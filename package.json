@@ -1,0 +1,38 @@
+{
+  "name": "ac27-level-editor",
+  "version": "1.0.0",
+  "description": "Cross-platform Level Editor for Airport Control 25 .acl flight schedules",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win portable",
+    "build:mac": "electron-builder --mac",
+    "build:all": "electron-builder --win --mac"
+  },
+  "build": {
+    "appId": "com.ac27.level-editor",
+    "productName": "AC27 Level Editor",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": null
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": null,
+      "category": "public.app-category.utilities"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

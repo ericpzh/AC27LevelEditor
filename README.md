@@ -1,57 +1,55 @@
-# AC27 Level Editor
+# AC27 Level Editor (Electron)
 
-GUI tool for editing Airport Control 25 `.acl` flight schedule files.
+Cross-platform GUI tool for editing Airport Control 25 `.acl` flight schedule files.
+
+Built with **Electron** — runs on **Windows & macOS**.
 
 ## Features
 
-- Open/save `.acl` level files
-- Editable table with 13 flight fields (callsign, airport, stand, runway, times, airline, aircraft type, voice, language)
-- Filter by arrival/departure with color-coded rows
-- Real-time search across all fields
-- Right-click context menu (add, delete, duplicate, move up/down)
-- Batch operations: generate callsigns, set voice/language
-- CSV import/export (append or replace mode)
-- Column sorting
+- Open/save `.acl` level files with Newtonsoft.Json format
+- Editable table: 13 fields (callsign, airports, stand, runway, times, airline, aircraft, voice, language)
+- Color-coded rows: green = arrival, blue = departure
+- Multi-select, inline cell editing, sorting
+- Search across all fields, filter by flight type
+- Right-click context menu (add, delete, duplicate, move)
+- **Batch operations**: generate callsigns, set voice/language
+- **CSV import/export** (append or replace)
+- Keyboard shortcuts: `Ctrl+O` open, `Ctrl+S` save, `Ctrl+N` add, `Del` delete
 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run
-python main.py
+npm install
+npm start
 ```
 
-## Build .exe
+## Build Standalone Executables
 
 ```bash
-# Option 1: Using build.bat
-build.bat
+# Windows (.exe)
+npm run build:win
 
-# Option 2: Using PyInstaller directly
-pyinstaller --onefile --windowed --name "AC25_Level_Editor" main.py
+# macOS (.dmg)
+npm run build:mac
+
+# Both
+npm run build:all
 ```
 
-Output: `dist/AC25_Level_Editor.exe`
+Output: `dist/AC27 Level Editor.exe` (Win) or `dist/AC27 Level Editor.dmg` (Mac)
 
-## File Structure
+## Project Structure
 
 ```
 AC27LevelEditor/
-├── main.py              # Entry point
-├── editor_gui.py        # Tkinter GUI
-├── acl_parser.py        # .acl file parser (Newtonsoft.Json format)
-├── test_parser.py       # Unit tests for parser
-├── requirements.txt     # Python dependencies
-├── build.bat            # PyInstaller build script
-├── AC25_Level_Editor.spec  # PyInstaller spec
+├── package.json          # Electron + electron-builder config
+├── main.js               # Electron main process
+├── preload.js            # Secure IPC bridge
+├── src/
+│   ├── index.html        # UI shell
+│   ├── style.css         # Dark theme styles
+│   ├── renderer.js       # Frontend logic
+│   └── acl_parser.js     # .acl parser (Node.js)
 ├── .gitignore
 └── README.md
 ```
-
-## ACL Format
-
-The game uses `.acl` files with Newtonsoft.Json serialization (`$type`, `$rcontent`).
-The parser extracts `FlightPlanState` entries from `FlightSchedule.$rcontent` arrays
-using regex-based parsing to handle non-standard JSON quirks.

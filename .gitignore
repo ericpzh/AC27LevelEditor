@@ -1,19 +1,17 @@
-# Build outputs
-build/
-dist/
-*.spec.bak
+# Dependencies
+node_modules/
 
-# Python
+# Build outputs
+dist/
+out/
+
+# Python (legacy)
 __pycache__/
 *.pyc
-*.pyo
-*.egg-info/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
 # OS
 Thumbs.db
