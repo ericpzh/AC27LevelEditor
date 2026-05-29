@@ -28,11 +28,36 @@ npm start
 
 ## Build
 
-```bash
-npm run build:win    # Windows .exe (portable)
-npm run build:mac    # macOS .dmg
-npm run build:all    # Both
+### Prerequisites (Windows — first time only)
+
+The `winCodeSign` cache contains broken macOS symlinks (`libcrypto.dylib` / `libssl.dylib` are 0 bytes).
+Run this once after the first build attempt fails:
+
+```powershell
+$libDir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0\darwin\10.12\lib"
+Copy-Item "$libDir\libcrypto.1.0.0.dylib" "$libDir\libcrypto.dylib" -Force
+Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 ```
+
+### Build (Windows portable)
+
+> **Important:** `npm run build:win` (`npx electron-builder`) does **not** work in PowerShell — the watch mode kills the builder process mid-way.
+
+Use `build.js` instead:
+
+```bash
+node build.js
+```
+
+The output `.exe` will be in the `dist/` folder.
+
+### Icon notes
+
+- Edit `icon.png` (512×512 PNG), then regenerate `icon.ico`:
+  ```bash
+  node -e "const p=require('png-to-ico').default;require('fs').writeFileSync('icon.ico',await p('icon.png',[256,128,64,48,32,16]))"
+  ```
+- Both `package.json` and `build.js` reference `icon.ico` (the proper Windows format).
 
 ## Project Structure
 

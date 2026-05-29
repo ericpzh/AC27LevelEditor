@@ -1,13 +1,14 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { loadFlights, saveFlights, collectUniqueValues, getFileInfo, exportCSV } = require('./src/acl_parser');
+const { loadFlights, saveFlights, generateFullAcl, collectUniqueValues, getFileInfo, exportCSV, importCsvFromFile, generateAclFromCsv } = require('./src/acl_parser');
 const { scanGameRoot } = require('./src/acl_scanner');
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
 
 function createWindow() {
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 880,
@@ -21,25 +22,6 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
-  buildMenu();
-}
-
-function buildMenu() {
-  const template = [
-    { label: '文件', submenu: [
-      { label: '返回关卡列表', accelerator: 'CmdOrCtrl+B', click: () => mainWindow.webContents.send('nav-browser') },
-      { type: 'separator' },
-      { role: 'quit', label: '退出' },
-    ]},
-    { label: '视图', submenu: [
-      { role: 'reload', label: '刷新' },
-      { role: 'toggleDevTools', label: '开发者工具' },
-    ]},
-  ];
-  if (process.platform === 'darwin') {
-    template.unshift({ label: app.getName(), submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'quit' }] });
-  }
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 // ─── IPC: Select game root ───────────────────────────────
@@ -111,17 +93,20 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
 
 ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks }) => {
   try {
-    // 1) Generate timestamped backup in same directory
     const dir = path.dirname(filePath);
     const base = path.basename(filePath, '.acl');
     const ts = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
     const backupPath = path.join(dir, `${base}_backup_${ts}.acl`);
-    fs.copyFileSync(filePath, backupPath);
 
-    // 2) Save the new content
-    saveFlights(filePath, flights, before, after, arrayContent, originalBlocks);
+    // Generate backup from existing file if it exists
+    if (fs.existsSync(filePath)) {
+      fs.copyFileSync(filePath, backupPath);
+    }
 
-    return { success: true, backupPath };
+    // Generate full ACL from scratch, preserving header structure
+    generateFullAcl(filePath, flights, before, after, originalBlocks);
+
+    return { success: true, backupPath: fs.existsSync(filePath) ? backupPath : null };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -138,7 +123,7 @@ ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayCont
   if (result.canceled || !result.filePath) return { canceled: true };
 
   try {
-    saveFlights(result.filePath, flights, before, after, arrayContent, originalBlocks);
+    generateFullAcl(result.filePath, flights, before, after, originalBlocks);
     return { canceled: false, path: result.filePath };
   } catch (err) {
     return { canceled: false, error: err.message };
@@ -199,6 +184,31 @@ ipcMain.handle('export-csv', async (_event, { flights, defaultPath }) => {
   }
 });
 
+// ─── IPC: CSV → ACL ──────────────────────────────────────
+
+ipcMain.handle('csv-to-acl', async (_event, { suggestedAclName, templatePath }) => {
+  const csvResult = await dialog.showOpenDialog(mainWindow, {
+    title: '选择 CSV 文件',
+    filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+    properties: ['openFile'],
+  });
+  if (csvResult.canceled || !csvResult.filePaths.length) return { canceled: true };
+
+  const aclResult = await dialog.showSaveDialog(mainWindow, {
+    title: '保存生成的 .acl 文件',
+    defaultPath: suggestedAclName || 'generated_level.acl',
+    filters: [{ name: 'ACL 关卡文件', extensions: ['acl'] }],
+  });
+  if (aclResult.canceled || !aclResult.filePath) return { canceled: true };
+
+  try {
+    generateAclFromCsv(csvResult.filePaths[0], aclResult.filePath, templatePath);
+    return { success: true, path: aclResult.filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ─── IPC: Get last game root path ────────────────────────
 
 ipcMain.handle('get-last-root', () => {
@@ -218,6 +228,99 @@ ipcMain.handle('save-last-root', (_event, rootPath) => {
     if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
     fs.writeFileSync(path.join(cfgDir, 'lastRoot.json'), JSON.stringify({ rootPath }), 'utf-8');
   } catch (_) {}
+});
+
+// ─── IPC: Load timeline files for a level ────────────────
+
+ipcMain.handle('load-timelines', async (_event, aclPath) => {
+  try {
+    const levelsDir = path.dirname(aclPath);
+    const baseName = path.basename(aclPath, '.acl');
+
+    // 1) Read .aclcfg to get runwayTimelineFile reference
+    const cfgPath = path.join(levelsDir, baseName + '.aclcfg');
+    let cfgData = null;
+    let runwayTimelineFile = null;
+    if (fs.existsSync(cfgPath)) {
+      cfgData = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      runwayTimelineFile = cfgData.runwayTimelineFile || null;
+    }
+
+    // 2) Read weather_timeline.json (shared per airport)
+    let weatherTimeline = [];
+    const weatherPath = path.join(levelsDir, 'weather_timeline.json');
+    if (fs.existsSync(weatherPath)) {
+      weatherTimeline = JSON.parse(fs.readFileSync(weatherPath, 'utf-8'));
+    }
+
+    // 3) Read wind_timeline.json (shared per airport)
+    let windTimeline = [];
+    const windPath = path.join(levelsDir, 'wind_timeline.json');
+    if (fs.existsSync(windPath)) {
+      windTimeline = JSON.parse(fs.readFileSync(windPath, 'utf-8'));
+    }
+
+    // 4) Read runway_timeline_*.json (level-specific)
+    let runwayTimeline = { initialRunways: [], timeline: [] };
+    let runwayTimelinePath = null;
+    if (runwayTimelineFile) {
+      runwayTimelinePath = path.join(levelsDir, runwayTimelineFile + '.json');
+      if (fs.existsSync(runwayTimelinePath)) {
+        runwayTimeline = JSON.parse(fs.readFileSync(runwayTimelinePath, 'utf-8'));
+      }
+    }
+
+    return {
+      success: true,
+      weatherTimeline, weatherPath,
+      windTimeline, windPath,
+      runwayTimeline, runwayTimelinePath,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Save weather_timeline.json ──────────────────────
+
+ipcMain.handle('save-weather-timeline', async (_event, { filePath, data }) => {
+  try {
+    const dir = path.dirname(filePath);
+    const backupPath = path.join(dir, 'weather_timeline_backup_' + Date.now() + '.json');
+    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 4), 'utf-8');
+    return { success: true, backupPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Save wind_timeline.json ─────────────────────────
+
+ipcMain.handle('save-wind-timeline', async (_event, { filePath, data }) => {
+  try {
+    const dir = path.dirname(filePath);
+    const backupPath = path.join(dir, 'wind_timeline_backup_' + Date.now() + '.json');
+    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 4), 'utf-8');
+    return { success: true, backupPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Save runway_timeline*.json ─────────────────────
+
+ipcMain.handle('save-runway-timeline', async (_event, { filePath, data }) => {
+  try {
+    const dir = path.dirname(filePath);
+    const backupPath = path.join(dir, 'runway_timeline_backup_' + Date.now() + '.json');
+    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 4), 'utf-8');
+    return { success: true, backupPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // ─── IPC: Add flight (gets new flight data back) ─────────

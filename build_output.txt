@@ -1,0 +1,13 @@
+  • electron-builder  version=25.1.8 os=10.0.26200
+  • loaded configuration  file=package.json ("build" field)
+  • author is missed in the package.json  appPackageFile=D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest\AC27LevelEditor\package.json
+  • executing @electron/rebuild  electronVersion=33.4.11 arch=x64 buildFromSource=false appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=win32 arch=x64 electron=33.4.11 appOutDir=dist\win-unpacked
+  • updating asar integrity executable resource  executablePath=dist\win-unpacked\AC27 Level Editor.exe
+  • signing with signtool.exe  path=dist\win-unpacked\AC27 Level Editor.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null
+  • building        target=portable file=dist\AC27 Level Editor.exe archs=x64
+  • signing with signtool.exe  path=dist\win-unpacked\resources\elevate.exe
+  • no signing info identified, signing is skipped  signHook=false cscInfo=null

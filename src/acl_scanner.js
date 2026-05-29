@@ -24,14 +24,29 @@ function scanGameRoot(gameRoot) {
     const levelsDir = path.join(airportsDir, airportIcao, 'Levels');
     if (!fs.existsSync(levelsDir)) continue;
 
-    const aclFiles = [];
+    // Build set of .aclcfg base names (without extension)
+    const cfgFiles = new Set();
     const levelEntries = fs.readdirSync(levelsDir, { withFileTypes: true });
     for (const le of levelEntries) {
+      if (le.isFile() && le.name.endsWith('.aclcfg')) {
+        cfgFiles.add(le.name.replace(/\.aclcfg$/, ''));
+      }
+    }
+
+    // Only include .acl files that have a matching .aclcfg
+    const aclFiles = [];
+    for (const le of levelEntries) {
       if (le.isFile() && le.name.endsWith('.acl')) {
-        aclFiles.push({
-          filename: le.name,
-          path: path.join(levelsDir, le.name),
-        });
+        const baseName = le.name.replace(/\.acl$/, '');
+        if (cfgFiles.has(baseName)) {
+          const aclPath = path.join(levelsDir, le.name);
+          const cfgPath = path.join(levelsDir, baseName + '.aclcfg');
+          aclFiles.push({
+            filename: le.name,
+            path: aclPath,
+            cfgPath: cfgPath,
+          });
+        }
       }
     }
 

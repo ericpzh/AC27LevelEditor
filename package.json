@@ -23,16 +23,19 @@
     ],
     "win": {
       "target": "portable",
-      "icon": null
+      "icon": "icon.ico",
+      "artifactName": "${productName}.${ext}"
     },
     "mac": {
       "target": "dmg",
-      "icon": null,
+      "icon": "icon.ico",
       "category": "public.app-category.utilities"
     }
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.1",
+    "rcedit": "^5.0.2"
   }
 }

@@ -18,12 +18,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveAsAcl: (data) => ipcRenderer.invoke('save-as-acl', data),
   reloadAcl: (filePath) => ipcRenderer.invoke('reload-acl', filePath),
 
+  // Timeline editors
+  loadTimelines: (aclPath) => ipcRenderer.invoke('load-timelines', aclPath),
+  saveWeatherTimeline: (data) => ipcRenderer.invoke('save-weather-timeline', data),
+  saveWindTimeline: (data) => ipcRenderer.invoke('save-wind-timeline', data),
+  saveRunwayTimeline: (data) => ipcRenderer.invoke('save-runway-timeline', data),
+
   // Backup & Import
   manualBackup: (sourcePath) => ipcRenderer.invoke('manual-backup', sourcePath),
   importAcl: () => ipcRenderer.invoke('import-acl'),
 
   // CSV
   exportCSV: (data) => ipcRenderer.invoke('export-csv', data),
+  csvToAcl: (data) => ipcRenderer.invoke('csv-to-acl', data),
 
   // Navigation events from menu
   onNavBrowser: (cb) => ipcRenderer.on('nav-browser', () => cb()),
