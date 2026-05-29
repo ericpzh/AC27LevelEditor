@@ -28,10 +28,9 @@ jobs:
         run: npm ci
 
       - name: Build Windows (portable)
-        run: npm run build:win
+        run: npm run build:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -56,9 +55,7 @@ jobs:
         run: npm ci
 
       - name: Build macOS (dmg)
-        run: npm run build:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build:mac -- --publish never
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
