@@ -1,55 +1,69 @@
-# AC27 Level Editor (Electron)
+# AC27 Level Editor
 
-Cross-platform GUI tool for editing Airport Control 25 `.acl` flight schedule files.
+Cross-platform (Windows + macOS) GUI tool for editing **Airport Control 25** `.acl` flight schedule files. Built with Electron.
 
-Built with **Electron** — runs on **Windows & macOS**.
+## User Flow
 
-## Features
+1. **Setup** — Select game root folder (with Steam instructions)
+2. **Browser** — All `.acl` files across all airports auto-scanned and displayed, grouped by airport
+3. **Editor** — Full table editor with:
+   - Dropdown menus per column (values auto-collected per airport: KJFK ≠ ZSJN)
+   - Instant editing — no per-row save needed
+   - Auto-sort: arrivals by LandingTime, departures by OffBlockTime
+   - Batch operations: callsign, voice, language
+   - Search + arrival/departure filter
 
-- Open/save `.acl` level files with Newtonsoft.Json format
-- Editable table: 13 fields (callsign, airports, stand, runway, times, airline, aircraft, voice, language)
-- Color-coded rows: green = arrival, blue = departure
-- Multi-select, inline cell editing, sorting
-- Search across all fields, filter by flight type
-- Right-click context menu (add, delete, duplicate, move)
-- **Batch operations**: generate callsigns, set voice/language
-- **CSV import/export** (append or replace)
-- Keyboard shortcuts: `Ctrl+O` open, `Ctrl+S` save, `Ctrl+N` add, `Del` delete
+### Save Flow
+- **Save** (Ctrl+S) → auto-generates `filename_backup_YYYY-MM-DDTHH-MM-SS.acl` before writing
+- **Backup** → manual backup to any location
+- **Import** → load external `.acl` to override current
+- **Save As** → write to any location
 
-## Quick Start
+## Development
 
 ```bash
 npm install
 npm start
 ```
 
-## Build Standalone Executables
+## Build
 
 ```bash
-# Windows (.exe)
-npm run build:win
-
-# macOS (.dmg)
-npm run build:mac
-
-# Both
-npm run build:all
+npm run build:win    # Windows .exe (portable)
+npm run build:mac    # macOS .dmg
+npm run build:all    # Both
 ```
-
-Output: `dist/AC27 Level Editor.exe` (Win) or `dist/AC27 Level Editor.dmg` (Mac)
 
 ## Project Structure
 
 ```
-AC27LevelEditor/
-├── package.json          # Electron + electron-builder config
-├── main.js               # Electron main process
-├── preload.js            # Secure IPC bridge
+├── main.js           # Electron main process + all IPC handlers
+├── preload.js        # Secure IPC bridge
 ├── src/
-│   ├── index.html        # UI shell
-│   ├── style.css         # Dark theme styles
-│   ├── renderer.js       # Frontend logic
-│   └── acl_parser.js     # .acl parser (Node.js)
-├── .gitignore
-└── README.md
+│   ├── acl_parser.js # .acl file parser (read/write/collect values)
+│   ├── acl_scanner.js# Game root scanner (discovers airports & .acl files)
+│   ├── index.html    # 3-screen UI shell
+│   ├── style.css     # Dark theme styles
+│   └── renderer.js   # All UI logic (3-screen state machine)
+└── package.json
 ```
+
+## File Format
+
+`.acl` files use Newtonsoft.Json serialization with `$type` and `$rcontent`. Each file contains a `FlightSchedule` object with an array of `FlightPlanState` entries:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| CallSign | string | Flight callsign (e.g. CCA0001) |
+| DepartureAirport | string | ICAO departure |
+| ArrivalAirport | string | ICAO arrival |
+| Stand | string | Gate/stand number |
+| Runway | string | Runway identifier |
+| OffBlockTime | ticks | Pushback time |
+| TakeoffTime | ticks | Takeoff time |
+| LandingTime | ticks | Landing time |
+| InBlockTime | ticks | Gate arrival time |
+| AirlineName | string | Airline code |
+| AircraftType | string | Aircraft model |
+| Voice | string | Voice profile |
+| Language | string | Language code |

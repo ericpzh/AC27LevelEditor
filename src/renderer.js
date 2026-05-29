@@ -1,4 +1,4 @@
-// ─── State ─────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────
 const FIELDS = [
   ['CallSign', 'string'],
   ['DepartureAirport', 'string'],
@@ -22,6 +22,11 @@ const FIELD_LABELS = {
   AircraftType: '机型', Voice: '语音', Language: '语言',
 };
 
+const DROPDOWN_FIELDS = new Set([
+  'AircraftType', 'AirlineName', 'Voice', 'Language',
+  'Stand', 'Runway', 'DepartureAirport', 'ArrivalAirport',
+]);
+
 const COL_CLASSES = {
   '#': 'col-num', CallSign: 'col-callsign', DepartureAirport: 'col-dep',
   ArrivalAirport: 'col-arr', Stand: 'col-stand', Runway: 'col-runway',
@@ -30,21 +35,215 @@ const COL_CLASSES = {
   Voice: 'col-voice', Language: 'col-lang',
 };
 
-let state = {
-  aclPath: null,
+// ─── App State ──────────────────────────────────────────
+let appState = {
+  screen: 'setup',       // 'setup' | 'browser' | 'editor'
+  rootPath: null,
+  airports: [],
+  airportValues: {},     // { [icao]: { AircraftType: [...], Voice: [...], ... } }
+  // Editor state
+  currentPath: null,
+  currentAirport: null,  // ICAO of airport for dropdowns
   flights: [],
-  before: '',
-  after: '',
-  arrayContent: '',
-  originalBlocks: [],
+  before: '', after: '', arrayContent: '', originalBlocks: [],
   modified: false,
   selectedRows: new Set(),
-  sortCol: null,
-  sortAsc: true,
-  editingCell: null,
+  editingWidget: null,   // { td, col, idx, widget }
 };
 
-// ─── Table Headers ──────────────────────────────────────
+// ─── Screen Navigation ──────────────────────────────────
+function showScreen(name) {
+  appState.screen = name;
+  document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
+  const target = document.getElementById(`screen-${name}`);
+  if (target) target.classList.remove('hidden');
+}
+
+// ─── Toast ──────────────────────────────────────────────
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = type; t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ─── Modal ──────────────────────────────────────────────
+function showModal(title, bodyHtml, actionsHtml) {
+  const o = document.getElementById('modal-overlay');
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = bodyHtml;
+  document.getElementById('modal-actions').innerHTML = actionsHtml;
+  o.classList.remove('hidden');
+}
+function hideModal() { document.getElementById('modal-overlay').classList.add('hidden'); }
+
+function showAlert(title, msg) {
+  showModal(title, `<p>${msg}</p>`, `<button class="btn-confirm" id="modal-ok">确定</button>`);
+  document.getElementById('modal-ok').onclick = hideModal;
+}
+
+// ═══════════ SCREEN 0: SETUP ═══════════════════════════
+
+document.getElementById('btn-select-root').addEventListener('click', async () => {
+  const result = await window.electronAPI.selectGameRoot();
+  if (result.canceled) return;
+
+  if (result.error) {
+    document.getElementById('setup-error').textContent = '❌ ' + result.error;
+    document.getElementById('setup-error').classList.remove('hidden');
+    return;
+  }
+
+  document.getElementById('setup-error').classList.add('hidden');
+  appState.rootPath = result.rootPath;
+  appState.airports = result.airports || [];
+  await window.electronAPI.saveLastRoot(result.rootPath);
+  showBrowser();
+});
+
+// ═══════════ SCREEN 1: BROWSER ═════════════════════════
+
+async function showBrowser() {
+  showScreen('browser');
+  document.getElementById('browser-root-path').textContent = appState.rootPath || '';
+
+  const loading = document.getElementById('browser-loading');
+  const list = document.getElementById('browser-list');
+  loading.classList.remove('hidden');
+  list.innerHTML = '';
+
+  // If no airports loaded yet, scan
+  if (appState.airports.length === 0 && appState.rootPath) {
+    const scan = await window.electronAPI.scanAcls(appState.rootPath);
+    if (!scan.error) appState.airports = scan.airports || [];
+  }
+
+  // Get file info for all airports (with flight counts)
+  for (const airport of appState.airports) {
+    const infos = await window.electronAPI.getAirportFilesInfo(airport.icao, appState.rootPath);
+    airport._fileInfos = infos || [];
+  }
+
+  loading.classList.add('hidden');
+
+  if (appState.airports.length === 0) {
+    list.innerHTML = '<div class="browser-empty">未找到任何 .acl 关卡文件</div>';
+    return;
+  }
+
+  list.innerHTML = appState.airports.map(airport => {
+    const infos = airport._fileInfos || [];
+    const totalFlights = infos.reduce((s, i) => s + (i.flightCount || 0), 0);
+
+    const rows = infos.map(info => {
+      if (info.error) {
+        return `<div class="level-row" style="opacity:0.5">
+          <span class="level-name">${info.filename}</span>
+          <span class="level-stats" style="color:var(--red)">${info.error}</span>
+        </div>`;
+      }
+      const sizeMB = (info.size / 1048576).toFixed(1);
+      return `<div class="level-row" data-path="${escapeHtml(info.path)}" data-airport="${escapeHtml(airport.icao)}">
+        <span class="level-name">${info.filename}</span>
+        <span class="level-stats">
+          <span class="level-stat"><span class="level-stat-dot arrival"></span>进港 ${info.arrivals || 0}</span>
+          <span class="level-stat"><span class="level-stat-dot departure"></span>离港 ${info.departures || 0}</span>
+          <span class="level-stat">✈ ${info.flightCount || 0}</span>
+        </span>
+        <span class="level-size">${sizeMB} MB</span>
+        <span class="level-arrow">→</span>
+      </div>`;
+    }).join('');
+
+    return `<div class="airport-card">
+      <div class="airport-card-header">
+        <span class="airport-icao">${airport.icao}</span>
+        <span class="airport-file-count">${infos.length} 关卡 · ${totalFlights} 航班</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+
+  // Click handlers on level rows
+  list.querySelectorAll('.level-row[data-path]').forEach(row => {
+    row.addEventListener('click', async () => {
+      const filePath = row.dataset.path;
+      const airportIcao = row.dataset.airport;
+      await openEditor(filePath, airportIcao);
+    });
+  });
+}
+
+document.getElementById('btn-change-root').addEventListener('click', () => {
+  showScreen('setup');
+});
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ═══════════ SCREEN 2: EDITOR ══════════════════════════
+
+async function openEditor(filePath, airportIcao) {
+  showScreen('editor');
+  document.getElementById('editor-filename').textContent = '加载中…';
+
+  // Load the file
+  const data = await window.electronAPI.loadAcl(filePath);
+  if (!data.success) { showAlert('加载失败', data.error); return; }
+
+  appState.currentPath = filePath;
+  appState.currentAirport = airportIcao;
+  appState.flights = data.flights;
+  appState.before = data.before;
+  appState.after = data.after;
+  appState.arrayContent = data.arrayContent;
+  appState.originalBlocks = data.originalBlocks;
+  appState.modified = false;
+  appState.selectedRows = new Set();
+  appState.editingWidget = null;
+  document.getElementById('search-input').value = '';
+  document.getElementById('filter-type').value = 'all';
+
+  // Load dropdown values for this airport if not cached
+  if (appState.rootPath && airportIcao && !appState.airportValues[airportIcao]) {
+    appState.airportValues[airportIcao] = await window.electronAPI.collectValues(appState.rootPath, airportIcao);
+  }
+
+  buildTableHead();
+  autoSort();
+  renderTable();
+  updateStatusBar();
+
+  document.getElementById('editor-filename').textContent = filePath.split(/[/\\]/).pop();
+  document.getElementById('editor-airport').textContent = airportIcao || '';
+
+  showToast(`已加载 ${data.flights.length} 个航班`, 'success');
+}
+
+// ─── Auto-sort: arrivals by LandingTime, departures by OffBlockTime ───
+function autoSort() {
+  const arrivals = [];
+  const departures = [];
+  const others = [];
+
+  for (const fl of appState.flights) {
+    if ((fl.LandingTime || '').trim()) {
+      arrivals.push(fl);
+    } else if ((fl.OffBlockTime || '').trim()) {
+      departures.push(fl);
+    } else {
+      others.push(fl);
+    }
+  }
+
+  arrivals.sort((a, b) => (a.LandingTime || '').localeCompare(b.LandingTime || ''));
+  departures.sort((a, b) => (a.OffBlockTime || '').localeCompare(b.OffBlockTime || ''));
+
+  appState.flights = [...arrivals, ...departures, ...others];
+}
+
+// ─── Table Headers ───────────────────────────────────────
 function buildTableHead() {
   const thead = document.getElementById('table-head');
   const cols = ['#', ...FIELDS.map(f => f[0])];
@@ -53,24 +252,19 @@ function buildTableHead() {
     const cls = COL_CLASSES[col] || '';
     return `<th class="${cls}" data-col="${col}">${label}</th>`;
   }).join('');
-
-  thead.querySelectorAll('th').forEach(th => {
-    th.addEventListener('click', () => sortBy(th.dataset.col));
-  });
 }
 
-// ─── Render Table ───────────────────────────────────────
+// ─── Render Table ────────────────────────────────────────
 let filteredIndices = [];
 
 function renderTable() {
   const tbody = document.getElementById('table-body');
-  const emptyState = document.getElementById('empty-state');
+  const emptyEl = document.getElementById('empty-editor');
   const searchTerm = document.getElementById('search-input').value.toLowerCase().trim();
   const filter = document.getElementById('filter-type').value;
 
-  // Build filtered index list
   filteredIndices = [];
-  state.flights.forEach((fl, idx) => {
+  appState.flights.forEach((fl, idx) => {
     if (filter === 'arrival' && !(fl.LandingTime || '').trim()) return;
     if (filter === 'departure' && !(fl.OffBlockTime || '').trim()) return;
     if (searchTerm) {
@@ -80,26 +274,25 @@ function renderTable() {
     filteredIndices.push(idx);
   });
 
-  if (filteredIndices.length === 0 && !state.aclPath) {
-    emptyState.classList.remove('hidden');
+  if (filteredIndices.length === 0) {
+    emptyEl.classList.remove('hidden');
     tbody.innerHTML = '';
+    updateStatusBar();
     return;
   }
-
-  emptyState.classList.add('hidden');
+  emptyEl.classList.add('hidden');
 
   tbody.innerHTML = filteredIndices.map(i => {
-    const fl = state.flights[i];
+    const fl = appState.flights[i];
     const isArrival = !!(fl.LandingTime || '').trim();
     const isDeparture = !!(fl.OffBlockTime || '').trim();
     const rowClass = isArrival ? 'row-arrival' : (isDeparture ? 'row-departure' : '');
-    const selClass = state.selectedRows.has(i) ? ' selected' : '';
-
+    const selClass = appState.selectedRows.has(i) ? ' selected' : '';
     const cells = [i + 1, ...FIELDS.map(([fn]) => fl[fn] || '')];
     return `<tr class="${rowClass}${selClass}" data-idx="${i}">
       ${cells.map((v, ci) => {
         const col = ci === 0 ? '#' : FIELDS[ci - 1][0];
-        const cls = ci === 0 ? 'idx-cell' : '';
+        const cls = ci === 0 ? 'idx-cell' : (col === 'CallSign' ? 'callsign-cell' : '');
         return `<td class="${cls}" data-col="${col}" data-idx="${i}">${v}</td>`;
       }).join('')}
     </tr>`;
@@ -109,553 +302,414 @@ function renderTable() {
 }
 
 function updateStatusBar() {
-  document.getElementById('file-path').textContent = state.aclPath
-    ? state.aclPath.split(/[/\\]/).pop()
-    : '未打开文件';
+  const fp = appState.currentPath;
+  document.getElementById('editor-filename').textContent = fp ? fp.split(/[/\\]/).pop() : '—';
+  document.getElementById('editor-airport').textContent = appState.currentAirport || '';
+  document.getElementById('modified-dot').classList.toggle('hidden', !appState.modified);
 
-  document.getElementById('modified-dot').classList.toggle('hidden', !state.modified);
-
-  let arrivals = 0, departures = 0;
-  state.flights.forEach(fl => {
-    if ((fl.LandingTime || '').trim()) arrivals++;
-    if ((fl.OffBlockTime || '').trim()) departures++;
+  let arr = 0, dep = 0;
+  appState.flights.forEach(fl => {
+    if ((fl.LandingTime || '').trim()) arr++;
+    if ((fl.OffBlockTime || '').trim()) dep++;
   });
-
   document.getElementById('flight-stats').innerHTML = `
-    <span class="stat-item"><span class="stat-dot arrival"></span>进港 ${arrivals}</span>
-    <span class="stat-item"><span class="stat-dot departure"></span>离港 ${departures}</span>
-    <span>总计 ${state.flights.length}</span>
+    <span class="stat-item"><span class="stat-dot arrival"></span>进港 ${arr}</span>
+    <span class="stat-item"><span class="stat-dot departure"></span>离港 ${dep}</span>
+    <span>总计 ${appState.flights.length}</span>
   `;
 }
 
-// ─── Row Selection ──────────────────────────────────────
+// ─── Cell Click → Edit ───────────────────────────────────
 document.getElementById('table-body').addEventListener('click', (e) => {
   const td = e.target.closest('td');
   if (!td) return;
-
-  const tr = td.closest('tr');
-  const idx = parseInt(tr.dataset.idx);
-
-  // Ignore clicks during editing
-  if (state.editingCell) return;
-
-  if (e.ctrlKey || e.metaKey) {
-    // Toggle selection
-    if (state.selectedRows.has(idx)) {
-      state.selectedRows.delete(idx);
-    } else {
-      state.selectedRows.add(idx);
-    }
-  } else if (e.shiftKey) {
-    // Range select
-    const indices = [...state.selectedRows];
-    if (indices.length > 0) {
-      const last = Math.max(...indices);
-      const [from, to] = [Math.min(last, idx), Math.max(last, idx)];
-      for (let i = from; i <= to; i++) {
-        if (filteredIndices.includes(i)) state.selectedRows.add(i);
-      }
-    } else {
-      state.selectedRows.add(idx);
-    }
-  } else {
-    // Single select
-    state.selectedRows.clear();
-    state.selectedRows.add(idx);
-  }
-
-  refreshSelection();
-});
-
-// Double-click for inline editing
-document.getElementById('table-body').addEventListener('dblclick', (e) => {
-  const td = e.target.closest('td');
-  if (!td) return;
+  if (appState.editingWidget) return; // already editing
 
   const col = td.dataset.col;
   const idx = parseInt(td.dataset.idx);
   if (col === '#') return;
 
-  startInlineEdit(td, col, idx);
+  startCellEdit(td, col, idx);
 });
 
-function refreshSelection() {
-  document.querySelectorAll('#table-body tr').forEach(tr => {
-    const idx = parseInt(tr.dataset.idx);
-    tr.classList.toggle('selected', state.selectedRows.has(idx));
+function startCellEdit(td, col, idx) {
+  const currentVal = appState.flights[idx][col] || '';
+  const values = appState.airportValues[appState.currentAirport] || {};
+
+  let widget;
+  if (DROPDOWN_FIELDS.has(col) && values[col] && values[col].length > 0) {
+    // Dropdown with custom value support
+    widget = document.createElement('select');
+    widget.className = 'cell-widget';
+    widget.innerHTML = values[col].map(v =>
+      `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}</option>`
+    ).join('');
+    // Add the current value if it's not in the list
+    if (currentVal && !values[col].includes(currentVal)) {
+      widget.innerHTML += `<option value="${escapeHtml(currentVal)}" selected>${currentVal}</option>`;
+    }
+  } else {
+    // Text input for times and other fields
+    widget = document.createElement('input');
+    widget.type = 'text';
+    widget.className = 'cell-widget';
+    widget.value = currentVal;
+  }
+
+  td.innerHTML = '';
+  td.appendChild(widget);
+  appState.editingWidget = { td, col, idx, widget };
+  widget.focus();
+  if (widget.tagName === 'INPUT') widget.select();
+
+  const finish = (commit) => {
+    const newVal = (widget.tagName === 'SELECT') ? widget.value : widget.value.trim();
+    if (commit && newVal !== currentVal) {
+      appState.flights[idx][col] = newVal;
+      appState.modified = true;
+      // Auto-sort if a time field changed
+      if (col === 'LandingTime' || col === 'OffBlockTime') {
+        autoSort();
+      }
+    }
+    td.innerHTML = appState.flights[idx][col] || '';
+    appState.editingWidget = null;
+    renderTable();
+  };
+
+  widget.addEventListener('change', () => finish(true));
+  widget.addEventListener('blur', () => finish(true));
+  widget.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    if (e.key === 'Tab') { e.preventDefault(); finish(true); moveToNextCell(td); }
   });
 }
 
-// ─── Inline Editing ─────────────────────────────────────
-function startInlineEdit(td, col, idx) {
-  const fieldName = col;
-  const currentVal = state.flights[idx][fieldName] || '';
-  state.editingCell = { td, col, idx };
-
-  const isLang = fieldName === 'Language';
-
-  if (isLang) {
-    const select = document.createElement('select');
-    select.innerHTML = '<option value="en">en</option><option value="zh">zh</option>';
-    select.value = ['en', 'zh'].includes(currentVal) ? currentVal : 'en';
-    td.classList.add('editing');
-    td.innerHTML = '';
-    td.appendChild(select);
-    select.focus();
-
-    const finish = () => {
-      const newVal = select.value;
-      if (newVal !== currentVal) {
-        state.flights[idx][fieldName] = newVal;
-        state.modified = true;
-      }
-      td.classList.remove('editing');
-      state.editingCell = null;
-      renderTable();
-    };
-
-    select.addEventListener('change', finish);
-    select.addEventListener('blur', finish);
-    select.addEventListener('keydown', (e) => { if (e.key === 'Escape') finish(); });
-  } else {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = currentVal;
-    td.classList.add('editing');
-    td.innerHTML = '';
-    td.appendChild(input);
-    input.focus();
-    input.select();
-
-    const finish = () => {
-      const newVal = input.value.trim();
-      if (newVal !== currentVal) {
-        state.flights[idx][fieldName] = newVal;
-        state.modified = true;
-      }
-      td.classList.remove('editing');
-      state.editingCell = null;
-      renderTable();
-    };
-
-    input.addEventListener('blur', finish);
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') finish();
-      if (e.key === 'Escape') {
-        input.value = currentVal;
-        finish();
-      }
-    });
+function moveToNextCell(currentTd) {
+  // Find next editable cell
+  const allTds = [...document.querySelectorAll('#table-body td:not(.idx-cell)')];
+  const idx = allTds.indexOf(currentTd);
+  if (idx >= 0 && idx < allTds.length - 1) {
+    const next = allTds[idx + 1];
+    // Small delay to let render finish
+    setTimeout(() => {
+      const col = next.dataset.col;
+      const fi = parseInt(next.dataset.idx);
+      startCellEdit(next, col, fi);
+    }, 50);
   }
 }
 
-// ─── Context Menu ───────────────────────────────────────
-document.getElementById('table-body').addEventListener('contextmenu', (e) => {
-  e.preventDefault();
-  const tr = e.target.closest('tr');
-  const menu = document.getElementById('context-menu');
+// ─── Add / Delete / Duplicate ────────────────────────────
+document.getElementById('btn-add').addEventListener('click', addFlight);
+document.getElementById('btn-delete').addEventListener('click', deleteSelected);
+document.getElementById('btn-duplicate').addEventListener('click', duplicateSelected);
 
-  // If right-clicked on a row, select it
-  if (tr) {
-    const idx = parseInt(tr.dataset.idx);
-    if (!state.selectedRows.has(idx)) {
-      state.selectedRows.clear();
-      state.selectedRows.add(idx);
-      refreshSelection();
-    }
-  }
-
-  const hasSelection = state.selectedRows.size > 0;
-
-  let html = '<button id="ctx-add">＋ 添加航班</button>';
-  if (hasSelection) {
-    html += '<button id="ctx-delete">✕ 删除选中</button>';
-    html += '<button id="ctx-duplicate">⧉ 复制选中</button>';
-    html += '<div class="menu-sep"></div>';
-    html += '<button id="ctx-move-up">↑ 向上移动</button>';
-    html += '<button id="ctx-move-down">↓ 向下移动</button>';
-  }
-
-  menu.innerHTML = html;
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
-  menu.classList.add('show');
-
-  // Bind actions
-  menu.querySelector('#ctx-add')?.addEventListener('click', () => { hideContextMenu(); addFlight(); });
-  menu.querySelector('#ctx-delete')?.addEventListener('click', () => { hideContextMenu(); deleteSelected(); });
-  menu.querySelector('#ctx-duplicate')?.addEventListener('click', () => { hideContextMenu(); duplicateSelected(); });
-  menu.querySelector('#ctx-move-up')?.addEventListener('click', () => { hideContextMenu(); moveUp(); });
-  menu.querySelector('#ctx-move-down')?.addEventListener('click', () => { hideContextMenu(); moveDown(); });
-});
-
-function hideContextMenu() {
-  document.getElementById('context-menu').classList.remove('show');
-}
-
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('#context-menu')) hideContextMenu();
-});
-
-// ─── Flight Operations ──────────────────────────────────
 function addFlight() {
+  const values = appState.airportValues[appState.currentAirport] || {};
   const newFlight = {};
-  FIELDS.forEach(([fn]) => { newFlight[fn] = ''; });
-  newFlight.CallSign = 'NEW0001';
-  newFlight.AircraftType = 'AIRBUS A-320neo';
-  newFlight.Voice = 'Yeager';
-  newFlight.Language = 'en';
+  for (const [fn] of FIELDS) newFlight[fn] = '';
 
-  state.flights.push(newFlight);
-  state.modified = true;
+  // Smart defaults from collected values
+  newFlight.CallSign = 'NEW' + String(appState.flights.length + 1).padStart(4, '0');
+  if (values.AircraftType && values.AircraftType.length > 0) newFlight.AircraftType = values.AircraftType[0];
+  if (values.AirlineName && values.AirlineName.length > 0) newFlight.AirlineName = values.AirlineName[0];
+  if (values.Voice && values.Voice.length > 0) newFlight.Voice = values.Voice[0];
+  if (values.Language && values.Language.length > 0) newFlight.Language = values.Language[0];
+  if (appState.currentAirport) {
+    newFlight.ArrivalAirport = appState.currentAirport;
+    newFlight.DepartureAirport = appState.currentAirport;
+  }
+
+  appState.flights.push(newFlight);
+  appState.modified = true;
   renderTable();
-  // Scroll to bottom
-  const tbody = document.getElementById('table-body');
-  tbody.lastElementChild?.scrollIntoView({ block: 'nearest' });
   showToast('已添加航班', 'success');
 }
 
 function deleteSelected() {
-  if (state.selectedRows.size === 0) return;
-
-  const count = state.selectedRows.size;
-  showConfirm(`确定要删除 ${count} 个航班？`, () => {
-    const indices = [...state.selectedRows].sort((a, b) => b - a);
-    indices.forEach(idx => state.flights.splice(idx, 1));
-    state.selectedRows.clear();
-    state.modified = true;
+  if (appState.selectedRows.size === 0) { showToast('请先选择要删除的航班', 'error'); return; }
+  const count = appState.selectedRows.size;
+  showModal('确认删除', `<p>确定要删除 ${count} 个航班吗？此操作不可撤销。</p>`,
+    `<button class="btn-cancel" id="modal-cancel">取消</button><button class="btn-danger" id="modal-confirm">删除</button>`);
+  document.getElementById('modal-cancel').onclick = hideModal;
+  document.getElementById('modal-confirm').onclick = () => {
+    hideModal();
+    const indices = [...appState.selectedRows].sort((a, b) => b - a);
+    indices.forEach(i => appState.flights.splice(i, 1));
+    appState.selectedRows.clear();
+    appState.modified = true;
     renderTable();
     showToast(`已删除 ${count} 个航班`, 'success');
-  });
+  };
 }
 
 function duplicateSelected() {
-  if (state.selectedRows.size === 0) return;
-
+  if (appState.selectedRows.size === 0) { showToast('请先选择要复制的航班', 'error'); return; }
   const newFlights = [];
-  [...state.selectedRows].sort((a, b) => a - b).forEach(idx => {
-    const copy = { ...state.flights[idx] };
-    copy.CallSign = (copy.CallSign || '') + '_COPY';
+  [...appState.selectedRows].sort((a, b) => a - b).forEach(i => {
+    const copy = { ...appState.flights[i] };
+    copy.CallSign = (copy.CallSign || '') + '_CP';
     newFlights.push(copy);
   });
-
-  state.flights.push(...newFlights);
-  state.modified = true;
+  appState.flights.push(...newFlights);
+  appState.modified = true;
   renderTable();
-  showToast(`已复制 ${state.selectedRows.size} 个航班`, 'success');
+  showToast(`已复制 ${appState.selectedRows.size} 个航班`, 'success');
 }
 
-function moveUp() {
-  const indices = [...state.selectedRows].sort((a, b) => a - b);
-  if (indices.length === 0 || indices[0] === 0) return;
-
-  indices.forEach(idx => {
-    [state.flights[idx], state.flights[idx - 1]] = [state.flights[idx - 1], state.flights[idx]];
-  });
-
-  state.selectedRows = new Set(indices.map(i => i - 1));
-  state.modified = true;
-  renderTable();
-}
-
-function moveDown() {
-  const indices = [...state.selectedRows].sort((a, b) => b - a);
-  if (indices.length === 0 || indices[0] >= state.flights.length - 1) return;
-
-  indices.forEach(idx => {
-    [state.flights[idx], state.flights[idx + 1]] = [state.flights[idx + 1], state.flights[idx]];
-  });
-
-  state.selectedRows = new Set(indices.map(i => i + 1));
-  state.modified = true;
-  renderTable();
-}
-
-// ─── Sorting ────────────────────────────────────────────
-function sortBy(col) {
-  if (state.sortCol === col) {
-    state.sortAsc = !state.sortAsc;
-  } else {
-    state.sortCol = col;
-    state.sortAsc = true;
-  }
-
-  if (col === '#') {
-    state.flights.sort((a, b) => {
-      const va = (a.CallSign || '').toLowerCase();
-      const vb = (b.CallSign || '').toLowerCase();
-      return state.sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
-    });
-  } else {
-    state.flights.sort((a, b) => {
-      const va = (a[col] || '').toLowerCase();
-      const vb = (b[col] || '').toLowerCase();
-      return state.sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
-    });
-  }
-
-  state.modified = true;
-  renderTable();
-}
-
-// ─── Search & Filter ────────────────────────────────────
-document.getElementById('search-input').addEventListener('input', () => renderTable());
-document.getElementById('filter-type').addEventListener('change', () => renderTable());
-
-// ─── File Operations ────────────────────────────────────
-async function handleOpen() {
-  // Triggered by main process menu or button
-  window.electronAPI.openFile();
-}
-
-window.electronAPI.onFileLoaded((data) => {
-  state.aclPath = data.path;
-  state.flights = data.flights;
-  state.before = data.before;
-  state.after = data.after;
-  state.arrayContent = data.arrayContent;
-  state.originalBlocks = data.originalBlocks;
-  state.modified = false;
-  state.selectedRows.clear();
-  state.sortCol = null;
-  state.sortAsc = true;
-  document.getElementById('search-input').value = '';
-  document.getElementById('filter-type').value = 'all';
-  renderTable();
-  showToast(`已加载 ${data.flights.length} 个航班`, 'success');
-});
-
-async function handleSave() {
-  if (!state.aclPath) return handleSaveAs();
-
-  try {
-    const result = await window.electronAPI.saveFileDirect({
-      path: state.aclPath,
-      flights: state.flights,
-      before: state.before,
-      after: state.after,
-      arrayContent: state.arrayContent,
-      originalBlocks: state.originalBlocks,
-    });
-
-    if (result.success) {
-      state.flights = result.flights;
-      state.before = result.before;
-      state.after = result.after;
-      state.arrayContent = result.arrayContent;
-      state.originalBlocks = result.originalBlocks;
-      state.modified = false;
-      renderTable();
-      showToast('已保存', 'success');
-    } else {
-      showToast('保存失败: ' + result.error, 'error');
-    }
-  } catch (err) {
-    showToast('保存失败: ' + err.message, 'error');
-  }
-}
-
-async function handleSaveAs() {
-  try {
-    const result = await window.electronAPI.saveFile({
-      flights: state.flights,
-      before: state.before,
-      after: state.after,
-      arrayContent: state.arrayContent,
-      originalBlocks: state.originalBlocks,
-    });
-
-    if (result.success) {
-      state.aclPath = result.path;
-      state.flights = result.flights;
-      state.before = result.before;
-      state.after = result.after;
-      state.arrayContent = result.arrayContent;
-      state.originalBlocks = result.originalBlocks;
-      state.modified = false;
-      renderTable();
-      showToast('已保存', 'success');
-    }
-  } catch (err) {
-    showToast('保存失败: ' + err.message, 'error');
-  }
-}
-
-// ─── CSV ────────────────────────────────────────────────
-window.electronAPI.onRequestSaveData(() => handleSaveAs());
-window.electronAPI.onMenuSave(() => handleSave());
-
-window.electronAPI.onCSVImported(({ flights, mode }) => {
-  if (mode === 'replace') {
-    state.flights = flights;
-  } else {
-    state.flights = [...state.flights, ...flights];
-  }
-  state.modified = true;
-  renderTable();
-  showToast(`已${mode === 'replace' ? '替换' : '追加'} ${flights.length} 个航班`, 'success');
-});
-
-window.electronAPI.onRequestCSVData(() => {
-  if (state.flights.length === 0) {
-    showToast('没有航班数据可导出', 'error');
-    return;
-  }
-  window.electronAPI.exportCSV({ flights: state.flights }).then(result => {
-    if (result.success) showToast('CSV 导出完成', 'success');
-  });
-});
-
-// ─── Batch Operations ───────────────────────────────────
-function batchCallsign() {
-  showPromptForm('批量生成呼号', [
-    { id: 'prefix', label: '前缀 (如 CCA)', value: 'CCA', type: 'text' },
-    { id: 'start', label: '起始编号', value: '1', type: 'number' },
-  ], (values) => {
-    const prefix = values.prefix;
-    const start = parseInt(values.start);
-    state.flights.forEach((fl, i) => {
-      fl.CallSign = `${prefix}${String(start + i).padStart(4, '0')}`;
-    });
-    state.modified = true;
-    renderTable();
-    const last = start + state.flights.length - 1;
-    showToast(`呼号: ${prefix}${String(start).padStart(4, '0')} ~ ${prefix}${String(last).padStart(4, '0')}`, 'success');
-  });
-}
-
-function batchVoice() {
-  showPromptForm('批量设置语音', [
-    { id: 'voice', label: '语音包名称', value: 'Yeager', type: 'text' },
-  ], (values) => {
-    state.flights.forEach(fl => fl.Voice = values.voice);
-    state.modified = true;
-    renderTable();
-    showToast(`已设置语音: ${values.voice}`, 'success');
-  });
-}
-
-function batchLanguage() {
-  showPromptForm('批量设置语言', [
-    { id: 'lang', label: '语言代码', value: 'en', type: 'select', options: ['en', 'zh'] },
-  ], (values) => {
-    state.flights.forEach(fl => fl.Language = values.lang);
-    state.modified = true;
-    renderTable();
-    showToast(`已设置语言: ${values.lang}`, 'success');
-  });
-}
-
-// ─── Modal Helpers ──────────────────────────────────────
-function showToast(message, type = '') {
-  const toast = document.getElementById('toast');
-  toast.textContent = message;
-  toast.className = type;
-  toast.classList.add('show');
-  clearTimeout(toast._timeout);
-  toast._timeout = setTimeout(() => toast.classList.remove('show'), 2500);
-}
-
-function showConfirm(message, onConfirm) {
-  const overlay = document.getElementById('modal-overlay');
-  document.getElementById('modal-title').textContent = '确认操作';
-  document.getElementById('modal-body').innerHTML = `<p style="color:var(--text-secondary)">${message}</p>`;
-  document.getElementById('modal-actions').innerHTML = `
-    <button class="btn-cancel" id="modal-cancel">取消</button>
-    <button class="btn-danger" id="modal-confirm">确认删除</button>
-  `;
-  overlay.classList.remove('hidden');
-
-  document.getElementById('modal-cancel').onclick = () => overlay.classList.add('hidden');
-  document.getElementById('modal-confirm').onclick = () => {
-    overlay.classList.add('hidden');
-    onConfirm();
-  };
-}
-
-function showPromptForm(title, fields, onSubmit) {
-  const overlay = document.getElementById('modal-overlay');
-  document.getElementById('modal-title').textContent = title;
-
-  const bodyHtml = fields.map(f => `
-    <label for="pf-${f.id}">${f.label}</label>
-    ${f.type === 'select' ? `
-      <select id="pf-${f.id}">${f.options.map(o => `<option value="${o}" ${o===f.value?'selected':''}>${o}</option>`).join('')}</select>
-    ` : `
-      <input id="pf-${f.id}" type="${f.type}" value="${f.value}"${f.type==='number'?' min="1"':''}>
-    `}
-  `).join('');
-
-  document.getElementById('modal-body').innerHTML = bodyHtml;
-  document.getElementById('modal-actions').innerHTML = `
-    <button class="btn-cancel" id="modal-cancel">取消</button>
-    <button class="btn-confirm" id="modal-confirm">确定</button>
-  `;
-  overlay.classList.remove('hidden');
-
-  document.getElementById('modal-cancel').onclick = () => overlay.classList.add('hidden');
-  document.getElementById('modal-confirm').onclick = () => {
-    const values = {};
-    fields.forEach(f => {
-      values[f.id] = document.getElementById(`pf-${f.id}`).value;
-    });
-    overlay.classList.add('hidden');
-    onSubmit(values);
-  };
-
-  // Focus first input
-  setTimeout(() => {
-    const first = document.querySelector('#modal-body input, #modal-body select');
-    first?.focus();
-  }, 100);
-}
-
-// ─── Keyboard Shortcuts ─────────────────────────────────
-document.addEventListener('keydown', (e) => {
-  // Don't handle shortcuts during inline editing
-  if (state.editingCell) return;
-
-  const mod = e.ctrlKey || e.metaKey;
-
-  if (mod && e.key === 'o') { e.preventDefault(); handleOpen(); }
-  if (mod && e.key === 's') { e.preventDefault(); handleSave(); }
-  if (mod && e.key === 'n') { e.preventDefault(); addFlight(); }
-  if (e.key === 'Delete') { e.preventDefault(); deleteSelected(); }
-  if (e.key === 'Escape') {
-    state.selectedRows.clear();
-    refreshSelection();
-    hideContextMenu();
-  }
-});
-
-// ─── Toolbar Button Bindings ────────────────────────────
-document.getElementById('btn-open').addEventListener('click', () => window.electronAPI.openFile());
-document.getElementById('btn-save').addEventListener('click', handleSave);
-document.getElementById('btn-save-as').addEventListener('click', handleSaveAs);
-document.getElementById('btn-import-csv').addEventListener('click', () => {
-  // Simple import menu via modal
-  showPromptForm('导入 CSV', [
-    { id: 'op', label: '模式', value: 'append', type: 'select', options: ['append', 'replace'] },
-  ], (values) => {
-    // Can't trigger file dialog from renderer directly; send to main
-    showToast('请通过菜单栏: 文件 → 导入 CSV', 'error');
-  });
-});
-document.getElementById('btn-export-csv').addEventListener('click', () => {
-  if (state.flights.length === 0) { showToast('没有航班数据可导出', 'error'); return; }
-  window.electronAPI.exportCSV({ flights: state.flights }).then(result => {
-    if (result.success) showToast('CSV 导出完成', 'success');
-  });
-});
-document.getElementById('btn-add').addEventListener('click', addFlight);
-document.getElementById('btn-delete').addEventListener('click', deleteSelected);
-document.getElementById('btn-duplicate').addEventListener('click', duplicateSelected);
+// ─── Batch Operations ────────────────────────────────────
 document.getElementById('btn-batch-callsign').addEventListener('click', batchCallsign);
 document.getElementById('btn-batch-voice').addEventListener('click', batchVoice);
 document.getElementById('btn-batch-lang').addEventListener('click', batchLanguage);
 
-// ─── Init ───────────────────────────────────────────────
-buildTableHead();
-renderTable();
+function batchCallsign() {
+  showModal('批量生成呼号', `
+    <label for="bm-prefix">前缀 (如 CCA)</label><input id="bm-prefix" value="CCA">
+    <label for="bm-start">起始编号</label><input id="bm-start" type="number" value="1" min="1">
+  `, `<button class="btn-cancel" id="modal-cancel">取消</button><button class="btn-confirm" id="modal-confirm">确定</button>`);
+  document.getElementById('modal-cancel').onclick = hideModal;
+  document.getElementById('modal-confirm').onclick = () => {
+    const prefix = document.getElementById('bm-prefix').value.trim();
+    const start = parseInt(document.getElementById('bm-start').value) || 1;
+    appState.flights.forEach((fl, i) => {
+      fl.CallSign = `${prefix}${String(start + i).padStart(4, '0')}`;
+    });
+    appState.modified = true;
+    hideModal();
+    renderTable();
+    showToast(`呼号: ${prefix}${String(start).padStart(4, '0')} ~ ${prefix}${String(start + appState.flights.length - 1).padStart(4, '0')}`, 'success');
+  };
+}
 
-console.log('AC27 Level Editor ready');
+function batchVoice() {
+  const values = appState.airportValues[appState.currentAirport] || {};
+  const voices = values.Voice || [];
+  const options = voices.map(v => `<option value="${escapeHtml(v)}">${v}</option>`).join('');
+  showModal('批量设置语音', `
+    <label for="bm-voice">语音包</label>
+    <select id="bm-voice">${options}${!voices.length ? '<option>Yeager</option>' : ''}</select>
+  `, `<button class="btn-cancel" id="modal-cancel">取消</button><button class="btn-confirm" id="modal-confirm">确定</button>`);
+  document.getElementById('modal-cancel').onclick = hideModal;
+  document.getElementById('modal-confirm').onclick = () => {
+    const voice = document.getElementById('bm-voice').value;
+    appState.flights.forEach(fl => fl.Voice = voice);
+    appState.modified = true;
+    hideModal();
+    renderTable();
+    showToast(`已设置语音: ${voice}`, 'success');
+  };
+}
+
+function batchLanguage() {
+  const values = appState.airportValues[appState.currentAirport] || {};
+  const langs = values.Language || ['en', 'zh'];
+  const options = langs.map(l => `<option value="${escapeHtml(l)}">${l}</option>`).join('');
+  showModal('批量设置语言', `
+    <label for="bm-lang">语言代码</label>
+    <select id="bm-lang">${options}</select>
+  `, `<button class="btn-cancel" id="modal-cancel">取消</button><button class="btn-confirm" id="modal-confirm">确定</button>`);
+  document.getElementById('modal-cancel').onclick = hideModal;
+  document.getElementById('modal-confirm').onclick = () => {
+    const lang = document.getElementById('bm-lang').value;
+    appState.flights.forEach(fl => fl.Language = lang);
+    appState.modified = true;
+    hideModal();
+    renderTable();
+    showToast(`已设置语言: ${lang}`, 'success');
+  };
+}
+
+// ─── Search & Filter ─────────────────────────────────────
+document.getElementById('search-input').addEventListener('input', () => renderTable());
+document.getElementById('filter-type').addEventListener('change', () => renderTable());
+
+// ─── SAVE ────────────────────────────────────────────────
+document.getElementById('btn-save').addEventListener('click', handleSave);
+
+async function handleSave() {
+  if (!appState.currentPath) { showToast('没有打开的文件', 'error'); return; }
+  if (appState.flights.length === 0) { showToast('没有航班数据可保存', 'error'); return; }
+
+  try {
+    const result = await window.electronAPI.saveAcl({
+      filePath: appState.currentPath,
+      flights: appState.flights,
+      before: appState.before,
+      after: appState.after,
+      arrayContent: appState.arrayContent,
+      originalBlocks: appState.originalBlocks,
+    });
+
+    if (result.success) {
+      appState.modified = false;
+      updateStatusBar();
+      renderTable();
+
+      // Show success with backup info
+      showModal('保存成功', `
+        <p>✅ 文件已成功保存。</p>
+        <p style="font-size:12px;color:var(--text-muted)">自动备份已生成在相同目录下：</p>
+        <code>${result.backupPath}</code>
+      `, `<button class="btn-confirm" id="modal-ok">确定</button>`);
+      document.getElementById('modal-ok').onclick = hideModal;
+    } else {
+      showAlert('保存失败', result.error || '未知错误');
+    }
+  } catch (err) {
+    showAlert('保存失败', err.message);
+  }
+}
+
+// ─── SAVE AS ─────────────────────────────────────────────
+document.getElementById('btn-save-as').addEventListener('click', handleSaveAs);
+
+async function handleSaveAs() {
+  if (appState.flights.length === 0) { showToast('没有航班数据', 'error'); return; }
+
+  const result = await window.electronAPI.saveAsAcl({
+    flights: appState.flights,
+    before: appState.before,
+    after: appState.after,
+    arrayContent: appState.arrayContent,
+    originalBlocks: appState.originalBlocks,
+    suggestedName: appState.currentPath ? appState.currentPath.split(/[/\\]/).pop() : 'edited_level.acl',
+  });
+
+  if (result.canceled) return;
+  if (result.error) { showAlert('保存失败', result.error); return; }
+
+  appState.currentPath = result.path;
+  appState.modified = false;
+  updateStatusBar();
+  renderTable();
+  showToast('已另存为: ' + result.path.split(/[/\\]/).pop(), 'success');
+}
+
+// ─── MANUAL BACKUP ───────────────────────────────────────
+document.getElementById('btn-backup-only').addEventListener('click', handleManualBackup);
+
+async function handleManualBackup() {
+  if (!appState.currentPath) { showToast('没有打开的文件', 'error'); return; }
+
+  const result = await window.electronAPI.manualBackup(appState.currentPath);
+  if (result.canceled) return;
+  if (result.error) { showAlert('备份失败', result.error); return; }
+
+  showToast('备份已保存: ' + result.path.split(/[/\\]/).pop(), 'success');
+}
+
+// ─── IMPORT EXTERNAL ACL ─────────────────────────────────
+document.getElementById('btn-import-acl').addEventListener('click', handleImportAcl);
+
+async function handleImportAcl() {
+  const result = await window.electronAPI.importAcl();
+  if (result.canceled) return;
+  if (result.error) { showAlert('导入失败', result.error); return; }
+
+  // Override current data with imported
+  appState.currentPath = result.path;
+  appState.flights = result.flights;
+  appState.before = result.before;
+  appState.after = result.after;
+  appState.arrayContent = result.arrayContent;
+  appState.originalBlocks = result.originalBlocks;
+  appState.modified = true;
+  appState.selectedRows = new Set();
+  appState.editingWidget = null;
+  document.getElementById('search-input').value = '';
+  document.getElementById('filter-type').value = 'all';
+
+  // Try to determine airport from parent folder path
+  const parts = result.path.split(/[/\\]/);
+  const levelsIdx = parts.indexOf('Levels');
+  if (levelsIdx > 1) appState.currentAirport = parts[levelsIdx - 1];
+
+  autoSort();
+  renderTable();
+  updateStatusBar();
+  showToast(`已导入 ${result.flights.length} 个航班`, 'success');
+}
+
+// ─── BACK button ─────────────────────────────────────────
+document.getElementById('btn-back').addEventListener('click', () => {
+  if (appState.modified) {
+    showModal('未保存的更改', '<p>当前文件有未保存的更改，确定要返回关卡列表吗？</p>',
+      `<button class="btn-cancel" id="modal-cancel">取消</button><button class="btn-confirm" id="modal-confirm">放弃更改</button>`);
+    document.getElementById('modal-cancel').onclick = hideModal;
+    document.getElementById('modal-confirm').onclick = () => {
+      hideModal();
+      appState.modified = false;
+      showBrowser();
+    };
+  } else {
+    showBrowser();
+  }
+});
+
+window.electronAPI.onNavBrowser(() => {
+  if (appState.screen === 'editor' && appState.modified) {
+    showModal('未保存的更改', '<p>当前文件有未保存的更改，确定要返回吗？</p>',
+      `<button class="btn-cancel" id="modal-cancel">取消</button><button class="btn-confirm" id="modal-confirm">放弃更改</button>`);
+    document.getElementById('modal-cancel').onclick = hideModal;
+    document.getElementById('modal-confirm').onclick = () => { hideModal(); appState.modified = false; showBrowser(); };
+  } else if (appState.screen === 'editor') {
+    showBrowser();
+  }
+});
+
+// ─── Keyboard Shortcuts ──────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (appState.screen !== 'editor') return;
+  if (appState.editingWidget) return;
+
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key === 's') { e.preventDefault(); handleSave(); }
+  if (mod && e.key === 'n') { e.preventDefault(); addFlight(); }
+  if (mod && e.key === 'b') { e.preventDefault(); showBrowser(); }
+  if (e.key === 'Delete') { e.preventDefault(); deleteSelected(); }
+  if (e.key === 'Escape') {
+    appState.selectedRows.clear();
+    renderTable();
+  }
+});
+
+// ─── Click outside to deselect ───────────────────────────
+document.getElementById('table-body').addEventListener('click', function(e) {
+  if (appState.editingWidget) return;
+  const tr = e.target.closest('tr');
+  if (!tr) return;
+  const idx = parseInt(tr.dataset.idx);
+
+  if (e.ctrlKey || e.metaKey) {
+    if (appState.selectedRows.has(idx)) appState.selectedRows.delete(idx);
+    else appState.selectedRows.add(idx);
+  } else if (e.shiftKey && appState.selectedRows.size > 0) {
+    const last = Math.max(...appState.selectedRows);
+    const [from, to] = [Math.min(last, idx), Math.max(last, idx)];
+    for (let i = from; i <= to; i++) {
+      if (filteredIndices.includes(i)) appState.selectedRows.add(i);
+    }
+  } else {
+    appState.selectedRows = new Set([idx]);
+  }
+  renderTable();
+});
+
+// ─── Init ────────────────────────────────────────────────
+(async function init() {
+  // Try to restore last game root
+  const lastRoot = await window.electronAPI.getLastRoot();
+  if (lastRoot) {
+    // Try scanning it
+    const scan = await window.electronAPI.scanAcls(lastRoot);
+    if (!scan.error && scan.totalFiles > 0) {
+      appState.rootPath = lastRoot;
+      appState.airports = scan.airports || [];
+      showBrowser();
+      return;
+    }
+  }
+  showScreen('setup');
+})();
