@@ -28,7 +28,7 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "icon.ico",
+      "icon": "icon.png",
       "category": "public.app-category.utilities"
     }
   },
