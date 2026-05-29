@@ -1,7 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { loadFlights, saveFlights, generateFullAcl, collectUniqueValues, getFileInfo, exportCSV, importCsvFromFile, generateAclFromCsv } = require('./src/acl_parser');
+const { loadFlights, saveFlights, generateFullAcl, collectUniqueValues, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns } = require('./src/acl_parser');
 const { scanGameRoot } = require('./src/acl_scanner');
 
 let mainWindow;
@@ -91,7 +91,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
 
 // ─── IPC: Save .acl with auto-timestamped backup ──────────
 
-ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks }) => {
+ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState }) => {
   try {
     const dir = path.dirname(filePath);
     const base = path.basename(filePath, '.acl');
@@ -104,9 +104,32 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     }
 
     // Generate full ACL from scratch, preserving header structure
-    generateFullAcl(filePath, flights, before, after, originalBlocks);
+    generateFullAcl(filePath, flights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState);
 
-    return { success: true, backupPath: fs.existsSync(filePath) ? backupPath : null };
+    // ── Also sync the CSV that the game loads ──
+    let csvSynced = false;
+    try {
+      const cfgPath = path.join(dir, base + '.aclcfg');
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        const scheduleFile = cfg.flightScheduleFile;
+        if (scheduleFile) {
+          const csvPath = path.join(dir, scheduleFile + '.csv');
+          // Backup existing CSV
+          if (fs.existsSync(csvPath)) {
+            const csvBackup = path.join(dir, scheduleFile + '_backup.csv');
+            fs.copyFileSync(csvPath, csvBackup);
+          }
+          exportGameCSV(flights, csvPath);
+          csvSynced = true;
+        }
+      }
+    } catch (csvErr) {
+      // CSV sync is best-effort; don't fail the whole save
+      console.error('CSV sync warning:', csvErr.message);
+    }
+
+    return { success: true, backupPath: fs.existsSync(filePath) ? backupPath : null, csvSynced };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -114,7 +137,7 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
 
 // ─── IPC: Save As ────────────────────────────────────────
 
-ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayContent, originalBlocks, suggestedName }) => {
+ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, suggestedName }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: '另存为 .acl 文件',
     defaultPath: suggestedName || 'edited_level.acl',
@@ -123,7 +146,7 @@ ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayCont
   if (result.canceled || !result.filePath) return { canceled: true };
 
   try {
-    generateFullAcl(result.filePath, flights, before, after, originalBlocks);
+    generateFullAcl(result.filePath, flights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState);
     return { canceled: false, path: result.filePath };
   } catch (err) {
     return { canceled: false, error: err.message };
@@ -307,6 +330,13 @@ ipcMain.handle('save-wind-timeline', async (_event, { filePath, data }) => {
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+// ─── IPC: Load audio callsigns for an airport ─────────────
+
+ipcMain.handle('load-audio-callsigns', async (_event, rootPath, airportIcao) => {
+  const jsonPath = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports', airportIcao, 'Levels', 'audio_clips_en.json');
+  return loadAudioCallsigns(jsonPath);
 });
 
 // ─── IPC: Save runway_timeline*.json ─────────────────────

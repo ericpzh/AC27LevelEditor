@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 out/
+build_*.txt
 
 # Python (legacy)
 __pycache__/

@@ -161,6 +161,8 @@ let appState = {
   highlightedIdx: -1,           // single highlighted row for copy
   selectedIndices: new Set(),   // checked rows for batch delete
   editingWidget: null,
+  // Audio callsigns (available voices per airport, from audio_clips_en.json)
+  audioCallsigns: { byAirline: {}, allCallsigns: [], allAirlines: [] },
   // Tabs & Timelines
   activeTab: 'flights',
   // Timeline data
@@ -371,6 +373,10 @@ async function openEditor(filePath, airportIcao) {
   appState.after = data.after;
   appState.arrayContent = data.arrayContent;
   appState.originalBlocks = data.originalBlocks;
+  appState.worldStateData = data.worldStateData || null;
+  appState.sceneryMaps = data.sceneryMaps || null;
+  appState._fromWorldState = data._fromWorldState || false;
+  appState._rawText = data._rawText || '';
   appState.modified = false;
   appState.highlightedIdx = -1;
   appState.selectedIndices = new Set();
@@ -379,6 +385,13 @@ async function openEditor(filePath, airportIcao) {
 
   if (appState.rootPath && airportIcao && !appState.airportValues[airportIcao]) {
     appState.airportValues[airportIcao] = await window.electronAPI.collectValues(appState.rootPath, airportIcao);
+  }
+
+  // Load audio callsigns for this airport
+  if (appState.rootPath && airportIcao) {
+    appState.audioCallsigns = await window.electronAPI.loadAudioCallsigns(appState.rootPath, airportIcao);
+  } else {
+    appState.audioCallsigns = { byAirline: {}, allCallsigns: [], allAirlines: [] };
   }
 
   // Load timelines
@@ -811,12 +824,57 @@ function startCellEdit(td, col, idx) {
 
   const values = appState.airportValues[appState.currentAirport] || {};
   const compat = values._compat || { airlineToAircraft: {}, aircraftToAirline: {} };
+  const audioData = appState.audioCallsigns;
+  const currentAirlineCode = (appState.flights[idx].CallSign || '').substring(0, 3);
   let widget;
-  // Cross-filter: AirlineCode ↔ AircraftType
   let dropdownValues;
-  if (col === 'AirlineCode') {
-    // Always show ALL airline codes, no filtering by current AircraftType
-    dropdownValues = values['AirlineCode'] || [];
+
+  if (col === 'FlightNum' && audioData.allAirlines.length > 0) {
+    // ── FlightNum with audio: show dropdown of available numbers for current airline ──
+    const availNums = audioData.byAirline[currentAirlineCode] || [];
+    if (availNums.length > 0) {
+      dropdownValues = [...availNums];
+      // Include current value if it's valid and not already in the list
+      if (currentVal && !dropdownValues.includes(currentVal)) {
+        dropdownValues.push(currentVal);
+      }
+      widget = document.createElement('select');
+      widget.className = 'cell-widget';
+      widget.innerHTML = dropdownValues.map(v =>
+        `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}</option>`
+      ).join('');
+    } else {
+      // Current airline has no audio → text input
+      widget = document.createElement('input');
+      widget.type = 'text';
+      widget.className = 'cell-widget';
+      widget.value = currentVal;
+    }
+  } else if (col === 'AirlineCode') {
+    // ── AirlineCode: show all codes from ACL, mark ones with audio ──
+    const aclCodes = values['AirlineCode'] || [];
+    const hasAudio = audioData.allAirlines.length > 0;
+    if (hasAudio) {
+      // Sort: airlines with audio first, then rest alphabetically
+      const withAudio = new Set(audioData.allAirlines);
+      aclCodes.sort((a, b) => {
+        const aHas = withAudio.has(a) ? 0 : 1;
+        const bHas = withAudio.has(b) ? 0 : 1;
+        if (aHas !== bHas) return aHas - bHas;
+        return a.localeCompare(b);
+      });
+    }
+    dropdownValues = aclCodes;
+    widget = document.createElement('select');
+    widget.className = 'cell-widget';
+    widget.innerHTML = dropdownValues.map(v => {
+      const audioMark = audioData.allAirlines.includes(v) ? ' \u{1F399}' : ''; // 🎙 for airlines with audio
+      return `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}${audioMark}</option>`;
+    }).join('');
+    if (currentVal && !dropdownValues.includes(currentVal)) {
+      const audioMark = audioData.allAirlines.includes(currentVal) ? ' \u{1F399}' : '';
+      widget.innerHTML += `<option value="${escapeHtml(currentVal)}" selected>${currentVal}${audioMark}</option>`;
+    }
   } else if (col === 'AircraftType') {
     const acCode = (appState.flights[idx].CallSign || '').substring(0, 3);
     const validTypes = acCode ? (compat.airlineToAircraft[acCode] || null) : null;
@@ -826,7 +884,10 @@ function startCellEdit(td, col, idx) {
   } else {
     dropdownValues = values[col] || [];
   }
-  if (DROPDOWN_FIELDS.has(col) && dropdownValues.length > 0) {
+
+  if (widget) {
+    // widget already created above (FlightNum with audio or AirlineCode)
+  } else if (DROPDOWN_FIELDS.has(col) && dropdownValues.length > 0) {
     widget = document.createElement('select');
     widget.className = 'cell-widget';
     widget.innerHTML = dropdownValues.map(v =>
@@ -855,7 +916,16 @@ function startCellEdit(td, col, idx) {
         // Update both AirlineName (data field) and CallSign prefix
         appState.flights[idx].AirlineName = newVal;
         const oldCs = appState.flights[idx].CallSign || '';
-        appState.flights[idx].CallSign = newVal.substring(0, 3) + oldCs.substring(3);
+        const oldNum = oldCs.substring(3);
+        const audioData = appState.audioCallsigns;
+        appState.flights[idx].CallSign = newVal.substring(0, 3) + oldNum;
+        // If audio data exists: if old flight number not valid for new airline, auto-pick first available
+        if (audioData.allAirlines.length > 0) {
+          const availNums = audioData.byAirline[newVal];
+          if (availNums && availNums.length > 0 && !availNums.includes(oldNum)) {
+            appState.flights[idx].CallSign = newVal.substring(0, 3) + availNums[0];
+          }
+        }
         // Auto-clear AircraftType to null if no longer compatible with new airline
         const currType = appState.flights[idx].AircraftType || '';
         if (currType) {
@@ -912,12 +982,17 @@ document.getElementById('btn-add-arrival').addEventListener('click', addArrivalF
 
 function addArrivalFlight() {
   const values = appState.airportValues[appState.currentAirport] || {};
+  const audioData = appState.audioCallsigns;
   const newFlight = {};
   for (const [fn] of ALL_FIELDS) newFlight[fn] = '';
 
-  // CallSign = airline code (derived from AirlineName) + sequential number
-  const airlineCode = (values.AirlineName && values.AirlineName.length > 0)
-    ? getAirlineCode(values.AirlineName[0]) : 'NEW';
+  // CallSign = airline code + sequential number (prefer airlines with audio clips)
+  let airlineCode = 'NEW';
+  if (audioData.allAirlines.length > 0) {
+    airlineCode = audioData.allAirlines[0];
+  } else if (values.AirlineName && values.AirlineName.length > 0) {
+    airlineCode = getAirlineCode(values.AirlineName[0]);
+  }
   newFlight.CallSign = airlineCode + String(nextFlightNumber++).padStart(4, '0');
   newFlight.ArrivalAirport = appState.currentAirport || '';
 
@@ -941,12 +1016,17 @@ document.getElementById('btn-add-departure').addEventListener('click', addDepart
 
 function addDepartureFlight() {
   const values = appState.airportValues[appState.currentAirport] || {};
+  const audioData = appState.audioCallsigns;
   const newFlight = {};
   for (const [fn] of ALL_FIELDS) newFlight[fn] = '';
 
-  // CallSign = airline code (derived from AirlineName) + sequential number
-  const airlineCode = (values.AirlineName && values.AirlineName.length > 0)
-    ? getAirlineCode(values.AirlineName[0]) : 'NEW';
+  // CallSign = airline code + sequential number (prefer airlines with audio clips)
+  let airlineCode = 'NEW';
+  if (audioData.allAirlines.length > 0) {
+    airlineCode = audioData.allAirlines[0];
+  } else if (values.AirlineName && values.AirlineName.length > 0) {
+    airlineCode = getAirlineCode(values.AirlineName[0]);
+  }
   newFlight.CallSign = airlineCode + String(nextFlightNumber++).padStart(4, '0');
   newFlight.DepartureAirport = appState.currentAirport || '';
 
@@ -1078,6 +1158,10 @@ async function handleSave() {
       after: appState.after,
       arrayContent: appState.arrayContent,
       originalBlocks: appState.originalBlocks,
+      worldStateData: appState.worldStateData,
+      sceneryMaps: appState.sceneryMaps,
+      _fromWorldState: appState._fromWorldState,
+      _rawText: appState._rawText,
     });
 
     if (!result.success) {
@@ -1110,9 +1194,13 @@ async function handleSave() {
     const tlMsg = tlErrors.length > 0
       ? `<br><br><span style="color:var(--orange)">时间线保存警告：${tlErrors.join(', ')}</span>`
       : '';
+    const csvMsg = result.csvSynced
+      ? `<p style="font-size:12px;color:var(--green)">CSV 航班表已同步更新（游戏将读取最新数据）</p>`
+      : '';
     showModal('保存成功', `
       <p>文件已成功保存。</p>
       ${tlMsg}
+      ${csvMsg}
       <p style="font-size:12px;color:var(--text-muted)">自动备份已生成在相同目录下：</p>
       <code>${result.backupPath}</code>
     `, `<button class="btn-confirm" id="modal-ok">确定</button>`);
@@ -1134,6 +1222,10 @@ async function handleSaveAs() {
     after: appState.after,
     arrayContent: appState.arrayContent,
     originalBlocks: appState.originalBlocks,
+    worldStateData: appState.worldStateData,
+    sceneryMaps: appState.sceneryMaps,
+    _fromWorldState: appState._fromWorldState,
+    _rawText: appState._rawText,
     suggestedName: appState.currentPath ? appState.currentPath.split(/[/\\]/).pop() : 'edited_level.acl',
   });
 
@@ -1215,6 +1307,10 @@ async function handleImportAcl() {
   appState.after = result.after;
   appState.arrayContent = result.arrayContent;
   appState.originalBlocks = result.originalBlocks;
+  appState.worldStateData = result.worldStateData || null;
+  appState.sceneryMaps = result.sceneryMaps || null;
+  appState._fromWorldState = result._fromWorldState || false;
+  appState._rawText = result._rawText || '';
   appState.modified = true;
   appState.highlightedIdx = -1;
   appState.selectedIndices = new Set();

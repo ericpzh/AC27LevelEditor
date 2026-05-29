@@ -41,15 +41,44 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ### Build (Windows portable)
 
-> **Important:** `npm run build:win` (`npx electron-builder`) does **not** work in PowerShell — the watch mode kills the builder process mid-way.
+**Always use `build.js`**, never `npm run build:win` — the latter gets killed mid-way by PowerShell's watch-mode detection.
 
-Use `build.js` instead:
+#### 1. Close any running instance of the editor
+
+The build will **fail** with `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE` if `dist\win-unpacked\resources\app.asar` is locked by a running editor.
+
+```powershell
+Stop-Process -Name "AC27 Level Editor" -Force -ErrorAction SilentlyContinue
+```
+
+#### 2. Clean the output directory
+
+```powershell
+Remove-Item -Recurse -Force "dist" -ErrorAction SilentlyContinue
+```
+
+If this fails with "The process cannot access the file", the `.asar` is still locked by another process
+(antivirus scan, File Explorer preview pane, or a crashed builder process). Workaround:
+
+```powershell
+# Build to a temp directory instead, then robocopy into dist
+node -e "const b=require('electron-builder');b.build({targets:b.Platform.WINDOWS.createTarget('portable'),config:{appId:'com.ac27.level-editor',productName:'AC27 Level Editor',directories:{output:'dist_tmp'},files:['main.js','preload.js','src/**/*','node_modules/**/*'],win:{target:'portable',icon:'icon.ico',artifactName:'${productName}.${ext}'}}})"
+robocopy "dist_tmp\win-unpacked" "dist" /E /R:5 /W:3
+Remove-Item -Recurse -Force "dist_tmp" -ErrorAction SilentlyContinue
+```
+
+#### 3. Run the build
 
 ```bash
 node build.js
 ```
 
-The output `.exe` will be in the `dist/` folder.
+The output is `dist\AC27 Level Editor.exe` (~180 MB portable executable).
+
+If the build still fails:
+- Check that no folder/file under `dist\` is open in Explorer, VS Code, or any other program
+- Try temporarily disabling real-time antivirus scanning if it keeps locking `.asar` files
+- As a last resort, reboot and build before opening any other app
 
 ### Icon notes
 
