@@ -9,6 +9,62 @@ const NET_EPOCH_OFFSET = 621355968000000000n;
 const TICKS_PER_SECOND = 10000000n;
 const TICKS_PER_DAY = 86400n * TICKS_PER_SECOND; // 864000000000n
 
+// Fallback base date ticks: ~2000-01-01 midnight UTC
+// Used when no original file is available to extract the date portion from timestamps.
+const FALLBACK_BASE_DATE_TICKS = 630822816000000000;
+
+// ─── AircraftType → Designator mapping  ──────────────────
+// Maps the long AircraftType names (from FlightSchedule/TaskFlightState) to
+// ICAO aircraft designators (used in AircraftState.Specification.Designator).
+const AIRCRAFT_DESIGNATOR_MAP = {
+  'BOEING 737-800': 'B738',  'B737-800': 'B738',  'B738': 'B738',
+  'BOEING 737-700': 'B737',  'B737-700': 'B737',  'B737': 'B737',
+  'BOEING 737-900': 'B739',  'B737-900': 'B739',  'B739': 'B739',
+  'BOEING 777-300ER': 'B77W', 'B777-300ER': 'B77W', 'B77W': 'B77W',
+  'BOEING 777-200': 'B772',  'B777-200': 'B772',  'B772': 'B772',
+  'BOEING 777-200LR': 'B77L', 'B777-200LR': 'B77L', 'B77L': 'B77L',
+  'BOEING 787-8': 'B788',   'B787-8': 'B788',   'B788': 'B788',
+  'BOEING 787-9': 'B789',   'B787-9': 'B789',   'B789': 'B789',
+  'BOEING 787-10': 'B78X',  'B787-10': 'B78X',  'B78X': 'B78X',
+  'BOEING 747-400': 'B744', 'B747-400': 'B744', 'B744': 'B744',
+  'BOEING 757-200': 'B752', 'B757-200': 'B752', 'B752': 'B752',
+  'BOEING 767-300': 'B763', 'B767-300': 'B763', 'B763': 'B763',
+  'AIRBUS A320': 'A320',    'A320': 'A320',
+  'AIRBUS A320NEO': 'A20N', 'A320NEO': 'A20N',   'A20N': 'A20N',
+  'AIRBUS A319': 'A319',    'A319': 'A319',
+  'AIRBUS A321': 'A321',    'A321': 'A321',
+  'AIRBUS A321NEO': 'A21N', 'A321NEO': 'A21N',   'A21N': 'A21N',
+  'AIRBUS A330-300': 'A333', 'A330-300': 'A333', 'A333': 'A333',
+  'AIRBUS A330-200': 'A332', 'A330-200': 'A332', 'A332': 'A332',
+  'AIRBUS A350-900': 'A359', 'A350-900': 'A359', 'A359': 'A359',
+  'AIRBUS A350-1000': 'A35K','A350-1000': 'A35K','A35K': 'A35K',
+  'AIRBUS A380': 'A388',    'A380': 'A388',
+  'EMBRAER E190': 'E190',   'E190': 'E190',
+  'EMBRAER E170': 'E170',   'E170': 'E170',
+  'EMBRAER E195': 'E195',   'E195': 'E195',
+  'BOMBARDIER CRJ-700': 'CRJ7', 'CRJ-700': 'CRJ7', 'CRJ7': 'CRJ7',
+  'BOMBARDIER CRJ-900': 'CRJ9', 'CRJ-900': 'CRJ9', 'CRJ9': 'CRJ9',
+};
+
+function _guessDesignator(aircraftType) {
+  if (!aircraftType) return null;
+  const key = aircraftType.trim().toUpperCase();
+  // Direct lookup
+  if (AIRCRAFT_DESIGNATOR_MAP[key]) return AIRCRAFT_DESIGNATOR_MAP[key];
+  // If it already looks like an ICAO designator (e.g. "B738", "A320")
+  if (/^[A-Z]\d{2,3}[A-Z]?$/.test(key)) return key;
+  // Try partial match: strip manufacturer prefix
+  for (const prefix of ['BOEING ', 'AIRBUS ', 'EMBRAER ', 'BOMBARDIER ']) {
+    if (key.startsWith(prefix)) {
+      const suffix = key.substring(prefix.length);
+      if (AIRCRAFT_DESIGNATOR_MAP[suffix]) return AIRCRAFT_DESIGNATOR_MAP[suffix];
+      // Convert common patterns: "777-300ER" → "B77W", "A320" → "A320"
+      if (/^[A-Z]\d{2,3}/.test(suffix)) return suffix;
+    }
+  }
+  return null;
+}
+
 function ticksToTime(ticks) {
   if (ticks === 0 || ticks === '0' || ticks === 0n) return '';
   const ticksBig = BigInt(ticks);
@@ -47,9 +103,9 @@ function _extractBaseDateTicks(originalBlocks) {
       }
     }
   }
-  // Fallback: use the known game-wide base date (630822816000000000 = ~2000-01-01)
+  // Fallback: use the known game-wide base date (~2000-01-01)
   // This is needed when the backup file has been regenerated and lost the absolute ticks
-  return 630822816000000000;
+  return FALLBACK_BASE_DATE_TICKS;
 }
 
 const FIELDS = [
@@ -73,29 +129,51 @@ const FIELD_LABELS = {
   CallSign: '呼号', DepartureAirport: '出发', ArrivalAirport: '到达',
   Stand: '停机位', Runway: '跑道', OffBlockTime: '推出', TakeoffTime: '起飞',
   LandingTime: '落地', InBlockTime: '入位', AirlineName: '航司',
-  AircraftType: '机型', Airway: '航路',
-  Voice: '语音', Language: '语言',
+  AircraftType: '机型', Airway: '进场程序',
+  Registration: '注册号', Voice: '语音', Language: '语言',
 };
 
 // Fields that get dropdown menus
 const DROPDOWN_FIELDS = [
   'AircraftType', 'AirlineCode',
   'Stand', 'Runway', 'DepartureAirport', 'ArrivalAirport',
+  'Voice', 'Language', 'Registration', 'Airway',
 ];
 
 function loadFlights(aclPath) {
+  const log = (msg) => console.log('[ACL-LOAD]', path.basename(aclPath), '|', msg);
+  log('loadFlights() START');
   const text = fs.readFileSync(aclPath, 'utf-8');
+  log('file size=' + text.length + ' bytes');
   const data = _parseFlightSchedule(text);
   if (data) {
-    // Also extract scenery maps for WorldState sync
+    log('FlightSchedule FOUND, flights=' + data.flights.length);
     const sceneryMaps = _parseSceneryData(text);
     const worldStateData = _parseWorldStateData(text);
     return { flights: data.flights, before: data.before, after: data.after, arrayContent: data.arrayContent, originalBlocks: data.originalBlocks, originalLength: data.originalLength, worldStateData, sceneryMaps, _rawText: text };
   }
-  // Fallback: extract flights from WorldState.Aircrafts (TaskFlightState entries)
+  log('FlightSchedule NOT found, trying FlightPlans...');
+  // Fallback 1: extract flights from WorldState.FlightPlans (new game format, type 37)
+  const fpResult = _parseWorldStateFlightPlans(text);
+  log('FlightPlans result: ' + (fpResult ? 'found, flights=' + (fpResult.flights ? fpResult.flights.length : 'NULL') : 'NULL'));
+  if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
+    log('FlightPlans -> returning ' + fpResult.flights.length + ' flights');
+    const sceneryMaps = _parseSceneryData(text);
+    return {
+      flights: fpResult.flights,
+      before: '', after: '', arrayContent: '', originalBlocks: [], originalLength: fpResult.flights.length,
+      worldStateData: fpResult.fpData, sceneryMaps,
+      _fromFlightPlans: true, _rawText: text
+    };
+  }
+  log('FlightPlans EMPTY, trying WorldState.Aircrafts...');
+  // Fallback 2: extract flights from WorldState.Aircrafts (TaskFlightState entries, old format)
   const wsData = _parseWorldStateData(text);
+  log('WorldStateData: entries=' + (wsData.wsEntries ? wsData.wsEntries.length : 0) + ' aircraftsRlength=' + wsData.aircraftsRlength);
   const wsFlights = _extractFlightsFromWorldState(wsData, text);
+  log('WorldState extracted flights: ' + (wsFlights ? wsFlights.length : 'NULL'));
   if (!wsFlights || wsFlights.length === 0) throw new Error('No FlightSchedule or WorldState flight data found in .acl file');
+  log('WorldState -> returning ' + wsFlights.length + ' flights');
   const sceneryMaps = _parseSceneryData(text);
   return {
     flights: wsFlights,
@@ -240,11 +318,12 @@ function _parseWorldStateData(text) {
 
   const rcPos = acIdx + rcMatch.index + rcMatch[0].length;
   result.aircraftsBefore = text.substring(0, wsIdx + rcPos);
+  const absRcPos = wsIdx + rcPos;
 
   // Find the end of the $rcontent array
   let depth = 0;
   let endPos = null;
-  for (let i = rcPos; i < text.length; i++) {
+  for (let i = absRcPos; i < text.length; i++) {
     const c = text[i];
     if (c === '{') depth++;
     else if (c === '}') { depth--; if (depth === 0) { let j = i + 1; while (j < text.length && ' \t\n\r'.includes(text[j])) j++; if (j < text.length && text[j] === ']') { endPos = j + 1; break; } } }
@@ -255,7 +334,7 @@ function _parseWorldStateData(text) {
   result.aircraftsAfter = text.substring(endPos);
 
   // Parse entries inside the $rcontent array
-  const arrayContent = text.substring(rcPos, endPos);
+  const arrayContent = text.substring(absRcPos, endPos);
   depth = 0;
   let entryStart = -1;
   for (let i = 0; i < arrayContent.length; i++) {
@@ -308,8 +387,9 @@ function _extractFlightsFromWorldState(wsData, fullText, sceneryMaps) {
     const block = entry.block;
     const vBlock = entry.vBlock;
 
-    // Check if this is a TaskFlightState ($type 56)
-    if (!vBlock.includes('"$type": 56,') && !vBlock.includes('"$type": "56|')) continue;
+    // Check if this is a TaskFlightState ($type 56 old, $type 54 new)
+    if (!vBlock.includes('"$type": 56,') && !vBlock.includes('"$type": "56|') &&
+        !vBlock.includes('"$type": 54,') && !vBlock.includes('"$type": "54|')) continue;
 
     const f = { _wsEntryIdx: ei, _wsGuid: entry.k };
 
@@ -360,6 +440,7 @@ function _extractFlightsFromWorldState(wsData, fullText, sceneryMaps) {
       f.TakeoffTime = totMatch ? ticksToTime(totMatch[1]) : '';
       f.LandingTime = '';
       f.InBlockTime = '';
+      f.Airway = '';
     } else if (arrMatch) {
       f.isDeparture = false;
       const arrStart = arrMatch.index + arrMatch[0].length;
@@ -374,6 +455,7 @@ function _extractFlightsFromWorldState(wsData, fullText, sceneryMaps) {
       const origMatch = arrObj.match(/"OriginAirport"\s*:\s*"([^"]*)"/);
       const rwMatch = arrObj.match(/"Runway"\s*:\s*"([^"]*)"/);
       const stMatch = arrObj.match(/"Stand"\s*:\s*"([^"]*)"/);
+      const starMatch = arrObj.match(/"STAR"\s*:\s*"([^"]*)"/);
       const ldtMatch = arrObj.match(/"LandingTime"\s*:\s*\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
       const ibtMatch = arrObj.match(/"InBlockTime"\s*:\s*\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
 
@@ -381,12 +463,12 @@ function _extractFlightsFromWorldState(wsData, fullText, sceneryMaps) {
       f.ArrivalAirport = '';
       f.Runway = rwMatch ? rwMatch[1] : '';
       f.Stand = stMatch ? stMatch[1] : '';
+      f.Airway = starMatch ? starMatch[1] : '';
       f.LandingTime = ldtMatch ? ticksToTime(ldtMatch[1]) : '';
       f.InBlockTime = ibtMatch ? ticksToTime(ibtMatch[1]) : '';
       f.OffBlockTime = '';
       f.TakeoffTime = '';
     }
-    f.Airway = '';
 
     flights.push(f);
   }
@@ -419,7 +501,7 @@ function _extractBaseDateFromText(text) {
       }
     }
   }
-  return 630822816000000000;
+  return FALLBACK_BASE_DATE_TICKS;
 }
 
 /**
@@ -429,7 +511,7 @@ function _extractBaseDateFromText(text) {
 function _syncWorldState(rawText, flights, wsData, sceneryMaps, baseDateTicks) {
   if (!wsData || !wsData.wsEntries || wsData.wsEntries.length === 0 || !flights || flights.length === 0) return rawText;
   const sm = sceneryMaps || { runwayNameToGuid: {}, standIdToGuid: {} };
-  const bdt = baseDateTicks || 630822816000000000;
+  const bdt = baseDateTicks || FALLBACK_BASE_DATE_TICKS;
 
   // Build a CallSign → flight lookup for quick matching
   const flightByCallSign = {};
@@ -444,8 +526,9 @@ function _syncWorldState(rawText, flights, wsData, sceneryMaps, baseDateTicks) {
     const entry = wsData.wsEntries[ei];
     let newBlock = entry.block;
 
-    // Check if this is a TaskFlightState (type 56)
-    if (entry.vBlock.includes('"$type": 56,') || entry.vBlock.includes('"$type": "56|')) {
+    // Check if this is a TaskFlightState (type 56 old, type 54 new)
+    if (entry.vBlock.includes('"$type": 56,') || entry.vBlock.includes('"$type": "56|') ||
+        entry.vBlock.includes('"$type": 54,') || entry.vBlock.includes('"$type": "54|')) {
       // Find the CallSign in this entry
       const csMatch = entry.vBlock.match(/"CallSign"\s*:\s*"([^"]*)"/);
       const cs = csMatch ? csMatch[1] : '';
@@ -499,6 +582,10 @@ function _syncWorldState(rawText, flights, wsData, sceneryMaps, baseDateTicks) {
 function _applyWsChanges(block, flight, baseDateTicks, isDeparture) {
   // Update CallSign
   block = _applyWsField(block, 'CallSign', flight.CallSign || '', 'string');
+  // Update Registration
+  if (flight._Registration) {
+    block = _applyWsField(block, 'Registration', flight._Registration, 'string');
+  }
   // Update AirlineName
   block = _applyWsField(block, 'AirlineName', flight.AirlineName || '', 'string');
   // Update AircraftType
@@ -546,6 +633,7 @@ function _applyWsChanges(block, flight, baseDateTicks, isDeparture) {
       arrObj = _applyWsField(arrObj, 'OriginAirport', flight.DepartureAirport || '', 'string');
       arrObj = _applyWsField(arrObj, 'Runway', flight.Runway || '', 'string');
       arrObj = _applyWsField(arrObj, 'Stand', flight.Stand || '', 'string');
+      arrObj = _applyWsField(arrObj, 'STAR', flight.Airway || '', 'string');
       arrObj = _applyWsField(arrObj, 'LandingTime', ticksToString(timeToTicks(flight.LandingTime || '', baseDateTicks)), 'ticks');
       arrObj = _applyWsField(arrObj, 'InBlockTime', ticksToString(timeToTicks(flight.InBlockTime || '', baseDateTicks)), 'ticks');
 
@@ -574,25 +662,23 @@ function _applyAircraftStateChanges(block, flight, sceneryMaps) {
     block = _applyWsField(block, 'StandGuid', newGuid, 'string');
   }
 
-  // Update Designator in Specification
+  // Update Designator in Specification (AircraftState sync)
   if (flight.AircraftType) {
-    // Find Specification block and update Designator
-    const specMatch = block.match(/"Specification"\s*:\s*\{/);
-    if (specMatch) {
-      const specStart = specMatch.index + specMatch[0].length;
-      let specDepth = 1;
-      let specEnd = specStart;
-      for (; specEnd < block.length; specEnd++) {
-        if (block[specEnd] === '{') specDepth++;
-        else if (block[specEnd] === '}') { specDepth--; if (specDepth === 0) break; }
+    const designator = _guessDesignator(flight.AircraftType);
+    if (designator) {
+      const specMatch = block.match(/"Specification"\s*:\s*\{/);
+      if (specMatch) {
+        const specStart = specMatch.index + specMatch[0].length;
+        let specDepth = 1;
+        let specEnd = specStart;
+        for (; specEnd < block.length; specEnd++) {
+          if (block[specEnd] === '{') specDepth++;
+          else if (block[specEnd] === '}') { specDepth--; if (specDepth === 0) break; }
+        }
+        let specObj = block.substring(specStart, specEnd);
+        specObj = _applyWsField(specObj, 'Designator', designator, 'string');
+        block = block.substring(0, specStart) + specObj + block.substring(specEnd);
       }
-      let specObj = block.substring(specStart, specEnd);
-
-      // The Designator is the short ICAO code (e.g., "B77W"), while AircraftType is long (e.g., "BOEING 777-300ER")
-      // We can't reliably map between them without a lookup table. Skip for now - the game likely reads from TaskFlightState
-      // or has its own mapping. The Designator can be updated if user provides matching data.
-
-      block = block.substring(0, specStart) + specObj + block.substring(specEnd);
     }
   }
 
@@ -658,7 +744,34 @@ function _parseFlightBlock(block) {
   return flight;
 }
 
-function saveFlights(aclPath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState) {
+/**
+ * Build a new $rcontent array block string from flights, applying changes to
+ * existing originalBlocks and cloning the last block for new flights.
+ * Returns the rebuilt array text (without before/after brackets).
+ */
+function _rebuildBlocks(flights, originalBlocks, baseDateTicks) {
+  const newBlocks = [];
+  for (let i = 0; i < flights.length; i++) {
+    if (i < originalBlocks.length) {
+      newBlocks.push(_applyChanges(originalBlocks[i], flights[i], baseDateTicks));
+    } else {
+      const template = originalBlocks.length > 0 ? originalBlocks[originalBlocks.length - 1] : null;
+      newBlocks.push(_buildNewBlock(flights[i], template, baseDateTicks));
+    }
+  }
+  return newBlocks;
+}
+
+function saveFlights(aclPath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans) {
+  // If loaded from FlightPlans (new game format), only patch FlightPlans section
+  if (_fromFlightPlans && worldStateData && worldStateData.fpBefore) {
+    const text = fs.readFileSync(aclPath, 'utf-8');
+    const baseDateTicks = _extractBaseDateFromText(text);
+    const newText = _syncFlightPlans(text, flights, worldStateData, baseDateTicks);
+    fs.writeFileSync(aclPath, newText, 'utf-8');
+    return;
+  }
+
   // If loaded from WorldState (no FlightSchedule section), only patch WorldState
   if (_fromWorldState && worldStateData) {
     const text = fs.readFileSync(aclPath, 'utf-8');
@@ -670,16 +783,7 @@ function saveFlights(aclPath, flights, before, after, arrayContent, originalBloc
 
   // Normal FlightSchedule-based save
   const baseDateTicks = _extractBaseDateTicks(originalBlocks);
-  const newBlocks = [];
-  for (let i = 0; i < flights.length; i++) {
-    if (i < originalBlocks.length) {
-      newBlocks.push(_applyChanges(originalBlocks[i], flights[i], baseDateTicks));
-    } else {
-      const template = originalBlocks.length > 0 ? originalBlocks[originalBlocks.length - 1] : null;
-      newBlocks.push(_buildNewBlock(flights[i], template, baseDateTicks));
-    }
-  }
-  // Update $rlength in before to match actual flight count
+  const newBlocks = _rebuildBlocks(flights, originalBlocks, baseDateTicks);
   const fixedBefore = _updateRlength(before, flights.length);
   let newText = fixedBefore + newBlocks.join(',\n            ') + after;
 
@@ -720,7 +824,11 @@ function _applyChanges(block, flight, baseDateTicks) {
 function _buildNewBlock(flight, templateBlock, baseDateTicks) {
   if (templateBlock) {
     let block = templateBlock;
-    const newId = Math.floor(Math.random() * 10000) + 90000;
+    // Deterministic $id based on CallSign to avoid collisions across saves
+    const cs = (flight.CallSign || 'UNKNOWN');
+    let hash = 0;
+    for (let i = 0; i < cs.length; i++) hash = ((hash << 5) - hash + cs.charCodeAt(i)) | 0;
+    const newId = 90000 + (Math.abs(hash) % 90000);
     block = block.replace(/"\$id"\s*:\s*\d+/, `"$id": ${newId}`);
     return _applyChanges(block, flight, baseDateTicks);
   }
@@ -754,6 +862,8 @@ function collectUniqueValues(aclPaths) {
   // Cross-reference: AirlineCode ↔ AircraftType
   const airlineAircraft = new Map(); // AirlineCode → Set<AircraftType>
   const aircraftAirline = new Map(); // AircraftType → Set<AirlineCode>
+  // Registration map: "AirlineName|AircraftType" → Set<Registration>
+  const regMap = new Map();
 
   for (const aclPath of aclPaths) {
     const text = fs.readFileSync(aclPath, 'utf-8');
@@ -774,6 +884,9 @@ function collectUniqueValues(aclPaths) {
           // AirlineCode is the first 3 chars of CallSign
           const code = (fl.CallSign || '').trim().substring(0, 3);
           if (code) values[field].add(code);
+        } else if (field === 'Registration') {
+          const reg = fl._Registration || fl.Registration || '';
+          if (reg) values[field].add(reg);
         } else if (fl[field] && fl[field].trim()) {
           values[field].add(fl[field].trim());
         }
@@ -786,6 +899,13 @@ function collectUniqueValues(aclPaths) {
         airlineAircraft.get(acCode).add(acType);
         if (!aircraftAirline.has(acType)) aircraftAirline.set(acType, new Set());
         aircraftAirline.get(acType).add(acCode);
+      }
+      // Build Registration map: AirlineCode(ICAO) × AircraftType → Registrations
+      const reg = (fl._Registration || fl.Registration || '').trim();
+      if (acCode && acType && reg) {
+        const key = acCode + '|' + acType;
+        if (!regMap.has(key)) regMap.set(key, new Set());
+        regMap.get(key).add(reg);
       }
     }
   }
@@ -809,6 +929,11 @@ function collectUniqueValues(aclPaths) {
   for (const [k, v] of aircraftAirline) {
     result._compat.aircraftToAirline[k] = [...v].sort();
   }
+  // Store registration map (AirlineName|AircraftType → registrations)
+  result._registrationMap = {};
+  for (const [key, set] of regMap) {
+    result._registrationMap[key] = [...set].sort();
+  }
   return result;
 }
 
@@ -825,10 +950,16 @@ function getFileInfo(aclPath) {
     if (data) {
       flights = data.flights;
     } else {
-      // Fall back to WorldState
-      const wsData = _parseWorldStateData(text);
-      const sceneryMaps = _parseSceneryData(text);
-      flights = _extractFlightsFromWorldState(wsData, text, sceneryMaps);
+      // Fallback 1: WorldState.FlightPlans (newer game format, type 52)
+      const fpResult = _parseWorldStateFlightPlans(text);
+      if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
+        flights = fpResult.flights;
+      } else {
+        // Fallback 2: WorldState.Aircrafts (older TaskFlightState format, type 56/54)
+        const wsData = _parseWorldStateData(text);
+        const sceneryMaps = _parseSceneryData(text);
+        flights = _extractFlightsFromWorldState(wsData, text, sceneryMaps);
+      }
       if (!flights || flights.length === 0) {
         error = 'No FlightSchedule or WorldState flight data';
       }
@@ -858,7 +989,16 @@ function getFileInfo(aclPath) {
  * Preserves the original header from the loaded file if available,
  * otherwise creates a minimal valid structure.
  */
-function generateFullAcl(aclPath, flights, headerBefore = '', footerAfter = '', originalBlocks = [], worldStateData = null, sceneryMaps = null, _fromWorldState = false) {
+function generateFullAcl(aclPath, flights, headerBefore = '', footerAfter = '', originalBlocks = [], worldStateData = null, sceneryMaps = null, _fromWorldState = false, _fromFlightPlans = false) {
+  // If loaded from FlightPlans (new game format), only patch FlightPlans section
+  if (_fromFlightPlans && worldStateData && worldStateData.fpBefore) {
+    const text = fs.readFileSync(aclPath, 'utf-8');
+    const baseDateTicks = _extractBaseDateFromText(text);
+    const newText = _syncFlightPlans(text, flights, worldStateData, baseDateTicks);
+    fs.writeFileSync(aclPath, newText, 'utf-8');
+    return;
+  }
+
   // If loaded from WorldState (no FlightSchedule section), only patch WorldState
   if (_fromWorldState && worldStateData) {
     const text = fs.readFileSync(aclPath, 'utf-8');
@@ -871,15 +1011,7 @@ function generateFullAcl(aclPath, flights, headerBefore = '', footerAfter = '', 
   // If we have a valid header (before), use it as base and just build the flight blocks
   if (headerBefore && headerBefore.includes('"FlightSchedule"')) {
     const baseDateTicks = _extractBaseDateTicks(originalBlocks);
-    const newBlocks = [];
-    for (let i = 0; i < flights.length; i++) {
-      if (i < originalBlocks.length) {
-        newBlocks.push(_applyChanges(originalBlocks[i], flights[i], baseDateTicks));
-      } else {
-        const template = originalBlocks.length > 0 ? originalBlocks[originalBlocks.length - 1] : null;
-        newBlocks.push(_buildNewBlock(flights[i], template, baseDateTicks));
-      }
-    }
+    const newBlocks = _rebuildBlocks(flights, originalBlocks, baseDateTicks);
     const fixedBefore = _updateRlength(headerBefore, flights.length);
     // If footerAfter is empty, generate closing brackets
     const fixedAfter = footerAfter || '\n        ]\n    }\n}';
@@ -895,6 +1027,9 @@ function generateFullAcl(aclPath, flights, headerBefore = '', footerAfter = '', 
   }
 
   // No valid template → generate minimal ACL from scratch
+  // Use the fallback base date so timestamps contain the full date portion.
+  const baseDateTicks = FALLBACK_BASE_DATE_TICKS;
+
   const HEADER = `{
     "$id": 1,
     "$type": "0|ContextCross.Saves.Level, GroundATC.Core",
@@ -945,7 +1080,7 @@ function generateFullAcl(aclPath, flights, headerBefore = '', footerAfter = '', 
         const val = fl[fn] || '';
         lines.push(val ? `                "${fn}": "${val}",` : `                "${fn}": null,`);
       } else if (ft === 'time') {
-        const ticks = timeToTicks(fl[fn] || '');
+        const ticks = timeToTicks(fl[fn] || '', baseDateTicks);
         lines.push(`                "${fn}": { "$type": 3, ${ticks} },`);
       }
     }
@@ -970,16 +1105,28 @@ function _generateGuid() {
 }
 
 function exportCSV(flights, csvPath) {
-  const headers = 'callSign,departure,arrival,stand,runway,offBlockTime,takeOffTime,landingTime,inBlockTime,airline,aircraftType,airway,voice,language,precedingFlight';
+  // Use same format as game CSV for consistency
+  const headers = 'registration,arrivalCallSign,originAirport,landingTime,arrivalStand,arrivalRunway,arrivalSTAR,departureCallSign,destinationAirport,offBlockTime,departureStand,departureRunway,airline,aircraftType,voice,language';
   const rows = [headers];
   for (const fl of flights) {
+    const isArrival = !fl.isDeparture && !!(fl.LandingTime || '').trim();
+    const isDeparture = fl.isDeparture || !!(fl.OffBlockTime || '').trim();
+    const reg = fl._Registration || '';
+
     rows.push([
-      fl.CallSign || '', fl.DepartureAirport || '', fl.ArrivalAirport || '',
-      fl.Stand || '', fl.Runway || '', fl.OffBlockTime || '', fl.TakeoffTime || '',
-      fl.LandingTime || '', fl.InBlockTime || '', fl.AirlineName || '',
-      fl.AircraftType || '',
-      fl.Airway || '', fl.Voice || '', fl.Language || '',
-      fl.PrecedingFlight || ''
+      reg,
+      isArrival ? (fl.CallSign || '') : '',
+      isArrival ? (fl.DepartureAirport || '') : '',
+      isArrival ? (fl.LandingTime || '') : '',
+      isArrival ? (fl.Stand || '') : '',
+      isArrival ? (fl.Runway || '') : '',
+      isArrival ? (fl.Airway || '') : '',
+      isDeparture ? (fl.CallSign || '') : '',
+      isDeparture ? (fl.ArrivalAirport || '') : '',
+      isDeparture ? (fl.OffBlockTime || '') : '',
+      isDeparture ? (fl.Stand || '') : '',
+      isDeparture ? (fl.Runway || '') : '',
+      fl.AirlineName || '', fl.AircraftType || '', fl.Voice || '', fl.Language || ''
     ].join(','));
   }
   fs.writeFileSync(csvPath, rows.join('\n'), 'utf-8');
@@ -990,14 +1137,33 @@ function exportCSV(flights, csvPath) {
  * The game reads this CSV directly via flightScheduleFile in .aclcfg.
  */
 function exportGameCSV(flights, csvPath) {
-  const headers = 'callSign,departure,arrival,stand,runway,offBlockTime,takeOffTime,landingTime,inBlockTime,airline,aircraftType,voice,language';
+  // Post-update game CSV format (16 columns): registration, arrivalCallSign, originAirport, landingTime,
+  // arrivalStand, arrivalRunway, arrivalSTAR, departureCallSign, destinationAirport, offBlockTime,
+  // departureStand, departureRunway, airline, aircraftType, voice, language
+  const headers = 'registration,arrivalCallSign,originAirport,landingTime,arrivalStand,arrivalRunway,arrivalSTAR,departureCallSign,destinationAirport,offBlockTime,departureStand,departureRunway,airline,aircraftType,voice,language';
   const rows = [headers];
   for (const fl of flights) {
+    const isArrival = !fl.isDeparture && !!(fl.LandingTime || '').trim();
+    const isDeparture = fl.isDeparture || !!(fl.OffBlockTime || '').trim();
+    const reg = fl._Registration || '';
+
     rows.push([
-      fl.CallSign || '', fl.DepartureAirport || '', fl.ArrivalAirport || '',
-      fl.Stand || '', fl.Runway || '', fl.OffBlockTime || '', fl.TakeoffTime || '',
-      fl.LandingTime || '', fl.InBlockTime || '', fl.AirlineName || '',
-      fl.AircraftType || '', fl.Voice || '', fl.Language || ''
+      reg,
+      // Arrival columns
+      isArrival ? (fl.CallSign || '') : '',
+      isArrival ? (fl.DepartureAirport || '') : '',
+      isArrival ? (fl.LandingTime || '') : '',
+      isArrival ? (fl.Stand || '') : '',
+      isArrival ? (fl.Runway || '') : '',
+      isArrival ? (fl.Airway || '') : '',
+      // Departure columns
+      isDeparture ? (fl.CallSign || '') : '',
+      isDeparture ? (fl.ArrivalAirport || '') : '',
+      isDeparture ? (fl.OffBlockTime || '') : '',
+      isDeparture ? (fl.Stand || '') : '',
+      isDeparture ? (fl.Runway || '') : '',
+      // Shared columns
+      fl.AirlineName || '', fl.AircraftType || '', fl.Voice || '', fl.Language || ''
     ].join(','));
   }
   fs.writeFileSync(csvPath, rows.join('\n'), 'utf-8');
@@ -1017,6 +1183,8 @@ function importCsvFromFile(csvPath) {
   const colMap = {};
   header.forEach((name, i) => { colMap[name.trim()] = i; });
 
+  const isNewFormat = 'registration' in colMap;
+
   const flights = [];
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -1029,24 +1197,58 @@ function importCsvFromFile(csvPath) {
       return idx !== undefined && idx < cols.length ? (cols[idx] || '').trim() : '';
     };
 
-    const f = {
-      CallSign: get('callsign'),
-      DepartureAirport: get('departure'),
-      ArrivalAirport: get('arrival'),
-      Stand: get('stand'),
-      Runway: get('runway'),
-      OffBlockTime: get('offblocktime'),
-      TakeoffTime: get('takeofftime'),
-      LandingTime: get('landingtime'),
-      InBlockTime: get('inblocktime'),
-      AirlineName: get('airline'),
-      AircraftType: get('aircrafttype'),
-      Airway: get('airway'),
-      Voice: get('voice'),
-      Language: get('language'),
-      PrecedingFlight: get('precedingflight'),
-    };
-    flights.push(f);
+    if (isNewFormat) {
+      // New format: registration, arrivalCallSign, originAirport, landingTime, arrivalStand,
+      //   arrivalRunway, arrivalSTAR, departureCallSign, destinationAirport, offBlockTime,
+      //   departureStand, departureRunway, airline, aircraftType, voice, language
+      const arrCall = get('arrivalcallsign');
+      const depCall = get('departurecallsign');
+      const isArrival = !!arrCall;
+
+      const f = {
+        CallSign: isArrival ? arrCall : depCall,
+        DepartureAirport: isArrival ? get('originairport') : '',
+        ArrivalAirport: isArrival ? '' : get('destinationairport'),
+        Stand: isArrival ? get('arrivalstand') : get('departurestand'),
+        Runway: isArrival ? get('arrivalrunway') : get('departurerunway'),
+        LandingTime: isArrival ? get('landingtime') : '',
+        InBlockTime: '',
+        OffBlockTime: isArrival ? '' : get('offblocktime'),
+        TakeoffTime: '',
+        AirlineName: get('airline'),
+        AircraftType: get('aircrafttype'),
+        Airway: isArrival ? get('arrivalstar') : '',
+        Voice: get('voice'),
+        Language: get('language'),
+        PrecedingFlight: '',
+        _Registration: get('registration'),
+        isDeparture: !isArrival,
+      };
+      flights.push(f);
+    } else {
+      // Old format: callSign,departure,arrival,stand,runway,offBlockTime,takeOffTime,landingTime,inBlockTime,airline,aircraftType,airway,voice,language,precedingFlight
+      const f = {
+        CallSign: get('callsign'),
+        DepartureAirport: get('departure'),
+        ArrivalAirport: get('arrival'),
+        Stand: get('stand'),
+        Runway: get('runway'),
+        OffBlockTime: get('offblocktime'),
+        TakeoffTime: get('takeofftime'),
+        LandingTime: get('landingtime'),
+        InBlockTime: get('inblocktime'),
+        AirlineName: get('airline'),
+        AircraftType: get('aircrafttype'),
+        Airway: get('airway'),
+        Voice: get('voice'),
+        Language: get('language'),
+        PrecedingFlight: get('precedingflight'),
+      };
+      // Infer isDeparture
+      if ((f.OffBlockTime || '').trim()) f.isDeparture = true;
+      else if ((f.LandingTime || '').trim()) f.isDeparture = false;
+      flights.push(f);
+    }
   }
   return flights;
 }
@@ -1073,6 +1275,192 @@ function generateAclFromCsv(csvPath, aclPath, templatePath) {
   }
 
   generateFullAcl(aclPath, flights, headerBefore, footerAfter, origBlocks);
+}
+
+/**
+ * Merge two audio callsign dictionaries (e.g. EN + ZH).
+ * @param {object|null} primary - first audio data { byAirline, allCallsigns, allAirlines }
+ * @param {object|null} secondary - second audio data { byAirline, allCallsigns, allAirlines }
+ * @returns {{ byAirline: Record<string, string[]>, allCallsigns: string[], allAirlines: string[] }}
+ */
+function mergeAudioCallsigns(primary, secondary) {
+  if (!primary) primary = { byAirline: {}, allCallsigns: [], allAirlines: [] };
+  if (!secondary) secondary = { byAirline: {}, allCallsigns: [], allAirlines: [] };
+  const allAirlines = [...new Set([...primary.allAirlines, ...secondary.allAirlines])].sort();
+  const byAirline = {};
+  for (const code of allAirlines) {
+    byAirline[code] = [...new Set([
+      ...(primary.byAirline[code] || []), ...(secondary.byAirline[code] || [])
+    ])].sort((a, b) => {
+      const na = parseInt(a, 10), nb = parseInt(b, 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.localeCompare(b);
+    });
+  }
+  const allCallsigns = [...new Set([...primary.allCallsigns, ...secondary.allCallsigns])].sort();
+  return { byAirline, allCallsigns, allAirlines };
+}
+
+/**
+ * Scan a single CSV file and collect unique values for dropdown fields.
+ * @param {string} csvPath - path to CSV file
+ * @returns {object} - { Stand, Runway, DepartureAirport, ArrivalAirport, AircraftType, Voice, Language, _voiceOptions }
+ */
+function collectUniqueValuesFromCSV(csvPath) {
+  console.log('══════════════════════ [CSV-COLLECT] ══════════════════════');
+  console.log('[CSV-COLLECT] csvPath:', csvPath);
+  console.log('[CSV-COLLECT] exists:', fs.existsSync(csvPath));
+
+  const result = {
+    Stand: new Set(), Runway: new Set(),
+    DepartureAirport: new Set(), ArrivalAirport: new Set(),
+    AircraftType: new Set(), Voice: new Set(), Language: new Set(),
+    Registration: new Set(), Airway: new Set(),
+    _voiceOptions: new Set(),
+  };
+  const regMap = new Map();
+
+  if (!fs.existsSync(csvPath)) {
+    console.log('[CSV-COLLECT] FILE NOT FOUND, returning empty!');
+    return { Stand:[], Runway:[], DepartureAirport:[], ArrivalAirport:[], AircraftType:[], Voice:[], Language:[], Registration:[], Airway:[], _voiceOptions:[], _registrationMap: {} };
+  }
+
+  const text = fs.readFileSync(csvPath, 'utf-8');
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  console.log('[CSV-COLLECT] total lines:', lines.length);
+
+  // ── NEW header detection: match against actual game CSV column names (case-insensitive) ──
+  const knownFieldsLower = new Set([
+    'registration', 'arrivalcallsign', 'departurecallsign', 'callsign',
+    'originairport', 'destinationairport', 'departureairport', 'arrivalairport',
+    'arrivalstand', 'departurestand', 'stand',
+    'arrivalrunway', 'departurerunway', 'runway',
+    'arrivalstar', 'airway',  'star',
+    'aircrafttype', 'airline', 'airlinename',
+    'voice', 'language',
+    'landingtime', 'offblocktime', 'takeofftime', 'inblocktime',
+  ]);
+
+  let headerIdx = -1;
+  let headers = [];
+  for (let i = 0; i < Math.min(lines.length, 10); i++) {
+    const row = lines[i];
+    const cols = row.split(',').map(c => c.replace(/^"|"$/g, '').trim().toLowerCase());
+    const matchCount = cols.filter(c => knownFieldsLower.has(c)).length;
+    console.log(`[CSV-COLLECT] header scan row ${i}: cols=${JSON.stringify(cols)} matchCount=${matchCount}`);
+    if (matchCount >= 2) {
+      headerIdx = i;
+      headers = row.split(',').map(c => c.replace(/^"|"$/g, '').trim());
+      console.log('[CSV-COLLECT] ✅ HEADER FOUND at row', i, '->', JSON.stringify(headers));
+      break;
+    }
+  }
+
+  if (headerIdx < 0) {
+    console.log('[CSV-COLLECT] ❌ NO HEADER FOUND in first 10 rows!');
+  }
+
+  const startRow = headerIdx >= 0 ? headerIdx + 1 : 0;
+  console.log('[CSV-COLLECT] parsing data rows from index', startRow, 'to', lines.length - 1);
+
+  // keyMap: lowercased header → output key
+  const keyMap = {
+    'stand': 'Stand', 'arrivalstand': 'Stand', 'departurestand': 'Stand',
+    'runway': 'Runway', 'arrivalrunway': 'Runway', 'departurerunway': 'Runway',
+    'departureairport': 'DepartureAirport', 'originairport': 'DepartureAirport', 'departure': 'DepartureAirport',
+    'arrivalairport': 'ArrivalAirport', 'destinationairport': 'ArrivalAirport', 'arrival': 'ArrivalAirport',
+    'aircrafttype': 'AircraftType',
+    'voice': 'Voice',
+    'language': 'Language',
+    'registration': 'Registration',
+    'airway': 'Airway', 'arrivalstar': 'Airway', 'star': 'Airway',
+  };
+
+  // Build compat cross-ref: Airline(ICAO) ↔ AircraftType
+  const csvCompatAirlineToAircraft = new Map();
+  const csvCompatAircraftToAirline = new Map();
+
+  let rowsProcessed = 0;
+  for (let i = startRow; i < lines.length; i++) {
+    const cols = lines[i].split(',').map(c => c.replace(/^"|"$/g, '').trim());
+    if (cols.length < 2) continue;
+    rowsProcessed++;
+
+    for (let j = 0; j < cols.length; j++) {
+      const val = cols[j];
+      if (!val) continue;
+      const fieldName = (headers[j] || '').toLowerCase();
+      if (keyMap[fieldName]) {
+        result[keyMap[fieldName]].add(val);
+      }
+    }
+
+    // Build registration map & compat cross-ref
+    const getVal = (name) => {
+      const idx = headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
+      return idx >= 0 && idx < cols.length ? cols[idx] : '';
+    };
+    const reg = getVal('registration');
+    const airline = getVal('airline');
+    const acType = getVal('aircraftType');
+    if (reg && airline && acType) {
+      const key = airline + '|' + acType;
+      if (!regMap.has(key)) regMap.set(key, new Set());
+      regMap.get(key).add(reg);
+    }
+    // Build compat: airline(ICAO) ↔ aircraftType
+    if (airline && acType) {
+      if (!csvCompatAirlineToAircraft.has(airline)) csvCompatAirlineToAircraft.set(airline, new Set());
+      csvCompatAirlineToAircraft.get(airline).add(acType);
+      if (!csvCompatAircraftToAirline.has(acType)) csvCompatAircraftToAirline.set(acType, new Set());
+      csvCompatAircraftToAirline.get(acType).add(airline);
+    }
+  }
+  console.log('[CSV-COLLECT] rows processed:', rowsProcessed);
+
+  // Convert Sets to sorted arrays
+  const output = {};
+  for (const key of Object.keys(result)) {
+    if (key === '_voiceOptions') {
+      output[key] = [...result[key]].sort((a, b) => a.localeCompare(b));
+      continue;
+    }
+    const arr = [...result[key]];
+    const allNumeric = arr.length > 0 && arr.every(v => /^\d+(\.\d+)?$/.test(v));
+    if (allNumeric) {
+      arr.sort((a, b) => parseFloat(a) - parseFloat(b));
+    } else {
+      arr.sort((a, b) => a.localeCompare(b));
+    }
+    output[key] = arr;
+  }
+
+  output._registrationMap = {};
+  for (const [k, v] of regMap) {
+    output._registrationMap[k] = [...v].sort();
+  }
+
+  // Build compat from CSV: Airline(ICAO) ↔ AircraftType
+  output._compat = { airlineToAircraft: {}, aircraftToAirline: {} };
+  for (const [k, v] of csvCompatAirlineToAircraft) {
+    output._compat.airlineToAircraft[k] = [...v].sort();
+  }
+  for (const [k, v] of csvCompatAircraftToAirline) {
+    output._compat.aircraftToAirline[k] = [...v].sort();
+  }
+
+  // ── DUMP ALL RESULTS ──
+  console.log('[CSV-COLLECT] ═══ FINAL RESULTS ═══');
+  for (const [k, v] of Object.entries(output)) {
+    if (k === '_registrationMap') {
+      console.log(`[CSV-COLLECT]   ${k}: ${Object.keys(v).length} keys`);
+    } else {
+      console.log(`[CSV-COLLECT]   ${k} (${v.length}):`, JSON.stringify(v));
+    }
+  }
+  console.log('═════════════════════════════════════════════════════════');
+
+  return output;
 }
 
 /**
@@ -1116,9 +1504,366 @@ function loadAudioCallsigns(jsonPath) {
   }
 }
 
+// ─── WorldState.FlightPlans parser (new game format, type 37) ────────
+
+/**
+ * Parse WorldState.FlightPlans dictionary $rcontent and extract flight schedule data.
+ * Returns { flights, fpData } where fpData contains the raw positions for in-place save patching.
+ */
+function _parseWorldStateFlightPlans(text) {
+  const log = (msg) => console.log('[ACL-FP]', msg);
+  log('_parseWorldStateFlightPlans() START');
+  const fpIdx = text.indexOf('"FlightPlans"');
+  log('FlightPlans index: ' + fpIdx);
+  if (fpIdx < 0) return null;
+
+  // Make sure it's inside WorldState, not somewhere else
+  const wsIdx = text.indexOf('"WorldState"');
+  log('WorldState index: ' + wsIdx + ', fpIdx < wsIdx? ' + (fpIdx < wsIdx));
+  if (wsIdx < 0 || fpIdx < wsIdx) return null;
+
+  const afterFP = text.substring(fpIdx);
+  const rcMatch = afterFP.match(/"\$rcontent"\s*:\s*\[/);
+  log('$rcontent match: ' + !!rcMatch);
+  if (!rcMatch) return null;
+
+  const absRcPos = fpIdx + rcMatch.index + rcMatch[0].length;
+
+  // Extract $rlength
+  const beforeRcRaw = text.substring(fpIdx, absRcPos);
+  const rlMatch = beforeRcRaw.match(/"\$rlength"\s*:\s*(\d+)/);
+  const originalLength = rlMatch ? parseInt(rlMatch[1], 10) : 0;
+  log('$rlength: ' + originalLength);
+
+  // Find end of FlightPlans $rcontent array
+  let depth = 0, endPos = null;
+  for (let i = absRcPos; i < text.length; i++) {
+    const c = text[i];
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) {
+        let j = i + 1;
+        while (j < text.length && ' \t\n\r'.includes(text[j])) j++;
+        if (j < text.length && text[j] === ']') { endPos = j + 1; break; }
+      }
+    } else if (c === ']' && depth === 0) { endPos = i + 1; break; }
+  }
+  log('endPos: ' + endPos);
+  if (endPos === null) return null;
+
+  const fpData = {
+    fpStart: fpIdx,
+    fpBefore: text.substring(0, absRcPos),
+    fpAfter: text.substring(endPos),
+    fpEntries: [],
+    fpRlength: originalLength,
+  };
+
+  // Parse individual FlightPlan entries from the $rcontent array
+  const arrayContent = text.substring(absRcPos, endPos);
+  log('arrayContent length: ' + arrayContent.length);
+  depth = 0;
+  let entryStart = -1;
+  for (let i = 0; i < arrayContent.length; i++) {
+    const ch = arrayContent[i];
+    if (ch === '{') { if (depth === 0) entryStart = i; depth++; }
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0 && entryStart >= 0) {
+        const block = arrayContent.substring(entryStart, i + 1);
+        const kMatch = block.match(/"\$k"\s*:\s*"([^"]+)"/);
+        const vStart = block.indexOf('"$v"');
+        if (vStart >= 0) {
+          const colonIdx = block.indexOf(':', vStart);
+          const braceIdx = block.indexOf('{', colonIdx);
+          let vDepth = 1;
+          let vEnd = braceIdx + 1;
+          for (; vEnd < block.length; vEnd++) {
+            if (block[vEnd] === '{') vDepth++;
+            else if (block[vEnd] === '}') { vDepth--; if (vDepth === 0) break; }
+          }
+          fpData.fpEntries.push({
+            k: kMatch ? kMatch[1] : '',
+            block: block,
+            vBlock: block.substring(braceIdx, vEnd + 1),
+            _absStart: absRcPos + entryStart,
+            _absEnd: absRcPos + i + 1,
+          });
+        }
+        entryStart = -1;
+      }
+    }
+  }
+  log('parsed entries: ' + fpData.fpEntries.length);
+
+  // Convert FlightPlanState entries to our flight record format
+  const flights = [];
+  for (const entry of fpData.fpEntries) {
+    const flight = _parseFlightPlanEntry(entry.vBlock);
+    if (flight) flights.push(flight);
+  }
+  log('converted flights: ' + flights.length);
+
+  if (flights.length === 0) return null;
+  return { flights, fpData };
+}
+
+/**
+ * Parse a single FlightPlanState $v block (type 37) into our flight record format.
+ */
+function _parseFlightPlanEntry(vBlock) {
+  const f = {};
+
+  // Top-level fields
+  const regMatch = vBlock.match(/"Registration"\s*:\s*"([^"]*)"/);
+  const atMatch = vBlock.match(/"AircraftType"\s*:\s*"([^"]*)"/);
+  const alMatch = vBlock.match(/"AirlineName"\s*:\s*"([^"]*)"/);
+  const voiceMatch = vBlock.match(/"Voice"\s*:\s*"([^"]*)"/);
+  const langMatch = vBlock.match(/"Language"\s*:\s*"([^"]*)"/);
+
+  f._Registration = regMatch ? regMatch[1] : '';
+  f.AircraftType = atMatch ? atMatch[1] : '';
+  f.AirlineName = alMatch ? alMatch[1] : '';
+  f.Voice = voiceMatch ? voiceMatch[1] : '';
+  f.Language = langMatch ? langMatch[1] : '';
+  f._fpGuid = '';
+
+  // Check Arrival vs Departure
+  const arrNull = vBlock.match(/"Arrival"\s*:\s*null/);
+  const depNull = vBlock.match(/"Departure"\s*:\s*null/);
+
+  const arrIdx = vBlock.indexOf('"Arrival"');
+  const depIdx = vBlock.indexOf('"Departure"');
+
+  if (arrIdx >= 0 && !arrNull) {
+    f.isDeparture = false;
+    const arrMatch = vBlock.match(/"Arrival"\s*:\s*\{/);
+    if (arrMatch) {
+      const objStart = arrMatch.index + arrMatch[0].length;
+      let aDepth = 1;
+      let aEnd = objStart;
+      for (; aEnd < vBlock.length; aEnd++) {
+        if (vBlock[aEnd] === '{') aDepth++;
+        else if (vBlock[aEnd] === '}') { aDepth--; if (aDepth === 0) break; }
+      }
+      const arrObj = vBlock.substring(objStart, aEnd);
+
+      const csMatch = arrObj.match(/"CallSign"\s*:\s*"([^"]*)"/);
+      const origMatch = arrObj.match(/"OriginAirport"\s*:\s*"([^"]*)"/);
+      const rwMatch = arrObj.match(/"Runway"\s*:\s*"([^"]*)"/);
+      const stMatch = arrObj.match(/"Stand"\s*:\s*"([^"]*)"/);
+      const starMatch = arrObj.match(/"STAR"\s*:\s*"([^"]*)"/);
+      const ldtMatch = arrObj.match(/"LandingTime"\s*:\s*\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
+      const ibtMatch = arrObj.match(/"InBlockTime"\s*:\s*\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
+
+      f.CallSign = csMatch ? csMatch[1] : '';
+      f.DepartureAirport = origMatch ? origMatch[1] : '';
+      f.ArrivalAirport = '';
+      f.Runway = rwMatch ? rwMatch[1] : '';
+      f.Stand = stMatch ? stMatch[1] : '';
+      f.Airway = starMatch ? starMatch[1] : '';
+      f.LandingTime = ldtMatch ? ticksToTime(ldtMatch[1]) : '';
+      f.InBlockTime = ibtMatch ? ticksToTime(ibtMatch[1]) : '';
+      f.OffBlockTime = '';
+      f.TakeoffTime = '';
+    }
+  } else if (depIdx >= 0 && !depNull) {
+    f.isDeparture = true;
+    const depMatch = vBlock.match(/"Departure"\s*:\s*\{/);
+    if (depMatch) {
+      const objStart = depMatch.index + depMatch[0].length;
+      let dDepth = 1;
+      let dEnd = objStart;
+      for (; dEnd < vBlock.length; dEnd++) {
+        if (vBlock[dEnd] === '{') dDepth++;
+        else if (vBlock[dEnd] === '}') { dDepth--; if (dDepth === 0) break; }
+      }
+      const depObj = vBlock.substring(objStart, dEnd);
+
+      const csMatch = depObj.match(/"CallSign"\s*:\s*"([^"]*)"/);
+      const destMatch = depObj.match(/"DestinationAirport"\s*:\s*"([^"]*)"/);
+      const rwMatch = depObj.match(/"Runway"\s*:\s*"([^"]*)"/);
+      const stMatch = depObj.match(/"Stand"\s*:\s*"([^"]*)"/);
+      const obtMatch = depObj.match(/"OffBlockTime"\s*:\s*\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
+      const totMatch = depObj.match(/"TakeoffTime"\s*:\s*\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
+
+      f.CallSign = csMatch ? csMatch[1] : '';
+      f.DepartureAirport = '';
+      f.ArrivalAirport = destMatch ? destMatch[1] : '';
+      f.Runway = rwMatch ? rwMatch[1] : '';
+      f.Stand = stMatch ? stMatch[1] : '';
+      f.Airway = '';
+      f.OffBlockTime = obtMatch ? ticksToTime(obtMatch[1]) : '';
+      f.TakeoffTime = totMatch ? ticksToTime(totMatch[1]) : '';
+      f.LandingTime = '';
+      f.InBlockTime = '';
+    }
+  } else {
+    return null; // skip entries with both null
+  }
+
+  return f;
+}
+
+/**
+ * Sync edited flights back into WorldState.FlightPlans entries (in-place text patching).
+ */
+function _syncFlightPlans(rawText, flights, fpData, baseDateTicks) {
+  if (!fpData || !fpData.fpEntries || fpData.fpEntries.length === 0 || !flights || flights.length === 0) return rawText;
+  const bdt = baseDateTicks || FALLBACK_BASE_DATE_TICKS;
+
+  // Build CallSign → flight lookup
+  const flightByCallSign = {};
+  for (const fl of flights) {
+    const cs = (fl.CallSign || '').trim();
+    if (cs) flightByCallSign[cs] = fl;
+  }
+
+  // Update each FlightPlan entry block
+  const newEntryBlocks = [];
+  for (const entry of fpData.fpEntries) {
+    let newBlock = entry.block;
+    const csMatch = entry.vBlock.match(/"CallSign"\s*:\s*"([^"]*)"/);
+    if (!csMatch) {
+      // Try Registration
+      const regMatch = entry.vBlock.match(/"Registration"\s*:\s*"([^"]*)"/);
+      if (!regMatch) { newEntryBlocks.push(newBlock); continue; }
+      // Match by Registration instead of CallSign
+      const reg = regMatch[1];
+      const flight = flights.find(f => f._Registration === reg);
+      if (flight) newBlock = _applyFlightPlanChanges(newBlock, flight, bdt);
+      newEntryBlocks.push(newBlock);
+      continue;
+    }
+
+    const cs = csMatch[1];
+    let flight = flightByCallSign[cs];
+
+    // If CallSign changed, try to find the entry whose old CallSign isn't in the new list
+    if (!flight) {
+      // Match by Registration fallback
+      const regMatch2 = entry.vBlock.match(/"Registration"\s*:\s*"([^"]*)"/);
+      if (regMatch2) {
+        flight = flights.find(f => f._Registration === regMatch2[1]);
+      }
+    }
+
+    if (flight) {
+      newBlock = _applyFlightPlanChanges(newBlock, flight, bdt);
+    }
+    newEntryBlocks.push(newBlock);
+  }
+
+  // Handle new flights: append to the array by cloning the last entry template
+  const existingCount = fpData.fpEntries.length;
+  for (let i = existingCount; i < flights.length; i++) {
+    const templateBlock = fpData.fpEntries.length > 0 ? fpData.fpEntries[fpData.fpEntries.length - 1].block : null;
+    if (templateBlock) {
+      const newBlock = _buildFlightPlanBlock(flights[i], templateBlock, bdt);
+      newEntryBlocks.push(newBlock);
+    }
+  }
+
+  // Update $rlength
+  let newBefore = fpData.fpBefore;
+  const lenMatch = newBefore.match(/"\$rlength"\s*:\s*(\d+)/);
+  if (lenMatch) {
+    newBefore = newBefore.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${newEntryBlocks.length}`);
+  }
+
+  // Make sure section is inside WorldState context
+  const beforeWsIdx = newBefore.indexOf('"FlightPlans"');
+  let beforeWs = newBefore;
+  if (beforeWsIdx >= 0) {
+    // Keep everything before FlightPlans (including WorldState header) intact
+    // newBefore already starts at FlightPlans position, so it's fine
+  }
+
+  // Reconstruct full text: before + entries + after
+  // fpAfter contains the rest after FlightPlans $rcontent array
+  let finalText = beforeWs + '\n' + newEntryBlocks.join(',\n                ') + '\n' + fpData.fpAfter;
+
+  // Double-check: the fpAfter might start with a closing bracket that already exists
+  // or whitespace — the parser captured it precisely, so just concatenate.
+  return finalText;
+}
+
+/**
+ * Apply flight changes to a FlightPlanState entry block (raw text).
+ */
+function _applyFlightPlanChanges(block, flight, baseDateTicks) {
+  // Update top-level fields
+  const isDeparture = block.indexOf('"Departure"') >= 0 && !block.match(/"Departure"\s*:\s*null/);
+  const isArrival = block.indexOf('"Arrival"') >= 0 && !block.match(/"Arrival"\s*:\s*null/);
+
+  block = _applyWsField(block, 'Registration', flight._Registration || '', 'string');
+  block = _applyWsField(block, 'AircraftType', flight.AircraftType || '', 'string');
+  block = _applyWsField(block, 'AirlineName', flight.AirlineName || '', 'string');
+  block = _applyWsField(block, 'Voice', flight.Voice || '', 'string');
+  block = _applyWsField(block, 'Language', flight.Language || '', 'string');
+
+  if (isDeparture) {
+    const depMatch = block.match(/"Departure"\s*:\s*\{/);
+    if (depMatch) {
+      const depStart = depMatch.index + depMatch[0].length;
+      let depDepth = 1;
+      let depEnd = depStart;
+      for (; depEnd < block.length; depEnd++) {
+        if (block[depEnd] === '{') depDepth++;
+        else if (block[depEnd] === '}') { depDepth--; if (depDepth === 0) break; }
+      }
+      let depObj = block.substring(depStart, depEnd);
+
+      depObj = _applyWsField(depObj, 'CallSign', flight.CallSign || '', 'string');
+      depObj = _applyWsField(depObj, 'DestinationAirport', flight.ArrivalAirport || '', 'string');
+      depObj = _applyWsField(depObj, 'Runway', flight.Runway || '', 'string');
+      depObj = _applyWsField(depObj, 'Stand', flight.Stand || '', 'string');
+      depObj = _applyWsField(depObj, 'OffBlockTime', ticksToString(timeToTicks(flight.OffBlockTime || '', baseDateTicks)), 'ticks');
+      depObj = _applyWsField(depObj, 'TakeoffTime', ticksToString(timeToTicks(flight.TakeoffTime || '', baseDateTicks)), 'ticks');
+
+      block = block.substring(0, depStart) + depObj + block.substring(depEnd);
+    }
+  } else if (isArrival) {
+    const arrMatch = block.match(/"Arrival"\s*:\s*\{/);
+    if (arrMatch) {
+      const arrStart = arrMatch.index + arrMatch[0].length;
+      let arrDepth = 1;
+      let arrEnd = arrStart;
+      for (; arrEnd < block.length; arrEnd++) {
+        if (block[arrEnd] === '{') arrDepth++;
+        else if (block[arrEnd] === '}') { arrDepth--; if (arrDepth === 0) break; }
+      }
+      let arrObj = block.substring(arrStart, arrEnd);
+
+      arrObj = _applyWsField(arrObj, 'CallSign', flight.CallSign || '', 'string');
+      arrObj = _applyWsField(arrObj, 'OriginAirport', flight.DepartureAirport || '', 'string');
+      arrObj = _applyWsField(arrObj, 'Runway', flight.Runway || '', 'string');
+      arrObj = _applyWsField(arrObj, 'Stand', flight.Stand || '', 'string');
+      arrObj = _applyWsField(arrObj, 'STAR', flight.Airway || '', 'string');
+      arrObj = _applyWsField(arrObj, 'LandingTime', ticksToString(timeToTicks(flight.LandingTime || '', baseDateTicks)), 'ticks');
+      arrObj = _applyWsField(arrObj, 'InBlockTime', ticksToString(timeToTicks(flight.InBlockTime || '', baseDateTicks)), 'ticks');
+
+      block = block.substring(0, arrStart) + arrObj + block.substring(arrEnd);
+    }
+  }
+
+  return block;
+}
+
+/**
+ * Build a new FlightPlan entry by cloning a template and replacing its values.
+ */
+function _buildFlightPlanBlock(flight, templateBlock, baseDateTicks) {
+  if (!templateBlock) return '{}';
+  // Clone and apply changes
+  return _applyFlightPlanChanges(templateBlock, flight, baseDateTicks);
+}
+
 module.exports = {
   loadFlights, saveFlights, generateFullAcl, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv,
-  collectUniqueValues, getFileInfo, loadAudioCallsigns,
+  collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, loadAudioCallsigns,
   _parseFlightSchedule, _parseWorldStateData, _parseSceneryData, _extractFlightsFromWorldState,
+  _parseWorldStateFlightPlans, _parseFlightPlanEntry, _syncFlightPlans,
   FIELDS, FIELD_LABELS, DROPDOWN_FIELDS
 };

@@ -101,7 +101,7 @@ function initFlightNumberCounter() {
   nextFlightNumber = maxNum + 1;
 }
 
-// ─── Field Definitions (no Voice/Language) ────────────────
+// ─── Field Definitions ────────────────
 const ALL_FIELDS = [
   ['CallSign', 'string'],
   ['DepartureAirport', 'string'],
@@ -114,6 +114,10 @@ const ALL_FIELDS = [
   ['InBlockTime', 'time'],
   ['AirlineName', 'string'],
   ['AircraftType', 'string'],
+  ['Airway', 'string'],
+  ['Registration', 'string'],
+  ['Voice', 'string'],
+  ['Language', 'string'],
 ];
 
 const FIELD_LABELS = {
@@ -121,7 +125,8 @@ const FIELD_LABELS = {
   CallSign: '呼号', DepartureAirport: '出发', ArrivalAirport: '到达',
   Stand: '停机位', Runway: '跑道', OffBlockTime: '推出', TakeoffTime: '起飞',
   LandingTime: '落地', InBlockTime: '入位', AirlineName: '航司',
-  AircraftType: '机型',
+  AircraftType: '机型', Airway: '进场程序',
+  Registration: '注册号', Voice: '语音', Language: '语言',
 };
 
 // Fields that get clock popover
@@ -130,7 +135,8 @@ const TIME_FIELDS = new Set(['LandingTime', 'InBlockTime', 'OffBlockTime', 'Take
 // Fields that get dropdown menus
 const DROPDOWN_FIELDS = new Set([
   'AircraftType', 'AirlineCode',
-  'Stand', 'Runway', 'DepartureAirport', 'ArrivalAirport',
+  'Stand', 'Runway',
+  'Language', 'Registration', 'Airway', 'Voice',
 ]);
 
 const COL_CLASSES = {
@@ -139,12 +145,14 @@ const COL_CLASSES = {
   ArrivalAirport: 'col-arr', Stand: 'col-stand', Runway: 'col-runway',
   OffBlockTime: 'col-time', TakeoffTime: 'col-time', LandingTime: 'col-time',
   InBlockTime: 'col-time', AirlineName: 'col-airline', AircraftType: 'col-ac',
+  Airway: 'col-airway', Registration: 'col-reg',
+  Voice: 'col-voice', Language: 'col-lang',
 };
 
 // Fields per section (arrivals always ArrivalAirport=this airport, departures always DepartureAirport=this airport)
 // Arrivals show origin (DepartureAirport), departures show destination (ArrivalAirport)
-const ARRIVAL_FIELDS = ['AirlineCode', 'FlightNum', 'DepartureAirport', 'Stand', 'Runway', 'LandingTime', 'InBlockTime', 'AircraftType'];
-const DEPARTURE_FIELDS = ['AirlineCode', 'FlightNum', 'ArrivalAirport', 'Stand', 'Runway', 'OffBlockTime', 'TakeoffTime', 'AircraftType'];
+const ARRIVAL_FIELDS = ['AirlineCode', 'FlightNum', 'DepartureAirport', 'Stand', 'Runway', 'LandingTime', 'InBlockTime', 'AircraftType', 'Airway', 'Registration', 'Voice', 'Language'];
+const DEPARTURE_FIELDS = ['AirlineCode', 'FlightNum', 'ArrivalAirport', 'Stand', 'Runway', 'OffBlockTime', 'TakeoffTime', 'AircraftType', 'Registration', 'Voice', 'Language'];
 
 // ─── App State ──────────────────────────────────────────
 let appState = {
@@ -160,6 +168,7 @@ let appState = {
   modified: false,
   highlightedIdx: -1,           // single highlighted row for copy
   selectedIndices: new Set(),   // checked rows for batch delete
+  highlightedCells: new Set(),  // cells with invalid values (e.g. after airline change): "idx:col"
   editingWidget: null,
   // Audio callsigns (available voices per airport, from audio_clips_en.json)
   audioCallsigns: { byAirline: {}, allCallsigns: [], allAirlines: [] },
@@ -170,6 +179,8 @@ let appState = {
   windTimeline: [], windPath: null,
   runwayTimeline: { initialRunways: [], timeline: [] }, runwayTimelinePath: null,
   timelineModified: { weather: false, wind: false, runway: false },
+  // Config values for validation
+  _configStartTime: null, _configEndTime: null,
 };
 
 // ─── Screen Navigation ──────────────────────────────────
@@ -219,6 +230,12 @@ document.getElementById('btn-select-root').addEventListener('click', async () =>
   appState.rootPath = result.rootPath;
   appState.airports = result.airports || [];
   saveLastRootLocal(result.rootPath);
+
+  // Phase 0: Initialize airport cache (scan all CSV + audio per airport)
+  await window.electronAPI.initAirportCache(result.rootPath).catch(err => {
+    console.error('Airport cache init error:', err);
+  });
+
   showBrowser();
 });
 
@@ -243,10 +260,57 @@ async function showBrowser() {
 
   for (const airport of appState.airports) {
     const infos = await window.electronAPI.getAirportFilesInfo(airport.icao, appState.rootPath);
+    // Classify & tag every file
+    for (const info of infos) {
+      const name = info.filename.toLowerCase();
+      info._hidden = false;
+      info._metaLabels = [];
+      if (info.error) {
+        info._hidden = true;
+        info._metaLabels.push({ label: '解析失败', type: 'error' });
+      } else if (/tutorial/i.test(name)) {
+        info._hidden = true;
+        info._metaLabels.push({ label: '教程', type: 'tutorial' });
+      } else if (/demo/i.test(name)) {
+        info._hidden = true;
+        info._metaLabels.push({ label: 'Demo', type: 'demo' });
+      } else if (/bench|test|crossrunway|dev/i.test(name)) {
+        info._hidden = true;
+        info._metaLabels.push({ label: '测试', type: 'test' });
+      } else if (/endless/i.test(name)) {
+        info._hidden = true;
+        info._metaLabels.push({ label: '无尽', type: 'endless' });
+      }
+      // Time range label (from .aclcfg startTime/endTime) — all from file CONTENT, not filename
+      if (!info._hidden && info.startTime && info.endTime) {
+        const toHHMM = s => String(s).substring(0, 5);
+        info._metaLabels.push({ label: toHHMM(info.startTime) + '-' + toHHMM(info.endTime), type: 'timerange' });
+        // Infer time-of-day from start hour
+        const startH = parseInt(String(info.startTime).substring(0, 2));
+        let todLabel;
+        if (startH >= 5 && startH < 7) todLabel = '黎明';
+        else if (startH >= 7 && startH < 12) todLabel = '上午';
+        else if (startH >= 12 && startH < 17) todLabel = '下午';
+        else if (startH >= 17 && startH < 19) todLabel = '黄昏';
+        else todLabel = '夜晚';
+        info._metaLabels.push({ label: todLabel, type: 'tod' });
+      }
+    }
+    // Sort: Tutorial always first, then by startTime ascending
+    infos.sort((a, b) => {
+      const aTutorial = /tutorial/i.test(a.filename) ? 0 : 1;
+      const bTutorial = /tutorial/i.test(b.filename) ? 0 : 1;
+      if (aTutorial !== bTutorial) return aTutorial - bTutorial;
+      const aTime = a.startTime || '99:99';
+      const bTime = b.startTime || '99:99';
+      return aTime.localeCompare(bTime);
+    });
     airport._fileInfos = infos || [];
   }
 
   loading.classList.add('hidden');
+
+  const showAll = _showHiddenFiles;
 
   if (appState.airports.length === 0) {
     list.innerHTML = '<div class="browser-empty">未找到任何 .acl 关卡文件</div>';
@@ -258,20 +322,41 @@ async function showBrowser() {
     const dispName = airportDisplayName(airport.icao);
 
     const rows = infos.map(info => {
+      // Filter hidden rows unless toggle is on
+      if (info._hidden && !showAll) return '';
+
       if (info.error) {
-        return `<div class="level-row" style="opacity:0.5">
+        const labelTags = (info._metaLabels || []).map(l =>
+          `<span class="level-tag tag-${l.type}">${escapeHtml(l.label)}</span>`
+        ).join('');
+        return `<div class="level-row level-row-error">
           <span class="level-name">${info.filename}</span>
+          ${labelTags ? `<span class="level-tags">${labelTags}</span>` : ''}
           <span class="level-stats" style="color:var(--red)">${info.error}</span>
           <span class="level-arrow">&rarr;</span>
         </div>`;
       }
       const displayName = stripSuffixes(info.filename);
-      const tags = parseTags(displayName);
-      const tagsHtml = tags.length > 0
-        ? `<span class="level-tags">${tags.map(t => `<span class="level-tag tag-${t.type}">${escapeHtml(t.label)}</span>`).join('')}</span>`
+      const allTags = info._metaLabels || [];
+      // Build primary row title: tod + time range, fallback to filename
+      const todTag = allTags.find(t => t.type === 'tod');
+      const trTag = allTags.find(t => t.type === 'timerange');
+      const timeTag = allTags.find(t => t.type === 'time');
+      let rowTitle = displayName;
+      if (todTag && trTag) {
+        rowTitle = `${todTag.label} ${trTag.label}`;
+      } else if (todTag && timeTag) {
+        rowTitle = `${todTag.label} ${timeTag.label}`;
+      }
+      // Remove display-oriented tags from badge list (tod/time/timerange are now in row title)
+      const badgeTags = allTags.filter(t => t.type !== 'tod' && t.type !== 'time' && t.type !== 'timerange');
+      const tagsHtml = badgeTags.length > 0
+        ? `<span class="level-tags">${badgeTags.map(t => `<span class="level-tag tag-${t.type}">${escapeHtml(t.label)}</span>`).join('')}</span>`
         : '';
+      const hasCustomTitle = rowTitle !== displayName;
       return `<div class="level-row" data-path="${escapeHtml(info.path)}" data-airport="${escapeHtml(airport.icao)}">
-        <span class="level-name">${displayName}</span>
+        <span class="level-name">${rowTitle}</span>
+        ${hasCustomTitle ? `<span class="level-filename">${displayName}</span>` : ''}
         ${tagsHtml}
         <span class="level-stats">
           <span class="level-stat"><span class="level-stat-dot arrival"></span>进港 ${info.arrivals || 0}</span>
@@ -302,6 +387,16 @@ document.getElementById('btn-change-root').addEventListener('click', () => {
   showScreen('setup');
 });
 
+let _showHiddenFiles = false;
+
+document.getElementById('btn-toggle-hidden').addEventListener('click', () => {
+  _showHiddenFiles = !_showHiddenFiles;
+  const btn = document.getElementById('btn-toggle-hidden');
+  btn.textContent = _showHiddenFiles ? '隐藏文件' : '显示隐藏';
+  btn.classList.toggle('active', _showHiddenFiles);
+  showBrowser();
+});
+
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -311,50 +406,7 @@ function stripSuffixes(name) {
   return name.replace(/(\.[a-zA-Z0-9]+)+\.acl$/i, '.acl');
 }
 
-// ─── Filename Tag Parser ─────────────────────────────────
-function parseTags(filename) {
-  // strip .acl extension and ICAO prefix (e.g. KJFK_ / ZSJN-)
-  let base = filename.replace(/\.acl$/i, '');
-  base = base.replace(/^[A-Z]{4}[-_]?/, '');
-  // Replace _ with - so \b works correctly (JS treats _ as \w)
-  base = base.replace(/_/g, '-');
 
-  const tags = [];
-
-  // 1. Time range: 07-09 → "07:00~09:00", also infer time-of-day
-  const timeMatch = base.match(/(\d{2})-(\d{2})/);
-  if (timeMatch) {
-    const startH = parseInt(timeMatch[1]);
-    tags.push({ label: `${timeMatch[1]}:00\u2013${timeMatch[2]}:00`, type: 'time' });
-    // Infer time-of-day from start hour
-    if (startH >= 5 && startH < 12) {
-      tags.push({ label: '上午', type: 'tod' });
-    } else if (startH >= 12 && startH < 17) {
-      tags.push({ label: '下午', type: 'tod' });
-    } else if (startH >= 17 && startH < 20) {
-      tags.push({ label: '傍晚', type: 'tod' });
-    } else if (startH >= 20 || startH < 5) {
-      tags.push({ label: '夜间', type: 'tod' });
-    }
-  }
-
-  // 2. Tutorial
-  if (/Tutorial/i.test(base)) {
-    tags.push({ label: '教程', type: 'tutorial' });
-  }
-
-  // 3. Time of day: Day / Morning / Evening / Night (explicit keyword)
-  const todMatch = base.match(/\b(Day|Morning|Evening|Night)\b/i);
-  if (todMatch) {
-    const labelMap = { Day: '白天', Morning: '上午', Evening: '傍晚', Night: '夜间' };
-    // Avoid duplicate if already inferred from time range
-    if (!tags.some(t => t.type === 'tod' && t.label === labelMap[todMatch[1]])) {
-      tags.push({ label: labelMap[todMatch[1]], type: 'tod' });
-    }
-  }
-
-  return tags;
-}
 
 // ═══════════ SCREEN 2: EDITOR ══════════════════════════
 
@@ -362,7 +414,9 @@ async function openEditor(filePath, airportIcao) {
   showScreen('editor');
   document.getElementById('editor-filename').textContent = '加载中…';
 
+  console.log('[RENDERER] loadAcl() CALL for:', filePath);
   const data = await window.electronAPI.loadAcl(filePath);
+  console.log('[RENDERER] loadAcl() RESULT:', { success: data.success, flights: data.flights ? data.flights.length : 0, error: data.error, _fromFlightPlans: data._fromFlightPlans, _fromWorldState: data._fromWorldState });
   if (!data.success) { showAlert('加载失败', data.error); return; }
 
   appState.currentPath = filePath;
@@ -376,15 +430,39 @@ async function openEditor(filePath, airportIcao) {
   appState.worldStateData = data.worldStateData || null;
   appState.sceneryMaps = data.sceneryMaps || null;
   appState._fromWorldState = data._fromWorldState || false;
+  appState._fromFlightPlans = data._fromFlightPlans || false;
   appState._rawText = data._rawText || '';
   appState.modified = false;
   appState.highlightedIdx = -1;
+  appState.highlightedCells = new Set();
   appState.selectedIndices = new Set();
   appState.editingWidget = null;
   appState.timelineModified = { weather: false, wind: false, runway: false };
 
+  // Populate config info bar and store config for validation
+  populateConfigBar(data.config, filePath, airportIcao);
+  if (data.config) {
+    appState._configStartTime = data.config.startTime || null;
+    appState._configEndTime = data.config.endTime || null;
+  } else {
+    appState._configStartTime = null;
+    appState._configEndTime = null;
+  }
+
   if (appState.rootPath && airportIcao && !appState.airportValues[airportIcao]) {
-    appState.airportValues[airportIcao] = await window.electronAPI.collectValues(appState.rootPath, airportIcao);
+    const vals = await window.electronAPI.collectValues(appState.rootPath, airportIcao);
+    window.electronAPI.rendererLog('══════ [REG-IPC] collectValues returned for', airportIcao, '══════');
+    window.electronAPI.rendererLog('[REG-IPC] _registrationMap exists:', !!vals._registrationMap);
+    window.electronAPI.rendererLog('[REG-IPC] _registrationMap keys:', vals._registrationMap ? Object.keys(vals._registrationMap) : 'NONE');
+    if (vals._registrationMap) {
+      for (const [k, regs] of Object.entries(vals._registrationMap)) {
+        window.electronAPI.rendererLog('[REG-IPC]   ' + k + ' -> ' + JSON.stringify(regs));
+      }
+    }
+    window.electronAPI.rendererLog('[REG-IPC] Registration list length:', (vals.Registration || []).length);
+    window.electronAPI.rendererLog('[REG-IPC] _compat exists:', !!vals._compat);
+    window.electronAPI.rendererLog('[REG-IPC] _compat airlineToAircraft keys:', vals._compat ? Object.keys(vals._compat.airlineToAircraft) : 'MISSING');
+    appState.airportValues[airportIcao] = vals;
   }
 
   // Load audio callsigns for this airport
@@ -406,11 +484,46 @@ async function openEditor(filePath, airportIcao) {
   }
 
   autoSort();
+  autoFillSingleOptionColumns();
   renderAllSections();
 
   document.getElementById('editor-filename').textContent = stripSuffixes(filePath.split(/[/\\]/).pop());
   document.getElementById('editor-airport').textContent = airportIcao || '';
   showToast(`已加载 ${data.flights.length} 个航班`, 'success');
+}
+
+// ─── Auto-fill single-option dropdown columns ────────────
+
+function autoFillSingleOptionColumns() {
+  const values = appState.airportValues[appState.currentAirport] || {};
+  const allFieldLists = [ARRIVAL_FIELDS, DEPARTURE_FIELDS];
+  for (const fl of appState.flights) {
+    for (const fieldList of allFieldLists) {
+      for (const col of fieldList) {
+        if (!DROPDOWN_FIELDS.has(col)) continue;
+        // Registration and Language: never auto-fill, always show dropdown
+        if (col === 'Registration' || col === 'Language') continue;
+        const hasData = !!(fl[col] || '').trim();
+        if (hasData) continue;
+        const opts = values[col] || [];
+        if (opts.length === 1) {
+          fl[col] = opts[0];
+        }
+      }
+    }
+  }
+}
+
+// ─── Config info bar ────────────────────────────────────
+
+function populateConfigBar(config, filePath, airportIcao) {
+  if (config && config.startTime && config.endTime) {
+    // startTime/endTime are "HH:MM:SS" strings, show only HH:MM
+    document.getElementById('toolbar-time-range').textContent =
+      '时间段：' + String(config.startTime).substring(0, 5) + ' ~ ' + String(config.endTime).substring(0, 5);
+  } else {
+    document.getElementById('toolbar-time-range').textContent = '时间段：-';
+  }
 }
 
 // ─── Auto-sort: arrivals by LandingTime, departures by OffBlockTime ───
@@ -431,10 +544,35 @@ function autoSort() {
 // ─── Determine active columns for a section ─────────────
 function getActiveColumns(flights, fieldList) {
   if (flights.length === 0) return fieldList; // show all if empty
+  const values = appState.airportValues[appState.currentAirport] || {};
   const active = [];
   for (const col of fieldList) {
+    // Mandatory columns always show
+    if (col === 'CallSign' || col === 'FlightNum' || col === 'AirlineCode') {
+      active.push(col);
+      continue;
+    }
+    // Registration & Language: always show as dropdown (never auto-hide)
+    if (col === 'Registration' || col === 'Language') {
+      active.push(col);
+      continue;
+    }
     const hasData = flights.some(fl => (fl[col] || '').trim() !== '');
-    if (hasData || col === 'CallSign' || col === 'FlightNum' || col === 'AirlineCode') active.push(col); // always show these
+    // For dropdown fields: if ≤1 option exists across the whole airport, hide & auto-fill
+    if (DROPDOWN_FIELDS.has(col)) {
+      const opts = values[col] || [];
+      // 0 options → no dropdown possible, hide column entirely
+      if (opts.length === 0) continue;
+      // 1 option → auto-fill all flights and hide column
+      if (opts.length === 1) {
+        for (const fl of flights) {
+          if (col === 'Registration') fl._Registration = opts[0];
+          else fl[col] = opts[0];
+        }
+        continue;
+      }
+    }
+    if (hasData) active.push(col);
   }
   return active;
 }
@@ -463,6 +601,7 @@ function buildSectionTable(sectionId, title, flights, fieldList, typeClass) {
     function getCellValue(fl, col) {
       if (col === 'AirlineCode') return (fl.CallSign || '').substring(0, 3);
       if (col === 'FlightNum') return (fl.CallSign || '').substring(3);
+      if (col === 'Registration') return fl._Registration || fl.Registration || '';
       return fl[col] || '';
     }
     tbody.innerHTML = flights.map(fl => {
@@ -475,7 +614,8 @@ function buildSectionTable(sectionId, title, flights, fieldList, typeClass) {
           const val = getCellValue(fl, col);
           const baseCls = col === 'AirlineCode' ? 'airline-code-cell' : col === 'FlightNum' ? 'flight-num-cell' : '';
           const nullCls = val ? '' : ' cell-null';
-          return `<td class="${baseCls}${nullCls}" data-col="${col}" data-idx="${globalIdx}">${val}</td>`;
+          const hiCls = appState.highlightedCells.has(`${globalIdx}:${col}`) ? ' highlight-invalid' : '';
+          return `<td class="${baseCls}${nullCls}${hiCls}" data-col="${col}" data-idx="${globalIdx}">${val}</td>`;
         }).join('')}
       </tr>`;
     }).join('');
@@ -516,7 +656,6 @@ document.getElementById('sections-container').addEventListener('click', (e) => {
 
   // Click on checkbox → let the change event handle it
   if (e.target.closest('input[type="checkbox"]')) {
-    renderAllSections();
     return;
   }
 
@@ -541,6 +680,7 @@ document.getElementById('sections-container').addEventListener('change', functio
     } else {
       appState.selectedIndices.delete(idx);
     }
+    renderAllSections();
     return;
   }
 
@@ -812,6 +952,8 @@ function startCellEdit(td, col, idx) {
     currentVal = (appState.flights[idx].CallSign || '').substring(0, 3);
   } else if (col === 'FlightNum') {
     currentVal = (appState.flights[idx].CallSign || '').substring(3);
+  } else if (col === 'Registration') {
+    currentVal = appState.flights[idx]._Registration || appState.flights[idx].Registration || '';
   } else {
     currentVal = appState.flights[idx][col] || '';
   }
@@ -829,12 +971,10 @@ function startCellEdit(td, col, idx) {
   let widget;
   let dropdownValues;
 
-  if (col === 'FlightNum' && audioData.allAirlines.length > 0) {
-    // ── FlightNum with audio: show dropdown of available numbers for current airline ──
-    const availNums = audioData.byAirline[currentAirlineCode] || [];
-    if (availNums.length > 0) {
-      dropdownValues = [...availNums];
-      // Include current value if it's valid and not already in the list
+  switch (col) {
+    case 'FlightNum': {
+      // ── FlightNum: always use select dropdown (no text input fallback) ──
+      dropdownValues = [...(audioData.byAirline[currentAirlineCode] || [])];
       if (currentVal && !dropdownValues.includes(currentVal)) {
         dropdownValues.push(currentVal);
       }
@@ -843,51 +983,111 @@ function startCellEdit(td, col, idx) {
       widget.innerHTML = dropdownValues.map(v =>
         `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}</option>`
       ).join('');
-    } else {
-      // Current airline has no audio → text input
-      widget = document.createElement('input');
-      widget.type = 'text';
+      if (currentVal && !audioData.byAirline[currentAirlineCode]?.includes(currentVal)) {
+        widget.classList.add('highlight-invalid');
+      }
+      break;
+    }
+    case 'AirlineCode': {
+      // ── AirlineCode: strict whitelist from audio data only ──
+      dropdownValues = [...(audioData.allAirlines || [])];
+      if (currentVal && !dropdownValues.includes(currentVal)) {
+        dropdownValues.push(currentVal);
+      }
+      widget = document.createElement('select');
       widget.className = 'cell-widget';
-      widget.value = currentVal;
+      widget.innerHTML = dropdownValues.map(v =>
+        `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}</option>`
+      ).join('');
+      // No highlight-invalid on AirlineCode – it's the filter KEY, not VALUE
+      break;
     }
-  } else if (col === 'AirlineCode') {
-    // ── AirlineCode: show all codes from ACL, mark ones with audio ──
-    const aclCodes = values['AirlineCode'] || [];
-    const hasAudio = audioData.allAirlines.length > 0;
-    if (hasAudio) {
-      // Sort: airlines with audio first, then rest alphabetically
-      const withAudio = new Set(audioData.allAirlines);
-      aclCodes.sort((a, b) => {
-        const aHas = withAudio.has(a) ? 0 : 1;
-        const bHas = withAudio.has(b) ? 0 : 1;
-        if (aHas !== bHas) return aHas - bHas;
-        return a.localeCompare(b);
-      });
+    case 'AircraftType': {
+      // ── Lazy filter: read airline at click time, filter by compat map ──
+      const acCode = (appState.flights[idx].CallSign || '').substring(0, 3);
+      const validTypes = acCode ? (compat.airlineToAircraft[acCode] || null) : null;
+      window.electronAPI.rendererLog('[AC-TYPE] acCode:', acCode, 'validTypes:', JSON.stringify(validTypes));
+      window.electronAPI.rendererLog('[AC-TYPE] compat.airlineToAircraft keys:', JSON.stringify(Object.keys(compat.airlineToAircraft)));
+      window.electronAPI.rendererLog('[AC-TYPE] values[AircraftType]:', JSON.stringify(values['AircraftType']));
+      if (validTypes) {
+        dropdownValues = [...validTypes];
+      } else {
+        dropdownValues = [...(values['AircraftType'] || [])];
+      }
+      window.electronAPI.rendererLog('[AC-TYPE] FINAL dropdownValues:', JSON.stringify(dropdownValues));
+      if (currentVal && !dropdownValues.includes(currentVal)) dropdownValues.push(currentVal);
+      widget = document.createElement('select');
+      widget.className = 'cell-widget';
+      widget.innerHTML = dropdownValues.map(v =>
+        `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}</option>`
+      ).join('');
+      if (currentVal && validTypes && !validTypes.includes(currentVal)) {
+        widget.classList.add('highlight-invalid');
+      }
+      break;
     }
-    dropdownValues = aclCodes;
-    widget = document.createElement('select');
-    widget.className = 'cell-widget';
-    widget.innerHTML = dropdownValues.map(v => {
-      const audioMark = audioData.allAirlines.includes(v) ? ' \u{1F399}' : ''; // 🎙 for airlines with audio
-      return `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}${audioMark}</option>`;
-    }).join('');
-    if (currentVal && !dropdownValues.includes(currentVal)) {
-      const audioMark = audioData.allAirlines.includes(currentVal) ? ' \u{1F399}' : '';
-      widget.innerHTML += `<option value="${escapeHtml(currentVal)}" selected>${currentVal}${audioMark}</option>`;
+    case 'Voice': {
+      dropdownValues = values._voiceOptions ? [...values._voiceOptions] : [...(values['Voice'] || [])];
+      if (currentVal && !dropdownValues.includes(currentVal)) {
+        dropdownValues.push(currentVal);
+      }
+      widget = document.createElement('select');
+      widget.className = 'cell-widget';
+      widget.innerHTML = dropdownValues.map(v =>
+        `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}</option>`
+      ).join('');
+      break;
     }
-  } else if (col === 'AircraftType') {
-    const acCode = (appState.flights[idx].CallSign || '').substring(0, 3);
-    const validTypes = acCode ? (compat.airlineToAircraft[acCode] || null) : null;
-    dropdownValues = validTypes
-      ? validTypes.filter(t => (values['AircraftType'] || []).includes(t))
-      : (values['AircraftType'] || []);
-  } else {
-    dropdownValues = values[col] || [];
+    case 'Registration': {
+      // ── Lazy filter: read airline + aircraftType at click time, filter registrations ──
+      const flt = appState.flights[idx];
+      const acCode = (flt.CallSign || '').substring(0, 3);
+      const acType = flt.AircraftType || '';
+      const regMap = values._registrationMap || {};
+      const key = acCode + '|' + acType;
+      dropdownValues = regMap[key] ? [...regMap[key]] : [];
+      if (currentVal && !dropdownValues.includes(currentVal)) dropdownValues.push(currentVal);
+      widget = document.createElement('select');
+      widget.className = 'cell-widget';
+      widget.innerHTML = dropdownValues.map(v =>
+        `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}</option>`
+      ).join('');
+      if (currentVal && acCode && acType && regMap[key] && !regMap[key].includes(currentVal)) {
+        widget.classList.add('highlight-invalid');
+      }
+      break;
+    }
+    case 'Airway': {
+      dropdownValues = [...(values['Airway'] || [])];
+      if (currentVal && !dropdownValues.includes(currentVal)) {
+        dropdownValues.push(currentVal);
+      }
+      widget = document.createElement('select');
+      widget.className = 'cell-widget';
+      widget.innerHTML = dropdownValues.map(v =>
+        `<option value="${escapeHtml(v)}" ${v === currentVal ? 'selected' : ''}>${v}</option>`
+      ).join('');
+      break;
+    }
+    case 'Language': {
+      dropdownValues = ['en', 'zh'];
+      if (currentVal && !dropdownValues.includes(currentVal)) {
+        dropdownValues.push(currentVal);
+      }
+      break;
+    }
+    default:
+      dropdownValues = values[col] || [];
+      break;
   }
 
   if (widget) {
     // widget already created above (FlightNum with audio or AirlineCode)
-  } else if (DROPDOWN_FIELDS.has(col) && dropdownValues.length > 0) {
+  } else if (DROPDOWN_FIELDS.has(col)) {
+    // Always show dropdown for these fields, even if collected list is empty
+    if (currentVal && !dropdownValues.includes(currentVal)) {
+      dropdownValues = [currentVal, ...dropdownValues];
+    }
     widget = document.createElement('select');
     widget.className = 'cell-widget';
     widget.innerHTML = dropdownValues.map(v =>
@@ -919,24 +1119,51 @@ function startCellEdit(td, col, idx) {
         const oldNum = oldCs.substring(3);
         const audioData = appState.audioCallsigns;
         appState.flights[idx].CallSign = newVal.substring(0, 3) + oldNum;
-        // If audio data exists: if old flight number not valid for new airline, auto-pick first available
+
+        // Clear previous highlights for this row
+        for (const key of appState.highlightedCells) {
+          if (key.startsWith(`${idx}:`)) appState.highlightedCells.delete(key);
+        }
+
+        // Check FlightNum compatibility with new airline
         if (audioData.allAirlines.length > 0) {
           const availNums = audioData.byAirline[newVal];
           if (availNums && availNums.length > 0 && !availNums.includes(oldNum)) {
             appState.flights[idx].CallSign = newVal.substring(0, 3) + availNums[0];
+            appState.highlightedCells.add(`${idx}:FlightNum`);
           }
         }
-        // Auto-clear AircraftType to null if no longer compatible with new airline
+
+        // Check AircraftType compatibility with new airline
         const currType = appState.flights[idx].AircraftType || '';
         if (currType) {
           const compatTypes = compat.airlineToAircraft[newVal];
           if (compatTypes && !compatTypes.includes(currType)) {
             appState.flights[idx].AircraftType = null;
+            appState.highlightedCells.add(`${idx}:AircraftType`);
           }
+        }
+
+        // Clear Registration when airline changes (registration is airline + type specific)
+        if (appState.flights[idx]._Registration || appState.flights[idx].Registration) {
+          appState.flights[idx]._Registration = null;
+          appState.flights[idx].Registration = null;
+          appState.highlightedCells.add(`${idx}:Registration`);
+        }
+      } else if (col === 'AircraftType') {
+        appState.flights[idx].AircraftType = newVal;
+        // Clear Registration when aircraft type changes
+        if (appState.flights[idx]._Registration || appState.flights[idx].Registration) {
+          appState.flights[idx]._Registration = null;
+          appState.flights[idx].Registration = null;
+          appState.highlightedCells.add(`${idx}:Registration`);
         }
       } else if (col === 'FlightNum') {
         const cs = appState.flights[idx].CallSign || '';
         appState.flights[idx].CallSign = cs.substring(0, 3) + newVal;
+      } else if (col === 'Registration') {
+        appState.flights[idx]._Registration = newVal;
+        appState.highlightedCells.delete(`${idx}:Registration`);
       } else {
         appState.flights[idx][col] = newVal;
       }
@@ -948,6 +1175,8 @@ function startCellEdit(td, col, idx) {
       td.innerHTML = (appState.flights[idx].CallSign || '').substring(0, 3);
     } else if (col === 'FlightNum') {
       td.innerHTML = (appState.flights[idx].CallSign || '').substring(3);
+    } else if (col === 'Registration') {
+      td.innerHTML = appState.flights[idx]._Registration || '';
     } else {
       td.innerHTML = appState.flights[idx][col] || '';
     }
@@ -993,12 +1222,13 @@ function addArrivalFlight() {
   } else if (values.AirlineName && values.AirlineName.length > 0) {
     airlineCode = getAirlineCode(values.AirlineName[0]);
   }
-  newFlight.CallSign = airlineCode + String(nextFlightNumber++).padStart(4, '0');
+  newFlight.CallSign = airlineCode + String(nextFlightNumber++);
   newFlight.ArrivalAirport = appState.currentAirport || '';
 
   // Placeholder values for arrivals
   newFlight.LandingTime = '06:00:00';
   newFlight.InBlockTime = '06:05:00';
+  newFlight.Language = 'en';
   if (values.AircraftType && values.AircraftType.length > 0) newFlight.AircraftType = values.AircraftType[0];
   if (values.AirlineName && values.AirlineName.length > 0) newFlight.AirlineName = values.AirlineName[0];
   if (values.Stand && values.Stand.length > 0) newFlight.Stand = values.Stand[0];
@@ -1027,12 +1257,13 @@ function addDepartureFlight() {
   } else if (values.AirlineName && values.AirlineName.length > 0) {
     airlineCode = getAirlineCode(values.AirlineName[0]);
   }
-  newFlight.CallSign = airlineCode + String(nextFlightNumber++).padStart(4, '0');
+  newFlight.CallSign = airlineCode + String(nextFlightNumber++);
   newFlight.DepartureAirport = appState.currentAirport || '';
 
   // Placeholder values for departures
   newFlight.OffBlockTime = '06:00:00';
   newFlight.TakeoffTime = '06:05:00';
+  newFlight.Language = 'en';
   if (values.AircraftType && values.AircraftType.length > 0) newFlight.AircraftType = values.AircraftType[0];
   if (values.AirlineName && values.AirlineName.length > 0) newFlight.AirlineName = values.AirlineName[0];
   if (values.Stand && values.Stand.length > 0) newFlight.Stand = values.Stand[0];
@@ -1149,6 +1380,151 @@ async function handleSave() {
     return;
   }
 
+  // ── Triple validation ──
+  const issues = runTripleValidation();
+  if (issues.length > 0) {
+    const issueHtml = issues.map((issue, i) =>
+      `<p style="margin:4px 0;font-size:13px"><strong>#${i+1}</strong> ${escapeHtml(issue)}</p>`
+    ).join('');
+    showModal(`${issues.length} 个问题需要修复后才能保存`, `
+      <div style="max-height:400px;overflow-y:auto;text-align:left;margin-bottom:12px">
+        ${issueHtml}
+      </div>
+      <p style="color:var(--red);font-size:13px">请在修复所有问题后再保存。</p>
+    `, `<button class="btn-confirm" id="modal-close-issues">关闭</button>`);
+    document.getElementById('modal-close-issues').onclick = hideModal;
+    return;
+  }
+
+  // ── Backup confirmation dialog ──
+  showModal('保存前备份', `
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:12px">
+      <input type="checkbox" id="chk-create-backup" checked>
+      <span>创建 .bak 备份（覆盖式，无时间戳）</span>
+    </label>
+    <p style="font-size:12px;color:var(--text-muted)">备份将覆盖同名的 .acl.bak 和 .csv.bak 文件。</p>
+  `, `<button class="btn-cancel" id="modal-cancel-backup">取消</button>
+     <button class="btn-confirm" id="modal-confirm-save">确定保存</button>`);
+  document.getElementById('modal-cancel-backup').onclick = hideModal;
+  document.getElementById('modal-confirm-save').onclick = async () => {
+    const createBackup = document.getElementById('chk-create-backup').checked;
+    hideModal();
+    await doSaveAcl(createBackup);
+  };
+}
+
+/**
+ * Triple validation: (a) dropdown options, (b) time range, (c) runway timeline.
+ * @returns {string[]} list of human-readable issue descriptions
+ */
+function runTripleValidation() {
+  const issues = [];
+  const values = appState.airportValues[appState.currentAirport] || {};
+  const audioData = appState.audioCallsigns;
+  const compat = values._compat || {};
+
+  // (a) Dropdown option validation
+  const validSets = {
+    AirlineCode: new Set(audioData.allAirlines || []),
+    Stand: new Set(values.Stand || []),
+    Runway: new Set(values.Runway || []),
+    DepartureAirport: new Set(values.DepartureAirport || []),
+    ArrivalAirport: new Set(values.ArrivalAirport || []),
+    AircraftType: new Set(values.AircraftType || []),
+    Voice: new Set(values.Voice || []),
+    Language: new Set(['en', 'zh']),
+  };
+
+  appState.flights.forEach((fl, i) => {
+    // Check AirlineCode
+    const airlineCode = (fl.CallSign || '').substring(0, 3);
+    if (airlineCode && !validSets.AirlineCode.has(airlineCode)) {
+      issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 航司代码 "${airlineCode}" 不在有效白名单中`);
+    }
+    // Check FlightNum
+    const flightNum = (fl.CallSign || '').substring(3);
+    if (airlineCode && flightNum) {
+      const validNums = audioData.byAirline[airlineCode] || [];
+      if (validNums.length > 0 && !validNums.includes(flightNum)) {
+        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 航班号 "${flightNum}" 不在航司 ${airlineCode} 的有效列表中`);
+      }
+    }
+    // Check other dropdown fields
+    for (const col of ['Stand', 'Runway', 'DepartureAirport', 'ArrivalAirport', 'AircraftType', 'Voice', 'Language']) {
+      const val = fl[col];
+      if (val && validSets[col] && validSets[col].size > 0 && !validSets[col].has(val)) {
+        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): ${FIELD_LABELS[col] || col} "${val}" 不在有效选项中`);
+      }
+    }
+  });
+
+  // (b) Time range validation (startTime ~ endTime+15min from config)
+  // Note: config data is not stored in appState, so we'll use a cached version
+  if (appState._configStartTime && appState._configEndTime) {
+    const startTime = typeof appState._configStartTime === 'string'
+      ? parseInt(appState._configStartTime, 10) : appState._configStartTime;
+    let endTime = typeof appState._configEndTime === 'string'
+      ? parseInt(appState._configEndTime, 10) : appState._configEndTime;
+    // +15 minutes tolerance
+    endTime += 15;
+
+    appState.flights.forEach((fl, i) => {
+      for (const col of ['OffBlockTime', 'TakeoffTime', 'LandingTime', 'InBlockTime']) {
+        const timeVal = fl[col];
+        if (!timeVal) continue;
+        const parts = String(timeVal).split(':');
+        if (parts.length < 2) continue;
+        const hh = parseInt(parts[0], 10);
+        const mm = parseInt(parts[1], 10);
+        const t = hh * 100 + mm;
+        if (t < startTime || t > endTime) {
+          issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): ${FIELD_LABELS[col] || col} "${timeVal}" 超出有效时间范围 (${String(startTime).padStart(4,'0')} ~ ${String(endTime).padStart(4,'0')})`);
+        }
+      }
+    });
+  }
+
+  // (c) Runway timeline validation
+  const runwayTL = appState.runwayTimeline;
+  if (runwayTL && runwayTL.initialRunways && runwayTL.timeline) {
+    const initialRunways = runwayTL.initialRunways || [];
+    const changes = runwayTL.timeline || [];
+
+    appState.flights.forEach((fl, i) => {
+      const rwy = fl.Runway;
+      if (!rwy) return;
+      // Find a time to check: use landing time for arrivals, offblock for departures
+      const checkTime = fl.LandingTime || fl.OffBlockTime;
+      if (!checkTime) return;
+      const parts = String(checkTime).split(':');
+      if (parts.length < 2) return;
+      const hh = parseInt(parts[0], 10);
+      const mm = parseInt(parts[1], 10);
+      const checkT = hh * 100 + mm;
+
+      // Compute active runways at time checkT
+      let activeRunways = new Set(initialRunways);
+      for (const change of changes) {
+        const ct = typeof change.time === 'string' ? parseInt(change.time, 10) : change.time;
+        if (ct != null && ct <= checkT) {
+          // Apply change: replace runways
+          const rwList = change.runways || change.activeRunways || change.Runways || [];
+          if (rwList.length > 0) {
+            activeRunways = new Set(rwList);
+          }
+        }
+      }
+
+      if (activeRunways.size > 0 && !activeRunways.has(rwy)) {
+        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 在 ${checkTime} 时刻，跑道 "${rwy}" 不在活跃跑道列表中`);
+      }
+    });
+  }
+
+  return issues;
+}
+
+async function doSaveAcl(createBackup) {
   try {
     // 1) Save ACL
     const result = await window.electronAPI.saveAcl({
@@ -1161,7 +1537,9 @@ async function handleSave() {
       worldStateData: appState.worldStateData,
       sceneryMaps: appState.sceneryMaps,
       _fromWorldState: appState._fromWorldState,
+      _fromFlightPlans: appState._fromFlightPlans,
       _rawText: appState._rawText,
+      createBackup,
     });
 
     if (!result.success) {
@@ -1188,6 +1566,7 @@ async function handleSave() {
     }
 
     appState.modified = false;
+    appState.highlightedCells.clear();
     updateStatusBar();
     renderAllSections();
 
@@ -1197,12 +1576,14 @@ async function handleSave() {
     const csvMsg = result.csvSynced
       ? `<p style="font-size:12px;color:var(--green)">CSV 航班表已同步更新（游戏将读取最新数据）</p>`
       : '';
+    const backupMsg = createBackup
+      ? `<p style="font-size:12px;color:var(--text-muted)">.bak 备份已创建（覆盖式）</p>`
+      : '';
     showModal('保存成功', `
       <p>文件已成功保存。</p>
+      ${backupMsg}
       ${tlMsg}
       ${csvMsg}
-      <p style="font-size:12px;color:var(--text-muted)">自动备份已生成在相同目录下：</p>
-      <code>${result.backupPath}</code>
     `, `<button class="btn-confirm" id="modal-ok">确定</button>`);
     document.getElementById('modal-ok').onclick = hideModal;
   } catch (err) {
@@ -1225,6 +1606,7 @@ async function handleSaveAs() {
     worldStateData: appState.worldStateData,
     sceneryMaps: appState.sceneryMaps,
     _fromWorldState: appState._fromWorldState,
+    _fromFlightPlans: appState._fromFlightPlans,
     _rawText: appState._rawText,
     suggestedName: appState.currentPath ? appState.currentPath.split(/[/\\]/).pop() : 'edited_level.acl',
   });
@@ -1252,46 +1634,6 @@ async function handleManualBackup() {
   showToast('备份已保存: ' + result.path.split(/[/\\]/).pop(), 'success');
 }
 
-// ─── EXPORT CSV ──────────────────────────────────────────
-document.getElementById('btn-export-csv').addEventListener('click', handleExportCsv);
-
-async function handleExportCsv() {
-  if (appState.flights.length === 0) { showToast('没有航班数据可导出', 'error'); return; }
-
-  const defaultPath = appState.currentPath
-    ? appState.currentPath.replace(/\.acl$/i, '.csv')
-    : 'flights.csv';
-
-  const result = await window.electronAPI.exportCSV({
-    flights: appState.flights,
-    defaultPath,
-  });
-  if (result.success) {
-    showToast('CSV 已导出', 'success');
-  } else if (result.success === false) {
-    showAlert('导出失败', result.error || '未知错误');
-  }
-}
-
-// ─── CSV → ACL ──────────────────────────────────────────
-document.getElementById('btn-csv-to-acl').addEventListener('click', handleCsvToAcl);
-
-async function handleCsvToAcl() {
-  const suggestedAclName = appState.currentPath
-    ? appState.currentPath.split(/[/\\]/).pop()
-    : 'generated_level.acl';
-
-  const result = await window.electronAPI.csvToAcl({
-    suggestedAclName,
-    templatePath: appState.currentPath,  // optional: use current file's header as template
-  });
-
-  if (result.canceled) return;
-  if (!result.success) { showAlert('生成失败', result.error); return; }
-
-  showToast('ACL 已生成: ' + result.path.split(/[/\\]/).pop(), 'success');
-}
-
 // ─── IMPORT EXTERNAL ACL ─────────────────────────────────
 document.getElementById('btn-import-acl').addEventListener('click', handleImportAcl);
 
@@ -1310,6 +1652,7 @@ async function handleImportAcl() {
   appState.worldStateData = result.worldStateData || null;
   appState.sceneryMaps = result.sceneryMaps || null;
   appState._fromWorldState = result._fromWorldState || false;
+  appState._fromFlightPlans = result._fromFlightPlans || false;
   appState._rawText = result._rawText || '';
   appState.modified = true;
   appState.highlightedIdx = -1;
@@ -1324,6 +1667,66 @@ async function handleImportAcl() {
   renderAllSections();
   updateStatusBar();
   showToast(`已导入 ${result.flights.length} 个航班`, 'success');
+}
+
+// ─── RESTORE FROM BACKUP ─────────────────────────────────
+document.getElementById('btn-restore-backup').addEventListener('click', handleRestoreBackup);
+
+async function handleRestoreBackup() {
+  if (!appState.currentPath) { showToast('没有打开的文件', 'error'); return; }
+
+  showModal('还原备份确认', `
+    <p>将从最新的 <code>.bak</code> 备份文件还原：</p>
+    <ul style="text-align:left;font-size:13px;margin:8px 0;">
+      <li>.acl.bak → .acl</li>
+      <li>.csv.bak → .csv</li>
+      <li>.json.bak → .json（天气/风力/跑道时间线）</li>
+    </ul>
+    <p style="color:var(--orange)">⚠ 当前未保存的更改将丢失。</p>
+  `, `
+    <button class="btn-cancel" id="modal-cancel">取消</button>
+    <button class="btn-confirm" id="modal-confirm">确认还原</button>
+  `);
+
+  document.getElementById('modal-cancel').onclick = hideModal;
+  document.getElementById('modal-confirm').onclick = async () => {
+    hideModal();
+    const result = await window.electronAPI.restoreBackup(appState.currentPath);
+    if (!result.success) { showAlert('还原失败', result.error); return; }
+
+    appState.flights = result.flights;
+    initFlightNumberCounter();
+    appState.before = result.before;
+    appState.after = result.after;
+    appState.arrayContent = result.arrayContent;
+    appState.originalBlocks = result.originalBlocks;
+    appState.worldStateData = result.worldStateData || null;
+    appState.sceneryMaps = result.sceneryMaps || null;
+    appState._fromWorldState = result._fromWorldState || false;
+    appState._fromFlightPlans = result._fromFlightPlans || false;
+    appState._rawText = result._rawText || '';
+    appState.modified = false;
+    appState.highlightedIdx = -1;
+    appState.selectedIndices = new Set();
+    appState.editingWidget = null;
+
+    // Reload timelines from restored files
+    const tl = await window.electronAPI.loadTimelines(appState.currentPath);
+    if (tl.success) {
+      appState.weatherTimeline = tl.weatherTimeline || [];
+      appState.weatherPath = tl.weatherPath;
+      appState.windTimeline = tl.windTimeline || [];
+      appState.windPath = tl.windPath;
+      appState.runwayTimeline = tl.runwayTimeline || { initialRunways: [], timeline: [] };
+      appState.runwayTimelinePath = tl.runwayTimelinePath;
+    }
+    appState.timelineModified = { weather: false, wind: false, runway: false };
+
+    autoSort();
+    renderAllSections();
+    updateStatusBar();
+    showToast(`已还原 ${result.flights.length} 个航班（${result.restored.join('、')}）`, 'success');
+  };
 }
 
 window.electronAPI.onNavBrowser(() => {
@@ -1714,6 +2117,10 @@ function saveLastRootLocal(rootPath) {
     if (!scan.error && scan.totalFiles > 0) {
       appState.rootPath = lastRoot;
       appState.airports = scan.airports || [];
+      // Phase 0: Initialize airport cache (scan all CSV + audio per airport)
+      await window.electronAPI.initAirportCache(lastRoot).catch(err => {
+        console.error('Airport cache init error:', err);
+      });
       showBrowser();
       return;
     }
