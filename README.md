@@ -19,6 +19,61 @@ Cross-platform (Windows + macOS) GUI tool for editing **Airport Control 25** `.a
 - **Import** → load external `.acl` to override current
 - **Save As** → write to any location
 
+## Data Flow
+
+```mermaid
+flowchart TD
+    subgraph P0[Phase 0 机场初始化 仅一次]
+        R[选择 Game Root] --> PA[遍历各机场 ICAO]
+        PA --> CSV[扫描所有 Session CSV]
+        PA --> AUD[加载 audio_clips en+zh]
+        CSV & AUD --> CACHE[AirportCache ICAO 按机场缓存]
+    end
+    CACHE --> P1
+    subgraph P1[Phase 1 加载 打开 acl]
+        ACL[选择 acl 文件] --> B[loadAcl 解析航班]
+        ACL --> CFG[读取 aclcfg]
+        B --> D[collect ACL 特有值]
+        CFG --> TL[loadTimelines]
+        B & CFG & D & TL --> STATE[appState = 缓存 + ACL + Timeline]
+    end
+    STATE --> UI[render UI 表格 + ConfigBar + 时间线]
+    UI --> EDIT[用户点击编辑]
+    EDIT --> SW{哪个 Section}
+    SW -->|Flight Schedule| FS{哪一列}
+    FS -->|AirlineCode| F1[allAirlines 白名单]
+    FS -->|FlightNum| F2[byAirline code 强制select]
+    FS -->|AircraftType| F3[型号 + compat过滤]
+    FS -->|Stand/Runway| F4[ACL+CSV 双源]
+    FS -->|Dep/Arr| F5[ACL+CSV 双源]
+    FS -->|Voice| F6[CSV voiceOptions]
+    FS -->|Language| F7[en zh]
+    FS -->|时间字段| F8[时间选择器 hhmmss]
+    F1 & F2 & F3 & F4 & F5 & F6 & F7 & F8 --> J[提交修改]
+    SW -->|Runway| RT[编辑 initialRunways + changes]
+    SW -->|Weather| WT[编辑 weather presets + time]
+    SW -->|Wind| WD[编辑 wind dir + speed + time]
+    RT & WT & WD --> J
+    J --> L{改的是 AirlineCode}
+    L -->|是 换航司| K[联动 FlightNum选项 + AircraftType compat过滤 旧值不兼容红高亮]
+    K --> UI
+    L -->|否| M[更新 appState]
+    M --> N{点击保存}
+    N -->|是| O
+    subgraph P3[Phase 3 保存]
+        O[构建 aclData] --> P[三重验证 a选项合法性 b时间范围 c跑道集合]
+        P -->|N个问题| Q[弹窗列出问题 仅关闭 阻止保存]
+        P -->|通过| R2[备份弹窗 创建bak 默认勾选]
+        R2 -->|是| S[bak覆盖备份]
+        R2 -->|否| T[跳过]
+        S --> U[写入 acl + csv + json]
+        T --> U
+        U --> V[保存完成]
+    end
+    N -->|否| W[继续编辑]
+    W --> UI
+```
+
 ## Development
 
 ```bash

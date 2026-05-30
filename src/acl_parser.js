@@ -787,9 +787,13 @@ function saveFlights(aclPath, flights, before, after, arrayContent, originalBloc
   const fixedBefore = _updateRlength(before, flights.length);
   let newText = fixedBefore + newBlocks.join(',\n            ') + after;
 
-  // Also sync WorldState entries if available
+  // Also sync WorldState entries if available — operate on the UPDATED text
   if (worldStateData && worldStateData.wsEntries && worldStateData.wsEntries.length > 0) {
-    newText = _syncWorldState(newText, flights, worldStateData, sceneryMaps, baseDateTicks);
+    // Re-parse WorldState from the freshly-built text so positions are correct
+    const reParsedWs = _parseWorldStateData(newText);
+    if (reParsedWs && reParsedWs.wsEntries.length > 0) {
+      newText = _syncWorldState(newText, flights, reParsedWs, sceneryMaps, baseDateTicks);
+    }
   }
 
   fs.writeFileSync(aclPath, newText, 'utf-8');
@@ -1017,9 +1021,12 @@ function generateFullAcl(aclPath, flights, headerBefore = '', footerAfter = '', 
     const fixedAfter = footerAfter || '\n        ]\n    }\n}';
     let newText = fixedBefore + newBlocks.join(',\n            ') + fixedAfter;
 
-    // Also sync WorldState entries if available
+    // Also sync WorldState entries if available — re-parse from updated text
     if (worldStateData && worldStateData.wsEntries && worldStateData.wsEntries.length > 0) {
-      newText = _syncWorldState(newText, flights, worldStateData, sceneryMaps, baseDateTicks);
+      const reParsedWs = _parseWorldStateData(newText);
+      if (reParsedWs && reParsedWs.wsEntries.length > 0) {
+        newText = _syncWorldState(newText, flights, reParsedWs, sceneryMaps, baseDateTicks);
+      }
     }
 
     fs.writeFileSync(aclPath, newText, 'utf-8');
@@ -1781,11 +1788,10 @@ function _syncFlightPlans(rawText, flights, fpData, baseDateTicks) {
   }
 
   // Reconstruct full text: before + entries + after
-  // fpAfter contains the rest after FlightPlans $rcontent array
-  let finalText = beforeWs + '\n' + newEntryBlocks.join(',\n                ') + '\n' + fpData.fpAfter;
-
-  // Double-check: the fpAfter might start with a closing bracket that already exists
-  // or whitespace — the parser captured it precisely, so just concatenate.
+  // fpBefore ends at "$rcontent: [" — we need 16-space indent for first entry
+  // fpAfter starts AFTER the closing "]" — we must insert it back with 12-space indent
+  // (fpAfter already starts with "\n        }" to close FlightPlans)
+  let finalText = beforeWs + '\n                ' + newEntryBlocks.join(',\n                ') + '\n            ]' + fpData.fpAfter;
   return finalText;
 }
 
@@ -1860,10 +1866,24 @@ function _buildFlightPlanBlock(flight, templateBlock, baseDateTicks) {
   return _applyFlightPlanChanges(templateBlock, flight, baseDateTicks);
 }
 
+/**
+ * Sort flights chronologically (mixed arrivals + departures) by their active time:
+ * LandingTime for arrivals, OffBlockTime for departures.
+ * This restores original file order before saving, so ACL block pairing stays correct.
+ */
+function sortFlightsChronologically(flights) {
+  return flights.slice().sort((a, b) => {
+    const ta = (a.LandingTime || a.OffBlockTime || '99:99').trim();
+    const tb = (b.LandingTime || b.OffBlockTime || '99:99').trim();
+    return ta.localeCompare(tb);
+  });
+}
+
 module.exports = {
   loadFlights, saveFlights, generateFullAcl, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv,
   collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, loadAudioCallsigns,
   _parseFlightSchedule, _parseWorldStateData, _parseSceneryData, _extractFlightsFromWorldState,
   _parseWorldStateFlightPlans, _parseFlightPlanEntry, _syncFlightPlans,
+  sortFlightsChronologically,
   FIELDS, FIELD_LABELS, DROPDOWN_FIELDS
 };

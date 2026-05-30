@@ -1398,11 +1398,10 @@ async function handleSave() {
 
   // ── Backup confirmation dialog ──
   showModal('保存前备份', `
-    <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:12px">
-      <input type="checkbox" id="chk-create-backup" checked>
-      <span>创建 .bak 备份（覆盖式，无时间戳）</span>
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;white-space:nowrap">
+      <input type="checkbox" id="chk-create-backup" checked style="flex-shrink:0;width:auto;margin:0">
+      <span>创建 .bak 备份</span>
     </label>
-    <p style="font-size:12px;color:var(--text-muted)">备份将覆盖同名的 .acl.bak 和 .csv.bak 文件。</p>
   `, `<button class="btn-cancel" id="modal-cancel-backup">取消</button>
      <button class="btn-confirm" id="modal-confirm-save">确定保存</button>`);
   document.getElementById('modal-cancel-backup').onclick = hideModal;
@@ -1424,8 +1423,14 @@ function runTripleValidation() {
   const compat = values._compat || {};
 
   // (a) Dropdown option validation
+  // AirlineCode: union audio whitelist + airlines actually present in data
+  const airlineCodeSet = new Set(audioData.allAirlines || []);
+  for (const fl of appState.flights) {
+    const ac = (fl.CallSign || '').substring(0, 3);
+    if (ac) airlineCodeSet.add(ac);
+  }
   const validSets = {
-    AirlineCode: new Set(audioData.allAirlines || []),
+    AirlineCode: airlineCodeSet,
     Stand: new Set(values.Stand || []),
     Runway: new Set(values.Runway || []),
     DepartureAirport: new Set(values.DepartureAirport || []),
@@ -1461,10 +1466,12 @@ function runTripleValidation() {
   // (b) Time range validation (startTime ~ endTime+15min from config)
   // Note: config data is not stored in appState, so we'll use a cached version
   if (appState._configStartTime && appState._configEndTime) {
-    const startTime = typeof appState._configStartTime === 'string'
-      ? parseInt(appState._configStartTime, 10) : appState._configStartTime;
-    let endTime = typeof appState._configEndTime === 'string'
-      ? parseInt(appState._configEndTime, 10) : appState._configEndTime;
+    const toHHMM = (s) => {
+      const parts = String(s).split(':');
+      return parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10);
+    };
+    const startTime = toHHMM(appState._configStartTime);
+    let endTime = toHHMM(appState._configEndTime);
     // +15 minutes tolerance
     endTime += 15;
 

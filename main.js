@@ -6,7 +6,7 @@ const { initLogger, closeLogger } = require('./src/logger');
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
 if (!app.isPackaged) initLogger();
 
-const { loadFlights, saveFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns } = require('./src/acl_parser');
+const { loadFlights, saveFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically } = require('./src/acl_parser');
 const { scanGameRoot } = require('./src/acl_scanner');
 
 let mainWindow;
@@ -371,13 +371,17 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     const dir = path.dirname(filePath);
     const base = path.basename(filePath, '.acl');
 
+    // Re-sort flights to chronological (file) order before saving,
+    // so ACL block pairing and CSV output match the original order.
+    const saveFlights = sortFlightsChronologically(flights);
+
     // Create .bak overwrite backup if requested
     if (createBackup && fs.existsSync(filePath)) {
       fs.copyFileSync(filePath, filePath + '.bak');
     }
 
     // Generate full ACL from scratch, preserving header structure
-    generateFullAcl(filePath, flights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans);
+    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans);
 
     // ── Also sync the CSV that the game loads ──
     let csvSynced = false;
@@ -394,7 +398,7 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
             fs.copyFileSync(csvPath, csvPath + '.bak');
             csvBackupDone = true;
           }
-          exportGameCSV(flights, csvPath);
+          exportGameCSV(saveFlights, csvPath);
           csvSynced = true;
         }
       }
@@ -420,13 +424,15 @@ ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayCont
   if (result.canceled || !result.filePath) return { canceled: true };
 
   try {
-    generateFullAcl(result.filePath, flights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans);
+    // Re-sort flights to chronological order before saving
+    const saveFlights = sortFlightsChronologically(flights);
+    generateFullAcl(result.filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans);
 
     // Also write CSV alongside
     let csvSynced = false;
     try {
       const csvPath = result.filePath.replace(/\.acl$/i, '.csv');
-      exportGameCSV(flights, csvPath);
+      exportGameCSV(saveFlights, csvPath);
       csvSynced = true;
     } catch (csvErr) {
       console.error('Save-as CSV warning:', csvErr.message);

@@ -34,11 +34,12 @@
   <div id="screen-browser" class="screen hidden">
     <header class="browser-header">
       <div class="browser-title">
-        <span>AC27 Level Editor &mdash; 关卡列表</span>
+        <span>关卡列表</span>
       </div>
       <div class="browser-actions">
         <span id="browser-root-path" class="browser-root-path"></span>
         <button id="btn-change-root" class="btn-sm">更换目录</button>
+        <button id="btn-toggle-hidden" class="btn-sm btn-toggle-hidden">显示隐藏</button>
       </div>
     </header>
     <main id="browser-content" class="browser-content">
@@ -65,17 +66,19 @@
         <button id="btn-delete-selected" title="删除选中 (Del)">删除选中</button>
         <button id="btn-delete-all" title="一键全部删除">全部删除</button>
       </div>
-      <div class="toolbar-spacer"></div>
+      <div class="toolbar-spacer toolbar-time-wrap">
+        <span id="toolbar-time-range">时间段：-</span>
+      </div>
       <div class="toolbar-sep"></div>
       <div class="toolbar-group save-group">
         <button id="btn-backup-only" title="手动备份当前文件">备份</button>
+        <button id="btn-restore-backup" title="从 .bak 备份还原所有文件">还原备份</button>
         <button id="btn-import-acl" title="导入外部 .acl 覆盖当前">导入</button>
-        <button id="btn-export-csv" title="导出 CSV 文件供检查">导出 CSV</button>
-        <button id="btn-csv-to-acl" title="从 CSV 生成 ACL 文件">CSV → ACL</button>
         <button id="btn-save-as" title="另存为…">另存为</button>
         <button id="btn-save" class="btn-primary-sm" title="保存 (Ctrl+S)">保存</button>
       </div>
     </header>
+
 
     <!-- Tab Panels -->
     <main id="table-container">

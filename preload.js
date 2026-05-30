@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectGameRoot: () => ipcRenderer.invoke('select-game-root'),
   getLastRoot: () => ipcRenderer.invoke('get-last-root'),
   saveLastRoot: (rootPath) => ipcRenderer.invoke('save-last-root', rootPath),
+  initAirportCache: (rootPath) => ipcRenderer.invoke('init-airport-cache', rootPath),
 
   // Browser screen
   scanAcls: (rootPath) => ipcRenderer.invoke('scan-acls', rootPath),
@@ -28,10 +29,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Backup & Import
   manualBackup: (sourcePath) => ipcRenderer.invoke('manual-backup', sourcePath),
   importAcl: () => ipcRenderer.invoke('import-acl'),
+  restoreBackup: (filePath) => ipcRenderer.invoke('restore-latest-backup', filePath),
 
-  // CSV
-  exportCSV: (data) => ipcRenderer.invoke('export-csv', data),
-  csvToAcl: (data) => ipcRenderer.invoke('csv-to-acl', data),
+  // Debug logging from renderer -> main process log file
+  rendererLog: (...args) => ipcRenderer.invoke('renderer-log', ...args),
 
   // Navigation events from menu
   onNavBrowser: (cb) => ipcRenderer.on('nav-browser', () => cb()),
