@@ -65,26 +65,248 @@ Save always produces the same format as the original file. Flight data fields:
 | Voice | string | Voice profile (from audio_clips) |
 | Language | string | en / zh |
 
+## Architecture
+
+All renderer JS files share the global scope (plain `<script>` tags, no ES modules or bundler). The `<script>` load order in `index.html` is the definitive dependency order — each file can only reference symbols defined in files loaded before it.
+
+### Dependency Graph
+
+```
+data-constants.js   (pure data, no dependencies)
+        │
+   state.js         (mutates appState, depends on data-constants.js)
+        │
+   ui-utils.js      (showScreen/showToast/showModal, depends on state.js)
+        │
+   ┌────┼────┬──────────┐
+   │    │    │          │
+   ▼    ▼    ▼          ▼
+setup  browser   editor-   cell-     ← Screen handlers (all depend on ui-utils + state + data-constants)
+-screen -screen   core     editor
+                  │          │
+          ┌───────┘          │
+          ▼                  ▼
+    flight-actions      save-actions    ← Mutate flights & save (depend on editor-core for autoSort/renderAllSections)
+    import-actions                       ← depends on editor-core to reload after import
+                  │
+          ┌───────┘
+          ▼
+   timeline-editors.js     ← depends on editor-shell (updateTimelineStatus) + editor-core (renderAllSections on rwy change)
+          │
+          ▼
+   editor-shell.js         ← Init & event wiring; depends on EVERY file above (wires onClick handlers, keyboard shortcuts)
+```
+
+**Key cross-module calls (file A calls file B):**
+
+| Caller | Callee | Function(s) |
+|--------|--------|-------------|
+| `flight-actions.js` | `editor-core.js` | `autoSort()`, `renderAllSections()` |
+| `save-actions.js` | `editor-core.js` | `autoSort()`, `renderAllSections()`, `appState` |
+| `import-actions.js` | `editor-core.js` | `openEditor()` (re-opens after import) |
+| `cell-editor.js` | `editor-core.js` | `renderAllSections()` (after inline edit) |
+| `timeline-editors.js` | `editor-shell.js` | `updateTimelineStatus()` |
+| `timeline-editors.js` | `editor-core.js` | `renderAllSections()` (on runway change) |
+| `editor-shell.js` | `editor-core.js` | `openEditor()`, `autoSort()`, `renderAllSections()` |
+| `editor-shell.js` | `setup-screen.js` | Calls `initSetupScreen()` or inline handler |
+| `editor-shell.js` | `browser-screen.js` | `showBrowser()` |
+| `editor-shell.js` | `flight-actions.js` | `addArrivalFlight()`, `addDepartureFlight()`, `deleteSelected()`, etc. |
+| `editor-shell.js` | `save-actions.js` | `handleSave()`, `handleSaveAs()`, `handleManualBackup()` |
+| `editor-shell.js` | `import-actions.js` | `handleImportAcl()`, `handleRestoreBackup()` |
+| `editor-shell.js` | `timeline-editors.js` | `renderWeatherEditor()`, `renderWindEditor()`, `renderRunwayEditor()` |
+
+### Backend Module Dependency Graph (Node.js / IPC side)
+
+The backend modules in `src/` form a strict acyclic dependency tree. `acl_parser.js` is the **facade** — `main.js` only requires this one file, which delegates to all sub-modules.
+
+```
+constants.js  ──────────────────────────────────────────── (pure data, no deps)
+     │
+time_utils.js ─────────────────────────────── (tick math, depends on constants.js)
+     │
+     ├── csv_io.js ────────────────────────── (CSV read/write, depends on constants+time_utils)
+     │
+     ├── acl_scenery.js ───────────────────── (SceneryData parser, no deps)
+     │
+     ├── acl_flights_schedule.js ──────────── (old FlightSchedule type 33/34, depends on constants+time_utils)
+     │
+     ├── acl_world_state.js ──────────────── (WorldState type 56/54/35, depends on constants+time_utils)
+     │         │
+     │         └── acl_flight_plans.js ────── (new FlightPlans type 37/52/57/58, depends on acl_world_state)
+     │                   │
+     └───────┬───────────┴──────┬────────────────┐
+             │                  │                │
+             ▼                  ▼                ▼
+    acl_utils.js ─────────────────────────────── (enrich, sort, scan, audio — depends on all parsers + csv_io)
+             │
+             ▼
+    acl_parser.js ────────────────────────────── (FACADE: loadFlights, saveFlights, generateFullAcl, generateAclFromCsv)
+             │
+             ▼
+         main.js ─────────────────────────────── (Electron main process, IPC handlers)
+```
+
+**Key cross-module calls (backend):**
+
+| Caller | Callee | Function(s) |
+|--------|--------|-------------|
+| `acl_parser.js` | `acl_scenery.js` | `_parseSceneryData()` |
+| `acl_parser.js` | `acl_flights_schedule.js` | `_parseFlightSchedule()`, `_rebuildBlocks()`, `_updateRlength()` |
+| `acl_parser.js` | `acl_world_state.js` | `_parseWorldStateData()`, `_extractFlightsFromWorldState()`, `_syncWorldState()` |
+| `acl_parser.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()`, `_syncFlightPlans()`, `_rebuildWorldStateSections()` |
+| `acl_parser.js` | `acl_utils.js` | `_enrichFlightsFromSource()`, all public utils |
+| `acl_flight_plans.js` | `acl_world_state.js` | `_applyWsField()`, `_generateGuid()` |
+| `acl_utils.js` | `acl_flights_schedule.js` | `_parseFlightSchedule()` |
+| `acl_utils.js` | `acl_world_state.js` | `_parseWorldStateData()`, `_extractFlightsFromWorldState()` |
+| `acl_utils.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()` |
+| `main.js` | `acl_parser.js` | `loadFlights()`, `saveFlights()`, `generateFullAcl()`, `generateAclFromCsv()`, `collectUniqueValues()`, etc. |
+
+**Note on export convention:** Underscore-prefixed exports (`_parse...`, `_apply...`, `_sync...`) are internal functions exposed only for testing and cross-module use within the backend. Public API functions have no underscore prefix.
+
+### ACL Parsing Flow
+
+When loading a `.acl` file, the parser detects the file format and dispatches accordingly:
+
+```
+loadFlights(aclPath)
+  ├── _parseSceneryData(text)           → extracts Runway and Stand GUID maps
+  ├── _parseWorldStateFlightPlans(text) → try new format (type 37 in WorldState.FlightPlans)
+  │   └── IF found: enrich CSV flights from FlightPlans data ✓
+  │
+  └── IF no FlightPlans found:
+      ├── _parseFlightSchedule(text)    → try old format (type 33 FlightSchedule array)
+      └── _parseWorldStateData(text)    → extract TaskFlightState entries
+          └── _extractFlightsFromWorldState() → convert WS entries to flight objects
+```
+
+When saving, `_rebuildWorldStateSections()` handles the new format (rebuilds FlightPlans entries from scratch), while `_rebuildBlocks() + _syncWorldState()` handle the old format (in-place patch + WorldState sync).
+
 ## Project Structure
 
 ```
 ├── main.js              # Electron main process + all IPC handlers
-├── preload.js           # Secure contextBridge IPC layer
+├── preload.js           # Secure contextBridge IPC layer (exposes ipcApi to renderer)
 ├── build.js             # Electron-builder build script
 ├── package.json
 ├── src/
-│   ├── acl_parser.js    # Core: ACL read/write, FlightPlans/WorldState sync, CSV import/export, audio callsign loading
-│   ├── acl_scanner.js   # Game root scanner (discovers airports & .acl files)
-│   ├── renderer.js      # All UI logic (3-screen state machine, cell editing, validation, timeline editors)
-│   ├── index.html       # 3-screen SPA shell (Setup / Browser / Editor)
-│   ├── style.css        # Dark theme styles
-│   └── logger.js        # File-based logging (dev mode)
+│   │
+│   │ ── Backend: ACL parsing & CSV I/O (Node.js, no DOM) ──
+│   │
+│   ├── constants.js          # Shared constants: field definitions, tick constants, aircraft designator map
+│   │   Depends on: nothing (pure data)
+│   │   Exports: FIELDS, FIELD_LABELS, DROPDOWN_FIELDS, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS, AIRCRAFT_DESIGNATOR_MAP
+│   │
+│   ├── time_utils.js         # Newtonsoft.Json DateTime ticks ↔ HH:MM:SS conversion, base-date extraction
+│   │   Depends on: constants.js
+│   │   Exports: ticksToTime(), timeToTicks(), ticksToString(), _guessDesignator(), _extractBaseDateTicks(), _extractBaseDateFromText()
+│   │
+│   ├── csv_io.js             # CSV import/export: game-compatible 16-column format, value scanning
+│   │   Depends on: constants.js, time_utils.js
+│   │   Exports: importCsvFromFile(), exportCSV(), exportGameCSV(), collectUniqueValuesFromCSV()
+│   │
+│   ├── acl_scenery.js        # SceneryData parser: extracts Runway Name↔GUID and Stand Identifier↔GUID maps
+│   │   Depends on: nothing (pure text parsing, no imports)
+│   │   Exports: _parseSceneryData()
+│   │
+│   ├── acl_flights_schedule.js  # Old-format FlightSchedule parser (type 33 FlightPlanState array → type 34 entries)
+│   │   Depends on: constants.js, time_utils.js
+│   │   Exports: _parseFlightSchedule(), _parseFlightBlock(), _applyChanges(), _buildNewBlock(), _rebuildBlocks(), _updateRlength()
+│   │
+│   ├── acl_world_state.js    # WorldState parser: TaskFlightState (type 56/54), AircraftState (type 35)
+│   │   Depends on: constants.js, time_utils.js
+│   │   Exports: _generateGuid(), _parseWorldStateData(), _extractFlightsFromWorldState(),
+│   │            _syncWorldState(), _applyWsChanges(), _applyAircraftStateChanges(), _applyWsField()
+│   │
+│   ├── acl_flight_plans.js   # New-format FlightPlans parser (type 37 → ArrivalLeg type 58 / DepartureLeg type 57)
+│   │   Depends on: constants.js, time_utils.js, acl_world_state.js (_applyWsField, _generateGuid)
+│   │   Exports: _parseWorldStateFlightPlans(), _parseFlightPlanEntry(), _syncFlightPlans(),
+│   │            _applyFlightPlanChanges(), _buildFlightPlanBlock(), _buildFlightPlanStateEntry(),
+│   │            _buildFlightPlanArrivalLeg(), _buildFlightPlanDepartureLeg(), _rebuildWorldStateSections()
+│   │
+│   ├── acl_utils.js          # Utility functions: CSV↔ACL enrichment, chronological sort, dropdown scanning, audio callsign loading
+│   │   Depends on: constants.js, acl_scenery.js, acl_flights_schedule.js, acl_world_state.js, acl_flight_plans.js
+│   │   Exports: _enrichFlightsFromSource(), sortFlightsChronologically(), collectUniqueValues(),
+│   │            getFileInfo(), loadAudioCallsigns(), mergeAudioCallsigns()
+│   │
+│   ├── acl_parser.js         # FACADE — public API: load/save/generate ACL, re-exports all sub-module exports
+│   │   Depends on: ALL modules above
+│   │   Exports: loadFlights(), saveFlights(), generateFullAcl(), generateAclFromCsv(),
+│   │            + re-exports from csv_io, acl_utils, and internal _parse* functions (used by tests)
+│   │
+│   ├── acl_scanner.js        # Game root scanner: discovers all airports and their .acl/csv files
+│   │   Depends on: fs, path only
+│   │   Exports: scanGameRoot(), getAllAirportsFromPlaytest()
+│   │
+│   ├── index.html            # 3-screen SPA shell (Setup / Browser / Editor), loads all JS in dependency order
+│   ├── style.css             # Dark theme styles
+│   ├── logger.js             # File-based logging (dev mode)
+│   │
+│   └── renderer/             # 12-module UI logic (refactored from single 2137-line renderer.js)
+│       │
+│       │ ── Foundation (loaded first, no renderer dependencies) ──
+│       ├── data-constants.js
+│       │   Exports: AIRPORT_META, AIRLINE_CODE_MAP, ALL_FIELDS, FIELD_LABELS, TIME_FIELDS,
+│       │            DROPDOWN_FIELDS, COL_CLASSES, ARRIVAL_FIELDS, DEPARTURE_FIELDS
+│       │   Helpers: getAirlineCode(), airportDisplayName(), airportSortOrder()
+│       │   Depends on: nothing (pure data + pure functions)
+│       │
+│       ├── state.js
+│       │   Exports: appState{} (the single global state object), nextFlightNumber,
+│       │            initFlightNumberCounter()
+│       │   Depends on: data-constants.js
+│       │
+│       ├── ui-utils.js
+│       │   Exports: showScreen(name), showToast(msg, type), showModal(title, bodyHtml, actionsHtml),
+│       │            hideModal(), showAlert(title, msg), escapeHtml(str), stripSuffixes(name)
+│       │   Depends on: state.js (reads/writes appState.screen)
+│       │
+│       │ ── Screen controllers (each handles one screen's rendering + events) ──
+│       ├── setup-screen.js
+│       │   Depends on: ui-utils.js, state.js
+│       │   Renders: Screen 0 — game root folder picker with Steam path instructions
+│       │
+│       ├── browser-screen.js
+│       │   Exports: showBrowser() — rescans .acl files, renders grouped card UI
+│       │   Depends on: ui-utils.js, state.js, data-constants.js
+│       │   Renders: Screen 1 — level cards grouped by airport, tag pills, hidden-toggle
+│       │
+│       ├── editor-core.js
+│       │   Exports: openEditor(filePath, airportIcao), autoSort(), populateConfigBar(),
+│       │            getActiveColumns(), buildSectionTable(), renderAllSections(), autoFillSingleOptionColumns()
+│       │   Depends on: ui-utils.js, state.js, data-constants.js
+│       │   Renders: Screen 2 — config bar, arrivals/departures table sections
+│       │
+│       │ ── Interaction modules (tightly coupled to editor-core's DOM) ──
+│       ├── cell-editor.js
+│       │   Exports: startCellEdit(td, col, idx), moveToNextCell(), openTimeClockPopover()
+│       │   Depends on: ui-utils.js, state.js, data-constants.js, editor-core.js
+│       │
+│       ├── flight-actions.js
+│       │   Exports: addArrivalFlight(), addDepartureFlight(), deleteSelected(), deleteAll(), copyHighlighted()
+│       │   Depends on: ui-utils.js, state.js, editor-core.js
+│       │
+│       ├── save-actions.js
+│       │   Exports: handleSave(), handleSaveAs(), handleManualBackup(), runTripleValidation(), doSaveAcl(), validateCallsigns()
+│       │   Depends on: ui-utils.js, state.js, editor-core.js
+│       │
+│       ├── import-actions.js
+│       │   Exports: handleImportAcl(), handleRestoreBackup()
+│       │   Depends on: ui-utils.js, state.js, editor-core.js
+│       │
+│       ├── timeline-editors.js
+│       │   Exports: renderWeatherEditor(), renderWindEditor(), renderRunwayEditor(), WEATHER_PRESETS
+│       │   Depends on: ui-utils.js, state.js, editor-shell.js
+│       │
+│       └── editor-shell.js
+│           Exports: updateTimelineStatus(), updateStatusBar(), getLastRootLocal(), saveLastRootLocal()
+│           Depends on: ALL previous renderer modules
+│           Wires: toolbar buttons, search, keyboard shortcuts → delegates to action modules
 ├── test/
-│   ├── e2e_save_load.js         # End-to-end round-trip: load → save → load → compare
-│   ├── parse_airport.js         # Smoke test: parse all airports, validate field coverage
-│   ├── csv_vs_flightplans.js    # Cross-check CSV imports against ACL FlightPlans entries
-│   ├── callsign_gen_test.js     # Verify CallSign prefixes match airline ICAO codes
-│   └── timeline_comparison.js   # Compare JSON timeline files against ACL-embedded data
+│   ├── e2e_save_load.js           # End-to-end round-trip: load → save → load → compare
+│   ├── parse_airport.js           # Smoke test: parse all airports, validate field coverage
+│   ├── csv_vs_flightplans.js      # Cross-check CSV imports against ACL FlightPlans entries
+│   ├── callsign_gen_test.js       # Verify CallSign prefixes match airline ICAO codes
+│   └── timeline_comparison.js     # Compare JSON timeline files against ACL-embedded data
 └── dist/                # Build output (AC27 Level Editor.exe)
 ```
 

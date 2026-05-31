@@ -415,7 +415,7 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
 
 // ─── IPC: Save As ────────────────────────────────────────
 
-ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, suggestedName }) => {
+ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, suggestedName, _rawText }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: '另存为 .acl 文件',
     defaultPath: suggestedName || 'edited_level.acl',
@@ -426,6 +426,13 @@ ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayCont
   try {
     // Re-sort flights to chronological order before saving
     const saveFlights = sortFlightsChronologically(flights);
+
+    // For WorldState/FlightPlans paths, write template text to new file first
+    // so _rebuildWorldStateSections can read it as a template
+    if ((_fromWorldState || _fromFlightPlans) && _rawText) {
+      fs.writeFileSync(result.filePath, _rawText, 'utf-8');
+    }
+
     generateFullAcl(result.filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans);
 
     // Also write CSV alongside
