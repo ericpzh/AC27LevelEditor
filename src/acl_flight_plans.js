@@ -2,9 +2,11 @@
  * ACL FlightPlans parser — new game format (type 37/52), ArrivalLeg (type 58), DepartureLeg (type 57).
  */
 const fs = require('fs');
+const path = require('path');
 const { FALLBACK_BASE_DATE_TICKS } = require('./constants');
 const { ticksToTime, timeToTicks, _extractBaseDateFromText, ticksToString } = require('./time_utils');
 const { _applyWsField, _generateGuid } = require('./acl_world_state');
+const { calcProgressRatio, buildAircraftEntry } = require('./acl_dynamics');
 
 // ─── Parse WorldState.FlightPlans ─────────────────────────────
 
@@ -425,11 +427,24 @@ function _buildFlightPlanStateEntry(flight, entryId, baseDateTicks) {
 
 // ─── Rebuild WorldState.FlightPlans & Aircrafts from scratch ──
 
-function _rebuildWorldStateSections(aclPath, flights, baseDateTicks) {
+function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, dynamicsTemplates, aclcfgStartTime) {
   const log = (msg) => console.log('[ACL-REBUILD]', msg);
   const text = fs.readFileSync(aclPath, 'utf-8');
   const bdt = baseDateTicks || _extractBaseDateFromText(text);
-  log('baseDateTicks: ' + bdt + '  flights: ' + (flights ? flights.length : 0));
+  // Extract ICAO from path: .../Airports/<ICAO>/Levels/...
+  const icaoMatch = aclPath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+  const icao = icaoMatch ? icaoMatch[1] : '';
+  // Fallback: read startTime from .aclcfg if not passed
+  if (!aclcfgStartTime) {
+    try {
+      const cfgPath = aclPath.replace(/\.acl$/i, '.aclcfg');
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        aclcfgStartTime = cfg.startTime || null;
+      }
+    } catch (_) {}
+  }
+  log('baseDateTicks: ' + bdt + '  flights: ' + (flights ? flights.length : 0) + ' dynamicsTemplates: ' + (dynamicsTemplates ? Object.keys(dynamicsTemplates).length : 0) + ' startTime: ' + aclcfgStartTime + ' icao: ' + icao);
 
   if (!flights || flights.length === 0) {
     log('WARNING: empty flights array, skipping rebuild');
@@ -487,32 +502,87 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks) {
   let segBetween = text.substring(acContentEnd, fpContentStart);
   const segAfter = text.substring(fpContentEnd);
 
-  // 5. Update $rlength in Aircrafts
+  // 5. Generate new FlightPlans entries (need to know GUIDs for Aircrafts linking)
+  const fpEntries = [];
+  const fpGuids = []; // parallel to flights array — GUID used for each FlightPlan
+  for (let i = 0; i < flights.length; i++) {
+    // Generate GUID first so we can link AircraftState to it
+    const fpGuid = _generateGuid();
+    fpGuids.push(fpGuid);
+    fpEntries.push(_buildFlightPlanStateEntryWithGuid(flights[i], 90000 + i, bdt, fpGuid));
+  }
+  log('generated ' + fpEntries.length + ' FlightPlan entries');
+
+  // 6. Build Aircrafts entries for arrivals with DynamicsParams templates
+  const acEntries = [];
+  if (dynamicsTemplates) {
+    for (let i = 0; i < flights.length; i++) {
+      const fl = flights[i];
+      const isArrival = (fl.isDeparture === false) ||
+        (((fl.LandingTime || '').trim() && !(fl.OffBlockTime || '').trim()));
+      if (!isArrival) continue;
+
+      const star = fl.Airway || '';
+      const runway = fl.Runway || '';
+      if (!star || !runway) continue;
+
+      const key = star + '|' + runway;
+      const template = dynamicsTemplates[key];
+      if (!template) {
+        log('  no template for "' + key + '", skipping Aircraft entry for Callsign=' + fl.CallSign);
+        continue;
+      }
+
+      // Compute timeDiff = landingTime - startTime in seconds
+      let timeDiff = 0;
+      const landing = fl.LandingTime || '';
+      const start = aclcfgStartTime || '';
+      if (landing && start) {
+        const _toSec = (t) => { const p = t.split(':'); return +p[0]*3600 + +p[1]*60 + +p[2]; };
+        timeDiff = _toSec(landing) - _toSec(start);
+      }
+      // Temp validator: skip flights landing within 20 min of game start
+      if (timeDiff < 1200) {
+        log('  SKIP (td < 20min): Callsign=' + fl.CallSign + ' td=' + timeDiff);
+        continue;
+      }
+      const progressRatio = calcProgressRatio(icao, runway, star, timeDiff);
+      log('  build Aircraft entry: Callsign=' + fl.CallSign + ' STAR=' + star + ' RWY=' + runway + ' td=' + timeDiff + ' PR=' + progressRatio);
+
+      if (progressRatio < 0.01) {
+        log('  ProgressRatio < 0.01, skipping entry');
+        continue;
+      }
+
+      const entryText = buildAircraftEntry(template, progressRatio, fpGuids[i]);
+      acEntries.push(entryText);
+    }
+  }
+  log('generated ' + acEntries.length + ' Aircraft entries');
+
+  // 7. Update $rlength in Aircrafts
   const acMarker = segBefore.lastIndexOf('"Aircrafts"');
   if (acMarker >= 0) {
     const beforeAc = segBefore.substring(0, acMarker);
     const fromAc = segBefore.substring(acMarker);
-    segBefore = beforeAc + fromAc.replace(/"\$rlength"\s*:\s*\d+/, '"$rlength": 0');
+    segBefore = beforeAc + fromAc.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${acEntries.length}`);
   }
 
-  // 6. Update $rlength in FlightPlans
+  // 8. Update $rlength in FlightPlans
   const fpMarker = segBetween.indexOf('"FlightPlans"');
   if (fpMarker >= 0) {
     const beforeFp = segBetween.substring(0, fpMarker);
     const fromFp = segBetween.substring(fpMarker);
-    segBetween = beforeFp + fromFp.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${flights.length}`);
+    segBetween = beforeFp + fromFp.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${fpEntries.length}`);
   }
 
-  // 7. Generate new FlightPlans entries
-  const fpEntries = [];
-  for (let i = 0; i < flights.length; i++) {
-    fpEntries.push(_buildFlightPlanStateEntry(flights[i], 90000 + i, bdt));
-  }
-  log('generated ' + fpEntries.length + ' FlightPlan entries');
+  // 9. Assemble and write
+  const acContent = acEntries.length > 0
+    ? '\n' + acEntries.join(',\n') + '\n            '
+    : '';
 
-  // 8. Assemble and write
   const newText =
-    segBefore + '\n            ]' +
+    segBefore + acContent + ']' +
     segBetween + '\n                ' +
     fpEntries.join(',\n                ') +
     '\n            ]' +
@@ -520,6 +590,49 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks) {
 
   fs.writeFileSync(aclPath, newText, 'utf-8');
   log('SUCCESS – file written (' + (newText.length / 1024).toFixed(0) + ' KB)');
+}
+
+// ─── Build FlightPlanStateEntry with preset GUID ────────────────
+
+function _buildFlightPlanStateEntryWithGuid(flight, entryId, baseDateTicks, fpGuid) {
+  const bdt = baseDateTicks || FALLBACK_BASE_DATE_TICKS;
+  const reg = flight._Registration || flight.Registration || '';
+  const acType = flight.AircraftType || '';
+  const airline = flight.AirlineName || '';
+  const voice = flight.Voice || '';
+  const lang = flight.Language || '';
+
+  const isArrival = (flight.isDeparture === false) ||
+    (((flight.LandingTime || '').trim() && !(flight.OffBlockTime || '').trim()));
+
+  const lines = [];
+  lines.push('                {');
+  lines.push(`                    "$k": "${fpGuid}",`);
+  lines.push('                    "$v": {');
+  lines.push(`                        "$id": ${entryId},`);
+  lines.push('                        "$type": "56|ContextCross.States.FlightPlanState, GroundATC.Core",');
+  lines.push(`                        "Guid": "${fpGuid}",`);
+  lines.push('                        "Enabled": true,');
+  if (reg) lines.push(`                        "Registration": "${reg}",`);
+  else lines.push('                        "Registration": null,');
+  lines.push(`                        "AircraftType": "${acType}",`);
+  lines.push(`                        "AirlineName": "${airline}",`);
+  lines.push(`                        "Voice": "${voice}",`);
+  lines.push(`                        "Language": "${lang}",`);
+
+  if (isArrival) {
+    lines.push('                        "Arrival":');
+    lines.push(_buildFlightPlanArrivalLeg(flight, entryId, bdt));
+    lines.push('                        "Departure": null');
+  } else {
+    lines.push('                        "Arrival": null,');
+    lines.push('                        "Departure":');
+    lines.push(_buildFlightPlanDepartureLeg(flight, entryId, bdt));
+  }
+
+  lines.push('                    }');
+  lines.push('                }');
+  return lines.join('\n');
 }
 
 module.exports = {

@@ -235,6 +235,10 @@ document.getElementById('btn-select-root').addEventListener('click', async () =>
   await window.electronAPI.initAirportCache(result.rootPath).catch(err => {
     console.error('Airport cache init error:', err);
   });
+  // Capture DynamicsParams templates from all airport ACLs
+  await window.electronAPI.captureDynamicsTemplates(result.rootPath).catch(err => {
+    console.error('Dynamics templates capture error:', err);
+  });
 
   showBrowser();
 });
@@ -2127,6 +2131,10 @@ function saveLastRootLocal(rootPath) {
       // Phase 0: Initialize airport cache (scan all CSV + audio per airport)
       await window.electronAPI.initAirportCache(lastRoot).catch(err => {
         console.error('Airport cache init error:', err);
+      });
+      // Capture DynamicsParams templates from all airport ACLs
+      await window.electronAPI.captureDynamicsTemplates(lastRoot).catch(err => {
+        console.error('Dynamics templates capture error:', err);
       });
       showBrowser();
       return;

@@ -8,10 +8,12 @@ if (!app.isPackaged) initLogger();
 
 const { loadFlights, saveFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically } = require('./src/acl_parser');
 const { scanGameRoot } = require('./src/acl_scanner');
+const { captureAllDynamicsTemplates } = require('./src/acl_dynamics');
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
+let dynamicsTemplatesCache = null; // "STAR|Runway" → { type, vBlock }
 
 function createWindow() {
   Menu.setApplicationMenu(null);
@@ -338,6 +340,21 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
   return cache;
 });
 
+// ─── IPC: Capture DynamicsParams templates from all airports ────
+
+ipcMain.handle('capture-dynamics-templates', async (_event, rootPath) => {
+  console.log('[IPC] capture-dynamics-templates START, rootPath:', rootPath);
+  try {
+    const templates = captureAllDynamicsTemplates(rootPath);
+    dynamicsTemplatesCache = templates;
+    console.log('[IPC] capture-dynamics-templates OK —', Object.keys(templates).length, 'templates');
+    return { success: true, count: Object.keys(templates).length };
+  } catch (err) {
+    console.error('[IPC] capture-dynamics-templates FAIL:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
 // ─── IPC: Load an .acl file ──────────────────────────────
 
 ipcMain.handle('load-acl', async (_event, filePath) => {
@@ -380,8 +397,43 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
       fs.copyFileSync(filePath, filePath + '.bak');
     }
 
+    // Read startTime from .aclcfg for ProgressRatio calculation
+    let aclcfgStartTime = null;
+    const _cfgPath = path.join(dir, base + '.aclcfg');
+    if (fs.existsSync(_cfgPath)) {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(_cfgPath, 'utf-8'));
+        aclcfgStartTime = cfg.startTime || null;
+      } catch (_) {}
+    }
+
+    // Temp validator: reject arrivals (<=20min) and departures (<=10min) from game start
+    if (aclcfgStartTime) {
+      const _toSec = (t) => { const p = t.split(':'); return +p[0]*3600 + +p[1]*60 + +p[2]; };
+      const startSec = _toSec(aclcfgStartTime);
+      for (const fl of saveFlights) {
+        const isArrival = (fl.isDeparture === false) || ((fl.LandingTime || '').trim() && !(fl.OffBlockTime || '').trim());
+        const isDeparture = (fl.isDeparture === true) || (!(fl.LandingTime || '').trim() && (fl.OffBlockTime || '').trim()) || (!(fl.LandingTime || '').trim() && !(fl.OffBlockTime || '').trim());
+        if (isArrival) {
+          const landing = fl.LandingTime || '';
+          if (!landing) continue;
+          const td = _toSec(landing) - startSec;
+          if (td < 1200) {
+            return { success: false, error: `航班 ${fl.CallSign || fl.arrivalCallSign || '(未知)'} 降落时间 ${landing} 距游戏开始 ${aclcfgStartTime} 仅 ${Math.floor(td/60)}分${Math.round(td%60)}秒，需要至少20分钟。` };
+          }
+        } else if (isDeparture) {
+          const offblock = fl.OffBlockTime || '';
+          if (!offblock) continue;
+          const td = _toSec(offblock) - startSec;
+          if (td < 600) {
+            return { success: false, error: `航班 ${fl.CallSign || fl.departureCallSign || '(未知)'} 推出时间 ${offblock} 距游戏开始 ${aclcfgStartTime} 仅 ${Math.floor(td/60)}分${Math.round(td%60)}秒，需要至少10分钟。` };
+          }
+        }
+      }
+    }
+
     // Generate full ACL from scratch, preserving header structure
-    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans);
+    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, dynamicsTemplatesCache, aclcfgStartTime);
 
     // ── Also sync the CSV that the game loads ──
     let csvSynced = false;
@@ -433,7 +485,7 @@ ipcMain.handle('save-as-acl', async (_event, { flights, before, after, arrayCont
       fs.writeFileSync(result.filePath, _rawText, 'utf-8');
     }
 
-    generateFullAcl(result.filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans);
+    generateFullAcl(result.filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, dynamicsTemplatesCache, null);
 
     // Also write CSV alongside
     let csvSynced = false;

@@ -132,6 +132,10 @@ function saveLastRootLocal(rootPath) {
       await window.electronAPI.initAirportCache(lastRoot).catch(err => {
         console.error('Airport cache init error:', err);
       });
+      // Capture DynamicsParams templates from all airport ACLs
+      await window.electronAPI.captureDynamicsTemplates(lastRoot).catch(err => {
+        console.error('Dynamics templates capture error:', err);
+      });
       showBrowser();
       return;
     }

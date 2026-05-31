@@ -150,9 +150,9 @@ function saveFlights(aclPath, flights, before, after, arrayContent, originalBloc
 
 // ─── Generate full ACL from scratch ──────────────────────────
 
-function generateFullAcl(aclPath, flights, headerBefore = '', footerAfter = '', originalBlocks = [], worldStateData = null, sceneryMaps = null, _fromWorldState = false, _fromFlightPlans = false) {
+function generateFullAcl(aclPath, flights, headerBefore = '', footerAfter = '', originalBlocks = [], worldStateData = null, sceneryMaps = null, _fromWorldState = false, _fromFlightPlans = false, dynamicsTemplates = null, aclcfgStartTime = null) {
   if (_fromFlightPlans || _fromWorldState) {
-    _rebuildWorldStateSections(aclPath, flights);
+    _rebuildWorldStateSections(aclPath, flights, undefined, dynamicsTemplates, aclcfgStartTime);
     return;
   }
 
