@@ -98,14 +98,28 @@ function runTripleValidation() {
     }
   });
 
-  if (appState._configStartTime && appState._configEndTime) {
+  if (appState._earliestTime && appState._configEndTime) {
     const toHHMM = (s) => {
       const parts = String(s).split(':');
       return parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10);
     };
-    const startTime = toHHMM(appState._configStartTime);
+    // Arrival floor = earliest + 10 min, departure floor = earliest
+    const etParts = String(appState._earliestTime).split(':');
+    const etH = parseInt(etParts[0], 10);
+    const etM = parseInt(etParts[1], 10);
+    const depStartTime = etH * 100 + etM;
+    const arrStartTime = Math.floor((etH * 60 + etM + 10) / 60) * 100 + ((etH * 60 + etM + 10) % 60);
     let endTime = toHHMM(appState._configEndTime);
     endTime += 15;
+
+    const floorLabel = String(etH).padStart(2, '0') + ':' + String(etM).padStart(2, '0');
+    const arrFloorH = Math.floor((etH * 60 + etM + 10) / 60) % 24;
+    const arrFloorM = (etH * 60 + etM + 10) % 60;
+    const arrFloorLabel = String(arrFloorH).padStart(2, '0') + ':' + String(arrFloorM).padStart(2, '0');
+    const endTotal = Math.floor(toHHMM(appState._configEndTime) / 100) * 60 + (toHHMM(appState._configEndTime) % 100) + 15;
+    const endH = Math.floor(endTotal / 60) % 24;
+    const endM = endTotal % 60;
+    const endLabel = String(endH).padStart(2, '0') + ':' + String(endM).padStart(2, '0');
 
     appState.flights.forEach((fl, i) => {
       for (const col of ['OffBlockTime', 'TakeoffTime', 'LandingTime', 'InBlockTime']) {
@@ -114,8 +128,11 @@ function runTripleValidation() {
         const parts = String(timeVal).split(':');
         if (parts.length < 2) continue;
         const t = parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10);
-        if (t < startTime || t > endTime) {
-          issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): ${FIELD_LABELS[col] || col} "${timeVal}" 超出有效时间范围`);
+        const isDep = (col === 'OffBlockTime' || col === 'TakeoffTime');
+        const minT = isDep ? depStartTime : arrStartTime;
+        const rangeLabel = '≥ ' + (isDep ? floorLabel : arrFloorLabel) + ' / ≤ ' + endLabel;
+        if (t < minT || t > endTime) {
+          issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): ${FIELD_LABELS[col] || col} "${timeVal}" 超出允许范围 (${rangeLabel})`);
         }
       }
     });
@@ -167,6 +184,7 @@ async function doSaveAcl(createBackup) {
       _fromWorldState: appState._fromWorldState,
       _fromFlightPlans: appState._fromFlightPlans,
       _rawText: appState._rawText,
+      earliestTime: appState._earliestTime,
       createBackup,
     });
 

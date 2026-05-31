@@ -145,9 +145,14 @@ function getFileInfo(aclPath) {
     if (error) return { error, filename: path.basename(aclPath), size: stat.size };
 
     let arrivals = 0, departures = 0;
+    let earliestTime = null;
     for (const fl of flights) {
       if ((fl.LandingTime || '').trim()) arrivals++;
       else if ((fl.OffBlockTime || '').trim()) departures++;
+      for (const field of ['LandingTime', 'OffBlockTime']) {
+        const t = fl[field];
+        if (t && (!earliestTime || t < earliestTime)) earliestTime = t;
+      }
     }
     return {
       filename: path.basename(aclPath),
@@ -156,6 +161,7 @@ function getFileInfo(aclPath) {
       flightCount: flights.length,
       arrivals,
       departures,
+      earliestTime,
     };
   } catch (err) {
     return { error: err.message, filename: path.basename(aclPath), size: 0 };

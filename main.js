@@ -84,16 +84,17 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
   console.log('[IPC] get-airport-files-info:', airportIcao, 'files count:', airport.aclFiles.length);
   const results = airport.aclFiles.map((f, i) => {
     const info = getFileInfo(f.path);
-    // Read .aclcfg to get startTime for sorting
+    // Read .aclcfg to get endTime and flightScheduleFile
     const base = f.filename.replace(/\.acl$/i, '');
     const cfgPath = path.join(path.dirname(f.path), base + '.aclcfg');
     if (fs.existsSync(cfgPath)) {
       try {
         const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-        info.startTime = cfg.startTime || null;
         info.endTime = cfg.endTime || null;
       } catch (_) { /* ignore malformed cfg */ }
     }
+    // Use earliest flight time as actual start time (not config warmup time)
+    info.startTime = info.earliestTime || null;
     console.log('[IPC]   file', i, f.filename, '->', info.error ? ('ERROR: ' + info.error) : ('OK arrivals=' + info.arrivals + ' departures=' + info.departures + ' startTime=' + (info.startTime || 'none')));
     return info;
   });
@@ -374,7 +375,18 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
       } catch (_) {}
     }
 
-    return { success: true, path: filePath, config, ...data };
+    // Compute earliest flight time from loaded data
+    let earliestTime = null;
+    if (data.flights) {
+      for (const fl of data.flights) {
+        for (const field of ['LandingTime', 'OffBlockTime']) {
+          const t = fl[field];
+          if (t && (!earliestTime || t < earliestTime)) earliestTime = t;
+        }
+      }
+    }
+
+    return { success: true, path: filePath, config, earliestTime, ...data };
   } catch (err) {
     console.error('[IPC] load-acl FAIL:', filePath, '|', err.message, '|', err.stack);
     return { success: false, error: err.message };
@@ -383,7 +395,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
 
 // ─── IPC: Save .acl with optional .bak overwrite backup ────
 
-ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, createBackup }) => {
+ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, earliestTime, createBackup }) => {
   try {
     const dir = path.dirname(filePath);
     const base = path.basename(filePath, '.acl');
@@ -399,34 +411,42 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
 
     // Read startTime from .aclcfg for ProgressRatio calculation
     let aclcfgStartTime = null;
+    let aclcfgEndTime = null;
     const _cfgPath = path.join(dir, base + '.aclcfg');
     if (fs.existsSync(_cfgPath)) {
       try {
         const cfg = JSON.parse(fs.readFileSync(_cfgPath, 'utf-8'));
         aclcfgStartTime = cfg.startTime || null;
+        aclcfgEndTime = cfg.endTime || null;
       } catch (_) {}
     }
 
-    // Temp validator: reject arrivals (<=20min) and departures (<=10min) from game start
-    if (aclcfgStartTime) {
-      const _toSec = (t) => { const p = t.split(':'); return +p[0]*3600 + +p[1]*60 + +p[2]; };
-      const startSec = _toSec(aclcfgStartTime);
+    // Temp validator: arrivals must be >= earliestTime + 10 min, departures >= earliestTime
+    if (earliestTime) {
+      const etParts = String(earliestTime).split(':');
+      const etH = parseInt(etParts[0], 10);
+      const etM = parseInt(etParts[1], 10);
+      // Arrival floor = earliestTime + 10 min
+      const arrTotal = etH * 60 + etM + 10;
+      const arrH = Math.floor(arrTotal / 60) % 24;
+      const arrM = arrTotal % 60;
+      const arrFloor = String(arrH).padStart(2, '0') + ':' + String(arrM).padStart(2, '0') + ':' + (etParts[2] || '00');
+      // Departure floor = earliestTime (no offset)
+      const depFloor = earliestTime;
       for (const fl of saveFlights) {
         const isArrival = (fl.isDeparture === false) || ((fl.LandingTime || '').trim() && !(fl.OffBlockTime || '').trim());
         const isDeparture = (fl.isDeparture === true) || (!(fl.LandingTime || '').trim() && (fl.OffBlockTime || '').trim()) || (!(fl.LandingTime || '').trim() && !(fl.OffBlockTime || '').trim());
         if (isArrival) {
           const landing = fl.LandingTime || '';
           if (!landing) continue;
-          const td = _toSec(landing) - startSec;
-          if (td < 1200) {
-            return { success: false, error: `航班 ${fl.CallSign || fl.arrivalCallSign || '(未知)'} 降落时间 ${landing} 距游戏开始 ${aclcfgStartTime} 仅 ${Math.floor(td/60)}分${Math.round(td%60)}秒，需要至少20分钟。` };
+          if (landing < arrFloor) {
+            return { success: false, error: `航班 ${fl.CallSign || fl.arrivalCallSign || '(未知)'} 降落时间 ${landing} 早于允许范围 (≥ ${arrFloor.substring(0, 5)})，不允许保存。` };
           }
         } else if (isDeparture) {
           const offblock = fl.OffBlockTime || '';
           if (!offblock) continue;
-          const td = _toSec(offblock) - startSec;
-          if (td < 600) {
-            return { success: false, error: `航班 ${fl.CallSign || fl.departureCallSign || '(未知)'} 推出时间 ${offblock} 距游戏开始 ${aclcfgStartTime} 仅 ${Math.floor(td/60)}分${Math.round(td%60)}秒，需要至少10分钟。` };
+          if (offblock < depFloor) {
+            return { success: false, error: `航班 ${fl.CallSign || fl.departureCallSign || '(未知)'} 推出时间 ${offblock} 早于允许范围 (≥ ${String(depFloor).substring(0, 5)})，不允许保存。` };
           }
         }
       }

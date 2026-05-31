@@ -30,6 +30,7 @@ async function openEditor(filePath, airportIcao) {
   appState.timelineModified = { weather: false, wind: false, runway: false };
 
   // Populate config info bar and store config for validation
+  appState._earliestTime = data.earliestTime || null;
   populateConfigBar(data.config, filePath, airportIcao);
   if (data.config) {
     appState._configStartTime = data.config.startTime || null;
@@ -107,10 +108,12 @@ function autoFillSingleOptionColumns() {
 // ─── Config info bar ────────────────────────────────────
 
 function populateConfigBar(config, filePath, airportIcao) {
-  if (config && config.startTime && config.endTime) {
-    // startTime/endTime are "HH:MM:SS" strings, show only HH:MM
+  // Show earliest flight time from schedule, not config warmup time
+  const start = appState._earliestTime || (config && config.startTime) || null;
+  const end = (config && config.endTime) || null;
+  if (start && end) {
     document.getElementById('toolbar-time-range').textContent =
-      '时间段：' + String(config.startTime).substring(0, 5) + ' ~ ' + String(config.endTime).substring(0, 5);
+      '时间段：' + String(start).substring(0, 5) + ' ~ ' + String(end).substring(0, 5);
   } else {
     document.getElementById('toolbar-time-range').textContent = '时间段：-';
   }
