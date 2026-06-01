@@ -28,7 +28,7 @@ Phase 0 (Setup, once):
   Game Root → scan all CSVs per airport → load audio_clips en+zh → AirportCache
 
 Phase 1 (Load):
-  .acl file → parse flights (FlightSchedule or WorldState.FlightPlans)
+  .acl file → parse flights (WorldState.FlightPlans)
            → load .aclcfg config (time bounds, airport code, sceneries)
            → load timeline JSONs (weather, wind, runway)
            → collect per-airport dropdown values (ACL + CSV + audio merge)
@@ -40,14 +40,9 @@ Phase 3 (Save):
 
 ## ACL File Format
 
-`.acl` files use Newtonsoft.Json serialization with `$type` and `$rcontent`. The editor supports **two input formats**:
+`.acl` files use Newtonsoft.Json serialization with `$type` and `$rcontent`. The editor uses the `WorldState.FlightPlans` format — a dictionary of keyed `FlightPlanState` entries, each containing either an `Arrival` or `Departure` leg.
 
-| Format | Section | Description |
-|--------|---------|-------------|
-| Legacy | `FlightSchedule` | Array of `FlightPlanState` entries with time ticks |
-| Current | `WorldState.FlightPlans` | Dictionary of keyed `FlightPlanState` entries, each containing either an `Arrival` or `Departure` leg |
-
-Save always produces the same format as the original file. Flight data fields:
+Flight data fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -128,8 +123,6 @@ time_utils.js ──────────────────────
      │
      ├── acl_scenery.js ───────────────────── (SceneryData parser, no deps)
      │
-     ├── acl_flights_schedule.js ──────────── (old FlightSchedule type 33/34, depends on constants+time_utils)
-     │
      ├── acl_world_state.js ──────────────── (WorldState type 56/54/35, depends on constants+time_utils)
      │         │
      │         └── acl_flight_plans.js ────── (new FlightPlans type 37/52/57/58, depends on acl_world_state)
@@ -140,7 +133,7 @@ time_utils.js ──────────────────────
     acl_utils.js ─────────────────────────────── (enrich, sort, scan, audio — depends on all parsers + csv_io)
              │
              ▼
-    acl_parser.js ────────────────────────────── (FACADE: loadFlights, saveFlights, generateFullAcl, generateAclFromCsv)
+    acl_parser.js ────────────────────────────── (FACADE: loadFlights, generateFullAcl, generateAclFromCsv)
              │
              ▼
          main.js ─────────────────────────────── (Electron main process, IPC handlers)
@@ -151,17 +144,15 @@ time_utils.js ──────────────────────
 | Caller | Callee | Function(s) |
 |--------|--------|-------------|
 | `acl_parser.js` | `acl_scenery.js` | `_parseSceneryData()` |
-| `acl_parser.js` | `acl_flights_schedule.js` | `_parseFlightSchedule()`, `_rebuildBlocks()`, `_updateRlength()` |
-| `acl_parser.js` | `acl_world_state.js` | `_parseWorldStateData()`, `_extractFlightsFromWorldState()`, `_syncWorldState()` |
-| `acl_parser.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()`, `_syncFlightPlans()`, `_rebuildWorldStateSections()` |
+| `acl_parser.js` | `acl_world_state.js` | `_parseWorldStateData()`, `_extractFlightsFromWorldState()` |
+| `acl_parser.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()`, `_rebuildWorldStateSections()` |
 | `acl_parser.js` | `acl_utils.js` | `_enrichFlightsFromSource()`, all public utils |
 | `acl_flight_plans.js` | `acl_world_state.js` | `_applyWsField()`, `_generateGuid()` |
-| `acl_utils.js` | `acl_flights_schedule.js` | `_parseFlightSchedule()` |
 | `acl_utils.js` | `acl_world_state.js` | `_parseWorldStateData()`, `_extractFlightsFromWorldState()` |
 | `acl_utils.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()` |
-| `main.js` | `acl_parser.js` | `loadFlights()`, `saveFlights()`, `generateFullAcl()`, `generateAclFromCsv()`, `collectUniqueValues()`, etc. |
+| `main.js` | `acl_parser.js` | `loadFlights()`, `generateFullAcl()`, `generateAclFromCsv()`, `collectUniqueValues()`, etc. |
 
-**Note on export convention:** Underscore-prefixed exports (`_parse...`, `_apply...`, `_sync...`) are internal functions exposed only for testing and cross-module use within the backend. Public API functions have no underscore prefix.
+**Note on export convention:** Underscore-prefixed exports (`_parse...`, `_apply...`, `_rebuild...`) are internal functions exposed only for testing and cross-module use within the backend. Public API functions have no underscore prefix.
 
 ### ACL Parsing Flow
 
@@ -170,16 +161,15 @@ When loading a `.acl` file, the parser detects the file format and dispatches ac
 ```
 loadFlights(aclPath)
   ├── _parseSceneryData(text)           → extracts Runway and Stand GUID maps
-  ├── _parseWorldStateFlightPlans(text) → try new format (type 37 in WorldState.FlightPlans)
+  ├── _parseWorldStateFlightPlans(text) → parse FlightPlans format (type 37 in WorldState.FlightPlans)
   │   └── IF found: enrich CSV flights from FlightPlans data ✓
   │
   └── IF no FlightPlans found:
-      ├── _parseFlightSchedule(text)    → try old format (type 33 FlightSchedule array)
       └── _parseWorldStateData(text)    → extract TaskFlightState entries
           └── _extractFlightsFromWorldState() → convert WS entries to flight objects
 ```
 
-When saving, `_rebuildWorldStateSections()` handles the new format (rebuilds FlightPlans entries from scratch), while `_rebuildBlocks() + _syncWorldState()` handle the old format (in-place patch + WorldState sync).
+When saving, `_rebuildWorldStateSections()` rebuilds FlightPlans entries from scratch.
 
 ## Project Structure
 
@@ -208,29 +198,23 @@ When saving, `_rebuildWorldStateSections()` handles the new format (rebuilds Fli
 │   │   Depends on: nothing (pure text parsing, no imports)
 │   │   Exports: _parseSceneryData()
 │   │
-│   ├── acl_flights_schedule.js  # Old-format FlightSchedule parser (type 33 FlightPlanState array → type 34 entries)
-│   │   Depends on: constants.js, time_utils.js
-│   │   Exports: _parseFlightSchedule(), _parseFlightBlock(), _applyChanges(), _buildNewBlock(), _rebuildBlocks(), _updateRlength()
-│   │
 │   ├── acl_world_state.js    # WorldState parser: TaskFlightState (type 56/54), AircraftState (type 35)
 │   │   Depends on: constants.js, time_utils.js
-│   │   Exports: _generateGuid(), _parseWorldStateData(), _extractFlightsFromWorldState(),
-│   │            _syncWorldState(), _applyWsChanges(), _applyAircraftStateChanges(), _applyWsField()
+│   │   Exports: _generateGuid(), _parseWorldStateData(), _extractFlightsFromWorldState(), _applyWsField()
 │   │
 │   ├── acl_flight_plans.js   # New-format FlightPlans parser (type 37 → ArrivalLeg type 58 / DepartureLeg type 57)
 │   │   Depends on: constants.js, time_utils.js, acl_world_state.js (_applyWsField, _generateGuid)
-│   │   Exports: _parseWorldStateFlightPlans(), _parseFlightPlanEntry(), _syncFlightPlans(),
-│   │            _applyFlightPlanChanges(), _buildFlightPlanBlock(), _buildFlightPlanStateEntry(),
+│   │   Exports: _parseWorldStateFlightPlans(), _parseFlightPlanEntry(),
 │   │            _buildFlightPlanArrivalLeg(), _buildFlightPlanDepartureLeg(), _rebuildWorldStateSections()
 │   │
 │   ├── acl_utils.js          # Utility functions: CSV↔ACL enrichment, chronological sort, dropdown scanning, audio callsign loading
-│   │   Depends on: constants.js, acl_scenery.js, acl_flights_schedule.js, acl_world_state.js, acl_flight_plans.js
+│   │   Depends on: constants.js, acl_scenery.js, acl_world_state.js, acl_flight_plans.js
 │   │   Exports: _enrichFlightsFromSource(), sortFlightsChronologically(), collectUniqueValues(),
 │   │            getFileInfo(), loadAudioCallsigns(), mergeAudioCallsigns()
 │   │
 │   ├── acl_parser.js         # FACADE — public API: load/save/generate ACL, re-exports all sub-module exports
 │   │   Depends on: ALL modules above
-│   │   Exports: loadFlights(), saveFlights(), generateFullAcl(), generateAclFromCsv(),
+│   │   Exports: loadFlights(), generateFullAcl(), generateAclFromCsv(),
 │   │            + re-exports from csv_io, acl_utils, and internal _parse* functions (used by tests)
 │   │
 │   ├── acl_scanner.js        # Game root scanner: discovers all airports and their .acl/csv files

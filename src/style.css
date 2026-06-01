@@ -129,6 +129,31 @@ body {
 
 .btn-big:hover { background: var(--accent-hover); }
 
+.setup-nightly-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--orange);
+  background: rgba(255, 159, 10, 0.12);
+  border: 1px solid rgba(255, 159, 10, 0.3);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  font-size: 12.5px;
+  color: var(--orange);
+  line-height: 1.5;
+}
+
+.setup-nightly-note strong {
+  color: #ffb830;
+}
+
+.setup-nightly-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
 .setup-error {
   color: var(--red);
   font-size: 12.5px;
@@ -533,7 +558,7 @@ body {
 }
 
 .tl-embed-toolbar {
-  padding: 8px 12px 4px;
+  padding: 8px 12px 0;
 }
 
 .tl-embed-block.collapsed .tl-embed-body { display: none; }
@@ -840,6 +865,45 @@ body {
   color: var(--red);
 }
 
+/* ─── Compass Popover ───────────────────────────────────── */
+.compass-popover {
+  width: 300px;
+}
+
+.compass-hand {
+  stroke: var(--red);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.compass-arrowhead {
+  fill: var(--red);
+  pointer-events: none;
+}
+
+.compass-dot {
+  fill: var(--red);
+  stroke: var(--bg-elevated);
+  stroke-width: 2;
+}
+
+.compass-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  margin-top: -6px;
+  letter-spacing: 0.5px;
+}
+
+.compass-unit {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
 /* ─── Modal ─────────────────────────────────────────────── */
 #modal-overlay {
   position: fixed; inset: 0;
@@ -978,14 +1042,6 @@ body {
 
 .tl-row:hover { background: rgba(91, 141, 239, 0.04); }
 
-.tl-idx {
-  width: 28px;
-  text-align: center;
-  font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
 .tl-label-sm {
   font-size: 11px;
   color: var(--text-muted);
@@ -1008,6 +1064,52 @@ body {
 
 .tl-int { width: 56px; text-align: center; }
 
+.tl-time-click { width: 68px; text-align: center; cursor: pointer; }
+.tl-direction-click { width: 62px; text-align: center; cursor: pointer; }
+
+.tl-speed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 140px;
+  flex: none;
+}
+
+.tl-speed-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+}
+
+.tl-speed-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(91, 141, 239, 0.3);
+  transition: transform 0.1s;
+}
+
+.tl-speed-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
+
+.tl-speed-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 42px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 .tl-select {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1018,6 +1120,8 @@ body {
   font-family: inherit;
   outline: none;
   cursor: pointer;
+  width: 120px;
+  flex: none;
   transition: border-color var(--transition);
 }
 
@@ -1048,14 +1152,30 @@ body {
   transition: color var(--transition);
 }
 
+/* ─── Timeline range indicator & hidden count ──────────── */
+.tl-range-indicator {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.tl-hidden-count {
+  font-size: 11px;
+  color: var(--orange);
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .tl-btn-del-sm:hover { color: var(--red); }
 
 /* Column widths for timeline headers */
-.tl-h-idx { width: 28px; flex-shrink: 0; }
-.tl-h-preset { width: 160px; }
-.tl-h-time { width: 120px; }
-.tl-h-dir { width: 64px; }
-.tl-h-speed { width: 64px; }
+.tl-h-time { width: 80px; padding-left: 20px; }
+.tl-h-preset { width: 100px; padding-left: 20px; }
+.tl-h-dir { width: 54px; padding-left: 20px; }
+.tl-h-speed { width: 54px; padding-left: 20px; }
 
 /* ─── Runway Editor ─────────────────────────────────────── */
 .rw-section {
@@ -1082,13 +1202,64 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 14px;
+  padding: 1px 14px;
 }
 
 .rw-initial-row .tl-input { flex: 1; max-width: 500px; }
 
+.rw-toolbar {
+  padding: 8px 14px 4px;
+}
+
+.rw-initial-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.rw-checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  flex: 1;
+}
+
+.rw-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.rw-checkbox-label:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.rw-checkbox-label:has(.rw-checkbox:checked) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.rw-checkbox {
+  accent-color: var(--accent);
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
 .rw-change-card {
-  padding: 12px 14px;
+  padding: 6px 14px;
   border-bottom: 1px solid rgba(46, 51, 69, 0.35);
 }
 
@@ -1098,32 +1269,16 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
 }
 
-.rw-time-input { width: 90px; }
+.rw-time-input { width: 68px; }
 
-.rw-change-pairs { padding-left: 36px; }
-
-.rw-pair {
+.rw-change-checkboxes {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  flex: 1;
 }
-
-.rw-pair-input { width: 100px; }
-
-.rw-pair-label {
-  font-size: 12px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-  min-width: 14px;
-  text-align: center;
-}
-
-.rw-add-pair { margin-top: 4px; font-size: 11px; }
-.rw-add-pair:hover { background: var(--bg-elevated); }
 
 /* ── Highlight invalid cells (e.g. after airline change) ── */
 .highlight-invalid {

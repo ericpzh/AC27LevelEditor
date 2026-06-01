@@ -14,7 +14,11 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const parser = require('../src/acl_parser');
 
 const ACL_ORIGINAL = path.join(ROOT, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/KJFK_20-22.acl');
+const CSV_ORIGINAL = path.join(ROOT, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/flight_schedule_20-22.csv');
 const ACL_TEMP     = path.join(__dirname, '_e2e_temp_KJFK_20-22.acl');
+// CSV must match flightScheduleFile in .aclcfg
+const CSV_TEMP     = path.join(__dirname, 'flight_schedule_20-22.csv');
+const CFG_TEMP     = path.join(__dirname, '_e2e_temp_KJFK_20-22.aclcfg');
 
 // ═══════════════════════════════════════════════════════════════
 //  Helpers
@@ -83,7 +87,7 @@ function run() {
   console.log('\n[1] Loading original ACL...');
   const originalData = parser.loadFlights(ACL_ORIGINAL);
   console.log(`    Flights: ${originalData.flights.length}`);
-  console.log(`    Mode: ${originalData._fromFlightPlans ? 'FlightPlans' : originalData._fromWorldState ? 'WorldState' : 'FlightSchedule'}`);
+  console.log(`    Mode: ${originalData._fromFlightPlans ? 'FlightPlans' : originalData._fromWorldState ? 'WorldState' : 'Unknown'}`);
 
   // ── Step 2: Snapshot the flights (deep clone) ───────────
   //    This simulates what the renderer's appState.flights holds at save time.
@@ -103,6 +107,10 @@ function run() {
   //    We write to a temp copy so the original is NEVER touched.
   console.log('\n[4] Copying original → temp (so generateFullAcl patches a copy)...');
   fs.copyFileSync(ACL_ORIGINAL, ACL_TEMP);
+  // Also copy CSV and cfg so reload works
+  if (fs.existsSync(CSV_ORIGINAL)) fs.copyFileSync(CSV_ORIGINAL, CSV_TEMP);
+  const origCfg = ACL_ORIGINAL.replace(/\.acl$/i, '.aclcfg');
+  if (fs.existsSync(origCfg)) fs.copyFileSync(origCfg, CFG_TEMP);
 
   // ── Step 5: Run generateFullAcl on temp copy ────────────
   //    This is the actual save pipeline from main.js save-acl IPC handler.
@@ -111,9 +119,9 @@ function run() {
     parser.generateFullAcl(
       ACL_TEMP,                              // writes here (temp file)
       sortedFlights,                         // sorted snapshot
-      originalData.before,                   // header before FlightSchedule
-      originalData.after,                    // footer after FlightSchedule
-      originalData.originalBlocks,           // original FlightSchedule blocks
+      originalData.before,                   // header before flight data
+      originalData.after,                    // footer after flight data
+      originalData.originalBlocks,           // original blocks (unused for FlightPlans)
       originalData.worldStateData,           // WorldState data (includes fpBefore/fpAfter)
       originalData.sceneryMaps,              // scenery maps
       originalData._fromWorldState,          // false for this file
@@ -130,7 +138,7 @@ function run() {
   console.log('\n[6] Loading saved temp file back...');
   const roundtrippedData = parser.loadFlights(ACL_TEMP);
   console.log(`    Flights: ${roundtrippedData.flights.length}`);
-  console.log(`    Mode: ${roundtrippedData._fromFlightPlans ? 'FlightPlans' : roundtrippedData._fromWorldState ? 'WorldState' : 'FlightSchedule'}`);
+  console.log(`    Mode: ${roundtrippedData._fromFlightPlans ? 'FlightPlans' : roundtrippedData._fromWorldState ? 'WorldState' : 'Unknown'}`);
 
   // ── Step 7: Sort original data the same way for comparison ──
   //    The original load yielded flights in "display order" (arrivals first, then departures).
@@ -162,10 +170,10 @@ function run() {
 
 function cleanup() {
   try {
-    if (fs.existsSync(ACL_TEMP)) {
-      fs.unlinkSync(ACL_TEMP);
-      console.log('\n[cleanup] Removed temp file');
-    }
+    if (fs.existsSync(ACL_TEMP)) { fs.unlinkSync(ACL_TEMP); }
+    if (fs.existsSync(CSV_TEMP)) { fs.unlinkSync(CSV_TEMP); }
+    if (fs.existsSync(CFG_TEMP)) { fs.unlinkSync(CFG_TEMP); }
+    console.log('\n[cleanup] Removed temp files');
   } catch (_) {}
 }
 

@@ -1,36 +1,73 @@
-// ─── IMPORT EXTERNAL ACL ─────────────────────────────────
+// ─── IMPORT FROM ZIP ────────────────────────────────────
 document.getElementById('btn-import-acl').addEventListener('click', handleImportAcl);
 
 async function handleImportAcl() {
-  const result = await window.electronAPI.importAcl();
-  if (result.canceled) return;
-  if (result.error) { showAlert('导入失败', result.error); return; }
+  if (!appState.currentPath) { showToast('没有打开的文件', 'error'); return; }
 
-  appState.currentPath = result.path;
-  appState.flights = result.flights;
-  initFlightNumberCounter();
-  appState.before = result.before;
-  appState.after = result.after;
-  appState.arrayContent = result.arrayContent;
-  appState.originalBlocks = result.originalBlocks;
-  appState.worldStateData = result.worldStateData || null;
-  appState.sceneryMaps = result.sceneryMaps || null;
-  appState._fromWorldState = result._fromWorldState || false;
-  appState._fromFlightPlans = result._fromFlightPlans || false;
-  appState._rawText = result._rawText || '';
-  appState.modified = true;
-  appState.highlightedIdx = -1;
-  appState.selectedIndices = new Set();
-  appState.editingWidget = null;
+  // 1) Save a backup first (like Save button with .bak)
+  showModal('导入前备份', `
+    <p style="font-size:14px;margin-bottom:12px">导入将覆盖当前所有关卡文件（.acl / .csv / 时间线）。</p>
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;white-space:nowrap">
+      <input type="checkbox" id="chk-import-backup" checked style="flex-shrink:0;width:auto;margin:0">
+      <span>导入前创建 .bak 备份</span>
+    </label>
+  `, `<button class="btn-cancel" id="modal-cancel-import">取消</button>
+     <button class="btn-confirm" id="modal-confirm-import">确定导入</button>`);
+  document.getElementById('modal-cancel-import').onclick = hideModal;
+  document.getElementById('modal-confirm-import').onclick = async () => {
+    const createBackup = document.getElementById('chk-import-backup').checked;
+    hideModal();
 
-  const parts = result.path.split(/[/\\]/);
-  const levelsIdx = parts.indexOf('Levels');
-  if (levelsIdx > 1) appState.currentAirport = parts[levelsIdx - 1];
+    // Save current state with backup (best-effort)
+    if (createBackup) {
+      try { await doSaveAcl(true, true); } catch (_) {}
+    }
 
-  autoSort();
-  renderAllSections();
-  updateStatusBar();
-  showToast(`已导入 ${result.flights.length} 个航班`, 'success');
+    // 2) Import ZIP
+    const result = await window.electronAPI.importZip({ aclPath: appState.currentPath });
+    if (result.canceled) return;
+    if (result.error) { showAlert('导入失败', result.error); return; }
+
+    // 3) Apply loaded data to appState
+    appState.flights = result.flights;
+    initFlightNumberCounter();
+    appState.before = result.before;
+    appState.after = result.after;
+    appState.arrayContent = result.arrayContent;
+    appState.originalBlocks = result.originalBlocks;
+    appState.worldStateData = result.worldStateData || null;
+    appState.sceneryMaps = result.sceneryMaps || null;
+    appState._fromWorldState = result._fromWorldState || false;
+    appState._fromFlightPlans = result._fromFlightPlans || false;
+    appState._rawText = result._rawText || '';
+    appState.modified = false;
+    appState.highlightedIdx = -1;
+    appState.selectedIndices = new Set();
+    appState.editingWidget = null;
+
+    // 4) Reload timelines from the newly imported files
+    const tl = await window.electronAPI.loadTimelines(appState.currentPath);
+    if (tl.success) {
+      appState.weatherTimeline = tl.weatherTimeline || [];
+      appState.weatherPath = tl.weatherPath;
+      appState.windTimeline = tl.windTimeline || [];
+      appState.windPath = tl.windPath;
+      appState.runwayTimeline = tl.runwayTimeline || { initialRunways: [], timeline: [] };
+      appState.runwayTimelinePath = tl.runwayTimelinePath;
+    }
+    appState.timelineModified = { weather: false, wind: false, runway: false };
+
+    // 5) Refresh runway pairs
+    if (appState.rootPath && appState.currentAirport) {
+      const rp = await window.electronAPI.scanRunwayPairs(appState.rootPath, appState.currentAirport);
+      appState._runwayPairs = (rp && rp.success) ? (rp.pairs || []) : [];
+    }
+
+    autoSort();
+    renderAllSections();
+    updateStatusBar();
+    showToast(`已导入 ${result.flights.length} 个航班`, 'success');
+  };
 }
 
 // ─── RESTORE FROM BACKUP ─────────────────────────────────
@@ -85,6 +122,12 @@ async function handleRestoreBackup() {
       appState.runwayTimelinePath = tl.runwayTimelinePath;
     }
     appState.timelineModified = { weather: false, wind: false, runway: false };
+
+    // Refresh runway pairs
+    if (appState.rootPath && appState.currentAirport) {
+      const rp = await window.electronAPI.scanRunwayPairs(appState.rootPath, appState.currentAirport);
+      appState._runwayPairs = (rp && rp.success) ? (rp.pairs || []) : [];
+    }
 
     autoSort();
     renderAllSections();

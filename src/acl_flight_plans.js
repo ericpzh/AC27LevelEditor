@@ -197,133 +197,6 @@ function _parseFlightPlanEntry(vBlock) {
   return f;
 }
 
-// ─── Sync flights into FlightPlans ────────────────────────────
-
-function _syncFlightPlans(rawText, flights, fpData, baseDateTicks) {
-  if (!fpData || !fpData.fpEntries || fpData.fpEntries.length === 0 || !flights || flights.length === 0) return rawText;
-  const bdt = baseDateTicks || FALLBACK_BASE_DATE_TICKS;
-
-  const flightByCallSign = {};
-  for (const fl of flights) {
-    const cs = (fl.CallSign || '').trim();
-    if (cs) flightByCallSign[cs] = fl;
-  }
-
-  const newEntryBlocks = [];
-  for (const entry of fpData.fpEntries) {
-    let newBlock = entry.block;
-    const csMatch = entry.vBlock.match(/"CallSign"\s*:\s*"([^"]*)"/);
-    if (!csMatch) {
-      const regMatch = entry.vBlock.match(/"Registration"\s*:\s*"([^"]*)"/);
-      if (!regMatch) { newEntryBlocks.push(newBlock); continue; }
-      const reg = regMatch[1];
-      const flight = flights.find(f => f._Registration === reg);
-      if (flight) newBlock = _applyFlightPlanChanges(newBlock, flight, bdt);
-      newEntryBlocks.push(newBlock);
-      continue;
-    }
-
-    const cs = csMatch[1];
-    let flight = flightByCallSign[cs];
-
-    if (!flight) {
-      const regMatch2 = entry.vBlock.match(/"Registration"\s*:\s*"([^"]*)"/);
-      if (regMatch2) {
-        flight = flights.find(f => f._Registration === regMatch2[1]);
-      }
-    }
-
-    if (flight) {
-      newBlock = _applyFlightPlanChanges(newBlock, flight, bdt);
-    }
-    newEntryBlocks.push(newBlock);
-  }
-
-  const existingCount = fpData.fpEntries.length;
-  for (let i = existingCount; i < flights.length; i++) {
-    const templateBlock = fpData.fpEntries.length > 0 ? fpData.fpEntries[fpData.fpEntries.length - 1].block : null;
-    if (templateBlock) {
-      const newBlock = _buildFlightPlanBlock(flights[i], templateBlock, bdt);
-      newEntryBlocks.push(newBlock);
-    }
-  }
-
-  let newBefore = fpData.fpBefore;
-  const lenMatch = newBefore.match(/"\$rlength"\s*:\s*(\d+)/);
-  if (lenMatch) {
-    newBefore = newBefore.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${newEntryBlocks.length}`);
-  }
-
-  let finalText = newBefore + '\n                ' + newEntryBlocks.join(',\n                ') + '\n            ]' + fpData.fpAfter;
-  return finalText;
-}
-
-// ─── Apply flight changes to a FlightPlanState entry ──────────
-
-function _applyFlightPlanChanges(block, flight, baseDateTicks) {
-  block = _applyWsField(block, 'Registration', flight._Registration || '', 'string');
-  block = _applyWsField(block, 'AircraftType', flight.AircraftType || '', 'string');
-  block = _applyWsField(block, 'AirlineName', flight.AirlineName || '', 'string');
-  block = _applyWsField(block, 'Voice', flight.Voice || '', 'string');
-  block = _applyWsField(block, 'Language', flight.Language || '', 'string');
-
-  const isDeparture = block.indexOf('"Departure"') >= 0 && !block.match(/"Departure"\s*:\s*null/);
-  const isArrival = block.indexOf('"Arrival"') >= 0 && !block.match(/"Arrival"\s*:\s*null/);
-
-  if (isDeparture) {
-    const depMatch = block.match(/"Departure"\s*:\s*\{/);
-    if (depMatch) {
-      const depStart = depMatch.index + depMatch[0].length;
-      let depDepth = 1;
-      let depEnd = depStart;
-      for (; depEnd < block.length; depEnd++) {
-        if (block[depEnd] === '{') depDepth++;
-        else if (block[depEnd] === '}') { depDepth--; if (depDepth === 0) break; }
-      }
-      let depObj = block.substring(depStart, depEnd);
-
-      depObj = _applyWsField(depObj, 'CallSign', flight.CallSign || '', 'string');
-      depObj = _applyWsField(depObj, 'DestinationAirport', flight.ArrivalAirport || '', 'string');
-      depObj = _applyWsField(depObj, 'Runway', flight.Runway || '', 'string');
-      depObj = _applyWsField(depObj, 'Stand', flight.Stand || '', 'string');
-      depObj = _applyWsField(depObj, 'OffBlockTime', ticksToString(timeToTicks(flight.OffBlockTime || '', baseDateTicks)), 'ticks');
-      depObj = _applyWsField(depObj, 'TakeoffTime', ticksToString(timeToTicks(flight.TakeoffTime || '', baseDateTicks)), 'ticks');
-
-      block = block.substring(0, depStart) + depObj + block.substring(depEnd);
-    }
-  } else if (isArrival) {
-    const arrMatch = block.match(/"Arrival"\s*:\s*\{/);
-    if (arrMatch) {
-      const arrStart = arrMatch.index + arrMatch[0].length;
-      let arrDepth = 1;
-      let arrEnd = arrStart;
-      for (; arrEnd < block.length; arrEnd++) {
-        if (block[arrEnd] === '{') arrDepth++;
-        else if (block[arrEnd] === '}') { arrDepth--; if (arrDepth === 0) break; }
-      }
-      let arrObj = block.substring(arrStart, arrEnd);
-
-      arrObj = _applyWsField(arrObj, 'CallSign', flight.CallSign || '', 'string');
-      arrObj = _applyWsField(arrObj, 'OriginAirport', flight.DepartureAirport || '', 'string');
-      arrObj = _applyWsField(arrObj, 'Runway', flight.Runway || '', 'string');
-      arrObj = _applyWsField(arrObj, 'Stand', flight.Stand || '', 'string');
-      arrObj = _applyWsField(arrObj, 'STAR', flight.Airway || '', 'string');
-      arrObj = _applyWsField(arrObj, 'LandingTime', ticksToString(timeToTicks(flight.LandingTime || '', baseDateTicks)), 'ticks');
-      arrObj = _applyWsField(arrObj, 'InBlockTime', ticksToString(timeToTicks(flight.InBlockTime || '', baseDateTicks)), 'ticks');
-
-      block = block.substring(0, arrStart) + arrObj + block.substring(arrEnd);
-    }
-  }
-
-  return block;
-}
-
-// ─── Build new FlightPlan block from template ─────────────────
-
-function _buildFlightPlanBlock(flight, templateBlock, baseDateTicks) {
-  if (!templateBlock) return '{}';
-  return _applyFlightPlanChanges(templateBlock, flight, baseDateTicks);
-}
 
 // ─── Build FlightPlan Arrival leg (type 58) ───────────────────
 
@@ -378,50 +251,6 @@ function _buildFlightPlanDepartureLeg(flight, id, baseDateTicks) {
   if (stand) lines.push(`                                "Stand": "${stand}",`);
   lines[lines.length - 1] = lines[lines.length - 1].replace(/,$/, '');
   lines.push('                            }');
-  return lines.join('\n');
-}
-
-// ─── Build complete FlightPlanState dictionary entry ──────────
-
-function _buildFlightPlanStateEntry(flight, entryId, baseDateTicks) {
-  const uuid = _generateGuid();
-  const bdt = baseDateTicks || FALLBACK_BASE_DATE_TICKS;
-  const reg = flight._Registration || flight.Registration || '';
-  const acType = flight.AircraftType || '';
-  const airline = flight.AirlineName || '';
-  const voice = flight.Voice || '';
-  const lang = flight.Language || '';
-
-  const isArrival = (flight.isDeparture === false) ||
-    (((flight.LandingTime || '').trim() && !(flight.OffBlockTime || '').trim()));
-
-  const lines = [];
-  lines.push('                {');
-  lines.push(`                    "$k": "${uuid}",`);
-  lines.push('                    "$v": {');
-  lines.push(`                        "$id": ${entryId},`);
-  lines.push('                        "$type": "56|ContextCross.States.FlightPlanState, GroundATC.Core",');
-  lines.push(`                        "Guid": "${uuid}",`);
-  lines.push('                        "Enabled": true,');
-  if (reg) lines.push(`                        "Registration": "${reg}",`);
-  else lines.push('                        "Registration": null,');
-  lines.push(`                        "AircraftType": "${acType}",`);
-  lines.push(`                        "AirlineName": "${airline}",`);
-  lines.push(`                        "Voice": "${voice}",`);
-  lines.push(`                        "Language": "${lang}",`);
-
-  if (isArrival) {
-    lines.push('                        "Arrival":');
-    lines.push(_buildFlightPlanArrivalLeg(flight, entryId, bdt));
-    lines.push('                        "Departure": null');
-  } else {
-    lines.push('                        "Arrival": null,');
-    lines.push('                        "Departure":');
-    lines.push(_buildFlightPlanDepartureLeg(flight, entryId, bdt));
-  }
-
-  lines.push('                    }');
-  lines.push('                }');
   return lines.join('\n');
 }
 
@@ -635,14 +464,308 @@ function _buildFlightPlanStateEntryWithGuid(flight, entryId, baseDateTicks, fpGu
   return lines.join('\n');
 }
 
+// ─── Rebuild Timeline Sections (WindFrames, WeatherFrames, RunwayTimeline) ──
+
+/** Extract an object section from raw ACL text by brace-matching from sectionKey. */
+function _extractSection(text, sectionKey) {
+  const idx = text.indexOf('"' + sectionKey + '"');
+  if (idx < 0) return null;
+  const colonIdx = text.indexOf(':', idx);
+  if (colonIdx < 0) return null;
+  let braceIdx = colonIdx + 1;
+  while (braceIdx < text.length && text[braceIdx] !== '{') braceIdx++;
+  if (braceIdx >= text.length) return null;
+  const between = text.substring(colonIdx + 1, braceIdx).trim();
+  if (between.startsWith('null')) return null;
+  let depth = 0, endIdx = braceIdx;
+  for (let i = braceIdx; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') { depth--; if (depth === 0) { endIdx = i + 1; break; } }
+  }
+  return { start: idx, end: endIdx, content: text.substring(braceIdx, endIdx) };
+}
+
+function _parseTypeNum(typeStr) {
+  if (!typeStr) return null;
+  const m = typeStr.match(/^"?(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function _sectionMeta(sectionText) {
+  const idMatch = sectionText.match(/"\$id"\s*:\s*(\d+)/);
+  const typeMatch = sectionText.match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+  let typeStr = null, typeNum = null;
+  if (typeMatch) {
+    typeStr = typeMatch[1] || null;
+    typeNum = typeMatch[1] ? _parseTypeNum(typeMatch[1]) : parseInt(typeMatch[2], 10);
+  }
+  return { id: idMatch ? parseInt(idMatch[1], 10) : 0, typeStr, typeNum };
+}
+
+function _elemTypeFromRcontent(sectionText) {
+  const rcMatch = sectionText.match(/"\$rcontent"\s*:\s*\[/);
+  if (!rcMatch) return null;
+  const after = sectionText.substring(rcMatch.index + rcMatch[0].length);
+  const brace = after.indexOf('{');
+  if (brace < 0) return null;
+  const m = after.substring(brace).match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+  if (!m) return null;
+  return m[1] ? _parseTypeNum(m[1]) : parseInt(m[2], 10);
+}
+
+function _generateFramesSection(frames, parentId, elemTypeNum, parentTypeNum, parentName, arrayTypeName, elemTypeName, fieldMap) {
+  const L = [];
+  const I = '    ';
+  L.push(`${I}"${parentName}": {`);
+  L.push(`${I}    "$id": ${parentId},`);
+  L.push(`${I}    "$type": "${parentTypeNum}|ContextCross.States.${arrayTypeName}, GroundATC.Core",`);
+  L.push(`${I}    "$rlength": ${frames.length},`);
+  L.push(`${I}    "$rcontent": [`);
+
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i];
+    const fid = parentId + 1 + i;
+    const keys = Object.keys(fieldMap);
+    L.push(`${I}        {`);
+    L.push(`${I}            "$id": ${fid},`);
+    if (i === 0)
+      L.push(`${I}            "$type": "${elemTypeNum}|ContextCross.States.${elemTypeName}, GroundATC.Core",`);
+    else
+      L.push(`${I}            "$type": ${elemTypeNum},`);
+
+    for (let k = 0; k < keys.length; k++) {
+      const jk = keys[k];
+      const { acl, type } = fieldMap[jk];
+      const comma = (k < keys.length - 1) ? ',' : '';
+      if (type === 'string')
+        L.push(`${I}            "${acl}": "${f[jk]}"${comma}`);
+      else
+        L.push(`${I}            "${acl}": ${f[jk]}${comma}`);
+    }
+
+    L.push(`${I}        }${i < frames.length - 1 ? ',' : ''}`);
+  }
+
+  L.push(`${I}    ]`);
+  L.push(`${I}}`);
+  return L.join('\n');
+}
+
+function _generateRunwayTimelineSection(data, meta) {
+  const L = [];
+  const I = '    ';
+  const ir = data.initialRunways || [];
+  const tl = data.timeline || [];
+
+  L.push(`${I}"RunwayTimeline": {`);
+  L.push(`${I}    "$id": ${meta.parentId},`);
+  L.push(`${I}    "$type": "${meta.parentTypeNum}|ContextCross.States.RunwayTimelineData, GroundATC.Core",`);
+
+  L.push(`${I}    "InitialRunways": {`);
+  L.push(`${I}        "$id": ${meta.irId},`);
+  L.push(`${I}        "$type": ${meta.irType},`);
+  L.push(`${I}        "$rlength": ${ir.length},`);
+  L.push(`${I}        "$rcontent": [`);
+  for (let i = 0; i < ir.length; i++)
+    L.push(`${I}            "${ir[i]}"${i < ir.length - 1 ? ',' : ''}`);
+  L.push(`${I}        ]`);
+  L.push(`${I}    },`);
+
+  L.push(`${I}    "Timeline": {`);
+  L.push(`${I}        "$id": ${meta.tlId},`);
+  if (meta.tlTypeStr)
+    L.push(`${I}        "$type": "${meta.tlTypeNum}|ContextCross.States.RunwayChangeFrame[], GroundATC.Core",`);
+  else
+    L.push(`${I}        "$type": ${meta.tlTypeNum},`);
+  L.push(`${I}        "$rlength": ${tl.length},`);
+  L.push(`${I}        "$rcontent": [`);
+
+  if (tl.length === 0) {
+    L.push(`${I}        ]`);
+  } else {
+    for (let i = 0; i < tl.length; i++) {
+      const e = tl[i];
+      const ch = e.changes || [];
+      const fid = meta.tlId + 1 + i;
+      const chId = meta.tlId + 1 + tl.length + i * 3;
+
+      L.push(`${I}            {`);
+      L.push(`${I}                "$id": ${fid},`);
+      L.push(`${I}                "$type": ${i === 0 ? '"' + meta.tlElemTypeNum + '|ContextCross.States.RunwayChangeFrame, GroundATC.Core"' : meta.tlElemTypeNum},`);
+      L.push(`${I}                "Time": "${e.time}",`);
+
+      L.push(`${I}                "Changes": {`);
+      L.push(`${I}                    "$id": ${chId},`);
+      L.push(`${I}                    "$type": "${meta.changesArrTypeNum}|ContextCross.States.RunwayChange[], GroundATC.Core",`);
+      L.push(`${I}                    "$rlength": ${ch.length},`);
+      L.push(`${I}                    "$rcontent": [`);
+
+      for (let j = 0; j < ch.length; j++) {
+        const c = ch[j];
+        const cid = chId + 1 + j;
+        L.push(`${I}                        {`);
+        L.push(`${I}                            "$id": ${cid},`);
+        L.push(`${I}                            "$type": ${j === 0 ? '"' + meta.changeElemTypeNum + '|ContextCross.States.RunwayChange, GroundATC.Core"' : meta.changeElemTypeNum},`);
+        L.push(`${I}                            "Source": "${c.source}",`);
+        L.push(`${I}                            "Dest": "${c.dest}"`);
+        L.push(`${I}                        }${j < ch.length - 1 ? ',' : ''}`);
+      }
+
+      L.push(`${I}                    ]`);
+      L.push(`${I}                }`);
+      L.push(`${I}            }${i < tl.length - 1 ? ',' : ''}`);
+    }
+    L.push(`${I}        ]`);
+  }
+
+  L.push(`${I}    }`);
+  L.push(`${I}}`);
+  return L.join('\n');
+}
+
+/** Parse metadata for RunwayTimeline from existing ACL section. */
+function _metaRunway(sectionText) {
+  const parent = _sectionMeta(sectionText);
+
+  // InitialRunways
+  const irIdx = sectionText.indexOf('"InitialRunways"');
+  let irId = 0, irType = 8;
+  if (irIdx >= 0) {
+    let depth = 0, start = -1, end = -1;
+    for (let i = irIdx; i < sectionText.length; i++) {
+      if (sectionText[i] === '{') { if (depth === 0) start = i; depth++; }
+      else if (sectionText[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+    }
+    if (start >= 0) {
+      const ir = sectionText.substring(start, end);
+      const m = ir.match(/"\$id"\s*:\s*(\d+)/);
+      irId = m ? parseInt(m[1], 10) : 0;
+      const tm = ir.match(/"\$type"\s*:\s*(\d+)/);
+      irType = tm ? parseInt(tm[1], 10) : 8;
+    }
+  }
+
+  // Timeline
+  const tlIdx = sectionText.indexOf('"Timeline"');
+  let tlId = 0, tlTypeNum = null, tlTypeStr = null;
+  let tlElemTypeNum = null;
+  let changesArrTypeNum = null, changeElemTypeNum = null;
+  if (tlIdx >= 0) {
+    let depth = 0, start = -1, end = -1;
+    for (let i = tlIdx; i < sectionText.length; i++) {
+      if (sectionText[i] === '{') { if (depth === 0) start = i; depth++; }
+      else if (sectionText[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+    }
+    if (start >= 0) {
+      const tl = sectionText.substring(start, end);
+      const tm = tl.match(/"\$id"\s*:\s*(\d+)/);
+      tlId = tm ? parseInt(tm[1], 10) : 0;
+      const ttm = tl.match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+      if (ttm) {
+        tlTypeStr = ttm[1] || null;
+        tlTypeNum = ttm[1] ? _parseTypeNum(ttm[1]) : parseInt(ttm[2], 10);
+      }
+      tlElemTypeNum = _elemTypeFromRcontent(tl);
+
+      const chIdx = tl.indexOf('"Changes"');
+      if (chIdx >= 0) {
+        let chDepth = 0, chStart = -1, chEnd = -1;
+        for (let i = chIdx; i < tl.length; i++) {
+          if (tl[i] === '{') { if (chDepth === 0) chStart = i; chDepth++; }
+          else if (tl[i] === '}') { chDepth--; if (chDepth === 0) { chEnd = i + 1; break; } }
+        }
+        if (chStart >= 0) {
+          const ch = tl.substring(chStart, chEnd);
+          const ctm = ch.match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+          if (ctm) changesArrTypeNum = ctm[1] ? _parseTypeNum(ctm[1]) : parseInt(ctm[2], 10);
+          changeElemTypeNum = _elemTypeFromRcontent(ch);
+        }
+      }
+    }
+  }
+
+  return {
+    parentId: parent.id, parentTypeNum: parent.typeNum, parentTypeStr: parent.typeStr,
+    irId, irType, tlId, tlTypeNum, tlTypeStr, tlElemTypeNum,
+    changesArrTypeNum, changeElemTypeNum,
+  };
+}
+
+/**
+ * Patches WindFrames, WeatherFrames, and RunwayTimeline sections in the .acl file
+ * to match the current timeline data.
+ */
+function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runwayTimeline) {
+  const log = (msg) => console.log('[ACL-TIMELINE]', msg);
+  let text = fs.readFileSync(aclPath, 'utf-8');
+
+  // Sort timelines by time
+  const _toSec = (t) => { const p = String(t || '').split(':'); return (parseInt(p[0]) || 0) * 3600 + (parseInt(p[1]) || 0) * 60 + (parseInt(p[2]) || 0); };
+  if (weatherTimeline && weatherTimeline.length > 1) weatherTimeline.sort((a, b) => _toSec(a.time) - _toSec(b.time));
+  if (windTimeline && windTimeline.length > 1) windTimeline.sort((a, b) => _toSec(a.time) - _toSec(b.time));
+
+  // Helper: replace a section in text
+  function replaceSection(text, sectionName, newContent) {
+    const sec = _extractSection(text, sectionName);
+    if (!sec) { log('WARNING: ' + sectionName + ' section not found, skipping'); return text; }
+    const prefix = text.substring(0, sec.start);
+    const suffix = text.substring(sec.end);
+    return prefix + newContent + suffix;
+  }
+
+  // ── WeatherFrames ──
+  if (weatherTimeline && weatherTimeline.length) {
+    const wsSec = _extractSection(text, 'WeatherFrames');
+    if (wsSec) {
+      const pMeta = _sectionMeta(wsSec.content);
+      const eTypeNum = _elemTypeFromRcontent(wsSec.content);
+      const fieldMap = {
+        preset: { acl: 'Preset', type: 'string' },
+        time:   { acl: 'Time',   type: 'string' },
+      };
+      const newSection = _generateFramesSection(weatherTimeline, pMeta.id, eTypeNum, pMeta.typeNum, 'WeatherFrames', 'WeatherFrame[]', 'WeatherFrame', fieldMap);
+      text = replaceSection(text, 'WeatherFrames', newSection);
+      log('WeatherFrames rebuilt (' + weatherTimeline.length + ' entries)');
+    }
+  }
+
+  // ── WindFrames ──
+  if (windTimeline && windTimeline.length) {
+    const wsSec = _extractSection(text, 'WindFrames');
+    if (wsSec) {
+      const pMeta = _sectionMeta(wsSec.content);
+      const eTypeNum = _elemTypeFromRcontent(wsSec.content);
+      const fieldMap = {
+        direction: { acl: 'Direction', type: 'number' },
+        speed:     { acl: 'Speed',     type: 'number' },
+        time:      { acl: 'Time',      type: 'string' },
+      };
+      const newSection = _generateFramesSection(windTimeline, pMeta.id, eTypeNum, pMeta.typeNum, 'WindFrames', 'WindFrame[]', 'WindFrame', fieldMap);
+      text = replaceSection(text, 'WindFrames', newSection);
+      log('WindFrames rebuilt (' + windTimeline.length + ' entries)');
+    }
+  }
+
+  // ── RunwayTimeline ──
+  if (runwayTimeline) {
+    const rsSec = _extractSection(text, 'RunwayTimeline');
+    if (rsSec) {
+      const meta = _metaRunway(rsSec.content);
+      const newSection = _generateRunwayTimelineSection(runwayTimeline, meta);
+      text = replaceSection(text, 'RunwayTimeline', newSection);
+      log('RunwayTimeline rebuilt (initRWs=' + (runwayTimeline.initialRunways || []).length + ', tl=' + (runwayTimeline.timeline || []).length + ')');
+    }
+  }
+
+  fs.writeFileSync(aclPath, text, 'utf-8');
+  log('Timeline sections written to ACL');
+}
+
 module.exports = {
   _parseWorldStateFlightPlans,
   _parseFlightPlanEntry,
-  _syncFlightPlans,
-  _applyFlightPlanChanges,
-  _buildFlightPlanBlock,
-  _buildFlightPlanStateEntry,
   _buildFlightPlanArrivalLeg,
   _buildFlightPlanDepartureLeg,
   _rebuildWorldStateSections,
+  _rebuildTimelineSections,
 };

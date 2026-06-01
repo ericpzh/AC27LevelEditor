@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Editor
   loadAcl: (filePath) => ipcRenderer.invoke('load-acl', filePath),
   saveAcl: (data) => ipcRenderer.invoke('save-acl', data),
-  saveAsAcl: (data) => ipcRenderer.invoke('save-as-acl', data),
+  exportZip: (data) => ipcRenderer.invoke('export-zip', data),
   reloadAcl: (filePath) => ipcRenderer.invoke('reload-acl', filePath),
 
   // Timeline editors
@@ -26,10 +26,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveWeatherTimeline: (data) => ipcRenderer.invoke('save-weather-timeline', data),
   saveWindTimeline: (data) => ipcRenderer.invoke('save-wind-timeline', data),
   saveRunwayTimeline: (data) => ipcRenderer.invoke('save-runway-timeline', data),
+  scanRunwayPairs: (rootPath, airportIcao) => ipcRenderer.invoke('scan-runway-pairs', rootPath, airportIcao),
 
   // Backup & Import
   manualBackup: (sourcePath) => ipcRenderer.invoke('manual-backup', sourcePath),
-  importAcl: () => ipcRenderer.invoke('import-acl'),
+  importZip: (data) => ipcRenderer.invoke('import-zip', data),
   restoreBackup: (filePath) => ipcRenderer.invoke('restore-latest-backup', filePath),
 
   // Debug logging from renderer -> main process log file

@@ -21,14 +21,14 @@ const parser = require('../src/acl_parser');
 // ═══════════════════════════════════════════════════════════════
 const TEST_CASES = [
   {
-    name: 'KJFK CrossRunwayTutorial',
-    csvPath: path.join(ROOT, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/flight_schedule_CrossRunway.csv'),
-    aclPath: path.join(ROOT, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/KJFK_CrossRunwayTutorial.acl'),
-  },
-  {
     name: 'KJFK 07-09',
     csvPath: path.join(ROOT, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/flight_schedule_07-09.csv'),
     aclPath: path.join(ROOT, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/KJFK_07-09.acl'),
+  },
+  {
+    name: 'KJFK 09-11',
+    csvPath: path.join(ROOT, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/flight_schedule_09-11.csv'),
+    aclPath: path.join(ROOT, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/KJFK_09-11.acl'),
   },
 ];
 

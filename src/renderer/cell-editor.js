@@ -222,6 +222,182 @@ function openTimeClockPopover(anchorEl, col, idx, currentVal, onCommit) {
   input.select();
 }
 
+// ═══════════ COMPASS POPOVER ══════════════════════════════
+function openCompassPopover(anchorEl, idx, currentVal, onCommit) {
+  let deg = parseInt(currentVal) || 0;
+  if (deg < 0) deg = 0; if (deg > 359) deg = 359;
+
+  const SIZE = 220;
+  const CX = SIZE / 2, CY = SIZE / 2;
+  const R = 95;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'time-clock-overlay';
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) commit(); });
+
+  const popover = document.createElement('div');
+  popover.className = 'time-clock-popover compass-popover';
+  overlay.appendChild(popover);
+
+  popover.innerHTML = `
+    <div class="clock-title">风向 (deg)</div>
+    <svg class="clock-svg compass-svg" viewBox="0 0 ${SIZE} ${SIZE}" width="${SIZE}" height="${SIZE}">
+      <circle class="clock-face-bg" cx="${CX}" cy="${CY}" r="${R}" />
+      ${buildCompassTicks(CX, CY, R)}
+      <line class="compass-hand" id="compass-hand" />
+      <circle class="clock-center-dot compass-dot" cx="${CX}" cy="${CY}" r="4" />
+      <polygon class="compass-arrowhead" id="compass-arrowhead" />
+    </svg>
+    <div class="clock-input-row">
+      <input class="clock-time-input compass-input" type="text" id="compass-deg-input" placeholder="000" maxlength="3" />
+      <span class="compass-unit">°</span>
+      <button class="clock-btn clock-btn-ok" id="compass-btn-ok">&#10003;</button>
+      <button class="clock-btn clock-btn-cancel" id="compass-btn-cancel">&#10005;</button>
+    </div>
+    <div class="compass-label" id="compass-label">N</div>
+  `;
+
+  const svg = popover.querySelector('.compass-svg');
+  const hand = popover.querySelector('#compass-hand');
+  const arrow = popover.querySelector('#compass-arrowhead');
+  const input = popover.querySelector('#compass-deg-input');
+  const label = popover.querySelector('#compass-label');
+
+  const CARDINAL = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+
+  function _updateCompass() {
+    const angle = (deg - 90) * Math.PI / 180;
+    const tipX = CX + R * Math.cos(angle);
+    const tipY = CY + R * Math.sin(angle);
+    const baseAngle = angle + Math.PI;
+    const baseR = 6;
+    const bx1 = CX + baseR * Math.cos(baseAngle - 0.6);
+    const by1 = CY + baseR * Math.sin(baseAngle - 0.6);
+    const bx2 = CX + baseR * Math.cos(baseAngle + 0.6);
+    const by2 = CY + baseR * Math.sin(baseAngle + 0.6);
+    hand.setAttribute('x1', CX);
+    hand.setAttribute('y1', CY);
+    hand.setAttribute('x2', tipX);
+    hand.setAttribute('y2', tipY);
+    arrow.setAttribute('points', `${tipX},${tipY} ${bx1},${by1} ${bx2},${by2}`);
+    input.value = String(deg);
+    label.textContent = CARDINAL[Math.round(deg / 22.5) % 16] + '  ' + deg + '°';
+  }
+
+  _updateCompass();
+
+  // Drag
+  let dragging = false;
+  let lastDragDeg = deg;
+
+  function dragStart(e) {
+    e.preventDefault();
+    dragging = true;
+    lastDragDeg = deg;
+    svg.classList.add('clock-dragging');
+  }
+
+  function dragMove(e) {
+    if (!dragging) return;
+    const rect = svg.getBoundingClientRect();
+    const scale = rect.width / SIZE;
+    const mx = ((e.touches ? e.touches[0].clientX : e.clientX) - rect.left) / scale - CX;
+    const my = ((e.touches ? e.touches[0].clientY : e.clientY) - rect.top) / scale - CY;
+    let angle = Math.atan2(my, mx) * 180 / Math.PI + 90;
+    if (angle < 0) angle += 360;
+    deg = Math.round(angle) % 360;
+    _updateCompass();
+  }
+
+  function dragEnd() { dragging = false; svg.classList.remove('clock-dragging'); }
+
+  svg.addEventListener('mousedown', dragStart);
+  svg.addEventListener('mousemove', dragMove);
+  svg.addEventListener('mouseup', dragEnd);
+  svg.addEventListener('mouseleave', dragEnd);
+  svg.addEventListener('touchstart', dragStart, { passive: false });
+  svg.addEventListener('touchmove', dragMove, { passive: false });
+  svg.addEventListener('touchend', dragEnd);
+
+  input.addEventListener('input', () => {
+    const v = parseInt(input.value);
+    if (!isNaN(v) && v >= 0 && v <= 359) { deg = v; _updateCompass(); }
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+
+  popover.querySelector('#compass-btn-ok').addEventListener('click', commit);
+  popover.querySelector('#compass-btn-cancel').addEventListener('click', cancel);
+
+  function commit() {
+    const v = parseInt(input.value);
+    const newVal = (!isNaN(v) && v >= 0 && v <= 359) ? v : deg;
+    if (newVal !== parseInt(currentVal)) {
+      if (onCommit) onCommit(newVal);
+    }
+    closePopover();
+  }
+
+  function cancel() { closePopover(); }
+
+  function closePopover() {
+    overlay.remove();
+    appState.editingWidget = null;
+  }
+
+  // Position popover
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const popW = 300, popH = 400;
+  let left = anchorRect.left + anchorRect.width / 2 - popW / 2;
+  let top = anchorRect.bottom + 6;
+  if (top + popH > window.innerHeight - 20) top = anchorRect.top - popH - 6;
+  if (left < 10) left = 10;
+  if (left + popW > window.innerWidth - 10) left = window.innerWidth - popW - 10;
+
+  popover.style.left = left + 'px';
+  popover.style.top = top + 'px';
+  appState.editingWidget = { widget: overlay, popover: true };
+
+  document.body.appendChild(overlay);
+  setTimeout(() => popover.classList.add('show'), 10);
+  input.focus();
+  input.select();
+}
+
+function buildCompassTicks(cx, cy, r) {
+  const DIRS = ['N','','','E','','','S','','','W','',''];
+  let html = '';
+  for (let i = 0; i < 12; i++) {
+    const angle = (i * 30 - 90) * Math.PI / 180;
+    const inner = r - 12;
+    const x1 = cx + inner * Math.cos(angle);
+    const y1 = cy + inner * Math.sin(angle);
+    const x2 = cx + r * Math.cos(angle);
+    const y2 = cy + r * Math.sin(angle);
+    html += `<line class="clock-tick" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" />`;
+    if (DIRS[i]) {
+      const numR = r - 24;
+      const nx = cx + numR * Math.cos(angle);
+      const ny = cy + numR * Math.sin(angle) + 5;
+      html += `<text class="clock-num" x="${nx}" y="${ny}">${DIRS[i]}</text>`;
+    }
+  }
+  for (let i = 0; i < 36; i++) {
+    if (i % 3 === 0) continue;
+    const angle = (i * 10 - 90) * Math.PI / 180;
+    const inner = r - 6;
+    const x1 = cx + inner * Math.cos(angle);
+    const y1 = cy + inner * Math.sin(angle);
+    const x2 = cx + r * Math.cos(angle);
+    const y2 = cy + r * Math.sin(angle);
+    html += `<line class="clock-tick-minor" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" />`;
+  }
+  return html;
+}
+
 function buildTickMarks(cx, cy, r) {
   let html = '';
   for (let i = 0; i < 12; i++) {

@@ -74,6 +74,12 @@ async function openEditor(filePath, airportIcao) {
     appState.runwayTimelinePath = tl.runwayTimelinePath;
   }
 
+  // Scan runway pairs from all runway_timeline_*.json for this airport
+  if (appState.rootPath && airportIcao) {
+    const rp = await window.electronAPI.scanRunwayPairs(appState.rootPath, airportIcao);
+    appState._runwayPairs = (rp && rp.success) ? (rp.pairs || []) : [];
+  }
+
   autoSort();
   autoFillSingleOptionColumns();
   renderAllSections();

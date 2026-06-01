@@ -49,7 +49,7 @@ async function handleSave() {
   document.getElementById('modal-confirm-save').onclick = async () => {
     const createBackup = document.getElementById('chk-create-backup').checked;
     hideModal();
-    await doSaveAcl(createBackup);
+    await doSaveAcl(createBackup, false);
   };
 }
 
@@ -138,6 +138,27 @@ function runTripleValidation() {
     });
   }
 
+  // Sort runway timeline entries by time before validation & save
+  const _toSec2 = (t) => { const p = String(t || '').split(':'); return (parseInt(p[0]) || 0) * 3600 + (parseInt(p[1]) || 0) * 60 + (parseInt(p[2]) || 0); };
+  if (appState.runwayTimeline.timeline && appState.runwayTimeline.timeline.length > 1) {
+    appState.runwayTimeline.timeline.sort((a, b) => _toSec2(a.time) - _toSec2(b.time));
+  }
+
+  // (c) Runway timeline time validation — strictly between level start/end
+  if (appState._configStartTime && appState._configEndTime && appState.runwayTimeline.timeline) {
+    const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
+    const startMin = toMin(appState._configStartTime);
+    const endMin = toMin(appState._configEndTime);
+
+    appState.runwayTimeline.timeline.forEach((entry, i) => {
+      if (!entry.time) return;
+      const t = toMin(entry.time);
+      if (t <= startMin || t >= endMin) {
+        issues.push(`跑道变更 #${i + 1}: 时间 "${entry.time}" 不在关卡范围内 (${appState._configStartTime} ~ ${appState._configEndTime})（须严格介于起止时间之间）`);
+      }
+    });
+  }
+
   const runwayTL = appState.runwayTimeline;
   if (runwayTL && runwayTL.initialRunways && runwayTL.timeline) {
     const initialRunways = runwayTL.initialRunways || [];
@@ -170,7 +191,7 @@ function runTripleValidation() {
   return issues;
 }
 
-async function doSaveAcl(createBackup) {
+async function doSaveAcl(createBackup, silent) {
   try {
     const result = await window.electronAPI.saveAcl({
       filePath: appState.currentPath,
@@ -186,17 +207,24 @@ async function doSaveAcl(createBackup) {
       _rawText: appState._rawText,
       earliestTime: appState._earliestTime,
       createBackup,
+      weatherTimeline: appState.weatherTimeline,
+      windTimeline: appState.windTimeline,
+      runwayTimeline: appState.runwayTimeline,
     });
 
-    if (!result.success) { showAlert('保存失败', result.error || '未知错误'); return; }
+    if (!result.success) { showAlert('保存失败', result.error || '未知错误'); return false; }
 
     const tlErrors = [];
+    // Sort by time before save so stored order is always canonical
+    const _toSecSort = (t) => { const p = String(t || '').split(':'); return (parseInt(p[0]) || 0) * 3600 + (parseInt(p[1]) || 0) * 60 + (parseInt(p[2]) || 0); };
     if (appState.weatherPath && appState.timelineModified.weather) {
+      appState.weatherTimeline.sort((a, b) => _toSecSort(a.time) - _toSecSort(b.time));
       const wr = await window.electronAPI.saveWeatherTimeline({ filePath: appState.weatherPath, data: appState.weatherTimeline });
       if (!wr.success) tlErrors.push('天气: ' + wr.error);
       else appState.timelineModified.weather = false;
     }
     if (appState.windPath && appState.timelineModified.wind) {
+      appState.windTimeline.sort((a, b) => _toSecSort(a.time) - _toSecSort(b.time));
       const wr = await window.electronAPI.saveWindTimeline({ filePath: appState.windPath, data: appState.windTimeline });
       if (!wr.success) tlErrors.push('风力: ' + wr.error);
       else appState.timelineModified.wind = false;
@@ -212,50 +240,37 @@ async function doSaveAcl(createBackup) {
     updateStatusBar();
     renderAllSections();
 
-    const tlMsg = tlErrors.length > 0
-      ? `<br><br><span style="color:var(--orange)">时间线保存警告：${tlErrors.join(', ')}</span>`
-      : '';
-    const csvMsg = result.csvSynced
-      ? `<p style="font-size:12px;color:var(--green)">CSV 航班表已同步更新（游戏将读取最新数据）</p>`
-      : '';
-    const backupMsg = createBackup
-      ? `<p style="font-size:12px;color:var(--text-muted)">.bak 备份已创建（覆盖式）</p>`
-      : '';
-    showModal('保存成功', `<p>文件已成功保存。</p>${backupMsg}${tlMsg}${csvMsg}`, `<button class="btn-confirm" id="modal-ok">确定</button>`);
+    if (silent) return true;
+
+    if (tlErrors.length > 0) {
+      console.warn('[SAVE] 时间线保存警告：' + tlErrors.join(', '));
+    }
+    showModal('保存成功', '', `<button class="btn-confirm" id="modal-ok">确定</button>`);
     document.getElementById('modal-ok').onclick = hideModal;
+    return true;
   } catch (err) {
     showAlert('保存失败', err.message);
+    return false;
   }
 }
 
-// ─── SAVE AS ─────────────────────────────────────────────
+// ─── SAVE AS (Export ZIP) ──────────────────────────────────
 document.getElementById('btn-save-as').addEventListener('click', handleSaveAs);
 
 async function handleSaveAs() {
+  if (!appState.currentPath) { showToast('没有打开的文件', 'error'); return; }
   if (appState.flights.length === 0) { showToast('没有航班数据', 'error'); return; }
 
-  const result = await window.electronAPI.saveAsAcl({
-    flights: appState.flights,
-    before: appState.before,
-    after: appState.after,
-    arrayContent: appState.arrayContent,
-    originalBlocks: appState.originalBlocks,
-    worldStateData: appState.worldStateData,
-    sceneryMaps: appState.sceneryMaps,
-    _fromWorldState: appState._fromWorldState,
-    _fromFlightPlans: appState._fromFlightPlans,
-    _rawText: appState._rawText,
-    suggestedName: appState.currentPath ? appState.currentPath.split(/[/\\]/).pop() : 'edited_level.acl',
-  });
+  // 1) Full save to current path (same as Save button, silent mode)
+  const saved = await doSaveAcl(false, true);
+  if (!saved) return;
 
+  // 2) Package into ZIP and show save dialog
+  const result = await window.electronAPI.exportZip({ aclPath: appState.currentPath });
   if (result.canceled) return;
-  if (result.error) { showAlert('保存失败', result.error); return; }
+  if (result.error) { showAlert('导出失败', result.error); return; }
 
-  appState.currentPath = result.path;
-  appState.modified = false;
-  updateStatusBar();
-  renderAllSections();
-  showToast('已另存为: ' + result.path.split(/[/\\]/).pop(), 'success');
+  showToast('已导出: ' + result.path.split(/[/\\]/).pop(), 'success');
 }
 
 // ─── MANUAL BACKUP ───────────────────────────────────────

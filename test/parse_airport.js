@@ -41,7 +41,16 @@ function testAirport(icao, levelsDir) {
   }
 
   const aclFiles = fs.readdirSync(levelsDir).filter(f => 
-    f.endsWith('.acl') && !f.endsWith('.acl.bak') && !f.includes('_backup_') && !f.includes('-bak')
+    f.endsWith('.acl')
+    && !f.endsWith('.acl.bak')
+    && !f.includes('_backup_')
+    && !f.includes('-bak')
+    && !f.includes('.demo.')
+    && !f.includes('Tutorial')
+    && !f.includes('Endless')
+    && !f.includes('_test')
+    && !f.includes('Dev')
+    && !f.includes('PerfBench')
   );
   const result = { icao, files: aclFiles.length, ok: 0, fail: 0, totalFlights: 0, details: [] };
 
@@ -50,7 +59,7 @@ function testAirport(icao, levelsDir) {
     try {
       const data = loadFlights(filePath);
       const flights = data.flights;
-      const mode = data._fromFlightPlans ? 'FlightPlans' : data._fromWorldState ? 'WorldState' : 'FlightSchedule';
+      const mode = data._fromFlightPlans ? 'FlightPlans' : data._fromWorldState ? 'WorldState' : 'Unknown';
 
       // Validate each flight
       let flightIssues = 0;

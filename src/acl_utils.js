@@ -4,7 +4,6 @@
 const fs = require('fs');
 const path = require('path');
 const { DROPDOWN_FIELDS } = require('./constants');
-const { _parseFlightSchedule } = require('./acl_flights_schedule');
 const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./acl_world_state');
 const { _parseSceneryData } = require('./acl_scenery');
 const { _parseWorldStateFlightPlans } = require('./acl_flight_plans');
@@ -55,10 +54,10 @@ function collectUniqueValues(aclPaths) {
 
   for (const aclPath of aclPaths) {
     const text = fs.readFileSync(aclPath, 'utf-8');
-    let data = _parseFlightSchedule(text);
     let flights;
-    if (data) {
-      flights = data.flights;
+    const fpResult = _parseWorldStateFlightPlans(text);
+    if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
+      flights = fpResult.flights;
     } else {
       const wsData = _parseWorldStateData(text);
       const sceneryMaps = _parseSceneryData(text);
@@ -124,23 +123,18 @@ function getFileInfo(aclPath) {
   try {
     const stat = fs.statSync(aclPath);
     const text = fs.readFileSync(aclPath, 'utf-8');
-    let data = _parseFlightSchedule(text);
     let flights;
     let error = null;
-    if (data) {
-      flights = data.flights;
+    const fpResult = _parseWorldStateFlightPlans(text);
+    if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
+      flights = fpResult.flights;
     } else {
-      const fpResult = _parseWorldStateFlightPlans(text);
-      if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
-        flights = fpResult.flights;
-      } else {
-        const wsData = _parseWorldStateData(text);
-        const sceneryMaps = _parseSceneryData(text);
-        flights = _extractFlightsFromWorldState(wsData, text, sceneryMaps);
-      }
-      if (!flights || flights.length === 0) {
-        error = 'No FlightSchedule or WorldState flight data';
-      }
+      const wsData = _parseWorldStateData(text);
+      const sceneryMaps = _parseSceneryData(text);
+      flights = _extractFlightsFromWorldState(wsData, text, sceneryMaps);
+    }
+    if (!flights || flights.length === 0) {
+      error = 'No WorldState flight data';
     }
     if (error) return { error, filename: path.basename(aclPath), size: stat.size };
 

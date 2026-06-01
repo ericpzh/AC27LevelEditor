@@ -40,4 +40,6 @@ let appState = {
   timelineModified: { weather: false, wind: false, runway: false },
   // Config values for validation
   _configStartTime: null, _configEndTime: null,
+  // Runway pairs scanned from all runway_timeline_*.json for current airport
+  _runwayPairs: [],
 };

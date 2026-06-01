@@ -1551,6 +1551,9 @@ async function doSaveAcl(createBackup) {
       _fromFlightPlans: appState._fromFlightPlans,
       _rawText: appState._rawText,
       createBackup,
+      weatherTimeline: appState.weatherTimeline,
+      windTimeline: appState.windTimeline,
+      runwayTimeline: appState.runwayTimeline,
     });
 
     if (!result.success) {
@@ -1581,21 +1584,10 @@ async function doSaveAcl(createBackup) {
     updateStatusBar();
     renderAllSections();
 
-    const tlMsg = tlErrors.length > 0
-      ? `<br><br><span style="color:var(--orange)">时间线保存警告：${tlErrors.join(', ')}</span>`
-      : '';
-    const csvMsg = result.csvSynced
-      ? `<p style="font-size:12px;color:var(--green)">CSV 航班表已同步更新（游戏将读取最新数据）</p>`
-      : '';
-    const backupMsg = createBackup
-      ? `<p style="font-size:12px;color:var(--text-muted)">.bak 备份已创建（覆盖式）</p>`
-      : '';
-    showModal('保存成功', `
-      <p>文件已成功保存。</p>
-      ${backupMsg}
-      ${tlMsg}
-      ${csvMsg}
-    `, `<button class="btn-confirm" id="modal-ok">确定</button>`);
+    if (tlErrors.length > 0) {
+      console.warn('[SAVE] 时间线保存警告：' + tlErrors.join(', '));
+    }
+    showModal('保存成功', '', `<button class="btn-confirm" id="modal-ok">确定</button>`);
     document.getElementById('modal-ok').onclick = hideModal;
   } catch (err) {
     showAlert('保存失败', err.message);
@@ -1794,7 +1786,6 @@ function renderWeatherEditor() {
 
   list.innerHTML = appState.weatherTimeline.map((entry, i) => `
     <div class="tl-row" data-idx="${i}">
-      <span class="tl-idx">${i + 1}</span>
       <select class="tl-select" data-field="preset" data-idx="${i}">
         ${WEATHER_PRESETS.map(p => `<option value="${p}" ${entry.preset === p ? 'selected' : ''}>${p}</option>`).join('')}
         ${!WEATHER_PRESETS.includes(entry.preset) ? `<option value="${entry.preset}" selected>${entry.preset}</option>` : ''}
@@ -1860,7 +1851,6 @@ function renderWindEditor() {
 
   list.innerHTML = appState.windTimeline.map((entry, i) => `
     <div class="tl-row" data-idx="${i}">
-      <span class="tl-idx">${i + 1}</span>
       <input class="tl-input tl-int" type="text" inputmode="numeric" data-field="direction" data-idx="${i}" value="${entry.direction || 0}">
       <span class="tl-label-sm">deg</span>
       <input class="tl-input tl-int" type="text" inputmode="numeric" data-field="speed" data-idx="${i}" value="${entry.speed || 0}">
@@ -1924,61 +1914,66 @@ function renderRunwayEditor() {
   if (!container) return;
 
   const rw = appState.runwayTimeline;
-  const initialStr = (rw.initialRunways || []).join(', ');
 
-  // Get known runways from airportValues or fallback to extracting from current flights
-  const rwOptions = (appState.airportValues[appState.currentAirport]?.Runway) ||
-    [...new Set(appState.flights.map(f => (f.Runway || '').trim()).filter(Boolean))];
+  // Get known runways from pairs or airportValues or flights
+  const pairs = appState._runwayPairs || [];
+  const rwFromPairs = pairs.length ? [...new Set(pairs.flatMap(p => [p.source, p.dest]))] : [];
+  const rwFromValues = (appState.airportValues[appState.currentAirport]?.Runway) || [];
+  const rwFromFlights = [...new Set(appState.flights.map(f => (f.Runway || '').trim()).filter(Boolean))];
+  const allRunwayNames = [...new Set([...rwFromPairs, ...rwFromValues, ...rwFromFlights])].sort((a, b) => {
+    const na = parseInt(a) || 0, nb = parseInt(b) || 0;
+    if (na !== nb) return na - nb;
+    return a.localeCompare(b);
+  });
+  const initialSet = new Set(rw.initialRunways || []);
+
+  const checkboxesHTML = allRunwayNames.map(name => `
+    <label class="rw-checkbox-label">
+      <input class="rw-checkbox" type="checkbox" value="${escapeHtml(name)}" ${initialSet.has(name) ? 'checked' : ''}>
+      ${escapeHtml(name)}
+    </label>
+  `).join('');
 
   container.innerHTML = `
-    <div class="rw-section">
-      <div class="rw-section-title">初始跑道</div>
-      <div class="rw-initial-row">
-        <input id="rw-initial-input" class="tl-input" type="text" value="${escapeHtml(initialStr)}" placeholder="如: 4L, 4R, 31L, 31R">
-        <button id="btn-rw-initial-save" class="btn-sm">应用</button>
-      </div>
+    <div class="rw-initial-row">
+      <span class="rw-initial-label">初始跑道:</span>
+      <div class="rw-checkbox-grid">${checkboxesHTML || '<span class="text-muted">无跑道数据</span>'}</div>
     </div>
-    <div class="rw-section">
-      <div class="rw-section-title">跑道变更时间线 <button id="btn-rw-change-add" class="btn-sm">+ 添加变更</button></div>
+    <div class="rw-toolbar">
+      <button id="btn-rw-change-add" class="btn-sm">+ 添加变更</button>
+    </div>
       <div id="rw-changes-list">
-        ${(rw.timeline || []).map((tle, i) => `
+        ${(rw.timeline || []).map((tle, i) => {
+          const activeKeys = new Set((tle.changes || []).map(ch => ch.source + '|' + ch.dest));
+          return `
           <div class="rw-change-card">
             <div class="rw-change-header">
-              <span class="tl-idx">变更 ${i + 1}</span>
-              <input class="tl-input rw-time-input" type="text" data-idx="${i}" data-field="time" value="${tle.time || ''}" placeholder="HH:MM:SS">
+              <input class="tl-input rw-time-input" type="text" data-idx="${i}" data-field="time" value="${tle.time || ''}" placeholder="HH:MM">
+              <div class="rw-change-checkboxes">
+                ${pairs.map(p => {
+                  const key = p.source + '|' + p.dest;
+                  return `
+                  <label class="rw-checkbox-label">
+                    <input class="rw-change-cb" type="checkbox" value="${escapeHtml(p.source)}|${escapeHtml(p.dest)}" data-tli="${i}" ${activeKeys.has(key) ? 'checked' : ''}>
+                    ${escapeHtml(p.source)} → ${escapeHtml(p.dest)}
+                  </label>
+                `}).join('')}
+              </div>
               <button class="tl-btn-del" data-idx="${i}" title="删除此变更">X</button>
             </div>
-            <div class="rw-change-pairs">
-              ${(tle.changes || []).map((ch, j) => `
-                <div class="rw-pair">
-                  <span class="rw-pair-label">从</span>
-                  <select class="tl-select rw-pair-input" data-tli="${i}" data-idx="${j}" data-field="source">
-                    <option value="">—</option>
-                    ${rwOptions.map(v => `<option value="${escapeHtml(v)}" ${ch.source === v ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
-                  </select>
-                  <span>&rarr;</span>
-                  <span class="rw-pair-label">到</span>
-                  <select class="tl-select rw-pair-input" data-tli="${i}" data-idx="${j}" data-field="dest">
-                    <option value="">—</option>
-                    ${rwOptions.map(v => `<option value="${escapeHtml(v)}" ${ch.dest === v ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
-                  </select>
-                  <button class="tl-btn-del-sm" data-tli="${i}" data-idx="${j}" title="删除此对">&times;</button>
-                </div>
-              `).join('')}
-              <button class="btn-sm rw-add-pair" data-tli="${i}">+ 添加跑道对</button>
-            </div>
           </div>
-        `).join('')}
+        `}).join('')}
       </div>
-    </div>
   `;
 
-  // Initial runways save
-  document.getElementById('btn-rw-initial-save').addEventListener('click', () => {
-    const val = document.getElementById('rw-initial-input').value;
-    appState.runwayTimeline.initialRunways = val.split(',').map(s => s.trim()).filter(Boolean);
-    appState.timelineModified.runway = true;
-    updateTimelineStatus();
+  // Initial runways — checkbox changes update live
+  container.querySelectorAll('.rw-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = container.querySelectorAll('.rw-checkbox:checked');
+      appState.runwayTimeline.initialRunways = [...checked].map(c => c.value);
+      appState.timelineModified.runway = true;
+      updateTimelineStatus();
+    });
   });
 
   // Change time
@@ -1991,27 +1986,17 @@ function renderRunwayEditor() {
     });
   });
 
-  // Pair fields
-  container.querySelectorAll('.rw-pair-input').forEach(el => {
-    el.addEventListener('change', () => {
-      const tli = parseInt(el.dataset.tli);
-      const idx = parseInt(el.dataset.idx);
-      const field = el.dataset.field;
-      appState.runwayTimeline.timeline[tli].changes[idx][field] = el.value;
+  // Runway change checkboxes — rebuild changes[] from checked pairs
+  container.querySelectorAll('.rw-change-cb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const tli = parseInt(cb.dataset.tli);
+      const checked = container.querySelectorAll(`.rw-change-cb[data-tli="${tli}"]:checked`);
+      appState.runwayTimeline.timeline[tli].changes = [...checked].map(c => {
+        const [source, dest] = c.value.split('|');
+        return { source, dest };
+      });
       appState.timelineModified.runway = true;
       updateTimelineStatus();
-    });
-  });
-
-  // Delete pair
-  container.querySelectorAll('.tl-btn-del-sm').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tli = parseInt(btn.dataset.tli);
-      const idx = parseInt(btn.dataset.idx);
-      appState.runwayTimeline.timeline[tli].changes.splice(idx, 1);
-      appState.timelineModified.runway = true;
-      updateTimelineStatus();
-      renderRunwayEditor();
     });
   });
 
@@ -2026,24 +2011,16 @@ function renderRunwayEditor() {
     });
   });
 
-  // Add pair button
-  container.querySelectorAll('.rw-add-pair').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tli = parseInt(btn.dataset.tli);
-      appState.runwayTimeline.timeline[tli].changes.push({ source: '', dest: '' });
+  // Add change button (re-bind after innerHTML replace)
+  const addBtn = document.getElementById('btn-rw-change-add');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      appState.runwayTimeline.timeline.push({ time: '12:00:00', changes: [] });
       appState.timelineModified.runway = true;
       updateTimelineStatus();
       renderRunwayEditor();
     });
-  });
-
-  // Add change button
-  document.getElementById('btn-rw-change-add').addEventListener('click', () => {
-    appState.runwayTimeline.timeline.push({ time: '12:00:00', changes: [] });
-    appState.timelineModified.runway = true;
-    updateTimelineStatus();
-    renderRunwayEditor();
-  });
+  }
 
   updateTimelineStatus();
 }

@@ -25,6 +25,11 @@
         <p class="steam-path-hint">通常路径如：<code>...\steamapps\common\Airport Control 25 Playtest</code></p>
       </div>
 
+      <div class="setup-nightly-note">
+        <span class="setup-nightly-icon">⚠️</span>
+        <span>请切换到<strong>nightly</strong>游戏版本（属性 → 游戏版本及测试版 → nightly）</span>
+      </div>
+
       <button id="btn-select-root" class="btn-big">选择游戏根目录</button>
       <p id="setup-error" class="setup-error hidden"></p>
     </div>
@@ -73,8 +78,8 @@
       <div class="toolbar-group save-group">
         <button id="btn-backup-only" title="手动备份当前文件">备份</button>
         <button id="btn-restore-backup" title="从 .bak 备份还原所有文件">还原备份</button>
-        <button id="btn-import-acl" title="导入外部 .acl 覆盖当前">导入</button>
-        <button id="btn-save-as" title="另存为…">另存为</button>
+        <button id="btn-import-acl" title="导入关卡包 (.zip) 覆盖当前">导入</button>
+        <button id="btn-save-as" title="导出关卡包 (.zip)">另存为</button>
         <button id="btn-save" class="btn-primary-sm" title="保存 (Ctrl+S)">保存</button>
       </div>
     </header>
@@ -92,9 +97,11 @@
           <div class="tl-embed-body">
             <div class="tl-toolbar tl-embed-toolbar">
               <button id="btn-weather-add" class="btn-sm">+ 添加条目</button>
+              <span id="weather-range-indicator" class="tl-range-indicator"></span>
+              <span id="weather-hidden-count" class="tl-hidden-count"></span>
             </div>
             <div class="tl-list-header">
-              <span class="tl-h-idx">#</span><span class="tl-h-preset">预设</span><span class="tl-h-time">时间</span><span></span>
+              <span class="tl-h-time">时间</span><span class="tl-h-preset">天气</span><span></span>
             </div>
             <div id="weather-list" class="tl-list"></div>
           </div>
@@ -108,9 +115,11 @@
           <div class="tl-embed-body">
             <div class="tl-toolbar tl-embed-toolbar">
               <button id="btn-wind-add" class="btn-sm">+ 添加条目</button>
+              <span id="wind-range-indicator" class="tl-range-indicator"></span>
+              <span id="wind-hidden-count" class="tl-hidden-count"></span>
             </div>
             <div class="tl-list-header">
-              <span class="tl-h-idx">#</span><span class="tl-h-dir">风向</span><span></span><span class="tl-h-speed">风速</span><span></span><span class="tl-h-time">时间</span><span></span>
+              <span class="tl-h-time">时间</span><span class="tl-h-dir">风向</span><span></span><span class="tl-h-speed">风速</span><span></span>
             </div>
             <div id="wind-list" class="tl-list"></div>
           </div>
@@ -122,9 +131,7 @@
             <span class="tl-embed-arrow">▸</span>
           </div>
           <div class="tl-embed-body">
-            <div class="tl-toolbar tl-embed-toolbar">
-              <span></span>
-            </div>
+            <div class="tl-toolbar tl-embed-toolbar"></div>
             <div id="runway-editor" class="tl-list"></div>
           </div>
         </div>
