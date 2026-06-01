@@ -15,8 +15,8 @@ Cross-platform (Windows + macOS) GUI tool for editing **Airport Control 25** `.a
    - **Timeline editors**: Weather presets, Wind direction/speed, Runway usage — editable in collapsible panels within the flight tab
 
 ### Save Flow
-- **Save** (Ctrl+S) — triple validation (options legality → time range → runway set), then writes `.acl` + `.csv` + timeline `.json` files, creating `.bak` backups automatically
-- **Save As** — write to any location
+- **Save** (Ctrl+S) — triple validation (options legality → time range → runway set), then writes `.acl` + `.csv` + timeline `.json` files, creating `.bak` backups automatically. Minimal confirmation popup on success.
+- **Save As** — export `.acl` + `.csv` + timeline `.json` as a ZIP bundle
 - **Import** — load external `.acl` to override current level
 - **CSV Export/Import** — export flights to generic CSV, or bulk-import from CSV into a `.acl` template
 - **Backup/Restore** — manual backup to any location, restore latest `.bak` chain (`.acl` + `.csv` + timeline `.json`)
@@ -125,7 +125,9 @@ time_utils.js ──────────────────────
      │
      ├── acl_world_state.js ──────────────── (WorldState type 56/54/35, depends on constants+time_utils)
      │         │
-     │         └── acl_flight_plans.js ────── (new FlightPlans type 37/52/57/58, depends on acl_world_state)
+     │         ├── acl_flight_plans.js ────── (flight plans + timeline sections, depends on acl_world_state)
+     │         │         │
+     │         └── acl_dynamics.js ──────── (DynamicsParams builder, depends on acl_world_state)
      │                   │
      └───────┬───────────┴──────┬────────────────┐
              │                  │                │
@@ -148,6 +150,7 @@ time_utils.js ──────────────────────
 | `acl_parser.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()`, `_rebuildWorldStateSections()` |
 | `acl_parser.js` | `acl_utils.js` | `_enrichFlightsFromSource()`, all public utils |
 | `acl_flight_plans.js` | `acl_world_state.js` | `_applyWsField()`, `_generateGuid()` |
+| `acl_dynamics.js` | `acl_world_state.js` | `_generateGuid()` |
 | `acl_utils.js` | `acl_world_state.js` | `_parseWorldStateData()`, `_extractFlightsFromWorldState()` |
 | `acl_utils.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()` |
 | `main.js` | `acl_parser.js` | `loadFlights()`, `generateFullAcl()`, `generateAclFromCsv()`, `collectUniqueValues()`, etc. |
@@ -202,10 +205,19 @@ When saving, `_rebuildWorldStateSections()` rebuilds FlightPlans entries from sc
 │   │   Depends on: constants.js, time_utils.js
 │   │   Exports: _generateGuid(), _parseWorldStateData(), _extractFlightsFromWorldState(), _applyWsField()
 │   │
-│   ├── acl_flight_plans.js   # New-format FlightPlans parser (type 37 → ArrivalLeg type 58 / DepartureLeg type 57)
+│   ├── acl_flight_plans.js   # FlightPlans parser + rebuild: type 37/52/57/58, timeline sections (Weather/Wind/Runway)
 │   │   Depends on: constants.js, time_utils.js, acl_world_state.js (_applyWsField, _generateGuid)
 │   │   Exports: _parseWorldStateFlightPlans(), _parseFlightPlanEntry(),
-│   │            _buildFlightPlanArrivalLeg(), _buildFlightPlanDepartureLeg(), _rebuildWorldStateSections()
+│   │            _buildFlightPlanArrivalLeg(), _buildFlightPlanDepartureLeg(),
+│   │            _rebuildWorldStateSections(), _rebuildTimelineSections(),
+│   │            generateFramesSection(), generateRunwayTimelineSection()
+│   │   Note: timeline sections rebuild WeatherFrames/WindFrames/RunwayTimeline in-place,
+│   │         preserving $id and $type references
+│   │
+│   ├── acl_dynamics.js       # DynamicsParams builder: captures AircraftState templates, creates runtime entries
+│   │   Depends on: acl_world_state.js (_generateGuid)
+│   │   Exports: calcProgressRatio(), captureAllDynamicsTemplates(), buildAircraftEntry(),
+│   │            _parseFlightPlanArrivalData(), _parseAircraftsEntries()
 │   │
 │   ├── acl_utils.js          # Utility functions: CSV↔ACL enrichment, chronological sort, dropdown scanning, audio callsign loading
 │   │   Depends on: constants.js, acl_scenery.js, acl_world_state.js, acl_flight_plans.js
@@ -220,6 +232,10 @@ When saving, `_rebuildWorldStateSections()` rebuilds FlightPlans entries from sc
 │   ├── acl_scanner.js        # Game root scanner: discovers all airports and their .acl/csv files
 │   │   Depends on: fs, path only
 │   │   Exports: scanGameRoot(), getAllAirportsFromPlaytest()
+│   │
+│   ├── zip_utils.js           # Minimal ZIP create/extract using Node.js built-ins (zlib + CRC32)
+│   │   Depends on: fs, path, zlib only
+│   │   Exports: createZip(), extractZip()
 │   │
 │   ├── index.html            # 3-screen SPA shell (Setup / Browser / Editor), loads all JS in dependency order
 │   ├── style.css             # Dark theme styles
@@ -286,11 +302,14 @@ When saving, `_rebuildWorldStateSections()` rebuilds FlightPlans entries from sc
 │           Depends on: ALL previous renderer modules
 │           Wires: toolbar buttons, search, keyboard shortcuts → delegates to action modules
 ├── test/
-│   ├── e2e_save_load.js           # End-to-end round-trip: load → save → load → compare
 │   ├── parse_airport.js           # Smoke test: parse all airports, validate field coverage
-│   ├── csv_vs_flightplans.js      # Cross-check CSV imports against ACL FlightPlans entries
 │   ├── callsign_gen_test.js       # Verify CallSign prefixes match airline ICAO codes
-│   └── timeline_comparison.js     # Compare JSON timeline files against ACL-embedded data
+│   ├── csv_vs_flightplans.js      # Cross-check CSV imports against ACL FlightPlans entries
+│   ├── e2e_save_load.js           # End-to-end round-trip: load → save → load → compare
+│   ├── timeline_comparison.js     # Compare JSON timeline files against ACL-embedded data
+│   ├── test_generate_timelines.js # Unit: generateFramesSection / generateRunwayTimelineSection ↔ existing ACL
+│   ├── test_rebuild_sections.js   # E2E: _rebuildWorldStateSections (FlightPlans/Aircrafts rebuild)
+│   └── test_rebuild_timelines.js  # E2E: _rebuildTimelineSections (Weather/Wind/Runway in-place patch)
 └── dist/                # Build output (AC27 Level Editor.exe)
 ```
 
@@ -309,6 +328,9 @@ node test/callsign_gen_test.js          # Validate CallSign → ICAO consistency
 node test/csv_vs_flightplans.js         # CSV ↔ ACL FlightPlans cross-check
 node test/e2e_save_load.js              # Full save/load round-trip test
 node test/timeline_comparison.js <acl>  # Compare ACL timelines vs JSON files
+node test/test_generate_timelines.js    # Verify JSON→ACL timeline section generators
+node test/test_rebuild_sections.js      # E2E: FlightPlans/Aircrafts section rebuild
+node test/test_rebuild_timelines.js     # E2E: Weather/Wind/Runway section rebuild
 ```
 
 ## Build
