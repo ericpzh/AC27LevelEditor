@@ -1,6 +1,10 @@
 # AC27 Level Editor
 
-Cross-platform (Windows + macOS) GUI tool for editing **Airport Control 25** `.acl` flight schedule and level files. Built with Electron + Node.js.
+《机场管制27》关卡编辑器，用于编辑 `.acl` 航班时刻表文件，提供完整的航班表格编辑器、天气/风向/跑道时间线编辑。仅兼容游戏版本： **nightly（Playtest）**。
+
+Cross-platform (Windows + macOS) GUI tool for editing **Airport Control 27** `.acl` flight schedule and level files. Built with Electron + Node.js.
+
+> **Compatibility**: Only compatible with the **nightly build** (Playtest) of Airport Control. The stable/release version uses a different data format.
 
 ## User Flow
 
@@ -368,10 +372,3 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 Output: `dist\AC27 Level Editor.exe` (~180 MB portable executable).
 
 If the build fails with file-locking errors, try disabling real-time antivirus or reboot before building.
-
-### Icon notes
-
-- Edit `icon.png` (512×512 PNG), then regenerate `icon.ico`:
-  ```bash
-  node -e "const p=require('png-to-ico').default;require('fs').writeFileSync('icon.ico',await p('icon.png',[256,128,64,48,32,16]))"
-  ```
