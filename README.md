@@ -314,7 +314,7 @@ When saving, `_rebuildWorldStateSections()` rebuilds FlightPlans entries from sc
 │   ├── test_generate_timelines.js # Unit: generateFramesSection / generateRunwayTimelineSection ↔ existing ACL
 │   ├── test_rebuild_sections.js   # E2E: _rebuildWorldStateSections (FlightPlans/Aircrafts rebuild)
 │   └── test_rebuild_timelines.js  # E2E: _rebuildTimelineSections (Weather/Wind/Runway in-place patch)
-└── dist/                # Build output (AC27 Level Editor.exe)
+└── dist/                # Build output (AC27LevelEditor.exe)
 ```
 
 ## Development
@@ -369,6 +369,6 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
    node build.js
    ```
 
-Output: `dist\AC27 Level Editor.exe` (~180 MB portable executable).
+Output: `dist\AC27LevelEditor.exe` (~180 MB portable executable).
 
 If the build fails with file-locking errors, try disabling real-time antivirus or reboot before building.

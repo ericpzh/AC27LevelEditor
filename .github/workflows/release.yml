@@ -36,7 +36,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Level-Editor-Windows
-          path: dist/*.exe
+          path: dist/AC27LevelEditor.exe
           if-no-files-found: error
 
   build-macos:

@@ -24,7 +24,7 @@
     "win": {
       "target": "portable",
       "icon": "icon.ico",
-      "artifactName": "${productName}.${ext}"
+      "artifactName": "AC27LevelEditor.${ext}"
     },
     "mac": {
       "target": "dmg",
