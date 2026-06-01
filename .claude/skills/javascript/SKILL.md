@@ -1,3 +1,8 @@
+---
+name: javascript
+description: JavaScript/TypeScript coding standards — naming conventions, file organization, module structure, and code style. Use this skill whenever reviewing, generating, refactoring, or discussing JavaScript or TypeScript code, setting up JS/TS project conventions, or when the user asks about code style, naming patterns, file naming, or module organization in a JS/TS codebase.
+---
+
 # JavaScript/TypeScript Coding Standards
 
 When reviewing or generating JavaScript/TypeScript code, follow these rules:

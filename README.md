@@ -1,348 +1,213 @@
-# AC27 Level Editor
+# AC27 Level Editor · AC27 关卡编辑器
 
-《机场管制27》关卡编辑器，用于编辑 `.acl` 航班时刻表文件，提供完整的航班表格编辑器、天气/风向/跑道时间线编辑。仅兼容游戏版本： **nightly（Playtest）**。
+**《机场管制 27》关卡编辑器** — 用于编辑 `.acl` 航班时刻表文件的跨平台桌面工具。支持完整的航班表格编辑、天气/风向/跑道时间线编辑。
 
-Cross-platform (Windows + macOS) GUI tool for editing **Airport Control 27** `.acl` flight schedule and level files. Built with Electron + Node.js.
+**Airport Control 27 Level Editor** — cross-platform desktop tool for editing `.acl` flight schedule files. Full flight table editor + weather/wind/runway timeline editor.
 
-> **Compatibility**: Only compatible with the **nightly build** (Playtest) of Airport Control. The stable/release version uses a different data format.
+> ⚠️ **兼容性 Compatibility**: 仅兼容 **Playtest（nightly）** 版本。稳定版使用不同的数据格式。
+> Only compatible with the **nightly build (Playtest)**. The stable/release version uses a different data format.
 
-## User Flow
+---
 
-1. **Setup** — Select game root folder (with Steam instructions)
-2. **Browser** — All `.acl` files across all airports auto-scanned and displayed, grouped by airport. Hidden levels (tutorial/test/demo/bench/endless) are toggleable.
-3. **Editor** — Full flight table editor + embedded timeline editors:
-   - Dropdown menus per column (values auto-collected per airport: KJFK ≠ ZSJN)
-   - Instant inline editing — no per-row save dialog needed
-   - Auto-sort: arrivals by LandingTime, departures by OffBlockTime
-   - Batch operations: add/delete/copy flights, batch callsign assignment
-   - Search + arrival/departure filter via toolbar
-   - **Timeline editors**: Weather presets, Wind direction/speed, Runway usage — editable in collapsible panels within the flight tab
+# 用户指南 · User Guide
 
-### Save Flow
-- **Save** (Ctrl+S) — triple validation (options legality → time range → runway set), then writes `.acl` + `.csv` + timeline `.json` files, creating `.bak` backups automatically. Minimal confirmation popup on success.
-- **Save As** — export `.acl` + `.csv` + timeline `.json` as a ZIP bundle
-- **Import** — load external `.acl` to override current level
-- **CSV Export/Import** — export flights to generic CSV, or bulk-import from CSV into a `.acl` template
-- **Backup/Restore** — manual backup to any location, restore latest `.bak` chain (`.acl` + `.csv` + timeline `.json`)
+## 中文
 
-## Data Flow
+### 安装与启动
 
-```
-Phase 0 (Setup, once):
-  Game Root → scan all CSVs per airport → load audio_clips en+zh → AirportCache
+1. 从 [Releases](../../releases) 下载 `AC27LevelEditor.exe`（Windows 免安装版）
+2. 双击运行即可，无需安装
 
-Phase 1 (Load):
-  .acl file → parse flights (WorldState.FlightPlans)
-           → load .aclcfg config (time bounds, airport code, sceneries)
-           → load timeline JSONs (weather, wind, runway)
-           → collect per-airport dropdown values (ACL + CSV + audio merge)
-           → appState
+首次启动时需要选择游戏根目录：
+- Steam 默认路径：`...\SteamLibrary\steamapps\common\Airport Control 25 Playtest`
+- 选择后编辑器会自动扫描所有机场的关卡文件
 
-Phase 3 (Save):
-  Edit → triple validation → .bak backup → write .acl + .csv + timeline .json
-```
+### 使用流程
 
-## ACL File Format
+**第一步：选择关卡** — 浏览器页面按机场分组显示所有 `.acl` 文件。每个卡片显示关卡时间范围、航班数量等信息。可一键切换隐藏教学/测试关卡。
 
-`.acl` files use Newtonsoft.Json serialization with `$type` and `$rcontent`. The editor uses the `WorldState.FlightPlans` format — a dictionary of keyed `FlightPlanState` entries, each containing either an `Arrival` or `Departure` leg.
+**第二步：编辑航班** — 进入编辑器后：
+- 点击任意单元格即可内联编辑（下拉菜单或文本输入）
+- 时间字段点击后弹出 SVG 时钟面板，支持鼠标拖拽和键盘输入
+- 到达航班按落地时间排序，出发航班按撤轮挡时间排序
+- 工具栏支持搜索、筛选、批量操作
 
-Flight data fields:
+**第三步：保存** — `Ctrl+S` 保存。校验通过后自动创建 `.bak` 备份并写入文件。
 
-| Field | Type | Description |
-|-------|------|-------------|
-| CallSign | string | Flight callsign (e.g. CCA0001) |
-| DepartureAirport | string | ICAO departure |
-| ArrivalAirport | string | ICAO arrival |
-| Stand | string | Gate/stand number |
-| Runway | string | Runway identifier |
-| OffBlockTime | ticks/HH:MM:SS | Pushback time |
-| TakeoffTime | ticks/HH:MM:SS | Takeoff time |
-| LandingTime | ticks/HH:MM:SS | Landing time |
-| InBlockTime | ticks/HH:MM:SS | Gate arrival time |
-| AirlineName | string | Airline code |
-| AircraftType | string | Aircraft model |
-| Voice | string | Voice profile (from audio_clips) |
-| Language | string | en / zh |
+### 主要功能
 
-## Architecture
+| 功能 | 说明 |
+|------|------|
+| 航班编辑 | 内联编辑所有字段，下拉值按机场自动收集 |
+| 时间线编辑 | 天气预设、风向/风速、跑道使用时段 |
+| 保存/另存 | Ctrl+S 保存；另存为 ZIP 打包分享 |
+| 导入 | 从 ZIP 或 CSV 导入航班数据 |
+| 备份/还原 | 手动备份到任意位置，一键还原最近备份 |
 
-All renderer JS files share the global scope (plain `<script>` tags, no ES modules or bundler). The `<script>` load order in `index.html` is the definitive dependency order — each file can only reference symbols defined in files loaded before it.
+---
 
-### Dependency Graph
+## English
 
-```
-data-constants.js   (pure data, no dependencies)
-        │
-   state.js         (mutates appState, depends on data-constants.js)
-        │
-   ui-utils.js      (showScreen/showToast/showModal, depends on state.js)
-        │
-   ┌────┼────┬──────────┐
-   │    │    │          │
-   ▼    ▼    ▼          ▼
-setup  browser   editor-   cell-     ← Screen handlers (all depend on ui-utils + state + data-constants)
--screen -screen   core     editor
-                  │          │
-          ┌───────┘          │
-          ▼                  ▼
-    flight-actions      save-actions    ← Mutate flights & save (depend on editor-core for autoSort/renderAllSections)
-    import-actions                       ← depends on editor-core to reload after import
-                  │
-          ┌───────┘
-          ▼
-   timeline-editors.js     ← depends on editor-shell (updateTimelineStatus) + editor-core (renderAllSections on rwy change)
-          │
-          ▼
-   editor-shell.js         ← Init & event wiring; depends on EVERY file above (wires onClick handlers, keyboard shortcuts)
-```
+### Installation & Launch
 
-**Key cross-module calls (file A calls file B):**
+1. Download `AC27LevelEditor.exe` from [Releases](../../releases) (Windows portable, no installer)
+2. Double-click to run
 
-| Caller | Callee | Function(s) |
-|--------|--------|-------------|
-| `flight-actions.js` | `editor-core.js` | `autoSort()`, `renderAllSections()` |
-| `save-actions.js` | `editor-core.js` | `autoSort()`, `renderAllSections()`, `appState` |
-| `import-actions.js` | `editor-core.js` | `openEditor()` (re-opens after import) |
-| `cell-editor.js` | `editor-core.js` | `renderAllSections()` (after inline edit) |
-| `timeline-editors.js` | `editor-shell.js` | `updateTimelineStatus()` |
-| `timeline-editors.js` | `editor-core.js` | `renderAllSections()` (on runway change) |
-| `editor-shell.js` | `editor-core.js` | `openEditor()`, `autoSort()`, `renderAllSections()` |
-| `editor-shell.js` | `setup-screen.js` | Calls `initSetupScreen()` or inline handler |
-| `editor-shell.js` | `browser-screen.js` | `showBrowser()` |
-| `editor-shell.js` | `flight-actions.js` | `addArrivalFlight()`, `addDepartureFlight()`, `deleteSelected()`, etc. |
-| `editor-shell.js` | `save-actions.js` | `handleSave()`, `handleSaveAs()`, `handleManualBackup()` |
-| `editor-shell.js` | `import-actions.js` | `handleImportAcl()`, `handleRestoreBackup()` |
-| `editor-shell.js` | `timeline-editors.js` | `renderWeatherEditor()`, `renderWindEditor()`, `renderRunwayEditor()` |
+On first launch, select the game root folder:
+- Default Steam path: `...\SteamLibrary\steamapps\common\Airport Control 25 Playtest`
+- The editor auto-scans all airports and their level files
 
-### Backend Module Dependency Graph (Node.js / IPC side)
+### User Flow
 
-The backend modules in `src/` form a strict acyclic dependency tree. `acl_parser.js` is the **facade** — `main.js` only requires this one file, which delegates to all sub-modules.
+**Step 1 — Browse:** All `.acl` files across all airports are listed, grouped by airport. Each card shows time range, flight count, and metadata. Hidden levels (tutorial/test/demo) can be toggled.
 
-```
-constants.js  ──────────────────────────────────────────── (pure data, no deps)
-     │
-time_utils.js ─────────────────────────────── (tick math, depends on constants.js)
-     │
-     ├── csv_io.js ────────────────────────── (CSV read/write, depends on constants+time_utils)
-     │
-     ├── acl_scenery.js ───────────────────── (SceneryData parser, no deps)
-     │
-     ├── acl_world_state.js ──────────────── (WorldState type 56/54/35, depends on constants+time_utils)
-     │         │
-     │         ├── acl_flight_plans.js ────── (flight plans + timeline sections, depends on acl_world_state)
-     │         │         │
-     │         └── acl_dynamics.js ──────── (DynamicsParams builder, depends on acl_world_state)
-     │                   │
-     └───────┬───────────┴──────┬────────────────┐
-             │                  │                │
-             ▼                  ▼                ▼
-    acl_utils.js ─────────────────────────────── (enrich, sort, scan, audio — depends on all parsers + csv_io)
-             │
-             ▼
-    acl_parser.js ────────────────────────────── (FACADE: loadFlights, generateFullAcl, generateAclFromCsv)
-             │
-             ▼
-         main.js ─────────────────────────────── (Electron main process, IPC handlers)
-```
+**Step 2 — Edit:** Inline editing for every cell:
+- Click any cell → dropdown or text input
+- Time cells → SVG clock popover (drag hands or type)
+- Arrivals auto-sorted by landing time, departures by off-block time
+- Toolbar: search, filter, batch operations
 
-**Key cross-module calls (backend):**
+**Step 3 — Save:** `Ctrl+S` triggers validation, then writes `.acl` + `.csv` + timeline `.json` files with `.bak` backup.
 
-| Caller | Callee | Function(s) |
-|--------|--------|-------------|
-| `acl_parser.js` | `acl_scenery.js` | `_parseSceneryData()` |
-| `acl_parser.js` | `acl_world_state.js` | `_parseWorldStateData()`, `_extractFlightsFromWorldState()` |
-| `acl_parser.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()`, `_rebuildWorldStateSections()` |
-| `acl_parser.js` | `acl_utils.js` | `_enrichFlightsFromSource()`, all public utils |
-| `acl_flight_plans.js` | `acl_world_state.js` | `_applyWsField()`, `_generateGuid()` |
-| `acl_dynamics.js` | `acl_world_state.js` | `_generateGuid()` |
-| `acl_utils.js` | `acl_world_state.js` | `_parseWorldStateData()`, `_extractFlightsFromWorldState()` |
-| `acl_utils.js` | `acl_flight_plans.js` | `_parseWorldStateFlightPlans()` |
-| `main.js` | `acl_parser.js` | `loadFlights()`, `generateFullAcl()`, `generateAclFromCsv()`, `collectUniqueValues()`, etc. |
+### Features
 
-**Note on export convention:** Underscore-prefixed exports (`_parse...`, `_apply...`, `_rebuild...`) are internal functions exposed only for testing and cross-module use within the backend. Public API functions have no underscore prefix.
+| Feature | Description |
+|---------|-------------|
+| Flight Editor | Inline cell editing, per-airport dropdown values |
+| Timeline Editors | Weather presets, wind direction/speed, runway schedule |
+| Save / Save As | Ctrl+S to save; export as ZIP bundle |
+| Import | Import from ZIP or CSV |
+| Backup / Restore | Manual backup, one-click restore from `.bak` chain |
 
-### ACL Parsing Flow
+---
 
-When loading a `.acl` file, the parser detects the file format and dispatches accordingly:
+# 开发者文档 · Developer Documentation
 
-```
-loadFlights(aclPath)
-  ├── _parseSceneryData(text)           → extracts Runway and Stand GUID maps
-  ├── _parseWorldStateFlightPlans(text) → parse FlightPlans format (type 37 in WorldState.FlightPlans)
-  │   └── IF found: enrich CSV flights from FlightPlans data ✓
-  │
-  └── IF no FlightPlans found:
-      └── _parseWorldStateData(text)    → extract TaskFlightState entries
-          └── _extractFlightsFromWorldState() → convert WS entries to flight objects
-```
+## English
 
-When saving, `_rebuildWorldStateSections()` rebuilds FlightPlans entries from scratch.
+### Tech Stack
 
-## Project Structure
+- **Runtime:** Electron 33
+- **Language:** JavaScript (plain, no TypeScript)
+- **Build:** electron-builder (programmatic API via `build.js`)
+- **No bundler, no framework, no test runner** — deliberately minimal
 
-```
-├── main.js              # Electron main process + all IPC handlers
-├── preload.js           # Secure contextBridge IPC layer (exposes ipcApi to renderer)
-├── build.js             # Electron-builder build script
-├── package.json
-├── src/
-│   │
-│   │ ── Backend: ACL parsing & CSV I/O (Node.js, no DOM) ──
-│   │
-│   ├── constants.js          # Shared constants: field definitions, tick constants, aircraft designator map
-│   │   Depends on: nothing (pure data)
-│   │   Exports: FIELDS, FIELD_LABELS, DROPDOWN_FIELDS, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS, AIRCRAFT_DESIGNATOR_MAP
-│   │
-│   ├── time_utils.js         # Newtonsoft.Json DateTime ticks ↔ HH:MM:SS conversion, base-date extraction
-│   │   Depends on: constants.js
-│   │   Exports: ticksToTime(), timeToTicks(), ticksToString(), _guessDesignator(), _extractBaseDateTicks(), _extractBaseDateFromText()
-│   │
-│   ├── csv_io.js             # CSV import/export: game-compatible 16-column format, value scanning
-│   │   Depends on: constants.js, time_utils.js
-│   │   Exports: importCsvFromFile(), exportCSV(), exportGameCSV(), collectUniqueValuesFromCSV()
-│   │
-│   ├── acl_scenery.js        # SceneryData parser: extracts Runway Name↔GUID and Stand Identifier↔GUID maps
-│   │   Depends on: nothing (pure text parsing, no imports)
-│   │   Exports: _parseSceneryData()
-│   │
-│   ├── acl_world_state.js    # WorldState parser: TaskFlightState (type 56/54), AircraftState (type 35)
-│   │   Depends on: constants.js, time_utils.js
-│   │   Exports: _generateGuid(), _parseWorldStateData(), _extractFlightsFromWorldState(), _applyWsField()
-│   │
-│   ├── acl_flight_plans.js   # FlightPlans parser + rebuild: type 37/52/57/58, timeline sections (Weather/Wind/Runway)
-│   │   Depends on: constants.js, time_utils.js, acl_world_state.js (_applyWsField, _generateGuid)
-│   │   Exports: _parseWorldStateFlightPlans(), _parseFlightPlanEntry(),
-│   │            _buildFlightPlanArrivalLeg(), _buildFlightPlanDepartureLeg(),
-│   │            _rebuildWorldStateSections(), _rebuildTimelineSections(),
-│   │            generateFramesSection(), generateRunwayTimelineSection()
-│   │   Note: timeline sections rebuild WeatherFrames/WindFrames/RunwayTimeline in-place,
-│   │         preserving $id and $type references
-│   │
-│   ├── acl_dynamics.js       # DynamicsParams builder: captures AircraftState templates, creates runtime entries
-│   │   Depends on: acl_world_state.js (_generateGuid)
-│   │   Exports: calcProgressRatio(), captureAllDynamicsTemplates(), buildAircraftEntry(),
-│   │            _parseFlightPlanArrivalData(), _parseAircraftsEntries()
-│   │
-│   ├── acl_utils.js          # Utility functions: CSV↔ACL enrichment, chronological sort, dropdown scanning, audio callsign loading
-│   │   Depends on: constants.js, acl_scenery.js, acl_world_state.js, acl_flight_plans.js
-│   │   Exports: _enrichFlightsFromSource(), sortFlightsChronologically(), collectUniqueValues(),
-│   │            getFileInfo(), loadAudioCallsigns(), mergeAudioCallsigns()
-│   │
-│   ├── acl_parser.js         # FACADE — public API: load/save/generate ACL, re-exports all sub-module exports
-│   │   Depends on: ALL modules above
-│   │   Exports: loadFlights(), generateFullAcl(), generateAclFromCsv(),
-│   │            + re-exports from csv_io, acl_utils, and internal _parse* functions (used by tests)
-│   │
-│   ├── acl_scanner.js        # Game root scanner: discovers all airports and their .acl/csv files
-│   │   Depends on: fs, path only
-│   │   Exports: scanGameRoot(), getAllAirportsFromPlaytest()
-│   │
-│   ├── zip_utils.js           # Minimal ZIP create/extract using Node.js built-ins (zlib + CRC32)
-│   │   Depends on: fs, path, zlib only
-│   │   Exports: createZip(), extractZip()
-│   │
-│   ├── index.html            # 3-screen SPA shell (Setup / Browser / Editor), loads all JS in dependency order
-│   ├── style.css             # Dark theme styles
-│   ├── logger.js             # File-based logging (dev mode)
-│   │
-│   └── renderer/             # 12-module UI logic (refactored from single 2137-line renderer.js)
-│       │
-│       │ ── Foundation (loaded first, no renderer dependencies) ──
-│       ├── data-constants.js
-│       │   Exports: AIRPORT_META, AIRLINE_CODE_MAP, ALL_FIELDS, FIELD_LABELS, TIME_FIELDS,
-│       │            DROPDOWN_FIELDS, COL_CLASSES, ARRIVAL_FIELDS, DEPARTURE_FIELDS
-│       │   Helpers: getAirlineCode(), airportDisplayName(), airportSortOrder()
-│       │   Depends on: nothing (pure data + pure functions)
-│       │
-│       ├── state.js
-│       │   Exports: appState{} (the single global state object), nextFlightNumber,
-│       │            initFlightNumberCounter()
-│       │   Depends on: data-constants.js
-│       │
-│       ├── ui-utils.js
-│       │   Exports: showScreen(name), showToast(msg, type), showModal(title, bodyHtml, actionsHtml),
-│       │            hideModal(), showAlert(title, msg), escapeHtml(str), stripSuffixes(name)
-│       │   Depends on: state.js (reads/writes appState.screen)
-│       │
-│       │ ── Screen controllers (each handles one screen's rendering + events) ──
-│       ├── setup-screen.js
-│       │   Depends on: ui-utils.js, state.js
-│       │   Renders: Screen 0 — game root folder picker with Steam path instructions
-│       │
-│       ├── browser-screen.js
-│       │   Exports: showBrowser() — rescans .acl files, renders grouped card UI
-│       │   Depends on: ui-utils.js, state.js, data-constants.js
-│       │   Renders: Screen 1 — level cards grouped by airport, tag pills, hidden-toggle
-│       │
-│       ├── editor-core.js
-│       │   Exports: openEditor(filePath, airportIcao), autoSort(), populateConfigBar(),
-│       │            getActiveColumns(), buildSectionTable(), renderAllSections(), autoFillSingleOptionColumns()
-│       │   Depends on: ui-utils.js, state.js, data-constants.js
-│       │   Renders: Screen 2 — config bar, arrivals/departures table sections
-│       │
-│       │ ── Interaction modules (tightly coupled to editor-core's DOM) ──
-│       ├── cell-editor.js
-│       │   Exports: startCellEdit(td, col, idx), moveToNextCell(), openTimeClockPopover()
-│       │   Depends on: ui-utils.js, state.js, data-constants.js, editor-core.js
-│       │
-│       ├── flight-actions.js
-│       │   Exports: addArrivalFlight(), addDepartureFlight(), deleteSelected(), deleteAll(), copyHighlighted()
-│       │   Depends on: ui-utils.js, state.js, editor-core.js
-│       │
-│       ├── save-actions.js
-│       │   Exports: handleSave(), handleSaveAs(), handleManualBackup(), runTripleValidation(), doSaveAcl(), validateCallsigns()
-│       │   Depends on: ui-utils.js, state.js, editor-core.js
-│       │
-│       ├── import-actions.js
-│       │   Exports: handleImportAcl(), handleRestoreBackup()
-│       │   Depends on: ui-utils.js, state.js, editor-core.js
-│       │
-│       ├── timeline-editors.js
-│       │   Exports: renderWeatherEditor(), renderWindEditor(), renderRunwayEditor(), WEATHER_PRESETS
-│       │   Depends on: ui-utils.js, state.js, editor-shell.js
-│       │
-│       └── editor-shell.js
-│           Exports: updateTimelineStatus(), updateStatusBar(), getLastRootLocal(), saveLastRootLocal()
-│           Depends on: ALL previous renderer modules
-│           Wires: toolbar buttons, search, keyboard shortcuts → delegates to action modules
-├── test/
-│   ├── parse_airport.js           # Smoke test: parse all airports, validate field coverage
-│   ├── callsign_gen_test.js       # Verify CallSign prefixes match airline ICAO codes
-│   ├── csv_vs_flightplans.js      # Cross-check CSV imports against ACL FlightPlans entries
-│   ├── e2e_save_load.js           # End-to-end round-trip: load → save → load → compare
-│   ├── timeline_comparison.js     # Compare JSON timeline files against ACL-embedded data
-│   ├── test_generate_timelines.js # Unit: generateFramesSection / generateRunwayTimelineSection ↔ existing ACL
-│   ├── test_rebuild_sections.js   # E2E: _rebuildWorldStateSections (FlightPlans/Aircrafts rebuild)
-│   └── test_rebuild_timelines.js  # E2E: _rebuildTimelineSections (Weather/Wind/Runway in-place patch)
-└── dist/                # Build output (AC27LevelEditor.exe)
-```
-
-## Development
+### Quick Start
 
 ```bash
 npm install
-npm start
+npm start          # Launch in dev mode (no build step needed)
 ```
 
-## Tests
+### Architecture (High-Level)
+
+```
+main.js          →  Electron main process, all IPC handlers, file I/O
+preload.js       →  contextBridge: exposes window.electronAPI to renderer
+src/index.html   →  SPA shell, loads 12 renderer scripts in dependency order
+src/renderer/    →  12 global-scope JS files (no ES modules)
+src/*.js         →  8 CommonJS backend modules (ACL parsing, CSV, ZIP, time)
+```
+
+The app has three screens managed by CSS visibility: **Setup → Browser → Editor**.
+
+All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
+
+### Data Flow
+
+```
+Phase 0 (once):   Game Root → scan CSVs + audio → AirportCache
+Phase 1 (load):   .acl + .csv + timeline JSONs → parse → appState
+Phase 2 (edit):   All edits mutate appState in-memory (renderer only)
+Phase 3 (save):   Validation → generate ACL from scratch → write files
+```
+
+### Project Structure
+
+```
+├── main.js              # Electron main process + ~20 IPC handlers
+├── preload.js           # contextBridge (window.electronAPI)
+├── build.js             # Build script (always use this, never npm run build:win)
+├── set_icon.js          # Post-build icon embedding
+│
+├── src/
+│   ├── acl_parser.js        # FACADE — single entry point for all parsing
+│   ├── acl_scanner.js       # Game root scanner (finds airports & .acl files)
+│   ├── acl_flight_plans.js  # FlightPlans format (types 37/52/57/58)
+│   ├── acl_world_state.js   # WorldState format (types 35/56/54)
+│   ├── acl_dynamics.js      # DynamicParams templates & Aircraft entries
+│   ├── acl_scenery.js       # SceneryData parser (runway/gate GUIDs)
+│   ├── acl_utils.js         # Enrichment, sorting, audio loading
+│   ├── csv_io.js            # CSV import/export (standard + game format)
+│   ├── zip_utils.js         # Pure Node.js ZIP (zlib, no dependencies)
+│   ├── time_utils.js        # Newtonsoft.Json DateTime ticks ↔ HH:MM:SS
+│   ├── constants.js         # Shared constants & aircraft designator map
+│   ├── logger.js            # Console → file redirect (dev mode)
+│   ├── index.html           # SPA shell
+│   ├── style.css            # Dark theme
+│   └── renderer/            # 12 UI modules (global scope, loaded by index.html)
+│       ├── data-constants.js    # Airport metadata, airline codes
+│       ├── state.js             # appState singleton
+│       ├── ui-utils.js          # showScreen, showToast, showModal
+│       ├── setup-screen.js      # Game root picker
+│       ├── browser-screen.js    # Level browser
+│       ├── editor-core.js       # Flight table rendering
+│       ├── cell-editor.js       # Inline cell editing + SVG clock
+│       ├── flight-actions.js    # Add/delete/duplicate flights
+│       ├── save-actions.js      # Save with validation
+│       ├── import-actions.js    # ZIP import
+│       ├── timeline-editors.js  # Weather/Wind/Runway editors
+│       └── editor-shell.js      # Keyboard shortcuts, event wiring
+│
+├── test/                # 8 plain Node.js test scripts (no framework)
+├── tools/               # Python analysis scripts (STAR coords, diff)
+└── dist/                # Build output (gitignored)
+```
+
+### Coding Conventions
+
+For detailed conventions, see the repo skill (loaded automatically by Claude Code). Quick reference:
+
+- **Backend:** CommonJS (`require`/`module.exports`), `snake_case.js` filenames, `_underscore` = private
+- **Frontend:** Global scope `<script>` tags in dependency order, `appState` singleton, `camelCase` functions
+- **IPC:** All file I/O via `ipcMain.handle` → `preload.js` bridge → `window.electronAPI`
+- **Error handling:** Return `{ success: true/false, error?: message }` from all IPC handlers
+- **No new dependencies** unless strongly justified — the app uses only Node.js built-ins
+
+### Running Tests
+
+No test framework — each test is a standalone Node.js script:
 
 ```bash
-node test/parse_airport.js              # Parse all airports, check field coverage
-node test/callsign_gen_test.js          # Validate CallSign → ICAO consistency
-node test/csv_vs_flightplans.js         # CSV ↔ ACL FlightPlans cross-check
-node test/e2e_save_load.js              # Full save/load round-trip test
-node test/timeline_comparison.js <acl>  # Compare ACL timelines vs JSON files
-node test/test_generate_timelines.js    # Verify JSON→ACL timeline section generators
-node test/test_rebuild_sections.js      # E2E: FlightPlans/Aircrafts section rebuild
-node test/test_rebuild_timelines.js     # E2E: Weather/Wind/Runway section rebuild
+node test/parse_airport.js              # Smoke test: parse all airports
+node test/callsign_gen_test.js          # CallSign prefix validation
+node test/csv_vs_flightplans.js         # CSV ↔ ACL cross-check
+node test/e2e_save_load.js              # Full save/load round-trip
+node test/timeline_comparison.js <acl>  # JSON timelines vs ACL-embedded data
+node test/test_generate_timelines.js    # Timeline section generators
+node test/test_rebuild_sections.js      # ACL section rebuild
+node test/test_rebuild_timelines.js     # Timeline section rebuild
 ```
 
-## Build
+### Building
 
-### Prerequisites (Windows — first time only)
+**Always use `build.js`** — `npm run build:win` gets killed by PowerShell's watch-mode detection.
 
-The `winCodeSign` cache contains broken macOS symlinks (`libcrypto.dylib` / `libssl.dylib` are 0 bytes).
-Run this once after the first build attempt fails:
+```powershell
+# Pre-build cleanup
+Stop-Process -Name "AC27 Level Editor" -Force -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force "dist" -ErrorAction SilentlyContinue
+
+# Build
+node build.js
+
+# Embed icon (optional)
+node set_icon.js
+```
+
+Output: `dist\AC27LevelEditor.exe` (~180 MB portable).
+
+**First-time Windows setup** — if the build fails with winCodeSign errors:
 
 ```powershell
 $libDir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0\darwin\10.12\lib"
@@ -350,25 +215,36 @@ Copy-Item "$libDir\libcrypto.1.0.0.dylib" "$libDir\libcrypto.dylib" -Force
 Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 ```
 
-### Build (Windows portable)
+### CI/CD
 
-**Always use `build.js`**, never `npm run build:win` — the latter gets killed mid-way by PowerShell's watch-mode detection.
+GitHub Actions workflow (`.github/workflows/release.yml`): pushes to `v*` tags trigger Windows + macOS builds and create a GitHub Release with both artifacts.
 
-1. Close any running instance of the editor:
-   ```powershell
-   Stop-Process -Name "AC27 Level Editor" -Force -ErrorAction SilentlyContinue
-   ```
+---
 
-2. Clean `dist/`:
-   ```powershell
-   Remove-Item -Recurse -Force "dist" -ErrorAction SilentlyContinue
-   ```
+## 开发者摘要
 
-3. Run the build:
-   ```bash
-   node build.js
-   ```
+### 技术栈
+- Electron 33，纯 JavaScript（无 TypeScript、无打包工具、无测试框架）
+- 后端使用 CommonJS 模块，前端使用全局 `<script>` 标签加载
+- 所有文件读写通过 Electron IPC，渲染进程不直接访问文件系统
 
-Output: `dist\AC27LevelEditor.exe` (~180 MB portable executable).
+### 快速开始
+```bash
+npm install
+npm start    # 开发模式启动
+```
 
-If the build fails with file-locking errors, try disabling real-time antivirus or reboot before building.
+### 运行测试
+```bash
+node test/e2e_save_load.js    # 完整存取往返测试
+node test/parse_airport.js    # 解析所有机场
+# ... 共 8 个测试脚本
+```
+
+### 构建
+```bash
+node build.js    # 输出 dist\AC27LevelEditor.exe
+```
+
+> 详细架构、依赖关系图、编码规范请参考 `.claude/skills/ac27-level-editor/SKILL.md`（Claude Code 自动加载）。
+> For full architecture, dependency graphs, and coding conventions, see `.claude/skills/ac27-level-editor/SKILL.md` (loaded automatically by Claude Code).

@@ -1,3 +1,8 @@
+---
+name: electron
+description: Electron framework development guide — build tools, patches, testing, PR workflows, and Chromium/Node.js upgrades. Use this skill whenever working in an Electron repository, building or debugging Electron, managing Electron patches, creating PRs for electron/electron, or when the user mentions e commands like e build, e sync, e test, or e start.
+---
+
 # Electron Development Guide
 
 ## Running node_modules binaries
@@ -16,7 +21,7 @@ Electron is a framework for building cross-platform desktop applications using w
 ## Directory Structure
 
 ```text
-electron/                 # This repo (run `e` commands here)
+electron/                 # This repo (run e commands here)
 ├── shell/               # Core C++ application code
 │   ├── browser/         # Main process implementation (107+ API modules)
 │   ├── renderer/        # Renderer process code
