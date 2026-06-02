@@ -4,8 +4,8 @@
 const fs = require('fs');
 const path = require('path');
 const { FALLBACK_BASE_DATE_TICKS } = require('./constants');
-const { ticksToTime, timeToTicks, _extractBaseDateFromText, ticksToString } = require('./time_utils');
-const { _applyWsField, _generateGuid } = require('./acl_world_state');
+const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('./time_utils');
+const { _generateGuid } = require('./acl_world_state');
 const { calcProgressRatio, buildAircraftEntry } = require('./acl_dynamics');
 
 // ─── Parse WorldState.FlightPlans ─────────────────────────────

@@ -2,10 +2,10 @@
  * ACL WorldState parser — TaskFlightState (type 56/54) and AircraftState (type 35).
  */
 const {
-  TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS, AIRCRAFT_DESIGNATOR_MAP,
+  TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS,
 } = require('./constants');
 const {
-  ticksToTime, timeToTicks, _guessDesignator, _extractBaseDateFromText, ticksToString,
+  ticksToTime, timeToTicks, _extractBaseDateFromText,
 } = require('./time_utils');
 
 // ─── GUID generator ───────────────────────────────────────────
@@ -191,34 +191,8 @@ function _extractFlightsFromWorldState(wsData, fullText, sceneryMaps) {
 }
 
 
-// ─── Single field patcher in raw JSON text ────────────────────
-
-function _applyWsField(block, fieldName, value, fieldType) {
-  if (fieldType === 'string') {
-    const val = value || '';
-    const m = block.match(new RegExp(`("${fieldName}"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`));
-    if (m) {
-      return block.substring(0, m.index) + m[1] + '"' + val + '"' + block.substring(m.index + m[0].length);
-    }
-    const mNull = block.match(new RegExp(`("${fieldName}"\\s*:\\s*)null`));
-    if (mNull && val) {
-      return block.substring(0, mNull.index) + mNull[1] + '"' + val + '"' + block.substring(mNull.index + mNull[0].length);
-    }
-  } else if (fieldType === 'ticks') {
-    const val = value || '0';
-    const m = block.match(new RegExp(`("${fieldName}"\\s*:\\s*\\{\\s*"\\$type"\\s*:\\s*\\d+\\s*,\\s*)(-?\\d+)(\\s*\\})`));
-    if (m) {
-      const start = m.index + m[1].length;
-      const end = start + m[2].length;
-      return block.substring(0, start) + val + block.substring(end);
-    }
-  }
-  return block;
-}
-
 module.exports = {
   _generateGuid,
   _parseWorldStateData,
   _extractFlightsFromWorldState,
-  _applyWsField,
 };

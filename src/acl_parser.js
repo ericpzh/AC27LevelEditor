@@ -25,6 +25,12 @@ const {
   collectUniqueValues, getFileInfo,
   loadAudioCallsigns, mergeAudioCallsigns,
 } = require('./acl_utils');
+const { scanGameRoot } = require('./acl_scanner');
+const { captureAllDynamicsTemplates } = require('./acl_dynamics');
+const {
+  _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
+} = require('./acl_flight_plans');
+const { createZip, listZipFiles, extractZip } = require('./zip_utils');
 
 // ─── Load flights ─────────────────────────────────────────────
 
@@ -118,13 +124,18 @@ function generateAclFromCsv(csvPath, aclPath, _templatePath) {
 // ─── Public API ───────────────────────────────────────────────
 
 module.exports = {
+  // Public API
   loadFlights, generateFullAcl,
   exportCSV, exportGameCSV, importCsvFromFile,
   generateAclFromCsv, collectUniqueValuesFromCSV,
   collectUniqueValues, mergeAudioCallsigns,
   getFileInfo, loadAudioCallsigns,
   sortFlightsChronologically,
-  // Internal exports (used by tests / csv_io)
+  scanGameRoot,
+  captureAllDynamicsTemplates,
+  _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
+  createZip, listZipFiles, extractZip,
+  // Internal exports (used by tests)
   _parseWorldStateData, _parseSceneryData,
   _extractFlightsFromWorldState,
   _parseWorldStateFlightPlans, _parseFlightPlanEntry,

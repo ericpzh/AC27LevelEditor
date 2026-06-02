@@ -6,11 +6,7 @@ const { initLogger, closeLogger } = require('./src/logger');
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
 if (!app.isPackaged) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically } = require('./src/acl_parser');
-const { _rebuildTimelineSections } = require('./src/acl_flight_plans');
-const { scanGameRoot } = require('./src/acl_scanner');
-const { captureAllDynamicsTemplates } = require('./src/acl_dynamics');
-const { createZip, listZipFiles, extractZip } = require('./src/zip_utils');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, captureAllDynamicsTemplates, createZip, listZipFiles, extractZip } = require('./src/acl_parser');
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }

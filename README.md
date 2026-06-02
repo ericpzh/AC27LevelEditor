@@ -106,7 +106,7 @@ main.js          →  Electron main process, all IPC handlers, file I/O
 preload.js       →  contextBridge: exposes window.electronAPI to renderer
 src/index.html   →  SPA shell, loads 12 renderer scripts in dependency order
 src/renderer/    →  12 global-scope JS files (no ES modules)
-src/*.js         →  8 CommonJS backend modules (ACL parsing, CSV, ZIP, time)
+src/*.js         →  12 CommonJS backend modules, single facade entry point
 ```
 
 The app has three screens managed by CSS visibility: **Setup → Browser → Editor**.
@@ -131,7 +131,7 @@ Phase 3 (save):   Validation → generate ACL from scratch → write files
 ├── set_icon.js          # Post-build icon embedding
 │
 ├── src/
-│   ├── acl_parser.js        # FACADE — single entry point for all parsing
+│   ├── acl_parser.js        # FACADE — main.js imports everything through here
 │   ├── acl_scanner.js       # Game root scanner (finds airports & .acl files)
 │   ├── acl_flight_plans.js  # FlightPlans format (types 37/52/57/58)
 │   ├── acl_world_state.js   # WorldState format (types 35/56/54)
@@ -160,7 +160,6 @@ Phase 3 (save):   Validation → generate ACL from scratch → write files
 │       └── editor-shell.js      # Keyboard shortcuts, event wiring
 │
 ├── test/                # 8 plain Node.js test scripts (no framework)
-├── tools/               # Python analysis scripts (STAR coords, diff)
 └── dist/                # Build output (gitignored)
 ```
 

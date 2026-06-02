@@ -38,9 +38,10 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - Imperative DOM manipulation via getElementById       │
 │  - No modules, no imports, no framework                 │
 ├─────────────────────────────────────────────────────────┤
-│  src/*.js (8 CommonJS backend modules)                  │
+│  src/*.js (12 CommonJS backend modules)                 │
 │  - module.exports / require() patterns                  │
-│  - acl_parser.js is the facade (barrel module)          │
+│  - acl_parser.js is the COMPLETE facade — main.js       │
+│    imports ALL backend modules through it only          │
 │  - Underscore-prefix = private, no prefix = public      │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -99,7 +100,6 @@ AC27LevelEditor/
 │   ├── test_rebuild_sections.js      # FlightPlans/Aircrafts rebuild
 │   └── test_rebuild_timelines.js     # Weather/Wind/Runway section rebuild
 │
-├── tools/                   # Python analysis scripts (not part of dev workflow)
 ├── dist/                    # Build output (gitignored)
 ├── .github/workflows/       # CI: release.yml (Build & Release on v* tags)
 └── .claude/skills/          # Claude Code project skills
