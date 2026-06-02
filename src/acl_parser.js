@@ -21,7 +21,7 @@ const {
   _rebuildWorldStateSections,
 } = require('./acl_flight_plans');
 const {
-  _enrichFlightsFromSource, sortFlightsChronologically,
+  sortFlightsChronologically,
   collectUniqueValues, getFileInfo,
   loadAudioCallsigns, mergeAudioCallsigns,
 } = require('./acl_utils');
@@ -29,73 +29,65 @@ const { scanGameRoot } = require('./acl_scanner');
 const { captureAllDynamicsTemplates } = require('./acl_dynamics');
 const {
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
+  _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
 } = require('./acl_flight_plans');
 const { createZip, listZipFiles, extractZip } = require('./zip_utils');
 
-// ─── Load flights ─────────────────────────────────────────────
+// ─── Load flights from ACL (single source of truth) ───────────
 
 function loadFlights(aclPath) {
   const log = (msg) => console.log('[ACL-LOAD]', path.basename(aclPath), '|', msg);
   log('loadFlights() START');
 
-  const dir = path.dirname(aclPath);
-  const base = path.basename(aclPath, '.acl');
-  const cfgPath = path.join(dir, base + '.aclcfg');
-
-  let csvPath = null;
-  if (fs.existsSync(cfgPath)) {
-    try {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-      if (cfg.flightScheduleFile) {
-        const candidate = path.join(dir, cfg.flightScheduleFile + '.csv');
-        if (fs.existsSync(candidate)) { csvPath = candidate; log('CSV found via aclcfg'); }
-      }
-    } catch (_) {}
-  }
-
-  if (!csvPath) {
-    const tm = base.match(/_(\d{2}-\d{2})$/);
-    if (tm) {
-      const candidate = path.join(dir, 'flight_schedule_' + tm[1] + '.csv');
-      if (fs.existsSync(candidate)) { csvPath = candidate; log('CSV found by suffix fallback'); }
-    }
-  }
-
-  if (!csvPath) throw new Error('No flight schedule CSV found. Expected .aclcfg with flightScheduleFile, or flight_schedule_HH-HH.csv next to .acl.');
-
-  const flights = importCsvFromFile(csvPath);
-  log('CSV parsed: ' + flights.length + ' flights');
-  if (flights.length === 0) throw new Error('CSV contains no valid flight data');
+  const text = fs.readFileSync(aclPath, 'utf-8');
+  const _rawText = text;
 
   let sceneryMaps = { runwayNameToGuid:{}, standIdToGuid:{}, runwayGuidToName:{}, standGuidToId:{} };
   let worldStateData = null;
   let _fromWorldState = false;
   let _fromFlightPlans = false;
-  let _rawText = '';
+  let flights = [];
 
   try {
-    const text = fs.readFileSync(aclPath, 'utf-8');
-    _rawText = text;
     sceneryMaps = _parseSceneryData(text);
 
+    // Primary: parse FlightPlans directly from ACL
     const fpResult = _parseWorldStateFlightPlans(text);
     if (fpResult && fpResult.flights && fpResult.flights.length > 0 && fpResult.fpData) {
-      log('Found FlightPlans format');
+      log('Found FlightPlans format — using as primary source');
+      flights = fpResult.flights;
       worldStateData = fpResult.fpData;
       _fromFlightPlans = true;
-      _enrichFlightsFromSource(flights, fpResult.flights);
     } else {
+      // Fallback: WorldState Aircrafts (older format)
       const wsData = _parseWorldStateData(text);
       if (wsData && wsData.wsEntries.length > 0) {
-        log('Found WorldState Aircrafts, entries=' + wsData.wsEntries.length);
+        log('Found WorldState Aircrafts — using as primary source');
         worldStateData = wsData;
         _fromWorldState = true;
-        const wsFlights = _extractFlightsFromWorldState(wsData, text, sceneryMaps);
-        _enrichFlightsFromSource(flights, wsFlights);
+        flights = _extractFlightsFromWorldState(wsData, text, sceneryMaps);
       }
     }
-  } catch (_) {
-    log('ACL structure parse FAILED (continuing with CSV-only): ' + _.message);
+  } catch (e) {
+    log('ACL structure parse FAILED: ' + e.message);
+    throw e;
+  }
+
+  if (flights.length === 0) throw new Error('No flight data found in ACL');
+
+  // Locate CSV path for reference only (not read)
+  let csvPath = null;
+  const dir = path.dirname(aclPath);
+  const base = path.basename(aclPath, '.acl');
+  const cfgPath = path.join(dir, base + '.aclcfg');
+  if (fs.existsSync(cfgPath)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      if (cfg.flightScheduleFile) {
+        const candidate = path.join(dir, cfg.flightScheduleFile + '.csv');
+        if (fs.existsSync(candidate)) csvPath = candidate;
+      }
+    } catch (_) {}
   }
 
   return {
@@ -134,6 +126,7 @@ module.exports = {
   scanGameRoot,
   captureAllDynamicsTemplates,
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
+  _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
   createZip, listZipFiles, extractZip,
   // Internal exports (used by tests)
   _parseWorldStateData, _parseSceneryData,

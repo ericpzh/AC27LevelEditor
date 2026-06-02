@@ -219,11 +219,13 @@ Screen transitions: `showScreen(name)` in `ui-utils.js` toggles `.hidden` on all
 ### Phase 0: Airport Cache Init (once per game root)
 1. User selects game root directory
 2. `scan-acls` IPC → `scanGameRoot()` → returns airport list with `.acl` file paths
-3. `init-airport-cache` IPC → scans all CSVs and audio clips per airport → caches in memory
+3. `init-airport-cache` IPC → loads audio clips per airport → caches in memory
 
 ### Phase 1: Load Level
 1. User clicks a level row → `openEditor(filePath, airportIcao)`
-2. `load-acl` IPC → reads `.aclcfg` → finds `.csv` → parses both → enriches CSV from ACL
+2. `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
+   → timelines parsed from WeatherFrames/WindFrames/RunwayTimeline sections
+   > `.acl` is the single source of truth. CSV and JSON are write-only for game compat.
 3. `load-timelines` IPC → reads `weather_timeline.json`, `wind_timeline.json`, `runway_timeline_*.json`
 4. `collect-values` IPC → builds dropdown option sets
 5. `load-audio-callsigns` IPC → loads airline/aircraft audio metadata

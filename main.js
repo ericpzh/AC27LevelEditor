@@ -6,7 +6,7 @@ const { initLogger, closeLogger } = require('./src/logger');
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
 if (!app.isPackaged) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, captureAllDynamicsTemplates, createZip, listZipFiles, extractZip } = require('./src/acl_parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, captureAllDynamicsTemplates, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline } = require('./src/acl_parser');
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
@@ -120,129 +120,20 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   if (!airport) return {};
   const paths = airport.aclFiles.map(f => f.path);
 
-  // Phase 1: collect from ACL files only
+  // Collect all values from ACL files only (single source of truth)
   const aclValues = collectUniqueValues(paths);
 
-  // Merge with Phase 0 CSV cache if available
-  const cacheEntry = airportCache && airportCache[airportIcao];
-  console.log('[COLLECT-VALUES] airportIcao:', airportIcao);
-  console.log('[COLLECT-VALUES] cacheEntry exists:', !!cacheEntry);
-  if (cacheEntry && cacheEntry.csvValues) {
-    console.log('[COLLECT-VALUES] cache csvValues keys:', Object.keys(cacheEntry.csvValues).filter(k => !k.startsWith('_')));
-    console.log('[COLLECT-VALUES] cache _registrationMap keys:', cacheEntry.csvValues._registrationMap ? Object.keys(cacheEntry.csvValues._registrationMap) : 'MISSING');
-    if (cacheEntry.csvValues._registrationMap) {
-      for (const [k, regs] of Object.entries(cacheEntry.csvValues._registrationMap)) {
-        console.log('[COLLECT-VALUES] cache regMap[' + k + '] = ' + JSON.stringify(regs));
-      }
-    }
-    const csvVals = cacheEntry.csvValues;
-    for (const key of Object.keys(csvVals)) {
-      if (!key.startsWith('_')) {
-        const merged = new Set([
-          ...(aclValues[key] || []),
-          ...(csvVals[key] || []),
-        ]);
-        aclValues[key] = [...merged].sort((a, b) => a.localeCompare(b));
-      }
-    }
-    // Merge registration map
-    if (csvVals._registrationMap) {
-      if (!aclValues._registrationMap) aclValues._registrationMap = {};
-      for (const [k, regs] of Object.entries(csvVals._registrationMap)) {
-        const merged = new Set([
-          ...(aclValues._registrationMap[k] || []),
-          ...(regs || []),
-        ]);
-        aclValues._registrationMap[k] = [...merged].sort();
-      }
-    }
-    // Merge compat (airline ↔ aircraftType) from CSV
-    if (csvVals._compat) {
-      if (!aclValues._compat) aclValues._compat = { airlineToAircraft: {}, aircraftToAirline: {} };
-      for (const [k, types] of Object.entries(csvVals._compat.airlineToAircraft || {})) {
-        const merged = new Set([...(aclValues._compat.airlineToAircraft[k] || []), ...types]);
-        aclValues._compat.airlineToAircraft[k] = [...merged].sort();
-      }
-      for (const [k, codes] of Object.entries(csvVals._compat.aircraftToAirline || {})) {
-        const merged = new Set([...(aclValues._compat.aircraftToAirline[k] || []), ...codes]);
-        aclValues._compat.aircraftToAirline[k] = [...merged].sort();
-      }
-    }
-    console.log('[COLLECT-VALUES] AFTER cache merge, aclValues._registrationMap keys:', Object.keys(aclValues._registrationMap));
-  } else {
-    console.log('[COLLECT-VALUES] cache MISSING or empty for', airportIcao);
-  }
-
-  // ── Language: derive from audio_clips_*.json existence, not from CSV ──
+  // Language: derive from audio_clips_*.json existence
   const availableLanguages = [];
   const levelsPath = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports', airportIcao, 'Levels');
   if (fs.existsSync(path.join(levelsPath, 'audio_clips_en.json'))) availableLanguages.push('en');
   if (fs.existsSync(path.join(levelsPath, 'audio_clips_zh.json'))) availableLanguages.push('zh');
-  // Also merge in any language values already found in ACL (e.g. from WorldState)
   for (const l of (aclValues.Language || [])) {
     if (!availableLanguages.includes(l)) availableLanguages.push(l);
   }
   if (availableLanguages.length > 0) {
     aclValues.Language = availableLanguages.sort();
   }
-
-  // ── ALWAYS build _registrationMap from CSV files (CSV is the source of truth) ──
-  // The ACL parser cannot read Registration, so regMap must come from CSV.
-  // Do a direct CSV scan here in addition to the cache merge above.
-  console.log('[COLLECT-VALUES] === STARTING direct CSV scan ===');
-  if (!aclValues._registrationMap) aclValues._registrationMap = {};
-  const csvDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports', airportIcao, 'Levels');
-  console.log('[COLLECT-VALUES] csvDir:', csvDir, 'exists:', fs.existsSync(csvDir));
-  if (fs.existsSync(csvDir)) {
-    const allFiles = fs.readdirSync(csvDir);
-    console.log('[COLLECT-VALUES] csvDir contents:', JSON.stringify(allFiles));
-    for (const f of allFiles) {
-      if (!f.endsWith('.csv')) continue;
-      console.log('[COLLECT-VALUES] scanning CSV:', f);
-      const csvData = collectUniqueValuesFromCSV(path.join(csvDir, f));
-      console.log('[COLLECT-VALUES] csvData._registrationMap keys:', csvData._registrationMap ? Object.keys(csvData._registrationMap) : 'NONE');
-      if (csvData._registrationMap) {
-        for (const [k, regs] of Object.entries(csvData._registrationMap)) {
-          console.log('[COLLECT-VALUES]   ' + k + ' -> ' + JSON.stringify(regs));
-        }
-      }
-      if (csvData._registrationMap) {
-        for (const [k, regs] of Object.entries(csvData._registrationMap)) {
-          if (!aclValues._registrationMap[k]) aclValues._registrationMap[k] = [];
-          const merged = new Set([...aclValues._registrationMap[k], ...regs]);
-          aclValues._registrationMap[k] = [...merged].sort();
-        }
-      }
-      // Also merge Registration dropdown list
-      if (csvData.Registration) {
-        const merged = new Set([...(aclValues.Registration || []), ...csvData.Registration]);
-        aclValues.Registration = [...merged].sort();
-      }
-      // Merge compat (airline ↔ aircraftType) from CSV
-      if (csvData._compat) {
-        if (!aclValues._compat) aclValues._compat = { airlineToAircraft: {}, aircraftToAirline: {} };
-        for (const [k, types] of Object.entries(csvData._compat.airlineToAircraft || {})) {
-          const merged = new Set([...(aclValues._compat.airlineToAircraft[k] || []), ...types]);
-          aclValues._compat.airlineToAircraft[k] = [...merged].sort();
-        }
-        for (const [k, codes] of Object.entries(csvData._compat.aircraftToAirline || {})) {
-          const merged = new Set([...(aclValues._compat.aircraftToAirline[k] || []), ...codes]);
-          aclValues._compat.aircraftToAirline[k] = [...merged].sort();
-        }
-      }
-    }
-  } else {
-    console.log('[COLLECT-VALUES] csvDir DOES NOT EXIST!');
-  }
-
-  console.log('[COLLECT-VALUES] === FINAL _registrationMap ===');
-  console.log('[COLLECT-VALUES] keys:', Object.keys(aclValues._registrationMap));
-  for (const [k, regs] of Object.entries(aclValues._registrationMap)) {
-    console.log('[COLLECT-VALUES] FINAL ' + k + ' -> ' + JSON.stringify(regs));
-  }
-  console.log('[COLLECT-VALUES] _compat airlineToAircraft keys:', aclValues._compat ? Object.keys(aclValues._compat.airlineToAircraft) : 'MISSING');
-  console.log('[COLLECT-VALUES] Registration list length:', (aclValues.Registration || []).length);
-  console.log('[COLLECT-VALUES] === RETURNING ===');
 
   return aclValues;
 });
@@ -256,10 +147,7 @@ ipcMain.handle('renderer-log', async (_event, ...args) => {
 
 ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
   console.log('══════════════ [INIT-CACHE] START ══════════════');
-  console.log('[INIT-CACHE] rootPath:', rootPath);
   const airportsDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports');
-  console.log('[INIT-CACHE] airportsDir:', airportsDir);
-  console.log('[INIT-CACHE] exists:', fs.existsSync(airportsDir));
   if (!fs.existsSync(airportsDir)) return {};
 
   const cache = {};
@@ -268,101 +156,16 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     const airportPath = path.join(airportsDir, icao);
     if (!fs.statSync(airportPath).isDirectory()) continue;
     const levelsDir = path.join(airportPath, 'Levels');
-    if (!fs.existsSync(levelsDir)) { console.log('[INIT-CACHE]', icao, '-> no Levels dir, skip'); continue; }
-    const csvFiles = fs.readdirSync(levelsDir).filter(f => f.endsWith('.csv'));
-    console.log('[INIT-CACHE]', icao, '-> Levels dir found, CSV files:', JSON.stringify(csvFiles));
+    if (!fs.existsSync(levelsDir)) continue;
 
-    // Scan ALL Session CSV files for this airport
-    const csvValues = {
-      Stand: new Set(), Runway: new Set(),
-      DepartureAirport: new Set(), ArrivalAirport: new Set(),
-      AircraftType: new Set(), Voice: new Set(), Language: new Set(),
-      Registration: new Set(), Airway: new Set(),
-      _voiceOptions: new Set(),
-    };
-    const csvRegMap = {}; // "AirlineName|AircraftType" → Set<Registration>
-    const csvCompat = { airlineToAircraft: {}, aircraftToAirline: {} }; // CSV-compat
-
-    for (const f of fs.readdirSync(levelsDir)) {
-      if (!f.endsWith('.csv')) continue;
-      const csvData = collectUniqueValuesFromCSV(path.join(levelsDir, f));
-      for (const key of Object.keys(csvValues)) {
-        for (const val of (csvData[key] || [])) {
-          csvValues[key].add(val);
-        }
-      }
-      // Merge registration maps
-      if (csvData._registrationMap) {
-        for (const [k, regs] of Object.entries(csvData._registrationMap)) {
-          if (!csvRegMap[k]) csvRegMap[k] = new Set();
-          for (const r of regs) csvRegMap[k].add(r);
-        }
-      }
-      // Merge compat (airline ↔ aircraftType) from CSV
-      if (csvData._compat) {
-        for (const [k, types] of Object.entries(csvData._compat.airlineToAircraft || {})) {
-          if (!csvCompat.airlineToAircraft[k]) csvCompat.airlineToAircraft[k] = new Set();
-          for (const t of types) csvCompat.airlineToAircraft[k].add(t);
-        }
-        for (const [k, codes] of Object.entries(csvData._compat.aircraftToAirline || {})) {
-          if (!csvCompat.aircraftToAirline[k]) csvCompat.aircraftToAirline[k] = new Set();
-          for (const c of codes) csvCompat.aircraftToAirline[k].add(c);
-        }
-      }
-    }
-
-    // Convert sets to sorted arrays
-    const csvValuesOutput = {};
-    for (const key of Object.keys(csvValues)) {
-      const arr = [...csvValues[key]];
-      arr.sort((a, b) => a.localeCompare(b));
-      csvValuesOutput[key] = arr;
-    }
-    // Convert registration map
-    const regMapOutput = {};
-    for (const [k, v] of Object.entries(csvRegMap)) {
-      regMapOutput[k] = [...v].sort();
-    }
-    csvValuesOutput._registrationMap = regMapOutput;
-    // Convert compat map
-    const compatOutput = { airlineToAircraft: {}, aircraftToAirline: {} };
-    for (const [k, v] of Object.entries(csvCompat.airlineToAircraft)) {
-      compatOutput.airlineToAircraft[k] = [...v].sort();
-    }
-    for (const [k, v] of Object.entries(csvCompat.aircraftToAirline)) {
-      compatOutput.aircraftToAirline[k] = [...v].sort();
-    }
-    csvValuesOutput._compat = compatOutput;
-
-    // Load and merge audio clips (EN + ZH)
+    // Only load audio clips — ACL is the source of truth for all other data
     const enPath = path.join(levelsDir, 'audio_clips_en.json');
     const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
     const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
     const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
     const audioCallsigns = mergeAudioCallsigns(enData, zhData);
 
-    // Merge CSV CallSigns into audio byAirline so validation covers both sources
-    const csvCallsigns = csvValuesOutput._callsigns || [];
-    for (const cs of csvCallsigns) {
-      const code = cs.substring(0, 3);
-      const num = cs.substring(3);
-      if (code && num) {
-        if (!audioCallsigns.byAirline[code]) audioCallsigns.byAirline[code] = [];
-        if (!audioCallsigns.byAirline[code].includes(num)) audioCallsigns.byAirline[code].push(num);
-      }
-    }
-    for (const code of Object.keys(audioCallsigns.byAirline)) {
-      audioCallsigns.byAirline[code].sort((a, b) => {
-        const na = parseInt(a, 10), nb = parseInt(b, 10);
-        if (!isNaN(na) && !isNaN(nb)) return na - nb;
-        return a.localeCompare(b);
-      });
-    }
-
-    cache[icao] = {
-      csvValues: csvValuesOutput,
-      audioCallsigns,
-    };
+    cache[icao] = { audioCallsigns };
   }
 
   airportCache = cache;
@@ -817,44 +620,32 @@ ipcMain.handle('load-timelines', async (_event, aclPath) => {
     const levelsDir = path.dirname(aclPath);
     const baseName = path.basename(aclPath, '.acl');
 
-    // 1) Read .aclcfg to get runwayTimelineFile reference
+    // Read .aclcfg for runwayTimelineFile reference (path only, not data)
     const cfgPath = path.join(levelsDir, baseName + '.aclcfg');
-    let cfgData = null;
     let runwayTimelineFile = null;
     if (fs.existsSync(cfgPath)) {
-      cfgData = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-      runwayTimelineFile = cfgData.runwayTimelineFile || null;
+      try {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        runwayTimelineFile = cfg.runwayTimelineFile || null;
+      } catch (_) {}
     }
 
-    // 2) Read weather_timeline.json (shared per airport)
-    let weatherTimeline = [];
-    const weatherPath = path.join(levelsDir, 'weather_timeline.json');
-    if (fs.existsSync(weatherPath)) {
-      weatherTimeline = JSON.parse(fs.readFileSync(weatherPath, 'utf-8'));
-    }
-
-    // 3) Read wind_timeline.json (shared per airport)
-    let windTimeline = [];
-    const windPath = path.join(levelsDir, 'wind_timeline.json');
-    if (fs.existsSync(windPath)) {
-      windTimeline = JSON.parse(fs.readFileSync(windPath, 'utf-8'));
-    }
-
-    // 4) Read runway_timeline_*.json (level-specific)
-    let runwayTimeline = { initialRunways: [], timeline: [] };
-    let runwayTimelinePath = null;
-    if (runwayTimelineFile) {
-      runwayTimelinePath = path.join(levelsDir, runwayTimelineFile + '.json');
-      if (fs.existsSync(runwayTimelinePath)) {
-        runwayTimeline = JSON.parse(fs.readFileSync(runwayTimelinePath, 'utf-8'));
-      }
-    }
+    // Parse timelines directly from ACL (single source of truth)
+    const aclText = fs.readFileSync(aclPath, 'utf-8');
+    const weatherTimeline = _parseWeatherFrames(aclText);
+    const windTimeline = _parseWindFrames(aclText);
+    const runwayTimeline = _parseRunwayTimeline(aclText);
 
     return {
       success: true,
-      weatherTimeline, weatherPath,
-      windTimeline, windPath,
-      runwayTimeline, runwayTimelinePath,
+      weatherTimeline,
+      weatherPath: path.join(levelsDir, 'weather_timeline.json'),
+      windTimeline,
+      windPath: path.join(levelsDir, 'wind_timeline.json'),
+      runwayTimeline,
+      runwayTimelinePath: runwayTimelineFile
+        ? path.join(levelsDir, runwayTimelineFile + '.json')
+        : null,
     };
   } catch (err) {
     return { success: false, error: err.message };

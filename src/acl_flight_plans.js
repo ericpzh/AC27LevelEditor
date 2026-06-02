@@ -761,6 +761,127 @@ function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runway
   log('Timeline sections written to ACL');
 }
 
+// ─── Parse timeline sections from ACL text ────────────────────
+
+/** Parse $rcontent entries from a frames section (WeatherFrames/WindFrames). */
+function _parseFramesSection(sectionContent) {
+  if (!sectionContent) return [];
+  const entries = [];
+  const rcIdx = sectionContent.indexOf('"$rcontent"');
+  if (rcIdx < 0) return entries;
+  const colonIdx = sectionContent.indexOf(':', rcIdx);
+  const bracketIdx = sectionContent.indexOf('[', colonIdx);
+  if (bracketIdx < 0) return entries;
+
+  let depth = 0, blockStart = -1;
+  for (let i = bracketIdx + 1; i < sectionContent.length; i++) {
+    if (sectionContent[i] === '{') {
+      if (depth === 0) blockStart = i;
+      depth++;
+    } else if (sectionContent[i] === '}') {
+      depth--;
+      if (depth === 0 && blockStart >= 0) {
+        const block = sectionContent.substring(blockStart, i + 1);
+        const entry = {};
+        const strRe = /"(\w+)":\s*"([^"]*)"/g;
+        let sm;
+        while ((sm = strRe.exec(block)) !== null) entry[sm[1].toLowerCase()] = sm[2];
+        const numRe = /"(\w+)":\s*(-?\d+)/g;
+        let nm;
+        while ((nm = numRe.exec(block)) !== null) {
+          const key = nm[1].toLowerCase();
+          if (!(key in entry)) entry[key] = parseInt(nm[2], 10);
+        }
+        entries.push(entry);
+        blockStart = -1;
+      }
+    }
+  }
+  return entries;
+}
+
+/** Parse WeatherFrames from ACL text → same format as weather_timeline.json. */
+function _parseWeatherFrames(text) {
+  const sec = _extractSection(text, 'WeatherFrames');
+  if (!sec) return [];
+  return _parseFramesSection(sec.content).map(e => ({
+    preset: e.preset || '',
+    time: e.time || '',
+  }));
+}
+
+/** Parse WindFrames from ACL text → same format as wind_timeline.json. */
+function _parseWindFrames(text) {
+  const sec = _extractSection(text, 'WindFrames');
+  if (!sec) return [];
+  return _parseFramesSection(sec.content).map(e => ({
+    direction: e.direction || 0,
+    speed: e.speed || 0,
+    time: e.time || '',
+  }));
+}
+
+/** Parse RunwayTimeline from ACL text → same format as runway_timeline_*.json. */
+function _parseRunwayTimeline(text) {
+  const sec = _extractSection(text, 'RunwayTimeline');
+  if (!sec) return { initialRunways: [], timeline: [] };
+
+  const content = sec.content;
+  const result = { initialRunways: [], timeline: [] };
+
+  // Parse InitialRunways
+  const irIdx = content.indexOf('"InitialRunways"');
+  if (irIdx >= 0) {
+    const rcMatch = content.substring(irIdx).match(/"\$rcontent"\s*:\s*\[([^\]]*)\]/);
+    if (rcMatch) {
+      const items = rcMatch[1].match(/"([^"]+)"/g);
+      if (items) result.initialRunways = items.map(s => s.replace(/"/g, ''));
+    }
+  }
+
+  // Parse Timeline
+  const tlIdx = content.indexOf('"Timeline"');
+  if (tlIdx >= 0) {
+    let depth = 0, start = -1, end = -1;
+    for (let i = tlIdx; i < content.length; i++) {
+      if (content[i] === '{') { if (depth === 0) start = i; depth++; }
+      else if (content[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+    }
+    if (start >= 0) {
+      const tlContent = content.substring(start, end);
+      const frames = _parseFramesSection(tlContent);
+      result.timeline = frames.map(e => {
+        const changes = [];
+        // Parse nested Changes array within each frame
+        const chIdx = tlContent.indexOf('"Changes"');
+        if (chIdx >= 0) {
+          const rcMatch = tlContent.substring(chIdx).match(/"\$rcontent"\s*:\s*\[/);
+          if (rcMatch) {
+            const absRc = chIdx + rcMatch.index + rcMatch[0].length;
+            let cd = 0, cs = -1;
+            for (let i = absRc; i < tlContent.length; i++) {
+              if (tlContent[i] === '{') { if (cd === 0) cs = i; cd++; }
+              else if (tlContent[i] === '}') {
+                cd--;
+                if (cd === 0 && cs >= 0) {
+                  const chBlock = tlContent.substring(cs, i + 1);
+                  const sm = chBlock.match(/"Source":\s*"([^"]*)"/);
+                  const dm = chBlock.match(/"Dest":\s*"([^"]*)"/);
+                  if (sm && dm) changes.push({ source: sm[1], dest: dm[1] });
+                  cs = -1;
+                }
+              }
+            }
+          }
+        }
+        return { time: e.time || '', changes };
+      });
+    }
+  }
+
+  return result;
+}
+
 module.exports = {
   _parseWorldStateFlightPlans,
   _parseFlightPlanEntry,
@@ -770,4 +891,7 @@ module.exports = {
   _rebuildTimelineSections,
   _generateFramesSection,
   _generateRunwayTimelineSection,
+  _parseWeatherFrames,
+  _parseWindFrames,
+  _parseRunwayTimeline,
 };

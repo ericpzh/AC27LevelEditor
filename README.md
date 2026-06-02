@@ -116,10 +116,10 @@ All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The ren
 ### Data Flow
 
 ```
-Phase 0 (once):   Game Root → scan CSVs + audio → AirportCache
-Phase 1 (load):   .acl + .csv + timeline JSONs → parse → appState
+Phase 0 (once):   Game Root → scan audio clips → AirportCache
+Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → appState
 Phase 2 (edit):   All edits mutate appState in-memory (renderer only)
-Phase 3 (save):   Validation → generate ACL from scratch → write files
+Phase 3 (save):   Validation → write .acl + .csv + timeline .json (game compat)
 ```
 
 ### Project Structure
