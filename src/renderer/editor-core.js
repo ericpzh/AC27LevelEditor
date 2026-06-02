@@ -114,12 +114,17 @@ function autoFillSingleOptionColumns() {
 // ─── Config info bar ────────────────────────────────────
 
 function populateConfigBar(config, filePath, airportIcao) {
-  // Show earliest flight time from schedule, not config warmup time
-  const start = appState._earliestTime || (config && config.startTime) || null;
   const end = (config && config.endTime) || null;
+  // Config startTime has 10-min warmup — add 10 min to match in-game display
+  let start = null;
+  if (config && config.startTime) {
+    const p = String(config.startTime).split(':');
+    const m = parseInt(p[0]) * 60 + parseInt(p[1]) + 10;
+    start = String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  }
   if (start && end) {
     document.getElementById('toolbar-time-range').textContent =
-      '时间段：' + String(start).substring(0, 5) + ' ~ ' + String(end).substring(0, 5);
+      '时间段：' + start + ' ~ ' + String(end).substring(0, 5);
   } else {
     document.getElementById('toolbar-time-range').textContent = '时间段：-';
   }

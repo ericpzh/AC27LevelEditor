@@ -66,7 +66,16 @@ async function handleImportAcl() {
     autoSort();
     renderAllSections();
     updateStatusBar();
-    showToast(`已导入 ${result.flights.length} 个航班`, 'success');
+    showModal('导入成功 ✓', `
+      <div style="font-size:14px;text-align:center">
+        <p style="font-size:40px;margin:8px 0">✓</p>
+        <p style="margin:8px 0">已成功导入关卡文件</p>
+        <p style="color:var(--text-muted);font-size:13px;margin:4px 0">
+          共 <strong style="color:var(--accent)">${result.flights.length}</strong> 个航班
+        </p>
+      </div>
+    `, `<button class="btn-confirm" id="modal-import-ok">确定</button>`);
+    document.getElementById('modal-import-ok').onclick = hideModal;
   };
 }
 

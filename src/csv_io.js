@@ -123,6 +123,7 @@ function collectUniqueValuesFromCSV(csvPath) {
     AircraftType: new Set(), Voice: new Set(), Language: new Set(),
     Registration: new Set(), Airway: new Set(),
     _voiceOptions: new Set(),
+    _callsigns: new Set(),
   };
   const regMap = new Map();
 
@@ -202,6 +203,12 @@ function collectUniqueValuesFromCSV(csvPath) {
       const idx = headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
       return idx >= 0 && idx < cols.length ? cols[idx] : '';
     };
+    // Collect CallSigns for flight number validation
+    for (const csField of ['arrivalcallsign', 'departurecallsign', 'callsign']) {
+      const cs = getVal(csField);
+      if (cs) result._callsigns.add(cs);
+    }
+
     const reg = getVal('registration');
     const airline = getVal('airline');
     const acType = getVal('aircraftType');

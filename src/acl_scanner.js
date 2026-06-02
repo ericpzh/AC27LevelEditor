@@ -6,7 +6,7 @@ const path = require('path');
 
 /**
  * Scan the game root directory for all .acl files.
- * @param {string} gameRoot - path to "Airport Control 25 Playtest"
+ * @param {string} gameRoot - path to "Airport Control 27 Playtest"
  * @returns {{ airports: Array, totalFiles: number, error?: string }}
  */
 function scanGameRoot(gameRoot) {

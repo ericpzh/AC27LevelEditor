@@ -34,7 +34,7 @@ function createWindow() {
 
 ipcMain.handle('select-game-root', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '选择 Airport Control 25 Playtest 游戏根目录',
+    title: '选择 Airport Control 27 Playtest 游戏根目录',
     properties: ['openDirectory'],
   });
   if (result.canceled || !result.filePaths.length) return { canceled: true };
@@ -89,10 +89,21 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
       try {
         const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
         info.endTime = cfg.endTime || null;
-      } catch (_) { /* ignore malformed cfg */ }
+        if (cfg.startTime) {
+          // Config startTime has 10-min warmup — add 10 min to match in-game display
+          const p = String(cfg.startTime).split(':');
+          const m = parseInt(p[0]) * 60 + parseInt(p[1]) + 10;
+          const h = Math.floor(m / 60) % 24;
+          info.startTime = String(h).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00';
+        } else {
+          info.startTime = info.earliestTime || null;
+        }
+      } catch (_) {
+        info.startTime = info.earliestTime || null;
+      }
+    } else {
+      info.startTime = info.earliestTime || null;
     }
-    // Use earliest flight time as actual start time (not config warmup time)
-    info.startTime = info.earliestTime || null;
     console.log('[IPC]   file', i, f.filename, '->', info.error ? ('ERROR: ' + info.error) : ('OK arrivals=' + info.arrivals + ' departures=' + info.departures + ' startTime=' + (info.startTime || 'none')));
     return info;
   });
@@ -328,10 +339,29 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
     const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
     const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
+    const audioCallsigns = mergeAudioCallsigns(enData, zhData);
+
+    // Merge CSV CallSigns into audio byAirline so validation covers both sources
+    const csvCallsigns = csvValuesOutput._callsigns || [];
+    for (const cs of csvCallsigns) {
+      const code = cs.substring(0, 3);
+      const num = cs.substring(3);
+      if (code && num) {
+        if (!audioCallsigns.byAirline[code]) audioCallsigns.byAirline[code] = [];
+        if (!audioCallsigns.byAirline[code].includes(num)) audioCallsigns.byAirline[code].push(num);
+      }
+    }
+    for (const code of Object.keys(audioCallsigns.byAirline)) {
+      audioCallsigns.byAirline[code].sort((a, b) => {
+        const na = parseInt(a, 10), nb = parseInt(b, 10);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return a.localeCompare(b);
+      });
+    }
 
     cache[icao] = {
       csvValues: csvValuesOutput,
-      audioCallsigns: mergeAudioCallsigns(enData, zhData),
+      audioCallsigns,
     };
   }
 
@@ -373,13 +403,23 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
       } catch (_) {}
     }
 
-    // Compute earliest flight time from loaded data
-    let earliestTime = null;
+    // Compute earliest flight time from loaded data (handles midnight-crossing)
+    let earliestTime = null, earliestMin = Infinity;
     if (data.flights) {
+      const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
+      // If level starts in the evening, treat post-midnight times as next-day
+      const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
+      const crossesMidnight = startH >= 18;
       for (const fl of data.flights) {
         for (const field of ['LandingTime', 'OffBlockTime']) {
           const t = fl[field];
-          if (t && (!earliestTime || t < earliestTime)) earliestTime = t;
+          if (!t) continue;
+          let tm = toMin(t);
+          if (crossesMidnight && tm < 360) tm += 1440; // times before 06:00 are next day
+          if (tm < earliestMin) {
+            earliestTime = t;
+            earliestMin = tm;
+          }
         }
       }
     }

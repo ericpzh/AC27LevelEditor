@@ -29,6 +29,10 @@ function _enrichFlightsFromSource(csvFlights, aclFlights) {
     if (acl.Voice && !(c.Voice || '').trim()) c.Voice = acl.Voice;
     if (acl.Language && !(c.Language || '').trim()) c.Language = acl.Language;
     if (acl._wsGuid) c._wsGuid = acl._wsGuid;
+    // Copy time fields from ACL when CSV doesn't have them
+    for (const f of ['LandingTime', 'OffBlockTime', 'TakeoffTime', 'InBlockTime']) {
+      if (!c[f] && acl[f]) c[f] = acl[f];
+    }
   }
 }
 

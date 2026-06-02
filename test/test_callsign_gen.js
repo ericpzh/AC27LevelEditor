@@ -11,7 +11,7 @@
  *
  * Usage: node test/test_callsign_gen.js [--root <game-root-path>]
  *
- *   --root   Path to Airport Control 25 Playtest game root.
+ *   --root   Path to Airport Control 27 Playtest game root.
  *            Defaults to ../../../ (relative to this script).
  */
 const fs = require('fs');
@@ -24,7 +24,7 @@ for (let i = 2; i < process.argv.length; i++) {
     ROOT = path.resolve(process.argv[++i]);
   } else if (process.argv[i] === '--help' || process.argv[i] === '-h') {
     console.log('Usage: node test/test_callsign_gen.js [--root <game-root-path>]');
-    console.log('  --root   Path to Airport Control 25 Playtest game root.');
+    console.log('  --root   Path to Airport Control 27 Playtest game root.');
     console.log('           Defaults to ../../../');
     process.exit(0);
   }

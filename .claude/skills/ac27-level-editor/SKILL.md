@@ -1,6 +1,6 @@
 ---
 name: ac27-level-editor
-description: AC27 Level Editor — Electron desktop app for editing Airport Control 25 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, node test/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes — the app has no bundler, no TypeScript, no test framework, and no linter; patterns are deliberate and should be preserved.
+description: AC27 Level Editor — Electron desktop app for editing Airport Control 27 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, node test/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes — the app has no bundler, no TypeScript, no test framework, and no linter; patterns are deliberate and should be preserved.
 ---
 
 # AC27 Level Editor — Repo Skill
@@ -8,7 +8,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ## Project Identity
 
 - **Name:** `ac27-level-editor` (v1.0.3)
-- **Purpose:** Cross-platform desktop level editor for Airport Control 25 `.acl` flight schedule files
+- **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + plain JavaScript (no TypeScript, no bundler, no framework)
 - **Entry:** `main.js` (Electron main process)
 - **App ID:** `com.ac27.level-editor`
@@ -198,7 +198,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 
 - No test framework. Tests are plain Node.js scripts run with `node test/<name>.js`
 - Tests `require('./src/acl_parser.js')` to access both public and `_private` functions
-- Many tests need a real game installation (Airport Control 25) at a known path
+- Many tests need a real game installation (Airport Control 27) at a known path
 - Tests print results to stdout — read the output to determine pass/fail
 - No mocking, no fixtures — tests operate on real files
 

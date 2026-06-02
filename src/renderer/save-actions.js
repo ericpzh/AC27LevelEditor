@@ -28,7 +28,7 @@ async function handleSave() {
   const issues = runTripleValidation();
   if (issues.length > 0) {
     const issueHtml = issues.map((issue, i) =>
-      `<p style="margin:4px 0;font-size:13px"><strong>#${i+1}</strong> ${escapeHtml(issue)}</p>`
+      `<p style="margin:4px 0;font-size:13px">${escapeHtml(issue)}</p>`
     ).join('');
     showModal(`${issues.length} 个问题需要修复后才能保存`, `
       <div style="max-height:400px;overflow-y:auto;text-align:left;margin-bottom:12px">${issueHtml}</div>
@@ -63,9 +63,19 @@ function runTripleValidation() {
   const compat = values._compat || {};
 
   const airlineCodeSet = new Set(audioData.allAirlines || []);
+  // Build valid flight numbers from audio clips + ALL flights in current level
+  const validFlightNums = {};
+  for (const code of Object.keys(audioData.byAirline)) {
+    validFlightNums[code] = new Set(audioData.byAirline[code]);
+  }
   for (const fl of appState.flights) {
     const ac = (fl.CallSign || '').substring(0, 3);
+    const num = (fl.CallSign || '').substring(3);
     if (ac) airlineCodeSet.add(ac);
+    if (ac && num) {
+      if (!validFlightNums[ac]) validFlightNums[ac] = new Set();
+      validFlightNums[ac].add(num);
+    }
   }
   const validSets = {
     AirlineCode: airlineCodeSet,
@@ -81,19 +91,19 @@ function runTripleValidation() {
   appState.flights.forEach((fl, i) => {
     const airlineCode = (fl.CallSign || '').substring(0, 3);
     if (airlineCode && !validSets.AirlineCode.has(airlineCode)) {
-      issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 航司代码 "${airlineCode}" 不在有效白名单中`);
+      issues.push(`${fl.CallSign || '?'}: 航司代码 "${airlineCode}" 不在有效白名单中`);
     }
     const flightNum = (fl.CallSign || '').substring(3);
     if (airlineCode && flightNum) {
-      const validNums = audioData.byAirline[airlineCode] || [];
-      if (validNums.length > 0 && !validNums.includes(flightNum)) {
-        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 航班号 "${flightNum}" 不在航司 ${airlineCode} 的有效列表中`);
+      const validNums = validFlightNums[airlineCode];
+      if (validNums && validNums.size > 0 && !validNums.has(flightNum)) {
+        issues.push(`${fl.CallSign || '?'}: 航班号 "${flightNum}" 不在航司 ${airlineCode} 的有效列表中`);
       }
     }
     for (const col of ['Stand', 'Runway', 'DepartureAirport', 'ArrivalAirport', 'AircraftType', 'Voice', 'Language']) {
       const val = fl[col];
       if (val && validSets[col] && validSets[col].size > 0 && !validSets[col].has(val)) {
-        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): ${FIELD_LABELS[col] || col} "${val}" 不在有效选项中`);
+        issues.push(`${fl.CallSign || '?'}: ${FIELD_LABELS[col] || col} "${val}" 不在有效选项中`);
       }
     }
   });
@@ -109,17 +119,15 @@ function runTripleValidation() {
     const etM = parseInt(etParts[1], 10);
     const depStartTime = etH * 100 + etM;
     const arrStartTime = Math.floor((etH * 60 + etM + 10) / 60) * 100 + ((etH * 60 + etM + 10) % 60);
+    // +15 min tolerance for validation, but show actual config end in messages
     let endTime = toHHMM(appState._configEndTime);
+    const configEndLabel = String(appState._configEndTime).substring(0, 5);
     endTime += 15;
 
     const floorLabel = String(etH).padStart(2, '0') + ':' + String(etM).padStart(2, '0');
     const arrFloorH = Math.floor((etH * 60 + etM + 10) / 60) % 24;
     const arrFloorM = (etH * 60 + etM + 10) % 60;
     const arrFloorLabel = String(arrFloorH).padStart(2, '0') + ':' + String(arrFloorM).padStart(2, '0');
-    const endTotal = Math.floor(toHHMM(appState._configEndTime) / 100) * 60 + (toHHMM(appState._configEndTime) % 100) + 15;
-    const endH = Math.floor(endTotal / 60) % 24;
-    const endM = endTotal % 60;
-    const endLabel = String(endH).padStart(2, '0') + ':' + String(endM).padStart(2, '0');
 
     appState.flights.forEach((fl, i) => {
       for (const col of ['OffBlockTime', 'TakeoffTime', 'LandingTime', 'InBlockTime']) {
@@ -130,9 +138,15 @@ function runTripleValidation() {
         const t = parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10);
         const isDep = (col === 'OffBlockTime' || col === 'TakeoffTime');
         const minT = isDep ? depStartTime : arrStartTime;
-        const rangeLabel = '≥ ' + (isDep ? floorLabel : arrFloorLabel) + ' / ≤ ' + endLabel;
-        if (t < minT || t > endTime) {
-          issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): ${FIELD_LABELS[col] || col} "${timeVal}" 超出允许范围 (${rangeLabel})`);
+        const minLabel = isDep ? floorLabel : arrFloorLabel;
+        const below = t < minT;
+        const above = t > endTime;
+        if (below || above) {
+          let hint = '';
+          if (below && above) hint = '≥ ' + minLabel + ' / ≤ ' + configEndLabel;
+          else if (below) hint = '≥ ' + minLabel;
+          else hint = '≤ ' + configEndLabel;
+          issues.push(`${fl.CallSign || '?'}: ${FIELD_LABELS[col] || col} "${timeVal}" 超出范围 (${hint})`);
         }
       }
     });
@@ -165,9 +179,11 @@ function runTripleValidation() {
     const changes = runwayTL.timeline || [];
 
     appState.flights.forEach((fl, i) => {
+      // Only validate landing runways — initialRunways restricts arrivals, not takeoffs
+      if (fl.isDeparture) return;
       const rwy = fl.Runway;
       if (!rwy) return;
-      const checkTime = fl.LandingTime || fl.OffBlockTime;
+      const checkTime = fl.LandingTime;
       if (!checkTime) return;
       const parts = String(checkTime).split(':');
       if (parts.length < 2) return;
@@ -183,7 +199,7 @@ function runTripleValidation() {
       }
 
       if (activeRunways.size > 0 && !activeRunways.has(rwy)) {
-        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 在 ${checkTime} 时刻，跑道 "${rwy}" 不在活跃跑道列表中`);
+        issues.push(`${fl.CallSign || '?'}: 在 ${checkTime} 时刻，跑道 "${rwy}" 不在活跃跑道列表中`);
       }
     });
   }

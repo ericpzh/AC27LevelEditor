@@ -522,9 +522,12 @@ function autoFillSingleOptionColumns() {
 
 function populateConfigBar(config, filePath, airportIcao) {
   if (config && config.startTime && config.endTime) {
-    // startTime/endTime are "HH:MM:SS" strings, show only HH:MM
+    // Config startTime has 10-min warmup — add 10 min to match in-game display
+    const p = String(config.startTime).split(':');
+    const m = parseInt(p[0]) * 60 + parseInt(p[1]) + 10;
+    const displayStart = String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
     document.getElementById('toolbar-time-range').textContent =
-      '时间段：' + String(config.startTime).substring(0, 5) + ' ~ ' + String(config.endTime).substring(0, 5);
+      '时间段：' + displayStart + ' ~ ' + String(config.endTime).substring(0, 5);
   } else {
     document.getElementById('toolbar-time-range').textContent = '时间段：-';
   }
@@ -1388,7 +1391,7 @@ async function handleSave() {
   const issues = runTripleValidation();
   if (issues.length > 0) {
     const issueHtml = issues.map((issue, i) =>
-      `<p style="margin:4px 0;font-size:13px"><strong>#${i+1}</strong> ${escapeHtml(issue)}</p>`
+      `<p style="margin:4px 0;font-size:13px">${escapeHtml(issue)}</p>`
     ).join('');
     showModal(`${issues.length} 个问题需要修复后才能保存`, `
       <div style="max-height:400px;overflow-y:auto;text-align:left;margin-bottom:12px">
@@ -1429,9 +1432,18 @@ function runTripleValidation() {
   // (a) Dropdown option validation
   // AirlineCode: union audio whitelist + airlines actually present in data
   const airlineCodeSet = new Set(audioData.allAirlines || []);
+  const validFlightNums = {};
+  for (const code of Object.keys(audioData.byAirline)) {
+    validFlightNums[code] = new Set(audioData.byAirline[code]);
+  }
   for (const fl of appState.flights) {
     const ac = (fl.CallSign || '').substring(0, 3);
+    const num = (fl.CallSign || '').substring(3);
     if (ac) airlineCodeSet.add(ac);
+    if (ac && num) {
+      if (!validFlightNums[ac]) validFlightNums[ac] = new Set();
+      validFlightNums[ac].add(num);
+    }
   }
   const validSets = {
     AirlineCode: airlineCodeSet,
@@ -1448,21 +1460,20 @@ function runTripleValidation() {
     // Check AirlineCode
     const airlineCode = (fl.CallSign || '').substring(0, 3);
     if (airlineCode && !validSets.AirlineCode.has(airlineCode)) {
-      issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 航司代码 "${airlineCode}" 不在有效白名单中`);
+      issues.push(`${fl.CallSign || '?'}: 航司代码 "${airlineCode}" 不在有效白名单中`);
     }
-    // Check FlightNum
     const flightNum = (fl.CallSign || '').substring(3);
     if (airlineCode && flightNum) {
-      const validNums = audioData.byAirline[airlineCode] || [];
-      if (validNums.length > 0 && !validNums.includes(flightNum)) {
-        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 航班号 "${flightNum}" 不在航司 ${airlineCode} 的有效列表中`);
+      const validNums = validFlightNums[airlineCode];
+      if (validNums && validNums.size > 0 && !validNums.has(flightNum)) {
+        issues.push(`${fl.CallSign || '?'}: 航班号 "${flightNum}" 不在航司 ${airlineCode} 的有效列表中`);
       }
     }
     // Check other dropdown fields
     for (const col of ['Stand', 'Runway', 'DepartureAirport', 'ArrivalAirport', 'AircraftType', 'Voice', 'Language']) {
       const val = fl[col];
       if (val && validSets[col] && validSets[col].size > 0 && !validSets[col].has(val)) {
-        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): ${FIELD_LABELS[col] || col} "${val}" 不在有效选项中`);
+        issues.push(`${fl.CallSign || '?'}: ${FIELD_LABELS[col] || col} "${val}" 不在有效选项中`);
       }
     }
   });
@@ -1489,7 +1500,11 @@ function runTripleValidation() {
         const mm = parseInt(parts[1], 10);
         const t = hh * 100 + mm;
         if (t < startTime || t > endTime) {
-          issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): ${FIELD_LABELS[col] || col} "${timeVal}" 超出有效时间范围 (${String(startTime).padStart(4,'0')} ~ ${String(endTime).padStart(4,'0')})`);
+          let hint = '';
+          if (t < startTime && t > endTime) hint = '≥ ' + String(startTime).padStart(4, '0') + ' / ≤ ' + String(endTime).padStart(4, '0');
+          else if (t < startTime) hint = '≥ ' + String(startTime).padStart(4, '0');
+          else hint = '≤ ' + String(endTime).padStart(4, '0');
+          issues.push(`${fl.CallSign || '?'}: ${FIELD_LABELS[col] || col} "${timeVal}" 超出范围 (${hint})`);
         }
       }
     });
@@ -1502,10 +1517,11 @@ function runTripleValidation() {
     const changes = runwayTL.timeline || [];
 
     appState.flights.forEach((fl, i) => {
+      // Only validate landing runways — initialRunways restricts arrivals, not takeoffs
+      if (fl.isDeparture) return;
       const rwy = fl.Runway;
       if (!rwy) return;
-      // Find a time to check: use landing time for arrivals, offblock for departures
-      const checkTime = fl.LandingTime || fl.OffBlockTime;
+      const checkTime = fl.LandingTime;
       if (!checkTime) return;
       const parts = String(checkTime).split(':');
       if (parts.length < 2) return;
@@ -1527,7 +1543,7 @@ function runTripleValidation() {
       }
 
       if (activeRunways.size > 0 && !activeRunways.has(rwy)) {
-        issues.push(`航班 #${i+1} (${fl.CallSign || '?'}): 在 ${checkTime} 时刻，跑道 "${rwy}" 不在活跃跑道列表中`);
+        issues.push(`${fl.CallSign || '?'}: 在 ${checkTime} 时刻，跑道 "${rwy}" 不在活跃跑道列表中`);
       }
     });
   }
@@ -1669,7 +1685,16 @@ async function handleImportAcl() {
   autoSort();
   renderAllSections();
   updateStatusBar();
-  showToast(`已导入 ${result.flights.length} 个航班`, 'success');
+  showModal('导入成功 ✓', `
+    <div style="font-size:14px;text-align:center">
+      <p style="font-size:40px;margin:8px 0">✓</p>
+      <p style="margin:8px 0">已成功导入关卡文件</p>
+      <p style="color:var(--text-muted);font-size:13px;margin:4px 0">
+        共 <strong style="color:var(--accent)">${result.flights.length}</strong> 个航班
+      </p>
+    </div>
+  `, `<button class="btn-confirm" id="modal-import-ok">确定</button>`);
+  document.getElementById('modal-import-ok').onclick = hideModal;
 }
 
 // ─── RESTORE FROM BACKUP ─────────────────────────────────
@@ -1784,8 +1809,10 @@ function renderWeatherEditor() {
   const list = document.getElementById('weather-list');
   if (!list) return;
 
-  list.innerHTML = appState.weatherTimeline.map((entry, i) => `
-    <div class="tl-row" data-idx="${i}">
+  list.innerHTML =
+    `<div class="tl-hdr"><span>时间</span><span>天气</span><span></span></div>` +
+    appState.weatherTimeline.map((entry, i) => `
+    <div class="tl-row" data-idx="${i}"${entry._isNew ? ' data-new' : ''}>
       <select class="tl-select" data-field="preset" data-idx="${i}">
         ${WEATHER_PRESETS.map(p => `<option value="${p}" ${entry.preset === p ? 'selected' : ''}>${p}</option>`).join('')}
         ${!WEATHER_PRESETS.includes(entry.preset) ? `<option value="${entry.preset}" selected>${entry.preset}</option>` : ''}
@@ -1833,14 +1860,40 @@ function renderWeatherEditor() {
   updateTimelineStatus();
 }
 
+function _getDefaultTime() {
+  const s = appState._configStartTime;
+  const e = appState._configEndTime;
+  if (s && e) {
+    const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
+    const mid = Math.floor((toMin(s) + toMin(e)) / 2);
+    return String(Math.floor(mid / 60) % 24).padStart(2, '0') + ':' + String(mid % 60).padStart(2, '0') + ':00';
+  }
+  if (s) return String(s).substring(0, 8);
+  if (e) return String(e).substring(0, 8);
+  return '12:00:00';
+}
+
+function _flashNewRow(selector, entriesArray) {
+  requestAnimationFrame(() => {
+    const el = document.querySelector(selector + '[data-new]');
+    if (!el) return;
+    el.classList.add('flash-new');
+    el.removeAttribute('data-new');
+    if (entriesArray) entriesArray.forEach(e => { delete e._isNew; });
+    const clear = () => {
+      el.classList.remove('flash-new');
+      document.removeEventListener('click', clear);
+    };
+    document.addEventListener('click', clear);
+  });
+}
+
 document.getElementById('btn-weather-add').addEventListener('click', () => {
-  // Add after last or at 06:00
-  const lastTime = appState.weatherTimeline.length > 0
-    ? appState.weatherTimeline[appState.weatherTimeline.length - 1].time : '06:00:00';
-  appState.weatherTimeline.push({ preset: 'Sunny', time: lastTime });
+  appState.weatherTimeline.push({ preset: 'Sunny', time: _getDefaultTime(), _isNew: true });
   appState.timelineModified.weather = true;
   updateTimelineStatus();
   renderWeatherEditor();
+  _flashNewRow('#weather-list .tl-row', appState.weatherTimeline);
 });
 
 // ─── Wind Editor ─────────────────────────────────────────
@@ -1849,8 +1902,10 @@ function renderWindEditor() {
   const list = document.getElementById('wind-list');
   if (!list) return;
 
-  list.innerHTML = appState.windTimeline.map((entry, i) => `
-    <div class="tl-row" data-idx="${i}">
+  list.innerHTML =
+    `<div class="tl-hdr"><span>时间</span><span>风向</span><span></span><span>风速</span><span></span></div>` +
+    appState.windTimeline.map((entry, i) => `
+    <div class="tl-row" data-idx="${i}"${entry._isNew ? ' data-new' : ''}>
       <input class="tl-input tl-int" type="text" inputmode="numeric" data-field="direction" data-idx="${i}" value="${entry.direction || 0}">
       <span class="tl-label-sm">deg</span>
       <input class="tl-input tl-int" type="text" inputmode="numeric" data-field="speed" data-idx="${i}" value="${entry.speed || 0}">
@@ -1899,12 +1954,11 @@ function renderWindEditor() {
 }
 
 document.getElementById('btn-wind-add').addEventListener('click', () => {
-  const lastTime = appState.windTimeline.length > 0
-    ? appState.windTimeline[appState.windTimeline.length - 1].time : '06:00:00';
-  appState.windTimeline.push({ direction: 180, speed: 5, time: lastTime });
+  appState.windTimeline.push({ direction: 180, speed: 5, time: _getDefaultTime(), _isNew: true });
   appState.timelineModified.wind = true;
   updateTimelineStatus();
   renderWindEditor();
+  _flashNewRow('#wind-list .tl-row', appState.windTimeline);
 });
 
 // ─── Runway Editor ───────────────────────────────────────
@@ -1940,13 +1994,13 @@ function renderRunwayEditor() {
       <div class="rw-checkbox-grid">${checkboxesHTML || '<span class="text-muted">无跑道数据</span>'}</div>
     </div>
     <div class="rw-toolbar">
-      <button id="btn-rw-change-add" class="btn-sm">+ 添加变更</button>
+      <button id="btn-rw-change-add" class="btn-sm">+ 添加</button>
     </div>
       <div id="rw-changes-list">
         ${(rw.timeline || []).map((tle, i) => {
           const activeKeys = new Set((tle.changes || []).map(ch => ch.source + '|' + ch.dest));
           return `
-          <div class="rw-change-card">
+          <div class="rw-change-card"${tle._isNew ? ' data-new' : ''}>
             <div class="rw-change-header">
               <input class="tl-input rw-time-input" type="text" data-idx="${i}" data-field="time" value="${tle.time || ''}" placeholder="HH:MM">
               <div class="rw-change-checkboxes">
@@ -2015,10 +2069,11 @@ function renderRunwayEditor() {
   const addBtn = document.getElementById('btn-rw-change-add');
   if (addBtn) {
     addBtn.addEventListener('click', () => {
-      appState.runwayTimeline.timeline.push({ time: '12:00:00', changes: [] });
+      appState.runwayTimeline.timeline.push({ time: _getDefaultTime(), changes: [], _isNew: true });
       appState.timelineModified.runway = true;
       updateTimelineStatus();
       renderRunwayEditor();
+      _flashNewRow('#runway-list .rw-change-card', appState.runwayTimeline.timeline);
     });
   }
 

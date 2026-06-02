@@ -167,8 +167,10 @@ function renderWeatherEditor() {
     }
   }
 
-  list.innerHTML = activeEntries.map(({ entry, realIdx }, displayIdx) => `
-    <div class="tl-row" data-idx="${realIdx}">
+  list.innerHTML =
+    `<div class="tl-hdr"><span>时间</span><span>天气</span><span></span></div>` +
+    activeEntries.map(({ entry, realIdx }, displayIdx) => `
+    <div class="tl-row" data-idx="${realIdx}"${entry._isNew ? ' data-new' : ''}>
       <input class="tl-input tl-time-click" type="text" data-field="time" data-idx="${realIdx}" value="${entry.time || ''}" placeholder="HH:MM" readonly>
       <select class="tl-select" data-field="preset" data-idx="${realIdx}">
         ${WEATHER_PRESETS.map(p => `<option value="${p}" ${entry.preset === p ? 'selected' : ''}>${p}</option>`).join('')}
@@ -224,16 +226,11 @@ function renderWeatherEditor() {
 }
 
 document.getElementById('btn-weather-add').addEventListener('click', () => {
-  const range = _getWeatherValidRange();
-  // Default time: always at the end of the valid range
-  let defaultTime = '06:00:00';
-  if (range.validMaxTime != null) {
-    defaultTime = minutesToTimeStr(range.validMaxTime - 1);
-  }
-  appState.weatherTimeline.push({ preset: 'Sunny', time: defaultTime });
+  appState.weatherTimeline.push({ preset: 'Sunny', time: _getDefaultTime(), _isNew: true });
   appState.timelineModified.weather = true;
   updateTimelineStatus();
   renderWeatherEditor();
+  _flashNewRow('#weather-list .tl-row', appState.weatherTimeline);
 });
 
 // ═══════════ WIND EDITOR ══════════════════════════════════
@@ -276,8 +273,10 @@ function renderWindEditor() {
     }
   }
 
-  list.innerHTML = activeEntries.map(({ entry, realIdx }, displayIdx) => `
-    <div class="tl-row" data-idx="${realIdx}">
+  list.innerHTML =
+    `<div class="tl-hdr"><span>时间</span><span>风向</span><span></span><span>风速</span><span></span></div>` +
+    activeEntries.map(({ entry, realIdx }, displayIdx) => `
+    <div class="tl-row" data-idx="${realIdx}"${entry._isNew ? ' data-new' : ''}>
       <input class="tl-input tl-time-click" type="text" data-field="time" data-idx="${realIdx}" value="${entry.time || ''}" placeholder="HH:MM" readonly>
       <input class="tl-input tl-direction-click" type="text" data-field="direction" data-idx="${realIdx}" value="${entry.direction || 0}°" readonly>
       <div class="tl-speed-row">
@@ -354,21 +353,16 @@ function renderWindEditor() {
 }
 
 document.getElementById('btn-wind-add').addEventListener('click', () => {
-  const range = _getWindValidRange();
-  // Default time: always at the end of the valid range
-  let defaultTime = '06:00:00';
-  if (range.validMaxTime != null) {
-    defaultTime = minutesToTimeStr(range.validMaxTime - 1);
-  }
-  appState.windTimeline.push({ direction: 180, speed: 5, time: defaultTime });
+  appState.windTimeline.push({ direction: 180, speed: 5, time: _getDefaultTime(), _isNew: true });
   appState.timelineModified.wind = true;
   updateTimelineStatus();
   renderWindEditor();
+  _flashNewRow('#wind-list .tl-row', appState.windTimeline);
 });
 
 // ═══════════ RUNWAY EDITOR ════════════════════════════════
 
-function _getRunwayDefaultTime() {
+function _getDefaultTime() {
   const s = appState._configStartTime;
   const e = appState._configEndTime;
   if (s && e) {
@@ -379,6 +373,22 @@ function _getRunwayDefaultTime() {
   if (s) return String(s).substring(0, 8);
   if (e) return String(e).substring(0, 8);
   return '12:00:00';
+}
+
+function _flashNewRow(selector, entriesArray) {
+  requestAnimationFrame(() => {
+    const el = document.querySelector(selector + '[data-new]');
+    if (!el) return;
+    el.classList.add('flash-new');
+    el.removeAttribute('data-new');
+    // Clean up _isNew flags from data
+    if (entriesArray) entriesArray.forEach(e => { delete e._isNew; });
+    const clear = () => {
+      el.classList.remove('flash-new');
+      document.removeEventListener('click', clear);
+    };
+    document.addEventListener('click', clear);
+  });
 }
 
 function renderRunwayEditor() {
@@ -397,7 +407,7 @@ function renderRunwayEditor() {
   const hasPairs = pairs.length > 0;
 
   // Default time: midpoint of level timeline, fallback to "12:00:00"
-  const defaultTime = _getRunwayDefaultTime();
+  const defaultTime = _getDefaultTime();
 
   // First pair for auto-populate
   const defaultPair = hasPairs ? pairs[0] : null;
@@ -426,14 +436,14 @@ function renderRunwayEditor() {
       <div class="rw-checkbox-grid">${checkboxesHTML || '<span class="text-muted">无跑道数据</span>'}</div>
     </div>
     <div class="rw-toolbar">
-      <button id="btn-rw-change-add" class="btn-sm">+ 添加变更</button>
+      <button id="btn-rw-change-add" class="btn-sm">+ 添加</button>
     </div>
     ${hasPairs ? `
       <div id="rw-changes-list">
         ${(rw.timeline || []).map((tle, i) => {
           const activeKeys = new Set((tle.changes || []).map(ch => ch.source + '|' + ch.dest));
           return `
-          <div class="rw-change-card">
+          <div class="rw-change-card"${tle._isNew ? ' data-new' : ''}>
             <div class="rw-change-header">
               <input class="tl-input tl-time-click" type="text" data-idx="${i}" data-field="time" value="${tle.time || ''}" placeholder="HH:MM" readonly>
               <div class="rw-change-checkboxes">
@@ -517,14 +527,15 @@ function renderRunwayEditor() {
   const addBtn = document.getElementById('btn-rw-change-add');
   if (addBtn) {
     addBtn.addEventListener('click', () => {
-      const defaultTime = _getRunwayDefaultTime();
       appState.runwayTimeline.timeline.push({
-        time: defaultTime,
-        changes: []
+        time: _getDefaultTime(),
+        changes: [],
+        _isNew: true
       });
       appState.timelineModified.runway = true;
       updateTimelineStatus();
       renderRunwayEditor();
+      _flashNewRow('#runway-list .rw-change-card', appState.runwayTimeline.timeline);
     });
   }
 

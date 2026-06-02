@@ -47,6 +47,10 @@
         <button id="btn-toggle-hidden" class="btn-sm btn-toggle-hidden">显示隐藏</button>
       </div>
     </header>
+    <div id="browser-note" class="browser-note hidden">
+      <span>⚠ 部分关卡的时间线已整合到更大范围关卡的时间线中（如 05:45-06:15 整合到 05:00-07:00 中）</span>
+      <button id="browser-note-close" class="browser-note-close" title="关闭">✕</button>
+    </div>
     <main id="browser-content" class="browser-content">
       <div id="browser-loading" class="loading-state">
         <div class="spinner"></div>
@@ -96,12 +100,9 @@
           </div>
           <div class="tl-embed-body">
             <div class="tl-toolbar tl-embed-toolbar">
-              <button id="btn-weather-add" class="btn-sm">+ 添加条目</button>
+              <button id="btn-weather-add" class="btn-sm">+ 添加</button>
               <span id="weather-range-indicator" class="tl-range-indicator"></span>
               <span id="weather-hidden-count" class="tl-hidden-count"></span>
-            </div>
-            <div class="tl-list-header">
-              <span class="tl-h-time">时间</span><span class="tl-h-preset">天气</span><span></span>
             </div>
             <div id="weather-list" class="tl-list"></div>
           </div>
@@ -114,12 +115,9 @@
           </div>
           <div class="tl-embed-body">
             <div class="tl-toolbar tl-embed-toolbar">
-              <button id="btn-wind-add" class="btn-sm">+ 添加条目</button>
+              <button id="btn-wind-add" class="btn-sm">+ 添加</button>
               <span id="wind-range-indicator" class="tl-range-indicator"></span>
               <span id="wind-hidden-count" class="tl-hidden-count"></span>
-            </div>
-            <div class="tl-list-header">
-              <span class="tl-h-time">时间</span><span class="tl-h-dir">风向</span><span></span><span class="tl-h-speed">风速</span><span></span>
             </div>
             <div id="wind-list" class="tl-list"></div>
           </div>

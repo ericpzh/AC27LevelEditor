@@ -1,8 +1,19 @@
 // ═══════════ SCREEN 1: BROWSER ═════════════════════════
 
+// Closable browser note (persists across sessions)
+document.getElementById('browser-note-close').addEventListener('click', () => {
+  document.getElementById('browser-note').classList.add('hidden');
+  try { localStorage.setItem('browser-note-dismissed', '1'); } catch (_) {}
+});
+
 async function showBrowser() {
   showScreen('browser');
   document.getElementById('browser-root-path').textContent = appState.rootPath || '';
+
+  // Show info note unless previously dismissed
+  if (!localStorage.getItem('browser-note-dismissed')) {
+    document.getElementById('browser-note').classList.remove('hidden');
+  }
 
   const loading = document.getElementById('browser-loading');
   const list = document.getElementById('browser-list');
@@ -33,7 +44,7 @@ async function showBrowser() {
       } else if (/demo/i.test(name)) {
         info._hidden = true;
         info._metaLabels.push({ label: 'Demo', type: 'demo' });
-      } else if (/bench|test|crossrunway|dev/i.test(name)) {
+      } else if (/bench|test|crossrunway|dev|\.prod/i.test(name)) {
         info._hidden = true;
         info._metaLabels.push({ label: '测试', type: 'test' });
       } else if (/endless/i.test(name)) {

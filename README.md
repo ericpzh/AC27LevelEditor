@@ -19,7 +19,7 @@
 2. 双击运行即可，无需安装
 
 首次启动时需要选择游戏根目录：
-- Steam 默认路径：`...\SteamLibrary\steamapps\common\Airport Control 25 Playtest`
+- Steam 默认路径：`...\SteamLibrary\steamapps\common\Airport Control 27 Playtest`
 - 选择后编辑器会自动扫描所有机场的关卡文件
 
 ### 使用流程
@@ -54,7 +54,7 @@
 2. Double-click to run
 
 On first launch, select the game root folder:
-- Default Steam path: `...\SteamLibrary\steamapps\common\Airport Control 25 Playtest`
+- Default Steam path: `...\SteamLibrary\steamapps\common\Airport Control 27 Playtest`
 - The editor auto-scans all airports and their level files
 
 ### User Flow
