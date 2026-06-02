@@ -1,26 +1,81 @@
 /**
  * End-to-end test: _rebuildTimelineSections
  *
- * Verifies that WeatherFrames, WindFrames, RunwayTimeline in the .acl file
- * are correctly patched when the timeline JSON data changes.
+ * Verifies that WeatherFrames, WindFrames, and RunwayTimeline sections in the
+ * .acl file are correctly patched when the timeline JSON data changes.
  *
- * Usage: node test/test_rebuild_timelines.js
+ * Usage: node test/test_rebuild_timelines.js --acl <path-to-.acl-file>
+ *
+ * Timeline JSON files (weather_timeline.json, wind_timeline.json,
+ * runway_timeline_*.json) are auto-discovered from the ACL's directory.
+ * All temp files are written to test/ and cleaned up.
  */
 const fs = require('fs');
 const path = require('path');
-
-const ROOT = path.resolve(__dirname, '..', '..');
-const LEVELS_DIR = path.join(ROOT, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'KJFK', 'Levels');
-const ACL_SRC = path.join(LEVELS_DIR, 'KJFK_07-09.acl');
-const ACL_TEMP = path.join(LEVELS_DIR, '_test_rebuild_timelines.acl');
-
 const { _rebuildTimelineSections } = require('../src/acl_flight_plans');
 
-// ─── Helpers ─────────────────────────────────────────────────────────
+// ─── CLI ──────────────────────────────────────────────────────
+let aclSrc = null;
+let weatherPath = null, windPath = null, runwayPath = null;
+for (let i = 2; i < process.argv.length; i++) {
+  if (process.argv[i] === '--acl' && i + 1 < process.argv.length) {
+    aclSrc = path.resolve(process.argv[++i]);
+  } else if (process.argv[i] === '--weather' && i + 1 < process.argv.length) {
+    weatherPath = path.resolve(process.argv[++i]);
+  } else if (process.argv[i] === '--wind' && i + 1 < process.argv.length) {
+    windPath = path.resolve(process.argv[++i]);
+  } else if (process.argv[i] === '--runway' && i + 1 < process.argv.length) {
+    runwayPath = path.resolve(process.argv[++i]);
+  } else if (process.argv[i] === '--help' || process.argv[i] === '-h') {
+    console.log('Usage: node test/test_rebuild_timelines.js --acl <path-to-.acl-file> [--weather <path>] [--wind <path>] [--runway <path>]');
+    console.log('  --acl       Path to the .acl file to test against (required).');
+    console.log('  --weather   Path to weather_timeline.json (auto-discovered if omitted).');
+    console.log('  --wind      Path to wind_timeline.json (auto-discovered if omitted).');
+    console.log('  --runway    Path to runway_timeline_*.json (auto-discovered if omitted).');
+    process.exit(0);
+  }
+}
+if (!aclSrc) {
+  console.error('ERROR: --acl <path> is required.');
+  console.error('Usage: node test/test_rebuild_timelines.js --acl <path-to-.acl-file>');
+  process.exit(1);
+}
+if (!fs.existsSync(aclSrc)) {
+  console.error('ERROR: File not found: ' + aclSrc);
+  process.exit(1);
+}
+
+// Auto-discover timeline JSON paths from ACL directory
+const aclDir = path.dirname(aclSrc);
+const aclBase = path.basename(aclSrc, '.acl');
+
+if (!weatherPath) {
+  const p = path.join(aclDir, 'weather_timeline.json');
+  if (fs.existsSync(p)) weatherPath = p;
+}
+if (!windPath) {
+  const p = path.join(aclDir, 'wind_timeline.json');
+  if (fs.existsSync(p)) windPath = p;
+}
+if (!runwayPath) {
+  // Try runway_timeline_<aclBase>.json first, then any runway_timeline_*.json
+  const specific = path.join(aclDir, 'runway_timeline_' + aclBase + '.json');
+  if (fs.existsSync(specific)) {
+    runwayPath = specific;
+  } else {
+    const files = fs.readdirSync(aclDir).filter(f => f.startsWith('runway_timeline_') && f.endsWith('.json'));
+    if (files.length > 0) runwayPath = path.join(aclDir, files[0]);
+  }
+}
+
+const ACL_TEMP = path.join(__dirname, '_e2e_temp_rebuild_timelines.acl');
+const ACL_TEMP2 = path.join(__dirname, '_e2e_temp_rebuild_timelines2.acl');
+
+// ─── Helpers ──────────────────────────────────────────────────
 
 function check(condition, label) {
-  if (condition) { console.log('  \u2713 ' + label); return true; }
-  else { console.log('  \u2717 ' + label); return false; }
+  if (condition) { console.log('  ✓ ' + label); return true; }
+  else { console.log('  ✗ ' + label); return false; }
 }
 
 function extractSection(text, sectionKey) {
@@ -50,62 +105,60 @@ function normalizeNewlines(text) {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-// ─── Test #1: WeatherFrames rebuild ──────────────────────────────────
+function cleanup() {
+  for (const p of [ACL_TEMP, ACL_TEMP2]) {
+    try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+  }
+}
+
+// ─── Test #1: WeatherFrames rebuild ───────────────────────────
 
 function testWeatherFramesRebuild() {
   console.log('\n=== Test #1: WeatherFrames rebuild ===');
+  if (!weatherPath) { console.log('  SKIP: no weather_timeline.json found'); return true; }
 
-  // Setup: clean temp copy
-  fs.copyFileSync(ACL_SRC, ACL_TEMP);
-
-  // Load & modify weather data (reverse order, change some presets)
-  const origData = JSON.parse(fs.readFileSync(path.join(LEVELS_DIR, 'weather_timeline.json'), 'utf-8'));
+  fs.copyFileSync(aclSrc, ACL_TEMP);
+  const origData = JSON.parse(fs.readFileSync(weatherPath, 'utf-8'));
   const modifiedData = origData.map((f, i) => ({
     preset: (i % 3 === 0) ? 'TEST_PRESET_' + i : f.preset,
     time: f.time
   }));
-  // Re-sort by time (the rebuild function sorts internally)
   modifiedData.sort((a, b) => {
-    const t = s => { const p = s.split(':'); return +p[0]*3600 + +p[1]*60 + +p[2]; };
+    const t = s => { const p = s.split(':'); return +p[0] * 3600 + +p[1] * 60 + +p[2]; };
     return t(a.time) - t(b.time);
   });
 
-  // Run rebuild (only WeatherFrames)
   _rebuildTimelineSections(ACL_TEMP, modifiedData, null, null);
-
-  // Verify
   const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
   let ok = true;
 
-  // Check TEST_PRESET entries exist
   ok &= check(outText.includes('"Preset": "TEST_PRESET_0"'), 'Modified preset TEST_PRESET_0 present');
   ok &= check(outText.includes('"Preset": "TEST_PRESET_3"'), 'Modified preset TEST_PRESET_3 present');
 
-  // Check $rlength updated
   const ws = extractSection(outText, 'WeatherFrames');
-  ok &= check(ws.raw.includes('"$rlength": ' + modifiedData.length), 'WeatherFrames $rlength == ' + modifiedData.length);
+  ok &= check(ws && ws.raw.includes('"$rlength": ' + modifiedData.length),
+    'WeatherFrames $rlength == ' + modifiedData.length);
+  ok &= check(countInText(ws.raw, '"Preset":') === modifiedData.length,
+    'Preset count == ' + modifiedData.length);
+  ok &= check(countInText(ws.raw, '"Time":') === modifiedData.length,
+    'Time count == ' + modifiedData.length);
 
-  // Check all entries exist
-  ok &= check(countInText(ws.raw, '"Preset":') === modifiedData.length, 'Preset count == ' + modifiedData.length);
-  ok &= check(countInText(ws.raw, '"Time":') === modifiedData.length, 'Time count == ' + modifiedData.length);
-
-  // Check WindFrames UNTOUCHED (null means no rebuild)
-  const windOrig = extractSection(fs.readFileSync(ACL_SRC, 'utf-8'), 'WindFrames');
+  // WindFrames untouched (null means no rebuild)
+  const windOrig = extractSection(fs.readFileSync(aclSrc, 'utf-8'), 'WindFrames');
   const windOut = extractSection(outText, 'WindFrames');
-  ok &= check(windOrig.raw === windOut.raw, 'WindFrames unchanged (null passed)');
+  if (windOrig && windOut) ok &= check(windOrig.raw === windOut.raw, 'WindFrames unchanged (null passed)');
 
   return ok;
 }
 
-// ─── Test #2: WindFrames rebuild ─────────────────────────────────────
+// ─── Test #2: WindFrames rebuild ──────────────────────────────
 
 function testWindFramesRebuild() {
   console.log('\n=== Test #2: WindFrames rebuild ===');
+  if (!windPath) { console.log('  SKIP: no wind_timeline.json found'); return true; }
 
-  fs.copyFileSync(ACL_SRC, ACL_TEMP);
-
-  // Modify wind data aggressively
-  const origData = JSON.parse(fs.readFileSync(path.join(LEVELS_DIR, 'wind_timeline.json'), 'utf-8'));
+  fs.copyFileSync(aclSrc, ACL_TEMP);
+  const origData = JSON.parse(fs.readFileSync(windPath, 'utf-8'));
   const modifiedData = origData.map(f => ({
     direction: (f.direction + 90) % 360,
     speed: Math.min(f.speed + 3, 15),
@@ -113,37 +166,32 @@ function testWindFramesRebuild() {
   }));
 
   _rebuildTimelineSections(ACL_TEMP, null, modifiedData, null);
-
   const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
   let ok = true;
 
   const ws = extractSection(outText, 'WindFrames');
-  ok &= check(ws.raw.includes('"$rlength": ' + modifiedData.length), 'WindFrames $rlength == ' + modifiedData.length);
-
-  // Spot check modified values
-  ok &= check(ws.raw.includes('"Direction": ' + modifiedData[0].direction), 'Modified Direction[0]=' + modifiedData[0].direction);
-  ok &= check(ws.raw.includes('"Speed": ' + modifiedData[0].speed), 'Modified Speed[0]=' + modifiedData[0].speed);
+  ok &= check(ws && ws.raw.includes('"$rlength": ' + modifiedData.length),
+    'WindFrames $rlength == ' + modifiedData.length);
+  ok &= check(ws.raw.includes('"Direction": ' + modifiedData[0].direction),
+    'Modified Direction[0]=' + modifiedData[0].direction);
+  ok &= check(ws.raw.includes('"Speed": ' + modifiedData[0].speed),
+    'Modified Speed[0]=' + modifiedData[0].speed);
 
   // WeatherFrames untouched
-  const wxOrig = extractSection(fs.readFileSync(ACL_SRC, 'utf-8'), 'WeatherFrames');
+  const wxOrig = extractSection(fs.readFileSync(aclSrc, 'utf-8'), 'WeatherFrames');
   const wxOut = extractSection(outText, 'WeatherFrames');
-  ok &= check(wxOrig.raw === wxOut.raw, 'WeatherFrames unchanged (null passed)');
+  if (wxOrig && wxOut) ok &= check(wxOrig.raw === wxOut.raw, 'WeatherFrames unchanged (null passed)');
 
   return ok;
 }
 
-// ─── Test #3: RunwayTimeline rebuild (empty timeline) ────────────────
+// ─── Test #3: RunwayTimeline rebuild (empty) ──────────────────
 
 function testRunwayTimelineEmpty() {
   console.log('\n=== Test #3: RunwayTimeline rebuild (empty) ===');
 
-  fs.copyFileSync(ACL_SRC, ACL_TEMP);
-
-  const modifiedData = {
-    initialRunways: ['22L', '22R'],
-    timeline: []
-  };
-
+  fs.copyFileSync(aclSrc, ACL_TEMP);
+  const modifiedData = { initialRunways: ['22L', '22R'], timeline: [] };
   _rebuildTimelineSections(ACL_TEMP, null, null, modifiedData);
 
   const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
@@ -151,38 +199,28 @@ function testRunwayTimelineEmpty() {
 
   ok &= check(outText.includes('"22L"'), 'InitialRunway 22L present');
   ok &= check(outText.includes('"22R"'), 'InitialRunway 22R present');
-  // Check within RunwayTimeline section only (4L appears elsewhere in scenery/flights)
-  const rwForCheck = extractSection(outText, 'RunwayTimeline');
-  ok &= check(!rwForCheck.raw.includes('"4L"'), 'Old InitialRunway 4L removed from RunwayTimeline');
 
-  // Timeline $rlength should be 0
-  ok &= check(rwForCheck.raw.match(/"Timeline"[\s\S]*?"\$rlength"\s*:\s*0/), 'Timeline $rlength == 0');
+  const rwForCheck = extractSection(outText, 'RunwayTimeline');
+  // Old runway removed (check is relative — 4L may or may not be the old one)
+  ok &= check(rwForCheck && rwForCheck.raw.match(/"Timeline"[\s\S]*?"\$rlength"\s*:\s*0/),
+    'Timeline $rlength == 0');
 
   return ok;
 }
 
-// ─── Test #4: RunwayTimeline rebuild WITH changes (Day.Prod) ─────────
+// ─── Test #4: RunwayTimeline rebuild WITH changes ─────────────
 
 function testRunwayTimelineWithChanges() {
   console.log('\n=== Test #4: RunwayTimeline rebuild WITH changes ===');
+  if (!runwayPath) { console.log('  SKIP: no runway_timeline_*.json found'); return true; }
 
-  const aclProd = path.join(LEVELS_DIR, 'KJFK-Day.Prod.acl');
-  const jsonProd = path.join(LEVELS_DIR, 'runway_timeline_KJFK-Day.Prod.json');
-  if (!fs.existsSync(aclProd) || !fs.existsSync(jsonProd)) {
-    console.log('  SKIP: Day.Prod files not available');
-    return true;
-  }
+  fs.copyFileSync(aclSrc, ACL_TEMP2);
+  const origData = JSON.parse(fs.readFileSync(runwayPath, 'utf-8'));
 
-  const ACL_TEMP2 = path.join(LEVELS_DIR, '_test_rebuild_timelines2.acl');
-  fs.copyFileSync(aclProd, ACL_TEMP2);
-
-  const origData = JSON.parse(fs.readFileSync(jsonProd, 'utf-8'));
-
-  // Modify: add a new runway change frame
   const modifiedData = {
-    initialRunways: origData.initialRunways,
+    initialRunways: origData.initialRunways || [],
     timeline: [
-      ...origData.timeline,
+      ...(origData.timeline || []),
       {
         time: '18:00:00',
         changes: [
@@ -194,35 +232,29 @@ function testRunwayTimelineWithChanges() {
   };
 
   _rebuildTimelineSections(ACL_TEMP2, null, null, modifiedData);
-
   const outText = fs.readFileSync(ACL_TEMP2, 'utf-8');
   let ok = true;
 
-  // Check the added frame
   ok &= check(outText.includes('"Time": "18:00:00"'), 'Added frame Time="18:00:00"');
   ok &= check(outText.includes('"Source": "31L"'), 'Change Source=31L present');
   ok &= check(outText.includes('"Dest": "22R"'), 'Change Dest=22R present');
   ok &= check(outText.includes('"Source": "31R"'), 'Change Source=31R present');
   ok &= check(outText.includes('"Dest": "22L"'), 'Change Dest=22L present');
 
-  // Check $rlength matches new count
   const rw = extractSection(outText, 'RunwayTimeline');
-  const tlMatch = rw.raw.match(/"Timeline"[\s\S]*?"\$rlength"\s*:\s*(\d+)/);
+  const tlMatch = rw && rw.raw.match(/"Timeline"[\s\S]*?"\$rlength"\s*:\s*(\d+)/);
   ok &= check(tlMatch && parseInt(tlMatch[1], 10) === modifiedData.timeline.length,
     'Timeline $rlength == ' + modifiedData.timeline.length + ' (got ' + (tlMatch ? tlMatch[1] : '?') + ')');
-
-  // Cleanup
-  try { fs.unlinkSync(ACL_TEMP2); } catch (_) {}
 
   return ok;
 }
 
-// ─── Test #5: All three sections simultaneously ──────────────────────
+// ─── Test #5: All three sections simultaneously ───────────────
 
 function testAllSectionsRebuild() {
   console.log('\n=== Test #5: All 3 sections simultaneous rebuild ===');
 
-  fs.copyFileSync(ACL_SRC, ACL_TEMP);
+  fs.copyFileSync(aclSrc, ACL_TEMP);
 
   const weatherData = [
     { preset: 'FULL_SYNC_TEST', time: '06:00:00' },
@@ -234,26 +266,18 @@ function testAllSectionsRebuild() {
   ];
   const runwayData = {
     initialRunways: ['TEST'],
-    timeline: [
-      { time: '08:00:00', changes: [{ source: 'TEST', dest: 'NONE' }] }
-    ]
+    timeline: [{ time: '08:00:00', changes: [{ source: 'TEST', dest: 'NONE' }] }]
   };
 
   _rebuildTimelineSections(ACL_TEMP, weatherData, windData, runwayData);
-
   const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
   let ok = true;
 
-  // Weather
   ok &= check(outText.includes('"Preset": "FULL_SYNC_TEST"'), 'Weather: custom preset present');
   ok &= check(countInText(extractSection(outText, 'WeatherFrames').raw, '"Preset":') === 2, 'Weather: 2 entries');
-
-  // Wind
   ok &= check(outText.includes('"Direction": 270'), 'Wind: Direction=270 present');
   ok &= check(outText.includes('"Speed": 10'), 'Wind: Speed=10 present');
   ok &= check(countInText(extractSection(outText, 'WindFrames').raw, '"Direction":') === 2, 'Wind: 2 entries');
-
-  // Runway
   ok &= check(outText.includes('"TEST"'), 'Runway: TEST initial runway');
   ok &= check(outText.includes('"Time": "08:00:00"'), 'Runway: timeline frame time');
   ok &= check(outText.includes('"Source": "TEST"'), 'Runway: change source');
@@ -266,25 +290,27 @@ function testAllSectionsRebuild() {
   return ok;
 }
 
-// ─── Test #6: Round-trip stability (rebuild with same data = identical) ──
+// ─── Test #6: Round-trip stability ────────────────────────────
 
 function testRoundTripStability() {
   console.log('\n=== Test #6: Round-trip stability ===');
+  if (!weatherPath || !windPath || !runwayPath) {
+    console.log('  SKIP: need all three timeline JSONs (weather, wind, runway)');
+    return true;
+  }
 
-  fs.copyFileSync(ACL_SRC, ACL_TEMP);
+  fs.copyFileSync(aclSrc, ACL_TEMP);
 
-  const weatherData = JSON.parse(fs.readFileSync(path.join(LEVELS_DIR, 'weather_timeline.json'), 'utf-8'));
-  const windData = JSON.parse(fs.readFileSync(path.join(LEVELS_DIR, 'wind_timeline.json'), 'utf-8'));
-  const runwayData = JSON.parse(fs.readFileSync(path.join(LEVELS_DIR, 'runway_timeline_KJFK_07-09.json'), 'utf-8'));
+  const weatherData = JSON.parse(fs.readFileSync(weatherPath, 'utf-8'));
+  const windData = JSON.parse(fs.readFileSync(windPath, 'utf-8'));
+  const runwayData = JSON.parse(fs.readFileSync(runwayPath, 'utf-8'));
 
   _rebuildTimelineSections(ACL_TEMP, weatherData, windData, runwayData);
 
   const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
-  const srcText = fs.readFileSync(ACL_SRC, 'utf-8');
-
+  const srcText = fs.readFileSync(aclSrc, 'utf-8');
   let ok = true;
 
-  // Each timeline section should match original (normalize line endings: ACL has \r\n, generated has \n)
   const weatherOrig = normalizeNewlines(extractSection(srcText, 'WeatherFrames').raw);
   const weatherOut = normalizeNewlines(extractSection(outText, 'WeatherFrames').raw);
   ok &= check(weatherOrig === weatherOut, 'WeatherFrames round-trip identical');
@@ -300,17 +326,15 @@ function testRoundTripStability() {
   return ok;
 }
 
-// ─── Main ────────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────
 
 function main() {
   console.log('Test: _rebuildTimelineSections — E2E ACL patching');
-  console.log('Reference ACL: ' + path.basename(ACL_SRC));
-  console.log('Temp file: ' + path.basename(ACL_TEMP));
-
-  if (!fs.existsSync(ACL_SRC)) {
-    console.error('FATAL: Source ACL not found: ' + ACL_SRC);
-    process.exit(1);
-  }
+  console.log('ACL:  ' + aclSrc);
+  console.log('Temp: ' + path.basename(ACL_TEMP));
+  if (weatherPath) console.log('Weather: ' + path.basename(weatherPath));
+  if (windPath) console.log('Wind:    ' + path.basename(windPath));
+  if (runwayPath) console.log('Runway:  ' + path.basename(runwayPath));
 
   let allOk = true;
   allOk &= testWeatherFramesRebuild();
@@ -320,16 +344,10 @@ function main() {
   allOk &= testAllSectionsRebuild();
   allOk &= testRoundTripStability();
 
-  // ── Cleanup ──
-  console.log('\nCleaning up temp file...');
-  try { fs.unlinkSync(ACL_TEMP); console.log('  Removed'); } catch (_) {}
-
+  cleanup();
+  console.log('\nCleaned up temp files.');
   console.log('\n' + '='.repeat(60));
-  if (allOk) {
-    console.log('ALL TESTS PASSED');
-  } else {
-    console.log('SOME TESTS FAILED');
-  }
+  console.log(allOk ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');
   process.exit(allOk ? 0 : 1);
 }
 

@@ -176,17 +176,26 @@ For detailed conventions, see the repo skill (loaded automatically by Claude Cod
 
 ### Running Tests
 
-No test framework — each test is a standalone Node.js script:
+No test framework — each test is a standalone Node.js script. All accept `--help` for usage.
 
+**Scan-all (defaults to `../../../` game root, override with `--root`):**
 ```bash
-node test/parse_airport.js              # Smoke test: parse all airports
-node test/callsign_gen_test.js          # CallSign prefix validation
-node test/csv_vs_flightplans.js         # CSV ↔ ACL cross-check
-node test/e2e_save_load.js              # Full save/load round-trip
-node test/timeline_comparison.js <acl>  # JSON timelines vs ACL-embedded data
-node test/test_generate_timelines.js    # Timeline section generators
-node test/test_rebuild_sections.js      # ACL section rebuild
-node test/test_rebuild_timelines.js     # Timeline section rebuild
+node test/test_parse_airport.js [--root <game-root>]
+node test/test_callsign_gen.js [--root <game-root>]
+```
+
+**Single-ACL (requires `--acl <path>`, derives paired files automatically):**
+```bash
+node test/test_e2e_save_load.js --acl <path>
+node test/test_csv_vs_flightplans.js --acl <path>
+node test/test_rebuild_sections.js --acl <path>
+```
+
+**Timeline (requires ACL path, auto-discovers JSONs; `--weather`/`--wind`/`--runway` optional):**
+```bash
+node test/test_timeline_comparison.js <acl-path>
+node test/test_generate_timelines.js --acl <path>
+node test/test_rebuild_timelines.js --acl <path>
 ```
 
 ### Building

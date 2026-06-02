@@ -276,15 +276,27 @@ npm start          # Launch Electron in dev mode (no build step needed)
 ```
 
 ### Running tests
+
+All tests accept `--help` / `-h` for usage. Temp files are written to `test/` and cleaned up automatically.
+
+**Scan-all tests (need game root, default `../../../` from test dir):**
 ```bash
-node test/parse_airport.js              # Smoke test — parse all airports
-node test/callsign_gen_test.js          # CallSign validation
-node test/csv_vs_flightplans.js         # CSV ↔ ACL cross-check
-node test/e2e_save_load.js              # Full round-trip test
-node test/timeline_comparison.js <acl>  # JSON vs ACL timeline comparison
-node test/test_generate_timelines.js    # Timeline section generators
-node test/test_rebuild_sections.js      # ACL section rebuild
-node test/test_rebuild_timelines.js     # Timeline section rebuild
+node test/test_parse_airport.js [--root <game-root>]     # Smoke test — parse all airports
+node test/test_callsign_gen.js [--root <game-root>]      # CallSign prefix validation
+```
+
+**Single-ACL tests (require `--acl <path>`, derive paired files automatically):**
+```bash
+node test/test_e2e_save_load.js --acl <path>             # Full save/load round-trip
+node test/test_csv_vs_flightplans.js --acl <path>        # CSV ↔ ACL FlightPlans cross-check
+node test/test_rebuild_sections.js --acl <path>          # _rebuildWorldStateSections E2E
+```
+
+**Timeline tests (require `--acl <path>`, auto-discover JSONs; can override with `--weather`/`--wind`/`--runway`):**
+```bash
+node test/test_timeline_comparison.js <acl-path>         # JSON vs ACL timeline field-by-field comparison
+node test/test_generate_timelines.js --acl <path>        # generateFramesSection / generateRunwayTimelineSection
+node test/test_rebuild_timelines.js --acl <path>         # _rebuildTimelineSections E2E (6 sub-tests)
 ```
 
 ### Building

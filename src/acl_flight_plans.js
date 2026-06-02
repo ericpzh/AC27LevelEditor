@@ -768,4 +768,6 @@ module.exports = {
   _buildFlightPlanDepartureLeg,
   _rebuildWorldStateSections,
   _rebuildTimelineSections,
+  _generateFramesSection,
+  _generateRunwayTimelineSection,
 };
