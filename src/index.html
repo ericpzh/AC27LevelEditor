@@ -88,6 +88,14 @@
       </div>
     </header>
 
+    <!-- Search bar (hidden until Ctrl+F) -->
+    <div id="search-bar" class="search-bar hidden">
+      <input id="search-input" type="text" placeholder="查找航班… (Enter/↓ 下一个, Shift+Enter/↑ 上一个)">
+      <span id="search-count" class="search-count"></span>
+      <button id="search-prev" class="btn-sm" title="上一个 (Shift+Enter)">↑</button>
+      <button id="search-next" class="btn-sm" title="下一个 (Enter)">↓</button>
+      <button id="search-close" class="search-close" title="关闭 (Escape)">✕</button>
+    </div>
 
     <!-- Tab Panels -->
     <main id="table-container">

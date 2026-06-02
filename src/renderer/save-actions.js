@@ -19,22 +19,42 @@ async function handleSave() {
 
   const dupes = validateCallsigns();
   if (dupes.length > 0) {
+    const dupesHtml = dupes.map(d =>
+      `<strong class="callsign-link" data-cs="${escapeHtml(d)}" style="cursor:pointer;color:var(--accent);text-decoration:underline">${escapeHtml(d)}</strong>`
+    ).join('<br>');
     showAlert('呼号重复', `以下呼号出现了多次，请修正后再保存：<br><br>
-      ${dupes.map(d => `<strong>${escapeHtml(d)}</strong>`).join('<br>')}
+      ${dupesHtml}
       <br><br><span style="color:var(--red)">保存已取消。</span>`);
+    document.querySelectorAll('.callsign-link').forEach(el => {
+      el.addEventListener('click', () => {
+        hideModal();
+        jumpToCallsign(el.dataset.cs);
+      });
+    });
     return;
   }
 
   const issues = runTripleValidation();
   if (issues.length > 0) {
-    const issueHtml = issues.map((issue, i) =>
-      `<p style="margin:4px 0;font-size:13px">${escapeHtml(issue)}</p>`
-    ).join('');
+    const issueHtml = issues.map((issue, i) => {
+      // Make callsign clickable: first word before ":" is the callsign
+      const csMatch = issue.match(/^([A-Z]{3}\d+[A-Z]?):/);
+      const cs = csMatch ? csMatch[1] : null;
+      const escaped = escapeHtml(issue);
+      if (cs) {
+        const linked = `<span class="callsign-link" data-cs="${escapeHtml(cs)}" style="cursor:pointer;color:var(--accent);text-decoration:underline">${escapeHtml(cs)}</span>` + escaped.substring(cs.length);
+        return `<p style="margin:4px 0;font-size:13px">${linked}</p>`;
+      }
+      return `<p style="margin:4px 0;font-size:13px">${escaped}</p>`;
+    }).join('');
     showModal(`${issues.length} 个问题需要修复后才能保存`, `
       <div style="max-height:400px;overflow-y:auto;text-align:left;margin-bottom:12px">${issueHtml}</div>
       <p style="color:var(--red);font-size:13px">请在修复所有问题后再保存。</p>
     `, `<button class="btn-confirm" id="modal-close-issues">关闭</button>`);
     document.getElementById('modal-close-issues').onclick = hideModal;
+    document.querySelectorAll('.callsign-link').forEach(el => {
+      el.addEventListener('click', () => { hideModal(); jumpToCallsign(el.dataset.cs); });
+    });
     return;
   }
 
@@ -151,6 +171,20 @@ function runTripleValidation() {
       }
     });
   }
+
+  // (b2) Time order validation: InBlockTime > LandingTime, OffBlockTime < TakeoffTime
+  appState.flights.forEach((fl, i) => {
+    const landing = (fl.LandingTime || '').trim();
+    const inblock = (fl.InBlockTime || '').trim();
+    if (landing && inblock && inblock <= landing) {
+      issues.push(`${fl.CallSign || '?'}: 入位 "${inblock}" 应晚于落地 "${landing}"`);
+    }
+    const offblock = (fl.OffBlockTime || '').trim();
+    const takeoff = (fl.TakeoffTime || '').trim();
+    if (offblock && takeoff && offblock >= takeoff) {
+      issues.push(`${fl.CallSign || '?'}: 推出 "${offblock}" 应早于起飞 "${takeoff}"`);
+    }
+  });
 
   // Sort runway timeline entries by time before validation & save
   const _toSec2 = (t) => { const p = String(t || '').split(':'); return (parseInt(p[0]) || 0) * 3600 + (parseInt(p[1]) || 0) * 60 + (parseInt(p[2]) || 0); };
@@ -277,6 +311,43 @@ async function handleSaveAs() {
   if (!appState.currentPath) { showToast('没有打开的文件', 'error'); return; }
   if (appState.flights.length === 0) { showToast('没有航班数据', 'error'); return; }
 
+  // Run same validation as Save button
+  const dupes = validateCallsigns();
+  if (dupes.length > 0) {
+    const dupesHtml = dupes.map(d =>
+      `<strong class="callsign-link" data-cs="${escapeHtml(d)}" style="cursor:pointer;color:var(--accent);text-decoration:underline">${escapeHtml(d)}</strong>`
+    ).join('<br>');
+    showAlert('呼号重复', `以下呼号出现了多次，请修正后再保存：<br><br>
+      ${dupesHtml}
+      <br><br><span style="color:var(--red)">导出已取消。</span>`);
+    document.querySelectorAll('.callsign-link').forEach(el => {
+      el.addEventListener('click', () => { hideModal(); jumpToCallsign(el.dataset.cs); });
+    });
+    return;
+  }
+  const issues = runTripleValidation();
+  if (issues.length > 0) {
+    const issueHtml = issues.map((issue) => {
+      const csMatch = issue.match(/^([A-Z]{3}\d+[A-Z]?):/);
+      const cs = csMatch ? csMatch[1] : null;
+      const escaped = escapeHtml(issue);
+      if (cs) {
+        const linked = `<span class="callsign-link" data-cs="${escapeHtml(cs)}" style="cursor:pointer;color:var(--accent);text-decoration:underline">${escapeHtml(cs)}</span>` + escaped.substring(cs.length);
+        return `<p style="margin:4px 0;font-size:13px">${linked}</p>`;
+      }
+      return `<p style="margin:4px 0;font-size:13px">${escaped}</p>`;
+    }).join('');
+    showModal(`${issues.length} 个问题需要修复后才能导出`, `
+      <div style="max-height:400px;overflow-y:auto;text-align:left;margin-bottom:12px">${issueHtml}</div>
+      <p style="color:var(--red);font-size:13px">请在修复所有问题后再导出。</p>
+    `, `<button class="btn-confirm" id="modal-close-issues">关闭</button>`);
+    document.getElementById('modal-close-issues').onclick = hideModal;
+    document.querySelectorAll('.callsign-link').forEach(el => {
+      el.addEventListener('click', () => { hideModal(); jumpToCallsign(el.dataset.cs); });
+    });
+    return;
+  }
+
   // 1) Full save to current path (same as Save button, silent mode)
   const saved = await doSaveAcl(false, true);
   if (!saved) return;
@@ -287,6 +358,18 @@ async function handleSaveAs() {
   if (result.error) { showAlert('导出失败', result.error); return; }
 
   showToast('已导出: ' + result.path.split(/[/\\]/).pop(), 'success');
+}
+
+// ─── Jump to callsign via search ─────────────────────────
+
+function jumpToCallsign(callsign) {
+  // Open search bar and search for the callsign
+  const bar = document.getElementById('search-bar');
+  const input = document.getElementById('search-input');
+  bar.classList.remove('hidden');
+  input.value = callsign;
+  input.dispatchEvent(new Event('input'));
+  input.focus();
 }
 
 // ─── MANUAL BACKUP ───────────────────────────────────────

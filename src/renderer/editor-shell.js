@@ -101,6 +101,7 @@ document.addEventListener('keydown', (e) => {
   else if (mod && e.key === 'n') { e.preventDefault(); addArrivalFlight(); }
   else if (mod && e.key === 'b') { e.preventDefault(); showBrowser(); }
   else if (mod && e.key === 'd') { e.preventDefault(); copyHighlighted(); }
+  else if (mod && e.key === 'f') { e.preventDefault(); toggleSearch(); }
   else if (e.key === 'Delete') { e.preventDefault(); deleteSelected(); }
   else if (e.key === 'Escape') {
     appState.highlightedIdx = -1;
@@ -118,6 +119,114 @@ function getLastRootLocal() {
 function saveLastRootLocal(rootPath) {
   try { localStorage.setItem('ac27_lastRoot', rootPath); } catch (_) {}
 }
+
+// ─── Search / Find ────────────────────────────────────────
+
+let searchMatches = [];
+let searchCurrentIdx = -1;
+
+function toggleSearch() {
+  const bar = document.getElementById('search-bar');
+  const input = document.getElementById('search-input');
+  if (bar.classList.contains('hidden')) {
+    bar.classList.remove('hidden');
+    input.value = '';
+    input.focus();
+    searchMatches = [];
+    searchCurrentIdx = -1;
+    updateSearchCount();
+    clearSearchHighlights();
+  } else {
+    bar.classList.add('hidden');
+    clearSearchHighlights();
+  }
+}
+
+function performSearch() {
+  const term = document.getElementById('search-input').value.trim();
+  searchMatches = [];
+  searchCurrentIdx = -1;
+
+  if (!term) {
+    updateSearchCount();
+    clearSearchHighlights();
+    return;
+  }
+
+  const lower = term.toLowerCase();
+  const rows = document.querySelectorAll('#sections-container .flight-table tbody tr');
+  rows.forEach((tr, i) => {
+    // Search all visible text in the row
+    const text = (tr.textContent || '').toLowerCase();
+    if (text.includes(lower)) {
+      searchMatches.push(tr);
+    }
+  });
+
+  if (searchMatches.length > 0) {
+    searchCurrentIdx = 0;
+  }
+  updateSearchHighlights();
+  updateSearchCount();
+  scrollToCurrentMatch();
+}
+
+function navigateSearch(dir) {
+  if (searchMatches.length === 0) return;
+  searchCurrentIdx = (searchCurrentIdx + dir + searchMatches.length) % searchMatches.length;
+  updateSearchHighlights();
+  updateSearchCount();
+  scrollToCurrentMatch();
+}
+
+function updateSearchHighlights() {
+  // Clear all
+  document.querySelectorAll('#sections-container .flight-table tr.search-match, #sections-container .flight-table tr.search-current')
+    .forEach(tr => { tr.classList.remove('search-match', 'search-current'); });
+  // Add match class
+  searchMatches.forEach(tr => tr.classList.add('search-match'));
+  // Add current class
+  if (searchCurrentIdx >= 0 && searchCurrentIdx < searchMatches.length) {
+    searchMatches[searchCurrentIdx].classList.add('search-current');
+  }
+}
+
+function clearSearchHighlights() {
+  document.querySelectorAll('#sections-container .flight-table tr.search-match, #sections-container .flight-table tr.search-current')
+    .forEach(tr => { tr.classList.remove('search-match', 'search-current'); });
+}
+
+function updateSearchCount() {
+  const el = document.getElementById('search-count');
+  if (!el) return;
+  if (searchMatches.length === 0) {
+    el.textContent = document.getElementById('search-input').value.trim() ? '0 个匹配' : '';
+  } else {
+    el.textContent = (searchCurrentIdx + 1) + '/' + searchMatches.length;
+  }
+}
+
+function scrollToCurrentMatch() {
+  if (searchCurrentIdx >= 0 && searchCurrentIdx < searchMatches.length) {
+    searchMatches[searchCurrentIdx].scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+}
+
+// Wire up search UI
+document.getElementById('search-input').addEventListener('input', performSearch);
+document.getElementById('search-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (e.shiftKey) navigateSearch(-1);
+    else navigateSearch(1);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    toggleSearch();
+  }
+});
+document.getElementById('search-next').addEventListener('click', () => navigateSearch(1));
+document.getElementById('search-prev').addEventListener('click', () => navigateSearch(-1));
+document.getElementById('search-close').addEventListener('click', toggleSearch);
 
 // ─── Init ────────────────────────────────────────────────
 

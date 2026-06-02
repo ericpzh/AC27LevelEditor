@@ -211,7 +211,8 @@ function buildSectionTable(sectionId, title, flights, fieldList, typeClass) {
       const globalIdx = appState.flights.indexOf(fl);
       const checked = appState.selectedIndices.has(globalIdx) ? ' checked' : '';
       const selClass = appState.highlightedIdx === globalIdx ? ' selected' : '';
-      return `<tr class="${typeClass}${selClass}" data-idx="${globalIdx}">
+      const newAttr = fl._isNew ? ' data-new' : '';
+      return `<tr class="${typeClass}${selClass}" data-idx="${globalIdx}"${newAttr}>
         <td class="chk-cell"><input type="checkbox" class="chk-row" data-idx="${globalIdx}"${checked}></td>
         ${activeCols.map(col => {
           const val = getCellValue(fl, col);
@@ -234,6 +235,9 @@ function renderAllSections() {
 
   buildSectionTable('section-arrivals', '进港', arrivals, ARRIVAL_FIELDS, 'row-arrival');
   buildSectionTable('section-departures', '离港', departures, DEPARTURE_FIELDS, 'row-departure');
+
+  // Clean up _isNew flags after render (they trigger flash animation via data-new)
+  for (const fl of appState.flights) { delete fl._isNew; }
 
   // Render embedded timelines
   renderWeatherEditor();

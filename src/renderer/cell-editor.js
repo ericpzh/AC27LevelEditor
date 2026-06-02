@@ -31,6 +31,85 @@ document.getElementById('sections-container').addEventListener('change', functio
   }
 });
 
+// ─── Drag-to-select multiple rows ──────────────────────────
+(function() {
+  let dragStartIdx = -1;
+  let dragActive = false;
+  let dragPending = false;
+  let dragStartX = 0, dragStartY = 0;
+  let dragSelectMode = true; // true = select, false = deselect
+  let dragOriginalState = new Set(); // snapshot of selectedIndices at drag start
+
+  document.getElementById('sections-container').addEventListener('mousedown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.closest('.clock-popover')) return;
+    const td = e.target.closest('td');
+    if (!td) return;
+    const tr = td.closest('tr');
+    if (!tr) return;
+    dragStartIdx = parseInt(tr.dataset.idx);
+    if (isNaN(dragStartIdx)) return;
+
+    dragSelectMode = !appState.selectedIndices.has(dragStartIdx);
+    dragOriginalState = new Set(appState.selectedIndices); // snapshot
+    dragPending = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (dragPending && !dragActive) {
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+      dragActive = true;
+      dragPending = false;
+    }
+    if (!dragActive) return;
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    const currentIdx = parseInt(tr.dataset.idx);
+    if (isNaN(currentIdx)) return;
+
+    // Restore all checkboxes to original state, then apply mode to range
+    const min = Math.min(dragStartIdx, currentIdx);
+    const max = Math.max(dragStartIdx, currentIdx);
+    const cbs = document.querySelectorAll('#sections-container .chk-row');
+    cbs.forEach(cb => {
+      const idx = parseInt(cb.dataset.idx);
+      cb.checked = dragOriginalState.has(idx);
+      if (dragOriginalState.has(idx)) appState.selectedIndices.add(idx);
+      else appState.selectedIndices.delete(idx);
+    });
+    // Apply drag mode to range between start and current
+    cbs.forEach(cb => {
+      const idx = parseInt(cb.dataset.idx);
+      if (idx >= min && idx <= max) {
+        cb.checked = dragSelectMode;
+        if (dragSelectMode) appState.selectedIndices.add(idx);
+        else appState.selectedIndices.delete(idx);
+      }
+    });
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (dragActive || dragPending) {
+      // Only refresh the flight tables, not the runway editor
+      if (dragActive) {
+        const arrivals = [], departures = [];
+        for (const fl of appState.flights) {
+          if ((fl.LandingTime || '').trim()) arrivals.push(fl);
+          else departures.push(fl);
+        }
+        buildSectionTable('section-arrivals', '进港', arrivals, ARRIVAL_FIELDS, 'row-arrival');
+        buildSectionTable('section-departures', '离港', departures, DEPARTURE_FIELDS, 'row-departure');
+      }
+      dragActive = false;
+      dragPending = false;
+      dragStartIdx = -1;
+    }
+  });
+})();
+
 // ═══════════ TIME CLOCK POPOVER ══════════════════════════
 function openTimeClockPopover(anchorEl, col, idx, currentVal, onCommit) {
   const parsed = (currentVal || '00:00:00').split(':');

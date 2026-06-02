@@ -113,14 +113,32 @@ function deleteAll() {
 document.getElementById('btn-copy').addEventListener('click', copyHighlighted);
 
 function copyHighlighted() {
-  if (appState.highlightedIdx < 0) { showToast('请先点击选择要复制的航班', 'error'); return; }
-  const idx = appState.highlightedIdx;
-  const source = appState.flights[idx];
-  const copy = { ...source };
-  copy.CallSign = (source.CallSign || '') + '_CP';
-  appState.flights.splice(idx + 1, 0, copy);
-  appState.highlightedIdx = idx + 1;
+  // Collect indices to copy: checked rows first, else highlighted row
+  let indices = [...appState.selectedIndices].sort((a, b) => a - b);
+  if (indices.length === 0) {
+    if (appState.highlightedIdx < 0) { showToast('请先点击选择要复制的航班', 'error'); return; }
+    indices = [appState.highlightedIdx];
+  }
+
+  // Copy all selected flights, keeping original callsigns
+  const copies = indices.map(i => {
+    const copy = { ...appState.flights[i] };
+    copy._isNew = true;
+    return copy;
+  });
+
+  // Insert copies after the last selected row
+  const insertAt = indices[indices.length - 1] + 1;
+  appState.flights.splice(insertAt, 0, ...copies);
+
+  // Clear previous selections, select the new copies
+  appState.highlightedIdx = -1;
+  appState.selectedIndices = new Set();
+  for (let i = 0; i < copies.length; i++) {
+    appState.selectedIndices.add(insertAt + i);
+  }
+
   appState.modified = true;
   renderAllSections();
-  showToast('已复制航班，插入到下方', 'success');
+  showToast(`已复制 ${copies.length} 个航班`, 'success');
 }
