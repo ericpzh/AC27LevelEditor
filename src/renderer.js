@@ -1877,11 +1877,13 @@ function _flashNewRow(selector, entriesArray) {
   requestAnimationFrame(() => {
     const el = document.querySelector(selector + '[data-new]');
     if (!el) return;
-    el.classList.add('flash-new');
+    // .tl-row has display:contents, flash its first child instead
+    const target = el.firstElementChild || el;
+    target.classList.add('flash-new');
     el.removeAttribute('data-new');
     if (entriesArray) entriesArray.forEach(e => { delete e._isNew; });
     const clear = () => {
-      el.classList.remove('flash-new');
+      target.classList.remove('flash-new');
       document.removeEventListener('click', clear);
     };
     document.addEventListener('click', clear);
@@ -1903,7 +1905,7 @@ function renderWindEditor() {
   if (!list) return;
 
   list.innerHTML =
-    `<div class="tl-hdr"><span>时间</span><span>风向</span><span></span><span>风速</span><span></span></div>` +
+    `<div class="tl-hdr"><span>时间</span><span>风向</span><span>风速</span><span></span></div>` +
     appState.windTimeline.map((entry, i) => `
     <div class="tl-row" data-idx="${i}"${entry._isNew ? ' data-new' : ''}>
       <input class="tl-input tl-int" type="text" inputmode="numeric" data-field="direction" data-idx="${i}" value="${entry.direction || 0}">

@@ -1077,33 +1077,19 @@ body {
   flex: 1;
 }
 
-.tl-list-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-bottom: 2px solid var(--border);
-}
-
-.tl-list { margin-top: 0; }
-
 /* ── Timeline list grid ── */
 .tl-list {
   display: grid;
   gap: 0;
+  padding: 0 12px;
 }
-/* weather: time | preset | delete-btn */
+/* weather: time | preset | spacer | delete-btn */
 #weather-list {
-  grid-template-columns: 76px 1fr 32px;
+  grid-template-columns: 76px auto 1fr 32px;
 }
-/* wind: time | direction | speed-row | delete-btn */
+/* wind: time | direction | speed-row | spacer | delete-btn */
 #wind-list {
-  grid-template-columns: 76px 62px 1fr 32px;
+  grid-template-columns: 76px 62px auto 1fr 32px;
 }
 
 .tl-row {
@@ -1111,7 +1097,7 @@ body {
 }
 
 .tl-row > * {
-  padding: 6px 4px;
+  padding: 0;
   border-bottom: 1px solid rgba(46, 51, 69, 0.35);
   display: flex;
   align-items: center;
@@ -1127,11 +1113,11 @@ body {
 }
 
 .tl-hdr > span {
-  padding: 4px 8px;
+  padding: 5px 8px;
   display: flex;
   align-items: center;
-  border-bottom: 1px solid rgba(46, 51, 69, 0.5);
-  background: var(--bg-surface);
+  justify-content: center;
+  border-bottom: 1px solid rgba(46, 51, 69, 0.35);
 }
 
 .tl-label-sm {
@@ -1227,7 +1213,6 @@ body {
   font-size: 12px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
-  margin-left: auto;
   transition: all var(--transition);
 }
 
@@ -1411,7 +1396,8 @@ body {
 }
 
 /* ── Flash newly added row ── */
-.flash-new {
+.tl-row[data-new] > *,
+.rw-change-card[data-new] {
   animation: flash-highlight 1.2s ease-out 2;
 }
 @keyframes flash-highlight {

@@ -168,7 +168,7 @@ function renderWeatherEditor() {
   }
 
   list.innerHTML =
-    `<div class="tl-hdr"><span>时间</span><span>天气</span><span></span></div>` +
+    `<div class="tl-hdr"><span>时间</span><span>天气</span><span></span><span></span></div>` +
     activeEntries.map(({ entry, realIdx }, displayIdx) => `
     <div class="tl-row" data-idx="${realIdx}"${entry._isNew ? ' data-new' : ''}>
       <input class="tl-input tl-time-click" type="text" data-field="time" data-idx="${realIdx}" value="${entry.time || ''}" placeholder="HH:MM" readonly>
@@ -176,6 +176,7 @@ function renderWeatherEditor() {
         ${WEATHER_PRESETS.map(p => `<option value="${p}" ${entry.preset === p ? 'selected' : ''}>${p}</option>`).join('')}
         ${!WEATHER_PRESETS.includes(entry.preset) ? `<option value="${entry.preset}" selected>${entry.preset}</option>` : ''}
       </select>
+      <span></span>
       <button class="tl-btn-del" data-idx="${realIdx}" title="删除">X</button>
     </div>
   `).join('');
@@ -274,7 +275,7 @@ function renderWindEditor() {
   }
 
   list.innerHTML =
-    `<div class="tl-hdr"><span>时间</span><span>风向</span><span></span><span>风速</span><span></span></div>` +
+    `<div class="tl-hdr"><span>时间</span><span>风向</span><span>风速</span><span></span><span></span></div>` +
     activeEntries.map(({ entry, realIdx }, displayIdx) => `
     <div class="tl-row" data-idx="${realIdx}"${entry._isNew ? ' data-new' : ''}>
       <input class="tl-input tl-time-click" type="text" data-field="time" data-idx="${realIdx}" value="${entry.time || ''}" placeholder="HH:MM" readonly>
@@ -283,6 +284,7 @@ function renderWindEditor() {
         <input class="tl-speed-slider" type="range" min="0" max="40" value="${entry.speed || 0}" data-field="speed" data-idx="${realIdx}">
         <span class="tl-speed-val" data-idx="${realIdx}">${entry.speed || 0} kt</span>
       </div>
+      <span></span>
       <button class="tl-btn-del" data-idx="${realIdx}" title="删除">X</button>
     </div>
   `).join('');
@@ -379,12 +381,9 @@ function _flashNewRow(selector, entriesArray) {
   requestAnimationFrame(() => {
     const el = document.querySelector(selector + '[data-new]');
     if (!el) return;
-    el.classList.add('flash-new');
-    el.removeAttribute('data-new');
-    // Clean up _isNew flags from data
     if (entriesArray) entriesArray.forEach(e => { delete e._isNew; });
     const clear = () => {
-      el.classList.remove('flash-new');
+      el.removeAttribute('data-new');
       document.removeEventListener('click', clear);
     };
     document.addEventListener('click', clear);
