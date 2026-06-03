@@ -27,7 +27,13 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  // Capture renderer console to log file
+  mainWindow.webContents.on('console-message', (event, level, message) => {
+    console.log('[RENDERER] ' + message);
+  });
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
+  // Open DevTools in dev mode
+  if (!app.isPackaged) mainWindow.webContents.openDevTools();
 }
 
 // ─── IPC: Select game root ───────────────────────────────
