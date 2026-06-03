@@ -12,25 +12,23 @@
   <!-- SCREEN 0: SETUP -->
   <div id="screen-setup" class="screen">
     <div class="setup-card">
-      <h1>AC27 Level Editor</h1>
-      <p class="setup-sub">请先定位游戏安装目录以扫描所有关卡文件</p>
-
+      <h1 id="setup-title"></h1>
+      <p id="setup-sub" class="setup-sub"></p>
+      <button id="btn-lang-setup" class="btn-lang-toggle-top"></button>
       <div class="steam-hint">
-        <div class="steam-hint-title">如何通过 Steam 找到游戏目录</div>
+        <div id="setup-steam-title" class="steam-hint-title"></div>
         <ol>
-          <li>打开 Steam 库 &rarr; 找到 <strong>Airport Control 25</strong></li>
-          <li>右键 &rarr; <strong>管理</strong> &rarr; <strong>浏览本地文件</strong></li>
-          <li>在弹出的文件夹中复制路径，或直接选择</li>
+          <li id="setup-steam-step1"></li>
+          <li id="setup-steam-step2"></li>
+          <li id="setup-steam-step3"></li>
         </ol>
-        <p class="steam-path-hint">通常路径如：<code>...\steamapps\common\Airport Control 25 Playtest</code></p>
+        <p class="steam-path-hint"><span id="setup-steam-path-label"></span><code id="setup-game-path"></code></p>
       </div>
-
       <div class="setup-nightly-note">
         <span class="setup-nightly-icon">⚠️</span>
-        <span>请切换到<strong>nightly</strong>游戏版本（属性 → 游戏版本及测试版 → nightly）</span>
+        <span id="setup-nightly"></span>
       </div>
-
-      <button id="btn-select-root" class="btn-big">选择游戏根目录</button>
+      <button id="btn-select-root" class="btn-big"></button>
       <p id="setup-error" class="setup-error hidden"></p>
     </div>
   </div>
@@ -38,23 +36,22 @@
   <!-- SCREEN 1: BROWSER -->
   <div id="screen-browser" class="screen hidden">
     <header class="browser-header">
-      <div class="browser-title">
-        <span>关卡列表</span>
-      </div>
+      <div class="browser-title"><span id="browser-title-text"></span></div>
       <div class="browser-actions">
         <span id="browser-root-path" class="browser-root-path"></span>
-        <button id="btn-change-root" class="btn-sm">更换目录</button>
-        <button id="btn-toggle-hidden" class="btn-sm btn-toggle-hidden">显示隐藏</button>
+        <button id="btn-change-root" class="btn-sm"></button>
+        <button id="btn-toggle-hidden" class="btn-sm btn-toggle-hidden"></button>
+        <button id="btn-lang-browser" class="btn-lang-toggle-top"></button>
       </div>
     </header>
     <div id="browser-note" class="browser-note hidden">
-      <span>⚠ 部分关卡的时间线已整合到更大范围关卡的时间线中（如 05:45-06:15 整合到 05:00-07:00 中）</span>
-      <button id="browser-note-close" class="browser-note-close" title="关闭">✕</button>
+      <span id="browser-note-text"></span>
+      <button id="browser-note-close" class="browser-note-close" title="✕">✕</button>
     </div>
     <main id="browser-content" class="browser-content">
       <div id="browser-loading" class="loading-state">
         <div class="spinner"></div>
-        <p>正在扫描关卡文件…</p>
+        <p id="browser-loading-text"></p>
       </div>
       <div id="browser-list"></div>
     </main>
@@ -62,78 +59,73 @@
 
   <!-- ═══════════ SCREEN 2: EDITOR ═══════════ -->
   <div id="screen-editor" class="screen hidden">
-    <!-- Toolbar -->
     <header id="toolbar">
       <div class="toolbar-group">
-        <button id="btn-back" title="返回关卡列表">&larr; 返回</button>
+        <button id="btn-back"></button>
       </div>
       <div class="toolbar-sep"></div>
       <div class="toolbar-group">
-        <button id="btn-add-arrival" title="添加进港航班 (Ctrl+N)">+ 添加进港</button>
-        <button id="btn-add-departure" title="添加离港航班 (Ctrl+Shift+N)">+ 添加离港</button>
-        <button id="btn-copy" title="复制选中行 (Ctrl+D)">复制</button>
-        <button id="btn-delete-selected" title="删除选中 (Del)">删除选中</button>
-        <button id="btn-delete-all" title="一键全部删除">全部删除</button>
+        <button id="btn-add-arrival"></button>
+        <button id="btn-add-departure"></button>
+        <button id="btn-copy"></button>
+        <button id="btn-delete-selected"></button>
+        <button id="btn-delete-all"></button>
       </div>
       <div class="toolbar-spacer toolbar-time-wrap">
-        <span id="toolbar-time-range">时间段：-</span>
+        <span id="toolbar-time-range"></span>
       </div>
       <div class="toolbar-sep"></div>
       <div class="toolbar-group save-group">
-        <button id="btn-backup-only" title="手动备份当前文件">备份</button>
-        <button id="btn-restore-backup" title="从 .bak 备份还原所有文件">还原备份</button>
-        <button id="btn-import-acl" title="导入关卡包 (.zip) 覆盖当前">导入</button>
-        <button id="btn-save-as" title="导出关卡包 (.zip)">另存为</button>
-        <button id="btn-save" class="btn-primary-sm" title="保存 (Ctrl+S)">保存</button>
+        <button id="btn-lang-editor" class="btn-lang-toggle-top"></button>
+        <button id="btn-backup-only"></button>
+        <button id="btn-restore-backup"></button>
+        <button id="btn-import-acl"></button>
+        <button id="btn-save-as"></button>
+        <button id="btn-save" class="btn-primary-sm"></button>
       </div>
     </header>
 
-    <!-- Search bar (hidden until Ctrl+F) -->
     <div id="search-bar" class="search-bar hidden">
-      <input id="search-input" type="text" placeholder="查找航班… (Enter/↓ 下一个, Shift+Enter/↑ 上一个)">
+      <input id="search-input" type="text">
       <span id="search-count" class="search-count"></span>
-      <button id="search-prev" class="btn-sm" title="上一个 (Shift+Enter)">↑</button>
-      <button id="search-next" class="btn-sm" title="下一个 (Enter)">↓</button>
-      <button id="search-close" class="search-close" title="关闭 (Escape)">✕</button>
+      <button id="search-prev" class="btn-sm">↑</button>
+      <button id="search-next" class="btn-sm">↓</button>
+      <button id="search-close" class="search-close">✕</button>
     </div>
 
-    <!-- Tab Panels -->
     <main id="table-container">
       <div id="tab-flights" class="tab-panel">
-        <!-- ── Timelines (collapsed by default) ── -->
         <div id="timeline-block-weather" class="tl-embed-block collapsed">
           <div class="tl-embed-header" data-block="weather">
-            <span class="tl-embed-title">天气</span>
+            <span id="tl-weather-title" class="tl-embed-title"></span>
             <span class="tl-embed-arrow">▸</span>
           </div>
           <div class="tl-embed-body">
             <div class="tl-toolbar tl-embed-toolbar">
-              <button id="btn-weather-add" class="btn-sm">+ 添加</button>
+              <button id="btn-weather-add" class="btn-sm"></button>
               <span id="weather-range-indicator" class="tl-range-indicator"></span>
               <span id="weather-hidden-count" class="tl-hidden-count"></span>
             </div>
             <div id="weather-list" class="tl-list"></div>
           </div>
         </div>
-
         <div id="timeline-block-wind" class="tl-embed-block collapsed">
           <div class="tl-embed-header" data-block="wind">
-            <span class="tl-embed-title">风向</span>
+            <span id="tl-wind-title" class="tl-embed-title"></span>
             <span class="tl-embed-arrow">▸</span>
           </div>
           <div class="tl-embed-body">
             <div class="tl-toolbar tl-embed-toolbar">
-              <button id="btn-wind-add" class="btn-sm">+ 添加</button>
+              <button id="btn-wind-add" class="btn-sm"></button>
               <span id="wind-range-indicator" class="tl-range-indicator"></span>
               <span id="wind-hidden-count" class="tl-hidden-count"></span>
             </div>
             <div id="wind-list" class="tl-list"></div>
           </div>
         </div>
-
         <div id="timeline-block-runway" class="tl-embed-block collapsed">
           <div class="tl-embed-header" data-block="runway">
-            <span class="tl-embed-title">跑道</span>
+            <span id="tl-runway-title" class="tl-embed-title"></span>
             <span class="tl-embed-arrow">▸</span>
           </div>
           <div class="tl-embed-body">
@@ -141,12 +133,10 @@
             <div id="runway-editor" class="tl-list"></div>
           </div>
         </div>
-
-        <!-- ── Flight sections ── -->
         <div id="sections-container">
           <div id="section-arrivals" class="section-block hidden">
             <div class="section-header collapse-header" data-section="arrivals">
-              <span>进港</span>
+              <span id="section-arrivals-title"></span>
               <span class="collapse-arrow">▾</span>
             </div>
             <div class="section-table-wrap">
@@ -155,7 +145,7 @@
           </div>
           <div id="section-departures" class="section-block hidden">
             <div class="section-header departure-header collapse-header" data-section="departures">
-              <span>离港</span>
+              <span id="section-departures-title"></span>
               <span class="collapse-arrow">▾</span>
             </div>
             <div class="section-table-wrap">
@@ -164,12 +154,11 @@
           </div>
         </div>
         <div id="empty-editor" class="empty-editor hidden">
-          <p>无匹配的航班记录</p>
+          <p id="empty-editor-text"></p>
         </div>
       </div>
     </main>
 
-    <!-- Status Bar -->
     <footer id="statusbar">
       <span id="editor-filename">—</span>
       <span id="editor-airport" class="editor-airport"></span>
@@ -177,7 +166,6 @@
     </footer>
   </div>
 
-  <!-- Modal -->
   <div id="modal-overlay" class="hidden">
     <div id="modal-box">
       <h3 id="modal-title"></h3>
@@ -186,9 +174,9 @@
     </div>
   </div>
 
-  <!-- Toast -->
   <div id="toast"></div>
 
+  <script src="renderer/i18n.js"></script>
   <script src="renderer/data-constants.js"></script>
   <script src="renderer/state.js"></script>
   <script src="renderer/ui-utils.js"></script>

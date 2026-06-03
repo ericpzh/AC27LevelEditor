@@ -168,7 +168,7 @@ function renderWeatherEditor() {
   }
 
   list.innerHTML =
-    `<div class="tl-hdr"><span>时间</span><span>天气</span><span></span><span></span></div>` +
+    `<div class="tl-hdr"><span>${t('tl_time')}</span><span>${t('tl_preset')}</span><span></span><span></span></div>` +
     activeEntries.map(({ entry, realIdx }, displayIdx) => `
     <div class="tl-row" data-idx="${realIdx}"${entry._isNew ? ' data-new' : ''}>
       <input class="tl-input tl-time-click" type="text" data-field="time" data-idx="${realIdx}" value="${entry.time || ''}" placeholder="HH:MM" readonly>
@@ -275,7 +275,7 @@ function renderWindEditor() {
   }
 
   list.innerHTML =
-    `<div class="tl-hdr"><span>时间</span><span>风向</span><span>风速</span><span></span><span></span></div>` +
+    `<div class="tl-hdr"><span>${t('tl_time')}</span><span>${t('tl_direction')}</span><span>${t('tl_speed')}</span><span></span><span></span></div>` +
     activeEntries.map(({ entry, realIdx }, displayIdx) => `
     <div class="tl-row" data-idx="${realIdx}"${entry._isNew ? ' data-new' : ''}>
       <input class="tl-input tl-time-click" type="text" data-field="time" data-idx="${realIdx}" value="${entry.time || ''}" placeholder="HH:MM" readonly>
@@ -431,8 +431,8 @@ function renderRunwayEditor() {
 
   container.innerHTML = `
     <div class="rw-initial-row">
-      <span class="rw-initial-label">初始跑道:</span>
-      <div class="rw-checkbox-grid">${checkboxesHTML || '<span class="text-muted">无跑道数据</span>'}</div>
+      <span class="rw-initial-label">${t('tl_initial_runway')}</span>
+      <div class="rw-checkbox-grid">${checkboxesHTML || '<span class="text-muted">${t('tl_no_runway_data')}</span>'}</div>
     </div>
     <div class="rw-toolbar">
       <button id="btn-rw-change-add" class="btn-sm">+ 添加</button>

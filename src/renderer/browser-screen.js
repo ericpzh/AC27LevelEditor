@@ -37,19 +37,19 @@ async function showBrowser() {
       info._metaLabels = [];
       if (info.error) {
         info._hidden = true;
-        info._metaLabels.push({ label: '解析失败', type: 'error' });
+        info._metaLabels.push({ label: t('browser_parse_error'), type: 'error' });
       } else if (/tutorial/i.test(name)) {
         info._hidden = true;
-        info._metaLabels.push({ label: '教程', type: 'tutorial' });
+        info._metaLabels.push({ label: t('browser_tag_tutorial'), type: 'tutorial' });
       } else if (/demo/i.test(name)) {
         info._hidden = true;
         info._metaLabels.push({ label: 'Demo', type: 'demo' });
       } else if (/bench|test|crossrunway|dev|\.prod/i.test(name)) {
         info._hidden = true;
-        info._metaLabels.push({ label: '测试', type: 'test' });
+        info._metaLabels.push({ label: t('browser_tag_test'), type: 'test' });
       } else if (/endless/i.test(name)) {
         info._hidden = true;
-        info._metaLabels.push({ label: '无尽', type: 'endless' });
+        info._metaLabels.push({ label: t('browser_tag_endless'), type: 'endless' });
       }
       // Time range label (from .aclcfg startTime/endTime) — all from file CONTENT, not filename
       if (!info._hidden && info.startTime && info.endTime) {
@@ -58,11 +58,11 @@ async function showBrowser() {
         // Infer time-of-day from start hour
         const startH = parseInt(String(info.startTime).substring(0, 2));
         let todLabel;
-        if (startH >= 5 && startH < 7) todLabel = '黎明';
-        else if (startH >= 7 && startH < 12) todLabel = '上午';
-        else if (startH >= 12 && startH < 17) todLabel = '下午';
-        else if (startH >= 17 && startH < 19) todLabel = '黄昏';
-        else todLabel = '夜晚';
+        if (startH >= 5 && startH < 7) todLabel = t('browser_tod_dawn');
+        else if (startH >= 7 && startH < 12) todLabel = t('browser_tod_morning');
+        else if (startH >= 12 && startH < 17) todLabel = t('browser_tod_afternoon');
+        else if (startH >= 17 && startH < 19) todLabel = t('browser_tod_dusk');
+        else todLabel = t('browser_tod_night');
         info._metaLabels.push({ label: todLabel, type: 'tod' });
       }
     }
@@ -79,11 +79,16 @@ async function showBrowser() {
   }
 
   loading.classList.add('hidden');
+  try { renderBrowserCards(); } catch(e) { console.error('[BROWSER] renderBrowserCards crashed:', e.message, e.stack); }
+}
 
+// Fast re-render from cache (no IPC calls) — used by language switch
+function renderBrowserCards() {
+  const list = document.getElementById('browser-list');
   const showAll = _showHiddenFiles;
 
   if (appState.airports.length === 0) {
-    list.innerHTML = '<div class="browser-empty">未找到任何 .acl 关卡文件</div>';
+    list.innerHTML = '<div class="browser-empty">' + (typeof t === 'function' ? t('browser_no_files') : '未找到任何 .acl 关卡文件') + '</div>';
     return;
   }
 

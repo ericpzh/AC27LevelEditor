@@ -204,6 +204,38 @@ body {
   white-space: nowrap;
 }
 
+.btn-lang-toggle-top {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all var(--transition);
+  white-space: nowrap;
+  min-width: 70px;
+}
+
+.setup-card .btn-lang-toggle-top {
+  display: block;
+  margin: 0 auto 20px;
+  padding: 6px 20px;
+  font-size: 13px;
+  min-width: 90px;
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.setup-card .btn-lang-toggle-top:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
+}
+.btn-lang-toggle-top:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--accent); }
+
 .btn-sm {
   background: transparent;
   border: 1px solid var(--border);
@@ -323,6 +355,8 @@ body {
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
+  width: 210px;
+  min-width: 210px;
   flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -333,6 +367,11 @@ body {
   font-size: 11px;
   color: var(--text-muted);
   margin-left: 8px;
+  width: 220px;
+  min-width: 220px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
