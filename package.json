@@ -2,23 +2,24 @@
   "name": "ac27-level-editor",
   "version": "1.0.5",
   "description": "Cross-platform Level Editor for Airport Control 25 .acl flight schedules",
-  "main": "main.js",
+  "main": "dist-electron/main.js",
   "scripts": {
-    "start": "electron .",
-    "build:win": "electron-builder --win portable --x64",
-    "build:mac": "electron-builder --mac",
-    "build:all": "electron-builder --win --mac"
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build",
+    "build:win": "vite build && electron-builder --win portable --x64",
+    "build:mac": "vite build && electron-builder --mac",
+    "build:all": "vite build && electron-builder --win --mac"
   },
   "build": {
     "appId": "com.ac27.level-editor",
     "productName": "AC27 Level Editor",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
     "files": [
-      "main.js",
-      "preload.js",
-      "src/**/*",
+      "dist/**/*",
+      "dist-electron/**/*",
       "node_modules/**/*"
     ],
     "win": {
@@ -33,10 +34,18 @@
     }
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8",
     "png-to-ico": "^3.0.1",
     "rcedit": "^5.0.2",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "vite": "^8.0.16",
+    "vite-plugin-electron": "^1.0.0"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zustand": "^5.0.14"
   }
 }
