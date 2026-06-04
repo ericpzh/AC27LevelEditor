@@ -17,7 +17,7 @@ export function useEditorShell({ onSave }) {
       if (mod && e.shiftKey && e.key === 'N') { e.preventDefault(); st.addDepartureFlight(); }
       else if (mod && e.key === 's') { e.preventDefault(); if (onSave) onSave(); }
       else if (mod && e.key === 'n') { e.preventDefault(); st.addArrivalFlight(); }
-      else if (mod && e.key === 'b') { e.preventDefault(); st.setScreen('browser'); }
+      else if (mod && e.key === 'b') { e.preventDefault(); const hasMod=st.modified||st.timelineModified.weather||st.timelineModified.wind||st.timelineModified.runway; if(hasMod){showModal(t('modal_unsaved_title'),<p>{t('modal_unsaved_body')}</p>,<div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={()=>{hideModal();useAppStore.setState({modified:false,timelineModified:{weather:false,wind:false,runway:false},selectedIndices:new Set()});st.setScreen('browser');}}>{t('modal_btn_discard')}</button></div>);}else{st.setScreen('browser');} }
       else if (mod && e.key === 'd') { e.preventDefault(); st.copySelected(); }
       else if (e.key === 'Delete') { e.preventDefault(); if (st.selectedIndices.size > 0) st.deleteSelected(); }
       else if (e.key === 'Escape') { useAppStore.setState({ highlightedIdx: -1, selectedIndices: new Set() }); }
