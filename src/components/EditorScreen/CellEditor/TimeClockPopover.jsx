@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import './CellEditor.css';
 import { createPortal } from 'react-dom';
 import { FIELD_LABELS } from '../../../utils/constants';
 

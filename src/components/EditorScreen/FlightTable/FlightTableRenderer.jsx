@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import './FlightTable.css';
 import { createPortal } from 'react-dom';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';

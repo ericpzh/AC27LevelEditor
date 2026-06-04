@@ -1,0 +1,18 @@
+/* ─── Toast ─────────────────────────────────────────────── */
+#toast {
+  position: fixed; bottom: 48px; right: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 18px;
+  font-size: 13px; color: var(--text);
+  box-shadow: var(--shadow);
+  z-index: 200;
+  opacity: 0; transform: translateY(10px);
+  transition: all 250ms ease;
+  pointer-events: none;
+}
+
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.success { border-color: var(--green); }
+#toast.error { border-color: var(--red); }

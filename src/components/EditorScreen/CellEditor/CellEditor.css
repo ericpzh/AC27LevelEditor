@@ -1,0 +1,200 @@
+/* ─── Time Clock Popover ─────────────────────────────────── */
+.time-clock-overlay {
+  position: fixed; inset: 0;
+  z-index: 300;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.time-clock-popover {
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  width: 300px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  opacity: 0;
+  transform: translateY(6px) scale(0.96);
+  transition: all 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.time-clock-popover.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.clock-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+}
+
+.clock-svg {
+  display: block;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.clock-svg.clock-dragging { cursor: grabbing; }
+
+.clock-face-bg {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.clock-tick {
+  stroke: var(--text-secondary);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.clock-tick-minor {
+  stroke: var(--text-muted);
+  stroke-width: 0.8;
+  stroke-linecap: round;
+  opacity: 0.4;
+}
+
+.clock-num {
+  fill: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.clock-hand {
+  stroke-linecap: round;
+  pointer-events: stroke;
+}
+
+.clock-hand-hour {
+  stroke: var(--text);
+  stroke-width: 3.5;
+}
+
+.clock-hand-minute {
+  stroke: var(--accent);
+  stroke-width: 2.2;
+}
+
+.clock-hand-second {
+  stroke: var(--red);
+  stroke-width: 1.2;
+  opacity: 0.7;
+}
+
+.clock-center-dot {
+  fill: var(--accent);
+  stroke: var(--bg-elevated);
+  stroke-width: 2;
+}
+
+.clock-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+
+.clock-time-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  outline: none;
+  text-align: center;
+  letter-spacing: 1px;
+  transition: border-color var(--transition);
+}
+
+.clock-time-input:focus { border-color: var(--accent); }
+
+.clock-btn {
+  width: 32px; height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.clock-btn-ok {
+  color: var(--green);
+}
+
+.clock-btn-ok:hover {
+  background: var(--green-bg);
+  border-color: var(--green);
+}
+
+.clock-btn-cancel {
+  color: var(--text-muted);
+}
+
+.clock-btn-cancel:hover {
+  background: var(--red-bg);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* ─── Compass Popover ───────────────────────────────────── */
+.compass-popover {
+  width: 300px;
+}
+
+.compass-hand {
+  stroke: var(--red);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.compass-arrowhead {
+  fill: var(--red);
+  pointer-events: none;
+}
+
+.compass-dot {
+  fill: var(--red);
+  stroke: var(--bg-elevated);
+  stroke-width: 2;
+}
+
+.compass-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  margin-top: -6px;
+  letter-spacing: 0.5px;
+}
+
+.compass-unit {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}

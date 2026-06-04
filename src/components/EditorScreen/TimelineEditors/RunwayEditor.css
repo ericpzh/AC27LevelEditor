@@ -1,0 +1,138 @@
+/* ─── Runway Editor ─────────────────────────────────────── */
+.rw-section {
+  margin-bottom: 20px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.rw-section-title {
+  background: var(--bg-elevated);
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.rw-initial-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 1px 14px;
+}
+
+.rw-initial-row .tl-input { flex: 1; max-width: 500px; }
+
+.rw-toolbar {
+  padding: 8px 14px 4px;
+}
+
+.rw-initial-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.rw-checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  flex: 1;
+}
+
+.rw-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.rw-checkbox-label:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.rw-checkbox-label:has(.rw-checkbox:checked) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.rw-checkbox, .rw-change-cb {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-surface);
+  position: relative;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.rw-checkbox:hover, .rw-change-cb:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.rw-checkbox:checked, .rw-change-cb:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.rw-checkbox:checked::after, .rw-change-cb:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.rw-checkbox:focus-visible, .rw-change-cb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.rw-change-card {
+  padding: 6px 14px;
+  border-bottom: 1px solid rgba(46, 51, 69, 0.35);
+}
+
+.rw-change-card:last-child { border-bottom: none; }
+
+.rw-change-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rw-change-header .tl-input { padding: 4px 20px 4px 10px; }
+
+.rw-change-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  flex: 1;
+}

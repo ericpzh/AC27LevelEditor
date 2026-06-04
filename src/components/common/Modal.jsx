@@ -1,4 +1,5 @@
 import React from 'react';
+import './Modal.css';
 import { useAppStore } from '../../store/appStore';
 
 export default function Modal() {

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import './TimelineEditors.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
 import ClockPopover from '../CellEditor/TimeClockPopover';

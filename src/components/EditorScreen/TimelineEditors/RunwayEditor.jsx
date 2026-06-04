@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from 'react';
+import './TimelineEditors.css';
+import './RunwayEditor.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
 import { escapeHtml } from '../../../utils/htmlUtils';

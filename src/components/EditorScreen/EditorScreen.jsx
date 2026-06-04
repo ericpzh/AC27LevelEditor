@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import './EditorScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore, initFlightNumberCounter } from '../../store/appStore';

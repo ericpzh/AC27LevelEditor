@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
+import './CellEditor.css';
 import { createPortal } from 'react-dom';
 
 const SIZE = 220, CX = SIZE / 2, CY = SIZE / 2, R = 95;

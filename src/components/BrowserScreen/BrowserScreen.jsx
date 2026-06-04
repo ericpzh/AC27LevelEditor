@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import './BrowserScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';

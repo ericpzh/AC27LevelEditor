@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import './SetupScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';

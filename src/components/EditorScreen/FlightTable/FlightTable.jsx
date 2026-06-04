@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
+import './FlightTable.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS } from '../../../utils/constants';

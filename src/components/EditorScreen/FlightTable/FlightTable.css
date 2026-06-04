@@ -1,0 +1,214 @@
+/* ─── Table ─────────────────────────────────────────────── */
+#table-container {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+/* ─── Section blocks ──────────────────────────────────── */
+.section-block { margin-bottom: 4px; }
+
+.section-header {
+  background: var(--bg-elevated);
+  color: var(--orange);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  border-left: 4px solid var(--orange);
+  letter-spacing: 0.5px;
+  position: sticky; top: 0; z-index: 11;
+}
+
+.section-header.departure-header { color: var(--blue); border-left-color: var(--blue); }
+
+/* Collapsible section headers */
+.collapse-header {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: background var(--transition);
+}
+.collapse-header:hover { background: rgba(255,255,255,0.03); }
+
+.collapse-arrow {
+  font-size: 10px;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  transition: transform 150ms ease;
+}
+
+.section-block.collapsed .section-table-wrap { grid-template-rows: 0fr; opacity: 0; }
+.section-block.collapsed .section-header { border-bottom: none; }
+
+.section-table-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-top: 0;
+  padding-top: 0;
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 0.25s ease, opacity 0.15s ease;
+}
+.section-table-wrap > * { min-height: 0; }
+/* Search match highlighting */
+.flight-table tr.search-match > td {
+  background: rgba(59, 130, 246, 0.12);
+}
+.flight-table tr.search-current > td {
+  background: rgba(59, 130, 246, 0.28) !important;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.flight-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 1100px;
+}
+
+.flight-table thead { z-index: 10; }
+
+.flight-table th {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 6px;
+  text-align: left;
+  border-bottom: 2px solid var(--border);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.flight-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(46, 51, 69, 0.4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  cursor: pointer;
+  position: relative;
+  height: 30px;
+  vertical-align: middle;
+}
+
+/* Checkbox cell */
+.flight-table td.chk-cell {
+  cursor: default;
+  text-align: center;
+  padding: 0 0 0 4px;
+  width: 36px;
+  min-width: 36px;
+  vertical-align: middle;
+}
+
+.chk-row {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  vertical-align: middle;
+  border: 1.5px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-surface);
+  position: relative;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.chk-row:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.chk-row:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.chk-row:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.chk-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.flight-table tbody tr { transition: background var(--transition); }
+.flight-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.012); }
+.flight-table tbody tr:hover { background: rgba(91, 141, 239, 0.06); }
+.flight-table tbody tr.selected { background: var(--accent-dim) !important; outline: 1px solid var(--accent); outline-offset: -1px; }
+.flight-table tbody tr.row-arrival { border-left: 3px solid var(--orange); }
+.flight-table tbody tr.row-departure { border-left: 3px solid var(--blue); }
+
+.flight-table td.idx-cell { color: var(--text-muted); font-size: 11px; text-align: center; width: 36px; min-width: 36px; cursor: default; }
+.flight-table td.callsign-cell { font-weight: 600; color: var(--text); }
+.flight-table td.airline-code-cell { font-weight: 700; letter-spacing: 1px; text-align: left; padding-left: 8px !important; }
+.flight-table td.flight-num-cell { text-align: left; font-weight: 600; }
+
+/* ─── Null cell indicator ──────────────────────────────── */
+.flight-table td.cell-null {
+  outline: 1px dashed var(--red);
+  outline-offset: -1px;
+  background: var(--red-bg);
+}
+
+/* Inline dropdown / input overlay that fills the cell */
+.flight-table td .cell-widget {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  border-radius: 0;
+  padding: 0 4px;
+}
+
+.flight-table td .cell-widget:focus { border-color: var(--accent); }
+
+/* Select dropdown: use native appearance */
+.flight-table td select.cell-widget {
+  text-align: left;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.empty-editor {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Column widths — checkbox only; rest evenly spaced via table-layout: fixed */
+.col-chk    { width: 36px; min-width: 36px; text-align: center; padding: 0 0 0 4px !important; }
+.col-airline-code { text-align: left !important; }
+.col-flight-num   { text-align: left !important; }

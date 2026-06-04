@@ -1,4 +1,5 @@
 import React from 'react';
+import './Toast.css';
 import { useAppStore } from '../../store/appStore';
 
 export default function Toast() {
