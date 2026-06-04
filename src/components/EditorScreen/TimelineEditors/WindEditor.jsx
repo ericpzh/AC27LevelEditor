@@ -31,7 +31,7 @@ export default function WindEditor() {
   const active = useMemo(() => sorted.filter((_,i) => range.activeIndices.has(i)), [sorted, range]);
   const hidden = range.totalCount - range.activeIndices.size;
 
-  const update = (fn) => { const st = useAppStore.getState(); fn(st); /* state synced via Zustand */ };
+  const update = (fn) => { const st = useAppStore.getState(); fn(st); st.setTimelineModified('wind', true); };
   const add = () => update(st => { useAppStore.setState({ windTimeline: [...st.windTimeline, { direction:180, speed:5, time:getDefaultTime({_configStartTime:_s,_configEndTime:_e}), _isNew:true }] }); });
   const del = (ri) => update(st => { const c=[...st.windTimeline]; c.splice(ri,1); useAppStore.setState({ windTimeline: c }); });
   const chg = (ri, f, v) => update(st => { const c=[...st.windTimeline]; c[ri]={...c[ri], [f]: f==='speed'?parseInt(v)||0:v}; useAppStore.setState({ windTimeline: c }); });

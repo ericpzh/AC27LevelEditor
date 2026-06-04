@@ -95,25 +95,41 @@ export const useAppStore = create((set, get) => ({
     const state = get();
     const values = state.airportValues[state.currentAirport] || {};
     const audioData = state.audioCallsigns;
-    const newFlight = {};
-    // Initialize empty fields
-    for (const [fn] of []) newFlight[fn] = ''; // will be filled below
+
+    // ── compute default times from config end ──
+    let baseMin = 360; // fallback 06:00
+    if (state._configEndTime) {
+      const p = String(state._configEndTime).split(':');
+      baseMin = parseInt(p[0]) * 60 + parseInt(p[1]) - 10;
+      if (baseMin < 0) baseMin = 0;
+    }
+    const pad = (m) => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00';
 
     let airlineCode = 'NEW';
     if (audioData.allAirlines && audioData.allAirlines.length > 0) airlineCode = audioData.allAirlines[0];
     else if (values.AirlineName && values.AirlineName.length > 0) airlineCode = getAirlineCode(values.AirlineName[0]);
 
-    Object.assign(newFlight, {
+    const newFlight = {
+      // Initialize all possible fields so getActiveColumns sees them
+      CallSign: '', DepartureAirport: '', ArrivalAirport: '',
+      Stand: '', Runway: '',
+      OffBlockTime: '', TakeoffTime: '', LandingTime: '', InBlockTime: '',
+      AirlineName: '', AircraftType: '', Airway: '',
+      Registration: '', Voice: '', Language: '',
+      // ── arrival-specific defaults ──
       CallSign: airlineCode + String(nextFlightNumber++),
       ArrivalAirport: state.currentAirport || '',
-      LandingTime: '06:00:00',
-      InBlockTime: '06:05:00',
+      LandingTime: pad(baseMin),
+      InBlockTime: pad(baseMin + 5),
       Language: 'en',
       AircraftType: (values.AircraftType && values.AircraftType[0]) || '',
       AirlineName: (values.AirlineName && values.AirlineName[0]) || '',
       Stand: (values.Stand && values.Stand[0]) || '',
       Runway: (values.Runway && values.Runway[0]) || '',
-    });
+      Airway: (values.Airway && values.Airway[0]) || '',
+      Registration: (values.Registration && values.Registration[0]) || '',
+      Voice: (values.Voice && values.Voice[0]) || '',
+    };
 
     const flights = [...state.flights, newFlight];
     set({ flights, modified: true, selectedIndices: new Set([flights.length - 1]) });
@@ -124,20 +140,39 @@ export const useAppStore = create((set, get) => ({
     const values = state.airportValues[state.currentAirport] || {};
     const audioData = state.audioCallsigns;
 
+    // ── compute default times from config end ──
+    let baseMin = 360; // fallback 06:00
+    if (state._configEndTime) {
+      const p = String(state._configEndTime).split(':');
+      baseMin = parseInt(p[0]) * 60 + parseInt(p[1]) - 10;
+      if (baseMin < 0) baseMin = 0;
+    }
+    const pad = (m) => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00';
+
     let airlineCode = 'NEW';
     if (audioData.allAirlines && audioData.allAirlines.length > 0) airlineCode = audioData.allAirlines[0];
     else if (values.AirlineName && values.AirlineName.length > 0) airlineCode = getAirlineCode(values.AirlineName[0]);
 
     const newFlight = {
+      // Initialize all possible fields so getActiveColumns sees them
+      CallSign: '', DepartureAirport: '', ArrivalAirport: '',
+      Stand: '', Runway: '',
+      OffBlockTime: '', TakeoffTime: '', LandingTime: '', InBlockTime: '',
+      AirlineName: '', AircraftType: '', Airway: '',
+      Registration: '', Voice: '', Language: '',
+      // ── departure-specific defaults ──
       CallSign: airlineCode + String(nextFlightNumber++),
       DepartureAirport: state.currentAirport || '',
-      OffBlockTime: '06:00:00',
-      TakeoffTime: '06:05:00',
+      OffBlockTime: pad(baseMin),
+      TakeoffTime: pad(baseMin + 5),
       Language: 'en',
       AircraftType: (values.AircraftType && values.AircraftType[0]) || '',
       AirlineName: (values.AirlineName && values.AirlineName[0]) || '',
       Stand: (values.Stand && values.Stand[0]) || '',
       Runway: (values.Runway && values.Runway[0]) || '',
+      Airway: (values.Airway && values.Airway[0]) || '',
+      Registration: (values.Registration && values.Registration[0]) || '',
+      Voice: (values.Voice && values.Voice[0]) || '',
     };
 
     const flights = [...state.flights, newFlight];
@@ -177,7 +212,24 @@ export const useAppStore = create((set, get) => ({
 
   updateFlight: (idx, updates) => {
     const flights = [...get().flights];
-    flights[idx] = { ...flights[idx], ...updates };
+    const flight = { ...flights[idx], ...updates };
+    // Rebuild CallSign when FlightNum or AirlineCode changes
+    if ('FlightNum' in updates || 'AirlineCode' in updates) {
+      const old = flights[idx];
+      const code = flight.AirlineCode || (old.CallSign || '').substring(0, 3);
+      let num;
+      if ('FlightNum' in updates) {
+        // User explicitly picked a flight number — use their choice
+        num = flight.FlightNum;
+      } else {
+        // AirlineCode changed — auto-pick first valid number for new airline
+        const audioData = get().audioCallsigns;
+        const validNums = audioData?.byAirline?.[code];
+        num = (validNums && validNums.length > 0) ? validNums[0] : (old.CallSign || '').substring(3);
+      }
+      flight.CallSign = code + num;
+    }
+    flights[idx] = flight;
     set({ flights, modified: true });
   },
 

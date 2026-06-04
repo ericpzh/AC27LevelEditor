@@ -33,6 +33,14 @@
   opacity: 1;
 }
 
+.btn-bug-report {
+  opacity: 0.75;
+  transition: opacity 0.15s;
+}
+.btn-bug-report:hover {
+  opacity: 1;
+}
+
 .browser-root-path {
   color: var(--text-muted);
   font-size: 11px;

@@ -11,7 +11,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { ticksToTime } = require('../src/time_utils');
+const { ticksToTime } = require('../src/utils/timeUtils');
 
 // ─── CLI ──────────────────────────────────────────────────────
 if (process.argv.length < 3 || process.argv[2] === '--help' || process.argv[2] === '-h') {

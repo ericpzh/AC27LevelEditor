@@ -12,7 +12,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { _rebuildTimelineSections } = require('../src/acl_flight_plans');
+const { _rebuildTimelineSections } = require('../src/acl/flight_plans');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let aclSrc = null;

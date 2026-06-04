@@ -20,7 +20,7 @@ export default function WeatherEditor() {
   const active = useMemo(() => sorted.filter((_,i) => range.activeIndices.has(i)), [sorted, range]);
   const hidden = range.totalCount - range.activeIndices.size;
 
-  const update = (fn) => { const st = useAppStore.getState(); fn(st); /* state synced via Zustand */ };
+  const update = (fn) => { const st = useAppStore.getState(); fn(st); st.setTimelineModified('weather', true); };
   const add = () => update(st => { useAppStore.setState({ weatherTimeline: [...st.weatherTimeline, { preset:'Sunny', time:getDefaultTime({_configStartTime:_s,_configEndTime:_e}), _isNew:true }] }); });
   const del = (ri) => update(st => { const c=[...st.weatherTimeline]; c.splice(ri,1); useAppStore.setState({ weatherTimeline: c }); });
   const chg = (ri, f, v) => update(st => { const c=[...st.weatherTimeline]; c[ri]={...c[ri], [f]:v}; useAppStore.setState({ weatherTimeline: c }); });

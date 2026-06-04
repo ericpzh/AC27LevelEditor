@@ -14,7 +14,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const parser = require('../src/acl_parser');
+const parser = require('../src/acl/parser');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let aclPath = null;

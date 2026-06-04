@@ -4,7 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoEyeOutline, IoEyeOffOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoEyeOutline, IoEyeOffOutline, IoBugOutline } from 'react-icons/io5';
 import { escapeHtml, stripSuffixes } from '../../utils/htmlUtils';
 
 // Module-scope regexps — hoisted per AGENTS rule 7.10
@@ -78,6 +78,10 @@ export default function BrowserScreen() {
     useAppStore.getState().setScreen('editor');
   };
 
+  const handleBugReport = () => {
+    electronAPI.openExternal('https://github.com/ericpzh/AC27LevelEditor/issues');
+  };
+
   const visibleCount = Object.values(fileInfos).flat().filter(i => showHidden || !i._hidden).length;
 
   return (
@@ -89,6 +93,9 @@ export default function BrowserScreen() {
           <button className="btn-sm" onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
           <button className={`btn-sm btn-toggle-hidden ${showHidden ? 'active' : ''}`} onClick={() => setShowHidden(!showHidden)}>
             {showHidden ? <><IoEyeOffOutline size={14} className="btn-icon" />{t('browser_hide_hidden')}</> : <><IoEyeOutline size={14} className="btn-icon" />{t('browser_toggle_hidden')}</>}
+          </button>
+          <button className="btn-sm btn-bug-report" onClick={handleBugReport} title={t('browser_bug_report')}>
+            <IoBugOutline size={14} className="btn-icon" />{t('browser_bug_report')}
           </button>
           <button className="btn-lang-toggle-top" onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
         </div>

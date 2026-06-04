@@ -54,7 +54,7 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
     e.stopPropagation();
     if (isTime) { setShowClock(true); }
     else if (col === 'FlightNum' && flightNums && flightNums.length > 0) { setEditVal(value); setEditing(true); }
-    else if (options && options.length > 0) { setEditVal(value); setEditing(true); }
+    else if (options && options.length > 0) { setEditVal(value || options[0]); setEditing(true); }
     else { setEditVal(value); setEditing(true); }
   };
 
@@ -138,8 +138,6 @@ export default function FlightTable({ type, flights, columns }) {
     document.body.onselectstart = null;
   }, []);
 
-  if (flights.length === 0) return null;
-
   return (
     <div id={isArrivals ? 'section-arrivals' : 'section-departures'} className={`section-block ${collapsed ? 'collapsed' : ''}`}>
       <div className={`section-header collapse-header ${!isArrivals ? 'departure-header' : ''}`} onClick={() => setCollapsed(!collapsed)} data-section={isArrivals ? 'arrivals' : 'departures'}>
@@ -150,6 +148,9 @@ export default function FlightTable({ type, flights, columns }) {
           <table className="flight-table">
             <thead><tr><th className="col-chk"></th>{allColumns.map(col => <th key={col} className={COL_CLASSES[col] || ''} data-col={col}>{t('field_' + col) || FIELD_LABELS[col] || col}</th>)}</tr></thead>
             <tbody>
+              {flights.length === 0 && (
+                <tr><td colSpan={allColumns.length + 1} className="empty-section-cell">{t('table_no_flights')}</td></tr>
+              )}
               {flights.map(fl => {
                 const gi = allFlights.indexOf(fl);
                 if (gi < 0) return null;
@@ -165,9 +166,18 @@ export default function FlightTable({ type, flights, columns }) {
                       let val = fl[col] || '';
                       if (col === 'AirlineCode') val = airlineCode;
                       if (col === 'FlightNum') val = (fl.CallSign || '').substring(3);
+                      // Registration is stored as _Registration in parsed data
+                      if (col === 'Registration') val = fl._Registration || fl.Registration || '';
                       const isTime = TIME_FIELDS.has(col);
                       const isDropdown = DROPDOWN_FIELDS.has(col);
-                      const opts = (isDropdown ? vals[col] : null);
+                      let opts = (isDropdown ? vals[col] : null);
+                      // Registration: filter by airline + aircraft type
+                      if (col === 'Registration') {
+                        const acType = (fl.AircraftType || '').trim();
+                        const regKey = airlineCode + '|' + acType;
+                        const filtered = vals._registrationMap?.[regKey];
+                        if (filtered && filtered.length > 0) opts = filtered;
+                      }
                       const flightNums = (col === 'FlightNum' ? validFlightNums[airlineCode] : null);
                       return <EditableCell key={col} value={val} col={col} globalIdx={gi} isTime={isTime} options={opts} flightNums={flightNums} />;
                     })}

@@ -214,4 +214,13 @@
 .col-airline-code { text-align: left !important; }
 .col-flight-num   { text-align: left !important; }
 
+.empty-section-cell {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 32px 16px !important;
+  cursor: default !important;
+  border-bottom: none !important;
+}
+
 .cell-clickable { cursor: pointer; }

@@ -91,8 +91,8 @@ export default function EditorScreen() {
   const addArrival = () => { useAppStore.getState().addArrivalFlight(); showToast(t('toast_added_arrival',{cs:useAppStore.getState().flights.slice(-1)[0]?.CallSign||''}),'success'); };
   const addDeparture = () => { useAppStore.getState().addDepartureFlight(); showToast(t('toast_added_departure',{cs:useAppStore.getState().flights.slice(-1)[0]?.CallSign||''}),'success'); };
   const copy = () => { const st=useAppStore.getState(); if(!st.selectedIndices.size&&st.highlightedIdx<0){showToast(t('toast_select_to_copy'),'error');return;} st.copySelected(); showToast(t('toast_copied_n',{n:st.selectedIndices.size||1}),'success'); };
-  const del = () => { const st=useAppStore.getState(); if(!st.selectedIndices.size){showToast(t('toast_no_flights_selected'),'error');return;} const n=st.selectedIndices.size; st.deleteSelected(); showToast(t('toast_deleted_n',{n}),'success'); };
-  const delAll = () => { const st=useAppStore.getState(); if(!st.flights.length){showToast(t('toast_no_flights_to_delete'),'error');return;} const n=st.flights.length; st.deleteAllFlights(); showToast(t('toast_deleted_all',{n}),'success'); };
+  const del = () => { const st=useAppStore.getState(); if(!st.selectedIndices.size){showToast(t('toast_no_flights_selected'),'error');return;} const n=st.selectedIndices.size; const bodyText=t('modal_delete_confirm_body',{n:String(n)}); const m=bodyText.match(/^(.*?)<strong>(.*?)<\/strong>(.*)$/); showModal(t('modal_delete_confirm'),<div><p>{m?[m[1],<strong key="n">{m[2]}</strong>,m[3]]:bodyText}</p><p className="modal-hint-error">{t('modal_delete_irreversible')}</p></div>,<div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={()=>{hideModal();useAppStore.getState().deleteSelected();showToast(t('toast_deleted_n',{n}),'success');}}>{t('modal_delete_btn',{n})}</button></div>); };
+  const delAll = () => { const st=useAppStore.getState(); if(!st.flights.length){showToast(t('toast_no_flights_to_delete'),'error');return;} const n=st.flights.length; const bodyText=t('modal_delete_all_body',{n:String(n)}); const m=bodyText.match(/^(.*?)<strong>(.*?)<\/strong>(.*)$/); showModal(t('modal_delete_all_confirm'),<div><p>{m?[m[1],<strong key="n">{m[2]}</strong>,m[3]]:bodyText}</p></div>,<div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={()=>{hideModal();useAppStore.getState().deleteAllFlights();showToast(t('toast_deleted_all',{n}),'success');}}>{t('modal_delete_all_btn')}</button></div>); };
 
   const doSave = async (createBackup) => {
     const st = useAppStore.getState();
@@ -134,7 +134,14 @@ export default function EditorScreen() {
     if (!st.currentPath) { showToast(t('toast_no_file'),'error'); return; }
     if (!st.flights.length) { showToast(t('toast_no_flight_data'),'error'); return; }
     const dupes = validateCallsigns(st.flights);
-    if (dupes.length > 0) { showModal(t('modal_duplicate_title'), <div>{t('modal_duplicate_body')}<br/><br/>{dupes.map((d, i) => [i > 0 && <br key={`sep-${d}`} />, <strong key={d} className="callsign-link" onClick={()=>{hideModal();jumpToCallsign(d);}}>{d}</strong>])}<br/><br/><span className="modal-hint-error">{t('modal_duplicate_save_cancelled')}</span></div>); return; }
+    if (dupes.length > 0) {
+      showModal(
+        t('modal_duplicate_title'),
+        <div>{t('modal_duplicate_body')}<br/><br/>{dupes.map((d, i) => [i > 0 && <br key={`sep-${d}`} />, <strong key={d} className="callsign-link" onClick={() => { hideModal(); jumpToCallsign(d); }}>{d}</strong>])}<br/><br/><span className="modal-hint-error">{t('modal_duplicate_save_cancelled')}</span></div>,
+        <div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_close')}</button></div>
+      );
+      return;
+    }
     const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._earliestTime, st._configStartTime, st._configEndTime, st.runwayTimeline);
     if (issues.length > 0) { showModal(t('modal_issues_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((issue,i)=><p key={i} className="modal-issue-item">{renderCallsignLink(issue)}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_save')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
     showModal(t('modal_backup_title'), <label className="modal-checkbox-row"><input type="checkbox" id="chk-save-backup" defaultChecked className="modal-checkbox" /><span>{t('modal_backup_checkbox')}</span></label>,
@@ -146,7 +153,14 @@ export default function EditorScreen() {
     if (!st.currentPath) { showToast(t('toast_no_file'),'error'); return; }
     if (!st.flights.length) { showToast(t('toast_no_flight_data'),'error'); return; }
     const dupes = validateCallsigns(st.flights);
-    if (dupes.length > 0) { showModal(t('modal_duplicate_title'), <span>{t('modal_duplicate_body')}<br/><br/><span className="modal-hint-error">{t('modal_duplicate_export_cancelled')}</span></span>); return; }
+    if (dupes.length > 0) {
+      showModal(
+        t('modal_duplicate_title'),
+        <span>{t('modal_duplicate_body')}<br/><br/><span className="modal-hint-error">{t('modal_duplicate_export_cancelled')}</span></span>,
+        <div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_close')}</button></div>
+      );
+      return;
+    }
     const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._earliestTime, st._configStartTime, st._configEndTime, st.runwayTimeline);
     if (issues.length > 0) { showModal(t('modal_issues_export_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((i,idx)=><p key={idx} className="modal-issue-item">{i}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_export')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
     await doSave(false);
@@ -276,7 +290,6 @@ export default function EditorScreen() {
             <FlightTable type="arrivals" flights={arrivals} columns={arrCols} />
             <FlightTable type="departures" flights={departures} columns={depCols} />
           </div>
-          {flights.length === 0 && <div id="empty-editor" className="empty-editor"><p>{t('table_no_flights')}</p></div>}
         </div>
       </main>
       <StatusBar />

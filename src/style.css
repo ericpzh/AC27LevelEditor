@@ -43,11 +43,15 @@ body {
 .hidden { display: none !important; }
 
 /* ─── Shared button icon spacing ─────────────────────── */
-.btn-icon { vertical-align: middle; margin-right: 3px; flex-shrink: 0; }
+.btn-icon { vertical-align: -0.125em; margin-right: 3px; flex-shrink: 0; }
+.btn-sm .btn-icon, .btn-lang-toggle-top .btn-icon { margin-right: 0; }
 
 /* ─── Shared buttons (used by multiple screens) ──────── */
 
 .btn-lang-toggle-top {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-secondary);
@@ -80,6 +84,9 @@ body {
 .btn-lang-toggle-top:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--accent); }
 
 .btn-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-secondary);

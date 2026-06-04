@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Debug logging from renderer -> main process log file
   rendererLog: (...args) => ipcRenderer.invoke('renderer-log', ...args),
 
+  // Open external URL in default browser
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
   // Navigation events from menu
   onNavBrowser: (cb) => ipcRenderer.on('nav-browser', () => cb()),
 });

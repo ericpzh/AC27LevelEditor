@@ -76,7 +76,8 @@ export function useSaveAcl() {
     if (dupes.length > 0) {
       store.showModal(
         t('modal_duplicate_title'),
-        <span>{t('modal_duplicate_body')}<br /><br />{dupes.map((d, i) => [i > 0 && <br key={`sep-${d}`} />, <strong key={d} className="callsign-link" onClick={() => { store.hideModal(); }}>{d}</strong>])}<br /><br /><span className="modal-hint-error">{t('modal_duplicate_save_cancelled')}</span></span>
+        <span>{t('modal_duplicate_body')}<br /><br />{dupes.map((d, i) => [i > 0 && <br key={`sep-${d}`} />, <strong key={d} className="callsign-link">{d}</strong>])}<br /><br /><span className="modal-hint-error">{t('modal_duplicate_save_cancelled')}</span></span>,
+        <div className="modal-actions-row"><button className="btn-cancel" onClick={() => store.hideModal()}>{t('modal_btn_close')}</button></div>
       );
       return;
     }
@@ -88,7 +89,8 @@ export function useSaveAcl() {
         <div className="modal-issues-body">
           {issues.map((issue, i) => <p key={i} className="modal-issue-item">{issue}</p>)}
           <p className="modal-hint-error">{t('modal_issues_fix_hint_save')}</p>
-        </div>
+        </div>,
+        <div className="modal-actions-row"><button className="btn-cancel" onClick={() => store.hideModal()}>{t('modal_btn_close')}</button></div>
       );
       return;
     }
@@ -126,16 +128,22 @@ export function useSaveAcl() {
 
     const dupes = validateCallsigns();
     if (dupes.length > 0) {
-      store.showModal(t('modal_duplicate_title'), <span>{t('modal_duplicate_body')}<br /><br /><span className="modal-hint-error">{t('modal_duplicate_export_cancelled')}</span></span>);
+      store.showModal(
+        t('modal_duplicate_title'),
+        <span>{t('modal_duplicate_body')}<br /><br /><span className="modal-hint-error">{t('modal_duplicate_export_cancelled')}</span></span>,
+        <div className="modal-actions-row"><button className="btn-cancel" onClick={() => store.hideModal()}>{t('modal_btn_close')}</button></div>
+      );
       return;
     }
     const issues = runTripleValidation();
     if (issues.length > 0) {
-      store.showModal(t('modal_issues_export_title', { n: issues.length }),
+      store.showModal(
+        t('modal_issues_export_title', { n: issues.length }),
         <div className="modal-issues-body">
           {issues.map((issue, i) => <p key={i} className="modal-issue-item">{issue}</p>)}
           <p className="modal-hint-error">{t('modal_issues_fix_hint_export')}</p>
-        </div>
+        </div>,
+        <div className="modal-actions-row"><button className="btn-cancel" onClick={() => store.hideModal()}>{t('modal_btn_close')}</button></div>
       );
       return;
     }

@@ -9,7 +9,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { loadFlights, FIELDS } = require('../src/acl_parser');
+const { loadFlights, FIELDS } = require('../src/acl/parser');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let ROOT = path.resolve(__dirname, '..', '..', '..');

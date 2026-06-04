@@ -36,8 +36,6 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     AirlineCode: airlineCodeSet,
     Stand: new Set(values.Stand || []),
     Runway: new Set(values.Runway || []),
-    DepartureAirport: new Set(values.DepartureAirport || []),
-    ArrivalAirport: new Set(values.ArrivalAirport || []),
     AircraftType: new Set(values.AircraftType || []),
     Voice: new Set(values.Voice || []),
     Language: new Set(['en', 'zh']),
@@ -55,7 +53,7 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
         issues.push(T('val_flightnum_not_valid', { cs: fl.CallSign || '?', num: flightNum, code: airlineCode }));
       }
     }
-    for (const col of ['Stand', 'Runway', 'DepartureAirport', 'ArrivalAirport', 'AircraftType', 'Voice', 'Language']) {
+    for (const col of ['Stand', 'Runway', 'AircraftType', 'Voice', 'Language']) {
       const val = fl[col];
       if (val && validSets[col] && validSets[col].size > 0 && !validSets[col].has(val)) {
         issues.push(T('val_field_not_in_options', { cs: fl.CallSign || '?', field: T('field_' + col) || FIELD_LABELS[col] || col, val: val }));
@@ -64,18 +62,23 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
   });
 
   if (_earliestTime && _configEndTime) {
-    const toHHMM = (s) => { const parts = String(s).split(':'); return parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10); };
+    // _earliestTime = warm-up end (actual flights begin), _configEndTime = scenario end
+    // Both bounds get +10min: 07:00~09:00 → valid range 07:10~09:10
     const etParts = String(_earliestTime).split(':');
+    const ceParts = String(_configEndTime).split(':');
     const etH = parseInt(etParts[0], 10), etM = parseInt(etParts[1], 10);
-    const depStartTime = etH * 100 + etM;
-    const arrStartTime = Math.floor((etH * 60 + etM + 10) / 60) * 100 + ((etH * 60 + etM + 10) % 60);
-    let endTime = toHHMM(_configEndTime);
-    const configEndLabel = String(_configEndTime).substring(0, 5);
-    endTime += 15;
-    const floorLabel = String(etH).padStart(2, '0') + ':' + String(etM).padStart(2, '0');
-    const arrFloorH = Math.floor((etH * 60 + etM + 10) / 60) % 24;
-    const arrFloorM = (etH * 60 + etM + 10) % 60;
-    const arrFloorLabel = String(arrFloorH).padStart(2, '0') + ':' + String(arrFloorM).padStart(2, '0');
+    const ceH = parseInt(ceParts[0], 10), ceM = parseInt(ceParts[1], 10);
+
+    const startTime = Math.floor((etH * 60 + etM + 10) / 60) * 100 + ((etH * 60 + etM + 10) % 60);
+    const endTime = Math.floor((ceH * 60 + ceM + 10) / 60) * 100 + ((ceH * 60 + ceM + 10) % 60);
+
+    const startH = Math.floor((etH * 60 + etM + 10) / 60) % 24;
+    const startM = (etH * 60 + etM + 10) % 60;
+    const startLabel = String(startH).padStart(2, '0') + ':' + String(startM).padStart(2, '0');
+
+    const endH = Math.floor((ceH * 60 + ceM + 10) / 60) % 24;
+    const endM = (ceH * 60 + ceM + 10) % 60;
+    const endLabel = String(endH).padStart(2, '0') + ':' + String(endM).padStart(2, '0');
 
     flights.forEach((fl) => {
       for (const col of ['OffBlockTime', 'TakeoffTime', 'LandingTime', 'InBlockTime']) {
@@ -84,14 +87,11 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
         const parts = String(timeVal).split(':');
         if (parts.length < 2) continue;
         const t = parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10);
-        const isDep = (col === 'OffBlockTime' || col === 'TakeoffTime');
-        const minT = isDep ? depStartTime : arrStartTime;
-        const minLabel = isDep ? floorLabel : arrFloorLabel;
-        if (t < minT || t > endTime) {
+        if (t < startTime || t > endTime) {
           let hint = '';
-          if (t < minT && t > endTime) hint = '≥ ' + minLabel + ' / ≤ ' + configEndLabel;
-          else if (t < minT) hint = '≥ ' + minLabel;
-          else hint = '≤ ' + configEndLabel;
+          if (t < startTime && t > endTime) hint = '≥ ' + startLabel + ' / ≤ ' + endLabel;
+          else if (t < startTime) hint = '≥ ' + startLabel;
+          else hint = '≤ ' + endLabel;
           issues.push(T('val_time_out_of_range', { cs: fl.CallSign || '?', field: T('field_' + col) || FIELD_LABELS[col] || col, time: timeVal, hint: hint }));
         }
       }

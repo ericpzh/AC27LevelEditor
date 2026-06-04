@@ -103,15 +103,15 @@ export const ARRIVAL_FIELDS = ['AirlineCode', 'FlightNum', 'DepartureAirport', '
 export const DEPARTURE_FIELDS = ['AirlineCode', 'FlightNum', 'ArrivalAirport', 'Stand', 'Runway', 'OffBlockTime', 'TakeoffTime', 'AircraftType', 'Registration', 'Voice', 'Language'];
 
 /**
- * Return columns that have non-empty values in at least one flight,
- * plus AirlineCode/FlightNum which are always shown.
+ * Return all columns from the field list, plus AirlineCode/FlightNum
+ * which are always shown (derived from CallSign).
+ * All columns are always displayed to maintain a stable table layout.
  */
 export function getActiveColumns(flights, fieldList) {
-  const cols = [];
+  const cols = ['AirlineCode', 'FlightNum'];
   for (const [fn] of ALL_FIELDS) {
-    if (!fieldList.includes(fn)) continue;
-    if (fn === 'AirlineCode' || fn === 'FlightNum') cols.push(fn);
-    else if (flights.some(fl => (fl[fn] || '').trim())) cols.push(fn);
+    if (fn === 'AirlineCode' || fn === 'FlightNum') continue;
+    if (fieldList.includes(fn)) cols.push(fn);
   }
   return cols;
 }

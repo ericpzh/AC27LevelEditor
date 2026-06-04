@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { initLogger, closeLogger } = require('../src/utils/logger');
@@ -263,7 +263,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
 
 // ─── IPC: Save .acl with optional .bak overwrite backup ────
 
-ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, earliestTime, createBackup, weatherTimeline, windTimeline, runwayTimeline }) => {
+ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, createBackup, weatherTimeline, windTimeline, runwayTimeline }) => {
   try {
     const dir = path.dirname(filePath);
     const base = path.basename(filePath, '.acl');
@@ -287,37 +287,6 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
         aclcfgStartTime = cfg.startTime || null;
         aclcfgEndTime = cfg.endTime || null;
       } catch (_) {}
-    }
-
-    // Temp validator: arrivals must be >= earliestTime + 10 min, departures >= earliestTime
-    if (earliestTime) {
-      const etParts = String(earliestTime).split(':');
-      const etH = parseInt(etParts[0], 10);
-      const etM = parseInt(etParts[1], 10);
-      // Arrival floor = earliestTime + 10 min
-      const arrTotal = etH * 60 + etM + 10;
-      const arrH = Math.floor(arrTotal / 60) % 24;
-      const arrM = arrTotal % 60;
-      const arrFloor = String(arrH).padStart(2, '0') + ':' + String(arrM).padStart(2, '0') + ':' + (etParts[2] || '00');
-      // Departure floor = earliestTime (no offset)
-      const depFloor = earliestTime;
-      for (const fl of saveFlights) {
-        const isArrival = (fl.isDeparture === false) || ((fl.LandingTime || '').trim() && !(fl.OffBlockTime || '').trim());
-        const isDeparture = (fl.isDeparture === true) || (!(fl.LandingTime || '').trim() && (fl.OffBlockTime || '').trim()) || (!(fl.LandingTime || '').trim() && !(fl.OffBlockTime || '').trim());
-        if (isArrival) {
-          const landing = fl.LandingTime || '';
-          if (!landing) continue;
-          if (landing < arrFloor) {
-            return { success: false, error: `航班 ${fl.CallSign || fl.arrivalCallSign || '(未知)'} 降落时间 ${landing} 早于允许范围 (≥ ${arrFloor.substring(0, 5)})，不允许保存。` };
-          }
-        } else if (isDeparture) {
-          const offblock = fl.OffBlockTime || '';
-          if (!offblock) continue;
-          if (offblock < depFloor) {
-            return { success: false, error: `航班 ${fl.CallSign || fl.departureCallSign || '(未知)'} 推出时间 ${offblock} 早于允许范围 (≥ ${String(depFloor).substring(0, 5)})，不允许保存。` };
-          }
-        }
-      }
     }
 
     // Generate full ACL from scratch, preserving header structure
@@ -638,6 +607,10 @@ ipcMain.handle('save-last-root', (_event, rootPath) => {
     if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
     fs.writeFileSync(path.join(cfgDir, 'lastRoot.json'), JSON.stringify({ rootPath }), 'utf-8');
   } catch (_) {}
+});
+
+ipcMain.handle('open-external', async (_event, url) => {
+  await shell.openExternal(url);
 });
 
 // ─── IPC: Load timeline files for a level ────────────────

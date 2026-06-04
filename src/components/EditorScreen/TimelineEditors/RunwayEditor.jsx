@@ -32,7 +32,7 @@ export default function RunwayEditor() {
 
   const initialSet = new Set(rw.initialRunways||[]);
 
-  const update = (fn) => { const st = useAppStore.getState(); fn(st); /* state synced via Zustand */ };
+  const update = (fn) => { const st = useAppStore.getState(); fn(st); st.setTimelineModified('runway', true); };
   const toggleInit = (n) => update(st => { const cur=new Set(st.runwayTimeline.initialRunways||[]); cur.has(n)?cur.delete(n):cur.add(n); useAppStore.setState({runwayTimeline:{...st.runwayTimeline,initialRunways:[...cur]}}); });
   const addChange = () => update(st => { useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:[...(st.runwayTimeline.timeline||[]),{time:getDefaultTime({_configStartTime:_s,_configEndTime:_e}),changes:[],_isNew:true}]}}); });
   const delChange = (i) => update(st => { const tl=[...(st.runwayTimeline.timeline||[])]; tl.splice(i,1); useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}}); });

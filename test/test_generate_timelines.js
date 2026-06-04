@@ -14,7 +14,7 @@ const path = require('path');
 const {
   _generateFramesSection,
   _generateRunwayTimelineSection,
-} = require('../src/acl_flight_plans');
+} = require('../src/acl/flight_plans');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let aclSrc = null;
