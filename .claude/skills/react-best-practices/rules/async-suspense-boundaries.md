@@ -1,99 +1,80 @@
 ---
 title: Strategic Suspense Boundaries
 impact: HIGH
-impactDescription: faster initial paint
-tags: async, suspense, streaming, layout-shift
+impactDescription: faster initial paint for complex layouts
+tags: async, suspense, loading, layout
 ---
 
 ## Strategic Suspense Boundaries
 
-Instead of awaiting data in async components before returning JSX, use Suspense boundaries to show the wrapper UI faster while data loads.
+Instead of blocking an entire screen on data loading, use `<Suspense>` boundaries to show static UI immediately while data-dependent sections load.
 
-**Incorrect (wrapper blocked by data fetching):**
+**Incorrect (entire screen blocked by data loading):**
 
-```tsx
-async function Page() {
-  const data = await fetchData() // Blocks entire page
-  
+```jsx
+function EditorScreen() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    loadAllData().then(d => { setData(d); setLoading(false) })
+  }, [])
+
+  if (loading) return <div className="spinner" />
+
   return (
     <div>
-      <div>Sidebar</div>
-      <div>Header</div>
-      <div>
-        <DataDisplay data={data} />
-      </div>
-      <div>Footer</div>
+      <Toolbar />
+      <FlightTable flights={data.flights} />
+      <TimelineEditor timelines={data.timelines} />
+      <StatusBar />
     </div>
   )
 }
 ```
 
-The entire layout waits for data even though only the middle section needs it.
+**Correct (static UI renders immediately, data sections show skeleton):**
 
-**Correct (wrapper shows immediately, data streams in):**
+```jsx
+import React, { Suspense } from 'react'
 
-```tsx
-function Page() {
+function EditorScreen() {
   return (
     <div>
-      <div>Sidebar</div>
-      <div>Header</div>
-      <div>
-        <Suspense fallback={<Skeleton />}>
-          <DataDisplay />
-        </Suspense>
-      </div>
-      <div>Footer</div>
-    </div>
-  )
-}
-
-async function DataDisplay() {
-  const data = await fetchData() // Only blocks this component
-  return <div>{data.content}</div>
-}
-```
-
-Sidebar, Header, and Footer render immediately. Only DataDisplay waits for data.
-
-**Alternative (share promise across components):**
-
-```tsx
-function Page() {
-  // Start fetch immediately, but don't await
-  const dataPromise = fetchData()
-  
-  return (
-    <div>
-      <div>Sidebar</div>
-      <div>Header</div>
-      <Suspense fallback={<Skeleton />}>
-        <DataDisplay dataPromise={dataPromise} />
-        <DataSummary dataPromise={dataPromise} />
+      <Toolbar />
+      <Suspense fallback={<div className="skeleton-table" />}>
+        <FlightTableSection />
       </Suspense>
-      <div>Footer</div>
+      <Suspense fallback={<div className="skeleton-timeline" />}>
+        <TimelineSection />
+      </Suspense>
+      <StatusBar />
     </div>
   )
 }
 
-function DataDisplay({ dataPromise }: { dataPromise: Promise<Data> }) {
-  const data = use(dataPromise) // Unwraps the promise
-  return <div>{data.content}</div>
-}
-
-function DataSummary({ dataPromise }: { dataPromise: Promise<Data> }) {
-  const data = use(dataPromise) // Reuses the same promise
-  return <div>{data.summary}</div>
+// Each section handles its own data loading internally
+function FlightTableSection() {
+  const flights = useAppStore(s => s.flights)
+  // ...
 }
 ```
 
-Both components share the same promise, so only one fetch occurs. Layout renders immediately while both components wait together.
+For heavy components that aren't needed immediately, use `React.lazy()`:
 
-**When NOT to use this pattern:**
+```jsx
+const HeavyChart = React.lazy(() => import('./HeavyChart'))
 
-- Critical data needed for layout decisions (affects positioning)
-- SEO-critical content above the fold
-- Small, fast queries where suspense overhead isn't worth it
-- When you want to avoid layout shift (loading → content jump)
+function Dashboard() {
+  return (
+    <div>
+      <Header />
+      <Suspense fallback={<div className="spinner" />}>
+        <HeavyChart />
+      </Suspense>
+    </div>
+  )
+}
+```
 
-**Trade-off:** Faster initial paint vs potential layout shift. Choose based on your UX priorities.
+**When NOT to use:** Critical data needed for layout decisions, very small/fast components where Suspense overhead isn't worth it, or when avoiding layout shift is prioritized over faster initial render.

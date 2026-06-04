@@ -1,35 +1,38 @@
 ---
 title: Dynamic Imports for Heavy Components
 impact: CRITICAL
-impactDescription: directly affects TTI and LCP
-tags: bundle, dynamic-import, code-splitting, next-dynamic
+impactDescription: directly affects startup time
+tags: bundle, dynamic-import, code-splitting, react-lazy
 ---
 
 ## Dynamic Imports for Heavy Components
 
-Use `next/dynamic` to lazy-load large components not needed on initial render.
+Use `React.lazy()` + `<Suspense>` to lazy-load large components not needed on initial render. Vite supports dynamic `import()` natively.
 
-**Incorrect (Monaco bundles with main chunk ~300KB):**
+**Incorrect (heavy editor bundles with main chunk):**
 
-```tsx
+```jsx
 import { MonacoEditor } from './monaco-editor'
 
-function CodePanel({ code }: { code: string }) {
+function CodePanel({ code }) {
   return <MonacoEditor value={code} />
 }
 ```
 
-**Correct (Monaco loads on demand):**
+**Correct (editor loads on demand):**
 
-```tsx
-import dynamic from 'next/dynamic'
+```jsx
+import React, { Suspense } from 'react'
 
-const MonacoEditor = dynamic(
-  () => import('./monaco-editor').then(m => m.MonacoEditor),
-  { ssr: false }
+const MonacoEditor = React.lazy(() =>
+  import('./monaco-editor').then(m => ({ default: m.MonacoEditor }))
 )
 
-function CodePanel({ code }: { code: string }) {
-  return <MonacoEditor value={code} />
+function CodePanel({ code }) {
+  return (
+    <Suspense fallback={<div className="spinner" />}>
+      <MonacoEditor value={code} />
+    </Suspense>
+  )
 }
 ```

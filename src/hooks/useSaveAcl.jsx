@@ -74,10 +74,9 @@ export function useSaveAcl() {
 
     const dupes = validateCallsigns();
     if (dupes.length > 0) {
-      const dupesHtml = dupes.map(d => '<strong>' + d + '</strong>').join('<br>');
       store.showModal(
         t('modal_duplicate_title'),
-        <span>{t('modal_duplicate_body')}<br /><br /><span dangerouslySetInnerHTML={{ __html: dupesHtml }} /><br /><br /><span style={{ color: 'var(--red)' }}>{t('modal_duplicate_save_cancelled')}</span></span>
+        <span>{t('modal_duplicate_body')}<br /><br />{dupes.map((d, i) => [i > 0 && <br key={`sep-${d}`} />, <strong key={d} className="callsign-link" onClick={() => { store.hideModal(); }}>{d}</strong>])}<br /><br /><span className="modal-hint-error">{t('modal_duplicate_save_cancelled')}</span></span>
       );
       return;
     }
@@ -86,9 +85,9 @@ export function useSaveAcl() {
     if (issues.length > 0) {
       store.showModal(
         t('modal_issues_title', { n: issues.length }),
-        <div style={{ maxHeight: 400, overflow: 'auto', textAlign: 'left' }}>
-          {issues.map((issue, i) => <p key={i} style={{ margin: '4px 0', fontSize: 13 }}>{issue}</p>)}
-          <p style={{ color: 'var(--red)', fontSize: 13 }}>{t('modal_issues_fix_hint_save')}</p>
+        <div className="modal-issues-body">
+          {issues.map((issue, i) => <p key={i} className="modal-issue-item">{issue}</p>)}
+          <p className="modal-hint-error">{t('modal_issues_fix_hint_save')}</p>
         </div>
       );
       return;
@@ -96,11 +95,11 @@ export function useSaveAcl() {
 
     store.showModal(
       t('modal_backup_title'),
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
-        <input type="checkbox" id="chk-create-backup" defaultChecked />
+      <label className="modal-checkbox-row">
+        <input type="checkbox" id="chk-create-backup" defaultChecked className="modal-checkbox" />
         <span>{t('modal_backup_checkbox')}</span>
       </label>,
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+      <div className="modal-actions-row">
         <button className="btn-cancel" onClick={() => store.hideModal()}>{t('modal_btn_cancel')}</button>
         <button className="btn-confirm" onClick={async () => {
           const cb = document.getElementById('chk-create-backup');
@@ -127,15 +126,15 @@ export function useSaveAcl() {
 
     const dupes = validateCallsigns();
     if (dupes.length > 0) {
-      store.showModal(t('modal_duplicate_title'), <span>{t('modal_duplicate_body')}<br /><br /><span style={{ color: 'var(--red)' }}>{t('modal_duplicate_export_cancelled')}</span></span>);
+      store.showModal(t('modal_duplicate_title'), <span>{t('modal_duplicate_body')}<br /><br /><span className="modal-hint-error">{t('modal_duplicate_export_cancelled')}</span></span>);
       return;
     }
     const issues = runTripleValidation();
     if (issues.length > 0) {
       store.showModal(t('modal_issues_export_title', { n: issues.length }),
-        <div style={{ maxHeight: 400, overflow: 'auto' }}>
-          {issues.map((issue, i) => <p key={i}>{issue}</p>)}
-          <p style={{ color: 'var(--red)' }}>{t('modal_issues_fix_hint_export')}</p>
+        <div className="modal-issues-body">
+          {issues.map((issue, i) => <p key={i} className="modal-issue-item">{issue}</p>)}
+          <p className="modal-hint-error">{t('modal_issues_fix_hint_export')}</p>
         </div>
       );
       return;

@@ -1,38 +1,49 @@
 ---
-title: Prevent Waterfall Chains in API Routes
+title: Prevent Waterfall Chains in Async Operations
 impact: CRITICAL
 impactDescription: 2-10× improvement
-tags: api-routes, server-actions, waterfalls, parallelization
+tags: async, parallel, waterfalls, IPC
 ---
 
-## Prevent Waterfall Chains in API Routes
+## Prevent Waterfall Chains in Async Operations
 
-In API routes and Server Actions, start independent operations immediately, even if you don't await them yet.
+In any async function (load handlers, save handlers, IPC callers), start independent operations immediately, even if you don't await them yet.
 
 **Incorrect (config waits for auth, data waits for both):**
 
-```typescript
-export async function GET(request: Request) {
-  const session = await auth()
-  const config = await fetchConfig()
-  const data = await fetchData(session.user.id)
-  return Response.json({ data, config })
+```js
+async function loadEditorData(filePath) {
+  const meta = await electronAPI.getFileInfo(filePath)
+  const flights = await electronAPI.loadAcl(filePath)
+  const timelines = await electronAPI.loadTimelines(filePath)
+  return { meta, flights, timelines }
 }
 ```
 
-**Correct (auth and config start immediately):**
+**Correct (all three start immediately):**
 
-```typescript
-export async function GET(request: Request) {
-  const sessionPromise = auth()
-  const configPromise = fetchConfig()
-  const session = await sessionPromise
-  const [config, data] = await Promise.all([
-    configPromise,
-    fetchData(session.user.id)
+```js
+async function loadEditorData(filePath) {
+  const metaPromise = electronAPI.getFileInfo(filePath)
+  const flightsPromise = electronAPI.loadAcl(filePath)
+  const timelinesPromise = electronAPI.loadTimelines(filePath)
+
+  const [meta, flights, timelines] = await Promise.all([
+    metaPromise, flightsPromise, timelinesPromise
   ])
-  return Response.json({ data, config })
+  return { meta, flights, timelines }
 }
 ```
 
-For operations with more complex dependency chains, use `better-all` to automatically maximize parallelism (see Dependency-Based Parallelization).
+For operations where one call depends on another's result, start both early and chain:
+
+```js
+const userPromise = getUser()
+const profilePromise = userPromise.then(user => getProfile(user.id))
+
+const [user, profile, config] = await Promise.all([
+  userPromise,
+  profilePromise,
+  getConfig()
+])
+```

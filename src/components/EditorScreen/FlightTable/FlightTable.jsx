@@ -2,19 +2,8 @@ import React, { useState, useMemo, useCallback, useRef } from 'react';
 import './FlightTable.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
-import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS } from '../../../utils/constants';
+import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../../utils/constants';
 import ClockPopover from '../CellEditor/TimeClockPopover';
-
-function getActiveColumns(flights, fieldList) {
-  const cols = [];
-  for (const [fn] of ALL_FIELDS) {
-    if (!fieldList.includes(fn)) continue;
-    if (fn === 'AirlineCode' || fn === 'FlightNum') cols.push(fn);
-    else if (flights.some(fl => (fl[fn] || '').trim())) cols.push(fn);
-  }
-  return cols;
-}
-
 
 function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
   const [editing, setEditing] = useState(false);
@@ -33,7 +22,7 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
     return (
       <td className={cls} data-col={col} data-idx={globalIdx}>
         <ClockPopover value={value} col={col} onCommit={commit} onClose={() => setShowClock(false)} />
-        <span style={{cursor:'pointer'}} onClick={() => setShowClock(false)}>{value || ''}</span>
+        <span className="cell-clickable" onClick={() => setShowClock(false)}>{value || ''}</span>
       </td>
     );
   }
@@ -146,11 +135,10 @@ export default function FlightTable({ type, flights, columns }) {
                 const airlineCode = (fl.CallSign || '').substring(0, 3);
                 return (
                   <tr key={gi}
-                    className={`${isArrivals ? 'row-arrival' : 'row-departure'} ${selectedIndices.has(gi) ? 'selected' : ''}`}
+                    className={`${isArrivals ? 'row-arrival' : 'row-departure'} ${selectedIndices.has(gi) ? 'selected' : ''} ${highlightedIdx === gi ? 'highlighted' : ''}`}
                     onClick={(e) => { if (e.target.closest('td')) return; setHighlightedIdx(gi); }}
                     onMouseDown={(e) => onMouseDown(e, gi)}
-                    onMouseEnter={(e) => onMouseEnter(e, gi)}
-                    style={highlightedIdx === gi ? { outline: '1px solid var(--accent)', outlineOffset: -1 } : {}}>
+                    onMouseEnter={(e) => onMouseEnter(e, gi)}>
                     <td className="chk-cell"><input type="checkbox" className="chk-row" data-idx={gi} checked={selectedIndices.has(gi)} onChange={e => { e.stopPropagation(); toggleSelection(gi); }} /></td>
                     {allColumns.map(col => {
                       let val = fl[col] || '';

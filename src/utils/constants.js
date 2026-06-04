@@ -1,3 +1,9 @@
+// ─── Newtonsoft.Json DateTime ticks ──────────────────────
+export const NET_EPOCH_OFFSET = 621355968000000000n;
+export const TICKS_PER_SECOND = 10000000n;
+export const TICKS_PER_DAY = 86400n * TICKS_PER_SECOND;
+export const FALLBACK_BASE_DATE_TICKS = 630822816000000000;
+
 // ─── Airport Hardcoded Display Names & Sort Order ──────────
 export const AIRPORT_META = {
   ZSJN: { id: 0, name: '济南遥墙机场' },
@@ -95,3 +101,17 @@ export const COL_CLASSES = {
 
 export const ARRIVAL_FIELDS = ['AirlineCode', 'FlightNum', 'DepartureAirport', 'Stand', 'Runway', 'LandingTime', 'InBlockTime', 'AircraftType', 'Airway', 'Registration', 'Voice', 'Language'];
 export const DEPARTURE_FIELDS = ['AirlineCode', 'FlightNum', 'ArrivalAirport', 'Stand', 'Runway', 'OffBlockTime', 'TakeoffTime', 'AircraftType', 'Registration', 'Voice', 'Language'];
+
+/**
+ * Return columns that have non-empty values in at least one flight,
+ * plus AirlineCode/FlightNum which are always shown.
+ */
+export function getActiveColumns(flights, fieldList) {
+  const cols = [];
+  for (const [fn] of ALL_FIELDS) {
+    if (!fieldList.includes(fn)) continue;
+    if (fn === 'AirlineCode' || fn === 'FlightNum') cols.push(fn);
+    else if (flights.some(fl => (fl[fn] || '').trim())) cols.push(fn);
+  }
+  return cols;
+}

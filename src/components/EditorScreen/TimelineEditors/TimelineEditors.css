@@ -134,6 +134,7 @@
   font-size: 12.5px;
   font-family: inherit;
   outline: none;
+  cursor: pointer;
   transition: border-color var(--transition);
 }
 
@@ -143,6 +144,7 @@
 
 .tl-time-click { width: 68px; cursor: pointer; }
 .tl-direction-click { width: 54px; text-align: center; cursor: pointer; }
+.tl-direction-cell { display: flex; align-items: center; }
 
 .tl-speed-row {
   display: flex;

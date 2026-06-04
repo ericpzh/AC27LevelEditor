@@ -6,9 +6,9 @@ const fs = require('fs');
 const path = require('path');
 
 // ─── External modules ────────────────────────────────────────
-const {
+import {
   FIELDS, FIELD_LABELS, DROPDOWN_FIELDS,
-} = require('../constants');
+} from './constants';
 const { importCsvFromFile, exportCSV, exportGameCSV, collectUniqueValuesFromCSV } = require('../utils/csvIo');
 
 // ─── Internal sub-modules ────────────────────────────────────

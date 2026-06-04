@@ -8,25 +8,33 @@ import EditorScreen from './components/EditorScreen/EditorScreen';
 import Modal from './components/common/Modal';
 import Toast from './components/common/Toast';
 
+let didInit = false; // Survives Strict Mode double-mount (AGENTS rule 8.2)
+
 function ScreenRouter() {
   const screen = useAppStore(s => s.screen);
   const electronAPI = useElectronAPI();
   const [booting, setBooting] = useState(true);
 
-  // Restore last root on startup
+  // Restore last root on startup — runs once per app load
   useEffect(() => {
+    if (didInit) return;
+    didInit = true;
     (async () => {
       try {
         const lastRoot = await electronAPI.getLastRoot();
-        if (!lastRoot) return;
+        if (!lastRoot) { setBooting(false); return; }
         const scan = await electronAPI.scanAcls(lastRoot);
-        if (scan.error || !scan.totalFiles) return;
+        if (scan.error || !scan.totalFiles) { setBooting(false); return; }
         const st = useAppStore.getState();
         st.setRootPath(lastRoot, scan.airports || []);
         await electronAPI.initAirportCache(lastRoot).catch(() => {});
         await electronAPI.captureDynamicsTemplates(lastRoot).catch(() => {});
         st.setScreen('browser');
-      } catch (_) {} finally { setBooting(false); }
+      } catch (err) {
+        console.error('[App] Boot failed:', err);
+      } finally {
+        setBooting(false);
+      }
     })();
   }, []);
 

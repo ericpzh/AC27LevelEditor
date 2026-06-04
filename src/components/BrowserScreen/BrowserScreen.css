@@ -161,6 +161,7 @@
 }
 
 .level-row-error { opacity: 0.55; pointer-events: none; }
+.level-error-text { color: var(--red); }
 
 .level-stat {
   display: flex;

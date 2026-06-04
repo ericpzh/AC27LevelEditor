@@ -3,7 +3,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { DROPDOWN_FIELDS } = require('../constants');
+import { DROPDOWN_FIELDS } from './constants';
 const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./world_state');
 const { _parseSceneryData } = require('./scenery');
 const { _parseWorldStateFlightPlans } = require('./flight_plans');

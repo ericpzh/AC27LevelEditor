@@ -158,6 +158,7 @@
 .flight-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.012); }
 .flight-table tbody tr:hover { background: rgba(91, 141, 239, 0.06); }
 .flight-table tbody tr.selected { background: var(--accent-dim) !important; outline: 1px solid var(--accent); outline-offset: -1px; }
+.flight-table tbody tr.highlighted { outline: 1px solid var(--accent); outline-offset: -1px; }
 .flight-table tbody tr.row-arrival { border-left: 3px solid var(--orange); }
 .flight-table tbody tr.row-departure { border-left: 3px solid var(--blue); }
 
@@ -212,3 +213,5 @@
 .col-chk    { width: 36px; min-width: 36px; text-align: center; padding: 0 0 0 4px !important; }
 .col-airline-code { text-align: left !important; }
 .col-flight-num   { text-align: left !important; }
+
+.cell-clickable { cursor: pointer; }

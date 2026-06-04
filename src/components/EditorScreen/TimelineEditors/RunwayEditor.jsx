@@ -4,24 +4,8 @@ import './RunwayEditor.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
 import { escapeHtml } from '../../../utils/htmlUtils';
-import ClockPopover from '../CellEditor/TimeClockPopover';
-
-function TimeCell({ value, onChange }) {
-  const [show, setShow] = useState(false);
-  return (
-    <>
-      <span className="tl-input" style={{cursor:'pointer'}} onClick={() => setShow(true)}>{value || ''}</span>
-      {show && <ClockPopover value={value || '00:00:00'} col="Time" onCommit={v => { onChange(v); setShow(false); }} onClose={() => setShow(false)} />}
-    </>
-  );
-}
-
-function getDefaultTime(_s, _e) {
-  if (_s && _e) { const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); }; const mid = Math.floor((toMin(_s) + toMin(_e)) / 2); return String(Math.floor(mid / 60) % 24).padStart(2, '0') + ':' + String(mid % 60).padStart(2, '0') + ':00'; }
-  if (_s) return String(_s).substring(0, 8);
-  if (_e) return String(_e).substring(0, 8);
-  return '12:00:00';
-}
+import { getDefaultTime } from '../../../utils/timeUtils';
+import TimeCell from './TimeCell';
 
 export default function RunwayEditor() {
   const { t } = useTranslation();
@@ -49,7 +33,7 @@ export default function RunwayEditor() {
 
   const update = (fn) => { const st = useAppStore.getState(); fn(st); /* state synced via Zustand */ };
   const toggleInit = (n) => update(st => { const cur=new Set(st.runwayTimeline.initialRunways||[]); cur.has(n)?cur.delete(n):cur.add(n); useAppStore.setState({runwayTimeline:{...st.runwayTimeline,initialRunways:[...cur]}}); });
-  const addChange = () => update(st => { useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:[...(st.runwayTimeline.timeline||[]),{time:getDefaultTime(_s,_e),changes:[],_isNew:true}]}}); });
+  const addChange = () => update(st => { useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:[...(st.runwayTimeline.timeline||[]),{time:getDefaultTime({_configStartTime:_s,_configEndTime:_e}),changes:[],_isNew:true}]}}); });
   const delChange = (i) => update(st => { const tl=[...(st.runwayTimeline.timeline||[])]; tl.splice(i,1); useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}}); });
   const chgTime = (i,v) => update(st => { const tl=[...(st.runwayTimeline.timeline||[])]; tl[i]={...tl[i],time:v}; useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}}); });
   const togglePair = (tli,s,d) => update(st => { const tl=[...(st.runwayTimeline.timeline||[])]; const changes=[...(tl[tli].changes||[])]; const key=s+'|'+d; const idx=changes.findIndex(c=>(c.source+'|'+c.dest)===key); idx>=0?changes.splice(idx,1):changes.push({source:s,dest:d}); tl[tli]={...tl[tli],changes}; useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}}); });

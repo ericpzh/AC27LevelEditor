@@ -2,20 +2,20 @@
 title: Deduplicate Global Event Listeners
 impact: LOW
 impactDescription: single listener for N components
-tags: client, swr, event-listeners, subscription
+tags: client, event-listeners, subscription, keyboard
 ---
 
 ## Deduplicate Global Event Listeners
 
-Use `useSWRSubscription()` to share global event listeners across component instances.
+Use a module-level Map to share a single global event listener across multiple hook instances, instead of each instance registering its own listener.
 
 **Incorrect (N instances = N listeners):**
 
-```tsx
-function useKeyboardShortcut(key: string, callback: () => void) {
+```jsx
+function useKeyboardShortcut(key, callback) {
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.metaKey && e.key === key) {
+    const handler = (e) => {
+      if (e.ctrlKey && e.key === key) {
         callback()
       }
     }
@@ -25,50 +25,50 @@ function useKeyboardShortcut(key: string, callback: () => void) {
 }
 ```
 
-When using the `useKeyboardShortcut` hook multiple times, each instance will register a new listener.
+Each `useKeyboardShortcut` call attaches a separate listener, even for the same key combination.
 
 **Correct (N instances = 1 listener):**
 
-```tsx
-import useSWRSubscription from 'swr/subscription'
-
+```jsx
 // Module-level Map to track callbacks per key
-const keyCallbacks = new Map<string, Set<() => void>>()
+const keyCallbacks = new Map()
 
-function useKeyboardShortcut(key: string, callback: () => void) {
+function useKeyboardShortcut(key, callback) {
   // Register this callback in the Map
   useEffect(() => {
     if (!keyCallbacks.has(key)) {
       keyCallbacks.set(key, new Set())
     }
-    keyCallbacks.get(key)!.add(callback)
+    keyCallbacks.get(key).add(callback)
 
     return () => {
       const set = keyCallbacks.get(key)
       if (set) {
         set.delete(callback)
-        if (set.size === 0) {
-          keyCallbacks.delete(key)
-        }
+        if (set.size === 0) keyCallbacks.delete(key)
       }
     }
   }, [key, callback])
 
-  useSWRSubscription('global-keydown', () => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.metaKey && keyCallbacks.has(e.key)) {
-        keyCallbacks.get(e.key)!.forEach(cb => cb())
+  // Single global listener registered once per key combination
+  useEffect(() => {
+    if (keyCallbacks.has(key) && keyCallbacks.get(key).size > 1) return
+
+    const handler = (e) => {
+      if (e.ctrlKey && keyCallbacks.has(e.key)) {
+        keyCallbacks.get(e.key).forEach(cb => cb())
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  })
+  }, [key])
 }
 
-function Profile() {
-  // Multiple shortcuts will share the same listener
-  useKeyboardShortcut('p', () => { /* ... */ }) 
-  useKeyboardShortcut('k', () => { /* ... */ })
-  // ...
+function Editor() {
+  useKeyboardShortcut('s', handleSave)
+  useKeyboardShortcut('n', handleNew)
+  // Both share a single keydown listener
 }
 ```
+
+This pattern is especially useful in Electron apps where keyboard shortcuts are common across multiple components.

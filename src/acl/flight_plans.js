@@ -3,7 +3,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { FALLBACK_BASE_DATE_TICKS } = require('../constants');
+import { FALLBACK_BASE_DATE_TICKS } from './constants';
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
 const { calcProgressRatio, buildAircraftEntry } = require('./dynamics');

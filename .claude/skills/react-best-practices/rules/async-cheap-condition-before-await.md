@@ -1,37 +1,37 @@
 ---
-title: Check Cheap Conditions Before Async Flags
+title: Check Cheap Conditions Before Async Work
 impact: HIGH
 impactDescription: avoids unnecessary async work when a synchronous guard already fails
-tags: async, await, feature-flags, short-circuit, conditional
+tags: async, await, short-circuit, conditional
 ---
 
-## Check Cheap Conditions Before Async Flags
+## Check Cheap Conditions Before Async Work
 
-When a branch uses `await` for a flag or remote value and also requires a **cheap synchronous** condition (local props, request metadata, already-loaded state), evaluate the cheap condition **first**. Otherwise you pay for the async call even when the compound condition can never be true.
+When a branch uses `await` for an async value and also requires a **cheap synchronous** condition (local props, config, already-loaded state), evaluate the cheap condition **first**. Otherwise you pay for the async call even when the compound condition can never be true.
 
 This is a specialization of [Defer Await Until Needed](./async-defer-await.md) for `flag && cheapCondition` style checks.
 
-**Incorrect:**
+**Incorrect (IPC call made even when condition is false):**
 
-```typescript
-const someFlag = await getFlag()
+```js
+const result = await electronAPI.getConfig()
 
-if (someFlag && someCondition) {
+if (result.success && someCondition) {
   // ...
 }
 ```
 
-**Correct:**
+**Correct (cheap check first, avoids unnecessary IPC):**
 
-```typescript
+```js
 if (someCondition) {
-  const someFlag = await getFlag()
-  if (someFlag) {
+  const result = await electronAPI.getConfig()
+  if (result.success) {
     // ...
   }
 }
 ```
 
-This matters when `getFlag` hits the network, a feature-flag service, or `React.cache` / DB work: skipping it when `someCondition` is false removes that cost on the cold path.
+This matters when the async operation hits the filesystem, makes an IPC call, or does heavy computation: skipping it when `someCondition` is false removes that cost on the cold path.
 
-Keep the original order if `someCondition` is expensive, depends on the flag, or you must run side effects in a fixed order.
+Keep the original order if `someCondition` is expensive, depends on the async result, or you must run side effects in a fixed order.

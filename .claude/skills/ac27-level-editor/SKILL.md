@@ -1,16 +1,16 @@
 ---
 name: ac27-level-editor
-description: AC27 Level Editor — Electron desktop app for editing Airport Control 27 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, node test/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes — the app has no bundler, no TypeScript, no test framework, and no linter; patterns are deliberate and should be preserved.
+description: AC27 Level Editor — Electron desktop app for editing Airport Control 27 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, node test/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes.
 ---
 
 # AC27 Level Editor — Repo Skill
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.0.3)
+- **Name:** `ac27-level-editor` (v1.0.5)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
-- **Stack:** Electron 33 + plain JavaScript (no TypeScript, no bundler, no framework)
-- **Entry:** `main.js` (Electron main process)
+- **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
+- **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
 - **App ID:** `com.ac27.level-editor`
 - **Product name:** `AC27 Level Editor`
 
@@ -18,31 +18,49 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  main.js (Electron Main Process)                        │
+│  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
 │  - ~20 ipcMain.handle() endpoints                       │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
-│  preload.js (contextBridge)                             │
+│  electron/preload.js (contextBridge)                    │
 │  - Exposes window.electronAPI with ~20 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
-│  src/index.html + style.css                             │
-│  - 12 <script> tags in dependency order (NO bundler)    │
-│  - Dark theme, CSS custom properties                    │
+│  index.html + src/main.jsx (Vite entry)                 │
+│  - <div id="root"> rendered by ReactDOM.createRoot      │
+│  - Vite bundles src/ → dist/                            │
 │  - Three screens: setup → browser → editor              │
 ├─────────────────────────────────────────────────────────┤
-│  src/renderer/ (12 global-scope JS files)               │
-│  - Share state via window-level appState singleton      │
-│  - Imperative DOM manipulation via getElementById       │
-│  - No modules, no imports, no framework                 │
+│  src/components/ (React component tree)                 │
+│  - App.jsx — root: I18nProvider + ScreenRouter + Modal +│
+│    Toast                                                │
+│  - SetupScreen / BrowserScreen / EditorScreen           │
+│  - EditorScreen: FlightTable, TimelineEditors,          │
+│    CellEditor, SearchBar                                │
+│  - common: Modal, Toast                                 │
 ├─────────────────────────────────────────────────────────┤
-│  src/*.js (12 CommonJS backend modules)                 │
-│  - module.exports / require() patterns                  │
-│  - acl_parser.js is the COMPLETE facade — main.js       │
-│    imports ALL backend modules through it only          │
-│  - Underscore-prefix = private, no prefix = public      │
+│  src/hooks/ (React custom hooks)                        │
+│  - useTranslation, useElectronAPI, useEditorShell,      │
+│    useSaveAcl, useKeyboardShortcuts                     │
+├─────────────────────────────────────────────────────────┤
+│  src/store/ (zustand state)                             │
+│  - appStore.js — single store: screen, flights,         │
+│    timelines, modal/toast                               │
+├─────────────────────────────────────────────────────────┤
+│  src/acl/ (7 CommonJS backend modules)                  │
+│  - parser.js is the FACADE — main.js imports ALL        │
+│    backend modules through it only                      │
+│  - scanner, flight_plans, world_state, dynamics,        │
+│    scenery, utils                                       │
+├─────────────────────────────────────────────────────────┤
+│  src/utils/ (shared utilities, ESM frontend + CJS back) │
+│  - constants.js — field defs, airline codes, getActiveCol│
+│  - timeUtils.js — time conversion + timeline helpers    │
+│  - i18n.js — Chinese/English translation system         │
+│  - validators.js — save validation logic                │
+│  - htmlUtils.js, csvIo.js, zipUtils.js, logger.js       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -50,132 +68,149 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ```
 AC27LevelEditor/
-├── main.js                  # Electron main process entry
-├── preload.js               # contextBridge (window.electronAPI)
+├── electron/
+│   ├── main.js              # Electron main process + ~20 IPC handlers
+│   └── preload.js           # contextBridge (window.electronAPI)
+├── index.html               # Vite HTML entry (<div id="root">)
+├── vite.config.js           # Vite 8 + @vitejs/plugin-react + vite-plugin-electron
 ├── package.json             # scripts, electron-builder config
 ├── build.js                 # RECOMMENDED build script (programmatic)
 ├── set_icon.js              # Post-build icon embedding
 ├── icon.ico / icon.png      # App icons
-├── README.md                # Comprehensive docs — read it first
+├── README.md                # Comprehensive docs
 │
 ├── src/
-│   ├── index.html           # SPA shell, loads 12 renderer scripts in order
-│   ├── style.css            # Dark theme, all app styles
-│   ├── renderer.js          # Entry renderer (IIFE bootstrap, screen routing)
+│   ├── main.jsx             # React entry: ReactDOM.createRoot → <App />
+│   ├── App.jsx              # Root component: providers + screen routing
+│   ├── style.css            # Global dark theme CSS variables + reset
 │   │
-│   ├── acl_parser.js        # FACADE — re-exports from all backend modules
-│   ├── acl_scanner.js       # Scans game root for airports & .acl files
-│   ├── acl_flight_plans.js  # FlightPlans format parse/generate (types 37/52/56/57/58)
-│   ├── acl_world_state.js   # WorldState format parse/generate (types 35/56/54)
-│   ├── acl_dynamics.js      # DynamicParams template capture & Aircraft entry builder
-│   ├── acl_scenery.js       # SceneryData parser (runway/gate GUID mapping)
-│   ├── acl_utils.js         # Import utilities (enrich, sort, collect, audio)
-│   ├── csv_io.js            # CSV import/export (standard + game format)
-│   ├── zip_utils.js         # Pure Node.js ZIP create/read/extract (zlib, no deps)
-│   ├── time_utils.js        # Newtonsoft.Json DateTime ticks ↔ HH:MM:SS
-│   ├── constants.js         # Shared constants (aircraft map, fields, tick offsets)
-│   ├── logger.js            # Console → file redirect (dev mode only)
+│   ├── components/
+│   │   ├── SetupScreen/     # Game root directory selection
+│   │   │   ├── SetupScreen.jsx  + .css
+│   │   ├── BrowserScreen/   # Airport card listing, file browsing
+│   │   │   ├── BrowserScreen.jsx + .css
+│   │   ├── EditorScreen/    # Main editor: toolbar + table + timelines
+│   │   │   ├── EditorScreen.jsx + .css
+│   │   │   ├── SearchBar.jsx     # Ctrl+F search (extracted component)
+│   │   │   ├── FlightTable/
+│   │   │   │   └── FlightTable.jsx + .css
+│   │   │   ├── CellEditor/
+│   │   │   │   ├── TimeClockPopover.jsx  # SVG clock picker
+│   │   │   │   ├── CompassPopover.jsx    # SVG compass picker
+│   │   │   │   └── CellEditor.css
+│   │   │   └── TimelineEditors/
+│   │   │       ├── WeatherEditor.jsx
+│   │   │       ├── WindEditor.jsx
+│   │   │       ├── RunwayEditor.jsx + .css
+│   │   │       ├── TimeCell.jsx         # Shared time cell with clock popover
+│   │   │       └── TimelineEditors.css
+│   │   └── common/
+│   │       ├── Modal.jsx + .css         # Declarative modal
+│   │       └── Toast.jsx + .css         # Declarative toast
 │   │
-│   └── renderer/            # 12 global-scope scripts (loaded by index.html)
-│       ├── data-constants.js    # Airport metadata, airline codes, field defs
-│       ├── state.js             # appState singleton — ALL shared state
-│       ├── ui-utils.js          # escapeHtml, showModal, showToast, showScreen
-│       ├── setup-screen.js      # Game root directory selection
-│       ├── browser-screen.js    # Airport card listing, file sorting/filtering
-│       ├── editor-core.js       # Flight table rendering, sorting, column mgmt
-│       ├── editor-shell.js      # Screen routing, keyboard shortcuts, modals
-│       ├── cell-editor.js       # Inline cell editing + SVG clock popover
-│       ├── flight-actions.js    # Add/delete/duplicate flight operations
-│       ├── save-actions.js      # Save with triple validation, Save As ZIP
-│       ├── import-actions.js    # ZIP import with backup
-│       └── timeline-editors.js  # Weather/Wind/Runway timeline inline editors
+│   ├── hooks/
+│   │   ├── useTranslation.jsx   # I18n Context Provider
+│   │   ├── useElectronAPI.jsx   # electronAPI Context Provider
+│   │   ├── useEditorShell.jsx   # Keyboard shortcuts (Ctrl+S, Delete, etc.)
+│   │   ├── useSaveAcl.jsx       # Save/export/backup logic
+│   │   └── useKeyboardShortcuts.js
+│   │
+│   ├── store/
+│   │   └── appStore.js          # zustand store — all app state
+│   │
+│   ├── acl/                     # Backend modules (CommonJS + some ESM)
+│   │   ├── parser.js            # FACADE — re-exports all backend modules
+│   │   ├── constants.js         # Shared constants (ESM, imported by parser)
+│   │   ├── scanner.js           # Scans game root for airports & .acl files
+│   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
+│   │   ├── world_state.js       # WorldState format (types 35/56/54)
+│   │   ├── dynamics.js          # DynamicParams templates & Aircraft entries
+│   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
+│   │   └── utils.js             # Enrichment, sorting, audio, import utils
+│   │
+│   └── utils/                   # Shared utilities (ESM + some CJS for backend)
+│       ├── constants.js         # Field defs, airline codes, getActiveColumns
+│       ├── timeUtils.js         # Tick↔time conversion, timeline helpers (CJS + ESM)
+│       ├── i18n.js              # Chinese/English translation (T(), getLang, setLang)
+│       ├── validators.js        # validateCallsigns, runTripleValidation
+│       ├── htmlUtils.js         # escapeHtml, stripSuffixes
+│       ├── csvIo.js             # CSV import/export
+│       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
+│       └── logger.js            # Console → file redirect (dev mode)
 │
-├── test/
-│   ├── parse_airport.js         # Smoke test: parse all airports
-│   ├── callsign_gen_test.js     # CallSign prefix validation
-│   ├── csv_vs_flightplans.js    # CSV vs ACL cross-check
-│   ├── e2e_save_load.js         # Full save/load round-trip
-│   ├── timeline_comparison.js   # JSON timelines vs ACL-embedded data
-│   ├── test_generate_timelines.js    # Timeline section generators
-│   ├── test_rebuild_sections.js      # FlightPlans/Aircrafts rebuild
-│   └── test_rebuild_timelines.js     # Weather/Wind/Runway section rebuild
-│
-├── dist/                    # Build output (gitignored)
-├── .github/workflows/       # CI: release.yml (Build & Release on v* tags)
-└── .claude/skills/          # Claude Code project skills
+├── test/                # 8 plain Node.js test scripts (no framework)
+└── dist/                # Build output (gitignored)
 ```
 
 ## Coding Conventions
 
-### Backend (Node.js / `src/*.js` + `main.js` + `preload.js`)
+### Backend (Node.js / `electron/*.js` + `src/acl/*.js`)
 
-**Module system:** CommonJS throughout.
+**Module system:** Primarily CommonJS. `parser.js` uses `require()` for most modules but also uses ESM `import` for `./constants.js`. New shared constants should use ESM so both frontend and backend can consume them.
 ```js
-// Import
-const { loadFlights, exportCSV } = require('./src/acl_parser.js');
-
-// Export
+const { loadFlights, exportCSV } = require('../src/acl/parser.js');
 module.exports = { publicFn, _privateFn };
 ```
 
 **Naming:**
 - `camelCase` for functions and variables
-- `_underscorePrefix` for private/internal functions (not exported, or exported only for testing)
+- `_underscorePrefix` for private/internal functions
 - `UPPER_SNAKE_CASE` for true constants
-- `PascalCase` only for class-like objects (rare — the codebase is procedural)
-
-**File naming:** `snake_case.js` — this is the established convention in this repo. Do NOT introduce kebab-case or PascalCase filenames.
+- `snake_case.js` filenames in `src/acl/`
 
 **Error handling:** Always return `{ success: true/false, error?: message }` from IPC handlers and I/O functions. Never throw across process boundaries.
 
-**Logging:** Use `console.log` with a `[TAG]` prefix for filtering:
-- `[IPC]` — main process IPC handlers
-- `[ACL-LOAD]` — ACL parsing
-- `[DYNAMICS]` — Dynamics template capture
-- `[RENDERER]` — renderer-side operations
+**Logging:** Use `console.log` with a `[TAG]` prefix: `[IPC]`, `[ACL-LOAD]`, `[DYNAMICS]`, `[RENDERER]`.
 
-**No external dependencies for core logic.** The app uses only Node.js built-ins (`fs`, `path`, `zlib`, `crypto`). Do not add npm dependencies without strong justification.
+**No external dependencies for core logic.** Uses only Node.js built-ins (`fs`, `path`, `zlib`, `crypto`). Do not add npm dependencies without strong justification.
 
-**Facade pattern:** `acl_parser.js` is the single entry point for all parsing/generation. `main.js` imports only from `acl_parser.js`. New parsing modules must be re-exported through `acl_parser.js`.
+**Facade pattern:** `src/acl/parser.js` is the single entry point. `electron/main.js` imports only from `parser.js`. New parsing modules must be re-exported through `parser.js`.
 
-### Frontend (Renderer / `src/renderer/*.js` + `src/renderer.js`)
+### Frontend (React / `src/components/*.jsx` + `src/hooks/*.jsx`)
 
-**No modules.** All files share the global `window` scope. The `<script>` load order in `index.html` IS the dependency graph. Files loaded earlier are available to files loaded later.
+**Module system:** ESM (`import`/`export`) throughout. Vite handles bundling.
 
-**Load order (critical — do not change without understanding dependencies):**
-1. `data-constants.js` — static data, no deps
-2. `state.js` — `appState` singleton, depends on data-constants
-3. `ui-utils.js` — DOM utilities, depends on state
-4. `setup-screen.js` — depends on ui-utils
-5. `browser-screen.js` — depends on ui-utils
-6. `editor-core.js` — depends on ui-utils
-7. `cell-editor.js` — depends on editor-core
-8. `flight-actions.js` — depends on editor-core, cell-editor
-9. `save-actions.js` — depends on editor-core
-10. `import-actions.js` — depends on save-actions
-11. `timeline-editors.js` — depends on editor-core
-12. `editor-shell.js` — LAST, wires everything together
+**Component patterns:**
+- One component per file (default export)
+- Each component has a matching `.css` file in the same directory
+- Sub-components that are only used by one parent may be defined in the same file
+- Shared sub-components go in their own file (e.g., `TimeCell.jsx`)
+- Use React hooks for state and side effects (never class components)
 
-**State management:** Single mutable `appState` object in `state.js`. All modules read/write it directly. Key fields:
-- `appState.flights[]` — the flight array being edited
-- `appState.modified` — unsaved changes flag
-- `appState.timelineModified` — `{ weather, wind, runway }` booleans
-- `appState.selectedIndices` — `Set` of selected flight indices
-- `appState.currentPath`, `appState.currentAirport` — active file context
+**File naming:**
+- `PascalCase.jsx` for components: `EditorScreen.jsx`, `FlightTable.jsx`
+- `camelCase.js` for non-React utilities: `constants.js`, `timeUtils.js`
+- `.css` files match their component: `EditorScreen.css`, `FlightTable.css`
 
-**DOM patterns:**
-- `document.getElementById('some-id')` for element access
-- `.innerHTML = array.map(...).join('')` for dynamic content
-- Event delegation on containers (e.g., click handler on `#sections-container`)
-- CSS class toggling for visibility: `element.classList.toggle('hidden', condition)`
+**CSS conventions:**
+- Global variables + reset in `src/style.css`
+- Component styles in `<ComponentName>.css` next to the `.jsx` file
+- NEVER use inline `style={{}}` — always extract to CSS classes
+- CSS class naming: BEM-like flat naming (`.modal-issues-body`, `.callsign-link`)
+- CSS custom properties (`--bg`, `--accent`, `--radius`, etc.) for theming
 
-**Function naming:**
-- `render*()` — functions that rebuild DOM subtrees (`renderWeatherEditor()`)
-- `handle*()` — event handlers (`handleSave()`, `handleClick()`)
-- `open*()` / `close*()` — screen/modal transitions (`openEditor()`, `closeModal()`)
-- `start*()` — begin an interaction (`startCellEdit()`)
+**State management (zustand):**
+- Single store in `src/store/appStore.js`
+- Components subscribe with selectors: `useAppStore(s => s.flights)`
+- Actions are defined in the store and called via `useAppStore.getState().actionName()`
+- NEVER mutate state directly — always use `set()` or store actions
+- `Set` and `Map` in state must be replaced with new instances on mutation
 
-**CSS:** Dark theme using CSS custom properties (`--bg`, `--accent`, `--radius`, `--transition`). BEM-like flat naming. Never add a CSS framework or utility library.
+**Hooks:**
+- Custom hooks in `src/hooks/` — one hook per file
+- `useTranslation()` — returns `{ t, lang, toggleLang }`
+- `useElectronAPI()` — returns the `window.electronAPI` bridge
+- `useEditorShell({ onSave })` — registers keyboard shortcuts
+- `useSaveAcl()` — returns `{ handleSave, handleSaveAs, handleBackup }`
+
+**React best practices:**
+- Hoist RegExp to module scope (never inside render)
+- Use `useMemo`/`useCallback` for expensive computations or stable callbacks
+- Never mutate props/state arrays — use spread `[...arr]` or `.toSorted()`
+- Always include proper dependency arrays in `useEffect`
+- Use `didInit` guard pattern for app-wide initialization effects
+- Never use `key={Math.random()}` — use stable keys
+- Never use `dangerouslySetInnerHTML` — render JSX elements instead
 
 ### IPC Patterns
 
@@ -189,30 +224,30 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 
 **Rules:**
 - Renderer NEVER accesses `require()` or Node.js APIs directly
-- All file I/O goes through IPC handlers in `main.js`
+- All file I/O goes through IPC handlers in `electron/main.js`
 - IPC channels use kebab-case strings matching the handler name
 - Every `ipcMain.handle()` must return `{ success: true/false }`
-- New IPC channels require: (1) handler in `main.js`, (2) bridge method in `preload.js`, (3) call site in renderer
+- New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer
 
 ### Test Conventions
 
 - No test framework. Tests are plain Node.js scripts run with `node test/<name>.js`
-- Tests `require('./src/acl_parser.js')` to access both public and `_private` functions
+- Tests `require('./src/acl/parser.js')` to access both public and `_private` functions
 - Many tests need a real game installation (Airport Control 27) at a known path
 - Tests print results to stdout — read the output to determine pass/fail
 - No mocking, no fixtures — tests operate on real files
 
 ## Three-Screen SPA
 
-The app is a single-page application with three screens managed by CSS visibility:
+The app is a single-page application with three screens managed by zustand state:
 
-| Screen | ID | Purpose | Trigger |
-|--------|-----|---------|---------|
-| Setup | `#screen-setup` | Select game root directory | First launch (no saved root) |
-| Browser | `#screen-browser` | Browse airports & level files | After setup completes |
-| Editor | `#screen-editor` | Edit flights in table + timelines | Click a level row |
+| Screen | Component | Purpose | Trigger |
+|--------|-----------|---------|---------|
+| Setup | `<SetupScreen />` | Select game root directory | First launch (no saved root) |
+| Browser | `<BrowserScreen />` | Browse airports & level files | After setup completes |
+| Editor | `<EditorScreen />` | Edit flights in table + timelines | Click a level row |
 
-Screen transitions: `showScreen(name)` in `ui-utils.js` toggles `.hidden` on all `.screen` divs.
+Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'s `ScreenRouter` renders the corresponding component.
 
 ## Data Flow: Load → Edit → Save
 
@@ -222,23 +257,22 @@ Screen transitions: `showScreen(name)` in `ui-utils.js` toggles `.hidden` on all
 3. `init-airport-cache` IPC → loads audio clips per airport → caches in memory
 
 ### Phase 1: Load Level
-1. User clicks a level row → `openEditor(filePath, airportIcao)`
-2. `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
-   → timelines parsed from WeatherFrames/WindFrames/RunwayTimeline sections
-   > `.acl` is the single source of truth. CSV and JSON are write-only for game compat.
-3. `load-timelines` IPC → reads `weather_timeline.json`, `wind_timeline.json`, `runway_timeline_*.json`
-4. `collect-values` IPC → builds dropdown option sets
-5. `load-audio-callsigns` IPC → loads airline/aircraft audio metadata
-6. Renderer populates `appState` and renders the flight table
+1. User clicks a level row → `window._pendingEditor = { filePath, airportIcao }` → `setScreen('editor')`
+2. EditorScreen's `useEffect` reads `window._pendingEditor` and loads:
+   - `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
+   - `load-timelines` IPC → reads `weather_timeline.json`, `wind_timeline.json`, `runway_timeline_*.json`
+   - `collect-values` IPC → builds dropdown option sets
+   - `load-audio-callsigns` IPC → loads airline/aircraft audio metadata
+3. Zustand store is populated and React renders the flight table
 
-### Phase 2: Edit (all local)
-- All edits mutate `appState` directly in the renderer process
-- `appState.modified = true` on any change
-- `appState.timelineModified[type] = true` on timeline changes
-- Auto-sort on time changes, auto-fill single-option dropdowns
+### Phase 2: Edit (all in zustand store)
+- All edits go through store actions: `updateFlight()`, `addArrivalFlight()`, `deleteSelected()`, etc.
+- `store.modified = true` on any change
+- `store.timelineModified[type] = true` on timeline changes
+- FlightNumber counter tracks next available number
 
 ### Phase 3: Save
-1. `handleSave()` → `runTripleValidation()`:
+1. `handleSave()` → `validateCallsigns()` → `runTripleValidation()`:
    - (a) Dropdown value validation — every field against valid options
    - (b) Time range validation — flights within config startTime/endTime bounds
    - (c) Runway timeline validation — active runways at each flight's time
@@ -274,7 +308,7 @@ Key section types:
 
 ### Running the app
 ```bash
-npm start          # Launch Electron in dev mode (no build step needed)
+npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 ```
 
 ### Running tests
@@ -283,28 +317,27 @@ All tests accept `--help` / `-h` for usage. Temp files are written to `test/` an
 
 **Scan-all tests (need game root, default `../../../` from test dir):**
 ```bash
-node test/test_parse_airport.js [--root <game-root>]     # Smoke test — parse all airports
-node test/test_callsign_gen.js [--root <game-root>]      # CallSign prefix validation
+node test/test_parse_airport.js [--root <game-root>]
+node test/test_callsign_gen.js [--root <game-root>]
 ```
 
 **Single-ACL tests (require `--acl <path>`, derive paired files automatically):**
 ```bash
-node test/test_e2e_save_load.js --acl <path>             # Full save/load round-trip
-node test/test_csv_vs_flightplans.js --acl <path>        # CSV ↔ ACL FlightPlans cross-check
-node test/test_rebuild_sections.js --acl <path>          # _rebuildWorldStateSections E2E
+node test/test_e2e_save_load.js --acl <path>
+node test/test_csv_vs_flightplans.js --acl <path>
+node test/test_rebuild_sections.js --acl <path>
 ```
 
-**Timeline tests (require `--acl <path>`, auto-discover JSONs; can override with `--weather`/`--wind`/`--runway`):**
+**Timeline tests (require `--acl <path>`, auto-discover JSONs):**
 ```bash
-node test/test_timeline_comparison.js <acl-path>         # JSON vs ACL timeline field-by-field comparison
-node test/test_generate_timelines.js --acl <path>        # generateFramesSection / generateRunwayTimelineSection
-node test/test_rebuild_timelines.js --acl <path>         # _rebuildTimelineSections E2E (6 sub-tests)
+node test/test_timeline_comparison.js <acl-path>
+node test/test_generate_timelines.js --acl <path>
+node test/test_rebuild_timelines.js --acl <path>
 ```
 
 ### Building
 ```bash
 # ALWAYS use build.js — never npm run build:win directly
-# (PowerShell's watch-mode detection kills the npm script mid-way)
 node build.js        # Build Windows portable EXE → dist/AC27LevelEditor.exe
 node set_icon.js     # Post-build: embed icon.ico into the EXE
 ```
@@ -324,19 +357,21 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ## Key Rules for Agents
 
-1. **No bundler, no TypeScript.** This is plain JS. Do not add `tsconfig.json`, `vite.config.js`, `webpack.config.js`, or any build tooling.
-2. **No linter/formatter.** Do not add ESLint, Prettier, or any linting config unless explicitly asked.
-3. **No test framework.** Tests are `node test/script.js`. Do not add Jest, Mocha, or Vitest unless asked.
-4. **No npm dependencies for core logic.** The app uses only Node.js built-ins. Justify any new dependency.
-5. **Preserve CommonJS.** Do not convert to ESM (`import`/`export`). The backend uses `require()`/`module.exports`.
-6. **Preserve global scope for renderer.** Do not add `<script type="module">` or convert renderer files to ES modules.
-7. **IPC for all file I/O.** The renderer never touches the filesystem. All reads/writes go through `main.js` handlers.
-8. **Return `{ success }` from IPC.** Every handler returns `{ success: true/false, error?: string }`.
-9. **`_underscore` = private.** Prefix internal functions with `_`. Export them anyway for testing.
-10. **`snake_case.js` filenames.** Match the existing convention for all new source and test files.
-11. **Update the facade.** New backend modules must be re-exported through `acl_parser.js`.
-12. **Respect the `<script>` load order.** New renderer modules must be inserted at the correct position in `index.html`.
-13. **Build with `node build.js`** on Windows, never `npm run build:win`.
-14. **Keep documentation in sync.** After any significant change (new file, new module, new IPC channel, new test, dependency change, architecture change), update BOTH:
-    - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`) — update the directory tree, architecture diagram, data flow, command list, or rules if the change affects them.
-    - **README.md** — update the project structure tree, feature table, test list, or build instructions. The README is the human-facing summary; the skill is the agent-facing reference. Both must stay accurate.
+1. **React + Vite + zustand stack.** Frontend uses ESM, JSX, and React hooks. No global-scope scripts.
+2. **No TypeScript.** This is plain JS/JSX. Do not add `tsconfig.json` or convert files to `.tsx`.
+3. **No linter/formatter.** Do not add ESLint, Prettier, or any linting config unless explicitly asked.
+4. **No test framework.** Tests are `node test/script.js`. Do not add Jest, Mocha, or Vitest unless asked.
+5. **No npm dependencies for core logic.** The app uses only Node.js built-ins. Justify any new dependency.
+6. **Preserve CommonJS for backend.** `electron/` and `src/acl/` use `require()`/`module.exports`.
+7. **ESM for frontend.** `src/components/`, `src/hooks/`, `src/store/`, `src/utils/` use `import`/`export`.
+8. **IPC for all file I/O.** The renderer never touches the filesystem. All reads/writes go through `electron/main.js` handlers.
+9. **Return `{ success }` from IPC.** Every handler returns `{ success: true/false, error?: string }`.
+10. **`_underscore` = private in backend.** Prefix internal functions with `_`. Export them anyway for testing.
+11. **`snake_case.js` for backend, `PascalCase.jsx` for components.** Match existing conventions.
+12. **No inline `style={{}}`.** Always extract CSS to the component's `.css` file.
+13. **One `.css` per component.** Match the component filename.
+14. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
+15. **Build with `node build.js`** on Windows, never `npm run build:win`.
+16. **Keep documentation in sync.** After any significant change, update BOTH:
+    - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`)
+    - **README.md**

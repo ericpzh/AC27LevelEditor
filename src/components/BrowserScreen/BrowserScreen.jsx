@@ -6,6 +6,12 @@ import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
 import { escapeHtml, stripSuffixes } from '../../utils/htmlUtils';
 
+// Module-scope regexps — hoisted per AGENTS rule 7.10
+const RE_TUTORIAL = /tutorial/i;
+const RE_DEMO = /demo/i;
+const RE_TEST = /bench|test|crossrunway|dev|\.prod/i;
+const RE_ENDLESS = /endless/i;
+
 export default function BrowserScreen() {
   const { t, toggleLang } = useTranslation();
   const electronAPI = useElectronAPI();
@@ -27,15 +33,15 @@ export default function BrowserScreen() {
       const sorted = [...airports].sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao));
       const allInfos = {};
       for (const airport of sorted) {
-        const infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
+        let infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
         for (const info of infos) {
           const name = info.filename.toLowerCase();
           info._hidden = false; info._metaLabels = [];
           if (info.error) { info._hidden = true; info._metaLabels.push({ label: t('browser_parse_error'), type: 'error' }); }
-          else if (/tutorial/i.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_tutorial'), type: 'tutorial' }); }
-          else if (/demo/i.test(name)) { info._hidden = true; info._metaLabels.push({ label: 'Demo', type: 'demo' }); }
-          else if (/bench|test|crossrunway|dev|\.prod/i.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_test'), type: 'test' }); }
-          else if (/endless/i.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_endless'), type: 'endless' }); }
+          else if (RE_TUTORIAL.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_tutorial'), type: 'tutorial' }); }
+          else if (RE_DEMO.test(name)) { info._hidden = true; info._metaLabels.push({ label: 'Demo', type: 'demo' }); }
+          else if (RE_TEST.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_test'), type: 'test' }); }
+          else if (RE_ENDLESS.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_endless'), type: 'endless' }); }
           if (!info._hidden && info.startTime && info.endTime) {
             const toHHMM = s => String(s).substring(0, 5);
             info._metaLabels.push({ label: toHHMM(info.startTime) + '-' + toHHMM(info.endTime), type: 'timerange' });
@@ -49,7 +55,7 @@ export default function BrowserScreen() {
             info._metaLabels.push({ label: todLabel, type: 'tod', tod: todType });
           }
         }
-        infos.sort((a, b) => { const aT=/tutorial/i.test(a.filename)?0:1, bT=/tutorial/i.test(b.filename)?0:1; if(aT!==bT)return aT-bT; return (a.startTime||'99:99').localeCompare(b.startTime||'99:99'); });
+        infos = [...infos].sort((a, b) => { const aT=RE_TUTORIAL.test(a.filename)?0:1, bT=RE_TUTORIAL.test(b.filename)?0:1; if(aT!==bT)return aT-bT; return (a.startTime||'99:99').localeCompare(b.startTime||'99:99'); });
         allInfos[airport.icao] = infos;
       }
       if (!cancelled) { setFileInfos(allInfos); setLoading(false); }
@@ -114,7 +120,7 @@ export default function BrowserScreen() {
                     <span className="level-timerange"></span>
                     <span className="level-name">{info.filename}</span>
                     {badgeTags.length>0 && <span className="level-tags">{badgeTags.map((l,j)=><span key={j} className={`level-tag tag-${l.type}`}>{escapeHtml(getLabel(l))}</span>)}</span>}
-                    <span className="level-stats" style={{color:'var(--red)'}}>{info.error}</span>
+                    <span className="level-stats level-error-text">{info.error}</span>
                     <span className="level-arrow">→</span>
                   </div>
                 );

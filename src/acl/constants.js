@@ -1,14 +1,9 @@
 /**
- * Shared constants used across the ACL parser and renderer.
+ * Shared constants used across the ACL parser.
+ * Re-exports tick constants from ../utils/constants.js.
  */
 
-// ─── Newtonsoft.Json DateTime ticks ──────────────────────
-const NET_EPOCH_OFFSET = 621355968000000000n;
-const TICKS_PER_SECOND = 10000000n;
-const TICKS_PER_DAY = 86400n * TICKS_PER_SECOND;
-
-// Fallback base date ticks: ~2000-01-01 midnight UTC
-const FALLBACK_BASE_DATE_TICKS = 630822816000000000;
+export { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS } from '../utils/constants';
 
 // ─── CSV field definitions ─────────────────────────────
 const FIELDS = [
@@ -42,8 +37,6 @@ const DROPDOWN_FIELDS = [
   'Voice', 'Language', 'Registration', 'Airway',
 ];
 
-module.exports = {
-  NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY,
-  FALLBACK_BASE_DATE_TICKS,
+export {
   FIELDS, FIELD_LABELS, DROPDOWN_FIELDS,
 };

@@ -1,49 +1,46 @@
 ---
-title: Defer Non-Critical Third-Party Libraries
+title: Defer Non-Critical Libraries
 impact: MEDIUM
-impactDescription: loads after hydration
-tags: bundle, third-party, analytics, defer
+impactDescription: loads after initial render
+tags: bundle, third-party, analytics, defer, react-lazy
 ---
 
-## Defer Non-Critical Third-Party Libraries
+## Defer Non-Critical Libraries
 
-Analytics, logging, and error tracking don't block user interaction. Load them after hydration.
+Analytics, logging, and error tracking don't block user interaction. Load them lazily after the initial render.
 
 **Incorrect (blocks initial bundle):**
 
-```tsx
-import { Analytics } from '@vercel/analytics/react'
+```jsx
+import { Analytics } from './analytics'
 
-export default function RootLayout({ children }) {
-  return (
-    <html>
-      <body>
-        {children}
-        <Analytics />
-      </body>
-    </html>
-  )
+function App() {
+  useEffect(() => {
+    Analytics.track('page_view')
+  }, [])
+  return <Main />
 }
 ```
 
-**Correct (loads after hydration):**
+**Correct (loads after initial render):**
 
-```tsx
-import dynamic from 'next/dynamic'
+```jsx
+import React, { Suspense } from 'react'
 
-const Analytics = dynamic(
-  () => import('@vercel/analytics/react').then(m => m.Analytics),
-  { ssr: false }
+const Analytics = React.lazy(() =>
+  import('./analytics').then(m => ({ default: m.Analytics }))
 )
 
-export default function RootLayout({ children }) {
+function App() {
   return (
-    <html>
-      <body>
-        {children}
+    <>
+      <Main />
+      <Suspense fallback={null}>
         <Analytics />
-      </body>
-    </html>
+      </Suspense>
+    </>
   )
 }
 ```
+
+In a Vite/Electron context, `import()` is handled by Vite's code-splitting and works natively in Chromium.

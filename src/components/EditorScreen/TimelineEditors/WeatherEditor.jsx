@@ -2,35 +2,8 @@ import React, { useState, useMemo } from 'react';
 import './TimelineEditors.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
-import ClockPopover from '../CellEditor/TimeClockPopover';
-
-function timeToMinutes(timeStr) { const parts = String(timeStr).split(':'); return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10); }
-function timeToSeconds(timeStr) { const parts = String(timeStr).split(':'); return (parseInt(parts[0], 10) || 0) * 3600 + (parseInt(parts[1], 10) || 0) * 60 + (parseInt(parts[2], 10) || 0); }
-function sortTimelineByTime(timeline) { timeline.sort((a, b) => timeToSeconds(a.time) - timeToSeconds(b.time)); }
-function getTimelineActiveRange(timeline, configStartTime, configEndTime) {
-  if (!configStartTime || !configEndTime) return { validMinTime: null, validMaxTime: null, activeIndices: new Set((timeline||[]).map((_, i) => i)), totalCount: (timeline||[]).length };
-  const start = timeToMinutes(configStartTime), end = timeToMinutes(configEndTime);
-  const activeIndices = new Set();
-  for (let i = 0; i < timeline.length; i++) { const t = timeToMinutes(timeline[i].time); if (t > start && t < end) activeIndices.add(i); }
-  return { validMinTime: start, validMaxTime: end, activeIndices, totalCount: timeline.length };
-}
-function TimeCell({ value, onChange }) {
-  const [show, setShow] = useState(false);
-  return (
-    <>
-      <span className="tl-input" style={{cursor:'pointer'}} onClick={() => setShow(true)}>{value || ''}</span>
-      {show && <ClockPopover value={value || '00:00:00'} col="Time" onCommit={v => { onChange(v); setShow(false); }} onClose={() => setShow(false)} />}
-    </>
-  );
-}
-
-function getDefaultTime(appState) {
-  const s = appState._configStartTime, e = appState._configEndTime;
-  if (s && e) { const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); }; const mid = Math.floor((toMin(s) + toMin(e)) / 2); return String(Math.floor(mid / 60) % 24).padStart(2, '0') + ':' + String(mid % 60).padStart(2, '0') + ':00'; }
-  if (s) return String(s).substring(0, 8);
-  if (e) return String(e).substring(0, 8);
-  return '12:00:00';
-}
+import { sortTimelineByTime, getTimelineActiveRange, getDefaultTime } from '../../../utils/timeUtils';
+import TimeCell from './TimeCell';
 
 const PRESETS = ['Sunny','FewCloudy','MidCloudy','PartlyCloudy','OvercastSky','AfterRain'];
 

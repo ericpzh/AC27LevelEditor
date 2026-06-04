@@ -1,9 +1,9 @@
 /**
  * ACL WorldState parser — TaskFlightState (type 56/54) and AircraftState (type 35).
  */
-const {
+import {
   TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS,
-} = require('../constants');
+} from './constants';
 const {
   ticksToTime, timeToTicks, _extractBaseDateFromText,
 } = require('../utils/timeUtils');

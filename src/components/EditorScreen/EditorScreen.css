@@ -159,3 +159,59 @@
   color: var(--accent);
   white-space: nowrap;
 }
+
+/* ─── Modal shared helpers ─────────────────────────────── */
+.modal-issues-body {
+  max-height: 400px;
+  overflow: auto;
+  text-align: left;
+}
+
+.modal-issue-item {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.modal-hint-error {
+  color: var(--red);
+  font-size: 13px;
+}
+
+.modal-actions-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.modal-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.modal-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.modal-warning-text {
+  color: var(--orange);
+}
+
+.callsign-link {
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.import-body-text {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+/* Search bar visibility toggled via class */
+.search-bar.hidden { display: none; }

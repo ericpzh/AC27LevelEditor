@@ -88,9 +88,10 @@ On first launch, select the game root folder:
 ### Tech Stack
 
 - **Runtime:** Electron 33
+- **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **No bundler, no framework, no test runner** — deliberately minimal
+- **No test framework** — tests are plain Node.js scripts
 
 ### Quick Start
 
@@ -102,14 +103,19 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-main.js          →  Electron main process, all IPC handlers, file I/O
-preload.js       →  contextBridge: exposes window.electronAPI to renderer
-src/index.html   →  SPA shell, loads 12 renderer scripts in dependency order
-src/renderer/    →  12 global-scope JS files (no ES modules)
-src/*.js         →  12 CommonJS backend modules, single facade entry point
+electron/main.js     →  Electron main process, all IPC handlers, file I/O
+electron/preload.js  →  contextBridge: exposes window.electronAPI to renderer
+index.html           →  Vite HTML entry, loads src/main.jsx
+src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
+src/App.jsx          →  Root component: providers + screen routing
+src/components/      →  React component tree (Setup, Browser, Editor, common)
+src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
+src/store/           →  zustand store (single source of truth for all UI state)
+src/acl/             →  CommonJS backend modules (parser facade + 6 modules)
+src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by CSS visibility: **Setup → Browser → Editor**.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
@@ -117,47 +123,63 @@ All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The ren
 
 ```
 Phase 0 (once):   Game Root → scan audio clips → AirportCache
-Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → appState
-Phase 2 (edit):   All edits mutate appState in-memory (renderer only)
+Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → zustand store
+Phase 2 (edit):   All edits go through zustand store actions
 Phase 3 (save):   Validation → write .acl + .csv + timeline .json (game compat)
 ```
 
 ### Project Structure
 
 ```
-├── main.js              # Electron main process + ~20 IPC handlers
-├── preload.js           # contextBridge (window.electronAPI)
-├── build.js             # Build script (always use this, never npm run build:win)
-├── set_icon.js          # Post-build icon embedding
+├── electron/
+│   ├── main.js              # Electron main process + ~20 IPC handlers
+│   └── preload.js           # contextBridge (window.electronAPI)
+├── index.html               # Vite HTML entry
+├── vite.config.js           # Vite 8 + React plugin + Electron plugin
+├── build.js                 # Build script (always use this, never npm run build:win)
+├── set_icon.js              # Post-build icon embedding
 │
 ├── src/
-│   ├── acl_parser.js        # FACADE — main.js imports everything through here
-│   ├── acl_scanner.js       # Game root scanner (finds airports & .acl files)
-│   ├── acl_flight_plans.js  # FlightPlans format (types 37/52/57/58)
-│   ├── acl_world_state.js   # WorldState format (types 35/56/54)
-│   ├── acl_dynamics.js      # DynamicParams templates & Aircraft entries
-│   ├── acl_scenery.js       # SceneryData parser (runway/gate GUIDs)
-│   ├── acl_utils.js         # Enrichment, sorting, audio loading
-│   ├── csv_io.js            # CSV import/export (standard + game format)
-│   ├── zip_utils.js         # Pure Node.js ZIP (zlib, no dependencies)
-│   ├── time_utils.js        # Newtonsoft.Json DateTime ticks ↔ HH:MM:SS
-│   ├── constants.js         # Shared constants & aircraft designator map
-│   ├── logger.js            # Console → file redirect (dev mode)
-│   ├── index.html           # SPA shell
-│   ├── style.css            # Dark theme
-│   └── renderer/            # 12 UI modules (global scope, loaded by index.html)
-│       ├── data-constants.js    # Airport metadata, airline codes
-│       ├── state.js             # appState singleton
-│       ├── ui-utils.js          # showScreen, showToast, showModal
-│       ├── setup-screen.js      # Game root picker
-│       ├── browser-screen.js    # Level browser
-│       ├── editor-core.js       # Flight table rendering
-│       ├── cell-editor.js       # Inline cell editing + SVG clock
-│       ├── flight-actions.js    # Add/delete/duplicate flights
-│       ├── save-actions.js      # Save with validation
-│       ├── import-actions.js    # ZIP import
-│       ├── timeline-editors.js  # Weather/Wind/Runway editors
-│       └── editor-shell.js      # Keyboard shortcuts, event wiring
+│   ├── main.jsx             # React entry point (createRoot)
+│   ├── App.jsx              # Root component: providers + screen router
+│   ├── style.css            # Global dark theme CSS variables + reset
+│   │
+│   ├── components/
+│   │   ├── SetupScreen/         # Game root directory picker
+│   │   ├── BrowserScreen/       # Airport & level browser
+│   │   ├── EditorScreen/        # Main editor: table + timelines
+│   │   │   ├── FlightTable/     # Sortable flight table with inline editing
+│   │   │   ├── CellEditor/      # SVG clock & compass popovers
+│   │   │   └── TimelineEditors/ # Weather, Wind, Runway editors
+│   │   └── common/              # Modal, Toast
+│   │
+│   ├── hooks/               # React custom hooks
+│   │   ├── useTranslation.jsx   # I18n Context Provider (zh/en)
+│   │   ├── useElectronAPI.jsx   # electronAPI Context Provider
+│   │   ├── useEditorShell.jsx   # Keyboard shortcuts
+│   │   └── useSaveAcl.jsx       # Save/export/backup logic
+│   │
+│   ├── store/
+│   │   └── appStore.js      # zustand store — all app state
+│   │
+│   ├── acl/                 # Backend modules (CommonJS)
+│   │   ├── parser.js            # FACADE — main.js imports everything through here
+│   │   ├── scanner.js           # Game root scanner
+│   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
+│   │   ├── world_state.js       # WorldState format (types 35/56/54)
+│   │   ├── dynamics.js          # DynamicParams templates & Aircraft entries
+│   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
+│   │   └── utils.js             # Enrichment, sorting, audio, import utils
+│   │
+│   └── utils/               # Shared utilities (ESM for frontend)
+│       ├── constants.js         # Field defs, airline codes, getActiveColumns
+│       ├── timeUtils.js         # Tick↔time conversion + timeline helpers
+│       ├── i18n.js              # Chinese/English translation system
+│       ├── validators.js        # Save validation logic
+│       ├── htmlUtils.js         # escapeHtml, stripSuffixes
+│       ├── csvIo.js             # CSV import/export
+│       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
+│       └── logger.js            # Console → file redirect (dev mode)
 │
 ├── test/                # 8 plain Node.js test scripts (no framework)
 └── dist/                # Build output (gitignored)
@@ -168,7 +190,8 @@ Phase 3 (save):   Validation → write .acl + .csv + timeline .json (game compat
 For detailed conventions, see the repo skill (loaded automatically by Claude Code). Quick reference:
 
 - **Backend:** CommonJS (`require`/`module.exports`), `snake_case.js` filenames, `_underscore` = private
-- **Frontend:** Global scope `<script>` tags in dependency order, `appState` singleton, `camelCase` functions
+- **Frontend:** ESM (`import`/`export`), React components (`PascalCase.jsx`), zustand selectors
+- **CSS:** One `.css` file per component, no inline `style={{}}`, CSS custom properties for theming
 - **IPC:** All file I/O via `ipcMain.handle` → `preload.js` bridge → `window.electronAPI`
 - **Error handling:** Return `{ success: true/false, error?: message }` from all IPC handlers
 - **No new dependencies** unless strongly justified — the app uses only Node.js built-ins
@@ -232,8 +255,8 @@ GitHub Actions workflow (`.github/workflows/release.yml`): pushes to `v*` tags t
 ## 开发者摘要
 
 ### 技术栈
-- Electron 33，纯 JavaScript（无 TypeScript、无打包工具、无测试框架）
-- 后端使用 CommonJS 模块，前端使用全局 `<script>` 标签加载
+- Electron 33，React 19 + Vite 8 + zustand 5，纯 JavaScript（无 TypeScript、无测试框架）
+- 后端使用 CommonJS 模块，前端使用 ESM + React 组件
 - 所有文件读写通过 Electron IPC，渲染进程不直接访问文件系统
 
 ### 快速开始
@@ -244,8 +267,8 @@ npm start    # 开发模式启动
 
 ### 运行测试
 ```bash
-node test/e2e_save_load.js    # 完整存取往返测试
-node test/parse_airport.js    # 解析所有机场
+node test/test_e2e_save_load.js    # 完整存取往返测试
+node test/test_parse_airport.js    # 解析所有机场
 # ... 共 8 个测试脚本
 ```
 

@@ -1,26 +1,17 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import './EditorScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore, initFlightNumberCounter } from '../../store/appStore';
 import { useEditorShell } from '../../hooks/useEditorShell';
 import { validateCallsigns, runTripleValidation } from '../../utils/validators';
-import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS } from '../../utils/constants';
+import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import FlightTable from './FlightTable/FlightTable';
 import WeatherEditor from './TimelineEditors/WeatherEditor';
 import WindEditor from './TimelineEditors/WindEditor';
 import RunwayEditor from './TimelineEditors/RunwayEditor';
-
-function getActiveColumns(flights, fieldList) {
-  const cols = [];
-  for (const [fn] of ALL_FIELDS) {
-    if (!fieldList.includes(fn)) continue;
-    if (fn === 'AirlineCode' || fn === 'FlightNum') cols.push(fn);
-    else if (flights.some(fl => (fl[fn] || '').trim())) cols.push(fn);
-  }
-  return cols;
-}
+import SearchBar, { searchAPI } from './SearchBar';
 
 // ─── Sub-components ────────────────────────────────────────
 
@@ -53,55 +44,6 @@ function StatusBar() {
         <span>{t('status_total')} {flights.length}</span>
       </span>
     </footer>
-  );
-}
-
-// Module-level API so jumpToCallsign can trigger search from outside
-const searchAPI = { current: null };
-
-function SearchBar() {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [term, setTerm] = useState('');
-  const [matches, setMatches] = useState([]);
-  const [idx, setIdx] = useState(0);
-  const inputRef = React.useRef(null);
-
-  const flights = useAppStore(s => s.flights);
-
-  // Expose search controls so jumpToCallsign can trigger from outside
-  useEffect(() => {
-    searchAPI.current = { setOpen, setTerm, inputRef };
-    return () => { searchAPI.current = null; };
-  });
-
-  const doSearch = (val) => {
-    setTerm(val);
-    if (!val.trim()) { setMatches([]); return; }
-    const lower = val.toLowerCase();
-    const results = []; // DOM rows not in React — skip for now
-    setMatches(results);
-  };
-
-  // Keyboard shortcut: Ctrl+F toggles search
-  useEffect(() => {
-    const h = (e) => {
-      if ((e.ctrlKey||e.metaKey) && e.key === 'f' && useAppStore.getState().screen === 'editor') {
-        e.preventDefault(); setOpen(o => { if (!o) setTimeout(() => inputRef.current?.focus(), 0); return !o; });
-      }
-    };
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
-  }, []);
-
-  return (
-    <div id="search-bar" className="search-bar" style={{ display: open ? 'flex' : 'none' }}>
-      <input ref={inputRef} id="search-input" type="text" value={term} onChange={e => doSearch(e.target.value)} placeholder={t('search_placeholder')} />
-      <span id="search-count" className="search-count">{matches.length === 0 && term ? t('search_no_matches') : matches.length > 0 ? `${idx+1}/${matches.length}` : ''}</span>
-      <button id="search-prev" className="btn-sm" onClick={() => setIdx(i => (i-1+matches.length)%matches.length)}>↑</button>
-      <button id="search-next" className="btn-sm" onClick={() => setIdx(i => (i+1)%matches.length)}>↓</button>
-      <button id="search-close" className="search-close" onClick={() => setOpen(false)}>✕</button>
-    </div>
   );
 }
 
@@ -178,7 +120,7 @@ export default function EditorScreen() {
     const cs = csMatch[1];
     return (
       <span>
-        <span style={{cursor:'pointer',color:'var(--accent)',textDecoration:'underline'}} onClick={() => { hideModal(); jumpToCallsign(cs); }}>
+        <span className="callsign-link" onClick={() => { hideModal(); jumpToCallsign(cs); }}>
           {cs}
         </span>
         {text.substring(cs.length)}
@@ -191,11 +133,11 @@ export default function EditorScreen() {
     if (!st.currentPath) { showToast(t('toast_no_file'),'error'); return; }
     if (!st.flights.length) { showToast(t('toast_no_flight_data'),'error'); return; }
     const dupes = validateCallsigns(st.flights);
-    if (dupes.length > 0) { showModal(t('modal_duplicate_title'), <div>{t('modal_duplicate_body')}<br/><br/>{dupes.map(d=><strong key={d} style={{cursor:'pointer',color:'var(--accent)',textDecoration:'underline'}} onClick={()=>{hideModal();jumpToCallsign(d);}}>{d}</strong>).reduce((a,b)=>[a,<br key={Math.random()}/>,b])}<br/><br/><span style={{color:'var(--red)'}}>{t('modal_duplicate_save_cancelled')}</span></div>); return; }
+    if (dupes.length > 0) { showModal(t('modal_duplicate_title'), <div>{t('modal_duplicate_body')}<br/><br/>{dupes.map((d, i) => [i > 0 && <br key={`sep-${d}`} />, <strong key={d} className="callsign-link" onClick={()=>{hideModal();jumpToCallsign(d);}}>{d}</strong>])}<br/><br/><span className="modal-hint-error">{t('modal_duplicate_save_cancelled')}</span></div>); return; }
     const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._earliestTime, st._configStartTime, st._configEndTime, st.runwayTimeline);
-    if (issues.length > 0) { showModal(t('modal_issues_title',{n:issues.length}), <div style={{maxHeight:400,overflow:'auto',textAlign:'left'}}>{issues.map((issue,i)=><p key={i} style={{margin:'4px 0',fontSize:13}}>{renderCallsignLink(issue)}</p>)}<p style={{color:'var(--red)',fontSize:13}}>{t('modal_issues_fix_hint_save')}</p></div>, <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
-    showModal(t('modal_backup_title'), <label style={{display:'flex',alignItems:'center',gap:8,fontSize:14}}><input type="checkbox" id="chk-save-backup" defaultChecked style={{width:16,height:16,margin:0,flexShrink:0,accentColor:'var(--accent)'}} /><span>{t('modal_backup_checkbox')}</span></label>,
-      <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={async()=>{const cb=document.getElementById('chk-save-backup');hideModal();await doSave(cb?cb.checked:true);}}>{t('modal_btn_confirm_save')}</button></div>);
+    if (issues.length > 0) { showModal(t('modal_issues_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((issue,i)=><p key={i} className="modal-issue-item">{renderCallsignLink(issue)}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_save')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
+    showModal(t('modal_backup_title'), <label className="modal-checkbox-row"><input type="checkbox" id="chk-save-backup" defaultChecked className="modal-checkbox" /><span>{t('modal_backup_checkbox')}</span></label>,
+      <div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={async()=>{const cb=document.getElementById('chk-save-backup');hideModal();await doSave(cb?cb.checked:true);}}>{t('modal_btn_confirm_save')}</button></div>);
   };
 
   const handleSaveAs = async () => {
@@ -203,9 +145,9 @@ export default function EditorScreen() {
     if (!st.currentPath) { showToast(t('toast_no_file'),'error'); return; }
     if (!st.flights.length) { showToast(t('toast_no_flight_data'),'error'); return; }
     const dupes = validateCallsigns(st.flights);
-    if (dupes.length > 0) { showModal(t('modal_duplicate_title'), <span>{t('modal_duplicate_body')}<br/><br/><span style={{color:'var(--red)'}}>{t('modal_duplicate_export_cancelled')}</span></span>); return; }
+    if (dupes.length > 0) { showModal(t('modal_duplicate_title'), <span>{t('modal_duplicate_body')}<br/><br/><span className="modal-hint-error">{t('modal_duplicate_export_cancelled')}</span></span>); return; }
     const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._earliestTime, st._configStartTime, st._configEndTime, st.runwayTimeline);
-    if (issues.length > 0) { showModal(t('modal_issues_export_title',{n:issues.length}), <div style={{maxHeight:400,overflow:'auto'}}>{issues.map((i,idx)=><p key={idx}>{i}</p>)}<p style={{color:'var(--red)'}}>{t('modal_issues_fix_hint_export')}</p></div>, <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
+    if (issues.length > 0) { showModal(t('modal_issues_export_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((i,idx)=><p key={idx} className="modal-issue-item">{i}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_export')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
     await doSave(false);
     const result = await electronAPI.exportZip({ aclPath: st.currentPath });
     if (result.canceled) return;
@@ -218,7 +160,7 @@ export default function EditorScreen() {
     const hasMod = st.modified || st.timelineModified.weather || st.timelineModified.wind || st.timelineModified.runway;
     if (!hasMod) { setScreen('browser'); return; }
     showModal(t('modal_unsaved_title'), <p>{t('modal_unsaved_body')}</p>,
-      <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+      <div className="modal-actions-row">
         <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
         <button className="btn-confirm" onClick={() => { hideModal(); useAppStore.setState({ modified: false, timelineModified: { weather: false, wind: false, runway: false }, selectedIndices: new Set() }); setScreen('browser'); }}>{t('modal_btn_discard')}</button>
       </div>);
@@ -238,8 +180,8 @@ export default function EditorScreen() {
     if (!st.currentPath) { showToast(t('toast_no_file'), 'error'); return; }
     showModal(
       t('modal_restore_title'),
-      <p style={{ color: 'var(--orange)' }}>{t('modal_restore_warning')}</p>,
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+      <p className="modal-warning-text">{t('modal_restore_warning')}</p>,
+      <div className="modal-actions-row">
         <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
         <button className="btn-confirm" onClick={async () => {
           hideModal();
@@ -263,13 +205,13 @@ export default function EditorScreen() {
     showModal(
       t('modal_import_backup_title'),
       <div>
-        <p style={{ fontSize: 14, marginBottom: 12 }}>{t('modal_import_body')}</p>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
-          <input type="checkbox" id="chk-import-backup" defaultChecked style={{width:16,height:16,margin:0,flexShrink:0,accentColor:'var(--accent)'}} />
+        <p className="import-body-text">{t('modal_import_body')}</p>
+        <label className="modal-checkbox-row">
+          <input type="checkbox" id="chk-import-backup" defaultChecked className="modal-checkbox" />
           <span>{t('modal_import_checkbox')}</span>
         </label>
       </div>,
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+      <div className="modal-actions-row">
         <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
         <button className="btn-confirm" onClick={async () => {
           const cb = document.getElementById('chk-import-backup');

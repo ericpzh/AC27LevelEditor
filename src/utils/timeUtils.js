@@ -1,10 +1,10 @@
 /**
  * Time conversion utilities — Newtonsoft.Json DateTime ticks ↔ HH:MM:SS strings.
  */
-const { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS } = require('../constants');
+import { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS } from './constants';
 
 // ─── Tick ↔ Time conversion ─────────────────────────────
-function ticksToTime(ticks) {
+export function ticksToTime(ticks) {
   if (ticks === 0 || ticks === '0' || ticks === 0n) return '';
   const ticksBig = BigInt(ticks);
   const ms = Number((ticksBig - NET_EPOCH_OFFSET) / 10000n);
@@ -12,7 +12,7 @@ function ticksToTime(ticks) {
   return d.toISOString().substring(11, 19);
 }
 
-function timeToTicks(timeStr, baseDateTicks) {
+export function timeToTicks(timeStr, baseDateTicks) {
   if (!timeStr || !timeStr.trim()) return 0;
   try {
     const parts = timeStr.trim().split(':').map(Number);
@@ -24,7 +24,7 @@ function timeToTicks(timeStr, baseDateTicks) {
 }
 
 // ─── Base date extraction from ACL text ─────────────────
-function _extractBaseDateFromText(text) {
+export function _extractBaseDateFromText(text) {
   const btMatch = text.match(/"BaseTime"\s*:\s*\{\s*"\$type"\s*:\s*3\s*,\s*(-?\d+)\s*\}/);
   if (btMatch) {
     const ticks = BigInt(btMatch[1]);
@@ -45,23 +45,23 @@ function _extractBaseDateFromText(text) {
 }
 
 // ─── Simple time helpers (used by React frontend) ──────────
-function timeToMinutes(timeStr) {
+export function timeToMinutes(timeStr) {
   const parts = String(timeStr).split(':');
   return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
 }
-function timeToSeconds(timeStr) {
+export function timeToSeconds(timeStr) {
   const parts = String(timeStr).split(':');
   return (parseInt(parts[0], 10) || 0) * 3600 + (parseInt(parts[1], 10) || 0) * 60 + (parseInt(parts[2], 10) || 0);
 }
-function minutesToTimeStr(minutes) {
+export function minutesToTimeStr(minutes) {
   const h = Math.floor(minutes / 60) % 24;
   const m = minutes % 60;
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':00';
 }
-function sortTimelineByTime(timeline) {
+export function sortTimelineByTime(timeline) {
   timeline.sort((a, b) => timeToSeconds(a.time) - timeToSeconds(b.time));
 }
-function getTimelineActiveRange(timeline, configStartTime, configEndTime) {
+export function getTimelineActiveRange(timeline, configStartTime, configEndTime) {
   if (!configStartTime || !configEndTime) {
     return { validMinTime: null, validMaxTime: null, activeIndices: new Set((timeline||[]).map((_, i) => i)), totalCount: (timeline||[]).length };
   }
@@ -73,7 +73,7 @@ function getTimelineActiveRange(timeline, configStartTime, configEndTime) {
   }
   return { validMinTime: start, validMaxTime: end, activeIndices, totalCount: timeline.length };
 }
-function getDefaultTime(appState) {
+export function getDefaultTime(appState) {
   const s = appState._configStartTime, e = appState._configEndTime;
   if (s && e) {
     const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
@@ -85,13 +85,4 @@ function getDefaultTime(appState) {
   return '12:00:00';
 }
 
-module.exports = { ticksToTime, timeToTicks, _extractBaseDateFromText, timeToMinutes, timeToSeconds, minutesToTimeStr, sortTimelineByTime, getTimelineActiveRange, getDefaultTime };
-exports.ticksToTime = ticksToTime;
-exports.timeToTicks = timeToTicks;
-exports._extractBaseDateFromText = _extractBaseDateFromText;
-exports.timeToMinutes = timeToMinutes;
-exports.timeToSeconds = timeToSeconds;
-exports.minutesToTimeStr = minutesToTimeStr;
-exports.sortTimelineByTime = sortTimelineByTime;
-exports.getTimelineActiveRange = getTimelineActiveRange;
-exports.getDefaultTime = getDefaultTime;
+

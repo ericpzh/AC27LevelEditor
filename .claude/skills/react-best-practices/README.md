@@ -1,59 +1,36 @@
-# React Best Practices
+# React Best Practices (Desktop/Client Edition)
 
-A structured repository for creating and maintaining React Best Practices optimized for agents and LLMs.
+Performance optimization guide for client-rendered React apps — Electron, Vite SPAs, zustand. 57 rules across 7 categories. Adapted from [@shuding](https://x.com/shuding)'s original Vercel guide.
 
 ## Structure
 
-- `rules/` - Individual rule files (one per rule)
-  - `_sections.md` - Section metadata (titles, impacts, descriptions)
-  - `_template.md` - Template for creating new rules
-  - `area-description.md` - Individual rule files
-- `src/` - Build scripts and utilities
-- `metadata.json` - Document metadata (version, organization, abstract)
-- __`AGENTS.md`__ - Compiled output (generated)
-- __`test-cases.json`__ - Test cases for LLM evaluation (generated)
+- `rules/` — 57 individual rule files (one per rule)
+  - `_sections.md` — Section metadata (titles, impacts, descriptions)
+  - `_template.md` — Template for creating new rules
+- `SKILL.md` — Skill entry point with quick reference (loaded by Claude Code)
+- `metadata.json` — Version and attribution metadata
 
-## Getting Started
+## Rule Categories
 
-1. Install dependencies:
-   ```bash
-   pnpm install
-   ```
-
-2. Build AGENTS.md from rules:
-   ```bash
-   pnpm build
-   ```
-
-3. Validate rule files:
-   ```bash
-   pnpm validate
-   ```
-
-4. Extract test cases:
-   ```bash
-   pnpm extract-tests
-   ```
+| # | Category | Prefix | Rules |
+|---|----------|--------|-------|
+| 1 | Eliminating Waterfalls | `async-` | 7 |
+| 2 | Bundle Size Optimization | `bundle-` | 6 |
+| 3 | Client-Side Data Patterns | `client-` | 3 |
+| 4 | Re-render Optimization | `rerender-` | 15 |
+| 5 | Rendering Performance | `rendering-` | 7 |
+| 6 | JavaScript Performance | `js-` | 16 |
+| 7 | Advanced Patterns | `advanced-` | 4 |
 
 ## Creating a New Rule
 
-1. Copy `rules/_template.md` to `rules/area-description.md`
-2. Choose the appropriate area prefix:
-   - `async-` for Eliminating Waterfalls (Section 1)
-   - `bundle-` for Bundle Size Optimization (Section 2)
-   - `server-` for Server-Side Performance (Section 3)
-   - `client-` for Client-Side Data Fetching (Section 4)
-   - `rerender-` for Re-render Optimization (Section 5)
-   - `rendering-` for Rendering Performance (Section 6)
-   - `js-` for JavaScript Performance (Section 7)
-   - `advanced-` for Advanced Patterns (Section 8)
-3. Fill in the frontmatter and content
-4. Ensure you have clear examples with explanations
-5. Run `pnpm build` to regenerate AGENTS.md and test-cases.json
+1. Copy `rules/_template.md` to `rules/prefix-description.md`
+2. Choose the prefix from the table above
+3. Fill in frontmatter (`title`, `impact`, `impactDescription`, `tags`)
+4. Include clear **Incorrect** / **Correct** code examples with explanations
+5. Use plain JS/JSX (not TypeScript) for examples — this is a JS project
 
 ## Rule File Structure
-
-Each rule file should follow this structure:
 
 ```markdown
 ---
@@ -69,55 +46,27 @@ Brief explanation of the rule and why it matters.
 
 **Incorrect (description of what's wrong):**
 
-```typescript
+```js
 // Bad code example
 ```
 
 **Correct (description of what's right):**
 
-```typescript
+```js
 // Good code example
 ```
 
 Optional explanatory text after examples.
-
-Reference: [Link](https://example.com)
-
-## File Naming Convention
-
-- Files starting with `_` are special (excluded from build)
-- Rule files: `area-description.md` (e.g., `async-parallel.md`)
-- Section is automatically inferred from filename prefix
-- Rules are sorted alphabetically by title within each section
-- IDs (e.g., 1.1, 1.2) are auto-generated during build
+```
 
 ## Impact Levels
 
-- `CRITICAL` - Highest priority, major performance gains
-- `HIGH` - Significant performance improvements
-- `MEDIUM-HIGH` - Moderate-high gains
-- `MEDIUM` - Moderate performance improvements
-- `LOW-MEDIUM` - Low-medium gains
-- `LOW` - Incremental improvements
-
-## Scripts
-
-- `pnpm build` - Compile rules into AGENTS.md
-- `pnpm validate` - Validate all rule files
-- `pnpm extract-tests` - Extract test cases for LLM evaluation
-- `pnpm dev` - Build and validate
-
-## Contributing
-
-When adding or modifying rules:
-
-1. Use the correct filename prefix for your section
-2. Follow the `_template.md` structure
-3. Include clear bad/good examples with explanations
-4. Add appropriate tags
-5. Run `pnpm build` to regenerate AGENTS.md and test-cases.json
-6. Rules are automatically sorted by title - no need to manage numbers!
+- `CRITICAL` — Highest priority, major performance gains
+- `HIGH` — Significant performance improvements
+- `MEDIUM` — Moderate performance improvements
+- `LOW-MEDIUM` — Low-medium gains
+- `LOW` — Incremental improvements
 
 ## Acknowledgments
 
-Originally created by [@shuding](https://x.com/shuding) at [Vercel](https://vercel.com).
+Originally created by [@shuding](https://x.com/shuding) at [Vercel](https://vercel.com). Tailored for Electron/desktop React apps by removing SSR/Next.js/server-specific rules and adapting examples for IPC, zustand, and Vite.

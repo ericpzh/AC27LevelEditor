@@ -2,7 +2,6 @@
  * CSV input/output — import, export (game format), value scanning.
  */
 const fs = require('fs');
-const { FIELDS, DROPDOWN_FIELDS } = require('../constants');
 const { timeToTicks } = require('./timeUtils');
 
 // ─── CSV import ─────────────────────────────────────────
