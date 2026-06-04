@@ -38,6 +38,27 @@
 }
 #modal-body input:focus, #modal-body select:focus { border-color: var(--accent); }
 
+#modal-body .modal-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px 0;
+  margin-bottom: 0;
+  font-weight: 400;
+}
+#modal-body .modal-checkbox-row input[type="checkbox"] {
+  width: auto !important;
+  margin: 0 !important;
+  flex-shrink: 0;
+}
+.modal-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
 #modal-body code {
   display: block;
   background: var(--bg);

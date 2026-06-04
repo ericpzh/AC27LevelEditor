@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { IoChevronForward, IoChevronDown, IoClose, IoAdd } from 'react-icons/io5';
 import './TimelineEditors.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
@@ -39,12 +40,12 @@ export default function WindEditor() {
     <div id="timeline-block-wind" className={`tl-embed-block ${collapsed ? 'collapsed' : ''}`}>
       <div className="tl-embed-header" onClick={() => setCollapsed(!collapsed)} data-block="wind">
         <span className="tl-embed-title">{t('tl_wind')}</span>
-        <span className="tl-embed-arrow">{collapsed ? '▸' : '▾'}</span>
+        <span className="tl-embed-arrow">{collapsed ? <IoChevronForward size={12} /> : <IoChevronDown size={12} />}</span>
       </div>
       <div className="tl-embed-body">
         <div className="tl-embed-body-inner">
         <div className="tl-toolbar tl-embed-toolbar">
-          <button className="btn-sm" onClick={add}>{t('tl_add')}</button>
+          <button className="btn-sm" onClick={add}><IoAdd size={14} className="btn-icon" />{t('tl_add')}</button>
           <span className="tl-range-indicator">{range.validMinTime!=null?`${t('tl_range')}: ${String(Math.floor(range.validMinTime/60)%24).padStart(2,'0')}:${String(range.validMinTime%60).padStart(2,'0')} ~ ${String(Math.floor(range.validMaxTime/60)%24).padStart(2,'0')}:${String(range.validMaxTime%60).padStart(2,'0')}`:''}</span>
           {hidden>0&&<span className="tl-hidden-count">{t('tl_hidden_count',{n:hidden})}</span>}
         </div>
@@ -56,7 +57,7 @@ export default function WindEditor() {
               <DirectionCell value={e.direction} onChange={v => chg(ri,'direction',v)} />
               <div className="tl-speed-row"><input className="tl-speed-slider" type="range" min="0" max="40" value={e.speed||0} onChange={ev => chg(ri,'speed',ev.target.value)} /><span className="tl-speed-val">{e.speed||0} kt</span></div>
               <span></span>
-              <button className="tl-btn-del" onClick={() => del(ri)} title={t('tl_delete')}>X</button>
+              <button className="tl-btn-del" onClick={() => del(ri)} title={t('tl_delete')}><IoClose size={14} /></button>
             </div>;
           })}
         </div>

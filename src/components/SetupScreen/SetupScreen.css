@@ -5,6 +5,7 @@
 }
 
 .setup-card {
+  position: relative;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -115,17 +116,19 @@
   margin-top: 12px;
 }
 .setup-card .btn-lang-toggle-top {
-  display: block;
-  margin: 0 auto 20px;
-  padding: 6px 20px;
-  font-size: 13px;
-  min-width: 90px;
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 11px;
+  min-width: auto;
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
 }
 .setup-card .btn-lang-toggle-top:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  color: #fff;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-color: var(--border);
 }

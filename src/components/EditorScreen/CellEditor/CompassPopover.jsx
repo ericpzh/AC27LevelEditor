@@ -1,6 +1,8 @@
 import React, { useState, useRef, useCallback } from 'react';
+import { IoClose } from 'react-icons/io5';
 import './CellEditor.css';
 import { createPortal } from 'react-dom';
+import { useTranslation } from '../../../hooks/useTranslation';
 
 const SIZE = 220, CX = SIZE / 2, CY = SIZE / 2, R = 95;
 const DIRS = ['N','','','E','','','S','','','W','',''];
@@ -29,6 +31,7 @@ function buildCompassTicks() {
 }
 
 export default function CompassPopover({ value, onCommit, onClose }) {
+  const { t } = useTranslation();
   const [deg, setDeg] = useState(() => {
     let d = parseInt(value) || 0;
     if (d < 0) d = 0; if (d > 359) d = 359;
@@ -47,7 +50,6 @@ export default function CompassPopover({ value, onCommit, onClose }) {
     if (arrowRef.current) arrowRef.current.setAttribute('points', `${tipX},${tipY} ${bx1},${by1} ${bx2},${by2}`);
   }, []);
 
-  // Init on mount
   React.useEffect(() => { updateCompass(deg); }, []);
 
   const dragRef = useRef(false);
@@ -71,10 +73,12 @@ export default function CompassPopover({ value, onCommit, onClose }) {
     onCommit(newVal);
   }, [inputVal, deg, onCommit]);
 
+  const cardinal = CARDINAL[Math.round(deg / 22.5) % 16];
+
   return createPortal(
     <div className="time-clock-overlay" onClick={e => { if (e.target.classList.contains('time-clock-overlay')) onClose(); }}>
       <div className="time-clock-popover compass-popover show">
-        <div className="clock-title">Wind Direction (deg)</div>
+        <div className="clock-title">{t('tl_direction')}</div>
         <svg className="clock-svg compass-svg" viewBox={`0 0 ${SIZE} ${SIZE}`} width={SIZE} height={SIZE}
           onMouseDown={() => { dragRef.current = true; }}
           onMouseMove={handleDragMove}
@@ -89,13 +93,29 @@ export default function CompassPopover({ value, onCommit, onClose }) {
           <circle className="clock-center-dot compass-dot" cx={CX} cy={CY} r="4" />
           <polygon ref={arrowRef} className="compass-arrowhead" />
         </svg>
-        <div className="clock-input-row">
-          <input className="clock-time-input compass-input" type="text" value={inputVal} onChange={e => { setInputVal(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 359) { setDeg(v); updateCompass(v); } }} onKeyDown={e => { if (e.key==='Enter') { e.preventDefault(); commit(); } if (e.key==='Escape') { e.preventDefault(); onClose(); } }} placeholder="000" maxLength={3} autoFocus />
+        <div className="compass-row">
+          <span className="compass-cardinal">{cardinal}</span>
+          <input
+            className="compass-deg-input"
+            type="text"
+            value={inputVal}
+            onChange={e => {
+              setInputVal(e.target.value);
+              const v = parseInt(e.target.value);
+              if (!isNaN(v) && v >= 0 && v <= 359) { setDeg(v); updateCompass(v); }
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commit(); }
+              if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+            }}
+            placeholder="000"
+            maxLength={3}
+            autoFocus
+          />
           <span className="compass-unit">°</span>
           <button className="clock-btn clock-btn-ok" onClick={commit}>✓</button>
-          <button className="clock-btn clock-btn-cancel" onClick={onClose}>✕</button>
+          <button className="clock-btn clock-btn-cancel" onClick={onClose}><IoClose size={16} /></button>
         </div>
-        <div className="compass-label">{CARDINAL[Math.round(deg / 22.5) % 16]}  {deg}°</div>
       </div>
     </div>,
     document.body

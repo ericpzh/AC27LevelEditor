@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { IoChevronForward, IoChevronDown, IoClose, IoAdd } from 'react-icons/io5';
 import './TimelineEditors.css';
 import './RunwayEditor.css';
 import { useTranslation } from '../../../hooks/useTranslation';
@@ -42,7 +43,7 @@ export default function RunwayEditor() {
     <div id="timeline-block-runway" className={`tl-embed-block ${collapsed ? 'collapsed' : ''}`}>
       <div className="tl-embed-header" onClick={() => setCollapsed(!collapsed)} data-block="runway">
         <span className="tl-embed-title">{t('tl_runway')}</span>
-        <span className="tl-embed-arrow">{collapsed ? '▸' : '▾'}</span>
+        <span className="tl-embed-arrow">{collapsed ? <IoChevronForward size={12} /> : <IoChevronDown size={12} />}</span>
       </div>
       <div className="tl-embed-body">
         <div className="tl-embed-body-inner">
@@ -56,7 +57,7 @@ export default function RunwayEditor() {
               )) : <span className="text-muted">{t('tl_no_runway_data')}</span>}
             </div>
           </div>
-          <div className="rw-toolbar"><button className="btn-sm" onClick={addChange}>{t('tl_add')}</button></div>
+          <div className="rw-toolbar"><button className="btn-sm" onClick={addChange}><IoAdd size={14} className="btn-icon" />{t('tl_add')}</button></div>
           {hasPairs && (rw.timeline||[]).map((tle,i) => {
             const activeKeys = new Set((tle.changes||[]).map(ch=>ch.source+'|'+ch.dest));
             return <div key={i} className="rw-change-card" {...(tle._isNew?{'data-new':''}:{})}>
@@ -65,7 +66,7 @@ export default function RunwayEditor() {
                 <div className="rw-change-checkboxes">
                   {pairs.map(p=>{const key=p.source+'|'+p.dest; return <label key={key} className="rw-checkbox-label"><input className="rw-change-cb" type="checkbox" checked={activeKeys.has(key)} onChange={()=>togglePair(i,p.source,p.dest)} />{escapeHtml(p.source)} → {escapeHtml(p.dest)}</label>;})}
                 </div>
-                <button className="tl-btn-del" onClick={()=>delChange(i)} title={t('tl_delete_change')}>X</button>
+                <button className="tl-btn-del" onClick={()=>delChange(i)} title={t('tl_delete_change')}><IoClose size={14} /></button>
               </div>
             </div>;
           })}

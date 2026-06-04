@@ -42,6 +42,8 @@
 .btn-primary-sm:hover { background: var(--accent-hover) !important; }
 
 .save-group { gap: 4px; }
+
+.btn-icon { vertical-align: middle; margin-right: 3px; flex-shrink: 0; }
 /* ─── Tab Bar ───────────────────────────────────────────── */
 #tab-bar {
   display: flex;

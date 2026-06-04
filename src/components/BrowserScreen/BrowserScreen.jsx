@@ -4,6 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoEyeOutline, IoEyeOffOutline } from 'react-icons/io5';
 import { escapeHtml, stripSuffixes } from '../../utils/htmlUtils';
 
 // Module-scope regexps — hoisted per AGENTS rule 7.10
@@ -85,18 +86,18 @@ export default function BrowserScreen() {
         <div className="browser-title"><span>{t('browser_title')}</span></div>
         <div className="browser-actions">
           <span className="browser-root-path">{rootPath || ''}</span>
-          <button className="btn-sm" onClick={() => setScreen('setup')}>{t('browser_change_dir')}</button>
+          <button className="btn-sm" onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
           <button className={`btn-sm btn-toggle-hidden ${showHidden ? 'active' : ''}`} onClick={() => setShowHidden(!showHidden)}>
-            {showHidden ? t('browser_hide_hidden') : t('browser_toggle_hidden')}
+            {showHidden ? <><IoEyeOffOutline size={14} className="btn-icon" />{t('browser_hide_hidden')}</> : <><IoEyeOutline size={14} className="btn-icon" />{t('browser_toggle_hidden')}</>}
           </button>
-          <button className="btn-lang-toggle-top" onClick={toggleLang}>{t('lang_switch_to')}</button>
+          <button className="btn-lang-toggle-top" onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
         </div>
       </header>
 
       {!noteDismissed && (
         <div className="browser-note">
           <span>{t('browser_note')}</span>
-          <button className="browser-note-close" onClick={() => { setNoteDismissed(true); try { localStorage.setItem('browser-note-dismissed','1'); } catch(_){} }}>✕</button>
+          <button className="browser-note-close" onClick={() => { setNoteDismissed(true); try { localStorage.setItem('browser-note-dismissed','1'); } catch(_){} }}><IoClose size={16} /></button>
         </div>
       )}
 
@@ -107,7 +108,7 @@ export default function BrowserScreen() {
           <div className="browser-empty">{t('browser_no_files')}</div>
         ) : (
           [...airports].sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao)).filter(a => (fileInfos[a.icao]||[]).some(i => showHidden || !i._hidden)).map(airport => (
-            <div key={airport.icao} className="airport-card">
+            <div key={airport.icao} className="airport-card" style={{ '--card-bg': `url(./${airport.icao}.png)` }}>
               <div className="airport-card-header"><span className="airport-icao">{airportDisplayName(airport.icao, t)}</span></div>
               {fileInfos[airport.icao].map((info, i) => {
                 if (info._hidden && !showHidden) return null;
@@ -121,7 +122,7 @@ export default function BrowserScreen() {
                     <span className="level-name">{info.filename}</span>
                     {badgeTags.length>0 && <span className="level-tags">{badgeTags.map((l,j)=><span key={j} className={`level-tag tag-${l.type}`}>{escapeHtml(getLabel(l))}</span>)}</span>}
                     <span className="level-stats level-error-text">{info.error}</span>
-                    <span className="level-arrow">→</span>
+                    <span className="level-arrow"><IoChevronForward size={14} /></span>
                   </div>
                 );
                 const displayName = stripSuffixes(info.filename);
@@ -135,7 +136,7 @@ export default function BrowserScreen() {
                       <span className="level-stat"><span className="level-stat-dot arrival" />{t('table_arrivals')} {info.arrivals||0}</span>
                       <span className="level-stat"><span className="level-stat-dot departure" />{t('table_departures')} {info.departures||0}</span>
                     </span>
-                    <span className="level-arrow">→</span>
+                    <span className="level-arrow"><IoChevronForward size={14} /></span>
                   </div>
                 );
               })}

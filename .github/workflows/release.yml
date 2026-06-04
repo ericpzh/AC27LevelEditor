@@ -36,7 +36,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Level-Editor-Windows
-          path: dist/AC27LevelEditor.exe
+          path: release/AC27LevelEditor.exe
           if-no-files-found: error
 
   build-macos:
@@ -61,7 +61,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Level-Editor-macOS
-          path: dist/*.dmg
+          path: release/*.dmg
           if-no-files-found: error
 
   release:

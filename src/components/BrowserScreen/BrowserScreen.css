@@ -81,6 +81,7 @@
 
 /* Airport card */
 .airport-card {
+  position: relative;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -89,7 +90,28 @@
   transition: border-color var(--transition);
 }
 
+.airport-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--card-bg);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0;
+  z-index: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.airport-card:hover::before {
+  opacity: 0.1;
+}
+
 .airport-card:hover { border-color: var(--accent); }
+
+/* Ensure card content stays above the background */
+.airport-card > * { position: relative; z-index: 1; }
 
 .airport-card-header {
   display: flex;

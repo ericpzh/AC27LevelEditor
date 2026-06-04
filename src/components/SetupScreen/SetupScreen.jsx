@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { IoLanguage, IoFolderOpenOutline } from 'react-icons/io5';
 import './SetupScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
@@ -32,7 +33,7 @@ export default function SetupScreen() {
       <div className="setup-card">
         <h1>{t('setup_title')}</h1>
         <p className="setup-sub">{t('setup_sub')}</p>
-        <button className="btn-lang-toggle-top" onClick={toggleLang}>{t('lang_switch_to')}</button>
+        <button className="btn-lang-toggle-top" onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
         <div className="steam-hint">
           <div className="steam-hint-title">{t('setup_steam_title')}</div>
           <ol>
@@ -47,7 +48,7 @@ export default function SetupScreen() {
           <span dangerouslySetInnerHTML={{ __html: t('setup_nightly') }} />
         </div>
         <button className="btn-big" onClick={handleSelectRoot} disabled={loading}>
-          {loading ? '...' : t('setup_select_root')}
+          {loading ? '...' : <><IoFolderOpenOutline size={16} className="btn-icon" />{t('setup_select_root')}</>}
         </button>
         {error && <p className="setup-error">{error}</p>}
       </div>

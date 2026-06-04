@@ -15,7 +15,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 16px;
-  width: 300px;
+  width: 260px;
+  overflow: hidden;
   box-shadow: 0 12px 48px rgba(0,0,0,0.55);
   display: flex;
   flex-direction: column;
@@ -108,10 +109,12 @@
   gap: 6px;
   align-items: center;
   width: 100%;
+  min-width: 0;
 }
 
 .clock-time-input {
   flex: 1;
+  min-width: 0;
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
@@ -162,12 +165,54 @@
 
 /* ─── Compass Popover ───────────────────────────────────── */
 .compass-popover {
-  width: 300px;
+  width: 260px;
+  gap: 10px;
+}
+
+.compass-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.compass-cardinal {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 40px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.compass-deg-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  outline: none;
+  text-align: center;
+  transition: border-color var(--transition);
+}
+
+.compass-deg-input:focus { border-color: var(--accent); }
+
+.compass-unit {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-right: 6px;
 }
 
 .compass-hand {
   stroke: var(--red);
-  stroke-width: 2.2;
+  stroke-width: 1.5;
   stroke-linecap: round;
   pointer-events: none;
 }
@@ -181,20 +226,4 @@
   fill: var(--red);
   stroke: var(--bg-elevated);
   stroke-width: 2;
-}
-
-.compass-label {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-  text-align: center;
-  margin-top: -6px;
-  letter-spacing: 0.5px;
-}
-
-.compass-unit {
-  color: var(--text-secondary);
-  font-size: 14px;
-  font-weight: 600;
-  flex-shrink: 0;
 }

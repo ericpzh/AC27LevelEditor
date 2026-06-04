@@ -7,6 +7,7 @@ import { useEditorShell } from '../../hooks/useEditorShell';
 import { validateCallsigns, runTripleValidation } from '../../utils/validators';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
+import { IoArrowBack, IoAdd, IoCopyOutline, IoTrashOutline, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoSaveOutline, IoSave, IoLanguage } from 'react-icons/io5';
 import FlightTable from './FlightTable/FlightTable';
 import WeatherEditor from './TimelineEditors/WeatherEditor';
 import WindEditor from './TimelineEditors/WindEditor';
@@ -205,7 +206,6 @@ export default function EditorScreen() {
     showModal(
       t('modal_import_backup_title'),
       <div>
-        <p className="import-body-text">{t('modal_import_body')}</p>
         <label className="modal-checkbox-row">
           <input type="checkbox" id="chk-import-backup" defaultChecked className="modal-checkbox" />
           <span>{t('modal_import_checkbox')}</span>
@@ -246,24 +246,24 @@ export default function EditorScreen() {
   return (
     <div id="screen-editor" className="screen">
       <header id="toolbar">
-        <div className="toolbar-group"><button onClick={handleBack}>{t('toolbar_back')}</button></div>
+        <div className="toolbar-group"><button onClick={handleBack}><IoArrowBack size={14} className="btn-icon" /> {t('toolbar_back')}</button></div>
         <div className="toolbar-sep" />
         <div className="toolbar-group">
-          <button onClick={addArrival}>{t('toolbar_add_arrival')}</button>
-          <button onClick={addDeparture}>{t('toolbar_add_departure')}</button>
-          <button onClick={copy}>{t('toolbar_copy')}</button>
-          <button onClick={del}>{t('toolbar_delete_selected')}</button>
-          <button onClick={delAll}>{t('toolbar_delete_all')}</button>
+          <button onClick={addArrival}><IoAdd size={14} className="btn-icon" /> {t('toolbar_add_arrival')}</button>
+          <button onClick={addDeparture}><IoAdd size={14} className="btn-icon" /> {t('toolbar_add_departure')}</button>
+          <button onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
+          <button onClick={del}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_selected')}</button>
+          <button onClick={delAll}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_all')}</button>
         </div>
         <div className="toolbar-spacer toolbar-time-wrap"><ConfigBar /></div>
         <div className="toolbar-sep" />
         <div className="toolbar-group save-group">
-          <button className="btn-lang-toggle-top" onClick={toggleLang}>{t('lang_switch_to')}</button>
-          <button onClick={handleBackup}>{t('toolbar_backup')}</button>
-          <button onClick={handleRestore}>{t('toolbar_restore')}</button>
-          <button onClick={handleImport}>{t('toolbar_import')}</button>
-          <button onClick={handleSaveAs}>{t('toolbar_save_as')}</button>
-          <button className="btn-primary-sm" onClick={handleSave}>{t('toolbar_save')}</button>
+          <button className="btn-lang-toggle-top" onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
+          <button onClick={handleBackup}><IoCloudUploadOutline size={14} className="btn-icon" /> {t('toolbar_backup')}</button>
+          <button onClick={handleRestore}><IoCloudDownloadOutline size={14} className="btn-icon" /> {t('toolbar_restore')}</button>
+          <button onClick={handleImport}><IoDownloadOutline size={14} className="btn-icon" /> {t('toolbar_import')}</button>
+          <button onClick={handleSaveAs}><IoSaveOutline size={14} className="btn-icon" /> {t('toolbar_save_as')}</button>
+          <button className="btn-primary-sm" onClick={handleSave}><IoSave size={14} className="btn-icon" /> {t('toolbar_save')}</button>
         </div>
       </header>
       <SearchBar />

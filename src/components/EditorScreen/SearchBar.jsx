@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { IoChevronUp, IoChevronDown, IoClose } from 'react-icons/io5';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useAppStore } from '../../store/appStore';
 
@@ -45,9 +46,9 @@ export default function SearchBar() {
     <div id="search-bar" className={`search-bar${open ? '' : ' hidden'}`}>
       <input ref={inputRef} id="search-input" type="text" value={term} onChange={e => doSearch(e.target.value)} placeholder={t('search_placeholder')} />
       <span id="search-count" className="search-count">{matches.length === 0 && term ? t('search_no_matches') : matches.length > 0 ? `${idx+1}/${matches.length}` : ''}</span>
-      <button id="search-prev" className="btn-sm" onClick={() => setIdx(i => (i-1+matches.length)%matches.length)}>↑</button>
-      <button id="search-next" className="btn-sm" onClick={() => setIdx(i => (i+1)%matches.length)}>↓</button>
-      <button id="search-close" className="search-close" onClick={() => setOpen(false)}>✕</button>
+      <button id="search-prev" className="btn-sm" onClick={() => setIdx(i => (i-1+matches.length)%matches.length)}><IoChevronUp size={14} /></button>
+      <button id="search-next" className="btn-sm" onClick={() => setIdx(i => (i+1)%matches.length)}><IoChevronDown size={14} /></button>
+      <button id="search-close" className="search-close" onClick={() => setOpen(false)}><IoClose size={16} /></button>
     </div>
   );
 }

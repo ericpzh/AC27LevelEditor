@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef } from 'react';
 import './FlightTable.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
+import { IoChevronForward, IoChevronDown } from 'react-icons/io5';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../../utils/constants';
 import ClockPopover from '../CellEditor/TimeClockPopover';
 
@@ -123,7 +124,7 @@ export default function FlightTable({ type, flights, columns }) {
     <div id={isArrivals ? 'section-arrivals' : 'section-departures'} className={`section-block ${collapsed ? 'collapsed' : ''}`}>
       <div className={`section-header collapse-header ${!isArrivals ? 'departure-header' : ''}`} onClick={() => setCollapsed(!collapsed)} data-section={isArrivals ? 'arrivals' : 'departures'}>
         <span>{t(isArrivals ? 'table_arrivals' : 'table_departures')}</span>
-        <span className="collapse-arrow">{collapsed ? '▸' : '▾'}</span>
+        <span className="collapse-arrow">{collapsed ? <IoChevronForward size={12} /> : <IoChevronDown size={12} />}</span>
       </div>
         <div className="section-table-wrap" onMouseUp={onMouseUp}>
           <table className="flight-table">
