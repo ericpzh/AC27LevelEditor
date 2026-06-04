@@ -7,12 +7,13 @@ import { useEditorShell } from '../../hooks/useEditorShell';
 import { validateCallsigns, runTripleValidation } from '../../utils/validators';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { IoArrowBack, IoAdd, IoCopyOutline, IoTrashOutline, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoSaveOutline, IoSave, IoLanguage } from 'react-icons/io5';
+import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline } from 'react-icons/io5';
 import FlightTable from './FlightTable/FlightTable';
 import WeatherEditor from './TimelineEditors/WeatherEditor';
 import WindEditor from './TimelineEditors/WindEditor';
 import RunwayEditor from './TimelineEditors/RunwayEditor';
 import SearchBar, { searchAPI } from './SearchBar';
+import TutorialOverlay from './TutorialOverlay';
 
 // ─── Sub-components ────────────────────────────────────────
 
@@ -63,6 +64,7 @@ export default function EditorScreen() {
   const _configEndTime = useAppStore(s => s._configEndTime);
 
   const [loading, setLoading] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
 
   // Load data on mount
   useEffect(() => {
@@ -93,6 +95,8 @@ export default function EditorScreen() {
   const copy = () => { const st=useAppStore.getState(); if(!st.selectedIndices.size&&st.highlightedIdx<0){showToast(t('toast_select_to_copy'),'error');return;} st.copySelected(); showToast(t('toast_copied_n',{n:st.selectedIndices.size||1}),'success'); };
   const del = () => { const st=useAppStore.getState(); if(!st.selectedIndices.size){showToast(t('toast_no_flights_selected'),'error');return;} const n=st.selectedIndices.size; const bodyText=t('modal_delete_confirm_body',{n:String(n)}); const m=bodyText.match(/^(.*?)<strong>(.*?)<\/strong>(.*)$/); showModal(t('modal_delete_confirm'),<div><p>{m?[m[1],<strong key="n">{m[2]}</strong>,m[3]]:bodyText}</p><p className="modal-hint-error">{t('modal_delete_irreversible')}</p></div>,<div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={()=>{hideModal();useAppStore.getState().deleteSelected();showToast(t('toast_deleted_n',{n}),'success');}}>{t('modal_delete_btn',{n})}</button></div>); };
   const delAll = () => { const st=useAppStore.getState(); if(!st.flights.length){showToast(t('toast_no_flights_to_delete'),'error');return;} const n=st.flights.length; const bodyText=t('modal_delete_all_body',{n:String(n)}); const m=bodyText.match(/^(.*?)<strong>(.*?)<\/strong>(.*)$/); showModal(t('modal_delete_all_confirm'),<div><p>{m?[m[1],<strong key="n">{m[2]}</strong>,m[3]]:bodyText}</p></div>,<div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={()=>{hideModal();useAppStore.getState().deleteAllFlights();showToast(t('toast_deleted_all',{n}),'success');}}>{t('modal_delete_all_btn')}</button></div>); };
+
+  const handleFind = () => { const api = searchAPI.current; if (api) { api.setOpen(true); setTimeout(() => api.inputRef?.current?.focus(), 0); } };
 
   const doSave = async (createBackup) => {
     const st = useAppStore.getState();
@@ -260,27 +264,20 @@ export default function EditorScreen() {
   return (
     <div id="screen-editor" className="screen">
       <header id="toolbar">
-        <div className="toolbar-group"><button onClick={handleBack}><IoArrowBack size={14} className="btn-icon" /> {t('toolbar_back')}</button></div>
-        <div className="toolbar-sep" />
         <div className="toolbar-group">
-          <button onClick={addArrival}><IoAdd size={14} className="btn-icon" /> {t('toolbar_add_arrival')}</button>
-          <button onClick={addDeparture}><IoAdd size={14} className="btn-icon" /> {t('toolbar_add_departure')}</button>
-          <button onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
-          <button onClick={del}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_selected')}</button>
-          <button onClick={delAll}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_all')}</button>
+          <button onClick={handleBack}><IoArrowBack size={14} className="btn-icon" /> {t('toolbar_back')}</button>
+          <button onClick={() => setTutorialOpen(true)} title={t('toolbar_help')}><IoHelpCircleOutline size={14} className="btn-icon" /> {t('toolbar_help')}</button>
+          <button onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
         </div>
-        <div className="toolbar-spacer toolbar-time-wrap"><ConfigBar /></div>
-        <div className="toolbar-sep" />
-        <div className="toolbar-group save-group">
-          <button className="btn-lang-toggle-top" onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
+        <div className="toolbar-spacer" />
+        <div className="toolbar-group">
           <button onClick={handleBackup}><IoCloudUploadOutline size={14} className="btn-icon" /> {t('toolbar_backup')}</button>
           <button onClick={handleRestore}><IoCloudDownloadOutline size={14} className="btn-icon" /> {t('toolbar_restore')}</button>
           <button onClick={handleImport}><IoDownloadOutline size={14} className="btn-icon" /> {t('toolbar_import')}</button>
-          <button onClick={handleSaveAs}><IoSaveOutline size={14} className="btn-icon" /> {t('toolbar_save_as')}</button>
+          <button onClick={handleSaveAs}><IoShareOutline size={14} className="btn-icon" /> {t('toolbar_save_as')}</button>
           <button className="btn-primary-sm" onClick={handleSave}><IoSave size={14} className="btn-icon" /> {t('toolbar_save')}</button>
         </div>
       </header>
-      <SearchBar />
       <main id="table-container">
         <div id="tab-flights" className="tab-panel">
           <WeatherEditor />
@@ -292,7 +289,22 @@ export default function EditorScreen() {
           </div>
         </div>
       </main>
+      <SearchBar />
+      <div id="secondary-toolbar">
+        <div className="toolbar-group secondary-left">
+          <button onClick={addArrival}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(45deg)',display:'block'}} /></span> {t('toolbar_add_arrival')}</button>
+          <button onClick={addDeparture}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(-45deg)',display:'block'}} /></span> {t('toolbar_add_departure')}</button>
+          <button onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
+        </div>
+        <div className="toolbar-time-wrap"><ConfigBar /></div>
+        <div className="toolbar-group secondary-right">
+          <button onClick={del}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_selected')}</button>
+          <button onClick={delAll}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_all')}</button>
+          <button onClick={handleFind}><IoSearchOutline size={14} className="btn-icon" /> {t('toolbar_find')}</button>
+        </div>
+      </div>
       <StatusBar />
+      {tutorialOpen && <TutorialOverlay onClose={() => setTutorialOpen(false)} />}
     </div>
   );
 }

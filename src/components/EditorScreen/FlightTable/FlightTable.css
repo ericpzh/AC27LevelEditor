@@ -5,7 +5,9 @@
   position: relative;
 }
 /* ─── Section blocks ──────────────────────────────────── */
-.section-block { margin-bottom: 4px; }
+.section-block { margin-bottom: 4px; border-left: 4px solid var(--orange); }
+
+.section-block#section-departures { border-left-color: var(--blue); }
 
 .section-header {
   background: var(--bg-elevated);
@@ -14,12 +16,12 @@
   font-weight: 600;
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
-  border-left: 4px solid var(--orange);
+  box-shadow: inset 2px 0 0 var(--orange);
   letter-spacing: 0.5px;
   position: sticky; top: 0; z-index: 11;
 }
 
-.section-header.departure-header { color: var(--blue); border-left-color: var(--blue); }
+.section-header.departure-header { color: var(--blue); box-shadow: inset 3px 0 0 var(--blue); }
 
 /* Collapsible section headers */
 .collapse-header {
@@ -55,15 +57,6 @@
   transition: grid-template-rows 0.25s ease, opacity 0.15s ease;
 }
 .section-table-wrap > * { min-height: 0; }
-/* Search match highlighting */
-.flight-table tr.search-match > td {
-  background: rgba(59, 130, 246, 0.12);
-}
-.flight-table tr.search-current > td {
-  background: rgba(59, 130, 246, 0.28) !important;
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
 
 .flight-table {
   width: 100%;
@@ -159,8 +152,8 @@
 .flight-table tbody tr:hover { background: rgba(91, 141, 239, 0.06); }
 .flight-table tbody tr.selected { background: var(--accent-dim) !important; outline: 1px solid var(--accent); outline-offset: -1px; }
 .flight-table tbody tr.highlighted { outline: 1px solid var(--accent); outline-offset: -1px; }
-.flight-table tbody tr.row-arrival { border-left: 3px solid var(--orange); }
-.flight-table tbody tr.row-departure { border-left: 3px solid var(--blue); }
+.flight-table tbody tr.search-match { background: rgba(59, 130, 246, 0.07); }
+.flight-table tbody tr.search-current { background: rgba(59, 130, 246, 0.18) !important; outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .flight-table td.idx-cell { color: var(--text-muted); font-size: 11px; text-align: center; width: 36px; min-width: 36px; cursor: default; }
 .flight-table td.callsign-cell { font-weight: 600; color: var(--text); }

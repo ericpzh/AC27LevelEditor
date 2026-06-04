@@ -69,6 +69,7 @@ export default function FlightTable({ type, flights, columns }) {
   const { t } = useTranslation();
   const selectedIndices = useAppStore(s => s.selectedIndices);
   const highlightedIdx = useAppStore(s => s.highlightedIdx);
+  const searchMatches = useAppStore(s => s.searchMatches);
   const toggleSelection = useAppStore(s => s.toggleSelection);
   const setHighlightedIdx = useAppStore(s => s.setHighlightedIdx);
   const airportValues = useAppStore(s => s.airportValues);
@@ -157,7 +158,7 @@ export default function FlightTable({ type, flights, columns }) {
                 const airlineCode = (fl.CallSign || '').substring(0, 3);
                 return (
                   <tr key={gi}
-                    className={`${isArrivals ? 'row-arrival' : 'row-departure'} ${selectedIndices.has(gi) ? 'selected' : ''} ${highlightedIdx === gi ? 'highlighted' : ''}`}
+                    className={`${isArrivals ? 'row-arrival' : 'row-departure'} ${selectedIndices.has(gi) ? 'selected' : ''} ${highlightedIdx === gi ? 'highlighted' : ''} ${searchMatches.has(gi) ? 'search-match' : ''} ${highlightedIdx === gi && searchMatches.has(gi) ? 'search-current' : ''}`}
                     onClick={(e) => { if (e.target.closest('td')) return; setHighlightedIdx(gi); }}
                     onMouseDown={(e) => onMouseDown(e, gi)}
                     onMouseEnter={(e) => onMouseEnter(e, gi)}>

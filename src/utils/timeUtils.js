@@ -69,7 +69,7 @@ export function getTimelineActiveRange(timeline, configStartTime, configEndTime)
   const activeIndices = new Set();
   for (let i = 0; i < timeline.length; i++) {
     const t = timeToMinutes(timeline[i].time);
-    if (t > start && t < end) activeIndices.add(i);
+    if (t >= start && t <= end) activeIndices.add(i);
   }
   return { validMinTime: start, validMaxTime: end, activeIndices, totalCount: timeline.length };
 }

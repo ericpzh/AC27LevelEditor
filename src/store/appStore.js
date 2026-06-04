@@ -30,6 +30,7 @@ export const useAppStore = create((set, get) => ({
   modified: false,
   highlightedIdx: -1,
   selectedIndices: new Set(),
+  searchMatches: new Set(),
   highlightedCells: new Set(),
   editingWidget: null,
 
@@ -72,6 +73,7 @@ export const useAppStore = create((set, get) => ({
     modified: false,
     highlightedIdx: -1,
     selectedIndices: new Set(),
+    searchMatches: new Set(),
     highlightedCells: new Set(),
     editingWidget: null,
     _configStartTime: data.configStartTime,
@@ -241,6 +243,7 @@ export const useAppStore = create((set, get) => ({
   },
 
   setHighlightedIdx: (idx) => set({ highlightedIdx: idx }),
+  setSearchMatches: (indices) => set({ searchMatches: new Set(indices) }),
 
   // ─── Actions: Timeline ───
   setTimelineModified: (key, val) => set(state => ({

@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { IoChevronUp, IoChevronDown, IoClose } from 'react-icons/io5';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useAppStore } from '../../store/appStore';
 
-// Module-level API so jumpToCallsign can trigger search from outside
+// Module-level API so jumpToCallsign / handleFind can trigger search from outside
 export const searchAPI = { current: null };
 
 export default function SearchBar() {
@@ -15,21 +15,64 @@ export default function SearchBar() {
   const inputRef = useRef(null);
 
   const flights = useAppStore(s => s.flights);
+  const setHighlightedIdx = useAppStore(s => s.setHighlightedIdx);
+  const setSearchMatches = useAppStore(s => s.setSearchMatches);
 
-  // Expose search controls so jumpToCallsign can trigger from outside
-  // setOpen, setTerm, inputRef are all stable references (useState/useRef)
+  // Expose search controls so jumpToCallsign / handleFind can trigger from outside
   useEffect(() => {
     searchAPI.current = { setOpen, setTerm, inputRef };
     return () => { searchAPI.current = null; };
-  }, [setOpen, setTerm, inputRef]);
+  }, []);
 
-  const doSearch = (val) => {
+  const doSearch = useCallback((val) => {
     setTerm(val);
-    if (!val.trim()) { setMatches([]); return; }
+    if (!val.trim()) { setMatches([]); setIdx(0); setSearchMatches([]); return; }
     const lower = val.toLowerCase();
-    const results = []; // DOM rows not in React — skip for now
+    const matchField = (f) => {
+      for (const key of Object.keys(f)) {
+        const v = f[key];
+        if (v != null && String(v).toLowerCase().includes(lower)) return true;
+      }
+      return false;
+    };
+    // Order matches in visual table order: arrivals top-to-bottom, then departures
+    const results = [];
+    for (let i = 0; i < flights.length; i++) {
+      const f = flights[i];
+      if ((f.LandingTime || '').trim() && matchField(f)) results.push(i);
+    }
+    for (let i = 0; i < flights.length; i++) {
+      const f = flights[i];
+      if (!(f.LandingTime || '').trim() && matchField(f)) results.push(i);
+    }
+    setSearchMatches(results);
     setMatches(results);
+    if (results.length > 0) {
+      setIdx(0);
+      setHighlightedIdx(results[0]);
+      scrollToRow(results[0]);
+    }
+  }, [flights, setHighlightedIdx, setSearchMatches]);
+
+  const scrollToRow = (globalIdx) => {
+    // Find the <tr> whose first <td> has data-idx matching globalIdx
+    const rows = document.querySelectorAll('.flight-table tbody tr');
+    for (const row of rows) {
+      const td = row.querySelector('td[data-idx]');
+      if (td && parseInt(td.getAttribute('data-idx')) === globalIdx) {
+        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        return;
+      }
+    }
   };
+
+  const goTo = useCallback((newIdx) => {
+    if (!matches.length) return;
+    const i = ((newIdx % matches.length) + matches.length) % matches.length;
+    setIdx(i);
+    setHighlightedIdx(matches[i]);
+    scrollToRow(matches[i]);
+  }, [matches, setHighlightedIdx]);
 
   // Keyboard shortcut: Ctrl+F toggles search
   useEffect(() => {
@@ -42,13 +85,22 @@ export default function SearchBar() {
     return () => document.removeEventListener('keydown', h);
   }, []);
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) goTo(idx - 1);
+      else goTo(idx + 1);
+    }
+    if (e.key === 'Escape') setOpen(false);
+  };
+
   return (
     <div id="search-bar" className={`search-bar${open ? '' : ' hidden'}`}>
-      <input ref={inputRef} id="search-input" type="text" value={term} onChange={e => doSearch(e.target.value)} placeholder={t('search_placeholder')} />
-      <span id="search-count" className="search-count">{matches.length === 0 && term ? t('search_no_matches') : matches.length > 0 ? `${idx+1}/${matches.length}` : ''}</span>
-      <button id="search-prev" className="btn-sm" onClick={() => setIdx(i => (i-1+matches.length)%matches.length)}><IoChevronUp size={14} /></button>
-      <button id="search-next" className="btn-sm" onClick={() => setIdx(i => (i+1)%matches.length)}><IoChevronDown size={14} /></button>
-      <button id="search-close" className="search-close" onClick={() => setOpen(false)}><IoClose size={16} /></button>
+      <span id="search-count" className="search-count">{term.trim() ? (matches.length > 0 ? `${idx+1}/${matches.length}` : t('search_no_matches')) : ''}</span>
+      <input ref={inputRef} id="search-input" type="text" value={term} onChange={e => doSearch(e.target.value)} onKeyDown={handleKeyDown} placeholder={t('search_placeholder')} />
+      <button id="search-prev" className="btn-sm" onClick={() => goTo(idx - 1)} disabled={!matches.length}><IoChevronUp size={14} /></button>
+      <button id="search-next" className="btn-sm" onClick={() => goTo(idx + 1)} disabled={!matches.length}><IoChevronDown size={14} /></button>
+      <button id="search-close" className="search-close" onClick={() => { setOpen(false); setSearchMatches([]); }}><IoClose size={16} /></button>
     </div>
   );
 }

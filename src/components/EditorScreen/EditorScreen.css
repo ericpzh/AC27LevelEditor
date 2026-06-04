@@ -16,7 +16,7 @@
 .toolbar-sep { width: 1px; height: 24px; background: var(--border); margin: 0 6px; }
 .toolbar-spacer { flex: 1; }
 
-#toolbar button {
+#toolbar button, #secondary-toolbar button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -32,8 +32,8 @@
   white-space: nowrap;
 }
 
-#toolbar button:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--border); }
-#toolbar button:active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+#toolbar button:hover, #secondary-toolbar button:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--border); }
+#toolbar button:active, #secondary-toolbar button:active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 
 .btn-primary-sm {
   background: var(--accent) !important;
@@ -46,8 +46,23 @@
 
 .save-group { gap: 4px; }
 
+/* ─── Secondary Toolbar ─────────────────────────────────── */
+#secondary-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.secondary-left { flex: 1; }
+
+.secondary-right { flex: 1; justify-content: flex-end; }
+
 .btn-icon { vertical-align: -0.125em; margin-right: 3px; flex-shrink: 0; }
-#toolbar button .btn-icon { margin-right: 0; }
+#toolbar button .btn-icon, #secondary-toolbar button .btn-icon { margin-right: 0; }
 /* ─── Tab Bar ───────────────────────────────────────────── */
 #tab-bar {
   display: flex;
@@ -90,14 +105,14 @@
 .search-bar {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   padding: 6px 12px;
   background: var(--bg-surface);
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
 }
 .search-bar.hidden { display: none; }
 #search-input {
-  flex: 1;
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
@@ -106,7 +121,7 @@
   font-size: 13px;
   font-family: inherit;
   outline: none;
-  max-width: 360px;
+  width: 240px;
 }
 #search-input:focus { border-color: var(--accent); }
 #search-input::placeholder { color: var(--text-muted); }
@@ -115,7 +130,12 @@
   color: var(--text-muted);
   white-space: nowrap;
   min-width: 60px;
-  text-align: center;
+  text-align: right;
+}
+
+#search-prev:disabled, #search-next:disabled {
+  opacity: 0.3;
+  pointer-events: none;
 }
 .search-close {
   background: none;

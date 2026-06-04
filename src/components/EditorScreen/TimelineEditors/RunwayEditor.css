@@ -23,13 +23,13 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 1px 14px;
+  padding: 1px 0 1px 16px;
 }
 
 .rw-initial-row .tl-input { flex: 1; max-width: 500px; }
 
 .rw-toolbar {
-  padding: 8px 14px 4px;
+  padding: 8px 0 4px;
 }
 
 .rw-initial-label {
@@ -115,17 +115,56 @@
   outline-offset: 1px;
 }
 
-.rw-change-card {
-  padding: 6px 14px;
-  border-bottom: 1px solid rgba(46, 51, 69, 0.35);
+/* runway list grid: time | change | spacer | range | add */
+#runway-list {
+  grid-template-columns: 76px 1fr 1fr auto auto;
+}
+#runway-list .tl-hdr > span:nth-child(2) {
+  justify-content: flex-start;
+  padding-left: 12px;
+}
+#runway-list .tl-hdr > button,
+#runway-list .rw-change-header > button {
+  justify-self: end;
+  margin-right: 0;
+}
+#runway-list .tl-hdr > * {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+#runway-list .tl-hdr > button {
+  align-self: center;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  background: var(--bg);
+}
+#runway-list .tl-row[data-new] .rw-change-header > .tl-input,
+#runway-list .tl-row[data-new] .rw-change-header > .tl-btn-del,
+#runway-list .tl-row[data-new] .rw-checkbox-label {
+  animation: flash-highlight 1.2s ease-out 2;
+}
+#runway-list .rw-change-header > span:empty {
+  border-bottom: none;
+  padding: 0;
+}
+#runway-list .tl-row[data-new] .rw-change-header > span:empty {
+  animation: none;
 }
 
-.rw-change-card:last-child { border-bottom: none; }
+.rw-change-card {
+  display: contents;
+}
 
 .rw-change-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: contents;
+}
+
+.rw-change-header > * {
+  padding: 4px 4px;
+  border-bottom: 1px solid rgba(46, 51, 69, 0.35);
+}
+.rw-change-header > .tl-input {
+  align-self: center;
 }
 
 .rw-change-header .tl-input { padding: 4px 20px 4px 10px; }
