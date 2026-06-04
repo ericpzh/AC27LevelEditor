@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import './FlightTable.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
@@ -79,6 +79,19 @@ export default function FlightTable({ type, flights, columns }) {
 
   const dragRef = useRef({ active: false, startIdx: -1, lastIdx: -1 });
   const isArrivals = type === 'arrivals';
+
+  // End drag on any mouseup — even outside the table
+  useEffect(() => {
+    const handleMouseUp = () => {
+      if (!dragRef.current.active) return;
+      dragRef.current.active = false;
+      document.body.style.userSelect = '';
+      // Remove onselectstart suppression
+      document.body.onselectstart = null;
+    };
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => window.removeEventListener('mouseup', handleMouseUp);
+  }, []);
   const vals = airportValues[currentAirport] || {};
   const allColumns = useMemo(() => ['AirlineCode', 'FlightNum', ...columns.filter(c => c !== 'AirlineCode' && c !== 'FlightNum')], [columns]);
 
@@ -103,6 +116,9 @@ export default function FlightTable({ type, flights, columns }) {
 
   const onMouseDown = useCallback((e, gi) => {
     if (e.target.closest('input,select,button')) return;
+    e.preventDefault(); // suppress text selection during drag
+    document.body.style.userSelect = 'none';
+    document.body.onselectstart = () => false;
     dragRef.current = { active: true, startIdx: gi, lastIdx: gi };
     useAppStore.setState({ selectedIndices: new Set([gi]), highlightedIdx: gi });
   }, []);
@@ -116,7 +132,11 @@ export default function FlightTable({ type, flights, columns }) {
     for (let i = min; i <= max; i++) set.add(i);
     useAppStore.setState({ selectedIndices: set });
   }, []);
-  const onMouseUp = useCallback(() => { dragRef.current.active = false; }, []);
+  const onMouseUp = useCallback(() => {
+    dragRef.current.active = false;
+    document.body.style.userSelect = '';
+    document.body.onselectstart = null;
+  }, []);
 
   if (flights.length === 0) return null;
 

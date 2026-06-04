@@ -11,15 +11,15 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 24px;
+  padding: 20px 24px;
   min-width: 400px;
   max-width: 620px;
   box-shadow: var(--shadow);
 }
 
-#modal-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+#modal-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
 
-#modal-body { margin-bottom: 20px; }
+#modal-body { margin-bottom: 12px; }
 #modal-body p { color: var(--text-secondary); margin-bottom: 10px; font-size: 13px; line-height: 1.6; }
 #modal-body ul, #modal-body ol { padding-left: 20px; margin-bottom: 10px; }
 #modal-body li { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
@@ -46,6 +46,8 @@
   padding: 8px 0;
   margin-bottom: 0;
   font-weight: 400;
+  font-size: 14px;
+  color: var(--text);
 }
 #modal-body .modal-checkbox-row input[type="checkbox"] {
   width: auto !important;

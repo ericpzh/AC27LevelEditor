@@ -154,7 +154,7 @@
   outline-offset: 1px;
 }
 
-.flight-table tbody tr { transition: background var(--transition); }
+.flight-table tbody tr { transition: background var(--transition); user-select: none; }
 .flight-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.012); }
 .flight-table tbody tr:hover { background: rgba(91, 141, 239, 0.06); }
 .flight-table tbody tr.selected { background: var(--accent-dim) !important; outline: 1px solid var(--accent); outline-offset: -1px; }
