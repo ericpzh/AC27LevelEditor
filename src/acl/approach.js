@@ -1066,13 +1066,41 @@ function buildApproachCache(airportDir) {
   const appPointMap = buildAppPointMap(allEntries);
   const totalApproachTimes = computeTotalApproachTimes(allEntries, (e) => e._file);
 
+  // Compute per-file saveTime offsets from approach entries.
+  // saveTime = LandingTime - (1 - PR) * totalApproachTime  → seconds since midnight
+  const saveTimeOffsets = new Map(); // filename -> saveSec
+  const fileGroups = new Map();
+  for (const e of allEntries) {
+    if (!e._file) continue;
+    if (!fileGroups.has(e._file)) fileGroups.set(e._file, []);
+    fileGroups.get(e._file).push(e);
+  }
+  const _toSec = (t) => { const p = String(t).split(':'); return +p[0]*3600 + +p[1]*60 + (+p[2]||0); };
+  for (const [filename, entries] of fileGroups) {
+    const offsets = [];
+    for (const e of entries) {
+      const tat = totalApproachTimes.get(e.route) || 1600;
+      const lt = e.landingTimeTicks;
+      if (!lt || lt === 0) continue;
+      const baseTicks = Math.floor(lt / 864000000000) * 864000000000;
+      const ltSec = (lt - baseTicks) / 10000000;
+      const saveSec = ltSec - (1 - e.progressRatio) * tat;
+      offsets.push(saveSec);
+    }
+    if (offsets.length > 0) {
+      offsets.sort((a, b) => a - b);
+      saveTimeOffsets.set(filename, Math.round(offsets[Math.floor(offsets.length / 2)]));
+    }
+  }
+
   log('Done: ' + specDB.size + ' specs, ' + appPointMap.size + ' route combos, ' +
-      totalApproachTimes.size + ' routes, ' + designatorMap.size + ' type mappings');
+      totalApproachTimes.size + ' routes, ' + designatorMap.size + ' type mappings, ' +
+      saveTimeOffsets.size + ' file saveTime offsets');
 
   // Clean up _file property from entries
   for (const e of allEntries) delete e._file;
 
-  return { specDB, appPointMap, totalApproachTimes, designatorMap };
+  return { specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets };
 }
 
 // ─── 9b. AircraftAnimators Block Builder ──────────────────────────
@@ -1111,6 +1139,64 @@ function buildAnimatorBlock(aircraftGuid, opts) {
   return { guid: 'ac_anim::' + aircraftGuid, block, nextId: id };
 }
 
+// ─── 10b. Extract GameTime from ACL text ──────────────────────────
+
+function extractGameTime(aclText) {
+  const gtIdx = aclText.indexOf('"GameTime"');
+  if (gtIdx < 0) return null;
+  const sub = aclText.substring(gtIdx, gtIdx + 2000);
+  const cdtMatch = sub.match(/"CurrentDateTime"[\s\S]{0,100}?\$type":\s*3\s*,\s*(-?\d+)/);
+  if (!cdtMatch) return null;
+  const ticks = parseInt(cdtMatch[1]);
+  const baseTicks = Math.floor(ticks / 864000000000) * 864000000000;
+  return Math.round((ticks - baseTicks) / 10000000); // seconds since midnight
+}
+
+// ─── 10c. Extract saveTime from ACL approach entries ──────────────
+
+function extractSaveTime(aclText, totalApproachTimes) {
+  const wsIdx = aclText.indexOf('"WorldState"');
+  if (wsIdx < 0) return null;
+  const acIdx = aclText.indexOf('"Aircrafts"', wsIdx);
+  if (acIdx < 0) return null;
+
+  // Find first State=30 entry: PR, Route, FlightPlanGuid
+  const stMatch = aclText.substring(acIdx).match(/"State":\s*30\b/);
+  if (!stMatch) return null;
+
+  // Extract the $v block containing this State=30
+  const pos = acIdx + stMatch.index;
+  const vTag = aclText.lastIndexOf('"$v"', pos);
+  if (vTag < 0) return null;
+  const vOpen = aclText.indexOf('{', vTag);
+  let d = 1, e = vOpen + 1;
+  for (; e < aclText.length; e++) { if (aclText[e] === '{') d++; else if (aclText[e] === '}') { d--; if (d === 0) break; } }
+  const vBlock = aclText.substring(vOpen, e + 1);
+
+  const prMatch = vBlock.match(/"ProgressRatio":\s*([\d.eE+\-]+)/);
+  const routeMatch = vBlock.match(/"Route":\s*"([^"]*)"/);
+  const fpMatch = vBlock.match(/"FlightPlanGuid":\s*"([^"]+)"/);
+  if (!prMatch || !fpMatch) return null;
+
+  const pr = parseFloat(prMatch[1]);
+  const route = routeMatch ? routeMatch[1] : '';
+  const tat = (totalApproachTimes && totalApproachTimes.get(route)) || 1600;
+
+  // Find this FlightPlan's LandingTime
+  const fpIdx = aclText.indexOf('"FlightPlans"');
+  if (fpIdx < 0) return null;
+  const fpText = aclText.substring(fpIdx);
+  const fpRe = new RegExp('"Guid":\\s*"' + fpMatch[1] + '"[\\s\\S]{0,2000}?"LandingTime":\\s*\\{\\s*"\\$type":\\s*3\\s*,\\s*(-?\\d+)\\s*\\}');
+  const ltMatch = fpText.match(fpRe);
+  if (!ltMatch) return null;
+
+  const origLT = parseInt(ltMatch[1]);
+  const baseTicks = Math.floor(origLT / 864000000000) * 864000000000;
+  const saveTicks = origLT - (1 - pr) * tat * 10000000;
+  const saveSec = Math.round((saveTicks - baseTicks) / 10000000);
+  return saveSec;
+}
+
 // ─── 11. Cache Serialization ──────────────────────────────────────
 
 /**
@@ -1120,22 +1206,11 @@ function buildAnimatorBlock(aircraftGuid, opts) {
 function serializeApproachCache(cache) {
   if (!cache) return null;
   const out = {};
-  if (cache.specDB) {
-    out.specDB = {};
-    for (const [k, v] of cache.specDB) out.specDB[k] = v;
-  }
-  if (cache.appPointMap) {
-    out.appPointMap = {};
-    for (const [k, v] of cache.appPointMap) out.appPointMap[k] = v;
-  }
-  if (cache.totalApproachTimes) {
-    out.totalApproachTimes = {};
-    for (const [k, v] of cache.totalApproachTimes) out.totalApproachTimes[k] = v;
-  }
-  if (cache.designatorMap) {
-    out.designatorMap = {};
-    for (const [k, v] of cache.designatorMap) out.designatorMap[k] = v;
-  }
+  if (cache.specDB) { out.specDB = {}; for (const [k, v] of cache.specDB) out.specDB[k] = v; }
+  if (cache.appPointMap) { out.appPointMap = {}; for (const [k, v] of cache.appPointMap) out.appPointMap[k] = v; }
+  if (cache.totalApproachTimes) { out.totalApproachTimes = {}; for (const [k, v] of cache.totalApproachTimes) out.totalApproachTimes[k] = v; }
+  if (cache.designatorMap) { out.designatorMap = {}; for (const [k, v] of cache.designatorMap) out.designatorMap[k] = v; }
+  if (cache.saveTimeOffsets) { out.saveTimeOffsets = {}; for (const [k, v] of cache.saveTimeOffsets) out.saveTimeOffsets[k] = v; }
   return out;
 }
 
@@ -1146,18 +1221,11 @@ function serializeApproachCache(cache) {
 function deserializeApproachCache(json) {
   if (!json) return null;
   const cache = {};
-  if (json.specDB && typeof json.specDB === 'object') {
-    cache.specDB = new Map(Object.entries(json.specDB));
-  }
-  if (json.appPointMap && typeof json.appPointMap === 'object') {
-    cache.appPointMap = new Map(Object.entries(json.appPointMap));
-  }
-  if (json.totalApproachTimes && typeof json.totalApproachTimes === 'object') {
-    cache.totalApproachTimes = new Map(Object.entries(json.totalApproachTimes));
-  }
-  if (json.designatorMap && typeof json.designatorMap === 'object') {
-    cache.designatorMap = new Map(Object.entries(json.designatorMap));
-  }
+  if (json.specDB && typeof json.specDB === 'object') { cache.specDB = new Map(Object.entries(json.specDB)); }
+  if (json.appPointMap && typeof json.appPointMap === 'object') { cache.appPointMap = new Map(Object.entries(json.appPointMap)); }
+  if (json.totalApproachTimes && typeof json.totalApproachTimes === 'object') { cache.totalApproachTimes = new Map(Object.entries(json.totalApproachTimes)); }
+  if (json.designatorMap && typeof json.designatorMap === 'object') { cache.designatorMap = new Map(Object.entries(json.designatorMap)); }
+  if (json.saveTimeOffsets && typeof json.saveTimeOffsets === 'object') { cache.saveTimeOffsets = new Map(Object.entries(json.saveTimeOffsets)); }
   return cache;
 }
 
@@ -1183,6 +1251,8 @@ module.exports = {
   // Designator mapping & cache
   buildDesignatorMapping,
   buildApproachCache,
+  extractSaveTime,
+  extractGameTime,
   serializeApproachCache,
   deserializeApproachCache,
 

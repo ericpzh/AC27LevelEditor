@@ -26,6 +26,7 @@ export function useSaveAcl() {
         arrayContent: store.arrayContent,
         originalBlocks: store.originalBlocks,
         earliestTime: store._earliestTime,
+        _saveSec: store._saveSec,
         createBackup,
         weatherTimeline: store.weatherTimeline,
         windTimeline: store.windTimeline,

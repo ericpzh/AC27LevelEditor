@@ -13,12 +13,22 @@ const RE_DEMO = /demo/i;
 const RE_TEST = /bench|test|crossrunway|dev|\.prod/i;
 const RE_ENDLESS = /endless/i;
 
+// Demo mode: show only these time-window subsets of real ACL files
+const DEMO_LEVELS = [
+  { icao: 'ZSJN', filePattern: /morning/i, labelStartTime: '05:45', labelEndTime: '06:15' },
+  { icao: 'ZSJN', filePattern: /07-10/i,  labelStartTime: '07:30', labelEndTime: '08:00' },
+  { icao: 'KJFK', filePattern: /09-11/i,  labelStartTime: '09:30', labelEndTime: '10:00' },
+  { icao: 'KJFK', filePattern: /20-22/i,  labelStartTime: '20:30', labelEndTime: '21:00' },
+];
+
 export default function BrowserScreen() {
   const { t, toggleLang } = useTranslation();
   const electronAPI = useElectronAPI();
   const rootPath = useAppStore(s => s.rootPath);
   const airports = useAppStore(s => s.airports);
   const setScreen = useAppStore(s => s.setScreen);
+
+  const isDemo = rootPath && rootPath.includes('Airport Control 27 Demo');
 
   const [fileInfos, setFileInfos] = useState({});
   const [loading, setLoading] = useState(true);
@@ -36,25 +46,52 @@ export default function BrowserScreen() {
       const allInfos = {};
       for (const airport of sorted) {
         let infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
-        for (const info of infos) {
-          const name = info.filename.toLowerCase();
-          info._hidden = false; info._metaLabels = [];
-          if (info.error) { info._hidden = true; info._metaLabels.push({ label: t('browser_parse_error'), type: 'error' }); }
-          else if (RE_TUTORIAL.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_tutorial'), type: 'tutorial' }); }
-          else if (RE_DEMO.test(name)) { info._hidden = true; info._metaLabels.push({ label: 'Demo', type: 'demo' }); }
-          else if (RE_TEST.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_test'), type: 'test' }); }
-          else if (RE_ENDLESS.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_endless'), type: 'endless' }); }
-          if (!info._hidden && info.startTime && info.endTime) {
-            const toHHMM = s => String(s).substring(0, 5);
-            info._metaLabels.push({ label: toHHMM(info.startTime) + '-' + toHHMM(info.endTime), type: 'timerange' });
-            const startH = parseInt(String(info.startTime).substring(0, 2));
-            let todLabel, todType;
-            if (startH >= 5 && startH < 7) { todLabel = t('browser_tod_dawn'); todType = 'dawn'; }
-            else if (startH >= 7 && startH < 12) { todLabel = t('browser_tod_morning'); todType = 'morning'; }
-            else if (startH >= 12 && startH < 17) { todLabel = t('browser_tod_afternoon'); todType = 'afternoon'; }
-            else if (startH >= 17 && startH < 19) { todLabel = t('browser_tod_dusk'); todType = 'dusk'; }
-            else { todLabel = t('browser_tod_night'); todType = 'night'; }
-            info._metaLabels.push({ label: todLabel, type: 'tod', tod: todType });
+        if (isDemo) {
+          // Filter to demo entries matching this airport
+          infos = infos.filter(info => {
+            return DEMO_LEVELS.some(d => d.icao === airport.icao && d.filePattern.test(info.filename));
+          });
+          for (const info of infos) {
+            // Override display times with demo time windows
+            const demoEntry = DEMO_LEVELS.find(d => d.icao === airport.icao && d.filePattern.test(info.filename));
+            info.startTime = demoEntry ? demoEntry.labelStartTime : info.startTime;
+            info.endTime = demoEntry ? demoEntry.labelEndTime : info.endTime;
+            info._hidden = false;
+            info._metaLabels = [];
+            if (info.startTime && info.endTime) {
+              const toHHMM = s => String(s).substring(0, 5);
+              info._metaLabels.push({ label: toHHMM(info.startTime) + '-' + toHHMM(info.endTime), type: 'timerange' });
+              const startH = parseInt(String(info.startTime).substring(0, 2));
+              let todLabel, todType;
+              if (startH >= 5 && startH < 7) { todLabel = t('browser_tod_dawn'); todType = 'dawn'; }
+              else if (startH >= 7 && startH < 12) { todLabel = t('browser_tod_morning'); todType = 'morning'; }
+              else if (startH >= 12 && startH < 17) { todLabel = t('browser_tod_afternoon'); todType = 'afternoon'; }
+              else if (startH >= 17 && startH < 19) { todLabel = t('browser_tod_dusk'); todType = 'dusk'; }
+              else { todLabel = t('browser_tod_night'); todType = 'night'; }
+              info._metaLabels.push({ label: todLabel, type: 'tod', tod: todType });
+            }
+          }
+        } else {
+          for (const info of infos) {
+            const name = info.filename.toLowerCase();
+            info._hidden = false; info._metaLabels = [];
+            if (info.error) { info._hidden = true; info._metaLabels.push({ label: t('browser_parse_error'), type: 'error' }); }
+            else if (RE_TUTORIAL.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_tutorial'), type: 'tutorial' }); }
+            else if (RE_DEMO.test(name)) { info._hidden = true; info._metaLabels.push({ label: 'Demo', type: 'demo' }); }
+            else if (RE_TEST.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_test'), type: 'test' }); }
+            else if (RE_ENDLESS.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_endless'), type: 'endless' }); }
+            if (!info._hidden && info.startTime && info.endTime) {
+              const toHHMM = s => String(s).substring(0, 5);
+              info._metaLabels.push({ label: toHHMM(info.startTime) + '-' + toHHMM(info.endTime), type: 'timerange' });
+              const startH = parseInt(String(info.startTime).substring(0, 2));
+              let todLabel, todType;
+              if (startH >= 5 && startH < 7) { todLabel = t('browser_tod_dawn'); todType = 'dawn'; }
+              else if (startH >= 7 && startH < 12) { todLabel = t('browser_tod_morning'); todType = 'morning'; }
+              else if (startH >= 12 && startH < 17) { todLabel = t('browser_tod_afternoon'); todType = 'afternoon'; }
+              else if (startH >= 17 && startH < 19) { todLabel = t('browser_tod_dusk'); todType = 'dusk'; }
+              else { todLabel = t('browser_tod_night'); todType = 'night'; }
+              info._metaLabels.push({ label: todLabel, type: 'tod', tod: todType });
+            }
           }
         }
         infos = [...infos].sort((a, b) => { const aT=RE_TUTORIAL.test(a.filename)?0:1, bT=RE_TUTORIAL.test(b.filename)?0:1; if(aT!==bT)return aT-bT; return (a.startTime||'99:99').localeCompare(b.startTime||'99:99'); });
@@ -124,9 +161,11 @@ export default function BrowserScreen() {
           <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} onClick={handleRefreshScan} disabled={refreshing} title={t('browser_refresh_scan')}>
             <IoRefreshOutline size={14} className="btn-icon" />{refreshing ? t('browser_refreshing') : t('browser_refresh_scan')}
           </button>
-          <button className={`btn-sm btn-toggle-hidden ${showHidden ? 'active' : ''}`} onClick={() => setShowHidden(!showHidden)}>
-            {showHidden ? <><IoEyeOffOutline size={14} className="btn-icon" />{t('browser_hide_hidden')}</> : <><IoEyeOutline size={14} className="btn-icon" />{t('browser_toggle_hidden')}</>}
-          </button>
+          {!isDemo && (
+            <button className={`btn-sm btn-toggle-hidden ${showHidden ? 'active' : ''}`} onClick={() => setShowHidden(!showHidden)}>
+              {showHidden ? <><IoEyeOffOutline size={14} className="btn-icon" />{t('browser_hide_hidden')}</> : <><IoEyeOutline size={14} className="btn-icon" />{t('browser_toggle_hidden')}</>}
+            </button>
+          )}
           <button className="btn-sm btn-bug-report" onClick={handleBugReport} title={t('browser_bug_report')}>
             <IoBugOutline size={14} className="btn-icon" />{t('browser_bug_report')}
           </button>

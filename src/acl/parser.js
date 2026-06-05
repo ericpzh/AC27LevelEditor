@@ -35,6 +35,7 @@ const {
   buildApproachAircraftBlock,
   buildDesignatorMapping, buildApproachCache,
   serializeApproachCache, deserializeApproachCache,
+  extractSaveTime, extractGameTime,
 } = require('./approach');
 const {
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
@@ -109,8 +110,8 @@ function loadFlights(aclPath) {
 
 // ─── Generate full ACL from scratch ──────────────────────────
 
-function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _worldStateData, _sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime) {
-  _rebuildWorldStateSections(aclPath, flights, undefined, approachCache, aclcfgStartTime);
+function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _worldStateData, _sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime, _saveSec) {
+  _rebuildWorldStateSections(aclPath, flights, undefined, approachCache, aclcfgStartTime, _saveSec);
 }
 
 // ─── Generate ACL from CSV (uses template) ────────────────────
@@ -141,6 +142,7 @@ module.exports = {
   buildApproachAircraftBlock,
   buildDesignatorMapping, buildApproachCache,
   serializeApproachCache, deserializeApproachCache,
+  extractSaveTime, extractGameTime,
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
   createZip, listZipFiles, extractZip,

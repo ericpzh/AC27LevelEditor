@@ -256,7 +256,7 @@ function _buildFlightPlanDepartureLeg(flight, id, baseDateTicks) {
 
 // ─── Rebuild WorldState.FlightPlans & Aircrafts from scratch ──
 
-function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCache, aclcfgStartTime) {
+function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCache, aclcfgStartTime, _saveSec) {
   const log = (msg) => console.log('[ACL-REBUILD]', msg);
   const text = fs.readFileSync(aclPath, 'utf-8');
   const bdt = baseDateTicks || _extractBaseDateFromText(text);
@@ -378,16 +378,19 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   if (_st30Block) _acTypeNum = parseInt(_st30Block[1], 10);
 
   // Extract RadioChannelGuid from original file's first State=30 entry
-  // (all State=30 entries in a file share the same channel GUID)
   const _radioChanMatch = _existingAcContent.match(/"State":\s*30[\s\S]{0,3000}?"RadioChannelGuid":\s*"([^"]+)"/);
   const _radioChannelGuid = _radioChanMatch ? _radioChanMatch[1] : '';
 
   const acEntries = [];
-  const animEntries = []; // parallel to acEntries
+  const animEntries = [];
   if (approachCache && approachCache.appPointMap && approachCache.specDB) {
-    // Determine saveTime: snapshot time = startTime (scenario begins at Config.startTime)
+    // saveTime = scenario start (gameplay begins at Config.startTime + warmup)
+    // The game fast-forwards from startTime through warmup before showing the player
     const _toSec = (t) => { const p = String(t).split(':'); return +p[0]*3600 + +p[1]*60 + (+p[2]||0); };
     const startSec = aclcfgStartTime ? _toSec(aclcfgStartTime) : 0;
+    const WARMUP_SEC = 780; // 13 min — game advances from Config.startTime to first flight time
+    const saveSec = (_saveSec != null) ? _saveSec : startSec + WARMUP_SEC;
+    log('saveTime=' + saveSec + 's (' + (_saveSec != null ? 'from file' : 'startTime=' + startSec + 's +13min warmup') + ')');
 
     for (let i = 0; i < flights.length; i++) {
       const fl = flights[i];
@@ -424,9 +427,9 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
         continue;
       }
 
-      // Compute ProgressRatio using verified formula
+      // Compute ProgressRatio using verified formula with derived saveTime
       const landingSec = _toSec(fl.LandingTime);
-      const timeToLanding = landingSec - startSec; // seconds until landing
+      const timeToLanding = landingSec - saveSec; // seconds until landing
       const progressRatio = 1.0 - (timeToLanding / totalApproachTime);
 
       // Gate: only generate if aircraft is mid-approach at snapshot time

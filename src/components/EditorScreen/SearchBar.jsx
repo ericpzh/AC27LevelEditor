@@ -18,12 +18,6 @@ export default function SearchBar() {
   const setHighlightedIdx = useAppStore(s => s.setHighlightedIdx);
   const setSearchMatches = useAppStore(s => s.setSearchMatches);
 
-  // Expose search controls so jumpToCallsign / handleFind can trigger from outside
-  useEffect(() => {
-    searchAPI.current = { setOpen, setTerm, inputRef };
-    return () => { searchAPI.current = null; };
-  }, []);
-
   const doSearch = useCallback((val) => {
     setTerm(val);
     if (!val.trim()) { setMatches([]); setIdx(0); setSearchMatches([]); return; }
@@ -53,6 +47,12 @@ export default function SearchBar() {
       scrollToRow(results[0]);
     }
   }, [flights, setHighlightedIdx, setSearchMatches]);
+
+  // Expose search controls so jumpToCallsign / handleFind can trigger from outside
+  useEffect(() => {
+    searchAPI.current = { setOpen, setTerm, inputRef, doSearch };
+    return () => { searchAPI.current = null; };
+  }, [doSearch]);
 
   const scrollToRow = (globalIdx) => {
     // Find the <tr> whose first <td> has data-idx matching globalIdx

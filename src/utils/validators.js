@@ -13,7 +13,7 @@ export function validateCallsigns(flights) {
   return dupes;
 }
 
-export function runTripleValidation(flights, airportValues, currentAirport, audioCallsigns, _earliestTime, _configStartTime, _configEndTime, runwayTimeline) {
+export function runTripleValidation(flights, airportValues, currentAirport, audioCallsigns, _saveSec, _configStartTime, _configEndTime, runwayTimeline) {
   const issues = [];
   const values = airportValues[currentAirport] || {};
   const audioData = audioCallsigns || { byAirline: {}, allCallsigns: [], allAirlines: [] };
@@ -61,18 +61,17 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     }
   });
 
-  if (_earliestTime && _configEndTime) {
-    // _earliestTime = warm-up end (actual flights begin), _configEndTime = scenario end
-    // Use raw start bound (approach aircraft can now be generated at any time)
+  if (_saveSec != null && _configEndTime) {
+    // _saveSec = scenario snapshot time (warmup end), _configEndTime = scenario end
     // Keep +10min grace on end bound for InBlockTime after scenario end
-    const etParts = String(_earliestTime).split(':');
     const ceParts = String(_configEndTime).split(':');
-    const etH = parseInt(etParts[0], 10), etM = parseInt(etParts[1], 10);
     const ceH = parseInt(ceParts[0], 10), ceM = parseInt(ceParts[1], 10);
 
-    const startTime = etH * 100 + etM;
+    const sh = Math.floor(_saveSec / 3600) % 24;
+    const sm = Math.floor((_saveSec % 3600) / 60);
+    const startTime = sh * 100 + sm;
+    const startLabel = String(sh).padStart(2, '0') + ':' + String(sm).padStart(2, '0');
     const endTime = Math.floor((ceH * 60 + ceM + 10) / 60) * 100 + ((ceH * 60 + ceM + 10) % 60);
-    const startLabel = _earliestTime;
 
     const endH = Math.floor((ceH * 60 + ceM + 10) / 60) % 24;
     const endM = (ceH * 60 + ceM + 10) % 60;

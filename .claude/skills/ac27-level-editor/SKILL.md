@@ -346,6 +346,8 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 - `extractApproachData(aclText)` → `Array<{route, runway, progressRatio, flyPoints, appPoints, ...}>` — all State=30 aircraft
 - `buildAppPointMap(approachEntries)` → `Map<"Route|Runway", Vector3[]>` — verified 1:1 mapping
 - `computeTotalApproachTimes(approachEntries, getGroupId?)` → `Map<Route, seconds>` — per-route duration
+- `extractGameTime(aclText)` → `seconds \| null` — parse `GameTime.CurrentDateTime` ticks as seconds since midnight
+- `extractSaveTime(aclText, totalApproachTimes)` → `seconds \| null` — derive snapshot time from first State=30 entry's PR + LandingTime
 
 **Path Resolution:**
 - `resolveFlyApproachPoints(aclText, route, runway)` → `Vector3[]` — via SceneryData AirwayNodes
@@ -359,7 +361,7 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 
 **Designator Mapping & Cache:**
 - `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates
-- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap}` — scans all production .acl files for an airport
+- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets}` — scans all production .acl files for an airport; `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times
 
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?})` → `{guid, block, nextId}` — complete `$k/$v` JSON block

@@ -6,7 +6,7 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
 if (!app.isPackaged) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline } = require('../src/acl/parser');
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
@@ -358,7 +358,33 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
       }
     }
 
-    return { success: true, path: filePath, config, earliestTime, ...data };
+    // Extract saveTime: prefer GameTime.CurrentDateTime, fall back to approach entries,
+    // then to config.startTime + warmup so _saveSec is never null when config exists
+    let _saveSec = null;
+    try {
+      const rawText = fs.readFileSync(filePath, 'utf-8');
+      _saveSec = extractGameTime(rawText);
+      if (_saveSec !== null) {
+        console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from GameTime.CurrentDateTime');
+      } else {
+        const icaoMatch = filePath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+        const icao = icaoMatch ? icaoMatch[1] : '';
+        const cacheEntry = airportCache && airportCache[icao];
+        const totalApproachTimes = cacheEntry?.approachData?.totalApproachTimes;
+        _saveSec = extractSaveTime(rawText, totalApproachTimes);
+        if (_saveSec !== null) {
+          console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from approach entries (fallback)');
+        }
+      }
+    } catch (_) {}
+    // Final fallback: compute from config.startTime + 13min warmup
+    if (_saveSec == null && config && config.startTime) {
+      const p = String(config.startTime).split(':');
+      _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + 780;
+      console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from config.startTime + warmup (final fallback)');
+    }
+
+    return { success: true, path: filePath, config, earliestTime, _saveSec, ...data };
   } catch (err) {
     console.error('[IPC] load-acl FAIL:', filePath, '|', err.message, '|', err.stack);
     return { success: false, error: err.message };
@@ -367,7 +393,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
 
 // ─── IPC: Save .acl with optional .bak overwrite backup ────
 
-ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, createBackup, weatherTimeline, windTimeline, runwayTimeline }) => {
+ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, createBackup, weatherTimeline, windTimeline, runwayTimeline, _saveSec }) => {
   try {
     const dir = path.dirname(filePath);
     const base = path.basename(filePath, '.acl');
@@ -399,7 +425,7 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
 
     // Generate full ACL from scratch, preserving header structure
-    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime);
+    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime, _saveSec);
 
     // ── Patch timeline sections into ACL ──
     _rebuildTimelineSections(filePath, weatherTimeline, windTimeline, runwayTimeline);

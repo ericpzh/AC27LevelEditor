@@ -19,12 +19,19 @@ import TutorialOverlay from './TutorialOverlay';
 
 function ConfigBar() {
   const { t } = useTranslation();
-  const _s = useAppStore(s => s._configStartTime);
+  const _saveSec = useAppStore(s => s._saveSec);
+  const _cs = useAppStore(s => s._configStartTime);
   const _e = useAppStore(s => s._configEndTime);
-  if (!_s || !_e) return <span id="toolbar-time-range">{t('editor_time_range')}-</span>;
-  const p = String(_s).split(':');
-  const m = parseInt(p[0]) * 60 + parseInt(p[1]) + 10;
-  const start = String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  // Resolve display start: _saveSec first, fall back to config.startTime + 13min warmup
+  let saveSec = _saveSec;
+  if (saveSec == null && _cs) {
+    const p = String(_cs).split(':');
+    saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + 780;
+  }
+  if (saveSec == null || !_e) return <span id="toolbar-time-range">{t('editor_time_range')}-</span>;
+  const h = Math.floor(saveSec / 3600) % 24;
+  const m = Math.floor((saveSec % 3600) / 60);
+  const start = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
   return <span id="toolbar-time-range">{t('editor_time_range')}{start} ~ {String(_e).substring(0, 5)}</span>;
 }
 
@@ -79,7 +86,7 @@ export default function EditorScreen() {
       const data = await electronAPI.loadAcl(filePath);
       if (!data.success) { showModal(t('editor_load_failed'), data.error); setLoading(false); return; }
       const st = useAppStore.getState();
-      st.setLegacyState({ currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null });
+      st.setLegacyState({ currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec });
       initFlightNumberCounter(data.flights);
       if (rootPath && airportIcao) {
         const [vals, audio, tl, rp] = await Promise.all([electronAPI.collectValues(rootPath, airportIcao), electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
@@ -118,6 +125,7 @@ export default function EditorScreen() {
     if (!api) return;
     api.setTerm(callsign);
     api.setOpen(true);
+    api.doSearch(callsign);
     setTimeout(() => api.inputRef?.current?.focus(), 0);
   };
 
@@ -148,7 +156,7 @@ export default function EditorScreen() {
       );
       return;
     }
-    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._earliestTime, st._configStartTime, st._configEndTime, st.runwayTimeline);
+    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline);
     if (issues.length > 0) { showModal(t('modal_issues_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((issue,i)=><p key={i} className="modal-issue-item">{renderCallsignLink(issue)}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_save')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
     showModal(t('modal_backup_title'), <label className="modal-checkbox-row"><input type="checkbox" id="chk-save-backup" defaultChecked className="modal-checkbox" /><span>{t('modal_backup_checkbox')}</span></label>,
       <div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={async()=>{const cb=document.getElementById('chk-save-backup');hideModal();await doSave(cb?cb.checked:true);}}>{t('modal_btn_confirm_save')}</button></div>);
@@ -167,7 +175,7 @@ export default function EditorScreen() {
       );
       return;
     }
-    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._earliestTime, st._configStartTime, st._configEndTime, st.runwayTimeline);
+    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline);
     if (issues.length > 0) { showModal(t('modal_issues_export_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((i,idx)=><p key={idx} className="modal-issue-item">{i}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_export')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
     await doSave(false);
     const result = await electronAPI.exportZip({ aclPath: st.currentPath });

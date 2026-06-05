@@ -47,6 +47,7 @@ export const useAppStore = create((set, get) => ({
   _configStartTime: null, _configEndTime: null,
   _runwayPairs: [],
   _earliestTime: null,
+  _saveSec: null,
 
   // ─── Modal (declarative) ───
   modal: { open: false, title: '', body: null, actions: null },
@@ -79,6 +80,7 @@ export const useAppStore = create((set, get) => ({
     _configStartTime: data.configStartTime,
     _configEndTime: data.configEndTime,
     _earliestTime: data.earliestTime,
+    _saveSec: data._saveSec,
   }),
   setAuxData: (values, audio, tl, rp) => set({
     airportValues: values,
