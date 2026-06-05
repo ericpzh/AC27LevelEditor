@@ -7,7 +7,7 @@ import { useEditorShell } from '../../hooks/useEditorShell';
 import { validateCallsigns, runTripleValidation } from '../../utils/validators';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline } from 'react-icons/io5';
+import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline } from 'react-icons/io5';
 import FlightTable from './FlightTable/FlightTable';
 import WeatherEditor from './TimelineEditors/WeatherEditor';
 import WindEditor from './TimelineEditors/WindEditor';
@@ -60,6 +60,8 @@ export default function EditorScreen() {
   const setScreen = useAppStore(s => s.setScreen);
   const rootPath = useAppStore(s => s.rootPath);
   const flights = useAppStore(s => s.flights);
+  const selectedIndices = useAppStore(s => s.selectedIndices);
+  const allSelected = flights.length > 0 && selectedIndices.size === flights.length;
   const _configStartTime = useAppStore(s => s._configStartTime);
   const _configEndTime = useAppStore(s => s._configEndTime);
 
@@ -94,7 +96,7 @@ export default function EditorScreen() {
   const addDeparture = () => { useAppStore.getState().addDepartureFlight(); showToast(t('toast_added_departure',{cs:useAppStore.getState().flights.slice(-1)[0]?.CallSign||''}),'success'); };
   const copy = () => { const st=useAppStore.getState(); if(!st.selectedIndices.size&&st.highlightedIdx<0){showToast(t('toast_select_to_copy'),'error');return;} st.copySelected(); showToast(t('toast_copied_n',{n:st.selectedIndices.size||1}),'success'); };
   const del = () => { const st=useAppStore.getState(); if(!st.selectedIndices.size){showToast(t('toast_no_flights_selected'),'error');return;} const n=st.selectedIndices.size; const bodyText=t('modal_delete_confirm_body',{n:String(n)}); const m=bodyText.match(/^(.*?)<strong>(.*?)<\/strong>(.*)$/); showModal(t('modal_delete_confirm'),<div><p>{m?[m[1],<strong key="n">{m[2]}</strong>,m[3]]:bodyText}</p><p className="modal-hint-error">{t('modal_delete_irreversible')}</p></div>,<div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={()=>{hideModal();useAppStore.getState().deleteSelected();showToast(t('toast_deleted_n',{n}),'success');}}>{t('modal_delete_btn',{n})}</button></div>); };
-  const delAll = () => { const st=useAppStore.getState(); if(!st.flights.length){showToast(t('toast_no_flights_to_delete'),'error');return;} const n=st.flights.length; const bodyText=t('modal_delete_all_body',{n:String(n)}); const m=bodyText.match(/^(.*?)<strong>(.*?)<\/strong>(.*)$/); showModal(t('modal_delete_all_confirm'),<div><p>{m?[m[1],<strong key="n">{m[2]}</strong>,m[3]]:bodyText}</p></div>,<div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={()=>{hideModal();useAppStore.getState().deleteAllFlights();showToast(t('toast_deleted_all',{n}),'success');}}>{t('modal_delete_all_btn')}</button></div>); };
+  const handleSelectAll = () => { const st=useAppStore.getState(); if(!st.flights.length){showToast(t('toast_no_flight_data'),'error');return;} st.toggleSelectAll(); };
 
   const handleFind = () => { const api = searchAPI.current; if (api) { api.setOpen(true); setTimeout(() => api.inputRef?.current?.focus(), 0); } };
 
@@ -298,8 +300,8 @@ export default function EditorScreen() {
         </div>
         <div className="toolbar-time-wrap"><ConfigBar /></div>
         <div className="toolbar-group secondary-right">
+          <button onClick={handleSelectAll} title={allSelected ? t('toolbar_deselect_all') : t('toolbar_select_all')}><IoCheckmarkDone size={14} className="btn-icon" /> {allSelected ? t('toolbar_deselect_all') : t('toolbar_select_all')}</button>
           <button onClick={del}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_selected')}</button>
-          <button onClick={delAll}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_all')}</button>
           <button onClick={handleFind}><IoSearchOutline size={14} className="btn-icon" /> {t('toolbar_find')}</button>
         </div>
       </div>

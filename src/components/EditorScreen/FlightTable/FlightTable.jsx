@@ -78,8 +78,20 @@ export default function FlightTable({ type, flights, columns }) {
   const audioCallsigns = useAppStore(s => s.audioCallsigns);
   const [collapsed, setCollapsed] = useState(false);
 
-  const dragRef = useRef({ active: false, startIdx: -1, lastIdx: -1 });
+  const dragRef = useRef({ active: false, lastIdx: -1 });
   const isArrivals = type === 'arrivals';
+
+  // Precompute which global indices belong to this table's type, so drag-select
+  // never cross-contaminates arrivals ↔ departures (they share allFlights indices).
+  const typeIndicesRef = useRef(new Set());
+  {
+    const set = new Set();
+    for (let i = 0; i < allFlights.length; i++) {
+      const isArr = !!(allFlights[i].LandingTime || '').trim();
+      if (isArrivals ? isArr : !isArr) set.add(i);
+    }
+    typeIndicesRef.current = set;
+  }
 
   // End drag on any mouseup — even outside the table
   useEffect(() => {
@@ -120,17 +132,37 @@ export default function FlightTable({ type, flights, columns }) {
     e.preventDefault(); // suppress text selection during drag
     document.body.style.userSelect = 'none';
     document.body.onselectstart = () => false;
-    dragRef.current = { active: true, startIdx: gi, lastIdx: gi };
-    useAppStore.setState({ selectedIndices: new Set([gi]), highlightedIdx: gi });
+    dragRef.current = { active: true, lastIdx: gi };
+    // Toggle the clicked row
+    const prev = useAppStore.getState().selectedIndices;
+    const next = new Set(prev);
+    if (next.has(gi)) next.delete(gi); else next.add(gi);
+    useAppStore.setState({ selectedIndices: next, highlightedIdx: gi });
   }, []);
   const onMouseEnter = useCallback((e, gi) => {
     if (!dragRef.current.active) return;
-    if (gi === dragRef.current.lastIdx) return;
+    const prev = useAppStore.getState().selectedIndices;
+    const set = new Set(prev);
+    const last = dragRef.current.lastIdx;
+    if (gi > last) {
+      for (let i = last + 1; i <= gi; i++) {
+        if (typeIndicesRef.current.has(i)) {
+          if (set.has(i)) set.delete(i); else set.add(i);
+        }
+      }
+    } else if (gi < last) {
+      for (let i = gi; i < last; i++) {
+        if (typeIndicesRef.current.has(i)) {
+          if (set.has(i)) set.delete(i); else set.add(i);
+        }
+      }
+    } else {
+      // Same row re-entered — toggle it
+      if (typeIndicesRef.current.has(gi)) {
+        if (set.has(gi)) set.delete(gi); else set.add(gi);
+      }
+    }
     dragRef.current.lastIdx = gi;
-    const min = Math.min(dragRef.current.startIdx, gi);
-    const max = Math.max(dragRef.current.startIdx, gi);
-    const set = new Set();
-    for (let i = min; i <= max; i++) set.add(i);
     useAppStore.setState({ selectedIndices: set });
   }, []);
   const onMouseUp = useCallback(() => {

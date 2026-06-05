@@ -206,10 +206,15 @@ export const useAppStore = create((set, get) => ({
     set({ flights, modified: true, selectedIndices: new Set(), highlightedIdx: -1 });
   },
 
-  deleteAllFlights: () => {
+  toggleSelectAll: () => {
     const state = get();
     if (state.flights.length === 0) return;
-    set({ flights: [], modified: true, selectedIndices: new Set(), highlightedIdx: -1 });
+    const allSelected = state.selectedIndices.size === state.flights.length;
+    if (allSelected) {
+      set({ selectedIndices: new Set(), highlightedIdx: -1 });
+    } else {
+      set({ selectedIndices: new Set(state.flights.map((_, i) => i)), highlightedIdx: -1 });
+    }
   },
 
   updateFlight: (idx, updates) => {
