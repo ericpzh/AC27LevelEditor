@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.0.5)
+- **Name:** `ac27-level-editor` (v1.0.7)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -49,11 +49,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - appStore.js — single store: screen, flights,         │
 │    timelines, modal/toast                               │
 ├─────────────────────────────────────────────────────────┤
-│  src/acl/ (7 CommonJS backend modules)                  │
+│  src/acl/ (8 backend modules, CommonJS + some ESM)      │
 │  - parser.js is the FACADE — main.js imports ALL        │
 │    backend modules through it only                      │
-│  - scanner, flight_plans, world_state, dynamics,        │
-│    scenery, utils                                       │
+│  - constants, scanner, flight_plans, world_state,       │
+│    dynamics, scenery, utils                             │
 ├─────────────────────────────────────────────────────────┤
 │  src/utils/ (shared utilities, ESM frontend + CJS back) │
 │  - constants.js — field defs, airline codes, getActiveCol│
@@ -92,6 +92,7 @@ AC27LevelEditor/
 │   │   ├── EditorScreen/    # Main editor: toolbar + table + timelines
 │   │   │   ├── EditorScreen.jsx + .css
 │   │   │   ├── SearchBar.jsx     # Ctrl+F search (extracted component)
+│   │   │   ├── TutorialOverlay.jsx + .css  # First-time help overlay
 │   │   │   ├── FlightTable/
 │   │   │   │   └── FlightTable.jsx + .css
 │   │   │   ├── CellEditor/
@@ -118,9 +119,9 @@ AC27LevelEditor/
 │   ├── store/
 │   │   └── appStore.js          # zustand store — all app state
 │   │
-│   ├── acl/                     # Backend modules (CommonJS + some ESM)
+│   ├── acl/                     # Backend modules (8 files; CommonJS + some ESM)
 │   │   ├── parser.js            # FACADE — re-exports all backend modules
-│   │   ├── constants.js         # Shared constants (ESM, imported by parser)
+│   │   ├── constants.js         # ACL-format constants (ESM, imported by parser)
 │   │   ├── scanner.js           # Scans game root for airports & .acl files
 │   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
 │   │   ├── world_state.js       # WorldState format (types 35/56/54)
@@ -129,7 +130,7 @@ AC27LevelEditor/
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
 │   └── utils/                   # Shared utilities (ESM + some CJS for backend)
-│       ├── constants.js         # Field defs, airline codes, getActiveColumns
+│       ├── constants.js         # UI field defs, airline codes, getActiveColumns
 │       ├── timeUtils.js         # Tick↔time conversion, timeline helpers (CJS + ESM)
 │       ├── i18n.js              # Chinese/English translation (T(), getLang, setLang)
 │       ├── validators.js        # validateCallsigns, runTripleValidation

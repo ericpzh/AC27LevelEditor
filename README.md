@@ -111,7 +111,7 @@ src/App.jsx          →  Root component: providers + screen routing
 src/components/      →  React component tree (Setup, Browser, Editor, common)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
-src/acl/             →  CommonJS backend modules (parser facade + 6 modules)
+src/acl/             →  CommonJS backend modules (parser facade + 7 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
@@ -157,6 +157,7 @@ Phase 3 (save):   Validation → write .acl + .csv + timeline .json (game compat
 │   │   ├── useTranslation.jsx   # I18n Context Provider (zh/en)
 │   │   ├── useElectronAPI.jsx   # electronAPI Context Provider
 │   │   ├── useEditorShell.jsx   # Keyboard shortcuts
+│   │   ├── useKeyboardShortcuts.js  # Generic shortcut registry
 │   │   └── useSaveAcl.jsx       # Save/export/backup logic
 │   │
 │   ├── store/
