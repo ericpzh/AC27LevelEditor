@@ -4,7 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoEyeOutline, IoEyeOffOutline, IoBugOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoEyeOutline, IoEyeOffOutline, IoBugOutline, IoRefreshOutline } from 'react-icons/io5';
 import { escapeHtml, stripSuffixes } from '../../utils/htmlUtils';
 
 // Module-scope regexps — hoisted per AGENTS rule 7.10
@@ -26,6 +26,7 @@ export default function BrowserScreen() {
   const [noteDismissed, setNoteDismissed] = useState(() => {
     try { return !!localStorage.getItem('browser-note-dismissed'); } catch (_) { return false; }
   });
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,7 +63,7 @@ export default function BrowserScreen() {
       if (!cancelled) { setFileInfos(allInfos); setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [airports, rootPath]);
+  }, [airports, rootPath, refreshKey]);
 
   const getLabel = useCallback((l) => {
     if (l.type === 'error') return t('browser_parse_error');
@@ -82,6 +83,35 @@ export default function BrowserScreen() {
     electronAPI.openExternal('https://github.com/ericpzh/AC27LevelEditor/issues');
   };
 
+  const [refreshing, setRefreshing] = useState(false);
+
+  const doRefreshScan = async () => {
+    setRefreshing(true);
+    try {
+      await electronAPI.refreshRootScan(rootPath);
+      setRefreshKey(k => k + 1); // trigger useEffect to reload with proper hidden/label processing
+    } catch (_) {}
+    setRefreshing(false);
+  };
+
+  const handleRefreshScan = () => {
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal(
+      t('browser_rescan_guide_title'),
+      <div>
+        <p>{t('browser_rescan_guide_body')}</p>
+        <ol>
+          <li>{t('browser_rescan_guide_step1')} <code className="guide-path">{t('browser_rescan_guide_step1_path')}</code></li>
+          <li dangerouslySetInnerHTML={{ __html: t('browser_rescan_guide_step2') }} />
+        </ol>
+      </div>,
+      <div className="modal-actions-row">
+        <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
+        <button className="btn-confirm" onClick={() => { hideModal(); doRefreshScan(); }}>{t('browser_btn_continue')}</button>
+      </div>
+    );
+  };
+
   const visibleCount = Object.values(fileInfos).flat().filter(i => showHidden || !i._hidden).length;
 
   return (
@@ -91,6 +121,9 @@ export default function BrowserScreen() {
         <div className="browser-actions">
           <span className="browser-root-path">{rootPath || ''}</span>
           <button className="btn-sm" onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
+          <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} onClick={handleRefreshScan} disabled={refreshing} title={t('browser_refresh_scan')}>
+            <IoRefreshOutline size={14} className="btn-icon" />{refreshing ? t('browser_refreshing') : t('browser_refresh_scan')}
+          </button>
           <button className={`btn-sm btn-toggle-hidden ${showHidden ? 'active' : ''}`} onClick={() => setShowHidden(!showHidden)}>
             {showHidden ? <><IoEyeOffOutline size={14} className="btn-icon" />{t('browser_hide_hidden')}</> : <><IoEyeOutline size={14} className="btn-icon" />{t('browser_toggle_hidden')}</>}
           </button>

@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.0.7)
+- **Name:** `ac27-level-editor` (v1.0.8)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -21,11 +21,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - ~20 ipcMain.handle() endpoints                       │
+│  - 26 ipcMain.handle() endpoints                       │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with ~20 methods          │
+│  - Exposes window.electronAPI with 25 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -49,11 +49,12 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - appStore.js — single store: screen, flights,         │
 │    timelines, modal/toast                               │
 ├─────────────────────────────────────────────────────────┤
-│  src/acl/ (8 backend modules, CommonJS + some ESM)      │
+│  src/acl/ (parser facade + 8 backend modules,          │
+│    CommonJS + some ESM)                                  │
 │  - parser.js is the FACADE — main.js imports ALL        │
 │    backend modules through it only                      │
-│  - constants, scanner, flight_plans, world_state,       │
-│    dynamics, scenery, utils                             │
+│  - constants, scanner, flight_plans, world_state,        │
+│    approach, dynamics, scenery, utils                   │
 ├─────────────────────────────────────────────────────────┤
 │  src/utils/ (shared utilities, ESM frontend + CJS back) │
 │  - constants.js — field defs, airline codes, getActiveCol│
@@ -69,7 +70,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ```
 AC27LevelEditor/
 ├── electron/
-│   ├── main.js              # Electron main process + ~20 IPC handlers
+│   ├── main.js              # Electron main process + 26 IPC handlers
 │   └── preload.js           # contextBridge (window.electronAPI)
 ├── index.html               # Vite HTML entry (<div id="root">)
 ├── vite.config.js           # Vite 8 + @vitejs/plugin-react + vite-plugin-electron
@@ -125,7 +126,8 @@ AC27LevelEditor/
 │   │   ├── scanner.js           # Scans game root for airports & .acl files
 │   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
 │   │   ├── world_state.js       # WorldState format (types 35/56/54)
-│   │   ├── dynamics.js          # DynamicParams templates & Aircraft entries
+│   │   ├── approach.js         # Approach AircraftState constructor (State=30)
+│   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
 │   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
@@ -139,7 +141,7 @@ AC27LevelEditor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── test/                # 8 plain Node.js test scripts (no framework)
+├── test/                # 9 plain Node.js test scripts (no framework)
 └── dist/                # Build output (gitignored)
 ```
 
@@ -255,7 +257,10 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 ### Phase 0: Airport Cache Init (once per game root)
 1. User selects game root directory
 2. `scan-acls` IPC → `scanGameRoot()` → returns airport list with `.acl` file paths
-3. `init-airport-cache` IPC → loads audio clips per airport → caches in memory
+3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data per airport:
+   - Scans all production `.acl` files (excludes demo/test/tutorial)
+   - Extracts `specDB` (Designator → AircraftSpec), `appPointMap` ((Route,Runway) → AppPointList), `totalApproachTimes` (Route → seconds), and `designatorMap` (AircraftType → Designator)
+   - Caches in memory as `airportCache[icao].approachData`
 
 ### Phase 1: Load Level
 1. User clicks a level row → `window._pendingEditor = { filePath, airportIcao }` → `setScreen('editor')`
@@ -277,7 +282,10 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - (a) Dropdown value validation — every field against valid options
    - (b) Time range validation — flights within config startTime/endTime bounds
    - (c) Runway timeline validation — active runways at each flight's time
-2. `save-acl` IPC → sorts flights → generates full ACL from scratch → writes `.acl` + `.csv`
+2. `save-acl` IPC → sorts flights → looks up approach cache for the airport → generates full ACL:
+   - FlightPlans rebuilt from scratch with new GUIDs
+   - **AircraftState entries generated for arrival flights** where `0 < ProgressRatio < 1.0` (mid-approach at snapshot time), using `approach.js` verified algorithm: AppPointList lookup, FlyApproach resolution from SceneryData, PR formula, Position/Direction interpolation
+   - Writes `.acl` + `.csv`
 3. Timeline saves (separate IPC per type) → writes JSON files
 4. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog)
 
@@ -305,6 +313,65 @@ Key section types:
 - `TaskFlightState` (type 56/54) — older WorldState format (legacy)
 - `WeatherFrames` / `WindFrames` / `RunwayTimeline` — timeline sections
 
+## Approach Aircraft Construction (State=30)
+
+The `src/acl/approach.js` module implements verified findings from an audit of 8 production `.acl` files (ZSJN + KJFK). It handles construction of State=30 (Flying/Approach) aircraft entries.
+
+### Verified Field Relationships
+
+| Field | Source | Pattern |
+|-------|--------|---------|
+| `Specification` | Designator→Spec DB | Fixed per Designator (byte-identical across all files) |
+| `FlyApproachPathPointList` | AirwayNodes via STAR GUIDs | `Runways[runway].Routes[route].AirwayNodeGuids → AirwayNodes[guid].Position` |
+| `AppPointList` | f(Route, Runway) map | Fixed per (Route, Runway) — 8 combos verified, 0 counterexamples |
+| `ProgressRatio` | Time-based formula | `1 − (LandingTime − saveTime) / totalApproachTime(Route)` |
+| `Direction` | Path tangent | Unit vector in XZ at current path position |
+| `Position.y` | Constant | Always 15.24 (approach altitude) |
+| All other fields | Invariant template | Fixed across all State=30 aircraft |
+
+### ProgressRatio Formula
+
+```
+ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
+```
+
+- `saveTime` = simulation clock when the snapshot was taken (file-consistent, validated within 6-72s spread)
+- `totalApproachTime(Route)` = route-specific total duration from STAR entry to touchdown (~1380-1775s, computed from dTime/dPR within each file)
+- Verified: saveTime spread within each file is <73s (proves the formula is linear time-based)
+
+### Module API (`src/acl/approach.js`)
+
+**Data Extraction:**
+- `extractSpecificationDB(aclText)` → `Map<Designator, Spec>` — 14 designators across ZSJN+KJFK
+- `extractApproachData(aclText)` → `Array<{route, runway, progressRatio, flyPoints, appPoints, ...}>` — all State=30 aircraft
+- `buildAppPointMap(approachEntries)` → `Map<"Route|Runway", Vector3[]>` — verified 1:1 mapping
+- `computeTotalApproachTimes(approachEntries, getGroupId?)` → `Map<Route, seconds>` — per-route duration
+
+**Path Resolution:**
+- `resolveFlyApproachPoints(aclText, route, runway)` → `Vector3[]` — via SceneryData AirwayNodes
+
+**Computation:**
+- `computeProgressRatio(landingTimeTicks, saveTimeTicks, totalApproachTime)` → `0..1`
+- `computePosition(flyPoints, appPoints, progressRatio)` → `{x, y:15.24, z}` — approximate (linear interp, ~50-200m error due to non-uniform speed)
+- `computeDirection(flyPoints, appPoints, progressRatio)` → unit vector — accurate (~88%)
+- `buildFullPath(flyPoints, appPoints)` → combined path array
+- `computePathLength(points)` → total distance
+
+**Designator Mapping & Cache:**
+- `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates
+- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap}` — scans all production .acl files for an airport
+
+**Assembly:**
+- `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?})` → `{guid, block, nextId}` — complete `$k/$v` JSON block
+
+### Test
+
+```bash
+node test/test_approach_aircraft.js [--root <game-root>]
+```
+
+Validates all algorithms against the 8 production files: spec consistency, AppPoint mapping, ProgressRatio formula (saveTime spread), FlyApproach resolution, Position/Direction reconstruction, and block assembly.
+
 ## All Dev Commands
 
 ### Running the app
@@ -320,6 +387,7 @@ All tests accept `--help` / `-h` for usage. Temp files are written to `test/` an
 ```bash
 node test/test_parse_airport.js [--root <game-root>]
 node test/test_callsign_gen.js [--root <game-root>]
+node test/test_approach_aircraft.js [--root <game-root>]
 ```
 
 **Single-ACL tests (require `--acl <path>`, derive paired files automatically):**
@@ -327,6 +395,7 @@ node test/test_callsign_gen.js [--root <game-root>]
 node test/test_e2e_save_load.js --acl <path>
 node test/test_csv_vs_flightplans.js --acl <path>
 node test/test_rebuild_sections.js --acl <path>
+node test/test_acl_linkage.js --acl <path>
 ```
 
 **Timeline tests (require `--acl <path>`, auto-discover JSONs):**

@@ -6,7 +6,7 @@ const path = require('path');
 import { FALLBACK_BASE_DATE_TICKS } from './constants';
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
-const { calcProgressRatio, buildAircraftEntry } = require('./dynamics');
+const { computeProgressRatio, resolveFlyApproachPoints, buildApproachAircraftBlock, buildAnimatorBlock } = require('./approach');
 
 // ─── Parse WorldState.FlightPlans ─────────────────────────────
 
@@ -256,7 +256,7 @@ function _buildFlightPlanDepartureLeg(flight, id, baseDateTicks) {
 
 // ─── Rebuild WorldState.FlightPlans & Aircrafts from scratch ──
 
-function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, dynamicsTemplates, aclcfgStartTime) {
+function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCache, aclcfgStartTime) {
   const log = (msg) => console.log('[ACL-REBUILD]', msg);
   const text = fs.readFileSync(aclPath, 'utf-8');
   const bdt = baseDateTicks || _extractBaseDateFromText(text);
@@ -273,7 +273,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, dynamicsTem
       }
     } catch (_) {}
   }
-  log('baseDateTicks: ' + bdt + '  flights: ' + (flights ? flights.length : 0) + ' dynamicsTemplates: ' + (dynamicsTemplates ? Object.keys(dynamicsTemplates).length : 0) + ' startTime: ' + aclcfgStartTime + ' icao: ' + icao);
+  log('baseDateTicks: ' + bdt + '  flights: ' + (flights ? flights.length : 0) + ' approachCache: ' + (approachCache ? (approachCache.appPointMap ? approachCache.appPointMap.size : 0) + ' combos' : 'null') + ' startTime: ' + aclcfgStartTime + ' icao: ' + icao);
 
   if (!flights || flights.length === 0) {
     log('WARNING: empty flights array, skipping rebuild');
@@ -326,10 +326,34 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, dynamicsTem
   if (fpContentEnd === null) { log('ERROR: cannot find FlightPlans $rcontent end'); return; }
   log('FlightPlans $rcontent: ' + fpContentStart + ' → ' + fpContentEnd);
 
-  // 4. Build segments
+  // 4. Build segments — also locate AircraftAnimators $rcontent between Aircrafts and FlightPlans
   let segBefore = text.substring(0, acContentStart);
-  let segBetween = text.substring(acContentEnd, fpContentStart);
+  const betweenText = text.substring(acContentEnd, fpContentStart);
   const segAfter = text.substring(fpContentEnd);
+
+  // 4a. Find AircraftAnimators $rcontent in betweenText
+  const aaIdx = betweenText.indexOf('"AircraftAnimators"');
+  let aaRcStart = -1, aaRcEnd = -1;
+  let preAnimators = betweenText, postAnimators = '';
+  if (aaIdx >= 0) {
+    const aaSection = betweenText.substring(aaIdx);
+    const aaRcMatch = aaSection.match(/"\$rcontent"\s*:\s*\[/);
+    if (aaRcMatch) {
+      aaRcStart = aaIdx + aaRcMatch.index + aaRcMatch[0].length;
+      let depth = 0;
+      for (let i = aaRcStart; i < betweenText.length; i++) {
+        const c = betweenText[i];
+        if (c === '{') depth++;
+        else if (c === '}') depth--;
+        else if (c === ']' && depth === 0) { aaRcEnd = i + 1; break; }
+      }
+      if (aaRcEnd >= 0) {
+        preAnimators = betweenText.substring(0, aaRcStart);
+        postAnimators = betweenText.substring(aaRcEnd);
+        log('AircraftAnimators $rcontent: ' + aaRcStart + ' → ' + aaRcEnd);
+      }
+    }
+  }
 
   // 5. Generate new FlightPlans entries (need to know GUIDs for Aircrafts linking)
   const fpEntries = [];
@@ -342,9 +366,29 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, dynamicsTem
   }
   log('generated ' + fpEntries.length + ' FlightPlan entries');
 
-  // 6. Build Aircrafts entries for arrivals with DynamicsParams templates
+  // 6. Generate Aircrafts entries — only State=30 approach aircraft
+  // Non-approach entries (State 10/31/5) are NOT preserved: their FlightPlanGuids
+  // become stale when FlightPlans are regenerated with new GUIDs.
+
+  // Detect AircraftState $type number from original file (ZSJN=33, KJFK=35)
+  // Find the first $v block containing State=30 and extract its first $type
+  const _existingAcContent = text.substring(acContentStart, acContentEnd);
+  let _acTypeNum = 33; // default ZSJN
+  const _st30Block = _existingAcContent.match(/"\$v":\s*\{[\s\S]{0,300}?"\$type":\s*(\d+)[\s\S]{0,500}?"State":\s*30\b/);
+  if (_st30Block) _acTypeNum = parseInt(_st30Block[1], 10);
+
+  // Extract RadioChannelGuid from original file's first State=30 entry
+  // (all State=30 entries in a file share the same channel GUID)
+  const _radioChanMatch = _existingAcContent.match(/"State":\s*30[\s\S]{0,3000}?"RadioChannelGuid":\s*"([^"]+)"/);
+  const _radioChannelGuid = _radioChanMatch ? _radioChanMatch[1] : '';
+
   const acEntries = [];
-  if (dynamicsTemplates) {
+  const animEntries = []; // parallel to acEntries
+  if (approachCache && approachCache.appPointMap && approachCache.specDB) {
+    // Determine saveTime: snapshot time = startTime (scenario begins at Config.startTime)
+    const _toSec = (t) => { const p = String(t).split(':'); return +p[0]*3600 + +p[1]*60 + (+p[2]||0); };
+    const startSec = aclcfgStartTime ? _toSec(aclcfgStartTime) : 0;
+
     for (let i = 0; i < flights.length; i++) {
       const fl = flights[i];
       const isArrival = (fl.isDeparture === false) ||
@@ -355,54 +399,109 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, dynamicsTem
       const runway = fl.Runway || '';
       if (!star || !runway) continue;
 
-      const key = star + '|' + runway;
-      const template = dynamicsTemplates[key];
-      if (!template) {
-        log('  no template for "' + key + '", skipping Aircraft entry for Callsign=' + fl.CallSign);
+      // Look up AppPointList for this (Route, Runway) combo
+      const appKey = star + '|' + runway;
+      const appPoints = approachCache.appPointMap.get(appKey);
+      if (!appPoints) {
+        log('  no AppPointList for "' + appKey + '", skipping Aircraft entry for ' + fl.CallSign);
         continue;
       }
 
-      // Compute timeDiff = landingTime - startTime in seconds
-      let timeDiff = 0;
-      const landing = fl.LandingTime || '';
-      const start = aclcfgStartTime || '';
-      if (landing && start) {
-        const _toSec = (t) => { const p = t.split(':'); return +p[0]*3600 + +p[1]*60 + +p[2]; };
-        timeDiff = _toSec(landing) - _toSec(start);
-      }
-      // Temp validator: skip flights landing within 20 min of game start
-      if (timeDiff < 1200) {
-        log('  SKIP (td < 20min): Callsign=' + fl.CallSign + ' td=' + timeDiff);
-        continue;
-      }
-      const progressRatio = calcProgressRatio(icao, runway, star, timeDiff);
-      log('  build Aircraft entry: Callsign=' + fl.CallSign + ' STAR=' + star + ' RWY=' + runway + ' td=' + timeDiff + ' PR=' + progressRatio);
-
-      if (progressRatio < 0.01) {
-        log('  ProgressRatio < 0.01, skipping entry');
+      // Look up totalApproachTime for this Route
+      const totalApproachTime = approachCache.totalApproachTimes.get(star);
+      if (!totalApproachTime) {
+        log('  no totalApproachTime for route "' + star + '", skipping Aircraft entry');
         continue;
       }
 
-      const entryText = buildAircraftEntry(template, progressRatio, fpGuids[i]);
-      acEntries.push(entryText);
+      // Look up Specification via Designator mapping
+      const designator = approachCache.designatorMap
+        ? approachCache.designatorMap.get(fl.AircraftType || '')
+        : null;
+      const spec = designator ? approachCache.specDB.get(designator) : null;
+      if (!spec) {
+        log('  no spec for type "' + (fl.AircraftType || '') + '" (designator=' + designator + '), skipping Aircraft entry');
+        continue;
+      }
+
+      // Compute ProgressRatio using verified formula
+      const landingSec = _toSec(fl.LandingTime);
+      const timeToLanding = landingSec - startSec; // seconds until landing
+      const progressRatio = 1.0 - (timeToLanding / totalApproachTime);
+
+      // Gate: only generate if aircraft is mid-approach at snapshot time
+      if (progressRatio <= 0.0) {
+        log('  SKIP (PR=' + progressRatio.toFixed(3) + ' ≤ 0, not started approach): ' + fl.CallSign);
+        continue;
+      }
+      if (progressRatio >= 1.0) {
+        log('  SKIP (PR=' + progressRatio.toFixed(3) + ' ≥ 1, already landed): ' + fl.CallSign);
+        continue;
+      }
+
+      // Resolve FlyApproachPathPointList from SceneryData in the ACL text
+      const flyPoints = resolveFlyApproachPoints(text, star, runway);
+      if (!flyPoints || flyPoints.length === 0) {
+        log('  could not resolve FlyApproach points for ' + star + '/' + runway + ', skipping');
+        continue;
+      }
+
+      log('  build Aircraft entry: ' + fl.CallSign + ' ' + star + '/' + runway +
+          ' td=' + timeToLanding + 's PR=' + progressRatio.toFixed(3) +
+          ' flyPts=' + flyPoints.length + ' appPts=' + appPoints.length);
+
+      const result = buildApproachAircraftBlock({
+        flightPlanGuid: fpGuids[i],
+        route: star,
+        flyPoints: flyPoints,
+        appPoints: appPoints,
+        progressRatio: progressRatio,
+        spec: spec,
+        radioChannelGuid: _radioChannelGuid,
+        nextId: 70000 + i * 1000,
+        acTypeNum: _acTypeNum,
+      });
+      // Wrap in $k/$v dictionary entry format to match original file
+      const entry = '{"$k": "' + result.guid + '", "$v": ' + result.block + '}';
+      acEntries.push(entry);
+
+      // Generate matching AircraftAnimators entry
+      const animResult = buildAnimatorBlock(result.guid, {
+        nextId: 80000 + i * 100,
+        acTypeNum: _acTypeNum,
+      });
+      const animEntry = '{"$k": "' + animResult.guid + '", "$v": ' + animResult.block + '}';
+      animEntries.push(animEntry);
     }
   }
-  log('generated ' + acEntries.length + ' Aircraft entries');
+  log('generated ' + acEntries.length + ' Aircraft entries + ' + animEntries.length + ' Animator entries');
 
   // 7. Update $rlength in Aircrafts
-  const acMarker = segBefore.lastIndexOf('"Aircrafts"');
+  let segBeforeMod = segBefore;
+  const acMarker = segBeforeMod.lastIndexOf('"Aircrafts"');
   if (acMarker >= 0) {
-    const beforeAc = segBefore.substring(0, acMarker);
-    const fromAc = segBefore.substring(acMarker);
-    segBefore = beforeAc + fromAc.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${acEntries.length}`);
+    const beforeAc = segBeforeMod.substring(0, acMarker);
+    const fromAc = segBeforeMod.substring(acMarker);
+    segBeforeMod = beforeAc + fromAc.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${acEntries.length}`);
   }
 
-  // 8. Update $rlength in FlightPlans
-  const fpMarker = segBetween.indexOf('"FlightPlans"');
+  // 8. Update $rlength in AircraftAnimators and FlightPlans
+  let segBetweenMod = postAnimators; // everything after AircraftAnimators $rcontent
+  const fpMarker = segBetweenMod.indexOf('"FlightPlans"');
   if (fpMarker >= 0) {
-    const beforeFp = segBetween.substring(0, fpMarker);
-    const fromFp = segBetween.substring(fpMarker);
-    segBetween = beforeFp + fromFp.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${fpEntries.length}`);
+    const beforeFp = segBetweenMod.substring(0, fpMarker);
+    const fromFp = segBetweenMod.substring(fpMarker);
+    segBetweenMod = beforeFp + fromFp.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${fpEntries.length}`);
+  }
+
+  // Update $rlength in AircraftAnimators
+  if (aaIdx >= 0 && aaRcStart >= 0) {
+    const aaMarker = preAnimators.lastIndexOf('"AircraftAnimators"');
+    if (aaMarker >= 0) {
+      const beforeAa = preAnimators.substring(0, aaMarker);
+      const fromAa = preAnimators.substring(aaMarker);
+      preAnimators = beforeAa + fromAa.replace(/"\$rlength"\s*:\s*\d+/, `"$rlength": ${animEntries.length}`);
+    }
   }
 
   // 9. Assemble and write
@@ -410,9 +509,14 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, dynamicsTem
     ? '\n' + acEntries.join(',\n') + '\n            '
     : '';
 
+  const animContent = animEntries.length > 0
+    ? '\n' + animEntries.join(',\n') + '\n                '
+    : '';
+
   const newText =
-    segBefore + acContent + ']' +
-    segBetween + '\n                ' +
+    segBeforeMod + acContent + ']' +
+    preAnimators + animContent + ']' +
+    segBetweenMod + '\n                ' +
     fpEntries.join(',\n                ') +
     '\n            ]' +
     segAfter;

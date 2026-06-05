@@ -6,12 +6,11 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
 if (!app.isPackaged) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, captureAllDynamicsTemplates, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectUniqueValuesFromCSV, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, importCsvFromFile, generateAclFromCsv, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline } = require('../src/acl/parser');
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
-let dynamicsTemplatesCache = null; // "STAR|Runway" → { type, vBlock }
 
 async function createWindow() {
   Menu.setApplicationMenu(null);
@@ -162,6 +161,15 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
     aclValues.Language = availableLanguages.sort();
   }
 
+  // Filter AircraftType to only show types with known Designator mappings
+  // (ensures every selectable type can generate approach AircraftState entries)
+  const cacheEntry = airportCache && airportCache[airportIcao];
+  const designatorMap = cacheEntry?.approachData?.designatorMap;
+  if (designatorMap && designatorMap.size > 0 && aclValues.AircraftType) {
+    const knownTypes = new Set(designatorMap.keys());
+    aclValues.AircraftType = aclValues.AircraftType.filter(t => knownTypes.has(t));
+  }
+
   return aclValues;
 });
 
@@ -170,12 +178,38 @@ ipcMain.handle('renderer-log', async (_event, ...args) => {
   console.log('[RENDERER]', ...args);
 });
 
+// ─── Durable approach cache file path ─────────────────────
+
+function _approachCachePath() {
+  return path.join(app.getPath('userData'), 'approachCache.json');
+}
+
+const CACHE_MAX_AGE_MS = 7 * 24 * 3600 * 1000; // 7 days
+
 // ─── IPC: Phase 0 — initialize airport cache (scan all CSV + audio) ──
 
 ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
   console.log('══════════════ [INIT-CACHE] START ══════════════');
   const airportsDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports');
   if (!fs.existsSync(airportsDir)) return {};
+
+  // ── Try loading approach data from disk cache ──
+  let diskCache = null;
+  const cachePath = _approachCachePath();
+  try {
+    if (fs.existsSync(cachePath)) {
+      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+      const age = Date.now() - (raw.builtAt || 0);
+      if (raw.gameRoot === rootPath && age < CACHE_MAX_AGE_MS) {
+        diskCache = raw.airports || {};
+        console.log('[INIT-CACHE] loaded approach cache from disk (' + Object.keys(diskCache).length + ' airports, age=' + (age / 3600000).toFixed(1) + 'h)');
+      } else {
+        console.log('[INIT-CACHE] disk cache invalid (rootMatch=' + (raw.gameRoot === rootPath) + ' age=' + (age / 3600000).toFixed(1) + 'h), will rebuild');
+      }
+    }
+  } catch (e) {
+    console.log('[INIT-CACHE] disk cache read error:', e.message);
+  }
 
   const cache = {};
 
@@ -185,31 +219,101 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     const levelsDir = path.join(airportPath, 'Levels');
     if (!fs.existsSync(levelsDir)) continue;
 
-    // Only load audio clips — ACL is the source of truth for all other data
+    // Load audio clips
     const enPath = path.join(levelsDir, 'audio_clips_en.json');
     const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
     const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
     const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
     const audioCallsigns = mergeAudioCallsigns(enData, zhData);
 
-    cache[icao] = { audioCallsigns };
+    // Pre-scan approach data — from disk cache if available, otherwise scan files
+    let approachData = null;
+    if (diskCache && diskCache[icao]) {
+      approachData = deserializeApproachCache(diskCache[icao]);
+      console.log('[INIT-CACHE]   ' + icao + ': from disk cache');
+    } else {
+      approachData = buildApproachCache(levelsDir);
+      console.log('[INIT-CACHE]   ' + icao + ': scanned from files');
+    }
+
+    cache[icao] = { audioCallsigns, approachData };
   }
 
   airportCache = cache;
+
+  // ── Persist to disk for next launch ──
+  if (!diskCache) {
+    try {
+      const serialized = {};
+      for (const [icao, entry] of Object.entries(cache)) {
+        if (entry.approachData) {
+          serialized[icao] = serializeApproachCache(entry.approachData);
+        }
+      }
+      const payload = {
+        gameRoot: rootPath,
+        builtAt: Date.now(),
+        airports: serialized,
+      };
+      const cfgDir = app.getPath('userData');
+      if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
+      fs.writeFileSync(cachePath, JSON.stringify(payload), 'utf-8');
+      console.log('[INIT-CACHE] persisted approach cache to disk (' + Object.keys(serialized).length + ' airports)');
+    } catch (e) {
+      console.log('[INIT-CACHE] disk cache write error:', e.message);
+    }
+  }
+
   return cache;
 });
 
-// ─── IPC: Capture DynamicsParams templates from all airports ────
+// ─── IPC: Refresh root scan (delete disk cache & re-scan) ──
 
-ipcMain.handle('capture-dynamics-templates', async (_event, rootPath) => {
-  console.log('[IPC] capture-dynamics-templates START, rootPath:', rootPath);
+ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
+  console.log('[IPC] refresh-root-scan START');
   try {
-    const templates = captureAllDynamicsTemplates(rootPath);
-    dynamicsTemplatesCache = templates;
-    console.log('[IPC] capture-dynamics-templates OK —', Object.keys(templates).length, 'templates');
-    return { success: true, count: Object.keys(templates).length };
+    // Delete disk cache to force re-scan
+    const cachePath = _approachCachePath();
+    if (fs.existsSync(cachePath)) {
+      fs.unlinkSync(cachePath);
+      console.log('[IPC] refresh-root-scan: deleted disk cache');
+    }
+    // Re-run init-airport-cache logic (same as the handler above but inline)
+    const airportsDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports');
+    if (!fs.existsSync(airportsDir)) return { success: false, error: 'Airports directory not found' };
+
+    const cache = {};
+    for (const icao of fs.readdirSync(airportsDir)) {
+      const airportPath = path.join(airportsDir, icao);
+      if (!fs.statSync(airportPath).isDirectory()) continue;
+      const levelsDir = path.join(airportPath, 'Levels');
+      if (!fs.existsSync(levelsDir)) continue;
+
+      const enPath = path.join(levelsDir, 'audio_clips_en.json');
+      const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
+      const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
+      const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
+      const audioCallsigns = mergeAudioCallsigns(enData, zhData);
+      const approachData = buildApproachCache(levelsDir);
+      cache[icao] = { audioCallsigns, approachData };
+    }
+
+    airportCache = cache;
+
+    // Persist new cache
+    const serialized = {};
+    for (const [icao, entry] of Object.entries(cache)) {
+      if (entry.approachData) serialized[icao] = serializeApproachCache(entry.approachData);
+    }
+    const payload = { gameRoot: rootPath, builtAt: Date.now(), airports: serialized };
+    const cfgDir = app.getPath('userData');
+    if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
+    fs.writeFileSync(_approachCachePath(), JSON.stringify(payload), 'utf-8');
+
+    console.log('[IPC] refresh-root-scan OK — ' + Object.keys(cache).length + ' airports');
+    return { success: true };
   } catch (err) {
-    console.error('[IPC] capture-dynamics-templates FAIL:', err.message);
+    console.error('[IPC] refresh-root-scan FAIL:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -289,8 +393,13 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
       } catch (_) {}
     }
 
+    // Extract ICAO for approach cache lookup
+    const icaoMatch = filePath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+    const icao = icaoMatch ? icaoMatch[1] : '';
+    const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
+
     // Generate full ACL from scratch, preserving header structure
-    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, dynamicsTemplatesCache, aclcfgStartTime);
+    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime);
 
     // ── Patch timeline sections into ACL ──
     _rebuildTimelineSections(filePath, weatherTimeline, windTimeline, runwayTimeline);

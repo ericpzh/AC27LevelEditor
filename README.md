@@ -111,7 +111,7 @@ src/App.jsx          →  Root component: providers + screen routing
 src/components/      →  React component tree (Setup, Browser, Editor, common)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
-src/acl/             →  CommonJS backend modules (parser facade + 7 modules)
+src/acl/             →  CommonJS backend modules (parser facade + 8 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
@@ -122,17 +122,17 @@ All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The ren
 ### Data Flow
 
 ```
-Phase 0 (once):   Game Root → scan audio clips → AirportCache
+Phase 0 (once):   Game Root → scan audio clips + approach data → AirportCache
 Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → zustand store
 Phase 2 (edit):   All edits go through zustand store actions
-Phase 3 (save):   Validation → write .acl + .csv + timeline .json (game compat)
+Phase 3 (save):   Validation → generate AircraftStates for approach flights → write .acl + .csv + timeline .json (game compat)
 ```
 
 ### Project Structure
 
 ```
 ├── electron/
-│   ├── main.js              # Electron main process + ~20 IPC handlers
+│   ├── main.js              # Electron main process + 26 IPC handlers
 │   └── preload.js           # contextBridge (window.electronAPI)
 ├── index.html               # Vite HTML entry
 ├── vite.config.js           # Vite 8 + React plugin + Electron plugin
@@ -168,7 +168,8 @@ Phase 3 (save):   Validation → write .acl + .csv + timeline .json (game compat
 │   │   ├── scanner.js           # Game root scanner
 │   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
 │   │   ├── world_state.js       # WorldState format (types 35/56/54)
-│   │   ├── dynamics.js          # DynamicParams templates & Aircraft entries
+│   │   ├── approach.js         # Approach AircraftState constructor (State=30)
+│   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
 │   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
@@ -182,7 +183,7 @@ Phase 3 (save):   Validation → write .acl + .csv + timeline .json (game compat
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── test/                # 8 plain Node.js test scripts (no framework)
+├── test/                # 9 plain Node.js test scripts (no framework)
 └── dist/                # Build output (gitignored)
 ```
 
@@ -205,6 +206,7 @@ No test framework — each test is a standalone Node.js script. All accept `--he
 ```bash
 node test/test_parse_airport.js [--root <game-root>]
 node test/test_callsign_gen.js [--root <game-root>]
+node test/test_approach_aircraft.js [--root <game-root>]
 ```
 
 **Single-ACL (requires `--acl <path>`, derives paired files automatically):**
@@ -212,6 +214,7 @@ node test/test_callsign_gen.js [--root <game-root>]
 node test/test_e2e_save_load.js --acl <path>
 node test/test_csv_vs_flightplans.js --acl <path>
 node test/test_rebuild_sections.js --acl <path>
+node test/test_acl_linkage.js --acl <path>
 ```
 
 **Timeline (requires ACL path, auto-discovers JSONs; `--weather`/`--wind`/`--runway` optional):**
@@ -270,7 +273,7 @@ npm start    # 开发模式启动
 ```bash
 node test/test_e2e_save_load.js    # 完整存取往返测试
 node test/test_parse_airport.js    # 解析所有机场
-# ... 共 8 个测试脚本
+# ... 共 9 个测试脚本
 ```
 
 ### 构建

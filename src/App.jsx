@@ -28,7 +28,6 @@ function ScreenRouter() {
         const st = useAppStore.getState();
         st.setRootPath(lastRoot, scan.airports || []);
         await electronAPI.initAirportCache(lastRoot).catch(() => {});
-        await electronAPI.captureDynamicsTemplates(lastRoot).catch(() => {});
         st.setScreen('browser');
       } catch (err) {
         console.error('[App] Boot failed:', err);

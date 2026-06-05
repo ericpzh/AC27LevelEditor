@@ -256,8 +256,8 @@ export default function EditorScreen() {
   useEditorShell({ onSave: handleSave });
 
   // Compute table data
-  const arrivals = useMemo(() => flights.filter(fl => (fl.LandingTime || '').trim()), [flights]);
-  const departures = useMemo(() => flights.filter(fl => !(fl.LandingTime || '').trim()), [flights]);
+  const arrivals = useMemo(() => flights.filter(fl => (fl.LandingTime || '').trim()).sort((a, b) => (a.LandingTime || '').localeCompare(b.LandingTime || '')), [flights]);
+  const departures = useMemo(() => flights.filter(fl => !(fl.LandingTime || '').trim()).sort((a, b) => (a.OffBlockTime || '99:99').localeCompare(b.OffBlockTime || '99:99')), [flights]);
   const arrCols = useMemo(() => getActiveColumns(arrivals, ARRIVAL_FIELDS), [arrivals]);
   const depCols = useMemo(() => getActiveColumns(departures, DEPARTURE_FIELDS), [departures]);
 

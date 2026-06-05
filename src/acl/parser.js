@@ -26,7 +26,16 @@ const {
   loadAudioCallsigns, mergeAudioCallsigns,
 } = require('./utils');
 const { scanGameRoot } = require('./scanner');
-const { captureAllDynamicsTemplates } = require('./dynamics');
+const {
+  extractSpecificationDB, extractApproachData,
+  buildAppPointMap, computeTotalApproachTimes,
+  resolveFlyApproachPoints,
+  computeProgressRatio, computePosition, computeDirection,
+  buildFullPath, computePathLength,
+  buildApproachAircraftBlock,
+  buildDesignatorMapping, buildApproachCache,
+  serializeApproachCache, deserializeApproachCache,
+} = require('./approach');
 const {
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
@@ -100,8 +109,8 @@ function loadFlights(aclPath) {
 
 // ─── Generate full ACL from scratch ──────────────────────────
 
-function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _worldStateData, _sceneryMaps, _fromWorldState, _fromFlightPlans, dynamicsTemplates, aclcfgStartTime) {
-  _rebuildWorldStateSections(aclPath, flights, undefined, dynamicsTemplates, aclcfgStartTime);
+function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _worldStateData, _sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime) {
+  _rebuildWorldStateSections(aclPath, flights, undefined, approachCache, aclcfgStartTime);
 }
 
 // ─── Generate ACL from CSV (uses template) ────────────────────
@@ -124,7 +133,14 @@ module.exports = {
   getFileInfo, loadAudioCallsigns,
   sortFlightsChronologically,
   scanGameRoot,
-  captureAllDynamicsTemplates,
+  extractSpecificationDB, extractApproachData,
+  buildAppPointMap, computeTotalApproachTimes,
+  resolveFlyApproachPoints,
+  computeProgressRatio, computePosition, computeDirection,
+  buildFullPath, computePathLength,
+  buildApproachAircraftBlock,
+  buildDesignatorMapping, buildApproachCache,
+  serializeApproachCache, deserializeApproachCache,
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
   createZip, listZipFiles, extractZip,

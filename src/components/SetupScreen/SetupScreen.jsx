@@ -22,7 +22,6 @@ export default function SetupScreen() {
       setRootPath(result.rootPath, result.airports || []);
       try { electronAPI.saveLastRoot(result.rootPath); } catch (_) {}
       await electronAPI.initAirportCache(result.rootPath).catch(err => console.error(err));
-      await electronAPI.captureDynamicsTemplates(result.rootPath).catch(err => console.error(err));
       setScreen('browser');
     } catch (err) { setError(err.message); }
     setLoading(false);

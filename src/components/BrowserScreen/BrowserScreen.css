@@ -75,6 +75,16 @@
 }
 .browser-note-close:hover { color: var(--text); }
 
+/* Re-scan guide path code — inline, matching SetupScreen .steam-path-hint code */
+.guide-path {
+  display: inline;
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
 .browser-content {
   flex: 1;
   overflow-y: auto;

@@ -63,18 +63,16 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
 
   if (_earliestTime && _configEndTime) {
     // _earliestTime = warm-up end (actual flights begin), _configEndTime = scenario end
-    // Both bounds get +10min: 07:00~09:00 → valid range 07:10~09:10
+    // Use raw start bound (approach aircraft can now be generated at any time)
+    // Keep +10min grace on end bound for InBlockTime after scenario end
     const etParts = String(_earliestTime).split(':');
     const ceParts = String(_configEndTime).split(':');
     const etH = parseInt(etParts[0], 10), etM = parseInt(etParts[1], 10);
     const ceH = parseInt(ceParts[0], 10), ceM = parseInt(ceParts[1], 10);
 
-    const startTime = Math.floor((etH * 60 + etM + 10) / 60) * 100 + ((etH * 60 + etM + 10) % 60);
+    const startTime = etH * 100 + etM;
     const endTime = Math.floor((ceH * 60 + ceM + 10) / 60) * 100 + ((ceH * 60 + ceM + 10) % 60);
-
-    const startH = Math.floor((etH * 60 + etM + 10) / 60) % 24;
-    const startM = (etH * 60 + etM + 10) % 60;
-    const startLabel = String(startH).padStart(2, '0') + ':' + String(startM).padStart(2, '0');
+    const startLabel = _earliestTime;
 
     const endH = Math.floor((ceH * 60 + ceM + 10) / 60) % 24;
     const endM = (ceH * 60 + ceM + 10) % 60;

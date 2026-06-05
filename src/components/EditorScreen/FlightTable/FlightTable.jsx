@@ -78,20 +78,8 @@ export default function FlightTable({ type, flights, columns }) {
   const audioCallsigns = useAppStore(s => s.audioCallsigns);
   const [collapsed, setCollapsed] = useState(false);
 
-  const dragRef = useRef({ active: false, lastIdx: -1 });
+  const dragRef = useRef({ active: false, lastDi: -1 });
   const isArrivals = type === 'arrivals';
-
-  // Precompute which global indices belong to this table's type, so drag-select
-  // never cross-contaminates arrivals ↔ departures (they share allFlights indices).
-  const typeIndicesRef = useRef(new Set());
-  {
-    const set = new Set();
-    for (let i = 0; i < allFlights.length; i++) {
-      const isArr = !!(allFlights[i].LandingTime || '').trim();
-      if (isArrivals ? isArr : !isArr) set.add(i);
-    }
-    typeIndicesRef.current = set;
-  }
 
   // End drag on any mouseup — even outside the table
   useEffect(() => {
@@ -127,44 +115,57 @@ export default function FlightTable({ type, flights, columns }) {
     return map;
   }, [audioCallsigns, allFlights]);
 
+  // Map global store index ↔ display index (position in the sorted flights prop)
+  const giToDi = useMemo(() => {
+    const map = new Map();
+    for (let di = 0; di < flights.length; di++) {
+      const gi = allFlights.indexOf(flights[di]);
+      if (gi >= 0) map.set(gi, di);
+    }
+    return map;
+  }, [flights, allFlights]);
+  const diToGi = useMemo(() => flights.map(fl => allFlights.indexOf(fl)), [flights, allFlights]);
+
   const onMouseDown = useCallback((e, gi) => {
     if (e.target.closest('input,select,button')) return;
     e.preventDefault(); // suppress text selection during drag
     document.body.style.userSelect = 'none';
     document.body.onselectstart = () => false;
-    dragRef.current = { active: true, lastIdx: gi };
+    dragRef.current = { active: true, lastDi: giToDi.get(gi) ?? -1 };
     // Toggle the clicked row
     const prev = useAppStore.getState().selectedIndices;
     const next = new Set(prev);
     if (next.has(gi)) next.delete(gi); else next.add(gi);
     useAppStore.setState({ selectedIndices: next, highlightedIdx: gi });
-  }, []);
+  }, [giToDi]);
   const onMouseEnter = useCallback((e, gi) => {
     if (!dragRef.current.active) return;
+    const currDi = giToDi.get(gi);
+    if (currDi == null) return;
     const prev = useAppStore.getState().selectedIndices;
     const set = new Set(prev);
-    const last = dragRef.current.lastIdx;
-    if (gi > last) {
-      for (let i = last + 1; i <= gi; i++) {
-        if (typeIndicesRef.current.has(i)) {
-          if (set.has(i)) set.delete(i); else set.add(i);
+    const lastDi = dragRef.current.lastDi;
+    if (currDi > lastDi) {
+      for (let di = lastDi + 1; di <= currDi; di++) {
+        const idx = diToGi[di];
+        if (idx >= 0) {
+          if (set.has(idx)) set.delete(idx); else set.add(idx);
         }
       }
-    } else if (gi < last) {
-      for (let i = gi; i < last; i++) {
-        if (typeIndicesRef.current.has(i)) {
-          if (set.has(i)) set.delete(i); else set.add(i);
+    } else if (currDi < lastDi) {
+      for (let di = currDi; di < lastDi; di++) {
+        const idx = diToGi[di];
+        if (idx >= 0) {
+          if (set.has(idx)) set.delete(idx); else set.add(idx);
         }
       }
     } else {
       // Same row re-entered — toggle it
-      if (typeIndicesRef.current.has(gi)) {
-        if (set.has(gi)) set.delete(gi); else set.add(gi);
-      }
+      if (set.has(gi)) set.delete(gi); else set.add(gi);
     }
-    dragRef.current.lastIdx = gi;
+    dragRef.current.lastDi = currDi;
     useAppStore.setState({ selectedIndices: set });
-  }, []);
+  }, [flights, diToGi, giToDi]);
   const onMouseUp = useCallback(() => {
     dragRef.current.active = false;
     document.body.style.userSelect = '';
@@ -204,6 +205,11 @@ export default function FlightTable({ type, flights, columns }) {
                       const isTime = TIME_FIELDS.has(col);
                       const isDropdown = DROPDOWN_FIELDS.has(col);
                       let opts = (isDropdown ? vals[col] : null);
+                      // AircraftType: filter by airline (only show types this airline operates)
+                      if (col === 'AircraftType' && airlineCode) {
+                        const airlineTypes = vals._compat?.airlineToAircraft?.[airlineCode];
+                        if (airlineTypes && airlineTypes.length > 0) opts = airlineTypes;
+                      }
                       // Registration: filter by airline + aircraft type
                       if (col === 'Registration') {
                         const acType = (fl.AircraftType || '').trim();
