@@ -20,7 +20,7 @@
     browser_rescan_guide_step1_path:'GroundATC_Data\\StreamingAssets\\Airports\\<机场代码>\\Levels',
     browser_rescan_guide_step2:'在 Steam 中：右键 <strong>Airport Control 27</strong> → <strong>属性</strong> → <strong>已安装文件</strong> → <strong>验证游戏文件的完整性</strong>',
     browser_btn_continue:'继续',
-    browser_note:'⚠ 部分关卡的时间线已整合到更大范围关卡的时间线中（如 05:45-06:15 整合到 05:00-07:00 中）',
+
     browser_loading:'正在扫描关卡文件…', browser_no_files:'未找到任何 .acl 关卡文件',
     browser_parse_error:'解析失败', browser_tag_tutorial:'教程', browser_tag_test:'测试', browser_tag_endless:'无尽',
     browser_tod_dawn:'黎明', browser_tod_morning:'上午', browser_tod_afternoon:'下午', browser_tod_dusk:'黄昏', browser_tod_night:'夜晚',
@@ -144,7 +144,6 @@
     browser_rescan_guide_step1_path:'GroundATC_Data\\StreamingAssets\\Airports\\<ICAO>\\Levels',
     browser_rescan_guide_step2:'In Steam: right-click <strong>Airport Control 27</strong> → <strong>Properties</strong> → <strong>Installed Files</strong> → <strong>Verify integrity of game files</strong>',
     browser_btn_continue:'Continue',
-    browser_note:'⚠ Some level timelines are incorporated into larger levels (e.g. 05:45-06:15 is part of 05:00-07:00)',
     browser_loading:'Scanning level files…', browser_no_files:'No .acl level files found',
     browser_parse_error:'Parse Error', browser_tag_tutorial:'Tutorial', browser_tag_test:'Test', browser_tag_endless:'Endless',
     browser_tod_dawn:'Dawn', browser_tod_morning:'Morning', browser_tod_afternoon:'Afternoon', browser_tod_dusk:'Dusk', browser_tod_night:'Night',

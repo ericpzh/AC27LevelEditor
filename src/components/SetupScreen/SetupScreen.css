@@ -4,6 +4,10 @@
   background: linear-gradient(135deg, #0f1117 0%, #1a1d27 50%, #0f1117 100%);
 }
 
+[data-theme="light"] #screen-setup {
+  background: linear-gradient(135deg, #e8eaed 0%, #f2f4f7 50%, #e8eaed 100%);
+}
+
 .setup-card {
   position: relative;
   background: var(--bg-surface);
@@ -105,7 +109,7 @@
 }
 
 .setup-nightly-note strong {
-  color: #ffb830;
+  color: var(--orange);
 }
 
 .setup-nightly-icon {

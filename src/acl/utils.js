@@ -6,35 +6,9 @@ const path = require('path');
 import { DROPDOWN_FIELDS } from './constants';
 const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./world_state');
 const { _parseSceneryData } = require('./scenery');
-const { _parseWorldStateFlightPlans } = require('./flight_plans');
+const { _parseWorldStateFlightPlans, _extractConfig } = require('./flight_plans');
 
-// ─── Enrich CSV flights from ACL source ───────────────────────
 
-function _enrichFlightsFromSource(csvFlights, aclFlights) {
-  const aclByCs = {};
-  for (const a of aclFlights) {
-    const cs = (a.CallSign || '').trim();
-    if (cs) aclByCs[cs] = a;
-  }
-  for (const c of csvFlights) {
-    const cs = (c.CallSign || '').trim();
-    const acl = aclByCs[cs];
-    if (!acl) continue;
-    if (acl._Registration && !c._Registration) {
-      c._Registration = acl._Registration;
-    }
-    if (acl.AirlineName && !(c.AirlineName || '').trim()) {
-      c.AirlineName = acl.AirlineName;
-    }
-    if (acl.Voice && !(c.Voice || '').trim()) c.Voice = acl.Voice;
-    if (acl.Language && !(c.Language || '').trim()) c.Language = acl.Language;
-    if (acl._wsGuid) c._wsGuid = acl._wsGuid;
-    // Copy time fields from ACL when CSV doesn't have them
-    for (const f of ['LandingTime', 'OffBlockTime', 'TakeoffTime', 'InBlockTime']) {
-      if (!c[f] && acl[f]) c[f] = acl[f];
-    }
-  }
-}
 
 // ─── Sort flights chronologically ─────────────────────────────
 
@@ -142,6 +116,8 @@ function getFileInfo(aclPath) {
     }
     if (error) return { error, filename: path.basename(aclPath), size: stat.size };
 
+    // Extract level config from ACL's Config block (single source of truth)
+    const config = _extractConfig(text);
     let arrivals = 0, departures = 0;
     let earliestTime = null;
     for (const fl of flights) {
@@ -160,6 +136,8 @@ function getFileInfo(aclPath) {
       arrivals,
       departures,
       earliestTime,
+      startTime: config ? config.startTime : null,
+      endTime: config ? config.endTime : null,
     };
   } catch (err) {
     return { error: err.message, filename: path.basename(aclPath), size: 0 };
@@ -223,7 +201,6 @@ function mergeAudioCallsigns(primary, secondary) {
 }
 
 module.exports = {
-  _enrichFlightsFromSource,
   sortFlightsChronologically,
   collectUniqueValues,
   getFileInfo,

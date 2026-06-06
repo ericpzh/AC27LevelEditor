@@ -200,7 +200,7 @@ function _parseFlightPlanEntry(vBlock) {
 
 // ─── Build FlightPlan Arrival leg (type 58) ───────────────────
 
-function _buildFlightPlanArrivalLeg(flight, id, baseDateTicks) {
+function _buildFlightPlanArrivalLeg(flight, id, baseDateTicks, arrTypeNum) {
   const legId = id + 1;
   const bdt = baseDateTicks || FALLBACK_BASE_DATE_TICKS;
   const cs = (flight.CallSign || '').trim();
@@ -210,11 +210,12 @@ function _buildFlightPlanArrivalLeg(flight, id, baseDateTicks) {
   const star = (flight.Airway || '');
   const landingTicks = timeToTicks(flight.LandingTime || '', bdt);
   const inBlockTicks = timeToTicks(flight.InBlockTime || '', bdt);
+  const atn = arrTypeNum || 58;
 
   const lines = [];
   lines.push('                            {');
   lines.push(`                                "$id": ${legId},`);
-  lines.push('                                "$type": "58|ContextCross.States.FlightPlanArrivalLegState, GroundATC.Core",');
+  lines.push(`                                "$type": "${atn}|ContextCross.States.FlightPlanArrivalLegState, GroundATC.Core",`);
   if (cs) lines.push(`                                "CallSign": "${cs}",`);
   if (origin) lines.push(`                                "OriginAirport": "${origin}",`);
   lines.push(`                                "LandingTime": { "$type": 3, ${landingTicks} },`);
@@ -229,7 +230,7 @@ function _buildFlightPlanArrivalLeg(flight, id, baseDateTicks) {
 
 // ─── Build FlightPlan Departure leg (type 57) ─────────────────
 
-function _buildFlightPlanDepartureLeg(flight, id, baseDateTicks) {
+function _buildFlightPlanDepartureLeg(flight, id, baseDateTicks, depTypeNum) {
   const legId = id + 1;
   const bdt = baseDateTicks || FALLBACK_BASE_DATE_TICKS;
   const cs = (flight.CallSign || '').trim();
@@ -238,11 +239,12 @@ function _buildFlightPlanDepartureLeg(flight, id, baseDateTicks) {
   const stand = (flight.Stand || '');
   const obTicks = timeToTicks(flight.OffBlockTime || '', bdt);
   const totTicks = timeToTicks(flight.TakeoffTime || '', bdt);
+  const dtn = depTypeNum || 57;
 
   const lines = [];
   lines.push('                            {');
   lines.push(`                                "$id": ${legId},`);
-  lines.push('                                "$type": "57|ContextCross.States.FlightPlanDepartureLegState, GroundATC.Core",');
+  lines.push(`                                "$type": "${dtn}|ContextCross.States.FlightPlanDepartureLegState, GroundATC.Core",`);
   if (cs) lines.push(`                                "CallSign": "${cs}",`);
   if (dest) lines.push(`                                "DestinationAirport": "${dest}",`);
   lines.push(`                                "OffBlockTime": { "$type": 3, ${obTicks} },`);
@@ -263,17 +265,34 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   // Extract ICAO from path: .../Airports/<ICAO>/Levels/...
   const icaoMatch = aclPath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
   const icao = icaoMatch ? icaoMatch[1] : '';
-  // Fallback: read startTime from .aclcfg if not passed
+  // Fallback: read startTime from ACL's Config block if not passed
   if (!aclcfgStartTime) {
     try {
-      const cfgPath = aclPath.replace(/\.acl$/i, '.aclcfg');
-      if (fs.existsSync(cfgPath)) {
-        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-        aclcfgStartTime = cfg.startTime || null;
+      const config = _extractConfig(text);
+      if (config && config.startTime) {
+        aclcfgStartTime = config.startTime;
       }
     } catch (_) {}
   }
   log('baseDateTicks: ' + bdt + '  flights: ' + (flights ? flights.length : 0) + ' approachCache: ' + (approachCache ? (approachCache.appPointMap ? approachCache.appPointMap.size : 0) + ' combos' : 'null') + ' startTime: ' + aclcfgStartTime + ' icao: ' + icao);
+
+  // Build type map from ALL full $type declarations in the original file.
+  // Preserved segments (segBefore, segAfter) may contain short-form "$type": N
+  // references to types whose full declarations live ONLY inside the Aircrafts
+  // section (which gets replaced). Capturing these full declarations here lets
+  // us expand short-form refs in preserved segments so type resolution survives
+  // the Aircrafts rebuild.
+  const typeMap = new Map();
+  const typeDeclRegex = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+  let tdMatch;
+  while ((tdMatch = typeDeclRegex.exec(text)) !== null) {
+    const num = parseInt(tdMatch[1], 10);
+    // First declaration wins — earliest in file is canonical
+    if (!typeMap.has(num)) {
+      typeMap.set(num, tdMatch[2]);
+    }
+  }
+  log('typeMap: ' + typeMap.size + ' type declarations');
 
   if (!flights || flights.length === 0) {
     log('WARNING: empty flights array, skipping rebuild');
@@ -326,10 +345,34 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   if (fpContentEnd === null) { log('ERROR: cannot find FlightPlans $rcontent end'); return; }
   log('FlightPlans $rcontent: ' + fpContentStart + ' → ' + fpContentEnd);
 
+  // Extract type numbers from original FlightPlans $rcontent.
+  // Unity's JSON serializer assigns type numbers per-file — they are NOT
+  // consistent across airports or even levels. Hardcoding them causes type-ID
+  // conflicts (e.g., Dictionary and FlightPlanState both claiming type 56).
+  // We extract the canonical numbers from the original file's first full
+  // declarations so regenerated entries use the correct IDs.
+  const _origFpContent = text.substring(fpContentStart, fpContentEnd);
+  // Escape for regex literal: only . and \ need escaping in .NET type names
+  const _escapeRegex = (s) => s.replace(/[.\\]/g, '\\$&');
+  const _extractTypeNum = (namespaceName) => {
+    // Match: "$type": "N|NamespaceName, GroundATC.Core"
+    // The type name is followed by ", GroundATC.Core" — this anchors us to the
+    // exact type, not a longer type that contains namespaceName as a substring
+    // (e.g. Dictionary`2[[...],[FlightPlanState, ...]]).
+    const pat = '"\\$type":\\s*"(\\d+)\\|' + _escapeRegex(namespaceName) + ',\\s*GroundATC\\.Core"';
+    const re = new RegExp(pat);
+    const m = _origFpContent.match(re);
+    return m ? parseInt(m[1], 10) : null;
+  };
+  const _fpTypeNum = _extractTypeNum('ContextCross.States.FlightPlanState') || 56;
+  const _fpArrTypeNum = _extractTypeNum('ContextCross.States.FlightPlanArrivalLegState') || 58;
+  const _fpDepTypeNum = _extractTypeNum('ContextCross.States.FlightPlanDepartureLegState') || 57;
+  log('FlightPlans type numbers: FlightPlanState=' + _fpTypeNum + ' ArrivalLeg=' + _fpArrTypeNum + ' DepartureLeg=' + _fpDepTypeNum);
+
   // 4. Build segments — also locate AircraftAnimators $rcontent between Aircrafts and FlightPlans
   let segBefore = text.substring(0, acContentStart);
   const betweenText = text.substring(acContentEnd, fpContentStart);
-  const segAfter = text.substring(fpContentEnd);
+  let segAfter = text.substring(fpContentEnd);
 
   // 4a. Find AircraftAnimators $rcontent in betweenText
   const aaIdx = betweenText.indexOf('"AircraftAnimators"');
@@ -362,7 +405,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
     // Generate GUID first so we can link AircraftState to it
     const fpGuid = _generateGuid();
     fpGuids.push(fpGuid);
-    fpEntries.push(_buildFlightPlanStateEntryWithGuid(flights[i], 90000 + i, bdt, fpGuid));
+    fpEntries.push(_buildFlightPlanStateEntryWithGuid(flights[i], 90000 + i, bdt, fpGuid, _fpTypeNum, _fpArrTypeNum, _fpDepTypeNum));
   }
   log('generated ' + fpEntries.length + ' FlightPlan entries');
 
@@ -377,9 +420,12 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   const _st30Block = _existingAcContent.match(/"\$v":\s*\{[\s\S]{0,300}?"\$type":\s*(\d+)[\s\S]{0,500}?"State":\s*30\b/);
   if (_st30Block) _acTypeNum = parseInt(_st30Block[1], 10);
 
-  // Extract RadioChannelGuid from original file's first State=30 entry
-  const _radioChanMatch = _existingAcContent.match(/"State":\s*30[\s\S]{0,3000}?"RadioChannelGuid":\s*"([^"]+)"/);
-  const _radioChannelGuid = _radioChanMatch ? _radioChanMatch[1] : '';
+  // Extract the Approach radio channel GUID from the Channels section.
+  // We previously tried to extract it from the Aircrafts section, but that fails
+  // when the first State=30 entry is a taxiing aircraft (RadioChannelGuid: null)
+  // or on re-saves (all RadioChannelGuid values already empty).
+  // The Channels section lives in segAfter and is always preserved verbatim.
+  const _radioChannelGuid = _extractAppChannelGuid(segAfter);
 
   const acEntries = [];
   const animEntries = [];
@@ -479,6 +525,26 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   }
   log('generated ' + acEntries.length + ' Aircraft entries + ' + animEntries.length + ' Animator entries');
 
+  // 6b. Expand short-form $type references in preserved segments.
+  // The regenerated Aircrafts/FlightPlans sections use full-form types, but
+  // segBefore and segAfter (copied verbatim from the original file) may contain
+  // short-form "$type": N references to types whose full declarations were in
+  // the now-replaced Aircrafts $rcontent. Expanding them to full form ensures
+  // the game's JSON deserializer can resolve every type in the output file.
+  if (typeMap.size > 0) {
+    segBefore = _expandShortFormTypes(segBefore, typeMap);
+    preAnimators = _expandShortFormTypes(preAnimators, typeMap);
+    postAnimators = _expandShortFormTypes(postAnimators, typeMap);
+    segAfter = _expandShortFormTypes(segAfter, typeMap);
+    log('Expanded short-form $type refs in preserved segments');
+  }
+
+  // Reset docking state on Jetways entries that reference old aircraft GUIDs.
+  // The Aircrafts section is rebuilt with new GUIDs, so DockingAircraftGuid
+  // values in the preserved Jetways section become orphaned and cause
+  // NullReferenceException in the game. Must run unconditionally.
+  segAfter = _resetJetwayDockingState(segAfter, log);
+
   // 7. Update $rlength in Aircrafts
   let segBeforeMod = segBefore;
   const acMarker = segBeforeMod.lastIndexOf('"Aircrafts"');
@@ -530,13 +596,16 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
 
 // ─── Build FlightPlanStateEntry with preset GUID ────────────────
 
-function _buildFlightPlanStateEntryWithGuid(flight, entryId, baseDateTicks, fpGuid) {
+function _buildFlightPlanStateEntryWithGuid(flight, entryId, baseDateTicks, fpGuid, fpTypeNum, fpArrTypeNum, fpDepTypeNum) {
   const bdt = baseDateTicks || FALLBACK_BASE_DATE_TICKS;
   const reg = flight._Registration || flight.Registration || '';
   const acType = flight.AircraftType || '';
   const airline = flight.AirlineName || '';
   const voice = flight.Voice || '';
   const lang = flight.Language || '';
+  const fpt = fpTypeNum || 56;
+  const fat = fpArrTypeNum || 58;
+  const fdt = fpDepTypeNum || 57;
 
   const isArrival = (flight.isDeparture === false) ||
     (((flight.LandingTime || '').trim() && !(flight.OffBlockTime || '').trim()));
@@ -546,7 +615,7 @@ function _buildFlightPlanStateEntryWithGuid(flight, entryId, baseDateTicks, fpGu
   lines.push(`                    "$k": "${fpGuid}",`);
   lines.push('                    "$v": {');
   lines.push(`                        "$id": ${entryId},`);
-  lines.push('                        "$type": "56|ContextCross.States.FlightPlanState, GroundATC.Core",');
+  lines.push(`                        "$type": "${fpt}|ContextCross.States.FlightPlanState, GroundATC.Core",`);
   lines.push(`                        "Guid": "${fpGuid}",`);
   lines.push('                        "Enabled": true,');
   if (reg) lines.push(`                        "Registration": "${reg}",`);
@@ -558,12 +627,12 @@ function _buildFlightPlanStateEntryWithGuid(flight, entryId, baseDateTicks, fpGu
 
   if (isArrival) {
     lines.push('                        "Arrival":');
-    lines.push(_buildFlightPlanArrivalLeg(flight, entryId, bdt));
+    lines.push(_buildFlightPlanArrivalLeg(flight, entryId, bdt, fat));
     lines.push('                        "Departure": null');
   } else {
     lines.push('                        "Arrival": null,');
     lines.push('                        "Departure":');
-    lines.push(_buildFlightPlanDepartureLeg(flight, entryId, bdt));
+    lines.push(_buildFlightPlanDepartureLeg(flight, entryId, bdt, fdt));
   }
 
   lines.push('                    }');
@@ -592,10 +661,145 @@ function _extractSection(text, sectionKey) {
   return { start: idx, end: endIdx, content: text.substring(braceIdx, endIdx) };
 }
 
+/** Extract level config (startTime, endTime, file paths) from ACL's Config block. */
+function _extractConfig(aclText) {
+  const sec = _extractSection(aclText, 'Config');
+  if (!sec) { console.log('[CONFIG-EXTRACT] Config section NOT FOUND in ACL text (len=' + (aclText ? aclText.length : 0) + ')'); return null; }
+  // Use regex extraction instead of JSON.parse — the Unity-serialized Config block
+  // may contain non-standard JSON (unquoted keys, trailing commas, NaN, etc.)
+  const getStr = (name) => {
+    const re = new RegExp('"' + name + '"\\s*:\\s*"([^"]*)"');
+    const m = sec.content.match(re);
+    return m ? m[1] : null;
+  };
+  const result = {
+    startTime: getStr('startTime'),
+    endTime: getStr('endTime'),
+    flightScheduleFile: getStr('flightScheduleFile'),
+    runwayTimelineFile: getStr('runwayTimelineFile'),
+  };
+  console.log('[CONFIG-EXTRACT] startTime=' + result.startTime + ' endTime=' + result.endTime + ' flightScheduleFile=' + result.flightScheduleFile + ' runwayTimelineFile=' + result.runwayTimelineFile);
+  return result;
+}
+
 function _parseTypeNum(typeStr) {
   if (!typeStr) return null;
   const m = typeStr.match(/^"?(\d+)/);
   return m ? parseInt(m[1], 10) : null;
+}
+
+/**
+ * Expand short-form $type references to fully-qualified type strings.
+ * Short form:   "$type": 44,
+ * Resolved to:  "$type": "44|ContextCross.Events.AircraftEvent[], GroundATC.Core",
+ *
+ * Only matches bare numeric $type values (not already-qualified "N|..." strings).
+ * References whose type ID is not in the typeMap are left as-is.
+ */
+function _expandShortFormTypes(text, typeMap) {
+  if (!typeMap || typeMap.size === 0) return text;
+  return text.replace(/"\$type":\s*(\d+)\s*([,\}\]])/g, (match, numStr, delimiter) => {
+    const num = parseInt(numStr, 10);
+    const fullType = typeMap.get(num);
+    if (fullType) {
+      return '"$type": "' + num + '|' + fullType + '"' + delimiter;
+    }
+    return match;
+  });
+}
+
+/**
+ * Extract the Approach (APP) radio channel GUID from the Channels section.
+ * The Channels dictionary is preserved verbatim in segAfter and always contains
+ * the correct channel GUIDs independent of the Aircrafts rebuild state.
+ *
+ * We search for a channel entry with Type=5 (Approach), falling back to
+ * ShortCode "APP" if Type is not found.
+ */
+function _extractAppChannelGuid(segAfter) {
+  const chIdx = segAfter.indexOf('"Channels"');
+  if (chIdx < 0) return '';
+  const chSection = segAfter.substring(chIdx);
+  const rcMatch = chSection.match(/"\$rcontent"\s*:\s*\[/);
+  if (!rcMatch) return '';
+  const chRcStart = chIdx + rcMatch.index + rcMatch[0].length;
+  let depth = 0, chRcEnd = null;
+  for (let i = chRcStart; i < segAfter.length; i++) {
+    if (segAfter[i] === '{') depth++;
+    else if (segAfter[i] === '}') depth--;
+    else if (segAfter[i] === ']' && depth === 0) { chRcEnd = i + 1; break; }
+  }
+  if (chRcEnd === null) return '';
+  const chContent = segAfter.substring(chRcStart, chRcEnd);
+  // Split on $v blocks to find the APP channel (Type=5 or ShortCode="APP").
+  // Field order varies between files (Guid may come before or after Type),
+  // so we can't rely on a single regex with fixed field sequence.
+  const parts = chContent.split(/"\$v":\s*\{/);
+  for (let i = 1; i < parts.length; i++) {
+    const block = parts[i];
+    // Check for Type=5 (Approach) or ShortCode "APP"
+    if (/"Type":\s*5\b/.test(block) || /"ShortCode":\s*"APP"/.test(block)) {
+      const guidM = block.match(/"Guid":\s*"([\da-f-]+)"/);
+      if (guidM) return guidM[1];
+    }
+  }
+  return '';
+}
+
+/**
+ * Reset docking state on Jetways entries whose DockingAircraftGuid references
+ * an old aircraft GUID. Since the Aircrafts section is rebuilt with new GUIDs,
+ * any non-null DockingAircraftGuid becomes an orphaned reference that causes a
+ * Unity NullReferenceException. We reset the 4 docking fields to their empty
+ * state: Status→0, Progress→0, DockingAircraftGuid→null, DockingDoorIndex→-1.
+ */
+function _resetJetwayDockingState(segAfter, log) {
+  const jwIdx = segAfter.indexOf('"Jetways"');
+  if (jwIdx < 0) return segAfter;
+
+  // Locate Jetways $rcontent boundaries
+  const jwSection = segAfter.substring(jwIdx);
+  const rcMatch = jwSection.match(/"\$rcontent"\s*:\s*\[/);
+  if (!rcMatch) return segAfter;
+  const jwRcStart = jwIdx + rcMatch.index + rcMatch[0].length;
+
+  let depth = 0, jwRcEnd = null;
+  for (let i = jwRcStart; i < segAfter.length; i++) {
+    if (segAfter[i] === '{') depth++;
+    else if (segAfter[i] === '}') depth--;
+    else if (segAfter[i] === ']' && depth === 0) { jwRcEnd = i + 1; break; }
+  }
+  if (jwRcEnd === null) return segAfter;
+
+  const jwBefore = segAfter.substring(0, jwRcStart);
+  const jwContent = segAfter.substring(jwRcStart, jwRcEnd);
+  const jwAfter = segAfter.substring(jwRcEnd);
+
+  // Split into individual $v blocks and reset docking fields
+  const entries = [];
+  // Split on "$v": {  — each pair is a $k/$v Jetway entry
+  const parts = jwContent.split(/"\$v":\s*\{/);
+  // First part is before the first $v (leading whitespace or nothing)
+  if (parts[0].trim()) entries.push(parts[0]);
+
+  let resetCount = 0;
+  for (let i = 1; i < parts.length; i++) {
+    let block = parts[i];
+    // Check if this block has a non-null DockingAircraftGuid
+    if (/"DockingAircraftGuid":\s*"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"/.test(block)) {
+      // Reset docking fields to empty state
+      block = block
+        .replace(/"Status":\s*\d+/, '"Status": 0')
+        .replace(/"Progress":\s*\d+(\.\d+)?/, '"Progress": 0')
+        .replace(/"DockingAircraftGuid":\s*"[0-9a-f-]+"/, '"DockingAircraftGuid": null')
+        .replace(/"DockingDoorIndex":\s*-?\d+/, '"DockingDoorIndex": -1');
+      resetCount++;
+    }
+    entries.push('"$v": {' + block);
+  }
+
+  if (resetCount > 0) log('Reset ' + resetCount + ' Jetways docking entries');
+  return jwBefore + entries.join('') + jwAfter;
 }
 
 function _sectionMeta(sectionText) {
@@ -996,6 +1200,7 @@ module.exports = {
   _buildFlightPlanDepartureLeg,
   _rebuildWorldStateSections,
   _rebuildTimelineSections,
+  _extractSection, _extractConfig,
   _generateFramesSection,
   _generateRunwayTimelineSection,
   _parseWeatherFrames,

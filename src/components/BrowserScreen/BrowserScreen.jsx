@@ -1,25 +1,28 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import './BrowserScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoEyeOutline, IoEyeOffOutline, IoBugOutline, IoRefreshOutline } from 'react-icons/io5';
-import { escapeHtml, stripSuffixes } from '../../utils/htmlUtils';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline } from 'react-icons/io5';
+import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
+import { stripSuffixes } from '../../utils/htmlUtils';
 
-// Module-scope regexps — hoisted per AGENTS rule 7.10
-const RE_TUTORIAL = /tutorial/i;
-const RE_DEMO = /demo/i;
-const RE_TEST = /bench|test|crossrunway|dev|\.prod/i;
-const RE_ENDLESS = /endless/i;
+// Only hide tutorial / test / endless / dev / bench / crossrunway / .Prod variants.
+// Demo files (.demo.acl) are always visible alongside production levels.
+const RE_HIDDEN = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
 
-// Demo mode: show only these time-window subsets of real ACL files
-const DEMO_LEVELS = [
-  { icao: 'ZSJN', filePattern: /morning/i, labelStartTime: '05:45', labelEndTime: '06:15' },
-  { icao: 'ZSJN', filePattern: /07-10/i,  labelStartTime: '07:30', labelEndTime: '08:00' },
-  { icao: 'KJFK', filePattern: /09-11/i,  labelStartTime: '09:30', labelEndTime: '10:00' },
-  { icao: 'KJFK', filePattern: /20-22/i,  labelStartTime: '20:30', labelEndTime: '21:00' },
-];
+function computeTodLabel(startTime, t) {
+  if (!startTime) return { label: '', type: '' };
+  const startH = parseInt(String(startTime).substring(0, 2));
+  if (startH >= 5 && startH < 7) return { label: t('browser_tod_dawn'), type: 'dawn' };
+  if (startH >= 7 && startH < 12) return { label: t('browser_tod_morning'), type: 'morning' };
+  if (startH >= 12 && startH < 17) return { label: t('browser_tod_afternoon'), type: 'afternoon' };
+  if (startH >= 17 && startH < 19) return { label: t('browser_tod_dusk'), type: 'dusk' };
+  return { label: t('browser_tod_night'), type: 'night' };
+}
+
+function toHHMM(s) { return String(s).substring(0, 5); }
 
 export default function BrowserScreen() {
   const { t, toggleLang } = useTranslation();
@@ -27,16 +30,19 @@ export default function BrowserScreen() {
   const rootPath = useAppStore(s => s.rootPath);
   const airports = useAppStore(s => s.airports);
   const setScreen = useAppStore(s => s.setScreen);
+  const theme = useAppStore(s => s.theme);
+  const toggleTheme = useAppStore(s => s.toggleTheme);
 
   const isDemo = rootPath && rootPath.includes('Airport Control 27 Demo');
 
   const [fileInfos, setFileInfos] = useState({});
   const [loading, setLoading] = useState(true);
-  const [showHidden, setShowHidden] = useState(false);
-  const [noteDismissed, setNoteDismissed] = useState(() => {
-    try { return !!localStorage.getItem('browser-note-dismissed'); } catch (_) { return false; }
-  });
   const [refreshKey, setRefreshKey] = useState(0);
+  const [appVersion, setAppVersion] = useState('');
+
+  useEffect(() => {
+    electronAPI.getAppVersion().then(v => setAppVersion(v)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,71 +51,28 @@ export default function BrowserScreen() {
       const sorted = [...airports].sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao));
       const allInfos = {};
       for (const airport of sorted) {
-        let infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
+        const infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
         if (isDemo) {
-          // Filter to demo entries matching this airport
-          infos = infos.filter(info => {
-            return DEMO_LEVELS.some(d => d.icao === airport.icao && d.filePattern.test(info.filename));
-          });
-          for (const info of infos) {
-            // Override display times with demo time windows
-            const demoEntry = DEMO_LEVELS.find(d => d.icao === airport.icao && d.filePattern.test(info.filename));
-            info.startTime = demoEntry ? demoEntry.labelStartTime : info.startTime;
-            info.endTime = demoEntry ? demoEntry.labelEndTime : info.endTime;
-            info._hidden = false;
-            info._metaLabels = [];
-            if (info.startTime && info.endTime) {
-              const toHHMM = s => String(s).substring(0, 5);
-              info._metaLabels.push({ label: toHHMM(info.startTime) + '-' + toHHMM(info.endTime), type: 'timerange' });
-              const startH = parseInt(String(info.startTime).substring(0, 2));
-              let todLabel, todType;
-              if (startH >= 5 && startH < 7) { todLabel = t('browser_tod_dawn'); todType = 'dawn'; }
-              else if (startH >= 7 && startH < 12) { todLabel = t('browser_tod_morning'); todType = 'morning'; }
-              else if (startH >= 12 && startH < 17) { todLabel = t('browser_tod_afternoon'); todType = 'afternoon'; }
-              else if (startH >= 17 && startH < 19) { todLabel = t('browser_tod_dusk'); todType = 'dusk'; }
-              else { todLabel = t('browser_tod_night'); todType = 'night'; }
-              info._metaLabels.push({ label: todLabel, type: 'tod', tod: todType });
-            }
-          }
+          // Demo mode: only show .demo.acl files
+          allInfos[airport.icao] = infos.filter(info => info.isDemo);
         } else {
-          for (const info of infos) {
-            const name = info.filename.toLowerCase();
-            info._hidden = false; info._metaLabels = [];
-            if (info.error) { info._hidden = true; info._metaLabels.push({ label: t('browser_parse_error'), type: 'error' }); }
-            else if (RE_TUTORIAL.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_tutorial'), type: 'tutorial' }); }
-            else if (RE_DEMO.test(name)) { info._hidden = true; info._metaLabels.push({ label: 'Demo', type: 'demo' }); }
-            else if (RE_TEST.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_test'), type: 'test' }); }
-            else if (RE_ENDLESS.test(name)) { info._hidden = true; info._metaLabels.push({ label: t('browser_tag_endless'), type: 'endless' }); }
-            if (!info._hidden && info.startTime && info.endTime) {
-              const toHHMM = s => String(s).substring(0, 5);
-              info._metaLabels.push({ label: toHHMM(info.startTime) + '-' + toHHMM(info.endTime), type: 'timerange' });
-              const startH = parseInt(String(info.startTime).substring(0, 2));
-              let todLabel, todType;
-              if (startH >= 5 && startH < 7) { todLabel = t('browser_tod_dawn'); todType = 'dawn'; }
-              else if (startH >= 7 && startH < 12) { todLabel = t('browser_tod_morning'); todType = 'morning'; }
-              else if (startH >= 12 && startH < 17) { todLabel = t('browser_tod_afternoon'); todType = 'afternoon'; }
-              else if (startH >= 17 && startH < 19) { todLabel = t('browser_tod_dusk'); todType = 'dusk'; }
-              else { todLabel = t('browser_tod_night'); todType = 'night'; }
-              info._metaLabels.push({ label: todLabel, type: 'tod', tod: todType });
-            }
-          }
+          // Normal mode: show production levels + .demo.acl slices; hide tutorial/test/endless/dev/bench/crossrunway/.Prod
+          const visible = infos.filter(info => {
+            // Always show .demo.acl files
+            if (info.isDemo) return true;
+            // Show production levels; hide tutorial/test/endless/dev/bench/crossrunway/.Prod variants
+            if (info.error) return false;
+            return !RE_HIDDEN.test(info.filename.toLowerCase());
+          });
+          allInfos[airport.icao] = visible.sort((a, b) =>
+            (a.startTime || '99:99').localeCompare(b.startTime || '99:99')
+          );
         }
-        infos = [...infos].sort((a, b) => { const aT=RE_TUTORIAL.test(a.filename)?0:1, bT=RE_TUTORIAL.test(b.filename)?0:1; if(aT!==bT)return aT-bT; return (a.startTime||'99:99').localeCompare(b.startTime||'99:99'); });
-        allInfos[airport.icao] = infos;
       }
       if (!cancelled) { setFileInfos(allInfos); setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [airports, rootPath, refreshKey]);
-
-  const getLabel = useCallback((l) => {
-    if (l.type === 'error') return t('browser_parse_error');
-    if (l.type === 'tutorial') return t('browser_tag_tutorial');
-    if (l.type === 'test') return t('browser_tag_test');
-    if (l.type === 'endless') return t('browser_tag_endless');
-    if (l.type === 'tod' && l.tod) return t('browser_tod_' + l.tod);
-    return l.label;
-  }, [t]);
+  }, [airports, rootPath, refreshKey, isDemo]);
 
   const handleOpenFile = (filePath, airportIcao) => {
     window._pendingEditor = { filePath, airportIcao };
@@ -126,7 +89,7 @@ export default function BrowserScreen() {
     setRefreshing(true);
     try {
       await electronAPI.refreshRootScan(rootPath);
-      setRefreshKey(k => k + 1); // trigger useEffect to reload with proper hidden/label processing
+      setRefreshKey(k => k + 1);
     } catch (_) {}
     setRefreshing(false);
   };
@@ -149,7 +112,11 @@ export default function BrowserScreen() {
     );
   };
 
-  const visibleCount = Object.values(fileInfos).flat().filter(i => showHidden || !i._hidden).length;
+  const allAirportsWithFiles = [...airports]
+    .sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao))
+    .filter(a => (fileInfos[a.icao] || []).length > 0);
+
+  const totalFileCount = Object.values(fileInfos).flat().length;
 
   return (
     <div id="screen-browser" className="screen">
@@ -161,59 +128,46 @@ export default function BrowserScreen() {
           <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} onClick={handleRefreshScan} disabled={refreshing} title={t('browser_refresh_scan')}>
             <IoRefreshOutline size={14} className="btn-icon" />{refreshing ? t('browser_refreshing') : t('browser_refresh_scan')}
           </button>
-          {!isDemo && (
-            <button className={`btn-sm btn-toggle-hidden ${showHidden ? 'active' : ''}`} onClick={() => setShowHidden(!showHidden)}>
-              {showHidden ? <><IoEyeOffOutline size={14} className="btn-icon" />{t('browser_hide_hidden')}</> : <><IoEyeOutline size={14} className="btn-icon" />{t('browser_toggle_hidden')}</>}
-            </button>
-          )}
           <button className="btn-sm btn-bug-report" onClick={handleBugReport} title={t('browser_bug_report')}>
             <IoBugOutline size={14} className="btn-icon" />{t('browser_bug_report')}
           </button>
           <button className="btn-lang-toggle-top" onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
+          <button className="btn-lang-toggle-top btn-icon-only" onClick={toggleTheme}>
+            {theme === 'dark' ? <IoSunnyOutline size={14} /> : <IoMoonOutline size={14} />}
+          </button>
         </div>
       </header>
-
-      {!noteDismissed && (
-        <div className="browser-note">
-          <span>{t('browser_note')}</span>
-          <button className="browser-note-close" onClick={() => { setNoteDismissed(true); try { localStorage.setItem('browser-note-dismissed','1'); } catch(_){} }}><IoClose size={16} /></button>
-        </div>
-      )}
 
       <main className="browser-content">
         {loading ? (
           <div className="loading-state"><div className="spinner" /><p>{t('browser_loading')}</p></div>
-        ) : visibleCount === 0 ? (
+        ) : totalFileCount === 0 ? (
           <div className="browser-empty">{t('browser_no_files')}</div>
         ) : (
-          [...airports].sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao)).filter(a => (fileInfos[a.icao]||[]).some(i => showHidden || !i._hidden)).map(airport => (
+          allAirportsWithFiles.map(airport => (
             <div key={airport.icao} className="airport-card" style={{ '--card-bg': `url(./${airport.icao}.png)` }}>
               <div className="airport-card-header"><span className="airport-icao">{airportDisplayName(airport.icao, t)}</span></div>
               {fileInfos[airport.icao].map((info, i) => {
-                if (info._hidden && !showHidden) return null;
-                const allTags = info._metaLabels || [];
-                const todTag = allTags.find(t=>t.type==='tod'), trTag = allTags.find(t=>t.type==='timerange');
-                const badgeTags = allTags.filter(t=>t.type!=='tod'&&t.type!=='time'&&t.type!=='timerange');
                 if (info.error) return (
                   <div key={i} className="level-row level-row-error">
                     <span className="level-tod"></span>
                     <span className="level-timerange"></span>
                     <span className="level-name">{info.filename}</span>
-                    {badgeTags.length>0 && <span className="level-tags">{badgeTags.map((l,j)=><span key={j} className={`level-tag tag-${l.type}`}>{escapeHtml(getLabel(l))}</span>)}</span>}
                     <span className="level-stats level-error-text">{info.error}</span>
                     <span className="level-arrow"><IoChevronForward size={14} /></span>
                   </div>
                 );
                 const displayName = stripSuffixes(info.filename);
+                const todInfo = computeTodLabel(info.startTime, t);
+                const timeRange = info.startTime && info.endTime ? toHHMM(info.startTime) + '-' + toHHMM(info.endTime) : '';
                 return (
-                  <div key={i} className="level-row" onClick={()=>handleOpenFile(info.path, airport.icao)}>
-                    <span className="level-tod">{todTag ? getLabel(todTag) : ''}</span>
-                    <span className="level-timerange">{trTag ? trTag.label : ''}</span>
+                  <div key={i} className="level-row" onClick={() => handleOpenFile(info.path, airport.icao)}>
+                    <span className="level-tod">{todInfo.label}</span>
+                    <span className="level-timerange">{timeRange}</span>
                     <span className="level-name">{displayName}</span>
-                    {badgeTags.length>0 && <span className="level-tags">{badgeTags.map((l,j)=><span key={j} className={`level-tag tag-${l.type}`}>{escapeHtml(getLabel(l))}</span>)}</span>}
                     <span className="level-stats">
-                      <span className="level-stat"><span className="level-stat-dot arrival" />{t('table_arrivals')} {info.arrivals||0}</span>
-                      <span className="level-stat"><span className="level-stat-dot departure" />{t('table_departures')} {info.departures||0}</span>
+                      <span className="level-stat"><span className="level-stat-dot arrival" />{t('table_arrivals')} {info.arrivals || 0}</span>
+                      <span className="level-stat"><span className="level-stat-dot departure" />{t('table_departures')} {info.departures || 0}</span>
                     </span>
                     <span className="level-arrow"><IoChevronForward size={14} /></span>
                   </div>
@@ -223,6 +177,8 @@ export default function BrowserScreen() {
           ))
         )}
       </main>
+
+      {appVersion && <div className="browser-version">v{appVersion}</div>}
     </div>
   );
 }

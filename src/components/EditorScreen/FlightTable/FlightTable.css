@@ -33,7 +33,7 @@
   gap: 8px;
   transition: background var(--transition);
 }
-.collapse-header:hover { background: rgba(255,255,255,0.03); }
+.collapse-header:hover { background: var(--row-hover); }
 
 .collapse-arrow {
   font-size: 10px;
@@ -83,7 +83,7 @@
 
 .flight-table td {
   padding: 4px 6px;
-  border-bottom: 1px solid rgba(46, 51, 69, 0.4);
+  border-bottom: 1px solid rgba(var(--border-rgb), 0.4);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -148,7 +148,7 @@
 }
 
 .flight-table tbody tr { transition: background var(--transition); user-select: none; }
-.flight-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.012); }
+.flight-table tbody tr:nth-child(even) { background: rgba(var(--border-rgb), 0.04); }
 .flight-table tbody tr:hover { background: rgba(91, 141, 239, 0.06); }
 .flight-table tbody tr.selected { background: var(--accent-dim) !important; outline: 1px solid var(--accent); outline-offset: -1px; }
 .flight-table tbody tr.highlighted { outline: 1px solid var(--accent); outline-offset: -1px; }

@@ -39,6 +39,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Open external URL in default browser
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
+  // App version
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
   // Navigation events from menu
   onNavBrowser: (cb) => ipcRenderer.on('nav-browser', () => cb()),
 });

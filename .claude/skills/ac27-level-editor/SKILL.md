@@ -21,11 +21,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 27 ipcMain.handle() endpoints                       │
+│  - 26 ipcMain.handle() endpoints                       │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with 26 methods          │
+│  - Exposes window.electronAPI with 25 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -137,7 +137,7 @@ AC27LevelEditor/
 │       ├── i18n.js              # Chinese/English translation (T(), getLang, setLang)
 │       ├── validators.js        # validateCallsigns, runTripleValidation
 │       ├── htmlUtils.js         # escapeHtml, stripSuffixes
-│       ├── csvIo.js             # CSV import/export
+│       ├── csvIo.js             # CSV export
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
@@ -258,7 +258,7 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 1. User selects game root directory
 2. `scan-acls` IPC → `scanGameRoot()` → returns airport list with `.acl` file paths
 3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data per airport:
-   - Scans all production `.acl` files (excludes demo/test/tutorial)
+   - Scans all `.acl` files (includes demo/test/tutorial variants — all treated as normal levels)
    - Extracts `specDB` (Designator → AircraftSpec), `appPointMap` ((Route,Runway) → AppPointList), `totalApproachTimes` (Route → seconds), and `designatorMap` (AircraftType → Designator)
    - Caches in memory as `airportCache[icao].approachData`
 
@@ -286,15 +286,39 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - FlightPlans rebuilt from scratch with new GUIDs
    - **AircraftState entries generated for arrival flights** where `0 < ProgressRatio < 1.0` (mid-approach at snapshot time), using `approach.js` verified algorithm: AppPointList lookup, FlyApproach resolution from SceneryData, PR formula, Position/Direction interpolation
    - Writes `.acl` + `.csv`
+   - **Demo `.demo.acl` files treated identically** — save writes to `.demo.acl` + same shared `.csv` + shared timeline `.json` files
 3. Timeline saves (separate IPC per type) → writes JSON files
-4. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog)
+4. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog). For `.demo.acl` files, creates `.demo.acl.bak`
 
 ### Save As ZIP
 - Saves silently → packages 5 files into ZIP → native save dialog
 - ZIP contents: `.acl` + `.csv` + `weather_timeline.json` + `wind_timeline.json` + `runway_timeline_*.json`
+- Works identically for `.demo.acl` files (packs `.demo.acl` + shared `.csv` + shared timelines)
 
 ### Import ZIP
 - Native open dialog → validates ZIP structure → backs up current files → extracts → reloads
+- Works identically for `.demo.acl` files
+
+### Demo .acl File Handling (v1.0.9+)
+
+The game ships four 30-minute `.demo.acl` slice levels:
+- `ZSJN-Morning_120min.demo.acl` (05:45–06:15)
+- `ZSJN_07-10.demo.acl` (07:30–08:00)
+- `KJFK_09-11.demo.acl` (09:30–10:00)
+- `KJFK_20-22.demo.acl` (20:30–21:00)
+
+**Key properties:**
+- Each `.demo.acl` is a save-state snapshot with the **same BaseTime** as its parent but a **later CurrentDateTime** (~40–55 min offset), creating the 30-min playable window
+- FlightPlans, scenery, and file references are identical to the parent `.acl`
+- No matching `.aclcfg` exists — Config is read from the `.acl` file itself
+
+**Editor behavior:**
+- `.demo.acl` files are treated as **normal levels** — always visible, no tags, no hiding
+- **Demo mode** (root path contains "Airport Control 27 Demo"): only `.demo.acl` files are shown
+- **On load:** flights with landing/off-block times before `CurrentDateTime` are auto-removed (ease-of-use cleanup)
+- **On save:** writes to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`
+- **Export/Import:** packs/unpacks `.demo.acl` identically to normal `.acl` files
+- **Approach cache:** includes `.demo.acl` files (unfiltered)
 
 ## ACL File Format
 
@@ -361,7 +385,7 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 
 **Designator Mapping & Cache:**
 - `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates
-- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets}` — scans all production .acl files for an airport; `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times
+- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times
 
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?})` → `{guid, block, nextId}` — complete `$k/$v` JSON block
@@ -395,7 +419,6 @@ node test/test_approach_aircraft.js [--root <game-root>]
 **Single-ACL tests (require `--acl <path>`, derive paired files automatically):**
 ```bash
 node test/test_e2e_save_load.js --acl <path>
-node test/test_csv_vs_flightplans.js --acl <path>
 node test/test_rebuild_sections.js --acl <path>
 node test/test_acl_linkage.js --acl <path>
 ```

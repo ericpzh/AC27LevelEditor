@@ -4,6 +4,7 @@
   --bg-surface: #1a1d27;
   --bg-elevated: #242836;
   --border: #2e3345;
+  --border-rgb: 46, 51, 69;
   --text: #e1e4ed;
   --text-secondary: #8b90a0;
   --text-muted: #5c6170;
@@ -17,11 +18,38 @@
   --red: #ff453a;
   --red-bg: rgba(255, 69, 58, 0.1);
   --orange: #ff9f0a;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --row-hover: rgba(255, 255, 255, 0.03);
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
   --shadow: 0 8px 32px rgba(0,0,0,0.4);
   --transition: 150ms ease;
+}
+
+/* ─── Light theme ────────────────────────────────────── */
+[data-theme="light"] {
+  --bg: #f4f5f7;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ebedf0;
+  --border: #d1d5db;
+  --border-rgb: 209, 213, 219;
+  --text: #1f2937;
+  --text-secondary: #4b5563;
+  --text-muted: #9ca3af;
+  --accent: #5b8def;
+  --accent-hover: #4a7de0;
+  --accent-dim: rgba(91, 141, 239, 0.10);
+  --green: #16a34a;
+  --green-bg: rgba(22, 163, 74, 0.10);
+  --blue: #0284c7;
+  --blue-bg: rgba(2, 132, 199, 0.08);
+  --red: #dc2626;
+  --red-bg: rgba(220, 38, 38, 0.10);
+  --orange: #d97706;
+  --overlay: rgba(0, 0, 0, 0.25);
+  --row-hover: rgba(0, 0, 0, 0.03);
+  --shadow: 0 8px 32px rgba(0,0,0,0.10);
 }
 
 /* ─── Reset ────────────────────────────────────────────── */
@@ -35,6 +63,7 @@ body {
   height: 100vh;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  transition: background var(--transition), color var(--transition);
 }
 
 .screen { width: 100%; height: 100vh; display: flex; flex-direction: column; }
@@ -100,6 +129,8 @@ body {
 
 .btn-sm:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--accent); }
 
+.btn-icon-only { min-width: auto; padding: 5px 10px; }
+
 /* ─── Loading & spinner (global) ─────────────────────── */
 
 .loading-state {
@@ -132,8 +163,8 @@ body {
 
 /* ─── Highlight & flash animations (shared) ──────────── */
 .highlight-invalid {
-  background-color: #ffcccc !important;
-  border: 1px solid #ff4444 !important;
+  background-color: var(--red-bg) !important;
+  border: 1px solid var(--red) !important;
   animation: hl-pulse 1.5s ease-in-out infinite alternate;
 }
 
@@ -149,6 +180,6 @@ body {
 }
 
 @keyframes hl-pulse {
-  from { background-color: #ffcccc; }
-  to   { background-color: #ffaaaa; }
+  from { background-color: var(--red-bg); }
+  to   { background-color: var(--red-bg); opacity: 0.7; }
 }

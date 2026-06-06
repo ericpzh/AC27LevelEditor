@@ -48,6 +48,12 @@ function ScreenRouter() {
 }
 
 export default function App() {
+  const theme = useAppStore(s => s.theme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
   return (
     <I18nProvider>
       <ScreenRouter />

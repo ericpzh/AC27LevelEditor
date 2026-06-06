@@ -9,7 +9,7 @@ const path = require('path');
 import {
   FIELDS, FIELD_LABELS, DROPDOWN_FIELDS,
 } from './constants';
-const { importCsvFromFile, exportCSV, exportGameCSV, collectUniqueValuesFromCSV } = require('../utils/csvIo');
+const { exportCSV, exportGameCSV } = require('../utils/csvIo');
 
 // ─── Internal sub-modules ────────────────────────────────────
 const { _parseSceneryData } = require('./scenery');
@@ -40,6 +40,7 @@ const {
 const {
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
+  _extractConfig,
 } = require('./flight_plans');
 const { createZip, listZipFiles, extractZip } = require('../utils/zipUtils');
 
@@ -85,19 +86,13 @@ function loadFlights(aclPath) {
 
   if (flights.length === 0) throw new Error('No flight data found in ACL');
 
-  // Locate CSV path for reference only (not read)
+  // Locate CSV path from ACL's Config block for reference only (not read)
   let csvPath = null;
   const dir = path.dirname(aclPath);
-  const base = path.basename(aclPath, '.acl');
-  const cfgPath = path.join(dir, base + '.aclcfg');
-  if (fs.existsSync(cfgPath)) {
-    try {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-      if (cfg.flightScheduleFile) {
-        const candidate = path.join(dir, cfg.flightScheduleFile + '.csv');
-        if (fs.existsSync(candidate)) csvPath = candidate;
-      }
-    } catch (_) {}
+  const config = _extractConfig(text);
+  if (config && config.flightScheduleFile) {
+    const candidate = path.join(dir, config.flightScheduleFile + '.csv');
+    if (fs.existsSync(candidate)) csvPath = candidate;
   }
 
   return {
@@ -108,28 +103,36 @@ function loadFlights(aclPath) {
   };
 }
 
+// ─── Extract CurrentDateTime from ACL text ──────────────────
+
+function extractCurrentDateTime(aclText) {
+  const gtIdx = aclText.indexOf('"GameTime"');
+  if (gtIdx < 0) return null;
+  const sub = aclText.substring(gtIdx, gtIdx + 2000);
+  const cdtMatch = sub.match(/"CurrentDateTime"[\s\S]{0,100}?"\$type":\s*3\s*,\s*(-?\d+)/);
+  if (!cdtMatch) return null;
+  const ticks = parseInt(cdtMatch[1], 10);
+  const baseTicks = Math.floor(ticks / 864000000000) * 864000000000;
+  const secSinceMidnight = Math.round((ticks - baseTicks) / 10000000);
+  const h = Math.floor(secSinceMidnight / 3600);
+  const m = Math.floor((secSinceMidnight % 3600) / 60);
+  const s = secSinceMidnight % 60;
+  const timeString = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  return { ticks, secSinceMidnight, timeString };
+}
+
 // ─── Generate full ACL from scratch ──────────────────────────
 
 function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _worldStateData, _sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime, _saveSec) {
   _rebuildWorldStateSections(aclPath, flights, undefined, approachCache, aclcfgStartTime, _saveSec);
 }
 
-// ─── Generate ACL from CSV (uses template) ────────────────────
-
-function generateAclFromCsv(csvPath, aclPath, _templatePath) {
-  const flights = importCsvFromFile(csvPath);
-  if (flights.length === 0) throw new Error('No valid flight data in CSV');
-
-  generateFullAcl(aclPath, flights, '', '', [], null, null, false, false);
-}
-
 // ─── Public API ───────────────────────────────────────────────
 
 module.exports = {
   // Public API
-  loadFlights, generateFullAcl,
-  exportCSV, exportGameCSV, importCsvFromFile,
-  generateAclFromCsv, collectUniqueValuesFromCSV,
+  loadFlights, generateFullAcl, extractCurrentDateTime,
+  exportCSV, exportGameCSV,
   collectUniqueValues, mergeAudioCallsigns,
   getFileInfo, loadAudioCallsigns,
   sortFlightsChronologically,
@@ -145,6 +148,7 @@ module.exports = {
   extractSaveTime, extractGameTime,
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
+  _extractConfig,
   createZip, listZipFiles, extractZip,
   // Internal exports (used by tests)
   _parseWorldStateData, _parseSceneryData,

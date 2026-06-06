@@ -161,7 +161,7 @@
 
 .rw-change-header > * {
   padding: 4px 4px;
-  border-bottom: 1px solid rgba(46, 51, 69, 0.35);
+  border-bottom: 1px solid rgba(var(--border-rgb), 0.35);
 }
 .rw-change-header > .tl-input {
   align-self: center;

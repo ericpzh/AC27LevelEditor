@@ -6,7 +6,7 @@
  *
  * Usage: node test/test_e2e_save_load.js --acl <path-to-.acl-file>
  *
- * The test needs the .acl file + its paired .csv and .aclcfg (derived automatically).
+ * The test needs the .acl file + its paired .csv (derived from ACL's Config block).
  */
 const fs = require('fs');
 const path = require('path');
@@ -20,7 +20,7 @@ for (let i = 2; i < process.argv.length; i++) {
   } else if (process.argv[i] === '--help' || process.argv[i] === '-h') {
     console.log('Usage: node test/test_e2e_save_load.js --acl <path-to-.acl-file>');
     console.log('  --acl   Path to the .acl file to round-trip test.');
-    console.log('          CSV and .aclcfg paths are derived from the .acl path.');
+    console.log('          CSV path is derived from the ACL Config block.');
     process.exit(0);
   }
 }
@@ -34,23 +34,20 @@ const TEST_DIR = __dirname;
 const aclBase = path.basename(aclOriginal, '.acl');
 const ACL_TEMP = path.join(TEST_DIR, '_e2e_temp_' + aclBase + '.acl');
 const CSV_TEMP = path.join(TEST_DIR, '_e2e_temp_' + aclBase + '.csv');
-const CFG_TEMP = path.join(TEST_DIR, '_e2e_temp_' + aclBase + '.aclcfg');
 
-// Derive CSV path: from .aclcfg, or by convention
+// Derive CSV path from ACL's Config block, or by convention
 function findCsvPath(aclPath) {
-  const cfgPath = aclPath.replace(/\.acl$/i, '.aclcfg');
-  if (fs.existsSync(cfgPath)) {
-    try {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-      if (cfg.flightScheduleFile) {
-        const csvPath = path.join(path.dirname(aclPath), cfg.flightScheduleFile + '.csv');
-        if (fs.existsSync(csvPath)) return csvPath;
-      }
-    } catch (_) {}
-  }
+  try {
+    const text = fs.readFileSync(aclPath, 'utf-8');
+    const config = parser._extractConfig(text);
+    if (config && config.flightScheduleFile) {
+      const csvPath = path.join(path.dirname(aclPath), config.flightScheduleFile + '.csv');
+      if (fs.existsSync(csvPath)) return csvPath;
+    }
+  } catch (_) {}
   // Fallback: look for flight_schedule_*.csv in same directory
   const dir = path.dirname(aclPath);
-  const match = aclBase.match(/(\d{2})-(\d{2})/);
+  const match = path.basename(aclPath, '.acl').match(/(\d{2})-(\d{2})/);
   if (match) {
     const csvPath = path.join(dir, 'flight_schedule_' + match[1] + '-' + match[2] + '.csv');
     if (fs.existsSync(csvPath)) return csvPath;
@@ -61,7 +58,7 @@ function findCsvPath(aclPath) {
 const CSV_ORIGINAL = findCsvPath(aclOriginal);
 if (!CSV_ORIGINAL) {
   console.error('ERROR: Could not find CSV file for ' + aclOriginal);
-  console.error('Make sure a flight_schedule_*.csv or .aclcfg with flightScheduleFile exists.');
+  console.error('Make sure a flight_schedule_*.csv or the ACL Config block references one.');
   process.exit(1);
 }
 
@@ -109,7 +106,7 @@ function compareFlights(original, roundtripped, label) {
 }
 
 function cleanup() {
-  for (const p of [ACL_TEMP, CSV_TEMP, CFG_TEMP]) {
+  for (const p of [ACL_TEMP, CSV_TEMP]) {
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
   }
   console.log('[cleanup] Removed temp files');
@@ -137,18 +134,10 @@ console.log('\n[3] Sorting snapshot chronologically...');
 const sortedFlights = parser.sortFlightsChronologically(snapshotFlights);
 console.log('    Sorted ' + sortedFlights.length + ' flights');
 
-// [4] Copy to temp (patch .aclcfg to point to temp CSV name)
+// [4] Copy to temp
 console.log('\n[4] Copying original → temp...');
 fs.copyFileSync(aclOriginal, ACL_TEMP);
 fs.copyFileSync(CSV_ORIGINAL, CSV_TEMP);
-const origCfg = aclOriginal.replace(/\.acl$/i, '.aclcfg');
-if (fs.existsSync(origCfg)) {
-  let cfgText = fs.readFileSync(origCfg, 'utf-8');
-  // Point flightScheduleFile to the temp CSV (strip .csv extension)
-  const csvBase = path.basename(CSV_TEMP, '.csv');
-  cfgText = cfgText.replace(/"flightScheduleFile"\s*:\s*"[^"]*"/, '"flightScheduleFile": "' + csvBase + '"');
-  fs.writeFileSync(CFG_TEMP, cfgText);
-}
 
 // [5] Run generateFullAcl on temp
 console.log('\n[5] Running generateFullAcl on temp copy...');

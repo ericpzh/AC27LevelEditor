@@ -2,7 +2,7 @@
 .time-clock-overlay {
   position: fixed; inset: 0;
   z-index: 300;
-  background: rgba(0,0,0,0.35);
+  background: var(--overlay);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: center;

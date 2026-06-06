@@ -48,9 +48,17 @@ export const useAppStore = create((set, get) => ({
   _runwayPairs: [],
   _earliestTime: null,
   _saveSec: null,
+  _currentDateTime: null,
+  isDemo: false,
 
   // ─── Modal (declarative) ───
   modal: { open: false, title: '', body: null, actions: null },
+
+  // ─── Theme ───
+  theme: (() => {
+    try { return localStorage.getItem('ac27_theme') || 'dark'; }
+    catch (_) { return 'dark'; }
+  })(),
 
   // ─── Toast ───
   toast: { message: '', type: '' },
@@ -81,6 +89,8 @@ export const useAppStore = create((set, get) => ({
     _configEndTime: data.configEndTime,
     _earliestTime: data.earliestTime,
     _saveSec: data._saveSec,
+    _currentDateTime: data._currentDateTime || null,
+    isDemo: data.isDemo || false,
   }),
   setAuxData: (values, audio, tl, rp) => set({
     airportValues: values,
@@ -297,6 +307,13 @@ export const useAppStore = create((set, get) => ({
   hideModal: () => set({
     modal: { open: false, title: '', body: null, actions: null },
   }),
+
+  // ─── Actions: Theme ───
+  toggleTheme: () => {
+    const next = get().theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('ac27_theme', next); } catch (_) {}
+    set({ theme: next });
+  },
 
   // ─── Actions: Toast ───
   showToast: (message, type) => {

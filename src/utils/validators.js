@@ -63,7 +63,7 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
 
   if (_saveSec != null && _configEndTime) {
     // _saveSec = scenario snapshot time (warmup end), _configEndTime = scenario end
-    // Keep +10min grace on end bound for InBlockTime after scenario end
+    // Only OffBlockTime and LandingTime are bounded; InBlockTime and TakeoffTime are free
     const ceParts = String(_configEndTime).split(':');
     const ceH = parseInt(ceParts[0], 10), ceM = parseInt(ceParts[1], 10);
 
@@ -71,14 +71,11 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     const sm = Math.floor((_saveSec % 3600) / 60);
     const startTime = sh * 100 + sm;
     const startLabel = String(sh).padStart(2, '0') + ':' + String(sm).padStart(2, '0');
-    const endTime = Math.floor((ceH * 60 + ceM + 10) / 60) * 100 + ((ceH * 60 + ceM + 10) % 60);
-
-    const endH = Math.floor((ceH * 60 + ceM + 10) / 60) % 24;
-    const endM = (ceH * 60 + ceM + 10) % 60;
-    const endLabel = String(endH).padStart(2, '0') + ':' + String(endM).padStart(2, '0');
+    const endTime = ceH * 100 + ceM;
+    const endLabel = String(ceH).padStart(2, '0') + ':' + String(ceM).padStart(2, '0');
 
     flights.forEach((fl) => {
-      for (const col of ['OffBlockTime', 'TakeoffTime', 'LandingTime', 'InBlockTime']) {
+      for (const col of ['OffBlockTime', 'LandingTime']) {
         const timeVal = fl[col];
         if (!timeVal) continue;
         const parts = String(timeVal).split(':');

@@ -711,16 +711,16 @@ function buildApproachAircraftBlock(opts) {
 
   // Use namespace-qualified $type strings to bypass the game's integer type registry.
   // This ensures all types resolve correctly regardless of $id continuity.
-  const ns = (num, name) => `"${num}|${name}, GroundATC.Core"`;
+  const ns = (num, name, asm = 'GroundATC.Core') => `"${num}|${name}, ${asm}"`;
   const T = {
     ac: ns(opts.acTypeNum || 33, 'ContextCross.States.AircraftState'),
     spec: ns(opts.acTypeNum === 35 ? 36 : 34, 'ContextCross.States.AircraftSpecificationState'),
     dyn: ns(opts.acTypeNum === 35 ? 40 : 38, 'ContextCross.Dynamics.DynamicInternalState'),
     dynParams: ns(opts.acTypeNum === 35 ? 51 : 47, 'ContextCross.Dynamics.States.FlyApproachDynamicsParams'),
     acRwy: ns(opts.acTypeNum === 35 ? 43 : 42, 'ContextCross.States.AircraftRunwayCoordinateState'),
-    float3: ns(opts.acTypeNum === 35 ? 37 : 35, 'Unity.Mathematics.float3'),
-    vec4: ns(opts.acTypeNum === 35 ? 39 : 37, 'UnityEngine.Vector4'),
-    dockArr: ns(opts.acTypeNum === 35 ? 38 : 36, 'UnityEngine.Vector4[]'),
+    float3: ns(opts.acTypeNum === 35 ? 37 : 35, 'Unity.Mathematics.float3', 'Unity.Mathematics'),
+    vec4: ns(opts.acTypeNum === 35 ? 39 : 37, 'UnityEngine.Vector4', 'UnityEngine.CoreModule'),
+    dockArr: ns(opts.acTypeNum === 35 ? 38 : 36, 'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
     waitCmd: ns(opts.acTypeNum === 35 ? 47 : 43, 'ContextCross.Enums.ECommand[]'),
     recvEvt: ns(opts.acTypeNum === 35 ? 48 : 44, 'ContextCross.Events.AircraftEvent[]'),
   };
@@ -1013,18 +1013,17 @@ function buildApproachCache(airportDir) {
   const path = require('path');
   const log = (msg) => console.log('[APPROACH-CACHE]', msg);
 
-  // Find all production .acl files (exclude demo, test, tutorial, endless, perfbench)
+  // Find all .acl files (include demo, test, tutorial, endless, perfbench variants)
   let aclFiles = [];
   try {
     const files = fs.readdirSync(airportDir);
     aclFiles = files
-      .filter(f => f.endsWith('.acl') && !f.endsWith('.demo.acl'))
-      .filter(f => !/[-._](demo|test|tutorial|endless|perfbench|dev|goaround|crossrunway|incursion)/i.test(f))
+      .filter(f => f.endsWith('.acl'))
       .map(f => path.join(airportDir, f));
   } catch (_) { return null; }
 
   if (aclFiles.length === 0) {
-    log('WARNING: no production .acl files found in ' + airportDir);
+    log('WARNING: no .acl files found in ' + airportDir);
     return null;
   }
 
