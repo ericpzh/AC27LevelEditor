@@ -18,7 +18,7 @@ export default function SetupScreen() {
     try {
       const result = await electronAPI.selectGameRoot();
       if (result.canceled) { setLoading(false); return; }
-      if (result.error) { setError(result.error); setLoading(false); return; }
+      if (result.errorCode) { setError(t(result.errorCode, { path: result.errorPath })); setLoading(false); return; }
       setRootPath(result.rootPath, result.airports || []);
       try { electronAPI.saveLastRoot(result.rootPath); } catch (_) {}
       await electronAPI.initAirportCache(result.rootPath).catch(err => console.error(err));
@@ -40,7 +40,7 @@ export default function SetupScreen() {
             <li dangerouslySetInnerHTML={{ __html: t('setup_steam_step2') }} />
             <li>{t('setup_steam_step3')}</li>
           </ol>
-          <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>C:\Program Files (x86)\Steam\steamapps\common\Airport Control 27 Playtest</code></p>
+          <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>C:\Program Files (x86)\Steam\steamapps\common\Airport Control 25 Playtest</code> {t('setup_steam_path_or')} <code>D:\SteamLibrary\steamapps\common\Airport Control 27 Demo</code></p>
         </div>
         <div className="setup-nightly-note">
           <span className="setup-nightly-icon">⚠️</span>

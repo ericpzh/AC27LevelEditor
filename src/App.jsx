@@ -24,7 +24,7 @@ function ScreenRouter() {
         const lastRoot = await electronAPI.getLastRoot();
         if (!lastRoot) { setBooting(false); return; }
         const scan = await electronAPI.scanAcls(lastRoot);
-        if (scan.error || !scan.totalFiles) { setBooting(false); return; }
+        if (scan.errorCode || !scan.totalFiles) { setBooting(false); return; }
         const st = useAppStore.getState();
         st.setRootPath(lastRoot, scan.airports || []);
         await electronAPI.initAirportCache(lastRoot).catch(() => {});

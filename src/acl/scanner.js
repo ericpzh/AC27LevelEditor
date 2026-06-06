@@ -7,12 +7,12 @@ const path = require('path');
 /**
  * Scan the game root directory for all .acl files.
  * @param {string} gameRoot - path to "Airport Control 27 Playtest"
- * @returns {{ airports: Array, totalFiles: number, error?: string }}
+ * @returns {{ airports: Array, totalFiles: number, errorCode?: string, errorPath?: string }}
  */
 function scanGameRoot(gameRoot) {
   const airportsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
   if (!fs.existsSync(airportsDir)) {
-    return { airports: [], totalFiles: 0, error: `Airports directory not found at: ${airportsDir}` };
+    return { airports: [], totalFiles: 0, errorCode: 'error_airports_dir_not_found', errorPath: airportsDir };
   }
 
   const airports = [];

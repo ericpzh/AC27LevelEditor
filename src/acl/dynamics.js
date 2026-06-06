@@ -17,7 +17,7 @@ function captureAllDynamicsTemplates(gameRoot) {
   const log = (msg) => console.log('[DYNAMICS]', msg);
   log('captureAllDynamicsTemplates START, root=' + gameRoot);
   const scan = scanGameRoot(gameRoot);
-  if (scan.error) { log('scan error: ' + scan.error); return {}; }
+  if (scan.errorCode) { log('scan error: ' + scan.errorCode + (scan.errorPath ? ' ' + scan.errorPath : '')); return {}; }
 
   const templates = {}; // "STAR|Runway" → { type, vBlock }
 

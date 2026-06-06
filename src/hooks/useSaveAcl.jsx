@@ -34,7 +34,7 @@ export function useSaveAcl() {
       });
 
       if (!result.success) {
-        store.showModal(t('modal_save_failed'), result.error || 'Unknown error');
+        store.showModal(t('modal_save_failed'), result.error || 'Unknown error', <div className="modal-actions-row"><button className="btn-confirm" onClick={() => store.hideModal()}>{t('modal_btn_ok')}</button></div>);
         return false;
       }
 
@@ -60,10 +60,14 @@ export function useSaveAcl() {
 
       if (silent) return true;
 
-      store.showModal(t('modal_save_success'), '', null);
+      store.showModal(
+        t('modal_save_success'),
+        '',
+        <div className="modal-actions-row"><button className="btn-confirm" onClick={() => store.hideModal()}>{t('modal_btn_ok')}</button></div>
+      );
       return true;
     } catch (err) {
-      store.showModal(t('modal_save_failed'), err.message);
+      store.showModal(t('modal_save_failed'), err.message, <div className="modal-actions-row"><button className="btn-confirm" onClick={() => store.hideModal()}>{t('modal_btn_ok')}</button></div>);
       return false;
     }
   }, [t, electronAPI]);
@@ -118,7 +122,7 @@ export function useSaveAcl() {
     if (!store.currentPath) { store.showToast(t('toast_no_file'), 'error'); return; }
     const result = await electronAPI.manualBackup(store.currentPath);
     if (result.canceled) return;
-    if (result.error) { store.showModal(t('modal_backup_failed'), result.error); return; }
+    if (result.error) { store.showModal(t('modal_backup_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={() => store.hideModal()}>{t('modal_btn_ok')}</button></div>); return; }
     store.showToast(t('toast_backup_saved', { name: result.path.split(/[/\\]/).pop() }), 'success');
   }, [t, electronAPI]);
 
@@ -152,7 +156,7 @@ export function useSaveAcl() {
     await doSaveAcl(false, true);
     const result = await electronAPI.exportZip({ aclPath: store.currentPath });
     if (result.canceled) return;
-    if (result.error) { store.showModal(t('modal_export_failed'), result.error); return; }
+    if (result.error) { store.showModal(t('modal_export_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={() => store.hideModal()}>{t('modal_btn_ok')}</button></div>); return; }
     store.showToast(t('toast_exported', { name: result.path.split(/[/\\]/).pop() }), 'success');
   }, [t, electronAPI, doSaveAcl]);
 

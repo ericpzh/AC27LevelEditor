@@ -21,11 +21,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 26 ipcMain.handle() endpoints                       │
+│  - 27 ipcMain.handle() endpoints                       │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with 25 methods          │
+│  - Exposes window.electronAPI with 26 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -70,7 +70,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ```
 AC27LevelEditor/
 ├── electron/
-│   ├── main.js              # Electron main process + 26 IPC handlers
+│   ├── main.js              # Electron main process + 27 IPC handlers
 │   └── preload.js           # contextBridge (window.electronAPI)
 ├── index.html               # Vite HTML entry (<div id="root">)
 ├── vite.config.js           # Vite 8 + @vitejs/plugin-react + vite-plugin-electron

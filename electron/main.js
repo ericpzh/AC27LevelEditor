@@ -60,15 +60,15 @@ async function createWindow() {
 
 ipcMain.handle('select-game-root', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '选择 Airport Control 27 Playtest 游戏根目录',
+    title: 'Select Airport Control 27 Playtest Game Root',
     properties: ['openDirectory'],
   });
   if (result.canceled || !result.filePaths.length) return { canceled: true };
 
   const root = result.filePaths[0];
   const scan = scanGameRoot(root);
-  if (scan.error) {
-    return { canceled: false, rootPath: root, error: scan.error };
+  if (scan.errorCode) {
+    return { canceled: false, rootPath: root, errorCode: scan.errorCode, errorPath: scan.errorPath };
   }
   cachedScan = scan;
   return { canceled: false, rootPath: root, airports: scan.airports, totalFiles: scan.totalFiles };
@@ -79,9 +79,9 @@ ipcMain.handle('select-game-root', async () => {
 ipcMain.handle('scan-acls', async (_event, rootPath) => {
   console.log('[IPC] scan-acls rootPath:', rootPath);
   const scan = scanGameRoot(rootPath);
-  if (scan.error) {
-    console.error('[IPC] scan-acls FAIL:', scan.error);
-    return { error: scan.error };
+  if (scan.errorCode) {
+    console.error('[IPC] scan-acls FAIL:', scan.errorCode, scan.errorPath || '');
+    return { errorCode: scan.errorCode, errorPath: scan.errorPath };
   }
   cachedScan = scan;
   console.log('[IPC] scan-acls OK: airports=' + scan.airports.length + ' totalFiles=' + scan.totalFiles);
@@ -102,7 +102,7 @@ ipcMain.handle('get-file-info', async (_event, filePath) => {
 ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) => {
   console.log('[IPC] get-airport-files-info:', airportIcao);
   const scan = scanGameRoot(rootPath);
-  if (scan.error) { console.error('[IPC] get-airport-files-info scan error:', scan.error); return []; }
+  if (scan.errorCode) { console.error('[IPC] get-airport-files-info scan error:', scan.errorCode, scan.errorPath || ''); return []; }
   const airport = scan.airports.find(a => a.icao === airportIcao);
   if (!airport) { console.error('[IPC] get-airport-files-info: airport not found:', airportIcao); return []; }
   console.log('[IPC] get-airport-files-info:', airportIcao, 'files count:', airport.aclFiles.length);
@@ -141,7 +141,7 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
 
 ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   const scan = scanGameRoot(rootPath);
-  if (scan.error) return {};
+  if (scan.errorCode) return {};
   const airport = scan.airports.find(a => a.icao === airportIcao);
   if (!airport) return {};
   const paths = airport.aclFiles.map(f => f.path);
@@ -280,7 +280,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
     }
     // Re-run init-airport-cache logic (same as the handler above but inline)
     const airportsDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports');
-    if (!fs.existsSync(airportsDir)) return { success: false, error: 'Airports directory not found' };
+    if (!fs.existsSync(airportsDir)) return { success: false, errorCode: 'error_airports_dir_not_found', errorPath: airportsDir };
 
     const cache = {};
     for (const icao of fs.readdirSync(airportsDir)) {
@@ -522,13 +522,13 @@ function getLevelFilePaths(aclPath) {
 
 ipcMain.handle('export-zip', async (_event, { aclPath }) => {
   const entries = getLevelFilePaths(aclPath);
-  if (entries.length === 0) return { canceled: false, error: '没有可导出的文件' };
+  if (entries.length === 0) return { canceled: false, error: 'No files to export' };
 
   const defaultName = path.basename(aclPath, '.acl') + '_export.zip';
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: '导出关卡包 (.zip)',
+    title: 'Export Level Package (.zip)',
     defaultPath: defaultName,
-    filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+    filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
   });
   if (result.canceled || !result.filePath) return { canceled: true };
 
@@ -544,9 +544,9 @@ ipcMain.handle('export-zip', async (_event, { aclPath }) => {
 
 ipcMain.handle('manual-backup', async (_event, sourcePath) => {
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: '选择备份保存位置',
+    title: 'Choose Backup Location',
     defaultPath: path.basename(sourcePath),
-    filters: [{ name: 'ACL 文件', extensions: ['acl'] }],
+    filters: [{ name: 'ACL Files', extensions: ['acl'] }],
   });
   if (result.canceled || !result.filePath) return { canceled: true };
 
@@ -563,8 +563,8 @@ ipcMain.handle('manual-backup', async (_event, sourcePath) => {
 ipcMain.handle('import-zip', async (_event, { aclPath }) => {
   // 1) Show open dialog for .zip
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '导入关卡包 (.zip)',
-    filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+    title: 'Import Level Package (.zip)',
+    filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
     properties: ['openFile'],
   });
   if (result.canceled || !result.filePaths.length) return { canceled: true };
@@ -590,10 +590,17 @@ ipcMain.handle('import-zip', async (_event, { aclPath }) => {
     if (!hasRunway) missing.push('runway_timeline*.json');
 
     if (missing.length > 0) {
-      return { canceled: false, error: `ZIP 缺少必要文件: ${missing.join(', ')}` };
+      return { canceled: false, error: `ZIP missing required files: ${missing.join(', ')}` };
     }
 
-    // 3) Backup current files before overwriting
+    // 3) Validate ZIP .acl filename matches current level (reject airport/level mismatch)
+    const currentAclName = path.basename(aclPath);
+    const zipAclNames = fileList.filter(f => f.toLowerCase().endsWith('.acl'));
+    if (!zipAclNames.includes(currentAclName)) {
+      return { canceled: false, error: 'Level mismatch' };
+    }
+
+    // 4) Backup current files before overwriting
     const dir = path.dirname(aclPath);
     const entries = getLevelFilePaths(aclPath);
     for (const entry of entries) {
@@ -603,17 +610,83 @@ ipcMain.handle('import-zip', async (_event, { aclPath }) => {
       }
     }
 
-    // 4) Extract ZIP to the target directory (overwrites existing)
+    // 5) Extract ZIP to the target directory (overwrites existing)
     extractZip(zipPath, dir);
 
-    // 5) Reload the ACL to return parsed data
+    // 6) Reload the ACL to return parsed data
     const aclFile = path.basename(aclPath);
     const newAclPath = path.join(dir, aclFile);
     const data = loadFlights(newAclPath);
 
-    return { canceled: false, path: newAclPath, ...data };
+    // 7) Read .aclcfg for config info (same as load-acl handler)
+    let config = null;
+    const aclBase = path.basename(newAclPath, '.acl');
+    const cfgPath = path.join(dir, aclBase + '.aclcfg');
+    if (fs.existsSync(cfgPath)) {
+      try {
+        config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      } catch (_) {}
+    }
+
+    // 8) Compute earliest flight time (same as load-acl handler)
+    let earliestTime = null, earliestMin = Infinity;
+    if (data.flights) {
+      const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
+      const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
+      const crossesMidnight = startH >= 18;
+      for (const fl of data.flights) {
+        for (const field of ['LandingTime', 'OffBlockTime']) {
+          const t = fl[field];
+          if (!t) continue;
+          let tm = toMin(t);
+          if (crossesMidnight && tm < 360) tm += 1440;
+          if (tm < earliestMin) {
+            earliestTime = t;
+            earliestMin = tm;
+          }
+        }
+      }
+    }
+
+    // 9) Extract saveTime (same as load-acl handler)
+    let _saveSec = null;
+    try {
+      const rawText = fs.readFileSync(newAclPath, 'utf-8');
+      _saveSec = extractGameTime(rawText);
+      if (_saveSec !== null) {
+        console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from GameTime.CurrentDateTime');
+      } else {
+        const icaoMatch2 = newAclPath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+        const icao2 = icaoMatch2 ? icaoMatch2[1] : '';
+        const cacheEntry2 = airportCache && airportCache[icao2];
+        const totalApproachTimes2 = cacheEntry2?.approachData?.totalApproachTimes;
+        _saveSec = extractSaveTime(rawText, totalApproachTimes2);
+        if (_saveSec !== null) {
+          console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from approach entries (fallback)');
+        }
+      }
+    } catch (_) {}
+    if (_saveSec == null && config && config.startTime) {
+      const p2 = String(config.startTime).split(':');
+      _saveSec = parseInt(p2[0]) * 3600 + parseInt(p2[1]) * 60 + (parseInt(p2[2]) || 0) + 780;
+      console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from config.startTime + warmup (final fallback)');
+    }
+
+    return { canceled: false, path: newAclPath, config, earliestTime, _saveSec, ...data };
   } catch (err) {
     return { canceled: false, error: err.message };
+  }
+});
+
+// ─── IPC: Check backup existence ─────────────────────────
+
+ipcMain.handle('check-backup-exists', async (_event, filePath) => {
+  try {
+    const aclBak = filePath + '.bak';
+    const exists = fs.existsSync(aclBak);
+    return { success: true, exists };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 });
 
@@ -628,7 +701,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     // 1) Restore .acl.bak → .acl
     const aclBak = filePath + '.bak';
     if (!fs.existsSync(aclBak)) {
-      return { success: false, error: '未找到 .acl.bak 备份文件' };
+      return { success: false, error: 'No .acl.bak backup file found' };
     }
     fs.copyFileSync(aclBak, filePath);
     restored.push('ACL');
@@ -650,8 +723,8 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
 
     // 3) Restore timeline .json.bak → .json
     const timelineFiles = [
-      { bak: path.join(dir, 'weather_timeline.json.bak'), dest: path.join(dir, 'weather_timeline.json'), label: '天气时间线' },
-      { bak: path.join(dir, 'wind_timeline.json.bak'), dest: path.join(dir, 'wind_timeline.json'), label: '风力时间线' },
+      { bak: path.join(dir, 'weather_timeline.json.bak'), dest: path.join(dir, 'weather_timeline.json'), label: 'Weather Timeline' },
+      { bak: path.join(dir, 'wind_timeline.json.bak'), dest: path.join(dir, 'wind_timeline.json'), label: 'Wind Timeline' },
     ];
 
     // Runway timeline: read cfg again for the file name
@@ -662,7 +735,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     }
     if (runwayTimelineFile) {
       const rwyPath = path.join(dir, runwayTimelineFile + '.json');
-      timelineFiles.push({ bak: rwyPath + '.bak', dest: rwyPath, label: '跑道时间线' });
+      timelineFiles.push({ bak: rwyPath + '.bak', dest: rwyPath, label: 'Runway Timeline' });
     }
 
     for (const tf of timelineFiles) {
@@ -674,7 +747,47 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
 
     // 4) Parse restored ACL and return flights
     const data = loadFlights(filePath);
-    return { success: true, path: filePath, restored, ...data };
+
+    // 5) Read .aclcfg for config (same as load-acl handler)
+    let config = null;
+    if (fs.existsSync(cfgPath)) {
+      try { config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')); } catch (_) {}
+    }
+
+    // 6) Compute earliest flight time + saveTime (same as load-acl handler)
+    let earliestTime = null, earliestMin = Infinity;
+    if (data.flights) {
+      const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
+      const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
+      const crossesMidnight = startH >= 18;
+      for (const fl of data.flights) {
+        for (const field of ['LandingTime', 'OffBlockTime']) {
+          const t = fl[field];
+          if (!t) continue;
+          let tm = toMin(t);
+          if (crossesMidnight && tm < 360) tm += 1440;
+          if (tm < earliestMin) { earliestTime = t; earliestMin = tm; }
+        }
+      }
+    }
+
+    let _saveSec = null;
+    try {
+      const rawText = fs.readFileSync(filePath, 'utf-8');
+      _saveSec = extractGameTime(rawText);
+      if (_saveSec == null) {
+        const icaoMatch = filePath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+        const icao = icaoMatch ? icaoMatch[1] : '';
+        const cacheEntry = airportCache && airportCache[icao];
+        _saveSec = extractSaveTime(rawText, cacheEntry?.approachData?.totalApproachTimes);
+      }
+    } catch (_) {}
+    if (_saveSec == null && config && config.startTime) {
+      const p = String(config.startTime).split(':');
+      _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + 780;
+    }
+
+    return { success: true, path: filePath, restored, config, earliestTime, _saveSec, ...data };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -684,9 +797,9 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
 
 ipcMain.handle('export-csv', async (_event, { flights, defaultPath }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: '导出 CSV',
+    title: 'Export CSV',
     defaultPath: defaultPath || 'flights.csv',
-    filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
   });
   if (result.canceled || !result.filePath) return { canceled: false };
 
@@ -702,16 +815,16 @@ ipcMain.handle('export-csv', async (_event, { flights, defaultPath }) => {
 
 ipcMain.handle('csv-to-acl', async (_event, { suggestedAclName, templatePath }) => {
   const csvResult = await dialog.showOpenDialog(mainWindow, {
-    title: '选择 CSV 文件',
-    filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+    title: 'Select CSV File',
+    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
     properties: ['openFile'],
   });
   if (csvResult.canceled || !csvResult.filePaths.length) return { canceled: true };
 
   const aclResult = await dialog.showSaveDialog(mainWindow, {
-    title: '保存生成的 .acl 文件',
+    title: 'Save Generated .acl File',
     defaultPath: suggestedAclName || 'generated_level.acl',
-    filters: [{ name: 'ACL 关卡文件', extensions: ['acl'] }],
+    filters: [{ name: 'ACL Level Files', extensions: ['acl'] }],
   });
   if (aclResult.canceled || !aclResult.filePath) return { canceled: true };
 

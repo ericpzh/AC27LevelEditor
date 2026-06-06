@@ -84,7 +84,7 @@ export default function EditorScreen() {
       setLoading(true);
       const { filePath, airportIcao } = pending;
       const data = await electronAPI.loadAcl(filePath);
-      if (!data.success) { showModal(t('editor_load_failed'), data.error); setLoading(false); return; }
+      if (!data.success) { showModal(t('editor_load_failed'), data.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); setLoading(false); return; }
       const st = useAppStore.getState();
       st.setLegacyState({ currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec });
       initFlightNumberCounter(data.flights);
@@ -111,12 +111,18 @@ export default function EditorScreen() {
     const st = useAppStore.getState();
     try {
       const result = await electronAPI.saveAcl({ filePath: st.currentPath, flights: st.flights, before: st.before, after: st.after, arrayContent: st.arrayContent, originalBlocks: st.originalBlocks, earliestTime: st._earliestTime, createBackup, weatherTimeline: st.weatherTimeline, windTimeline: st.windTimeline, runwayTimeline: st.runwayTimeline });
-      if (!result.success) { showModal(t('modal_save_failed'), result.error); return false; }
+      if (!result.success) { showModal(t('modal_save_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return false; }
       if (st.weatherPath && st.timelineModified.weather) { await electronAPI.saveWeatherTimeline({ filePath: st.weatherPath, data: st.weatherTimeline }); useAppStore.getState().setTimelineModified('weather', false); }
       if (st.windPath && st.timelineModified.wind) { await electronAPI.saveWindTimeline({ filePath: st.windPath, data: st.windTimeline }); useAppStore.getState().setTimelineModified('wind', false); }
       if (st.runwayTimelinePath && st.timelineModified.runway) { await electronAPI.saveRunwayTimeline({ filePath: st.runwayTimelinePath, data: st.runwayTimeline }); useAppStore.getState().setTimelineModified('runway', false); }
-      useAppStore.setState({ modified: false }); return true;
-    } catch (err) { showModal(t('modal_save_failed'), err.message); return false; }
+      useAppStore.setState({ modified: false });
+      showModal(
+        t('modal_save_success'),
+        '',
+        <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>
+      );
+      return true;
+    } catch (err) { showModal(t('modal_save_failed'), err.message, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return false; }
   };
 
   const jumpToCallsign = (callsign) => {
@@ -180,7 +186,7 @@ export default function EditorScreen() {
     await doSave(false);
     const result = await electronAPI.exportZip({ aclPath: st.currentPath });
     if (result.canceled) return;
-    if (result.error) { showModal(t('modal_export_failed'), result.error); return; }
+    if (result.error) { showModal(t('modal_export_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
     showToast(t('toast_exported', { name: result.path.split(/[/\\]/).pop() }), 'success');
   };
 
@@ -200,13 +206,21 @@ export default function EditorScreen() {
     if (!st.currentPath) { showToast(t('toast_no_file'), 'error'); return; }
     const r = await electronAPI.manualBackup(st.currentPath);
     if (r.canceled) return;
-    if (r.error) showModal(t('modal_backup_failed'), r.error);
+    if (r.error) showModal(t('modal_backup_failed'), r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>);
     else showToast(t('toast_backup_saved', { name: r.path.split(/[/\\]/).pop() }), 'success');
   };
 
-  const handleRestore = () => {
+  const handleRestore = async () => {
     const st = useAppStore.getState();
     if (!st.currentPath) { showToast(t('toast_no_file'), 'error'); return; }
+    // Check backup exists before showing confirmation modal
+    const check = await electronAPI.checkBackupExists(st.currentPath);
+    if (!check.success || !check.exists) {
+      showModal(t('modal_restore_failed'), t('modal_restore_no_backup'),
+        <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>
+      );
+      return;
+    }
     showModal(
       t('modal_restore_title'),
       <p className="modal-warning-text">{t('modal_restore_warning')}</p>,
@@ -215,8 +229,8 @@ export default function EditorScreen() {
         <button className="btn-confirm" onClick={async () => {
           hideModal();
           const r = await electronAPI.restoreBackup(st.currentPath);
-          if (!r.success) { showModal(t('modal_restore_failed'), r.error); return; }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set() });
+          if (!r.success) { showModal(t('modal_restore_failed'), r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
+          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
           initFlightNumberCounter(r.flights);
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: tl.windTimeline || [], runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] } });
@@ -247,8 +261,8 @@ export default function EditorScreen() {
           if (cb?.checked) { try { await doSave(true); } catch (_) {} }
           const r = await electronAPI.importZip({ aclPath: st.currentPath });
           if (r.canceled) return;
-          if (r.error) { showModal(t('modal_import_failed'), r.error); return; }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null });
+          if (r.error) { showModal(t('modal_import_failed'), r.error === 'Level mismatch' ? t('modal_import_level_mismatch') : r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
+          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
           initFlightNumberCounter(r.flights);
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: tl.windTimeline || [], runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] } });

@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Backup & Import
   manualBackup: (sourcePath) => ipcRenderer.invoke('manual-backup', sourcePath),
   importZip: (data) => ipcRenderer.invoke('import-zip', data),
+  checkBackupExists: (filePath) => ipcRenderer.invoke('check-backup-exists', filePath),
   restoreBackup: (filePath) => ipcRenderer.invoke('restore-latest-backup', filePath),
 
   // Debug logging from renderer -> main process log file

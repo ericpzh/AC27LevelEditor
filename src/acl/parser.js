@@ -118,7 +118,7 @@ function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _wo
 
 function generateAclFromCsv(csvPath, aclPath, _templatePath) {
   const flights = importCsvFromFile(csvPath);
-  if (flights.length === 0) throw new Error('CSV 中没有有效的航班数据');
+  if (flights.length === 0) throw new Error('No valid flight data in CSV');
 
   generateFullAcl(aclPath, flights, '', '', [], null, null, false, false);
 }

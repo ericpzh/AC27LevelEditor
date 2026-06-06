@@ -237,6 +237,39 @@ export const useAppStore = create((set, get) => ({
         num = (validNums && validNums.length > 0) ? validNums[0] : (old.CallSign || '').substring(3);
       }
       flight.CallSign = code + num;
+
+      // AirlineCode changed — cascade AircraftType + Registration to first valid option
+      if ('AirlineCode' in updates) {
+        const state = get();
+        const vals = state.airportValues[state.currentAirport] || {};
+        const compat = vals._compat || {};
+
+        // AircraftType: reset to first valid type for the new airline
+        const validTypes = compat.airlineToAircraft?.[code];
+        if (validTypes && validTypes.length > 0) {
+          const curType = flight.AircraftType || '';
+          if (!curType || !validTypes.includes(curType)) {
+            flight.AircraftType = validTypes[0];
+          }
+        }
+
+        // Registration: reset to first valid reg for airline + aircraft type
+        const acType = flight.AircraftType || '';
+        const regKey = code + '|' + acType;
+        const validRegs = vals._registrationMap?.[regKey];
+        if (validRegs && validRegs.length > 0) {
+          const curReg = flight.Registration || flight._Registration || '';
+          if (!curReg || !validRegs.includes(curReg)) {
+            flight.Registration = validRegs[0];
+            delete flight._Registration;
+          }
+        }
+      }
+    }
+    // When user explicitly edits Registration, clear the parsed _Registration
+    // so it doesn't shadow the new value (display reads _Registration first)
+    if ('Registration' in updates) {
+      delete flight._Registration;
     }
     flights[idx] = flight;
     set({ flights, modified: true });
