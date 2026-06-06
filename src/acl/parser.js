@@ -107,10 +107,11 @@ function loadFlights(aclPath) {
 
 function extractCurrentDateTime(aclText) {
   const gtIdx = aclText.indexOf('"GameTime"');
-  if (gtIdx < 0) return null;
+  if (gtIdx < 0) { console.log('[extractCurrentDateTime] "GameTime" NOT FOUND'); return null; }
   const sub = aclText.substring(gtIdx, gtIdx + 2000);
-  const cdtMatch = sub.match(/"CurrentDateTime"[\s\S]{0,100}?"\$type":\s*3\s*,\s*(-?\d+)/);
-  if (!cdtMatch) return null;
+  // Match both short-form "$type": 3, <ticks> and expanded "$type": "3|...", <ticks>
+  const cdtMatch = sub.match(/"CurrentDateTime"[\s\S]{0,200}?"\$type":\s*(?:"\d+\|[^"]*"|\d+)\s*,\s*(-?\d+)/);
+  if (!cdtMatch) { console.log('[extractCurrentDateTime] CurrentDateTime regex NO MATCH'); return null; }
   const ticks = parseInt(cdtMatch[1], 10);
   const baseTicks = Math.floor(ticks / 864000000000) * 864000000000;
   const secSinceMidnight = Math.round((ticks - baseTicks) / 10000000);
@@ -118,6 +119,7 @@ function extractCurrentDateTime(aclText) {
   const m = Math.floor((secSinceMidnight % 3600) / 60);
   const s = secSinceMidnight % 60;
   const timeString = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  console.log('[extractCurrentDateTime] SUCCESS: timeString=' + timeString + ' secSinceMidnight=' + secSinceMidnight);
   return { ticks, secSinceMidnight, timeString };
 }
 

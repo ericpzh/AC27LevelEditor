@@ -115,6 +115,7 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
       try {
         const text = fs.readFileSync(f.path, 'utf-8');
         const cdt = extractCurrentDateTime(text);
+        console.log('[IPC] get-airport-files-info: demo file', f.filename, '— extractCurrentDateTime returned', cdt ? ('timeString=' + cdt.timeString) : 'NULL');
         if (cdt) {
           info.currentDateTime = cdt.timeString;
           // Compute 30-min window end: CurrentDateTime + 30 min
@@ -127,8 +128,11 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
           // Override startTime/endTime to show the 30-min demo window
           info.startTime = cdt.timeString;
           info.endTime = info.demoEndTime;
+          console.log('[IPC] get-airport-files-info: demo file', f.filename, '— window [' + cdt.timeString + ' ~ ' + info.demoEndTime + ']');
+        } else {
+          console.log('[IPC] get-airport-files-info: demo file', f.filename, '— FALLBACK to config range [' + (info.startTime || 'none') + ' ~ ' + (info.endTime || 'none') + ']');
         }
-      } catch (_) { /* keep config startTime/endTime as fallback */ }
+      } catch (e) { console.log('[IPC] get-airport-files-info: demo file', f.filename, '— ERROR:', e.message); /* keep config startTime/endTime as fallback */ }
     } else {
       // getFileInfo now extracts startTime/endTime from ACL's Config block (single source of truth)
       if (info.startTime) {
@@ -348,6 +352,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
     }
 
     const isDemo = filePath.endsWith('.demo.acl');
+    console.log('[IPC] load-acl: isDemo=' + isDemo + ' flights=' + (data.flights ? data.flights.length : 0) + ' config=' + (config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime) : 'NULL'));
 
     // For .demo.acl: extract CurrentDateTime, cap flights to [CDT, CDT+30min] window
     let _currentDateTime = null;
@@ -356,6 +361,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
       try {
         const rawText = fs.readFileSync(filePath, 'utf-8');
         const cdt = extractCurrentDateTime(rawText);
+        console.log('[IPC] load-acl: demo — extractCurrentDateTime returned ' + (cdt ? ('timeString=' + cdt.timeString + ' sec=' + cdt.secSinceMidnight) : 'NULL'));
         if (cdt && cdt.timeString) {
           _currentDateTime = cdt.timeString;
           const cdtMin = cdt.secSinceMidnight / 60;        // lower bound in minutes
@@ -924,6 +930,17 @@ ipcMain.handle('load-timelines', async (_event, aclPath) => {
     const windTimeline = _parseWindFrames(aclText);
     const runwayTimeline = _parseRunwayTimeline(aclText);
 
+    // Read windSpeedUnit from airport_config.json (default to 'knots')
+    let windSpeedUnit = 'knots';
+    try {
+      const airportConfigPath = path.join(path.dirname(levelsDir), 'airport_config.json');
+      if (fs.existsSync(airportConfigPath)) {
+        const acJson = JSON.parse(fs.readFileSync(airportConfigPath, 'utf-8'));
+        if (acJson.windSpeedUnit) windSpeedUnit = acJson.windSpeedUnit;
+        console.log('[IPC] load-timelines: windSpeedUnit=' + windSpeedUnit + ' from airport_config.json');
+      }
+    } catch (e) { /* keep default */ }
+
     return {
       success: true,
       weatherTimeline,
@@ -934,6 +951,7 @@ ipcMain.handle('load-timelines', async (_event, aclPath) => {
       runwayTimelinePath: (config && config.runwayTimelineFile)
         ? path.join(levelsDir, config.runwayTimelineFile + '.json')
         : null,
+      windSpeedUnit,
     };
   } catch (err) {
     return { success: false, error: err.message };

@@ -45,6 +45,7 @@ export const useAppStore = create((set, get) => ({
 
   // ─── Config ───
   _configStartTime: null, _configEndTime: null,
+  _windSpeedUnit: 'knots',
   _runwayPairs: [],
   _earliestTime: null,
   _saveSec: null,

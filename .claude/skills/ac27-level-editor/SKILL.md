@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.0.8)
+- **Name:** `ac27-level-editor` (v1.0.9)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -47,7 +47,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ├─────────────────────────────────────────────────────────┤
 │  src/store/ (zustand state)                             │
 │  - appStore.js — single store: screen, flights,         │
-│    timelines, modal/toast                               │
+│    timelines, modal/toast, _windSpeedUnit               │
 ├─────────────────────────────────────────────────────────┤
 │  src/acl/ (parser facade + 8 backend modules,          │
 │    CommonJS + some ESM)                                  │
@@ -266,10 +266,11 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 1. User clicks a level row → `window._pendingEditor = { filePath, airportIcao }` → `setScreen('editor')`
 2. EditorScreen's `useEffect` reads `window._pendingEditor` and loads:
    - `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
-   - `load-timelines` IPC → reads `weather_timeline.json`, `wind_timeline.json`, `runway_timeline_*.json`
+   - `load-timelines` IPC → reads timelines from ACL + `windSpeedUnit` from `airport_config.json` (defaults to `'knots'`)
    - `collect-values` IPC → builds dropdown option sets
    - `load-audio-callsigns` IPC → loads airline/aircraft audio metadata
-3. Zustand store is populated and React renders the flight table
+3. **Wind speed conversion:** If `windSpeedUnit` is `'mps'`, speeds are converted to knots on load (1 m/s = 1.94384 kt). The zustand store always holds knots. Stored in `_windSpeedUnit`.
+4. Zustand store is populated and React renders the flight table
 
 ### Phase 2: Edit (all in zustand store)
 - All edits go through store actions: `updateFlight()`, `addArrivalFlight()`, `deleteSelected()`, etc.
@@ -282,13 +283,14 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - (a) Dropdown value validation — every field against valid options
    - (b) Time range validation — flights within config startTime/endTime bounds
    - (c) Runway timeline validation — active runways at each flight's time
-2. `save-acl` IPC → sorts flights → looks up approach cache for the airport → generates full ACL:
+2. **Wind speed conversion:** Wind speeds are converted from knots (store) back to the airport's native unit (e.g., mps) before being sent to IPC handlers. This ensures `wind_timeline.json` and the ACL both contain values in the unit the game expects.
+3. `save-acl` IPC → sorts flights → looks up approach cache for the airport → generates full ACL:
    - FlightPlans rebuilt from scratch with new GUIDs
    - **AircraftState entries generated for arrival flights** where `0 < ProgressRatio < 1.0` (mid-approach at snapshot time), using `approach.js` verified algorithm: AppPointList lookup, FlyApproach resolution from SceneryData, PR formula, Position/Direction interpolation
    - Writes `.acl` + `.csv`
    - **Demo `.demo.acl` files treated identically** — save writes to `.demo.acl` + same shared `.csv` + shared timeline `.json` files
-3. Timeline saves (separate IPC per type) → writes JSON files
-4. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog). For `.demo.acl` files, creates `.demo.acl.bak`
+4. Timeline saves (separate IPC per type) → writes JSON files
+5. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog). For `.demo.acl` files, creates `.demo.acl.bak`
 
 ### Save As ZIP
 - Saves silently → packages 5 files into ZIP → native save dialog

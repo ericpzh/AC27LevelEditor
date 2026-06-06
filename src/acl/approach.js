@@ -1144,7 +1144,8 @@ function extractGameTime(aclText) {
   const gtIdx = aclText.indexOf('"GameTime"');
   if (gtIdx < 0) return null;
   const sub = aclText.substring(gtIdx, gtIdx + 2000);
-  const cdtMatch = sub.match(/"CurrentDateTime"[\s\S]{0,100}?\$type":\s*3\s*,\s*(-?\d+)/);
+  // Match both short-form "$type": 3, <ticks> and expanded "$type": "3|...", <ticks>
+  const cdtMatch = sub.match(/"CurrentDateTime"[\s\S]{0,200}?"\$type":\s*(?:"\d+\|[^"]*"|\d+)\s*,\s*(-?\d+)/);
   if (!cdtMatch) return null;
   const ticks = parseInt(cdtMatch[1]);
   const baseTicks = Math.floor(ticks / 864000000000) * 864000000000;

@@ -698,7 +698,18 @@ function _parseTypeNum(typeStr) {
  */
 function _expandShortFormTypes(text, typeMap) {
   if (!typeMap || typeMap.size === 0) return text;
-  return text.replace(/"\$type":\s*(\d+)\s*([,\}\]])/g, (match, numStr, delimiter) => {
+  // Protect CurrentDateTime blocks from expansion — the System.DateTime type (3)
+  // is a standard .NET type, not a custom GroundATC type, and its short-form
+  // representation must be preserved for extractCurrentDateTime / extractGameTime.
+  const protectedBlocks = [];
+  const textWithPlaceholders = text.replace(
+    /"CurrentDateTime":\s*\{[\s\S]{0,250}?\}/g,
+    (match) => {
+      protectedBlocks.push(match);
+      return '<<<CDT_BLOCK_' + (protectedBlocks.length - 1) + '>>>';
+    }
+  );
+  const expanded = textWithPlaceholders.replace(/"\$type":\s*(\d+)\s*([,\}\]])/g, (match, numStr, delimiter) => {
     const num = parseInt(numStr, 10);
     const fullType = typeMap.get(num);
     if (fullType) {
@@ -706,6 +717,8 @@ function _expandShortFormTypes(text, typeMap) {
     }
     return match;
   });
+  // Restore protected CurrentDateTime blocks
+  return expanded.replace(/<<<CDT_BLOCK_(\d+)>>>/g, (_, idx) => protectedBlocks[parseInt(idx, 10)]);
 }
 
 /**

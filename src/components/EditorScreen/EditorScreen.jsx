@@ -8,6 +8,21 @@ import { validateCallsigns, runTripleValidation } from '../../utils/validators';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline } from 'react-icons/io5';
+
+// Wind speed unit conversion: 1 m/s = 1.94384 knots
+const MPS_TO_KNOTS = 1.94384;
+function convertWindSpeed(entries, fromUnit, toUnit) {
+  if (!entries || !entries.length) return entries;
+  if (fromUnit === toUnit) return entries;
+  // Only mps ↔ knots conversion is needed; both other cases are identity
+  const factor = (fromUnit === 'mps' && toUnit === 'knots') ? MPS_TO_KNOTS
+    : (fromUnit === 'knots' && toUnit === 'mps') ? (1 / MPS_TO_KNOTS)
+    : 1;
+  if (factor === 1) return entries;
+  // To avoid mutating readonly JSON-parsed objects (that may be frozen or reused
+  // across restore/import flows), always return copies.
+  return entries.map(e => ({ ...e, speed: Math.round(e.speed * factor) }));
+}
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import FlightTable from './FlightTable/FlightTable';
 import WeatherEditor from './TimelineEditors/WeatherEditor';
@@ -94,7 +109,25 @@ export default function EditorScreen() {
       if (rootPath && airportIcao) {
         const [vals, audio, tl, rp] = await Promise.all([electronAPI.collectValues(rootPath, airportIcao), electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
         console.log('[Editor] loaded aux data', { airportIcao, valsKeys: Object.keys(vals||{}), dropdowns: { Stand: vals?.Stand?.length, Runway: vals?.Runway?.length, AircraftType: vals?.AircraftType?.length } });
-        st.setLegacyState({ airportValues: { ...st.airportValues, [airportIcao]: vals }, audioCallsigns: audio, weatherTimeline: tl.success ? (tl.weatherTimeline || []) : [], windTimeline: tl.success ? (tl.windTimeline || []) : [], runwayTimeline: tl.success ? (tl.runwayTimeline || { initialRunways: [], timeline: [] }) : { initialRunways: [], timeline: [] }, _runwayPairs: (rp?.success) ? (rp.pairs || []) : [], weatherPath: tl.weatherPath, windPath: tl.windPath, runwayTimelinePath: tl.runwayTimelinePath });
+        // Auto-remove runway timeline entries outside the level time range
+        // (mirrors the demo flight auto-removal in load-acl IPC for consistency)
+        if (data.config && data.config.startTime && data.config.endTime && tl.success && tl.runwayTimeline && tl.runwayTimeline.timeline) {
+          console.log('[Editor] runway filter: config.startTime=' + data.config.startTime + ' config.endTime=' + data.config.endTime + ' timeline.length=' + tl.runwayTimeline.timeline.length + ' isDemo=' + data.isDemo);
+          const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
+          const startMin = toMin(data.config.startTime), endMin = toMin(data.config.endTime);
+          const before = tl.runwayTimeline.timeline.length;
+          tl.runwayTimeline.timeline = tl.runwayTimeline.timeline.filter(entry => {
+            if (!entry.time) return false;
+            const t = toMin(entry.time);
+            return t >= startMin && t <= endMin;
+          });
+          const removed = before - tl.runwayTimeline.timeline.length;
+          if (removed > 0) {
+            console.log('[Editor] Auto-removed ' + removed + ' runway timeline entries outside [' + data.config.startTime + ' ~ ' + data.config.endTime + ']');
+          }
+        }
+        const wsu = tl.success ? (tl.windSpeedUnit || 'knots') : 'knots';
+        st.setLegacyState({ airportValues: { ...st.airportValues, [airportIcao]: vals }, audioCallsigns: audio, weatherTimeline: tl.success ? (tl.weatherTimeline || []) : [], windTimeline: tl.success ? convertWindSpeed(tl.windTimeline || [], wsu, 'knots') : [], runwayTimeline: tl.success ? (tl.runwayTimeline || { initialRunways: [], timeline: [] }) : { initialRunways: [], timeline: [] }, _runwayPairs: (rp?.success) ? (rp.pairs || []) : [], weatherPath: tl.weatherPath, windPath: tl.windPath, runwayTimelinePath: tl.runwayTimelinePath, _windSpeedUnit: wsu });
       }
       setLoading(false);
       showToast(t('editor_loaded_n', { n: data.flights.length }), 'success');
@@ -113,10 +146,11 @@ export default function EditorScreen() {
   const doSave = async (createBackup) => {
     const st = useAppStore.getState();
     try {
-      const result = await electronAPI.saveAcl({ filePath: st.currentPath, flights: st.flights, before: st.before, after: st.after, arrayContent: st.arrayContent, originalBlocks: st.originalBlocks, earliestTime: st._earliestTime, createBackup, weatherTimeline: st.weatherTimeline, windTimeline: st.windTimeline, runwayTimeline: st.runwayTimeline });
+      const nativeWind = convertWindSpeed(st.windTimeline, 'knots', st._windSpeedUnit || 'knots');
+      const result = await electronAPI.saveAcl({ filePath: st.currentPath, flights: st.flights, before: st.before, after: st.after, arrayContent: st.arrayContent, originalBlocks: st.originalBlocks, earliestTime: st._earliestTime, createBackup, weatherTimeline: st.weatherTimeline, windTimeline: nativeWind, runwayTimeline: st.runwayTimeline });
       if (!result.success) { showModal(t('modal_save_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return false; }
       if (st.weatherPath && st.timelineModified.weather) { await electronAPI.saveWeatherTimeline({ filePath: st.weatherPath, data: st.weatherTimeline }); useAppStore.getState().setTimelineModified('weather', false); }
-      if (st.windPath && st.timelineModified.wind) { await electronAPI.saveWindTimeline({ filePath: st.windPath, data: st.windTimeline }); useAppStore.getState().setTimelineModified('wind', false); }
+      if (st.windPath && st.timelineModified.wind) { await electronAPI.saveWindTimeline({ filePath: st.windPath, data: nativeWind }); useAppStore.getState().setTimelineModified('wind', false); }
       if (st.runwayTimelinePath && st.timelineModified.runway) { await electronAPI.saveRunwayTimeline({ filePath: st.runwayTimelinePath, data: st.runwayTimeline }); useAppStore.getState().setTimelineModified('runway', false); }
       useAppStore.setState({ modified: false });
       showModal(
@@ -236,7 +270,7 @@ export default function EditorScreen() {
           st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
           initFlightNumberCounter(r.flights);
           const tl = await electronAPI.loadTimelines(st.currentPath);
-          if (tl.success) st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: tl.windTimeline || [], runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] } });
+          if (tl.success) { const wsu2 = tl.windSpeedUnit || 'knots'; st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu2, 'knots'), runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] }, _windSpeedUnit: wsu2 }); }
           const rp = await electronAPI.scanRunwayPairs(rootPath, st.currentAirport);
           if (rp?.success) st.setLegacyState({ _runwayPairs: rp.pairs || [] });
           showToast(t('toast_restored_n', { n: r.flights.length, items: r.restored.join(', ') }), 'success');
@@ -268,7 +302,7 @@ export default function EditorScreen() {
           st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
           initFlightNumberCounter(r.flights);
           const tl = await electronAPI.loadTimelines(st.currentPath);
-          if (tl.success) st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: tl.windTimeline || [], runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] } });
+          if (tl.success) { const wsu3 = tl.windSpeedUnit || 'knots'; st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu3, 'knots'), runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] }, _windSpeedUnit: wsu3 }); }
           const rp = await electronAPI.scanRunwayPairs(rootPath, st.currentAirport);
           if (rp?.success) st.setLegacyState({ _runwayPairs: rp.pairs || [] });
           showToast(t('toast_imported_n', { n: r.flights.length }), 'success');
