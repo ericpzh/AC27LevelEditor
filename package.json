@@ -30,7 +30,8 @@
     "mac": {
       "target": "dmg",
       "icon": "icon.png",
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "artifactName": "AC27LevelEditor.${ext}"
     }
   },
   "devDependencies": {
