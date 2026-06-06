@@ -10,6 +10,9 @@
  *   - Direction = path tangent at current position
  */
 
+const { createTokenizer } = require('./tokenizer');
+const { preprocessUnityJson } = require('./acl_json');
+
 // ─── GUID generator (inlined to avoid ESM import chain issues in tests) ──
 
 let _cryptoRandomUUID;
@@ -53,48 +56,28 @@ function _vec3Dist(a, b) {
 
 // ─── ACL text parsing helpers ─────────────────────────────────────
 
+// ═══ Shared ACL text parsing helpers ══════════════════════════════
+// These were previously duplicated across approach.js and flight_plans.js.
+// They now delegate to the string-aware tokenizer to avoid the
+// "brace-in-string" fragility.
+
 function _findArrayEnd(text, startPos) {
-  let depth = 0;
-  for (let i = startPos; i < text.length; i++) {
-    const c = text[i];
-    if (c === '{') depth++;
-    else if (c === '}') {
-      depth--;
-      if (depth === 0) {
-        let j = i + 1;
-        while (j < text.length && ' \t\n\r'.includes(text[j])) j++;
-        if (j < text.length && text[j] === ']') return j + 1;
-      }
-    } else if (c === ']' && depth === 0) return i + 1;
-  }
-  return null;
+  const t = createTokenizer(text);
+  return t.findArrayEnd(startPos);
 }
 
 function _extractValueBlock(block) {
-  const vIdx = block.indexOf('"$v"');
-  if (vIdx < 0) return null;
-  const colon = block.indexOf(':', vIdx);
-  const brace = block.indexOf('{', colon);
-  let depth = 1, end = brace + 1;
-  for (; end < block.length; end++) {
-    if (block[end] === '{') depth++;
-    else if (block[end] === '}') { depth--; if (depth === 0) break; }
-  }
-  return block.substring(brace, end + 1);
+  const t = createTokenizer(block);
+  const vSec = t.findSection('$v');
+  if (!vSec) return null;
+  return t.substring(vSec.valueStart, vSec.valueEnd);
 }
 
 function _extractNestedObject(text, key) {
-  const idx = text.indexOf('"' + key + '"');
-  if (idx < 0) return null;
-  const colon = text.indexOf(':', idx);
-  const brace = text.indexOf('{', colon);
-  if (brace < 0) return null;
-  let depth = 1, end = brace + 1;
-  for (; end < text.length; end++) {
-    if (text[end] === '{') depth++;
-    else if (text[end] === '}') { depth--; if (depth === 0) break; }
-  }
-  return text.substring(brace, end + 1);
+  const t = createTokenizer(text);
+  const sec = t.findSection(key);
+  if (!sec) return null;
+  return t.substring(sec.valueStart, sec.valueEnd);
 }
 
 function _extractFloat(text, key) {
@@ -363,31 +346,41 @@ function resolveFlyApproachPoints(aclText, route, runway) {
   const runwayGuid = _findRunwayGuid(aclText, runway);
   if (!runwayGuid) return [];
 
-  // Read the RunwayState entry's Routes array
+  // Read the RunwayState entry's Routes array (uses tokenizer internally)
   const rwEntry = _findDictionaryEntry(aclText.substring(sdIdx), runwayGuid);
   if (!rwEntry) return [];
 
   const routesBlock = _extractNestedObject(rwEntry, 'Routes');
-  if (!routesBlock) return [];
+  if (!routesBlock) {
+    // Fallback: find by AirwaySegments name
+    return _resolveFromAirwaySegments(aclText, route);
+  }
 
-  // Find route with matching Name
-  const routeRe = new RegExp('"Name"\\s*:\\s*"' + _escapeRegex(route) + '"');
-  let matchPos = 0;
+  // Parse Routes $rcontent array using tokenizer to find route by Name
+  const routesT = createTokenizer(routesBlock);
+  const routesRc = routesT.findSection('$rcontent');
+
   let routeEntry = null;
-  while (true) {
-    const m = routeRe.exec(routesBlock.substring(matchPos));
-    if (!m) break;
-    // Find the enclosing { ... } for this Route entry
-    const entryStart = _findEnclosingBrace(routesBlock, matchPos + m.index);
-    if (entryStart >= 0) {
-      const candidate = routesBlock.substring(entryStart);
-      const entryEnd = _findMatchingBrace(candidate, 0);
-      if (entryEnd >= 0) {
-        routeEntry = candidate.substring(0, entryEnd + 1);
-        break;
+  if (routesRc) {
+    let pos = routesRc.valueStart + 1; // skip opening [
+    while (pos < routesBlock.length) {
+      while (pos < routesBlock.length && ' \t\n\r'.includes(routesBlock[pos])) pos++;
+      if (pos >= routesBlock.length || routesBlock[pos] === ']') break;
+      if (routesBlock[pos] === ',') { pos++; continue; }
+      if (routesBlock[pos] === '{') {
+        const entryEnd = routesT.findObjectEnd(pos);
+        if (entryEnd === null) break;
+        const candidate = routesBlock.substring(pos, entryEnd);
+        const name = _extractString(candidate, 'Name');
+        if (name === route) {
+          routeEntry = candidate;
+          break;
+        }
+        pos = entryEnd;
+      } else {
+        pos++;
       }
     }
-    matchPos += m.index + m[0].length;
   }
 
   if (!routeEntry) {
@@ -395,11 +388,11 @@ function resolveFlyApproachPoints(aclText, route, runway) {
     return _resolveFromAirwaySegments(aclText, route);
   }
 
-  // Extract AirwayNodeGuids array
+  // Extract AirwayNodeGuids array (uses tokenizer internally)
   const guids = _extractGuidArray(routeEntry, 'AirwayNodeGuids');
   if (!guids || guids.length === 0) return [];
 
-  // Resolve each GUID to AirwayNode Position
+  // Resolve each GUID to AirwayNode Position (uses tokenizer internally)
   const airwayNodes = _parseAirwayNodes(aclText);
   const points = [];
   for (const guid of guids) {
@@ -413,92 +406,89 @@ function _findRunwayGuid(text, runwayName) {
   const sdIdx = text.indexOf('"SceneryData"');
   if (sdIdx < 0) return null;
   const sdText = text.substring(sdIdx);
-  const rwIdx = sdText.indexOf('"Runways"');
-  if (rwIdx < 0) return null;
-  const rwSection = sdText.substring(rwIdx);
+  const sdT = createTokenizer(sdText);
+  const rwSec = sdT.findSection('Runways');
+  if (!rwSec) return null;
 
-  // Parse the Runways dictionary entries: each is {"$k": "guid", "$v": { ... RunwayState ... }}
-  // We need to find the RunwayState whose Name or PhysicalName matches runwayName
-  const rcMatch = rwSection.match(/"\$rcontent"\s*:\s*\[/);
-  if (!rcMatch) return null;
-  const absRc = rcMatch.index + rcMatch[0].length;
-  const endPos = _findArrayEnd(rwSection, absRc);
-  if (!endPos) return null;
-  const arr = rwSection.substring(absRc, endPos);
+  const rwText = sdT.substring(rwSec.valueStart, rwSec.valueEnd);
+  const rwT = createTokenizer(rwText);
+  const rcSec = rwT.findSection('$rcontent');
+  if (!rcSec) return null;
 
-  // Each entry: { "$k": "guid", "$v": { ... } }
-  let depth = 0, start = -1;
-  for (let i = 0; i < arr.length; i++) {
-    if (arr[i] === '{') { if (depth === 0) start = i; depth++; }
-    else if (arr[i] === '}') {
-      depth--;
-      if (depth === 0 && start >= 0) {
-        const block = arr.substring(start, i + 1);
-        const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
-        const vBlock = _extractValueBlock(block);
-        if (kMatch && vBlock) {
-          const name = _extractString(vBlock, 'Name');
-          const physName = _extractString(vBlock, 'PhysicalName');
-          // Match either Name or PhysicalName containing runwayName
-          if (name === runwayName || (physName && physName.includes(runwayName))) {
-            return kMatch[1];
-          }
+  // Iterate Runways dictionary entries using tokenizer for block boundaries
+  let pos = rcSec.valueStart + 1; // skip opening [
+  while (pos < rwText.length) {
+    while (pos < rwText.length && ' \t\n\r'.includes(rwText[pos])) pos++;
+    if (pos >= rwText.length || rwText[pos] === ']') break;
+    if (rwText[pos] === ',') { pos++; continue; }
+    if (rwText[pos] === '{') {
+      const entryEnd = rwT.findObjectEnd(pos);
+      if (entryEnd === null) break;
+      const block = rwText.substring(pos, entryEnd);
+      const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+      const vBlock = _extractValueBlock(block);
+      if (kMatch && vBlock) {
+        const name = _extractString(vBlock, 'Name');
+        const physName = _extractString(vBlock, 'PhysicalName');
+        // Match either Name or PhysicalName containing runwayName
+        if (name === runwayName || (physName && physName.includes(runwayName))) {
+          return kMatch[1];
         }
-        start = -1;
       }
+      pos = entryEnd;
+    } else {
+      pos++;
     }
   }
   return null;
 }
 
 function _findDictionaryEntry(sectionText, keyGuid) {
-  const re = new RegExp('"\\$k"\\s*:\\s*"' + _escapeRegex(keyGuid) + '"');
-  const m = re.exec(sectionText);
-  if (!m) return null;
-  const vIdx = sectionText.indexOf('"$v"', m.index);
-  if (vIdx < 0) return null;
-  const colon = sectionText.indexOf(':', vIdx);
-  const brace = sectionText.indexOf('{', colon);
-  let depth = 1, end = brace + 1;
-  for (; end < sectionText.length; end++) {
-    if (sectionText[end] === '{') depth++;
-    else if (sectionText[end] === '}') { depth--; if (depth === 0) break; }
-  }
-  return sectionText.substring(brace, end + 1);
-}
+  // Iterate $rcontent array entries using tokenizer for string-aware block boundaries
+  const t = createTokenizer(sectionText);
+  const rcSec = t.findSection('$rcontent');
+  if (!rcSec) return null;
 
-function _findEnclosingBrace(text, pos) {
-  // Go backwards to find the opening { of the enclosing object
-  let depth = 0;
-  for (let i = pos; i >= 0; i--) {
-    if (text[i] === '}') depth++;
-    else if (text[i] === '{') {
-      if (depth === 0) return i;
-      depth--;
+  let pos = rcSec.valueStart + 1; // skip opening [
+  while (pos < sectionText.length) {
+    while (pos < sectionText.length && ' \t\n\r'.includes(sectionText[pos])) pos++;
+    if (pos >= sectionText.length || sectionText[pos] === ']') break;
+    if (sectionText[pos] === ',') { pos++; continue; }
+    if (sectionText[pos] === '{') {
+      const entryEnd = t.findObjectEnd(pos);
+      if (entryEnd === null) break;
+      const block = sectionText.substring(pos, entryEnd);
+      const kMatch = block.match(/"\$k"\s*:\s*"([^"]+)"/);
+      if (kMatch && kMatch[1] === keyGuid) {
+        return _extractValueBlock(block);
+      }
+      pos = entryEnd;
+    } else {
+      pos++;
     }
   }
-  return -1;
-}
-
-function _findMatchingBrace(text, start) {
-  let depth = 1;
-  for (let i = start + 1; i < text.length; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}') { depth--; if (depth === 0) return i; }
-  }
-  return -1;
+  return null;
 }
 
 function _extractGuidArray(text, key) {
-  const idx = text.indexOf('"' + key + '"');
-  if (idx < 0) return null;
-  const rcMatch = text.substring(idx).match(/"\$rcontent"\s*:\s*\[/);
-  if (!rcMatch) return null;
-  const absRc = idx + rcMatch.index + rcMatch[0].length;
-  const endPos = _findArrayEnd(text, absRc);
-  if (!endPos) return null;
+  // Use tokenizer for string-aware key lookup
+  const t = createTokenizer(text);
+  const keySec = t.findSection(key);
+  if (!keySec) return null;
 
-  const arr = text.substring(absRc, endPos);
+  // The value should be an object containing $rcontent; find the GUID array within it
+  const valText = t.substring(keySec.valueStart, keySec.valueEnd);
+  const valT = createTokenizer(valText);
+  const rcSec = valT.findSection('$rcontent');
+  if (!rcSec) return null;
+
+  // $rcontent is a string array of GUIDs
+  let pos = rcSec.valueStart + 1; // skip opening [
+  // Find the array end (string-aware)
+  const arrEnd = valT.findArrayEnd(rcSec.valueStart);
+  if (arrEnd === null) return null;
+
+  const arr = valT.substring(rcSec.valueStart, arrEnd);
   const guids = [];
   const gRe = /"([a-f0-9-]{36})"/g;
   let m;
@@ -509,35 +499,51 @@ function _extractGuidArray(text, key) {
 }
 
 function _resolveFromAirwaySegments(aclText, route) {
+  // Find route by Name in AirwaySegments using tokenizer for all boundaries
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return [];
   const sdText = aclText.substring(sdIdx);
+  const sdT = createTokenizer(sdText);
+  const asSec = sdT.findSection('AirwaySegments');
+  if (!asSec) return [];
 
-  const asIdx = sdText.indexOf('"AirwaySegments"');
-  if (asIdx < 0) return [];
+  const asText = sdT.substring(asSec.valueStart, asSec.valueEnd);
+  const asT = createTokenizer(asText);
+  const rcSec = asT.findSection('$rcontent');
+  if (!rcSec) return [];
 
-  const asSection = sdText.substring(asIdx);
-  const nameRe = new RegExp('"Name"\\s*:\\s*"' + _escapeRegex(route) + '"');
-  const nm = nameRe.exec(asSection);
-  if (!nm) return [];
-
-  const entryStart = _findEnclosingBrace(asSection, nm.index);
-  if (entryStart < 0) return [];
-  const entryBlock = asSection.substring(entryStart);
-  const entryEnd = _findMatchingBrace(entryBlock, 0);
-  if (entryEnd < 0) return [];
-  const routeEntry = entryBlock.substring(0, entryEnd + 1);
-
-  const guids = _extractGuidArray(routeEntry, 'Nodes');
-  if (!guids || guids.length === 0) return [];
-
-  const airwayNodes = _parseAirwayNodes(aclText);
-  const points = [];
-  for (const guid of guids) {
-    const node = airwayNodes.get(guid);
-    if (node) points.push(node.position);
+  // Iterate AirwaySegments entries to find route by Name
+  let pos = rcSec.valueStart + 1; // skip opening [
+  while (pos < asText.length) {
+    while (pos < asText.length && ' \t\n\r'.includes(asText[pos])) pos++;
+    if (pos >= asText.length || asText[pos] === ']') break;
+    if (asText[pos] === ',') { pos++; continue; }
+    if (asText[pos] === '{') {
+      const entryEnd = asT.findObjectEnd(pos);
+      if (entryEnd === null) break;
+      const entry = asText.substring(pos, entryEnd);
+      const vBlock = _extractValueBlock(entry);
+      if (vBlock) {
+        const name = _extractString(vBlock, 'Name');
+        if (name === route) {
+          const guids = _extractGuidArray(vBlock, 'Nodes');
+          if (guids && guids.length > 0) {
+            const airwayNodes = _parseAirwayNodes(aclText);
+            const points = [];
+            for (const guid of guids) {
+              const node = airwayNodes.get(guid);
+              if (node) points.push(node.position);
+            }
+            return points;
+          }
+        }
+      }
+      pos = entryEnd;
+    } else {
+      pos++;
+    }
   }
-  return points;
+  return [];
 }
 
 function _parseAirwayNodes(aclText) {
@@ -545,37 +551,37 @@ function _parseAirwayNodes(aclText) {
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return map;
   const sdText = aclText.substring(sdIdx);
+  const sdT = createTokenizer(sdText);
+  const anSec = sdT.findSection('AirwayNodes');
+  if (!anSec) return map;
 
-  const anIdx = sdText.indexOf('"AirwayNodes"');
-  if (anIdx < 0) return map;
+  const anText = sdT.substring(anSec.valueStart, anSec.valueEnd);
+  const anT = createTokenizer(anText);
+  const rcSec = anT.findSection('$rcontent');
+  if (!rcSec) return map;
 
-  const anSection = sdText.substring(anIdx);
-  const rcMatch = anSection.match(/"\$rcontent"\s*:\s*\[/);
-  if (!rcMatch) return map;
-
-  const absRc = anIdx + rcMatch.index + rcMatch[0].length;
-  const endPos = _findArrayEnd(sdText, absRc);
-  if (!endPos) return map;
-
-  const arr = sdText.substring(absRc, endPos);
-  let depth = 0, start = -1;
-  for (let i = 0; i < arr.length; i++) {
-    if (arr[i] === '{') { if (depth === 0) start = i; depth++; }
-    else if (arr[i] === '}') {
-      depth--;
-      if (depth === 0 && start >= 0) {
-        const block = arr.substring(start, i + 1);
-        const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
-        const vBlock = _extractValueBlock(block);
-        if (kMatch && vBlock) {
-          const name = _extractString(vBlock, 'Name');
-          const pos = _extractVector3(vBlock);
-          if (pos) {
-            map.set(kMatch[1], { name: name || '', position: pos });
-          }
+  // Iterate dictionary entries using tokenizer for block boundaries
+  let pos = rcSec.valueStart + 1; // skip opening [
+  while (pos < anText.length) {
+    while (pos < anText.length && ' \t\n\r'.includes(anText[pos])) pos++;
+    if (pos >= anText.length || anText[pos] === ']') break;
+    if (anText[pos] === ',') { pos++; continue; }
+    if (anText[pos] === '{') {
+      const entryEnd = anT.findObjectEnd(pos);
+      if (entryEnd === null) break;
+      const block = anText.substring(pos, entryEnd);
+      const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+      const vBlock = _extractValueBlock(block);
+      if (kMatch && vBlock) {
+        const name = _extractString(vBlock, 'Name');
+        const posVec = _extractVector3(vBlock);
+        if (posVec) {
+          map.set(kMatch[1], { name: name || '', position: posVec });
         }
-        start = -1;
       }
+      pos = entryEnd;
+    } else {
+      pos++;
     }
   }
   return map;
@@ -941,10 +947,6 @@ function _parseFlightPlanData(text) {
   return map;
 }
 
-function _escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 // ─── 9. Designator Mapping ────────────────────────────────────────
 
 /**
@@ -1141,10 +1143,29 @@ function buildAnimatorBlock(aircraftGuid, opts) {
 // ─── 10b. Extract GameTime from ACL text ──────────────────────────
 
 function extractGameTime(aclText) {
+  // Use tokenizer to find GameTime section, then pre-processor + JSON.parse
+  const t = createTokenizer(aclText);
+  const gtSec = t.findSection('GameTime');
+  if (!gtSec) return null;
+
+  const gtText = t.substring(gtSec.valueStart, gtSec.valueEnd);
+  try {
+    const cleaned = preprocessUnityJson(gtText);
+    const parsed = JSON.parse(cleaned);
+    const cdt = parsed.CurrentDateTime;
+    if (cdt && cdt.__v && cdt.__v.length > 0) {
+      const ticks = BigInt(cdt.__v[0]);
+      const baseTicks = (ticks / 864000000000n) * 864000000000n;
+      return Number((ticks - baseTicks) / 10000000n);
+    }
+  } catch (_) {
+    // Fallback to regex
+  }
+
+  // Fallback: regex extraction
   const gtIdx = aclText.indexOf('"GameTime"');
   if (gtIdx < 0) return null;
   const sub = aclText.substring(gtIdx, gtIdx + 2000);
-  // Match both short-form "$type": 3, <ticks> and expanded "$type": "3|...", <ticks>
   const cdtMatch = sub.match(/"CurrentDateTime"[\s\S]{0,200}?"\$type":\s*(?:"\d+\|[^"]*"|\d+)\s*,\s*(-?\d+)/);
   if (!cdtMatch) return null;
   const ticks = parseInt(cdtMatch[1]);

@@ -1,5 +1,9 @@
 /**
  * ACL FlightPlans parser — new game format (type 37/52), ArrivalLeg (type 58), DepartureLeg (type 57).
+ *
+ * Parse path uses the tokenizer for string-aware boundary finding and the
+ * pre-processor + JSON.parse for section content. Write/rebuild path still
+ * uses string concatenation (to be migrated to serializer in follow-up).
  */
 const fs = require('fs');
 const path = require('path');
@@ -7,90 +11,67 @@ import { FALLBACK_BASE_DATE_TICKS } from './constants';
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
 const { computeProgressRatio, resolveFlyApproachPoints, buildApproachAircraftBlock, buildAnimatorBlock } = require('./approach');
+const { createTokenizer } = require('./tokenizer');
+const { preprocessUnityJson } = require('./acl_json');
 
 // ─── Parse WorldState.FlightPlans ─────────────────────────────
 
 function _parseWorldStateFlightPlans(text) {
   const log = (msg) => console.log('[ACL-FP]', msg);
   log('_parseWorldStateFlightPlans() START');
-  const fpIdx = text.indexOf('"FlightPlans"');
-  log('FlightPlans index: ' + fpIdx);
-  if (fpIdx < 0) return null;
 
-  const wsIdx = text.indexOf('"WorldState"');
-  log('WorldState index: ' + wsIdx + ', fpIdx < wsIdx? ' + (fpIdx < wsIdx));
-  if (wsIdx < 0 || fpIdx < wsIdx) return null;
+  // Use tokenizer to verify FlightPlans is a child of WorldState
+  const t = createTokenizer(text);
+  const wsSec = t.findSection('WorldState');
+  if (!wsSec) return null;
 
-  const afterFP = text.substring(fpIdx);
-  const rcMatch = afterFP.match(/"\$rcontent"\s*:\s*\[/);
-  log('$rcontent match: ' + !!rcMatch);
-  if (!rcMatch) return null;
+  // Find FlightPlans within WorldState
+  const wsText = t.substring(wsSec.valueStart, wsSec.valueEnd);
+  const wsT = createTokenizer(wsText);
+  const fpSec = wsT.findSection('FlightPlans');
+  if (!fpSec) { log('FlightPlans NOT FOUND inside WorldState'); return null; }
 
-  const absRcPos = fpIdx + rcMatch.index + rcMatch[0].length;
+  // Parse FlightPlans section: find $rcontent array (string-aware)
+  const fpText = wsT.substring(fpSec.valueStart, fpSec.valueEnd);
+  const fpT = createTokenizer(fpText);
 
-  const beforeRcRaw = text.substring(fpIdx, absRcPos);
-  const rlMatch = beforeRcRaw.match(/"\$rlength"\s*:\s*(\d+)/);
+  const rcSec = fpT.findSection('$rcontent');
+  if (!rcSec) { log('$rcontent NOT FOUND'); return null; }
+
+  // $rcontent is an array that starts with [
+  const rcStart = rcSec.valueStart;
+  if (fpText[rcStart] !== '[') { log('$rcontent value is not an array'); return null; }
+
+  // Find end of $rcontent array (string-aware)
+  const rcEnd = fpT.findArrayEnd(rcStart);
+  if (rcEnd === null) { log('cannot find $rcontent end'); return null; }
+
+  // Extract $rlength
+  const rlMatch = fpText.match(/"\$rlength"\s*:\s*(\d+)/);
   const originalLength = rlMatch ? parseInt(rlMatch[1], 10) : 0;
   log('$rlength: ' + originalLength);
 
-  let depth = 0, endPos = null;
-  for (let i = absRcPos; i < text.length; i++) {
-    const c = text[i];
-    if (c === '{') depth++;
-    else if (c === '}') {
-      depth--;
-      if (depth === 0) {
-        let j = i + 1;
-        while (j < text.length && ' \t\n\r'.includes(text[j])) j++;
-        if (j < text.length && text[j] === ']') { endPos = j + 1; break; }
-      }
-    } else if (c === ']' && depth === 0) { endPos = i + 1; break; }
-  }
-  log('endPos: ' + endPos);
-  if (endPos === null) return null;
+  // Absolute positions in original text
+  const absFpStart = wsSec.valueStart + fpSec.keyStart;
+  const absRcPos = wsSec.valueStart + fpSec.valueStart + rcStart;
+  const fpEnd = wsSec.valueStart + fpSec.valueStart + rcEnd;
 
   const fpData = {
-    fpStart: fpIdx,
+    fpStart: absFpStart,
     fpBefore: text.substring(0, absRcPos),
-    fpAfter: text.substring(endPos),
+    fpAfter: text.substring(fpEnd),
     fpEntries: [],
     fpRlength: originalLength,
   };
 
-  const arrayContent = text.substring(absRcPos, endPos);
-  log('arrayContent length: ' + arrayContent.length);
-  depth = 0;
-  let entryStart = -1;
-  for (let i = 0; i < arrayContent.length; i++) {
-    const ch = arrayContent[i];
-    if (ch === '{') { if (depth === 0) entryStart = i; depth++; }
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0 && entryStart >= 0) {
-        const block = arrayContent.substring(entryStart, i + 1);
-        const kMatch = block.match(/"\$k"\s*:\s*"([^"]+)"/);
-        const vStart = block.indexOf('"$v"');
-        if (vStart >= 0) {
-          const colonIdx = block.indexOf(':', vStart);
-          const braceIdx = block.indexOf('{', colonIdx);
-          let vDepth = 1;
-          let vEnd = braceIdx + 1;
-          for (; vEnd < block.length; vEnd++) {
-            if (block[vEnd] === '{') vDepth++;
-            else if (block[vEnd] === '}') { vDepth--; if (vDepth === 0) break; }
-          }
-          fpData.fpEntries.push({
-            k: kMatch ? kMatch[1] : '',
-            block: block,
-            vBlock: block.substring(braceIdx, vEnd + 1),
-            _absStart: absRcPos + entryStart,
-            _absEnd: absRcPos + i + 1,
-          });
-        }
-        entryStart = -1;
-      }
-    }
-  }
+  // Parse $rcontent entries using string-aware tokenizer
+  const arrayContent = text.substring(absRcPos, fpEnd);
+  const arrayT = createTokenizer(arrayContent);
+
+  // The $rcontent array contains $k/$v dictionary entries as objects
+  // Each entry: { "$k": "guid", "$v": { ... } }
+  _parseDictEntriesToFpData(arrayContent, arrayT, fpData, absRcPos);
+
   log('parsed entries: ' + fpData.fpEntries.length);
 
   const flights = [];
@@ -104,9 +85,138 @@ function _parseWorldStateFlightPlans(text) {
   return { flights, fpData };
 }
 
+/**
+ * Parse $k/$v dictionary entries from a $rcontent array into fpData.fpEntries.
+ * Uses string-aware tokenizer for block boundary finding.
+ */
+function _parseDictEntriesToFpData(content, contentT, fpData, baseOffset) {
+  // Find all $k entries
+  const kRe = /"\$k"\s*:\s*"([^"]+)"/g;
+  let km;
+  while ((km = kRe.exec(content)) !== null) {
+    const k = km[1];
+
+    // Find the $v block for this entry
+    const vKeyIdx = content.indexOf('"$v"', km.index);
+    if (vKeyIdx < 0) continue;
+
+    const colonIdx = content.indexOf(':', vKeyIdx);
+    if (colonIdx < 0) continue;
+
+    let vBlockStart = colonIdx + 1;
+    while (vBlockStart < content.length && ' \t\n\r'.includes(content[vBlockStart])) vBlockStart++;
+    if (vBlockStart >= content.length || content[vBlockStart] !== '{') continue;
+
+    const vBlockEnd = contentT.findObjectEnd(vBlockStart);
+    if (vBlockEnd === null) continue;
+
+    // Find the block end (the entire { "$k": ..., "$v": ... } object)
+    // Walk backward from km.index to find the opening {
+    let blockStart = km.index;
+    while (blockStart > 0 && content[blockStart] !== '{') blockStart--;
+
+    fpData.fpEntries.push({
+      k,
+      block: content.substring(blockStart, vBlockEnd),
+      vBlock: content.substring(vBlockStart, vBlockEnd),
+      _absStart: baseOffset + blockStart,
+      _absEnd: baseOffset + vBlockEnd,
+    });
+  }
+}
+
 // ─── Parse single FlightPlanState entry (type 37) ─────────────
 
 function _parseFlightPlanEntry(vBlock) {
+  try {
+    const cleaned = preprocessUnityJson(vBlock);
+    const obj = JSON.parse(cleaned);
+    return _extractFlightFromParsed(obj);
+  } catch (e) {
+    // Fallback to regex extraction for compatibility
+    return _parseFlightPlanEntryRegex(vBlock);
+  }
+}
+
+/**
+ * Extract flight data from a parsed FlightPlanState object.
+ * The object was produced by pre-processor + JSON.parse, so DateTime
+ * fields have __v sentinel arrays (e.g., { "$type": 3, "__v": ["<ticks>"] }).
+ */
+function _extractFlightFromParsed(obj) {
+  const f = {};
+
+  f._Registration = obj.Registration || '';
+  f.AircraftType = obj.AircraftType || '';
+  f.AirlineName = obj.AirlineName || '';
+  f.Voice = obj.Voice || '';
+  f.Language = obj.Language || '';
+  f._fpGuid = '';
+
+  // Determine arrival vs departure from parsed object
+  const arrLeg = obj.Arrival;
+  const depLeg = obj.Departure;
+
+  if (arrLeg && arrLeg !== null) {
+    f.isDeparture = false;
+    f.CallSign = arrLeg.CallSign || '';
+    f.DepartureAirport = arrLeg.OriginAirport || '';
+    f.ArrivalAirport = '';
+    f.Runway = arrLeg.Runway || '';
+    f.Stand = arrLeg.Stand || '';
+    f.Airway = arrLeg.STAR || '';
+
+    // DateTime fields have __v sentinel from pre-processor
+    const ldt = arrLeg.LandingTime;
+    if (ldt && ldt.__v && ldt.__v.length > 0) {
+      f.LandingTime = ticksToTime(ldt.__v[0]);
+    } else {
+      f.LandingTime = '';
+    }
+    const ibt = arrLeg.InBlockTime;
+    if (ibt && ibt.__v && ibt.__v.length > 0) {
+      f.InBlockTime = ticksToTime(ibt.__v[0]);
+    } else {
+      f.InBlockTime = '';
+    }
+    f.OffBlockTime = '';
+    f.TakeoffTime = '';
+  } else if (depLeg && depLeg !== null) {
+    f.isDeparture = true;
+    f.CallSign = depLeg.CallSign || '';
+    f.DepartureAirport = '';
+    f.ArrivalAirport = depLeg.DestinationAirport || '';
+    f.Runway = depLeg.Runway || '';
+    f.Stand = depLeg.Stand || '';
+    f.Airway = '';
+
+    const obt = depLeg.OffBlockTime;
+    if (obt && obt.__v && obt.__v.length > 0) {
+      f.OffBlockTime = ticksToTime(obt.__v[0]);
+    } else {
+      f.OffBlockTime = '';
+    }
+    const tot = depLeg.TakeoffTime;
+    if (tot && tot.__v && tot.__v.length > 0) {
+      f.TakeoffTime = ticksToTime(tot.__v[0]);
+    } else {
+      f.TakeoffTime = '';
+    }
+    f.LandingTime = '';
+    f.InBlockTime = '';
+  } else {
+    return null;
+  }
+
+  return f;
+}
+
+/**
+ * Legacy regex-based fallback for _parseFlightPlanEntry.
+ * Kept for backward compatibility with edge-case ACL files that
+ * can't be parsed by the pre-processor + JSON.parse path.
+ */
+function _parseFlightPlanEntryRegex(vBlock) {
   const f = {};
 
   const regMatch = vBlock.match(/"Registration"\s*:\s*"([^"]*)"/);
@@ -642,44 +752,52 @@ function _buildFlightPlanStateEntryWithGuid(flight, entryId, baseDateTicks, fpGu
 
 // ─── Rebuild Timeline Sections (WindFrames, WeatherFrames, RunwayTimeline) ──
 
-/** Extract an object section from raw ACL text by brace-matching from sectionKey. */
+/** Extract an object section from raw ACL text using string-aware tokenizer. */
 function _extractSection(text, sectionKey) {
-  const idx = text.indexOf('"' + sectionKey + '"');
-  if (idx < 0) return null;
-  const colonIdx = text.indexOf(':', idx);
-  if (colonIdx < 0) return null;
-  let braceIdx = colonIdx + 1;
-  while (braceIdx < text.length && text[braceIdx] !== '{') braceIdx++;
-  if (braceIdx >= text.length) return null;
-  const between = text.substring(colonIdx + 1, braceIdx).trim();
-  if (between.startsWith('null')) return null;
-  let depth = 0, endIdx = braceIdx;
-  for (let i = braceIdx; i < text.length; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}') { depth--; if (depth === 0) { endIdx = i + 1; break; } }
-  }
-  return { start: idx, end: endIdx, content: text.substring(braceIdx, endIdx) };
+  const t = createTokenizer(text);
+  const range = t.findSection(sectionKey);
+  if (!range) return null;
+  // Check for null value
+  const val = t.substring(range.valueStart, range.valueEnd);
+  if (val === 'null') return null;
+  return {
+    start: range.keyStart,
+    end: range.valueEnd,
+    content: val,
+  };
 }
 
 /** Extract level config (startTime, endTime, file paths) from ACL's Config block. */
 function _extractConfig(aclText) {
   const sec = _extractSection(aclText, 'Config');
   if (!sec) { console.log('[CONFIG-EXTRACT] Config section NOT FOUND in ACL text (len=' + (aclText ? aclText.length : 0) + ')'); return null; }
-  // Use regex extraction instead of JSON.parse — the Unity-serialized Config block
-  // may contain non-standard JSON (unquoted keys, trailing commas, NaN, etc.)
-  const getStr = (name) => {
-    const re = new RegExp('"' + name + '"\\s*:\\s*"([^"]*)"');
-    const m = sec.content.match(re);
-    return m ? m[1] : null;
-  };
-  const result = {
-    startTime: getStr('startTime'),
-    endTime: getStr('endTime'),
-    flightScheduleFile: getStr('flightScheduleFile'),
-    runwayTimelineFile: getStr('runwayTimelineFile'),
-  };
-  console.log('[CONFIG-EXTRACT] startTime=' + result.startTime + ' endTime=' + result.endTime + ' flightScheduleFile=' + result.flightScheduleFile + ' runwayTimelineFile=' + result.runwayTimelineFile);
-  return result;
+  // Use pre-processor + JSON.parse for robust extraction
+  try {
+    const cleaned = preprocessUnityJson(sec.content);
+    const cfg = JSON.parse(cleaned);
+    const result = {
+      startTime: cfg.startTime || '',
+      endTime: cfg.endTime || '',
+      flightScheduleFile: cfg.flightScheduleFile || '',
+      runwayTimelineFile: cfg.runwayTimelineFile || '',
+    };
+    console.log('[CONFIG-EXTRACT] startTime=' + result.startTime + ' endTime=' + result.endTime + ' flightScheduleFile=' + result.flightScheduleFile + ' runwayTimelineFile=' + result.runwayTimelineFile);
+    return result;
+  } catch (e) {
+    console.log('[CONFIG-EXTRACT] Parse error, falling back to regex:', e.message);
+    // Fallback: regex extraction for backward compat
+    const getStr = (name) => {
+      const re = new RegExp('"' + name + '"\\s*:\\s*"([^"]*)"');
+      const m = sec.content.match(re);
+      return m ? m[1] : null;
+    };
+    return {
+      startTime: getStr('startTime') || '',
+      endTime: getStr('endTime') || '',
+      flightScheduleFile: getStr('flightScheduleFile') || '',
+      runwayTimelineFile: getStr('runwayTimelineFile') || '',
+    };
+  }
 }
 
 function _parseTypeNum(typeStr) {
@@ -1087,25 +1205,47 @@ function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runway
 
 // ─── Parse timeline sections from ACL text ────────────────────
 
-/** Parse $rcontent entries from a frames section (WeatherFrames/WindFrames). */
+/** Parse $rcontent entries from a frames section using string-aware tokenizer. */
 function _parseFramesSection(sectionContent) {
   if (!sectionContent) return [];
   const entries = [];
-  const rcIdx = sectionContent.indexOf('"$rcontent"');
-  if (rcIdx < 0) return entries;
-  const colonIdx = sectionContent.indexOf(':', rcIdx);
-  const bracketIdx = sectionContent.indexOf('[', colonIdx);
-  if (bracketIdx < 0) return entries;
 
-  let depth = 0, blockStart = -1;
-  for (let i = bracketIdx + 1; i < sectionContent.length; i++) {
-    if (sectionContent[i] === '{') {
-      if (depth === 0) blockStart = i;
-      depth++;
-    } else if (sectionContent[i] === '}') {
-      depth--;
-      if (depth === 0 && blockStart >= 0) {
-        const block = sectionContent.substring(blockStart, i + 1);
+  const t = createTokenizer(sectionContent);
+  const rcSec = t.findSection('$rcontent');
+  if (!rcSec) return entries;
+
+  const rcStart = rcSec.valueStart;
+  if (sectionContent[rcStart] !== '[') return entries;
+
+  // Parse each { ... } block in the array using string-aware tokenizer
+  let pos = rcStart + 1; // skip opening [
+  while (pos < sectionContent.length) {
+    // Skip whitespace
+    while (pos < sectionContent.length && ' \t\n\r'.includes(sectionContent[pos])) pos++;
+    if (pos >= sectionContent.length) break;
+
+    if (sectionContent[pos] === ']') break; // end of array
+    if (sectionContent[pos] === ',') { pos++; continue; }
+
+    if (sectionContent[pos] === '{') {
+      const blockEnd = t.findObjectEnd(pos);
+      if (blockEnd === null) break;
+
+      const block = sectionContent.substring(pos, blockEnd);
+
+      // Try pre-processor + JSON.parse first
+      try {
+        const cleaned = preprocessUnityJson(block);
+        const parsed = JSON.parse(cleaned);
+        // Convert parsed object to lowercase-keyed entry
+        const entry = {};
+        for (const key of Object.keys(parsed)) {
+          if (key === '$type' || key === '$id') continue;
+          entry[key.toLowerCase()] = parsed[key];
+        }
+        entries.push(entry);
+      } catch (_) {
+        // Fallback to regex extraction
         const entry = {};
         const strRe = /"(\w+)":\s*"([^"]*)"/g;
         let sm;
@@ -1117,10 +1257,14 @@ function _parseFramesSection(sectionContent) {
           if (!(key in entry)) entry[key] = parseInt(nm[2], 10);
         }
         entries.push(entry);
-        blockStart = -1;
       }
+
+      pos = blockEnd;
+    } else {
+      pos++;
     }
   }
+
   return entries;
 }
 

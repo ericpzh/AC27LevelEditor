@@ -43,6 +43,9 @@ const {
   _extractConfig,
 } = require('./flight_plans');
 const { createZip, listZipFiles, extractZip } = require('../utils/zipUtils');
+const { createTokenizer } = require('./tokenizer');
+const { preprocessUnityJson, serializeUnityJson, isUnityJson } = require('./acl_json');
+const { AclDocument } = require('./acl_document');
 
 // ─── Load flights from ACL (single source of truth) ───────────
 
@@ -106,10 +109,36 @@ function loadFlights(aclPath) {
 // ─── Extract CurrentDateTime from ACL text ──────────────────
 
 function extractCurrentDateTime(aclText) {
+  // Use tokenizer for section finding + pre-processor + JSON.parse
+  const t = createTokenizer(aclText);
+  const gtSec = t.findSection('GameTime');
+  if (!gtSec) { console.log('[extractCurrentDateTime] "GameTime" NOT FOUND'); return null; }
+
+  const gtText = t.substring(gtSec.valueStart, gtSec.valueEnd);
+  try {
+    const cleaned = preprocessUnityJson(gtText);
+    const parsed = JSON.parse(cleaned);
+    const cdt = parsed.CurrentDateTime;
+    if (cdt && cdt.__v && cdt.__v.length > 0) {
+      const ticks = BigInt(cdt.__v[0]);
+      const TICKS_PER_DAY = 864000000000n;
+      const baseTicks = (ticks / TICKS_PER_DAY) * TICKS_PER_DAY;
+      const secSinceMidnight = Number((ticks - baseTicks) / 10000000n);
+      const h = Math.floor(secSinceMidnight / 3600);
+      const m = Math.floor((secSinceMidnight % 3600) / 60);
+      const s = secSinceMidnight % 60;
+      const timeString = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+      console.log('[extractCurrentDateTime] SUCCESS: timeString=' + timeString + ' secSinceMidnight=' + secSinceMidnight);
+      return { ticks, secSinceMidnight, timeString };
+    }
+  } catch (e) {
+    console.log('[extractCurrentDateTime] JSON parse failed, falling back to regex:', e.message);
+  }
+
+  // Fallback: regex extraction (legacy)
   const gtIdx = aclText.indexOf('"GameTime"');
-  if (gtIdx < 0) { console.log('[extractCurrentDateTime] "GameTime" NOT FOUND'); return null; }
+  if (gtIdx < 0) { console.log('[extractCurrentDateTime] "GameTime" NOT FOUND (fallback)'); return null; }
   const sub = aclText.substring(gtIdx, gtIdx + 2000);
-  // Match both short-form "$type": 3, <ticks> and expanded "$type": "3|...", <ticks>
   const cdtMatch = sub.match(/"CurrentDateTime"[\s\S]{0,200}?"\$type":\s*(?:"\d+\|[^"]*"|\d+)\s*,\s*(-?\d+)/);
   if (!cdtMatch) { console.log('[extractCurrentDateTime] CurrentDateTime regex NO MATCH'); return null; }
   const ticks = parseInt(cdtMatch[1], 10);
@@ -119,7 +148,7 @@ function extractCurrentDateTime(aclText) {
   const m = Math.floor((secSinceMidnight % 3600) / 60);
   const s = secSinceMidnight % 60;
   const timeString = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
-  console.log('[extractCurrentDateTime] SUCCESS: timeString=' + timeString + ' secSinceMidnight=' + secSinceMidnight);
+  console.log('[extractCurrentDateTime] SUCCESS (fallback): timeString=' + timeString + ' secSinceMidnight=' + secSinceMidnight);
   return { ticks, secSinceMidnight, timeString };
 }
 
@@ -152,6 +181,9 @@ module.exports = {
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
   _extractConfig,
   createZip, listZipFiles, extractZip,
+  // New object-based parser (v1.0.10+)
+  createTokenizer, preprocessUnityJson, serializeUnityJson, isUnityJson,
+  AclDocument,
   // Internal exports (used by tests)
   _parseWorldStateData, _parseSceneryData,
   _extractFlightsFromWorldState,

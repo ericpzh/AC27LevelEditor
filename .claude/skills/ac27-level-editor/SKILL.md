@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.0.9)
+- **Name:** `ac27-level-editor` (v1.0.10)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -49,12 +49,13 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - appStore.js — single store: screen, flights,         │
 │    timelines, modal/toast, _windSpeedUnit               │
 ├─────────────────────────────────────────────────────────┤
-│  src/acl/ (parser facade + 8 backend modules,          │
+│  src/acl/ (parser facade + 11 backend modules,          │
 │    CommonJS + some ESM)                                  │
 │  - parser.js is the FACADE — main.js imports ALL        │
 │    backend modules through it only                      │
-│  - constants, scanner, flight_plans, world_state,        │
-│    approach, dynamics, scenery, utils                   │
+│  - tokenizer, acl_json, acl_document, constants,         │
+│    scanner, flight_plans, world_state, approach,         │
+│    dynamics, scenery, utils                             │
 ├─────────────────────────────────────────────────────────┤
 │  src/utils/ (shared utilities, ESM frontend + CJS back) │
 │  - constants.js — field defs, airline codes, getActiveCol│
@@ -120,8 +121,11 @@ AC27LevelEditor/
 │   ├── store/
 │   │   └── appStore.js          # zustand store — all app state
 │   │
-│   ├── acl/                     # Backend modules (8 files; CommonJS + some ESM)
+│   ├── acl/                     # Backend modules (11 files; CommonJS + some ESM)
 │   │   ├── parser.js            # FACADE — re-exports all backend modules
+│   │   ├── tokenizer.js         # String-aware section boundary scanner (no more brace-counting)
+│   │   ├── acl_json.js          # Pre-processor (Unity JSON→valid JSON) + serializer
+│   │   ├── acl_document.js      # In-memory document model (lazy parsing, mutation tracking)
 │   │   ├── constants.js         # ACL-format constants (ESM, imported by parser)
 │   │   ├── scanner.js           # Scans game root for airports & .acl files
 │   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
@@ -141,7 +145,7 @@ AC27LevelEditor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── test/                # 9 plain Node.js test scripts (no framework)
+├── test/                # 12 plain Node.js test scripts (no framework)
 └── dist/                # Build output (gitignored)
 ```
 
@@ -236,9 +240,10 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 
 - No test framework. Tests are plain Node.js scripts run with `node test/<name>.js`
 - Tests `require('./src/acl/parser.js')` to access both public and `_private` functions
-- Many tests need a real game installation (Airport Control 27) at a known path
+- New parser tests (`test_tokenizer`, `test_acl_json`, `test_acl_document`) run without a game root — they use synthetic test data
+- Integration tests need a real game installation (Airport Control 27) at a known path
 - Tests print results to stdout — read the output to determine pass/fail
-- No mocking, no fixtures — tests operate on real files
+- No mocking, no fixtures — integration tests operate on real files
 
 ## Three-Screen SPA
 
@@ -324,11 +329,31 @@ The game ships four 30-minute `.demo.acl` slice levels:
 
 ## ACL File Format
 
-ACL files are proprietary JSON with embedded .NET type information:
+ACL files are proprietary JSON with embedded .NET type information. Unity's `JsonUtility` produces several non-standard extensions beyond standard JSON:
+
+### Standard JSON-Plus Extensions
 - `"$type": "56|Namespace.ClassName, Assembly"` — type tags
 - `"$id": N` — object reference IDs
+- `"$ref": N` — back-references to `$id`
 - `"$k"` / `"$v"` — dictionary key/value entries
+- `"$rcontent": [...]` / `"$rlength": N` — array wrappers
 - `"$values": [...]` — array payloads
+
+### Non-Standard JSON Syntax (handled by pre-processor)
+- **Trailing commas** — `{"a": 1,}` or `[1, 2,]`
+- **NaN / Infinity** — `"field": NaN`
+- **Missing commas between properties** — Unity may omit commas after nested object values
+- **Typed-value objects** — `{"$type": 3, int64_ticks}` (DateTime), `{"$type": "16|...", x, 0, z}` (Vector3) — bare numeric values without keys in objects
+
+### Two-Pass Parsing (`src/acl/acl_json.js`)
+
+The `preprocessUnityJson()` function transforms Unity JSON into valid JSON in 3 passes:
+1. **Fix trailing commas** (string-aware removal)
+2. **Insert missing commas** between adjacent properties
+3. **Fix NaN / Infinity** → safe values
+4. **Transform typed-value objects** → `__v` sentinel: `{"$type": 3, "__v": ["int64_string"]}`
+
+`JSON.parse` then runs on the sanitized output. The `serializeUnityJson()` function reverses all transformations for output.
 
 Key section types:
 - `SceneryData` (type 59) — runway/gate GUIDs
@@ -410,6 +435,13 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 ### Running tests
 
 All tests accept `--help` / `-h` for usage. Temp files are written to `test/` and cleaned up automatically.
+
+**New parser module tests (no game root needed):**
+```bash
+node test/test_tokenizer.js            # String-aware scanner (18 tests)
+node test/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
+node test/test_acl_document.js         # Document model integration (13 tests)
+```
 
 **Scan-all tests (need game root, default `../../../` from test dir):**
 ```bash

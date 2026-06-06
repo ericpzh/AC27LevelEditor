@@ -113,7 +113,7 @@ src/App.jsx          →  Root component: providers + screen routing
 src/components/      →  React component tree (Setup, Browser, Editor, common)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
-src/acl/             →  CommonJS backend modules (parser facade + 8 modules)
+src/acl/             →  CommonJS backend modules (parser facade + 11 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
@@ -167,6 +167,9 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │   │
 │   ├── acl/                 # Backend modules (CommonJS)
 │   │   ├── parser.js            # FACADE — main.js imports everything through here
+│   │   ├── tokenizer.js         # String-aware section boundary scanner
+│   │   ├── acl_json.js          # Pre-processor (Unity JSON → valid JSON) + serializer
+│   │   ├── acl_document.js      # In-memory document model (lazy parsing, mutation tracking)
 │   │   ├── scanner.js           # Game root scanner
 │   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
 │   │   ├── world_state.js       # WorldState format (types 35/56/54)
@@ -185,7 +188,7 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── test/                # 9 plain Node.js test scripts (no framework)
+├── test/                # 12 plain Node.js test scripts (no framework)
 └── dist/                # Build output (gitignored)
 ```
 
@@ -203,6 +206,13 @@ For detailed conventions, see the repo skill (loaded automatically by Claude Cod
 ### Running Tests
 
 No test framework — each test is a standalone Node.js script. All accept `--help` for usage.
+
+**New parser module tests (no game root needed):**
+```bash
+node test/test_tokenizer.js            # String-aware scanner (18 tests)
+node test/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
+node test/test_acl_document.js         # Document model integration (13 tests)
+```
 
 **Scan-all (defaults to `../../../` game root, override with `--root`):**
 ```bash
@@ -274,7 +284,7 @@ npm start    # 开发模式启动
 ```bash
 node test/test_e2e_save_load.js    # 完整存取往返测试
 node test/test_parse_airport.js    # 解析所有机场
-# ... 共 9 个测试脚本
+# ... 共 12 个测试脚本
 ```
 
 ### 构建
