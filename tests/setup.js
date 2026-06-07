@@ -18,8 +18,7 @@ const mockIpcOn = vi.fn((channel, cb) => {
 vi.stubGlobal('electronAPI', {
   // Setup screen
   selectGameRoot: () => mockIpcInvoke('select-game-root'),
-  getLastRoot: () => mockIpcInvoke('get-last-root'),
-  saveLastRoot: (rootPath) => mockIpcInvoke('save-last-root', rootPath),
+  getCacheState: () => mockIpcInvoke('get-cache-state'),
   initAirportCache: (rootPath) => mockIpcInvoke('init-airport-cache', rootPath),
 
   // Browser screen
@@ -57,8 +56,10 @@ vi.stubGlobal('electronAPI', {
 
   // App version
   getAppVersion: () => mockIpcInvoke('get-app-version'),
-  checkVersionMismatch: () => mockIpcInvoke('check-version-mismatch'),
-  updateCachedVersion: () => mockIpcInvoke('update-cached-version'),
+
+  // Cache
+  getCachedLang: () => mockIpcInvoke('get-cached-lang'),
+  saveCachedLang: (lang) => mockIpcInvoke('save-cached-lang', lang),
 
   // Navigation
   onNavBrowser: (cb) => mockIpcOn('nav-browser', cb),

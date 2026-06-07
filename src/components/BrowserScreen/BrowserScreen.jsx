@@ -57,18 +57,20 @@ export default function BrowserScreen() {
   }, []);
 
   useEffect(() => {
-    electronAPI.checkVersionMismatch().then(result => {
-      if (result && result.mismatch) {
+    electronAPI.getCacheState().then(result => {
+      if (result && result.state === 'mismatch') {
         const { showModal } = useAppStore.getState();
         showModal(
-          t('browser_version_mismatch_title'),
-          rescanGuideContent(t),
-          <div className="modal-actions-row">
+          t => t('browser_version_mismatch_title'),
+          t => rescanGuideContent(t),
+          t => <div className="modal-actions-row">
             <button className="btn-confirm" onClick={handleVersionMismatchRescan}>
               {t('browser_version_mismatch_button')}
             </button>
           </div>,
-          false // closeable=false — only Re-Scan button dismisses this modal
+          false, // closeable=false
+          null,  // headerRight
+          true   // showLangToggle — Modal renders the button with its own live hooks
         );
       }
     }).catch(() => {});
@@ -135,9 +137,7 @@ export default function BrowserScreen() {
     const { hideModal, showToast } = useAppStore.getState();
     hideModal();
     const result = await doRefreshScan();
-    if (result && result.success) {
-      electronAPI.updateCachedVersion().catch(() => {});
-    } else {
+    if (!result || !result.success) {
       showToast(t('toast_scan_failed'), 'error');
     }
   };
@@ -145,9 +145,9 @@ export default function BrowserScreen() {
   const handleRefreshScan = () => {
     const { showModal, hideModal } = useAppStore.getState();
     showModal(
-      t('browser_rescan_guide_title'),
-      rescanGuideContent(t),
-      <div className="modal-actions-row">
+      t => t('browser_rescan_guide_title'),
+      t => rescanGuideContent(t),
+      t => <div className="modal-actions-row">
         <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
         <button className="btn-confirm" onClick={() => { hideModal(); doRefreshScan(); }}>{t('browser_btn_continue')}</button>
       </div>

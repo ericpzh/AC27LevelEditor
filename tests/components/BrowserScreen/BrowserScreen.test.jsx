@@ -25,8 +25,8 @@ function setupDefaultMocks(overrides = {}) {
     switch (channel) {
       case 'get-app-version':
         return Promise.resolve('1.0.10');
-      case 'check-version-mismatch':
-        return Promise.resolve({ mismatch: false, currentVersion: '1.0.10' });
+      case 'get-cache-state':
+        return Promise.resolve({ state: 'ready', gameRoot: 'D:\\Games\\Airport Control 27', lang: null, airports: ['ZSJN'] });
       case 'get-airport-files-info':
         return Promise.resolve([]);
       default:
@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 describe('Version Mismatch Detection', () => {
-  it('does NOT show version mismatch modal when versions match', async () => {
+  it('does NOT show version mismatch modal when cache version matches', async () => {
     setupDefaultMocks();
 
     renderBrowser();
@@ -59,10 +59,9 @@ describe('Version Mismatch Detection', () => {
     expect(screen.queryByText('App Updated')).toBeNull();
   });
 
-  it('shows version mismatch modal when version differs', async () => {
+  it('shows version mismatch modal when cache version differs', async () => {
     setupDefaultMocks({
-      'get-app-version': Promise.resolve('1.1.0'),
-      'check-version-mismatch': Promise.resolve({ mismatch: true, currentVersion: '1.1.0', cachedVersion: '1.0.10' }),
+      'get-cache-state': Promise.resolve({ state: 'mismatch', gameRoot: 'D:\\Games\\Airport Control 27', lang: null, airports: ['ZSJN'], cachedVersion: 0, expectedVersion: 1 }),
     });
 
     renderBrowser();
@@ -77,14 +76,12 @@ describe('Version Mismatch Detection', () => {
     expect(modalRescanBtn.textContent).toBe('Re-Scan');
   });
 
-  it('re-scan button triggers refresh and updates cached version', async () => {
+  it('re-scan button triggers refresh and dismisses modal', async () => {
     const user = userEvent.setup();
 
     setupDefaultMocks({
-      'get-app-version': Promise.resolve('1.1.0'),
-      'check-version-mismatch': Promise.resolve({ mismatch: true, currentVersion: '1.1.0', cachedVersion: '1.0.10' }),
+      'get-cache-state': Promise.resolve({ state: 'mismatch', gameRoot: 'D:\\Games\\Airport Control 27', lang: null, airports: ['ZSJN'], cachedVersion: 0, expectedVersion: 1 }),
       'refresh-root-scan': Promise.resolve({ success: true, airports: [{ icao: 'ZSJN', name: 'Jinan' }], totalFiles: 1 }),
-      'update-cached-version': Promise.resolve({ success: true }),
     });
     mockIpcInvoke.mockClear();
 
@@ -98,7 +95,6 @@ describe('Version Mismatch Detection', () => {
 
     await waitFor(() => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('refresh-root-scan', expect.any(String));
-      expect(mockIpcInvoke).toHaveBeenCalledWith('update-cached-version');
     });
 
     // Modal should be dismissed after click
@@ -107,14 +103,12 @@ describe('Version Mismatch Detection', () => {
     });
   });
 
-  it('does NOT update cached version when re-scan fails', async () => {
+  it('shows error toast when re-scan fails', async () => {
     const user = userEvent.setup();
 
     setupDefaultMocks({
-      'get-app-version': Promise.resolve('1.1.0'),
-      'check-version-mismatch': Promise.resolve({ mismatch: true, currentVersion: '1.1.0', cachedVersion: '1.0.10' }),
+      'get-cache-state': Promise.resolve({ state: 'mismatch', gameRoot: 'D:\\Games\\Airport Control 27', lang: null, airports: ['ZSJN'], cachedVersion: 0, expectedVersion: 1 }),
       'refresh-root-scan': Promise.resolve({ success: false, error: 'Disk full' }),
-      'update-cached-version': Promise.resolve({ success: true }),
     });
     mockIpcInvoke.mockClear();
 
@@ -126,10 +120,9 @@ describe('Version Mismatch Detection', () => {
 
     await user.click(document.querySelector('#modal-actions .btn-confirm'));
 
-    // Wait for scan to complete, then verify updateCachedVersion was NOT called
+    // Wait for scan to complete
     await waitFor(() => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('refresh-root-scan', expect.any(String));
     });
-    expect(mockIpcInvoke).not.toHaveBeenCalledWith('update-cached-version');
   });
 });

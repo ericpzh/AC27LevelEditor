@@ -3,8 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // Setup screen
   selectGameRoot: () => ipcRenderer.invoke('select-game-root'),
-  getLastRoot: () => ipcRenderer.invoke('get-last-root'),
-  saveLastRoot: (rootPath) => ipcRenderer.invoke('save-last-root', rootPath),
+  getCacheState: () => ipcRenderer.invoke('get-cache-state'),
   initAirportCache: (rootPath) => ipcRenderer.invoke('init-airport-cache', rootPath),
 
   // Browser screen
@@ -41,8 +40,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // App version
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
-  checkVersionMismatch: () => ipcRenderer.invoke('check-version-mismatch'),
-  updateCachedVersion: () => ipcRenderer.invoke('update-cached-version'),
+
+  // Cache
+  getCachedLang: () => ipcRenderer.invoke('get-cached-lang'),
+  saveCachedLang: (lang) => ipcRenderer.invoke('save-cached-lang', lang),
 
   // Navigation events from menu
   onNavBrowser: (cb) => ipcRenderer.on('nav-browser', () => cb()),

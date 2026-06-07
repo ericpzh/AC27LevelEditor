@@ -9,6 +9,8 @@ if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig } = require('../src/acl/parser');
 
+const CACHE_VERSION = 1; // Bump when cache.json schema changes
+
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
@@ -195,6 +197,10 @@ function _approachCachePath() {
   return path.join(app.getPath('userData'), 'approachCache.json');
 }
 
+function _cachePath() {
+  return path.join(app.getPath('userData'), 'cache.json');
+}
+
 // ─── IPC: Phase 0 — initialize airport cache (scan all CSV + audio) ──
 
 ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
@@ -204,7 +210,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
 
   // ── Try loading approach data from disk cache ──
   let diskCache = null;
-  const cachePath = _approachCachePath();
+  const cachePath = _cachePath();
   try {
     if (fs.existsSync(cachePath)) {
       const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
@@ -306,9 +312,9 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         };
       }
       const payload = {
+        cacheVersion: CACHE_VERSION,
         gameRoot: rootPath,
         builtAt: Date.now(),
-        version: app.getVersion(),
         airports: serialized,
       };
       const cfgDir = app.getPath('userData');
@@ -328,8 +334,17 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
 ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
   console.log('[IPC] refresh-root-scan START');
   try {
+    // Preserve lang from old cache before deleting
+    let preservedLang = null;
+    const cachePath = _cachePath();
+    try {
+      if (fs.existsSync(cachePath)) {
+        const old = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+        preservedLang = old.lang || null;
+      }
+    } catch (_) {}
+
     // Delete disk cache to force re-scan
-    const cachePath = _approachCachePath();
     if (fs.existsSync(cachePath)) {
       fs.unlinkSync(cachePath);
       console.log('[IPC] refresh-root-scan: deleted disk cache');
@@ -396,10 +411,10 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         runwayPairs: entry.runwayPairs || [],
       };
     }
-    const payload = { gameRoot: rootPath, builtAt: Date.now(), version: app.getVersion(), airports: serialized };
+    const payload = { cacheVersion: CACHE_VERSION, gameRoot: rootPath, lang: preservedLang, builtAt: Date.now(), airports: serialized };
     const cfgDir = app.getPath('userData');
     if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
-    fs.writeFileSync(_approachCachePath(), JSON.stringify(payload), 'utf-8');
+    fs.writeFileSync(_cachePath(), JSON.stringify(payload), 'utf-8');
 
     console.log('[IPC] refresh-root-scan OK — ' + Object.keys(cache).length + ' airports');
 
@@ -991,25 +1006,115 @@ ipcMain.handle('export-csv', async (_event, { flights, defaultPath }) => {
 });
 
 
-// ─── IPC: Get last game root path ────────────────────────
+// ─── IPC: Cache state (replaces get-last-root + check-version-mismatch) ──
 
-ipcMain.handle('get-last-root', () => {
+ipcMain.handle('get-cache-state', () => {
   try {
-    const cfgPath = path.join(app.getPath('userData'), 'lastRoot.json');
-    if (fs.existsSync(cfgPath)) {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-      return cfg.rootPath || null;
+    const cachePath = _cachePath();
+
+    // Cache exists — check version
+    if (fs.existsSync(cachePath)) {
+      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+      const cachedVersion = raw.cacheVersion || 0;
+      const mismatch = cachedVersion !== CACHE_VERSION;
+      const airportList = raw.airports ? Object.keys(raw.airports) : [];
+      return {
+        state: mismatch ? 'mismatch' : 'ready',
+        gameRoot: raw.gameRoot || null,
+        lang: raw.lang || null,
+        airports: airportList,
+        cachedVersion,
+        expectedVersion: CACHE_VERSION,
+      };
     }
-  } catch (_) {}
-  return null;
+
+    // No cache.json — try migration from old approachCache.json (has full data)
+    const oldApproachPath = _approachCachePath();
+    if (fs.existsSync(oldApproachPath)) {
+      try {
+        const old = JSON.parse(fs.readFileSync(oldApproachPath, 'utf-8'));
+        const payload = {
+          cacheVersion: CACHE_VERSION,
+          gameRoot: old.gameRoot || '',
+          lang: null,
+          builtAt: old.builtAt || Date.now(),
+          airports: old.airports || {},
+        };
+        const cfgDir = app.getPath('userData');
+        if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
+        fs.writeFileSync(cachePath, JSON.stringify(payload), 'utf-8');
+        console.log('[get-cache-state] migrated from approachCache.json');
+        return {
+          state: 'ready',
+          gameRoot: payload.gameRoot,
+          lang: null,
+          airports: Object.keys(payload.airports),
+          cachedVersion: CACHE_VERSION,
+          expectedVersion: CACHE_VERSION,
+        };
+      } catch (e) {
+        console.error('[get-cache-state] migration from approachCache.json failed:', e.message);
+      }
+    }
+
+    // Try old lastRoot.json (just the root path, no airport data)
+    const oldLastRootPath = path.join(app.getPath('userData'), 'lastRoot.json');
+    if (fs.existsSync(oldLastRootPath)) {
+      try {
+        const old = JSON.parse(fs.readFileSync(oldLastRootPath, 'utf-8'));
+        // Don't create cache.json yet — no airport data. Let init-airport-cache handle it.
+        return {
+          state: 'mismatch',
+          gameRoot: old.rootPath || '',
+          lang: null,
+          airports: [],
+          cachedVersion: 0,
+          expectedVersion: CACHE_VERSION,
+        };
+      } catch (e) {
+        console.error('[get-cache-state] read of lastRoot.json failed:', e.message);
+      }
+    }
+
+    // Nothing to migrate
+    return { state: 'no-cache' };
+  } catch (err) {
+    console.error('[get-cache-state] error:', err.message);
+    return { state: 'no-cache' };
+  }
 });
 
-ipcMain.handle('save-last-root', (_event, rootPath) => {
+// ─── IPC: Cache lang read/write ──────────────────────────
+
+ipcMain.handle('get-cached-lang', () => {
   try {
+    const cachePath = _cachePath();
+    if (fs.existsSync(cachePath)) {
+      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+      return { lang: raw.lang || null };
+    }
+  } catch (_) {}
+  return { lang: null };
+});
+
+ipcMain.handle('save-cached-lang', (_event, lang) => {
+  try {
+    const cachePath = _cachePath();
     const cfgDir = app.getPath('userData');
     if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
-    fs.writeFileSync(path.join(cfgDir, 'lastRoot.json'), JSON.stringify({ rootPath }), 'utf-8');
-  } catch (_) {}
+    if (fs.existsSync(cachePath)) {
+      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+      raw.lang = lang;
+      fs.writeFileSync(cachePath, JSON.stringify(raw), 'utf-8');
+    } else {
+      // No cache yet — write minimal record
+      fs.writeFileSync(cachePath, JSON.stringify({ cacheVersion: CACHE_VERSION, lang }), 'utf-8');
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('[save-cached-lang] error:', err.message);
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.handle('open-external', async (_event, url) => {
@@ -1140,53 +1245,6 @@ ipcMain.handle('reload-acl', async (_event, filePath) => {
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
-
-ipcMain.handle('check-version-mismatch', () => {
-  try {
-    const cachePath = _approachCachePath();
-    // No approach cache at all → fresh install, no popup needed
-    if (!fs.existsSync(cachePath)) {
-      return { mismatch: false, currentVersion: app.getVersion() };
-    }
-
-    const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-    const currentVersion = app.getVersion();
-
-    // Cache exists but no version key → old installation (pre-version-tracking), popup needed
-    if (!raw.version) {
-      return { mismatch: true, cachedVersion: null, currentVersion };
-    }
-
-    const mismatch = raw.version !== currentVersion;
-    return { mismatch, cachedVersion: raw.version, currentVersion };
-  } catch (err) {
-    console.error('[IPC] check-version-mismatch FAIL:', err.message);
-    return { mismatch: true, currentVersion: app.getVersion() };
-  }
-});
-
-ipcMain.handle('update-cached-version', () => {
-  try {
-    const cachePath = _approachCachePath();
-    const currentVersion = app.getVersion();
-    // Patch the version field into the existing approach cache file
-    if (fs.existsSync(cachePath)) {
-      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-      raw.version = currentVersion;
-      fs.writeFileSync(cachePath, JSON.stringify(raw, null, 2), 'utf-8');
-    } else {
-      // No cache exists yet — write a minimal record so future checks work
-      const payload = JSON.stringify({ version: currentVersion }, null, 2);
-      const dir = app.getPath('userData');
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(cachePath, payload, 'utf-8');
-    }
-    return { success: true };
-  } catch (err) {
-    console.error('[IPC] update-cached-version FAIL:', err.message);
-    return { success: false, error: err.message };
-  }
-});
 
 app.whenReady().then(() => {
   console.log('[APP] Ready, creating window...');

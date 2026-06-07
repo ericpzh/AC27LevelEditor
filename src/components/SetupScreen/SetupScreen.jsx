@@ -20,7 +20,6 @@ export default function SetupScreen() {
       if (result.canceled) { setLoading(false); return; }
       if (result.errorCode) { setError(t(result.errorCode, { path: result.errorPath })); setLoading(false); return; }
       setRootPath(result.rootPath, result.airports || []);
-      try { electronAPI.saveLastRoot(result.rootPath); } catch (_) {}
       await electronAPI.initAirportCache(result.rootPath).catch(err => console.error(err));
       setScreen('browser');
     } catch (err) { setError(err.message); }

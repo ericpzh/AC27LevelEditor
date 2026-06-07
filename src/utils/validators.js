@@ -10,8 +10,17 @@ function _toMinutes(timeStr) {
 
 function _addMinutes(timeStr, mins) {
   const total = _toMinutes(timeStr) + mins;
-  const h = Math.floor(total / 60) % 24;
-  const m = total % 60;
+  const wrapped = ((total % 1440) + 1440) % 1440;
+  const h = Math.floor(wrapped / 60);
+  const m = wrapped % 60;
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+function _subtractMinutes(timeStr, mins) {
+  const total = _toMinutes(timeStr) - mins;
+  const wrapped = ((total % 1440) + 1440) % 1440;
+  const h = Math.floor(wrapped / 60);
+  const m = wrapped % 60;
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
 
@@ -21,16 +30,39 @@ function _computeOccupancyWindow(fl) {
   const offblock = (fl.OffBlockTime || '').trim();
   const takeoff = (fl.TakeoffTime || '').trim();
 
-  let startStr, endStr;
+  // Start: when the plane claims the stand.
+  // The game allocates from landing time for arrivals — the stand is reserved
+  // from touchdown, not from inblock.  For departures, estimate ~20 min before offblock.
+  let startStr = null;
   if (landing) {
     startStr = landing.substring(0, 5);
-    endStr = inblock ? inblock.substring(0, 5) : _addMinutes(landing, 20);
+  } else if (inblock) {
+    // Arrival without explicit landing: estimate landing ~5 min before inblock
+    startStr = _subtractMinutes(inblock.substring(0, 5), 5);
   } else if (offblock) {
-    startStr = offblock.substring(0, 5);
-    endStr = takeoff ? takeoff.substring(0, 5) : _addMinutes(offblock, 20);
-  } else {
-    return null;
+    startStr = _subtractMinutes(offblock.substring(0, 5), 20);
   }
+
+  // End: when the plane physically vacates the stand
+  let endStr = null;
+  if (offblock) {
+    endStr = offblock.substring(0, 5);
+  } else if (inblock) {
+    endStr = _addMinutes(inblock.substring(0, 5), 20);
+  } else if (takeoff) {
+    endStr = takeoff.substring(0, 5);
+  }
+
+  // Skip if neither boundary is computable
+  if (startStr === null && endStr === null) return null;
+
+  // Default a missing boundary with a 20-minute estimate
+  if (startStr === null) startStr = _subtractMinutes(endStr, 20);
+  if (endStr === null) endStr = _addMinutes(startStr, 20);
+
+  // Skip bad data (computed end <= start)
+  if (_toMinutes(endStr) <= _toMinutes(startStr)) return null;
+
   return { start: _toMinutes(startStr), end: _toMinutes(endStr), startStr, endStr };
 }
 
@@ -45,19 +77,50 @@ export function detectStandConflicts(flights) {
     if (!byStand[stand]) byStand[stand] = [];
     byStand[stand].push({ fl, window: w });
   });
+  const fmtTime = (t) => {
+    if (!t) return '??:??:00';
+    const s = String(t).trim();
+    const p = s.split(':');
+    // Take HH:MM from the stored value and normalise to HH:MM:00
+    return (p[0] || '00').padStart(2, '0') + ':' + (p[1] || '00').padStart(2, '0') + ':00';
+  };
+
   for (const [stand, entries] of Object.entries(byStand)) {
     for (let i = 0; i < entries.length; i++) {
       for (let j = i + 1; j < entries.length; j++) {
         const a = entries[i].window, b = entries[j].window;
-        if (a.start < b.end && b.start < a.end) {
+        const flA = entries[i].fl, flB = entries[j].fl;
+        const obA = (flA.OffBlockTime || '').trim(), obB = (flB.OffBlockTime || '').trim();
+        const ldA = (flA.LandingTime || '').trim(), ldB = (flB.LandingTime || '').trim();
+
+        // 1) dep + dep → always a conflict (unique stand per schedule)
+        if (obA && obB) {
           issues.push(T('val_stand_conflict', {
-            cs1: entries[i].fl.CallSign || '?',
-            cs2: entries[j].fl.CallSign || '?',
-            stand,
-            t1_start: a.startStr, t1_end: a.endStr,
-            t2_start: b.startStr, t2_end: b.endStr,
+            cs1: flA.CallSign || '?', cs2: flB.CallSign || '?', stand,
           }));
+          continue;
         }
+
+        // 2) dep + arr → conflict when offblock >= landing (strict bound)
+        if (obA && ldB && _toMinutes(obA) >= _toMinutes(ldB)) {
+          issues.push(T('val_stand_conflict_dep_arr', {
+            cs1: flA.CallSign || '?', cs2: flB.CallSign || '?', stand,
+            cs_dep: flA.CallSign || '?', cs_arr: flB.CallSign || '?',
+            offblock: fmtTime(obA), landing: fmtTime(ldB),
+          }));
+          continue;
+        }
+        if (obB && ldA && _toMinutes(obB) >= _toMinutes(ldA)) {
+          issues.push(T('val_stand_conflict_dep_arr', {
+            cs1: flB.CallSign || '?', cs2: flA.CallSign || '?', stand,
+            cs_dep: flB.CallSign || '?', cs_arr: flA.CallSign || '?',
+            offblock: fmtTime(obB), landing: fmtTime(ldA),
+          }));
+          continue;
+        }
+
+        // Note: arr + arr stand overlap is NOT enforced by the game,
+        // so we intentionally skip that check here.
       }
     }
   }

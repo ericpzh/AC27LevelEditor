@@ -21,11 +21,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 28 ipcMain.handle() endpoints                       │
+│  - 27 ipcMain.handle() endpoints                       │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with 27 methods          │
+│  - Exposes window.electronAPI with 26 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -71,7 +71,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ```
 AC27LevelEditor/
 ├── electron/
-│   ├── main.js              # Electron main process + 29 IPC handlers
+│   ├── main.js              # Electron main process + 27 IPC handlers
 │   └── preload.js           # contextBridge (window.electronAPI)
 ├── index.html               # Vite HTML entry (<div id="root">)
 ├── vite.config.js           # Vite 8 + @vitejs/plugin-react + vite-plugin-electron
@@ -329,30 +329,41 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - Collects dropdown values (`collectUniqueValues`) and runway pairs (`collectRunwayPairs`) from ALL .acl files
    - Merges audio flight numbers into `_flightNums` per airline code
    - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs }`
-   - Persisted to disk (`approachCache.json` in userData) — no TTL, refreshed via `refresh-root-scan`
+   - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
 
-### Version Mismatch Detection (v1.0.10+)
+### Cache State & Version Detection (v1.0.10+)
 
-On BrowserScreen mount, the app checks the durable approach cache (`approachCache.json`) for a `version` field. Three cases:
+The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.json` + `lastRoot.json` + `localStorage.ac27_lang`). It contains `gameRoot`, `lang`, `cacheVersion`, `builtAt`, and `airports`.
 
-| `approachCache.json` | `version` key | Behavior |
-|---|---|---|
-| Missing | — | Fresh install — no popup |
-| Exists | Absent | Old installation (pre-version-tracking) — show popup |
-| Exists | Present | Compare with `app.getVersion()` — show popup if mismatch |
+Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `electron/main.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates — only bump `CACHE_VERSION` when the cache schema changes.
 
-**Flow:**
-1. `check-version-mismatch` IPC reads `approachCache.json` and checks the `version` field against `app.getVersion()`
-2. If mismatch: shows a non-closeable modal with rescan guide + single "Re-Scan" button (`closeable=false`)
-3. User clicks "Re-Scan" → `hideModal()` → `doRefreshScan()` → on success calls `update-cached-version`
-4. `update-cached-version` patches the `version` field into the existing `approachCache.json`
-5. `init-airport-cache` and `refresh-root-scan` also stamp `version` when writing the cache
-6. On next launch, versions match → no popup
+| `cache.json` | Behavior |
+|---|---|
+| Missing | Show root-select screen (SetupScreen) |
+| Exists, `cacheVersion` ≠ `CACHE_VERSION` | Show re-scan modal on browser screen |
+| Exists, `cacheVersion` matches | Proceed directly to level-select screen |
 
-**IPC handlers:** `check-version-mismatch`, `update-cached-version`
-**Preload bridges:** `checkVersionMismatch()`, `updateCachedVersion()`
-**Store:** `showModal(title, body, actions, closeable)` — 4th param controls overlay-dismiss behavior
-**Modal:** `closeable` prop (default `true`) — when `false`, overlay click is a no-op
+**Startup flow (`get-cache-state` IPC):**
+1. Check `cache.json` — if exists, compare `cacheVersion` vs `CACHE_VERSION`
+2. If missing, attempt migration from legacy `approachCache.json` → creates `cache.json` with current version
+3. If only `lastRoot.json` exists → returns `mismatch` state (no airport data, needs rescan)
+4. Returns `{ state: 'no-cache' | 'mismatch' | 'ready', gameRoot, lang, airports, cachedVersion, expectedVersion }`
+5. ScreenRouter uses `getCacheState()` instead of `getLastRoot()` — routes to setup/browser based on state
+
+**Re-scan flow:**
+1. Mismatch modal appears on BrowserScreen (non-closeable, with lang toggle button in top-right via `showLangToggle`)
+2. User clicks "Re-Scan" → `refresh-root-scan` → rebuilds cache with `cacheVersion: CACHE_VERSION`
+3. `init-airport-cache` and `refresh-root-scan` also stamp `cacheVersion` when writing
+
+**Language persistence:**
+- `lang` field in `cache.json` provides durable backup for language preference
+- `useTranslation` reads from cache JSON when `localStorage` is empty, and writes to both on toggle
+- IPC handlers: `get-cached-lang`, `save-cached-lang`
+
+**IPC handlers (new):** `get-cache-state`, `get-cached-lang`, `save-cached-lang`
+**IPC handlers (removed):** `get-last-root`, `save-last-root`, `check-version-mismatch`, `update-cached-version`
+**Preload bridges (new):** `getCacheState()`, `getCachedLang()`, `saveCachedLang(lang)`
+**Modal:** `showModal(title, body, actions, closeable, headerRight, showLangToggle)` — `showLangToggle` renders a live lang toggle button using Modal's own `useTranslation` hooks
 
 ### Phase 1: Load Level
 1. User clicks a level row → `window._pendingEditor = { filePath, airportIcao }` → `setScreen('editor')`
@@ -391,6 +402,23 @@ On BrowserScreen mount, the app checks the durable approach cache (`approachCach
 ### Import ZIP
 - Native open dialog → validates ZIP structure → backs up current files → extracts → reloads
 - Works identically for `.demo.acl` files
+
+### Stand Conflict Detection (v1.0.10+)
+
+Stand conflicts are validated on save via `detectStandConflicts()` in `src/utils/validators.js`. Three rules, based on in-game testing:
+
+| Pair | Enforced | Rule |
+|---|---|---|
+| **dep + dep** | ✅ | Always conflict — unique stand per schedule (regardless of time) |
+| **dep + arr** | ✅ | `offblock >= landing` — strict bound. Departure must vacate **before** arrival touches down. |
+| **arr + arr** | ❌ | Game does not enforce — intentionally skipped |
+
+**Occupancy window:** Arrival start uses `landing` (touchdown), not `inblock` (parking). Fallback: `inblock − 5min` when `landing` is missing. Departure end uses `offblock`.
+
+**Message formats:**
+- dep/dep: `"CES1234 和 CAL5678: 停机位 \"A01\" 时段重叠。"` (simple, no times)
+- dep/arr: `"CDG5166 和 CCA2761: 停机位 \"26\" 时段冲突。CDG5166推出 (07:58:00) >= CCA2761落地 (07:50:00)"` (pinpoints violation)
+- i18n keys: `val_stand_conflict`, `val_stand_conflict_dep_arr`
 
 ### Demo .acl File Handling (v1.0.9+)
 

@@ -4,15 +4,24 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Modal from '../../../src/components/common/Modal';
 import { useAppStore } from '../../../src/store/appStore';
+import { I18nProvider } from '../../../src/hooks/useTranslation';
 
 // Use the real store — inject state directly
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
 });
 
+function renderModal() {
+  return render(
+    <I18nProvider>
+      <Modal />
+    </I18nProvider>
+  );
+}
+
 describe('Modal', () => {
   it('renders nothing when closed', () => {
-    const { container } = render(<Modal />);
+    const { container } = renderModal();
     expect(container.firstChild).toBeNull();
   });
 
@@ -20,7 +29,7 @@ describe('Modal', () => {
     useAppStore.setState({
       modal: { open: true, title: 'Test Modal', body: <p>Body text</p>, actions: null },
     });
-    render(<Modal />);
+    renderModal();
     expect(screen.getByText('Test Modal')).toBeInTheDocument();
     expect(screen.getByText('Body text')).toBeInTheDocument();
   });
@@ -33,7 +42,7 @@ describe('Modal', () => {
     const hideModal = vi.fn();
     useAppStore.setState({ hideModal });
 
-    render(<Modal />);
+    renderModal();
     await user.click(screen.getByText('Content').closest('#modal-overlay'));
     expect(hideModal).toHaveBeenCalledTimes(1);
   });
@@ -46,7 +55,7 @@ describe('Modal', () => {
     const hideModal = vi.fn();
     useAppStore.setState({ hideModal });
 
-    render(<Modal />);
+    renderModal();
     await user.click(screen.getByText('Content'));
     expect(hideModal).not.toHaveBeenCalled();
   });
@@ -60,7 +69,7 @@ describe('Modal', () => {
         actions: <button>OK</button>,
       },
     });
-    render(<Modal />);
+    renderModal();
     expect(screen.getByRole('button', { name: 'OK' })).toBeInTheDocument();
   });
 
@@ -73,7 +82,7 @@ describe('Modal', () => {
         actions: null,
       },
     });
-    render(<Modal />);
+    renderModal();
     expect(screen.getByTestId('custom-body')).toBeInTheDocument();
   });
 });

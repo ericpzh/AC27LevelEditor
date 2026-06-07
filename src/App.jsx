@@ -24,13 +24,15 @@ function ScreenRouter() {
     didInit = true;
     (async () => {
       try {
-        const lastRoot = await electronAPI.getLastRoot();
-        if (!lastRoot) { setBooting(false); return; }
-        const scan = await electronAPI.scanAcls(lastRoot);
+        const cacheState = await electronAPI.getCacheState();
+        if (cacheState.state === 'no-cache') { setBooting(false); return; }
+
+        // 'ready' or 'mismatch' — both have gameRoot
+        const scan = await electronAPI.scanAcls(cacheState.gameRoot);
         if (scan.errorCode || !scan.totalFiles) { setBooting(false); return; }
         const st = useAppStore.getState();
-        st.setRootPath(lastRoot, scan.airports || []);
-        await electronAPI.initAirportCache(lastRoot).catch(() => {});
+        st.setRootPath(cacheState.gameRoot, scan.airports || []);
+        await electronAPI.initAirportCache(cacheState.gameRoot).catch(() => {});
         st.setScreen('browser');
       } catch (err) {
         console.error('[App] Boot failed:', err);

@@ -17,7 +17,19 @@
   box-shadow: var(--shadow);
 }
 
-#modal-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+#modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+#modal-title { font-size: 16px; font-weight: 600; margin: 0; color: var(--text); }
+#modal-header-right { flex-shrink: 0; }
+#modal-header-right .btn-lang-toggle-top {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+#modal-header-right .btn-lang-toggle-top:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
+}
 
 #modal-body { margin-bottom: 12px; }
 #modal-body p { color: var(--text-secondary); margin-bottom: 10px; font-size: 13px; line-height: 1.6; }

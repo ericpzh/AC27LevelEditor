@@ -49,7 +49,7 @@ export const useAppStore = create((set, get) => ({
   isDemo: false,
 
   // ─── Modal (declarative) ───
-  modal: { open: false, title: '', body: null, actions: null, closeable: true },
+  modal: { open: false, title: '', body: null, actions: null, closeable: true, headerRight: null, showLangToggle: false },
 
   // ─── Theme ───
   theme: (() => {
@@ -297,11 +297,11 @@ export const useAppStore = create((set, get) => ({
   })),
 
   // ─── Actions: Modal ───
-  showModal: (title, body, actions, closeable = true) => set({
-    modal: { open: true, title, body, actions, closeable },
+  showModal: (title, body, actions, closeable = true, headerRight = null, showLangToggle = false) => set({
+    modal: { open: true, title, body, actions, closeable, headerRight, showLangToggle },
   }),
   hideModal: () => set({
-    modal: { open: false, title: '', body: null, actions: null, closeable: true },
+    modal: { open: false, title: '', body: null, actions: null, closeable: true, headerRight: null, showLangToggle: false },
   }),
 
   // ─── Actions: Theme ───

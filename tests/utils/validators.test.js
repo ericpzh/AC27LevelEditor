@@ -77,23 +77,20 @@ describe('detectStandConflicts', () => {
   });
 
   it('returns empty array for non-overlapping times on same stand', () => {
+    // Arrival parks at 10:20, departure leaves at 10:00 — no overlap
     const flights = [
       { CallSign: 'CES1234', Stand: 'A01', LandingTime: '10:00', InBlockTime: '10:20' },
-      { CallSign: 'CAL5678', Stand: 'A01', LandingTime: '10:20', InBlockTime: '10:40' },
+      { CallSign: 'CAL5678', Stand: 'A01', OffBlockTime: '09:55', TakeoffTime: '10:10' },
     ];
     expect(detectStandConflicts(flights)).toEqual([]);
   });
 
-  it('detects two overlapping arrivals on same stand', () => {
+  it('allows overlapping arrivals on same stand (game does not enforce arr/arr)', () => {
     const flights = [
       { CallSign: 'CES1234', Stand: 'A01', LandingTime: '10:00', InBlockTime: '10:30' },
       { CallSign: 'CAL5678', Stand: 'A01', LandingTime: '10:15', InBlockTime: '10:45' },
     ];
-    const issues = detectStandConflicts(flights);
-    expect(issues).toHaveLength(1);
-    expect(issues[0]).toContain('CES1234');
-    expect(issues[0]).toContain('CAL5678');
-    expect(issues[0]).toContain('A01');
+    expect(detectStandConflicts(flights)).toEqual([]);
   });
 
   it('detects two overlapping departures on same stand', () => {
@@ -107,41 +104,65 @@ describe('detectStandConflicts', () => {
     expect(issues[0]).toContain('CAL5678');
   });
 
-  it('detects arrival + departure overlapping on same stand', () => {
+  it('allows arrival after departure on same stand when offblock < landing', () => {
+    // Game rule: departure offblock must be strictly before arrival landing.
     const flights = [
       { CallSign: 'CES1234', Stand: 'A01', LandingTime: '10:00', InBlockTime: '10:30' },
-      { CallSign: 'CAL5678', Stand: 'A01', OffBlockTime: '10:15', TakeoffTime: '10:45' },
+      { CallSign: 'CAL5678', Stand: 'A01', OffBlockTime: '09:59', TakeoffTime: '10:30' },
     ];
+    // departure vacates at 09:59, arrival lands at 10:00 — no conflict
+    expect(detectStandConflicts(flights)).toEqual([]);
+  });
+
+  it('detects arrival + departure conflict on same stand when windows truly overlap', () => {
+    const flights = [
+      { CallSign: 'CES1234', Stand: 'A01', LandingTime: '10:00', InBlockTime: '10:30' },
+      { CallSign: 'CAL5678', Stand: 'A01', OffBlockTime: '10:35', TakeoffTime: '11:05' },
+    ];
+    // departure vacates stand at 10:35 but was there since ~10:15,
+    // arrival occupies [10:30, 10:50) — windows overlap
     const issues = detectStandConflicts(flights);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('CES1234');
     expect(issues[0]).toContain('CAL5678');
   });
 
-  it('does not flag adjacent windows (one ends when next starts)', () => {
+  it('flags departure vacating at same minute as arrival landing (= is a conflict)', () => {
+    // Game rule: offblock must be STRICTLY before landing.  = is not allowed.
     const flights = [
-      { CallSign: 'CES1234', Stand: 'A01', LandingTime: '10:00', InBlockTime: '10:30' },
-      { CallSign: 'CAL5678', Stand: 'A01', LandingTime: '10:30', InBlockTime: '11:00' },
+      { CallSign: 'CES1234', Stand: 'A01', LandingTime: '10:30', InBlockTime: '11:00' },
+      { CallSign: 'CAL5678', Stand: 'A01', OffBlockTime: '10:30', TakeoffTime: '11:00' },
+    ];
+    const issues = detectStandConflicts(flights);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CAL5678');
+    expect(issues[0]).toContain('CES1234');
+  });
+
+  it('allows departure strictly before arrival landing', () => {
+    // Game rule: offblock < landing is OK.
+    const flights = [
+      { CallSign: 'CES1234', Stand: 'A01', LandingTime: '10:30', InBlockTime: '11:00' },
+      { CallSign: 'CAL5678', Stand: 'A01', OffBlockTime: '10:29', TakeoffTime: '11:00' },
     ];
     expect(detectStandConflicts(flights)).toEqual([]);
   });
 
-  it('uses 20-minute default when departure has OffBlockTime only', () => {
+  it('uses 20-minute default for start when departure has OffBlockTime only', () => {
     const flights = [
       { CallSign: 'CES1234', Stand: 'A01', OffBlockTime: '10:00', TakeoffTime: '10:30' },
-      { CallSign: 'CAL5678', Stand: 'A01', OffBlockTime: '10:25' }, // default end = 10:45, overlaps with 10:00-10:30
+      { CallSign: 'CAL5678', Stand: 'A01', OffBlockTime: '09:50' }, // no Takeoff — start defaults to 09:30
     ];
     const issues = detectStandConflicts(flights);
     expect(issues).toHaveLength(1);
   });
 
-  it('uses 20-minute default when arrival has LandingTime only', () => {
+  it('allows arrivals on same stand even when landing times overlap', () => {
     const flights = [
       { CallSign: 'CES1234', Stand: 'A01', LandingTime: '10:00', InBlockTime: '10:30' },
-      { CallSign: 'CAL5678', Stand: 'A01', LandingTime: '10:25' }, // default end = 10:45, overlaps with 10:00-10:30
+      { CallSign: 'CAL5678', Stand: 'A01', LandingTime: '10:25' },
     ];
-    const issues = detectStandConflicts(flights);
-    expect(issues).toHaveLength(1);
+    expect(detectStandConflicts(flights)).toEqual([]);
   });
 
   it('skips flights with no LandingTime or OffBlockTime', () => {
@@ -152,29 +173,42 @@ describe('detectStandConflicts', () => {
     expect(detectStandConflicts(flights)).toEqual([]);
   });
 
-  it('reports all pairwise conflicts for three overlapping flights', () => {
+  it('allows three arrivals on same stand (game does not enforce arr/arr)', () => {
     const flights = [
       { CallSign: 'AAA1111', Stand: 'A01', LandingTime: '10:00', InBlockTime: '10:30' },
-      { CallSign: 'BBB2222', Stand: 'A01', LandingTime: '10:15', InBlockTime: '10:45' },
-      { CallSign: 'CCC3333', Stand: 'A01', LandingTime: '10:10', InBlockTime: '10:20' },
+      { CallSign: 'BBB2222', Stand: 'A01', LandingTime: '10:05', InBlockTime: '10:35' },
+      { CallSign: 'CCC3333', Stand: 'A01', LandingTime: '10:10', InBlockTime: '10:40' },
     ];
-    const issues = detectStandConflicts(flights);
-    expect(issues).toHaveLength(3); // A-B, A-C, B-C
+    expect(detectStandConflicts(flights)).toEqual([]);
   });
 
-  it('issue message contains both callsigns and stand name', () => {
+  it('dep/dep conflict message contains both callsigns and stand name', () => {
     const flights = [
-      { CallSign: 'CES1234', Stand: 'B05', LandingTime: '08:00', InBlockTime: '08:30' },
-      { CallSign: 'CAL5678', Stand: 'B05', LandingTime: '08:15', InBlockTime: '08:45' },
+      { CallSign: 'CES1234', Stand: 'B05', OffBlockTime: '08:00', TakeoffTime: '08:30' },
+      { CallSign: 'CAL5678', Stand: 'B05', OffBlockTime: '09:00', TakeoffTime: '09:30' },
     ];
     const issues = detectStandConflicts(flights);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('CES1234');
     expect(issues[0]).toContain('CAL5678');
     expect(issues[0]).toContain('B05');
-    expect(issues[0]).toContain('08:00');
-    expect(issues[0]).toContain('08:30');
-    expect(issues[0]).toContain('08:15');
-    expect(issues[0]).toContain('08:45');
+  });
+
+  it('dep/arr conflict message shows game-rule violation with formatted times', () => {
+    const flights = [
+      { CallSign: 'CDG5166', Stand: '26', OffBlockTime: '07:58:00', TakeoffTime: '08:15' },
+      { CallSign: 'CCA2761', Stand: '26', LandingTime: '07:50:00', InBlockTime: '07:55' },
+    ];
+    const issues = detectStandConflicts(flights);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CDG5166');
+    expect(issues[0]).toContain('CCA2761');
+    expect(issues[0]).toContain('26');
+    // Times are normalised to HH:MM:00
+    expect(issues[0]).toContain('07:58:00');
+    expect(issues[0]).toContain('07:50:00');
+    // Should NOT have extra :00 appended
+    expect(issues[0]).not.toMatch(/07:58:00:00/);
+    expect(issues[0]).not.toMatch(/07:50:00:00/);
   });
 });
