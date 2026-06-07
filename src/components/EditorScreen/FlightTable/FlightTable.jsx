@@ -93,6 +93,7 @@ export default function FlightTable({ type, flights, columns }) {
     window.addEventListener('mouseup', handleMouseUp);
     return () => window.removeEventListener('mouseup', handleMouseUp);
   }, []);
+  const customTypeMode = useAppStore(s => s.customTypeMode);
   const vals = airportValues[currentAirport] || {};
   const allColumns = useMemo(() => ['AirlineCode', 'FlightNum', ...columns.filter(c => c !== 'AirlineCode' && c !== 'FlightNum')], [columns]);
 
@@ -206,19 +207,47 @@ export default function FlightTable({ type, flights, columns }) {
                       const isTime = TIME_FIELDS.has(col);
                       const isDropdown = DROPDOWN_FIELDS.has(col);
                       let opts = (isDropdown ? vals[col] : null);
+                      // In custom mode, AirlineCode becomes a text input (no dropdown)
+                      if (col === 'AirlineCode' && customTypeMode) opts = null;
                       // AircraftType: filter by airline (only show types this airline operates)
+                      // In custom mode, show ALL available types (unfiltered by airline compat)
                       if (col === 'AircraftType' && airlineCode) {
-                        const airlineTypes = vals._compat?.airlineToAircraft?.[airlineCode];
-                        if (airlineTypes && airlineTypes.length > 0) opts = airlineTypes;
+                        if (customTypeMode) {
+                          opts = vals.AircraftType || opts;
+                        } else {
+                          const airlineTypes = vals._compat?.airlineToAircraft?.[airlineCode];
+                          if (airlineTypes && airlineTypes.length > 0) opts = airlineTypes;
+                        }
                       }
                       // Registration: filter by airline + aircraft type
+                      // In custom mode, filter by aircraft type only (merge across all airlines)
                       if (col === 'Registration') {
                         const acType = (fl.AircraftType || '').trim();
-                        const regKey = airlineCode + '|' + acType;
-                        const filtered = vals._registrationMap?.[regKey];
-                        if (filtered && filtered.length > 0) opts = filtered;
+                        if (customTypeMode) {
+                          const regMap = vals._registrationMap || {};
+                          const allRegs = new Set();
+                          for (const [key, regs] of Object.entries(regMap)) {
+                            if (key.endsWith('|' + acType) && Array.isArray(regs)) {
+                              regs.forEach(r => allRegs.add(r));
+                            }
+                          }
+                          if (allRegs.size > 0) opts = [...allRegs].sort();
+                        } else {
+                          const regKey = airlineCode + '|' + acType;
+                          const filtered = vals._registrationMap?.[regKey];
+                          if (filtered && filtered.length > 0) opts = filtered;
+                        }
                       }
-                      const flightNums = (col === 'FlightNum' ? validFlightNums[airlineCode] : null);
+                      // FlightNum: dropdown in normal mode, text input in custom mode
+                      let flightNums = (col === 'FlightNum' ? validFlightNums[airlineCode] : null);
+                      if (col === 'FlightNum' && customTypeMode) flightNums = null;
+                      // Preserve current value in dropdown options (handles toggle OFF after custom input)
+                      const currentVal = col === 'AirlineCode' ? airlineCode
+                        : col === 'FlightNum' ? (fl.CallSign || '').substring(3)
+                        : (fl[col] || '');
+                      if (opts && currentVal && !opts.includes(currentVal)) {
+                        opts = [...opts, currentVal];
+                      }
                       return <EditableCell key={col} value={val} col={col} globalIdx={gi} isTime={isTime} options={opts} flightNums={flightNums} />;
                     })}
                   </tr>

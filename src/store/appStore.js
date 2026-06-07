@@ -39,6 +39,9 @@ export const useAppStore = create((set, get) => ({
   runwayTimeline: { initialRunways: [], timeline: [] }, runwayTimelinePath: null,
   timelineModified: { weather: false, wind: false, runway: false },
 
+  // ─── Editor mode ───
+  customTypeMode: false,
+
   // ─── Config ───
   _configStartTime: null, _configEndTime: null,
   _windSpeedUnit: 'knots',
@@ -82,6 +85,7 @@ export const useAppStore = create((set, get) => ({
     searchMatches: new Set(),
     highlightedCells: new Set(),
     editingWidget: null,
+    customTypeMode: false,
     _configStartTime: data.configStartTime,
     _configEndTime: data.configEndTime,
     _earliestTime: data.earliestTime,
@@ -245,7 +249,8 @@ export const useAppStore = create((set, get) => ({
       flight.CallSign = code + num;
 
       // AirlineCode changed — cascade AircraftType + Registration to first valid option
-      if ('AirlineCode' in updates) {
+      // (skip cascade when customTypeMode is ON — compat data doesn't cover custom codes)
+      if ('AirlineCode' in updates && !get().customTypeMode) {
         const state = get();
         const vals = state.airportValues[state.currentAirport] || {};
         const compat = vals._compat || {};
@@ -309,6 +314,11 @@ export const useAppStore = create((set, get) => ({
     const next = get().theme === 'dark' ? 'light' : 'dark';
     try { localStorage.setItem('ac27_theme', next); } catch (_) {}
     set({ theme: next });
+  },
+
+  // ─── Actions: Custom Type Mode ───
+  toggleCustomTypeMode: () => {
+    set(s => ({ customTypeMode: !s.customTypeMode }));
   },
 
   // ─── Actions: Toast ───

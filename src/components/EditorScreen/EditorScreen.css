@@ -44,6 +44,15 @@
 
 .btn-primary-sm:hover { background: var(--accent-hover) !important; }
 
+.btn-custom-type-active {
+  background: var(--accent) !important;
+  color: white !important;
+  border-color: var(--accent) !important;
+  font-weight: 600 !important;
+}
+
+.btn-custom-type-active:hover { background: var(--accent-hover) !important; }
+
 .save-group { gap: 4px; }
 
 /* ─── Secondary Toolbar ─────────────────────────────────── */

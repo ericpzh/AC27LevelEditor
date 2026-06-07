@@ -54,6 +54,11 @@ const SECTIONS = [
     id: 'search', headingKey: 'tutorial_heading_search',
     bodyKeys: ['tutorial_search_p1'],
   },
+  {
+    id: 'customType', headingKey: 'tutorial_heading_custom_type',
+    bodyKeys: ['tutorial_custom_type_p1'],
+    listKeys: ['tutorial_custom_type_li1', 'tutorial_custom_type_li2', 'tutorial_custom_type_li3'],
+  },
 ];
 
 // ─── Keyboard shortcuts table ─────────────────────────────

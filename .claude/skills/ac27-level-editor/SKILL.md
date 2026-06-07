@@ -379,6 +379,7 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 - All edits go through store actions: `updateFlight()`, `addArrivalFlight()`, `deleteSelected()`, etc.
 - `store.modified = true` on any change
 - `store.timelineModified[type] = true` on timeline changes
+- **Custom Type Mode** (`store.customTypeMode`): toggle button in the bottom toolbar switches AirlineCode and FlightNum columns from dropdowns to free-text inputs. When ON, AircraftType shows all available types (unfiltered by airline compat), and Registration is filtered by aircraft type only (across all airlines). The AirlineCode→AircraftType/Registration cascade in `updateFlight` is skipped. Validation is data-driven: if any flight has a custom airline code or flight number (one not in the audio callsign reference data), those specific validation rules are skipped for the entire save — regardless of toggle state. A one-time notice modal with "Don't show again" checkbox warns about missing radio calls.
 
 ### Phase 3: Save
 1. `handleSave()` → `validateCallsigns()` → `runTripleValidation()`:

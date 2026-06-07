@@ -141,6 +141,14 @@ Phase 2 (edit):   All edits go through zustand store actions
 Phase 3 (save):   Validation → generate AircraftStates for approach flights → write .acl + .csv + timeline .json (game compat)
 ```
 
+### Custom Type Mode
+
+The bottom toolbar has a **"Custom Type"** toggle button that switches Airline and Flight # columns from dropdowns to free-text inputs, allowing custom airline codes and flight numbers not present in the game's audio data. When enabled:
+- Aircraft Type shows all available types (unfiltered by airline)
+- Registration is filtered by aircraft type across all airlines
+- Validation automatically detects custom values and skips airline/flight number whitelist checks — no save blocking when custom callsigns are present
+- A one-time notice warns that custom callsigns won't play radio audio in-game
+
 ### Project Structure
 
 ```

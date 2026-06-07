@@ -90,6 +90,9 @@ export default function EditorScreen() {
   const _configStartTime = useAppStore(s => s._configStartTime);
   const _configEndTime = useAppStore(s => s._configEndTime);
 
+  const customTypeMode = useAppStore(s => s.customTypeMode);
+  const toggleCustomTypeMode = useAppStore(s => s.toggleCustomTypeMode);
+
   const [loading, setLoading] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
@@ -104,7 +107,7 @@ export default function EditorScreen() {
       const data = await electronAPI.loadAcl(filePath);
       if (!data.success) { showModal(t('editor_load_failed'), data.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); setLoading(false); return; }
       const st = useAppStore.getState();
-      st.setLegacyState({ currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false });
+      st.setLegacyState({ currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), customTypeMode: false, _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false });
       if (rootPath && airportIcao) {
         const [vals, audio, tl, rp] = await Promise.all([electronAPI.collectValues(rootPath, airportIcao), electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
         console.log('[Editor] loaded aux data', { airportIcao, valsKeys: Object.keys(vals||{}), dropdowns: { Stand: vals?.Stand?.length, Runway: vals?.Runway?.length, AircraftType: vals?.AircraftType?.length } });
@@ -141,6 +144,45 @@ export default function EditorScreen() {
   const handleSelectAll = () => { const st=useAppStore.getState(); if(!st.flights.length){showToast(t('toast_no_flight_data'),'error');return;} st.toggleSelectAll(); };
 
   const handleFind = () => { const api = searchAPI.current; if (api) { api.setOpen(true); setTimeout(() => api.inputRef?.current?.focus(), 0); } };
+
+  const handleToggleCustomType = () => {
+    const st = useAppStore.getState();
+    if (st.customTypeMode) {
+      // Toggling OFF — just toggle, no notice
+      toggleCustomTypeMode();
+      return;
+    }
+    // Toggling ON — check if notice should be shown
+    const hidden = (() => {
+      try { return localStorage.getItem('ac27_custom_type_notice_hidden') === '1'; }
+      catch (_) { return false; }
+    })();
+    if (hidden) {
+      toggleCustomTypeMode();
+      return;
+    }
+    // Show notice modal with "Don't show again" checkbox
+    showModal(
+      t('modal_custom_type_title'),
+      <div>
+        <p>{t('modal_custom_type_body')}</p>
+        <label className="modal-checkbox-row" style={{marginTop:'12px'}}>
+          <input type="checkbox" id="chk-custom-type-notice" className="modal-checkbox" />
+          <span>{t('modal_custom_type_checkbox')}</span>
+        </label>
+      </div>,
+      <div className="modal-actions-row">
+        <button className="btn-confirm" onClick={() => {
+          const cb = document.getElementById('chk-custom-type-notice');
+          if (cb?.checked) {
+            try { localStorage.setItem('ac27_custom_type_notice_hidden', '1'); } catch (_) {}
+          }
+          hideModal();
+          toggleCustomTypeMode();
+        }}>{t('modal_btn_ok')}</button>
+      </div>
+    );
+  };
 
   const doSave = async (createBackup, silent) => {
     const st = useAppStore.getState();
@@ -276,7 +318,7 @@ export default function EditorScreen() {
           hideModal();
           const r = await electronAPI.restoreBackup(st.currentPath);
           if (!r.success) { showModal(t('modal_restore_failed'), r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
+          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), customTypeMode: false, _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
 
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) { const wsu2 = tl.windSpeedUnit || 'knots'; st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu2, 'knots'), runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] }, _windSpeedUnit: wsu2 }); }
@@ -308,7 +350,7 @@ export default function EditorScreen() {
           const r = await electronAPI.importZip({ aclPath: st.currentPath, createBackup: cb?.checked ?? true });
           if (r.canceled) return;
           if (r.error) { showModal(t('modal_import_failed'), r.error === 'Level mismatch' ? t('modal_import_level_mismatch') : r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
+          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), customTypeMode: false, _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
 
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) { const wsu3 = tl.windSpeedUnit || 'knots'; st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu3, 'knots'), runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] }, _windSpeedUnit: wsu3 }); }
@@ -368,6 +410,7 @@ export default function EditorScreen() {
           <button onClick={addArrival}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(45deg)',display:'block'}} /></span> {t('toolbar_add_arrival')}</button>
           <button onClick={addDeparture}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(-45deg)',display:'block'}} /></span> {t('toolbar_add_departure')}</button>
           <button onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
+          <button className={customTypeMode ? 'btn-custom-type-active' : ''} onClick={handleToggleCustomType}>{t('toolbar_custom_type')}</button>
         </div>
         <div className="toolbar-time-wrap"><ConfigBar /></div>
         <div className="toolbar-group secondary-right">

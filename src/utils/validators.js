@@ -169,13 +169,31 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     Language: new Set(['en', 'zh']),
   };
 
+  // ── Phase 0: Detect custom (non-reference) airline codes / flight numbers ──
+  // Build reference sets from audio callsigns ONLY (the "blessed" set that has radio calls)
+  const refAirlineCodes = new Set(audioData.allAirlines || []);
+  const refFlightNums = {};
+  for (const code of Object.keys(audioData.byAirline || {})) {
+    refFlightNums[code] = new Set(audioData.byAirline[code]);
+  }
+  let hasCustomAirline = false;
+  let hasCustomFlightNum = false;
+  for (const fl of flights) {
+    const ac = (fl.CallSign || '').substring(0, 3);
+    const num = (fl.CallSign || '').substring(3);
+    if (ac && !refAirlineCodes.has(ac)) hasCustomAirline = true;
+    if (ac && num && (!refFlightNums[ac] || !refFlightNums[ac].has(num))) hasCustomFlightNum = true;
+  }
+
   flights.forEach((fl) => {
     const airlineCode = (fl.CallSign || '').substring(0, 3);
-    if (airlineCode && !validSets.AirlineCode.has(airlineCode)) {
+    // Skip airline whitelist check if any custom airline is present in the dataset
+    if (!hasCustomAirline && airlineCode && !validSets.AirlineCode.has(airlineCode)) {
       issues.push(T('val_airline_not_in_whitelist', { cs: fl.CallSign || '?', code: airlineCode }));
     }
     const flightNum = (fl.CallSign || '').substring(3);
-    if (airlineCode && flightNum) {
+    // Skip flightnum valid-list check if any custom flight number is present
+    if (!hasCustomFlightNum && airlineCode && flightNum) {
       const vNums = validFlightNums[airlineCode];
       if (vNums && vNums.size > 0 && !vNums.has(flightNum)) {
         issues.push(T('val_flightnum_not_valid', { cs: fl.CallSign || '?', num: flightNum, code: airlineCode }));
