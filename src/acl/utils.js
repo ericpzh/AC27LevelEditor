@@ -6,7 +6,7 @@ const path = require('path');
 import { DROPDOWN_FIELDS } from './constants';
 const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./world_state');
 const { _parseSceneryData } = require('./scenery');
-const { _parseWorldStateFlightPlans, _extractConfig } = require('./flight_plans');
+const { _parseWorldStateFlightPlans, _extractConfig, _parseRunwayTimeline } = require('./flight_plans');
 
 
 
@@ -54,7 +54,16 @@ function collectUniqueValues(aclPaths) {
           values[field].add(fl[field].trim());
         }
       }
-      const acCode = (fl.CallSign || '').trim().substring(0, 3);
+      // Collect FlightNum per airline code
+      const ac = (fl.CallSign || '').trim().substring(0, 3);
+      const fn = (fl.CallSign || '').trim().substring(3);
+      if (ac && fn) {
+        if (!values._flightNums) values._flightNums = {};
+        if (!values._flightNums[ac]) values._flightNums[ac] = new Set();
+        values._flightNums[ac].add(fn);
+      }
+
+      const acCode = ac;
       const acType = (fl.AircraftType || '').trim();
       if (acCode && acType) {
         if (!airlineAircraft.has(acCode)) airlineAircraft.set(acCode, new Set());
@@ -72,6 +81,7 @@ function collectUniqueValues(aclPaths) {
   }
   const result = {};
   for (const [key, set] of Object.entries(values)) {
+    if (key.startsWith('_')) continue; // skip internal fields handled below
     const arr = [...set];
     const allNumeric = arr.every(v => /^\d+(\.\d+)?$/.test(v));
     if (allNumeric) {
@@ -92,7 +102,46 @@ function collectUniqueValues(aclPaths) {
   for (const [key, set] of regMap) {
     result._registrationMap[key] = [...set].sort();
   }
+  if (values._flightNums) {
+    result._flightNums = {};
+    for (const [code, set] of Object.entries(values._flightNums)) {
+      const arr = [...set];
+      arr.sort((a, b) => {
+        const na = parseInt(a, 10), nb = parseInt(b, 10);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return a.localeCompare(b);
+      });
+      result._flightNums[code] = arr;
+    }
+  }
   return result;
+}
+
+// ─── Collect runway pairs from ACL RunwayTimeline sections ────
+
+function collectRunwayPairs(aclPaths) {
+  const pairSet = new Set();
+  for (const aclPath of aclPaths) {
+    try {
+      const text = fs.readFileSync(aclPath, 'utf-8');
+      const data = _parseRunwayTimeline(text);
+      if (!data || !data.timeline || !Array.isArray(data.timeline)) continue;
+      for (const entry of data.timeline) {
+        if (!entry.changes || !Array.isArray(entry.changes)) continue;
+        for (const ch of entry.changes) {
+          if (ch.source && ch.dest) {
+            pairSet.add(ch.source + '|' + ch.dest);
+            pairSet.add(ch.dest + '|' + ch.source); // reciprocal
+          }
+        }
+      }
+    } catch (_) { /* skip malformed files */ }
+  }
+  if (pairSet.size === 0) return [];
+  return Array.from(pairSet).sort().map(s => {
+    const [source, dest] = s.split('|');
+    return { source, dest };
+  });
 }
 
 // ─── Get basic file info without deep parsing ─────────────────
@@ -203,6 +252,7 @@ function mergeAudioCallsigns(primary, secondary) {
 module.exports = {
   sortFlightsChronologically,
   collectUniqueValues,
+  collectRunwayPairs,
   getFileInfo,
   loadAudioCallsigns,
   mergeAudioCallsigns,

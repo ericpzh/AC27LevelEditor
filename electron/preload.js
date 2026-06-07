@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // App version
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkVersionMismatch: () => ipcRenderer.invoke('check-version-mismatch'),
+  updateCachedVersion: () => ipcRenderer.invoke('update-cached-version'),
 
   // Navigation events from menu
   onNavBrowser: (cb) => ipcRenderer.on('nav-browser', () => cb()),

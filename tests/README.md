@@ -6,7 +6,7 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 
 ```bash
 npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~60s)
-npm test              # 53 Vitest component + store + utility tests (~1s)
+npm test              # 52 Vitest component + store + utility tests (~1s)
 npm run test:e2e      # 15 Playwright E2E tests (requires npm run build first, ~50s)
 
 # Save integrity — all .acl files across both airports:
@@ -19,13 +19,13 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 
-### `npm test` — all pass
+### `npm test` — 52 tests, all pass
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
 | `utils/timeUtils.test.js` | 18 | `ticksToTime` (0/0n/""→""; ticks→HH:MM:SS), `timeToTicks` (empty→0; "HH:MM:SS"→ticks; baseDate offset), `timeToMinutes` ("01:30"→90), `timeToSeconds` ("01:00:00"→3600), `minutesToTimeStr` (90→"01:30:00"; 1500 wraps to "01:00:00"), `sortTimelineByTime` (sorts by time field), `getTimelineActiveRange` (no bounds→all active; bounds→filters), `getDefaultTime` (midpoint "06:00"+"10:00"→"08:00:00"; none→"12:00:00"), `_extractBaseDateFromText` (BaseTime match; WorldState fallback; FALLBACK_BASE_DATE_TICKS) |
 | `utils/validators.test.js` | 5 | `validateCallsigns` — no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[] |
-| `store/appStore.test.jsx` | 14 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with ArrivalAirport; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; `initFlightNumberCounter` starts at 1 |
+| `store/appStore.test.jsx` | 13 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with ArrivalAirport; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |
 | `components/common/Toast.test.jsx` | 4 | Renders empty by default; shows message when set; applies CSS class from type; `.show` class toggles with message |
 

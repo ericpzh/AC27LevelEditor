@@ -57,6 +57,8 @@ vi.stubGlobal('electronAPI', {
 
   // App version
   getAppVersion: () => mockIpcInvoke('get-app-version'),
+  checkVersionMismatch: () => mockIpcInvoke('check-version-mismatch'),
+  updateCachedVersion: () => mockIpcInvoke('update-cached-version'),
 
   // Navigation
   onNavBrowser: (cb) => mockIpcOn('nav-browser', cb),

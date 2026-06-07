@@ -7,7 +7,7 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig } = require('../src/acl/parser');
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
@@ -157,14 +157,9 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
 // ─── IPC: Collect valid values for an airport ─────────────
 
 ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
-  const scan = scanGameRoot(rootPath);
-  if (scan.errorCode) return {};
-  const airport = scan.airports.find(a => a.icao === airportIcao);
-  if (!airport) return {};
-  const paths = airport.aclFiles.map(f => f.path);
-
-  // Collect all values from ACL files only (single source of truth)
-  const aclValues = collectUniqueValues(paths);
+  // Read from airport cache (built during init-airport-cache / refresh-root-scan)
+  const cached = airportCache && airportCache[airportIcao];
+  const aclValues = cached?.dropdownValues ? { ...cached.dropdownValues } : {};
 
   // Language: derive from audio_clips_*.json existence
   const availableLanguages = [];
@@ -180,8 +175,7 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
 
   // Filter AircraftType to only show types with known Designator mappings
   // (ensures every selectable type can generate approach AircraftState entries)
-  const cacheEntry = airportCache && airportCache[airportIcao];
-  const designatorMap = cacheEntry?.approachData?.designatorMap;
+  const designatorMap = cached?.approachData?.designatorMap;
   if (designatorMap && designatorMap.size > 0 && aclValues.AircraftType) {
     const knownTypes = new Set(designatorMap.keys());
     aclValues.AircraftType = aclValues.AircraftType.filter(t => knownTypes.has(t));
@@ -201,8 +195,6 @@ function _approachCachePath() {
   return path.join(app.getPath('userData'), 'approachCache.json');
 }
 
-const CACHE_MAX_AGE_MS = 7 * 24 * 3600 * 1000; // 7 days
-
 // ─── IPC: Phase 0 — initialize airport cache (scan all CSV + audio) ──
 
 ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
@@ -217,7 +209,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     if (fs.existsSync(cachePath)) {
       const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
       const age = Date.now() - (raw.builtAt || 0);
-      if (raw.gameRoot === rootPath && age < CACHE_MAX_AGE_MS) {
+      if (raw.gameRoot === rootPath) {
         diskCache = raw.airports || {};
         console.log('[INIT-CACHE] loaded approach cache from disk (' + Object.keys(diskCache).length + ' airports, age=' + (age / 3600000).toFixed(1) + 'h)');
       } else {
@@ -236,24 +228,68 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     const levelsDir = path.join(airportPath, 'Levels');
     if (!fs.existsSync(levelsDir)) continue;
 
-    // Load audio clips
+    // Load audio clips (always from JSON files — fast)
     const enPath = path.join(levelsDir, 'audio_clips_en.json');
     const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
     const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
     const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
     const audioCallsigns = mergeAudioCallsigns(enData, zhData);
 
-    // Pre-scan approach data — from disk cache if available, otherwise scan files
-    let approachData = null;
-    if (diskCache && diskCache[icao]) {
-      approachData = deserializeApproachCache(diskCache[icao]);
-      console.log('[INIT-CACHE]   ' + icao + ': from disk cache');
+    // Collect dropdown values + runway pairs from ALL .acl files
+    let dropdownValues = {};
+    let runwayPairs = [];
+    const cachedEntry = diskCache && diskCache[icao];
+    const hasCachedDropdowns = cachedEntry && cachedEntry.dropdownValues;
+
+    if (hasCachedDropdowns) {
+      dropdownValues = cachedEntry.dropdownValues;
+      runwayPairs = cachedEntry.runwayPairs || [];
+      console.log('[INIT-CACHE]   ' + icao + ': dropdowns from disk cache (' + Object.keys(dropdownValues).filter(k => !k.startsWith('_')).join(',') + ')');
     } else {
-      approachData = buildApproachCache(levelsDir);
-      console.log('[INIT-CACHE]   ' + icao + ': scanned from files');
+      const aclPaths = [];
+      try {
+        for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
+          if (le.isFile() && le.name.endsWith('.acl')) {
+            aclPaths.push(path.join(levelsDir, le.name));
+          }
+        }
+      } catch (_) {}
+      dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
+      runwayPairs = aclPaths.length > 0 ? collectRunwayPairs(aclPaths) : [];
+      console.log('[INIT-CACHE]   ' + icao + ': dropdowns scanned from ' + aclPaths.length + ' .acl files');
     }
 
-    cache[icao] = { audioCallsigns, approachData };
+    // Merge audio flight numbers into dropdown _flightNums
+    if (audioCallsigns?.byAirline) {
+      if (!dropdownValues._flightNums) dropdownValues._flightNums = {};
+      for (const [code, nums] of Object.entries(audioCallsigns.byAirline)) {
+        if (!dropdownValues._flightNums[code]) dropdownValues._flightNums[code] = [];
+        const existing = dropdownValues._flightNums[code];
+        for (const n of nums) {
+          if (!existing.includes(n)) existing.push(n);
+        }
+        // Re-sort after merging
+        existing.sort((a, b) => {
+          const na = parseInt(a, 10), nb = parseInt(b, 10);
+          if (!isNaN(na) && !isNaN(nb)) return na - nb;
+          return String(a).localeCompare(String(b));
+        });
+      }
+    }
+
+    // Pre-scan approach data — from disk cache if available, otherwise scan files
+    let approachData = null;
+    if (cachedEntry) {
+      // Support old format (approachData stored directly) and new format (nested under .approachData)
+      const rawApproach = cachedEntry.approachData || cachedEntry;
+      approachData = deserializeApproachCache(rawApproach);
+      console.log('[INIT-CACHE]   ' + icao + ': approach from disk cache');
+    } else {
+      approachData = buildApproachCache(levelsDir);
+      console.log('[INIT-CACHE]   ' + icao + ': approach scanned from files');
+    }
+
+    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs };
   }
 
   airportCache = cache;
@@ -263,19 +299,22 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     try {
       const serialized = {};
       for (const [icao, entry] of Object.entries(cache)) {
-        if (entry.approachData) {
-          serialized[icao] = serializeApproachCache(entry.approachData);
-        }
+        serialized[icao] = {
+          approachData: entry.approachData ? serializeApproachCache(entry.approachData) : null,
+          dropdownValues: entry.dropdownValues || {},
+          runwayPairs: entry.runwayPairs || [],
+        };
       }
       const payload = {
         gameRoot: rootPath,
         builtAt: Date.now(),
+        version: app.getVersion(),
         airports: serialized,
       };
       const cfgDir = app.getPath('userData');
       if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
       fs.writeFileSync(cachePath, JSON.stringify(payload), 'utf-8');
-      console.log('[INIT-CACHE] persisted approach cache to disk (' + Object.keys(serialized).length + ' airports)');
+      console.log('[INIT-CACHE] persisted cache to disk (' + Object.keys(serialized).length + ' airports)');
     } catch (e) {
       console.log('[INIT-CACHE] disk cache write error:', e.message);
     }
@@ -306,13 +345,44 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       const levelsDir = path.join(airportPath, 'Levels');
       if (!fs.existsSync(levelsDir)) continue;
 
+      // Load audio clips
       const enPath = path.join(levelsDir, 'audio_clips_en.json');
       const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
       const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
       const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
       const audioCallsigns = mergeAudioCallsigns(enData, zhData);
+
+      // Scan all .acl files for dropdown values + runway pairs
+      const aclPaths = [];
+      try {
+        for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
+          if (le.isFile() && le.name.endsWith('.acl')) {
+            aclPaths.push(path.join(levelsDir, le.name));
+          }
+        }
+      } catch (_) {}
+      const dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
+      const runwayPairs = aclPaths.length > 0 ? collectRunwayPairs(aclPaths) : [];
+
+      // Merge audio flight numbers into dropdown _flightNums
+      if (audioCallsigns?.byAirline) {
+        if (!dropdownValues._flightNums) dropdownValues._flightNums = {};
+        for (const [code, nums] of Object.entries(audioCallsigns.byAirline)) {
+          if (!dropdownValues._flightNums[code]) dropdownValues._flightNums[code] = [];
+          const existing = dropdownValues._flightNums[code];
+          for (const n of nums) {
+            if (!existing.includes(n)) existing.push(n);
+          }
+          existing.sort((a, b) => {
+            const na = parseInt(a, 10), nb = parseInt(b, 10);
+            if (!isNaN(na) && !isNaN(nb)) return na - nb;
+            return String(a).localeCompare(String(b));
+          });
+        }
+      }
+
       const approachData = buildApproachCache(levelsDir);
-      cache[icao] = { audioCallsigns, approachData };
+      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs };
     }
 
     airportCache = cache;
@@ -320,9 +390,13 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
     // Persist new cache
     const serialized = {};
     for (const [icao, entry] of Object.entries(cache)) {
-      if (entry.approachData) serialized[icao] = serializeApproachCache(entry.approachData);
+      serialized[icao] = {
+        approachData: entry.approachData ? serializeApproachCache(entry.approachData) : null,
+        dropdownValues: entry.dropdownValues || {},
+        runwayPairs: entry.runwayPairs || [],
+      };
     }
-    const payload = { gameRoot: rootPath, builtAt: Date.now(), airports: serialized };
+    const payload = { gameRoot: rootPath, builtAt: Date.now(), version: app.getVersion(), airports: serialized };
     const cfgDir = app.getPath('userData');
     if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
     fs.writeFileSync(_approachCachePath(), JSON.stringify(payload), 'utf-8');
@@ -650,7 +724,7 @@ ipcMain.handle('manual-backup', async (_event, sourcePath) => {
 
 // ─── IPC: Import ZIP ────────────────────────────────────
 
-ipcMain.handle('import-zip', async (_event, { aclPath }) => {
+ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
   // 1) Show open dialog for .zip
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Import Level Package (.zip)',
@@ -690,14 +764,19 @@ ipcMain.handle('import-zip', async (_event, { aclPath }) => {
       return { canceled: false, error: 'Level mismatch' };
     }
 
-    // 4) Backup current files before overwriting
+    // 4) Backup current files before overwriting (if requested)
     const dir = path.dirname(aclPath);
-    const entries = getLevelFilePaths(aclPath);
-    for (const entry of entries) {
-      const p = path.join(dir, entry.name);
-      if (fs.existsSync(p)) {
-        fs.copyFileSync(p, p + '.bak');
+    if (createBackup) {
+      const entries = getLevelFilePaths(aclPath);
+      for (const entry of entries) {
+        const p = path.join(dir, entry.name);
+        if (fs.existsSync(p)) {
+          fs.copyFileSync(p, p + '.bak');
+        }
       }
+      console.log('[IPC] import-zip: .bak created for level files');
+    } else {
+      console.log('[IPC] import-zip: .bak skipped (createBackup=' + createBackup + ')');
     }
 
     // 5) Extract ZIP to the target directory (overwrites existing)
@@ -990,7 +1069,7 @@ ipcMain.handle('save-weather-timeline', async (_event, { filePath, data }) => {
       fs.copyFileSync(filePath, bakPath);
       fs.copyFileSync(filePath, backupPath);
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 4), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify(data, (k, v) => k === '_isNew' ? undefined : v, 4), 'utf-8');
     return { success: true, backupPath };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1008,7 +1087,7 @@ ipcMain.handle('save-wind-timeline', async (_event, { filePath, data }) => {
       fs.copyFileSync(filePath, bakPath);
       fs.copyFileSync(filePath, backupPath);
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 4), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify(data, (k, v) => k === '_isNew' ? undefined : v, 4), 'utf-8');
     return { success: true, backupPath };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1018,13 +1097,9 @@ ipcMain.handle('save-wind-timeline', async (_event, { filePath, data }) => {
 // ─── IPC: Load audio callsigns for an airport (en + zh merged) ─────
 
 ipcMain.handle('load-audio-callsigns', async (_event, rootPath, airportIcao) => {
-  const levelsDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports', airportIcao, 'Levels');
-  const enPath = path.join(levelsDir, 'audio_clips_en.json');
-  const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
-
-  const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
-  const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
-  return mergeAudioCallsigns(enData, zhData);
+  // Read from airport cache (built during init-airport-cache / refresh-root-scan)
+  const cached = airportCache && airportCache[airportIcao];
+  return cached?.audioCallsigns || { byAirline: {}, allCallsigns: [], allAirlines: [] };
 });
 
 // ─── IPC: Save runway_timeline*.json ─────────────────────
@@ -1038,7 +1113,7 @@ ipcMain.handle('save-runway-timeline', async (_event, { filePath, data }) => {
       fs.copyFileSync(filePath, bakPath);
       fs.copyFileSync(filePath, backupPath);
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 4), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify(data, (k, v) => k === '_isNew' ? undefined : v, 4), 'utf-8');
     return { success: true, backupPath };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1048,42 +1123,9 @@ ipcMain.handle('save-runway-timeline', async (_event, { filePath, data }) => {
 // ─── IPC: Scan runway pairs from ACL RunwayTimeline sections ─
 
 ipcMain.handle('scan-runway-pairs', async (_event, rootPath, airportIcao) => {
-  try {
-    const levelsDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports', airportIcao, 'Levels');
-    if (!fs.existsSync(levelsDir)) return { success: true, pairs: [] };
-
-    // Scan all ACL files (include demo/test/tutorial variants)
-    const aclFiles = fs.readdirSync(levelsDir).filter(f =>
-      f.endsWith('.acl')
-    );
-
-    const pairSet = new Set();
-    for (const f of aclFiles) {
-      try {
-        const text = fs.readFileSync(path.join(levelsDir, f), 'utf-8');
-        const data = _parseRunwayTimeline(text);
-        if (!data.timeline || !Array.isArray(data.timeline)) continue;
-        for (const entry of data.timeline) {
-          if (!entry.changes || !Array.isArray(entry.changes)) continue;
-          for (const ch of entry.changes) {
-            if (ch.source && ch.dest) {
-              pairSet.add(ch.source + '|' + ch.dest);
-              pairSet.add(ch.dest + '|' + ch.source); // reciprocal
-            }
-          }
-        }
-      } catch (_) { /* skip malformed files */ }
-    }
-
-    const pairs = Array.from(pairSet).sort().map(s => {
-      const [source, dest] = s.split('|');
-      return { source, dest };
-    });
-
-    return { success: true, pairs };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+  // Read from airport cache (built during init-airport-cache / refresh-root-scan)
+  const cached = airportCache && airportCache[airportIcao];
+  return { success: true, pairs: cached?.runwayPairs || [] };
 });
 
 // ─── IPC: Add flight (gets new flight data back) ─────────
@@ -1098,6 +1140,53 @@ ipcMain.handle('reload-acl', async (_event, filePath) => {
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
+
+ipcMain.handle('check-version-mismatch', () => {
+  try {
+    const cachePath = _approachCachePath();
+    // No approach cache at all → fresh install, no popup needed
+    if (!fs.existsSync(cachePath)) {
+      return { mismatch: false, currentVersion: app.getVersion() };
+    }
+
+    const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+    const currentVersion = app.getVersion();
+
+    // Cache exists but no version key → old installation (pre-version-tracking), popup needed
+    if (!raw.version) {
+      return { mismatch: true, cachedVersion: null, currentVersion };
+    }
+
+    const mismatch = raw.version !== currentVersion;
+    return { mismatch, cachedVersion: raw.version, currentVersion };
+  } catch (err) {
+    console.error('[IPC] check-version-mismatch FAIL:', err.message);
+    return { mismatch: true, currentVersion: app.getVersion() };
+  }
+});
+
+ipcMain.handle('update-cached-version', () => {
+  try {
+    const cachePath = _approachCachePath();
+    const currentVersion = app.getVersion();
+    // Patch the version field into the existing approach cache file
+    if (fs.existsSync(cachePath)) {
+      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+      raw.version = currentVersion;
+      fs.writeFileSync(cachePath, JSON.stringify(raw, null, 2), 'utf-8');
+    } else {
+      // No cache exists yet — write a minimal record so future checks work
+      const payload = JSON.stringify({ version: currentVersion }, null, 2);
+      const dir = app.getPath('userData');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(cachePath, payload, 'utf-8');
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('[IPC] update-cached-version FAIL:', err.message);
+    return { success: false, error: err.message };
+  }
+});
 
 app.whenReady().then(() => {
   console.log('[APP] Ready, creating window...');

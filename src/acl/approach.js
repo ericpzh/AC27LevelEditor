@@ -717,23 +717,25 @@ function buildApproachAircraftBlock(opts) {
 
   // Use namespace-qualified $type strings to bypass the game's integer type registry.
   // This ensures all types resolve correctly regardless of $id continuity.
+  const tn = opts.typeNums || {};
   const ns = (num, name, asm = 'GroundATC.Core') => `"${num}|${name}, ${asm}"`;
   const T = {
-    ac: ns(opts.acTypeNum || 33, 'ContextCross.States.AircraftState'),
-    spec: ns(opts.acTypeNum === 35 ? 36 : 34, 'ContextCross.States.AircraftSpecificationState'),
-    dyn: ns(opts.acTypeNum === 35 ? 40 : 38, 'ContextCross.Dynamics.DynamicInternalState'),
-    dynParams: ns(opts.acTypeNum === 35 ? 51 : 47, 'ContextCross.Dynamics.States.FlyApproachDynamicsParams'),
-    acRwy: ns(opts.acTypeNum === 35 ? 43 : 42, 'ContextCross.States.AircraftRunwayCoordinateState'),
-    float3: ns(opts.acTypeNum === 35 ? 37 : 35, 'Unity.Mathematics.float3', 'Unity.Mathematics'),
-    vec4: ns(opts.acTypeNum === 35 ? 39 : 37, 'UnityEngine.Vector4', 'UnityEngine.CoreModule'),
-    dockArr: ns(opts.acTypeNum === 35 ? 38 : 36, 'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
-    waitCmd: ns(opts.acTypeNum === 35 ? 47 : 43, 'ContextCross.Enums.ECommand[]'),
-    recvEvt: ns(opts.acTypeNum === 35 ? 48 : 44, 'ContextCross.Events.AircraftEvent[]'),
+    ac:      ns(tn.acType      || opts.acTypeNum || 33, 'ContextCross.States.AircraftState'),
+    spec:    ns(tn.spec        || 34, 'ContextCross.States.AircraftSpecificationState'),
+    dyn:     ns(tn.dynInternal || 38, 'ContextCross.Dynamics.DynamicInternalState'),
+    dynParams: ns(tn.dynParams || 47, 'ContextCross.Dynamics.States.FlyApproachDynamicsParams'),
+    acRwy:   ns(tn.acRwy       || 42, 'ContextCross.States.AircraftRunwayCoordinateState'),
+    float3:  ns(tn.float3      || 35, 'Unity.Mathematics.float3', 'Unity.Mathematics'),
+    vec4:    ns(tn.vec4        || 37, 'UnityEngine.Vector4', 'UnityEngine.CoreModule'),
+    dockArr: ns(tn.vec4Arr     || 36, 'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
+    waitCmd: ns(tn.waitCmd     || 43, 'ContextCross.Enums.ECommand[]'),
+    recvEvt: ns(tn.recvEvt     || 44, 'ContextCross.Events.AircraftEvent[]'),
   };
 
-  // Format helpers — use namespace-qualified types everywhere
+  // Format helpers — use namespace-qualified types everywhere.
+  // BCL types (Vector3=16, String[]=8) are stable across Unity versions and safe as-is.
   const nsVec3 = '"16|UnityEngine.Vector3, UnityEngine.CoreModule"';
-  const nsListVec3 = '"42|System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib"';
+  const nsListVec3 = `"${tn.listVec3 || 46}|System.Collections.Generic.List\`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib"`;
   const nsStrArr = '"8|System.String[], mscorlib"';
 
   const fmtV3 = (v) => `{\n  "$type": ${nsVec3},\n  ${v.x},\n  0,\n  ${v.z}\n}`;
@@ -833,7 +835,7 @@ function buildApproachAircraftBlock(opts) {
       ${pos.z}
     },
     "RadioChannelGuid": "${radioChannelGuid}",
-    "JurisdictionRadioChannelGuid": null,
+    "JurisdictionRadioChannelGuid": "${radioChannelGuid}",
     "TaxiPathStartingPosition": { "$type": ${nsVec3}, 0, 0, 0 },
     "TaxiPath": null,
     "RollingPresetTaxiPathStartingPosition": { "$type": ${nsVec3}, 0, 0, 0 },
@@ -1003,12 +1005,38 @@ function buildDesignatorMapping(aclText) {
   return map;
 }
 
+// ─── 9c. Type Map Extraction ──────────────────────────────────────
+
+/**
+ * Extract the type number → type name map from an ACL file.
+ * Unity's JSON serializer assigns type numbers per-file sequentially — they are
+ * NOT consistent across airports or even levels of the same airport. This function
+ * captures ALL fully-qualified $type declarations so they can be preserved during
+ * save, preventing type numbering drift.
+ *
+ * @param {string} aclText - raw ACL file content
+ * @returns {Map<number, string>} type number → fully-qualified type name
+ */
+function extractTypeMap(aclText) {
+  const typeMap = new Map();
+  const typeDeclRegex = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+  let m;
+  while ((m = typeDeclRegex.exec(aclText)) !== null) {
+    const num = parseInt(m[1], 10);
+    // First declaration wins — earliest in file is canonical
+    if (!typeMap.has(num)) {
+      typeMap.set(num, m[2]);
+    }
+  }
+  return typeMap;
+}
+
 // ─── 10. Approach Cache Builder ────────────────────────────────────
 
 /**
  * Scan all production .acl files for an airport and build the approach cache.
  * @param {string} airportDir - path to .../Airports/<ICAO>/Levels/
- * @returns {{specDB: Map, appPointMap: Map, totalApproachTimes: Map, designatorMap: Map}}
+ * @returns {{specDB: Map, appPointMap: Map, totalApproachTimes: Map, designatorMap: Map, typeMap: Map}}
  */
 function buildApproachCache(airportDir) {
   const fs = require('fs');
@@ -1035,6 +1063,8 @@ function buildApproachCache(airportDir) {
   const allEntries = [];
   let specDB = new Map();
   let designatorMap = new Map();
+  const typeMap = new Map(); // per-airport: type_number → type_name
+  const fileTypeMaps = new Map(); // per-file: basename → Map<number, string>
 
   for (const aclPath of aclFiles) {
     try {
@@ -1053,7 +1083,18 @@ function buildApproachCache(airportDir) {
       const dm = buildDesignatorMapping(text);
       for (const [k, v] of dm) designatorMap.set(k, v);
 
-      log('  ' + path.basename(aclPath) + ': ' + entries.length + ' approach a/c, ' + fileSpecs.size + ' specs');
+      // Type map from each file (first-write-wins across files within this airport)
+      const fileTypeMap = extractTypeMap(text);
+      for (const [k, v] of fileTypeMap) {
+        if (!typeMap.has(k)) typeMap.set(k, v);
+      }
+
+      // Store per-file typeMap (keyed by basename) for save-time expansion.
+      // Type numbers are per-file in Unity's JSON serialization — each .acl file
+      // gets its own assignments. The per-file map survives repeated saves.
+      fileTypeMaps.set(path.basename(aclPath), fileTypeMap);
+
+      log('  ' + path.basename(aclPath) + ': ' + entries.length + ' approach a/c, ' + fileSpecs.size + ' specs, ' + fileTypeMap.size + ' types');
     } catch (e) {
       log('  SKIP ' + path.basename(aclPath) + ': ' + e.message);
     }
@@ -1096,22 +1137,23 @@ function buildApproachCache(airportDir) {
 
   log('Done: ' + specDB.size + ' specs, ' + appPointMap.size + ' route combos, ' +
       totalApproachTimes.size + ' routes, ' + designatorMap.size + ' type mappings, ' +
-      saveTimeOffsets.size + ' file saveTime offsets');
+      saveTimeOffsets.size + ' file saveTime offsets, ' + typeMap.size + ' type declarations, ' +
+      fileTypeMaps.size + ' file typeMaps');
 
   // Clean up _file property from entries
   for (const e of allEntries) delete e._file;
 
-  return { specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets };
+  return { specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps };
 }
 
 // ─── 9b. AircraftAnimators Block Builder ──────────────────────────
 
 function buildAnimatorBlock(aircraftGuid, opts) {
-  const { nextId = 80000, acTypeNum = 33 } = opts || {};
-  const isKJFK = acTypeNum === 35;
+  const { nextId = 80000, acTypeNum = 33, typeNums = null } = opts || {};
+  const tn = typeNums || {};
   const ns = (num, name) => `"${num}|${name}, GroundATC.Core"`;
-  const animType = ns(isKJFK ? 53 : 53, 'ContextCross.States.AircraftAnimatorState');
-  const stateType = ns(isKJFK ? 54 : 54, 'ContextCross.States.AircraftAnimState');
+  const animType = ns(tn.animState || 51, 'ContextCross.States.AircraftAnimatorState');
+  const stateType = ns(tn.animSubState || 52, 'ContextCross.States.AircraftAnimState');
   let id = nextId;
 
   const block = `{
@@ -1232,6 +1274,8 @@ function serializeApproachCache(cache) {
   if (cache.totalApproachTimes) { out.totalApproachTimes = {}; for (const [k, v] of cache.totalApproachTimes) out.totalApproachTimes[k] = v; }
   if (cache.designatorMap) { out.designatorMap = {}; for (const [k, v] of cache.designatorMap) out.designatorMap[k] = v; }
   if (cache.saveTimeOffsets) { out.saveTimeOffsets = {}; for (const [k, v] of cache.saveTimeOffsets) out.saveTimeOffsets[k] = v; }
+  if (cache.typeMap) { out.typeMap = {}; for (const [k, v] of cache.typeMap) out.typeMap[String(k)] = v; }
+  if (cache.fileTypeMaps) { out.fileTypeMaps = {}; for (const [fileName, tm] of cache.fileTypeMaps) { const obj = {}; for (const [k, v] of tm) obj[String(k)] = v; out.fileTypeMaps[fileName] = obj; } }
   return out;
 }
 
@@ -1247,6 +1291,8 @@ function deserializeApproachCache(json) {
   if (json.totalApproachTimes && typeof json.totalApproachTimes === 'object') { cache.totalApproachTimes = new Map(Object.entries(json.totalApproachTimes)); }
   if (json.designatorMap && typeof json.designatorMap === 'object') { cache.designatorMap = new Map(Object.entries(json.designatorMap)); }
   if (json.saveTimeOffsets && typeof json.saveTimeOffsets === 'object') { cache.saveTimeOffsets = new Map(Object.entries(json.saveTimeOffsets)); }
+  if (json.typeMap && typeof json.typeMap === 'object') { cache.typeMap = new Map(Object.entries(json.typeMap).map(([k, v]) => [parseInt(k, 10), v])); }
+  if (json.fileTypeMaps && typeof json.fileTypeMaps === 'object') { cache.fileTypeMaps = new Map(Object.entries(json.fileTypeMaps).map(([name, obj]) => [name, new Map(Object.entries(obj).map(([k, v]) => [parseInt(k, 10), v]))])); }
   return cache;
 }
 
@@ -1256,6 +1302,7 @@ module.exports = {
   // Data extraction
   extractSpecificationDB,
   extractApproachData,
+  extractTypeMap,
   buildAppPointMap,
   computeTotalApproachTimes,
 

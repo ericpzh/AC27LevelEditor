@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useAppStore, initFlightNumberCounter } from '../../src/store/appStore';
+import { useAppStore } from '../../src/store/appStore';
 
 // Reset the store to initial state before each test
 beforeEach(() => {
@@ -73,7 +73,6 @@ describe('appStore — editor state', () => {
 
 describe('appStore — addArrivalFlight', () => {
   it('adds a new arrival flight', () => {
-    initFlightNumberCounter([]);
     useAppStore.getState().initializeEditor({
       currentPath: '/test/file.acl',
       airportIcao: 'ZSJN',
@@ -138,29 +137,5 @@ describe('appStore — selection', () => {
     useAppStore.getState().toggleSelectAll(); // select all
     useAppStore.getState().toggleSelectAll(); // deselect all
     expect(useAppStore.getState().selectedIndices.size).toBe(0);
-  });
-});
-
-describe('appStore — initFlightNumberCounter', () => {
-  it('sets counter to 1 when no flights', () => {
-    initFlightNumberCounter([]);
-    // Indirectly verify: adding a flight gets CallSign with number 1
-    useAppStore.getState().initializeEditor({
-      currentPath: '/test/file.acl',
-      airportIcao: 'ZSJN',
-      flights: [],
-      before: '', after: '', arrayContent: '', originalBlocks: [],
-      configStartTime: '06:00', configEndTime: '18:00',
-      earliestTime: '05:00', _saveSec: 36000,
-    });
-    useAppStore.getState().setAuxData(
-      { ZSJN: { AircraftType: ['B738'], AirlineName: ['China Eastern'], Stand: ['G1'], Runway: ['01'], Airway: ['STAR1'], Registration: ['B-1234'], Voice: ['M'] } },
-      { byAirline: {}, allCallsigns: [], allAirlines: ['CES'] },
-      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
-      [],
-    );
-    useAppStore.getState().addArrivalFlight();
-    const cs = useAppStore.getState().flights[0].CallSign;
-    expect(cs).toMatch(/CES\d+/);
   });
 });

@@ -21,11 +21,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 26 ipcMain.handle() endpoints                       │
+│  - 28 ipcMain.handle() endpoints                       │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with 25 methods          │
+│  - Exposes window.electronAPI with 27 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -71,7 +71,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ```
 AC27LevelEditor/
 ├── electron/
-│   ├── main.js              # Electron main process + 27 IPC handlers
+│   ├── main.js              # Electron main process + 29 IPC handlers
 │   └── preload.js           # contextBridge (window.electronAPI)
 ├── index.html               # Vite HTML entry (<div id="root">)
 ├── vite.config.js           # Vite 8 + @vitejs/plugin-react + vite-plugin-electron
@@ -323,18 +323,44 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 ### Phase 0: Airport Cache Init (once per game root)
 1. User selects game root directory
 2. `scan-acls` IPC → `scanGameRoot()` → returns airport list with `.acl` file paths
-3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data per airport:
+3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data + dropdown values per airport:
    - Scans all `.acl` files (includes demo/test/tutorial variants — all treated as normal levels)
    - Extracts `specDB` (Designator → AircraftSpec), `appPointMap` ((Route,Runway) → AppPointList), `totalApproachTimes` (Route → seconds), and `designatorMap` (AircraftType → Designator)
-   - Caches in memory as `airportCache[icao].approachData`
+   - Collects dropdown values (`collectUniqueValues`) and runway pairs (`collectRunwayPairs`) from ALL .acl files
+   - Merges audio flight numbers into `_flightNums` per airline code
+   - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs }`
+   - Persisted to disk (`approachCache.json` in userData) — no TTL, refreshed via `refresh-root-scan`
+
+### Version Mismatch Detection (v1.0.10+)
+
+On BrowserScreen mount, the app checks the durable approach cache (`approachCache.json`) for a `version` field. Three cases:
+
+| `approachCache.json` | `version` key | Behavior |
+|---|---|---|
+| Missing | — | Fresh install — no popup |
+| Exists | Absent | Old installation (pre-version-tracking) — show popup |
+| Exists | Present | Compare with `app.getVersion()` — show popup if mismatch |
+
+**Flow:**
+1. `check-version-mismatch` IPC reads `approachCache.json` and checks the `version` field against `app.getVersion()`
+2. If mismatch: shows a non-closeable modal with rescan guide + single "Re-Scan" button (`closeable=false`)
+3. User clicks "Re-Scan" → `hideModal()` → `doRefreshScan()` → on success calls `update-cached-version`
+4. `update-cached-version` patches the `version` field into the existing `approachCache.json`
+5. `init-airport-cache` and `refresh-root-scan` also stamp `version` when writing the cache
+6. On next launch, versions match → no popup
+
+**IPC handlers:** `check-version-mismatch`, `update-cached-version`
+**Preload bridges:** `checkVersionMismatch()`, `updateCachedVersion()`
+**Store:** `showModal(title, body, actions, closeable)` — 4th param controls overlay-dismiss behavior
+**Modal:** `closeable` prop (default `true`) — when `false`, overlay click is a no-op
 
 ### Phase 1: Load Level
 1. User clicks a level row → `window._pendingEditor = { filePath, airportIcao }` → `setScreen('editor')`
 2. EditorScreen's `useEffect` reads `window._pendingEditor` and loads:
    - `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
    - `load-timelines` IPC → reads timelines from ACL + `windSpeedUnit` from `airport_config.json` (defaults to `'knots'`)
-   - `collect-values` IPC → builds dropdown option sets
-   - `load-audio-callsigns` IPC → loads airline/aircraft audio metadata
+   - `collect-values` IPC → reads dropdown options from airport cache (no file I/O)
+   - `load-audio-callsigns` IPC → reads audio callsigns from airport cache (no file I/O)
 3. **Wind speed conversion:** If `windSpeedUnit` is `'mps'`, speeds are converted to knots on load (1 m/s = 1.94384 kt). The zustand store always holds knots. Stored in `_windSpeedUnit`.
 4. Zustand store is populated and React renders the flight table
 
@@ -342,7 +368,6 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 - All edits go through store actions: `updateFlight()`, `addArrivalFlight()`, `deleteSelected()`, etc.
 - `store.modified = true` on any change
 - `store.timelineModified[type] = true` on timeline changes
-- FlightNumber counter tracks next available number
 
 ### Phase 3: Save
 1. `handleSave()` → `validateCallsigns()` → `runTripleValidation()`:
@@ -456,6 +481,7 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 **Data Extraction:**
 - `extractSpecificationDB(aclText)` → `Map<Designator, Spec>` — 14 designators across ZSJN+KJFK
 - `extractApproachData(aclText)` → `Array<{route, runway, progressRatio, flyPoints, appPoints, ...}>` — all State=30 aircraft
+- `extractTypeMap(aclText)` → `Map<number, string>` — captures all fully-qualified `$type` declarations from a file; type numbers are per-file in Unity's serialization
 - `buildAppPointMap(approachEntries)` → `Map<"Route|Runway", Vector3[]>` — verified 1:1 mapping
 - `computeTotalApproachTimes(approachEntries, getGroupId?)` → `Map<Route, seconds>` — per-route duration
 - `extractGameTime(aclText)` → `seconds \| null` — parse `GameTime.CurrentDateTime` ticks as seconds since midnight
@@ -473,10 +499,11 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 
 **Designator Mapping & Cache:**
 - `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates
-- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times
+- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times; `typeMap` is a merged `Map<number, string>` of all type declarations across the airport; `fileTypeMaps` is a `Map<basename, Map<number, string>>` of per-file type declarations for save-time type resolution
 
 **Assembly:**
-- `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?})` → `{guid, block, nextId}` — complete `$k/$v` JSON block
+- `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — complete `$k/$v` JSON block; `typeNums` (optional) maps type names→numbers from the per-file `typeMap` to avoid hardcoded type IDs
+- `buildAnimatorBlock(aircraftGuid, opts)` — builds the paired `AircraftAnimatorState` entry; `opts.typeNums` controls `animState`/`animSubState` type numbers
 
 ### Test
 

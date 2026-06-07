@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import './EditorScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
-import { useAppStore, initFlightNumberCounter } from '../../store/appStore';
+import { useAppStore } from '../../store/appStore';
 import { useEditorShell } from '../../hooks/useEditorShell';
 import { validateCallsigns, runTripleValidation } from '../../utils/validators';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../utils/constants';
@@ -105,7 +105,6 @@ export default function EditorScreen() {
       if (!data.success) { showModal(t('editor_load_failed'), data.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); setLoading(false); return; }
       const st = useAppStore.getState();
       st.setLegacyState({ currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false });
-      initFlightNumberCounter(data.flights);
       if (rootPath && airportIcao) {
         const [vals, audio, tl, rp] = await Promise.all([electronAPI.collectValues(rootPath, airportIcao), electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
         console.log('[Editor] loaded aux data', { airportIcao, valsKeys: Object.keys(vals||{}), dropdowns: { Stand: vals?.Stand?.length, Runway: vals?.Runway?.length, AircraftType: vals?.AircraftType?.length } });
@@ -270,7 +269,7 @@ export default function EditorScreen() {
           const r = await electronAPI.restoreBackup(st.currentPath);
           if (!r.success) { showModal(t('modal_restore_failed'), r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
           st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
-          initFlightNumberCounter(r.flights);
+
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) { const wsu2 = tl.windSpeedUnit || 'knots'; st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu2, 'knots'), runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] }, _windSpeedUnit: wsu2 }); }
           const rp = await electronAPI.scanRunwayPairs(rootPath, st.currentAirport);
@@ -298,11 +297,11 @@ export default function EditorScreen() {
           const cb = document.getElementById('chk-import-backup');
           hideModal();
           if (cb?.checked) { try { await doSave(true); } catch (_) {} }
-          const r = await electronAPI.importZip({ aclPath: st.currentPath });
+          const r = await electronAPI.importZip({ aclPath: st.currentPath, createBackup: cb?.checked ?? true });
           if (r.canceled) return;
           if (r.error) { showModal(t('modal_import_failed'), r.error === 'Level mismatch' ? t('modal_import_level_mismatch') : r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
           st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec });
-          initFlightNumberCounter(r.flights);
+
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) { const wsu3 = tl.windSpeedUnit || 'knots'; st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu3, 'knots'), runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] }, _windSpeedUnit: wsu3 }); }
           const rp = await electronAPI.scanRunwayPairs(rootPath, st.currentAirport);

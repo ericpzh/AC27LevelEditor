@@ -1,18 +1,14 @@
 import { create } from 'zustand';
 import { getAirlineCode } from '../utils/constants';
 
-let nextFlightNumber = 1;
-
-export function initFlightNumberCounter(flights) {
-  let maxNum = 0;
-  for (const fl of flights) {
-    const match = (fl.CallSign || '').match(/(\d+)$/);
-    if (match) {
-      const num = parseInt(match[1], 10);
-      if (!isNaN(num) && num > maxNum) maxNum = num;
-    }
-  }
-  nextFlightNumber = maxNum + 1;
+// Pick the first valid flight number for an airline from the canonical set
+// (_flightNums is collected during root scan from audio clips + ALL .acl files)
+function pickFirstFlightNumber(state, airlineCode) {
+  const vals = state.airportValues[state.currentAirport] || {};
+  const canonNums = vals._flightNums || {};
+  const nums = canonNums[airlineCode];
+  if (nums && nums.length > 0) return nums[0];
+  return '1'; // fallback
 }
 
 export const useAppStore = create((set, get) => ({
@@ -53,7 +49,7 @@ export const useAppStore = create((set, get) => ({
   isDemo: false,
 
   // ─── Modal (declarative) ───
-  modal: { open: false, title: '', body: null, actions: null },
+  modal: { open: false, title: '', body: null, actions: null, closeable: true },
 
   // ─── Theme ───
   theme: (() => {
@@ -132,7 +128,7 @@ export const useAppStore = create((set, get) => ({
       AirlineName: '', AircraftType: '', Airway: '',
       Registration: '', Voice: '', Language: '',
       // ── arrival-specific defaults ──
-      CallSign: airlineCode + String(nextFlightNumber++),
+      CallSign: airlineCode + pickFirstFlightNumber(get(), airlineCode),
       ArrivalAirport: state.currentAirport || '',
       LandingTime: pad(baseMin),
       InBlockTime: pad(baseMin + 5),
@@ -176,7 +172,7 @@ export const useAppStore = create((set, get) => ({
       AirlineName: '', AircraftType: '', Airway: '',
       Registration: '', Voice: '', Language: '',
       // ── departure-specific defaults ──
-      CallSign: airlineCode + String(nextFlightNumber++),
+      CallSign: airlineCode + pickFirstFlightNumber(get(), airlineCode),
       DepartureAirport: state.currentAirport || '',
       OffBlockTime: pad(baseMin),
       TakeoffTime: pad(baseMin + 5),
@@ -242,10 +238,9 @@ export const useAppStore = create((set, get) => ({
         // User explicitly picked a flight number — use their choice
         num = flight.FlightNum;
       } else {
-        // AirlineCode changed — auto-pick first valid number for new airline
-        const audioData = get().audioCallsigns;
-        const validNums = audioData?.byAirline?.[code];
-        num = (validNums && validNums.length > 0) ? validNums[0] : (old.CallSign || '').substring(3);
+        // AirlineCode changed — auto-pick first valid number from canonical set
+        num = pickFirstFlightNumber(get(), code);
+        if (!num || num === '1') num = (old.CallSign || '').substring(3);
       }
       flight.CallSign = code + num;
 
@@ -302,11 +297,11 @@ export const useAppStore = create((set, get) => ({
   })),
 
   // ─── Actions: Modal ───
-  showModal: (title, body, actions) => set({
-    modal: { open: true, title, body, actions },
+  showModal: (title, body, actions, closeable = true) => set({
+    modal: { open: true, title, body, actions, closeable },
   }),
   hideModal: () => set({
-    modal: { open: false, title: '', body: null, actions: null },
+    modal: { open: false, title: '', body: null, actions: null, closeable: true },
   }),
 
   // ─── Actions: Theme ───

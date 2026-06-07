@@ -1,6 +1,8 @@
 # AC27 Level Editor
 
-Tool for editing **Airport Control 27** level files. [**👇中文**](#chinese)
+Tool for editing **Airport Control 27** level files.
+
+[**👇中文**](#chinese)
 
 <img src="public\screen.webp" alt="Screenshot" width="100%"/>
 
@@ -133,7 +135,7 @@ All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The ren
 ### Data Flow
 
 ```
-Phase 0 (once):   Game Root → scan audio clips + approach data → AirportCache
+Phase 0 (once):   Game Root → scan audio clips + approach data + dropdown values + runway pairs → AirportCache
 Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → zustand store
 Phase 2 (edit):   All edits go through zustand store actions
 Phase 3 (save):   Validation → generate AircraftStates for approach flights → write .acl + .csv + timeline .json (game compat)
@@ -143,7 +145,7 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 
 ```
 ├── electron/
-│   ├── main.js              # Electron main process + 26 IPC handlers
+│   ├── main.js              # Electron main process + 29 IPC handlers
 │   └── preload.js           # contextBridge (window.electronAPI)
 ├── index.html               # Vite HTML entry
 ├── vite.config.js           # Vite 8 + React plugin + Electron plugin

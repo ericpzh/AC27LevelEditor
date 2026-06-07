@@ -12,6 +12,18 @@ import { stripSuffixes } from '../../utils/htmlUtils';
 // Demo files (.demo.acl) are always visible alongside production levels.
 const RE_HIDDEN = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
 
+function rescanGuideContent(t) {
+  return (
+    <div>
+      <p>{t('browser_rescan_guide_body')}</p>
+      <ol>
+        <li>{t('browser_rescan_guide_step1')} <code className="guide-path">{t('browser_rescan_guide_step1_path')}</code></li>
+        <li dangerouslySetInnerHTML={{ __html: t('browser_rescan_guide_step2') }} />
+      </ol>
+    </div>
+  );
+}
+
 function computeTodLabel(startTime, t) {
   if (!startTime) return { label: '', type: '' };
   const startH = parseInt(String(startTime).substring(0, 2));
@@ -42,6 +54,24 @@ export default function BrowserScreen() {
 
   useEffect(() => {
     electronAPI.getAppVersion().then(v => setAppVersion(v)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    electronAPI.checkVersionMismatch().then(result => {
+      if (result && result.mismatch) {
+        const { showModal } = useAppStore.getState();
+        showModal(
+          t('browser_version_mismatch_title'),
+          rescanGuideContent(t),
+          <div className="modal-actions-row">
+            <button className="btn-confirm" onClick={handleVersionMismatchRescan}>
+              {t('browser_version_mismatch_button')}
+            </button>
+          </div>,
+          false // closeable=false — only Re-Scan button dismisses this modal
+        );
+      }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -93,21 +123,30 @@ export default function BrowserScreen() {
         useAppStore.getState().setRootPath(rootPath, result.airports);
       }
       setRefreshKey(k => k + 1);
-    } catch (_) {}
-    setRefreshing(false);
+      return result;
+    } catch (_) {
+      return null;
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleVersionMismatchRescan = async () => {
+    const { hideModal, showToast } = useAppStore.getState();
+    hideModal();
+    const result = await doRefreshScan();
+    if (result && result.success) {
+      electronAPI.updateCachedVersion().catch(() => {});
+    } else {
+      showToast(t('toast_scan_failed'), 'error');
+    }
   };
 
   const handleRefreshScan = () => {
     const { showModal, hideModal } = useAppStore.getState();
     showModal(
       t('browser_rescan_guide_title'),
-      <div>
-        <p>{t('browser_rescan_guide_body')}</p>
-        <ol>
-          <li>{t('browser_rescan_guide_step1')} <code className="guide-path">{t('browser_rescan_guide_step1_path')}</code></li>
-          <li dangerouslySetInnerHTML={{ __html: t('browser_rescan_guide_step2') }} />
-        </ol>
-      </div>,
+      rescanGuideContent(t),
       <div className="modal-actions-row">
         <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
         <button className="btn-confirm" onClick={() => { hideModal(); doRefreshScan(); }}>{t('browser_btn_continue')}</button>

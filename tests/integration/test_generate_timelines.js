@@ -181,6 +181,14 @@ function metaRunway(sectionText) {
     }
   }
 
+  // Fallback: when timeline is empty, compute element type numbers from
+  // tlTypeNum using known fixed offsets (verified across all .acl files).
+  if (tlTypeNum !== null) {
+    if (tlElemTypeNum === null) tlElemTypeNum = tlTypeNum + 1;
+    if (changesArrTypeNum === null) changesArrTypeNum = tlTypeNum + 2;
+    if (changeElemTypeNum === null) changeElemTypeNum = tlTypeNum + 3;
+  }
+
   return {
     parentId: parent.id, parentTypeNum: parent.typeNum, parentTypeStr: parent.typeStr,
     irId, irType, tlId, tlTypeNum, tlTypeStr, tlElemTypeNum,
@@ -297,19 +305,12 @@ function testRunwayTimelineWithChanges() {
     const data = JSON.parse(fs.readFileSync(rwWithChanges, 'utf-8'));
     if (!data.timeline || data.timeline.length === 0) rwWithChanges = null;
   }
+  // Only run this test if the ACL's own paired runway JSON has changes.
+  // Never borrow from another file — that creates a cross-file mismatch.
   if (!rwWithChanges) {
-    // Try to find another runway JSON in the directory with changes
-    const files = fs.readdirSync(aclDir).filter(f => f.startsWith('runway_timeline_') && f.endsWith('.json'));
-    for (const f of files) {
-      if (f === path.basename(runwayPath || '')) continue;
-      const data = JSON.parse(fs.readFileSync(path.join(aclDir, f), 'utf-8'));
-      if (data.timeline && data.timeline.length > 0) {
-        rwWithChanges = path.join(aclDir, f);
-        break;
-      }
-    }
+    console.log('  SKIP: paired runway_timeline_*.json has no changes (empty timeline)');
+    return true;
   }
-  if (!rwWithChanges) { console.log('  SKIP: no runway_timeline_*.json with changes found'); return true; }
 
   const aclText = fs.readFileSync(aclSrc, 'utf-8');
   const jsonData = JSON.parse(fs.readFileSync(rwWithChanges, 'utf-8'));

@@ -20,16 +20,18 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
 
   const airlineCodeSet = new Set(audioData.allAirlines || []);
   const validFlightNums = {};
-  for (const code of Object.keys(audioData.byAirline || {})) {
-    validFlightNums[code] = new Set(audioData.byAirline[code]);
+  // Canonical flight numbers from root scan cache (audio + ALL .acl files merged)
+  const canonByAirline = values._flightNums || {};
+  for (const [code, nums] of Object.entries(canonByAirline)) {
+    airlineCodeSet.add(code);
+    validFlightNums[code] = new Set(nums);
   }
-  for (const fl of flights) {
-    const ac = (fl.CallSign || '').substring(0, 3);
-    const num = (fl.CallSign || '').substring(3);
-    if (ac) airlineCodeSet.add(ac);
-    if (ac && num) {
-      if (!validFlightNums[ac]) validFlightNums[ac] = new Set();
-      validFlightNums[ac].add(num);
+  // Fallback: audio callsigns (if cache hasn't been built yet)
+  for (const code of Object.keys(audioData.byAirline || {})) {
+    airlineCodeSet.add(code);
+    if (!validFlightNums[code]) validFlightNums[code] = new Set();
+    for (const n of (audioData.byAirline[code] || [])) {
+      validFlightNums[code].add(n);
     }
   }
   const validSets = {

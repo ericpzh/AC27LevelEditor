@@ -96,24 +96,25 @@ export default function FlightTable({ type, flights, columns }) {
   const vals = airportValues[currentAirport] || {};
   const allColumns = useMemo(() => ['AirlineCode', 'FlightNum', ...columns.filter(c => c !== 'AirlineCode' && c !== 'FlightNum')], [columns]);
 
-  // Build valid flight numbers per airline from audio callsigns
+  // Build valid flight numbers per airline from canonical set
+  // (_flightNums is collected during root scan from audio clips + ALL .acl files)
   const validFlightNums = useMemo(() => {
     const map = {};
+    // Primary source: canonical _flightNums (includes audio numbers merged in)
+    const canonByAirline = vals._flightNums || {};
+    for (const [code, nums] of Object.entries(canonByAirline)) {
+      map[code] = [...nums];
+    }
+    // Fallback: audio callsigns (if cache hasn't been built yet)
     const byAirline = audioCallsigns?.byAirline || {};
     for (const [code, nums] of Object.entries(byAirline)) {
-      if (Array.isArray(nums)) map[code] = nums;
-    }
-    // Also add from all flights
-    for (const fl of allFlights) {
-      const ac = (fl.CallSign || '').substring(0, 3);
-      const num = (fl.CallSign || '').substring(3);
-      if (ac && num) {
-        if (!map[ac]) map[ac] = [];
-        if (!map[ac].includes(num)) map[ac].push(num);
+      if (!map[code]) map[code] = [];
+      for (const n of nums) {
+        if (!map[code].includes(n)) map[code].push(n);
       }
     }
     return map;
-  }, [audioCallsigns, allFlights]);
+  }, [vals._flightNums, audioCallsigns]);
 
   // Map global store index ↔ display index (position in the sorted flights prop)
   const giToDi = useMemo(() => {

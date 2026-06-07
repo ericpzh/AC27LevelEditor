@@ -392,17 +392,62 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   // section (which gets replaced). Capturing these full declarations here lets
   // us expand short-form refs in preserved segments so type resolution survives
   // the Aircrafts rebuild.
+  //
+  // Type numbers are per-file in Unity's JSON serialization — each .acl file gets
+  // its own assignments. We seed from the current file first (ground truth), then
+  // fill in missing types from the per-file cache (built during initial scan).
+  // This survives repeated saves because the cache preserves the original file's
+  // type declarations even after non-approach entries are stripped.
   const typeMap = new Map();
   const typeDeclRegex = /"\$type":\s*"(\d+)\|([^"]+)"/g;
   let tdMatch;
   while ((tdMatch = typeDeclRegex.exec(text)) !== null) {
     const num = parseInt(tdMatch[1], 10);
-    // First declaration wins — earliest in file is canonical
     if (!typeMap.has(num)) {
       typeMap.set(num, tdMatch[2]);
     }
   }
-  log('typeMap: ' + typeMap.size + ' type declarations');
+  const typeMapFromFile = typeMap.size;
+  // Merge file-specific cached typeMap — current file wins (its type declarations
+  // are the ground truth), cache fills in types that were lost from prior saves.
+  const fileKey = path.basename(aclPath);
+  if (approachCache && approachCache.fileTypeMaps) {
+    const cachedFileTypes = approachCache.fileTypeMaps.get(fileKey);
+    if (cachedFileTypes) {
+      for (const [k, v] of cachedFileTypes) {
+        if (!typeMap.has(k)) typeMap.set(k, v);
+      }
+    }
+  }
+  log('typeMap: ' + typeMap.size + ' type declarations (' + typeMapFromFile + ' from file, ' + (typeMap.size - typeMapFromFile) + ' from cache)');
+
+  // Resolve all type numbers needed by builders from the per-file typeMap.
+  // This replaces hardcoded numbers that vary between airports and game versions.
+  const _tn = (search) => {
+    for (const [num, fullName] of typeMap) {
+      if (fullName.includes(search)) return num;
+    }
+    return null;
+  };
+  const typeNums = {
+    acType:           _tn('ContextCross.States.AircraftState,') || 33,
+    spec:             _tn('ContextCross.States.AircraftSpecificationState,') || 34,
+    dynInternal:      _tn('ContextCross.Dynamics.DynamicInternalState,') || 38,
+    dynParams:        _tn('ContextCross.Dynamics.States.FlyApproachDynamicsParams,') || 47,
+    acRwy:            _tn('ContextCross.States.AircraftRunwayCoordinateState,') || 42,
+    float3:           _tn('Unity.Mathematics.float3,') || 35,
+    vec4:             _tn('UnityEngine.Vector4,') || 37,
+    vec4Arr:          _tn('UnityEngine.Vector4[],') || 36,
+    waitCmd:          _tn('ContextCross.Enums.ECommand[],') || 43,
+    recvEvt:          _tn('ContextCross.Events.AircraftEvent[],') || 44,
+    listVec3:         _tn('List`1[[UnityEngine.Vector3,') || 46,
+    animState:        _tn('ContextCross.States.AircraftAnimatorState,') || 51,
+    animSubState:     _tn('ContextCross.States.AircraftAnimState,') || 52,
+    fpState:          _tn('ContextCross.States.FlightPlanState,') || 54,
+    fpArrLeg:         _tn('ContextCross.States.FlightPlanArrivalLegState,') || 55,
+    fpDepLeg:         _tn('ContextCross.States.FlightPlanDepartureLegState,') || 56,
+  };
+  log('typeNums: acType=' + typeNums.acType + ' listVec3=' + typeNums.listVec3 + ' animState=' + typeNums.animState + ' animSub=' + typeNums.animSubState + ' fpState=' + typeNums.fpState + ' fpArrLeg=' + typeNums.fpArrLeg + ' fpDepLeg=' + typeNums.fpDepLeg);
 
   if (!flights || flights.length === 0) {
     log('WARNING: empty flights array, skipping rebuild');
@@ -455,28 +500,12 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   if (fpContentEnd === null) { log('ERROR: cannot find FlightPlans $rcontent end'); return; }
   log('FlightPlans $rcontent: ' + fpContentStart + ' → ' + fpContentEnd);
 
-  // Extract type numbers from original FlightPlans $rcontent.
-  // Unity's JSON serializer assigns type numbers per-file — they are NOT
-  // consistent across airports or even levels. Hardcoding them causes type-ID
-  // conflicts (e.g., Dictionary and FlightPlanState both claiming type 56).
-  // We extract the canonical numbers from the original file's first full
-  // declarations so regenerated entries use the correct IDs.
-  const _origFpContent = text.substring(fpContentStart, fpContentEnd);
-  // Escape for regex literal: only . and \ need escaping in .NET type names
-  const _escapeRegex = (s) => s.replace(/[.\\]/g, '\\$&');
-  const _extractTypeNum = (namespaceName) => {
-    // Match: "$type": "N|NamespaceName, GroundATC.Core"
-    // The type name is followed by ", GroundATC.Core" — this anchors us to the
-    // exact type, not a longer type that contains namespaceName as a substring
-    // (e.g. Dictionary`2[[...],[FlightPlanState, ...]]).
-    const pat = '"\\$type":\\s*"(\\d+)\\|' + _escapeRegex(namespaceName) + ',\\s*GroundATC\\.Core"';
-    const re = new RegExp(pat);
-    const m = _origFpContent.match(re);
-    return m ? parseInt(m[1], 10) : null;
-  };
-  const _fpTypeNum = _extractTypeNum('ContextCross.States.FlightPlanState') || 56;
-  const _fpArrTypeNum = _extractTypeNum('ContextCross.States.FlightPlanArrivalLegState') || 58;
-  const _fpDepTypeNum = _extractTypeNum('ContextCross.States.FlightPlanDepartureLegState') || 57;
+  // FlightPlan type numbers resolved from per-file typeMap (see typeNums above).
+  // This replaces the old regex-based extraction from the original FlightPlans
+  // content; the typeMap lookup is simpler and shares the same source of truth.
+  const _fpTypeNum = typeNums.fpState;
+  const _fpArrTypeNum = typeNums.fpArrLeg;
+  const _fpDepTypeNum = typeNums.fpDepLeg;
   log('FlightPlans type numbers: FlightPlanState=' + _fpTypeNum + ' ArrivalLeg=' + _fpArrTypeNum + ' DepartureLeg=' + _fpDepTypeNum);
 
   // 4. Build segments — also locate AircraftAnimators $rcontent between Aircrafts and FlightPlans
@@ -523,12 +552,8 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   // Non-approach entries (State 10/31/5) are NOT preserved: their FlightPlanGuids
   // become stale when FlightPlans are regenerated with new GUIDs.
 
-  // Detect AircraftState $type number from original file (ZSJN=33, KJFK=35)
-  // Find the first $v block containing State=30 and extract its first $type
-  const _existingAcContent = text.substring(acContentStart, acContentEnd);
-  let _acTypeNum = 33; // default ZSJN
-  const _st30Block = _existingAcContent.match(/"\$v":\s*\{[\s\S]{0,300}?"\$type":\s*(\d+)[\s\S]{0,500}?"State":\s*30\b/);
-  if (_st30Block) _acTypeNum = parseInt(_st30Block[1], 10);
+  // AircraftState $type number resolved from per-file typeMap (was regex-extracted).
+  const _acTypeNum = typeNums.acType;
 
   // Extract the Approach radio channel GUID from the Channels section.
   // We previously tried to extract it from the Aircrafts section, but that fails
@@ -619,6 +644,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
         radioChannelGuid: _radioChannelGuid,
         nextId: 70000 + i * 1000,
         acTypeNum: _acTypeNum,
+        typeNums: typeNums,
       });
       // Wrap in $k/$v dictionary entry format to match original file
       const entry = '{"$k": "' + result.guid + '", "$v": ' + result.block + '}';
@@ -628,6 +654,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       const animResult = buildAnimatorBlock(result.guid, {
         nextId: 80000 + i * 100,
         acTypeNum: _acTypeNum,
+        typeNums: typeNums,
       });
       const animEntry = '{"$k": "' + animResult.guid + '", "$v": ' + animResult.block + '}';
       animEntries.push(animEntry);
@@ -635,12 +662,19 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   }
   log('generated ' + acEntries.length + ' Aircraft entries + ' + animEntries.length + ' Animator entries');
 
+  // Reset docking state on Jetways entries that reference old aircraft GUIDs.
+  // The Aircrafts section is rebuilt with new GUIDs, so DockingAircraftGuid
+  // values in the preserved Jetways section become orphaned and cause
+  // NullReferenceException in the game. Must run unconditionally.
+  segAfter = _resetJetwayDockingState(segAfter, log);
+
   // 6b. Expand short-form $type references in preserved segments.
   // The regenerated Aircrafts/FlightPlans sections use full-form types, but
   // segBefore and segAfter (copied verbatim from the original file) may contain
   // short-form "$type": N references to types whose full declarations were in
-  // the now-replaced Aircrafts $rcontent. Expanding them to full form ensures
-  // the game's JSON deserializer can resolve every type in the output file.
+  // the now-replaced Aircrafts $rcontent. The per-file typeMap (seeded from
+  // current file + approach cache) ensures correct expansion even after repeated
+  // saves. Full-form references self-register with Unity's deserializer.
   if (typeMap.size > 0) {
     segBefore = _expandShortFormTypes(segBefore, typeMap);
     preAnimators = _expandShortFormTypes(preAnimators, typeMap);
@@ -648,13 +682,6 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
     segAfter = _expandShortFormTypes(segAfter, typeMap);
     log('Expanded short-form $type refs in preserved segments');
   }
-
-  // Reset docking state on Jetways entries that reference old aircraft GUIDs.
-  // The Aircrafts section is rebuilt with new GUIDs, so DockingAircraftGuid
-  // values in the preserved Jetways section become orphaned and cause
-  // NullReferenceException in the game. Must run unconditionally.
-  segAfter = _resetJetwayDockingState(segAfter, log);
-
   // 7. Update $rlength in Aircrafts
   let segBeforeMod = segBefore;
   const acMarker = segBeforeMod.lastIndexOf('"Aircrafts"');
@@ -692,13 +719,20 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
     ? '\n' + animEntries.join(',\n') + '\n                '
     : '';
 
-  const newText =
+  let newText =
     segBeforeMod + acContent + ']' +
     preAnimators + animContent + ']' +
     segBetweenMod + '\n                ' +
     fpEntries.join(',\n                ') +
     '\n            ]' +
     segAfter;
+
+  // 9a. Expand any remaining short-form $type references in the full output.
+  // Preserved segments were already expanded above, and regenerated sections use
+  // full-form types. This is a safety net — it catches any short-form refs that
+  // may have been missed (e.g., inside string-replaced segments). BCL types
+  // (DateTime=3, Vector3=16, etc.) are not in typeMap and are left untouched.
+  newText = _expandShortFormTypes(newText, typeMap);
 
   fs.writeFileSync(aclPath, newText, 'utf-8');
   log('SUCCESS – file written (' + (newText.length / 1024).toFixed(0) + ' KB)');
@@ -1124,6 +1158,16 @@ function _metaRunway(sectionText) {
         }
       }
     }
+  }
+
+  // Fallback: when timeline is empty, element type numbers can't be
+  // extracted from rcontent — compute from tlTypeNum using known fixed
+  // offsets (RunwayChangeFrame=+1, RunwayChange[]=+2, RunwayChange=+3).
+  // Verified across all 24 .acl files — offsets never vary.
+  if (tlTypeNum !== null) {
+    if (tlElemTypeNum === null) tlElemTypeNum = tlTypeNum + 1;
+    if (changesArrTypeNum === null) changesArrTypeNum = tlTypeNum + 2;
+    if (changeElemTypeNum === null) changeElemTypeNum = tlTypeNum + 3;
   }
 
   return {
