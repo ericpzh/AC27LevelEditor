@@ -174,15 +174,23 @@ export default function EditorScreen() {
   };
 
   const renderCallsignLink = (text) => {
-    const csMatch = text.match(/^([A-Z]{3}\d+[A-Z]?):/);
-    if (!csMatch) return <span>{text}</span>;
-    const cs = csMatch[1];
+    const pattern = /\b([A-Z]{3}\d+[A-Z]?)\b/g;
+    const parts = [];
+    let lastIndex = 0, match;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) parts.push({ type: 'text', content: text.substring(lastIndex, match.index) });
+      parts.push({ type: 'callsign', content: match[1] });
+      lastIndex = pattern.lastIndex;
+    }
+    if (lastIndex < text.length) parts.push({ type: 'text', content: text.substring(lastIndex) });
+    if (parts.length === 0) return <span>{text}</span>;
     return (
       <span>
-        <span className="callsign-link" onClick={() => { hideModal(); jumpToCallsign(cs); }}>
-          {cs}
-        </span>
-        {text.substring(cs.length)}
+        {parts.map((part, i) =>
+          part.type === 'callsign'
+            ? <span key={i} className="callsign-link" onClick={() => { hideModal(); jumpToCallsign(part.content); }}>{part.content}</span>
+            : <span key={i}>{part.content}</span>
+        )}
       </span>
     );
   };

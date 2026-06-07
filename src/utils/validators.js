@@ -1,6 +1,69 @@
 import { T } from './i18n';
 import { FIELD_LABELS } from './constants';
 
+// ── Stand conflict detection helpers ──
+
+function _toMinutes(timeStr) {
+  const p = String(timeStr).split(':');
+  return parseInt(p[0], 10) * 60 + (parseInt(p[1], 10) || 0);
+}
+
+function _addMinutes(timeStr, mins) {
+  const total = _toMinutes(timeStr) + mins;
+  const h = Math.floor(total / 60) % 24;
+  const m = total % 60;
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+function _computeOccupancyWindow(fl) {
+  const landing = (fl.LandingTime || '').trim();
+  const inblock = (fl.InBlockTime || '').trim();
+  const offblock = (fl.OffBlockTime || '').trim();
+  const takeoff = (fl.TakeoffTime || '').trim();
+
+  let startStr, endStr;
+  if (landing) {
+    startStr = landing.substring(0, 5);
+    endStr = inblock ? inblock.substring(0, 5) : _addMinutes(landing, 20);
+  } else if (offblock) {
+    startStr = offblock.substring(0, 5);
+    endStr = takeoff ? takeoff.substring(0, 5) : _addMinutes(offblock, 20);
+  } else {
+    return null;
+  }
+  return { start: _toMinutes(startStr), end: _toMinutes(endStr), startStr, endStr };
+}
+
+export function detectStandConflicts(flights) {
+  const issues = [];
+  const byStand = {};
+  flights.forEach((fl) => {
+    const stand = (fl.Stand || '').trim();
+    if (!stand) return;
+    const w = _computeOccupancyWindow(fl);
+    if (!w) return;
+    if (!byStand[stand]) byStand[stand] = [];
+    byStand[stand].push({ fl, window: w });
+  });
+  for (const [stand, entries] of Object.entries(byStand)) {
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const a = entries[i].window, b = entries[j].window;
+        if (a.start < b.end && b.start < a.end) {
+          issues.push(T('val_stand_conflict', {
+            cs1: entries[i].fl.CallSign || '?',
+            cs2: entries[j].fl.CallSign || '?',
+            stand,
+            t1_start: a.startStr, t1_end: a.endStr,
+            t2_start: b.startStr, t2_end: b.endStr,
+          }));
+        }
+      }
+    }
+  }
+  return issues;
+}
+
 export function validateCallsigns(flights) {
   const seen = new Map();
   const dupes = [];
@@ -118,6 +181,9 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
       }
     });
   }
+
+  // Stand conflict detection
+  issues.push(...detectStandConflicts(flights));
 
   return issues;
 }
