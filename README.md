@@ -220,28 +220,22 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 
 **Master test runner (all layers):**
 ```bash
-npm run test:all      # Vitest + save integrity (12 files) + Playwright E2E (~60s)
+npm run test:all      # Vitest + save integrity (12 files) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 53 tests in 5 files):**
+**Component tests (Vitest — 73 tests in 6 files):**
 ```bash
 npm test              # Run all component + store + utility tests (~1s)
 npm run test:watch    # Watch mode — re-runs on file changes
 ```
 
-**E2E tests (Playwright + Electron — 15 tests in 6 files, + 1 all-files spec):**
+**E2E tests (Playwright + Electron — 16 tests in 8 files):**
 ```bash
 npm run build         # Build required first (produces dist-electron/main.js)
-npm run test:e2e      # UI flow tests against temp fixture (~50s)
-
-# E2E save integrity across all 12 prod+demo files (~2.5 min):
-$env:E2E_GAME_ROOT = "<game-root>"
-npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
+npm run test:e2e      # UI flow tests against real game data (~3 min)
 ```
 
-**Demo files:** Save completes but produces a smaller file (~1 MB delta) because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test.
-
-**KJFK_09-11:** Validation blocks save in E2E because `airportValues` are incomplete in the temp fixture (no audio clips). Covered by the parser-based integration test.
+**Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test.
 
 **Save integrity — all .acl files (Node.js integration — 13 scripts):**
 

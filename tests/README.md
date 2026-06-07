@@ -5,9 +5,9 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~60s)
-npm test              # 52 Vitest component + store + utility tests (~1s)
-npm run test:e2e      # 15 Playwright E2E tests (requires npm run build first, ~50s)
+npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
+npm test              # 73 Vitest component + store + utility tests (~1s)
+npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min)
 
 # Save integrity — all .acl files across both airports:
 node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root> --prod-demo
@@ -15,11 +15,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 
 ---
 
-## Layer 1 — Vitest Component Tests (53 tests)
+## Layer 1 — Vitest Component Tests (73 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 
-### `npm test` — 52 tests, all pass
+### `npm test` — 73 tests, all pass
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -41,9 +41,9 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 
 ---
 
-## Layer 2 — Playwright E2E Tests (15 tests)
+## Layer 2 — Playwright E2E Tests (16 tests)
 
-Launches the real Electron app against a temp copy of `tests/fixtures/game-root/`. File isolation is guaranteed — the real game installation is never touched.
+Launches the real Electron app against a temp copy of real game data (via `E2E_GAME_ROOT` env var set by `run-all.mjs`). File isolation is guaranteed — the real game installation is never touched.
 
 ### `npm run test:e2e` — all pass (requires `npm run build` first)
 
@@ -96,9 +96,10 @@ Launches the real Electron app against a temp copy of `tests/fixtures/game-root/
 
 | Spec | Coverage | Expected |
 |------|----------|----------|
-| `save-integrity-all-e2e.spec.mjs` | 8 production + 4 demo across ZSJN + KJFK | 10 passed, 2 skipped (see notes below) |
+| `save-integrity-all-e2e.spec.mjs` | 8 production + 4 demo across ZSJN + KJFK | 12 passed, 0 skipped |
 
 ```bash
+# Run standalone (requires E2E_GAME_ROOT env var):
 $env:E2E_GAME_ROOT = "<game-root>"
 npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
 ```
@@ -108,17 +109,17 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | File | Status | Note |
 |------|--------|------|
 | ZSJN-Morning_120min | ✓ | 48 flights, all state identical |
-| ZSJN-Morning_120min.demo | ⚠ | Save completes, flight data intact. Checker notes CDT-related size delta (~1 MB smaller) — demo saves strip CurrentDateTime content. Covered fully by integration test. |
+| ZSJN-Morning_120min.demo | ✓ | Save completes, flight data intact. Demo saves strip CurrentDateTime content — flight data preserved. |
 | ZSJN_07-10 | ✓ | 60 flights, all state identical |
-| ZSJN_07-10.demo | ⚠ | Same CDT delta as above |
+| ZSJN_07-10.demo | ✓ | Same demo behavior as above |
 | ZSJN-Evening_120min | ✓ | 48 flights |
 | ZSJN_19-21 | ✓ | 72 flights |
 | KJFK_07-09 | ✓ | 52 flights |
-| **KJFK_09-11** | **−** | **Validation blocks save** — `airportValues` for KJFK are incomplete in the temp fixture (no audio clips, limited collect-values). The parser-based integration test covers this file. |
-| KJFK_09-11.demo | − | Same validation gap |
+| KJFK_09-11 | ✓ | 56 flights |
+| KJFK_09-11.demo | ✓ | 56 flights |
 | KJFK_17-20 | ✓ | 63 flights |
 | KJFK_20-22 | ✓ | 57 flights |
-| KJFK_20-22.demo | ⚠ | CDT delta (same as other demos) |
+| KJFK_20-22.demo | ✓ | Same demo behavior as above |
 
 ---
 
@@ -236,25 +237,26 @@ Runs all three layers sequentially (Vitest → save integrity 12 files → Playw
 
 ## E2E File Isolation
 
-E2E tests **never touch real game files**. All reads and writes go through temp copies:
+E2E tests **never touch real game files**. All reads and writes go through temp copies, sourced from the real game installation via `E2E_GAME_ROOT` (set by `run-all.mjs`):
 
 ```
-tests/fixtures/game-root/       tests/tmp-e2e/                  tests/tmp-e2e-userdata/
-(committed to git)              (gitignored, fresh each run)    (gitignored)
-─────────────────────     copy    ─────────────────────
-ZSJN/                    ─────→   ZSJN/                  lastRoot.json → { rootPath: "tmp-e2e" }
-  airport_config.json               airport_config.json
-  Levels/                           Levels/              Electron launched with:
-    *.acl                             *.acl                --user-data-dir=tmp-e2e-userdata/
-    *.json                            *.json               AC27_E2E_TMP_DIR=tmp-e2e
+Real game root (read-only)      tests/tmp-e2e/                  tests/tmp-e2e-userdata/
+                                (gitignored, fresh each run)    (gitignored)
+────────────────────────  copy   ─────────────────────
+<game>/Airports/         ─────→  ZSJN/ + KJFK/          lastRoot.json → { rootPath: "tmp-e2e" }
+  ZSJN/                            airport_config.json
+  KJFK/                            Levels/              Electron launched with:
+                                     *.acl                --user-data-dir=tmp-e2e-userdata/
+                                     *.json               AC27_E2E_TMP_DIR=tmp-e2e
 ```
 
-1. **`global-setup.mjs`**: copies `fixtures/game-root/` → `tmp-e2e/`, writes `lastRoot.json` pointing there
-2. **Electron launch**: `--user-data-dir=tmp-e2e-userdata/` isolates user config from real app
-3. **Setup skip**: app reads `lastRoot.json` → goes straight to BrowserScreen (no native OS dialog)
-4. **All I/O in temp**: saves, backups (`.bak`), timeline JSON writes all land in `tmp-e2e/`
-5. **`AC27_E2E_TMP_DIR`**: env var tells `manual-backup` IPC to skip native save dialog in test mode
-6. **`global-teardown.mjs`**: removes both `tmp-e2e/` and `tmp-e2e-userdata/` after run
+1. **`global-setup.mjs`**: copies 12 prod+demo files from real game → `tmp-e2e/`, writes `lastRoot.json`
+2. **Fallback**: if `E2E_GAME_ROOT` is not set, falls back to `tests/fixtures/game-root/` (ZSJN-only)
+3. **Electron launch**: `--user-data-dir=tmp-e2e-userdata/` isolates user config from real app
+4. **Setup skip**: app reads `lastRoot.json` → goes straight to BrowserScreen (no native OS dialog)
+5. **All I/O in temp**: saves, backups (`.bak`), timeline JSON writes all land in `tmp-e2e/`
+6. **`AC27_E2E_TMP_DIR`**: env var tells `manual-backup` IPC to skip native save dialog in test mode
+7. **`global-teardown.mjs`**: removes both `tmp-e2e/` and `tmp-e2e-userdata/` after run
 
 ### Integration test file isolation
 
