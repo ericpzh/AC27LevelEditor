@@ -4,7 +4,8 @@ const fs = require('fs');
 const { initLogger, closeLogger } = require('../src/utils/logger');
 
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
-if (!app.isPackaged) initLogger();
+// Skip file logging in E2E tests so we can see console output
+if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
 const { loadFlights, generateFullAcl, collectUniqueValues, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig } = require('../src/acl/parser');
 
@@ -327,7 +328,12 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
     fs.writeFileSync(_approachCachePath(), JSON.stringify(payload), 'utf-8');
 
     console.log('[IPC] refresh-root-scan OK — ' + Object.keys(cache).length + ' airports');
-    return { success: true };
+
+    // Re-scan .acl files so the front-end gets an up-to-date airport/file listing
+    const scan = scanGameRoot(rootPath);
+    cachedScan = scan;
+    console.log('[IPC] refresh-root-scan: re-scanned filesystem — airports=' + scan.airports.length + ' totalFiles=' + (scan.totalFiles || 0));
+    return { success: true, airports: scan.airports, totalFiles: scan.totalFiles || 0 };
   } catch (err) {
     console.error('[IPC] refresh-root-scan FAIL:', err.message);
     return { success: false, error: err.message };
@@ -464,8 +470,12 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     const saveFlights = sortFlightsChronologically(flights);
 
     // Create .bak overwrite backup if requested
+    console.log('[IPC] save-acl: createBackup=' + createBackup + ' filePath=' + filePath + ' exists=' + fs.existsSync(filePath));
     if (createBackup && fs.existsSync(filePath)) {
       fs.copyFileSync(filePath, filePath + '.bak');
+      console.log('[IPC] save-acl: .bak created at ' + filePath + '.bak');
+    } else {
+      console.log('[IPC] save-acl: .bak NOT created (createBackup=' + createBackup + ')');
     }
 
     // Read the ACL's Config block for startTime and file references
@@ -612,6 +622,17 @@ ipcMain.handle('export-zip', async (_event, { aclPath }) => {
 // ─── IPC: Manual backup ──────────────────────────────────
 
 ipcMain.handle('manual-backup', async (_event, sourcePath) => {
+  // E2E test mode: skip native dialog, save .bak copy next to source
+  if (process.env.AC27_E2E_TMP_DIR) {
+    try {
+      const destPath = sourcePath + '.bak';
+      fs.copyFileSync(sourcePath, destPath);
+      return { canceled: false, path: destPath };
+    } catch (err) {
+      return { canceled: false, error: err.message };
+    }
+  }
+
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Choose Backup Location',
     defaultPath: path.basename(sourcePath),

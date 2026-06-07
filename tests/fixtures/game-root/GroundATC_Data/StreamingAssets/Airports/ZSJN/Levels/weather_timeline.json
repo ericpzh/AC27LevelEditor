@@ -1,0 +1,98 @@
+[
+    {
+        "preset": "Sunny",
+        "time": "06:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "06:30:00"
+    },
+    {
+        "preset": "MidCloudy",
+        "time": "07:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "07:30:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "08:00:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "08:30:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "09:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "09:30:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "10:00:00"
+    },
+    {
+        "preset": "MidCloudy",
+        "time": "17:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "17:30:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "18:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "18:30:00"
+    },
+    {
+        "preset": "MidCloudy",
+        "time": "19:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "19:30:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "20:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "20:30:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "21:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "21:30:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "22:00:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "22:30:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "23:00:00"
+    },
+    {
+        "preset": "Sunny",
+        "time": "23:30:00"
+    },
+    {
+        "preset": "FewCloudy",
+        "time": "24:00:00"
+    }
+]

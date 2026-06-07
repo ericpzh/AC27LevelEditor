@@ -1,0 +1,22 @@
+[
+    {
+        "direction": 175,
+        "speed": 5,
+        "time": "06:00:00"
+    },
+    {
+        "direction": 350,
+        "speed": 3,
+        "time": "08:24:00"
+    },
+    {
+        "direction": 185,
+        "speed": 4,
+        "time": "19:00:00"
+    },
+    {
+        "direction": 10,
+        "speed": 5,
+        "time": "20:00:00"
+    }
+]

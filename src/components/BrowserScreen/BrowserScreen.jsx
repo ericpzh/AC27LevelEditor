@@ -88,7 +88,10 @@ export default function BrowserScreen() {
   const doRefreshScan = async () => {
     setRefreshing(true);
     try {
-      await electronAPI.refreshRootScan(rootPath);
+      const result = await electronAPI.refreshRootScan(rootPath);
+      if (result && result.airports) {
+        useAppStore.getState().setRootPath(rootPath, result.airports);
+      }
       setRefreshKey(k => k + 1);
     } catch (_) {}
     setRefreshing(false);

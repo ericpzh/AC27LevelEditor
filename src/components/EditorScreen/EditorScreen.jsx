@@ -143,7 +143,7 @@ export default function EditorScreen() {
 
   const handleFind = () => { const api = searchAPI.current; if (api) { api.setOpen(true); setTimeout(() => api.inputRef?.current?.focus(), 0); } };
 
-  const doSave = async (createBackup) => {
+  const doSave = async (createBackup, silent) => {
     const st = useAppStore.getState();
     try {
       const nativeWind = convertWindSpeed(st.windTimeline, 'knots', st._windSpeedUnit || 'knots');
@@ -153,11 +153,13 @@ export default function EditorScreen() {
       if (st.windPath && st.timelineModified.wind) { await electronAPI.saveWindTimeline({ filePath: st.windPath, data: nativeWind }); useAppStore.getState().setTimelineModified('wind', false); }
       if (st.runwayTimelinePath && st.timelineModified.runway) { await electronAPI.saveRunwayTimeline({ filePath: st.runwayTimelinePath, data: st.runwayTimeline }); useAppStore.getState().setTimelineModified('runway', false); }
       useAppStore.setState({ modified: false });
-      showModal(
-        t('modal_save_success'),
-        '',
-        <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>
-      );
+      if (!silent) {
+        showModal(
+          t('modal_save_success'),
+          '',
+          <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>
+        );
+      }
       return true;
     } catch (err) { showModal(t('modal_save_failed'), err.message, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return false; }
   };
@@ -220,7 +222,7 @@ export default function EditorScreen() {
     }
     const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline);
     if (issues.length > 0) { showModal(t('modal_issues_export_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((i,idx)=><p key={idx} className="modal-issue-item">{i}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_export')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
-    await doSave(false);
+    await doSave(false, true);
     const result = await electronAPI.exportZip({ aclPath: st.currentPath });
     if (result.canceled) return;
     if (result.error) { showModal(t('modal_export_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }

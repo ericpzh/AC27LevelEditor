@@ -8,6 +8,9 @@ import EditorScreen from './components/EditorScreen/EditorScreen';
 import Modal from './components/common/Modal';
 import Toast from './components/common/Toast';
 
+// Expose store to window for E2E tests (allows config-time fix before save)
+if (typeof window !== 'undefined') window.__AC27_STORE = useAppStore;
+
 let didInit = false; // Survives Strict Mode double-mount (AGENTS rule 8.2)
 
 function ScreenRouter() {

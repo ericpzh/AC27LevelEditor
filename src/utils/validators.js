@@ -117,33 +117,5 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     });
   }
 
-  const rw = runwayTimeline || { initialRunways: [], timeline: [] };
-  if (rw.initialRunways && rw.timeline) {
-    const initialRunways = rw.initialRunways || [];
-    const changes = rw.timeline || [];
-    flights.forEach((fl) => {
-      if ((fl.LandingTime || '').trim()) { // only arrivals
-        const rwy = fl.Runway;
-        if (!rwy) return;
-        const checkTime = fl.LandingTime;
-        if (!checkTime) return;
-        const parts = String(checkTime).split(':');
-        if (parts.length < 2) return;
-        const checkT = parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10);
-        let activeRunways = new Set(initialRunways);
-        for (const change of changes) {
-          let ct = typeof change.time === 'string' ? parseInt(change.time, 10) : change.time;
-          if (ct != null && ct <= checkT) {
-            const rwList = change.runways || change.activeRunways || change.Runways || change.changes || [];
-            if (rwList.length > 0) activeRunways = new Set(rwList.map(c => typeof c === 'string' ? c : (c.source || c.dest || '')));
-          }
-        }
-        if (activeRunways.size > 0 && !activeRunways.has(rwy)) {
-          issues.push(T('val_runway_not_active', { cs: fl.CallSign || '?', time: checkTime, rwy: rwy }));
-        }
-      }
-    });
-  }
-
   return issues;
 }

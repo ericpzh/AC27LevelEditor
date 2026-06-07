@@ -1,6 +1,6 @@
 ---
 name: ac27-level-editor
-description: AC27 Level Editor — Electron desktop app for editing Airport Control 27 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, node test/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes.
+description: AC27 Level Editor — Electron desktop app for editing Airport Control 27 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, npm test, node tests/integration/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes.
 ---
 
 # AC27 Level Editor — Repo Skill
@@ -145,7 +145,7 @@ AC27LevelEditor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── test/                # 12 plain Node.js test scripts (no framework)
+├── tests/               # Vitest + Playwright + Node.js integration tests
 └── dist/                # Build output (gitignored)
 ```
 
@@ -238,12 +238,73 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 
 ### Test Conventions
 
-- No test framework. Tests are plain Node.js scripts run with `node test/<name>.js`
-- Tests `require('./src/acl/parser.js')` to access both public and `_private` functions
+Three-layer testing strategy:
+
+**Layer 1 — Component tests (Vitest + React Testing Library):**
+- `npm test` or `npm run test:watch`
+- Isolated component rendering in jsdom with mocked `window.electronAPI`
+- zustand stores are tested with the real store using `setState()` — never mock stores
+- Store auto-reset between tests via `tests/__mocks__/zustand.js`
+
+**Layer 2 — E2E tests (Playwright + Electron):**
+- `npm run test:e2e` (requires `npm run build` first)
+- Launches the real Electron app against a temp fixture copy in `tests/tmp-e2e/`
+- Custom `--user-data-dir` with pre-written `lastRoot.json` skips the setup screen
+- `AC27_E2E_TMP_DIR` env var skips native OS dialogs (backup, export) in test mode
+- **Never touches real game files** — all reads/writes go to temp copies
+
+File isolation flow:
+```
+tests/fixtures/game-root/       tests/tmp-e2e/                  tests/tmp-e2e-userdata/
+(committed to git)              (gitignored, fresh each run)    (gitignored)
+─────────────────────     copy    ─────────────────────
+ZSJN/                    ─────→   ZSJN/                  lastRoot.json → { rootPath: "tmp-e2e" }
+  airport_config.json               airport_config.json
+  Levels/                           Levels/
+    *.acl                             *.acl              Electron --user-data-dir=tmp-e2e-userdata/
+    *.json                            *.json             → reads lastRoot.json → skips SetupScreen
+                                                         → all file I/O goes to tmp-e2e/
+```
+1. `global-setup.mjs`: copy fixtures → `tmp-e2e/`, write `lastRoot.json`
+2. Electron launches with `--user-data-dir=tmp-e2e-userdata/` + `AC27_E2E_TMP_DIR` env
+3. App sees `lastRoot.json` → goes straight to BrowserScreen (no native dialog)
+4. All saves, backups, timeline writes land in `tmp-e2e/`
+5. `global-teardown.mjs`: remove both temp dirs
+
+**Layer 3 — Integration tests (plain Node.js):**
+- Located in `tests/integration/` (moved from `test/`)
+- Standalone scripts run with `node tests/integration/<name>.js`
+- Tests `require('../../src/acl/parser.js')` to access both public and `_private` functions
+- Use `--require ./tests/integration/preload.cjs` for tests that import ESM source modules
 - New parser tests (`test_tokenizer`, `test_acl_json`, `test_acl_document`) run without a game root — they use synthetic test data
-- Integration tests need a real game installation (Airport Control 27) at a known path
+- Other tests need a real game installation (Airport Control 27) at a known path
 - Tests print results to stdout — read the output to determine pass/fail
-- No mocking, no fixtures — integration tests operate on real files
+
+**Save integrity test (`test_save_integrity_all.js`) — file isolation flow:**
+
+Real game files are **never modified**. Each .acl file follows this path:
+
+```
+Game root (read-only)            Temp golden/ (pristine)        Temp result/ (save target)
+────────────────────────         ─────────────────────          ────────────────────────
+Airports/ZSJN/Levels/       copy →  _tmp/golden/ZSJN/     copy →  _tmp/result/ZSJN/
+  ZSJN-Morning_120min.acl  ─────→    ZSJN-Morning_120min.acl ──→   ZSJN-Morning_120min.acl
+  weather_timeline.json    ─────→    weather_timeline.json           (overwritten by save)
+  wind_timeline.json       ─────→    wind_timeline.json
+  runway_timeline_....json ─────→    runway_timeline_....json
+```
+
+1. **Copy** real .acl + timeline JSONs → `tests/integration/_tmp/golden/<icao>/` (pristine snapshot)
+2. **Load golden** → in-memory snapshot (flights, config, scenery, timelines)
+3. **Copy golden** → `tests/integration/_tmp/result/<icao>/` (save target)
+4. **Save** via `generateFullAcl` on result copy — only result is modified
+5. **Load result** → compare against golden snapshot (14 fields × N flights, config, scenery maps, embedded timelines)
+6. **Clean up** `_tmp/` after each file (removed entirely after run)
+7. **Write JSON report** → `tests/_reports_/save-integrity-<timestamp>.json` with per-file metrics and diffs
+
+- Supports `--prod-demo` flag to test only the 8 production + 4 demo files
+- Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored
+- Full test documentation: `tests/README.md` — test matrix, expected values, execution commands
 
 ## Three-Screen SPA
 
@@ -287,7 +348,7 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 1. `handleSave()` → `validateCallsigns()` → `runTripleValidation()`:
    - (a) Dropdown value validation — every field against valid options
    - (b) Time range validation — flights within config startTime/endTime bounds
-   - (c) Runway timeline validation — active runways at each flight's time
+   - (c) Runway timeline bounds — change entry times within level range
 2. **Wind speed conversion:** Wind speeds are converted from knots (store) back to the airport's native unit (e.g., mps) before being sent to IPC handlers. This ensures `wind_timeline.json` and the ACL both contain values in the unit the game expects.
 3. `save-acl` IPC → sorts flights → looks up approach cache for the airport → generates full ACL:
    - FlightPlans rebuilt from scratch with new GUIDs
@@ -420,7 +481,7 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 ### Test
 
 ```bash
-node test/test_approach_aircraft.js [--root <game-root>]
+node --require ./tests/integration/preload.cjs tests/integration/test_approach_aircraft.js [--root <game-root>]
 ```
 
 Validates all algorithms against the 8 production files: spec consistency, AppPoint mapping, ProgressRatio formula (saveTime spread), FlyApproach resolution, Position/Direction reconstruction, and block assembly.
@@ -434,34 +495,47 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 
 ### Running tests
 
-All tests accept `--help` / `-h` for usage. Temp files are written to `test/` and cleaned up automatically.
-
-**New parser module tests (no game root needed):**
+**Component tests:**
 ```bash
-node test/test_tokenizer.js            # String-aware scanner (18 tests)
-node test/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
-node test/test_acl_document.js         # Document model integration (13 tests)
+npm test              # Run all Vitest component + store + utility tests
+npm run test:watch    # Watch mode — re-runs on file changes
 ```
 
-**Scan-all tests (need game root, default `../../../` from test dir):**
+**E2E tests:**
 ```bash
-node test/test_parse_airport.js [--root <game-root>]
-node test/test_callsign_gen.js [--root <game-root>]
-node test/test_approach_aircraft.js [--root <game-root>]
+npm run test:e2e      # Playwright + Electron full user-flow tests
 ```
 
-**Single-ACL tests (require `--acl <path>`, derive paired files automatically):**
+**Integration tests (plain Node.js, now in `tests/integration/`):**
+
+All accept `--help` / `-h` for usage. Temp files are written to `tests/integration/` and cleaned up automatically.
+
+New parser module tests (no game root needed):
 ```bash
-node test/test_e2e_save_load.js --acl <path>
-node test/test_rebuild_sections.js --acl <path>
-node test/test_acl_linkage.js --acl <path>
+node tests/integration/test_tokenizer.js            # String-aware scanner (18 tests)
+node tests/integration/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
+node tests/integration/test_acl_document.js         # Document model integration (13 tests)
 ```
 
-**Timeline tests (require `--acl <path>`, auto-discover JSONs):**
+Scan-all tests (need game root, default `../../../../` from integration dir):
 ```bash
-node test/test_timeline_comparison.js <acl-path>
-node test/test_generate_timelines.js --acl <path>
-node test/test_rebuild_timelines.js --acl <path>
+node tests/integration/test_parse_airport.js [--root <game-root>]
+node --require ./tests/integration/preload.cjs tests/integration/test_callsign_gen.js [--root <game-root>]
+node --require ./tests/integration/preload.cjs tests/integration/test_approach_aircraft.js [--root <game-root>]
+```
+
+Single-ACL tests (require `--acl <path>`, derive paired files automatically):
+```bash
+node tests/integration/test_e2e_save_load.js --acl <path>
+node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_sections.js --acl <path>
+node tests/integration/test_acl_linkage.js --acl <path>
+```
+
+Timeline tests (require `--acl <path>`, auto-discover JSONs):
+```bash
+node --require ./tests/integration/preload.cjs tests/integration/test_timeline_comparison.js <acl-path>
+node --require ./tests/integration/preload.cjs tests/integration/test_generate_timelines.js --acl <path>
+node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_timelines.js --acl <path>
 ```
 
 ### Building
@@ -489,7 +563,7 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 1. **React + Vite + zustand stack.** Frontend uses ESM, JSX, and React hooks. No global-scope scripts.
 2. **No TypeScript.** This is plain JS/JSX. Do not add `tsconfig.json` or convert files to `.tsx`.
 3. **No linter/formatter.** Do not add ESLint, Prettier, or any linting config unless explicitly asked.
-4. **No test framework.** Tests are `node test/script.js`. Do not add Jest, Mocha, or Vitest unless asked.
+4. **Testing uses Vitest (component) + Playwright (E2E) + Node.js (integration).** Component tests go in `tests/components/`, E2E specs in `tests/e2e/`, integration scripts in `tests/integration/`. Do not add Jest or Mocha.
 5. **No npm dependencies for core logic.** The app uses only Node.js built-ins. Justify any new dependency.
 6. **Preserve CommonJS for backend.** `electron/` and `src/acl/` use `require()`/`module.exports`.
 7. **ESM for frontend.** `src/components/`, `src/hooks/`, `src/store/`, `src/utils/` use `import`/`export`.

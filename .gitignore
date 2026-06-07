@@ -16,6 +16,14 @@ __pycache__/
 .vscode/
 .idea/
 
+# Test artifacts
+coverage/
+test-results/
+tests/tmp-e2e/
+tests/tmp-e2e-userdata/
+tests/integration/_tmp/
+tests/_reports_/
+
 # OS
 Thumbs.db
 .DS_Store
