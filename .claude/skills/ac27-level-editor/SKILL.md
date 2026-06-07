@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.0.10)
+- **Name:** `ac27-level-editor` (v1.1.0)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -331,7 +331,7 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs }`
    - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
 
-### Cache State & Version Detection (v1.0.10+)
+### Cache State & Version Detection (v1.1.0)
 
 The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.json` + `lastRoot.json` + `localStorage.ac27_lang`). It contains `gameRoot`, `lang`, `cacheVersion`, `builtAt`, and `airports`.
 
@@ -403,7 +403,7 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 - Native open dialog → validates ZIP structure → backs up current files → extracts → reloads
 - Works identically for `.demo.acl` files
 
-### Stand Conflict Detection (v1.0.10+)
+### Stand Conflict Detection (v1.1.0)
 
 Stand conflicts are validated on save via `detectStandConflicts()` in `src/utils/validators.js`. Three rules, based on in-game testing:
 

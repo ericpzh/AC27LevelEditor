@@ -6,9 +6,9 @@
  *   node tests/run-all.mjs [--game-root <path>]
  *
  * Layers:
- *   1. Vitest (component tests)     — 53 tests, ~1s
+ *   1. Vitest (component tests)     — 73 tests, ~1s
  *   2. Integration: save integrity  — 12 prod+demo files, ~20s
- *   3. Playwright E2E                — 15 tests, ~50s (requires build)
+ *   3. Playwright E2E                — 16 tests, ~60s (requires build, uses E2E_GAME_ROOT)
  *
  * Default game root: D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest
  */
@@ -63,7 +63,7 @@ console.log(`\nGame root: ${GAME_ROOT}`);
 const startTime = Date.now();
 
 // ── 1. Vitest ────────────────────────────────────────────────────
-runStep('Layer 1: Vitest (53 component tests)', 'npx vitest run');
+runStep('Layer 1: Vitest (73 component tests)', 'npx vitest run');
 
 // ── 2. Save Integrity (12 prod+demo files) ───────────────────────
 // Quote paths to handle spaces in game root
@@ -84,7 +84,23 @@ try {
 }
 
 // ── 4. Playwright E2E ────────────────────────────────────────────
-runStep('Layer 3: Playwright E2E (15 browser tests)', 'npx playwright test --config=playwright.config.mjs');
+// Set E2E_GAME_ROOT so global-setup sources all 12 prod+demo files
+// (including KJFK) from the real game installation instead of the
+// limited ZSJN-only fixture directory.
+const e2eEnv = { ...process.env, E2E_GAME_ROOT: GAME_ROOT };
+const layer4Cmd = `npx playwright test --config=playwright.config.mjs`;
+console.log(`\n${'='.repeat(60)}`);
+console.log('▶ Layer 3: Playwright E2E (16 browser tests)');
+console.log(`${'='.repeat(60)}`);
+try {
+  execSync(layer4Cmd, { cwd: ROOT, stdio: 'inherit', env: e2eEnv, timeout: 600000 });
+  totalPassed++;
+  console.log(`\n✓ Layer 3: Playwright E2E (16 browser tests) — PASSED`);
+} catch (e) {
+  totalFailed++;
+  failures.push('Layer 3: Playwright E2E');
+  console.log(`\n✗ Layer 3: Playwright E2E — FAILED (exit ${e.status})`);
+}
 
 // ── Summary ──────────────────────────────────────────────────────
 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
