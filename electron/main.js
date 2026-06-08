@@ -7,9 +7,9 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions } = require('../src/acl/parser');
 
-const CACHE_VERSION = 1; // Bump when cache.json schema changes
+const CACHE_VERSION = 2; // Bump when cache.json schema changes
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
@@ -183,6 +183,9 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
     aclValues.AircraftType = aclValues.AircraftType.filter(t => knownTypes.has(t));
   }
 
+  // Include stand positions from airport cache
+  aclValues._standPositions = cached?.standPositions || {};
+
   return aclValues;
 });
 
@@ -265,6 +268,27 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       console.log('[INIT-CACHE]   ' + icao + ': dropdowns scanned from ' + aclPaths.length + ' .acl files');
     }
 
+    // Parse stand positions from first .acl file (airport-level, shared across all levels)
+    let standPositions = cachedEntry?.standPositions || null;
+    if (!standPositions) {
+      try {
+        const aclFiles = [];
+        for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
+          if (le.isFile() && le.name.endsWith('.acl')) aclFiles.push(path.join(levelsDir, le.name));
+        }
+        if (aclFiles.length > 0) {
+          const firstAclText = fs.readFileSync(aclFiles[0], 'utf-8');
+          standPositions = _parseStandPositions(firstAclText);
+          console.log('[INIT-CACHE]   ' + icao + ': stand positions parsed from ' + path.basename(aclFiles[0]) + ' (' + Object.keys(standPositions).length + ' stands)');
+        }
+      } catch (e) {
+        console.log('[INIT-CACHE]   ' + icao + ': stand position parsing failed:', e.message);
+        standPositions = {};
+      }
+    } else {
+      console.log('[INIT-CACHE]   ' + icao + ': stand positions from disk cache (' + Object.keys(standPositions).length + ' stands)');
+    }
+
     // Merge audio flight numbers into dropdown _flightNums
     if (audioCallsigns?.byAirline) {
       if (!dropdownValues._flightNums) dropdownValues._flightNums = {};
@@ -295,7 +319,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       console.log('[INIT-CACHE]   ' + icao + ': approach scanned from files');
     }
 
-    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs };
+    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions };
   }
 
   airportCache = cache;
@@ -309,6 +333,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
           approachData: entry.approachData ? serializeApproachCache(entry.approachData) : null,
           dropdownValues: entry.dropdownValues || {},
           runwayPairs: entry.runwayPairs || [],
+          standPositions: entry.standPositions || {},
         };
       }
       const payload = {
@@ -397,7 +422,17 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       }
 
       const approachData = buildApproachCache(levelsDir);
-      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs };
+
+      // Parse stand positions from first .acl file
+      let standPositions = {};
+      try {
+        if (aclPaths.length > 0) {
+          const firstAclText = fs.readFileSync(aclPaths[0], 'utf-8');
+          standPositions = _parseStandPositions(firstAclText);
+        }
+      } catch (e) { standPositions = {}; }
+
+      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions };
     }
 
     airportCache = cache;
@@ -409,6 +444,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         approachData: entry.approachData ? serializeApproachCache(entry.approachData) : null,
         dropdownValues: entry.dropdownValues || {},
         runwayPairs: entry.runwayPairs || [],
+        standPositions: entry.standPositions || {},
       };
     }
     const payload = { cacheVersion: CACHE_VERSION, gameRoot: rootPath, lang: preservedLang, builtAt: Date.now(), airports: serialized };

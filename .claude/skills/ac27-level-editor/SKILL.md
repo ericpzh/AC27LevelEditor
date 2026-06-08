@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.0)
+- **Name:** `ac27-level-editor` (v1.1.1)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -101,6 +101,8 @@ AC27LevelEditor/
 │   │   │   │   ├── TimeClockPopover.jsx  # SVG clock picker
 │   │   │   │   ├── CompassPopover.jsx    # SVG compass picker
 │   │   │   │   └── CellEditor.css
+│   │   │   ├── StandMap/
+│   │   │   │   ├── StandMap.jsx + .css   # Interactive stand position map overlay
 │   │   │   └── TimelineEditors/
 │   │   │       ├── WeatherEditor.jsx
 │   │   │       ├── WindEditor.jsx
@@ -132,7 +134,7 @@ AC27LevelEditor/
 │   │   ├── world_state.js       # WorldState format (types 35/56/54)
 │   │   ├── approach.js         # Approach AircraftState constructor (State=30)
 │   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
-│   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
+│   │   ├── scenery.js           # SceneryData parser (runway/stand GUIDs + stand position extraction)
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
 │   └── utils/                   # Shared utilities (ESM + some CJS for backend)
@@ -328,7 +330,8 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - Extracts `specDB` (Designator → AircraftSpec), `appPointMap` ((Route,Runway) → AppPointList), `totalApproachTimes` (Route → seconds), and `designatorMap` (AircraftType → Designator)
    - Collects dropdown values (`collectUniqueValues`) and runway pairs (`collectRunwayPairs`) from ALL .acl files
    - Merges audio flight numbers into `_flightNums` per airline code
-   - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs }`
+   - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions }`
+   - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint of tail/nose taxiway node Positions)
    - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
 
 ### Cache State & Version Detection (v1.1.0)
@@ -419,6 +422,18 @@ Stand conflicts are validated on save via `detectStandConflicts()` in `src/utils
 - dep/dep: `"CES1234 和 CAL5678: 停机位 \"A01\" 时段重叠。"` (simple, no times)
 - dep/arr: `"CDG5166 和 CCA2761: 停机位 \"26\" 时段冲突。CDG5166推出 (07:58:00) >= CCA2761落地 (07:50:00)"` (pinpoints violation)
 - i18n keys: `val_stand_conflict`, `val_stand_conflict_dep_arr`
+
+### Stand Map Overlay
+
+When editing a Stand cell in the flight table, a non-blocking overlay panel appears pinned to the right edge of the app window. It shows:
+
+- **SVG map** of all stands for the current airport, with dots positioned by real x,y coordinates parsed from `SceneryData > TaxiwayNodes`
+- **4 dot states**: Current (accent, large + ring), Hovered (accent, medium), Available (accent, small), Occupied (grey, not clickable)
+- **Occupancy detection**: `computeOccupiedStands()` in FlightTable checks time-window overlaps between flights
+- **Airport background**: Semi-transparent `/{ICAO}_Stand.png` image overlaid (falls back to panel background if missing)
+- **i18n**: Title and legend use `standmap_title`, `standmap_current`, `standmap_available`, `standmap_occupied` keys
+
+**Component:** `src/components/EditorScreen/StandMap/StandMap.jsx` — portal-based, responsive (scales with window via `useWindowSize` hook), viewBox preserves data aspect ratio with a target ratio cap.
 
 ### Demo .acl File Handling (v1.0.9+)
 

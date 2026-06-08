@@ -12,7 +12,7 @@ import {
 const { exportCSV, exportGameCSV } = require('../utils/csvIo');
 
 // ─── Internal sub-modules ────────────────────────────────────
-const { _parseSceneryData } = require('./scenery');
+const { _parseSceneryData, _parseStandPositions } = require('./scenery');
 const {
   _parseWorldStateData, _extractFlightsFromWorldState,
 } = require('./world_state');
@@ -185,7 +185,7 @@ module.exports = {
   createTokenizer, preprocessUnityJson, serializeUnityJson, isUnityJson,
   AclDocument,
   // Internal exports (used by tests)
-  _parseWorldStateData, _parseSceneryData,
+  _parseWorldStateData, _parseSceneryData, _parseStandPositions,
   _extractFlightsFromWorldState,
   _parseWorldStateFlightPlans, _parseFlightPlanEntry,
   _rebuildWorldStateSections,

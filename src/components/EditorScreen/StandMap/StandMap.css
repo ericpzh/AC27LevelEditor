@@ -1,0 +1,141 @@
+/* ─── Stand Map Panel ────────────────────────────────────── */
+/* Non-blocking overlay positioned to the right of the cell  */
+
+:root {
+  --stand-dot-color: var(--accent, #5b8def);
+  --stand-dot-occupied: var(--text-muted, #5c6170);
+}
+
+.stand-map-panel {
+  position: fixed;
+  z-index: 250;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.stand-map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.stand-map-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.stand-map-close {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all var(--transition);
+}
+
+.stand-map-close:hover {
+  background: var(--red-bg);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.stand-map-svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.stand-map-svg .map-bg {
+  fill: var(--bg);
+}
+
+/* ── Dot states: available & current share accent color ── */
+/* Sizes are set inline (viewBox-relative), CSS only handles fill */
+
+.stand-map-dot {
+  transition: r 100ms ease;
+}
+
+.stand-map-dot.available,
+.stand-map-dot.hovered,
+.stand-map-dot.current {
+  fill: var(--stand-dot-color);
+  cursor: pointer;
+}
+
+.stand-map-dot.occupied {
+  fill: var(--stand-dot-occupied);
+  opacity: 0.5;
+  pointer-events: none;
+  cursor: default;
+}
+
+.stand-map-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.5%;
+  opacity: 0.25;
+}
+
+.stand-map-label {
+  fill: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ─── Legend ──────────────────────────────────────────── */
+
+.stand-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.stand-map-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.stand-map-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stand-map-legend-dot.lg-current {
+  background: var(--stand-dot-color);
+  width: 14px;
+  height: 14px;
+}
+
+.stand-map-legend-dot.lg-available {
+  background: var(--stand-dot-color);
+  width: 8px;
+  height: 8px;
+}
+
+.stand-map-legend-dot.lg-occupied {
+  background: var(--stand-dot-occupied);
+  opacity: 0.5;
+}

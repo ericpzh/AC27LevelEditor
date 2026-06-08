@@ -87,6 +87,163 @@ function _extractDictEntries(parentText, parentT, dictKey, valueField, nameToGui
   }
 }
 
+/**
+ * Extract stand (x, y) positions from SceneryData.
+ *
+ * Walks the Stands dictionary to get each stand's Identifier →
+ * {TailPositionGuid, NosePositionGuid}, then looks up those GUIDs in
+ * TaxiwayNodes to get actual Vector3 positions.  Returns the midpoint
+ * of tail and nose as the stand centre.
+ *
+ * @param {string} text - Full .acl file text (raw, before pre-processing)
+ * @returns {{ [standId: string]: { x: number, y: number } }}
+ */
+function _parseStandPositions(text) {
+  const t = createTokenizer(text);
+  const sdSec = t.findSection('SceneryData');
+  if (!sdSec) return {};
+
+  const sdText = t.substring(sdSec.valueStart, sdSec.valueEnd);
+  const sdT = createTokenizer(sdText);
+
+  // ── Step 1: Stands → { guid: { identifier, tailGuid, noseGuid } } ──
+  const standsMap = {};
+
+  const standsSec = sdT.findSection('Stands');
+  if (standsSec) {
+    const standsText = sdT.substring(standsSec.valueStart, standsSec.valueEnd);
+    const standsStr = standsText;
+    const kRe = /"\$k"\s*:\s*"([a-f0-9-]+)"/g;
+    let km;
+
+    while ((km = kRe.exec(standsStr)) !== null) {
+      const guid = km[1];
+
+      // Find the $v block
+      const vKeyIdx = standsStr.indexOf('"$v"', km.index);
+      if (vKeyIdx < 0) continue;
+      const colonIdx = standsStr.indexOf(':', vKeyIdx);
+      if (colonIdx < 0) continue;
+
+      let vBlockStart = colonIdx + 1;
+      while (vBlockStart < standsStr.length && ' \t\n\r'.includes(standsStr[vBlockStart])) vBlockStart++;
+      if (vBlockStart >= standsStr.length || standsStr[vBlockStart] !== '{') continue;
+
+      const vBlockEnd = _findObjectEnd(standsStr, vBlockStart);
+      if (vBlockEnd === null) continue;
+      const vBlock = standsStr.substring(vBlockStart, vBlockEnd);
+
+      const idMatch = vBlock.match(/"Identifier"\s*:\s*"([^"]*)"/);
+      if (!idMatch) continue;
+
+      const tailMatch = vBlock.match(/"TailPositionGuid"\s*:\s*"([^"]*)"/);
+      const noseMatch = vBlock.match(/"NosePositionGuid"\s*:\s*"([^"]*)"/);
+
+      standsMap[guid] = {
+        identifier: idMatch[1],
+        tailGuid: tailMatch ? tailMatch[1] : null,
+        noseGuid: noseMatch ? noseMatch[1] : null,
+      };
+    }
+  }
+
+  if (Object.keys(standsMap).length === 0) return {};
+
+  // ── Step 2: TaxiwayNodes → { guid: { x, y } } ──────────────
+  const nodesMap = {};
+
+  const nodesSec = sdT.findSection('TaxiwayNodes');
+  if (nodesSec) {
+    const nodesText = sdT.substring(nodesSec.valueStart, nodesSec.valueEnd);
+    const kRe = /"\$k"\s*:\s*"([a-f0-9-]+)"/g;
+    let km;
+
+    while ((km = kRe.exec(nodesText)) !== null) {
+      const guid = km[1];
+
+      const vKeyIdx = nodesText.indexOf('"$v"', km.index);
+      if (vKeyIdx < 0) continue;
+      const colonIdx = nodesText.indexOf(':', vKeyIdx);
+      if (colonIdx < 0) continue;
+
+      let vBlockStart = colonIdx + 1;
+      while (vBlockStart < nodesText.length && ' \t\n\r'.includes(nodesText[vBlockStart])) vBlockStart++;
+      if (vBlockStart >= nodesText.length || nodesText[vBlockStart] !== '{') continue;
+
+      const vBlockEnd = _findObjectEnd(nodesText, vBlockStart);
+      if (vBlockEnd === null) continue;
+      const vBlock = nodesText.substring(vBlockStart, vBlockEnd);
+
+      // Extract Position block
+      const posIdx = vBlock.indexOf('"Position"');
+      if (posIdx < 0) continue;
+
+      const colonAfterPos = vBlock.indexOf(':', posIdx);
+      if (colonAfterPos < 0) continue;
+
+      let posStart = colonAfterPos + 1;
+      while (posStart < vBlock.length && ' \t\n\r'.includes(vBlock[posStart])) posStart++;
+      if (posStart >= vBlock.length || vBlock[posStart] !== '{') continue;
+
+      const posEnd = _findObjectEnd(vBlock, posStart);
+      if (posEnd === null) continue;
+      const posBlock = vBlock.substring(posStart, posEnd);
+
+      // Extract numeric values from Position.
+      // Strip the $type field first (handles both "16" and "16|Full.Name" forms).
+      const cleaned = posBlock.replace(/"\$type"\s*:\s*(?:\d+|\"[^\"]*\"),?\s*/, '');
+      const nums = cleaned.match(/(-?[\d.eE+-]+)/g);
+      if (nums && nums.length >= 3) {
+        const x = parseFloat(nums[0]);
+        const z = parseFloat(nums[2]); // nums[1] is elevation — ignore
+        if (!isNaN(x) && !isNaN(z)) {
+          nodesMap[guid] = { x, y: z };
+        }
+      }
+    }
+  }
+
+  if (Object.keys(nodesMap).length === 0) return {};
+
+  // ── Step 3: Compute stand centres ──────────────────────────
+  const result = {};
+  for (const [, stand] of Object.entries(standsMap)) {
+    const tailPos = stand.tailGuid ? nodesMap[stand.tailGuid] : null;
+    const nosePos = stand.noseGuid ? nodesMap[stand.noseGuid] : null;
+
+    if (tailPos && nosePos) {
+      result[stand.identifier] = {
+        x: (tailPos.x + nosePos.x) / 2,
+        y: (tailPos.y + nosePos.y) / 2,
+      };
+    } else if (tailPos) {
+      result[stand.identifier] = { x: tailPos.x, y: tailPos.y };
+    } else if (nosePos) {
+      result[stand.identifier] = { x: nosePos.x, y: nosePos.y };
+    }
+    // If neither position found, skip this stand
+  }
+
+  return result;
+}
+
+/**
+ * Simple brace-matcher (not string-aware) — safe for vBlock boundaries
+ * because the tokenizer already found the correct start/end positions.
+ */
+function _findObjectEnd(text, start) {
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return null;
+}
+
 module.exports = {
   _parseSceneryData,
+  _parseStandPositions,
 };
