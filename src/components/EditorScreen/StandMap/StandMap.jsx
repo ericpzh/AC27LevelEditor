@@ -191,7 +191,7 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
 
       <svg className="stand-map-svg" viewBox={viewBox} width={svgW} height={svgH}>
         <image
-          href={`/${airportIcao}_Stand.png`}
+          href={`${airportIcao}_Stand.png`}
           x={vbX} y={vbY} width={vbW} height={vbH}
           preserveAspectRatio="xMidYMid slice"
           opacity="0.2"
