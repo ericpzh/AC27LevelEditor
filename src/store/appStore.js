@@ -8,7 +8,7 @@ function pickFirstFlightNumber(state, airlineCode) {
   const canonNums = vals._flightNums || {};
   const nums = canonNums[airlineCode];
   if (nums && nums.length > 0) return nums[0];
-  return '1'; // fallback
+  return ''; // no canonical number — leave blank
 }
 
 export const useAppStore = create((set, get) => ({
@@ -244,7 +244,7 @@ export const useAppStore = create((set, get) => ({
       } else {
         // AirlineCode changed — auto-pick first valid number from canonical set
         num = pickFirstFlightNumber(get(), code);
-        if (!num || num === '1') num = (old.CallSign || '').substring(3);
+        if (!num) num = (old.CallSign || '').substring(3);
       }
       flight.CallSign = code + num;
 

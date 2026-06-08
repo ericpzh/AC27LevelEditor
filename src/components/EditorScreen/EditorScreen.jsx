@@ -7,7 +7,7 @@ import { useEditorShell } from '../../hooks/useEditorShell';
 import { validateCallsigns, runTripleValidation } from '../../utils/validators';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline } from 'react-icons/io5';
+import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoPencil } from 'react-icons/io5';
 
 // Wind speed unit conversion: 1 m/s = 1.94384 knots
 const MPS_TO_KNOTS = 1.94384;
@@ -164,14 +164,12 @@ export default function EditorScreen() {
     // Show notice modal with "Don't show again" checkbox
     showModal(
       t('modal_custom_type_title'),
-      <div>
-        <p>{t('modal_custom_type_body')}</p>
-        <label className="modal-checkbox-row" style={{marginTop:'12px'}}>
+      <p>{t('modal_custom_type_body')}</p>,
+      <div className="modal-actions-row">
+        <label className="modal-checkbox-row" style={{marginRight:'auto'}}>
           <input type="checkbox" id="chk-custom-type-notice" className="modal-checkbox" />
           <span>{t('modal_custom_type_checkbox')}</span>
         </label>
-      </div>,
-      <div className="modal-actions-row">
         <button className="btn-confirm" onClick={() => {
           const cb = document.getElementById('chk-custom-type-notice');
           if (cb?.checked) {
@@ -410,7 +408,7 @@ export default function EditorScreen() {
           <button onClick={addArrival}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(45deg)',display:'block'}} /></span> {t('toolbar_add_arrival')}</button>
           <button onClick={addDeparture}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(-45deg)',display:'block'}} /></span> {t('toolbar_add_departure')}</button>
           <button onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
-          <button className={customTypeMode ? 'btn-custom-type-active' : ''} onClick={handleToggleCustomType}>{t('toolbar_custom_type')}</button>
+          <button className={customTypeMode ? 'btn-custom-type-active' : ''} onClick={handleToggleCustomType}><IoPencil size={14} className="btn-icon" /> {t('toolbar_custom_type')}</button>
         </div>
         <div className="toolbar-time-wrap"><ConfigBar /></div>
         <div className="toolbar-group secondary-right">

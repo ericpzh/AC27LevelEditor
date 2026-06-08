@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import './TutorialOverlay.css';
 import { useTranslation } from '../../hooks/useTranslation';
-import { IoClose, IoAirplane, IoCopyOutline, IoTrashOutline, IoSearchOutline } from 'react-icons/io5';
+import { IoClose, IoAirplane, IoCopyOutline, IoTrashOutline, IoSearchOutline, IoPencil } from 'react-icons/io5';
 
 // ─── Button registry (icon + label key) ────────────────────
 const BUTTONS = {
@@ -10,6 +10,7 @@ const BUTTONS = {
   copy:           { icon: IoCopyOutline,    labelKey: 'toolbar_copy' },
   deleteSelected: { icon: IoTrashOutline,   labelKey: 'toolbar_delete_selected' },
   find:           { icon: IoSearchOutline,  labelKey: 'toolbar_find' },
+  customType:     { icon: IoPencil,         labelKey: 'toolbar_custom_type' },
 };
 
 // ─── Render text with {{btn:key}} / {{kbd:key}} tokens
@@ -41,6 +42,7 @@ const SECTIONS = [
     bodyKeys: ['tutorial_editing_p1'],
     listKeys: ['tutorial_editing_li1', 'tutorial_editing_li2', 'tutorial_editing_li3'],
     tailKeys: ['tutorial_editing_p2'],
+    tailBodyKeys: ['tutorial_custom_type_p1'],
   },
   {
     id: 'adding', headingKey: 'tutorial_heading_adding',
@@ -53,11 +55,6 @@ const SECTIONS = [
   {
     id: 'search', headingKey: 'tutorial_heading_search',
     bodyKeys: ['tutorial_search_p1'],
-  },
-  {
-    id: 'customType', headingKey: 'tutorial_heading_custom_type',
-    bodyKeys: ['tutorial_custom_type_p1'],
-    listKeys: ['tutorial_custom_type_li1', 'tutorial_custom_type_li2', 'tutorial_custom_type_li3'],
   },
 ];
 
@@ -115,6 +112,16 @@ export default function TutorialOverlay({ onClose }) {
               {s.tailKeys && s.tailKeys.map((tk, i) => (
                 <p key={'t' + i}>{renderContent(t(tk), t)}</p>
               ))}
+              {s.tailBodyKeys && s.tailBodyKeys.map((tk, i) => (
+                <p key={'tb' + i} className="tutorial-tail-body">{renderContent(t(tk), t)}</p>
+              ))}
+              {s.tailListKeys && (
+                <ul className="tutorial-list">
+                  {s.tailListKeys.map((lk, i) => (
+                    <li key={'tli' + i}>{renderContent(t(lk), t)}</li>
+                  ))}
+                </ul>
+              )}
             </section>
           ))}
 

@@ -80,6 +80,8 @@
 }
 .tutorial-section p:last-child { margin-bottom: 0; }
 
+.tutorial-tail-body { margin-top: 12px; }
+
 .tutorial-list {
   margin: 0 0 8px 18px; padding: 0;
   list-style: disc; color: var(--text-secondary); font-size: 13px; line-height: 1.65;

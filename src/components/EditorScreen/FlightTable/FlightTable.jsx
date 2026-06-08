@@ -200,8 +200,14 @@ export default function FlightTable({ type, flights, columns }) {
                     <td className="chk-cell"><input type="checkbox" className="chk-row" data-idx={gi} checked={selectedIndices.has(gi)} onChange={e => { e.stopPropagation(); toggleSelection(gi); }} /></td>
                     {allColumns.map(col => {
                       let val = fl[col] || '';
-                      if (col === 'AirlineCode') val = airlineCode;
-                      if (col === 'FlightNum') val = (fl.CallSign || '').substring(3);
+                      if (col === 'AirlineCode') {
+                        // In custom mode, use explicitly-stored AirlineCode if present
+                        val = (customTypeMode && fl.AirlineCode) ? fl.AirlineCode : airlineCode;
+                      }
+                      if (col === 'FlightNum') {
+                        // In custom mode, use explicitly-stored FlightNum if present
+                        val = (customTypeMode && fl.FlightNum) ? fl.FlightNum : (fl.CallSign || '').substring(3);
+                      }
                       // Registration is stored as _Registration in parsed data
                       if (col === 'Registration') val = fl._Registration || fl.Registration || '';
                       const isTime = TIME_FIELDS.has(col);
