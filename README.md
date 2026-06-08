@@ -4,7 +4,7 @@ Tool for editing **Airport Control 27** level files.
 
 [**👇中文**](#chinese)
 
-<img src="public\screen.webp" alt="Screenshot" width="100%"/>
+<img src="public\Screen.png" alt="Screenshot" width="100%"/>
 
 ---
 
