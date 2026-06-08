@@ -78,14 +78,16 @@ export default function FlightTable({ type, flights, columns }) {
   const audioCallsigns = useAppStore(s => s.audioCallsigns);
   const [collapsed, setCollapsed] = useState(false);
 
-  const dragRef = useRef({ active: false, lastDi: -1 });
+  const dragRef = useRef({ active: false, pending: false, lastDi: -1, pendingGi: -1 });
   const isArrivals = type === 'arrivals';
 
   // End drag on any mouseup — even outside the table
   useEffect(() => {
     const handleMouseUp = () => {
-      if (!dragRef.current.active) return;
+      if (!dragRef.current.active && !dragRef.current.pending) return;
       dragRef.current.active = false;
+      dragRef.current.pending = false;
+      dragRef.current.pendingGi = -1;
       document.body.style.userSelect = '';
       // Remove onselectstart suppression
       document.body.onselectstart = null;
@@ -129,17 +131,37 @@ export default function FlightTable({ type, flights, columns }) {
 
   const onMouseDown = useCallback((e, gi) => {
     if (e.target.closest('input,select,button')) return;
+    // Portal-rendered popovers (clock, etc.) bubble through the React tree
+    // but their DOM target is outside the table — ignore them entirely.
+    if (e.target.closest('.time-clock-overlay') || e.target.closest('.compass-popover')) return;
     e.preventDefault(); // suppress text selection during drag
     document.body.style.userSelect = 'none';
     document.body.onselectstart = () => false;
-    dragRef.current = { active: true, lastDi: giToDi.get(gi) ?? -1 };
-    // Toggle the clicked row
-    const prev = useAppStore.getState().selectedIndices;
-    const next = new Set(prev);
-    if (next.has(gi)) next.delete(gi); else next.add(gi);
-    useAppStore.setState({ selectedIndices: next, highlightedIdx: gi });
+    const isDataCell = e.target.closest('td') && !e.target.closest('td.chk-cell');
+    if (isDataCell) {
+      // Click on editable cell — defer toggle until we know it's a drag
+      dragRef.current = { active: false, pending: true, lastDi: giToDi.get(gi) ?? -1, pendingGi: gi };
+    } else {
+      // Checkbox cell or row margin — toggle immediately
+      dragRef.current = { active: true, pending: false, lastDi: giToDi.get(gi) ?? -1, pendingGi: -1 };
+      const prev = useAppStore.getState().selectedIndices;
+      const next = new Set(prev);
+      if (next.has(gi)) next.delete(gi); else next.add(gi);
+      useAppStore.setState({ selectedIndices: next, highlightedIdx: gi });
+    }
   }, [giToDi]);
   const onMouseEnter = useCallback((e, gi) => {
+    // Transition pending click → active drag on first row change
+    if (dragRef.current.pending && !dragRef.current.active) {
+      dragRef.current.active = true;
+      dragRef.current.pending = false;
+      const pendingGi = dragRef.current.pendingGi;
+      // Toggle the initial row
+      const prev = useAppStore.getState().selectedIndices;
+      const set = new Set(prev);
+      if (set.has(pendingGi)) set.delete(pendingGi); else set.add(pendingGi);
+      useAppStore.setState({ selectedIndices: set, highlightedIdx: pendingGi });
+    }
     if (!dragRef.current.active) return;
     const currDi = giToDi.get(gi);
     if (currDi == null) return;
@@ -169,6 +191,8 @@ export default function FlightTable({ type, flights, columns }) {
   }, [flights, diToGi, giToDi]);
   const onMouseUp = useCallback(() => {
     dragRef.current.active = false;
+    dragRef.current.pending = false;
+    dragRef.current.pendingGi = -1;
     document.body.style.userSelect = '';
     document.body.onselectstart = null;
   }, []);

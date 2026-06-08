@@ -223,7 +223,7 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (12 files) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 73 tests in 6 files):**
+**Component tests (Vitest — 79 tests in 7 files):**
 ```bash
 npm test              # Run all component + store + utility tests (~1s)
 npm run test:watch    # Watch mode — re-runs on file changes

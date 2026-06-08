@@ -6,7 +6,7 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 
 ```bash
 npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
-npm test              # 73 Vitest component + store + utility tests (~1s)
+npm test              # 79 Vitest component + store + utility tests (~1s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min)
 
 # Save integrity — all .acl files across both airports:
@@ -15,11 +15,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 
 ---
 
-## Layer 1 — Vitest Component Tests (73 tests)
+## Layer 1 — Vitest Component Tests (79 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 
-### `npm test` — 73 tests, all pass
+### `npm test` — 79 tests, all pass
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -28,6 +28,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 | `store/appStore.test.jsx` | 13 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with ArrivalAirport; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |
 | `components/common/Toast.test.jsx` | 4 | Renders empty by default; shows message when set; applies CSS class from type; `.show` class toggles with message |
+| `components/EditorScreen/FlightTable/FlightTable.test.jsx` | 6 | Click on data cell → no selection toggle; checkbox click → toggles; drag from data cell → range-selects; dropdown/time cell clicks → no toggle; clock portal click → no toggle |
 
 ### Expected outcomes
 
