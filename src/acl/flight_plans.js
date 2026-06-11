@@ -10,7 +10,7 @@ const path = require('path');
 import { FALLBACK_BASE_DATE_TICKS } from './constants';
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
-const { computeProgressRatio, resolveFlyApproachPoints, buildApproachAircraftBlock, buildAnimatorBlock } = require('./approach');
+const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, _vec3Sub, _vec3Normalize, _vec3Dist } = require('./approach');
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
 
@@ -421,31 +421,44 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   }
   log('typeMap: ' + typeMap.size + ' type declarations (' + typeMapFromFile + ' from file, ' + (typeMap.size - typeMapFromFile) + ' from cache)');
 
+  // Compute the next available type number for types not found in the file.
+  // This guarantees unique numbers — no collision with existing types or each other.
+  let nextFallbackNum = 100; // above BCL types (0-99)
+  for (const num of typeMap.keys()) {
+    if (num >= nextFallbackNum) nextFallbackNum = num + 1;
+  }
+
   // Resolve all type numbers needed by builders from the per-file typeMap.
   // This replaces hardcoded numbers that vary between airports and game versions.
   const _tn = (search) => {
     for (const [num, fullName] of typeMap) {
+      // Skip generic collection type DECLARATIONS (e.g. Dictionary`2[[...,[AircraftState,...]],...])
+      // ONLY when the search itself is not targeting a generic type. Searches for
+      // `List`1[[...` or similar generic types contain a backtick and must be allowed
+      // through, otherwise List<Vector3> types silently fall back to a colliding default.
+      if (fullName.startsWith('System.Collections.Generic') && !search.includes('`')) continue;
       if (fullName.includes(search)) return num;
     }
     return null;
   };
   const typeNums = {
-    acType:           _tn('ContextCross.States.AircraftState,') || 33,
-    spec:             _tn('ContextCross.States.AircraftSpecificationState,') || 34,
-    dynInternal:      _tn('ContextCross.Dynamics.DynamicInternalState,') || 38,
-    dynParams:        _tn('ContextCross.Dynamics.States.FlyApproachDynamicsParams,') || 47,
-    acRwy:            _tn('ContextCross.States.AircraftRunwayCoordinateState,') || 42,
-    float3:           _tn('Unity.Mathematics.float3,') || 35,
-    vec4:             _tn('UnityEngine.Vector4,') || 37,
-    vec4Arr:          _tn('UnityEngine.Vector4[],') || 36,
-    waitCmd:          _tn('ContextCross.Enums.ECommand[],') || 43,
-    recvEvt:          _tn('ContextCross.Events.AircraftEvent[],') || 44,
-    listVec3:         _tn('List`1[[UnityEngine.Vector3,') || 46,
-    animState:        _tn('ContextCross.States.AircraftAnimatorState,') || 51,
-    animSubState:     _tn('ContextCross.States.AircraftAnimState,') || 52,
-    fpState:          _tn('ContextCross.States.FlightPlanState,') || 54,
-    fpArrLeg:         _tn('ContextCross.States.FlightPlanArrivalLegState,') || 55,
-    fpDepLeg:         _tn('ContextCross.States.FlightPlanDepartureLegState,') || 56,
+    acType:           _tn('ContextCross.States.AircraftState,')           || nextFallbackNum++,
+    spec:             _tn('ContextCross.States.AircraftSpecificationState,') || nextFallbackNum++,
+    dynInternal:      _tn('ContextCross.Dynamics.DynamicInternalState,')   || nextFallbackNum++,
+    dynParams:        _tn('ContextCross.Dynamics.States.FlyApproachDynamicsParams,') || nextFallbackNum++,
+    acRwy:            _tn('ContextCross.States.AircraftRunwayCoordinateState,') || nextFallbackNum++,
+    float3:           _tn('Unity.Mathematics.float3,')                    || nextFallbackNum++,
+    vec4:             _tn('UnityEngine.Vector4,')                         || nextFallbackNum++,
+    vec4Arr:          _tn('UnityEngine.Vector4[],')                       || nextFallbackNum++,
+    waitCmd:          _tn('ContextCross.Enums.ECommand[],')               || nextFallbackNum++,
+    recvEvt:          _tn('ContextCross.Events.AircraftEvent[],')         || nextFallbackNum++,
+    approachDynParams: _tn('ContextCross.Dynamics.States.ApproachDynamicsParams,') || nextFallbackNum++,
+    listVec3:         _tn('List`1[[UnityEngine.Vector3,')                 || nextFallbackNum++,
+    animState:        _tn('ContextCross.States.AircraftAnimatorState,')   || nextFallbackNum++,
+    animSubState:     _tn('ContextCross.States.AircraftAnimState,')       || nextFallbackNum++,
+    fpState:          _tn('ContextCross.States.FlightPlanState,')         || nextFallbackNum++,
+    fpArrLeg:         _tn('ContextCross.States.FlightPlanArrivalLegState,') || nextFallbackNum++,
+    fpDepLeg:         _tn('ContextCross.States.FlightPlanDepartureLegState,') || nextFallbackNum++,
   };
   log('typeNums: acType=' + typeNums.acType + ' listVec3=' + typeNums.listVec3 + ' animState=' + typeNums.animState + ' animSub=' + typeNums.animSubState + ' fpState=' + typeNums.fpState + ' fpArrLeg=' + typeNums.fpArrLeg + ' fpDepLeg=' + typeNums.fpDepLeg);
 
@@ -561,6 +574,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   // or on re-saves (all RadioChannelGuid values already empty).
   // The Channels section lives in segAfter and is always preserved verbatim.
   const _radioChannelGuid = _extractAppChannelGuid(segAfter);
+  const _towerChannelGuid = _extractTowerChannelGuid(segAfter);
 
   const acEntries = [];
   const animEntries = [];
@@ -570,8 +584,36 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
     const _toSec = (t) => { const p = String(t).split(':'); return +p[0]*3600 + +p[1]*60 + (+p[2]||0); };
     const startSec = aclcfgStartTime ? _toSec(aclcfgStartTime) : 0;
     const WARMUP_SEC = 780; // 13 min — game advances from Config.startTime to first flight time
-    const saveSec = (_saveSec != null) ? _saveSec : startSec + WARMUP_SEC;
-    log('saveTime=' + saveSec + 's (' + (_saveSec != null ? 'from file' : 'startTime=' + startSec + 's +13min warmup') + ')');
+
+    // Resolve saveTime: explicit > GameTime.CurrentDateTime (authoritative — the
+    // literal wall-clock time the game wrote when it saved this snapshot) >
+    // per-file cache offset (derived from State=30 approach entries — calibrates
+    // the PR formula to match the game's path-based PR, but can be inaccurate for
+    // State=5 aircraft whose effective TAT differs) > warmup fallback.
+    let saveSec;
+    if (_saveSec != null) {
+      saveSec = _saveSec;
+      log('saveTime=' + saveSec + 's (explicit)');
+    }
+    if (saveSec == null) {
+      const gameTime = extractGameTime(text);
+      if (gameTime != null) {
+        saveSec = gameTime;
+        log('saveTime=' + saveSec + 's (from GameTime.CurrentDateTime)');
+      }
+    }
+    if (saveSec == null && approachCache && approachCache.saveTimeOffsets) {
+      const aclBasename = path.basename(aclPath);
+      const cachedSave = approachCache.saveTimeOffsets.get(aclBasename);
+      if (cachedSave != null) {
+        saveSec = cachedSave;
+        log('saveTime=' + saveSec + 's (from cache offset for ' + aclBasename + ')');
+      }
+    }
+    if (saveSec == null) {
+      saveSec = startSec + WARMUP_SEC;
+      log('saveTime=' + saveSec + 's (startTime=' + startSec + 's +13min warmup fallback)');
+    }
 
     for (let i = 0; i < flights.length; i++) {
       const fl = flights[i];
@@ -582,6 +624,19 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       const star = fl.Airway || '';
       const runway = fl.Runway || '';
       if (!star || !runway) continue;
+
+      // Resolve approach procedure name (e.g. "RNAV ILS Z Rwy 19") from the cache.
+      // The state5ParamsMap has keys like "procedureName|runway" from original files.
+      let approachRoute = star; // fallback to STAR name
+      if (approachCache && approachCache.state5ParamsMap) {
+        for (const key of approachCache.state5ParamsMap.keys()) {
+          const pipeIdx = key.indexOf('|');
+          if (pipeIdx > 0 && key.substring(pipeIdx + 1) === runway) {
+            approachRoute = key.substring(0, pipeIdx);
+            break;
+          }
+        }
+      }
 
       // Look up AppPointList for this (Route, Runway) combo
       const appKey = star + '|' + runway;
@@ -611,28 +666,160 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       // Compute ProgressRatio using verified formula with derived saveTime
       const landingSec = _toSec(fl.LandingTime);
       const timeToLanding = landingSec - saveSec; // seconds until landing
-      const progressRatio = 1.0 - (timeToLanding / totalApproachTime);
+      // Clamp timeToLanding to a minimum of 30s for aircraft near landing,
+      // but skip aircraft that landed more than 10s before the snapshot.
+      // This avoids edge cases where PR ≈ 1.0 places the aircraft at/beyond
+      // the last path point (touchdown with Y=0, wrong XZ position).
+      const MIN_TTL = 30;
+      const GRACE_TTL = -10;
+      if (timeToLanding < GRACE_TTL) {
+        log('  SKIP (landed ' + (-timeToLanding) + 's ago): ' + fl.CallSign);
+        continue;
+      }
+      const clampedTTL = timeToLanding < MIN_TTL ? MIN_TTL : timeToLanding;
+      const progressRatio = 1.0 - (clampedTTL / totalApproachTime);
 
       // Gate: only generate if aircraft is mid-approach at snapshot time
       if (progressRatio <= 0.0) {
         log('  SKIP (PR=' + progressRatio.toFixed(3) + ' ≤ 0, not started approach): ' + fl.CallSign);
         continue;
       }
-      if (progressRatio >= 1.0) {
-        log('  SKIP (PR=' + progressRatio.toFixed(3) + ' ≥ 1, already landed): ' + fl.CallSign);
-        continue;
-      }
 
-      // Resolve FlyApproachPathPointList from SceneryData in the ACL text
+      // Resolve FULL FlyApproach path from SceneryData.
+      // This gives the complete path (not per-aircraft remaining points from
+      // DynamicsParams), enabling correct IAF passage detection for State=30 vs State=5.
       const flyPoints = resolveFlyApproachPoints(text, star, runway);
       if (!flyPoints || flyPoints.length === 0) {
         log('  could not resolve FlyApproach points for ' + star + '/' + runway + ', skipping');
         continue;
       }
 
-      log('  build Aircraft entry: ' + fl.CallSign + ' ' + star + '/' + runway +
+      // IAF (Initial Approach Fix) = last point of FlyApproach path.
+      // Aircraft past this point are on final approach (State=5, Tower).
+      // Aircraft before it are still on the STAR (State=30, Approach).
+      const flyLen = computePathLength(flyPoints);
+      const appLen = computePathLength(appPoints);
+      const totalLen = flyLen + appLen;
+
+      // Aircraft position along the unified path (FlyApproach → AppPath → TouchDown)
+      const targetDist = progressRatio * totalLen;
+
+      if (targetDist >= flyLen) {
+        // ── State=5: Past IAF, on Tower frequency ──
+
+        // State=5 entries use approach procedure names as Route (e.g. "RNAV ILS Z Rwy 19"),
+        // not STAR names. Try appKey first (STAR|runway), then runway-only key.
+        let state5Params = approachCache.state5ParamsMap
+          ? approachCache.state5ParamsMap.get(appKey)
+          : null;
+        if (!state5Params) {
+          state5Params = approachCache.state5ParamsMap
+            ? approachCache.state5ParamsMap.get(runway)
+            : null;
+        }
+        if (!state5Params) {
+          // Fallback: derive State=5 params from AppPointList when no cached
+          // State=5 entry exists for this runway. The AppPointList covers the
+          // same final-approach segment as PathPointList but stops at the FAF.
+          // The real touchdown is further along the approach direction — for
+          // KJFK 22R, the distToTD from last ppList point is ~108m.
+          if (appPoints && appPoints.length >= 2) {
+            const lastPt = appPoints[appPoints.length - 1];
+            const prevPt = appPoints[appPoints.length - 2];
+            const dir = _vec3Normalize(_vec3Sub(lastPt, prevPt));
+            // Use standard approach cap of 15.24m (matches production files).
+            // AppPointList points have y=0 in the ACL (Unity XZ plane);
+            // Y is always computed from the 3° glideslope in buildState5AircraftBlock.
+            const approachCap = 15.24;
+            // Extend touchdown past the last AppPoint by the AppPath length
+            // (the glideslope continues ~108m beyond the FAF for KJFK 22R).
+            let appPathLen = 0;
+            for (let pi = 0; pi < appPoints.length - 1; pi++) {
+              appPathLen += _vec3Dist(appPoints[pi], appPoints[pi + 1]);
+            }
+            const tdExtendDist = appPathLen; // extension past last AppPoint
+            const tdPos = {
+              x: lastPt.x + dir.x * tdExtendDist,
+              y: 0,
+              z: lastPt.z + dir.z * tdExtendDist,
+            };
+            state5Params = {
+              pathPointList: appPoints,
+              touchDownPosition: tdPos,
+              approachDirection: dir,
+              initialPosition: { x: appPoints[0].x, y: approachCap, z: appPoints[0].z },
+            };
+            log('  derived State=5 params from AppPointList for runway ' + runway +
+                ' (cap=' + approachCap.toFixed(1) + 'm, tdExt=' + tdExtendDist.toFixed(0) + 'm)');
+            if (approachRoute === star) {
+              approachRoute = 'RNAV Rwy ' + runway;
+            }
+          }
+        }
+        if (!state5Params) {
+          log('  no State=5 params for "' + appKey + '" or runway "' + runway + '", falling back to State=30 for ' + fl.CallSign);
+          // fall through to State=30 below
+        } else {
+          // State=5 PR rescaled to final approach segment [0, 1].
+          // The game's ApproachDynamicsParams expects PR relative to the final
+          // approach path (PathPointList→TouchDown), not the full STAR+Approach.
+          const state5PR = (targetDist - flyLen) / appLen;
+
+          log('  build State=5 entry: ' + fl.CallSign + ' ' + star + '/' + runway +
+              ' PR=' + progressRatio.toFixed(3) + ' state5PR=' + state5PR.toFixed(3) +
+              ' timeToLanding=' + timeToLanding.toFixed(0) + 's' +
+              ' pastIAF=' + (targetDist - flyLen).toFixed(0) + 'm' +
+              ' towerCh=' + (_towerChannelGuid ? 'yes' : 'no'));
+
+          // Determine State=5 sub-type based on time-to-landing:
+          //   ≥60s → Contact Tower (command 22, no exit selected)
+          //   <60s → Cleared to Land (command 23, exit selected)
+          // TEMP: always use Contact Tower (22) — jumping straight to Cleared to Land (23)
+          // prevents the game from initializing the landing state machine, causing
+          // NullReferenceException due to missing type declarations (types 41-43, 49-52).
+          // const isClearedToLand = timeToLanding < 60; // TEMP: disabled
+
+          const result = buildState5AircraftBlock({
+            flightPlanGuid: fpGuids[i],
+            route: approachRoute,
+            state5PR: state5PR,
+            spec: spec,
+            towerChannelGuid: _towerChannelGuid || _radioChannelGuid, // fallback to APP if no TWR found
+            state5Params: state5Params,
+            flyPoints: flyPoints,
+            fullPR: progressRatio,
+            waitingForCommand: 22, // TEMP: always Contact Tower (was: isClearedToLand ? 23 : 22)
+            selectedRunwayExitIndex: -1, // TEMP: always -1 (was: isClearedToLand ? 0 : -1)
+            nextId: 70000 + i * 1000,
+            acTypeNum: _acTypeNum,
+            typeNums: typeNums,
+          });
+          const entry = '{"$k": "' + result.guid + '", "$v": ' + result.block + '}';
+          acEntries.push(entry);
+
+          const animResult = buildAnimatorBlock(result.guid, {
+            nextId: 80000 + i * 100,
+            acTypeNum: _acTypeNum,
+            typeNums: typeNums,
+          });
+          const animEntry = '{"$k": "' + animResult.guid + '", "$v": ' + animResult.block + '}';
+          animEntries.push(animEntry);
+          continue;
+        }
+      }
+
+      // ── State=30: Before IAF, on Approach frequency ──
+
+      log('  build State=30 entry: ' + fl.CallSign + ' ' + star + '/' + runway +
           ' td=' + timeToLanding + 's PR=' + progressRatio.toFixed(3) +
           ' flyPts=' + flyPoints.length + ' appPts=' + appPoints.length);
+
+      // TouchDownPosition + approachCap for 3° glideslope Y in State=30.
+      // Both come from the per-runway state5ParamsMap (cached from ACL).
+      // approachCap = max approach altitude — NOT hardcoded.
+      const state5ForRwy = approachCache?.state5ParamsMap?.get(runway);
+      const tdPos = state5ForRwy?.touchDownPosition || null;
+      const approachCap = state5ForRwy?.initialPosition?.y ?? null;
 
       const result = buildApproachAircraftBlock({
         flightPlanGuid: fpGuids[i],
@@ -642,6 +829,8 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
         progressRatio: progressRatio,
         spec: spec,
         radioChannelGuid: _radioChannelGuid,
+        touchDownPosition: tdPos,
+        approachCap: approachCap,
         nextId: 70000 + i * 1000,
         acTypeNum: _acTypeNum,
         typeNums: typeNums,
@@ -904,6 +1093,37 @@ function _extractAppChannelGuid(segAfter) {
     const block = parts[i];
     // Check for Type=5 (Approach) or ShortCode "APP"
     if (/"Type":\s*5\b/.test(block) || /"ShortCode":\s*"APP"/.test(block)) {
+      const guidM = block.match(/"Guid":\s*"([\da-f-]+)"/);
+      if (guidM) return guidM[1];
+    }
+  }
+  return '';
+}
+
+/**
+ * Extract the Tower (TWR) radio channel GUID from the Channels section.
+ * Same approach as _extractAppChannelGuid but searches for Type=3 or ShortCode "TWR".
+ */
+function _extractTowerChannelGuid(segAfter) {
+  const chIdx = segAfter.indexOf('"Channels"');
+  if (chIdx < 0) return '';
+  const chSection = segAfter.substring(chIdx);
+  const rcMatch = chSection.match(/"\$rcontent"\s*:\s*\[/);
+  if (!rcMatch) return '';
+  const chRcStart = chIdx + rcMatch.index + rcMatch[0].length;
+  let depth = 0, chRcEnd = null;
+  for (let i = chRcStart; i < segAfter.length; i++) {
+    if (segAfter[i] === '{') depth++;
+    else if (segAfter[i] === '}') depth--;
+    else if (segAfter[i] === ']' && depth === 0) { chRcEnd = i + 1; break; }
+  }
+  if (chRcEnd === null) return '';
+  const chContent = segAfter.substring(chRcStart, chRcEnd);
+  const parts = chContent.split(/"\$v":\s*\{/);
+  for (let i = 1; i < parts.length; i++) {
+    const block = parts[i];
+    // Check for Type=3 (Tower) or ShortCode "TWR"
+    if (/"Type":\s*3\b/.test(block) || /"ShortCode":\s*"TWR"/.test(block)) {
       const guidM = block.match(/"Guid":\s*"([\da-f-]+)"/);
       if (guidM) return guidM[1];
     }
@@ -1402,6 +1622,8 @@ module.exports = {
   _rebuildWorldStateSections,
   _rebuildTimelineSections,
   _extractSection, _extractConfig,
+  _extractAppChannelGuid,
+  _extractTowerChannelGuid,
   _generateFramesSection,
   _generateRunwayTimelineSection,
   _parseWeatherFrames,

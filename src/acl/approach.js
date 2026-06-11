@@ -249,6 +249,102 @@ function extractApproachData(aclText) {
   return results;
 }
 
+// ─── 2b. State=5 Data Extraction ────────────────────────────────
+
+/**
+ * Extract all State=5 (Sub-type A: in-air, on Tower frequency) aircraft data from ACL text.
+ * Only returns entries that have ApproachDynamicsParams (DynamicsParams present, no
+ * TaxiArrivalToHoldingPointPath) — these are aircraft still in the air after handoff.
+ *
+ * Returns array of { route, runway, touchDownPosition, approachDirection,
+ *                     initialPosition, pathPointList }
+ */
+function extractState5Data(aclText) {
+  const results = [];
+  const fpMap = _parseFlightPlanData(aclText);
+  const acEntries = _parseAircraftEntries(aclText);
+
+  for (const entry of acEntries) {
+    const vBlock = entry.vBlock;
+    const state = _extractInt(vBlock, 'State');
+    if (state !== 5) continue;
+
+    // Sub-type A check: must have DynamicsParams (ApproachDynamicsParams)
+    const disObj = _extractNestedObject(vBlock, 'DynamicInternalState');
+    if (!disObj) continue;
+    const dpObj = _extractNestedObject(disObj, 'DynamicsParams');
+    if (!dpObj) continue; // Sub-type B has no DynamicsParams — skip
+
+    // Must NOT have TaxiArrivalToHoldingPointPath (would be Sub-type B)
+    // _extractNestedObject returns the raw text — check for non-null object
+    const taxiPathRaw = _extractNestedObject(disObj, 'TaxiArrivalToHoldingPointPath');
+    if (taxiPathRaw && taxiPathRaw.trim() !== 'null') continue;
+
+    const route = _extractString(vBlock, 'Route') || '';
+    const fpGuid = _extractString(vBlock, 'FlightPlanGuid');
+    const fpData = fpGuid ? fpMap.get(fpGuid) : null;
+    const runway = fpData ? fpData.runway : '';
+
+    // Must have at least a runway — can't key into cache otherwise
+    if (!runway) continue;
+
+    // Extract ApproachDynamicsParams fields
+    const tdObj = _extractNestedObject(dpObj, 'TouchDownPosition');
+    const touchDownPosition = tdObj ? _extractVector3(tdObj) : null;
+    const adObj = _extractNestedObject(dpObj, 'ApproachDirection');
+    const approachDirection = adObj ? _extractVector3(adObj) : null;
+    const ipObj = _extractNestedObject(dpObj, 'InitialPosition');
+    const initialPosition = ipObj ? _extractVector3(ipObj) : null;
+    const pathPointList = _extractVector3Array(dpObj, 'PathPointList') || [];
+
+    if (!touchDownPosition || !approachDirection || !initialPosition || pathPointList.length === 0) continue;
+
+    results.push({
+      route,
+      runway,
+      touchDownPosition,
+      approachDirection,
+      initialPosition,
+      pathPointList,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Build Map<(route, runway), State5Params> from extracted State=5 data.
+ * Stores entries under BOTH keys:
+ *   1. "<approach-route>|<runway>" — the State=5 Route field (e.g. "RNAV ILS Z Rwy 19|19")
+ *   2. "<runway>" — runway-only key, for lookup during save when we only have the runway
+ * First occurrence wins for each key.
+ */
+function buildState5ParamsMap(state5Entries) {
+  const map = new Map();
+  for (const entry of state5Entries) {
+    if (!entry.runway) continue;
+    const runwayKey = entry.runway; // Each runway maps to exactly one approach procedure
+    const params = {
+      touchDownPosition: entry.touchDownPosition,
+      approachDirection: entry.approachDirection,
+      initialPosition: entry.initialPosition,
+      pathPointList: entry.pathPointList,
+    };
+    // Always store by runway (primary lookup during save since STAR ≠ approach route name)
+    if (!map.has(runwayKey)) {
+      map.set(runwayKey, params);
+    }
+    // Also store by route|runway if route is non-empty (for completeness)
+    if (entry.route) {
+      const routeKey = entry.route + '|' + entry.runway;
+      if (!map.has(routeKey)) {
+        map.set(routeKey, params);
+      }
+    }
+  }
+  return map;
+}
+
 // ─── 3. Build (Route, Runway) → AppPointList Map ─────────────────
 
 /**
@@ -412,11 +508,27 @@ function _findRunwayGuid(text, runwayName) {
 
   const rwText = sdT.substring(rwSec.valueStart, rwSec.valueEnd);
   const rwT = createTokenizer(rwText);
-  const rcSec = rwT.findSection('$rcontent');
-  if (!rcSec) return null;
+
+  // Find the MAIN $rcontent (skip nested ones like 'comparer' by counting brace depth)
+  let mainRcStart = -1;
+  let depth = 0;
+  for (let i = 0; i < rwText.length - 11; i++) {
+    if (rwText[i] === '{') depth++;
+    else if (rwText[i] === '}') depth--;
+    else if (depth === 1 && rwText.substring(i, i + 11) === '"$rcontent"') {
+      const ci = rwText.indexOf(':', i + 11);
+      if (ci >= 0) {
+        let as = ci + 1;
+        while (as < rwText.length && ' \t\n\r'.includes(rwText[as])) as++;
+        if (rwText[as] === '[') { mainRcStart = as; break; }
+      }
+    }
+  }
+  if (mainRcStart < 0) return null;
 
   // Iterate Runways dictionary entries using tokenizer for block boundaries
-  let pos = rcSec.valueStart + 1; // skip opening [
+  let _physFallback = null;
+  let pos = mainRcStart + 1; // skip opening [
   while (pos < rwText.length) {
     while (pos < rwText.length && ' \t\n\r'.includes(rwText[pos])) pos++;
     if (pos >= rwText.length || rwText[pos] === ']') break;
@@ -430,9 +542,13 @@ function _findRunwayGuid(text, runwayName) {
       if (kMatch && vBlock) {
         const name = _extractString(vBlock, 'Name');
         const physName = _extractString(vBlock, 'PhysicalName');
-        // Match either Name or PhysicalName containing runwayName
-        if (name === runwayName || (physName && physName.includes(runwayName))) {
+        // Prefer exact Name match over PhysicalName includes
+        if (name === runwayName) {
           return kMatch[1];
+        }
+        // Remember first PhysicalName match as fallback
+        if (physName && physName.includes(runwayName) && !_physFallback) {
+          _physFallback = kMatch[1];
         }
       }
       pos = entryEnd;
@@ -440,7 +556,7 @@ function _findRunwayGuid(text, runwayName) {
       pos++;
     }
   }
-  return null;
+  return _physFallback || null;
 }
 
 function _findDictionaryEntry(sectionText, keyGuid) {
@@ -587,6 +703,408 @@ function _parseAirwayNodes(aclText) {
   return map;
 }
 
+/**
+ * Parse TaxiwayNodes from SceneryData into a Map<guid, Position>.
+ * Used to resolve TouchDownPointGuid → TouchDownPosition for approach procedures.
+ */
+function _parseTaxiwayNodes(aclText) {
+  const map = new Map();
+  const sdIdx = aclText.indexOf('"SceneryData"');
+  if (sdIdx < 0) return map;
+  const sdText = aclText.substring(sdIdx);
+  const sdT = createTokenizer(sdText);
+  const tnSec = sdT.findSection('TaxiwayNodes');
+  if (!tnSec) return map;
+
+  const tnText = sdT.substring(tnSec.valueStart, tnSec.valueEnd);
+  const tnT = createTokenizer(tnText);
+  const rcSec = tnT.findSection('$rcontent');
+  if (!rcSec) return map;
+
+  let pos = rcSec.valueStart + 1;
+  while (pos < tnText.length) {
+    while (pos < tnText.length && ' \t\n\r'.includes(tnText[pos])) pos++;
+    if (pos >= tnText.length || tnText[pos] === ']') break;
+    if (tnText[pos] === ',') { pos++; continue; }
+    if (tnText[pos] === '{') {
+      const entryEnd = tnT.findObjectEnd(pos);
+      if (entryEnd === null) break;
+      const block = tnText.substring(pos, entryEnd);
+      const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+      const vBlock = _extractValueBlock(block);
+      if (kMatch && vBlock) {
+        const posVec = _extractVector3(vBlock);
+        if (posVec) {
+          map.set(kMatch[1], posVec);
+        }
+      }
+      pos = entryEnd;
+    } else {
+      pos++;
+    }
+  }
+  return map;
+}
+
+// ─── 5c. Parse Runway Thresholds from SceneryData ──────────────
+
+/**
+ * Extract runway threshold positions from SceneryData.Runways.
+ * Each runway entry has "ThresholdPointGuids" (2 GUIDs) referencing
+ * AirwayNodes — these are the exact runway endpoints.
+ *
+ * @param {string} aclText - raw ACL text
+ * @returns {{[name: string]: {thresholds: Array<{x: number, z: number}>}}}
+ */
+function _parseRunwayThresholds(aclText) {
+  const result = {};
+  const sdIdx = aclText.indexOf('"SceneryData"');
+  if (sdIdx < 0) return result;
+  const sdText = aclText.substring(sdIdx);
+  const sdT = createTokenizer(sdText);
+
+  // Parse AirwayNodes + TaxiwayNodes for GUID→position lookup
+  const airwayNodes = _parseAirwayNodes(aclText);
+  const taxiwayNodes = _parseTaxiwayNodes(aclText);
+
+  // Find Runways section
+  const rwSec = sdT.findSection('Runways');
+  console.log('[RUNWAY-THRESHOLDS] found Runways section:', !!rwSec);
+  if (!rwSec) return result;
+
+  const rwText = sdT.substring(rwSec.valueStart, rwSec.valueEnd);
+  const rwT = createTokenizer(rwText);
+  const rcSec = rwT.findSection('$rcontent');
+  console.log('[RUNWAY-THRESHOLDS] found $rcontent:', !!rcSec, 'airwayNodes:', airwayNodes.size, 'taxiwayNodes:', taxiwayNodes.size);
+  if (!rcSec) return result;
+
+  // Resolve GUID to position: try AirwayNodes ({name, position}) then TaxiwayNodes (Vector3 directly)
+  const resolveNode = (guid) => {
+    const an = airwayNodes.get(guid);
+    if (an && an.position) return an.position;
+    const tn = taxiwayNodes.get(guid);
+    if (tn && tn.x !== undefined) return tn;
+    return null;
+  };
+
+  // Iterate runway entries
+  let pos = rcSec.valueStart + 1;
+  let entryCount = 0;
+  while (pos < rwText.length) {
+    while (pos < rwText.length && ' \t\n\r'.includes(rwText[pos])) pos++;
+    const charAtPos = pos < rwText.length ? rwText[pos] : 'EOF';
+    const snippet = rwText.substring(pos, Math.min(pos + 60, rwText.length)).replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+    console.log('[RUNWAY-THRESHOLDS] LOOP iter=' + entryCount + ' pos=' + pos + ' char=' + charAtPos + ' snippet=' + snippet);
+    if (pos >= rwText.length || rwText[pos] === ']') { console.log('[RUNWAY-THRESHOLDS] BREAK at ] or EOF'); break; }
+    if (rwText[pos] === ',') { pos++; continue; }
+    if (rwText[pos] === '{') {
+      const entryEnd = rwT.findObjectEnd(pos);
+      console.log('[RUNWAY-THRESHOLDS]   entryEnd=' + entryEnd);
+      if (entryEnd === null) { console.log('[RUNWAY-THRESHOLDS] BREAK entryEnd null'); break; }
+      const block = rwText.substring(pos, entryEnd);
+      const vBlock = _extractValueBlock(block);
+      if (vBlock) {
+        const physName = _extractString(vBlock, 'PhysicalName');
+        // Only actual runways have PhysicalName with "/" (e.g. "13L/31R") — taxiways don't.
+        // Each runway pair has 2 entries sharing the same threshold points; deduplicate by physName.
+        if (physName && physName.includes('/') && !result[physName]) {
+          const tpgGuids = _extractGuidArray(vBlock, 'ThresholdPointGuids');
+          console.log('[RUNWAY-THRESHOLDS]   entry ' + entryCount + ' physName=' + physName + ' tpgGuids=' + (tpgGuids ? tpgGuids.length : 0));
+          if (tpgGuids && tpgGuids.length >= 2) {
+            const thresholds = [];
+            for (const guid of tpgGuids) {
+              const pt = resolveNode(guid);
+              if (pt) thresholds.push({ x: pt.x, z: pt.z });
+            }
+            if (thresholds.length === 2) {
+              result[physName] = { thresholds };
+              console.log('[RUNWAY-THRESHOLDS]   ADDED ' + physName);
+            }
+          }
+        }
+      }
+      entryCount++;
+      pos = entryEnd;
+    } else {
+      console.log('[RUNWAY-THRESHOLDS] UNEXPECTED char, advancing');
+      pos++;
+    }
+  }
+  console.log('[RUNWAY-THRESHOLDS] DONE: ' + entryCount + ' entries, result keys: ' + Object.keys(result).join(', '));
+  return result;
+}
+
+// ─── 5b. STAR-Runway Mapping from SceneryData ─────
+
+/**
+ * Extract ALL valid STAR↔runway combinations directly from SceneryData.Runways.
+ *
+ * This is the authoritative source: each runway entry has a Routes array where
+ * Type=0 entries are STARs (arrival transitions) and Type=2 entries are SIDs
+ * (departure transitions). We extract only Type=0 entries.
+ *
+ * Unlike appPointMap (built from State=30 aircraft at snapshot time), this
+ * captures EVERY combo defined in the scenery, regardless of whether any
+ * .acl file has an active approach aircraft for it.
+ *
+ * @param {string} aclText - raw ACL file content
+ * @returns {{starRunwayMap: Object<string, string[]>, runwayStarMap: Object<string, string[]>}}
+ */
+function extractStarRunwayMappings(aclText) {
+  const starRunwayMap = {};  // { starName → [runway, ...] }
+  const runwayStarMap = {};  // { runway → [starName, ...] }
+  if (!aclText) return { starRunwayMap, runwayStarMap };
+
+  // 1. Navigate to SceneryData → Runways
+  const sdIdx = aclText.indexOf('"SceneryData"');
+  if (sdIdx < 0) return { starRunwayMap, runwayStarMap };
+  const sdText = aclText.substring(sdIdx);
+  const sdT = createTokenizer(sdText);
+  const rwSec = sdT.findSection('Runways');
+  if (!rwSec) return { starRunwayMap, runwayStarMap };
+
+  const rwText = sdT.substring(rwSec.valueStart, rwSec.valueEnd);
+  const rwT = createTokenizer(rwText);
+
+  // 2. Find the MAIN $rcontent (skip nested ones like 'comparer' by counting brace depth)
+  let rwRcStart = -1;
+  let mainDepth = 0;
+  for (let i = 0; i < rwText.length - 11; i++) {
+    if (rwText[i] === '{') mainDepth++;
+    else if (rwText[i] === '}') mainDepth--;
+    else if (mainDepth === 1 && rwText.substring(i, i + 11) === '"$rcontent"') {
+      const colonIdx = rwText.indexOf(':', i + 11);
+      if (colonIdx >= 0) {
+        let arrStart = colonIdx + 1;
+        while (arrStart < rwText.length && ' \t\n\r'.includes(rwText[arrStart])) arrStart++;
+        if (rwText[arrStart] === '[') {
+          rwRcStart = arrStart;
+          break;
+        }
+      }
+    }
+  }
+  if (rwRcStart < 0) return { starRunwayMap, runwayStarMap };
+
+  // 3. Iterate runway dictionary entries
+  let pos = rwRcStart + 1; // skip opening [
+  while (pos < rwText.length) {
+    while (pos < rwText.length && ' \t\n\r'.includes(rwText[pos])) pos++;
+    if (pos >= rwText.length || rwText[pos] === ']') break;
+    if (rwText[pos] === ',') { pos++; continue; }
+    if (rwText[pos] === '{') {
+      const entryEnd = rwT.findObjectEnd(pos);
+      if (entryEnd === null) break;
+      const block = rwText.substring(pos, entryEnd);
+      const vBlock = _extractValueBlock(block);
+      if (vBlock) {
+        // Find the runway Name at depth 1 of the $v block. _extractString
+        // would match the FIRST "Name" anywhere, which in KJFK comparer
+        // entries picks up nested Entry names like "Z" instead of the real
+        // runway designator like "31L" deeper in the block. Depth-aware
+        // scanning ensures we always get the runway designator.
+        let runwayName = null;
+        let rwyDepth = 0;
+        for (let i = 0; i < vBlock.length - 8; i++) {
+          if (vBlock[i] === '{') rwyDepth++;
+          else if (vBlock[i] === '}') rwyDepth--;
+          else if (rwyDepth === 1 && vBlock.substring(i, i + 6) === '"Name"') {
+            const colonPos = vBlock.indexOf(':', i + 6);
+            if (colonPos > 0) {
+              let vs = colonPos + 1;
+              while (vs < vBlock.length && ' \t\n\r'.includes(vBlock[vs])) vs++;
+              if (vBlock[vs] === '"') {
+                const ve = vBlock.indexOf('"', vs + 1);
+                if (ve > vs) runwayName = vBlock.substring(vs + 1, ve);
+              }
+            }
+            break;
+          }
+        }
+        const physName = _extractString(vBlock, 'PhysicalName');
+        // Only process actual runway entries (PhysicalName contains '/')
+        if (runwayName && physName && physName.includes('/')) {
+          // 4. Extract the Routes block and find Type=0 entries
+          const routesBlock = _extractNestedObject(vBlock, 'Routes');
+          if (routesBlock) {
+            const routesT = createTokenizer(routesBlock);
+            const routesRc = routesT.findSection('$rcontent');
+            if (routesRc) {
+              let rp = routesRc.valueStart + 1; // skip opening [
+              while (rp < routesBlock.length) {
+                while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+                if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+                if (routesBlock[rp] === ',') { rp++; continue; }
+                if (routesBlock[rp] === '{') {
+                  const reEnd = routesT.findObjectEnd(rp);
+                  if (reEnd === null) break;
+                  const routeEntry = routesBlock.substring(rp, reEnd);
+                  const type = _extractInt(routeEntry, 'Type');
+                  if (type === 0) {
+                    const starName = _extractString(routeEntry, 'Name');
+                    if (starName) {
+                      if (!starRunwayMap[starName]) starRunwayMap[starName] = [];
+                      if (!starRunwayMap[starName].includes(runwayName)) starRunwayMap[starName].push(runwayName);
+                      if (!runwayStarMap[runwayName]) runwayStarMap[runwayName] = [];
+                      if (!runwayStarMap[runwayName].includes(starName)) runwayStarMap[runwayName].push(starName);
+                    }
+                  }
+                  rp = reEnd;
+                } else {
+                  rp++;
+                }
+              }
+            }
+          }
+        }
+      }
+      pos = entryEnd;
+    } else {
+      pos++;
+    }
+  }
+  return { starRunwayMap, runwayStarMap };
+}
+
+// ─── 5c. Resolve Approach Procedure Data from SceneryData ─────
+
+/**
+ * Resolve State=5 approach procedure data from SceneryData for a given runway.
+ * Extracts PathPointList, TouchDownPosition, ApproachDirection, and InitialPosition
+ * from the approach procedure route (Type=1) and the runway's TouchDownPointGuid.
+ *
+ * Unlike extractState5Data() which relies on existing State=5 aircraft entries,
+ * this extracts data from SceneryData which has approach procedures for ALL runways
+ * regardless of whether any file contains a State=5 aircraft for that runway.
+ *
+ * @param {string} aclText - raw ACL file content
+ * @param {string} runway - runway name, e.g. "22L"
+ * @returns {{pathPointList, touchDownPosition, approachDirection, initialPosition} | null}
+ */
+function resolveApproachProcedureData(aclText, runway) {
+  if (!runway) return null;
+
+  // 1. Find the Runway entry GUID
+  const runwayGuid = _findRunwayGuid(aclText, runway);
+  if (!runwayGuid) return null;
+
+  // 2. Navigate to the Runways dictionary within SceneryData.
+  // The Runways dictionary has nested $rcontent arrays (e.g. in 'comparer'),
+  // so we must find the OUTERMOST $rcontent that belongs to Runways itself.
+  const sdIdx = aclText.indexOf('"SceneryData"');
+  if (sdIdx < 0) return null;
+  const sdText = aclText.substring(sdIdx);
+  const sdT = createTokenizer(sdText);
+  const rwSec = sdT.findSection('Runways');
+  if (!rwSec) return null;
+
+  const rwText = sdT.substring(rwSec.valueStart, rwSec.valueEnd);
+  const rwT = createTokenizer(rwText);
+
+  // Find the MAIN $rcontent (skip nested ones by counting brace depth)
+  let rwRcStart = -1;
+  let mainDepth = 0;
+  for (let i = 0; i < rwText.length - 11; i++) {
+    if (rwText[i] === '{') mainDepth++;
+    else if (rwText[i] === '}') mainDepth--;
+    else if (mainDepth === 1 && rwText.substring(i, i + 11) === '"$rcontent"') {
+      const colonIdx = rwText.indexOf(':', i + 11);
+      if (colonIdx >= 0) {
+        let arrStart = colonIdx + 1;
+        while (arrStart < rwText.length && ' \t\n\r'.includes(rwText[arrStart])) arrStart++;
+        if (rwText[arrStart] === '[') {
+          rwRcStart = arrStart;
+          break;
+        }
+      }
+    }
+  }
+  if (rwRcStart < 0) return null;
+
+  // Search within the main Runways $rcontent for the matching runway GUID
+  let rwEntry = null;
+  let pos = rwRcStart + 1; // skip opening [
+  while (pos < rwText.length) {
+    while (pos < rwText.length && ' \t\n\r'.includes(rwText[pos])) pos++;
+    if (pos >= rwText.length || rwText[pos] === ']') break;
+    if (rwText[pos] === ',') { pos++; continue; }
+    if (rwText[pos] === '{') {
+      const entryEnd = rwT.findObjectEnd(pos);
+      if (entryEnd === null) break;
+      const block = rwText.substring(pos, entryEnd);
+      const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+      if (kMatch && kMatch[1] === runwayGuid) {
+        const vBlock = _extractValueBlock(block);
+        if (vBlock) rwEntry = vBlock;
+        break;
+      }
+      pos = entryEnd;
+    } else {
+      pos++;
+    }
+  }
+  if (!rwEntry) return null;
+
+  // 3. Extract TouchDownPointGuid
+  const tdGuid = _extractString(rwEntry, 'TouchDownPointGuid');
+  if (!tdGuid) return null;
+
+  // 4. Find the approach procedure route (Type=1) in Routes[]
+  const routesBlock = _extractNestedObject(rwEntry, 'Routes');
+  if (!routesBlock) return null;
+
+  const routesT = createTokenizer(routesBlock);
+  const routesRc = routesT.findSection('$rcontent');
+  if (!routesRc) return null;
+
+  let procedureName = null;
+  let rp = routesRc.valueStart + 1; // skip opening [
+  while (rp < routesBlock.length) {
+    while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+    if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+    if (routesBlock[rp] === ',') { rp++; continue; }
+    if (routesBlock[rp] === '{') {
+      const entryEnd = routesT.findObjectEnd(rp);
+      if (entryEnd === null) break;
+      const routeEntry = routesBlock.substring(rp, entryEnd);
+      const type = _extractInt(routeEntry, 'Type');
+      if (type === 1) {
+        procedureName = _extractString(routeEntry, 'Name');
+        break;
+      }
+      rp = entryEnd;
+    } else {
+      rp++;
+    }
+  }
+
+  if (!procedureName) return null;
+
+  // 5. Resolve PathPointList from AirwaySegments → AirwayNodes
+  const pathPointList = _resolveFromAirwaySegments(aclText, procedureName);
+  if (!pathPointList || pathPointList.length < 2) return null;
+
+  // 6. Resolve TouchDownPosition from TaxiwayNodes
+  const taxiNodes = _parseTaxiwayNodes(aclText);
+  const tdPos = taxiNodes.get(tdGuid);
+  if (!tdPos) return null;
+
+  // 7. Compute ApproachDirection from last segment of PathPointList
+  const lastPt = pathPointList[pathPointList.length - 1];
+  const prevPt = pathPointList[pathPointList.length - 2];
+  const approachDirection = _vec3Normalize(_vec3Sub(lastPt, prevPt));
+
+  // 8. InitialPosition = first PathPointList point (entry to final approach)
+  const initialPosition = { ...pathPointList[0] };
+
+  return {
+    pathPointList,
+    touchDownPosition: tdPos,
+    approachDirection,
+    initialPosition,
+  };
+}
+
 // ─── 6. ProgressRatio Computation ────────────────────────────────
 
 /**
@@ -607,8 +1125,10 @@ function computeProgressRatio(landingTimeTicks, saveTimeTicks, totalApproachTime
 /**
  * Combine FlyApproach + App points into one full path.
  */
-function buildFullPath(flyApproachPoints, appPoints) {
-  return [...(flyApproachPoints || []), ...(appPoints || [])];
+function buildFullPath(flyApproachPoints, appPoints, touchDownPosition) {
+  const all = [...(flyApproachPoints || []), ...(appPoints || [])];
+  if (touchDownPosition) all.push(touchDownPosition);
+  return all;
 }
 
 /**
@@ -661,13 +1181,29 @@ function _tangentAlongPath(points, targetDist) {
 
 /**
  * Compute Position from ProgressRatio along combined FlyApproach + App path.
+ * Touchdown is NOT included in the interpolation path (State=30 aircraft are on
+ * the STAR, not yet on final approach). It is only used for Y/glideslope via
+ * remaining path distance extended to the runway threshold.
  */
-function computePosition(flyApproachPoints, appPoints, progressRatio) {
+function computePosition(flyApproachPoints, appPoints, progressRatio, touchDownPosition, approachCap) {
   const fullPath = buildFullPath(flyApproachPoints, appPoints);
   const totalLen = computePathLength(fullPath);
   const targetDist = totalLen * progressRatio;
   const pos = _interpolateAlongPath(fullPath, targetDist);
-  pos.y = 15.24; // constant approach altitude
+  // Y from 3° ILS glideslope using REMAINING PATH DISTANCE (not straight-line).
+  // Path distance follows the approach route through turns — correct for
+  // curved approaches like KJFK SIE.CAMRM5. Capped at the runway's approach
+  // ceiling (cached per runway, NOT hardcoded).
+  if (touchDownPosition && approachCap != null) {
+    // Remaining distance: path left on FlyApproach+App, plus distance from
+    // last App point to touchdown (the final approach segment).
+    const remainingPathDist = (totalLen - targetDist) +
+      _vec3Dist(fullPath[fullPath.length - 1], touchDownPosition);
+    const glideY = remainingPathDist * Math.tan(3 * Math.PI / 180);
+    pos.y = Math.min(approachCap, glideY);
+  } else {
+    pos.y = 15.24; // fallback for callers without runway data (tests, legacy)
+  }
   return pos;
 }
 
@@ -709,6 +1245,8 @@ function buildApproachAircraftBlock(opts) {
     progressRatio,
     spec,
     radioChannelGuid = '',
+    touchDownPosition = null,
+    approachCap = null,
     nextId = 5001,
   } = opts;
 
@@ -770,7 +1308,7 @@ function buildApproachAircraftBlock(opts) {
   }
 
   // Position and Direction
-  const pos = computePosition(flyPoints, appPoints, progressRatio);
+  const pos = computePosition(flyPoints, appPoints, progressRatio, touchDownPosition, approachCap);
   const dir = computeDirection(flyPoints, appPoints, progressRatio);
 
   const block = `{
@@ -851,6 +1389,246 @@ function buildApproachAircraftBlock(opts) {
       "$type": ${T.waitCmd},
       "$rlength": 0,
       "$rcontent": []
+    },
+    "ReceivedEvents": {
+      "$id": ${id++},
+      "$type": ${T.recvEvt},
+      "$rlength": 0,
+      "$rcontent": []
+    },
+    "Route": "${route}"
+  }`;
+
+  return {
+    guid,
+    block,
+    nextId: id,
+  };
+}
+
+// ─── 8b. State=5 Aircraft Block Builder ────────────────────────────
+
+/**
+ * Build a State=5 (Approach/Tower, in-air) aircraft entry JSON block.
+ * Uses ApproachDynamicsParams with cached PathPointList instead of
+ * FlyApproachDynamicsParams (which State=30 uses).
+ *
+ * @param {Object} opts
+ * @param {string} opts.flightPlanGuid - GUID of the matching FlightPlanState
+ * @param {string} opts.route - approach procedure name (e.g., "RNAV ILS Z Rwy 19")
+ * @param {number} opts.state5PR - progress ratio along the final approach (0→1)
+ * @param {Object} opts.spec - AircraftSpec from specDB
+ * @param {string} opts.towerChannelGuid - Tower radio channel GUID
+ * @param {Object} opts.state5Params - cached { touchDownPosition, approachDirection, initialPosition, pathPointList }
+ * @param {number} [opts.nextId=5001] - starting $id counter
+ * @param {Object} [opts.typeNums] - per-file type number overrides
+ * @param {number} [opts.acTypeNum] - AircraftState $type number
+ * @returns {{guid: string, block: string, nextId: number}}
+ */
+function buildState5AircraftBlock(opts) {
+  const {
+    flightPlanGuid,
+    route,
+    state5PR,
+    spec,
+    towerChannelGuid = '',
+    state5Params,
+    flyPoints = null,
+    fullPR = null,
+    waitingForCommand = 22,
+    selectedRunwayExitIndex = -1,
+    nextId = 5001,
+  } = opts;
+
+  const guid = _generateGuid();
+  let id = nextId;
+
+  // Use namespace-qualified $type strings to bypass the game's integer type registry.
+  const tn = opts.typeNums || {};
+  const ns = (num, name, asm = 'GroundATC.Core') => `"${num}|${name}, ${asm}"`;
+  const T = {
+    ac:          ns(tn.acType            || opts.acTypeNum || 33, 'ContextCross.States.AircraftState'),
+    spec:        ns(tn.spec              || 34, 'ContextCross.States.AircraftSpecificationState'),
+    dyn:         ns(tn.dynInternal       || 38, 'ContextCross.Dynamics.DynamicInternalState'),
+    approachDyn: ns(tn.approachDynParams || 47, 'ContextCross.Dynamics.States.ApproachDynamicsParams'),
+    acRwy:       ns(tn.acRwy             || 42, 'ContextCross.States.AircraftRunwayCoordinateState'),
+    float3:      ns(tn.float3            || 35, 'Unity.Mathematics.float3', 'Unity.Mathematics'),
+    vec4:        ns(tn.vec4              || 37, 'UnityEngine.Vector4', 'UnityEngine.CoreModule'),
+    dockArr:     ns(tn.vec4Arr           || 36, 'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
+    waitCmd:     ns(tn.waitCmd           || 43, 'ContextCross.Enums.ECommand[]'),
+    recvEvt:     ns(tn.recvEvt           || 44, 'ContextCross.Events.AircraftEvent[]'),
+  };
+
+  const nsVec3 = '"16|UnityEngine.Vector3, UnityEngine.CoreModule"';
+  const nsListVec3 = `"${tn.listVec3 || 46}|System.Collections.Generic.List\`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib"`;
+  const nsStrArr = '"8|System.String[], mscorlib"';
+
+  const fmtV3 = (v) => `{\n  "$type": ${nsVec3},\n  ${v.x},\n  0,\n  ${v.z}\n}`;
+  const fmtFloat3 = (v) => `{\n  "$type": ${T.float3},\n  "x": ${v.x},\n  "y": ${v.y},\n  "z": ${v.z}\n}`;
+
+  // Standard ILS glideslope — 3 degrees.
+  // All AirwayNodes and PathPointList points have y=0 in the ACL
+  // (Unity stores positions in the XZ plane). The game computes actual
+  // altitude from the glideslope using REMAINING PATH DISTANCE (not
+  // straight-line) to follow the approach route through turns.
+  // Capped at the runway's approach ceiling — cached per runway from
+  // state5Params.initialPosition.y, NOT hardcoded.
+  const TAN_3_DEG = Math.tan(3 * Math.PI / 180); // ≈ 0.052408
+  const tdPos = state5Params.touchDownPosition || { x: 0, y: 0, z: 0 };
+  const approachCap = state5Params.initialPosition
+    ? state5Params.initialPosition.y
+    : 15.24;
+
+  // Build PathPointList with glideslope-computed Y (not the stored Y=0).
+  // Each point's Y = min(approachCap, pathDistanceToTD × tan(3°)).
+  const ppList = state5Params.pathPointList || [];
+  let pathPointsStr = '';
+
+  // Pre-compute path distances from each point to touchdown.
+  // Walk backwards through the path + tdPos to get cumulative distance.
+  const fullPathPoints = ppList.length > 0 ? [...ppList, tdPos] : [tdPos];
+  const pointDists = new Array(ppList.length);
+  let cumDist = 0;
+  for (let i = fullPathPoints.length - 2; i >= 0; i--) {
+    cumDist += _vec3Dist(fullPathPoints[i], fullPathPoints[i + 1]);
+    pointDists[i] = cumDist;
+  }
+
+  if (ppList.length > 0) {
+    const pts = ppList.map((p, i) => {
+      const pY = Math.min(approachCap, pointDists[i] * TAN_3_DEG);
+      // TEMP: hardcode Y=0 — original game files store PathPointList points with Y=0
+      // (flat XZ plane). The game computes altitude internally from the glideslope.
+      // Non-zero Y values differ from the game's expected format.
+      return `${i === 0 ? '' : ',\n'}{"$type": ${nsVec3}, ${p.x}, 0, ${p.z}}`; // TEMP: 0 instead of ${pY}
+    }).join('');
+    pathPointsStr = `{\n"$id": ${id++},\n"$type": ${nsListVec3},\n"$rlength": ${ppList.length},\n"$rcontent": [\n${pts}\n]\n}`;
+  } else {
+    pathPointsStr = `{\n"$id": ${id++},\n"$type": ${nsListVec3},\n"$rlength": 0,\n"$rcontent": []\n}`;
+  }
+
+  // Build DockingPositions
+  let dockStr = '';
+  const dp = spec.DockingPositions || [];
+  if (dp.length > 0) {
+    const dpts = dp.map((d, i) => `${i === 0 ? '' : ',\n'}{"$type": ${T.vec4}, ${d.x}, ${d.y}, ${d.z}, ${d.w}}`).join('');
+    dockStr = `{\n"$id": ${id++},\n"$type": ${T.dockArr},\n"$rlength": ${dp.length},\n"$rcontent": [\n${dpts}\n]\n}`;
+  } else {
+    dockStr = `{\n"$id": ${id++},\n"$type": ${T.dockArr},\n"$rlength": 0,\n"$rcontent": []\n}`;
+  }
+
+  // Position: interpolate along the unified path (FlyApproach → PathPointList).
+  // TouchDownPosition is NOT appended to the path to avoid zero-length tail segments
+  // when tdPos equals the last PathPointList point (common with derived params).
+  // Instead, remaining-path-distance for the glideslope is extended from the last
+  // path point to tdPos, matching how computePosition() works for State=30.
+  const posFullPath = flyPoints && flyPoints.length > 0
+    ? [...flyPoints, ...ppList]
+    : (ppList.length > 0 ? [...ppList] : [tdPos]);
+  const posPR = (flyPoints && flyPoints.length > 0 && fullPR != null) ? fullPR : state5PR;
+  const totalPathLen = computePathLength(posFullPath);
+  const targetDist = totalPathLen * Math.max(0, Math.min(1, posPR));
+  const pos = _interpolateAlongPath(posFullPath, targetDist);
+  // Y from 3° ILS glideslope using REMAINING PATH DISTANCE extended to touchdown.
+  // NOT straight-line — path distance follows the route through turns.
+  // Capped at the runway's approach ceiling.
+  const remainingPathDist = (totalPathLen - targetDist) +
+    _vec3Dist(posFullPath[posFullPath.length - 1], tdPos);
+  const glideY = remainingPathDist * TAN_3_DEG;
+  pos.y = Math.min(approachCap, glideY);
+
+  // Direction: path tangent at current position along the unified path.
+  // The tangent naturally converges to the runway heading at touchdown but
+  // follows the approach path through turns before that (e.g., SIE.CAMRM5→13L).
+  // dir.y is left at whatever _tangentAlongPath returns (in-plane direction).
+  const dir = _tangentAlongPath(posFullPath, targetDist);
+
+  const block = `{
+    "$id": ${id++},
+    "$type": ${T.ac},
+    "Guid": "${guid}",
+    "Enabled": true,
+    "State": 5,
+    "Specification": {
+      "$id": ${id++},
+      "$type": ${T.spec},
+      "Guid": null,
+      "Enabled": false,
+      "Designator": "${spec.Designator}",
+      "AerodromeCode": ${spec.AerodromeCode},
+      "WakeTurbulenceCategory": ${spec.WakeTurbulenceCategory},
+      "WheelBase": ${spec.WheelBase},
+      "ModelOffset": ${fmtFloat3(spec.ModelOffset)},
+      "WingSpan": ${spec.WingSpan},
+      "DockingPositions": ${dockStr},
+      "RunwayVRSpeed": ${spec.RunwayVRSpeed},
+      "RunwayTakeOffLength": ${spec.RunwayTakeOffLength}
+    },
+    "Direction": ${fmtV3(dir)},
+    "DynamicInternalState": {
+      "$type": ${T.dyn},
+      "DynamicsState": 2,
+      "TaxiSpeed": 240,
+      "ForwardSpeed": true,
+      "TargetTaxiSpeed": 240,
+      "PositiveTaxiAcceleration": 1,
+      "NegativeTaxiAcceleration": -2,
+      "TaxiArrivalToSpotPath": null,
+      "TaxiArrivalToHoldingPointPath": null,
+      "FrontWheelSteeringAngle": 0,
+      "DynamicsParams": {
+        "$id": ${id++},
+        "$type": ${T.approachDyn},
+        "ProgressRatio": ${state5PR},
+        "TouchDownPosition": ${fmtV3(state5Params.touchDownPosition || { x:0, z:0 })},
+        "ApproachDirection": ${fmtV3(state5Params.approachDirection || { x:0, z:-1 })},
+        "CommandedGoAround": false,
+        "InitialPosition": {
+          "$type": ${nsVec3},
+          ${ppList.length > 0 ? ppList[0].x : 0},
+          ${ppList.length > 0 ? Math.min(approachCap, pointDists[0] * TAN_3_DEG) : approachCap},
+          ${ppList.length > 0 ? ppList[0].z : 0}
+        },
+        "PathPointList": ${pathPointsStr}
+      }
+    },
+    "AircraftRunwayCoordinateState": {
+      "$id": ${id++},
+      "$type": ${T.acRwy},
+      "Guid": null,
+      "Enabled": false,
+      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "TaxiBlockingRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "RunwayFenceCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "RunwayGuardCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "CrossRunwayPermissions": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "RunwaySetterIdx": 0
+    },
+    "FlightPlanGuid": "${flightPlanGuid}",
+    "ActiveFlightDirection": 1,
+    "Position": {
+      "$type": ${nsVec3},
+      ${pos.x},
+      ${pos.y},
+      ${pos.z}
+    },
+    "RadioChannelGuid": "${towerChannelGuid}",
+    "JurisdictionRadioChannelGuid": "${towerChannelGuid}",
+    "TaxiPathStartingPosition": { "$type": ${nsVec3}, 0, 0, 0 },
+    "TaxiPath": null,
+    "RollingPresetTaxiPathStartingPosition": { "$type": ${nsVec3}, 0, 0, 0 },
+    "RollingPresetTaxiPath": null,
+    "SelectedRunwayEntryIndex": -1,
+    "SelectedRunwayEntryRunwayGuid": null,
+    "SelectedRunwayExitIndex": ${selectedRunwayExitIndex},
+    "SelectedTaxiPushBackNodeGuid": null,
+    "SelectedTowNavigationPointGuid": null,
+    "IsFirstTaxi": false,
+    "WaitingForCommands": {
+      "$id": ${id++},
+      "$type": ${T.waitCmd},
+      "$rlength": ${waitingForCommand === 0 ? 0 : 1},
+      "$rcontent": [${waitingForCommand === 0 ? '' : waitingForCommand}]
     },
     "ReceivedEvents": {
       "$id": ${id++},
@@ -1031,6 +1809,83 @@ function extractTypeMap(aclText) {
   return typeMap;
 }
 
+// ─── 9c. STAR Path Visualization Data ──────────────────────────────
+
+/**
+ * Build STAR path visualization data from appPointMap + SceneryData.
+ * Groups appPointMap entries by STAR name, resolves full flight paths
+ * (fly approach + app points) for each (STAR, runway) combo.
+ *
+ * Reuses resolveFlyApproachPoints() and buildFullPath() — the same
+ * path-resolution functions used by computePosition() for approach aircraft.
+ *
+ * @param {string} aclText - raw ACL text containing SceneryData
+ * @param {Map<string, Vector3[]>} appPointMap - Map<"STAR|Runway", Vector3[]> (may be null/empty)
+ * @param {Object<string, string[]>} [starRunwayMap] - { starName → [runway, ...] } from SceneryData
+ * @returns {{[starName: string]: Array<{runway: string, points: Vector3[]}>}}
+ */
+function buildStarPaths(aclText, appPointMap, starRunwayMap) {
+  if (!aclText) return {};
+
+  const starPaths = {};
+
+  // ── Pass 1: appPointMap-driven paths (from State=30 aircraft) ──
+  if (appPointMap && appPointMap.size > 0) {
+    // Group appPointMap entries by STAR name
+    const starGroups = new Map(); // starName -> [{runway, appPoints}]
+    for (const [key, points] of appPointMap) {
+      const pipeIdx = key.lastIndexOf('|');
+      if (pipeIdx === -1) continue;
+      const route = key.substring(0, pipeIdx);
+      const runway = key.substring(pipeIdx + 1);
+      if (!route || !runway) continue;
+      if (!starGroups.has(route)) starGroups.set(route, []);
+      starGroups.get(route).push({ runway, appPoints: points });
+    }
+
+    for (const [route, entries] of starGroups) {
+      const routePaths = [];
+      for (const { runway, appPoints } of entries) {
+        // Resolve fly approach points from SceneryData AirwayNodes
+        const flyPoints = resolveFlyApproachPoints(aclText, route, runway);
+        // Build full path: fly approach + final approach points
+        const fullPath = buildFullPath(flyPoints, appPoints, null);
+        if (fullPath.length >= 2) {
+          routePaths.push({ runway, points: fullPath });
+        } else if (appPoints.length >= 2) {
+          // Fallback: use appPoints alone if fly points couldn't be resolved
+          routePaths.push({ runway, points: appPoints });
+        }
+      }
+      if (routePaths.length > 0) {
+        starPaths[route] = routePaths;
+      }
+    }
+  }
+
+  // ── Pass 2: starRunwayMap-driven paths (from SceneryData Routes Type=0) ──
+  // Covers STAR+runway combos that exist in SceneryData but have no State=30
+  // aircraft (so they're absent from appPointMap). Paths use only FlyApproach
+  // waypoints from AirwayNodes — no AppPointList available.
+  if (starRunwayMap) {
+    for (const [starName, runways] of Object.entries(starRunwayMap)) {
+      const existingRunways = new Set(
+        (starPaths[starName] || []).map(v => v.runway)
+      );
+      for (const runway of runways) {
+        if (existingRunways.has(runway)) continue; // already handled by Pass 1
+        const flyPoints = resolveFlyApproachPoints(aclText, starName, runway);
+        if (flyPoints.length >= 2) {
+          if (!starPaths[starName]) starPaths[starName] = [];
+          starPaths[starName].push({ runway, points: flyPoints });
+        }
+      }
+    }
+  }
+
+  return starPaths;
+}
+
 // ─── 10. Approach Cache Builder ────────────────────────────────────
 
 /**
@@ -1043,12 +1898,13 @@ function buildApproachCache(airportDir) {
   const path = require('path');
   const log = (msg) => console.log('[APPROACH-CACHE]', msg);
 
-  // Find all .acl files (include demo, test, tutorial, endless, perfbench variants)
+  // Find all .acl files (include demo, test, tutorial, endless, perfbench variants,
+  // and .bak backups — needed for correct saveTimeOffsets computation).
   let aclFiles = [];
   try {
     const files = fs.readdirSync(airportDir);
     aclFiles = files
-      .filter(f => f.endsWith('.acl'))
+      .filter(f => f.endsWith('.acl') || f.endsWith('.acl.bak'))
       .map(f => path.join(airportDir, f));
   } catch (_) { return null; }
 
@@ -1061,17 +1917,25 @@ function buildApproachCache(airportDir) {
 
   // Collect all approach entries from all files
   const allEntries = [];
+  const allState5Entries = [];
   let specDB = new Map();
   let designatorMap = new Map();
   const typeMap = new Map(); // per-airport: type_number → type_name
   const fileTypeMaps = new Map(); // per-file: basename → Map<number, string>
+  let firstAclText = null;
 
   for (const aclPath of aclFiles) {
     try {
       const text = fs.readFileSync(aclPath, 'utf-8');
+      if (!firstAclText) firstAclText = text;
       const entries = extractApproachData(text);
       for (const e of entries) e._file = path.basename(aclPath);
       allEntries.push(...entries);
+
+      // State=5 entries (Sub-type A: in-air, Tower frequency)
+      const s5Entries = extractState5Data(text);
+      for (const e of s5Entries) e._file = path.basename(aclPath);
+      allState5Entries.push(...s5Entries);
 
       // Merge specDB from each file (byte-identical per Designator, safe to merge)
       const fileSpecs = extractSpecificationDB(text);
@@ -1094,7 +1958,7 @@ function buildApproachCache(airportDir) {
       // gets its own assignments. The per-file map survives repeated saves.
       fileTypeMaps.set(path.basename(aclPath), fileTypeMap);
 
-      log('  ' + path.basename(aclPath) + ': ' + entries.length + ' approach a/c, ' + fileSpecs.size + ' specs, ' + fileTypeMap.size + ' types');
+      log('  ' + path.basename(aclPath) + ': ' + entries.length + ' approach a/c, ' + s5Entries.length + ' state5 a/c, ' + fileSpecs.size + ' specs, ' + fileTypeMap.size + ' types');
     } catch (e) {
       log('  SKIP ' + path.basename(aclPath) + ': ' + e.message);
     }
@@ -1106,7 +1970,25 @@ function buildApproachCache(airportDir) {
   }
 
   const appPointMap = buildAppPointMap(allEntries);
+
+  // Extract authoritative STAR↔runway mappings from SceneryData.
+  // This captures ALL valid combos (not just those with State=30 aircraft).
+  const starMappings = firstAclText
+    ? extractStarRunwayMappings(firstAclText)
+    : { starRunwayMap: {}, runwayStarMap: {} };
+
+  // Build starPaths from both appPointMap AND the starRunwayMap.
+  // Pass 1 uses appPointMap (State=30 aircraft) for full fly+approach paths.
+  // Pass 2 uses starRunwayMap to add any STARs defined in SceneryData but
+  // missing from appPointMap — these get FlyApproach-only paths.
+  const starPaths = firstAclText
+    ? buildStarPaths(firstAclText, appPointMap, starMappings.starRunwayMap)
+    : {};
+  const runwayThresholds = firstAclText
+    ? _parseRunwayThresholds(firstAclText)
+    : {};
   const totalApproachTimes = computeTotalApproachTimes(allEntries, (e) => e._file);
+  const state5ParamsMap = buildState5ParamsMap(allState5Entries);
 
   // Compute per-file saveTime offsets from approach entries.
   // saveTime = LandingTime - (1 - PR) * totalApproachTime  → seconds since midnight
@@ -1138,12 +2020,22 @@ function buildApproachCache(airportDir) {
   log('Done: ' + specDB.size + ' specs, ' + appPointMap.size + ' route combos, ' +
       totalApproachTimes.size + ' routes, ' + designatorMap.size + ' type mappings, ' +
       saveTimeOffsets.size + ' file saveTime offsets, ' + typeMap.size + ' type declarations, ' +
-      fileTypeMaps.size + ' file typeMaps');
+      fileTypeMaps.size + ' file typeMaps, ' + state5ParamsMap.size + ' state5 route combos, ' +
+      Object.keys(starPaths).length + ' star paths (' +
+      Object.keys(starMappings.starRunwayMap).length + ' STARs from SceneryData), ' +
+      Object.keys(runwayThresholds).length + ' runways');
 
   // Clean up _file property from entries
   for (const e of allEntries) delete e._file;
+  for (const e of allState5Entries) delete e._file;
 
-  return { specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps };
+  return {
+    specDB, appPointMap, totalApproachTimes, designatorMap,
+    saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap,
+    starPaths, runwayThresholds,
+    starRunwayMap: starMappings.starRunwayMap,
+    runwayStarMap: starMappings.runwayStarMap,
+  };
 }
 
 // ─── 9b. AircraftAnimators Block Builder ──────────────────────────
@@ -1276,6 +2168,11 @@ function serializeApproachCache(cache) {
   if (cache.saveTimeOffsets) { out.saveTimeOffsets = {}; for (const [k, v] of cache.saveTimeOffsets) out.saveTimeOffsets[k] = v; }
   if (cache.typeMap) { out.typeMap = {}; for (const [k, v] of cache.typeMap) out.typeMap[String(k)] = v; }
   if (cache.fileTypeMaps) { out.fileTypeMaps = {}; for (const [fileName, tm] of cache.fileTypeMaps) { const obj = {}; for (const [k, v] of tm) obj[String(k)] = v; out.fileTypeMaps[fileName] = obj; } }
+  if (cache.state5ParamsMap) { out.state5ParamsMap = {}; for (const [k, v] of cache.state5ParamsMap) out.state5ParamsMap[k] = v; }
+  if (cache.starPaths) { out.starPaths = cache.starPaths; }
+  if (cache.runwayThresholds) { out.runwayThresholds = cache.runwayThresholds; }
+  if (cache.starRunwayMap) { out.starRunwayMap = cache.starRunwayMap; }
+  if (cache.runwayStarMap) { out.runwayStarMap = cache.runwayStarMap; }
   return out;
 }
 
@@ -1293,6 +2190,11 @@ function deserializeApproachCache(json) {
   if (json.saveTimeOffsets && typeof json.saveTimeOffsets === 'object') { cache.saveTimeOffsets = new Map(Object.entries(json.saveTimeOffsets)); }
   if (json.typeMap && typeof json.typeMap === 'object') { cache.typeMap = new Map(Object.entries(json.typeMap).map(([k, v]) => [parseInt(k, 10), v])); }
   if (json.fileTypeMaps && typeof json.fileTypeMaps === 'object') { cache.fileTypeMaps = new Map(Object.entries(json.fileTypeMaps).map(([name, obj]) => [name, new Map(Object.entries(obj).map(([k, v]) => [parseInt(k, 10), v]))])); }
+  if (json.state5ParamsMap && typeof json.state5ParamsMap === 'object') { cache.state5ParamsMap = new Map(Object.entries(json.state5ParamsMap)); }
+  if (json.starPaths && typeof json.starPaths === 'object') { cache.starPaths = json.starPaths; }
+  if (json.runwayThresholds && typeof json.runwayThresholds === 'object') { cache.runwayThresholds = json.runwayThresholds; }
+  if (json.starRunwayMap && typeof json.starRunwayMap === 'object') { cache.starRunwayMap = json.starRunwayMap; }
+  if (json.runwayStarMap && typeof json.runwayStarMap === 'object') { cache.runwayStarMap = json.runwayStarMap; }
   return cache;
 }
 
@@ -1302,12 +2204,15 @@ module.exports = {
   // Data extraction
   extractSpecificationDB,
   extractApproachData,
+  extractState5Data,
   extractTypeMap,
   buildAppPointMap,
+  buildState5ParamsMap,
   computeTotalApproachTimes,
 
   // Path resolution
   resolveFlyApproachPoints,
+  resolveApproachProcedureData,
 
   // Computation
   computeProgressRatio,
@@ -1319,6 +2224,8 @@ module.exports = {
   // Designator mapping & cache
   buildDesignatorMapping,
   buildApproachCache,
+  buildStarPaths,
+  extractStarRunwayMappings,
   extractSaveTime,
   extractGameTime,
   serializeApproachCache,
@@ -1326,6 +2233,7 @@ module.exports = {
 
   // Assembly
   buildApproachAircraftBlock,
+  buildState5AircraftBlock,
   buildAnimatorBlock,
 
   // Internal exports (for testing)
@@ -1333,6 +2241,7 @@ module.exports = {
   _interpolateAlongPath, _tangentAlongPath,
   _findArrayEnd, _extractValueBlock, _extractNestedObject,
   _extractFloat, _extractInt, _extractString, _extractVector3, _extractVector3Array,
-  _parseAircraftEntries, _parseFlightPlanData, _parseAirwayNodes,
+  _parseAircraftEntries, _parseFlightPlanData, _parseAirwayNodes, _parseTaxiwayNodes,
+  _parseRunwayThresholds,
   _resolveFromAirwaySegments, _findRunwayGuid,
 };

@@ -27,20 +27,22 @@ const {
 } = require('./utils');
 const { scanGameRoot } = require('./scanner');
 const {
-  extractSpecificationDB, extractApproachData, extractTypeMap,
-  buildAppPointMap, computeTotalApproachTimes,
+  extractSpecificationDB, extractApproachData, extractState5Data, extractTypeMap,
+  buildAppPointMap, buildState5ParamsMap, computeTotalApproachTimes, buildFlyFractionMap,
   resolveFlyApproachPoints,
   computeProgressRatio, computePosition, computeDirection,
   buildFullPath, computePathLength,
-  buildApproachAircraftBlock,
-  buildDesignatorMapping, buildApproachCache,
+  buildApproachAircraftBlock, buildState5AircraftBlock,
+  buildDesignatorMapping, buildApproachCache, buildStarPaths,
+  extractStarRunwayMappings,
   serializeApproachCache, deserializeApproachCache,
   extractSaveTime, extractGameTime,
+  _parseRunwayThresholds,
 } = require('./approach');
 const {
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
-  _extractConfig,
+  _extractConfig, _extractTowerChannelGuid,
 } = require('./flight_plans');
 const { createZip, listZipFiles, extractZip } = require('../utils/zipUtils');
 const { createTokenizer } = require('./tokenizer');
@@ -168,13 +170,14 @@ module.exports = {
   getFileInfo, loadAudioCallsigns,
   sortFlightsChronologically,
   scanGameRoot,
-  extractSpecificationDB, extractApproachData, extractTypeMap,
-  buildAppPointMap, computeTotalApproachTimes,
+  extractSpecificationDB, extractApproachData, extractState5Data, extractTypeMap,
+  buildAppPointMap, buildState5ParamsMap, computeTotalApproachTimes, buildFlyFractionMap,
   resolveFlyApproachPoints,
   computeProgressRatio, computePosition, computeDirection,
   buildFullPath, computePathLength,
-  buildApproachAircraftBlock,
-  buildDesignatorMapping, buildApproachCache,
+  buildApproachAircraftBlock, buildState5AircraftBlock,
+  buildDesignatorMapping, buildApproachCache, buildStarPaths,
+  extractStarRunwayMappings,
   serializeApproachCache, deserializeApproachCache,
   extractSaveTime, extractGameTime,
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
@@ -186,6 +189,7 @@ module.exports = {
   AclDocument,
   // Internal exports (used by tests)
   _parseWorldStateData, _parseSceneryData, _parseStandPositions,
+  _parseRunwayThresholds,
   _extractFlightsFromWorldState,
   _parseWorldStateFlightPlans, _parseFlightPlanEntry,
   _rebuildWorldStateSections,

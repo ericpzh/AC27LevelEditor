@@ -33,7 +33,7 @@ const FIELD_LABELS = {
 
 const DROPDOWN_FIELDS = [
   'AircraftType', 'AirlineCode',
-  'Stand', 'Runway',
+  'Runway',
   'Voice', 'Language', 'Registration', 'Airway',
 ];
 

@@ -1,0 +1,261 @@
+/* ─── Star Map Panel ────────────────────────────────────── */
+/* Non-blocking overlay positioned to the left of the cell   */
+
+:root {
+  --star-line-color: var(--accent, #5b8def);
+  --star-line-disabled: var(--text-muted, #5c6170);
+}
+
+.star-map-panel {
+  position: fixed;
+  z-index: 250;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ── Expand: fade-in only (no scale — avoids text rendering artifacts) ── */
+.star-map-panel.opening {
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+/* ── Shrink: scale toward toggle button + fade ── */
+.star-map-panel.closing {
+  opacity: 0;
+  transform: scale(0);
+  transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
+}
+
+.star-map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+
+.star-map-panel.dragging .star-map-header {
+  cursor: grabbing;
+}
+
+.star-map-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.star-map-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.star-map-shrink {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all var(--transition);
+}
+
+.star-map-shrink:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+/* ── Content wrapper ── */
+
+.star-map-content-wrap {
+  overflow: hidden;
+}
+
+.star-map-svg {
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.star-map-bg {
+  fill: var(--bg);
+}
+
+/* ── Line states ──────────────────────────────────────── */
+
+.star-map-line {
+  transition: stroke 100ms ease, stroke-width 100ms ease, opacity 100ms ease;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.star-map-line.available,
+.star-map-line.hovered,
+.star-map-line.current {
+  stroke: var(--star-line-color);
+  cursor: pointer;
+}
+
+.star-map-line.disabled {
+  stroke: var(--star-line-disabled);
+  opacity: 0.5;
+  pointer-events: none;
+  cursor: default;
+}
+
+.star-map-ring {
+  stroke: var(--accent);
+  opacity: 0.25;
+}
+
+.star-map-label {
+  fill: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: fill 100ms ease;
+}
+
+.star-map-label-bg {
+  fill: var(--bg);
+}
+
+.star-map-label.hovered {
+  fill: var(--text);
+}
+
+.star-map-label.current {
+  fill: var(--accent);
+  font-weight: 600;
+}
+
+.star-map-label.disabled {
+  fill: var(--star-line-disabled);
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
+.star-map-runway {
+  stroke: var(--star-line-disabled);
+  opacity: 0.5;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.star-map-runway.current {
+  stroke: var(--text);
+  opacity: 1.0;
+}
+
+.star-map-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  flex: 1;
+}
+
+/* ── Aircraft position icons ─────────────────────────── */
+
+.star-map-aircraft {
+  will-change: transform;
+  transition: transform 400ms ease;
+}
+
+.star-map-aircraft path {
+  fill: var(--text-muted);
+  stroke: var(--bg-surface);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
+}
+
+.star-map-aircraft.editing path {
+  fill: var(--text);
+  stroke: var(--accent);
+  stroke-width: 1.2;
+}
+
+.star-map-ac-label {
+  fill: var(--text-muted);
+  font-weight: 400;
+  pointer-events: none;
+  user-select: none;
+}
+
+.star-map-ac-label.editing {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+/* ── Hover ghost: aircraft projected onto hovered STAR ── */
+
+.star-map-hover-line {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+
+/* ─── Legend ──────────────────────────────────────────── */
+
+.star-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 10px 12px 14px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.star-map-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.star-map-legend-swatch {
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.star-map-legend-swatch.lg-current {
+  background: var(--star-line-color);
+  width: 14px;
+  height: 4px;
+}
+
+.star-map-legend-swatch.lg-available {
+  background: var(--star-line-color);
+  width: 10px;
+  height: 2px;
+}
+
+.star-map-legend-swatch.lg-disabled {
+  background: var(--star-line-disabled);
+  opacity: 0.5;
+  width: 10px;
+  height: 2px;
+}

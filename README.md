@@ -163,6 +163,8 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │   │   ├── EditorScreen/        # Main editor: table + timelines
 │   │   │   ├── FlightTable/     # Sortable flight table with inline editing
 │   │   │   ├── CellEditor/      # SVG clock & compass popovers
+│   │   │   ├── StandMap/        # Interactive stand position map overlay
+│   │   │   ├── StarMap/         # Interactive STAR/approach chart overlay
 │   │   │   └── TimelineEditors/ # Weather, Wind, Runway editors
 │   │   └── common/              # Modal, Toast
 │   │
@@ -171,7 +173,8 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │   │   ├── useElectronAPI.jsx   # electronAPI Context Provider
 │   │   ├── useEditorShell.jsx   # Keyboard shortcuts
 │   │   ├── useKeyboardShortcuts.js  # Generic shortcut registry
-│   │   └── useSaveAcl.jsx       # Save/export/backup logic
+│   │   ├── useSaveAcl.jsx       # Save/export/backup logic
+│   │   └── useDrag.js          # Shared drag behavior for floating panels
 │   │
 │   ├── store/
 │   │   └── appStore.js      # zustand store — all app state
@@ -184,7 +187,7 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │   │   ├── scanner.js           # Game root scanner
 │   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
 │   │   ├── world_state.js       # WorldState format (types 35/56/54)
-│   │   ├── approach.js         # Approach AircraftState constructor (State=30)
+│   │   ├── approach.js         # Approach AircraftState constructor (State=30 & State=5)
 │   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
 │   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils

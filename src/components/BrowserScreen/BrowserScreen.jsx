@@ -76,6 +76,26 @@ export default function BrowserScreen() {
     }).catch(() => {});
   }, []);
 
+  // Listen for mid-session cache invalidation (e.g., cache.json deleted while app is open)
+  useEffect(() => {
+    if (!electronAPI.onCacheInvalidated) return;
+    electronAPI.onCacheInvalidated(() => {
+      const { showModal } = useAppStore.getState();
+      showModal(
+        t => t('browser_version_mismatch_title'),
+        t => rescanGuideContent(t),
+        t => <div className="modal-actions-row">
+          <button className="btn-confirm" onClick={handleVersionMismatchRescan}>
+            {t('browser_version_mismatch_button')}
+          </button>
+        </div>,
+        false, // closeable=false
+        null,  // headerRight
+        true   // showLangToggle
+      );
+    });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {

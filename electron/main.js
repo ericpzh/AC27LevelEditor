@@ -7,9 +7,9 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, computePosition, computeDirection } = require('../src/acl/parser');
 
-const CACHE_VERSION = 2; // Bump when cache.json schema changes
+const CACHE_VERSION = 3; // Bump when cache.json schema changes
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
@@ -186,6 +186,39 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   // Include stand positions from airport cache
   aclValues._standPositions = cached?.standPositions || {};
 
+  // Include STAR paths for the Airway column graph popup
+  aclValues._starPaths = cached?.approachData?.starPaths || {};
+
+  // Use authoritative STAR↔runway mappings extracted from SceneryData.Runways[].Routes[].Type=0.
+  // This captures ALL valid STAR-runway combinations, not just those present in appPointMap
+  // (which is limited to State=30 aircraft entries at snapshot time).
+  aclValues._starRunwayMap = cached?.approachData?.starRunwayMap || {};
+  aclValues._runwayStarMap = cached?.approachData?.runwayStarMap || {};
+
+  // Build runway threshold lines for StarMap visualization.
+  // Data from SceneryData.Runways (parsed by _parseRunwayThresholds),
+  // keyed by PhysicalName (e.g. "13L/31R"). Each entry already has both
+  // threshold points — just convert to {a, b} format for StarMap.
+  const runwayThresholds = {};
+  if (cached?.approachData?.runwayThresholds) {
+    const rwyData = cached.approachData.runwayThresholds;
+    console.log('[COLLECT-VALUES] runway pairs from scenery:', Object.keys(rwyData).join(', '));
+    for (const [name, entry] of Object.entries(rwyData)) {
+      if (entry.thresholds && entry.thresholds.length === 2) {
+        const a = entry.thresholds[0];
+        const b = entry.thresholds[1];
+        // Extend runway to 3x: push each endpoint outward by one full length
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        runwayThresholds[name] = {
+          a: { x: a.x - dx, z: a.z - dz },
+          b: { x: b.x + dx, z: b.z + dz },
+        };
+      }
+    }
+  }
+  aclValues._runwayThresholds = runwayThresholds;
+
   return aclValues;
 });
 
@@ -204,6 +237,66 @@ function _cachePath() {
   return path.join(app.getPath('userData'), 'cache.json');
 }
 
+// ─── Centralized cache.json read/write ────────────────────
+// All reads/writes to cache.json MUST go through these functions.
+
+/**
+ * Read and validate cache.json.
+ * @param {{ validateRoot?: string, signalReScan?: boolean }} options
+ * @returns {{ data: object|null, valid: boolean, missing: boolean, error?: string, versionMismatch: boolean, rootMismatch: boolean }}
+ *   - data: the parsed JSON (always populated if file exists, even when invalid)
+ *   - valid: true when cacheVersion matches CACHE_VERSION and root matches (if validateRoot set)
+ *   - missing: true when cache.json doesn't exist on disk
+ */
+function _readCache(options = {}) {
+  const cachePath = _cachePath();
+
+  if (!fs.existsSync(cachePath)) {
+    if (options.signalReScan && mainWindow) {
+      mainWindow.webContents.send('cache-invalidated');
+    }
+    return { data: null, valid: false, missing: true, versionMismatch: true, rootMismatch: true };
+  }
+
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+  } catch (e) {
+    console.error('[CACHE] _readCache parse error:', e.message);
+    if (options.signalReScan && mainWindow) {
+      mainWindow.webContents.send('cache-invalidated');
+    }
+    return { data: null, valid: false, missing: false, error: e.message, versionMismatch: true, rootMismatch: true };
+  }
+
+  const cachedVersion = raw.cacheVersion || 0;
+  const versionMismatch = cachedVersion !== CACHE_VERSION;
+  const rootMismatch = options.validateRoot ? raw.gameRoot !== options.validateRoot : false;
+  const valid = !versionMismatch && !rootMismatch;
+
+  if (!valid && options.signalReScan && mainWindow) {
+    mainWindow.webContents.send('cache-invalidated');
+  }
+
+  // Log validity for debugging
+  if (!valid) {
+    console.log('[CACHE] _readCache invalid — versionMismatch=' + versionMismatch + ' (stored=' + cachedVersion + ' expected=' + CACHE_VERSION + ') rootMismatch=' + rootMismatch);
+  }
+
+  return { data: raw, valid, missing: false, versionMismatch, rootMismatch };
+}
+
+/**
+ * Write the full cache object to cache.json.
+ * Creates the userData directory if it doesn't exist.
+ * @param {object} data - full cache payload to write
+ */
+function _writeCache(data) {
+  const cfgDir = app.getPath('userData');
+  if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
+  fs.writeFileSync(_cachePath(), JSON.stringify(data), 'utf-8');
+}
+
 // ─── IPC: Phase 0 — initialize airport cache (scan all CSV + audio) ──
 
 ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
@@ -213,20 +306,16 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
 
   // ── Try loading approach data from disk cache ──
   let diskCache = null;
-  const cachePath = _cachePath();
-  try {
-    if (fs.existsSync(cachePath)) {
-      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-      const age = Date.now() - (raw.builtAt || 0);
-      if (raw.gameRoot === rootPath) {
-        diskCache = raw.airports || {};
-        console.log('[INIT-CACHE] loaded approach cache from disk (' + Object.keys(diskCache).length + ' airports, age=' + (age / 3600000).toFixed(1) + 'h)');
-      } else {
-        console.log('[INIT-CACHE] disk cache invalid (rootMatch=' + (raw.gameRoot === rootPath) + ' age=' + (age / 3600000).toFixed(1) + 'h), will rebuild');
-      }
-    }
-  } catch (e) {
-    console.log('[INIT-CACHE] disk cache read error:', e.message);
+  const cr = _readCache({ validateRoot: rootPath });
+  if (cr.valid) {
+    diskCache = cr.data.airports || {};
+    const age = Date.now() - (cr.data.builtAt || 0);
+    console.log('[INIT-CACHE] loaded approach cache from disk (' + Object.keys(diskCache).length + ' airports, age=' + (age / 3600000).toFixed(1) + 'h)');
+  } else if (!cr.missing && !cr.error) {
+    const age = cr.data ? Date.now() - (cr.data.builtAt || 0) : 0;
+    console.log('[INIT-CACHE] disk cache invalid (rootMatch=' + !cr.rootMismatch + ' versionMatch=' + !cr.versionMismatch + ' age=' + (age / 3600000).toFixed(1) + 'h), will rebuild');
+  } else if (cr.error) {
+    console.log('[INIT-CACHE] disk cache read error:', cr.error);
   }
 
   const cache = {};
@@ -289,6 +378,11 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       console.log('[INIT-CACHE]   ' + icao + ': stand positions from disk cache (' + Object.keys(standPositions).length + ' stands)');
     }
 
+    // Use SceneryData stand identifiers as the authoritative stand list
+    if (standPositions && Object.keys(standPositions).length > 0) {
+      dropdownValues.Stand = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
+    }
+
     // Merge audio flight numbers into dropdown _flightNums
     if (audioCallsigns?.byAirline) {
       if (!dropdownValues._flightNums) dropdownValues._flightNums = {};
@@ -342,9 +436,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         builtAt: Date.now(),
         airports: serialized,
       };
-      const cfgDir = app.getPath('userData');
-      if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
-      fs.writeFileSync(cachePath, JSON.stringify(payload), 'utf-8');
+      _writeCache(payload);
       console.log('[INIT-CACHE] persisted cache to disk (' + Object.keys(serialized).length + ' airports)');
     } catch (e) {
       console.log('[INIT-CACHE] disk cache write error:', e.message);
@@ -361,15 +453,11 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
   try {
     // Preserve lang from old cache before deleting
     let preservedLang = null;
-    const cachePath = _cachePath();
-    try {
-      if (fs.existsSync(cachePath)) {
-        const old = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-        preservedLang = old.lang || null;
-      }
-    } catch (_) {}
+    const cr = _readCache();
+    if (cr.data) preservedLang = cr.data.lang || null;
 
     // Delete disk cache to force re-scan
+    const cachePath = _cachePath();
     if (fs.existsSync(cachePath)) {
       fs.unlinkSync(cachePath);
       console.log('[IPC] refresh-root-scan: deleted disk cache');
@@ -432,6 +520,11 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         }
       } catch (e) { standPositions = {}; }
 
+      // Use SceneryData stand identifiers as the authoritative stand list
+      if (standPositions && Object.keys(standPositions).length > 0) {
+        dropdownValues.Stand = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
+      }
+
       cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions };
     }
 
@@ -448,9 +541,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       };
     }
     const payload = { cacheVersion: CACHE_VERSION, gameRoot: rootPath, lang: preservedLang, builtAt: Date.now(), airports: serialized };
-    const cfgDir = app.getPath('userData');
-    if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
-    fs.writeFileSync(_cachePath(), JSON.stringify(payload), 'utf-8');
+    _writeCache(payload);
 
     console.log('[IPC] refresh-root-scan OK — ' + Object.keys(cache).length + ' airports');
 
@@ -615,14 +706,11 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
         aclcfgStartTime = config.startTime || null;
         aclcfgEndTime = config.endTime || null;
       }
-      // Extract CurrentDateTime as snapshot time for correct PR calculation.
-      // Applicable to ALL files — the game records the exact save time in CDT.
-      // For .demo.acl files, also override startTime/endTime from CDT.
+      // For .demo.acl files, override startTime/endTime from CDT.
+      // NOTE: We do NOT override _saveSec from CDT — the wall-clock timestamp
+      // is not the scenario save point. saveSec comes from the approach cache's
+      // saveTimeOffsets (derived from landingTime - (1-PR)*TAT during init scan).
       const cdt = extractCurrentDateTime(text);
-      if (cdt && cdt.secSinceMidnight != null) {
-        _saveSec = cdt.secSinceMidnight;
-        console.log('[IPC] save-acl: CDT=' + cdt.timeString + ' → _saveSec=' + _saveSec + 's');
-      }
       if (isDemoSave && cdt && cdt.timeString) {
         aclcfgStartTime = cdt.timeString;
         const endSec = cdt.secSinceMidnight + 1800;
@@ -761,7 +849,7 @@ ipcMain.handle('manual-backup', async (_event, sourcePath) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Choose Backup Location',
     defaultPath: path.basename(sourcePath),
-    filters: [{ name: 'ACL Files', extensions: ['acl'] }],
+    filters: [{ name: 'Level Files', extensions: ['acl'] }],
   });
   if (result.canceled || !result.filePath) return { canceled: true };
 
@@ -798,11 +886,11 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     const hasRunway = lowerNames.some(f => f.startsWith('runway_timeline') && f.endsWith('.json'));
 
     const missing = [];
-    if (!hasAcl) missing.push('.acl');
-    if (!hasCsv) missing.push('.csv');
-    if (!hasWeather) missing.push('weather_timeline.json');
-    if (!hasWind) missing.push('wind_timeline.json');
-    if (!hasRunway) missing.push('runway_timeline*.json');
+    if (!hasAcl) missing.push('flight schedule');
+    if (!hasCsv) missing.push('flight data');
+    if (!hasWeather) missing.push('weather timeline');
+    if (!hasWind) missing.push('wind timeline');
+    if (!hasRunway) missing.push('runway timeline');
 
     if (missing.length > 0) {
       return { canceled: false, error: `ZIP missing required files: ${missing.join(', ')}` };
@@ -941,10 +1029,10 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     // 1) Restore .acl.bak → .acl
     const aclBak = filePath + '.bak';
     if (!fs.existsSync(aclBak)) {
-      return { success: false, error: 'No .acl.bak backup file found' };
+      return { success: false, error: 'No backup file found' };
     }
     fs.copyFileSync(aclBak, filePath);
-    restored.push('ACL');
+    restored.push('flight schedule');
 
     // 2) Read config from restored ACL's Config block for file references
     let config = null;
@@ -959,7 +1047,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
       const csvBak = csvPath + '.bak';
       if (fs.existsSync(csvBak)) {
         fs.copyFileSync(csvBak, csvPath);
-        restored.push('CSV');
+        restored.push('flight data');
       }
     }
 
@@ -1027,9 +1115,9 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
 
 ipcMain.handle('export-csv', async (_event, { flights, defaultPath }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: 'Export CSV',
+    title: 'Export Flight Data',
     defaultPath: defaultPath || 'flights.csv',
-    filters: [{ name: 'CSV Files', extensions: ['csv'] }],
+    filters: [{ name: 'Spreadsheet Files', extensions: ['csv'] }],
   });
   if (result.canceled || !result.filePath) return { canceled: false };
 
@@ -1046,20 +1134,16 @@ ipcMain.handle('export-csv', async (_event, { flights, defaultPath }) => {
 
 ipcMain.handle('get-cache-state', () => {
   try {
-    const cachePath = _cachePath();
-
     // Cache exists — check version
-    if (fs.existsSync(cachePath)) {
-      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-      const cachedVersion = raw.cacheVersion || 0;
-      const mismatch = cachedVersion !== CACHE_VERSION;
-      const airportList = raw.airports ? Object.keys(raw.airports) : [];
+    const cr = _readCache();
+    if (cr.data) {
+      const airportList = cr.data.airports ? Object.keys(cr.data.airports) : [];
       return {
-        state: mismatch ? 'mismatch' : 'ready',
-        gameRoot: raw.gameRoot || null,
-        lang: raw.lang || null,
+        state: cr.valid ? 'ready' : 'mismatch',
+        gameRoot: cr.data.gameRoot || null,
+        lang: cr.data.lang || null,
         airports: airportList,
-        cachedVersion,
+        cachedVersion: cr.data.cacheVersion || 0,
         expectedVersion: CACHE_VERSION,
       };
     }
@@ -1076,9 +1160,7 @@ ipcMain.handle('get-cache-state', () => {
           builtAt: old.builtAt || Date.now(),
           airports: old.airports || {},
         };
-        const cfgDir = app.getPath('userData');
-        if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
-        fs.writeFileSync(cachePath, JSON.stringify(payload), 'utf-8');
+        _writeCache(payload);
         console.log('[get-cache-state] migrated from approachCache.json');
         return {
           state: 'ready',
@@ -1123,28 +1205,20 @@ ipcMain.handle('get-cache-state', () => {
 // ─── IPC: Cache lang read/write ──────────────────────────
 
 ipcMain.handle('get-cached-lang', () => {
-  try {
-    const cachePath = _cachePath();
-    if (fs.existsSync(cachePath)) {
-      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-      return { lang: raw.lang || null };
-    }
-  } catch (_) {}
+  const cr = _readCache();
+  if (cr.data) return { lang: cr.data.lang || null };
   return { lang: null };
 });
 
 ipcMain.handle('save-cached-lang', (_event, lang) => {
   try {
-    const cachePath = _cachePath();
-    const cfgDir = app.getPath('userData');
-    if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
-    if (fs.existsSync(cachePath)) {
-      const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-      raw.lang = lang;
-      fs.writeFileSync(cachePath, JSON.stringify(raw), 'utf-8');
+    const cr = _readCache();
+    if (cr.data) {
+      cr.data.lang = lang;
+      _writeCache(cr.data);
     } else {
       // No cache yet — write minimal record
-      fs.writeFileSync(cachePath, JSON.stringify({ cacheVersion: CACHE_VERSION, lang }), 'utf-8');
+      _writeCache({ cacheVersion: CACHE_VERSION, lang });
     }
     return { success: true };
   } catch (err) {
@@ -1267,6 +1341,106 @@ ipcMain.handle('scan-runway-pairs', async (_event, rootPath, airportIcao) => {
   // Read from airport cache (built during init-airport-cache / refresh-root-scan)
   const cached = airportCache && airportCache[airportIcao];
   return { success: true, pairs: cached?.runwayPairs || [] };
+});
+
+// ─── IPC: Compute aircraft positions on approach for StarMap visualization ───
+
+ipcMain.handle('get-aircraft-positions', async (_event, icao, arrivals, saveSec) => {
+  try {
+    const approachData = airportCache && airportCache[icao]?.approachData;
+    if (!approachData) return { success: true, positions: [] };
+
+    const { starPaths, totalApproachTimes, state5ParamsMap } = approachData;
+
+    // Compute fallback TAT (median) for STARs that have path data but no State=30 entries
+    let fallbackTat = null;
+    if (totalApproachTimes && totalApproachTimes.size > 0) {
+      const vals = [...totalApproachTimes.values()].sort((a, b) => a - b);
+      const mid = Math.floor(vals.length / 2);
+      fallbackTat = vals.length % 2 === 0
+        ? (vals[mid - 1] + vals[mid]) / 2
+        : vals[mid];
+    }
+
+    const positions = [];
+
+    for (const ac of arrivals) {
+      const { callsign, star, runway, landingSec } = ac;
+      if (!star || !runway || landingSec == null) continue;
+
+      // Get the unified path (FlyApproach + AppPointList) from cached starPaths
+      const variants = starPaths && starPaths[star];
+      if (!variants) continue;
+      const variant = variants.find(
+        (v) => v.runway && v.runway.toUpperCase() === runway.toUpperCase(),
+      );
+      if (!variant || !variant.points || variant.points.length < 2) continue;
+
+      // Total approach time for this STAR — use fallback (median) if not in map
+      let totalTime =
+        (totalApproachTimes && totalApproachTimes.get) // Map
+          ? totalApproachTimes.get(star)
+          : totalApproachTimes && totalApproachTimes[star];
+      if (!totalTime) totalTime = fallbackTat;
+      if (!totalTime) continue;
+
+      const pr = 1 - (landingSec - saveSec) / totalTime;
+      if (pr <= 0 || pr >= 1) continue; // not mid-approach
+
+      // State5 data for this runway (touchdown position, approach cap)
+      const state5 =
+        (state5ParamsMap && state5ParamsMap.get)
+          ? state5ParamsMap.get(runway)
+          : state5ParamsMap && state5ParamsMap[runway];
+      const touchDown = state5?.touchDownPosition || null;
+      const approachCap =
+        state5?.initialPosition?.y != null ? state5.initialPosition.y : 15.24;
+
+      // starPaths points are the unified FlyApproach+AppPointList path.
+      // computePosition / computeDirection work with separate flyPoints+appPoints,
+      // so we pass the unified path as flyPoints and empty as appPoints.
+      // The touchdown point is used for glideslope Y calculation.
+      const unifiedPath = variant.points;
+      const pos = computePosition(
+        unifiedPath,
+        [],
+        pr,
+        touchDown,
+        approachCap,
+      );
+      const dir = computeDirection(unifiedPath, [], pr);
+
+      // Direction heading for SVG rendering (degrees from +X axis).
+      // Game Z-up maps to SVG Y-down, so we negate the Z component.
+      const headingDeg = Math.atan2(-dir.z, dir.x) * (180 / Math.PI);
+
+      positions.push({
+        callsign,
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        dirX: dir.x,
+        dirZ: dir.z,
+        headingDeg,
+        progressRatio: pr,
+      });
+    }
+
+    // Convert totalApproachTimes Map to plain object for frontend hover computation
+    const approachTimesObj = {};
+    if (totalApproachTimes) {
+      if (totalApproachTimes.forEach) {
+        totalApproachTimes.forEach((v, k) => { approachTimesObj[k] = v; });
+      } else {
+        Object.assign(approachTimesObj, totalApproachTimes);
+      }
+    }
+
+    return { success: true, positions, totalApproachTimes: approachTimesObj };
+  } catch (err) {
+    console.error('[IPC] get-aircraft-positions error:', err);
+    return { success: false, error: err.message };
+  }
 });
 
 // ─── IPC: Add flight (gets new flight data back) ─────────

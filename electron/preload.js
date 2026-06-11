@@ -47,4 +47,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Navigation events from menu
   onNavBrowser: (cb) => ipcRenderer.on('nav-browser', () => cb()),
+
+  // Aircraft positions on STAR map
+  getAircraftPositions: (icao, arrivals, saveSec) => ipcRenderer.invoke('get-aircraft-positions', icao, arrivals, saveSec),
+
+  // Cache invalidation — main process signals when cache.json is missing/corrupt
+  onCacheInvalidated: (cb) => ipcRenderer.on('cache-invalidated', () => cb()),
 });

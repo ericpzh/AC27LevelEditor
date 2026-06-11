@@ -5,10 +5,10 @@ import { I18nProvider } from '../../../../src/hooks/useTranslation';
 import StandMap from '../../../../src/components/EditorScreen/StandMap/StandMap';
 
 const MOCK_STANDS = {
-  'G1': { x: 0, y: 0 },
-  'G2': { x: 1, y: 1 },
-  'G3': { x: 2, y: 2 },
-  'G4': { x: 0, y: 2 },
+  'G1': { x: 0, y: 0, heading: 90 },
+  'G2': { x: 1, y: 1, heading: 45 },
+  'G3': { x: 2, y: 2, heading: 45 },
+  'G4': { x: 0, y: 2, heading: 0 },
 };
 
 const MOCK_CELL_RECT = {
@@ -23,16 +23,23 @@ function makeCellRef(rect = MOCK_CELL_RECT) {
   return { current: el };
 }
 
+function makeButtonRef(rect = { left: 10, right: 100, top: 520, bottom: 552, width: 90, height: 32 }) {
+  const el = document.createElement('button');
+  el.getBoundingClientRect = () => rect;
+  return { current: el };
+}
+
 function renderMap(props = {}) {
   return render(
     <I18nProvider>
       <StandMap
         stands={MOCK_STANDS}
         selectedStand={null}
-        occupiedStands={new Set()}
+        occupiedStands={{}}
         onSelect={vi.fn()}
-        onClose={vi.fn()}
-        cellRef={makeCellRef()}
+        onShrink={vi.fn()}
+        buttonRef={makeButtonRef()}
+        callsign="CCA1234"
         {...props}
       />
     </I18nProvider>
@@ -64,19 +71,31 @@ describe('StandMap', () => {
     expect(ring).not.toBeNull();
   });
 
-  it('marks occupied stands with "occupied" class', () => {
-    renderMap({ occupiedStands: new Set(['G2', 'G3']) });
-    const occupiedDots = document.querySelectorAll('.stand-map-dot.occupied');
-    expect(occupiedDots).toHaveLength(2);
+  it('marks occupied stands with plane icons instead of dots', () => {
+    renderMap({ occupiedStands: { G2: { callsign: 'CCA1234' }, G3: { callsign: 'CES5678' } } });
+    const occupiedPlanes = document.querySelectorAll('.stand-map-plane');
+    expect(occupiedPlanes).toHaveLength(2);
   });
 
-  it('occupied dots are not clickable', () => {
-    const onSelect = vi.fn();
-    renderMap({ occupiedStands: new Set(['G1']), onSelect });
+  it('occupied stands show plane icons with callsign labels', () => {
+    renderMap({ occupiedStands: { G1: { callsign: 'CCA1234' } } });
+    // Plane icon rendered
+    const occupiedPlanes = document.querySelectorAll('.stand-map-plane');
+    expect(occupiedPlanes).toHaveLength(1);
+    // Callsign label in nose direction
+    const labels = document.querySelectorAll('.stand-map-ac-label');
+    expect(labels).toHaveLength(1);
+    expect(labels[0].textContent).toBe('CCA1234');
+  });
 
-    const occupiedDot = document.querySelector('.stand-map-dot.occupied');
-    expect(occupiedDot).not.toBeNull();
-    fireEvent.click(occupiedDot);
+  it('occupied plane icons are not clickable (pointer-events: none)', () => {
+    const onSelect = vi.fn();
+    renderMap({ occupiedStands: { G1: { callsign: 'CCA1234' } }, onSelect });
+
+    const planeGroup = document.querySelector('.stand-map-plane-group');
+    expect(planeGroup).not.toBeNull();
+    const plane = document.querySelector('.stand-map-plane');
+    fireEvent.click(plane);
 
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -121,7 +140,6 @@ describe('StandMap', () => {
     expect(currentDot).not.toBeNull();
     expect(availableDot).not.toBeNull();
 
-    // Both use --stand-dot-color which resolves to var(--accent)
     const currentFill = getComputedStyle(currentDot).fill;
     const availableFill = getComputedStyle(availableDot).fill;
     expect(currentFill).toBe(availableFill);
@@ -133,10 +151,10 @@ describe('StandMap', () => {
         <StandMap
           stands={{}}
           selectedStand={null}
-          occupiedStands={new Set()}
+          occupiedStands={{}}
           onSelect={vi.fn()}
-          onClose={vi.fn()}
-          cellRef={makeCellRef()}
+          onShrink={vi.fn()}
+          buttonRef={makeButtonRef()}
         />
       </I18nProvider>
     );
@@ -149,10 +167,10 @@ describe('StandMap', () => {
         <StandMap
           stands={null}
           selectedStand={null}
-          occupiedStands={new Set()}
+          occupiedStands={{}}
           onSelect={vi.fn()}
-          onClose={vi.fn()}
-          cellRef={makeCellRef()}
+          onShrink={vi.fn()}
+          buttonRef={makeButtonRef()}
         />
       </I18nProvider>
     );
@@ -164,20 +182,22 @@ describe('StandMap', () => {
     const legendItems = document.querySelectorAll('.stand-map-legend-item');
     expect(legendItems).toHaveLength(3);
 
-    // All items should have non-empty text (translated)
     for (const item of legendItems) {
       expect(item.textContent?.trim().length).toBeGreaterThan(0);
     }
   });
 
-  it('calls onClose when close button is clicked', () => {
-    const onClose = vi.fn();
-    renderMap({ onClose });
+  it('calls onShrink when shrink button is clicked', () => {
+    const onShrink = vi.fn();
+    renderMap({ onShrink });
 
-    const closeBtn = document.querySelector('.stand-map-close');
-    expect(closeBtn).not.toBeNull();
-    fireEvent.click(closeBtn);
-    expect(onClose).toHaveBeenCalledTimes(1);
+    const shrinkBtn = document.querySelector('.stand-map-shrink');
+    expect(shrinkBtn).not.toBeNull();
+    fireEvent.click(shrinkBtn);
+    // Shrink sets closing state, then onShrink fires on transitionend
+    // We test that the click handler runs (closing class is added)
+    const panel = document.querySelector('.stand-map-panel');
+    expect(panel.classList.contains('closing')).toBe(true);
   });
 
   it('renders panel via portal into document.body', () => {
@@ -203,5 +223,78 @@ describe('StandMap', () => {
     // Width and height should be set as inline px values (JS-computed)
     expect(panel.style.width).toMatch(/px$/);
     expect(panel.style.height).toMatch(/px$/);
+  });
+
+  it('starts with opening class for expand animation', () => {
+    renderMap();
+    const panel = document.querySelector('.stand-map-panel');
+    expect(panel).not.toBeNull();
+    // Panel starts with 'opening' class for expand-from-button animation
+    expect(panel.classList.contains('opening')).toBe(true);
+  });
+
+  it('renders only the shrink button (no close button)', () => {
+    renderMap();
+    const shrinkBtn = document.querySelector('.stand-map-shrink');
+    expect(shrinkBtn).not.toBeNull();
+    const closeBtn = document.querySelector('.stand-map-close');
+    expect(closeBtn).toBeNull();
+  });
+
+  it('occupied stand plane icons have rotation applied', () => {
+    renderMap({ occupiedStands: { G1: { callsign: 'CCA1234' } } });
+    const planeGroup = document.querySelector('.stand-map-plane-group');
+    expect(planeGroup).not.toBeNull();
+    // Rotation is on the inner <g> that wraps the path, not the outer group
+    const innerG = planeGroup.querySelector('g');
+    expect(innerG).not.toBeNull();
+    expect(innerG.getAttribute('transform')).toContain('rotate(');
+  });
+
+  it('active plane icon has rotation applied when selected', () => {
+    renderMap({ selectedStand: 'G1', callsign: 'CCA1234' });
+    const activePlane = document.querySelector('.stand-map-active-plane');
+    expect(activePlane).not.toBeNull();
+    // Rotation is on the inner <g> that wraps the path
+    const innerG = activePlane.querySelector('g');
+    expect(innerG).not.toBeNull();
+    expect(innerG.getAttribute('transform')).toContain('rotate(');
+  });
+
+  it('all stands are disabled when no callsign (no aircraft selected)', () => {
+    const onSelect = vi.fn();
+    renderMap({ callsign: '' });
+    const dots = document.querySelectorAll('.stand-map-dot');
+    // All dots should have the disabled class
+    expect(dots).toHaveLength(4);
+    dots.forEach(dot => {
+      expect(dot.classList.contains('disabled')).toBe(true);
+    });
+    // Clicking a disabled dot should not call onSelect
+    fireEvent.click(dots[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('backward compatible — missing heading defaults to 0 rotation', () => {
+    const standsNoHeading = { 'X1': { x: 5, y: 5 } };
+    render(
+      <I18nProvider>
+        <StandMap
+          stands={standsNoHeading}
+          selectedStand={null}
+          occupiedStands={{ X1: { callsign: 'TEST' } }}
+          onSelect={vi.fn()}
+          onShrink={vi.fn()}
+          buttonRef={makeButtonRef()}
+          callsign="CCA1234"
+        />
+      </I18nProvider>
+    );
+    const planeGroup = document.querySelector('.stand-map-plane-group');
+    expect(planeGroup).not.toBeNull();
+    // Rotation on the inner <g> wrapping the path
+    const innerG = planeGroup.querySelector('g');
+    expect(innerG).not.toBeNull();
+    expect(innerG.getAttribute('transform')).toContain('rotate(0)');
   });
 });

@@ -30,6 +30,12 @@ export const useAppStore = create((set, get) => ({
   highlightedCells: new Set(),
   editingWidget: null,
 
+  // ─── Map visibility (global so maps survive cell-edit lifecycle) ───
+  showStandMap: false,
+  showStarMap: false,
+  mapFlightIdx: -1,   // which flight row the map currently shows
+  activeMap: null,     // 'stand' | 'star' | null — which map overlay is on top
+
   // ─── Audio callsigns ───
   audioCallsigns: { byAirline: {}, allCallsigns: [], allAirlines: [] },
 
@@ -64,7 +70,7 @@ export const useAppStore = create((set, get) => ({
   setLegacyState: (updates) => set(updates),
 
   // ─── Actions: Screen ───
-  setScreen: (screen) => set({ screen }),
+  setScreen: (screen) => set({ screen, ...(screen !== 'editor' ? { showStandMap: false, showStarMap: false, activeMap: null } : {}) }),
   setRootPath: (rootPath, airports) => set({ rootPath, airports }),
 
   // ─── Actions: Editor Data ───
@@ -226,6 +232,37 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
+  // ─── Actions: Map visibility ───
+  toggleStandMap: () => {
+    const s = get();
+    const next = !s.showStandMap;
+    set({
+      showStandMap: next,
+      mapFlightIdx: next && s.mapFlightIdx < 0 ? s.highlightedIdx : s.mapFlightIdx,
+      activeMap: next ? 'stand' : null,
+    });
+  },
+  toggleStarMap: () => {
+    const s = get();
+    const next = !s.showStarMap;
+    set({
+      showStarMap: next,
+      mapFlightIdx: next && s.mapFlightIdx < 0 ? s.highlightedIdx : s.mapFlightIdx,
+      activeMap: next ? 'star' : null,
+    });
+  },
+  openStandMap: (idx) => set({ showStandMap: true, mapFlightIdx: idx, activeMap: 'stand' }),
+  openStarMap: (idx) => set({ showStarMap: true, mapFlightIdx: idx, activeMap: 'star' }),
+  closeStandMap: () => set((state) => ({
+    showStandMap: false,
+    activeMap: state.activeMap === 'stand' ? null : state.activeMap,
+  })),
+  closeStarMap: () => set((state) => ({
+    showStarMap: false,
+    activeMap: state.activeMap === 'star' ? null : state.activeMap,
+  })),
+  setActiveMap: (map) => set({ activeMap: map }),
+
   updateFlight: (idx, updates) => {
     const flights = [...get().flights];
     const flight = { ...flights[idx], ...updates };
@@ -272,6 +309,25 @@ export const useAppStore = create((set, get) => ({
         }
       }
     }
+    // Runway changed — cascade Airway to first valid STAR for the new runway.
+    // If the new runway has no approach data (e.g. 31L at KJFK), clear the Airway
+    // so it doesn't stay on a STAR that isn't valid for this runway.
+    if ('Runway' in updates) {
+      const state = get();
+      const vals = state.airportValues[state.currentAirport] || {};
+      const runwayStarMap = vals._runwayStarMap || {};
+      const validStars = runwayStarMap[updates.Runway] || [];
+      const curAirway = flight.Airway || '';
+      if (validStars.length > 0) {
+        if (!curAirway || !validStars.includes(curAirway)) {
+          flight.Airway = validStars[0];
+        }
+      } else {
+        // No STAR is valid for this runway — clear the stale value
+        flight.Airway = '';
+      }
+    }
+
     // When user explicitly edits Registration, clear the parsed _Registration
     // so it doesn't shadow the new value (display reads _Registration first)
     if ('Registration' in updates) {
@@ -289,6 +345,7 @@ export const useAppStore = create((set, get) => ({
   },
 
   setHighlightedIdx: (idx) => set({ highlightedIdx: idx }),
+  setMapFlightIdx: (idx) => set({ mapFlightIdx: idx }),
   setSearchMatches: (indices) => set({ searchMatches: new Set(indices) }),
 
   // ─── Actions: Timeline ───

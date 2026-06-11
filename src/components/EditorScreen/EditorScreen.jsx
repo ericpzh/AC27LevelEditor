@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import './EditorScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
@@ -7,7 +7,7 @@ import { useEditorShell } from '../../hooks/useEditorShell';
 import { validateCallsigns, runTripleValidation } from '../../utils/validators';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline } from 'react-icons/io5';
+import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoMapOutline, IoNavigateOutline } from 'react-icons/io5';
 
 // Wind speed unit conversion: 1 m/s = 1.94384 knots
 const MPS_TO_KNOTS = 1.94384;
@@ -30,8 +30,133 @@ import WindEditor from './TimelineEditors/WindEditor';
 import RunwayEditor from './TimelineEditors/RunwayEditor';
 import SearchBar, { searchAPI } from './SearchBar';
 import TutorialOverlay from './TutorialOverlay';
+import StandMap from './StandMap/StandMap';
+import StarMap from './StarMap/StarMap';
 
 // ─── Sub-components ────────────────────────────────────────
+
+function timeToMinutes(timeStr) {
+  if (!timeStr) return null;
+  const parts = String(timeStr).split(':');
+  return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+}
+
+function computeOccupiedStands(flights, currentIdx) {
+  const flight = flights[currentIdx];
+  if (!flight || flight.Stand == null || flight.Stand === '') return {};
+  let keyTimeMin = null;
+  if (flight.LandingTime) {
+    keyTimeMin = timeToMinutes(flight.InBlockTime || flight.LandingTime);
+  } else if (flight.OffBlockTime) {
+    keyTimeMin = timeToMinutes(flight.OffBlockTime);
+  }
+  if (keyTimeMin === null) return {};
+  const windowStart = keyTimeMin - 30;
+  const windowEnd = keyTimeMin + 60;
+  const occupied = {};
+  for (let i = 0; i < flights.length; i++) {
+    if (i === currentIdx) continue;
+    const other = flights[i];
+    if (!other.Stand) continue;
+    let otherStart = null, otherEnd = null;
+    if (other.LandingTime) {
+      const t = timeToMinutes(other.InBlockTime || other.LandingTime);
+      if (t !== null) { otherStart = t; otherEnd = t + 60; }
+    } else if (other.OffBlockTime) {
+      const t = timeToMinutes(other.OffBlockTime);
+      if (t !== null) { otherStart = t - 30; otherEnd = t; }
+    }
+    if (otherStart !== null && otherEnd !== null) {
+      if (otherStart < windowEnd && otherEnd > windowStart) {
+        occupied[other.Stand] = { callsign: other.CallSign };
+      }
+    }
+  }
+  return occupied;
+}
+
+function MapOverlays({ standBtnRef, starBtnRef }) {
+  const t = useTranslation();
+  const updateFlight = useAppStore(s => s.updateFlight);
+  const showStandMap = useAppStore(s => s.showStandMap);
+  const showStarMap = useAppStore(s => s.showStarMap);
+  const mapFlightIdx = useAppStore(s => s.mapFlightIdx);
+  const flights = useAppStore(s => s.flights);
+  const currentAirport = useAppStore(s => s.currentAirport);
+  const closeStandMap = useAppStore(s => s.closeStandMap);
+  const closeStarMap = useAppStore(s => s.closeStarMap);
+
+  const airportValues = useAppStore(s => s.airportValues);
+  const vals = airportValues[currentAirport] || {};
+
+  // StandMap props
+  const standPositions = vals._standPositions || null;
+  const occupiedStands = useMemo(() => {
+    if (!showStandMap || mapFlightIdx < 0) return {};
+    return computeOccupiedStands(flights, mapFlightIdx);
+  }, [showStandMap, mapFlightIdx, flights]);
+  const flightForMap = flights[mapFlightIdx] || {};
+  const selectedStand = flightForMap.Stand || null;
+  const callsign = flightForMap.CallSign || '';
+  const isDeparture = flightForMap.isDeparture || false;
+
+  // StarMap props
+  const starPaths = vals._starPaths || null;
+  const starRunwayMap = vals._starRunwayMap || null;
+  const runwayStarMap = vals._runwayStarMap || null;
+  const runwayThresholds = vals._runwayThresholds || null;
+  const selectedStar = flightForMap.Airway || null;
+  const selectedRunway = flightForMap.Runway || null;
+  const saveSec = useAppStore(s => s._saveSec);
+
+  const arrivalFlights = useMemo(() => {
+    if (!showStarMap) return [];
+    return flights
+      .filter(f => !f.isDeparture && f.Airway && f.Runway && f.LandingTime)
+      .map(f => ({
+        CallSign: f.CallSign,
+        Airway: f.Airway,
+        Runway: f.Runway,
+        LandingTime: f.LandingTime,
+      }));
+  }, [showStarMap, flights]);
+
+  console.log('[MapOverlays] render', { showStandMap, showStarMap, mapFlightIdx, hasStands: !!(standPositions && Object.keys(standPositions).length > 0) });
+
+  return (
+    <>
+      {showStandMap && standPositions && Object.keys(standPositions).length > 0 && (
+        <StandMap
+          stands={standPositions}
+          selectedStand={selectedStand}
+          occupiedStands={occupiedStands}
+          onSelect={(standId) => { updateFlight(mapFlightIdx, { Stand: standId }); }}
+          onShrink={() => closeStandMap()}
+          buttonRef={standBtnRef}
+          airportIcao={currentAirport}
+          callsign={callsign}
+        />
+      )}
+      {showStarMap && (
+        <StarMap
+          starPaths={starPaths}
+          selectedStar={selectedStar}
+          selectedRunway={selectedRunway}
+          starRunwayMap={starRunwayMap}
+          runwayThresholds={runwayThresholds}
+          onSelect={(starName) => { updateFlight(mapFlightIdx, { Airway: starName }); }}
+          onShrink={() => closeStarMap()}
+          buttonRef={starBtnRef}
+          airportIcao={currentAirport}
+          callsign={callsign}
+          isDeparture={isDeparture}
+          arrivalFlights={arrivalFlights}
+          saveSec={saveSec}
+        />
+      )}
+    </>
+  );
+}
 
 function ConfigBar() {
   const { t } = useTranslation();
@@ -92,6 +217,16 @@ export default function EditorScreen() {
 
   const [loading, setLoading] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  // ── Map toggle button refs (for expand/shrink animation origin) ──
+  const standBtnRef = useRef(null);
+  const starBtnRef = useRef(null);
+
+  // ── Map toggle handlers ──
+  const toggleStandMap = useAppStore(s => s.toggleStandMap);
+  const toggleStarMap = useAppStore(s => s.toggleStarMap);
+  const showStandMap = useAppStore(s => s.showStandMap);
+  const showStarMap = useAppStore(s => s.showStarMap);
 
   // Load data on mount
   useEffect(() => {
@@ -238,6 +373,9 @@ export default function EditorScreen() {
 
   const handleBack = () => {
     const st = useAppStore.getState();
+    // Close any open map overlays
+    st.closeStandMap();
+    st.closeStarMap();
     const hasMod = st.modified || st.timelineModified.weather || st.timelineModified.wind || st.timelineModified.runway;
     if (!hasMod) { setScreen('browser'); return; }
     showModal(t('modal_unsaved_title'), <p>{t('modal_unsaved_body')}</p>,
@@ -365,17 +503,20 @@ export default function EditorScreen() {
       <SearchBar />
       <div id="secondary-toolbar">
         <div className="toolbar-group secondary-left">
+          <button ref={starBtnRef} onClick={toggleStarMap} className={showStarMap ? 'btn-map-active' : ''} title={t('starmap_title')}><IoNavigateOutline size={14} className="btn-icon" /> {t('toolbar_star_map')}</button>
+          <button ref={standBtnRef} onClick={toggleStandMap} className={showStandMap ? 'btn-map-active' : ''} title={t('standmap_title')}><IoMapOutline size={14} className="btn-icon" /> {t('toolbar_stand_map')}</button>
           <button onClick={addArrival}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(45deg)',display:'block'}} /></span> {t('toolbar_add_arrival')}</button>
           <button onClick={addDeparture}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(-45deg)',display:'block'}} /></span> {t('toolbar_add_departure')}</button>
-          <button onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
         </div>
         <div className="toolbar-time-wrap"><ConfigBar /></div>
         <div className="toolbar-group secondary-right">
+          <button onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
           <button onClick={handleSelectAll} title={allSelected ? t('toolbar_deselect_all') : t('toolbar_select_all')}><IoCheckmarkDone size={14} className="btn-icon" /> {allSelected ? t('toolbar_deselect_all') : t('toolbar_select_all')}</button>
           <button onClick={del}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_selected')}</button>
           <button onClick={handleFind}><IoSearchOutline size={14} className="btn-icon" /> {t('toolbar_find')}</button>
         </div>
       </div>
+      <MapOverlays standBtnRef={standBtnRef} starBtnRef={starBtnRef} />
       <StatusBar />
       {tutorialOpen && <TutorialOverlay onClose={() => setTutorialOpen(false)} />}
     </div>

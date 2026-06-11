@@ -44,6 +44,13 @@
 
 .btn-primary-sm:hover { background: var(--accent-hover) !important; }
 
+/* ── Map toggle active state ── */
+#secondary-toolbar button.btn-map-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
 .save-group { gap: 4px; }
 
 /* ─── Secondary Toolbar ─────────────────────────────────── */

@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.1)
+- **Name:** `ac27-level-editor` (v1.1.2)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -21,11 +21,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 27 ipcMain.handle() endpoints                       │
+│  - 29 ipcMain.handle() endpoints                        │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with 26 methods          │
+│  - Exposes window.electronAPI with 28 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -43,11 +43,12 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ├─────────────────────────────────────────────────────────┤
 │  src/hooks/ (React custom hooks)                        │
 │  - useTranslation, useElectronAPI, useEditorShell,      │
-│    useSaveAcl, useKeyboardShortcuts                     │
+│    useSaveAcl, useKeyboardShortcuts, useDrag             │
 ├─────────────────────────────────────────────────────────┤
 │  src/store/ (zustand state)                             │
 │  - appStore.js — single store: screen, flights,         │
-│    timelines, modal/toast, _windSpeedUnit               │
+│    timelines, modal/toast, _windSpeedUnit, map overlay   │
+│    state (showStandMap, showStarMap, activeMap)          │
 ├─────────────────────────────────────────────────────────┤
 │  src/acl/ (parser facade + 11 backend modules,          │
 │    CommonJS + some ESM)                                  │
@@ -103,6 +104,8 @@ AC27LevelEditor/
 │   │   │   │   └── CellEditor.css
 │   │   │   ├── StandMap/
 │   │   │   │   ├── StandMap.jsx + .css   # Interactive stand position map overlay
+│   │   │   ├── StarMap/
+│   │   │   │   └── StarMap.jsx + .css    # Interactive STAR/approach map overlay
 │   │   │   └── TimelineEditors/
 │   │   │       ├── WeatherEditor.jsx
 │   │   │       ├── WindEditor.jsx
@@ -118,7 +121,8 @@ AC27LevelEditor/
 │   │   ├── useElectronAPI.jsx   # electronAPI Context Provider
 │   │   ├── useEditorShell.jsx   # Keyboard shortcuts (Ctrl+S, Delete, etc.)
 │   │   ├── useSaveAcl.jsx       # Save/export/backup logic
-│   │   └── useKeyboardShortcuts.js
+│   │   ├── useKeyboardShortcuts.js
+│   │   └── useDrag.js          # Shared drag behavior for floating panels (StandMap, StarMap)
 │   │
 │   ├── store/
 │   │   └── appStore.js          # zustand store — all app state
@@ -211,6 +215,7 @@ module.exports = { publicFn, _privateFn };
 - `useElectronAPI()` — returns the `window.electronAPI` bridge
 - `useEditorShell({ onSave })` — registers keyboard shortcuts
 - `useSaveAcl()` — returns `{ handleSave, handleSaveAs, handleBackup }`
+- `useDrag({ panelRef, enabled, onDragEnd })` — shared drag behavior for floating panels; returns `{ pos, isDragging, hasDragged, setPos, headerHandlers }`
 
 **React best practices:**
 - Hoist RegExp to module scope (never inside render)
@@ -237,6 +242,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 - IPC channels use kebab-case strings matching the handler name
 - Every `ipcMain.handle()` must return `{ success: true/false }`
 - New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer
+- **Main→renderer events:** `mainWindow.webContents.send('cache-invalidated')` — signals renderer when `cache.json` is missing/corrupt; preload bridges via `onCacheInvalidated(cb)`
 
 ### Test Conventions
 
@@ -328,17 +334,23 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data + dropdown values per airport:
    - Scans all `.acl` files (includes demo/test/tutorial variants — all treated as normal levels)
    - Extracts `specDB` (Designator → AircraftSpec), `appPointMap` ((Route,Runway) → AppPointList), `totalApproachTimes` (Route → seconds), and `designatorMap` (AircraftType → Designator)
+   - Extracts State=5 data: `state5ParamsMap` (runway → `{pathPointList, touchDownPosition, approachDirection, initialPosition}`), `starPaths` (STAR → waypoint array), and STAR↔runway maps from `SceneryData.Runways.Routes[Type=0]`
+   - Extracts `runwayThresholds` from SceneryData (PhysicalName → threshold pair) for StarMap visualization
    - Collects dropdown values (`collectUniqueValues`) and runway pairs (`collectRunwayPairs`) from ALL .acl files
    - Merges audio flight numbers into `_flightNums` per airline code
+   - **Stand dropdown from SceneryData:** Stand identifiers parsed by `_parseStandPositions()` become the authoritative dropdown options (sorted), replacing any hardcoded or ACL-derived stand lists
    - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions }`
    - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint of tail/nose taxiway node Positions)
    - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
+   - **Centralized cache I/O:** `_readCache(opts)` and `_writeCache(data)` in `electron/main.js` handle all `cache.json` reads/writes. `_readCache` validates `cacheVersion` and `gameRoot`, and signals `cache-invalidated` to the renderer on mismatch. All IPC handlers MUST use these helpers — never read/write `cache.json` directly.
 
 ### Cache State & Version Detection (v1.1.0)
 
 The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.json` + `lastRoot.json` + `localStorage.ac27_lang`). It contains `gameRoot`, `lang`, `cacheVersion`, `builtAt`, and `airports`.
 
-Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `electron/main.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates — only bump `CACHE_VERSION` when the cache schema changes.
+Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `electron/main.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
+
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `electron/main.js:12`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set.
 
 | `cache.json` | Behavior |
 |---|---|
@@ -433,7 +445,24 @@ When editing a Stand cell in the flight table, a non-blocking overlay panel appe
 - **Airport background**: Semi-transparent `/{ICAO}_Stand.png` image overlaid (falls back to panel background if missing)
 - **i18n**: Title and legend use `standmap_title`, `standmap_current`, `standmap_available`, `standmap_occupied` keys
 
-**Component:** `src/components/EditorScreen/StandMap/StandMap.jsx` — portal-based, responsive (scales with window via `useWindowSize` hook), viewBox preserves data aspect ratio with a target ratio cap.
+**Component:** `src/components/EditorScreen/StandMap/StandMap.jsx` — portal-based, responsive (scales with window via `useWindowSize` hook), viewBox preserves data aspect ratio with a target ratio cap. Uses the shared `useDrag` hook for header-drag repositioning.
+
+### Star Map Overlay
+
+When editing an Airway cell in the flight table, a non-blocking overlay panel shows the STAR/approach chart for the current airport. It displays:
+
+- **SVG map** of all STAR waypoint paths for the airport, plotted from real x,z coordinates in SceneryData `AirwayNodes`
+- **Runway thresholds** rendered as extended lines (3× runway length), parsed from `SceneryData.Runways.ThresholdPointGuids` via `_parseRunwayThresholds()`
+- **Live aircraft positions** on approach — arrival flights' positions computed via `get-aircraft-positions` IPC using the same `computePosition()` algorithm as State=30/State=5 save generation
+- **Aircraft interactivity**: Hovering an aircraft dot shows callsign + STAR + runway + ETA
+- **Click to select** a STAR path, which updates the flight's Airway field via `updateFlight(idx, { Airway: starName })`
+- **Departure flights**: Show a notice that the STAR map is unavailable (no approach data for departures)
+- **Airport background**: Semi-transparent `/{ICAO}_STAR.png` image overlaid
+- **i18n**: Title and legend use `starmap_title`, `starmap_current`, `starmap_available`, `starmap_disabled`, `starmap_no_data` keys
+
+**Component:** `src/components/EditorScreen/StarMap/StarMap.jsx` — portal-based, draggable via `useDrag` hook, responsive viewBox scaling. Path colors cycle through a preset palette per STAR name. Runway thresholds rendered as thin colored lines matching their associated STAR paths.
+
+**Map overlay orchestration:** `MapOverlays` sub-component in `EditorScreen.jsx` manages visibility and prop-passing for both StandMap and StarMap. Visibility state lives in zustand (`showStandMap`, `showStarMap`, `activeMap`, `mapFlightIdx`). Only one map is "on top" at a time (controlled by `activeMap`). Both maps close when leaving the editor screen (`setScreen` clears map state).
 
 ### Demo .acl File Handling (v1.0.9+)
 
@@ -493,11 +522,234 @@ Key section types:
 - `TaskFlightState` (type 56/54) — older WorldState format (legacy)
 - `WeatherFrames` / `WindFrames` / `RunwayTimeline` — timeline sections
 
-## Approach Aircraft Construction (State=30)
+### SceneryData Runway Routes
 
-The `src/acl/approach.js` module implements verified findings from an audit of 8 production `.acl` files (ZSJN + KJFK). It handles construction of State=30 (Flying/Approach) aircraft entries.
+`SceneryData.Runways` is a dictionary (`$k`/`$v`) where each entry represents one runway direction. Each `$v` block contains:
 
-### Verified Field Relationships
+| Field | Description |
+|---|---|
+| `Name` | Runway designator used by flight plans — e.g. `"31L"`, `"19"`, `"01"` |
+| `PhysicalName` | Runway pair — e.g. `"13R/31L"`, `"01/19"` |
+| `Routes` | Contains `$rcontent` array of route entries, each with `Name`, `Type`, `AirwayNodeGuids` |
+
+**Route Types** (verified against both KJFK and ZSJN production .acl files):
+
+| Type | Meaning | Example Names | Used for |
+|------|---------|---------------|----------|
+| **0** | **STAR** (arrival transition) | `SEY.PARCH4`, `UBSS6W`, `OKAL6W`, `WFG91A` | Airway dropdown filtering, StarMap availability, approach path resolution |
+| 1 | RNAV approach procedure | `RNAV Y Rwy 31L`, `RNAV ILS Z Rwy 19` | State=5 approach data (`resolveApproachProcedureData`) |
+| **2** | **SID** (departure transition) | `JFK5.JFK`, `TUML5T`, `BASV7Y` | Ignore — departure routes only |
+| 3 | Missed approach | `RNAV Y Rwy 31L (Missed Approach)` | Ignore |
+
+**Important:** The authoritative source for valid STAR↔runway combinations is `SceneryData.Runways[runway].Routes[].Name` where `Type === 0`. This is a superset of what `appPointMap` covers (which is limited to State=30 aircraft entries at snapshot time). For example, KJFK runway 31L has STAR `SEY.PARCH4` (Type 0) defined in SceneryData, but this combo may have no State=30 aircraft in any scanned .acl file, leaving it absent from `appPointMap`.
+
+**Extraction algorithm** (`extractStarRunwayMappings` — see approach.js):
+1. Find `SceneryData` → `Runways` section via tokenizer
+2. Find main `$rcontent` array at brace depth 1 (skip nested arrays like `comparer`)
+3. Iterate runway dictionary entries → extract `Name` (runway designator) and `Routes`
+4. Parse `Routes.$rcontent` → for each route with `Type === 0`, collect `Name` (STAR name)
+5. Return `{ starRunwayMap: {star → [runways]}, runwayStarMap: {runway → [stars]} }`
+
+## Approach Aircraft Construction (State=30 & State=5)
+
+The `src/acl/approach.js` module builds approach aircraft entries for arrival flights
+that are mid-approach at the snapshot time. Two states are generated:
+
+- **State=30** (FlyApproachDynamicsParams) — aircraft on the STAR/en-route approach segment,
+  on Approach frequency. Descending on the 3° ILS glideslope toward the runway.
+- **State=5** (ApproachDynamicsParams) — aircraft on the final approach segment, past the
+  IAF (Initial Approach Fix, the last FlyApproach waypoint), on Tower frequency. Same
+  glideslope descent, different DynamicsParams type and radio channel.
+
+**Unified path architecture:** Both State=30 and State=5 share the SAME full path:
+`FlyApproach → App/PathPointList → TouchDown`. Position is always interpolated on this
+unified path using `fullPR` (relative to the full STAR+Approach duration), ensuring
+spatial continuity across the State=30→5 transition.
+
+**Dual PR semantics:** The ACL's `ProgressRatio` field means different things per state:
+- State=30 (FlyApproachDynamicsParams): PR is relative to full approach → stores `fullPR`
+- State=5 (ApproachDynamicsParams): PR is relative to final approach segment only →
+  stores **rescaled** value `(targetDist - flyLen) / appLen` where `targetDist` is the
+  aircraft's distance along the unified path, `flyLen` is the FlyApproach path length,
+  and `appLen` is the AppPointList path length
+
+The rescaling is purely for the stored DynamicsParams field — position always uses the
+unified path with `fullPR`.
+
+### State=5 Sub-types
+
+State=5 has three sub-types based on `timeToLanding` (seconds until scheduled touchdown):
+
+| Sub-type | timeToLanding | WaitingForCommands | SelectedRunwayExitIndex | TaxiArrivalToHoldingPointPath |
+|----------|--------------|-------------------|------------------------|------------------------------|
+| **A: Contact Tower** | ≥ 60s | `[22]` | -1 | null |
+| **B: Cleared to Land** | 0–60s | `[23]` | 0 | null |
+| **C: Post-landing** | ≤ 0 | `[]` | ≥ 1 | populated (taxi route) |
+
+Sub-type A is the standard State=5 — aircraft just handed off to Tower, needs to
+contact. Sub-type B is for aircraft within 1 minute of landing — landing clearance
+already issued. Sub-type C is for aircraft that have already touched down and are
+taxiing to the stand.
+
+**Key principle for Y:** All Y values are computed from the **remaining path distance**
+along the approach route to the runway touchdown point, NOT from straight-line horizontal
+distance. The path distance follows the approach route through turns, giving correct
+altitude even for curved approaches (e.g., KJFK SIE.CAMRM5). The altitude is **capped**
+at the runway's approach ceiling (`approachCap`), which is the altitude at the start of
+the final approach segment — cached per runway from `state5Params.initialPosition.y`.
+
+### Complete Position & Direction Math
+
+**Inputs (per aircraft):**
+- `landingTime` [seconds since midnight] — from FlightPlan ArrivalLeg
+- `saveTime` [seconds since midnight] — from GameTime.CurrentDateTime (authoritative)
+- `star` [string] — STAR/route name, e.g. `"UBSS6W"`
+- `runway` [string] — runway name, e.g. `"19"`
+
+**Cache lookups (per airport, built during init by `buildApproachCache`):**
+- `TAT = totalApproachTimes[star]` — full approach duration in seconds (~1380-1775)
+- `appPoints = appPointMap[star + "|" + runway]` — AppPointList Vector3[]
+- `state5 = state5ParamsMap[runway]` — `{ pathPointList, touchDownPosition, approachDirection, initialPosition }`
+- `approachCap = state5.initialPosition.y` — max approach altitude for this runway (no hardcoded value; falls back to 15.24 only when no State=5 data exists)
+
+**SceneryData (resolved per-file from AirwayNodes):**
+- `flyPoints = resolveFlyApproachPoints(aclText, star, runway)` — FlyApproachPathPointList
+
+**Constant:**
+- `tan(3°) ≈ 0.052408` — standard ILS glideslope (3 degrees)
+
+#### Step 1: ProgressRatio
+
+```
+timeToLanding = landingTime - saveTime                          [seconds]
+TAT = totalApproachTimes[star]                                  [seconds]
+progressRatio = 1.0 - timeToLanding / TAT                       [0.0..1.0]
+```
+
+**Gate:** Only generate AircraftState if `0.0 < progressRatio < 1.0`.
+
+#### Step 2: State determination (IAF passage)
+
+The state is determined by whether the aircraft has passed the IAF (last FlyApproach waypoint):
+
+```
+flyLen   = Σ segmentDistances(flyPoints)   [path length of FlyApproach from SceneryData]
+appLen   = Σ segmentDistances(appPoints)   [path length of AppPointList from cache]
+totalLen = flyLen + appLen                 [total unified path length]
+targetDist = totalLen × progressRatio      [aircraft position along unified path]
+
+if targetDist >= flyLen → State=5  (past IAF, final approach, Tower)
+else → State=30                    (before IAF, still on STAR, Approach)
+```
+
+This eliminates the need for a cached `flyFractionMap` — the IAF is determined
+directly from the full FlyApproach path (resolved from SceneryData via
+`resolveFlyApproachPoints`) and the cached AppPointList.
+
+#### Step 3a: State=30 Position & Direction
+
+Aircraft is on the STAR/en-route approach segment, on Approach frequency.
+
+```
+// Unified path: FlyApproach + App + TouchDown
+fullPath = flyPoints + appPoints + [touchDownPosition]
+totalLen = Σ segmentDistances(fullPath)                         [sum of |p[i]-p[i-1]|]
+targetDist = totalLen × progressRatio
+
+// Position: interpolate along unified path
+pos = interpolateAlongPath(fullPath, targetDist)
+
+// Y from 3° ILS glideslope using REMAINING PATH DISTANCE.
+// NOT straight-line — path distance follows the approach route through turns.
+// Capped at the runway's approach ceiling (from state5ParamsMap, NOT hardcoded).
+remainingPathDist = totalLen - targetDist                        [distance still to fly]
+glideY = remainingPathDist × tan(3°)                             [uncapped glideslope]
+pos.y = min(approachCap, glideY)                                 [capped at max altitude]
+
+// Direction: path tangent, level flight (no vertical component in dir vector)
+dir = tangentAlongPath(fullPath, targetDist)
+dir.y = 0
+dir = normalize(dir)
+```
+
+The glideslope intercepts the cap at distance `approachCap / tan(3°)` from the runway.
+For portions of the approach beyond that distance, the aircraft stays at `approachCap`.
+
+#### Step 3b: State=5 Position & Direction
+
+Aircraft is on final approach, on Tower frequency. Position uses the **same unified
+path** as State=30 (FlyApproach + PathPointList + TouchDown) with `fullPR` for spatial
+continuity. The stored DynamicsParams.ProgressRatio uses the **rescaled** `state5PR`.
+
+```
+// Unified path for position (same as State=30)
+unifiedPath = flyPoints + pathPoints + [tdPos]
+totalLen = Σ segmentDistances(unifiedPath)
+targetDist = totalLen × fullPR                                    [fullPR for continuity]
+
+// Position: interpolate along unified path
+pos = interpolateAlongPath(unifiedPath, targetDist)
+
+// Y from 3° ILS glideslope using remaining path distance
+remainingPathDist = totalLen - targetDist
+glideY = remainingPathDist × tan(3°)
+pos.y = min(approachCap, glideY)
+
+// Direction: matches runway heading (from cached approachDirection)
+dir = state5.approachDirection
+
+// Stored PR: RESCALED for game's ApproachDynamicsParams
+// Based on position past IAF, not time-based fraction
+state5PR = (targetDist - flyLen) / appLen
+```
+
+#### State=5 DynamicsParams fields
+
+All Y values use path-distance × tan(3°) capped at `approachCap`.
+No value is hardcoded — the cap comes from the ACL via the approach cache.
+
+**InitialPosition** — the final approach entry point (first PathPointList point):
+```
+ipX = pathPoints[0].x
+ipZ = pathPoints[0].z
+ipPathDist = Σ segmentDistances([...pathPoints, tdPos])         [total path from this point]
+ipY = min(approachCap, ipPathDist × tan(3°))
+```
+
+**TouchDownPosition** — from SceneryData via `state5ParamsMap` (Y≈0, runway level).
+
+**PathPointList** — waypoints with glideslope-computed Y:
+```
+for each pt in pathPoints:
+    ptPathDist = Σ segmentDistances([pt, ...remainingPoints, tdPos])
+    ptOutput.y = min(approachCap, ptPathDist × tan(3°))
+```
+```
+
+#### Summary
+
+| Component | State=30 | State=5 |
+|-----------|----------|---------|
+| Path (position) | flyPoints + appPoints + [tdPos] | flyPoints + pathPoints + [tdPos] (same unified path) |
+| Position PR | fullPR (relative to full approach) | fullPR (same, for spatial continuity) |
+| Stored PR | fullPR | state5PR = (targetDist − flyLen) / appLen |
+| pos.y | min(approachCap, remainingPathDist × tan(3°)) | min(approachCap, remainingPathDist × tan(3°)) |
+| dir | path tangent (level) | path tangent (follows approach path, converges to runway heading at touchdown) |
+| Radio | Approach (APP) | Tower (TWR) |
+| DynamicsParams | FlyApproachDynamicsParams | ApproachDynamicsParams |
+| WaitingForCommands | [] (empty) | [22] or [23] (sub-type A/B) |
+| Y source | Not copied from aircraft — computed from glideslope + runway cap |
+
+#### saveTime Resolution Priority
+
+In `_rebuildWorldStateSections` (flight_plans.js), saveTime is resolved in this order:
+
+1. `_saveSec` — explicit, passed from frontend (set by `extractGameTime` during load)
+2. **`extractGameTime(text)`** — GameTime.CurrentDateTime from the file being saved (authoritative)
+3. Cache `saveTimeOffsets` — derived from State=30 entries (less accurate, fallback)
+4. `startSec + 780` — warmup fallback (13 min after config startTime)
+
+### Verified Field Relationships (State=30)
 
 | Field | Source | Pattern |
 |-------|--------|---------|
@@ -506,7 +758,7 @@ The `src/acl/approach.js` module implements verified findings from an audit of 8
 | `AppPointList` | f(Route, Runway) map | Fixed per (Route, Runway) — 8 combos verified, 0 counterexamples |
 | `ProgressRatio` | Time-based formula | `1 − (LandingTime − saveTime) / totalApproachTime(Route)` |
 | `Direction` | Path tangent | Unit vector in XZ at current path position |
-| `Position.y` | Constant | Always 15.24 (approach altitude) |
+| `Position.y` | 3° glideslope, path-distance, capped | `min(approachCap, remainingPathDist × tan(3°))` — continuous with State=5, approachCap from state5ParamsMap |
 | All other fields | Invariant template | Fixed across all State=30 aircraft |
 
 ### ProgressRatio Formula
@@ -515,17 +767,23 @@ The `src/acl/approach.js` module implements verified findings from an audit of 8
 ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 ```
 
-- `saveTime` = simulation clock when the snapshot was taken (file-consistent, validated within 6-72s spread)
-- `totalApproachTime(Route)` = route-specific total duration from STAR entry to touchdown (~1380-1775s, computed from dTime/dPR within each file)
-- Verified: saveTime spread within each file is <73s (proves the formula is linear time-based)
+- `saveTime` = the snapshot time. Prefer GameTime.CurrentDateTime from the ACL file
+  (the literal wall-clock time the game wrote). The cache's `saveTimeOffsets` is a
+  fallback derived from State=30 entries via the inverse formula.
+- `totalApproachTime(Route)` = route-specific total duration from STAR entry to
+  touchdown (~1380-1775s, computed from dTime/dPR within each file)
+- This is a time-based approximation of the game's path-based PR. Expected position
+  error is ~50-200m due to non-uniform aircraft speed along the approach.
 
 ### Module API (`src/acl/approach.js`)
 
 **Data Extraction:**
 - `extractSpecificationDB(aclText)` → `Map<Designator, Spec>` — 14 designators across ZSJN+KJFK
 - `extractApproachData(aclText)` → `Array<{route, runway, progressRatio, flyPoints, appPoints, ...}>` — all State=30 aircraft
+- `extractState5Data(aclText)` → `Array<{route, runway, touchDownPosition, approachDirection, initialPosition, pathPointList}>` — State=5 aircraft still in-air (Sub-type A: has DynamicsParams, no taxi path)
 - `extractTypeMap(aclText)` → `Map<number, string>` — captures all fully-qualified `$type` declarations from a file; type numbers are per-file in Unity's serialization
 - `buildAppPointMap(approachEntries)` → `Map<"Route|Runway", Vector3[]>` — verified 1:1 mapping
+- `buildState5ParamsMap(state5Entries)` → `Map<"runway", {pathPointList, touchDownPosition, approachDirection, initialPosition}>` — per-runway final approach parameters from State=5 data
 - `computeTotalApproachTimes(approachEntries, getGroupId?)` → `Map<Route, seconds>` — per-route duration
 - `extractGameTime(aclText)` → `seconds \| null` — parse `GameTime.CurrentDateTime` ticks as seconds since midnight
 - `extractSaveTime(aclText, totalApproachTimes)` → `seconds \| null` — derive snapshot time from first State=30 entry's PR + LandingTime
@@ -533,19 +791,26 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 **Path Resolution:**
 - `resolveFlyApproachPoints(aclText, route, runway)` → `Vector3[]` — via SceneryData AirwayNodes
 
+**SceneryData & STAR Mapping:**
+- `extractStarRunwayMappings(aclText)` → `{starRunwayMap: {star→[runways]}, runwayStarMap: {runway→[stars]}}` — authoritative from `SceneryData.Runways.Routes[Type=0]` (superset of `appPointMap`)
+- `_parseRunwayThresholds(aclText)` → `{[PhysicalName]: {thresholds: [{x,z}, {x,z}]}}` — runway endpoint positions from SceneryData for StarMap visualization
+- `_parseTaxiwayNodes(aclText)` → `Map<guid, Vector3>` — TaxiwayNode positions for GUID resolution
+- `_parseAirwayNodes(aclText)` → `Map<guid, {name, position}>` — AirwayNode positions for FlyApproach path resolution
+
 **Computation:**
 - `computeProgressRatio(landingTimeTicks, saveTimeTicks, totalApproachTime)` → `0..1`
-- `computePosition(flyPoints, appPoints, progressRatio)` → `{x, y:15.24, z}` — approximate (linear interp, ~50-200m error due to non-uniform speed)
-- `computeDirection(flyPoints, appPoints, progressRatio)` → unit vector — accurate (~88%)
-- `buildFullPath(flyPoints, appPoints)` → combined path array
+- `computePosition(flyPoints, appPoints, progressRatio, touchDownPosition?, approachCap?)` → `{x, y, z}` — unified path (FlyApproach + App + TouchDown) with 3° glideslope Y; exported through parser facade for `get-aircraft-positions` IPC (StarMap live aircraft dots)
+- `computeDirection(flyPoints, appPoints, progressRatio, touchDownPosition?)` → unit vector — unified path tangent; also exported through parser facade
+- `buildFullPath(flyPoints, appPoints, touchDownPosition?)` → combined unified path array
 - `computePathLength(points)` → total distance
 
 **Designator Mapping & Cache:**
 - `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates
-- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times; `typeMap` is a merged `Map<number, string>` of all type declarations across the airport; `fileTypeMaps` is a `Map<basename, Map<number, string>>` of per-file type declarations for save-time type resolution
+- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times; `state5ParamsMap` is a `Map<runway, {pathPointList, touchDownPosition, approachDirection, initialPosition}>` of per-runway final approach parameters — `initialPosition.y` is the **approach altitude cap** for that runway. State determination (State=30 vs State=5) uses IAF passage: aircraft past the last FlyApproach waypoint are State=5, computed directly from the full FlyApproach path (resolved from SceneryData) without a cached fraction map
 
 **Assembly:**
-- `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — complete `$k/$v` JSON block; `typeNums` (optional) maps type names→numbers from the per-file `typeMap` to avoid hardcoded type IDs
+- `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, touchDownPosition?, approachCap?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=30 `$k/$v` JSON block; position uses unified path with touchdown
+- `buildState5AircraftBlock({flightPlanGuid, route, state5PR, spec, towerChannelGuid?, state5Params, flyPoints?, fullPR?, waitingForCommand?, selectedRunwayExitIndex?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=5 `$k/$v` JSON block; position uses unified path (flyPoints + PathPointList + TouchDown) with `fullPR` for spatial continuity; stored PR is rescaled `state5PR`; `waitingForCommand` controls sub-type (22=Contact Tower, 23=Cleared to Land)
 - `buildAnimatorBlock(aircraftGuid, opts)` — builds the paired `AircraftAnimatorState` entry; `opts.typeNums` controls `animState`/`animSubState` type numbers
 
 ### Test
@@ -645,6 +910,7 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 13. **One `.css` per component.** Match the component filename.
 14. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
 15. **Build with `node build.js`** on Windows, never `npm run build:win`.
-16. **Keep documentation in sync.** After any significant change, update BOTH:
+16. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `electron/main.js:12`. Stale caches silently corrupt saves.
+17. **Keep documentation in sync.** After any significant change, update BOTH:
     - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`)
     - **README.md**

@@ -16,15 +16,36 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ── Expand: fade-in only (no scale — avoids text rendering artifacts) ── */
+.stand-map-panel.opening {
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+/* ── Shrink: scale toward toggle button + fade ── */
+.stand-map-panel.closing {
+  opacity: 0;
+  transform: scale(0);
+  transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
 }
 
 .stand-map-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+
+.stand-map-panel.dragging .stand-map-header {
+  cursor: grabbing;
 }
 
 .stand-map-title {
@@ -33,7 +54,13 @@
   color: var(--text);
 }
 
-.stand-map-close {
+.stand-map-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stand-map-shrink {
   width: 24px;
   height: 24px;
   border: 1px solid var(--border);
@@ -48,10 +75,16 @@
   transition: all var(--transition);
 }
 
-.stand-map-close:hover {
-  background: var(--red-bg);
-  border-color: var(--red);
-  color: var(--red);
+.stand-map-shrink:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+/* ── Content wrapper ── */
+
+.stand-map-content-wrap {
+  overflow: hidden;
 }
 
 .stand-map-svg {
@@ -64,7 +97,6 @@
 }
 
 /* ── Dot states: available & current share accent color ── */
-/* Sizes are set inline (viewBox-relative), CSS only handles fill */
 
 .stand-map-dot {
   transition: r 100ms ease;
@@ -77,7 +109,8 @@
   cursor: pointer;
 }
 
-.stand-map-dot.occupied {
+.stand-map-dot.occupied,
+.stand-map-dot.disabled {
   fill: var(--stand-dot-occupied);
   opacity: 0.5;
   pointer-events: none;
@@ -97,13 +130,57 @@
   user-select: none;
 }
 
+.stand-map-label.hovered,
+.stand-map-label.selected {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+/* ── Active plane icon (animated between stands) ────────── */
+
+.stand-map-active-plane {
+  transition: transform 400ms ease;
+  pointer-events: none;
+}
+
+.stand-map-active-plane path {
+  fill: var(--text);
+  stroke: var(--accent);
+  stroke-width: 1.2;
+}
+
+/* ── Static occupied-stand plane icon ──────────────────── */
+
+.stand-map-plane-group {
+  pointer-events: none;
+}
+
+.stand-map-plane {
+  fill: var(--text-muted);
+  stroke: var(--bg-surface);
+  stroke-width: 0.8;
+}
+
+/* ── Callsign labels ──────────────────────────────────── */
+
+.stand-map-ac-label {
+  fill: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+.stand-map-ac-label.active {
+  fill: var(--text);
+  font-weight: 600;
+}
+
 /* ─── Legend ──────────────────────────────────────────── */
 
 .stand-map-legend {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 14px;
-  padding: 8px 12px;
+  padding: 10px 12px 14px 12px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -137,5 +214,10 @@
 
 .stand-map-legend-dot.lg-occupied {
   background: var(--stand-dot-occupied);
+  opacity: 0.5;
+}
+
+.stand-map-legend-plane {
+  flex-shrink: 0;
   opacity: 0.5;
 }

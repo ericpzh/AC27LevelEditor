@@ -212,14 +212,19 @@ function _parseStandPositions(text) {
     const nosePos = stand.noseGuid ? nodesMap[stand.noseGuid] : null;
 
     if (tailPos && nosePos) {
+      const dx = nosePos.x - tailPos.x;
+      const dz = nosePos.y - tailPos.y;  // pos.y is ACL-Z in nodesMap
+      let heading = Math.atan2(-dz, dx) * (180 / Math.PI);
+      heading = ((heading % 360) + 360) % 360;  // normalize to [0, 360)
       result[stand.identifier] = {
         x: (tailPos.x + nosePos.x) / 2,
         y: (tailPos.y + nosePos.y) / 2,
+        heading,
       };
     } else if (tailPos) {
-      result[stand.identifier] = { x: tailPos.x, y: tailPos.y };
+      result[stand.identifier] = { x: tailPos.x, y: tailPos.y, heading: 0 };
     } else if (nosePos) {
-      result[stand.identifier] = { x: nosePos.x, y: nosePos.y };
+      result[stand.identifier] = { x: nosePos.x, y: nosePos.y, heading: 0 };
     }
     // If neither position found, skip this stand
   }

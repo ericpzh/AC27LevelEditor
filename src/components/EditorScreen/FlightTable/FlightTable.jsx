@@ -5,93 +5,32 @@ import { useAppStore } from '../../../store/appStore';
 import { IoChevronForward, IoChevronDown } from 'react-icons/io5';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../../utils/constants';
 import ClockPopover from '../CellEditor/TimeClockPopover';
-import StandMap from '../StandMap/StandMap';
-
-// ── Helpers ──────────────────────────────────────────────────
-
-function timeToMinutes(timeStr) {
-  if (!timeStr) return null;
-  const parts = String(timeStr).split(':');
-  return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
-}
-
-/**
- * Compute which stands are occupied by other flights at the time
- * of the flight being edited (identified by globalIdx).
- *
- * @param {Array} flights — all flights in the editor
- * @param {number} currentIdx — index of the flight being edited
- * @returns {Set<string>} stand identifiers occupied by other flights
- */
-function computeOccupiedStands(flights, currentIdx) {
-  const flight = flights[currentIdx];
-  if (!flight || flight.Stand == null || flight.Stand === '') return new Set();
-
-  // Determine the key time for the flight being edited
-  let keyTimeMin = null;
-  if (flight.LandingTime) {
-    keyTimeMin = timeToMinutes(flight.InBlockTime || flight.LandingTime);
-  } else if (flight.OffBlockTime) {
-    keyTimeMin = timeToMinutes(flight.OffBlockTime);
-  }
-  if (keyTimeMin === null) return new Set();
-
-  // Time window around this flight's key time
-  const windowStart = keyTimeMin - 30;
-  const windowEnd = keyTimeMin + 60;
-
-  const occupied = new Set();
-  for (let i = 0; i < flights.length; i++) {
-    if (i === currentIdx) continue;
-    const other = flights[i];
-    if (!other.Stand) continue;
-
-    let otherStart = null;
-    let otherEnd = null;
-    if (other.LandingTime) {
-      const t = timeToMinutes(other.InBlockTime || other.LandingTime);
-      if (t !== null) { otherStart = t; otherEnd = t + 60; }
-    } else if (other.OffBlockTime) {
-      const t = timeToMinutes(other.OffBlockTime);
-      if (t !== null) { otherStart = t - 30; otherEnd = t; }
-    }
-
-    if (otherStart !== null && otherEnd !== null) {
-      // Check time window overlap
-      if (otherStart < windowEnd && otherEnd > windowStart) {
-        occupied.add(other.Stand);
-      }
-    }
-  }
-  return occupied;
-}
 
 function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(value);
   const [showClock, setShowClock] = useState(false);
-  const [showStandMap, setShowStandMap] = useState(false);
   const cellRef = useRef(null);
   const updateFlight = useAppStore(s => s.updateFlight);
+  const openStandMap = useAppStore(s => s.openStandMap);
+  const openStarMap = useAppStore(s => s.openStarMap);
+  const setMapFlightIdx = useAppStore(s => s.setMapFlightIdx);
+  const showStandMap = useAppStore(s => s.showStandMap);
+  const showStarMap = useAppStore(s => s.showStarMap);
   const cls = COL_CLASSES[col] || '';
 
-  // Stand-map specific data
-  const currentAirport = useAppStore(s => s.currentAirport);
-  const standPositions = useAppStore(s => {
-    const vals = s.airportValues[s.currentAirport] || {};
-    return vals._standPositions || null;
-  });
+  // Flight-specific data for dropdown filtering
   const allFlights = useAppStore(s => s.flights);
-  const occupiedStands = useMemo(() => {
-    if (col !== 'Stand' || !showStandMap) return new Set();
-    return computeOccupiedStands(allFlights, globalIdx);
-  }, [col, showStandMap, allFlights, globalIdx]);
+  const runwayStarMap = useAppStore(s => {
+    const vals = s.airportValues[s.currentAirport] || {};
+    return vals._runwayStarMap || null;
+  });
+  const flightRunway = (allFlights[globalIdx] && allFlights[globalIdx].Runway) || null;
 
   const commit = useCallback((newVal) => {
     updateFlight(globalIdx, { [col]: newVal !== undefined ? newVal : editVal });
     setEditing(false);
     setShowClock(false);
-    setShowStandMap(false);
   }, [globalIdx, col, editVal, updateFlight]);
 
   if (showClock) {
@@ -110,28 +49,26 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
 
     if (opts && opts.length > 0) {
       const isStandCol = col === 'Stand';
+      const isAirwayCol = col === 'Airway';
+
+      // Filter Airway dropdown options by selected runway.
+      let filteredOpts = opts;
+      if (isAirwayCol && flightRunway && runwayStarMap) {
+        const validStars = runwayStarMap[flightRunway] || [];
+        filteredOpts = opts.filter(o => validStars.includes(o));
+      }
+
       return (
         <td className={cls} data-col={col} data-idx={globalIdx} ref={cellRef}>
           <select
             className="cell-widget"
             value={editVal}
             onChange={e => { setEditVal(e.target.value); commit(e.target.value); }}
-            onBlur={isStandCol && showStandMap ? undefined : () => setEditing(false)}
+            onBlur={() => setEditing(false)}
             autoFocus
           >
-            {opts.map(o => <option key={o} value={o}>{o}</option>)}
+            {filteredOpts.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
-          {isStandCol && showStandMap && standPositions && Object.keys(standPositions).length > 0 && (
-            <StandMap
-              stands={standPositions}
-              selectedStand={editVal}
-              occupiedStands={occupiedStands}
-              onSelect={(standId) => { setEditVal(standId); commit(standId); }}
-              onClose={() => { setShowStandMap(false); setEditing(false); }}
-              cellRef={cellRef}
-              airportIcao={currentAirport}
-            />
-          )}
         </td>
       );
     }
@@ -145,12 +82,14 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
 
   const handleClick = (e) => {
     e.stopPropagation();
+    setMapFlightIdx(globalIdx);
     if (isTime) { setShowClock(true); }
     else if (col === 'FlightNum' && flightNums && flightNums.length > 0) { setEditVal(value); setEditing(true); }
     else if (options && options.length > 0) {
       setEditVal(value || options[0]);
       setEditing(true);
-      if (col === 'Stand') setShowStandMap(true);
+      if (col === 'Stand') openStandMap(globalIdx);
+      if (col === 'Airway') openStarMap(globalIdx);
     }
     else { setEditVal(value); setEditing(true); }
   };
@@ -169,6 +108,7 @@ export default function FlightTable({ type, flights, columns }) {
   const searchMatches = useAppStore(s => s.searchMatches);
   const toggleSelection = useAppStore(s => s.toggleSelection);
   const setHighlightedIdx = useAppStore(s => s.setHighlightedIdx);
+  const setMapFlightIdx = useAppStore(s => s.setMapFlightIdx);
   const airportValues = useAppStore(s => s.airportValues);
   const currentAirport = useAppStore(s => s.currentAirport);
   const allFlights = useAppStore(s => s.flights);
@@ -314,7 +254,7 @@ export default function FlightTable({ type, flights, columns }) {
                 return (
                   <tr key={gi}
                     className={`${isArrivals ? 'row-arrival' : 'row-departure'} ${selectedIndices.has(gi) ? 'selected' : ''} ${highlightedIdx === gi ? 'highlighted' : ''} ${searchMatches.has(gi) ? 'search-match' : ''} ${highlightedIdx === gi && searchMatches.has(gi) ? 'search-current' : ''}`}
-                    onClick={(e) => { if (e.target.closest('td')) return; setHighlightedIdx(gi); }}
+                    onClick={(e) => { if (e.target.closest('td')) return; setHighlightedIdx(gi); setMapFlightIdx(gi); }}
                     onMouseDown={(e) => onMouseDown(e, gi)}
                     onMouseEnter={(e) => onMouseEnter(e, gi)}>
                     <td className="chk-cell"><input type="checkbox" className="chk-row" data-idx={gi} checked={selectedIndices.has(gi)} onChange={e => { e.stopPropagation(); toggleSelection(gi); }} /></td>
