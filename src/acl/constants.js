@@ -39,7 +39,7 @@ const DROPDOWN_FIELDS = [
 
 // Minimum time-to-landing clamp (seconds). Aircraft closer than this to landing
 // are clamped so they still show on approach and the user has time to interact.
-const APPROACH_MIN_TTL = 30;
+const APPROACH_MIN_TTL = 25;
 
 module.exports = {
   NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS,

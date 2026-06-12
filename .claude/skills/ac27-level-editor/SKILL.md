@@ -339,6 +339,7 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - Collects dropdown values (`collectUniqueValues`) and runway pairs (`collectRunwayPairs`) from ALL .acl files
    - Merges audio flight numbers into `_flightNums` per airline code
    - **Stand dropdown from SceneryData:** Stand identifiers parsed by `_parseStandPositions()` become the authoritative dropdown options (sorted), replacing any hardcoded or ACL-derived stand lists
+   - **STAR dropdown from SceneryData:** STAR names come from `starRunwayMap` keys (SceneryData Type=0 Routes), same pattern as Stand — scenery is the single source of truth. `starRunwayMap` is built by `extractStarRunwayMappings()` and already excludes stubs (`$rlength:0`)
    - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions }`
    - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint of tail/nose taxiway node Positions)
    - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
@@ -350,7 +351,7 @@ The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.j
 
 Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `electron/main.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
-**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `electron/main.js:12`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set.
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `electron/main.js:12`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set. Current `CACHE_VERSION` is 4.
 
 | `cache.json` | Behavior |
 |---|---|
@@ -400,6 +401,7 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
    - (a) Dropdown value validation — every field against valid options
    - (b) Time range validation — flights within config startTime/endTime bounds
    - (c) Runway timeline bounds — change entry times within level range
+   - (d) STAR/runway combination validation — flags flights where the assigned STAR is not valid for the assigned runway (per SceneryData Type=0 Routes via `starRunwayMap`)
 2. **Wind speed conversion:** Wind speeds are converted from knots (store) back to the airport's native unit (e.g., mps) before being sent to IPC handlers. This ensures `wind_timeline.json` and the ACL both contain values in the unit the game expects.
 3. `save-acl` IPC → sorts flights → looks up approach cache for the airport → generates full ACL:
    - FlightPlans rebuilt from scratch with new GUIDs
@@ -480,7 +482,7 @@ The game ships four 30-minute `.demo.acl` slice levels:
 **Editor behavior:**
 - `.demo.acl` files are treated as **normal levels** — always visible, no tags, no hiding
 - **Demo mode** (root path contains "Airport Control 27 Demo"): only `.demo.acl` files are shown
-- **On load:** flights with landing/off-block times before `CurrentDateTime` are auto-removed (ease-of-use cleanup)
+- **On load:** flights are filtered to a 30-minute window starting at `CurrentDateTime` via `_filterDemoFlights()` — centralized helper shared across load, save, import, and restore paths. Uses integer-minute bounds: `[cdtMin, cdtMin + 30)` (inclusive lower, exclusive upper). Config's `startTime`/`endTime` are overridden to match.
 - **On save:** writes to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`
 - **Export/Import:** packs/unpacks `.demo.acl` identically to normal `.acl` files
 - **Approach cache:** includes `.demo.acl` files (unfiltered)
@@ -595,8 +597,9 @@ taxiing to the stand.
 along the approach route to the runway touchdown point, NOT from straight-line horizontal
 distance. The path distance follows the approach route through turns, giving correct
 altitude even for curved approaches (e.g., KJFK SIE.CAMRM5). The altitude is **capped**
-at the runway's approach ceiling (`approachCap`), which is the altitude at the start of
-the final approach segment — cached per runway from `state5Params.initialPosition.y`.
+at the runway's approach ceiling (`approachCap`), currently hardcoded to 15.24m (standard
+ILS approach ceiling). TEMP: previously derived from `state5Params.initialPosition.y` but
+that value may differ from the game's actual ceiling.
 
 ### Complete Position & Direction Math
 
@@ -610,7 +613,7 @@ the final approach segment — cached per runway from `state5Params.initialPosit
 - `TAT = totalApproachTimes[star]` — full approach duration in seconds (~1380-1775)
 - `appPoints = appPointMap[star + "|" + runway]` — AppPointList Vector3[]
 - `state5 = state5ParamsMap[runway]` — `{ pathPointList, touchDownPosition, approachDirection, initialPosition }`
-- `approachCap = state5.initialPosition.y` — max approach altitude for this runway (no hardcoded value; falls back to 15.24 only when no State=5 data exists)
+- `approachCap = 15.24` — standard ILS approach ceiling in meters (hardcoded; TEMP: was previously per-runway from `state5.initialPosition.y`)
 
 **SceneryData (resolved per-file from AirwayNodes):**
 - `flyPoints = resolveFlyApproachPoints(aclText, star, runway)` — FlyApproachPathPointList
@@ -661,7 +664,7 @@ pos = interpolateAlongPath(fullPath, targetDist)
 
 // Y from 3° ILS glideslope using REMAINING PATH DISTANCE.
 // NOT straight-line — path distance follows the approach route through turns.
-// Capped at the runway's approach ceiling (from state5ParamsMap, NOT hardcoded).
+// Capped at the runway's approach ceiling (hardcoded 15.24m, standard ILS).
 remainingPathDist = totalLen - targetDist                        [distance still to fly]
 glideY = remainingPathDist × tan(3°)                             [uncapped glideslope]
 pos.y = min(approachCap, glideY)                                 [capped at max altitude]
@@ -679,11 +682,14 @@ For portions of the approach beyond that distance, the aircraft stays at `approa
 
 Aircraft is on final approach, on Tower frequency. Position uses the **same unified
 path** as State=30 (FlyApproach + PathPointList + TouchDown) with `fullPR` for spatial
-continuity. The stored DynamicsParams.ProgressRatio uses the **rescaled** `state5PR`.
+continuity. The STOR FlyApproach and procedure PathPointList meet at the IAF (Initial
+Approach Fix) — `_dedupeIafJoin()` trims the duplicate flyPoint when it matches the first
+pathPoint (within 0.1m) to avoid a zero-length segment that would cause NaN in interpolation.
+The stored DynamicsParams.ProgressRatio uses the **rescaled** `state5PR`.
 
 ```
-// Unified path for position (same as State=30)
-unifiedPath = flyPoints + pathPoints + [tdPos]
+// Unified path for position (same as State=30, with IAF dedup)
+unifiedPath = _dedupeIafJoin(flyPoints, pathPoints) + pathPoints + [tdPos]
 totalLen = Σ segmentDistances(unifiedPath)
 targetDist = totalLen × fullPR                                    [fullPR for continuity]
 
@@ -758,7 +764,7 @@ In `_rebuildWorldStateSections` (flight_plans.js), saveTime is resolved in this 
 | `AppPointList` | f(Route, Runway) map | Fixed per (Route, Runway) — 8 combos verified, 0 counterexamples |
 | `ProgressRatio` | Time-based formula | `1 − (LandingTime − saveTime) / totalApproachTime(Route)` |
 | `Direction` | Path tangent | Unit vector in XZ at current path position |
-| `Position.y` | 3° glideslope, path-distance, capped | `min(approachCap, remainingPathDist × tan(3°))` — continuous with State=5, approachCap from state5ParamsMap |
+| `Position.y` | 3° glideslope, path-distance, capped | `min(approachCap, remainingPathDist × tan(3°))` — continuous with State=5, approachCap hardcoded 15.24m |
 | All other fields | Invariant template | Fixed across all State=30 aircraft |
 
 ### ProgressRatio Formula
@@ -774,6 +780,11 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
   touchdown (~1380-1775s, computed from dTime/dPR within each file)
 - This is a time-based approximation of the game's path-based PR. Expected position
   error is ~50-200m due to non-uniform aircraft speed along the approach.
+- **APPROACH_MIN_TTL clamping:** For StarMap live position display and the PR gate,
+  `timeToLanding` is clamped to a minimum of `APPROACH_MIN_TTL` (25s, from
+  `src/acl/constants.js`) so aircraft at or very near landing still show on the map
+  (PR never reaches exactly 1.0). Note: StarMap.jsx has its own local copy (10s)
+  for the in-panel aircraft position computation.
 
 ### Module API (`src/acl/approach.js`)
 
@@ -793,6 +804,7 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 
 **SceneryData & STAR Mapping:**
 - `extractStarRunwayMappings(aclText)` → `{starRunwayMap: {star→[runways]}, runwayStarMap: {runway→[stars]}}` — authoritative from `SceneryData.Runways.Routes[Type=0]` (superset of `appPointMap`)
+- `resolveApproachProcedureData(aclText, runway)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition} | null` — resolves final approach parameters for a runway from SceneryData Type=1 routes; used to rebuild `state5ParamsMap` on cache hit when it was not persisted
 - `_parseRunwayThresholds(aclText)` → `{[PhysicalName]: {thresholds: [{x,z}, {x,z}]}}` — runway endpoint positions from SceneryData for StarMap visualization
 - `_parseTaxiwayNodes(aclText)` → `Map<guid, Vector3>` — TaxiwayNode positions for GUID resolution
 - `_parseAirwayNodes(aclText)` → `Map<guid, {name, position}>` — AirwayNode positions for FlyApproach path resolution
@@ -802,11 +814,12 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 - `computePosition(flyPoints, appPoints, progressRatio, touchDownPosition?, approachCap?)` → `{x, y, z}` — unified path (FlyApproach + App + TouchDown) with 3° glideslope Y; exported through parser facade for `get-aircraft-positions` IPC (StarMap live aircraft dots)
 - `computeDirection(flyPoints, appPoints, progressRatio, touchDownPosition?)` → unit vector — unified path tangent; also exported through parser facade
 - `buildFullPath(flyPoints, appPoints, touchDownPosition?)` → combined unified path array
+- `_dedupeIafJoin(flyPoints, ppList)` → flyPoints with last point trimmed if it matches the first PathPointList point (within 0.1m) — prevents zero-length segments at the IAF join that would cause NaN in interpolation
 - `computePathLength(points)` → total distance
 
 **Designator Mapping & Cache:**
 - `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates
-- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times; `state5ParamsMap` is a `Map<runway, {pathPointList, touchDownPosition, approachDirection, initialPosition}>` of per-runway final approach parameters — `initialPosition.y` is the **approach altitude cap** for that runway. State determination (State=30 vs State=5) uses IAF passage: aircraft past the last FlyApproach waypoint are State=5, computed directly from the full FlyApproach path (resolved from SceneryData) without a cached fraction map
+- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap, starRunwayMap, runwayStarMap}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times; `state5ParamsMap` is a `Map<runway, {pathPointList, touchDownPosition, approachDirection, initialPosition}>` of per-runway final approach parameters. Note: `state5ParamsMap` is NOT persisted in `cache.json` — it is rebuilt from SceneryData on cache hit via `resolveApproachProcedureData()`. State determination (State=30 vs State=5) uses IAF passage: aircraft past the last FlyApproach waypoint are State=5, computed directly from the full FlyApproach path (resolved from SceneryData) without a cached fraction map
 
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, touchDownPosition?, approachCap?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=30 `$k/$v` JSON block; position uses unified path with touchdown
