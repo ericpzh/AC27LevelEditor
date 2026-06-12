@@ -777,10 +777,10 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
           // NullReferenceException due to missing type declarations (types 41-43, 49-52).
           // const isClearedToLand = timeToLanding < 60; // TEMP: disabled
 
-          // Resolve FlyApproach for the approach PROCEDURE (not STAR) so the path
-          // is consistent with state5Params.pathPointList. Using STAR flyPoints
-          // would create a disjoint concatenation → wrong heading at the join.
-          const procFlyPoints = resolveFlyApproachPoints(text, approachRoute, runway);
+          // State=5 position path mirrors State=30: STAR FlyApproach + procedure
+          // PathPointList + touchdown. flyPoints (STAR) was already resolved
+          // above — pass it directly instead of re-resolving the procedure's
+          // FlyApproach (which would double the ppList segment).
 
           const result = buildState5AircraftBlock({
             flightPlanGuid: fpGuids[i],
@@ -788,7 +788,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
             spec: spec,
             towerChannelGuid: _towerChannelGuid || _radioChannelGuid,
             state5Params: state5Params,
-            flyPoints: procFlyPoints,
+            flyPoints: flyPoints,
             fullPR: progressRatio,
             waitingForCommand: 22, // TEMP: always Contact Tower (was: isClearedToLand ? 23 : 22)
             selectedRunwayExitIndex: -1, // TEMP: always -1 (was: isClearedToLand ? 0 : -1)

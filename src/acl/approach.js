@@ -1195,6 +1195,24 @@ function buildFullPath(flyApproachPoints, appPoints, touchDownPosition) {
 }
 
 /**
+ * Deduplicate the IAF join between STAR FlyApproach and procedure PathPointList.
+ * Both segments meet at the Initial Approach Fix — if the last flyPoint and first
+ * ppList point are the same (within 0.1m), trim the duplicate from flyPoints to
+ * avoid a zero-length segment that would cause NaN in _interpolateAlongPath.
+ */
+function _dedupeIafJoin(flyPoints, ppList) {
+  if (!flyPoints || flyPoints.length === 0 || !ppList || ppList.length === 0) {
+    return flyPoints || [];
+  }
+  const lastFly = flyPoints[flyPoints.length - 1];
+  const firstPP = ppList[0];
+  if (_vec3Dist(lastFly, firstPP) < 0.1) {
+    return flyPoints.slice(0, -1);
+  }
+  return flyPoints;
+}
+
+/**
  * Compute total path length (sum of segment distances).
  */
 function computePathLength(points) {
@@ -1536,13 +1554,12 @@ function buildState5AircraftBlock(opts) {
   // (Unity stores positions in the XZ plane). The game computes actual
   // altitude from the glideslope using REMAINING PATH DISTANCE (not
   // straight-line) to follow the approach route through turns.
-  // Capped at the runway's approach ceiling — cached per runway from
-  // state5Params.initialPosition.y, NOT hardcoded.
+  // Capped at the runway's approach ceiling.
+  // TEMP: hardcode 15.24m — state5Params.initialPosition.y may differ from
+  // the standard ILS approach ceiling used by the game.
   const TAN_3_DEG = Math.tan(3 * Math.PI / 180); // ≈ 0.052408
   const tdPos = state5Params.touchDownPosition || { x: 0, y: 0, z: 0 };
-  const approachCap = state5Params.initialPosition
-    ? state5Params.initialPosition.y
-    : 15.24;
+  const approachCap = 15.24;
 
   // Build PathPointList with glideslope-computed Y (not the stored Y=0).
   // Each point's Y = min(approachCap, pathDistanceToTD × tan(3°)).
@@ -1582,22 +1599,25 @@ function buildState5AircraftBlock(opts) {
     dockStr = `{\n"$id": ${id++},\n"$type": ${T.dockArr},\n"$rlength": 0,\n"$rcontent": []\n}`;
   }
 
-  // Position: interpolate along the unified path (FlyApproach → PathPointList → TouchDown).
-  // buildFullPath appends touchdown with a zero-length guard.
-  const posFullPath = buildFullPath(flyPoints, ppList, tdPos);
-  const posPR = (flyPoints && flyPoints.length > 0 && fullPR != null) ? fullPR : 0;
+  // Position: interpolate along the full path (STAR FlyApproach → PathPointList → TouchDown).
+  // flyPoints = STAR FlyApproach path (ending at IAF)
+  // ppList = approach procedure PathPointList (starting at IAF)
+  // tdPos = runway touchdown threshold
+  //
+  // Deduplicate the IAF join: if the last STAR flyPoint is very close to the
+  // first PathPointList point, trim the duplicate to avoid a zero-length segment.
+  const dedupedFlyPoints = _dedupeIafJoin(flyPoints, ppList);
+  const posFullPath = buildFullPath(dedupedFlyPoints, ppList, tdPos);
+  const posPR = fullPR != null ? fullPR : 0;
   const totalPathLen = computePathLength(posFullPath);
   const targetDist = totalPathLen * Math.max(0, Math.min(1, posPR));
   const pos = _interpolateAlongPath(posFullPath, targetDist);
   // Y from 3° ILS glideslope using REMAINING PATH DISTANCE to touchdown.
-  // Touchdown is now the last point in posFullPath, so remaining distance is
-  // simply totalPathLen - targetDist.
-  // Capped at the runway's approach ceiling.
   const remainingPathDist = totalPathLen - targetDist;
   const glideY = remainingPathDist * TAN_3_DEG;
   pos.y = Math.min(approachCap, glideY);
 
-  // Direction: path tangent at current position along the unified path.
+  // Direction: path tangent at current position along the full path.
   // The tangent naturally converges to the runway heading at touchdown but
   // follows the approach path through turns before that (e.g., SIE.CAMRM5→13L).
   const dir = _tangentAlongPath(posFullPath, targetDist);
