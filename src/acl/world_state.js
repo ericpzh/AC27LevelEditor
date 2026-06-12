@@ -2,9 +2,9 @@
  * ACL WorldState parser — TaskFlightState (type 56/54) and AircraftState (type 35).
  * Uses the tokenizer for string-aware structural boundary finding.
  */
-import {
+const {
   TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS,
-} from './constants';
+} = require('./constants.js');
 const {
   ticksToTime, timeToTicks, _extractBaseDateFromText,
 } = require('../utils/timeUtils');

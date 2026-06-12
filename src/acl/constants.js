@@ -3,7 +3,7 @@
  * Re-exports tick constants from ../utils/constants.js.
  */
 
-export { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS } from '../utils/constants';
+const { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS } = require('../utils/constants.js');
 
 // ─── CSV field definitions ─────────────────────────────
 const FIELDS = [
@@ -37,6 +37,12 @@ const DROPDOWN_FIELDS = [
   'Voice', 'Language', 'Registration', 'Airway',
 ];
 
-export {
+// Minimum time-to-landing clamp (seconds). Aircraft closer than this to landing
+// are clamped so they still show on approach and the user has time to interact.
+const APPROACH_MIN_TTL = 30;
+
+module.exports = {
+  NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS,
   FIELDS, FIELD_LABELS, DROPDOWN_FIELDS,
+  APPROACH_MIN_TTL,
 };

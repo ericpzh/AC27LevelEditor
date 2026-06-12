@@ -1,7 +1,7 @@
 /**
  * Time conversion utilities — Newtonsoft.Json DateTime ticks ↔ HH:MM:SS strings.
  */
-import { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS } from './constants';
+import { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS } from './constants.js';
 
 // ─── Tick ↔ Time conversion ─────────────────────────────
 export function ticksToTime(ticks) {

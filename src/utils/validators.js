@@ -1,5 +1,5 @@
-import { T } from './i18n';
-import { FIELD_LABELS } from './constants';
+import { T } from './i18n.js';
+import { FIELD_LABELS } from './constants.js';
 
 // ── Stand conflict detection helpers ──
 
@@ -188,6 +188,26 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
       }
     }
   });
+
+  // STAR/runway combination validation — flag flights where the assigned
+  // STAR is not valid for the assigned runway according to scenery data.
+  const starRunwayMap = values._starRunwayMap || {};
+  if (Object.keys(starRunwayMap).length > 0) {
+    flights.forEach((fl) => {
+      const runway = (fl.Runway || '').trim();
+      const airway = (fl.Airway || '').trim();
+      if (runway && airway) {
+        const validRunways = starRunwayMap[airway] || [];
+        if (validRunways.length > 0 && !validRunways.includes(runway)) {
+          issues.push(T('val_star_runway_invalid', {
+            cs: fl.CallSign || '?',
+            star: airway,
+            runway: runway,
+          }));
+        }
+      }
+    });
+  }
 
   if (_saveSec != null && _configEndTime) {
     // _saveSec = scenario snapshot time (warmup end), _configEndTime = scenario end

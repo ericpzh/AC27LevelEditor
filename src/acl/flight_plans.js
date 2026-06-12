@@ -7,7 +7,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-import { FALLBACK_BASE_DATE_TICKS } from './constants';
+import { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL } from './constants';
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
 const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, _vec3Sub, _vec3Normalize, _vec3Dist } = require('./approach');
@@ -670,13 +670,12 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       // but skip aircraft that landed more than 10s before the snapshot.
       // This avoids edge cases where PR ≈ 1.0 places the aircraft at/beyond
       // the last path point (touchdown with Y=0, wrong XZ position).
-      const MIN_TTL = 30;
       const GRACE_TTL = -10;
       if (timeToLanding < GRACE_TTL) {
         log('  SKIP (landed ' + (-timeToLanding) + 's ago): ' + fl.CallSign);
         continue;
       }
-      const clampedTTL = timeToLanding < MIN_TTL ? MIN_TTL : timeToLanding;
+      const clampedTTL = timeToLanding < APPROACH_MIN_TTL ? APPROACH_MIN_TTL : timeToLanding;
       const progressRatio = 1.0 - (clampedTTL / totalApproachTime);
 
       // Gate: only generate if aircraft is mid-approach at snapshot time
@@ -701,10 +700,11 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       const appLen = computePathLength(appPoints);
       const totalLen = flyLen + appLen;
 
-      // Aircraft position along the unified path (FlyApproach → AppPath → TouchDown)
-      const targetDist = progressRatio * totalLen;
+      // IAF boundary: use raw TTL (unclamped) so State classification is accurate.
+      // The clamped progressRatio is used for position interpolation downstream.
+      const rawTargetDist = (1.0 - timeToLanding / totalApproachTime) * totalLen;
 
-      if (targetDist >= flyLen) {
+      if (rawTargetDist >= flyLen) {
         // ── State=5: Past IAF, on Tower frequency ──
 
         // State=5 entries use approach procedure names as Route (e.g. "RNAV ILS Z Rwy 19"),
@@ -760,15 +760,13 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
           log('  no State=5 params for "' + appKey + '" or runway "' + runway + '", falling back to State=30 for ' + fl.CallSign);
           // fall through to State=30 below
         } else {
-          // State=5 PR rescaled to final approach segment [0, 1].
-          // The game's ApproachDynamicsParams expects PR relative to the final
-          // approach path (PathPointList→TouchDown), not the full STAR+Approach.
-          const state5PR = (targetDist - flyLen) / appLen;
+          // State=5 ProgressRatio hardcoded to 0 in buildState5AircraftBlock.
+          // The game recalculates the path-based PR when the level loads.
 
           log('  build State=5 entry: ' + fl.CallSign + ' ' + star + '/' + runway +
-              ' PR=' + progressRatio.toFixed(3) + ' state5PR=' + state5PR.toFixed(3) +
+              ' PR=' + progressRatio.toFixed(3) +
               ' timeToLanding=' + timeToLanding.toFixed(0) + 's' +
-              ' pastIAF=' + (targetDist - flyLen).toFixed(0) + 'm' +
+              ' pastIAF=' + (rawTargetDist - flyLen).toFixed(0) + 'm' +
               ' towerCh=' + (_towerChannelGuid ? 'yes' : 'no'));
 
           // Determine State=5 sub-type based on time-to-landing:
@@ -779,14 +777,18 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
           // NullReferenceException due to missing type declarations (types 41-43, 49-52).
           // const isClearedToLand = timeToLanding < 60; // TEMP: disabled
 
+          // Resolve FlyApproach for the approach PROCEDURE (not STAR) so the path
+          // is consistent with state5Params.pathPointList. Using STAR flyPoints
+          // would create a disjoint concatenation → wrong heading at the join.
+          const procFlyPoints = resolveFlyApproachPoints(text, approachRoute, runway);
+
           const result = buildState5AircraftBlock({
             flightPlanGuid: fpGuids[i],
             route: approachRoute,
-            state5PR: state5PR,
             spec: spec,
-            towerChannelGuid: _towerChannelGuid || _radioChannelGuid, // fallback to APP if no TWR found
+            towerChannelGuid: _towerChannelGuid || _radioChannelGuid,
             state5Params: state5Params,
-            flyPoints: flyPoints,
+            flyPoints: procFlyPoints,
             fullPR: progressRatio,
             waitingForCommand: 22, // TEMP: always Contact Tower (was: isClearedToLand ? 23 : 22)
             selectedRunwayExitIndex: -1, // TEMP: always -1 (was: isClearedToLand ? 0 : -1)
@@ -818,8 +820,18 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       // Both come from the per-runway state5ParamsMap (cached from ACL).
       // approachCap = max approach altitude — NOT hardcoded.
       const state5ForRwy = approachCache?.state5ParamsMap?.get(runway);
-      const tdPos = state5ForRwy?.touchDownPosition || null;
-      const approachCap = state5ForRwy?.initialPosition?.y ?? null;
+      let tdPos = state5ForRwy?.touchDownPosition || null;
+      let approachCap = state5ForRwy?.initialPosition?.y ?? null;
+      // Fallback: derive touchdown from AppPointList when state5ParamsMap lacks
+      // this runway. Same derivation as the State=5 fallback — extends the last
+      // AppPoint segment by 50m to approximate the runway threshold.
+      if (!tdPos && appPoints && appPoints.length >= 2) {
+        const lastPt = appPoints[appPoints.length - 1];
+        const prevPt = appPoints[appPoints.length - 2];
+        const dir = _vec3Normalize(_vec3Sub(lastPt, prevPt));
+        tdPos = { x: lastPt.x + dir.x * 50, y: 0, z: lastPt.z + dir.z * 50 };
+        if (approachCap == null) approachCap = 15.24;
+      }
 
       const result = buildApproachAircraftBlock({
         flightPlanGuid: fpGuids[i],

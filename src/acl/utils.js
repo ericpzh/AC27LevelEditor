@@ -3,7 +3,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-import { DROPDOWN_FIELDS } from './constants';
+const { DROPDOWN_FIELDS } = require('./constants.js');
 const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./world_state');
 const { _parseSceneryData } = require('./scenery');
 const { _parseWorldStateFlightPlans, _extractConfig, _parseRunwayTimeline } = require('./flight_plans');
@@ -44,6 +44,9 @@ function collectUniqueValues(aclPaths) {
     if (!flights || flights.length === 0) continue;
     for (const fl of flights) {
       for (const field of DROPDOWN_FIELDS) {
+        // Airway (STAR) values come from starRunwayMap (SceneryData), not
+        // from flight data — same pattern as Stand values from standPositions.
+        if (field === 'Airway') continue;
         if (field === 'AirlineCode') {
           const code = (fl.CallSign || '').trim().substring(0, 3);
           if (code) values[field].add(code);

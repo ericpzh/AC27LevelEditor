@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { IoRemove } from 'react-icons/io5';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useElectronAPI } from '../../../hooks/useElectronAPI';
+// Canonical value: src/acl/constants.js APPROACH_MIN_TTL
+const APPROACH_MIN_TTL = 10;
 import useDrag from '../../../hooks/useDrag';
 import { useAppStore } from '../../../store/appStore';
 import './StarMap.css';
@@ -69,6 +71,20 @@ function interpolateOnPath(points, targetDist) {
   }
   const last = points[points.length - 1];
   return { x: last.x, y: last.y || 0, z: last.z || 0, dirX: 1, dirZ: 0 };
+}
+
+// Extend a path to include a derived touchdown point (50m past the last point
+// along the approach heading). Used for aircraft position interpolation so the
+// aircraft reaches the runway threshold, not just the last AppPoint.
+// Mirrors the 50m fallback derivation in src/acl/flight_plans.js and main.js.
+function extendPathToThreshold(points) {
+  if (!points || points.length < 2) return points || [];
+  const last = points[points.length - 1];
+  const prev = points[points.length - 2];
+  const dx = last.x - prev.x;
+  const dz = (last.z || 0) - (prev.z || 0);
+  const len = Math.sqrt(dx * dx + dz * dz) || 1;
+  return [...points, { x: last.x + (dx / len) * 50, y: 0, z: last.z + (dz / len) * 50 }];
 }
 
 // ── Time string → seconds helper ────────────────────────
@@ -165,7 +181,8 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
     const landingSec = editFlight._landingSec != null
       ? editFlight._landingSec
       : timeToSec(editFlight.LandingTime || editFlight.landingTime);
-    const pr = 1 - (landingSec - saveSec) / tat;
+    const ttl = landingSec - saveSec;
+    const pr = 1 - Math.max(APPROACH_MIN_TTL, ttl) / tat;
     if (pr <= 0 || pr >= 1) return null;
 
     const runway = editFlight.Runway || editFlight.runway;
@@ -176,9 +193,10 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
     );
     if (!variant || !variant.points || variant.points.length < 2) return null;
 
-    const totalLen = pathLength(variant.points);
+    const extPoints = extendPathToThreshold(variant.points);
+    const totalLen = pathLength(extPoints);
     const targetDist = totalLen * pr;
-    const hp = interpolateOnPath(variant.points, targetDist);
+    const hp = interpolateOnPath(extPoints, targetDist);
     const headingDeg = Math.atan2(-hp.dirZ, hp.dirX) * (180 / Math.PI);
 
     return { x: hp.x, y: hp.y || 0, z: hp.z || 0, headingDeg };
@@ -201,7 +219,8 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
     const landingSec = ef._landingSec != null
       ? ef._landingSec
       : timeToSec(ef.LandingTime || ef.landingTime);
-    const pr = 1 - (landingSec - saveSec) / tat;
+    const ttl = landingSec - saveSec;
+    const pr = 1 - Math.max(APPROACH_MIN_TTL, ttl) / tat;
     if (pr <= 0 || pr >= 1) return null;
 
     const variants = starPaths[star];
@@ -211,9 +230,10 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
     );
     if (!variant || !variant.points || variant.points.length < 2) return null;
 
-    const totalLen = pathLength(variant.points);
+    const extPoints = extendPathToThreshold(variant.points);
+    const totalLen = pathLength(extPoints);
     const targetDist = totalLen * pr;
-    const hp = interpolateOnPath(variant.points, targetDist);
+    const hp = interpolateOnPath(extPoints, targetDist);
     const headingDeg = Math.atan2(-hp.dirZ, hp.dirX) * (180 / Math.PI);
 
     return { x: hp.x, y: hp.y || 0, z: hp.z || 0, headingDeg };

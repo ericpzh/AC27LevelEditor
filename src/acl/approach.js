@@ -54,6 +54,23 @@ function _vec3Dist(a, b) {
   return _vec3Length(_vec3Sub(a, b));
 }
 
+// ─── Runway name normalization ──────────────────────────────────
+
+/**
+ * Normalize a runway name by stripping leading zeros from the numeric portion.
+ * "01" → "1", "01L" → "1L", "19" → "19", "19R" → "19R"
+ * Returns the original string if it doesn't match the runway format.
+ * Idempotent — normalizing an already-normalized name is a no-op.
+ */
+function _normalizeRunway(name) {
+  if (!name) return name;
+  const match = name.match(/^0*(\d+)([LCR]?)$/);
+  if (match) {
+    return match[1] + (match[2] || '');
+  }
+  return name;
+}
+
 // ─── ACL text parsing helpers ─────────────────────────────────────
 
 // ═══ Shared ACL text parsing helpers ══════════════════════════════
@@ -540,15 +557,49 @@ function _findRunwayGuid(text, runwayName) {
       const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
       const vBlock = _extractValueBlock(block);
       if (kMatch && vBlock) {
-        const name = _extractString(vBlock, 'Name');
+        // Use depth-aware Name extraction (same pattern as extractStarRunwayMappings).
+        // _extractString(vBlock, 'Name') would grab the FIRST "Name" anywhere in the
+        // vBlock, which is often a nested Entry/route name like "A14" or "A1" inside
+        // the Routes[] array — NOT the runway designator like "19" or "01". Only
+        // depth-1 scanning finds the actual runway Name.
+        let name = null;
+        let rwyDepth = 0;
+        for (let si = 0; si < vBlock.length - 8; si++) {
+          if (vBlock[si] === '{') rwyDepth++;
+          else if (vBlock[si] === '}') rwyDepth--;
+          else if (rwyDepth === 1 && vBlock.substring(si, si + 6) === '"Name"') {
+            const colonPos = vBlock.indexOf(':', si + 6);
+            if (colonPos > 0) {
+              let vs = colonPos + 1;
+              while (vs < vBlock.length && ' \t\n\r'.includes(vBlock[vs])) vs++;
+              if (vBlock[vs] === '"') {
+                const ve = vBlock.indexOf('"', vs + 1);
+                if (ve > vs) { name = vBlock.substring(vs + 1, ve); }
+              }
+            }
+            break;
+          }
+        }
         const physName = _extractString(vBlock, 'PhysicalName');
-        // Prefer exact Name match over PhysicalName includes
-        if (name === runwayName) {
+        // Prefer exact Name match over PhysicalName fallback.
+        // Normalize both sides so "1" matches "01" and vice versa.
+        if (name && _normalizeRunway(name) === _normalizeRunway(runwayName)) {
           return kMatch[1];
         }
-        // Remember first PhysicalName match as fallback
-        if (physName && physName.includes(runwayName) && !_physFallback) {
-          _physFallback = kMatch[1];
+        // Fallback: split PhysicalName by "/" and compare each runway end
+        // using normalized names. This avoids false positives where
+        // physName.includes("1") matches both "01" and "19" in "01/19".
+        if (physName && !_physFallback) {
+          const normTarget = _normalizeRunway(runwayName);
+          if (normTarget) {
+            const runwayEnds = physName.split('/');
+            for (const end of runwayEnds) {
+              if (_normalizeRunway(end.trim()) === normTarget) {
+                _physFallback = kMatch[1];
+                break;
+              }
+            }
+          }
         }
       }
       pos = entryEnd;
@@ -942,7 +993,12 @@ function extractStarRunwayMappings(aclText) {
                   const type = _extractInt(routeEntry, 'Type');
                   if (type === 0) {
                     const starName = _extractString(routeEntry, 'Name');
-                    if (starName) {
+                    // Skip routes with no waypoint data ($rlength: 0) — these are
+                    // stub entries that don't have actual approach path nodes and
+                    // cannot be used by the game. Including them would let the
+                    // editor offer STARs that result in unrendered aircraft.
+                    const guids = _extractGuidArray(routeEntry, 'AirwayNodeGuids');
+                    if (starName && guids && guids.length > 0) {
                       if (!starRunwayMap[starName]) starRunwayMap[starName] = [];
                       if (!starRunwayMap[starName].includes(runwayName)) starRunwayMap[starName].push(runwayName);
                       if (!runwayStarMap[runwayName]) runwayStarMap[runwayName] = [];
@@ -1127,7 +1183,14 @@ function computeProgressRatio(landingTimeTicks, saveTimeTicks, totalApproachTime
  */
 function buildFullPath(flyApproachPoints, appPoints, touchDownPosition) {
   const all = [...(flyApproachPoints || []), ...(appPoints || [])];
-  if (touchDownPosition) all.push(touchDownPosition);
+  if (touchDownPosition) {
+    // Avoid zero-length tail segment which would cause div-by-zero in
+    // _interpolateAlongPath / _tangentAlongPath.
+    const last = all.length > 0 ? all[all.length - 1] : null;
+    if (!last || _vec3Dist(last, touchDownPosition) > 0.001) {
+      all.push(touchDownPosition);
+    }
+  }
   return all;
 }
 
@@ -1180,13 +1243,12 @@ function _tangentAlongPath(points, targetDist) {
 }
 
 /**
- * Compute Position from ProgressRatio along combined FlyApproach + App path.
- * Touchdown is NOT included in the interpolation path (State=30 aircraft are on
- * the STAR, not yet on final approach). It is only used for Y/glideslope via
- * remaining path distance extended to the runway threshold.
+ * Compute Position from ProgressRatio along combined FlyApproach + App + TouchDown path.
+ * Touchdown IS included in the interpolation path so the XZ position is accurate
+ * all the way to the runway threshold. It also drives the 3° ILS glideslope Y.
  */
 function computePosition(flyApproachPoints, appPoints, progressRatio, touchDownPosition, approachCap) {
-  const fullPath = buildFullPath(flyApproachPoints, appPoints);
+  const fullPath = buildFullPath(flyApproachPoints, appPoints, touchDownPosition);
   const totalLen = computePathLength(fullPath);
   const targetDist = totalLen * progressRatio;
   const pos = _interpolateAlongPath(fullPath, targetDist);
@@ -1195,10 +1257,9 @@ function computePosition(flyApproachPoints, appPoints, progressRatio, touchDownP
   // curved approaches like KJFK SIE.CAMRM5. Capped at the runway's approach
   // ceiling (cached per runway, NOT hardcoded).
   if (touchDownPosition && approachCap != null) {
-    // Remaining distance: path left on FlyApproach+App, plus distance from
-    // last App point to touchdown (the final approach segment).
-    const remainingPathDist = (totalLen - targetDist) +
-      _vec3Dist(fullPath[fullPath.length - 1], touchDownPosition);
+    // Remaining distance: path left from current position to touchdown
+    // (touchdown is now the last point in fullPath).
+    const remainingPathDist = totalLen - targetDist;
     const glideY = remainingPathDist * Math.tan(3 * Math.PI / 180);
     pos.y = Math.min(approachCap, glideY);
   } else {
@@ -1209,9 +1270,14 @@ function computePosition(flyApproachPoints, appPoints, progressRatio, touchDownP
 
 /**
  * Compute Direction (normalized XZ tangent) from ProgressRatio along combined path.
+ * @param {Vector3[]} flyApproachPoints
+ * @param {Vector3[]} appPoints
+ * @param {number} progressRatio - 0..1
+ * @param {Vector3} [touchDownPosition] - optional runway threshold, included in path
+ *   so heading points toward the runway when near the end of the approach
  */
-function computeDirection(flyApproachPoints, appPoints, progressRatio) {
-  const fullPath = buildFullPath(flyApproachPoints, appPoints);
+function computeDirection(flyApproachPoints, appPoints, progressRatio, touchDownPosition) {
+  const fullPath = buildFullPath(flyApproachPoints, appPoints, touchDownPosition || null);
   const totalLen = computePathLength(fullPath);
   const targetDist = totalLen * progressRatio;
   const dir = _tangentAlongPath(fullPath, targetDist);
@@ -1309,7 +1375,7 @@ function buildApproachAircraftBlock(opts) {
 
   // Position and Direction
   const pos = computePosition(flyPoints, appPoints, progressRatio, touchDownPosition, approachCap);
-  const dir = computeDirection(flyPoints, appPoints, progressRatio);
+  const dir = computeDirection(flyPoints, appPoints, progressRatio, touchDownPosition);
 
   const block = `{
     "$id": ${id++},
@@ -1416,7 +1482,7 @@ function buildApproachAircraftBlock(opts) {
  * @param {Object} opts
  * @param {string} opts.flightPlanGuid - GUID of the matching FlightPlanState
  * @param {string} opts.route - approach procedure name (e.g., "RNAV ILS Z Rwy 19")
- * @param {number} opts.state5PR - progress ratio along the final approach (0→1)
+ * @param {number} opts.state5PR - DEPRECATED: hardcoded to 0; game recalculates path-based PR
  * @param {Object} opts.spec - AircraftSpec from specDB
  * @param {string} opts.towerChannelGuid - Tower radio channel GUID
  * @param {Object} opts.state5Params - cached { touchDownPosition, approachDirection, initialPosition, pathPointList }
@@ -1429,7 +1495,6 @@ function buildState5AircraftBlock(opts) {
   const {
     flightPlanGuid,
     route,
-    state5PR,
     spec,
     towerChannelGuid = '',
     state5Params,
@@ -1517,30 +1582,24 @@ function buildState5AircraftBlock(opts) {
     dockStr = `{\n"$id": ${id++},\n"$type": ${T.dockArr},\n"$rlength": 0,\n"$rcontent": []\n}`;
   }
 
-  // Position: interpolate along the unified path (FlyApproach → PathPointList).
-  // TouchDownPosition is NOT appended to the path to avoid zero-length tail segments
-  // when tdPos equals the last PathPointList point (common with derived params).
-  // Instead, remaining-path-distance for the glideslope is extended from the last
-  // path point to tdPos, matching how computePosition() works for State=30.
-  const posFullPath = flyPoints && flyPoints.length > 0
-    ? [...flyPoints, ...ppList]
-    : (ppList.length > 0 ? [...ppList] : [tdPos]);
-  const posPR = (flyPoints && flyPoints.length > 0 && fullPR != null) ? fullPR : state5PR;
+  // Position: interpolate along the unified path (FlyApproach → PathPointList → TouchDown).
+  // buildFullPath appends touchdown with a zero-length guard.
+  const posFullPath = buildFullPath(flyPoints, ppList, tdPos);
+  const posPR = (flyPoints && flyPoints.length > 0 && fullPR != null) ? fullPR : 0;
   const totalPathLen = computePathLength(posFullPath);
   const targetDist = totalPathLen * Math.max(0, Math.min(1, posPR));
   const pos = _interpolateAlongPath(posFullPath, targetDist);
-  // Y from 3° ILS glideslope using REMAINING PATH DISTANCE extended to touchdown.
-  // NOT straight-line — path distance follows the route through turns.
+  // Y from 3° ILS glideslope using REMAINING PATH DISTANCE to touchdown.
+  // Touchdown is now the last point in posFullPath, so remaining distance is
+  // simply totalPathLen - targetDist.
   // Capped at the runway's approach ceiling.
-  const remainingPathDist = (totalPathLen - targetDist) +
-    _vec3Dist(posFullPath[posFullPath.length - 1], tdPos);
+  const remainingPathDist = totalPathLen - targetDist;
   const glideY = remainingPathDist * TAN_3_DEG;
   pos.y = Math.min(approachCap, glideY);
 
   // Direction: path tangent at current position along the unified path.
   // The tangent naturally converges to the runway heading at touchdown but
   // follows the approach path through turns before that (e.g., SIE.CAMRM5→13L).
-  // dir.y is left at whatever _tangentAlongPath returns (in-plane direction).
   const dir = _tangentAlongPath(posFullPath, targetDist);
 
   const block = `{
@@ -1579,7 +1638,7 @@ function buildState5AircraftBlock(opts) {
       "DynamicsParams": {
         "$id": ${id++},
         "$type": ${T.approachDyn},
-        "ProgressRatio": ${state5PR},
+        "ProgressRatio": 0,
         "TouchDownPosition": ${fmtV3(state5Params.touchDownPosition || { x:0, z:0 })},
         "ApproachDirection": ${fmtV3(state5Params.approachDirection || { x:0, z:-1 })},
         "CommandedGoAround": false,
@@ -1917,7 +1976,6 @@ function buildApproachCache(airportDir) {
 
   // Collect all approach entries from all files
   const allEntries = [];
-  const allState5Entries = [];
   let specDB = new Map();
   let designatorMap = new Map();
   const typeMap = new Map(); // per-airport: type_number → type_name
@@ -1931,11 +1989,6 @@ function buildApproachCache(airportDir) {
       const entries = extractApproachData(text);
       for (const e of entries) e._file = path.basename(aclPath);
       allEntries.push(...entries);
-
-      // State=5 entries (Sub-type A: in-air, Tower frequency)
-      const s5Entries = extractState5Data(text);
-      for (const e of s5Entries) e._file = path.basename(aclPath);
-      allState5Entries.push(...s5Entries);
 
       // Merge specDB from each file (byte-identical per Designator, safe to merge)
       const fileSpecs = extractSpecificationDB(text);
@@ -1988,7 +2041,24 @@ function buildApproachCache(airportDir) {
     ? _parseRunwayThresholds(firstAclText)
     : {};
   const totalApproachTimes = computeTotalApproachTimes(allEntries, (e) => e._file);
-  const state5ParamsMap = buildState5ParamsMap(allState5Entries);
+  // Build state5ParamsMap from SceneryData for all runways.
+  // No dependency on State=5 aircraft — touchDownPosition, approachDirection,
+  // pathPointList, and initialPosition all come from the scenery's approach procedures.
+  const state5ParamsMap = new Map();
+  if (firstAclText && starMappings.runwayStarMap) {
+    for (const runway of Object.keys(starMappings.runwayStarMap)) {
+      const data = resolveApproachProcedureData(firstAclText, runway);
+      if (data) {
+        state5ParamsMap.set(runway, data);
+        // Also index by normalized runway name so flight plans using "1"
+        // match runway "01" from SceneryData (and vice versa).
+        const normalized = _normalizeRunway(runway);
+        if (normalized !== runway && !state5ParamsMap.has(normalized)) {
+          state5ParamsMap.set(normalized, data);
+        }
+      }
+    }
+  }
 
   // Compute per-file saveTime offsets from approach entries.
   // saveTime = LandingTime - (1 - PR) * totalApproachTime  → seconds since midnight
@@ -2027,7 +2097,6 @@ function buildApproachCache(airportDir) {
 
   // Clean up _file property from entries
   for (const e of allEntries) delete e._file;
-  for (const e of allState5Entries) delete e._file;
 
   return {
     specDB, appPointMap, totalApproachTimes, designatorMap,
@@ -2168,7 +2237,6 @@ function serializeApproachCache(cache) {
   if (cache.saveTimeOffsets) { out.saveTimeOffsets = {}; for (const [k, v] of cache.saveTimeOffsets) out.saveTimeOffsets[k] = v; }
   if (cache.typeMap) { out.typeMap = {}; for (const [k, v] of cache.typeMap) out.typeMap[String(k)] = v; }
   if (cache.fileTypeMaps) { out.fileTypeMaps = {}; for (const [fileName, tm] of cache.fileTypeMaps) { const obj = {}; for (const [k, v] of tm) obj[String(k)] = v; out.fileTypeMaps[fileName] = obj; } }
-  if (cache.state5ParamsMap) { out.state5ParamsMap = {}; for (const [k, v] of cache.state5ParamsMap) out.state5ParamsMap[k] = v; }
   if (cache.starPaths) { out.starPaths = cache.starPaths; }
   if (cache.runwayThresholds) { out.runwayThresholds = cache.runwayThresholds; }
   if (cache.starRunwayMap) { out.starRunwayMap = cache.starRunwayMap; }
@@ -2190,7 +2258,6 @@ function deserializeApproachCache(json) {
   if (json.saveTimeOffsets && typeof json.saveTimeOffsets === 'object') { cache.saveTimeOffsets = new Map(Object.entries(json.saveTimeOffsets)); }
   if (json.typeMap && typeof json.typeMap === 'object') { cache.typeMap = new Map(Object.entries(json.typeMap).map(([k, v]) => [parseInt(k, 10), v])); }
   if (json.fileTypeMaps && typeof json.fileTypeMaps === 'object') { cache.fileTypeMaps = new Map(Object.entries(json.fileTypeMaps).map(([name, obj]) => [name, new Map(Object.entries(obj).map(([k, v]) => [parseInt(k, 10), v]))])); }
-  if (json.state5ParamsMap && typeof json.state5ParamsMap === 'object') { cache.state5ParamsMap = new Map(Object.entries(json.state5ParamsMap)); }
   if (json.starPaths && typeof json.starPaths === 'object') { cache.starPaths = json.starPaths; }
   if (json.runwayThresholds && typeof json.runwayThresholds === 'object') { cache.runwayThresholds = json.runwayThresholds; }
   if (json.starRunwayMap && typeof json.starRunwayMap === 'object') { cache.starRunwayMap = json.starRunwayMap; }
@@ -2237,6 +2304,7 @@ module.exports = {
   buildAnimatorBlock,
 
   // Internal exports (for testing)
+  _normalizeRunway,
   _vec3Sub, _vec3Add, _vec3Scale, _vec3Length, _vec3Normalize, _vec3Dist,
   _interpolateAlongPath, _tangentAlongPath,
   _findArrayEnd, _extractValueBlock, _extractNestedObject,

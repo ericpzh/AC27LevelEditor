@@ -8,8 +8,9 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, computePosition, computeDirection } = require('../src/acl/parser');
+const { APPROACH_MIN_TTL } = require('../src/acl/constants');
 
-const CACHE_VERSION = 3; // Bump when cache.json schema changes
+const CACHE_VERSION = 4; // Bump when cache.json schema changes
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
@@ -408,9 +409,39 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       const rawApproach = cachedEntry.approachData || cachedEntry;
       approachData = deserializeApproachCache(rawApproach);
       console.log('[INIT-CACHE]   ' + icao + ': approach from disk cache');
+      // Rebuild state5ParamsMap from SceneryData — not persisted in cache.json
+      if (!approachData.state5ParamsMap) {
+        const approach = require('../src/acl/approach');
+        try {
+          const aclFiles = fs.readdirSync(levelsDir).filter(f => f.endsWith('.acl'));
+          if (aclFiles.length > 0) {
+            const firstText = fs.readFileSync(path.join(levelsDir, aclFiles[0]), 'utf-8');
+            const mappings = approach.extractStarRunwayMappings(firstText);
+            approachData.state5ParamsMap = new Map();
+            for (const rwy of Object.keys(mappings.runwayStarMap || {})) {
+              const data = approach.resolveApproachProcedureData(firstText, rwy);
+              if (data) approachData.state5ParamsMap.set(rwy, data);
+            }
+            console.log('[INIT-CACHE]   ' + icao + ': rebuilt state5ParamsMap from scenery (' + approachData.state5ParamsMap.size + ' runways)');
+          }
+        } catch (e) {
+          console.error('[INIT-CACHE]   ' + icao + ': failed to rebuild state5ParamsMap:', e.message);
+        }
+      }
     } else {
       approachData = buildApproachCache(levelsDir);
       console.log('[INIT-CACHE]   ' + icao + ': approach scanned from files');
+    }
+
+    // Use starRunwayMap keys as the authoritative STAR list.
+    // Follows the same pattern as Stand filtering above — the scenery
+    // data is the single source of truth. starRunwayMap is built from
+    // SceneryData Type=0 Routes and already excludes stubs ($rlength:0).
+    if (approachData && approachData.starRunwayMap) {
+      const stars = Object.keys(approachData.starRunwayMap);
+      if (stars.length > 0) {
+        dropdownValues.Airway = stars.sort((a, b) => a.localeCompare(b));
+      }
     }
 
     cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions };
@@ -525,6 +556,15 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         dropdownValues.Stand = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
       }
 
+      // Use starRunwayMap keys as the authoritative STAR list
+      // (same pattern as Stand — scenery is the single source of truth).
+      if (approachData && approachData.starRunwayMap) {
+        const stars = Object.keys(approachData.starRunwayMap);
+        if (stars.length > 0) {
+          dropdownValues.Airway = stars.sort((a, b) => a.localeCompare(b));
+        }
+      }
+
       cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions };
     }
 
@@ -556,6 +596,70 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
   }
 });
 
+// ─── Shared helper: filter .demo.acl flights to 30-min window ───
+
+/**
+ * For .demo.acl files: filter flights to a 30-minute window starting at
+ * CurrentDateTime, and override config startTime/endTime to match.
+ * Uses integer minutes (Math.floor) so flights at the boundary minute are
+ * kept, and strict upper bound (<) so flights exactly at +30min are excluded.
+ * @param {string} filePath
+ * @param {Array} flights
+ * @param {object|null} config
+ * @returns {{ flights: Array, config: object|null, _currentDateTime: string|null, removedCount: number }}
+ */
+function _filterDemoFlights(filePath, flights, config) {
+  try {
+    const rawText = fs.readFileSync(filePath, 'utf-8');
+    const cdt = extractCurrentDateTime(rawText);
+    if (cdt && cdt.timeString) {
+      const _currentDateTime = cdt.timeString;
+      // Use integer minutes — secSinceMidnight can include seconds, but flight
+      // times are HH:MM only.  Without floor, a flight at 05:45 (345 min) would
+      // fail 345 >= 345.5 and be incorrectly removed.
+      const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
+      const cdtMaxMin = cdtMin + 30; // 30-min demo window
+
+      const toMin = t => {
+        const p = String(t).split(':');
+        return parseInt(p[0]) * 60 + parseInt(p[1]);
+      };
+
+      const before = flights.length;
+      flights = flights.filter(fl => {
+        const lt = (fl.LandingTime || '').trim();
+        const ob = (fl.OffBlockTime || '').trim();
+        const flightMin = lt ? toMin(lt) : (ob ? toMin(ob) : Infinity);
+        return flightMin >= cdtMin && flightMin < cdtMaxMin;
+      });
+      const removedCount = before - flights.length;
+      if (removedCount > 0) {
+        console.log('[DEMO] removed ' + removedCount + ' flights outside [' + _currentDateTime + ', +30min] window');
+      }
+
+      // Override config to match demo window
+      const endSec = cdt.secSinceMidnight + 1800;
+      const eh = Math.floor((endSec % 86400) / 3600) % 24;
+      const em = Math.floor((endSec % 3600) / 60);
+      const es = endSec % 60;
+      const demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':' + String(es).padStart(2, '0');
+
+      if (config) {
+        config.startTime = _currentDateTime;
+        config.endTime = demoEndTime;
+      } else {
+        config = { startTime: _currentDateTime, endTime: demoEndTime };
+      }
+
+      console.log('[DEMO] window [' + _currentDateTime + ' ~ ' + demoEndTime + '] (30min cap)');
+      return { flights, config, _currentDateTime, removedCount };
+    }
+  } catch (e) {
+    console.log('[DEMO] flight filtering failed:', e.message);
+  }
+  return { flights, config, _currentDateTime: null, removedCount: 0 };
+}
+
 // ─── IPC: Load an .acl file ──────────────────────────────
 
 ipcMain.handle('load-acl', async (_event, filePath) => {
@@ -576,48 +680,15 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
     const isDemo = filePath.endsWith('.demo.acl');
     console.log('[IPC] load-acl: isDemo=' + isDemo + ' flights=' + (data.flights ? data.flights.length : 0) + ' config=' + (config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime) : 'NULL'));
 
-    // For .demo.acl: extract CurrentDateTime, cap flights to [CDT, CDT+30min] window
+    // For .demo.acl: filter flights to 30-min window at CurrentDateTime
     let _currentDateTime = null;
     let removedCount = 0;
     if (isDemo && data.flights && data.flights.length > 0) {
-      try {
-        const rawText = fs.readFileSync(filePath, 'utf-8');
-        const cdt = extractCurrentDateTime(rawText);
-        console.log('[IPC] load-acl: demo — extractCurrentDateTime returned ' + (cdt ? ('timeString=' + cdt.timeString + ' sec=' + cdt.secSinceMidnight) : 'NULL'));
-        if (cdt && cdt.timeString) {
-          _currentDateTime = cdt.timeString;
-          const cdtMin = cdt.secSinceMidnight / 60;        // lower bound in minutes
-          const cdtMaxMin = cdtMin + 30;                    // upper bound = +30 min
-          const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
-          const before = data.flights.length;
-          // Keep only flights within [CurrentDateTime, CurrentDateTime+30min]
-          data.flights = data.flights.filter(fl => {
-            const lt = (fl.LandingTime || '').trim();
-            const ob = (fl.OffBlockTime || '').trim();
-            const flightMin = lt ? toMin(lt) : (ob ? toMin(ob) : Infinity);
-            return flightMin >= cdtMin && flightMin <= cdtMaxMin;
-          });
-          removedCount = before - data.flights.length;
-          if (removedCount > 0) {
-            console.log('[IPC] load-acl: demo — removed ' + removedCount + ' flights outside [' + cdt.timeString + ', +30min] window');
-          }
-          // Cap config endTime to the +30min demo upper bound
-          const endSec = cdt.secSinceMidnight + 1800;
-          const eh = Math.floor((endSec % 86400) / 3600) % 24;
-          const em = Math.floor((endSec % 3600) / 60);
-          const es = endSec % 60;
-          const demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':' + String(es).padStart(2, '0');
-          if (config) {
-            config.startTime = cdt.timeString;
-            config.endTime = demoEndTime;
-          } else {
-            config = { startTime: cdt.timeString, endTime: demoEndTime };
-          }
-          console.log('[IPC] load-acl: demo window [' + cdt.timeString + ' ~ ' + demoEndTime + '] (30min cap)');
-        }
-      } catch (e) {
-        console.log('[IPC] load-acl: demo flight filtering failed:', e.message);
-      }
+      const result = _filterDemoFlights(filePath, data.flights, config);
+      data.flights = result.flights;
+      config = result.config;
+      _currentDateTime = result._currentDateTime;
+      removedCount = result.removedCount;
     }
 
     // Compute earliest flight time from loaded data (handles midnight-crossing)
@@ -927,33 +998,22 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     const data = loadFlights(newAclPath);
     const isDemo = aclFile.endsWith('.demo.acl');
 
-    // 6b) For .demo.acl: extract CurrentDateTime and filter flights before it
-    let _currentDateTime = null;
-    if (isDemo && data.flights && data.flights.length > 0) {
-      try {
-        const rawText2 = fs.readFileSync(newAclPath, 'utf-8');
-        const cdt = extractCurrentDateTime(rawText2);
-        if (cdt && cdt.timeString) {
-          _currentDateTime = cdt.timeString;
-          const cdtMin = cdt.secSinceMidnight / 60;
-          const toMinFilter = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
-          const before = data.flights.length;
-          data.flights = data.flights.filter(fl => {
-            const lt = (fl.LandingTime || '').trim();
-            const ob = (fl.OffBlockTime || '').trim();
-            const flightMin = lt ? toMinFilter(lt) : (ob ? toMinFilter(ob) : Infinity);
-            return flightMin >= cdtMin;
-          });
-          const removed = before - data.flights.length;
-          if (removed > 0) console.log('[IPC] import-zip: removed ' + removed + ' flights before CurrentDateTime');
-        }
-      } catch (_) {}
-    }
-
-    // 7) Extract config from ACL's Config block (single source of truth)
+    // 6b) Extract config first (needed by demo filter to override startTime/endTime)
     let config = null;
     if (data._rawText) {
       config = _extractConfig(data._rawText);
+    }
+
+    // 6c) For .demo.acl: filter flights to 30-min window at CurrentDateTime
+    let _currentDateTime = null;
+    if (isDemo && data.flights && data.flights.length > 0) {
+      const result = _filterDemoFlights(newAclPath, data.flights, config);
+      data.flights = result.flights;
+      config = result.config;
+      _currentDateTime = result._currentDateTime;
+      if (result.removedCount > 0) {
+        console.log('[IPC] import-zip: removed ' + result.removedCount + ' flights outside demo window');
+      }
     }
 
     // 8) Compute earliest flight time (same as load-acl handler)
@@ -1072,6 +1132,16 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     // 5) Parse restored ACL and return flights
     const data = loadFlights(filePath);
 
+    // 5b) Demo filtering (same as load-acl handler) — filter flights to 30-min window
+    let _currentDateTime = null;
+    const isDemo = filePath.endsWith('.demo.acl');
+    if (isDemo && data.flights && data.flights.length > 0) {
+      const result = _filterDemoFlights(filePath, data.flights, config);
+      data.flights = result.flights;
+      config = result.config;
+      _currentDateTime = result._currentDateTime;
+    }
+
     // 6) Compute earliest flight time + saveTime (same as load-acl handler)
     let earliestTime = null, earliestMin = Infinity;
     if (data.flights) {
@@ -1105,7 +1175,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
       _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + 780;
     }
 
-    return { success: true, path: filePath, restored, config, earliestTime, _saveSec, ...data };
+    return { success: true, path: filePath, restored, config, earliestTime, _saveSec, _currentDateTime, isDemo, ...data };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -1384,7 +1454,12 @@ ipcMain.handle('get-aircraft-positions', async (_event, icao, arrivals, saveSec)
       if (!totalTime) totalTime = fallbackTat;
       if (!totalTime) continue;
 
-      const pr = 1 - (landingSec - saveSec) / totalTime;
+      // Clamp time-to-landing to a minimum of 30s so the user has time
+      // to issue landing clearance. Also fixes the bug where aircraft with
+      // landingSec === saveSec get PR=1 and are filtered out of the STAR map.
+      const ttl = landingSec - saveSec;
+      const clampedTTL = Math.max(APPROACH_MIN_TTL, ttl);
+      const pr = 1 - clampedTTL / totalTime;
       if (pr <= 0 || pr >= 1) continue; // not mid-approach
 
       // State5 data for this runway (touchdown position, approach cap)
@@ -1392,14 +1467,25 @@ ipcMain.handle('get-aircraft-positions', async (_event, icao, arrivals, saveSec)
         (state5ParamsMap && state5ParamsMap.get)
           ? state5ParamsMap.get(runway)
           : state5ParamsMap && state5ParamsMap[runway];
-      const touchDown = state5?.touchDownPosition || null;
-      const approachCap =
+      let touchDown = state5?.touchDownPosition || null;
+      let approachCap =
         state5?.initialPosition?.y != null ? state5.initialPosition.y : 15.24;
+      // Fallback: derive touchdown from last segment when state5ParamsMap lacks
+      // this runway. Extends the last path point by 50m along the approach heading.
+      if (!touchDown && variant.points && variant.points.length >= 2) {
+        const last = variant.points[variant.points.length - 1];
+        const prev = variant.points[variant.points.length - 2];
+        const dx = last.x - prev.x;
+        const dz = last.z - prev.z;
+        const len = Math.sqrt(dx * dx + dz * dz) || 1;
+        touchDown = { x: last.x + (dx / len) * 50, y: 0, z: last.z + (dz / len) * 50 };
+      }
 
       // starPaths points are the unified FlyApproach+AppPointList path.
       // computePosition / computeDirection work with separate flyPoints+appPoints,
       // so we pass the unified path as flyPoints and empty as appPoints.
-      // The touchdown point is used for glideslope Y calculation.
+      // The touchdown point is included in the interpolation path for accurate
+      // XZ positioning all the way to the runway threshold.
       const unifiedPath = variant.points;
       const pos = computePosition(
         unifiedPath,
@@ -1408,7 +1494,7 @@ ipcMain.handle('get-aircraft-positions', async (_event, icao, arrivals, saveSec)
         touchDown,
         approachCap,
       );
-      const dir = computeDirection(unifiedPath, [], pr);
+      const dir = computeDirection(unifiedPath, [], pr, touchDown);
 
       // Direction heading for SVG rendering (degrees from +X axis).
       // Game Z-up maps to SVG Y-down, so we negate the Z component.
