@@ -333,7 +333,7 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 2. `scan-acls` IPC → `scanGameRoot()` → returns airport list with `.acl` file paths
 3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data + dropdown values per airport:
    - Scans all `.acl` files (includes demo/test/tutorial variants — all treated as normal levels)
-   - Extracts `specDB` (Designator → AircraftSpec), `appPointMap` ((Route,Runway) → AppPointList), `totalApproachTimes` (Route → seconds), and `designatorMap` (AircraftType → Designator)
+   - Extracts `specDB` (Designator → AircraftSpec, from ALL aircraft entries regardless of State), `appPointMap` ((STAR,Runway) → AppPointList, from SceneryData Type=1 routes), `totalApproachTimes` (STAR → seconds, from SceneryData path lengths with aircraft-derived calibration), and `designatorMap` (AircraftType → Designator)
    - Extracts State=5 data: `state5ParamsMap` (runway → `{pathPointList, touchDownPosition, approachDirection, initialPosition}`), `starPaths` (STAR → waypoint array), and STAR↔runway maps from `SceneryData.Runways.Routes[Type=0]`
    - Extracts `runwayThresholds` from SceneryData (PhysicalName → threshold pair) for StarMap visualization
    - Collects dropdown values (`collectUniqueValues`) and runway pairs (`collectRunwayPairs`) from ALL .acl files
@@ -351,7 +351,7 @@ The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.j
 
 Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `electron/main.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
-**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `electron/main.js:12`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set. Current `CACHE_VERSION` is 4.
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `electron/main.js:12`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set. Current `CACHE_VERSION` is 7.
 
 | `cache.json` | Behavior |
 |---|---|
@@ -368,8 +368,9 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 
 **Re-scan flow:**
 1. Mismatch modal appears on BrowserScreen (non-closeable, with lang toggle button in top-right via `showLangToggle`)
-2. User clicks "Re-Scan" → `refresh-root-scan` → rebuilds cache with `cacheVersion: CACHE_VERSION`
+2. User clicks "Re-Scan" → scanning modal with spinner appears (i18n: `browser_scanning_title`/`browser_scanning_body`) → `refresh-root-scan` → rebuilds cache with `cacheVersion: CACHE_VERSION`
 3. `init-airport-cache` and `refresh-root-scan` also stamp `cacheVersion` when writing
+4. Scanning modal also appears during initial cache build in SetupScreen (`initAirportCache`)
 
 **Language persistence:**
 - `lang` field in `cache.json` provides durable backup for language preference
@@ -638,7 +639,8 @@ The state is determined by whether the aircraft has passed the IAF (last FlyAppr
 ```
 flyLen   = Σ segmentDistances(flyPoints)   [path length of FlyApproach from SceneryData]
 appLen   = Σ segmentDistances(appPoints)   [path length of AppPointList from cache]
-totalLen = flyLen + appLen                 [total unified path length]
+combined = [...flyPoints, ...appPoints]    [concatenate to include connecting segment]
+totalLen = computePathLength(combined)     [total unified path length]
 targetDist = totalLen × progressRatio      [aircraft position along unified path]
 
 if targetDist >= flyLen → State=5  (past IAF, final approach, Tower)
@@ -776,15 +778,99 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 - `saveTime` = the snapshot time. Prefer GameTime.CurrentDateTime from the ACL file
   (the literal wall-clock time the game wrote). The cache's `saveTimeOffsets` is a
   fallback derived from State=30 entries via the inverse formula.
-- `totalApproachTime(Route)` = route-specific total duration from STAR entry to
-  touchdown (~1380-1775s, computed from dTime/dPR within each file)
+- `totalApproachTime(STAR)` = route-specific total duration from STAR entry to
+  touchdown (~1380-1775s, computed from SceneryData path-length estimates via
+  `computeApproachTimesFromScenery()` using physics-based formula with
+  per-airport coordinate scale calibration)
 - This is a time-based approximation of the game's path-based PR. Expected position
   error is ~50-200m due to non-uniform aircraft speed along the approach.
 - **APPROACH_MIN_TTL clamping:** For StarMap live position display and the PR gate,
-  `timeToLanding` is clamped to a minimum of `APPROACH_MIN_TTL` (25s, from
+  `timeToLanding` is clamped to a minimum of `APPROACH_MIN_TTL` (30s, from
   `src/acl/constants.js`) so aircraft at or very near landing still show on the map
   (PR never reaches exactly 1.0). Note: StarMap.jsx has its own local copy (10s)
   for the in-panel aircraft position computation.
+
+### TAT (Total Approach Time) Computation
+
+TAT is the total duration from approach start (PR=0) to touchdown (PR=1). The game's
+coordinate system is compressed — all AirwayNodes are within ~1.7km of the airport in
+game units, but represent a much larger real-world approach geometry.
+
+#### Coordinate Scale Calibration
+
+Each airport has a **per-airport scale factor** (m/game-unit) derived from runway geometry:
+
+```
+airportScale = Σ realRunwayLength(m) / Σ gameThresholdDistance(game-units)
+```
+
+The game threshold distance is computed from the two `ThresholdPointGuids` in each
+`SceneryData → Runways → RunwayState → ThresholdPointGuids`. These are aeroway
+nodes (Type=1, Aeroway=threshold) whose `Position` fields give the runway endpoints
+in game coordinates. The Euclidean distance between them is the in-game runway length.
+The real-world runway lengths are known constants.
+
+**Calibrated values** (verified against all 34 State=30 aircraft across 8 production files):
+
+| Airport | Σ Real (m) | Σ Game (units) | Scale (m/unit) | Mean TAT Error |
+|---------|-----------|----------------|----------------|----------------|
+| ZSJN | 3,601 | 37.32 | **96.5** | 7.0% |
+| KJFK | 13,713 | 103.16 | **132.9** | 4.2% |
+
+ZSJN has one runway pair (01/19 = 3,601m). KJFK has four: 4L/22R (3,682m),
+4R/22L (2,560m), 13L/31R (3,048m), 13R/31L (4,423m).
+
+#### Full Terminal Path Length
+
+The total approach path in game units combines three segments from SceneryData:
+
+```
+totalGamePath = flyPathLen + procPathLen + tdDist
+
+where:
+  flyPathLen  = Σ segment distances of FlyApproach points (Type=0 STAR route, via resolveFlyApproachPoints)
+  procPathLen = Σ segment distances of approach procedure points (Type=1 route, via resolveApproachProcedureData)
+  tdDist      = distance from last procedure point to TouchDownPosition (runway threshold)
+```
+
+Example for WFG91A→01 @ ZSJN:
+- FlyApproach: 5 points, 1,765 game units
+- Procedure: 5 points, 303 game units
+- Touchdown: 163 game units
+- **Total: 2,231 game units × 96.5 = 215.3 km → at 240 kts = 1,744s** (vs aircraft TAT 1,570s, +11%)
+
+#### Aircraft Speed
+
+The aircraft approach speed is **240 knots** (123.47 m/s), sourced from the
+`TargetTaxiSpeed: 240` field in DynamicsParams — this is the game's constant
+airspeed for all aircraft on approach (not just ground taxi).
+
+#### TAT Formula
+
+```
+TAT(seconds) = totalGamePath × airportScale / (240 × 0.514444)
+
+              (flyLen + procLen + tdDist) × airportScale
+            = ─────────────────────────────────────────
+                           123.47
+```
+
+where `airportScale = Σ realRunwayLength / Σ gameThresholdDistance` as calibrated above.
+
+The deprecated `APPROACH_EFFECTIVE_SPEED` (12.5 m/s) fallback gives TAT values ~10× too small
+(165s vs 1,575s for WFG91A) — it was a fudge factor that conflated the coordinate scale and
+aircraft speed into one number. The physics-based formula separates them: scale the path to
+real meters, then divide by real speed.
+
+#### Implementation Status
+
+The production code in `computeApproachTimesFromScenery` now uses a three-tier TAT estimation:
+1. Aircraft-derived TATs (from `refTatMap`) — most accurate, preserved when available
+2. Physics-based: `totalLen × airportScale / APPROACH_SPEED_MS` (240 kts) — primary method
+3. `totalLen / APPROACH_EFFECTIVE_SPEED` (12.5 m/s) — deprecated fallback for airports without runway data
+
+The per-airport scale and updated TAT formula are also verified in the diagnostic scripts
+`tests/integration/test_scaled_tat.js` and `tests/integration/test_full_path.js`.
 
 ### Module API (`src/acl/approach.js`)
 
@@ -795,7 +881,7 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 - `extractTypeMap(aclText)` → `Map<number, string>` — captures all fully-qualified `$type` declarations from a file; type numbers are per-file in Unity's serialization
 - `buildAppPointMap(approachEntries)` → `Map<"Route|Runway", Vector3[]>` — verified 1:1 mapping
 - `buildState5ParamsMap(state5Entries)` → `Map<"runway", {pathPointList, touchDownPosition, approachDirection, initialPosition}>` — per-runway final approach parameters from State=5 data
-- `computeTotalApproachTimes(approachEntries, getGroupId?)` → `Map<Route, seconds>` — per-route duration
+- `computeApproachTimesFromScenery(aclText, starMappings, appPointMap, refTatMap, defaultTAT, airportScale?)` → `Map<STAR, seconds>` — per-STAR duration from SceneryData path-length estimates using three-tier estimation (aircraft-derived → physics-based → deprecated fallback)
 - `extractGameTime(aclText)` → `seconds \| null` — parse `GameTime.CurrentDateTime` ticks as seconds since midnight
 - `extractSaveTime(aclText, totalApproachTimes)` → `seconds \| null` — derive snapshot time from first State=30 entry's PR + LandingTime
 
@@ -804,7 +890,7 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 
 **SceneryData & STAR Mapping:**
 - `extractStarRunwayMappings(aclText)` → `{starRunwayMap: {star→[runways]}, runwayStarMap: {runway→[stars]}}` — authoritative from `SceneryData.Runways.Routes[Type=0]` (superset of `appPointMap`)
-- `resolveApproachProcedureData(aclText, runway)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition} | null` — resolves final approach parameters for a runway from SceneryData Type=1 routes; used to rebuild `state5ParamsMap` on cache hit when it was not persisted
+- `resolveApproachProcedureData(aclText, runway, hintPosition?)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition} | null` — resolves final approach parameters for a runway from SceneryData Type=1 routes; when `hintPosition` is provided and multiple Type=1 variants exist, picks the one whose first AirwayNode is closest to the hint (used for STAR-specific variant selection); used to rebuild `state5ParamsMap` on cache hit
 - `_parseRunwayThresholds(aclText)` → `{[PhysicalName]: {thresholds: [{x,z}, {x,z}]}}` — runway endpoint positions from SceneryData for StarMap visualization
 - `_parseTaxiwayNodes(aclText)` → `Map<guid, Vector3>` — TaxiwayNode positions for GUID resolution
 - `_parseAirwayNodes(aclText)` → `Map<guid, {name, position}>` — AirwayNode positions for FlyApproach path resolution
@@ -816,10 +902,12 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 - `buildFullPath(flyPoints, appPoints, touchDownPosition?)` → combined unified path array
 - `_dedupeIafJoin(flyPoints, ppList)` → flyPoints with last point trimmed if it matches the first PathPointList point (within 0.1m) — prevents zero-length segments at the IAF join that would cause NaN in interpolation
 - `computePathLength(points)` → total distance
+- `computeAirportScale(aclText)` → `number` — per-airport coordinate scale factor (m/game-unit) from runway threshold geometry; uses `RUNWAY_REAL_LENGTHS` from constants.js
+- `computeFullTerminalPath(aclText, star, runway)` → `{flyLen, procLen, tdDist, total}` — full terminal path length in game units combining FlyApproach + procedure + touchdown segments
 
 **Designator Mapping & Cache:**
 - `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates
-- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap, starRunwayMap, runwayStarMap}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times; `state5ParamsMap` is a `Map<runway, {pathPointList, touchDownPosition, approachDirection, initialPosition}>` of per-runway final approach parameters. Note: `state5ParamsMap` is NOT persisted in `cache.json` — it is rebuilt from SceneryData on cache hit via `resolveApproachProcedureData()`. State determination (State=30 vs State=5) uses IAF passage: aircraft past the last FlyApproach waypoint are State=5, computed directly from the full FlyApproach path (resolved from SceneryData) without a cached fraction map
+- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap, starPaths, runwayThresholds, airportScale, starRunwayMap, runwayStarMap}` — scans all .acl files for an airport (including demo/test/tutorial variants); `saveTimeOffsets` is a `Map<filename, seconds>` of per-file snapshot times; `state5ParamsMap` is a `Map<runway, {pathPointList, touchDownPosition, approachDirection, initialPosition}>` of per-runway and per-STAR+runway final approach parameters. `state5ParamsMap`, `appPointMap`, `totalApproachTimes`, and `airportScale` are now persisted in `cache.json`. On cache hit from an older version, they are rebuilt from SceneryData via `resolveApproachProcedureData()`, `computeApproachTimesFromScenery()`, and `computeAirportScale()`. State determination (State=30 vs State=5) uses IAF passage: aircraft past the last FlyApproach waypoint are State=5, computed directly from the full FlyApproach path (resolved from SceneryData) without a cached fraction map
 
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, touchDownPosition?, approachCap?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=30 `$k/$v` JSON block; position uses unified path with touchdown
