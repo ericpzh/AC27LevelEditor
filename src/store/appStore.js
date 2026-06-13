@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { getAirlineCode } from '../utils/constants';
+import { getAirlineCode, TOAST_DURATION_MS, FALLBACK_BASE_MINUTES, DEFAULT_TIME_OFFSET_MIN, DEFAULT_TAXI_MINUTES, STORAGE_KEY_THEME } from '../utils/constants';
 
 // Pick the first valid flight number for an airline from the canonical set
 // (_flightNums is collected during root scan from audio clips + ALL .acl files)
@@ -59,7 +59,7 @@ export const useAppStore = create((set, get) => ({
 
   // ─── Theme ───
   theme: (() => {
-    try { return localStorage.getItem('ac27_theme') || 'dark'; }
+    try { return localStorage.getItem(STORAGE_KEY_THEME) || 'dark'; }
     catch (_) { return 'dark'; }
   })(),
 
@@ -114,10 +114,10 @@ export const useAppStore = create((set, get) => ({
     const audioData = state.audioCallsigns;
 
     // ── compute default times from config end ──
-    let baseMin = 360; // fallback 06:00
+    let baseMin = FALLBACK_BASE_MINUTES; // fallback 06:00
     if (state._configEndTime) {
       const p = String(state._configEndTime).split(':');
-      baseMin = parseInt(p[0]) * 60 + parseInt(p[1]) - 10;
+      baseMin = parseInt(p[0]) * 60 + parseInt(p[1]) - DEFAULT_TIME_OFFSET_MIN;
       if (baseMin < 0) baseMin = 0;
     }
     const pad = (m) => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00';
@@ -137,7 +137,7 @@ export const useAppStore = create((set, get) => ({
       CallSign: airlineCode + pickFirstFlightNumber(get(), airlineCode),
       ArrivalAirport: state.currentAirport || '',
       LandingTime: pad(baseMin),
-      InBlockTime: pad(baseMin + 5),
+      InBlockTime: pad(baseMin + DEFAULT_TAXI_MINUTES),
       Language: 'en',
       AircraftType: (values.AircraftType && values.AircraftType[0]) || '',
       AirlineName: (values.AirlineName && values.AirlineName[0]) || '',
@@ -158,10 +158,10 @@ export const useAppStore = create((set, get) => ({
     const audioData = state.audioCallsigns;
 
     // ── compute default times from config end ──
-    let baseMin = 360; // fallback 06:00
+    let baseMin = FALLBACK_BASE_MINUTES; // fallback 06:00
     if (state._configEndTime) {
       const p = String(state._configEndTime).split(':');
-      baseMin = parseInt(p[0]) * 60 + parseInt(p[1]) - 10;
+      baseMin = parseInt(p[0]) * 60 + parseInt(p[1]) - DEFAULT_TIME_OFFSET_MIN;
       if (baseMin < 0) baseMin = 0;
     }
     const pad = (m) => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00';
@@ -181,7 +181,7 @@ export const useAppStore = create((set, get) => ({
       CallSign: airlineCode + pickFirstFlightNumber(get(), airlineCode),
       DepartureAirport: state.currentAirport || '',
       OffBlockTime: pad(baseMin),
-      TakeoffTime: pad(baseMin + 5),
+      TakeoffTime: pad(baseMin + DEFAULT_TAXI_MINUTES),
       Language: 'en',
       AircraftType: (values.AircraftType && values.AircraftType[0]) || '',
       AirlineName: (values.AirlineName && values.AirlineName[0]) || '',
@@ -364,7 +364,7 @@ export const useAppStore = create((set, get) => ({
   // ─── Actions: Theme ───
   toggleTheme: () => {
     const next = get().theme === 'dark' ? 'light' : 'dark';
-    try { localStorage.setItem('ac27_theme', next); } catch (_) {}
+    try { localStorage.setItem(STORAGE_KEY_THEME, next); } catch (_) {}
     set({ theme: next });
   },
 
@@ -372,7 +372,7 @@ export const useAppStore = create((set, get) => ({
   showToast: (message, type) => {
     set({ toast: { message, type } });
     clearTimeout(get()._toastTimer);
-    const timer = setTimeout(() => set({ toast: { message: '', type: '' } }), 2500);
+    const timer = setTimeout(() => set({ toast: { message: '', type: '' } }), TOAST_DURATION_MS);
     set({ _toastTimer: timer });
   },
 }));

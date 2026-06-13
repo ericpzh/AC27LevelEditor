@@ -7,7 +7,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-import { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL } from './constants';
+import { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND } from './constants';
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
 const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, computeApproachCap, _vec3Sub, _vec3Normalize, _vec3Dist } = require('./approach');
@@ -423,7 +423,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
 
   // Compute the next available type number for types not found in the file.
   // This guarantees unique numbers — no collision with existing types or each other.
-  let nextFallbackNum = 100; // above BCL types (0-99)
+  let nextFallbackNum = TYPE_NUM_FALLBACK_START; // above BCL types (0-99)
   for (const num of typeMap.keys()) {
     if (num >= nextFallbackNum) nextFallbackNum = num + 1;
   }
@@ -557,7 +557,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
     // Generate GUID first so we can link AircraftState to it
     const fpGuid = _generateGuid();
     fpGuids.push(fpGuid);
-    fpEntries.push(_buildFlightPlanStateEntryWithGuid(flights[i], 90000 + i, bdt, fpGuid, _fpTypeNum, _fpArrTypeNum, _fpDepTypeNum));
+    fpEntries.push(_buildFlightPlanStateEntryWithGuid(flights[i], ID_OFFSET_FLIGHTPLAN + i, bdt, fpGuid, _fpTypeNum, _fpArrTypeNum, _fpDepTypeNum));
   }
   log('generated ' + fpEntries.length + ' FlightPlan entries');
 
@@ -583,7 +583,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
     // The game fast-forwards from startTime through warmup before showing the player
     const _toSec = (t) => { const p = String(t).split(':'); return +p[0]*3600 + +p[1]*60 + (+p[2]||0); };
     const startSec = aclcfgStartTime ? _toSec(aclcfgStartTime) : 0;
-    const WARMUP_SEC = 780; // 13 min — game advances from Config.startTime to first flight time
+    // WARMUP_SEC imported from constants — game advances from Config.startTime to first flight time
 
     // Resolve saveTime: explicit > GameTime.CurrentDateTime (authoritative — the
     // literal wall-clock time the game wrote when it saved this snapshot) >
@@ -670,7 +670,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       // but skip aircraft that landed more than 10s before the snapshot.
       // This avoids edge cases where PR ≈ 1.0 places the aircraft at/beyond
       // the last path point (touchdown with Y=0, wrong XZ position).
-      const GRACE_TTL = -10;
+      // GRACE_TTL imported from constants (max seconds-past-landing before aircraft are skipped)
       if (timeToLanding < GRACE_TTL) {
         log('  SKIP (landed ' + (-timeToLanding) + 's ago): ' + fl.CallSign);
         continue;
@@ -802,9 +802,9 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
             flyPoints: flyPoints,
             fullPR: progressRatio,
             approachCap: state5Cap,
-            waitingForCommand: 22, // TEMP: always Contact Tower (was: isClearedToLand ? 23 : 22)
+            waitingForCommand: CMD_CONTACT_TOWER, // TEMP: always Contact Tower (was: isClearedToLand ? CMD_CLEARED_TO_LAND : CMD_CONTACT_TOWER)
             selectedRunwayExitIndex: -1, // TEMP: always -1 (was: isClearedToLand ? 0 : -1)
-            nextId: 70000 + i * 1000,
+            nextId: ID_OFFSET_AIRCRAFT + i * 1000,
             acTypeNum: _acTypeNum,
             typeNums: typeNums,
           });
@@ -812,7 +812,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
           acEntries.push(entry);
 
           const animResult = buildAnimatorBlock(result.guid, {
-            nextId: 80000 + i * 100,
+            nextId: ID_OFFSET_ANIMATOR + i * 100,
             acTypeNum: _acTypeNum,
             typeNums: typeNums,
           });
@@ -853,7 +853,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
         radioChannelGuid: _radioChannelGuid,
         touchDownPosition: tdPos,
         approachCap: approachCap,
-        nextId: 70000 + i * 1000,
+        nextId: ID_OFFSET_AIRCRAFT + i * 1000,
         acTypeNum: _acTypeNum,
         typeNums: typeNums,
       });
@@ -863,7 +863,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
 
       // Generate matching AircraftAnimators entry
       const animResult = buildAnimatorBlock(result.guid, {
-        nextId: 80000 + i * 100,
+        nextId: ID_OFFSET_ANIMATOR + i * 100,
         acTypeNum: _acTypeNum,
         typeNums: typeNums,
       });

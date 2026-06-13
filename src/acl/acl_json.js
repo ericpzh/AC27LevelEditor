@@ -16,6 +16,7 @@
  */
 
 const aclJson = {};
+const { SPECIAL_KEYS } = require('./constants');
 
 // ─── Pre-processor ─────────────────────────────────────────────────
 
@@ -598,12 +599,7 @@ function _serializeObject(obj, options, pad, innerPad) {
     }
   }
 
-  // 5. Regular keys
-  const SPECIAL_KEYS = new Set([
-    '$id', '$type', '$ref',
-    '$rcontent', '$rlength', '$values',
-    '__v',
-  ]);
+  // 5. Regular keys (SPECIAL_KEYS imported from ./constants)
 
   for (const key of Object.keys(obj)) {
     if (SPECIAL_KEYS.has(key)) continue;

@@ -3,10 +3,9 @@ import { IoClose } from 'react-icons/io5';
 import './CellEditor.css';
 import { createPortal } from 'react-dom';
 import { useTranslation } from '../../../hooks/useTranslation';
+import { COMPASS_DIRS, COMPASS_CARDINAL } from '../../../utils/constants';
 
 const SIZE = 220, CX = SIZE / 2, CY = SIZE / 2, R = 95;
-const DIRS = ['N','','','E','','','S','','','W','',''];
-const CARDINAL = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
 
 function buildCompassTicks() {
   const els = [];
@@ -16,9 +15,9 @@ function buildCompassTicks() {
     const x1 = CX + inner * Math.cos(angle), y1 = CY + inner * Math.sin(angle);
     const x2 = CX + R * Math.cos(angle), y2 = CY + R * Math.sin(angle);
     els.push(<line key={'t'+i} className="clock-tick" x1={x1} y1={y1} x2={x2} y2={y2} />);
-    if (DIRS[i]) {
+    if (COMPASS_DIRS[i]) {
       const numR = R - 24;
-      els.push(<text key={'n'+i} className="clock-num" x={CX + numR * Math.cos(angle)} y={CY + numR * Math.sin(angle) + 5}>{DIRS[i]}</text>);
+      els.push(<text key={'n'+i} className="clock-num" x={CX + numR * Math.cos(angle)} y={CY + numR * Math.sin(angle) + 5}>{COMPASS_DIRS[i]}</text>);
     }
   }
   for (let i = 0; i < 36; i++) {
@@ -73,7 +72,7 @@ export default function CompassPopover({ value, onCommit, onClose }) {
     onCommit(newVal);
   }, [inputVal, deg, onCommit]);
 
-  const cardinal = CARDINAL[Math.round(deg / 22.5) % 16];
+  const cardinal = COMPASS_CARDINAL[Math.round(deg / 22.5) % 16];
 
   return createPortal(
     <div className="time-clock-overlay" onClick={e => { if (e.target.classList.contains('time-clock-overlay')) onClose(); }}>

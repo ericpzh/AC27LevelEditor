@@ -104,7 +104,7 @@
     toast_select_to_copy:'请先点击选择要复制的航班',
     toast_added_arrival:'已添加进港航班 {{cs}}', toast_added_departure:'已添加离港航班 {{cs}}',
     toast_exported:'已导出: {{name}}', toast_backup_saved:'备份已保存: {{name}}',
-    toast_restored_n:'已还原 {{n}} 个航班（{{items}}）', toast_imported_n:'已导入 {{n}} 个航班',
+    toast_restored_n:'已还原 {{n}} 个航班', toast_imported_n:'已导入 {{n}} 个航班',
     toast_scan_failed:'重新扫描失败，请重试。',
     toolbar_help:'帮助',
     tutorial_title:'AC27 Level Editor 功能指南',
@@ -241,7 +241,7 @@
     toast_select_to_copy:'Click a flight to copy first',
     toast_added_arrival:'Added arrival {{cs}}', toast_added_departure:'Added departure {{cs}}',
     toast_exported:'Exported: {{name}}', toast_backup_saved:'Backup saved: {{name}}',
-    toast_restored_n:'Restored {{n}} flight(s) ({{items}})', toast_imported_n:'Imported {{n}} flights',
+    toast_restored_n:'Restored {{n}} flight(s)', toast_imported_n:'Imported {{n}} flights',
     toast_scan_failed:'Re-scan failed. Please try again.',
     toolbar_help:'Help',
     tutorial_title:'AC27 Level Editor Feature Guide',
@@ -276,8 +276,10 @@
   },
 };
 
+import { STORAGE_KEY_LANG } from './constants.js';
+
 let LANG = (function(){
-  try { return localStorage.getItem('ac27_lang') || 'zh'; }
+  try { return localStorage.getItem(STORAGE_KEY_LANG) || 'zh'; }
   catch(_) { return 'zh'; }
 })();
 

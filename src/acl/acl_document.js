@@ -13,26 +13,7 @@
 
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson, serializeUnityJson } = require('./acl_json');
-
-// Known top-level section names in ACL files
-const TOP_LEVEL_SECTIONS = [
-  'SceneryData',
-  'WorldState',
-  'GameTime',
-  'Config',
-  'Channels',
-  'WeatherFrames',
-  'WindFrames',
-  'RunwayTimeline',
-  'Jetways',
-];
-
-// Sub-sections within WorldState
-const WORLD_STATE_SUB = [
-  'Aircrafts',
-  'AircraftAnimators',
-  'FlightPlans',
-];
+const { TOP_LEVEL_SECTIONS, WORLD_STATE_SUB } = require('./constants');
 
 class AclDocument {
   /**
@@ -224,9 +205,7 @@ class AclDocument {
       ticks = BigInt(cdt.__v ? cdt.__v[0] : '0');
     }
 
-    const TICKS_PER_SECOND = 10000000n;
-    const TICKS_PER_DAY = 864000000000n;
-    const NET_EPOCH_OFFSET = 621355968000000000n;
+    const { TICKS_PER_SECOND, TICKS_PER_DAY, NET_EPOCH_OFFSET } = require('./constants');
 
     const sec = Number((ticks - NET_EPOCH_OFFSET) / TICKS_PER_SECOND);
     const secSinceMidnight = ((sec % 86400) + 86400) % 86400;

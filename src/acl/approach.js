@@ -12,7 +12,7 @@
 
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
-const { APPROACH_EFFECTIVE_SPEED, APPROACH_SPEED_MS, DEFAULT_AIRPORT_SCALE, APPROACH_CEILING_M } = require('./constants');
+const { APPROACH_EFFECTIVE_SPEED, APPROACH_SPEED_MS, DEFAULT_AIRPORT_SCALE, APPROACH_CEILING_M, TAN_3_DEG, DEFAULT_TAT, TD_FALLBACK_EXTEND, EPSILON_NORMALIZE, EPSILON_PR, EPSILON_IAF_JOIN } = require('./constants');
 
 // ─── GUID generator (inlined to avoid ESM import chain issues in tests) ──
 
@@ -47,7 +47,7 @@ function _vec3Length(v) {
 
 function _vec3Normalize(v) {
   const len = _vec3Length(v);
-  if (len < 1e-12) return { x: 0, y: 0, z: 1 };
+  if (len < EPSILON_NORMALIZE) return { x: 0, y: 0, z: 1 };
   return { x: v.x / len, y: v.y / len, z: v.z / len };
 }
 
@@ -423,7 +423,7 @@ function computeTotalApproachTimes(approachEntries, getGroupId) {
         for (let j = i + 1; j < groupEntries.length; j++) {
           const dPR = Math.abs(groupEntries[i].progressRatio - groupEntries[j].progressRatio);
           const dLT = Math.abs(groupEntries[i].landingTimeTicks - groupEntries[j].landingTimeTicks);
-          if (dPR > 0.001 && dLT > 0) {
+          if (dPR > EPSILON_PR && dLT > 0) {
             const dSeconds = dLT / 10000000;
             ratios.push(dSeconds / dPR);
           }
@@ -436,7 +436,7 @@ function computeTotalApproachTimes(approachEntries, getGroupId) {
       const median = ratios[Math.floor(ratios.length / 2)];
       result.set(route, Math.round(median));
     } else {
-      result.set(route, 1600); // default ~26-27 min
+      result.set(route, DEFAULT_TAT); // default ~26-27 min
     }
   }
 
@@ -459,7 +459,7 @@ function computeTotalApproachTimes(approachEntries, getGroupId) {
  */
 function computeApproachTimesFromScenery(aclText, starMappings, appPointMap, refTatMap, defaultTAT, airportScale) {
   const result = new Map();
-  const fallbackTAT = defaultTAT || 1600;
+  const fallbackTAT = defaultTAT || DEFAULT_TAT;
 
   if (!aclText || !starMappings || !starMappings.starRunwayMap) return result;
 
@@ -1376,7 +1376,7 @@ function buildFullPath(flyApproachPoints, appPoints, touchDownPosition) {
     // Avoid zero-length tail segment which would cause div-by-zero in
     // _interpolateAlongPath / _tangentAlongPath.
     const last = all.length > 0 ? all[all.length - 1] : null;
-    if (!last || _vec3Dist(last, touchDownPosition) > 0.001) {
+    if (!last || _vec3Dist(last, touchDownPosition) > EPSILON_PR) {
       all.push(touchDownPosition);
     }
   }
@@ -1395,7 +1395,7 @@ function _dedupeIafJoin(flyPoints, ppList) {
   }
   const lastFly = flyPoints[flyPoints.length - 1];
   const firstPP = ppList[0];
-  if (_vec3Dist(lastFly, firstPP) < 0.1) {
+  if (_vec3Dist(lastFly, firstPP) < EPSILON_IAF_JOIN) {
     return flyPoints.slice(0, -1);
   }
   return flyPoints;
@@ -1467,7 +1467,7 @@ function computePosition(flyApproachPoints, appPoints, progressRatio, touchDownP
     // Remaining distance: path left from current position to touchdown
     // (touchdown is now the last point in fullPath).
     const remainingPathDist = totalLen - targetDist;
-    const glideY = remainingPathDist * Math.tan(3 * Math.PI / 180);
+    const glideY = remainingPathDist * TAN_3_DEG;
     pos.y = Math.min(approachCap, glideY);
   } else {
     pos.y = APPROACH_CEILING_M / DEFAULT_AIRPORT_SCALE; // fallback for callers without runway data (tests, legacy)
@@ -1747,7 +1747,7 @@ function buildState5AircraftBlock(opts) {
   // straight-line) to follow the approach route through turns.
   // Capped at the runway's approach ceiling (5000ft real-world, converted
   // to game units via per-airport coordinate scale).
-  const TAN_3_DEG = Math.tan(3 * Math.PI / 180); // ≈ 0.052408
+  // TAN_3_DEG imported from ./constants
   const tdPos = state5Params.touchDownPosition || { x: 0, y: 0, z: 0 };
   const approachCap = (_explicitCap != null) ? _explicitCap : computeApproachCap();
 
@@ -2325,7 +2325,7 @@ function buildApproachCache(airportDir) {
   // Uses physics-based formula: TAT = totalGamePath × airportScale / 240kts
   // with ratio estimation from reference STARs on the same runway where available.
   const totalApproachTimes = computeApproachTimesFromScenery(
-    firstAclText, starMappings, appPointMap, null, 1600, airportScale
+    firstAclText, starMappings, appPointMap, null, DEFAULT_TAT, airportScale
   );
 
   // Compute per-file saveTime offsets from approach entries.
@@ -2341,7 +2341,7 @@ function buildApproachCache(airportDir) {
   for (const [filename, entries] of fileGroups) {
     const offsets = [];
     for (const e of entries) {
-      const tat = totalApproachTimes.get(e.route) || 1600;
+      const tat = totalApproachTimes.get(e.route) || DEFAULT_TAT;
       const lt = e.landingTimeTicks;
       if (!lt || lt === 0) continue;
       const baseTicks = Math.floor(lt / 864000000000) * 864000000000;
@@ -2473,7 +2473,7 @@ function extractSaveTime(aclText, totalApproachTimes) {
 
   const pr = parseFloat(prMatch[1]);
   const route = routeMatch ? routeMatch[1] : '';
-  const tat = (totalApproachTimes && totalApproachTimes.get(route)) || 1600;
+  const tat = (totalApproachTimes && totalApproachTimes.get(route)) || DEFAULT_TAT;
 
   // Find this FlightPlan's LandingTime
   const fpIdx = aclText.indexOf('"FlightPlans"');

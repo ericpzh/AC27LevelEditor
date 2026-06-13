@@ -7,10 +7,7 @@ import { airportDisplayName, airportSortOrder } from '../../utils/constants';
 import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
-
-// Only hide tutorial / test / endless / dev / bench / crossrunway / .Prod variants.
-// Demo files (.demo.acl) are always visible alongside production levels.
-const RE_HIDDEN = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
+import { RE_HIDDEN } from '../../utils/constants';
 
 function rescanGuideContent(t) {
   return (
@@ -114,7 +111,7 @@ export default function BrowserScreen() {
             if (info.isDemo) return true;
             // Show production levels; hide tutorial/test/endless/dev/bench/crossrunway/.Prod variants
             if (info.error) return false;
-            return !RE_HIDDEN.test(info.filename.toLowerCase());
+            return !RE_HIDDEN.test(info.filename);
           });
           allInfos[airport.icao] = visible.sort((a, b) =>
             (a.startTime || '99:99').localeCompare(b.startTime || '99:99')

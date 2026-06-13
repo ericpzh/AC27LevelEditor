@@ -54,12 +54,12 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │    CommonJS + some ESM)                                  │
 │  - parser.js is the FACADE — main.js imports ALL        │
 │    backend modules through it only                      │
-│  - tokenizer, acl_json, acl_document, constants,         │
-│    scanner, flight_plans, world_state, approach,         │
-│    dynamics, scenery, utils                             │
+│  - constants.js — CJS re-export of utils/constants.js    │
+│    (single source of truth — add new constants there)    │
 ├─────────────────────────────────────────────────────────┤
 │  src/utils/ (shared utilities, ESM frontend + CJS back) │
-│  - constants.js — field defs, airline codes, getActiveCol│
+│  - constants.js — single source of truth for ALL app      │
+│    constants (fields, math, timing, layout, i18n keys)    │
 │  - timeUtils.js — time conversion + timeline helpers    │
 │  - i18n.js — Chinese/English translation system         │
 │  - validators.js — save validation logic                │
@@ -132,7 +132,7 @@ AC27LevelEditor/
 │   │   ├── tokenizer.js         # String-aware section boundary scanner (no more brace-counting)
 │   │   ├── acl_json.js          # Pre-processor (Unity JSON→valid JSON) + serializer
 │   │   ├── acl_document.js      # In-memory document model (lazy parsing, mutation tracking)
-│   │   ├── constants.js         # ACL-format constants (ESM, imported by parser)
+│   │   ├── constants.js         # CJS re-export of utils/constants.js (backward compat)
 │   │   ├── scanner.js           # Scans game root for airports & .acl files
 │   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
 │   │   ├── world_state.js       # WorldState format (types 35/56/54)
@@ -142,7 +142,7 @@ AC27LevelEditor/
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
 │   └── utils/                   # Shared utilities (ESM + some CJS for backend)
-│       ├── constants.js         # UI field defs, airline codes, getActiveColumns
+│       ├── constants.js         # Single source of truth: ALL app constants (fields, math, timing, layout, keys)
 │       ├── timeUtils.js         # Tick↔time conversion, timeline helpers (CJS + ESM)
 │       ├── i18n.js              # Chinese/English translation (T(), getLang, setLang)
 │       ├── validators.js        # validateCallsigns, runTripleValidation

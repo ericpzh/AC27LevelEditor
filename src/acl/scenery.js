@@ -6,6 +6,7 @@
  */
 
 const { createTokenizer } = require('./tokenizer');
+const { RAD_TO_DEG } = require('./constants');
 
 // ─── SceneryData parser ───────────────────────────────────────────
 
@@ -214,7 +215,7 @@ function _parseStandPositions(text) {
     if (tailPos && nosePos) {
       const dx = nosePos.x - tailPos.x;
       const dz = nosePos.y - tailPos.y;  // pos.y is ACL-Z in nodesMap
-      let heading = Math.atan2(-dz, dx) * (180 / Math.PI);
+      let heading = Math.atan2(-dz, dx) * RAD_TO_DEG;
       heading = ((heading % 360) + 360) % 360;  // normalize to [0, 360)
       result[stand.identifier] = {
         x: (tailPos.x + nosePos.x) / 2,

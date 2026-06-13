@@ -3,18 +3,9 @@ import { createPortal } from 'react-dom';
 import { IoRemove } from 'react-icons/io5';
 import { useTranslation } from '../../../hooks/useTranslation';
 import useDrag from '../../../hooks/useDrag';
+import { MAP_PAD_RATIO, MAP_GAP, MAP_HEADER_H, MAP_LEGEND_H, MAP_SVG_FRAC, MAP_MIN_SVG, MAP_PLANE_VB, MAP_ICON_PATH, MAP_TARGET_RATIO } from '../../../utils/constants';
 import { useAppStore } from '../../../store/appStore';
 import './StandMap.css';
-
-const PAD_RATIO = 0.10;
-const GAP = 8;
-const HEADER_H = 38;
-const LEGEND_H = 40;
-const SVG_FRAC = 0.48;     // fraction of viewport width for longer SVG side
-const MIN_SVG = 680;       // floor — legend always fits
-const PLANE_VB = 512;
-// IoAirplane icon path (same as StarMap)
-const ICON_PATH = "M186.62 464H160a16 16 0 0 1-14.57-22.6l64.46-142.25L113.1 297l-35.3 42.77C71.07 348.23 65.7 352 52 352H34.08a17.66 17.66 0 0 1-14.7-7.06c-2.38-3.21-4.72-8.65-2.44-16.41l19.82-71c.15-.53.33-1.06.53-1.58a.38.38 0 0 0 0-.15 14.82 14.82 0 0 1-.53-1.59l-19.84-71.45c-2.15-7.61.2-12.93 2.56-16.06a16.83 16.83 0 0 1 13.6-6.7H52c10.23 0 20.16 4.59 26 12l34.57 42.05 97.32-1.44-64.44-142A16 16 0 0 1 160 48h26.91a25 25 0 0 1 19.35 9.8l125.05 152 57.77-1.52c4.23-.23 15.95-.31 18.66-.31C463 208 496 225.94 496 256c0 9.46-3.78 27-29.07 38.16-14.93 6.6-34.85 9.94-59.21 9.94-2.68 0-14.37-.08-18.66-.31l-57.76-1.54-125.36 152a25 25 0 0 1-19.32 9.75z";
 
 // ── Window size hook ─────────────────────────────────────
 
@@ -71,19 +62,18 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
 
     const rangeX = (maxX - minX) || 1;
     const rangeY = (maxY - minY) || 1;
-    let padX = rangeX * PAD_RATIO;
-    let padY = rangeY * PAD_RATIO;
+    let padX = rangeX * MAP_PAD_RATIO;
+    let padY = rangeY * MAP_PAD_RATIO;
 
     // Enforce target aspect ratio on viewBox — pad shorter axis
-    const TARGET_RATIO = 1.35;
     let vbW = rangeX + 2 * padX;
     let vbH = rangeY + 2 * padY;
-    if (vbW / vbH > TARGET_RATIO) {
-      const extra = (vbW / TARGET_RATIO - vbH) / 2;
+    if (vbW / vbH > MAP_TARGET_RATIO) {
+      const extra = (vbW / MAP_TARGET_RATIO - vbH) / 2;
       padY += extra;
       vbH = rangeY + 2 * padY;
-    } else if (vbH / vbW > TARGET_RATIO) {
-      const extra = (vbH / TARGET_RATIO - vbW) / 2;
+    } else if (vbH / vbW > MAP_TARGET_RATIO) {
+      const extra = (vbH / MAP_TARGET_RATIO - vbW) / 2;
       padX += extra;
       vbW = rangeX + 2 * padX;
     }
@@ -201,9 +191,9 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
 
   // ── SVG pixel size ─────────────────────────────────────────
   const dataRatio = vbW / vbH;
-  const svgMax = Math.max(MIN_SVG, Math.min(
-    Math.round(winW * SVG_FRAC),
-    Math.round(winH * 0.78) - HEADER_H - LEGEND_H
+  const svgMax = Math.max(MAP_MIN_SVG, Math.min(
+    Math.round(winW * MAP_SVG_FRAC),
+    Math.round(winH * 0.78) - MAP_HEADER_H - MAP_LEGEND_H
   ));
   let svgW, svgH;
   if (dataRatio >= 1) {
@@ -215,13 +205,13 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
   }
 
   const panelW = svgW;
-  const panelH = svgH + HEADER_H + LEGEND_H;
+  const panelH = svgH + MAP_HEADER_H + MAP_LEGEND_H;
 
   // ── Position: right-aligned by default; drag overrides ──
   const controlled = hasDragged || isDragging;
   const effLeft = controlled ? dragPos.left : undefined;
-  const effTop = controlled ? dragPos.top : GAP;
-  const effRight = !controlled ? GAP : undefined;
+  const effTop = controlled ? dragPos.top : MAP_GAP;
+  const effRight = !controlled ? MAP_GAP : undefined;
 
   // ── Compute transform-origin from button ref ───────────
   const updateOrigin = useCallback(() => {
@@ -347,8 +337,8 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
 
                 {isOccupied ? (
                   <g transform={`translate(${d.cx}, ${d.cy})`} className="stand-map-plane-group">
-                    <g transform={`rotate(${d.heading}) scale(${staticPlaneScale / PLANE_VB}) translate(-256, -256)`}>
-                      <path d={ICON_PATH} className="stand-map-plane" />
+                    <g transform={`rotate(${d.heading}) scale(${staticPlaneScale / MAP_PLANE_VB}) translate(-256, -256)`}>
+                      <path d={MAP_ICON_PATH} className="stand-map-plane" />
                     </g>
                     {(occupiedStands[d.id]?.callsign) && (
                       <text
@@ -392,8 +382,8 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
           {targetPlanePos && callsign && (
             <g transform={`translate(${targetPlanePos.cx}, ${targetPlanePos.cy})`}
                className="stand-map-active-plane">
-              <g transform={`rotate(${targetPlanePos.heading}) scale(${activePlaneScale / PLANE_VB}) translate(-256, -256)`}>
-                <path d={ICON_PATH} />
+              <g transform={`rotate(${targetPlanePos.heading}) scale(${activePlaneScale / MAP_PLANE_VB}) translate(-256, -256)`}>
+                <path d={MAP_ICON_PATH} />
               </g>
               <text
                 x={planeLabelOff * (1 + 0.6 * Math.abs(Math.cos(targetPlanePos.heading * Math.PI / 180))) * Math.cos(targetPlanePos.heading * Math.PI / 180)}
@@ -417,7 +407,7 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
           </div>
           <div className="stand-map-legend-item">
             <svg className="stand-map-legend-plane" viewBox="0 0 512 512" width="12" height="12">
-              <path d={ICON_PATH} fill="var(--text-muted)" />
+              <path d={MAP_ICON_PATH} fill="var(--text-muted)" />
             </svg>
             {t('standmap_occupied')}
           </div>

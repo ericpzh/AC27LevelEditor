@@ -121,7 +121,7 @@ function extractCurrentDateTime(aclText) {
     const cdt = parsed.CurrentDateTime;
     if (cdt && cdt.__v && cdt.__v.length > 0) {
       const ticks = BigInt(cdt.__v[0]);
-      const TICKS_PER_DAY = 864000000000n;
+      const { TICKS_PER_DAY } = require('./constants.js');
       const baseTicks = (ticks / TICKS_PER_DAY) * TICKS_PER_DAY;
       const secSinceMidnight = Number((ticks - baseTicks) / 10000000n);
       const h = Math.floor(secSinceMidnight / 3600);

@@ -1,5 +1,5 @@
 import { T } from './i18n.js';
-import { FIELD_LABELS } from './constants.js';
+import { FIELD_LABELS, STAND_DEP_BEFORE_ESTIMATE_MIN, STAND_ARR_AFTER_ESTIMATE_MIN, STAND_LANDING_BEFORE_INBLOCK_MIN, STAND_OCCUPANCY_START_OFFSET_MIN, STAND_OCCUPANCY_END_OFFSET_MIN, MINUTES_PER_DAY, VALID_LANGUAGES } from './constants.js';
 
 // ── Stand conflict detection helpers ──
 
@@ -10,7 +10,7 @@ function _toMinutes(timeStr) {
 
 function _addMinutes(timeStr, mins) {
   const total = _toMinutes(timeStr) + mins;
-  const wrapped = ((total % 1440) + 1440) % 1440;
+  const wrapped = ((total % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   const h = Math.floor(wrapped / 60);
   const m = wrapped % 60;
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
@@ -18,7 +18,7 @@ function _addMinutes(timeStr, mins) {
 
 function _subtractMinutes(timeStr, mins) {
   const total = _toMinutes(timeStr) - mins;
-  const wrapped = ((total % 1440) + 1440) % 1440;
+  const wrapped = ((total % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   const h = Math.floor(wrapped / 60);
   const m = wrapped % 60;
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
@@ -199,7 +199,7 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     Runway: new Set(values.Runway || []),
     AircraftType: new Set(values.AircraftType || []),
     Voice: new Set(values.Voice || []),
-    Language: new Set(['en', 'zh']),
+    Language: VALID_LANGUAGES,
   };
 
   flights.forEach((fl) => {

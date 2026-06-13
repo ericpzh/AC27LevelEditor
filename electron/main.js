@@ -8,7 +8,7 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, computePosition, computeDirection, computeApproachCap } = require('../src/acl/parser');
-const { APPROACH_MIN_TTL } = require('../src/acl/constants');
+const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT } = require('../src/acl/constants');
 
 const CACHE_VERSION = 7; // Bump when cache.json schema changes (airportScale added to approachData)
 
@@ -124,7 +124,7 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
           info.currentDateTime = cdt.timeString;
           // Compute 30-min window end: CurrentDateTime + 30 min
           const ssm = cdt.secSinceMidnight;
-          const endSec = ssm + 1800;
+          const endSec = ssm + DEMO_WINDOW_SEC;
           const eh = Math.floor((endSec % 86400) / 3600) % 24;
           const em = Math.floor((endSec % 3600) / 60);
           const es = endSec % 60;
@@ -486,7 +486,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
             // Rebuild totalApproachTimes from SceneryData path lengths (fallback for old caches)
             if (!approachData.totalApproachTimes) {
               approachData.totalApproachTimes = approach.computeApproachTimesFromScenery(
-                firstText, mappings, approachData.appPointMap, null, 1600,
+                firstText, mappings, approachData.appPointMap, null, DEFAULT_TAT,
                 approachData.airportScale
               );
             }
@@ -711,7 +711,7 @@ function _filterDemoFlights(filePath, flights, config) {
       }
 
       // Override config to match demo window
-      const endSec = cdt.secSinceMidnight + 1800;
+      const endSec = cdt.secSinceMidnight + DEMO_WINDOW_SEC;
       const eh = Math.floor((endSec % 86400) / 3600) % 24;
       const em = Math.floor((endSec % 3600) / 60);
       const es = endSec % 60;
@@ -770,13 +770,13 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
       const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
       // If level starts in the evening, treat post-midnight times as next-day
       const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
-      const crossesMidnight = startH >= 18;
+      const crossesMidnight = startH >= MIDNIGHT_CROSS_START_HOUR;
       for (const fl of data.flights) {
         for (const field of ['LandingTime', 'OffBlockTime']) {
           const t = fl[field];
           if (!t) continue;
           let tm = toMin(t);
-          if (crossesMidnight && tm < 360) tm += 1440; // times before 06:00 are next day
+          if (crossesMidnight && tm < MIDNIGHT_CROSS_THRESHOLD_MIN) tm += MINUTES_PER_DAY; // times before 06:00 are next day
           if (tm < earliestMin) {
             earliestTime = t;
             earliestMin = tm;
@@ -807,7 +807,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
     // Final fallback: compute from config.startTime + 13min warmup
     if (_saveSec == null && config && config.startTime) {
       const p = String(config.startTime).split(':');
-      _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + 780;
+      _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + WARMUP_SEC;
       console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from config.startTime + warmup (final fallback)');
     }
 
@@ -857,7 +857,7 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
       const cdt = extractCurrentDateTime(text);
       if (isDemoSave && cdt && cdt.timeString) {
         aclcfgStartTime = cdt.timeString;
-        const endSec = cdt.secSinceMidnight + 1800;
+        const endSec = cdt.secSinceMidnight + DEMO_WINDOW_SEC;
         const eh = Math.floor((endSec % 86400) / 3600) % 24;
         const em = Math.floor((endSec % 3600) / 60);
         const es = endSec % 60;
@@ -1094,13 +1094,13 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     if (data.flights) {
       const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
       const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
-      const crossesMidnight = startH >= 18;
+      const crossesMidnight = startH >= MIDNIGHT_CROSS_START_HOUR;
       for (const fl of data.flights) {
         for (const field of ['LandingTime', 'OffBlockTime']) {
           const t = fl[field];
           if (!t) continue;
           let tm = toMin(t);
-          if (crossesMidnight && tm < 360) tm += 1440;
+          if (crossesMidnight && tm < MIDNIGHT_CROSS_THRESHOLD_MIN) tm += MINUTES_PER_DAY;
           if (tm < earliestMin) {
             earliestTime = t;
             earliestMin = tm;
@@ -1129,7 +1129,7 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     } catch (_) {}
     if (_saveSec == null && config && config.startTime) {
       const p2 = String(config.startTime).split(':');
-      _saveSec = parseInt(p2[0]) * 3600 + parseInt(p2[1]) * 60 + (parseInt(p2[2]) || 0) + 780;
+      _saveSec = parseInt(p2[0]) * 3600 + parseInt(p2[1]) * 60 + (parseInt(p2[2]) || 0) + WARMUP_SEC;
       console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from config.startTime + warmup (final fallback)');
     }
 
@@ -1220,13 +1220,13 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     if (data.flights) {
       const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
       const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
-      const crossesMidnight = startH >= 18;
+      const crossesMidnight = startH >= MIDNIGHT_CROSS_START_HOUR;
       for (const fl of data.flights) {
         for (const field of ['LandingTime', 'OffBlockTime']) {
           const t = fl[field];
           if (!t) continue;
           let tm = toMin(t);
-          if (crossesMidnight && tm < 360) tm += 1440;
+          if (crossesMidnight && tm < MIDNIGHT_CROSS_THRESHOLD_MIN) tm += MINUTES_PER_DAY;
           if (tm < earliestMin) { earliestTime = t; earliestMin = tm; }
         }
       }
@@ -1245,7 +1245,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     } catch (_) {}
     if (_saveSec == null && config && config.startTime) {
       const p = String(config.startTime).split(':');
-      _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + 780;
+      _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + WARMUP_SEC;
     }
 
     return { success: true, path: filePath, restored, config, earliestTime, _saveSec, _currentDateTime, isDemo, ...data };

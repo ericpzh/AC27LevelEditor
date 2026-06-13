@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { T, getLang, setLang } from '../utils/i18n';
+import { STORAGE_KEY_LANG } from '../utils/constants';
 
 const I18nContext = createContext();
 
@@ -8,14 +9,14 @@ export function I18nProvider({ children }) {
 
   // On mount, if localStorage has no lang, try the cache JSON as fallback
   useEffect(() => {
-    if (!localStorage.getItem('ac27_lang') && window.electronAPI && window.electronAPI.getCachedLang) {
+    if (!localStorage.getItem(STORAGE_KEY_LANG) && window.electronAPI && window.electronAPI.getCachedLang) {
       const p = window.electronAPI.getCachedLang();
       if (p && typeof p.then === 'function') {
         p.then(result => {
           if (result && result.lang && (result.lang === 'en' || result.lang === 'zh')) {
             setLangState(result.lang);
             setLang(result.lang);
-            try { localStorage.setItem('ac27_lang', result.lang); } catch (_) {}
+            try { localStorage.setItem(STORAGE_KEY_LANG, result.lang); } catch (_) {}
           }
         }).catch(() => {});
       }
@@ -30,7 +31,7 @@ export function I18nProvider({ children }) {
     const next = lang === 'zh' ? 'en' : 'zh';
     setLangState(next);
     setLang(next);
-    try { localStorage.setItem('ac27_lang', next); } catch (_) {}
+    try { localStorage.setItem(STORAGE_KEY_LANG, next); } catch (_) {}
     if (window.electronAPI && window.electronAPI.saveCachedLang) {
       const p = window.electronAPI.saveCachedLang(next);
       if (p && typeof p.then === 'function') p.catch(() => {});

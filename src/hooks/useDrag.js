@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { DRAG_MIN_VISIBLE_X, DRAG_MIN_VISIBLE_Y } from '../utils/constants';
 
 /**
  * Shared drag hook for floating panels (StandMap, StarMap).
@@ -66,10 +67,10 @@ export default function useDrag({ panelRef, enabled = true, onDragEnd }) {
       let newLeft = e.clientX - offsetRef.current.x;
       let newTop = e.clientY - offsetRef.current.y;
 
-      // Clamp: keep at least 40 px of the panel visible horizontally,
-      // and the header (38 px) visible vertically.
-      newLeft = Math.max(-panelW + 40, Math.min(window.innerWidth - 40, newLeft));
-      newTop = Math.max(0, Math.min(window.innerHeight - 38, newTop));
+      // Clamp: keep at least DRAG_MIN_VISIBLE_X px of the panel visible horizontally,
+      // and DRAG_MIN_VISIBLE_Y px (header) visible vertically.
+      newLeft = Math.max(-panelW + DRAG_MIN_VISIBLE_X, Math.min(window.innerWidth - DRAG_MIN_VISIBLE_X, newLeft));
+      newTop = Math.max(0, Math.min(window.innerHeight - DRAG_MIN_VISIBLE_Y, newTop));
 
       panel.style.left = newLeft + 'px';
       panel.style.top = newTop + 'px';

@@ -4,9 +4,8 @@ import './TimelineEditors.css';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
 import { sortTimelineByTime, getTimelineActiveRange, getDefaultTime } from '../../../utils/timeUtils';
+import { WEATHER_PRESETS } from '../../../utils/constants';
 import TimeCell from './TimeCell';
-
-const PRESETS = ['Sunny','FewCloudy','MidCloudy','PartlyCloudy','OvercastSky','AfterRain'];
 
 export default function WeatherEditor() {
   const { t } = useTranslation();
@@ -44,7 +43,7 @@ export default function WeatherEditor() {
           {active.map(e => { const ri = weatherTimeline.indexOf(e);
             return <div key={ri} className="tl-row" data-idx={ri} {...(e._isNew ? { 'data-new': '' } : {})}>
               <TimeCell value={e.time} onChange={v => chg(ri,'time',v)} minTime={_s} maxTime={_e} />
-              <select className="tl-select" value={e.preset||'Sunny'} onChange={ev => chg(ri,'preset',ev.target.value)}>{PRESETS.map(p => <option key={p} value={p}>{p}</option>)}</select>
+              <select className="tl-select" value={e.preset||'Sunny'} onChange={ev => chg(ri,'preset',ev.target.value)}>{WEATHER_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}</select>
               <span></span><span></span><span></span>
               <button className="tl-btn-del" onClick={() => del(ri)} title={t('tl_delete')}><IoClose size={14} /></button>
             </div>;

@@ -193,7 +193,7 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
 │   └── utils/               # Shared utilities (ESM for frontend)
-│       ├── constants.js         # Field defs, airline codes, getActiveColumns
+│       ├── constants.js         # Central constants — single source of truth for all app constants
 │       ├── timeUtils.js         # Tick↔time conversion + timeline helpers
 │       ├── i18n.js              # Chinese/English translation system
 │       ├── validators.js        # Save validation logic

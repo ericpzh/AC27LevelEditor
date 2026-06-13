@@ -4,6 +4,7 @@
 const fs = require('fs');
 const { _generateGuid } = require('./world_state');
 const { scanGameRoot } = require('./scanner');
+const { ID_OFFSET_DYNAMICS } = require('./constants');
 
 // ─── calcProgressRatio ─────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ function buildAircraftEntry(template, progressRatio, flightPlanGuid) {
 
   // Update $id — increment all $id fields to avoid collisions
   // Simple: replace "$id": NNNN, with "$id": NNNN+100000,
-  vText = vText.replace(/"\$id"\s*:\s*(\d+)/g, (m, n) => `"$id": ${parseInt(n, 10) + 100000}`);
+  vText = vText.replace(/"\$id"\s*:\s*(\d+)/g, (m, n) => `"$id": ${parseInt(n, 10) + ID_OFFSET_DYNAMICS}`);
 
   // Force DynamicsParams $type to ApproachDynamicsParams (50)
   vText = vText.replace(

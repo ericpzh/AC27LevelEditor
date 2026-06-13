@@ -3,18 +3,10 @@ import { createPortal } from 'react-dom';
 import { IoRemove } from 'react-icons/io5';
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useElectronAPI } from '../../../hooks/useElectronAPI';
-// Canonical value: src/acl/constants.js APPROACH_MIN_TTL
-const APPROACH_MIN_TTL = 10;
-import useDrag from '../../../hooks/useDrag';
 import { useAppStore } from '../../../store/appStore';
+import useDrag from '../../../hooks/useDrag';
+import { APPROACH_MIN_TTL, MAP_PAD_RATIO, MAP_GAP, MAP_HEADER_H, MAP_LEGEND_H, MAP_SVG_FRAC, MAP_MIN_SVG, MAP_PLANE_VB, MAP_ICON_PATH, MAP_TARGET_RATIO } from '../../../utils/constants';
 import './StarMap.css';
-
-const PAD_RATIO = 0.10;
-const GAP = 8;
-const HEADER_H = 38;
-const LEGEND_H = 40;
-const SVG_FRAC = 0.48;     // fraction of viewport width for longer SVG side
-const MIN_SVG = 680;       // floor — legend always fits
 
 // ── Window size hook ─────────────────────────────────────
 
@@ -268,18 +260,17 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
 
     const rangeX = (maxX - minX) || 1;
     const rangeY = (maxY - minY) || 1;
-    let padX = rangeX * PAD_RATIO;
-    let padY = rangeY * PAD_RATIO;
+    let padX = rangeX * MAP_PAD_RATIO;
+    let padY = rangeY * MAP_PAD_RATIO;
 
-    const TARGET_RATIO = 1.35;
     let vbW = rangeX + 2 * padX;
     let vbH = rangeY + 2 * padY;
-    if (vbW / vbH > TARGET_RATIO) {
-      const extra = (vbW / TARGET_RATIO - vbH) / 2;
+    if (vbW / vbH > MAP_TARGET_RATIO) {
+      const extra = (vbW / MAP_TARGET_RATIO - vbH) / 2;
       padY += extra;
       vbH = rangeY + 2 * padY;
-    } else if (vbH / vbW > TARGET_RATIO) {
-      const extra = (vbH / TARGET_RATIO - vbW) / 2;
+    } else if (vbH / vbW > MAP_TARGET_RATIO) {
+      const extra = (vbH / MAP_TARGET_RATIO - vbW) / 2;
       padX += extra;
       vbW = rangeX + 2 * padX;
     }
@@ -428,9 +419,9 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
 
   // ── SVG pixel size ────────────────────────────────────────
   const dataRatio = vbW / vbH;
-  const svgMax = Math.max(MIN_SVG, Math.min(
-    Math.round(winW * SVG_FRAC),
-    Math.round(winH * 0.78) - HEADER_H - LEGEND_H
+  const svgMax = Math.max(MAP_MIN_SVG, Math.min(
+    Math.round(winW * MAP_SVG_FRAC),
+    Math.round(winH * 0.78) - MAP_HEADER_H - MAP_LEGEND_H
   ));
   let svgW, svgH;
   if (dataRatio >= 1) {
@@ -444,12 +435,12 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
   const hasData = starPaths && Object.keys(starPaths).length > 0 && lines.length > 0;
 
   const panelW = hasData ? svgW : 240;
-  const panelH = hasData ? (svgH + HEADER_H + LEGEND_H) : (HEADER_H + 36);
+  const panelH = hasData ? (svgH + MAP_HEADER_H + MAP_LEGEND_H) : (MAP_HEADER_H + 36);
 
   // ── Position: left-aligned by default; drag overrides ──
   const controlled = hasDragged || isDragging;
   const effLeft = controlled ? dragPos.left : 0;
-  const effTop = controlled ? dragPos.top : GAP;
+  const effTop = controlled ? dragPos.top : MAP_GAP;
 
   // ── Compute transform-origin from button ref ───────────
   const updateOrigin = useCallback(() => {
@@ -644,14 +635,12 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
 
               {/* Aircraft position icons */}
               {(() => {
-                const PLANE_VB = 512;
-                const ICON_PATH = "M186.62 464H160a16 16 0 0 1-14.57-22.6l64.46-142.25L113.1 297l-35.3 42.77C71.07 348.23 65.7 352 52 352H34.08a17.66 17.66 0 0 1-14.7-7.06c-2.38-3.21-4.72-8.65-2.44-16.41l19.82-71c.15-.53.33-1.06.53-1.58a.38.38 0 0 0 0-.15 14.82 14.82 0 0 1-.53-1.59l-19.84-71.45c-2.15-7.61.2-12.93 2.56-16.06a16.83 16.83 0 0 1 13.6-6.7H52c10.23 0 20.16 4.59 26 12l34.57 42.05 97.32-1.44-64.44-142A16 16 0 0 1 160 48h26.91a25 25 0 0 1 19.35 9.8l125.05 152 57.77-1.52c4.23-.23 15.95-.31 18.66-.31C463 208 496 225.94 496 256c0 9.46-3.78 27-29.07 38.16-14.93 6.6-34.85 9.94-59.21 9.94-2.68 0-14.37-.08-18.66-.31l-57.76-1.54-125.36 152a25 25 0 0 1-19.32 9.75z";
 
                 const renderAircraft = (ac, pos, isEditing) => {
                   const sx = pos.x;
                   const sy = -(pos.z);
                   const heading = pos.headingDeg || 0;
-                  const sc = (isEditing ? planeSize * 1.5 : planeSize) / PLANE_VB;
+                  const sc = (isEditing ? planeSize * 1.5 : planeSize) / MAP_PLANE_VB;
                   const lblOff = isEditing ? planeLabelOff * 1.2 : planeLabelOff;
 
                   return (
@@ -662,7 +651,7 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
                         }}
                       >
                         <g transform={`scale(${sc}) translate(-256, -256)`}>
-                          <path d={ICON_PATH} />
+                          <path d={MAP_ICON_PATH} />
                         </g>
                       </g>
                       <text
