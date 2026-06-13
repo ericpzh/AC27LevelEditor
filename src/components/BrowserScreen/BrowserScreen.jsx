@@ -211,7 +211,8 @@ export default function BrowserScreen() {
           <div className="browser-empty">{t('browser_no_files')}</div>
         ) : (
           allAirportsWithFiles.map(airport => (
-            <div key={airport.icao} className="airport-card" style={{ '--card-bg': `url(./${airport.icao}.png)` }}>
+            <div key={airport.icao} className="airport-card">
+              <div className="airport-card-bg" style={{ backgroundImage: `url(./${airport.icao}.png)` }} />
               <div className="airport-card-header"><span className="airport-icao">{airportDisplayName(airport.icao, t)}</span></div>
               {fileInfos[airport.icao].map((info, i) => {
                 if (info.error) return (
