@@ -7,10 +7,10 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, computePosition, computeDirection } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, computePosition, computeDirection, computeApproachCap } = require('../src/acl/parser');
 const { APPROACH_MIN_TTL } = require('../src/acl/constants');
 
-const CACHE_VERSION = 4; // Bump when cache.json schema changes
+const CACHE_VERSION = 7; // Bump when cache.json schema changes (airportScale added to approachData)
 
 let mainWindow;
 let cachedScan = null; // cached scan result { airports, totalFiles }
@@ -409,23 +409,96 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       const rawApproach = cachedEntry.approachData || cachedEntry;
       approachData = deserializeApproachCache(rawApproach);
       console.log('[INIT-CACHE]   ' + icao + ': approach from disk cache');
-      // Rebuild state5ParamsMap from SceneryData — not persisted in cache.json
-      if (!approachData.state5ParamsMap) {
+      // Rebuild state5ParamsMap and appPointMap from SceneryData as a fallback
+      // for old caches that were written before these fields were persisted.
+      // totalApproachTimes, state5ParamsMap, and appPointMap are now stored in
+      // cache.json — this block only runs when they are missing (old cache).
+      if (!approachData.state5ParamsMap || !approachData.appPointMap || !approachData.totalApproachTimes) {
         const approach = require('../src/acl/approach');
         try {
           const aclFiles = fs.readdirSync(levelsDir).filter(f => f.endsWith('.acl'));
           if (aclFiles.length > 0) {
             const firstText = fs.readFileSync(path.join(levelsDir, aclFiles[0]), 'utf-8');
             const mappings = approach.extractStarRunwayMappings(firstText);
-            approachData.state5ParamsMap = new Map();
-            for (const rwy of Object.keys(mappings.runwayStarMap || {})) {
-              const data = approach.resolveApproachProcedureData(firstText, rwy);
-              if (data) approachData.state5ParamsMap.set(rwy, data);
+
+            // Rebuild state5ParamsMap (approach procedure params per runway)
+            if (!approachData.state5ParamsMap) {
+              approachData.state5ParamsMap = new Map();
+              for (const rwy of Object.keys(mappings.runwayStarMap || {})) {
+                const data = approach.resolveApproachProcedureData(firstText, rwy);
+                if (data) {
+                  approachData.state5ParamsMap.set(rwy, data);
+                  // Also register normalized runway variant (e.g. "1" for "01")
+                  const normalized = approach._normalizeRunway(rwy);
+                  if (normalized !== rwy && !approachData.state5ParamsMap.has(normalized)) {
+                    approachData.state5ParamsMap.set(normalized, data);
+                  }
+                }
+              }
             }
-            console.log('[INIT-CACHE]   ' + icao + ': rebuilt state5ParamsMap from scenery (' + approachData.state5ParamsMap.size + ' runways)');
+
+            // Rebuild appPointMap from SceneryData with per-STAR variant selection.
+            // Each STAR gets the variant whose first AirwayNode is closest to the
+            // STAR's last FlyApproach point. Also adds STAR-specific state5ParamsMap keys.
+            if (!approachData.appPointMap) {
+              approachData.appPointMap = new Map();
+              for (const [runway, stars] of Object.entries(mappings.runwayStarMap || {})) {
+                for (const star of stars) {
+                  const flyPoints = approach.resolveFlyApproachPoints(firstText, star, runway);
+                  const hintPos = (flyPoints && flyPoints.length > 0)
+                    ? flyPoints[flyPoints.length - 1]
+                    : null;
+                  const s5 = approach.resolveApproachProcedureData(firstText, runway, hintPos);
+                  if (!s5 || !s5.pathPointList || s5.pathPointList.length < 2) continue;
+                  approachData.appPointMap.set(star + '|' + runway, s5.pathPointList);
+                  // Also store STAR-specific state5Params for State=5 generation
+                  const s5Key = star + '|' + runway;
+                  if (!approachData.state5ParamsMap.has(s5Key)) {
+                    approachData.state5ParamsMap.set(s5Key, s5);
+                  }
+                }
+                // Also register normalized runway variant (e.g. "1" for "01")
+                const normRunway = approach._normalizeRunway(runway);
+                if (normRunway !== runway) {
+                  for (const star of stars) {
+                    const flyPoints = approach.resolveFlyApproachPoints(firstText, star, normRunway);
+                    const hintPos = (flyPoints && flyPoints.length > 0)
+                      ? flyPoints[flyPoints.length - 1]
+                      : null;
+                    const s5n = approach.resolveApproachProcedureData(firstText, normRunway, hintPos);
+                    if (!s5n || !s5n.pathPointList) continue;
+                    const key = star + '|' + normRunway;
+                    if (!approachData.appPointMap.has(key)) approachData.appPointMap.set(key, s5n.pathPointList);
+                    const s5Key = star + '|' + normRunway;
+                    if (!approachData.state5ParamsMap.has(s5Key)) {
+                      approachData.state5ParamsMap.set(s5Key, s5n);
+                    }
+                  }
+                }
+              }
+            }
+
+            // Compute per-airport coordinate scale from runway thresholds (needed for TAT)
+            if (approachData.airportScale == null && firstText) {
+              approachData.airportScale = approach.computeAirportScale(firstText);
+            }
+
+            // Rebuild totalApproachTimes from SceneryData path lengths (fallback for old caches)
+            if (!approachData.totalApproachTimes) {
+              approachData.totalApproachTimes = approach.computeApproachTimesFromScenery(
+                firstText, mappings, approachData.appPointMap, null, 1600,
+                approachData.airportScale
+              );
+            }
+
+            console.log('[INIT-CACHE]   ' + icao + ': rebuilt SceneryData maps (' +
+              (approachData.state5ParamsMap?.size || 0) + ' runways, ' +
+              (approachData.appPointMap?.size || 0) + ' route combos, ' +
+              (approachData.totalApproachTimes?.size || 0) + ' TATs, ' +
+              'airportScale=' + (approachData.airportScale ? approachData.airportScale.toFixed(1) : 'N/A') + ')');
           }
         } catch (e) {
-          console.error('[INIT-CACHE]   ' + icao + ': failed to rebuild state5ParamsMap:', e.message);
+          console.error('[INIT-CACHE]   ' + icao + ': failed to rebuild SceneryData maps:', e.message);
         }
       }
     } else {
@@ -1420,7 +1493,7 @@ ipcMain.handle('get-aircraft-positions', async (_event, icao, arrivals, saveSec)
     const approachData = airportCache && airportCache[icao]?.approachData;
     if (!approachData) return { success: true, positions: [] };
 
-    const { starPaths, totalApproachTimes, state5ParamsMap } = approachData;
+    const { starPaths, totalApproachTimes, state5ParamsMap, airportScale } = approachData;
 
     // Compute fallback TAT (median) for STARs that have path data but no State=30 entries
     let fallbackTat = null;
@@ -1468,8 +1541,7 @@ ipcMain.handle('get-aircraft-positions', async (_event, icao, arrivals, saveSec)
           ? state5ParamsMap.get(runway)
           : state5ParamsMap && state5ParamsMap[runway];
       let touchDown = state5?.touchDownPosition || null;
-      let approachCap =
-        state5?.initialPosition?.y != null ? state5.initialPosition.y : 15.24;
+      let approachCap = computeApproachCap(airportScale);
       // Fallback: derive touchdown from last segment when state5ParamsMap lacks
       // this runway. Extends the last path point by 50m along the approach heading.
       if (!touchDown && variant.points && variant.points.length >= 2) {

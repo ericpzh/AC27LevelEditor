@@ -127,6 +127,39 @@ export function detectStandConflicts(flights) {
   return issues;
 }
 
+export function detectDuplicateRegistrations(flights) {
+  const issues = [];
+  const byReg = {};
+  flights.forEach((fl) => {
+    const reg = (fl._Registration || fl.Registration || '').trim();
+    if (!reg) return;
+    if (!byReg[reg]) byReg[reg] = [];
+    byReg[reg].push(fl);
+  });
+
+  for (const [reg, regFlights] of Object.entries(byReg)) {
+    const deps = [];
+    const arrs = [];
+    for (const fl of regFlights) {
+      const isArrival = (fl.isDeparture === false) ||
+        (((fl.LandingTime || '').trim() && !(fl.OffBlockTime || '').trim()));
+      if (isArrival) arrs.push(fl);
+      else deps.push(fl);
+    }
+    if (deps.length > 1) {
+      issues.push(T('val_duplicate_registration_dep', {
+        reg, cs1: deps[0].CallSign || '?', cs2: deps[1].CallSign || '?',
+      }));
+    }
+    if (arrs.length > 1) {
+      issues.push(T('val_duplicate_registration_arr', {
+        reg, cs1: arrs[0].CallSign || '?', cs2: arrs[1].CallSign || '?',
+      }));
+    }
+  }
+  return issues;
+}
+
 export function validateCallsigns(flights) {
   const seen = new Map();
   const dupes = [];
@@ -267,6 +300,9 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
 
   // Stand conflict detection
   issues.push(...detectStandConflicts(flights));
+
+  // Duplicate registration detection
+  issues.push(...detectDuplicateRegistrations(flights));
 
   return issues;
 }

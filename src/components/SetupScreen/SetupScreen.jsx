@@ -20,9 +20,19 @@ export default function SetupScreen() {
       if (result.canceled) { setLoading(false); return; }
       if (result.errorCode) { setError(t(result.errorCode, { path: result.errorPath })); setLoading(false); return; }
       setRootPath(result.rootPath, result.airports || []);
-      await electronAPI.initAirportCache(result.rootPath).catch(err => console.error(err));
+      const { showModal, hideModal } = useAppStore.getState();
+      showModal(
+        t => t('browser_scanning_title'),
+        t => <div className="loading-state"><div className="spinner" /><p>{t('browser_scanning_body')}</p></div>,
+        null,
+        false,
+      );
+      try {
+        await electronAPI.initAirportCache(result.rootPath);
+      } catch (err) { console.error(err); }
+      hideModal();
       setScreen('browser');
-    } catch (err) { setError(err.message); }
+    } catch (err) { setError(err.message); useAppStore.getState().hideModal(); }
     setLoading(false);
   };
 

@@ -12,6 +12,7 @@
 
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
+const { APPROACH_EFFECTIVE_SPEED, APPROACH_SPEED_MS, DEFAULT_AIRPORT_SCALE, APPROACH_CEILING_M } = require('./constants');
 
 // ─── GUID generator (inlined to avoid ESM import chain issues in tests) ──
 
@@ -259,7 +260,7 @@ function extractApproachData(aclText) {
       designator: designator,
       callsign: fpData ? fpData.callsign : '',
       direction: direction || { x: 0, y: 0, z: 1 },
-      position: position || { x: 0, y: 15.24, z: 0 },
+      position: position || { x: 0, y: APPROACH_CEILING_M / DEFAULT_AIRPORT_SCALE, z: 0 },
     });
   }
 
@@ -436,6 +437,87 @@ function computeTotalApproachTimes(approachEntries, getGroupId) {
       result.set(route, Math.round(median));
     } else {
       result.set(route, 1600); // default ~26-27 min
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Compute totalApproachTimes from SceneryData path lengths.
+ *
+ * For STARs that already have an aircraft-derived TAT in refTatMap, that value is
+ * preserved (it's the most accurate). For STARs without, estimates TAT using the
+ * path-length ratio from a reference STAR on the same runway:
+ *
+ *   estTAT = refTAT × (totalPathLen / refPathLen)
+ *
+ * where refTAT is the aircraft-derived TAT for the reference STAR, and path lengths
+ * are computed from SceneryData (FlyApproach + AppPointList).
+ *
+ * Falls back to defaultTAT (1600s) when no reference STAR exists for a runway.
+ */
+function computeApproachTimesFromScenery(aclText, starMappings, appPointMap, refTatMap, defaultTAT, airportScale) {
+  const result = new Map();
+  const fallbackTAT = defaultTAT || 1600;
+
+  if (!aclText || !starMappings || !starMappings.starRunwayMap) return result;
+
+  // First, copy aircraft-derived TATs (most accurate)
+  if (refTatMap) {
+    for (const [star, tat] of refTatMap) {
+      result.set(star, tat);
+    }
+  }
+
+  // Then fill missing STARs using path-length ratios from reference STARs on the same runway
+  for (const [starName, runways] of Object.entries(starMappings.starRunwayMap)) {
+    if (result.has(starName)) continue; // already have aircraft-derived TAT
+
+    let bestTAT = 0;
+    for (const runway of runways) {
+      // Compute full terminal path (FlyApproach + procedure + touchdown distance)
+      const pathInfo = computeFullTerminalPath(aclText, starName, runway);
+      const totalLen = pathInfo.total;
+      if (totalLen <= 0) continue;
+
+      // Find a reference STAR on this runway with a known TAT
+      const runwayStars = starMappings.runwayStarMap
+        ? (starMappings.runwayStarMap[runway] || [])
+        : [];
+      let refTAT = 0;
+      let refLen = 0;
+      for (const refStar of runwayStars) {
+        if (refStar === starName) continue;
+        const refTat = result.get(refStar);
+        if (!refTat || refTat <= 0) continue;
+
+        const refPathInfo = computeFullTerminalPath(aclText, refStar, runway);
+        refLen = refPathInfo.total;
+        if (refLen > 0) {
+          refTAT = refTat;
+          break;
+        }
+      }
+
+      let estTAT = 0;
+      if (refTAT > 0 && refLen > 0) {
+        // Estimate TAT from path-length ratio using aircraft-derived reference
+        estTAT = Math.round(refTAT * (totalLen / refLen));
+      } else if (airportScale && airportScale > 0) {
+        // Physics-based: scale game path to real meters, divide by 240 kts
+        estTAT = Math.round(totalLen * airportScale / APPROACH_SPEED_MS);
+      } else {
+        // Fallback: old effective-speed method (deprecated)
+        estTAT = Math.round(totalLen / APPROACH_EFFECTIVE_SPEED);
+      }
+      if (estTAT > bestTAT) bestTAT = estTAT;
+    }
+
+    if (bestTAT > 0) {
+      result.set(starName, bestTAT);
+    } else {
+      result.set(starName, fallbackTAT);
     }
   }
 
@@ -885,6 +967,74 @@ function _parseRunwayThresholds(aclText) {
   return result;
 }
 
+/**
+ * Returns the uniform coordinate scale factor (m/game-unit).
+ *
+ * All axes (XYZ) use a fixed 100 m/unit scale — confirmed by original game
+ * files using Y=15.24 (= 5000ft) at every airport regardless of runway geometry.
+ *
+ * @returns {number} DEFAULT_AIRPORT_SCALE (100)
+ */
+function computeAirportScale(aclText) {
+  // All axes use a uniform 100 m/unit scale. The per-airport runway-length
+  // ratio was a mistaken assumption — the game's coordinate system is fixed.
+  return DEFAULT_AIRPORT_SCALE;
+}
+
+/**
+ * Compute the approach altitude ceiling in game units from the per-airport
+ * coordinate scale. Uses a real-world ceiling of 5000ft (1524m) — the standard
+ * ILS approach ceiling — and converts to game units via the airport scale.
+ *
+ *   approachCap = APPROACH_CEILING_M / airportScale
+ *
+ * At the default scale (100 m/unit): 1524/100 = 15.24 (backward compatible).
+ *
+ * @param {number} [airportScale] - m/game-unit from computeAirportScale()
+ * @returns {number} approach ceiling in game units
+ */
+function computeApproachCap(airportScale) {
+  // All axes use a fixed 100 m/unit scale. Every original game file
+  // stores Y=15.24 (= 5000ft) regardless of airport.
+  return APPROACH_CEILING_M / DEFAULT_AIRPORT_SCALE;  // 15.24
+}
+
+/**
+ * Compute the full terminal path length for a STAR+runway combination.
+ *
+ * Combines three segments from SceneryData:
+ *   1. FlyApproach points (Type=0 STAR route) via resolveFlyApproachPoints
+ *   2. Approach procedure points (Type=1 route) via resolveApproachProcedureData
+ *   3. Touchdown distance from last procedure point to runway threshold
+ *
+ * Returns { flyLen, procLen, tdDist, total } in game units.
+ */
+function computeFullTerminalPath(aclText, star, runway) {
+  let flyLen = 0;
+  let procLen = 0;
+  let tdDist = 0;
+
+  const flyPoints = resolveFlyApproachPoints(aclText, star, runway);
+  if (flyPoints && flyPoints.length >= 2) {
+    flyLen = computePathLength(flyPoints);
+  }
+
+  const procData = resolveApproachProcedureData(aclText, runway);
+  if (procData && procData.pathPointList && procData.pathPointList.length >= 2) {
+    procLen = computePathLength(procData.pathPointList);
+
+    // Touchdown distance: last procedure point → threshold
+    if (procData.touchDownPosition) {
+      const last = procData.pathPointList[procData.pathPointList.length - 1];
+      const td = procData.touchDownPosition;
+      tdDist = Math.sqrt((last.x - td.x) ** 2 + (last.z - td.z) ** 2);
+    }
+  }
+
+  const total = flyLen + procLen + tdDist;
+  return { flyLen, procLen, tdDist, total };
+}
+
 // ─── 5b. STAR-Runway Mapping from SceneryData ─────
 
 /**
@@ -1033,11 +1183,18 @@ function extractStarRunwayMappings(aclText) {
  * this extracts data from SceneryData which has approach procedures for ALL runways
  * regardless of whether any file contains a State=5 aircraft for that runway.
  *
+ * When hintPosition is provided and multiple Type=1 variants exist for the runway,
+ * picks the variant whose first AirwayNode is closest to hintPosition. This ensures
+ * each STAR gets the correct approach procedure variant (e.g. ZSJN runway 01 has
+ * three "RNAV ILS Z Rwy 01" variants starting at JN207, DALIM, JN209).
+ *
  * @param {string} aclText - raw ACL file content
  * @param {string} runway - runway name, e.g. "22L"
+ * @param {{x:number, z:number}} [hintPosition] - optional last FlyApproach point
+ *   of the STAR; used to select the correct variant when multiple exist
  * @returns {{pathPointList, touchDownPosition, approachDirection, initialPosition} | null}
  */
-function resolveApproachProcedureData(aclText, runway) {
+function resolveApproachProcedureData(aclText, runway, hintPosition) {
   if (!runway) return null;
 
   // 1. Find the Runway entry GUID
@@ -1105,7 +1262,7 @@ function resolveApproachProcedureData(aclText, runway) {
   const tdGuid = _extractString(rwEntry, 'TouchDownPointGuid');
   if (!tdGuid) return null;
 
-  // 4. Find the approach procedure route (Type=1) in Routes[]
+  // 4. Find ALL approach procedure routes (Type=1) in Routes[]
   const routesBlock = _extractNestedObject(rwEntry, 'Routes');
   if (!routesBlock) return null;
 
@@ -1113,7 +1270,9 @@ function resolveApproachProcedureData(aclText, runway) {
   const routesRc = routesT.findSection('$rcontent');
   if (!routesRc) return null;
 
-  let procedureName = null;
+  // Collect all Type=1 route variants with their resolved pathPointLists
+  const airwayNodes = _parseAirwayNodes(aclText);
+  const variants = [];
   let rp = routesRc.valueStart + 1; // skip opening [
   while (rp < routesBlock.length) {
     while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
@@ -1125,8 +1284,24 @@ function resolveApproachProcedureData(aclText, runway) {
       const routeEntry = routesBlock.substring(rp, entryEnd);
       const type = _extractInt(routeEntry, 'Type');
       if (type === 1) {
-        procedureName = _extractString(routeEntry, 'Name');
-        break;
+        // Resolve PathPointList directly from AirwayNodeGuids (like
+        // resolveFlyApproachPoints does for Type=0 routes). This avoids
+        // the issue of _resolveFromAirwaySegments always returning the
+        // first AirwaySegments entry when multiple share the same Name.
+        const guids = _extractGuidArray(routeEntry, 'AirwayNodeGuids');
+        if (guids && guids.length >= 2) {
+          const points = [];
+          for (const guid of guids) {
+            const node = airwayNodes.get(guid);
+            if (node) points.push(node.position);
+          }
+          if (points.length >= 2) {
+            variants.push({
+              pathPointList: points,
+              firstPoint: points[0],
+            });
+          }
+        }
       }
       rp = entryEnd;
     } else {
@@ -1134,11 +1309,25 @@ function resolveApproachProcedureData(aclText, runway) {
     }
   }
 
-  if (!procedureName) return null;
+  if (variants.length === 0) return null;
 
-  // 5. Resolve PathPointList from AirwaySegments → AirwayNodes
-  const pathPointList = _resolveFromAirwaySegments(aclText, procedureName);
-  if (!pathPointList || pathPointList.length < 2) return null;
+  // 5. Pick the correct variant
+  let pathPointList;
+  if (hintPosition && variants.length > 1) {
+    // Find variant whose first AirwayNode is closest to the hint
+    let bestDist = Infinity;
+    for (const v of variants) {
+      const dx = v.firstPoint.x - hintPosition.x;
+      const dz = v.firstPoint.z - hintPosition.z;
+      const dist = dx * dx + dz * dz; // squared distance (avoid sqrt)
+      if (dist < bestDist) {
+        bestDist = dist;
+        pathPointList = v.pathPointList;
+      }
+    }
+  } else {
+    pathPointList = variants[0].pathPointList;
+  }
 
   // 6. Resolve TouchDownPosition from TaxiwayNodes
   const taxiNodes = _parseTaxiwayNodes(aclText);
@@ -1228,7 +1417,7 @@ function computePathLength(points) {
  * Interpolate position along a path given a distance from start.
  */
 function _interpolateAlongPath(points, targetDist) {
-  if (!points || points.length === 0) return { x: 0, y: 15.24, z: 0 };
+  if (!points || points.length === 0) return { x: 0, y: APPROACH_CEILING_M / DEFAULT_AIRPORT_SCALE, z: 0 };
   if (points.length === 1) return { ...points[0] };
 
   let traveled = 0;
@@ -1281,7 +1470,7 @@ function computePosition(flyApproachPoints, appPoints, progressRatio, touchDownP
     const glideY = remainingPathDist * Math.tan(3 * Math.PI / 180);
     pos.y = Math.min(approachCap, glideY);
   } else {
-    pos.y = 15.24; // fallback for callers without runway data (tests, legacy)
+    pos.y = APPROACH_CEILING_M / DEFAULT_AIRPORT_SCALE; // fallback for callers without runway data (tests, legacy)
   }
   return pos;
 }
@@ -1504,6 +1693,7 @@ function buildApproachAircraftBlock(opts) {
  * @param {Object} opts.spec - AircraftSpec from specDB
  * @param {string} opts.towerChannelGuid - Tower radio channel GUID
  * @param {Object} opts.state5Params - cached { touchDownPosition, approachDirection, initialPosition, pathPointList }
+ * @param {number} [opts.approachCap] - approach altitude ceiling in game units (default: computed from 5000ft / airportScale)
  * @param {number} [opts.nextId=5001] - starting $id counter
  * @param {Object} [opts.typeNums] - per-file type number overrides
  * @param {number} [opts.acTypeNum] - AircraftState $type number
@@ -1520,6 +1710,7 @@ function buildState5AircraftBlock(opts) {
     fullPR = null,
     waitingForCommand = 22,
     selectedRunwayExitIndex = -1,
+    approachCap: _explicitCap,
     nextId = 5001,
   } = opts;
 
@@ -1554,12 +1745,11 @@ function buildState5AircraftBlock(opts) {
   // (Unity stores positions in the XZ plane). The game computes actual
   // altitude from the glideslope using REMAINING PATH DISTANCE (not
   // straight-line) to follow the approach route through turns.
-  // Capped at the runway's approach ceiling.
-  // TEMP: hardcode 15.24m — state5Params.initialPosition.y may differ from
-  // the standard ILS approach ceiling used by the game.
+  // Capped at the runway's approach ceiling (5000ft real-world, converted
+  // to game units via per-airport coordinate scale).
   const TAN_3_DEG = Math.tan(3 * Math.PI / 180); // ≈ 0.052408
   const tdPos = state5Params.touchDownPosition || { x: 0, y: 0, z: 0 };
-  const approachCap = 15.24;
+  const approachCap = (_explicitCap != null) ? _explicitCap : computeApproachCap();
 
   // Build PathPointList with glideslope-computed Y (not the stored Y=0).
   // Each point's Y = min(approachCap, pathDistanceToTD × tan(3°)).
@@ -2031,7 +2221,7 @@ function buildApproachCache(airportDir) {
       // gets its own assignments. The per-file map survives repeated saves.
       fileTypeMaps.set(path.basename(aclPath), fileTypeMap);
 
-      log('  ' + path.basename(aclPath) + ': ' + entries.length + ' approach a/c, ' + s5Entries.length + ' state5 a/c, ' + fileSpecs.size + ' specs, ' + fileTypeMap.size + ' types');
+      log('  ' + path.basename(aclPath) + ': ' + entries.length + ' approach a/c, ' + fileSpecs.size + ' specs, ' + fileTypeMap.size + ' types');
     } catch (e) {
       log('  SKIP ' + path.basename(aclPath) + ': ' + e.message);
     }
@@ -2042,7 +2232,7 @@ function buildApproachCache(airportDir) {
     return null;
   }
 
-  const appPointMap = buildAppPointMap(allEntries);
+  // ── Derive path data from SceneryData (NOT from Aircraft section) ──
 
   // Extract authoritative STAR↔runway mappings from SceneryData.
   // This captures ALL valid combos (not just those with State=30 aircraft).
@@ -2050,28 +2240,19 @@ function buildApproachCache(airportDir) {
     ? extractStarRunwayMappings(firstAclText)
     : { starRunwayMap: {}, runwayStarMap: {} };
 
-  // Build starPaths from both appPointMap AND the starRunwayMap.
-  // Pass 1 uses appPointMap (State=30 aircraft) for full fly+approach paths.
-  // Pass 2 uses starRunwayMap to add any STARs defined in SceneryData but
-  // missing from appPointMap — these get FlyApproach-only paths.
-  const starPaths = firstAclText
-    ? buildStarPaths(firstAclText, appPointMap, starMappings.starRunwayMap)
-    : {};
-  const runwayThresholds = firstAclText
-    ? _parseRunwayThresholds(firstAclText)
-    : {};
-  const totalApproachTimes = computeTotalApproachTimes(allEntries, (e) => e._file);
   // Build state5ParamsMap from SceneryData for all runways.
   // No dependency on State=5 aircraft — touchDownPosition, approachDirection,
   // pathPointList, and initialPosition all come from the scenery's approach procedures.
+  // For runways with multiple Type=1 variants (e.g. ZSJN 01 has three
+  // "RNAV ILS Z Rwy 01" variants), the first variant is stored under the
+  // runway-only key as fallback. STAR-specific keys ("STAR|runway") are
+  // added below in the appPointMap loop with variant-correct data.
   const state5ParamsMap = new Map();
   if (firstAclText && starMappings.runwayStarMap) {
     for (const runway of Object.keys(starMappings.runwayStarMap)) {
       const data = resolveApproachProcedureData(firstAclText, runway);
       if (data) {
         state5ParamsMap.set(runway, data);
-        // Also index by normalized runway name so flight plans using "1"
-        // match runway "01" from SceneryData (and vice versa).
         const normalized = _normalizeRunway(runway);
         if (normalized !== runway && !state5ParamsMap.has(normalized)) {
           state5ParamsMap.set(normalized, data);
@@ -2079,6 +2260,73 @@ function buildApproachCache(airportDir) {
       }
     }
   }
+
+  // Build appPointMap from SceneryData (Type=1 approach procedure routes).
+  // Each STAR gets the approach procedure variant whose first AirwayNode is
+  // closest to the STAR's last FlyApproach point — resolving the correct
+  // variant when multiple "RNAV ILS Z Rwy XX" entries exist.
+  const appPointMap = new Map();
+  for (const [runway, stars] of Object.entries(starMappings.runwayStarMap)) {
+    for (const star of stars) {
+      // Resolve FlyApproach points to find the STAR's exit (IAF) point
+      const flyPoints = resolveFlyApproachPoints(firstAclText, star, runway);
+      const hintPos = (flyPoints && flyPoints.length > 0)
+        ? flyPoints[flyPoints.length - 1]
+        : null;
+
+      // Get variant-correct approach procedure data for this STAR
+      const s5 = resolveApproachProcedureData(firstAclText, runway, hintPos);
+      if (!s5 || !s5.pathPointList || s5.pathPointList.length < 2) continue;
+
+      appPointMap.set(star + '|' + runway, s5.pathPointList);
+
+      // Also store STAR-specific state5Params entry for State=5 generation
+      const s5Key = star + '|' + runway;
+      if (!state5ParamsMap.has(s5Key)) {
+        state5ParamsMap.set(s5Key, s5);
+      }
+    }
+    // Also register normalized runway variant (e.g. "1" for "01")
+    const normRunway = _normalizeRunway(runway);
+    if (normRunway !== runway) {
+      for (const star of stars) {
+        const flyPoints = resolveFlyApproachPoints(firstAclText, star, normRunway);
+        const hintPos = (flyPoints && flyPoints.length > 0)
+          ? flyPoints[flyPoints.length - 1]
+          : null;
+        const s5n = resolveApproachProcedureData(firstAclText, normRunway, hintPos);
+        if (!s5n || !s5n.pathPointList) continue;
+        const key = star + '|' + normRunway;
+        if (!appPointMap.has(key)) appPointMap.set(key, s5n.pathPointList);
+        const s5Key = star + '|' + normRunway;
+        if (!state5ParamsMap.has(s5Key)) {
+          state5ParamsMap.set(s5Key, s5n);
+        }
+      }
+    }
+  }
+
+  // Build starPaths from appPointMap and starRunwayMap.
+  // Pass 1 uses appPointMap (now SceneryData-derived, covers all STARs).
+  // Pass 2 uses starRunwayMap to add any STARs still missing (FlyApproach-only).
+  const starPaths = firstAclText
+    ? buildStarPaths(firstAclText, appPointMap, starMappings.starRunwayMap)
+    : {};
+  const runwayThresholds = firstAclText
+    ? _parseRunwayThresholds(firstAclText)
+    : {};
+
+  // Compute per-airport coordinate scale from runway threshold geometry
+  const airportScale = firstAclText
+    ? computeAirportScale(firstAclText)
+    : DEFAULT_AIRPORT_SCALE;
+
+  // Compute totalApproachTimes from SceneryData path-length estimates.
+  // Uses physics-based formula: TAT = totalGamePath × airportScale / 240kts
+  // with ratio estimation from reference STARs on the same runway where available.
+  const totalApproachTimes = computeApproachTimesFromScenery(
+    firstAclText, starMappings, appPointMap, null, 1600, airportScale
+  );
 
   // Compute per-file saveTime offsets from approach entries.
   // saveTime = LandingTime - (1 - PR) * totalApproachTime  → seconds since midnight
@@ -2113,6 +2361,7 @@ function buildApproachCache(airportDir) {
       fileTypeMaps.size + ' file typeMaps, ' + state5ParamsMap.size + ' state5 route combos, ' +
       Object.keys(starPaths).length + ' star paths (' +
       Object.keys(starMappings.starRunwayMap).length + ' STARs from SceneryData), ' +
+      'airportScale=' + (airportScale ? airportScale.toFixed(1) : 'N/A') + ', ' +
       Object.keys(runwayThresholds).length + ' runways');
 
   // Clean up _file property from entries
@@ -2121,7 +2370,7 @@ function buildApproachCache(airportDir) {
   return {
     specDB, appPointMap, totalApproachTimes, designatorMap,
     saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap,
-    starPaths, runwayThresholds,
+    starPaths, runwayThresholds, airportScale,
     starRunwayMap: starMappings.starRunwayMap,
     runwayStarMap: starMappings.runwayStarMap,
   };
@@ -2251,14 +2500,16 @@ function serializeApproachCache(cache) {
   if (!cache) return null;
   const out = {};
   if (cache.specDB) { out.specDB = {}; for (const [k, v] of cache.specDB) out.specDB[k] = v; }
-  if (cache.appPointMap) { out.appPointMap = {}; for (const [k, v] of cache.appPointMap) out.appPointMap[k] = v; }
-  if (cache.totalApproachTimes) { out.totalApproachTimes = {}; for (const [k, v] of cache.totalApproachTimes) out.totalApproachTimes[k] = v; }
   if (cache.designatorMap) { out.designatorMap = {}; for (const [k, v] of cache.designatorMap) out.designatorMap[k] = v; }
   if (cache.saveTimeOffsets) { out.saveTimeOffsets = {}; for (const [k, v] of cache.saveTimeOffsets) out.saveTimeOffsets[k] = v; }
   if (cache.typeMap) { out.typeMap = {}; for (const [k, v] of cache.typeMap) out.typeMap[String(k)] = v; }
   if (cache.fileTypeMaps) { out.fileTypeMaps = {}; for (const [fileName, tm] of cache.fileTypeMaps) { const obj = {}; for (const [k, v] of tm) obj[String(k)] = v; out.fileTypeMaps[fileName] = obj; } }
+  if (cache.totalApproachTimes) { out.totalApproachTimes = {}; for (const [k, v] of cache.totalApproachTimes) out.totalApproachTimes[k] = v; }
+  if (cache.appPointMap) { out.appPointMap = {}; for (const [k, v] of cache.appPointMap) out.appPointMap[k] = v; }
+  if (cache.state5ParamsMap) { out.state5ParamsMap = {}; for (const [k, v] of cache.state5ParamsMap) out.state5ParamsMap[k] = v; }
   if (cache.starPaths) { out.starPaths = cache.starPaths; }
   if (cache.runwayThresholds) { out.runwayThresholds = cache.runwayThresholds; }
+  if (cache.airportScale != null) { out.airportScale = cache.airportScale; }
   if (cache.starRunwayMap) { out.starRunwayMap = cache.starRunwayMap; }
   if (cache.runwayStarMap) { out.runwayStarMap = cache.runwayStarMap; }
   return out;
@@ -2272,14 +2523,16 @@ function deserializeApproachCache(json) {
   if (!json) return null;
   const cache = {};
   if (json.specDB && typeof json.specDB === 'object') { cache.specDB = new Map(Object.entries(json.specDB)); }
-  if (json.appPointMap && typeof json.appPointMap === 'object') { cache.appPointMap = new Map(Object.entries(json.appPointMap)); }
-  if (json.totalApproachTimes && typeof json.totalApproachTimes === 'object') { cache.totalApproachTimes = new Map(Object.entries(json.totalApproachTimes)); }
   if (json.designatorMap && typeof json.designatorMap === 'object') { cache.designatorMap = new Map(Object.entries(json.designatorMap)); }
   if (json.saveTimeOffsets && typeof json.saveTimeOffsets === 'object') { cache.saveTimeOffsets = new Map(Object.entries(json.saveTimeOffsets)); }
   if (json.typeMap && typeof json.typeMap === 'object') { cache.typeMap = new Map(Object.entries(json.typeMap).map(([k, v]) => [parseInt(k, 10), v])); }
   if (json.fileTypeMaps && typeof json.fileTypeMaps === 'object') { cache.fileTypeMaps = new Map(Object.entries(json.fileTypeMaps).map(([name, obj]) => [name, new Map(Object.entries(obj).map(([k, v]) => [parseInt(k, 10), v]))])); }
+  if (json.totalApproachTimes && typeof json.totalApproachTimes === 'object') { cache.totalApproachTimes = new Map(Object.entries(json.totalApproachTimes)); }
+  if (json.appPointMap && typeof json.appPointMap === 'object') { cache.appPointMap = new Map(Object.entries(json.appPointMap)); }
+  if (json.state5ParamsMap && typeof json.state5ParamsMap === 'object') { cache.state5ParamsMap = new Map(Object.entries(json.state5ParamsMap)); }
   if (json.starPaths && typeof json.starPaths === 'object') { cache.starPaths = json.starPaths; }
   if (json.runwayThresholds && typeof json.runwayThresholds === 'object') { cache.runwayThresholds = json.runwayThresholds; }
+  if (json.airportScale != null && typeof json.airportScale === 'number') { cache.airportScale = json.airportScale; }
   if (json.starRunwayMap && typeof json.starRunwayMap === 'object') { cache.starRunwayMap = json.starRunwayMap; }
   if (json.runwayStarMap && typeof json.runwayStarMap === 'object') { cache.runwayStarMap = json.runwayStarMap; }
   return cache;
@@ -2295,7 +2548,6 @@ module.exports = {
   extractTypeMap,
   buildAppPointMap,
   buildState5ParamsMap,
-  computeTotalApproachTimes,
 
   // Path resolution
   resolveFlyApproachPoints,
@@ -2307,6 +2559,10 @@ module.exports = {
   computeDirection,
   buildFullPath,
   computePathLength,
+  computeApproachTimesFromScenery,
+  computeAirportScale,
+  computeApproachCap,
+  computeFullTerminalPath,
 
   // Designator mapping & cache
   buildDesignatorMapping,

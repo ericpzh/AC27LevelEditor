@@ -72,7 +72,7 @@ export default function RunwayEditor() {
             const activeKeys = new Set((e.changes||[]).map(ch=>ch.source+'|'+ch.dest));
             return <div key={ri} className="tl-row" {...(e._isNew?{'data-new':''}:{})}>
               <div className="rw-change-header">
-                <TimeCell value={e.time} onChange={v => chgTime(e,v)} />
+                <TimeCell value={e.time} onChange={v => chgTime(e,v)} minTime={_s} maxTime={_e} />
                 <div className="rw-change-checkboxes">
                   {pairs.map(p=>{const key=p.source+'|'+p.dest; return <label key={key} className="rw-checkbox-label"><input className="rw-change-cb" type="checkbox" checked={activeKeys.has(key)} onChange={()=>togglePair(e,p.source,p.dest)} />{escapeHtml(p.source)} → {escapeHtml(p.dest)}</label>;})}
                 </div>

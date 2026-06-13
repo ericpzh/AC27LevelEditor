@@ -54,7 +54,7 @@ export default function WindEditor() {
           </div>
           {active.map(e => { const ri = windTimeline.indexOf(e);
             return <div key={ri} className="tl-row" data-idx={ri} {...(e._isNew ? { 'data-new': '' } : {})}>
-              <TimeCell value={e.time} onChange={v => chg(ri,'time',v)} />
+              <TimeCell value={e.time} onChange={v => chg(ri,'time',v)} minTime={_s} maxTime={_e} />
               <DirectionCell value={e.direction} onChange={v => chg(ri,'direction',v)} />
               <div className="tl-speed-row"><input className="tl-speed-slider" type="range" min="0" max="40" value={e.speed||0} onChange={ev => chg(ri,'speed',ev.target.value)} /><span className="tl-speed-val">{e.speed||0} kt</span></div>
               <span></span><span></span><span></span>

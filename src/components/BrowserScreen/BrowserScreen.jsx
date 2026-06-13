@@ -139,6 +139,13 @@ export default function BrowserScreen() {
 
   const doRefreshScan = async () => {
     setRefreshing(true);
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal(
+      t => t('browser_scanning_title'),
+      t => <div className="loading-state"><div className="spinner" /><p>{t('browser_scanning_body')}</p></div>,
+      null,
+      false,
+    );
     try {
       const result = await electronAPI.refreshRootScan(rootPath);
       if (result && result.airports) {
@@ -150,12 +157,12 @@ export default function BrowserScreen() {
       return null;
     } finally {
       setRefreshing(false);
+      hideModal();
     }
   };
 
   const handleVersionMismatchRescan = async () => {
-    const { hideModal, showToast } = useAppStore.getState();
-    hideModal();
+    const { showToast } = useAppStore.getState();
     const result = await doRefreshScan();
     if (!result || !result.success) {
       showToast(t('toast_scan_failed'), 'error');

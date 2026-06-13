@@ -5,6 +5,8 @@ import { useAppStore } from '../../../store/appStore';
 import { IoChevronForward, IoChevronDown } from 'react-icons/io5';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns } from '../../../utils/constants';
 import ClockPopover from '../CellEditor/TimeClockPopover';
+import { getTimeValidationBounds } from '../../../utils/timeUtils';
+import { T } from '../../../utils/i18n';
 
 function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
   const [editing, setEditing] = useState(false);
@@ -12,6 +14,10 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
   const [showClock, setShowClock] = useState(false);
   const cellRef = useRef(null);
   const updateFlight = useAppStore(s => s.updateFlight);
+  const _saveSec = useAppStore(s => s._saveSec);
+  const _configStartTime = useAppStore(s => s._configStartTime);
+  const _configEndTime = useAppStore(s => s._configEndTime);
+  const showToast = useAppStore(s => s.showToast);
   const openStandMap = useAppStore(s => s.openStandMap);
   const openStarMap = useAppStore(s => s.openStarMap);
   const setMapFlightIdx = useAppStore(s => s.setMapFlightIdx);
@@ -28,10 +34,25 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
   const flightRunway = (allFlights[globalIdx] && allFlights[globalIdx].Runway) || null;
 
   const commit = useCallback((newVal) => {
-    updateFlight(globalIdx, { [col]: newVal !== undefined ? newVal : editVal });
+    const val = newVal !== undefined ? newVal : editVal;
+    if (isTime) {
+      const bounds = getTimeValidationBounds(col, _saveSec, _configStartTime, _configEndTime);
+      if (bounds) {
+        const { minTime, maxTime } = bounds;
+        const tMin = parseInt(minTime.split(':')[0]) * 60 + parseInt(minTime.split(':')[1]);
+        const tMax = parseInt(maxTime.split(':')[0]) * 60 + parseInt(maxTime.split(':')[1]);
+        const parts = String(val).split(':');
+        const t = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+        if (t < tMin || t > tMax) {
+          showToast(T('clock_time_out_of_bounds', { min: minTime, max: maxTime }), 'error');
+          return;
+        }
+      }
+    }
+    updateFlight(globalIdx, { [col]: val });
     setEditing(false);
     setShowClock(false);
-  }, [globalIdx, col, editVal, updateFlight]);
+  }, [globalIdx, col, editVal, updateFlight, isTime, _saveSec, _configStartTime, _configEndTime, showToast]);
 
   if (showClock) {
     return (

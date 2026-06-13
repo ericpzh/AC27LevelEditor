@@ -10,7 +10,7 @@ const path = require('path');
 import { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL } from './constants';
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
-const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, _vec3Sub, _vec3Normalize, _vec3Dist } = require('./approach');
+const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, computeApproachCap, _vec3Sub, _vec3Normalize, _vec3Dist } = require('./approach');
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
 
@@ -698,11 +698,18 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       // Aircraft before it are still on the STAR (State=30, Approach).
       const flyLen = computePathLength(flyPoints);
       const appLen = computePathLength(appPoints);
-      const totalLen = flyLen + appLen;
+      // Build concatenated path (same as buildFullPath) to include the
+      // connecting segment between the last FlyApproach point and the
+      // first AppPointList point. flyLen + appLen would miss this gap.
+      const combined = [...(flyPoints || []), ...(appPoints || [])];
+      const totalLen = computePathLength(combined);
 
       // IAF boundary: use raw TTL (unclamped) so State classification is accurate.
       // The clamped progressRatio is used for position interpolation downstream.
       const rawTargetDist = (1.0 - timeToLanding / totalApproachTime) * totalLen;
+
+      // Per-airport coordinate scale for converting real-world ceiling to game units
+      const airportScale = approachCache?.airportScale;
 
       if (rawTargetDist >= flyLen) {
         // ── State=5: Past IAF, on Tower frequency ──
@@ -727,10 +734,10 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
             const lastPt = appPoints[appPoints.length - 1];
             const prevPt = appPoints[appPoints.length - 2];
             const dir = _vec3Normalize(_vec3Sub(lastPt, prevPt));
-            // Use standard approach cap of 15.24m (matches production files).
+            // Use per-airport approach cap from 5000ft real-world ceiling.
             // AppPointList points have y=0 in the ACL (Unity XZ plane);
             // Y is always computed from the 3° glideslope in buildState5AircraftBlock.
-            const approachCap = 15.24;
+            const approachCap = computeApproachCap(airportScale);
             // Extend touchdown past the last AppPoint by the AppPath length
             // (the glideslope continues ~108m beyond the FAF for KJFK 22R).
             let appPathLen = 0;
@@ -782,6 +789,10 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
           // above — pass it directly instead of re-resolving the procedure's
           // FlyApproach (which would double the ppList segment).
 
+          // Per-airport approach cap: from cached state5 params if available,
+          // otherwise computed from 5000ft real-world ceiling via coordinate scale.
+          const state5Cap = computeApproachCap(airportScale);
+
           const result = buildState5AircraftBlock({
             flightPlanGuid: fpGuids[i],
             route: approachRoute,
@@ -790,6 +801,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
             state5Params: state5Params,
             flyPoints: flyPoints,
             fullPR: progressRatio,
+            approachCap: state5Cap,
             waitingForCommand: 22, // TEMP: always Contact Tower (was: isClearedToLand ? 23 : 22)
             selectedRunwayExitIndex: -1, // TEMP: always -1 (was: isClearedToLand ? 0 : -1)
             nextId: 70000 + i * 1000,
@@ -817,11 +829,10 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
           ' flyPts=' + flyPoints.length + ' appPts=' + appPoints.length);
 
       // TouchDownPosition + approachCap for 3° glideslope Y in State=30.
-      // Both come from the per-runway state5ParamsMap (cached from ACL).
-      // approachCap = max approach altitude — NOT hardcoded.
+      // approachCap computed from 5000ft real-world ceiling via per-airport scale.
       const state5ForRwy = approachCache?.state5ParamsMap?.get(runway);
       let tdPos = state5ForRwy?.touchDownPosition || null;
-      let approachCap = state5ForRwy?.initialPosition?.y ?? null;
+      let approachCap = computeApproachCap(airportScale);
       // Fallback: derive touchdown from AppPointList when state5ParamsMap lacks
       // this runway. Same derivation as the State=5 fallback — extends the last
       // AppPoint segment by 50m to approximate the runway threshold.
@@ -830,7 +841,6 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
         const prevPt = appPoints[appPoints.length - 2];
         const dir = _vec3Normalize(_vec3Sub(lastPt, prevPt));
         tdPos = { x: lastPt.x + dir.x * 50, y: 0, z: lastPt.z + dir.z * 50 };
-        if (approachCap == null) approachCap = 15.24;
       }
 
       const result = buildApproachAircraftBlock({

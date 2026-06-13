@@ -7,7 +7,7 @@
   padding: 10px 18px;
   font-size: 13px; color: var(--text);
   box-shadow: var(--shadow);
-  z-index: 200;
+  z-index: 400;
   opacity: 0; transform: translateY(10px);
   transition: all 250ms ease;
   pointer-events: none;

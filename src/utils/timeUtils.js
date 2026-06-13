@@ -73,6 +73,45 @@ export function getTimelineActiveRange(timeline, configStartTime, configEndTime)
   }
   return { validMinTime: start, validMaxTime: end, activeIndices, totalCount: timeline.length };
 }
+/**
+ * Returns the time bounds that a clock OK click should validate against for a given
+ * field, mirroring the per‑field logic in runTripleValidation (validators.js).
+ *
+ * @param {string} col — field name ('OffBlockTime', 'LandingTime', 'InBlockTime',
+ *   'TakeoffTime', 'Time', etc.)
+ * @param {number|null} _saveSec — scenario snapshot time in seconds since midnight
+ * @param {string|null} _configStartTime — scenario start "HH:MM:SS"
+ * @param {string|null} _configEndTime — scenario end "HH:MM:SS"
+ * @returns {{ minTime: string, maxTime: string } | null}
+ *   null means "no bounds validation for this field" (matches save behaviour).
+ */
+export function getTimeValidationBounds(col, _saveSec, _configStartTime, _configEndTime) {
+  // Flight fields OffBlockTime & LandingTime → bound by [_saveSec, _configEndTime]
+  if (col === 'OffBlockTime' || col === 'LandingTime') {
+    if (_saveSec != null && _configEndTime) {
+      const sh = Math.floor(_saveSec / 3600) % 24;
+      const sm = Math.floor((_saveSec % 3600) / 60);
+      return {
+        minTime: String(sh).padStart(2, '0') + ':' + String(sm).padStart(2, '0') + ':00',
+        maxTime: _configEndTime,
+      };
+    }
+    return null;
+  }
+
+  // InBlockTime & TakeoffTime — save only checks ordering, never bounds
+  if (col === 'InBlockTime' || col === 'TakeoffTime') {
+    return null;
+  }
+
+  // Timeline / generic 'Time' field → bound by [_configStartTime, _configEndTime]
+  // (matches runway timeline validation in runTripleValidation)
+  if (_configStartTime && _configEndTime) {
+    return { minTime: _configStartTime, maxTime: _configEndTime };
+  }
+  return null;
+}
+
 export function getDefaultTime(appState) {
   const s = appState._configStartTime, e = appState._configEndTime;
   if (s && e) {
