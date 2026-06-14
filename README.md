@@ -116,37 +116,40 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, all IPC handlers, file I/O
-electron/preload.js  →  contextBridge: exposes window.electronAPI to renderer
+electron/main.js     →  Electron main process, 36 IPC handlers, file I/O, map window management
+electron/preload.js  →  contextBridge: exposes ~38 methods on window.electronAPI
+electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state from game)
 index.html           →  Vite HTML entry, loads src/main.jsx
 src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
-src/App.jsx          →  Root component: providers + screen routing
-src/components/      →  React component tree (Setup, Browser, Editor, common)
+src/App.jsx          →  Root component: providers + screen routing (+ map window routing)
+src/components/      →  React component tree (Setup, Browser, Editor, common, MapWindows)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
-src/acl/             →  CommonJS backend modules (parser facade + 11 modules)
+src/acl/             →  CommonJS backend modules (parser facade + 13 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Two additional window types — **Surface Radar** and **Approach Radar** — open as separate Electron windows showing live aircraft positions from the game's UDP telemetry stream.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
 ### Data Flow
 
 ```
-Phase 0 (once):   Game Root → scan audio clips + approach data + dropdown values + runway pairs → AirportCache
+Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths + dropdowns + runway pairs → AirportCache
 Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → zustand store
 Phase 2 (edit):   All edits go through zustand store actions
 Phase 3 (save):   Validation → generate AircraftStates for approach flights → write .acl + .csv + timeline .json (game compat)
+UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar)
 ```
 
 ### Project Structure
 
 ```
 ├── electron/
-│   ├── main.js              # Electron main process + 29 IPC handlers
-│   └── preload.js           # contextBridge (window.electronAPI)
+│   ├── main.js              # Electron main process + 36 IPC handlers
+│   ├── preload.js           # contextBridge (window.electronAPI, ~38 methods)
+│   └── udp_listener.js      # UDP telemetry — 10 Hz aircraft state + commands
 ├── index.html               # Vite HTML entry
 ├── vite.config.js           # Vite 8 + React plugin + Electron plugin
 ├── build.js                 # Build script (always use this, never npm run build:win)
@@ -166,6 +169,11 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │   │   │   ├── StandMap/        # Interactive stand position map overlay
 │   │   │   ├── StarMap/         # Interactive STAR/approach chart overlay
 │   │   │   └── TimelineEditors/ # Weather, Wind, Runway editors
+│   │   ├── MapWindows/          # Full-window radar visualizations (separate windows)
+│   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, ground aircraft
+│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/missed-app, air aircraft
+│   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook
+│   │   │   └── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
 │   │   └── common/              # Modal, Toast
 │   │
 │   ├── hooks/               # React custom hooks
@@ -190,6 +198,8 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │   │   ├── approach.js         # Approach AircraftState constructor (State=30 & State=5)
 │   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
 │   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
+│   │   ├── taxiway.js           # Taxiway centerline parser
+│   │   ├── sid_goaround.js      # SID + Missed Approach route parser
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
 │   └── utils/               # Shared utilities (ESM for frontend)
@@ -198,6 +208,7 @@ Phase 3 (save):   Validation → generate AircraftStates for approach flights �
 │       ├── i18n.js              # Chinese/English translation system
 │       ├── validators.js        # Save validation logic
 │       ├── htmlUtils.js         # escapeHtml, stripSuffixes
+│       ├── mapGeoRef.js         # _Map.png geo-reference per airport (Unity coords)
 │       ├── csvIo.js             # CSV export
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)

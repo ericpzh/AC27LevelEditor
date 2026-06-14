@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.2)
+- **Name:** `ac27-level-editor` (v1.1.3)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -21,11 +21,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 29 ipcMain.handle() endpoints                        │
+│  - 36 ipcMain.handle() endpoints                        │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with 28 methods          │
+│  - Exposes window.electronAPI with ~38 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -48,9 +48,12 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  src/store/ (zustand state)                             │
 │  - appStore.js — single store: screen, flights,         │
 │    timelines, modal/toast, _windSpeedUnit, map overlay   │
-│    state (showStandMap, showStarMap, activeMap)          │
+│    state (showStandMap, showStarMap, activeMap),          │
+│    radar window tracking (openGroundRadarAirports,        │
+│    openAirRadarAirports), UDP health (udpConnected,       │
+│    udpCurrentAirport)                                     │
 ├─────────────────────────────────────────────────────────┤
-│  src/acl/ (parser facade + 11 backend modules,          │
+│  src/acl/ (parser facade + 13 backend modules,          │
 │    CommonJS + some ESM)                                  │
 │  - parser.js is the FACADE — main.js imports ALL        │
 │    backend modules through it only                      │
@@ -67,13 +70,21 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 └─────────────────────────────────────────────────────────┘
 ```
 
+**Map Windows (separate BrowserWindow instances):**
+- `electron/main.js` manages `groundMapWindows` / `airMapWindows` Maps (keyed by ICAO)
+- Each map window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX` or `?window=airMap&airport=XXXX`)
+- `electron/udp_listener.js` listens on `127.0.0.1:20266` for binary aircraft telemetry (10 Hz) and sends commands on `127.0.0.1:20267`
+- Live aircraft state pushed to all open map windows at 200ms interval via `udp-aircraft-state` IPC event
+- Map window click-to-select sends `SelectAircraft` UDP command back to game
+
 ## Directory Structure
 
 ```
 AC27LevelEditor/
 ├── electron/
-│   ├── main.js              # Electron main process + 27 IPC handlers
-│   └── preload.js           # contextBridge (window.electronAPI)
+│   ├── main.js              # Electron main process + 36 IPC handlers
+│   ├── preload.js           # contextBridge (window.electronAPI, ~38 methods)
+│   └── udp_listener.js      # UDP telemetry — 10 Hz binary aircraft state (127.0.0.1:20266) + commands (20267)
 ├── index.html               # Vite HTML entry (<div id="root">)
 ├── vite.config.js           # Vite 8 + @vitejs/plugin-react + vite-plugin-electron
 ├── package.json             # scripts, electron-builder config
@@ -107,6 +118,11 @@ AC27LevelEditor/
 │   │   │   ├── StarMap/
 │   │   │   │   └── StarMap.jsx + .css    # Interactive STAR/approach map overlay
 │   │   │   └── TimelineEditors/
+│   │   ├── MapWindows/               # Full-window radar visualizations (separate BrowserWindow instances)
+│   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, ground aircraft
+│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/missed-app routes, air aircraft, map bg
+│   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook
+│   │   │   └── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
 │   │   │       ├── WeatherEditor.jsx
 │   │   │       ├── WindEditor.jsx
 │   │   │       ├── RunwayEditor.jsx + .css
@@ -127,7 +143,7 @@ AC27LevelEditor/
 │   ├── store/
 │   │   └── appStore.js          # zustand store — all app state
 │   │
-│   ├── acl/                     # Backend modules (11 files; CommonJS + some ESM)
+│   ├── acl/                     # Backend modules (13 files; CommonJS + some ESM)
 │   │   ├── parser.js            # FACADE — re-exports all backend modules
 │   │   ├── tokenizer.js         # String-aware section boundary scanner (no more brace-counting)
 │   │   ├── acl_json.js          # Pre-processor (Unity JSON→valid JSON) + serializer
@@ -139,6 +155,8 @@ AC27LevelEditor/
 │   │   ├── approach.js         # Approach AircraftState constructor (State=30)
 │   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
 │   │   ├── scenery.js           # SceneryData parser (runway/stand GUIDs + stand position extraction)
+│   │   ├── taxiway.js           # Taxiway centerline parser from SceneryData.TaxiwaySegments (added v1.1.3)
+│   │   ├── sid_goaround.js      # SID + Missed Approach route parser from SceneryData.Runways.Routes[Type=2/3]
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
 │   └── utils/                   # Shared utilities (ESM + some CJS for backend)
@@ -147,6 +165,7 @@ AC27LevelEditor/
 │       ├── i18n.js              # Chinese/English translation (T(), getLang, setLang)
 │       ├── validators.js        # validateCallsigns, runTripleValidation
 │       ├── htmlUtils.js         # escapeHtml, stripSuffixes
+│       ├── mapGeoRef.js         # _Map.png geo-reference lookup per airport (Unity game-unit coords)
 │       ├── csvIo.js             # CSV export
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
@@ -335,12 +354,16 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - Scans all `.acl` files (includes demo/test/tutorial variants — all treated as normal levels)
    - Extracts `specDB` (Designator → AircraftSpec, from ALL aircraft entries regardless of State), `appPointMap` ((STAR,Runway) → AppPointList, from SceneryData Type=1 routes), `totalApproachTimes` (STAR → seconds, from SceneryData path lengths with aircraft-derived calibration), and `designatorMap` (AircraftType → Designator)
    - Extracts State=5 data: `state5ParamsMap` (runway → `{pathPointList, touchDownPosition, approachDirection, initialPosition}`), `starPaths` (STAR → waypoint array), and STAR↔runway maps from `SceneryData.Runways.Routes[Type=0]`
-   - Extracts `runwayThresholds` from SceneryData (PhysicalName → threshold pair) for StarMap visualization
+   - Extracts `runwayThresholds` from SceneryData (PhysicalName → threshold pair) for StarMap/MapWindow visualization
+   - Extracts `taxiwayPaths` (taxiway centerline polylines from `SceneryData.TaxiwaySegments` via `taxiway.js`) — used by GroundMapWindow
+   - Extracts SID data: `sidPaths` (departure route polylines from `SceneryData.Runways.Routes[Type=2]`), `sidRunwayMap` (SID→[runways]), `runwaySidMap` (runway→[SIDs]) — parsed by `sid_goaround.js`
+   - Extracts Missed Approach data: `missedAppPaths` (go-around route polylines from `SceneryData.Runways.Routes[Type=3]`), `missedAppMap` (MA name→runway), `runwayMissedAppMap` (runway→MA names) — parsed by `sid_goaround.js`
    - Collects dropdown values (`collectUniqueValues`) and runway pairs (`collectRunwayPairs`) from ALL .acl files
    - Merges audio flight numbers into `_flightNums` per airline code
    - **Stand dropdown from SceneryData:** Stand identifiers parsed by `_parseStandPositions()` become the authoritative dropdown options (sorted), replacing any hardcoded or ACL-derived stand lists
    - **STAR dropdown from SceneryData:** STAR names come from `starRunwayMap` keys (SceneryData Type=0 Routes), same pattern as Stand — scenery is the single source of truth. `starRunwayMap` is built by `extractStarRunwayMappings()` and already excludes stubs (`$rlength:0`)
    - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions }`
+   - `approachData` now includes: `taxiwayPaths`, `sidPaths`, `missedAppPaths`, `sidRunwayMap`, `runwaySidMap`, `missedAppMap`, `runwayMissedAppMap` (all serialized through `serializeApproachCache`/`deserializeApproachCache`)
    - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint of tail/nose taxiway node Positions)
    - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
    - **Centralized cache I/O:** `_readCache(opts)` and `_writeCache(data)` in `electron/main.js` handle all `cache.json` reads/writes. `_readCache` validates `cacheVersion` and `gameRoot`, and signals `cache-invalidated` to the renderer on mismatch. All IPC handlers MUST use these helpers — never read/write `cache.json` directly.
@@ -349,9 +372,9 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 
 The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.json` + `lastRoot.json` + `localStorage.ac27_lang`). It contains `gameRoot`, `lang`, `cacheVersion`, `builtAt`, and `airports`.
 
-Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `electron/main.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
+Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `src/utils/constants.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
-**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `electron/main.js:12`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set. Current `CACHE_VERSION` is 7.
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants.js:13`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 8.
 
 | `cache.json` | Behavior |
 |---|---|
@@ -387,7 +410,7 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 2. EditorScreen's `useEffect` reads `window._pendingEditor` and loads:
    - `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
    - `load-timelines` IPC → reads timelines from ACL + `windSpeedUnit` from `airport_config.json` (defaults to `'knots'`)
-   - `collect-values` IPC → reads dropdown options from airport cache (no file I/O)
+   - `collect-values` IPC → reads dropdown options from airport cache (no file I/O). Also returns `_taxiwayPaths`, `_runwayData`, `_sidPaths`, `_missedAppPaths`, `_sidRunwayMap`, `_runwaySidMap` for map window rendering.
    - `load-audio-callsigns` IPC → reads audio callsigns from airport cache (no file I/O)
 3. **Wind speed conversion:** If `windSpeedUnit` is `'mps'`, speeds are converted to knots on load (1 m/s = 1.94384 kt). The zustand store always holds knots. Stored in `_windSpeedUnit`.
 4. Zustand store is populated and React renders the flight table
@@ -490,6 +513,266 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 **Map overlay orchestration:** `MapOverlays` sub-component in `EditorScreen.jsx` manages visibility and prop-passing for both StandMap and StarMap. Visibility state lives in zustand (`showStandMap`, `showStarMap`, `activeMap`, `mapFlightIdx`). Only one map is "on top" at a time (controlled by `activeMap`). Both maps close when leaving the editor screen (`setScreen` clears map state).
 
+## Map Windows (Surface Radar & Approach Radar) — v1.1.3
+
+Map windows are separate Electron `BrowserWindow` instances (one per airport ICAO + type pair), NOT React components rendered in the main window. They provide real-time radar visualization of aircraft positions streamed via UDP telemetry from the running game.
+
+### Architecture
+
+- `electron/main.js` manages two `Map` instances:
+  - `groundMapWindows` — keyed by airport ICAO, holds `BrowserWindow` for Surface Radar
+  - `airMapWindows` — keyed by airport ICAO, holds `BrowserWindow` for Approach Radar
+- Each map window loads the same Vite SPA with query params:
+  - `?window=groundMap&airport=XXXX&root=...` → renders `<GroundMapWindow>`
+  - `?window=airMap&airport=XXXX&root=...` → renders `<AirMapWindow>`
+- `App.jsx` (lines 23-28) checks `URLSearchParams` **before** the normal screen router
+- On window `closed`, the main process deletes the entry from its Map and sends `radar-window-closed` to the main window so the UI can update its toggle state
+
+### IPC Handlers (main → renderer)
+
+| Channel | Args | Direction | Purpose |
+|---------|------|-----------|---------|
+| `open-ground-map` | `(airportIcao, gameRoot)` | invoke | Creates/focuses Surface Radar BrowserWindow |
+| `open-air-map` | `(airportIcao, gameRoot)` | invoke | Creates/focuses Approach Radar BrowserWindow |
+| `close-ground-map` | `(airportIcao)` | invoke | Closes Surface Radar window |
+| `close-air-map` | `(airportIcao)` | invoke | Closes Approach Radar window |
+| `radar-window-closed` | `{ icao, type }` | main→renderer | Notifies main window that user closed a map window (X button) |
+| `send-udp-command` | `(commandId, payloadB64)` | invoke | Sends fire-and-forget UDP command to game on port 20267 |
+| `udp-aircraft-state` | `state` | main→renderer (push) | Live aircraft state pushed every 200ms to all open map windows |
+
+### Preload API (`window.electronAPI` additions)
+
+```js
+// Map window launchers
+openGroundMap(airportIcao, gameRoot)    // → ipcRenderer.invoke('open-ground-map', ...)
+openAirMap(airportIcao, gameRoot)       // → ipcRenderer.invoke('open-air-map', ...)
+closeGroundMap(airportIcao)             // → ipcRenderer.invoke('close-ground-map', ...)
+closeAirMap(airportIcao)                // → ipcRenderer.invoke('close-air-map', ...)
+onRadarWindowClosed(cb)                 // → ipcRenderer.on('radar-window-closed', handler)
+
+// UDP telemetry
+getUdpStatus()                          // → { connected, lastPacketTime, currentAirport }
+getUdpAircraftState()                   // → { aircraft, currentAirport, recordCount }
+sendUdpCommand(commandId, callSign)     // → base64-encodes 12B callSign, invokes 'send-udp-command'
+onUdpAircraftState(cb)                  // subscribe to live ~10 Hz pushes
+offUdpAircraftState(cb)                 // unsubscribe (must be SAME function reference)
+```
+
+### GroundMapWindow (`src/components/MapWindows/GroundMapWindow.jsx`)
+
+**Purpose:** SVG surface radar for tracking aircraft movement on the ground at a specific airport.
+
+**Data sources:**
+- `_taxiwayPaths` — taxiway centerline polylines from approach cache (via `electronAPI.collectValues()`)
+- `_runwayData` — runway rectangles (threshold pairs + width) computed in `collect-values` IPC
+- `useUdpAircraftState()` — live aircraft positions from UDP telemetry
+
+**Rendering layers:**
+1. Radar-blue background (`#1a2a3a`)
+2. Taxiway centerlines — grey polylines, color-coded by flags: standard (darker grey), wider (lighter), special (brighter)
+3. Runway rectangles — black filled polygons from threshold endpoints + width
+4. Live ground aircraft — filtered to `airSpeedKnot === 0 && route` (aircraft on ground with a route):
+   - **Icon:** `MAP_ICON_PATH` (IonIcons IoAirplane SVG path) rotated by `noseDirection.x/z`
+   - **Label:** Green callsign text with a short connector line from aircraft to label
+   - **Selection highlight:** Yellow icon + label when aircraft is selected (click-to-select)
+5. Reset-zoom button (bottom-left)
+
+**Zoom/pan:** `useSvgZoom` hook, initial viewBox at ±30 game units around origin.
+
+**Click-to-select:** Calls `electronAPI.sendUdpCommand(1, callSign)` which sends a `SelectAircraft` UDP command (commandId=1) to the game on port 20267. The selected callSign is stored in component state and rendered with yellow highlight.
+
+### AirMapWindow (`src/components/MapWindows/AirMapWindow.jsx`)
+
+**Purpose:** SVG approach radar for tracking airborne aircraft and visualizing STAR/SID/missed-approach routes.
+
+**Data sources:**
+- `_starPaths` (STAR routes, Type=0) — rendered in white
+- `_sidPaths` (SID departure routes, Type=2) — rendered in blue
+- `_missedAppPaths` (missed approach routes, Type=3) — rendered in dashed orange
+- `_runwayThresholds` from approach cache — extended 3× for runway direction lines
+- `useUdpAircraftState()` — live aircraft positions
+- `STAR_BG_OFFSETS` from `src/utils/constants.js` — per-airport background image config
+- `MAP_GEO_REF` from `src/utils/mapGeoRef.js` — `_Map.png` Unity-unit geo-referencing
+
+**Rendering layers (bottom to top):**
+1. Background map image (toggleable): `/{ICAO}_Map.png` positioned via `MAP_GEO_REF` → `useSvgZoom` viewBox transform, opacity ~20%
+2. Missed approach routes — dashed orange polylines
+3. SID departure routes — blue polylines with SID name labels
+4. STAR arrival routes — white polylines with STAR name labels
+5. Runway thresholds — extended 3× lines from threshold pairs
+6. Live airborne aircraft — filtered to `position.y > 1.0`:
+   - **Circle:** Small colored circle at aircraft position (white for unselected, yellow for selected)
+   - **Trail dots:** Ring buffer of historical positions (max 5 snapshots, minimum 600-tick gap), rendered as shrinking circles with decreasing opacity
+   - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale
+   - **Label:** Callsign + speed/type (toggles every 5 seconds between airspeed/10 and aircraft type), dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom)
+
+**Background toggle:** Bottom-right button with i18n key `air_map_bg`. Hides/shows the `_Map.png` overlay.
+
+**Zoom/pan:** `useSvgZoom` hook, same pattern as GroundMapWindow.
+
+**Click-to-select:** Same `sendUdpCommand(1, callSign)` pattern as GroundMapWindow.
+
+### Shared Hooks
+
+**`useSvgZoom.js`:**
+- Scroll-wheel zoom: cursor-centered, 1.12× factor per tick, clamped between 2% and 100% of initial viewBox
+- Click-drag pan: pixel-to-viewBox coordinate conversion
+- Reset on first data load only (not subsequent prop changes)
+- Returns `{ viewBox, svgRef, resetZoom, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp }`
+
+**`useUdpAircraftState.js`:**
+- Subscribes to `electronAPI.onUdpAircraftState` on mount, unsubscribes on unmount
+- Returns `{ aircraft: Array, currentAirport: string|null }` updated at ~10 Hz
+- Used by both GroundMapWindow and AirMapWindow
+
+### BrowserScreen Integration
+
+- **UDP health polling:** 1-second `setInterval` calls `electronAPI.getUdpStatus()` during BrowserScreen mount, updates zustand `udpConnected` and `udpCurrentAirport`
+- **Radar toggle buttons:** Each airport card in the browser shows two buttons when `udpConnected === true`:
+  - "Surface Radar" (`IoMapOutline` icon, i18n: `toolbar_surface_radar`)
+  - "Approach Radar" (`IoNavigateOutline` icon, i18n: `toolbar_approach_radar`)
+  - Buttons have an `.active` class when the corresponding window is open for that airport
+- **Toggle handler:** Checks `openGroundRadarAirports` / `openAirRadarAirports` Sets — if ICAO present, calls `closeXxxMap` IPC; otherwise calls `openXxxMap` IPC. Updates zustand state on both paths.
+- **Window-closed sync:** `onRadarWindowClosed` listener updates zustand Sets when user closes a map window via its X button (the main process notifies the renderer so toggle state stays in sync).
+
+### Zustand Store Additions (`appStore.js`)
+
+```js
+// State
+openGroundRadarAirports: new Set(),   // ICAO codes of open Surface Radar windows
+openAirRadarAirports: new Set(),      // ICAO codes of open Approach Radar windows
+udpConnected: false,                   // UDP telemetry listener is receiving packets
+udpCurrentAirport: null,              // Current airport ICAO from UDP (null if no packets)
+
+// Actions
+setGroundRadarOpen(icao, open)  // Add/remove from openGroundRadarAirports Set
+setAirRadarOpen(icao, open)     // Add/remove from openAirRadarAirports Set
+isGroundRadarOpen(icao)         // → openGroundRadarAirports.has(icao)
+isAirRadarOpen(icao)            // → openAirRadarAirports.has(icao)
+setUdpStatus(connected, currentAirport)  // Update UDP health state
+```
+
+**Important:** Set mutations must create a new `Set(...)` rather than mutating in place, per existing zustand Immutability rules.
+
+### New i18n Keys
+
+| Key | Chinese | English |
+|-----|---------|---------|
+| `toolbar_surface_radar` | 场面雷达 | Surface Radar |
+| `toolbar_approach_radar` | 进近雷达 | Approach Radar |
+| `air_map_bg` | 背景 | Background |
+
+### New Constants
+
+- **`STAR_BG_OFFSETS`** (`src/utils/constants.js`): Per-airport config for approach radar background image. Fields: `dx`/`dy` (fine-tune position offset), `w` (image width in viewBox units when height=3000), `bg` (color outside map image), `bgUnder` (color behind semi-transparent image). Entries for ZSJN and KJFK.
+- **`MAP_GEO_REF`** (`src/utils/mapGeoRef.js`): Lookup table mapping airport ICAO → `_Map.png` top-left origin (`originX`, `originZ`) and image extent (`width`, `height`) in Unity game units (at 100 m/unit). Used by AirMapWindow to correctly position the background map image.
+
+## UDP Telemetry Pipeline
+
+`electron/udp_listener.js` (271 lines) is the UDP telemetry engine that bridges the running game's live aircraft data into the Level Editor.
+
+### Architecture
+
+```
+┌──────────────────────┐    10 Hz UDP (20266)     ┌──────────────────────┐
+│  AC27 Game (Playtest) │ ──────────────────────→ │  electron/udp_       │
+│  AircraftUdpTelemetry │                          │  listener.js         │
+│  Service              │ ←────────────────────── │                      │
+└──────────────────────┘     UDP commands (20267)  │  aircraftMap         │
+                                                   │  trailSnapshots      │
+                                                   │  currentAirport      │
+                                                   └──────────┬───────────┘
+                                                              │ 200ms interval
+                                                   ┌──────────▼───────────┐
+                                                   │  ipcMain → all open  │
+                                                   │  map windows         │
+                                                   │  'udp-aircraft-state'│
+                                                   └──────────────────────┘
+```
+
+### Binary Protocol (Inbound Telemetry, Port 20266)
+
+Packets from the game arrive at ~10 Hz. Format: 40-byte header + N × 112-byte records.
+
+**Header (40 bytes, little-endian):**
+
+| Offset | Type | Field | Notes |
+|--------|------|-------|-------|
+| 0 | u32 | magic | `0x43544147` = ASCII `"GATC"` |
+| 4 | u16 | version | Currently `1` |
+| 6 | u16 | headerSize | Always `40` — record data starts here |
+| 8 | u16 | recordSize | Always `112` — stride per record |
+| 10 | u16 | recordCount | Number of records in this packet |
+| 12 | 4B | airportIcao | ASCII uppercase (4 chars) |
+| 16 | u64 | simTick | Simulation tick (60 Hz) |
+| 24 | i64 | simTimeUnixMs | Sim time in Unix milliseconds |
+| 32 | 8B | reserved | Zero-filled |
+
+**Record (112 bytes each, little-endian):**
+
+| Offset | Type | Field | Notes |
+|--------|------|-------|-------|
+| 0 | 12B | callSign | Active segment callsign, ASCII zero-padded |
+| 12 | 8B | aircraftType | ICAO designator (e.g. `B77W`, `A320`) |
+| 20 | u8 | flightDirection | `0` = Departure, `1` = Arrival |
+| 24 | f32×3 | position | Unity world coordinates (x, y, z) |
+| 36 | f32×3 | noseDirection | Nose heading unit vector (x, y, z) |
+| 48 | f32 | taxiSpeed | Ground taxi speed |
+| 52 | f32 | airSpeedKnot | Airspeed in knots |
+| 56 | 16B | star | STAR procedure name (blank for departures) |
+| 72 | 4B | runway | Active runway designator |
+| 76 | 8B | stand | Active stand identifier |
+| 84 | 16B | route | Active route name (may include taxiway sequence) |
+
+**Key receiver rules:**
+- Use `headerSize` and `recordSize` from the header to locate records — never hardcode offsets
+- Packets may be split: do not assume all aircraft for a tick are in one packet
+- `recordCount` can be 0 (heartbeat-only packet carrying sim time)
+- Reject packets with wrong magic or version
+
+### Trail Ring Buffer
+
+To render trailing dots on the AirMapWindow (historical positions), the listener maintains a `trailSnapshots` Map:
+
+- **Per callsign:** Ring buffer of `{ x, z, simTick }` objects
+- **Max 5 snapshots** per aircraft
+- **Minimum 600-tick gap** between snapshots (~10 game-seconds at 60 Hz)
+- Live position: `age: 0`, trail entries: `age: 10, 20, 30, 40, 50...` (age = approximate seconds old)
+- Used by map windows to render shrinking circles with decreasing opacity
+
+### Command Channel (Outbound, Port 20267)
+
+The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:20267`.
+
+- **`sendCommand(commandId, payloadBuf)`** → `Promise<{ success, error? }>`
+- 8-byte header: magic (u32 LE, `0x43544147`) + version (u16 LE, `1`) + commandId (u16 LE)
+- **Only supported command:** commandId=1 (`SelectAircraft`), 12-byte ASCII callSign payload (20B total datagram)
+- No response expected — effect is observed through the telemetry stream
+- Preload wraps this as `sendUdpCommand(commandId, callSign)` which base64-encodes a 12-byte callSign buffer
+
+### Live State Push to Map Windows
+
+- `startUdpListener()` called in `app.whenReady()` after `createWindow()`
+- `setInterval` at 200ms reads `getUdpAircraftState()` and sends `udp-aircraft-state` IPC event to all open map windows (`groundMapWindows` + `airMapWindows`)
+- On `will-quit`, `stopUdpListener()` cleans up: closes socket, clears all intervals/timeouts, resets `aircraftMap`, `trailSnapshots`, etc.
+- Auto-reconnect on socket errors with 2-second delay and logging
+
+### Public API (`electron/udp_listener.js` exports)
+
+| Export | Returns | Description |
+|--------|---------|-------------|
+| `start()` | void | Bind socket, begin parsing packets |
+| `stop()` | void | Close socket, clear intervals, reset state |
+| `getUdpStatus()` | `{ connected, lastPacketTime, currentAirport }` | Current health status |
+| `getUdpAircraftState()` | `{ aircraft: [], currentAirport, recordCount }` | Latest aircraft positions + trails |
+| `sendCommand(cmdId, payloadBuf)` | `Promise<{ success, error? }>` | Fire-and-forget command to game |
+
+### IPC Exposure
+
+- `get-udp-status` handler → `getUdpStatus()`
+- `get-udp-aircraft-state` handler → `getUdpAircraftState()`
+- `send-udp-command` handler → base64-decodes `payloadB64` → `sendCommand(commandId, buf)`
+
 ### Demo .acl File Handling (v1.0.9+)
 
 The game ships four 30-minute `.demo.acl` slice levels:
@@ -564,8 +847,8 @@ Key section types:
 |------|---------|---------------|----------|
 | **0** | **STAR** (arrival transition) | `SEY.PARCH4`, `UBSS6W`, `OKAL6W`, `WFG91A` | Airway dropdown filtering, StarMap availability, approach path resolution |
 | 1 | RNAV approach procedure | `RNAV Y Rwy 31L`, `RNAV ILS Z Rwy 19` | State=5 approach data (`resolveApproachProcedureData`) |
-| **2** | **SID** (departure transition) | `JFK5.JFK`, `TUML5T`, `BASV7Y` | Ignore — departure routes only |
-| 3 | Missed approach | `RNAV Y Rwy 31L (Missed Approach)` | Ignore |
+| **2** | **SID** (departure transition) | `JFK5.JFK`, `TUML5T`, `BASV7Y` | Parsed by `sid_goaround.js` → `sidPaths` for AirMapWindow route display |
+| 3 | Missed approach | `RNAV Y Rwy 31L (Missed Approach)` | Parsed by `sid_goaround.js` → `missedAppPaths` for AirMapWindow route display |
 
 **Important:** The authoritative source for valid STAR↔runway combinations is `SceneryData.Runways[runway].Routes[].Name` where `Type === 0`. This is a superset of what `appPointMap` covers (which is limited to State=30 aircraft entries at snapshot time). For example, KJFK runway 31L has STAR `SEY.PARCH4` (Type 0) defined in SceneryData, but this combo may have no State=30 aircraft in any scanned .acl file, leaving it absent from `appPointMap`.
 
@@ -575,6 +858,28 @@ Key section types:
 3. Iterate runway dictionary entries → extract `Name` (runway designator) and `Routes`
 4. Parse `Routes.$rcontent` → for each route with `Type === 0`, collect `Name` (STAR name)
 5. Return `{ starRunwayMap: {star → [runways]}, runwayStarMap: {runway → [stars]} }`
+
+**SID and Missed Approach extraction** follows the identical pattern in `sid_goaround.js`, operating on `Type === 2` (SID) and `Type === 3` (Missed Approach) routes. The four functions exported by `sid_goaround.js` mirror the approach.js STAR helpers:
+- `extractSidRunwayMappings(aclText)` → `{ sidRunwayMap, runwaySidMap }`
+- `extractMissedApproachMappings(aclText)` → `{ missedAppMap, runwayMissedAppMap }`
+- `buildSidPaths(aclText, sidRunwayMap)` → `{ sidName: [{x, z}, ...] }`
+- `buildMissedApproachPaths(aclText, missedAppMap)` → `{ maName: [{x, z}, ...] }`
+
+### SceneryData TaxiwaySegments
+
+`SceneryData.TaxiwaySegments` is a `$k`/`$v` dictionary where each entry represents a taxiway centerline segment:
+
+| Field | Description |
+|-------|-------------|
+| `Name` | Taxiway designation (e.g. `"A"`, `"B"`, may be empty) |
+| `Flags` | Integer: 1=standard, 2=wider, 4=special |
+| `Nodes` | `{$rcontent: [nodeGuid1, nodeGuid2]}` — endpoint GUIDs resolved via `_parseTaxiwayNodes()` |
+
+Parsed by `src/acl/taxiway.js`:
+- Resolves node GUIDs via `_parseTaxiwayNodes()` (shared with `approach.js`)
+- Filters out stand-access stubs: segments where BOTH endpoint node GUIDs are associated with stand positions (via `TailPositionGuid` / `NosePositionGuid` from `SceneryData.Stands`)
+- Returns `{ paths: [{ name, flags, points: [{x, z}] }] }`
+- Integrated into `buildApproachCache()` and exposed via `collect-values` as `_taxiwayPaths`
 
 ## Approach Aircraft Construction (State=30 & State=5)
 
@@ -1017,7 +1322,10 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 13. **One `.css` per component.** Match the component filename.
 14. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
 15. **Build with `node build.js`** on Windows, never `npm run build:win`.
-16. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `electron/main.js:12`. Stale caches silently corrupt saves.
+16. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants.js:13` (re-exported via `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
 17. **Keep documentation in sync.** After any significant change, update BOTH:
     - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`)
     - **README.md**
+18. **UDP listener lifecycle is managed by main process.** `startUdpListener()` is called in `app.whenReady()` after `createWindow()`, `stopUdpListener()` in `will-quit`. The listener auto-reconnects on socket errors (2s delay). Do not create multiple listeners or start/stop from the renderer.
+19. **Map windows are separate BrowserWindow instances.** They are NOT React components in the main renderer. Track them in `groundMapWindows`/`airMapWindows` Maps (keyed by ICAO). Always check for existing windows before creating (focus if exists). Clean up Map entries in the `closed` event handler. Each window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX` or `?window=airMap&airport=XXXX`).
+20. **UDP state push handles cleanup.** The `udp-aircraft-state` IPC event is pushed to ALL open map windows every 200ms. Map window components subscribe via `useUdpAircraftState()` hook which wraps `onUdpAircraftState`/`offUdpAircraftState`. Always unsubscribe in `useEffect` cleanup to prevent stale callbacks or memory leaks.
