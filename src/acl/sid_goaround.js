@@ -55,6 +55,9 @@ function _extractRouteMappingsByType(aclText, routeType) {
 
   if (!aclText) return { routeRunwayMap, runwayRouteMap };
 
+  // Lazily import helpers from approach.js (avoids circular dependency at module load)
+  const { _extractValueBlock } = require('./approach');
+
   // 1. Navigate to SceneryData → Runways
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return { routeRunwayMap, runwayRouteMap };
@@ -94,53 +97,70 @@ function _extractRouteMappingsByType(aclText, routeType) {
       if (entryEnd === null) break;
       const block = rwText.substring(pos, entryEnd);
 
-      // Find $v block
-      let runwayName = null;
-      let physName = null;
-      let routesBlock = null;
-      const vKeyIdx = block.indexOf('"$v"');
-      if (vKeyIdx >= 0) {
-        const colonIdx = block.indexOf(':', vKeyIdx);
-        if (colonIdx >= 0) {
-          let vStart = colonIdx + 1;
-          while (vStart < block.length && ' \t\n\r'.includes(block[vStart])) vStart++;
-          if (vStart < block.length && block[vStart] === '{') {
-            const vEnd = rwT.findObjectEnd(vStart);
-            if (vEnd !== null) {
-              const vBlock = block.substring(vStart, vEnd);
-              runwayName = _extractString(vBlock, 'Name');
-              physName = _extractString(vBlock, 'PhysicalName');
-              routesBlock = _extractNestedObject(vBlock, 'Routes');
+      // Use _extractValueBlock (same as STAR extraction in approach.js) —
+      // creates a tokenizer on the block itself, avoiding the position-offset
+      // bug that previously broke SID/missed-approach extraction.
+      const vBlock = _extractValueBlock(block);
+      if (vBlock) {
+        // Depth-aware Name extraction (same as approach.js:1107-1124)
+        // avoids picking up nested Entry/route names like "A14" from
+        // comparer entries instead of the runway designator.
+        let runwayName = null;
+        let rwyDepth = 0;
+        for (let i = 0; i < vBlock.length - 8; i++) {
+          if (vBlock[i] === '{') rwyDepth++;
+          else if (vBlock[i] === '}') rwyDepth--;
+          else if (rwyDepth === 1 && vBlock.substring(i, i + 6) === '"Name"') {
+            const colonPos = vBlock.indexOf(':', i + 6);
+            if (colonPos > 0) {
+              let vs = colonPos + 1;
+              while (vs < vBlock.length && ' \t\n\r'.includes(vBlock[vs])) vs++;
+              if (vBlock[vs] === '"') {
+                const ve = vBlock.indexOf('"', vs + 1);
+                if (ve > vs) runwayName = vBlock.substring(vs + 1, ve);
+              }
             }
+            break;
           }
         }
-      }
+        const physName = _extractString(vBlock, 'PhysicalName');
 
-      if (runwayName && physName && physName.includes('/') && routesBlock) {
-        const routesT = createTokenizer(routesBlock);
-        const routesRc = routesT.findSection('$rcontent');
-        if (routesRc) {
-          let rp = routesRc.valueStart + 1;
-          while (rp < routesBlock.length) {
-            while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
-            if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
-            if (routesBlock[rp] === ',') { rp++; continue; }
-            if (routesBlock[rp] === '{') {
-              const reEnd = routesT.findObjectEnd(rp);
-              if (reEnd === null) break;
-              const routeEntry = routesBlock.substring(rp, reEnd);
-              const type = _extractInt(routeEntry, 'Type');
-              if (type === routeType) {
-                const routeName = _extractString(routeEntry, 'Name');
-                if (routeName) {
-                  if (!routeRunwayMap[routeName]) routeRunwayMap[routeName] = [];
-                  if (!routeRunwayMap[routeName].includes(runwayName)) routeRunwayMap[routeName].push(runwayName);
-                  if (!runwayRouteMap[runwayName]) runwayRouteMap[runwayName] = [];
-                  if (!runwayRouteMap[runwayName].includes(routeName)) runwayRouteMap[runwayName].push(routeName);
-                }
+        // Only process actual runway entries (PhysicalName contains '/')
+        if (runwayName && physName && physName.includes('/')) {
+          // 4. Extract the Routes block and find Type=type entries
+          const routesBlock = _extractNestedObject(vBlock, 'Routes');
+          if (routesBlock) {
+            const routesT = createTokenizer(routesBlock);
+            const routesRc = routesT.findSection('$rcontent');
+            if (routesRc) {
+              let rp = routesRc.valueStart + 1;
+              while (rp < routesBlock.length) {
+                while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+                if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+                if (routesBlock[rp] === ',') { rp++; continue; }
+                if (routesBlock[rp] === '{') {
+                  const reEnd = routesT.findObjectEnd(rp);
+                  if (reEnd === null) break;
+                  const routeEntry = routesBlock.substring(rp, reEnd);
+                  const type = _extractInt(routeEntry, 'Type');
+                  if (type === routeType) {
+                    const routeName = _extractString(routeEntry, 'Name');
+                    // Skip stub routes with no waypoint data ($rlength: 0)
+                    const guids = [];
+                    const gReG = /"([a-f0-9-]{36})"/g;
+                    let mG;
+                    while ((mG = gReG.exec(routeEntry)) !== null) guids.push(mG[1]);
+                    if (routeName && guids.length > 0) {
+                      if (!routeRunwayMap[routeName]) routeRunwayMap[routeName] = [];
+                      if (!routeRunwayMap[routeName].includes(runwayName)) routeRunwayMap[routeName].push(runwayName);
+                      if (!runwayRouteMap[runwayName]) runwayRouteMap[runwayName] = [];
+                      if (!runwayRouteMap[runwayName].includes(routeName)) runwayRouteMap[runwayName].push(routeName);
+                    }
+                  }
+                  rp = reEnd;
+                } else { rp++; }
               }
-              rp = reEnd;
-            } else { rp++; }
+            }
           }
         }
       }
@@ -165,8 +185,8 @@ function _buildRoutePaths(aclText, routeRunwayMap) {
   const paths = {};
   if (!aclText || !routeRunwayMap) return paths;
 
-  // Resolve AirwayNodes once
-  const { _parseAirwayNodes } = require('./approach');
+  // Resolve AirwayNodes and _extractValueBlock once
+  const { _parseAirwayNodes, _extractValueBlock } = require('./approach');
   const airwayNodes = _parseAirwayNodes(aclText);
 
   // Find AirwaySegments section for route→GUID chain lookups
@@ -234,43 +254,34 @@ function _buildRoutePaths(aclText, routeRunwayMap) {
           const ee = rwT.findObjectEnd(pos);
           if (ee === null) break;
           const block = rwText.substring(pos, ee);
-          const vKeyIdx = block.indexOf('"$v"');
-          if (vKeyIdx >= 0) {
-            const ci2 = block.indexOf(':', vKeyIdx);
-            if (ci2 >= 0) {
-              let vs = ci2 + 1;
-              while (vs < block.length && ' \t\n\r'.includes(block[vs])) vs++;
-              if (vs < block.length && block[vs] === '{') {
-                const ve = rwT.findObjectEnd(vs);
-                if (ve !== null) {
-                  const vb = block.substring(vs, ve);
-                  const routesBlock = _extractNestedObject(vb, 'Routes');
-                  if (routesBlock) {
-                    const rtT = createTokenizer(routesBlock);
-                    const rtRc = rtT.findSection('$rcontent');
-                    if (rtRc) {
-                      let rp = rtRc.valueStart + 1;
-                      while (rp < routesBlock.length) {
-                        while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
-                        if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
-                        if (routesBlock[rp] === ',') { rp++; continue; }
-                        if (routesBlock[rp] === '{') {
-                          const re = rtT.findObjectEnd(rp);
-                          if (re === null) break;
-                          const reBlock = routesBlock.substring(rp, re);
-                          const rName = _extractString(reBlock, 'Name');
-                          if (rName && !routeGuidMap.has(rName)) {
-                            const guids = [];
-                            const gRe2 = /"([a-f0-9-]{36})"/g;
-                            let m2;
-                            while ((m2 = gRe2.exec(reBlock)) !== null) guids.push(m2[1]);
-                            if (guids.length > 0) routeGuidMap.set(rName, guids);
-                          }
-                          rp = re;
-                        } else { rp++; }
-                      }
+          // Use _extractValueBlock — creates a tokenizer on the block itself,
+          // avoiding the position-offset bug the original manual $v extraction had
+          const vb = _extractValueBlock(block);
+          if (vb) {
+            const routesBlock = _extractNestedObject(vb, 'Routes');
+            if (routesBlock) {
+              const rtT = createTokenizer(routesBlock);
+              const rtRc = rtT.findSection('$rcontent');
+              if (rtRc) {
+                let rp = rtRc.valueStart + 1;
+                while (rp < routesBlock.length) {
+                  while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+                  if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+                  if (routesBlock[rp] === ',') { rp++; continue; }
+                  if (routesBlock[rp] === '{') {
+                    const re = rtT.findObjectEnd(rp);
+                    if (re === null) break;
+                    const reBlock = routesBlock.substring(rp, re);
+                    const rName = _extractString(reBlock, 'Name');
+                    if (rName && !routeGuidMap.has(rName)) {
+                      const guids = [];
+                      const gRe2 = /"([a-f0-9-]{36})"/g;
+                      let m2;
+                      while ((m2 = gRe2.exec(reBlock)) !== null) guids.push(m2[1]);
+                      if (guids.length > 0) routeGuidMap.set(rName, guids);
                     }
-                  }
+                    rp = re;
+                  } else { rp++; }
                 }
               }
             }

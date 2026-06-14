@@ -171,8 +171,10 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   │   └── TimelineEditors/ # Weather, Wind, Runway editors
 │   │   ├── MapWindows/          # Full-window radar visualizations (separate windows)
 │   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, ground aircraft
-│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/missed-app, air aircraft
-│   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook
+│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID routes, runway extensions, range rings
+│   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs + action buttons
+│   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel)
+│   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   └── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
 │   │   └── common/              # Modal, Toast
 │   │

@@ -1728,6 +1728,13 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
   }
 });
 
+// ─── IPC: Debug log from renderer → main terminal ───
+
+ipcMain.handle('debug-log', async (_e, args) => {
+  console.log('[RENDERER]', ...args);
+  return { success: true };
+});
+
 app.whenReady().then(() => {
   console.log('[APP] Ready, creating window...');
   console.log('[APP] __dirname:', __dirname);

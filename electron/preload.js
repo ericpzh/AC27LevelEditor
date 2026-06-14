@@ -73,6 +73,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke('send-udp-command', commandId, buf.toString('base64'));
   },
 
+  // Debug: log to main process terminal
+  debugLog: (...args) => ipcRenderer.invoke('debug-log', args),
+
   // Subscribe to live UDP aircraft state pushes from main process
   _udpStateHandlers: new Map(),
   onUdpAircraftState: function (cb) {

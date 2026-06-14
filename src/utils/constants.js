@@ -12,6 +12,9 @@ export const TICKS_PER_DAY_NUM = 864000000000;
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
 export const CACHE_VERSION = 8;
 
+// ─── Nautical mile → game units (1852 m ÷ 100 m/unit) ──────
+export const NM_TO_GU = 18.52;
+
 // ─── Airport Hardcoded Display Names & Sort Order ──────────
 export const AIRPORT_META = {
   ZSJN: { id: 0, name: '济南遥墙机场' },
@@ -239,10 +242,25 @@ export const MAP_TARGET_RATIO = 1.35;
 // `bg` = color for area OUTSIDE the map image (within data bounds)
 // `bgUnder` = color BEHIND the semi-transparent map image
 // dx/dy = fine-tune position offset
-export const STAR_BG_OFFSETS = {
+export const AIR_MAP_BG_OFFSETS = {
   ZSJN: { dx: 0, dy: 0, bg: '#232323', bgUnder: '#000000' },
   KJFK: { dx: -875, dy: -150, w: 5600, bg:'#0c0c0c', bgUnder: '#000000' },
 };
+
+// Per-airport default zoom scale: 1.0 = full dataBounds, <1 = tighter initial view
+export const GROUND_MAP_DEFAULT_ZOOM = {
+  ZSJN: 0.75,
+  KJFK: 1.0,
+};
+export const AIR_MAP_DEFAULT_ZOOM = {
+  ZSJN: 1.0,
+  KJFK: 1.0,
+};
+
+// Ground radar: max distance (game units) from aircraft to assigned stand
+// midpoint to be considered "at stand". 0.5 GU ≈ 50 m.
+export const GROUND_RADAR_STAND_PROXIMITY = 0.5;
+
 export const MAP_PLANE_VB = 512;
 // IoAirplane icon path
 export const MAP_ICON_PATH = "M186.62 464H160a16 16 0 0 1-14.57-22.6l64.46-142.25L113.1 297l-35.3 42.77C71.07 348.23 65.7 352 52 352H34.08a17.66 17.66 0 0 1-14.7-7.06c-2.38-3.21-4.72-8.65-2.44-16.41l19.82-71c.15-.53.33-1.06.53-1.58a.38.38 0 0 0 0-.15 14.82 14.82 0 0 1-.53-1.59l-19.84-71.45c-2.15-7.61.2-12.93 2.56-16.06a16.83 16.83 0 0 1 13.6-6.7H52c10.23 0 20.16 4.59 26 12l34.57 42.05 97.32-1.44-64.44-142A16 16 0 0 1 160 48h26.91a25 25 0 0 1 19.35 9.8l125.05 152 57.77-1.52c4.23-.23 15.95-.31 18.66-.31C463 208 496 225.94 496 256c0 9.46-3.78 27-29.07 38.16-14.93 6.6-34.85 9.94-59.21 9.94-2.68 0-14.37-.08-18.66-.31l-57.76-1.54-125.36 152a25 25 0 0 1-19.32 9.75z";
