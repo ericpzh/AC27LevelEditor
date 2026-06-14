@@ -93,7 +93,7 @@ export default function GroundMapWindow({ airportIcao }) {
   const groundAircraft = useMemo(() => {
     if (udpAirport && udpAirport !== airportIcao) return [];
     return udpAircraft.filter(a => {
-      if (a.airSpeedKnot !== 0) return false;
+      if (a.position && a.position.y > 1.0) return false; // airborne → AirMapWindow
       // Hide inactive aircraft parked at a stand (unless showAllAircraft)
       if (showAllAircraft) return true;
       if (!a.stand || !standPositions[a.stand] || !a.position) return true;

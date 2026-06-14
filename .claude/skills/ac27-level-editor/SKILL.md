@@ -580,7 +580,7 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
 1. Radar-blue background (`#0a1628`)
 2. Taxiway centerlines — grey polylines, color-coded by flags: standard (darker grey), wider (lighter), special (brighter). Toggleable name labels at midpoints (filtered to exclude runway names).
 3. Runway rectangles — black filled polygons from threshold endpoints + width
-4. Live ground aircraft — filtered to `airSpeedKnot === 0` (ground-level) with inactive aircraft hidden by default:
+4. Live ground aircraft — filtered to `position.y <= 1.0` (ground-level, not airborne) with inactive aircraft hidden by default:
    - **Inactivity filter:** Aircraft at a known stand (UDP `stand` field ∈ `_standPositions`) AND within `GROUND_RADAR_STAND_PROXIMITY` (0.5 GU ≈ 50m) of that stand's midpoint are hidden as "parked/inactive"
    - **"Display All" toggle:** Sidebar button (i18n: `ground_map_show_all`) bypasses the inactivity filter, showing all ground-level aircraft
    - **Icon:** `MAP_ICON_PATH` (IonIons IoAirplane SVG path) rotated by `noseDirection.x/z`
