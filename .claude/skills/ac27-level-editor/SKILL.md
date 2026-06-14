@@ -21,7 +21,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 36 ipcMain.handle() endpoints                        │
+│  - 37 ipcMain.handle() endpoints                        │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
@@ -82,7 +82,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ```
 AC27LevelEditor/
 ├── electron/
-│   ├── main.js              # Electron main process + 36 IPC handlers
+│   ├── main.js              # Electron main process + 37 IPC handlers
 │   ├── preload.js           # contextBridge (window.electronAPI, ~38 methods)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz binary aircraft state (127.0.0.1:20266) + commands (20267)
 ├── index.html               # Vite HTML entry (<div id="root">)
@@ -537,6 +537,7 @@ Map windows are separate Electron `BrowserWindow` instances (one per airport ICA
 | `close-ground-map` | `(airportIcao)` | invoke | Closes Surface Radar window |
 | `close-air-map` | `(airportIcao)` | invoke | Closes Approach Radar window |
 | `radar-window-closed` | `{ icao, type }` | main→renderer | Notifies main window that user closed a map window (X button) |
+| `reset-udp-aircraft` | none | invoke | Clears all UDP aircraft state (used by map refresh button) |
 | `send-udp-command` | `(commandId, payloadB64)` | invoke | Sends fire-and-forget UDP command to game on port 20267 |
 | `udp-aircraft-state` | `state` | main→renderer (push) | Live aircraft state pushed every 200ms to all open map windows |
 
@@ -553,6 +554,7 @@ onRadarWindowClosed(cb)                 // → ipcRenderer.on('radar-window-clos
 // UDP telemetry
 getUdpStatus()                          // → { connected, lastPacketTime, currentAirport }
 getUdpAircraftState()                   // → { aircraft, currentAirport, recordCount }
+resetUdpAircraft()                      // → clears all aircraft state (map refresh button)
 sendUdpCommand(commandId, callSign)     // → base64-encodes 12B callSign, invokes 'send-udp-command'
 onUdpAircraftState(cb)                  // subscribe to live ~10 Hz pushes
 offUdpAircraftState(cb)                 // unsubscribe (must be SAME function reference)
@@ -627,11 +629,11 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
 
 ### BrowserScreen Integration
 
-- **UDP health polling:** 1-second `setInterval` calls `electronAPI.getUdpStatus()` during BrowserScreen mount, updates zustand `udpConnected` and `udpCurrentAirport`
-- **Radar toggle buttons:** Each airport card in the browser shows two buttons when `udpConnected === true`:
+- **Radar toggle buttons:** Each airport card shows two radar buttons when NOT in demo mode (`!isDemo`):
   - "Surface Radar" (`IoMapOutline` icon, i18n: `toolbar_surface_radar`)
   - "Approach Radar" (`IoNavigateOutline` icon, i18n: `toolbar_approach_radar`)
   - Buttons have an `.active` class when the corresponding window is open for that airport
+  - In demo mode (`rootPath` includes `'Airport Control 27 Demo'`), radar buttons are hidden entirely
 - **Toggle handler:** Checks `openGroundRadarAirports` / `openAirRadarAirports` Sets — if ICAO present, calls `closeXxxMap` IPC; otherwise calls `openXxxMap` IPC. Updates zustand state on both paths.
 - **Window-closed sync:** `onRadarWindowClosed` listener updates zustand Sets when user closes a map window via its X button (the main process notifies the renderer so toggle state stays in sync).
 
@@ -765,12 +767,14 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 | `stop()` | void | Close socket, clear intervals, reset state |
 | `getUdpStatus()` | `{ connected, lastPacketTime, currentAirport }` | Current health status |
 | `getUdpAircraftState()` | `{ aircraft: [], currentAirport, recordCount }` | Latest aircraft positions + trails |
+| `resetAircraftState()` | void | Clear all aircraft state (`aircraftMap` + `trailSnapshots`) — used by map window refresh button |
 | `sendCommand(cmdId, payloadBuf)` | `Promise<{ success, error? }>` | Fire-and-forget command to game |
 
 ### IPC Exposure
 
 - `get-udp-status` handler → `getUdpStatus()`
 - `get-udp-aircraft-state` handler → `getUdpAircraftState()`
+- `reset-udp-aircraft` handler → `resetAircraftState()` — clears stale aircraft after game level restart
 - `send-udp-command` handler → base64-decodes `payloadB64` → `sendCommand(commandId, buf)`
 
 ### Demo .acl File Handling (v1.0.9+)

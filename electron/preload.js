@@ -53,4 +53,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Cache invalidation — main process signals when cache.json is missing/corrupt
   onCacheInvalidated: (cb) => ipcRenderer.on('cache-invalidated', () => cb()),
+
+  // ─── Map windows ─────────────────────────────────────────
+  openGroundMap: (airportIcao, gameRoot) => ipcRenderer.invoke('open-ground-map', airportIcao, gameRoot),
+  openAirMap: (airportIcao, gameRoot) => ipcRenderer.invoke('open-air-map', airportIcao, gameRoot),
+  closeGroundMap: (airportIcao) => ipcRenderer.invoke('close-ground-map', airportIcao),
+  closeAirMap: (airportIcao) => ipcRenderer.invoke('close-air-map', airportIcao),
+  onRadarWindowClosed: (cb) => ipcRenderer.on('radar-window-closed', (_e, data) => cb(data)),
+
+  // ─── UDP telemetry ───────────────────────────────────────
+  getUdpStatus: () => ipcRenderer.invoke('get-udp-status'),
+  getUdpAircraftState: () => ipcRenderer.invoke('get-udp-aircraft-state'),
+  resetUdpAircraft: () => ipcRenderer.invoke('reset-udp-aircraft'),
+
+  // Send UDP command to game (e.g. SelectAircraft)
+  sendUdpCommand: (commandId, callSign) => {
+    const buf = Buffer.alloc(12);
+    buf.write(callSign, 0, 12, 'ascii');
+    return ipcRenderer.invoke('send-udp-command', commandId, buf.toString('base64'));
+  },
+
+  // Subscribe to live UDP aircraft state pushes from main process
+  _udpStateHandlers: new Map(),
+  onUdpAircraftState: function (cb) {
+    const handler = (_e, state) => cb(state);
+    this._udpStateHandlers.set(cb, handler);
+    ipcRenderer.on('udp-aircraft-state', handler);
+  },
+  offUdpAircraftState: function (cb) {
+    const handler = this._udpStateHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('udp-aircraft-state', handler);
+      this._udpStateHandlers.delete(cb);
+    }
+  },
 });

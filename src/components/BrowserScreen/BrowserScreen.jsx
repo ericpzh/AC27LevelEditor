@@ -4,7 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { RE_HIDDEN } from '../../utils/constants';
@@ -43,6 +43,10 @@ export default function BrowserScreen() {
   const toggleTheme = useAppStore(s => s.toggleTheme);
 
   const isDemo = rootPath && rootPath.includes('Airport Control 27 Demo');
+  const openGroundRadarAirports = useAppStore(s => s.openGroundRadarAirports);
+  const openAirRadarAirports = useAppStore(s => s.openAirRadarAirports);
+  const setGroundRadarOpen = useAppStore(s => s.setGroundRadarOpen);
+  const setAirRadarOpen = useAppStore(s => s.setAirRadarOpen);
 
   const [fileInfos, setFileInfos] = useState({});
   const [loading, setLoading] = useState(true);
@@ -90,6 +94,15 @@ export default function BrowserScreen() {
         null,  // headerRight
         true   // showLangToggle
       );
+    });
+  }, []);
+
+  // Listen for radar windows closed via X button (main process notifies us)
+  useEffect(() => {
+    if (!electronAPI.onRadarWindowClosed) return;
+    electronAPI.onRadarWindowClosed(({ icao, type }) => {
+      if (type === 'ground') setGroundRadarOpen(icao, false);
+      else if (type === 'air') setAirRadarOpen(icao, false);
     });
   }, []);
 
@@ -178,6 +191,28 @@ export default function BrowserScreen() {
     );
   };
 
+  const handleToggleSurfaceRadar = (icao) => {
+    const st = useAppStore.getState();
+    if (st.openGroundRadarAirports.has(icao)) {
+      electronAPI.closeGroundMap(icao);
+      setGroundRadarOpen(icao, false);
+    } else {
+      electronAPI.openGroundMap(icao, rootPath);
+      setGroundRadarOpen(icao, true);
+    }
+  };
+
+  const handleToggleApproachRadar = (icao) => {
+    const st = useAppStore.getState();
+    if (st.openAirRadarAirports.has(icao)) {
+      electronAPI.closeAirMap(icao);
+      setAirRadarOpen(icao, false);
+    } else {
+      electronAPI.openAirMap(icao, rootPath);
+      setAirRadarOpen(icao, true);
+    }
+  };
+
   const allAirportsWithFiles = [...airports]
     .sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao))
     .filter(a => (fileInfos[a.icao] || []).length > 0);
@@ -213,7 +248,29 @@ export default function BrowserScreen() {
           allAirportsWithFiles.map(airport => (
             <div key={airport.icao} className="airport-card">
               <div className="airport-card-bg" style={{ backgroundImage: `url(./${airport.icao}.png)` }} />
-              <div className="airport-card-header"><span className="airport-icao">{airportDisplayName(airport.icao, t)}</span></div>
+              <div className="airport-card-header">
+                <span className="airport-icao">{airportDisplayName(airport.icao, t)}</span>
+                <div className="airport-card-actions">
+                  {!isDemo && (
+                  <>
+                  <button
+                    className={'btn-radar-toggle' + (openGroundRadarAirports.has(airport.icao) ? ' active' : '')}
+                    onClick={(e) => { e.stopPropagation(); handleToggleSurfaceRadar(airport.icao); }}
+                    title={t('toolbar_surface_radar')}
+                  >
+                    <IoMapOutline size={13} /> {t('toolbar_surface_radar')}
+                  </button>
+                  <button
+                    className={'btn-radar-toggle' + (openAirRadarAirports.has(airport.icao) ? ' active' : '')}
+                    onClick={(e) => { e.stopPropagation(); handleToggleApproachRadar(airport.icao); }}
+                    title={t('toolbar_approach_radar')}
+                  >
+                    <IoNavigateOutline size={13} /> {t('toolbar_approach_radar')}
+                  </button>
+                  </>
+                  )}
+                </div>
+              </div>
               {fileInfos[airport.icao].map((info, i) => {
                 if (info.error) return (
                   <div key={i} className="level-row level-row-error">

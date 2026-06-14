@@ -5,6 +5,8 @@ import { useElectronAPI } from './hooks/useElectronAPI';
 import SetupScreen from './components/SetupScreen/SetupScreen';
 import BrowserScreen from './components/BrowserScreen/BrowserScreen';
 import EditorScreen from './components/EditorScreen/EditorScreen';
+import GroundMapWindow from './components/MapWindows/GroundMapWindow';
+import AirMapWindow from './components/MapWindows/AirMapWindow';
 import Modal from './components/common/Modal';
 import Toast from './components/common/Toast';
 
@@ -17,6 +19,13 @@ function ScreenRouter() {
   const screen = useAppStore(s => s.screen);
   const electronAPI = useElectronAPI();
   const [booting, setBooting] = useState(true);
+
+  // Detect map window query params (separate Electron BrowserWindow instances)
+  const sp = new URLSearchParams(window.location.search);
+  const mapWin = sp.get('window');
+  const mapAp = sp.get('airport');
+  if (mapWin === 'groundMap' && mapAp) return <I18nProvider><GroundMapWindow airportIcao={mapAp} /></I18nProvider>;
+  if (mapWin === 'airMap' && mapAp)   return <I18nProvider><AirMapWindow airportIcao={mapAp} /></I18nProvider>;
 
   // Restore last root on startup — runs once per app load
   useEffect(() => {

@@ -116,7 +116,7 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 36 IPC handlers, file I/O, map window management
+electron/main.js     →  Electron main process, 37 IPC handlers, file I/O, map window management
 electron/preload.js  →  contextBridge: exposes ~38 methods on window.electronAPI
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state from game)
 index.html           →  Vite HTML entry, loads src/main.jsx

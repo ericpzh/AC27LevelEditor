@@ -2316,6 +2316,36 @@ function buildApproachCache(airportDir) {
     ? _parseRunwayThresholds(firstAclText)
     : {};
 
+  // ── Parse taxiway paths from SceneryData (lazy require avoids circular dep) ──
+  let taxiwayPaths = { paths: [] };
+  if (firstAclText) {
+    try {
+      const { parseTaxiwayPaths } = require('./taxiway');
+      taxiwayPaths = parseTaxiwayPaths(firstAclText);
+    } catch (e) { log('  taxiway parse warning: ' + e.message); }
+  }
+
+  // ── Parse SID + Missed Approach routes from SceneryData ──
+  let sidRunwayMap = {};
+  let runwaySidMap = {};
+  let missedAppMap = {};
+  let runwayMissedAppMap = {};
+  let sidPaths = {};
+  let missedAppPaths = {};
+  if (firstAclText) {
+    try {
+      const { extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('./sid_goaround');
+      const sidMappings = extractSidRunwayMappings(firstAclText);
+      sidRunwayMap = sidMappings.sidRunwayMap || {};
+      runwaySidMap = sidMappings.runwaySidMap || {};
+      const maMappings = extractMissedApproachMappings(firstAclText);
+      missedAppMap = maMappings.missedAppMap || {};
+      runwayMissedAppMap = maMappings.runwayMissedAppMap || {};
+      sidPaths = buildSidPaths(firstAclText, sidRunwayMap);
+      missedAppPaths = buildMissedApproachPaths(firstAclText, missedAppMap);
+    } catch (e) { log('  SID/go-around parse warning: ' + e.message); }
+  }
+
   // Compute per-airport coordinate scale from runway threshold geometry
   const airportScale = firstAclText
     ? computeAirportScale(firstAclText)
@@ -2361,6 +2391,9 @@ function buildApproachCache(airportDir) {
       fileTypeMaps.size + ' file typeMaps, ' + state5ParamsMap.size + ' state5 route combos, ' +
       Object.keys(starPaths).length + ' star paths (' +
       Object.keys(starMappings.starRunwayMap).length + ' STARs from SceneryData), ' +
+      taxiwayPaths.paths.length + ' taxiway paths, ' +
+      Object.keys(sidPaths).length + ' SID paths, ' +
+      Object.keys(missedAppPaths).length + ' missed approach paths, ' +
       'airportScale=' + (airportScale ? airportScale.toFixed(1) : 'N/A') + ', ' +
       Object.keys(runwayThresholds).length + ' runways');
 
@@ -2373,6 +2406,9 @@ function buildApproachCache(airportDir) {
     starPaths, runwayThresholds, airportScale,
     starRunwayMap: starMappings.starRunwayMap,
     runwayStarMap: starMappings.runwayStarMap,
+    taxiwayPaths,
+    sidRunwayMap, runwaySidMap, sidPaths,
+    missedAppMap, runwayMissedAppMap, missedAppPaths,
   };
 }
 
@@ -2512,6 +2548,13 @@ function serializeApproachCache(cache) {
   if (cache.airportScale != null) { out.airportScale = cache.airportScale; }
   if (cache.starRunwayMap) { out.starRunwayMap = cache.starRunwayMap; }
   if (cache.runwayStarMap) { out.runwayStarMap = cache.runwayStarMap; }
+  if (cache.taxiwayPaths) { out.taxiwayPaths = cache.taxiwayPaths; }
+  if (cache.sidRunwayMap) { out.sidRunwayMap = cache.sidRunwayMap; }
+  if (cache.runwaySidMap) { out.runwaySidMap = cache.runwaySidMap; }
+  if (cache.sidPaths) { out.sidPaths = cache.sidPaths; }
+  if (cache.missedAppMap) { out.missedAppMap = cache.missedAppMap; }
+  if (cache.runwayMissedAppMap) { out.runwayMissedAppMap = cache.runwayMissedAppMap; }
+  if (cache.missedAppPaths) { out.missedAppPaths = cache.missedAppPaths; }
   return out;
 }
 
@@ -2535,6 +2578,13 @@ function deserializeApproachCache(json) {
   if (json.airportScale != null && typeof json.airportScale === 'number') { cache.airportScale = json.airportScale; }
   if (json.starRunwayMap && typeof json.starRunwayMap === 'object') { cache.starRunwayMap = json.starRunwayMap; }
   if (json.runwayStarMap && typeof json.runwayStarMap === 'object') { cache.runwayStarMap = json.runwayStarMap; }
+  if (json.taxiwayPaths && typeof json.taxiwayPaths === 'object') { cache.taxiwayPaths = json.taxiwayPaths; }
+  if (json.sidRunwayMap && typeof json.sidRunwayMap === 'object') { cache.sidRunwayMap = json.sidRunwayMap; }
+  if (json.runwaySidMap && typeof json.runwaySidMap === 'object') { cache.runwaySidMap = json.runwaySidMap; }
+  if (json.sidPaths && typeof json.sidPaths === 'object') { cache.sidPaths = json.sidPaths; }
+  if (json.missedAppMap && typeof json.missedAppMap === 'object') { cache.missedAppMap = json.missedAppMap; }
+  if (json.runwayMissedAppMap && typeof json.runwayMissedAppMap === 'object') { cache.runwayMissedAppMap = json.runwayMissedAppMap; }
+  if (json.missedAppPaths && typeof json.missedAppPaths === 'object') { cache.missedAppPaths = json.missedAppPaths; }
   return cache;
 }
 

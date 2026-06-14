@@ -1,0 +1,139 @@
+.air-map {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #000000;
+}
+
+.air-map-svg {
+  display: block;
+  cursor: grab;
+}
+.air-map-svg:active {
+  cursor: grabbing;
+}
+
+.air-map-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--text-muted);
+}
+
+.air-map-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--red);
+  font-size: 14px;
+}
+
+.air-map-aircraft-group {
+  cursor: pointer;
+}
+
+.air-map-heading-line {
+  stroke: #ffffff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.air-map-aircraft-icon {
+  fill: var(--text);
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  pointer-events: none;
+}
+
+.air-map-aircraft-label {
+  fill: var(--text);
+  font-weight: 600;
+  pointer-events: none;
+  user-select: none;
+}
+
+.air-map-route-label {
+  pointer-events: none;
+  user-select: none;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.7);
+  stroke-width: 3;
+}
+
+.air-map-reset-btn {
+  cursor: pointer;
+}
+.air-map-reset-btn:hover {
+  fill: white;
+}
+
+.air-map-refresh-btn {
+  position: absolute;
+  bottom: 48px;
+  right: 12px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: inherit;
+  transition: all var(--transition);
+  white-space: nowrap;
+  user-select: none;
+}
+.air-map-refresh-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-color: var(--border);
+}
+.air-map-refresh-btn:active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.air-map-bg-toggle {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: inherit;
+  transition: all var(--transition);
+  white-space: nowrap;
+  user-select: none;
+}
+.air-map-bg-toggle:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-color: var(--border);
+}
+.air-map-bg-toggle:active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.air-map-bg-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}

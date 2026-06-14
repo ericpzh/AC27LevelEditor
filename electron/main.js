@@ -7,12 +7,13 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, computePosition, computeDirection, computeApproachCap } = require('../src/acl/parser');
-const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT } = require('../src/acl/constants');
-
-const CACHE_VERSION = 7; // Bump when cache.json schema changes (airportScale added to approachData)
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
+const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendUdpCommand } = require('./udp_listener');
 
 let mainWindow;
+const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
+const airMapWindows = new Map();    // key: airportIcao → BrowserWindow
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
 
@@ -58,6 +59,72 @@ async function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+}
+
+// ─── Map window management ─────────────────────────────────────
+
+// ─── Radar window helpers ──────────────────────────────────────
+
+function notifyRadarClosed(icao, type) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('radar-window-closed', { icao, type });
+  }
+}
+
+function openGroundMapWindow(airportIcao, gameRoot) {
+  const key = airportIcao;
+  const existing = groundMapWindows.get(key);
+  if (existing && !existing.isDestroyed()) { existing.focus(); return; }
+  const isDev = !app.isPackaged;
+  const win = new BrowserWindow({
+    width: 900, height: 700, minWidth: 500, minHeight: 400,
+    title: airportIcao + ' Surface Radar',
+    parent: mainWindow,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  const rootParam = encodeURIComponent(gameRoot || '');
+  if (isDev) {
+    win.loadURL('http://localhost:5173/?window=groundMap&airport=' + airportIcao + '&root=' + rootParam);
+  } else {
+    win.loadURL('file://' + path.join(__dirname, '..', 'dist', 'index.html') + '?window=groundMap&airport=' + airportIcao + '&root=' + rootParam);
+  }
+  win.on('closed', () => { groundMapWindows.delete(key); notifyRadarClosed(airportIcao, 'ground'); });
+  groundMapWindows.set(key, win);
+}
+
+function openAirMapWindow(airportIcao, gameRoot) {
+  const key = airportIcao;
+  const existing = airMapWindows.get(key);
+  if (existing && !existing.isDestroyed()) { existing.focus(); return; }
+  const isDev = !app.isPackaged;
+  const win = new BrowserWindow({
+    width: 900, height: 700, minWidth: 500, minHeight: 400,
+    title: airportIcao + ' Approach Radar',
+    parent: mainWindow,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  const rootParam = encodeURIComponent(gameRoot || '');
+  if (isDev) {
+    win.loadURL('http://localhost:5173/?window=airMap&airport=' + airportIcao + '&root=' + rootParam);
+  } else {
+    win.loadURL('file://' + path.join(__dirname, '..', 'dist', 'index.html') + '?window=airMap&airport=' + airportIcao + '&root=' + rootParam);
+  }
+  win.on('closed', () => { airMapWindows.delete(key); notifyRadarClosed(airportIcao, 'air'); });
+  airMapWindows.set(key, win);
+}
+
+function closeGroundMapWindow(airportIcao) {
+  const key = airportIcao;
+  const win = groundMapWindows.get(key);
+  if (win && !win.isDestroyed()) { win.close(); }
+  groundMapWindows.delete(key);
+}
+
+function closeAirMapWindow(airportIcao) {
+  const key = airportIcao;
+  const win = airMapWindows.get(key);
+  if (win && !win.isDestroyed()) { win.close(); }
+  airMapWindows.delete(key);
 }
 
 // ─── IPC: Select game root ───────────────────────────────
@@ -219,6 +286,29 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
     }
   }
   aclValues._runwayThresholds = runwayThresholds;
+
+  // Include taxiway paths (for GroundMap)
+  aclValues._taxiwayPaths = cached?.approachData?.taxiwayPaths || { paths: [] };
+
+  // Build runway rectangles for GroundMap (original endpoints, not 3x extended)
+  aclValues._runwayData = {};
+  if (cached?.approachData?.runwayThresholds) {
+    const rwyThresh = cached.approachData.runwayThresholds;
+    for (const [name, entry] of Object.entries(rwyThresh)) {
+      if (entry.thresholds && entry.thresholds.length === 2) {
+        aclValues._runwayData[name] = {
+          thresholds: entry.thresholds,
+          width: 0.50,  // default runway width in game units (50m at 100m/unit scale)
+        };
+      }
+    }
+  }
+
+  // Include SID + Missed Approach paths (for AirMap)
+  aclValues._sidPaths = cached?.approachData?.sidPaths || {};
+  aclValues._missedAppPaths = cached?.approachData?.missedAppPaths || {};
+  aclValues._sidRunwayMap = cached?.approachData?.sidRunwayMap || {};
+  aclValues._runwaySidMap = cached?.approachData?.runwaySidMap || {};
 
   return aclValues;
 });
@@ -1614,11 +1704,53 @@ ipcMain.handle('reload-acl', async (_event, filePath) => {
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 
+// ─── IPC: Map window launchers ──────────────────────────────
+
+ipcMain.handle('open-ground-map', async (_e, airportIcao, gameRoot) => { openGroundMapWindow(airportIcao, gameRoot); });
+ipcMain.handle('open-air-map', async (_e, airportIcao, gameRoot) => { openAirMapWindow(airportIcao, gameRoot); });
+ipcMain.handle('close-ground-map', async (_e, airportIcao) => { closeGroundMapWindow(airportIcao); });
+ipcMain.handle('close-air-map', async (_e, airportIcao) => { closeAirMapWindow(airportIcao); });
+
+// ─── IPC: UDP telemetry status & state queries ──────────────
+
+ipcMain.handle('get-udp-status', async () => getUdpStatus());
+ipcMain.handle('get-udp-aircraft-state', async () => getUdpAircraftState());
+ipcMain.handle('reset-udp-aircraft', async () => { resetAircraftState(); return { success: true }; });
+
+// ─── IPC: Send UDP command to game (SelectAircraft, etc.) ───
+
+ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
+  try {
+    const buf = Buffer.from(payloadB64, 'base64');
+    return await sendUdpCommand(commandId, buf);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 app.whenReady().then(() => {
   console.log('[APP] Ready, creating window...');
   console.log('[APP] __dirname:', __dirname);
   console.log('[APP] userData:', app.getPath('userData'));
   createWindow();
+
+  // Start UDP telemetry listener
+  startUdpListener();
+
+  // Push live aircraft state to open map windows at 200ms
+  setInterval(() => {
+    const state = getUdpAircraftState();
+    for (const win of groundMapWindows.values()) {
+      if (win && !win.isDestroyed()) win.webContents.send('udp-aircraft-state', state);
+    }
+    for (const win of airMapWindows.values()) {
+      if (win && !win.isDestroyed()) win.webContents.send('udp-aircraft-state', state);
+    }
+  }, 200);
+});
+
+app.on('will-quit', () => {
+  stopUdpListener();
 });
 
 app.on('window-all-closed', () => {

@@ -54,6 +54,14 @@ export const useAppStore = create((set, get) => ({
   _currentDateTime: null,
   isDemo: false,
 
+  // ─── Radar window tracking (ICAO codes of open windows) ───
+  openGroundRadarAirports: new Set(),
+  openAirRadarAirports: new Set(),
+
+  // ─── UDP health ───
+  udpConnected: false,
+  udpCurrentAirport: null,
+
   // ─── Modal (declarative) ───
   modal: { open: false, title: '', body: null, actions: null, closeable: true, headerRight: null, showLangToggle: false },
 
@@ -360,6 +368,23 @@ export const useAppStore = create((set, get) => ({
   hideModal: () => set({
     modal: { open: false, title: '', body: null, actions: null, closeable: true, headerRight: null, showLangToggle: false },
   }),
+
+  // ─── Actions: Radar windows ───
+  setGroundRadarOpen: (icao, open) => set((s) => {
+    const next = new Set(s.openGroundRadarAirports);
+    if (open) next.add(icao); else next.delete(icao);
+    return { openGroundRadarAirports: next };
+  }),
+  setAirRadarOpen: (icao, open) => set((s) => {
+    const next = new Set(s.openAirRadarAirports);
+    if (open) next.add(icao); else next.delete(icao);
+    return { openAirRadarAirports: next };
+  }),
+  isGroundRadarOpen: (icao) => get().openGroundRadarAirports.has(icao),
+  isAirRadarOpen: (icao) => get().openAirRadarAirports.has(icao),
+
+  // ─── Actions: UDP ───
+  setUdpStatus: (connected, currentAirport) => set({ udpConnected: connected, udpCurrentAirport: currentAirport }),
 
   // ─── Actions: Theme ───
   toggleTheme: () => {

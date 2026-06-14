@@ -46,6 +46,11 @@ const { createZip, listZipFiles, extractZip } = require('../utils/zipUtils');
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson, serializeUnityJson, isUnityJson } = require('./acl_json');
 const { AclDocument } = require('./acl_document');
+const { parseTaxiwayPaths } = require('./taxiway');
+const {
+  extractSidRunwayMappings, extractMissedApproachMappings,
+  buildSidPaths, buildMissedApproachPaths,
+} = require('./sid_goaround');
 
 // ─── Load flights from ACL (single source of truth) ───────────
 
@@ -185,6 +190,10 @@ module.exports = {
   // New object-based parser (v1.0.10+)
   createTokenizer, preprocessUnityJson, serializeUnityJson, isUnityJson,
   AclDocument,
+  // Taxiway + SID / Missed Approach parsers
+  parseTaxiwayPaths,
+  extractSidRunwayMappings, extractMissedApproachMappings,
+  buildSidPaths, buildMissedApproachPaths,
   // Internal exports (used by tests)
   _parseWorldStateData, _parseSceneryData, _parseStandPositions,
   _parseRunwayThresholds,

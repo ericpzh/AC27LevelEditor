@@ -119,6 +119,42 @@
   letter-spacing: 1px;
 }
 
+.airport-card-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-radar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.btn-radar-toggle:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+.btn-radar-toggle.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-radar-toggle.active:hover {
+  background: var(--accent-hover, var(--accent));
+  border-color: var(--accent-hover, var(--accent));
+}
+
 /* Level rows */
 .level-row {
   display: grid;

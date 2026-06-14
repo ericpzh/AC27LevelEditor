@@ -1,0 +1,86 @@
+.ground-map {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #0a1628;
+}
+
+.ground-map-svg {
+  display: block;
+  cursor: grab;
+}
+.ground-map-svg:active {
+  cursor: grabbing;
+}
+
+.ground-map-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--text-muted);
+}
+
+.ground-map-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--red);
+  font-size: 14px;
+}
+
+.ground-map-aircraft-group {
+  cursor: pointer;
+}
+
+.ground-map-aircraft-icon {
+  fill: var(--text);
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  pointer-events: none;
+}
+
+.ground-map-aircraft-label {
+  fill: var(--text);
+  pointer-events: none;
+  user-select: none;
+}
+
+.ground-map-refresh-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: inherit;
+  transition: all var(--transition);
+  white-space: nowrap;
+  user-select: none;
+}
+.ground-map-refresh-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-color: var(--border);
+}
+.ground-map-refresh-btn:active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ground-map-reset-btn {
+  cursor: pointer;
+}
+.ground-map-reset-btn:hover {
+  fill: white;
+}
