@@ -893,6 +893,8 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
     segAfter = _expandShortFormTypes(segAfter, typeMap);
     log('Expanded short-form $type refs in preserved segments');
   }
+  segAfter = _fixSingletonStateRefs(segAfter, typeMap);
+
   // 7. Update $rlength in Aircrafts
   let segBeforeMod = segBefore;
   const acMarker = segBeforeMod.lastIndexOf('"Aircrafts"');
@@ -1082,6 +1084,99 @@ function _expandShortFormTypes(text, typeMap) {
   });
   // Restore protected CurrentDateTime blocks
   return expanded.replace(/<<<CDT_BLOCK_(\d+)>>>/g, (_, idx) => protectedBlocks[parseInt(idx, 10)]);
+}
+
+/**
+ * Fix dangling $iref references in the SingletonStates section.
+ *
+ * The Aircrafts rebuild replaces the entire Aircrafts $rcontent, which may
+ * contain $id definitions that GameEventScheduler.EventQueue and
+ * EventLogger.History reference via $iref.  After rebuild those $id
+ * definitions are gone, but the $iref pointers in segAfter remain —
+ * causing the game to crash on EventLogger.Load (NullReferenceException
+ * inside LinkedList constructor).
+ *
+ * When EventQueue is a $iref, we replace it with an inline empty
+ * AircraftEvent[] and update History to point to the new inline queue.
+ * This matches the pattern used by the game in healthy files (e.g.
+ * ZSJN_19-21.acl).
+ *
+ * @param {string} segAfter — preserved segment after FlightPlans
+ * @param {Map<number,string>} typeMap — per-file type-number → type-name mapping
+ * @returns {string} segAfter with dangling $iref references patched
+ */
+function _fixSingletonStateRefs(segAfter, typeMap) {
+  const tok = createTokenizer(segAfter);
+
+  // Locate EventQueue inside GameEventScheduler
+  const eq = tok.findSection('EventQueue');
+  if (!eq) return segAfter;
+
+  const eqVal = tok.substring(eq.valueStart, eq.valueEnd);
+  if (!eqVal.startsWith('$iref:')) return segAfter; // already inline, healthy
+
+  const eqRefNum = parseInt(eqVal.substring(6), 10);
+
+  // Resolve AircraftEvent[] type number from per-file typeMap
+  let evtTypeNum = null;
+  if (typeMap) {
+    for (const [num, name] of typeMap) {
+      if (name === 'ContextCross.Events.AircraftEvent[], GroundATC.Core') {
+        evtTypeNum = num;
+        break;
+      }
+    }
+  }
+
+  // Generate a unique $id that doesn't collide with anything in segAfter
+  let maxId = 0;
+  let idSearch = 0;
+  while ((idSearch = segAfter.indexOf('"$id":', idSearch)) !== -1) {
+    idSearch += 6;
+    while (idSearch < segAfter.length && segAfter[idSearch] === ' ') idSearch++;
+    let num = '';
+    while (idSearch < segAfter.length && segAfter[idSearch] >= '0' && segAfter[idSearch] <= '9') {
+      num += segAfter[idSearch++];
+    }
+    if (num) maxId = Math.max(maxId, parseInt(num, 10));
+  }
+  const newId = maxId + 1;
+
+  // Build inline empty AircraftEvent[] queue
+  const typeStr = evtTypeNum !== null
+    ? `"$type": "${evtTypeNum}|ContextCross.Events.AircraftEvent[], GroundATC.Core"`
+    : '"$type": 46';
+  const newQueue = `{\n                            "$id": ${newId},\n                            ${typeStr},\n                            "$rlength": 0,\n                            "$rcontent": [\n                            ]\n                        }`;
+
+  // Replace EventQueue $iref with inline queue
+  let result = segAfter.substring(0, eq.valueStart) + newQueue + segAfter.substring(eq.valueEnd);
+
+  // Update History $iref in EventLogger
+  const histTok = createTokenizer(result);
+  const hist = histTok.findSection('History');
+  if (hist) {
+    const histVal = histTok.substring(hist.valueStart, hist.valueEnd);
+    if (histVal.startsWith('$iref:')) {
+      const histRefNum = parseInt(histVal.substring(6), 10);
+      // If History references the same (now-replaced) queue, point it to the new one
+      if (histRefNum === eqRefNum) {
+        const newRef = `$iref:${newId}`;
+        result = result.substring(0, hist.valueStart) + newRef + result.substring(hist.valueEnd);
+      } else {
+        // History references a different $iref — also dangling.  Create a
+        // second inline empty queue for it.
+        const histNewId = newId + 1;
+        const histQueue = `{\n                            "$id": ${histNewId},\n                            ${typeStr},\n                            "$rlength": 0,\n                            "$rcontent": [\n                            ]\n                        }`;
+        // We need to find History *position* in result (already have it from
+        // histTok above) and replace.  But we also need to fix the EventLogger
+        // block so History gets the inline queue.  The cleanest approach:
+        // replace the History $iref with the inline queue directly.
+        result = result.substring(0, hist.valueStart) + histQueue + result.substring(hist.valueEnd);
+      }
+    }
+  }
+
+  return result;
 }
 
 /**

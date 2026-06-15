@@ -51,11 +51,7 @@ export default function SetupScreen() {
           </ol>
           <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>C:\Program Files (x86)\Steam\steamapps\common\Airport Control 25 Playtest</code> {t('setup_steam_path_or')} <code>D:\SteamLibrary\steamapps\common\Airport Control 27 Demo</code></p>
         </div>
-        <div className="setup-nightly-note">
-          <span className="setup-nightly-icon">⚠️</span>
-          <span dangerouslySetInnerHTML={{ __html: t('setup_nightly') }} />
-        </div>
-        <button className="btn-big" onClick={handleSelectRoot} disabled={loading}>
+<button className="btn-big" onClick={handleSelectRoot} disabled={loading}>
           {loading ? '...' : <><IoFolderOpenOutline size={16} className="btn-icon" />{t('setup_select_root')}</>}
         </button>
         {error && <p className="setup-error">{error}</p>}

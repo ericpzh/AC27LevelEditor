@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.4)
+- **Name:** `ac27-level-editor` (v1.1.5)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -443,9 +443,11 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
    - (d) STAR/runway combination validation — flags flights where the assigned STAR is not valid for the assigned runway (per SceneryData Type=0 Routes via `starRunwayMap`)
    - (e) Duplicate registration validation — flags flights where the same Registration appears in multiple departure or arrival flights (see below)
 2. **Wind speed conversion:** Wind speeds are converted from knots (store) back to the airport's native unit (e.g., mps) before being sent to IPC handlers. This ensures `wind_timeline.json` and the ACL both contain values in the unit the game expects.
-3. `save-acl` IPC → sorts flights → looks up approach cache for the airport → generates full ACL:
+3. `save-acl` IPC → sorts flights → looks up approach cache for the airport → generates full ACL via `_rebuildWorldStateSections()`:
    - FlightPlans rebuilt from scratch with new GUIDs
    - **AircraftState entries generated for arrival flights** where `0 < ProgressRatio < 1.0` (mid-approach at snapshot time), using `approach.js` verified algorithm: AppPointList lookup, FlyApproach resolution from SceneryData, PR formula, Position/Direction interpolation
+   - **Preserved segments patched:** `_expandShortFormTypes()` expands short-form `$type: N` references in `segBefore`/`segAfter` to full-form so Unity deserialization survives the Aircrafts rebuild. `_fixSingletonStateRefs()` replaces dangling `$iref` references in `GameEventScheduler.EventQueue` / `EventLogger.History` with inline empty `AircraftEvent[]` queues — these `$iref` targets lived in the original Aircrafts `$rcontent` and are lost after rebuild.
+   - `_resetJetwayDockingState()` clears orphaned `DockingAircraftGuid` values in the preserved Jetways section (old aircraft GUIDs no longer exist)
    - Writes `.acl` + `.csv`
    - **Demo `.demo.acl` files treated identically** — save writes to `.demo.acl` + same shared `.csv` + shared timeline `.json` files
 4. Timeline saves (separate IPC per type) → writes JSON files
@@ -851,9 +853,10 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 
 ### Demo .acl File Handling (v1.0.9+)
 
-The game ships four 30-minute `.demo.acl` slice levels:
+The game ships four 30-minute `.demo.acl` slice levels plus one `_emerg` emergency-scenario level:
 - `ZSJN-Morning_120min.demo.acl` (05:45–06:15)
 - `ZSJN_07-10.demo.acl` (07:30–08:00)
+- `ZSJN_17-19_emerg.acl` — emergency scenario, **not** a 30-min demo slice (no time filtering)
 - `KJFK_09-11.demo.acl` (09:30–10:00)
 - `KJFK_20-22.demo.acl` (20:30–21:00)
 
@@ -862,11 +865,15 @@ The game ships four 30-minute `.demo.acl` slice levels:
 - FlightPlans, scenery, and file references are identical to the parent `.acl`
 - No matching `.aclcfg` exists — Config is read from the `.acl` file itself
 
+**`_emerg` files:** Emergency-scenario files (filenames containing `_emerg`) are regular levels, not 30-minute demo slices. The `_isEmerFile()` helper in `electron/main.js` detects them and skips the 30-min `_filterDemoFlights()` time window. When rooted in the Demo game, `_emerg` files are shown alongside `.demo.acl` files via the `DEMO_VISIBLE_BASES` whitelist in `src/utils/constants.js`.
+
+**Demo mode visibility:** The `DEMO_VISIBLE_BASES` Set in `src/utils/constants.js` is a whitelist of base filenames (without `.acl` or `.demo.acl` extension) that are visible when browsing the demo game root. `demoBaseName(filename)` strips extensions for matching. Update this set when demo levels are added or removed.
+
 **Editor behavior:**
 - `.demo.acl` files are treated as **normal levels** — always visible, no tags, no hiding
-- **Demo mode** (root path contains "Airport Control 27 Demo"): only `.demo.acl` files are shown
-- **On load:** flights are filtered to a 30-minute window starting at `CurrentDateTime` via `_filterDemoFlights()` — centralized helper shared across load, save, import, and restore paths. Uses integer-minute bounds: `[cdtMin, cdtMin + 30)` (inclusive lower, exclusive upper). Config's `startTime`/`endTime` are overridden to match.
-- **On save:** writes to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`
+- **Demo mode** (root path contains "Airport Control 27 Demo"): only `.demo.acl` files **plus** `_emerg` files listed in `DEMO_VISIBLE_BASES` are shown
+- **On load:** flights in `.demo.acl` files (non-emergency) are filtered to a 30-minute window starting at `CurrentDateTime` via `_filterDemoFlights()` — centralized helper shared across load, save, import, and restore paths. Uses integer-minute bounds: `[cdtMin, cdtMin + 30)` (inclusive lower, exclusive upper). Config's `startTime`/`endTime` are overridden to match. `_emerg` files skip this filter.
+- **On save:** writes to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`. `_emerg` files save normally (no time filtering).
 - **Export/Import:** packs/unpacks `.demo.acl` identically to normal `.acl` files
 - **Approach cache:** includes `.demo.acl` files (unfiltered)
 

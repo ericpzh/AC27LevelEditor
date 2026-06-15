@@ -18,14 +18,6 @@ Tool for editing **Airport Control 27** level files.
 - Default Steam path: `...\SteamLibrary\steamapps\common\Airport Control 27 Demo`
 - The editor auto-scans all airports and their level files
 
-### Get the Nightly Game Build
-
-The editor **only works with the nightly build**:
-
-1. In Steam library, right-click **Airport Control 27 Demo** → **Properties** → **Betas**
-2. Select the **nigtly** branch from the dropdown
-3. Steam will download the update.
-
 ### Restore Game Files
 
 If the editor corrupts level files, Steam can restore the originals:
@@ -59,14 +51,6 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 首次运行时 [Windows Defender](#windowsdefinderzh) 大概率会拦截（正常现象 — EXE 未做代码签名）。允许运行后选择游戏根目录：
 - Playtest 默认路径：`...\SteamLibrary\steamapps\common\Airport Control 27 Playtest`
 - Demo 默认路径：`...\SteamLibrary\steamapps\common\Airport Control 27 Demo`
-
-### 获取 Nightly 游戏版本
-
-编辑器 **仅兼容 nightly版本**。如果你只有 Steam 稳定版，需切换到 nightly 分支：
-
-1. 在 Steam 库中右键 **Airport Control 27 Playtest** 或 **Airport Control 27 Demo** → **属性** → **Betas（测试版）**
-2. 下拉菜单中选择 **nightly** 分支
-3. Steam 会自动下载更新。
 
 ### 恢复游戏文件（Steam 验证完整性）
 

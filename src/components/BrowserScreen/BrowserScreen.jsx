@@ -7,7 +7,7 @@ import { airportDisplayName, airportSortOrder } from '../../utils/constants';
 import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { RE_HIDDEN } from '../../utils/constants';
+import { RE_HIDDEN, DEMO_VISIBLE_BASES, demoBaseName } from '../../utils/constants';
 
 function rescanGuideContent(t) {
   return (
@@ -115,8 +115,14 @@ export default function BrowserScreen() {
       for (const airport of sorted) {
         const infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
         if (isDemo) {
-          // Demo mode: only show .demo.acl files
-          allInfos[airport.icao] = infos.filter(info => info.isDemo);
+          // Demo mode: show .demo.acl files + _emerg.acl files (whitelist)
+          // Non-demo .acl files are hidden unless they are _emerg files
+          allInfos[airport.icao] = infos.filter(info => {
+            const base = demoBaseName(info.filename);
+            if (!DEMO_VISIBLE_BASES.has(base)) return false;
+            if (info.isDemo) return true;
+            return info.filename.includes('_emerg');
+          });
         } else {
           // Normal mode: show production levels + .demo.acl slices; hide tutorial/test/endless/dev/bench/crossrunway/.Prod
           const visible = infos.filter(info => {

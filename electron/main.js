@@ -209,9 +209,10 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
   const results = airport.aclFiles.map((f, i) => {
     const info = getFileInfo(f.path);
     const isDemo = f.filename.endsWith('.demo.acl');
+    const isEmer = _isEmerFile(f.filename);
     info.isDemo = isDemo;
-    // For .demo.acl files, extract CurrentDateTime for 30-min window display
-    if (isDemo) {
+    // For .demo.acl files (non-emergency): extract CurrentDateTime for 30-min window display
+    if (isDemo && !isEmer) {
       try {
         const text = fs.readFileSync(f.path, 'utf-8');
         const cdt = extractCurrentDateTime(text);
@@ -813,7 +814,18 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
   }
 });
 
-// ─── Shared helper: filter .demo.acl flights to 30-min window ───
+// ─── Shared helpers: demo file detection + 30-min window filter ───
+
+/**
+ * Returns true if the file is an emergency scenario (contains _emerg).
+ * Emergency files are regular levels, not 30-minute demo slices,
+ * even when they also end with .demo.acl.
+ * @param {string} filePathOrName
+ * @returns {boolean}
+ */
+function _isEmerFile(filePathOrName) {
+  return filePathOrName.includes('_emerg');
+}
 
 /**
  * For .demo.acl files: filter flights to a 30-minute window starting at
@@ -895,12 +907,13 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
     }
 
     const isDemo = filePath.endsWith('.demo.acl');
-    console.log('[IPC] load-acl: isDemo=' + isDemo + ' flights=' + (data.flights ? data.flights.length : 0) + ' config=' + (config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime) : 'NULL'));
+    const isEmer = _isEmerFile(filePath);
+    console.log('[IPC] load-acl: isDemo=' + isDemo + ' isEmer=' + isEmer + ' flights=' + (data.flights ? data.flights.length : 0) + ' config=' + (config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime) : 'NULL'));
 
-    // For .demo.acl: filter flights to 30-min window at CurrentDateTime
+    // For .demo.acl (non-emergency): filter flights to 30-min window at CurrentDateTime
     let _currentDateTime = null;
     let removedCount = 0;
-    if (isDemo && data.flights && data.flights.length > 0) {
+    if (isDemo && !isEmer && data.flights && data.flights.length > 0) {
       const result = _filterDemoFlights(filePath, data.flights, config);
       data.flights = result.flights;
       config = result.config;
@@ -987,6 +1000,7 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     let aclcfgEndTime = null;
     let config = null;
     const isDemoSave = filePath.endsWith('.demo.acl');
+    const isEmerSave = _isEmerFile(filePath);
     try {
       const text = fs.readFileSync(filePath, 'utf-8');
       config = _extractConfig(text);
@@ -994,12 +1008,12 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
         aclcfgStartTime = config.startTime || null;
         aclcfgEndTime = config.endTime || null;
       }
-      // For .demo.acl files, override startTime/endTime from CDT.
+      // For .demo.acl files (non-emergency), override startTime/endTime from CDT.
       // NOTE: We do NOT override _saveSec from CDT — the wall-clock timestamp
       // is not the scenario save point. saveSec comes from the approach cache's
       // saveTimeOffsets (derived from landingTime - (1-PR)*TAT during init scan).
       const cdt = extractCurrentDateTime(text);
-      if (isDemoSave && cdt && cdt.timeString) {
+      if (isDemoSave && !isEmerSave && cdt && cdt.timeString) {
         aclcfgStartTime = cdt.timeString;
         const endSec = cdt.secSinceMidnight + DEMO_WINDOW_SEC;
         const eh = Math.floor((endSec % 86400) / 3600) % 24;
@@ -1197,6 +1211,7 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     const newAclPath = path.join(dir, aclFile);
     const data = loadFlights(newAclPath);
     const isDemo = aclFile.endsWith('.demo.acl');
+    const isEmer = _isEmerFile(aclFile);
 
     // 6b) Extract config first (needed by demo filter to override startTime/endTime)
     let config = null;
@@ -1204,9 +1219,9 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
       config = _extractConfig(data._rawText);
     }
 
-    // 6c) For .demo.acl: filter flights to 30-min window at CurrentDateTime
+    // 6c) For .demo.acl (non-emergency): filter flights to 30-min window at CurrentDateTime
     let _currentDateTime = null;
-    if (isDemo && data.flights && data.flights.length > 0) {
+    if (isDemo && !isEmer && data.flights && data.flights.length > 0) {
       const result = _filterDemoFlights(newAclPath, data.flights, config);
       data.flights = result.flights;
       config = result.config;
@@ -1335,7 +1350,8 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     // 5b) Demo filtering (same as load-acl handler) — filter flights to 30-min window
     let _currentDateTime = null;
     const isDemo = filePath.endsWith('.demo.acl');
-    if (isDemo && data.flights && data.flights.length > 0) {
+    const isEmer = _isEmerFile(filePath);
+    if (isDemo && !isEmer && data.flights && data.flights.length > 0) {
       const result = _filterDemoFlights(filePath, data.flights, config);
       data.flights = result.flights;
       config = result.config;

@@ -293,5 +293,27 @@ export const COMPASS_CARDINAL = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE
 // ─── File filtering ────────────────────────────────────────
 export const RE_HIDDEN = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
 
+/**
+ * Base filenames (without .acl or .demo.acl extension) that are visible
+ * in demo mode. Only levels in this set appear when browsing the demo game root.
+ * Emergency files (_emerg) are included only when explicitly listed.
+ * Update this set when demo levels are added or removed.
+ */
+export const DEMO_VISIBLE_BASES = new Set([
+  'ZSJN-Morning_120min',
+  'ZSJN_17-19_emerg',
+  'KJFK_09-11',
+  'KJFK_20-22',
+]);
+
+/**
+ * Strip .demo.acl or .acl extension to get the base filename.
+ * @param {string} filename
+ * @returns {string}
+ */
+export function demoBaseName(filename) {
+  return filename.replace(/\.demo\.acl$/, '').replace(/\.acl$/, '');
+}
+
 // ─── Toast types ───────────────────────────────────────────
 export const TOAST_TYPES = { SUCCESS: 'success', ERROR: 'error' };
