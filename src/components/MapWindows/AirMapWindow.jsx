@@ -493,7 +493,7 @@ export default function AirMapWindow({ airportIcao }) {
     const els = [];
     const MIN_TICK = 0.5, MAX_TICK = 2.0;
     // Border rect at 0-100%
-    els.push(<rect key="b" x="0" y="0" width="100" height="100" fill="none" stroke="#fff" strokeWidth="0.12" opacity="1" />);
+    els.push(<rect key="b" x="0" y="0" width="100" height="100" fill="none" stroke="#fff" strokeWidth="0.12" opacity="0.6" />);
     for (let d = 0; d < 360; d += 10) {
       const rad = d * Math.PI / 180, sx = Math.sin(rad), sy = -Math.cos(rad);
       const t = Math.min(Math.abs(sx) < 1e-9 ? 1e9 : 50 / Math.abs(sx), Math.abs(sy) < 1e-9 ? 1e9 : 50 / Math.abs(sy));
@@ -501,11 +501,11 @@ export default function AirMapWindow({ airportIcao }) {
       // Tick length: short at edge centres, long at corners
       const angleFromCardinal = Math.min(d % 90, 90 - (d % 90));
       const tickLen = MIN_TICK + (MAX_TICK - MIN_TICK) * (angleFromCardinal / 45);
-      els.push(<line key={'t'+d} x1={bx} y1={by} x2={bx - sx * tickLen} y2={by - sy * tickLen} stroke="#fff" strokeWidth="0.15" opacity="1" />);
+      els.push(<line key={'t'+d} x1={bx} y1={by} x2={bx - sx * tickLen} y2={by - sy * tickLen} stroke="#fff" strokeWidth="0.15" opacity="0.6" />);
       // Label at the tick endpoint (tick points inward from border)
-      const lx = bx - sx * (tickLen + 0.6);
-      const ly = by - sy * (tickLen + 0.6);
-      els.push(<text key={'l'+d} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="1.2" opacity="1">{String(d).padStart(3, '0')}</text>);
+      const lx = bx - sx * (tickLen + 1.2);
+      const ly = by - sy * (tickLen + 1.2);
+      els.push(<text key={'l'+d} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="1.2" opacity="0.6">{String(d).padStart(3, '0')}</text>);
     }
     return (
       <div className="air-map-border-overlay">
