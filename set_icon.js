@@ -6,7 +6,7 @@ const { rcedit } = require('rcedit');
 async function main() {
   const pngPath = path.join(__dirname, 'icon.png');
   const icoPath = path.join(__dirname, 'icon.ico');
-  const exePath = path.join(__dirname, 'dist', 'AC27 Level Editor.exe');
+  const exePath = process.argv[2] || path.join(__dirname, 'dist', 'AC27 Level Editor.exe');
 
   // 1. Convert PNG to ICO with multiple sizes
   console.log('Converting icon.png to icon.ico...');

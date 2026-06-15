@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g. v1.0.0)'
+        description: 'Version tag (e.g. v1.0.0) — used for manual release'
         required: false
         default: ''
 
@@ -31,6 +31,9 @@ jobs:
         run: npm run build:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Embed icon
+        run: node set_icon.js release/AC27LevelEditor.exe
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
