@@ -634,6 +634,7 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
 6. Runway thresholds — runway-width lines connecting threshold pairs.
 7. Border overlay — independent SVG with white border rect and 10° tick marks with degree labels.
 8. Live airborne aircraft — filtered to `position.y > 1.0`:
+   - **Direction-based coloring:** Outbound aircraft (`flightDirection === 0`) render with green labels/indicators (`#66ff66`); inbound aircraft (`flightDirection === 1`) use white. Dots remain `#1a4a8a` blue for all. Selected aircraft always get yellow highlights.
    - **Circle:** Small colored circle at aircraft position (unselected) or yellow (selected)
    - **Trail dots:** Ring buffer of historical positions (max 5 snapshots, minimum 600-tick gap), rendered as shrinking circles with decreasing opacity
    - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale

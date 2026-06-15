@@ -611,7 +611,8 @@ export default function AirMapWindow({ airportIcao }) {
 
               {/* Live air aircraft — trail circles */}
               {airAircraft.map((ac) => {
-                const color = '#1a4a8a';
+                const isDeparture = ac.flightDirection === 0;
+                const labelColor = isDeparture ? '#66ff66' : '#ffffff';
                 const trail = ac.trail || [];
                 // Sort by age ascending (current first)
                 const sorted = [...trail].sort((a, b) => a.age - b.age);
@@ -636,7 +637,7 @@ export default function AirMapWindow({ airportIcao }) {
                       const sy = svgY(t.z);
                       return (
                         <circle key={'t' + t.age} cx={t.x} cy={sy} r={r}
-                          fill={color} opacity={opacity}
+                          fill="#1a4a8a" opacity={opacity}
                         />
                       );
                     })}
@@ -648,16 +649,16 @@ export default function AirMapWindow({ airportIcao }) {
                         textAnchor="middle"
                         dominantBaseline="middle"
                         fontSize={fontSize * 1.15}
-                        fill={ac.callSign === selectedCallSign ? '#ffff00' : '#ffffff'}
+                        fill={ac.callSign === selectedCallSign ? '#ffff00' : labelColor}
                         fontWeight="bold"
-                      >{ac.flightDirection === 0 ? 'D' : 'A'}</text>
+                      >{isDeparture ? 'D' : 'A'}</text>
                     )}
                     {/* Connector line from dot to label anchor */}
                     {conn && (
                       <line
                         x1={sorted[0].x} y1={svgY(sorted[0].z)}
                         x2={conn.x} y2={conn.y}
-                        stroke="#ffffff" strokeWidth={fontSize * 0.04} opacity="0.6"
+                        stroke={labelColor} strokeWidth={fontSize * 0.04} opacity="0.6"
                       />
                     )}
                     {/* Heading line for selected aircraft */}
@@ -672,7 +673,7 @@ export default function AirMapWindow({ airportIcao }) {
                     {/* Callsign label at current position */}
                     {conn && (() => {
                       const isSel = ac.callSign === selectedCallSign;
-                      const labelColor = isSel ? '#ffff00' : '#ffffff';
+                      const callLabelColor = isSel ? '#ffff00' : labelColor;
                       const altFt = Math.round(ac.position.y / 0.3048);
                       const altStr = String(altFt).padStart(3, '0');
                       return (
@@ -681,7 +682,7 @@ export default function AirMapWindow({ airportIcao }) {
                         y={refY}
                         textAnchor="start"
                         fontSize={fontSize}
-                        fill={labelColor}
+                        fill={callLabelColor}
                       >
                         {emergencyCallSign === ac.callSign && (
                           <tspan x={refX} dy="-2.4em" className="air-map-em-label">EM</tspan>
