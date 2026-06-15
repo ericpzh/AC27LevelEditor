@@ -14,6 +14,7 @@ const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAirc
 let mainWindow;
 const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
 const airMapWindows = new Map();    // key: airportIcao → BrowserWindow
+const selectedCallSigns = new Map(); // key: airportIcao → callSign | null (synced across ground+air map)
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
 
@@ -88,6 +89,15 @@ function notifyRadarClosed(icao, type) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('radar-window-closed', { icao, type });
   }
+}
+
+/** Broadcast selected aircraft change to ALL map windows for a given airport. */
+function broadcastSelectedAircraft(icao, callSign) {
+  const data = { icao, callSign: callSign || null };
+  const gw = groundMapWindows.get(icao);
+  if (gw && !gw.isDestroyed()) gw.webContents.send('aircraft-selected-in-map', data);
+  const aw = airMapWindows.get(icao);
+  if (aw && !aw.isDestroyed()) aw.webContents.send('aircraft-selected-in-map', data);
 }
 
 function openGroundMapWindow(airportIcao, gameRoot) {
@@ -1754,6 +1764,26 @@ ipcMain.handle('open-ground-map', async (_e, airportIcao, gameRoot) => { openGro
 ipcMain.handle('open-air-map', async (_e, airportIcao, gameRoot) => { openAirMapWindow(airportIcao, gameRoot); });
 ipcMain.handle('close-ground-map', async (_e, airportIcao) => { closeGroundMapWindow(airportIcao); });
 ipcMain.handle('close-air-map', async (_e, airportIcao) => { closeAirMapWindow(airportIcao); });
+
+// ─── IPC: Aircraft selection sync (linked across ground + air map) ──
+
+ipcMain.handle('select-aircraft-in-map', async (_e, airportIcao, callSign) => {
+  if (callSign) {
+    selectedCallSigns.set(airportIcao, callSign);
+    // Send SelectAircraft UDP command to game
+    const buf = Buffer.alloc(12);
+    buf.write(callSign, 0, 12, 'ascii');
+    sendUdpCommand(1, buf);
+  } else {
+    selectedCallSigns.delete(airportIcao);
+  }
+  broadcastSelectedAircraft(airportIcao, callSign || null);
+  return { success: true };
+});
+
+ipcMain.handle('get-selected-aircraft', async (_e, airportIcao) => {
+  return { callSign: selectedCallSigns.get(airportIcao) || null };
+});
 
 // ─── IPC: UDP telemetry status & state queries ──────────────
 

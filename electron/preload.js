@@ -61,6 +61,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeAirMap: (airportIcao) => ipcRenderer.invoke('close-air-map', airportIcao),
   onRadarWindowClosed: (cb) => ipcRenderer.on('radar-window-closed', (_e, data) => cb(data)),
 
+  // Linked aircraft selection (synced across ground + air map for same airport)
+  selectAircraftInMap: (airportIcao, callSign) => ipcRenderer.invoke('select-aircraft-in-map', airportIcao, callSign || null),
+  getSelectedAircraft: (airportIcao) => ipcRenderer.invoke('get-selected-aircraft', airportIcao),
+  _selectedAircraftHandlers: new Map(),
+  onAircraftSelectedInMap: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._selectedAircraftHandlers.set(cb, handler);
+    ipcRenderer.on('aircraft-selected-in-map', handler);
+  },
+  offAircraftSelectedInMap: function (cb) {
+    const handler = this._selectedAircraftHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('aircraft-selected-in-map', handler);
+      this._selectedAircraftHandlers.delete(cb);
+    }
+  },
+
   // ─── UDP telemetry ───────────────────────────────────────
   getUdpStatus: () => ipcRenderer.invoke('get-udp-status'),
   getUdpAircraftState: () => ipcRenderer.invoke('get-udp-aircraft-state'),

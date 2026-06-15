@@ -1,0 +1,196 @@
+/* ─── Map Help overlay ───────────────────────────────────── */
+#map-help-overlay {
+  position: fixed; inset: 0;
+  background: var(--overlay);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* ─── Content box ─────────────────────────────────────────── */
+#map-help-box {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 90vw;
+  max-width: 700px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+  animation: mapHelpFadeIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes mapHelpFadeIn {
+  from { opacity: 0; transform: scale(0.96) translateY(-8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+/* ─── Header ──────────────────────────────────────────────── */
+#map-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky; top: 0;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  z-index: 2;
+}
+
+#map-help-header h2 {
+  margin: 0; font-size: 17px; font-weight: 700; color: var(--text);
+}
+
+#map-help-header button {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-secondary); border-radius: var(--radius-sm);
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 14px; transition: all var(--transition);
+}
+#map-help-header button:hover {
+  background: var(--bg); color: var(--text); border-color: var(--text-muted);
+}
+
+/* ─── Body (scrollable) ───────────────────────────────────── */
+#map-help-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 28px;
+  scroll-behavior: smooth;
+}
+
+/* ─── Sections ────────────────────────────────────────────── */
+.map-help-section {
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.map-help-section:last-of-type { border-bottom: none; margin-bottom: 0; }
+
+.map-help-section h2 {
+  margin: 0 0 10px; font-size: 15px; font-weight: 700; color: var(--text);
+}
+
+.map-help-section p {
+  margin: 0 0 8px; font-size: 13px; line-height: 1.8; color: var(--text-secondary);
+}
+.map-help-section p:last-child { margin-bottom: 0; }
+
+/* ─── Inline button visual (matches real sidebar toggle/knob) ─ */
+.map-help-btn-inline {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+  margin: 0 2px;
+  user-select: none;
+  min-width: 42px;
+}
+
+/* Miniature version of .air-map-toggle-knob */
+.map-help-btn-knob-visual {
+  width: 30px;
+  height: 17px;
+  border-radius: 3px;
+  border: none;
+  /* Raised (out) state — matches the real sidebar toggle */
+  background: linear-gradient(180deg, #5a5a5a 0%, #3a3a3a 40%, #2a2a2a 100%);
+  box-shadow:
+    0 2px 0 #1a1a1a,
+    0 3px 5px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Knob-type buttons get a circular visual */
+.map-help-btn-knob .map-help-btn-knob-visual {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #6a6a6a 0%, #3a3a3a 60%, #1a1a1a 100%);
+  box-shadow:
+    0 2px 0 #111,
+    0 3px 5px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: transform 0.15s ease;
+}
+
+/* Knob spin animation on hover */
+.map-help-btn-knob:hover .map-help-btn-knob-visual {
+  transform: rotate(30deg);
+}
+
+/* Active (pushed in) state — matches .air-map-toggle.active */
+.map-help-btn-inline.active .map-help-btn-knob-visual {
+  transform: translateY(2px) scale(0.96);
+  background: linear-gradient(180deg, #2a6090 0%, #1a4060 40%, #102838 100%);
+  box-shadow:
+    0 1px 0 #0d1a28,
+    0 0 8px rgba(64, 160, 224, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.map-help-btn-inline.active .map-help-btn-knob-label {
+  color: var(--accent);
+}
+
+/* Knob active override — keep circular shape but blue */
+.map-help-btn-knob.active .map-help-btn-knob-visual {
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #3a7abf 0%, #1a4060 60%, #102838 100%);
+  box-shadow:
+    0 1px 0 #0d1a28,
+    0 0 8px rgba(64, 160, 224, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Push-down animation on click */
+.map-help-btn-inline:active .map-help-btn-knob-visual {
+  animation: mapHelpPushDown 0.12s ease-out forwards;
+}
+@keyframes mapHelpPushDown {
+  0%   { transform: translateY(0) scale(1); }
+  40%  { transform: translateY(2px) scale(0.94); }
+  100% { transform: translateY(1.5px) scale(0.96); }
+}
+
+/* Cursor for clickable toggles */
+.map-help-btn-inline:not(.map-help-btn-knob) {
+  cursor: pointer;
+}
+
+/* Label below the knob — matches .air-map-toggle-label */
+.map-help-btn-knob-label {
+  font-size: 8px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  min-height: 9px;
+}
+
+/* Toggle row: button inline with description */
+.map-help-toggle-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.map-help-toggle-row:last-child { margin-bottom: 0; }
+
+.map-help-toggle-btn {
+  display: flex;
+}
+
+.map-help-toggle-desc {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}

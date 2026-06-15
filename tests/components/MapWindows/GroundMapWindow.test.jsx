@@ -353,9 +353,9 @@ describe('GroundMapWindow', () => {
 
   // ── Click to select aircraft ────────────────────────────────
 
-  it('selects aircraft and sends UDP command on click', async () => {
-    const sendSpy = vi.fn();
-    window.electronAPI.sendUdpCommand = sendSpy;
+  it('selects aircraft via centralized API on click', async () => {
+    const selectSpy = vi.fn();
+    window.electronAPI.selectAircraftInMap = selectSpy;
 
     setupDefaultMocks();
     useUdpAircraftState.mockReturnValue({
@@ -380,7 +380,7 @@ describe('GroundMapWindow', () => {
     const acGroup = container.querySelector('.ground-map-aircraft-group');
     fireEvent.click(acGroup);
 
-    expect(sendSpy).toHaveBeenCalledWith(1, 'CES1234');
+    expect(selectSpy).toHaveBeenCalledWith('ZSJN', 'CES1234');
   });
 
   // ── SVG background click deselects ──────────────────────────

@@ -6,7 +6,8 @@
  * single line segment) and an optional Name for the taxiway segment.
  *
  * Nodes are resolved via the existing _parseTaxiwayNodes() helper.
- * Stand-access segments (both nodes used by stand positions) are excluded.
+ * Stand-access segments (nodes touching stand positions) are marked with
+ * isStandAccess: true so the renderer can style them differently.
  */
 
 const { createTokenizer } = require('./tokenizer');
@@ -59,8 +60,8 @@ function _extractNodesGuids(text) {
 
 /**
  * Build a Set of node GUIDs that are used by stand positions
- * (TailPositionGuid + NosePositionGuid) so we can filter out
- * taxiway segments that are stand-access stubs.
+ * (TailPositionGuid + NosePositionGuid) so we can mark taxiway
+ * segments as stand-access stubs for differentiated rendering.
  */
 function _extractStandNodeGuids(sdText, sdT) {
   const standGuids = new Set();
@@ -87,11 +88,11 @@ function _extractStandNodeGuids(sdText, sdT) {
  *   Nodes:  { $rcontent: [nodeGuid1, nodeGuid2] }
  *   Flags:  integer (1=standard, 2=wider, 4=special)
  *
- * Segments whose nodes are ALL stand-position nodes are excluded
- * (they are stand lead-in stubs, not main taxiways).
+ * Stand-access segments (touching stand-position nodes) are marked with
+ * isStandAccess: true for differentiated rendering (thicker lines).
  *
  * @param {string} aclText - raw ACL file content
- * @returns {{ paths: Array<{ name: string, flags: number, points: Array<{x: number, z: number}> }> }}
+ * @returns {{ paths: Array<{ name: string, flags: number, isStandAccess?: boolean, points: Array<{x: number, z: number}> }> }}
  */
 function parseTaxiwayPaths(aclText) {
   const paths = [];
@@ -106,7 +107,7 @@ function parseTaxiwayPaths(aclText) {
   const sdText = aclText.substring(sdIdx);
   const sdT = createTokenizer(sdText);
 
-  // Build set of stand-associated node GUIDs
+  // Build set of stand-associated node GUIDs for marking stand-access segments
   const standNodeGuids = _extractStandNodeGuids(sdText, sdT);
 
   // Only look for TaxiwaySegments
@@ -150,20 +151,16 @@ function parseTaxiwayPaths(aclText) {
       const flags = _extractInt(actualVBlock, 'Flags') || 1;
       const guids = _extractNodesGuids(actualVBlock);
 
-      // Only keep named segments that don't touch stand nodes
+      // Keep all segments, mark stand-access stubs for differentiated rendering
       if (guids && guids.length >= 2) {
-        if (standNodeGuids.size > 0 && guids.some(g => standNodeGuids.has(g))) {
-          pos = entryEnd;
-          continue;
-        }
-
         const points = [];
         for (const guid of guids) {
           const node = nodesMap.get(guid);
           if (node) points.push({ x: node.x, z: node.z !== undefined ? node.z : node.y });
         }
         if (points.length >= 2) {
-          paths.push({ name, flags, points });
+          const isStandAccess = standNodeGuids.size > 0 && guids.some(g => standNodeGuids.has(g));
+          paths.push({ name, flags, points, ...(isStandAccess && { isStandAccess: true }) });
         }
       }
 

@@ -63,6 +63,28 @@ vi.stubGlobal('electronAPI', {
 
   // Navigation
   onNavBrowser: (cb) => mockIpcOn('nav-browser', cb),
+
+  // ─── Map windows ─────────────────────────────────────────
+  openGroundMap: (airportIcao, gameRoot) => mockIpcInvoke('open-ground-map', airportIcao, gameRoot),
+  openAirMap: (airportIcao, gameRoot) => mockIpcInvoke('open-air-map', airportIcao, gameRoot),
+  closeGroundMap: (airportIcao) => mockIpcInvoke('close-ground-map', airportIcao),
+  closeAirMap: (airportIcao) => mockIpcInvoke('close-air-map', airportIcao),
+  onRadarWindowClosed: (cb) => mockIpcOn('radar-window-closed', cb),
+
+  // Linked aircraft selection (synced across ground + air map)
+  selectAircraftInMap: (airportIcao, callSign) => mockIpcInvoke('select-aircraft-in-map', airportIcao, callSign),
+  getSelectedAircraft: (airportIcao) => mockIpcInvoke('get-selected-aircraft', airportIcao),
+  onAircraftSelectedInMap: (cb) => mockIpcOn('aircraft-selected-in-map', cb),
+  offAircraftSelectedInMap: (cb) => { /* unsubscribe */ },
+
+  // ─── UDP telemetry ───────────────────────────────────────
+  getUdpStatus: () => mockIpcInvoke('get-udp-status'),
+  getUdpAircraftState: () => mockIpcInvoke('get-udp-aircraft-state'),
+  resetUdpAircraft: () => mockIpcInvoke('reset-udp-aircraft'),
+  sendUdpCommand: (commandId, callSign) => mockIpcInvoke('send-udp-command', commandId, callSign),
+  debugLog: (...args) => mockIpcInvoke('debug-log', args),
+  onUdpAircraftState: (cb) => mockIpcOn('udp-aircraft-state', cb),
+  offUdpAircraftState: (cb) => { /* unsubscribe */ },
 });
 
 // ── Mock dialog / matchMedia etc. ───────────────────────────────────

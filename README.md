@@ -116,8 +116,8 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 37 IPC handlers, file I/O, map window management
-electron/preload.js  →  contextBridge: exposes ~38 methods on window.electronAPI
+electron/main.js     →  Electron main process, 39 IPC handlers, file I/O, map window management
+electron/preload.js  →  contextBridge: exposes ~42 methods on window.electronAPI
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state from game)
 index.html           →  Vite HTML entry, loads src/main.jsx
 src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
@@ -170,12 +170,13 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   │   ├── StarMap/         # Interactive STAR/approach chart overlay
 │   │   │   └── TimelineEditors/ # Weather, Wind, Runway editors
 │   │   ├── MapWindows/          # Full-window radar visualizations (separate windows)
-│   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, areas, ground aircraft
-│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/APPR routes, runway extensions, range rings, border overlay
-│   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs + push-button toggles
+│   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, areas, ground aircraft, help overlay
+│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/APPR routes, runway extensions, range rings, border overlay, help overlay
+│   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs + push-button toggles + help button
 │   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel)
 │   │   │   ├── SimClock.jsx                # Shared sim-time clock (HH:MM:SS UTC)
-│   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, animations
+│   │   │   ├── MapHelpOverlay.jsx + .css   # Context-sensitive help overlay (air or ground map)
+│   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   └── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
 │   │   └── common/              # Modal, Toast
@@ -202,7 +203,7 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   ├── approach.js         # Approach AircraftState constructor (State=30 & State=5)
 │   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
 │   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
-│   │   ├── taxiway.js           # Taxiway centerline parser
+│   │   ├── taxiway.js           # Taxiway centerline parser (stand-access segments marked, not excluded)
 │   │   ├── sid_goaround.js      # SID + Missed Approach route parser
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │

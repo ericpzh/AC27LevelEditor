@@ -12,7 +12,7 @@
   100% { transform: translateY(0) scale(1); }
 }
 
-/* Sim time clock in top-left corner */
+/* Sim time clock — base (shared by both maps) */
 .air-map-clock {
   position: absolute;
   top: 28px;
@@ -25,6 +25,13 @@
   pointer-events: none;
   user-select: none;
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+  opacity: 0.7;
+}
+
+/* Ground map clock — tucked into the corner */
+.ground-map-clock {
+  top: 4px;
+  left: 6px;
 }
 
 /* Toggle button (unified sidebar button) */
@@ -95,5 +102,47 @@
   color: var(--accent);
 }
 .air-map-toggle:hover .air-map-toggle-label {
+  color: var(--text);
+}
+
+/* Help button (non-toggle, always up) */
+.map-help-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+  padding: 5px 4px;
+  border-radius: 4px;
+  transition: background var(--transition);
+  width: 100%;
+}
+.map-help-btn:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.map-help-btn-icon {
+  width: 38px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 17px;
+}
+.map-help-btn:hover .map-help-btn-icon {
+  color: var(--accent);
+}
+.map-help-btn-label {
+  font-size: 8.5px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  transition: color var(--transition);
+}
+.map-help-btn:hover .map-help-btn-label {
   color: var(--text);
 }

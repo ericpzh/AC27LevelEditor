@@ -266,6 +266,7 @@ export const AIR_MAP_DEFAULT_ZOOM = {
 // midpoint to be considered "at stand". 0.5 GU ≈ 50 m.
 export const GROUND_RADAR_STAND_PROXIMITY = 0.5;
 export const GROUND_MAP_TAXIWAY_LABEL_SPACING = 10.0; // min GU between same-name taxiway labels
+export const GROUND_MAP_STAND_ACCESS_WIDTH_MULT = 1.0; // stand-access taxiway line width multiplier
 
 export const MAP_PLANE_VB = 512;
 // IoAirplane icon path

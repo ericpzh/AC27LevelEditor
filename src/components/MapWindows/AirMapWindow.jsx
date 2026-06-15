@@ -6,6 +6,8 @@ import useUdpAircraftState from './useUdpAircraftState';
 import ControlSidebar from './ControlSidebar';
 import SpinKnob from './SpinKnob';
 import SimClock from './SimClock';
+import MapHelpOverlay from './MapHelpOverlay';
+import { IoHelpCircleOutline } from 'react-icons/io5';
 import {
   MAP_PAD_RATIO, MAP_TARGET_RATIO, MAP_PLANE_VB, MAP_ICON_PATH,
   RAD_TO_DEG, AIR_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
@@ -63,10 +65,33 @@ export default function AirMapWindow({ airportIcao }) {
   const [showApprPaths, setShowApprPaths] = useState(false);
   const [apprPaths, setApprPaths] = useState({});
   const [emergencyCallSign, setEmergencyCallSign] = useState(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const airMapRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
   const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs } = useUdpAircraftState();
+
+  // ── Sync selected aircraft across ground + air map windows ──
+  useEffect(() => {
+    if (!electronAPI || !airportIcao) return;
+    // Fetch current selection on mount (e.g. if ground map already has one selected)
+    if (electronAPI.getSelectedAircraft) {
+      electronAPI.getSelectedAircraft(airportIcao).then(r => {
+        if (r?.callSign) setSelectedCallSign(r.callSign);
+      });
+    }
+    const handler = (data) => {
+      if (data.icao === airportIcao) setSelectedCallSign(data.callSign || null);
+    };
+    if (electronAPI.onAircraftSelectedInMap) {
+      electronAPI.onAircraftSelectedInMap(handler);
+    }
+    return () => {
+      if (electronAPI.offAircraftSelectedInMap) {
+        electronAPI.offAircraftSelectedInMap(handler);
+      }
+    };
+  }, [electronAPI, airportIcao]);
 
   // ── Set window title ───────────────────────────────────────
   useEffect(() => {
@@ -175,15 +200,16 @@ export default function AirMapWindow({ airportIcao }) {
   // ── Select aircraft ───────────────────────────────────────
   const handleAircraftClick = useCallback((e, callSign) => {
     e.stopPropagation();
-    setSelectedCallSign(callSign);
-    if (electronAPI.sendUdpCommand) {
-      electronAPI.sendUdpCommand(1, callSign);
+    if (electronAPI.selectAircraftInMap) {
+      electronAPI.selectAircraftInMap(airportIcao, callSign);
     }
-  }, [electronAPI]);
+  }, [electronAPI, airportIcao]);
 
   const handleBgClick = useCallback(() => {
-    setSelectedCallSign(null);
-  }, []);
+    if (electronAPI.selectAircraftInMap) {
+      electronAPI.selectAircraftInMap(airportIcao, null);
+    }
+  }, [electronAPI, airportIcao]);
 
   // ── Dynamic label layout to avoid overlap ─────────────────
   const labelLayouts = useMemo(() => {
@@ -747,9 +773,14 @@ export default function AirMapWindow({ airportIcao }) {
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('map_refresh')}</span>
             </div>
+            <div className="map-help-btn"
+              onClick={() => setHelpOpen(true)}>
+              <div className="map-help-btn-icon"><IoHelpCircleOutline size={22} /></div>
+            </div>
           </ControlSidebar>
         </>
       )}
+      {helpOpen && <MapHelpOverlay type="air" onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

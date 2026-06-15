@@ -115,7 +115,7 @@ test('parses Flags values correctly: standard=1, wider=2, special=4', () => {
   assertEq(result.paths[2].flags, 4);
 });
 
-test('segments touching stand nodes are excluded', () => {
+test('segments touching stand nodes are marked isStandAccess', () => {
   const standGuid = gid(1001);
   const taxiGuid = gid(1002);
 
@@ -132,8 +132,11 @@ test('segments touching stand nodes are excluded', () => {
     ']}}');
 
   const result = parseTaxiwayPaths(acl);
-  // The segment touches a stand node, so it should be excluded
-  assertEq(result.paths.length, 0);
+  // Stand-access segment is included but marked
+  assertEq(result.paths.length, 1);
+  assertEq(result.paths[0].name, 'STUB');
+  assertEq(result.paths[0].points.length, 2);
+  assert(result.paths[0].isStandAccess === true, 'stand-access segment should have isStandAccess: true');
 });
 
 test('segments not touching stand nodes are kept', () => {
@@ -154,9 +157,10 @@ test('segments not touching stand nodes are kept', () => {
     ']}}');
 
   const result = parseTaxiwayPaths(acl);
-  // Neither node1 nor node2 are stand nodes, so this segment should be kept
+  // Neither node1 nor node2 are stand nodes — segment is kept, not marked
   assertEq(result.paths.length, 1);
   assertEq(result.paths[0].name, 'A_Taxi');
+  assert(!result.paths[0].isStandAccess, 'non-stand segment should not have isStandAccess');
 });
 
 // ── Integration Tests ───────────────────────────────────────────
