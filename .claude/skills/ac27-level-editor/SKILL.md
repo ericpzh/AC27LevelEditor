@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.4)
+- **Name:** `ac27-level-editor` (v1.1.5)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -169,7 +169,8 @@ AC27LevelEditor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # Vitest + Playwright + Node.js integration tests
+├── tests/               # 198 Vitest + Playwright E2E + 17 Node.js integration tests
+│   ├── components/MapWindows/  # MapWindow component & hook tests (7 files, 90 tests)
 └── dist/                # Build output (gitignored)
 ```
 
@@ -267,10 +268,12 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch`
+- `npm test` or `npm run test:watch` — 198 tests across 16 files
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - zustand stores are tested with the real store using `setState()` — never mock stores
 - Store auto-reset between tests via `tests/__mocks__/zustand.js`
+- MapWindow component tests mock `useUdpAircraftState`, `useSvgZoom`, and `useElectronAPI` hooks at the module level
+- MapWindow hooks (`useSvgZoom`, `useUdpAircraftState`) are tested with `renderHook` from `@testing-library/react`
 
 **Layer 2 — E2E tests (Playwright + Electron):**
 - `npm run test:e2e` (requires `npm run build` first)
@@ -302,7 +305,9 @@ ZSJN/                    ─────→   ZSJN/                  lastRoot.js
 - Standalone scripts run with `node tests/integration/<name>.js`
 - Tests `require('../../src/acl/parser.js')` to access both public and `_private` functions
 - Use `--require ./tests/integration/preload.cjs` for tests that import ESM source modules
-- New parser tests (`test_tokenizer`, `test_acl_json`, `test_acl_document`) run without a game root — they use synthetic test data
+- New parser tests (`test_tokenizer`, `test_acl_json`, `test_acl_document`, `test_sid_goaround`, `test_taxiway`) run without a game root — they use synthetic test data
+- `test_sid_goaround` and `test_taxiway` also run against the ZSJN fixture in `tests/fixtures/game-root/` for integration coverage
+- UDP listener test (`test_udp_listener`) uses a mock loopback server — sends crafted binary packets and verifies parsed state. Requires port 20266 to be free (game not running)
 - Other tests need a real game installation (Airport Control 27) at a known path
 - Tests print results to stdout — read the output to determine pass/fail
 
@@ -1286,9 +1291,9 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 
 ### Running tests
 
-**Component tests:**
+**Component tests (198 tests across 16 files):**
 ```bash
-npm test              # Run all Vitest component + store + utility tests
+npm test              # Run all Vitest component + store + utility + MapWindow tests
 npm run test:watch    # Watch mode — re-runs on file changes
 ```
 
@@ -1306,6 +1311,13 @@ New parser module tests (no game root needed):
 node tests/integration/test_tokenizer.js            # String-aware scanner (18 tests)
 node tests/integration/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
 node tests/integration/test_acl_document.js         # Document model integration (13 tests)
+node tests/integration/test_sid_goaround.js         # SID + missed approach route parsers (17 tests)
+node tests/integration/test_taxiway.js              # Taxiway centerline parser (10 tests)
+```
+
+UDP telemetry test (mock loopback server, requires port 20266 free):
+```bash
+node tests/integration/test_udp_listener.js         # Binary protocol parsing + trail buffer (13 tests)
 ```
 
 Scan-all tests (need game root, default `../../../../` from integration dir):

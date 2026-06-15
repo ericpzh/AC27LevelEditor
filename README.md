@@ -104,7 +104,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (component) + Playwright (E2E) + Node.js (integration)
+- **Tests:** Vitest (198 component tests, 16 files) + Playwright (E2E) + Node.js (integration, 17 scripts)
 
 ### Quick Start
 
@@ -217,7 +217,7 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # Vitest + Playwright + Node.js integration tests
+├── tests/               # 198 Vitest + Playwright E2E + 17 Node.js integration tests
 └── dist/                # Build output (gitignored)
 ```
 
@@ -241,9 +241,9 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (12 files) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 101 tests in 9 files):**
+**Component tests (Vitest — 198 tests in 16 files):**
 ```bash
-npm test              # Run all component + store + utility tests (~1s)
+npm test              # Run all component + store + utility + MapWindow tests (~1s)
 npm run test:watch    # Watch mode — re-runs on file changes
 ```
 
@@ -255,7 +255,7 @@ npm run test:e2e      # UI flow tests against real game data (~3 min)
 
 **Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test.
 
-**Save integrity — all .acl files (Node.js integration — 13 scripts):**
+**Save integrity — all .acl files (Node.js integration — 17 scripts):**
 
 Test every .acl file across all airports for save→reload→compare round-trip:
 ```bash
@@ -272,6 +272,13 @@ Validates flights (all 14 fields), config (startTime/endTime), scenery maps, emb
 node tests/integration/test_tokenizer.js            # String-aware scanner (18 tests)
 node tests/integration/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
 node tests/integration/test_acl_document.js         # Document model integration (13 tests)
+node tests/integration/test_sid_goaround.js         # SID + missed approach route parsers (17 tests)
+node tests/integration/test_taxiway.js              # Taxiway centerline parser (10 tests)
+```
+
+**UDP telemetry test (mock loopback server, port 20266 must be free):**
+```bash
+node tests/integration/test_udp_listener.js         # Binary protocol parsing + trail buffer (13 tests)
 ```
 
 **Scan-all (need game root, override with `--root`):**

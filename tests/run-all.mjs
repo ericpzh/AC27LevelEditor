@@ -6,7 +6,7 @@
  *   node tests/run-all.mjs [--game-root <path>]
  *
  * Layers:
- *   1. Vitest (component tests)     — 101 tests, ~1s
+ *   1. Vitest (component tests)     — 198 tests, ~1s
  *   2. Integration: save integrity  — 12 prod+demo files, ~20s
  *   3. Playwright E2E                — 16 tests, ~60s (requires build, uses E2E_GAME_ROOT)
  *
@@ -63,7 +63,7 @@ console.log(`\nGame root: ${GAME_ROOT}`);
 const startTime = Date.now();
 
 // ── 1. Vitest ────────────────────────────────────────────────────
-runStep('Layer 1: Vitest (73 component tests)', 'npx vitest run');
+runStep('Layer 1: Vitest (198 component tests)', 'npx vitest run');
 
 // ── 2. Save Integrity (12 prod+demo files) ───────────────────────
 // Quote paths to handle spaces in game root

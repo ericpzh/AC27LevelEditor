@@ -6,7 +6,7 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 
 ```bash
 npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
-npm test              # 79 Vitest component + store + utility tests (~1s)
+npm test              # 198 Vitest component + store + utility + MapWindow tests (~1s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min)
 
 # Save integrity — all .acl files across both airports:
@@ -15,11 +15,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 
 ---
 
-## Layer 1 — Vitest Component Tests (79 tests)
+## Layer 1 — Vitest Component Tests (198 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 
-### `npm test` — 79 tests, all pass
+### `npm test` — 198 tests, all pass
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -28,7 +28,17 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 | `store/appStore.test.jsx` | 13 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with ArrivalAirport; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |
 | `components/common/Toast.test.jsx` | 4 | Renders empty by default; shows message when set; applies CSS class from type; `.show` class toggles with message |
+| `components/BrowserScreen/BrowserScreen.test.jsx` | 4 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast |
 | `components/EditorScreen/FlightTable/FlightTable.test.jsx` | 6 | Click on data cell → no selection toggle; checkbox click → toggles; drag from data cell → range-selects; dropdown/time cell clicks → no toggle; clock portal click → no toggle |
+| `components/EditorScreen/StandMap/StandMap.test.jsx` | 19 | Stand dots/labels count, selected highlight + ring, occupied plane icons + callsign labels, click-to-select, hover states, empty/null stands, legend, shrink button, portal positioning, animations, rotation on planes, disabled stands, backward-compatible no-heading |
+| **MapWindows (7 files):** | **90** | |
+| `components/MapWindows/SimClock.test.jsx` | 5 | Null/0/undefined → null output; valid timestamp → HH:MM:SS UTC; midnight → "00:00:00" |
+| `components/MapWindows/useSvgZoom.test.js` | 22 | Init state, auto-init on data load, zoomIn/zoomOut bounds + center, panLeft/panRight/panUp/panDown with clamping, wheel zoom cursor-centered, drag pan start, reset functions preserve zoom + axis |
+| `components/MapWindows/useUdpAircraftState.test.js` | 6 | Default state, subscribe on mount, unsubscribe on unmount, handler updates state, null/undefined safety, missing API methods |
+| `components/MapWindows/SpinKnob.test.jsx` | 17 | Rendering with/without label, SVG structure (bezel, face, ticks, center, indicator, arrow), position→angle mapping at 0/0.5/1/clamp, indicator sync, scroll up/down direction, click-reset |
+| `components/MapWindows/ControlSidebar.test.jsx` | 7 | 3 spin knobs rendered, actions section, children in actions, airspaceKnob optional, label presence |
+| `components/MapWindows/GroundMapWindow.test.jsx` | 17 | Loading/error states, data fetch args, window title, SVG rendering, aircraft filtering (airborne y>1, stand proximity), Show All toggle, click-to-select UDP command, taxiway polylines, runway polygons |
+| `components/MapWindows/AirMapWindow.test.jsx` | 16 | Loading/error states, border overlay, airport mismatch filter, airborne filter, click-to-select UDP command, bg image toggle, range rings, runway thresholds, route polylines, toggle states, emergency double-click, airspace knob |
 
 ### Expected outcomes
 
@@ -39,6 +49,8 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 | Store | All actions produce correct state transitions. `modified` flag set on mutations. |
 | Modal | Opens/closes via store state. Backdrop click calls `hideModal`. Internal clicks stop propagation. |
 | Toast | Renders based on store state. `show` CSS class controls visibility. |
+| Map Window hooks | `useSvgZoom` zoom/pan bounded correctly, imperative API functions. `useUdpAircraftState` lifecycle clean. |
+| Map Window components | Loading/error states render correctly. Aircraft filtering logic (airborne, stand proximity, airport match). Click-to-select sends correct UDP command. Toggle buttons toggle state. |
 
 ---
 
@@ -124,7 +136,7 @@ Iterates every level row in the browser: open → disable time validation → Ct
 
 ---
 
-## Layer 3 — Node.js Integration Tests (12 scripts)
+## Layer 3 — Node.js Integration Tests (17 scripts)
 
 Standalone scripts in `tests/integration/`. Run directly with `node`. Some need `--require ./tests/integration/preload.cjs` for ESM interop.
 
@@ -135,11 +147,25 @@ Standalone scripts in `tests/integration/`. Run directly with `node`. Some need 
 | `test_tokenizer.js` | 18 | String-aware tokenizer: `findSection`, `findArrayEnd`, `findObjectEnd`, `skipString`, `getTopLevelKeys` against synthetic and real ACL patterns | 18/18 pass |
 | `test_acl_json.js` | 25 | JSON pre-processor + serializer round-trips: `_fixTrailingCommas`, `_fixSpecialFloats`, `_fixTypedValues`, `preprocessUnityJson`, `serializeUnityJson` | 25/25 pass |
 | `test_acl_document.js` | 13 | `AclDocument` model: section indexing, round-trip serialization, init from JSON | 13/13 pass |
+| `test_sid_goaround.js` | 17 | SID (Type=2), Missed Approach (Type=3), and APPR (Type=1) route parsers: `extractSidRunwayMappings`, `extractMissedApproachMappings`, `buildSidPaths`, `buildMissedApproachPaths`, `extractApprRunwayMappings`, `buildApprPaths` — synthetic edge cases + ZSJN fixture | 17/17 pass |
+| `test_taxiway.js` | 10 | `parseTaxiwayPaths`: ACL structure parsing, flag values (1/2/4), stand-node exclusion, ZSJN fixture (401 paths, 189 named) | 10/10 pass |
 
 ```bash
 node tests/integration/test_tokenizer.js
 node tests/integration/test_acl_json.js
 node tests/integration/test_acl_document.js
+node tests/integration/test_sid_goaround.js
+node tests/integration/test_taxiway.js
+```
+
+### UDP telemetry test (mock loopback server, port 20266 must be free)
+
+| File | Tests | What it validates | Expected |
+|------|-------|-------------------|----------|
+| `test_udp_listener.js` | 13 | Binary protocol parsing (40B header + N×112B records, little-endian), aircraft state tracking, trail ring buffer (600-tick gap, max 5), empty packets, bad magic rejection, flight direction 0/1, callsign trimming, reset/clear, simTimeUnixMs tracking | 13/13 pass |
+
+```bash
+node tests/integration/test_udp_listener.js
 ```
 
 ### Scan-all tests (need game root, override with `--root`)
