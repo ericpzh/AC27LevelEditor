@@ -7,7 +7,7 @@ const { initLogger, closeLogger } = require('../src/utils/logger');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 
@@ -16,6 +16,25 @@ const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
 const airMapWindows = new Map();    // key: airportIcao → BrowserWindow
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
+
+/** Parse Area polygons from the first .acl file in a list. Returns {} on any error. */
+function _parseAreaFromAcl(aclPaths, logPrefix) {
+  try {
+    if (aclPaths.length > 0) {
+      const firstAclText = fs.readFileSync(aclPaths[0], 'utf-8');
+      const areaData = _parseAreas(firstAclText);
+      if (logPrefix) {
+        console.log(logPrefix + ': area polygons parsed from ' + path.basename(aclPaths[0]) +
+          ' (' + (areaData[0]?.length || 0) + ' Type0, ' + (areaData[1]?.length || 0) + ' Type1, ' +
+          (areaData[2]?.length || 0) + ' Type2)');
+      }
+      return areaData;
+    }
+  } catch (e) {
+    if (logPrefix) console.log(logPrefix + ': area parsing failed:', e.message);
+  }
+  return {};
+}
 
 async function createWindow() {
   Menu.setApplicationMenu(null);
@@ -77,7 +96,7 @@ function openGroundMapWindow(airportIcao, gameRoot) {
   if (existing && !existing.isDestroyed()) { existing.focus(); return; }
   const isDev = !app.isPackaged;
   const win = new BrowserWindow({
-    width: 900, height: 700, minWidth: 500, minHeight: 400,
+    width: 900, height: 800, minWidth: 500, minHeight: 500,
     title: airportIcao + ' Surface Radar',
     parent: mainWindow,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
@@ -98,7 +117,7 @@ function openAirMapWindow(airportIcao, gameRoot) {
   if (existing && !existing.isDestroyed()) { existing.focus(); return; }
   const isDev = !app.isPackaged;
   const win = new BrowserWindow({
-    width: 900, height: 700, minWidth: 500, minHeight: 400,
+    width: 900, height: 800, minWidth: 500, minHeight: 500,
     title: airportIcao + ' Approach Radar',
     parent: mainWindow,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
@@ -304,11 +323,17 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
     }
   }
 
+  // Include area polygons (for GroundMap)
+  aclValues._areaData = cached?.areaData || {};
+
   // Include SID + Missed Approach paths (for AirMap)
   aclValues._sidPaths = cached?.approachData?.sidPaths || {};
   aclValues._missedAppPaths = cached?.approachData?.missedAppPaths || {};
   aclValues._sidRunwayMap = cached?.approachData?.sidRunwayMap || {};
   aclValues._runwaySidMap = cached?.approachData?.runwaySidMap || {};
+
+  // Include APPR (RNAV approach) paths for AirMap category toggle
+  aclValues._apprPaths = cached?.approachData?.apprPaths || {};
 
   return aclValues;
 });
@@ -469,6 +494,20 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       console.log('[INIT-CACHE]   ' + icao + ': stand positions from disk cache (' + Object.keys(standPositions).length + ' stands)');
     }
 
+    // Parse area polygons from SceneryData.Areas (airport-level, shared across all levels)
+    let areaData = cachedEntry?.areaData || null;
+    if (!areaData) {
+      const aclAreaFiles = [];
+      for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
+        if (le.isFile() && le.name.endsWith('.acl')) aclAreaFiles.push(path.join(levelsDir, le.name));
+      }
+      areaData = _parseAreaFromAcl(aclAreaFiles, '[INIT-CACHE]   ' + icao);
+    } else {
+      console.log('[INIT-CACHE]   ' + icao + ': area data from disk cache (' +
+        (areaData[0]?.length || 0) + ' Type0, ' + (areaData[1]?.length || 0) + ' Type1, ' +
+        (areaData[2]?.length || 0) + ' Type2)');
+    }
+
     // Use SceneryData stand identifiers as the authoritative stand list
     if (standPositions && Object.keys(standPositions).length > 0) {
       dropdownValues.Stand = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
@@ -607,7 +646,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       }
     }
 
-    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions };
+    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData };
   }
 
   airportCache = cache;
@@ -622,6 +661,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
           dropdownValues: entry.dropdownValues || {},
           runwayPairs: entry.runwayPairs || [],
           standPositions: entry.standPositions || {},
+          areaData: entry.areaData || {},
         };
       }
       const payload = {
@@ -714,6 +754,9 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         }
       } catch (e) { standPositions = {}; }
 
+      // Parse area polygons from SceneryData.Areas
+      const areaData = _parseAreaFromAcl(aclPaths, null);
+
       // Use SceneryData stand identifiers as the authoritative stand list
       if (standPositions && Object.keys(standPositions).length > 0) {
         dropdownValues.Stand = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
@@ -728,7 +771,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         }
       }
 
-      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions };
+      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData };
     }
 
     airportCache = cache;
@@ -741,6 +784,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         dropdownValues: entry.dropdownValues || {},
         runwayPairs: entry.runwayPairs || [],
         standPositions: entry.standPositions || {},
+        areaData: entry.areaData || {},
       };
     }
     const payload = { cacheVersion: CACHE_VERSION, gameRoot: rootPath, lang: preservedLang, builtAt: Date.now(), airports: serialized };

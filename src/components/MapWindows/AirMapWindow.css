@@ -5,6 +5,7 @@
   height: 100vh;
   overflow: hidden;
   background: var(--air-map-bg, #000000);
+  position: relative;
 }
 
 .air-map-svg-container {
@@ -18,6 +19,19 @@
   width: 100%;
   height: 100%;
   cursor: grab;
+}
+
+.air-map-border-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.air-map-border-overlay svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .air-map-svg:active {
   cursor: grabbing;
@@ -82,40 +96,6 @@
 }
 .air-map-reset-btn:hover {
   fill: white;
-}
-
-/* Unified sidebar button style */
-.air-map-side-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-secondary);
-  padding: 6px 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 12.5px;
-  font-family: inherit;
-  transition: all var(--transition);
-  white-space: nowrap;
-  user-select: none;
-  width: 100%;
-}
-.air-map-side-btn:hover {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border-color: var(--border);
-}
-.air-map-side-btn:active {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.air-map-side-btn.active {
-  color: var(--accent);
-  border-color: var(--accent);
 }
 
 .air-map-em-label {

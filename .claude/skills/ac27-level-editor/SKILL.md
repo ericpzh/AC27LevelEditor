@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.3)
+- **Name:** `ac27-level-editor` (v1.1.4)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -119,17 +119,14 @@ AC27LevelEditor/
 │   │   │   │   └── StarMap.jsx + .css    # Interactive STAR/approach map overlay
 │   │   │   └── TimelineEditors/
 │   │   ├── MapWindows/               # Full-window radar visualizations (separate BrowserWindow instances)
-│   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, ground aircraft
-│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID routes, air aircraft, map bg, runway extensions, range rings
-│   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs (zoom/pan) + action buttons
-│   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel)
+│   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, areas, ground aircraft
+│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/APPR routes, air aircraft, map bg, runway extensions, range rings, border overlay
+│   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs (zoom/pan/airspace) + toggle buttons
+│   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel, gauge mode)
+│   │   │   ├── SimClock.jsx                # Shared sim-time clock (HH:MM:SS UTC)
+│   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, animations
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
-│   │   │   └── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
-│   │   │       ├── WeatherEditor.jsx
-│   │   │       ├── WindEditor.jsx
-│   │   │       ├── RunwayEditor.jsx + .css
-│   │   │       ├── TimeCell.jsx         # Shared time cell with clock popover
-│   │   │       └── TimelineEditors.css
+│   │   │   └── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes (incl. simTimeUnixMs)
 │   │   └── common/
 │   │       ├── Modal.jsx + .css         # Declarative modal
 │   │       └── Toast.jsx + .css         # Declarative toast
@@ -364,9 +361,10 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
    - Merges audio flight numbers into `_flightNums` per airline code
    - **Stand dropdown from SceneryData:** Stand identifiers parsed by `_parseStandPositions()` become the authoritative dropdown options (sorted), replacing any hardcoded or ACL-derived stand lists
    - **STAR dropdown from SceneryData:** STAR names come from `starRunwayMap` keys (SceneryData Type=0 Routes), same pattern as Stand — scenery is the single source of truth. `starRunwayMap` is built by `extractStarRunwayMappings()` and already excludes stubs (`$rlength:0`)
-   - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions }`
-   - `approachData` now includes: `taxiwayPaths`, `sidPaths`, `missedAppPaths`, `sidRunwayMap`, `runwaySidMap`, `missedAppMap`, `runwayMissedAppMap` (all serialized through `serializeApproachCache`/`deserializeApproachCache`)
-   - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint of tail/nose taxiway node Positions)
+   - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData }`
+   - `approachData` now includes: `taxiwayPaths`, `sidPaths`, `missedAppPaths`, `apprPaths`, `sidRunwayMap`, `runwaySidMap`, `missedAppMap`, `runwayMissedAppMap`, `apprRunwayMap`, `runwayApprMap` (all serialized through `serializeApproachCache`/`deserializeApproachCache`)
+   - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint) plus `tailX`/`tailZ`/`noseX`/`noseZ` for heading/orientation
+	   - `areaData` parsed from first .acl via `_parseAreas()` — maps AreaType (0=boundary, 1=stand/apron, 2=building) → `[{guid, enabled, points[{x,z}]}]` — used by GroundMapWindow
    - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
    - **Centralized cache I/O:** `_readCache(opts)` and `_writeCache(data)` in `electron/main.js` handle all `cache.json` reads/writes. `_readCache` validates `cacheVersion` and `gameRoot`, and signals `cache-invalidated` to the renderer on mismatch. All IPC handlers MUST use these helpers — never read/write `cache.json` directly.
 
@@ -376,7 +374,7 @@ The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.j
 
 Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `src/utils/constants.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
-**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants.js:13`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 8.
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants.js:13`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 11.
 
 | `cache.json` | Behavior |
 |---|---|
@@ -556,7 +554,7 @@ onRadarWindowClosed(cb)                 // → ipcRenderer.on('radar-window-clos
 
 // UDP telemetry
 getUdpStatus()                          // → { connected, lastPacketTime, currentAirport }
-getUdpAircraftState()                   // → { aircraft, currentAirport, recordCount }
+getUdpAircraftState()                   // → { aircraft, currentAirport, recordCount, simTimeUnixMs }
 resetUdpAircraft()                      // → clears all aircraft state (map refresh button)
 sendUdpCommand(commandId, callSign)     // → base64-encodes 12B callSign, invokes 'send-udp-command'
 debugLog(...args)                       // → ipcRenderer.invoke('debug-log', args) — logs to main terminal
@@ -568,61 +566,68 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
 
 **Purpose:** SVG surface radar for tracking aircraft movement on the ground at a specific airport.
 
-**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan) and action buttons (display all toggle, taxiway name toggle, refresh).
+**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan) and push-button toggles (parked aircraft, taxiway labels, refresh). Sim-time clock displayed in top-left corner.
 
 **Data sources:**
 - `_taxiwayPaths` — taxiway centerline polylines from approach cache (via `electronAPI.collectValues()`)
 - `_runwayData` — runway rectangles (threshold pairs + width) computed in `collect-values` IPC
 - `_standPositions` — stand midpoints from approach cache (via `electronAPI.collectValues()`)
-- `useUdpAircraftState()` — live aircraft positions from UDP telemetry
+- `_areaData` — area polygons by AreaType (0=airport boundary, 1=stand/apron, 2=building) from approach cache
+- `useUdpAircraftState()` — live aircraft positions + `simTimeUnixMs` from UDP telemetry
+- `GROUND_MAP_CENTER_OFFSET` — per-airport viewBox center offset (game units)
 
 **Rendering layers:**
 1. Radar-blue background (`#0a1628`)
-2. Taxiway centerlines — grey polylines, color-coded by flags: standard (darker grey), wider (lighter), special (brighter). Toggleable name labels at midpoints (filtered to exclude runway names).
-3. Runway rectangles — black filled polygons from threshold endpoints + width
-4. Live ground aircraft — filtered to `position.y <= 1.0` (ground-level, not airborne) with inactive aircraft hidden by default:
+2. Taxiway centerlines — grey polylines, color-coded by flags: standard (darker grey), wider (lighter), special (brighter).
+3. Area polygons — semi-transparent fills by AreaType: blue boundary, grey apron, black buildings. Parsed from `SceneryData.Areas` via `_parseAreas()`.
+4. Taxiway labels — name labels at path midpoints with proximity dedup (`GROUND_MAP_TAXIWAY_LABEL_SPACING`), runway names excluded.
+5. Runway rectangles — black filled polygons from threshold endpoints + width
+6. Live ground aircraft — filtered to `position.y <= 1.0` (ground-level, not airborne) with inactive aircraft hidden by default:
    - **Inactivity filter:** Aircraft at a known stand (UDP `stand` field ∈ `_standPositions`) AND within `GROUND_RADAR_STAND_PROXIMITY` (0.5 GU ≈ 50m) of that stand's midpoint are hidden as "parked/inactive"
-   - **"Display All" toggle:** Sidebar button (i18n: `ground_map_show_all`) bypasses the inactivity filter, showing all ground-level aircraft
+   - **"Parked" toggle:** Push-button (i18n: `ground_map_show_all`) bypasses the inactivity filter, showing all ground-level aircraft
    - **Icon:** `MAP_ICON_PATH` (IonIons IoAirplane SVG path) rotated by `noseDirection.x/z`
    - **Label:** Green callsign text with a short connector line from aircraft to label
    - **Selection highlight:** Yellow icon + label when aircraft is selected (click-to-select)
 
-**Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `GROUND_MAP_DEFAULT_ZOOM`, pan clamped to initial bounds.
+**Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `GROUND_MAP_DEFAULT_ZOOM` + `GROUND_MAP_CENTER_OFFSET`, pan clamped to initial bounds.
 
 **Click-to-select:** Calls `electronAPI.sendUdpCommand(1, callSign)` which sends a `SelectAircraft` UDP command (commandId=1) to the game on port 20267. The selected callSign is stored in component state and rendered with yellow highlight.
 
 ### AirMapWindow (`src/components/MapWindows/AirMapWindow.jsx`)
 
-**Purpose:** SVG approach radar for tracking airborne aircraft and visualizing STAR/SID/missed-approach routes.
+**Purpose:** SVG approach radar for tracking airborne aircraft and visualizing STAR/SID/APPR/missed-approach routes with range rings, runway extensions, and border overlay.
 
-**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan with gauge indicators) and action buttons: STAR/SID labels toggle, airspace rings toggle, runway extension toggle, map background toggle, and refresh (also randomizes emergency call sign).
+**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan, airspace with gauge indicators) and push-button toggles: STAR, SID, APPR, Labels, ILS, Map, Refresh. Sim-time clock in top-left corner.
 
 **Data sources:**
-- `_starPaths` (STAR routes, Type=0) — rendered in grey
-- `_sidPaths` (SID departure routes, Type=2) — rendered in grey (unified with STAR)
+- `_starPaths` (STAR routes, Type=0) — rendered in grey; trimmed at APPR overlap points
+- `_sidPaths` (SID departure routes, Type=2) — rendered in grey
+- `_missedAppPaths` (Missed Approach routes, Type=3) — rendered in grey
+- `_apprPaths` (RNAV approach routes, Type=1) — rendered in grey; points used to trim STAR display
 - `_runwayThresholds` from approach cache — for threshold lines and runway extensions
-- `useUdpAircraftState()` — live aircraft positions
-- `AIR_MAP_BG_OFFSETS` from `src/utils/constants.js` — per-airport background image config (renamed from `STAR_BG_OFFSETS`)
+- `useUdpAircraftState()` — live aircraft positions + `simTimeUnixMs`
+- `AIR_MAP_BG_OFFSETS` from `src/utils/constants.js` — per-airport background image config
 - `AIR_MAP_DEFAULT_ZOOM` from `src/utils/constants.js` — per-airport initial zoom scale
 - `NM_TO_GU` from `src/utils/constants.js` — nautical mile to game-units conversion (18.52)
 
 **Rendering layers (bottom to top):**
-1. Background map image (toggleable via sidebar): `/{ICAO}_Map.png` positioned via `bgCfg`, opacity 20%. Background color via CSS custom property `--air-map-bg` for dynamic switching.
-2. Range rings (toggleable, 10/20/30 NM): centered on geometric mean of all runway thresholds, rendered behind routes.
-3. SID + STAR routes — both in grey (`#888888`) with 50% opacity.
-4. Route name labels (toggleable): positioned at the start of each path, offset perpendicular away from the range center. Dynamic text-anchor based on label position relative to path start.
-5. Runway extension lines (toggleable): 1-15NM outward from each threshold with tick marks at 5/10/15 NM.
+1. Background map image (toggleable): `/{ICAO}_Map.png` positioned via `bgCfg`, opacity 20%. Background color via CSS custom property `--air-map-bg`.
+2. Range rings (airspace knob, 12 levels from 10–120 NM gap): centered on geometric mean of all runway thresholds, radius labels when route labels enabled.
+3. SID / STAR / APPR routes — each independently toggleable, grey (`#888888`) at 50% opacity. STAR paths are trimmed at APPR overlap points so each category shows its unique portion.
+4. Route name labels (toggleable + per-category): positioned at path starts with vertical spreading to avoid overlaps.
+5. Runway extension lines (toggleable): 1–20 NM dashed white lines from each threshold with tick marks at 5/10/15/20 NM.
 6. Runway thresholds — runway-width lines connecting threshold pairs.
-7. Live airborne aircraft — filtered to `position.y > 1.0`:
+7. Border overlay — independent SVG with white border rect and 10° tick marks with degree labels.
+8. Live airborne aircraft — filtered to `position.y > 1.0`:
    - **Circle:** Small colored circle at aircraft position (unselected) or yellow (selected)
    - **Trail dots:** Ring buffer of historical positions (max 5 snapshots, minimum 600-tick gap), rendered as shrinking circles with decreasing opacity
    - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale
    - **Label:** Callsign + speed/type (toggles every 5 seconds between airspeed/10 and aircraft type), dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show an "EM" label above the callsign in red.
    - **A/D indicator:** "A" or "D" text next to the current position dot
 
-**Background toggle:** Sidebar button with i18n key `air_map_bg`. Dynamically sets `--air-map-bg` CSS custom property on the container.
+**Airspace knob:** `SpinKnob` passed via `airspaceKnob` prop to `ControlSidebar` — controls range ring density (0=10NM gap … 11=120NM gap, default 40NM). Double-click knob to reset to default.
 
-**Emergency call sign:** Refresh button randomly picks an active aircraft and marks it with a red "EM" label. Also calls `electronAPI.resetUdpAircraft()` to clear stale state.
+**Emergency call sign:** Refresh button (double-click) randomly picks an active aircraft and marks it with a red "EM" label. Single click resets UDP aircraft state.
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `AIR_MAP_DEFAULT_ZOOM`, pan clamped to initial bounds. Spin knobs show gauge positions derived from current zoom/pan relative to initial viewBox.
 
@@ -642,8 +647,8 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
 
 **`useUdpAircraftState.js`:**
 - Subscribes to `electronAPI.onUdpAircraftState` on mount, unsubscribes on unmount
-- Returns `{ aircraft: Array, currentAirport: string|null }` updated at ~10 Hz
-- Used by both GroundMapWindow and AirMapWindow
+- Returns `{ aircraft: Array, currentAirport: string|null, simTimeUnixMs: number }` updated at ~10 Hz
+- Used by both GroundMapWindow and AirMapWindow (simTimeUnixMs drives the SimClock component)
 
 ### BrowserScreen Integration
 
@@ -674,19 +679,23 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 
 **Important:** Set mutations must create a new `Set(...)` rather than mutating in place, per existing zustand Immutability rules.
 
-### New i18n Keys
+### Map Window i18n Keys
 
 | Key | Chinese | English |
 |-----|---------|---------|
 | `toolbar_surface_radar` | 场面雷达 | Surface Radar |
 | `toolbar_approach_radar` | 进近雷达 | Approach Radar |
-| `air_map_bg` | 地图 | Map |
-| `air_map_airspace` | 空域 | Airspace |
-| `air_map_runway_ext` | 延长线 | Runway Ext. |
-| `air_map_labels` | STAR/SID | STAR/SID |
-| `ground_map_taxiway` | 滑行道 | Taxiway |
-| `ground_map_show_all` | 显示全部 | Display All |
-| `knob_zoom` | 缩放 | Zoom |
+| `air_map_bg` | Map | Map |
+| `air_map_airspace` | Airspace | Airspace |
+| `air_map_runway_ext` | ILS | ILS |
+| `air_map_labels` | Label | Label |
+| `air_map_star` | STAR | STAR |
+| `air_map_sid` | SID | SID |
+| `air_map_appr` | APPR | APPR |
+| `ground_map_taxiway` | Label | Label |
+| `ground_map_show_all` | Parked | Parked |
+| `map_refresh` | Refresh | Refresh |
+| `knob_zoom` | Range | Range |
 | `knob_pan_h` | E-W | E-W |
 | `knob_pan_v` | S-N | S-N |
 
@@ -696,6 +705,8 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 - **`NM_TO_GU`** (`src/utils/constants.js`): Nautical mile to game-units conversion (18.52 = 1852m ÷ 100 m/unit). Used by AirMapWindow for runway extension lines, tick marks, and range rings.
 - **`AIR_MAP_DEFAULT_ZOOM`** / **`GROUND_MAP_DEFAULT_ZOOM`** (`src/utils/constants.js`): Per-airport default zoom scale. 1.0 = full dataBounds, <1 = tighter initial view. Entries for ZSJN (0.75 ground) and KJFK (1.0 both).
 - **`GROUND_RADAR_STAND_PROXIMITY`** (`src/utils/constants.js`): Max distance (0.5 GU ≈ 50m) from aircraft position to its assigned stand midpoint to consider it "parked at stand." Used by GroundMapWindow to hide inactive aircraft.
+- **`GROUND_MAP_CENTER_OFFSET`** (`src/utils/constants.js`): Per-airport viewBox center offset in game units (`{x, z}`). Used by GroundMapWindow to fine-tune initial camera position. Entries for ZSJN and KJFK.
+- **`GROUND_MAP_TAXIWAY_LABEL_SPACING`** (`src/utils/constants.js`): Minimum distance (10.0 GU) between same-name taxiway labels to prevent label clutter. Used by GroundMapWindow for proximity dedup.
 - **`MAP_GEO_REF`** (`src/utils/mapGeoRef.js`): Lookup table mapping airport ICAO → `_Map.png` top-left origin (`originX`, `originZ`) and image extent (`width`, `height`) in Unity game units (at 100 m/unit). Used by AirMapWindow to correctly position the background map image.
 
 ## UDP Telemetry Pipeline
@@ -795,7 +806,7 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 | `start()` | void | Bind socket, begin parsing packets |
 | `stop()` | void | Close socket, clear intervals, reset state |
 | `getUdpStatus()` | `{ connected, lastPacketTime, currentAirport }` | Current health status |
-| `getUdpAircraftState()` | `{ aircraft: [], currentAirport, recordCount }` | Latest aircraft positions + trails |
+| `getUdpAircraftState()` | `{ aircraft: [], currentAirport, recordCount, simTimeUnixMs }` | Latest aircraft positions + trails + sim time |
 | `resetAircraftState()` | void | Clear all aircraft state (`aircraftMap` + `trailSnapshots`) — used by map window refresh button |
 | `sendCommand(cmdId, payloadBuf)` | `Promise<{ success, error? }>` | Fire-and-forget command to game |
 

@@ -4,11 +4,27 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
 import useSvgZoom from './useSvgZoom';
 import useUdpAircraftState from './useUdpAircraftState';
 import ControlSidebar from './ControlSidebar';
+import SpinKnob from './SpinKnob';
+import SimClock from './SimClock';
 import {
   MAP_PAD_RATIO, MAP_TARGET_RATIO, MAP_PLANE_VB, MAP_ICON_PATH,
   RAD_TO_DEG, AIR_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
 } from '../../utils/constants';
 import './AirMapWindow.css';
+import './MapShared.css';
+
+// ─── Constants ─────────────────────────────────────────────────
+
+/** Pre-computed range ring levels: index 0 = 10nm gap, ..., 11 = 120nm gap. */
+const RING_LEVELS = (() => {
+  const levels = [];
+  for (let gap = 10; gap <= 120; gap += 10) {
+    const rings = [];
+    for (let r = gap; r <= 240; r += gap) rings.push(r);
+    levels.push(rings);
+  }
+  return levels;
+})();
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -40,13 +56,17 @@ export default function AirMapWindow({ airportIcao }) {
   const [showBgImage, setShowBgImage] = useState(false);
   const [speedToggle, setSpeedToggle] = useState(true);
   const [showRunwayExt, setShowRunwayExt] = useState(false);
-  const [showRangeRings, setShowRangeRings] = useState(false);
+  const [rangeRingLevel, setRangeRingLevel] = useState(3); // 0=gap10, ..., 3=gap40 (default)
   const [showRouteLabels, setShowRouteLabels] = useState(false);
+  const [showStarPaths, setShowStarPaths] = useState(true);
+  const [showSidPaths, setShowSidPaths] = useState(false);
+  const [showApprPaths, setShowApprPaths] = useState(false);
+  const [apprPaths, setApprPaths] = useState({});
   const [emergencyCallSign, setEmergencyCallSign] = useState(null);
   const airMapRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
-  const { aircraft: udpAircraft, currentAirport: udpAirport } = useUdpAircraftState();
+  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs } = useUdpAircraftState();
 
   // ── Set window title ───────────────────────────────────────
   useEffect(() => {
@@ -77,6 +97,7 @@ export default function AirMapWindow({ airportIcao }) {
         setStarPaths(vals?._starPaths || {});
         setSidPaths(vals?._sidPaths || {});
         setMissedAppPaths(vals?._missedAppPaths || {});
+        setApprPaths(vals?._apprPaths || {});
         setRunwayThresholds(vals?._runwayThresholds || {});
       } catch (e) {
         setError(e.message);
@@ -233,6 +254,35 @@ export default function AirMapWindow({ airportIcao }) {
   }, [airAircraft, selectedCallSign, planeScale, fontSize, svgY]);
 
   // ── Helper: render route polylines ────────────────────────
+  // ── Trim STAR paths at APPR overlap so each category shows its unique portion ──
+  const trimmedStarPaths = useMemo(() => {
+    if (!Object.keys(apprPaths).length) return starPaths;
+    // Build a set of all APPR point hashes (rounded to 0.5 GU ≈ 50m tolerance)
+    const apprPointSet = new Set();
+    for (const variants of Object.values(apprPaths)) {
+      for (const v of (variants || [])) {
+        for (const p of (v.points || [])) {
+          apprPointSet.add(Math.round(p.x * 2) + ',' + Math.round(p.z * 2));
+        }
+      }
+    }
+    if (!apprPointSet.size) return starPaths;
+    const trimmed = {};
+    for (const [name, variants] of Object.entries(starPaths)) {
+      trimmed[name] = (variants || []).map(v => {
+        const pts = v.points || [];
+        // Walk from start; stop at first point that appears in any APPR path
+        let cutIdx = pts.length;
+        for (let i = 0; i < pts.length; i++) {
+          const key = Math.round(pts[i].x * 2) + ',' + Math.round(pts[i].z * 2);
+          if (apprPointSet.has(key)) { cutIdx = i + 1; break; }
+        }
+        return { ...v, points: pts.slice(0, cutIdx) };
+      }).filter(v => v.points.length >= 2);
+    }
+    return trimmed;
+  }, [starPaths, apprPaths]);
+
   function renderRoutePaths(pathsObj, color, dashArray, opacity = 0.7) {
     return Object.entries(pathsObj || {}).map(([name, variants]) =>
       (variants || []).map((v, i) => {
@@ -252,51 +302,60 @@ export default function AirMapWindow({ airportIcao }) {
     );
   }
 
-  // ── Helper: route labels at start of each path, offset perp away from airport center ──
+  // ── Helper: route labels at start of each path, offset perp away from airport center,
+  //     with vertical spreading to avoid overlaps ──
   function renderRouteLabels(pathsObj, color) {
-    const labels = [];
+    const labelMeta = [];
     const cx = rangeCenter.x;
     const cz = rangeCenter.z;
     const offsetDist = fontSize * 3.5;
     Object.entries(pathsObj || {}).forEach(([name, variants]) => {
-      (variants || []).forEach((v, i) => {
-        const pts = v.points || [];
-        if (pts.length < 2) return;
-        const p0 = pts[0];
-        const p1 = pts[1];
-        // Direction of first segment
-        const dx = p1.x - p0.x;
-        const dz = p1.z - p0.z;
-        const segLen = Math.sqrt(dx * dx + dz * dz);
-        if (segLen < 1e-9) return;
-        const ux = dx / segLen;
-        const uz = dz / segLen;
-        // Perpendicular (rotate 90° CCW in XZ)
-        const px = -uz;
-        const pz = ux;
-        // Pick side away from airport center
-        const toCx = cx - p0.x;
-        const toCz = cz - p0.z;
-        const dot = toCx * px + toCz * pz;
-        const sx = dot > 0 ? -px : px;
-        const sz = dot > 0 ? -pz : pz;
-        const lx = p0.x + sx * offsetDist;
-        const lz = p0.z + sz * offsetDist;
-        // Determine text-anchor based on direction relative to label position
-        const anchor = (lx - p0.x) > 0 ? 'start' : 'end';
-        labels.push(
-          <text key={'lbl-' + name + '-' + i}
-            x={lx}
-            y={svgY(lz) - fontSize * 0.3}
-            fill={color}
-            fontSize={fontSize}
-            textAnchor={anchor}
-            className="air-map-route-label"
-          >{name}</text>
-        );
-      });
+      // Only one label per route name (first variant)
+      const v = (variants || [])[0];
+      if (!v) return;
+      const pts = v.points || [];
+      if (pts.length < 2) return;
+      const p0 = pts[0];
+      const p1 = pts[1];
+      const dx = p1.x - p0.x;
+      const dz = p1.z - p0.z;
+      const segLen = Math.sqrt(dx * dx + dz * dz);
+      if (segLen < 1e-9) return;
+      const ux = dx / segLen;
+      const uz = dz / segLen;
+      const px = -uz;
+      const pz = ux;
+      const toCx = cx - p0.x;
+      const toCz = cz - p0.z;
+      const dot = toCx * px + toCz * pz;
+      const sx = dot > 0 ? -px : px;
+      const sz = dot > 0 ? -pz : pz;
+      const lx = p0.x + sx * offsetDist;
+      const lz = p0.z + sz * offsetDist;
+      const anchor = (lx - p0.x) > 0 ? 'start' : 'end';
+      labelMeta.push({ name, key: name, x: lx, z: lz, anchor });
     });
-    return labels;
+    // Sort by Z (SVG Y) so we can spread vertically
+    labelMeta.sort((a, b) => a.z - b.z);
+    // Spread overlapping labels apart
+    const minGap = fontSize * 2.0;
+    for (let i = 1; i < labelMeta.length; i++) {
+      const prev = labelMeta[i - 1];
+      const dz = labelMeta[i].z - prev.z;
+      if (dz < minGap) {
+        labelMeta[i].z = prev.z + minGap;
+      }
+    }
+    return labelMeta.map(m => (
+      <text key={'lbl-' + m.key}
+        x={m.x}
+        y={svgY(m.z) - fontSize * 0.3}
+        fill={color}
+        fontSize={fontSize}
+        textAnchor={m.anchor}
+        className="air-map-route-label"
+      >{m.name}</text>
+    ));
   }
 
   // ── Background image geometry ────────────────────────────
@@ -317,7 +376,6 @@ export default function AirMapWindow({ airportIcao }) {
     return n ? { x: sx / n, z: sz / n } : { x: 0, z: 0 };
   }, [runwayThresholds]);
 
-  const RING_RADII_NM = [10, 20, 30];
   const ringLineW = (viewBox?.w || 1) * 0.0012;
 
   // ── Runway extension lines + tick marks ──────────────────
@@ -341,16 +399,18 @@ export default function AirMapWindow({ airportIcao }) {
       const pz = ux;
 
       const startD = 1 * NM_TO_GU;
-      const endD = 15 * NM_TO_GU;
+      const endD = 20 * NM_TO_GU;
       const tickHalf = 0.5 * NM_TO_GU;
-      const tickNMs = [5, 10, 15];
+      const tickNMs = [5, 10, 15, 20];
+      const dash = 0.8 * NM_TO_GU;
 
-      // Extension from threshold a (outward)
+      // Extension from threshold a (outward) — dashed
       elements.push(
         <line key={`ext-a-${name}`}
           x1={a.x + ux * startD} y1={svgY(a.z + uz * startD)}
           x2={a.x + ux * endD}   y2={svgY(a.z + uz * endD)}
-          stroke="#4080c0" strokeWidth={extLineW} opacity="0.7"
+          stroke="#ffffff" strokeWidth={extLineW} opacity="0.7"
+          strokeDasharray={`${dash} ${dash * 0.7}`}
         />
       );
       tickNMs.forEach(nm => {
@@ -361,17 +421,18 @@ export default function AirMapWindow({ airportIcao }) {
           <line key={`tick-a-${name}-${nm}`}
             x1={cx - px * tickHalf} y1={svgY(cz - pz * tickHalf)}
             x2={cx + px * tickHalf} y2={svgY(cz + pz * tickHalf)}
-            stroke="#4080c0" strokeWidth={extLineW * 0.8} opacity="0.6"
+            stroke="#ffffff" strokeWidth={extLineW * 0.8} opacity="0.6"
           />
         );
       });
 
-      // Extension from threshold b (outward, opposite direction)
+      // Extension from threshold b (outward, opposite direction) — dashed
       elements.push(
         <line key={`ext-b-${name}`}
           x1={b.x - ux * startD} y1={svgY(b.z - uz * startD)}
           x2={b.x - ux * endD}   y2={svgY(b.z - uz * endD)}
-          stroke="#4080c0" strokeWidth={extLineW} opacity="0.7"
+          stroke="#ffffff" strokeWidth={extLineW} opacity="0.7"
+          strokeDasharray={`${dash} ${dash * 0.7}`}
         />
       );
       tickNMs.forEach(nm => {
@@ -382,7 +443,7 @@ export default function AirMapWindow({ airportIcao }) {
           <line key={`tick-b-${name}-${nm}`}
             x1={cx - px * tickHalf} y1={svgY(cz - pz * tickHalf)}
             x2={cx + px * tickHalf} y2={svgY(cz + pz * tickHalf)}
-            stroke="#4080c0" strokeWidth={extLineW * 0.8} opacity="0.6"
+            stroke="#ffffff" strokeWidth={extLineW * 0.8} opacity="0.6"
           />
         );
       });
@@ -391,25 +452,69 @@ export default function AirMapWindow({ airportIcao }) {
   }, [showRunwayExt, runwayThresholds, viewBox?.w]);
 
   // ── Range rings ──────────────────────────────────────────
+  const MAX_RING_LEVEL = RING_LEVELS.length - 1;
   const rangeRingElements = useMemo(() => {
-    if (!showRangeRings) return null;
+    const radii = RING_LEVELS[rangeRingLevel];
+    if (!radii) return null;
     const cx = rangeCenter.x;
     const cy = svgY(rangeCenter.z);
     return (
       <g>
-        {RING_RADII_NM.map(nm => (
-          <circle key={`ring-${nm}`}
-            cx={cx} cy={cy}
-            r={nm * NM_TO_GU}
-            fill="none"
-            stroke="#4080c0"
-            strokeWidth={ringLineW}
-            opacity="0.4"
-          />
+        {radii.map(nm => (
+          <React.Fragment key={`ring-${nm}`}>
+            <circle
+              cx={cx} cy={cy}
+              r={nm * NM_TO_GU}
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth={ringLineW}
+              opacity="0.4"
+            />
+            {showRouteLabels && (
+              <text
+                x={cx + nm * NM_TO_GU}
+                y={cy}
+                textAnchor="start"
+                dominantBaseline="middle"
+                fill="#ffffff"
+                fontSize={fontSize * 0.75}
+                opacity="0.5"
+              >{nm}</text>
+            )}
+          </React.Fragment>
         ))}
       </g>
     );
-  }, [showRangeRings, rangeCenter, ringLineW]);
+  }, [rangeRingLevel, rangeCenter, ringLineW, showRouteLabels, fontSize]);
+
+  // ── Border rect + 10° ticks (independent overlay SVG, percentage-based so it
+  //     always hugs the container edges regardless of the main SVG viewBox) ──
+  const borderOverlay = useMemo(() => {
+    const els = [];
+    const MIN_TICK = 0.5, MAX_TICK = 2.0;
+    // Border rect at 0-100%
+    els.push(<rect key="b" x="0" y="0" width="100" height="100" fill="none" stroke="#fff" strokeWidth="0.12" opacity="1" />);
+    for (let d = 0; d < 360; d += 10) {
+      const rad = d * Math.PI / 180, sx = Math.sin(rad), sy = -Math.cos(rad);
+      const t = Math.min(Math.abs(sx) < 1e-9 ? 1e9 : 50 / Math.abs(sx), Math.abs(sy) < 1e-9 ? 1e9 : 50 / Math.abs(sy));
+      const bx = 50 + sx * t, by = 50 + sy * t;
+      // Tick length: short at edge centres, long at corners
+      const angleFromCardinal = Math.min(d % 90, 90 - (d % 90));
+      const tickLen = MIN_TICK + (MAX_TICK - MIN_TICK) * (angleFromCardinal / 45);
+      els.push(<line key={'t'+d} x1={bx} y1={by} x2={bx - sx * tickLen} y2={by - sy * tickLen} stroke="#fff" strokeWidth="0.15" opacity="1" />);
+      // Label at the tick endpoint (tick points inward from border)
+      const lx = bx - sx * (tickLen + 0.6);
+      const ly = by - sy * (tickLen + 0.6);
+      els.push(<text key={'l'+d} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="1.2" opacity="1">{String(d).padStart(3, '0')}</text>);
+    }
+    return (
+      <div className="air-map-border-overlay">
+        <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+          {els}
+        </svg>
+      </div>
+    );
+  }, []);
 
   if (!initialViewBox) return null;
 
@@ -419,6 +524,8 @@ export default function AirMapWindow({ airportIcao }) {
       {error && <div className="air-map-error">{error}</div>}
       {!loading && !error && (
         <>
+          {/* Sim time clock in top-left corner */}
+          <SimClock simTimeUnixMs={simTimeUnixMs} />
           <div className="air-map-svg-container" onWheel={handleWheel}>
             <svg
               ref={svgRef}
@@ -454,13 +561,16 @@ export default function AirMapWindow({ airportIcao }) {
               {/* Range rings (behind routes) */}
               {rangeRingElements}
 
-              {/* SID + STAR routes (Type 2 / Type 0) — matching gray */}
-              {renderRoutePaths(sidPaths, '#888888', 'none', 0.5)}
-              {renderRoutePaths(starPaths, '#888888', 'none', 0.5)}
+              {/* SID / STAR / APPR routes — each toggleable */}
+              {showSidPaths && renderRoutePaths(sidPaths, '#888888', 'none', 0.5)}
+              {showSidPaths && renderRoutePaths(missedAppPaths, '#888888', 'none', 0.5)}
+              {showStarPaths && renderRoutePaths(trimmedStarPaths, '#888888', 'none', 0.5)}
+              {showApprPaths && renderRoutePaths(apprPaths, '#888888', 'none', 0.5)}
 
-              {/* Route name labels (toggled) */}
-              {showRouteLabels && renderRouteLabels(starPaths, '#888888')}
-              {showRouteLabels && renderRouteLabels(sidPaths, '#888888')}
+              {/* Route name labels — only for categories whose toggle is on */}
+              {showRouteLabels && showStarPaths && renderRouteLabels(trimmedStarPaths, '#888888')}
+              {showRouteLabels && showSidPaths && renderRouteLabels(sidPaths, '#888888')}
+              {showRouteLabels && showApprPaths && renderRouteLabels(apprPaths, '#888888')}
 
               {/* Runway extension lines + ticks */}
               {runwayExtElements}
@@ -565,6 +675,8 @@ export default function AirMapWindow({ airportIcao }) {
               })}
 
             </svg>
+            {/* Border rect + 10° ticks — independent overlay SVG, always hugs container edges */}
+            {borderOverlay}
           </div>
           <ControlSidebar
             zoomStep={handleZoomStep}
@@ -576,25 +688,41 @@ export default function AirMapWindow({ airportIcao }) {
             onResetZoom={handleResetZoom}
             onResetPanH={handleResetPanH}
             onResetPanV={handleResetPanV}
+            airspaceKnob={
+              <SpinKnob label="AIRSPACE" onStep={(dir) => setRangeRingLevel(l => Math.max(0, Math.min(MAX_RING_LEVEL, l + dir)))} position={rangeRingLevel / MAX_RING_LEVEL} onReset={() => setRangeRingLevel(3)} />
+            }
           >
-            <button
-              className={'air-map-side-btn' + (showRouteLabels ? ' active' : '')}
-              onClick={() => setShowRouteLabels(v => !v)}
-            >{t('air_map_labels')}</button>
-            <button
-              className={'air-map-side-btn' + (showRangeRings ? ' active' : '')}
-              onClick={() => setShowRangeRings(v => !v)}
-            >{t('air_map_airspace')}</button>
-            <button
-              className={'air-map-side-btn' + (showRunwayExt ? ' active' : '')}
-              onClick={() => setShowRunwayExt(v => !v)}
-            >{t('air_map_runway_ext')}</button>
-            <button
-              className={'air-map-side-btn' + (showBgImage ? ' active' : '')}
-              onClick={() => setShowBgImage(v => !v)}
-            >{t('air_map_bg')}</button>
-            <button
-              className="air-map-side-btn"
+            <div className={'air-map-toggle' + (showStarPaths ? ' active' : '')}
+              onClick={() => setShowStarPaths(v => !v)}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('air_map_star')}</span>
+            </div>
+            <div className={'air-map-toggle' + (showSidPaths ? ' active' : '')}
+              onClick={() => setShowSidPaths(v => !v)}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('air_map_sid')}</span>
+            </div>
+            <div className={'air-map-toggle' + (showApprPaths ? ' active' : '')}
+              onClick={() => setShowApprPaths(v => !v)}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('air_map_appr')}</span>
+            </div>
+            <div className={'air-map-toggle' + (showRouteLabels ? ' active' : '')}
+              onClick={() => setShowRouteLabels(v => !v)}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('air_map_labels')}</span>
+            </div>
+            <div className={'air-map-toggle' + (showRunwayExt ? ' active' : '')}
+              onClick={() => setShowRunwayExt(v => !v)}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('air_map_runway_ext')}</span>
+            </div>
+            <div className={'air-map-toggle' + (showBgImage ? ' active' : '')}
+              onClick={() => setShowBgImage(v => !v)}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('air_map_bg')}</span>
+            </div>
+            <div className="air-map-toggle"
               onClick={() => {
                 if (refreshTimerRef.current) {
                   // Double-click: EM pick + reset
@@ -615,8 +743,10 @@ export default function AirMapWindow({ airportIcao }) {
                     if (electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft();
                   }, 300);
                 }
-              }}
-            >{t('map_refresh')}</button>
+              }}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('map_refresh')}</span>
+            </div>
           </ControlSidebar>
         </>
       )}

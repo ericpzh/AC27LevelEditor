@@ -170,10 +170,12 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   │   ├── StarMap/         # Interactive STAR/approach chart overlay
 │   │   │   └── TimelineEditors/ # Weather, Wind, Runway editors
 │   │   ├── MapWindows/          # Full-window radar visualizations (separate windows)
-│   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, ground aircraft
-│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID routes, runway extensions, range rings
-│   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs + action buttons
+│   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, areas, ground aircraft
+│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/APPR routes, runway extensions, range rings, border overlay
+│   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs + push-button toggles
 │   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel)
+│   │   │   ├── SimClock.jsx                # Shared sim-time clock (HH:MM:SS UTC)
+│   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, animations
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   └── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
 │   │   └── common/              # Modal, Toast

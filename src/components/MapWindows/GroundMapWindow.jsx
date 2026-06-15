@@ -4,8 +4,10 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
 import useSvgZoom from './useSvgZoom';
 import useUdpAircraftState from './useUdpAircraftState';
 import ControlSidebar from './ControlSidebar';
-import { RAD_TO_DEG, MAP_ICON_PATH, GROUND_MAP_DEFAULT_ZOOM, GROUND_RADAR_STAND_PROXIMITY } from '../../utils/constants';
+import SimClock from './SimClock';
+import { RAD_TO_DEG, MAP_ICON_PATH, GROUND_MAP_DEFAULT_ZOOM, GROUND_MAP_CENTER_OFFSET, GROUND_RADAR_STAND_PROXIMITY, GROUND_MAP_TAXIWAY_LABEL_SPACING } from '../../utils/constants';
 import './GroundMapWindow.css';
+import './MapShared.css';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -17,6 +19,13 @@ function headingDeg(noseDir) {
   if (!noseDir) return 0;
   return Math.atan2(-noseDir.z, noseDir.x) * RAD_TO_DEG;
 }
+
+/** Color scheme for ACL area polygons by AreaType. */
+const AREA_TYPE_STYLES = {
+  0: { fill: '#1a3a6a', stroke: '#2a5a9a', opacity: 0.20 },   // Airport boundary (blue)
+  1: { fill: '#444', stroke: 'none', opacity: 1.0 },           // Stand/apron (match taxiway)
+  2: { fill: '#000', stroke: 'none', opacity: 1.0 },           // Building (solid black)
+};
 
 /** Compute 4 corner points of a runway rectangle from centerline endpoints. */
 function computeRunwayCorners(a, b, halfWidth) {
@@ -47,13 +56,14 @@ export default function GroundMapWindow({ airportIcao }) {
   const [taxiwayPaths, setTaxiwayPaths] = useState([]);
   const [runwayData, setRunwayData] = useState({});
   const [standPositions, setStandPositions] = useState({});
+  const [areaData, setAreaData] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedCallSign, setSelectedCallSign] = useState(null);
   const [showTaxiwayNames, setShowTaxiwayNames] = useState(false);
   const [showAllAircraft, setShowAllAircraft] = useState(false);
 
-  const { aircraft: udpAircraft, currentAirport: udpAirport } = useUdpAircraftState();
+  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs } = useUdpAircraftState();
 
   // ── Debug: log selected aircraft full UDP data every 5s ────
   useEffect(() => {
@@ -81,6 +91,7 @@ export default function GroundMapWindow({ airportIcao }) {
         setTaxiwayPaths(vals?._taxiwayPaths?.paths || []);
         setRunwayData(vals?._runwayData || {});
         setStandPositions(vals?._standPositions || {});
+        setAreaData(vals?._areaData || {});
       } catch (e) {
         setError(e.message);
       } finally {
@@ -105,7 +116,7 @@ export default function GroundMapWindow({ airportIcao }) {
     });
   }, [udpAircraft, udpAirport, airportIcao, standPositions, showAllAircraft]);
 
-  // ── Ground box: center (0,0), per-airport default zoom ───
+  // ── Ground box: center (0,0) + per-airport offset, per-airport default zoom ───
   const dataBounds = useMemo(() => {
     const zoom = GROUND_MAP_DEFAULT_ZOOM[airportIcao] ?? 1.0;
     const halfW = 30 * zoom;
@@ -115,13 +126,14 @@ export default function GroundMapWindow({ airportIcao }) {
   // ── SVG viewBox ───────────────────────────────────────────
   const initialViewBox = useMemo(() => {
     if (!dataBounds) return null;
+    const offset = GROUND_MAP_CENTER_OFFSET[airportIcao] || { x: 0, z: 0 };
     return {
-      x: dataBounds.x,
-      y: dataBounds.z - dataBounds.h,
+      x: dataBounds.x + (offset.x || 0),
+      y: dataBounds.z - dataBounds.h + (-(offset.z || 0)),
       w: dataBounds.w,
       h: dataBounds.h,
     };
-  }, [dataBounds]);
+  }, [dataBounds, airportIcao]);
 
   const { viewBox, svgRef, resetZoom, resetPanH, resetPanV, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp,
           zoomIn, zoomOut, panLeft, panRight, panUp, panDown } = useSvgZoom(initialViewBox);
@@ -178,6 +190,56 @@ export default function GroundMapWindow({ airportIcao }) {
     return s;
   }, [runwayData]);
 
+  // ── Taxiway label indices (proximity dedup per name) ──────
+  const taxiwayLabelIndices = useMemo(() => {
+    const show = new Set();
+    const placed = {}; // name → [{x, z}]
+    taxiwayPaths.forEach((tp, i) => {
+      const midIdx = Math.floor((tp.points?.length || 0) / 2);
+      const midPt = tp.points?.[midIdx];
+      if (!showTaxiwayNames || !tp.name || runwayNameSet.has(tp.name) || !midPt) return;
+      const prev = placed[tp.name];
+      if (prev) {
+        // Check distance to all previously placed labels of this name
+        const tooClose = prev.some(p => {
+          const dx = midPt.x - p.x;
+          const dz = (midPt.z || 0) - (p.z || 0);
+          return dx * dx + dz * dz < GROUND_MAP_TAXIWAY_LABEL_SPACING * GROUND_MAP_TAXIWAY_LABEL_SPACING;
+        });
+        if (tooClose) return;
+      }
+      if (!placed[tp.name]) placed[tp.name] = [];
+      placed[tp.name].push({ x: midPt.x, z: midPt.z || 0 });
+      show.add(i);
+    });
+    return show;
+  }, [taxiwayPaths, showTaxiwayNames, runwayNameSet]);
+
+  // ── Area polygons from ACL SceneryData.Areas ──────────────
+  const areaPolygonElements = useMemo(() => {
+    const els = [];
+    Object.entries(areaData || {}).forEach(([areaTypeStr, areas]) => {
+      const areaType = parseInt(areaTypeStr, 10);
+      const style = AREA_TYPE_STYLES[areaType] || { fill: '#444', stroke: '#666', opacity: 0.20 };
+      (areas || []).forEach((area) => {
+        if (!area.enabled || !area.points || area.points.length < 3) return;
+        const pointsStr = area.points.map(p => `${p.x},${svgY(p.z)}`).join(' ');
+        els.push(
+          <polygon
+            key={'area-' + area.guid}
+            points={pointsStr}
+            fill={style.fill}
+            fillOpacity={style.opacity}
+            stroke={style.stroke}
+            strokeWidth={style.stroke === 'none' ? 0 : taxiwayW * 0.6}
+            strokeOpacity={style.stroke === 'none' ? 0 : 0.5}
+          />
+        );
+      });
+    });
+    return els;
+  }, [areaData, taxiwayW]);
+
   if (!initialViewBox) return null;
 
   return (
@@ -186,6 +248,7 @@ export default function GroundMapWindow({ airportIcao }) {
       {error && <div className="ground-map-error">{error}</div>}
       {!loading && !error && (
         <>
+          <SimClock simTimeUnixMs={simTimeUnixMs} />
           <div className="ground-map-svg-container" onWheel={handleWheel}>
             <svg
               ref={svgRef}
@@ -203,31 +266,35 @@ export default function GroundMapWindow({ airportIcao }) {
               <rect x={viewBox.x} y={viewBox.y} width={viewBox.w} height={viewBox.h} fill="#0a1628" />
 
               {/* ── Layer 1: Taxiway centerlines (grey) ────────── */}
+              {taxiwayPaths.map((tp, i) => (
+                <polyline
+                  key={'twy-' + i}
+                  points={tp.points.map(p => `${p.x},${svgY(p.z)}`).join(' ')}
+                  fill="none"
+                  stroke={tp.flags === 2 ? '#555' : tp.flags === 4 ? '#666' : '#444'}
+                  strokeWidth={taxiwayW}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ))}
+
+              {/* ── Layer 1b: Area polygons (semi-transparent, by AreaType) ── */}
+              {areaPolygonElements}
+
+              {/* ── Layer 1c: Taxiway labels (on top of lines + areas) ── */}
               {taxiwayPaths.map((tp, i) => {
-                const color = tp.flags === 2 ? '#555' : tp.flags === 4 ? '#666' : '#444';
-                const midIdx = Math.floor((tp.points?.length || 0) / 2);
-                const midPt = tp.points?.[midIdx];
+                if (!taxiwayLabelIndices.has(i)) return null;
+                const mid = tp.points[Math.floor(tp.points.length / 2)];
                 return (
-                  <g key={'twy-' + i}>
-                    <polyline
-                      points={tp.points.map(p => `${p.x},${svgY(p.z)}`).join(' ')}
-                      fill="none"
-                      stroke={color}
-                      strokeWidth={taxiwayW}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    {showTaxiwayNames && tp.name && !runwayNameSet.has(tp.name) && midPt && (
-                      <text
-                        x={midPt.x}
-                        y={svgY(midPt.z) - fontSize * 0.9}
-                        textAnchor="middle"
-                        fontSize={fontSize * 0.65}
-                        fill="#ffffff"
-                        className="ground-map-taxiway-label"
-                      >{tp.name}</text>
-                    )}
-                  </g>
+                  <text
+                    key={'twylbl-' + i}
+                    x={mid.x}
+                    y={svgY(mid.z) - fontSize * 0.9}
+                    textAnchor="middle"
+                    fontSize={fontSize * 0.65}
+                    fill="#ffffff"
+                    className="ground-map-taxiway-label"
+                  >{tp.name}</text>
                 );
               })}
 
@@ -303,18 +370,21 @@ export default function GroundMapWindow({ airportIcao }) {
             onResetPanH={handleResetPanH}
             onResetPanV={handleResetPanV}
           >
-            <button
-              className={'ground-map-side-btn' + (showAllAircraft ? ' active' : '')}
-              onClick={() => setShowAllAircraft(v => !v)}
-            >{t('ground_map_show_all')}</button>
-            <button
-              className={'ground-map-side-btn' + (showTaxiwayNames ? ' active' : '')}
-              onClick={() => setShowTaxiwayNames(v => !v)}
-            >{t('ground_map_taxiway')}</button>
-            <button
-              className="ground-map-refresh-btn"
-              onClick={() => { if (electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft(); }}
-            >{t('map_refresh')}</button>
+            <div className={'air-map-toggle' + (showAllAircraft ? ' active' : '')}
+              onClick={() => setShowAllAircraft(v => !v)}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('ground_map_show_all')}</span>
+            </div>
+            <div className={'air-map-toggle' + (showTaxiwayNames ? ' active' : '')}
+              onClick={() => setShowTaxiwayNames(v => !v)}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('ground_map_taxiway')}</span>
+            </div>
+            <div className="air-map-toggle"
+              onClick={() => { if (electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft(); }}>
+              <div className="air-map-toggle-knob" />
+              <span className="air-map-toggle-label">{t('map_refresh')}</span>
+            </div>
           </ControlSidebar>
         </>
       )}

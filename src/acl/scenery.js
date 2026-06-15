@@ -221,6 +221,8 @@ function _parseStandPositions(text) {
         x: (tailPos.x + nosePos.x) / 2,
         y: (tailPos.y + nosePos.y) / 2,
         heading,
+        tailX: tailPos.x, tailZ: tailPos.y,
+        noseX: nosePos.x, noseZ: nosePos.y,
       };
     } else if (tailPos) {
       result[stand.identifier] = { x: tailPos.x, y: tailPos.y, heading: 0 };
@@ -231,6 +233,136 @@ function _parseStandPositions(text) {
   }
 
   return result;
+}
+
+/**
+ * Parse Area polygons from SceneryData.Areas.
+ *
+ * Areas is a Unity Dictionary<string, AreaState> serialized with $k/$v
+ * entries inside a $rcontent array. Each $v block contains:
+ *   - Guid (redundant with $k)
+ *   - Enabled (boolean)
+ *   - NodePositions: { $type: 15, $rlength: N, $rcontent: [Vector3, ...] }
+ *   - AreaType: 0 (airport boundary), 1 (stand/apron), 2 (special)
+ *
+ * @param {string} text - Full .acl file text
+ * @returns {{ [areaType: number]: Array<{ guid: string, enabled: boolean, points: Array<{x: number, z: number}> }> }}
+ *   Groups areas by AreaType (0, 1, 2). Each area has a polygon of {x,z} game-unit coordinates.
+ */
+function _parseAreas(text) {
+  const t = createTokenizer(text);
+  const sdSec = t.findSection('SceneryData');
+  if (!sdSec) return {};
+
+  const sdText = t.substring(sdSec.valueStart, sdSec.valueEnd);
+  const sdT = createTokenizer(sdText);
+
+  const areasSec = sdT.findSection('Areas');
+  if (!areasSec) return {};
+
+  const areasText = sdT.substring(areasSec.valueStart, areasSec.valueEnd);
+  if (!areasText) return {};
+
+  // Find the $rcontent array enclosing the $k/$v entries
+  const rcIdx = areasText.indexOf('"$rcontent"');
+  if (rcIdx < 0) return {};
+
+  const bracketIdx = areasText.indexOf('[', rcIdx);
+  if (bracketIdx < 0) return {};
+
+  const areasT = createTokenizer(areasText);
+  const rcEnd = areasT.findArrayEnd(bracketIdx);
+  if (!rcEnd) return {};
+
+  const result = {};
+
+  // Regex for Vector3 nodes inside NodePositions $rcontent arrays.
+  // Form: { "$type": 16, x, 0, z } or { "$type": "16|...", x, 0, z }
+  const VEC3_RE = /\{\s*"\$type"\s*:\s*(?:16|"16\|[^"]+")\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*\}/g;
+
+  // Walk the $rcontent array — each entry is { $k: "guid", $v: { ... } }
+  const contentText = areasText.substring(bracketIdx + 1, rcEnd - 1);
+  let pos = 0;
+  while (pos < contentText.length) {
+    // Skip whitespace and commas
+    if (' \t\n\r,'.includes(contentText[pos])) { pos++; continue; }
+    if (contentText[pos] !== '{') { pos++; continue; }
+
+    const entryEnd = _findObjectEnd(contentText, pos);
+    if (!entryEnd) break;
+
+    const entryBlock = contentText.substring(pos, entryEnd);
+
+    // Extract $k (GUID)
+    const kMatch = entryBlock.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+    const guid = kMatch ? kMatch[1] : null;
+
+    // Find $v block within the entry
+    const vKeyIdx = entryBlock.indexOf('"$v"');
+    if (vKeyIdx >= 0 && guid) {
+      const colonIdx = entryBlock.indexOf(':', vKeyIdx);
+      if (colonIdx >= 0) {
+        let vStart = colonIdx + 1;
+        while (vStart < entryBlock.length && ' \t\n\r'.includes(entryBlock[vStart])) vStart++;
+        if (vStart < entryBlock.length && entryBlock[vStart] === '{') {
+          const vEnd = _findObjectEnd(entryBlock, vStart);
+          if (vEnd) {
+            const vBlock = entryBlock.substring(vStart, vEnd);
+
+            // Extract AreaType (integer 0, 1, or 2)
+            const atMatch = vBlock.match(/"AreaType"\s*:\s*(-?\d+)/);
+            const areaType = atMatch ? parseInt(atMatch[1], 10) : null;
+
+            // Extract Enabled (default true)
+            const enabled = !(/["']Enabled["']\s*:\s*false/.test(vBlock));
+
+            // Extract NodePositions array
+            const npIdx = vBlock.indexOf('"NodePositions"');
+            if (npIdx >= 0) {
+              const npRcMatch = vBlock.substring(npIdx).match(/"\$rcontent"\s*:\s*\[/);
+              if (npRcMatch) {
+                const absRc = npIdx + npRcMatch.index + npRcMatch[0].length;
+                const npEnd = _findArrayEndSimple(vBlock, absRc);
+                if (npEnd) {
+                  const arr = vBlock.substring(absRc, npEnd);
+                  const points = [];
+                  // Parse each Vector3 within this NodePositions array
+                  let vm;
+                  while ((vm = VEC3_RE.exec(arr)) !== null) {
+                    points.push({ x: parseFloat(vm[1]), z: parseFloat(vm[3]) });
+                  }
+                  // Reset lastIndex for the next area entry (global regex)
+                  VEC3_RE.lastIndex = 0;
+                  if (points.length >= 3 && areaType !== null) {
+                    if (!result[areaType]) result[areaType] = [];
+                    result[areaType].push({ guid, enabled, points });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    pos = entryEnd;
+  }
+
+  return result;
+}
+
+/**
+ * Simple array end finder (not string-aware) — follows [ ] nesting.
+ */
+function _findArrayEndSimple(text, start) {
+  let depth = 1;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '[') depth++;
+    else if (text[i] === ']') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return null;
 }
 
 /**
@@ -252,4 +384,5 @@ function _findObjectEnd(text, start) {
 module.exports = {
   _parseSceneryData,
   _parseStandPositions,
+  _parseAreas,
 };

@@ -2346,6 +2346,20 @@ function buildApproachCache(airportDir) {
     } catch (e) { log('  SID/go-around parse warning: ' + e.message); }
   }
 
+  // ── Parse APPR (RNAV approach) routes from SceneryData (Type=1) ──
+  let apprRunwayMap = {};
+  let runwayApprMap = {};
+  let apprPaths = {};
+  if (firstAclText) {
+    try {
+      const { extractApprRunwayMappings, buildApprPaths } = require('./sid_goaround');
+      const apprMappings = extractApprRunwayMappings(firstAclText);
+      apprRunwayMap = apprMappings.apprRunwayMap || {};
+      runwayApprMap = apprMappings.runwayApprMap || {};
+      apprPaths = buildApprPaths(firstAclText, apprRunwayMap);
+    } catch (e) { log('  APPR path parse warning: ' + e.message); }
+  }
+
   // Compute per-airport coordinate scale from runway threshold geometry
   const airportScale = firstAclText
     ? computeAirportScale(firstAclText)
@@ -2394,6 +2408,7 @@ function buildApproachCache(airportDir) {
       taxiwayPaths.paths.length + ' taxiway paths, ' +
       Object.keys(sidPaths).length + ' SID paths, ' +
       Object.keys(missedAppPaths).length + ' missed approach paths, ' +
+      Object.keys(apprPaths).length + ' APPR paths, ' +
       'airportScale=' + (airportScale ? airportScale.toFixed(1) : 'N/A') + ', ' +
       Object.keys(runwayThresholds).length + ' runways');
 
@@ -2409,6 +2424,7 @@ function buildApproachCache(airportDir) {
     taxiwayPaths,
     sidRunwayMap, runwaySidMap, sidPaths,
     missedAppMap, runwayMissedAppMap, missedAppPaths,
+    apprRunwayMap, runwayApprMap, apprPaths,
   };
 }
 
@@ -2555,6 +2571,7 @@ function serializeApproachCache(cache) {
   if (cache.missedAppMap) { out.missedAppMap = cache.missedAppMap; }
   if (cache.runwayMissedAppMap) { out.runwayMissedAppMap = cache.runwayMissedAppMap; }
   if (cache.missedAppPaths) { out.missedAppPaths = cache.missedAppPaths; }
+  if (cache.apprPaths) { out.apprPaths = cache.apprPaths; }
   return out;
 }
 
@@ -2585,6 +2602,7 @@ function deserializeApproachCache(json) {
   if (json.missedAppMap && typeof json.missedAppMap === 'object') { cache.missedAppMap = json.missedAppMap; }
   if (json.runwayMissedAppMap && typeof json.runwayMissedAppMap === 'object') { cache.runwayMissedAppMap = json.runwayMissedAppMap; }
   if (json.missedAppPaths && typeof json.missedAppPaths === 'object') { cache.missedAppPaths = json.missedAppPaths; }
+  if (json.apprPaths && typeof json.apprPaths === 'object') { cache.apprPaths = json.apprPaths; }
   return cache;
 }
 

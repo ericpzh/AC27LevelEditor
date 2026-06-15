@@ -59,74 +59,11 @@
   user-select: none;
 }
 
-.ground-map-refresh-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-secondary);
-  padding: 6px 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 12.5px;
-  font-family: inherit;
-  transition: all var(--transition);
-  white-space: nowrap;
-  user-select: none;
-  width: 100%;
-}
-.ground-map-refresh-btn:hover {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border-color: var(--border);
-}
-.ground-map-refresh-btn:active {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .ground-map-reset-btn {
   cursor: pointer;
 }
 .ground-map-reset-btn:hover {
   fill: white;
-}
-
-/* Sidebar toggle button (matches air-map-side-btn pattern) */
-.ground-map-side-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-secondary);
-  padding: 6px 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 12.5px;
-  font-family: inherit;
-  transition: all var(--transition);
-  white-space: nowrap;
-  user-select: none;
-  width: 100%;
-}
-.ground-map-side-btn:hover {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border-color: var(--border);
-}
-.ground-map-side-btn:active {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.ground-map-side-btn.active {
-  color: var(--accent);
-  border-color: var(--accent);
 }
 
 /* Taxiway name labels */

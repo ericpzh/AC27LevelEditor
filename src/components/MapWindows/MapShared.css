@@ -1,0 +1,99 @@
+/* ─── Shared map-window styles (toggle buttons, clock, animations) ─── */
+
+/* Push-button press animation */
+@keyframes pushDown {
+  0%   { transform: translateY(0) scale(1); }
+  40%  { transform: translateY(2.5px) scale(0.94); }
+  100% { transform: translateY(2px) scale(0.96); }
+}
+@keyframes pushUp {
+  0%   { transform: translateY(2px) scale(0.96); }
+  60%  { transform: translateY(0) scale(1.02); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+/* Sim time clock in top-left corner */
+.air-map-clock {
+  position: absolute;
+  top: 28px;
+  left: 12px;
+  color: #ffffff;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 16px;
+  font-weight: normal;
+  z-index: 20;
+  pointer-events: none;
+  user-select: none;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+}
+
+/* Toggle button (unified sidebar button) */
+.air-map-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+  padding: 5px 4px;
+  border-radius: 4px;
+  transition: background var(--transition);
+  width: 100%;
+}
+.air-map-toggle:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Push button — raised/out when off, depressed/in when active */
+.air-map-toggle-knob {
+  width: 38px;
+  height: 22px;
+  border-radius: 4px;
+  border: none;
+  transition: all 0.1s ease;
+  position: relative;
+  /* Raised (out) state */
+  background: linear-gradient(180deg, #5a5a5a 0%, #3a3a3a 40%, #2a2a2a 100%);
+  box-shadow:
+    0 3px 0 #1a1a1a,
+    0 4px 6px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.air-map-toggle-knob:active {
+  animation: pushDown 0.12s ease-out forwards;
+}
+/* When released after being active, snap back */
+.air-map-toggle:not(.active) .air-map-toggle-knob:not(:active) {
+  animation: pushUp 0.15s ease-out forwards;
+}
+
+/* Active (pushed in) state */
+.air-map-toggle.active .air-map-toggle-knob {
+  transform: translateY(2px) scale(0.96);
+  background: linear-gradient(180deg, #2a6090 0%, #1a4060 40%, #102838 100%);
+  box-shadow:
+    0 1px 0 #0d1a28,
+    0 0 8px rgba(64, 160, 224, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.air-map-toggle.active .air-map-toggle-knob:active {
+  animation: pushDown 0.1s ease-out forwards;
+}
+
+/* Label below the button */
+.air-map-toggle-label {
+  font-size: 8.5px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  transition: color var(--transition);
+}
+.air-map-toggle.active .air-map-toggle-label {
+  color: var(--accent);
+}
+.air-map-toggle:hover .air-map-toggle-label {
+  color: var(--text);
+}

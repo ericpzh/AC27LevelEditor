@@ -21,6 +21,7 @@ const TRAIL_TICK_GAP = 600; // 10 game-seconds at 60Hz
 const MAX_TRAIL = 5;
 let reconnectTimer = null;
 let logInterval = null;
+let lastSimTimeUnixMs = 0; // latest simTimeUnixMs from header
 let packetCount = 0;
 let firstPacketLogged = false;
 
@@ -51,7 +52,7 @@ function parseDatagram(buf) {
     icao += String.fromCharCode(b);
   }
 
-  // simTick at offset 16 (u64), simTimeUnixMs at offset 24 (i64) — not needed for display
+  // simTick at offset 16 (u64), simTimeUnixMs at offset 24 (i64)
   const records = [];
   for (let i = 0; i < recordCount; i++) {
     const off = headerSize + i * recordSize;
@@ -129,6 +130,14 @@ function bindSocket() {
     }
 
     if (result.icao) currentAirport = result.icao;
+
+    // Read simTimeUnixMs from header (offset 24, i64 little-endian)
+    if (buf.length >= 32) {
+      const simTimeUnixMs = Number(buf.readBigInt64LE(24));
+      if (!isNaN(simTimeUnixMs) && simTimeUnixMs > 0) {
+        lastSimTimeUnixMs = simTimeUnixMs;
+      }
+    }
 
     // Read simTick from header (offset 16, u64 little-endian)
     const simTick = buf.readBigUInt64LE
@@ -208,6 +217,7 @@ function stop() {
   trailSnapshots.clear();
   currentAirport = null;
   lastPacketTime = 0;
+  lastSimTimeUnixMs = 0;
   packetCount = 0;
   firstPacketLogged = false;
   console.log('[UDP] stopped');
@@ -234,7 +244,7 @@ function getUdpAircraftState() {
     }
     return { ...a, trail };
   });
-  return { aircraft, currentAirport, recordCount: aircraftMap.size };
+  return { aircraft, currentAirport, recordCount: aircraftMap.size, simTimeUnixMs: lastSimTimeUnixMs };
 }
 
 /**

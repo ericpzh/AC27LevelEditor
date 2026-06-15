@@ -333,9 +333,20 @@ function buildMissedApproachPaths(aclText, missedAppMap) {
   return _buildRoutePaths(aclText, missedAppMap);
 }
 
+function extractApprRunwayMappings(aclText) {
+  const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 1);
+  return { apprRunwayMap: routeRunwayMap, runwayApprMap: runwayRouteMap };
+}
+
+function buildApprPaths(aclText, apprRunwayMap) {
+  return _buildRoutePaths(aclText, apprRunwayMap);
+}
+
 module.exports = {
   extractSidRunwayMappings,
   extractMissedApproachMappings,
   buildSidPaths,
   buildMissedApproachPaths,
+  extractApprRunwayMappings,
+  buildApprPaths,
 };

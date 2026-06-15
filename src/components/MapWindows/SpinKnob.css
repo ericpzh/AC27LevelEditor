@@ -2,8 +2,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 6px 0;
+  gap: 8px;
+  padding: 8px 0 6px;
   user-select: none;
 }
 
@@ -13,31 +13,71 @@
   justify-content: center;
   cursor: grab;
   border-radius: 50%;
+  transition: transform 0.1s ease-out;
 }
 .spin-knob-svg-wrapper:active {
   cursor: grabbing;
 }
+/* Pressed down — whole knob sinks */
+.spin-knob-svg-wrapper.pressed {
+  transform: translateY(3px) scale(0.94);
+}
 
 .spin-knob-svg {
   display: block;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.5));
+  transition: filter 0.1s ease-out;
+}
+/* Compress shadow when pressed */
+.spin-knob-svg-wrapper.pressed .spin-knob-svg {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
 }
 
-.spin-knob-ring {
-  fill: none;
-  stroke: #2a2a2a;
-  stroke-width: 2.5;
+/* Bezel — darker outer ring */
+.spin-knob-bezel {
+  fill: url(#knobBezel);
+  stroke: #1a1a1a;
+  stroke-width: 0.8;
 }
 
+/* Knob face — convex metallic gradient */
+.spin-knob-face {
+  fill: url(#knobFace);
+  stroke: #222;
+  stroke-width: 0.5;
+}
+
+/* Tick marks around the bezel */
+.spin-knob-tick {
+  stroke: #666;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+/* Center hub */
 .spin-knob-center {
-  fill: #555;
+  fill: #222;
+  stroke: #444;
+  stroke-width: 0.6;
 }
 
+/* Indicator needle */
 .spin-knob-indicator {
   fill: none;
   stroke: var(--accent, #5b8def);
-  stroke-width: 2;
+  stroke-width: 2.5;
   stroke-linecap: round;
-  transition: transform 0.12s ease-out;
+  filter: drop-shadow(0 0 3px rgba(91, 141, 239, 0.4));
+}
+
+/* Curved double-arrow around lower portion */
+.spin-knob-arrow {
+  fill: none;
+  stroke: #666;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
 .spin-knob-label {
@@ -45,6 +85,8 @@
   color: var(--text-secondary, #8b90a0);
   text-align: center;
   line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
   pointer-events: none;
   white-space: nowrap;
 }

@@ -10,7 +10,7 @@ const { FIELDS, FIELD_LABELS, DROPDOWN_FIELDS } = require('./constants.js');
 const { exportCSV, exportGameCSV } = require('../utils/csvIo');
 
 // ─── Internal sub-modules ────────────────────────────────────
-const { _parseSceneryData, _parseStandPositions } = require('./scenery');
+const { _parseSceneryData, _parseStandPositions, _parseAreas } = require('./scenery');
 const {
   _parseWorldStateData, _extractFlightsFromWorldState,
 } = require('./world_state');
@@ -50,6 +50,8 @@ const { parseTaxiwayPaths } = require('./taxiway');
 const {
   extractSidRunwayMappings, extractMissedApproachMappings,
   buildSidPaths, buildMissedApproachPaths,
+  extractApprRunwayMappings,
+  buildApprPaths,
 } = require('./sid_goaround');
 
 // ─── Load flights from ACL (single source of truth) ───────────
@@ -194,8 +196,9 @@ module.exports = {
   parseTaxiwayPaths,
   extractSidRunwayMappings, extractMissedApproachMappings,
   buildSidPaths, buildMissedApproachPaths,
+  extractApprRunwayMappings, buildApprPaths,
   // Internal exports (used by tests)
-  _parseWorldStateData, _parseSceneryData, _parseStandPositions,
+  _parseWorldStateData, _parseSceneryData, _parseStandPositions, _parseAreas,
   _parseRunwayThresholds,
   _extractFlightsFromWorldState,
   _parseWorldStateFlightPlans, _parseFlightPlanEntry,

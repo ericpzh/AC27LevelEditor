@@ -10,7 +10,7 @@ export const TICKS_PER_SECOND_NUM = 10000000;
 export const TICKS_PER_DAY_NUM = 864000000000;
 
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
-export const CACHE_VERSION = 8;
+export const CACHE_VERSION = 11;
 
 // ─── Nautical mile → game units (1852 m ÷ 100 m/unit) ──────
 export const NM_TO_GU = 18.52;
@@ -252,6 +252,11 @@ export const GROUND_MAP_DEFAULT_ZOOM = {
   ZSJN: 0.75,
   KJFK: 1.0,
 };
+// Per-airport center offset in game units: { x, z } shift from (0, 0)
+export const GROUND_MAP_CENTER_OFFSET = {
+  ZSJN: { x: 0, z: -3 },
+  KJFK: { x: -3, z: 0 },
+};
 export const AIR_MAP_DEFAULT_ZOOM = {
   ZSJN: 1.0,
   KJFK: 1.0,
@@ -260,6 +265,7 @@ export const AIR_MAP_DEFAULT_ZOOM = {
 // Ground radar: max distance (game units) from aircraft to assigned stand
 // midpoint to be considered "at stand". 0.5 GU ≈ 50 m.
 export const GROUND_RADAR_STAND_PROXIMITY = 0.5;
+export const GROUND_MAP_TAXIWAY_LABEL_SPACING = 10.0; // min GU between same-name taxiway labels
 
 export const MAP_PLANE_VB = 512;
 // IoAirplane icon path
