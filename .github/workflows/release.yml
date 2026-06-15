@@ -30,10 +30,31 @@ jobs:
       - name: Vite build
         run: npx vite build
 
+      - name: Debug — verify build output
+        shell: pwsh
+        run: |
+          Write-Host "=== dist ==="
+          Get-ChildItem dist -Recurse | Select FullName, Length | ft -auto
+          Write-Host "=== dist-electron ==="
+          Get-ChildItem dist-electron -Recurse | Select FullName, Length | ft -auto
+          Write-Host "=== package.json build config ==="
+          (Get-Content package.json | ConvertFrom-Json).build.files | ForEach { Write-Host "  $_" }
+
       - name: Package Windows (portable)
         run: npx electron-builder --win portable --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Debug — verify packaged output
+        shell: pwsh
+        run: |
+          Write-Host "=== release ==="
+          Get-ChildItem release -Recurse -Depth 2 | Select FullName, Length | ft -auto
+          Write-Host "=== asar ==="
+          if (Test-Path release\win-unpacked\resources\app.asar) {
+            $s = (Get-Item release\win-unpacked\resources\app.asar).Length
+            Write-Host "app.asar: $s bytes"
+          } else { Write-Host "app.asar NOT FOUND" }
 
       - name: Embed icon
         run: node set_icon.js release/AC27LevelEditor.exe
