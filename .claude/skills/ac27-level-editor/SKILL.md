@@ -280,7 +280,7 @@ Three-layer testing strategy:
 - `npm run test:e2e` (requires `npm run build` first)
 - Launches the real Electron app against a temp fixture copy in `tests/tmp-e2e/`
 - Custom `--user-data-dir` with pre-written `lastRoot.json` skips the setup screen
-- `AC27_E2E_TMP_DIR` env var skips native OS dialogs (backup, export) in test mode
+- `AC27_E2E_TMP_DIR` env var skips native OS dialogs (export) in test mode; backup saves `.bak` directly alongside source (no dialog)
 - **Never touches real game files** — all reads/writes go to temp copies
 
 File isolation flow:
@@ -450,6 +450,11 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
    - **Demo `.demo.acl` files treated identically** — save writes to `.demo.acl` + same shared `.csv` + shared timeline `.json` files
 4. Timeline saves (separate IPC per type) → writes JSON files
 5. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog). For `.demo.acl` files, creates `.demo.acl.bak`
+
+### Toolbar Backup Button
+- **Backup button** (toolbar, `handleBackup`): directly copies current `.acl` → `.acl.bak` in the same directory (no file picker dialog)
+- If a `.bak` file already exists, a confirmation modal appears before overwriting
+- Uses `check-backup-exists` IPC to detect existing `.bak`, then `manual-backup` IPC to copy
 
 ### Save As ZIP
 - Saves silently → packages 5 files into ZIP → native save dialog

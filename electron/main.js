@@ -1123,27 +1123,10 @@ ipcMain.handle('export-zip', async (_event, { aclPath }) => {
 // ─── IPC: Manual backup ──────────────────────────────────
 
 ipcMain.handle('manual-backup', async (_event, sourcePath) => {
-  // E2E test mode: skip native dialog, save .bak copy next to source
-  if (process.env.AC27_E2E_TMP_DIR) {
-    try {
-      const destPath = sourcePath + '.bak';
-      fs.copyFileSync(sourcePath, destPath);
-      return { canceled: false, path: destPath };
-    } catch (err) {
-      return { canceled: false, error: err.message };
-    }
-  }
-
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title: 'Choose Backup Location',
-    defaultPath: path.basename(sourcePath),
-    filters: [{ name: 'Level Files', extensions: ['acl'] }],
-  });
-  if (result.canceled || !result.filePath) return { canceled: true };
-
   try {
-    fs.copyFileSync(sourcePath, result.filePath);
-    return { canceled: false, path: result.filePath };
+    const destPath = sourcePath + '.bak';
+    fs.copyFileSync(sourcePath, destPath);
+    return { canceled: false, path: destPath };
   } catch (err) {
     return { canceled: false, error: err.message };
   }

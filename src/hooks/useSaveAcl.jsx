@@ -120,10 +120,25 @@ export function useSaveAcl() {
   const handleBackup = useCallback(async () => {
     const store = useAppStore.getState();
     if (!store.currentPath) { store.showToast(t('toast_no_file'), 'error'); return; }
-    const result = await electronAPI.manualBackup(store.currentPath);
-    if (result.canceled) return;
-    if (result.error) { store.showModal(t('modal_backup_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={() => store.hideModal()}>{t('modal_btn_ok')}</button></div>); return; }
-    store.showToast(t('toast_backup_saved', { name: result.path.split(/[/\\]/).pop() }), 'success');
+    const doBackup = async () => {
+      const result = await electronAPI.manualBackup(store.currentPath);
+      if (result.canceled) return;
+      if (result.error) { store.showModal(t('modal_backup_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={() => store.hideModal()}>{t('modal_btn_ok')}</button></div>); return; }
+      store.showToast(t('toast_backup_saved', { name: result.path.split(/[/\\]/).pop() }), 'success');
+    };
+    const check = await electronAPI.checkBackupExists(store.currentPath);
+    if (check.success && check.exists) {
+      store.showModal(
+        t('modal_backup_overwrite_title'),
+        <p className="modal-warning-text" dangerouslySetInnerHTML={{ __html: t('modal_backup_overwrite_body', { name: store.currentPath.split(/[/\\]/).pop() + '.bak' }) }} />,
+        <div className="modal-actions-row">
+          <button className="btn-cancel" onClick={() => store.hideModal()}>{t('modal_btn_cancel')}</button>
+          <button className="btn-confirm" onClick={() => { store.hideModal(); doBackup(); }}>{t('modal_btn_overwrite')}</button>
+        </div>
+      );
+    } else {
+      doBackup();
+    }
   }, [t, electronAPI]);
 
   const handleSaveAs = useCallback(async () => {
