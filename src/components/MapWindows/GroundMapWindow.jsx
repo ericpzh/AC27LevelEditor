@@ -215,15 +215,29 @@ export default function GroundMapWindow({ airportIcao }) {
     return s;
   }, [runwayData]);
 
+  // ── Split taxiway paths: runway-named vs normal ─────────────
+  const { runwayTaxiwayPaths, normalTaxiwayPaths } = useMemo(() => {
+    const rwy = [];
+    const norm = [];
+    for (const tp of taxiwayPaths) {
+      if (tp.name && runwayNameSet.has(tp.name)) {
+        rwy.push(tp);
+      } else {
+        norm.push(tp);
+      }
+    }
+    return { runwayTaxiwayPaths: rwy, normalTaxiwayPaths: norm };
+  }, [taxiwayPaths, runwayNameSet]);
+
   // ── Taxiway label indices (proximity dedup per name) ──────────
   const taxiwayLabelIndices = useMemo(() => {
     const show = new Set();
     if (!showTaxiwayNames) return show;
     const placed = {}; // name → [{x, z}]
-    taxiwayPaths.forEach((tp, i) => {
+    normalTaxiwayPaths.forEach((tp, i) => {
       const midIdx = Math.floor((tp.points?.length || 0) / 2);
       const midPt = tp.points?.[midIdx];
-      if (!tp.name || runwayNameSet.has(tp.name) || !midPt) return;
+      if (!tp.name || !midPt) return;
       if (!placed[tp.name]) placed[tp.name] = [];
       const prev = placed[tp.name];
       const minGapSq = GROUND_MAP_TAXIWAY_LABEL_SPACING * GROUND_MAP_TAXIWAY_LABEL_SPACING;
@@ -236,7 +250,7 @@ export default function GroundMapWindow({ airportIcao }) {
       show.add(i);
     });
     return show;
-  }, [taxiwayPaths, showTaxiwayNames, runwayNameSet]);
+  }, [normalTaxiwayPaths, showTaxiwayNames]);
 
   // ── Area polygons from ACL SceneryData.Areas ──────────────
   const areaPolygonElements = useMemo(() => {
@@ -293,7 +307,7 @@ export default function GroundMapWindow({ airportIcao }) {
               <rect x={viewBox.x} y={viewBox.y} width={viewBox.w} height={viewBox.h} fill="#0a1628" />
 
               {/* ── Layer 1: Taxiway centerlines (grey) ────────── */}
-              {taxiwayPaths.map((tp, i) => {
+              {normalTaxiwayPaths.map((tp, i) => {
                 const width = tp.isStandAccess ? taxiwayW * GROUND_MAP_STAND_ACCESS_WIDTH_MULT : taxiwayW;
                 return (
                 <polyline
@@ -330,8 +344,28 @@ export default function GroundMapWindow({ airportIcao }) {
                 );
               })}
 
+              {/* ── Layer 2c: Taxiway segments with runway names → runway style ── */}
+              {runwayTaxiwayPaths.map((tp, i) => {
+                if (!tp.points || tp.points.length < 2) return null;
+                const a = tp.points[0];
+                const b = tp.points[tp.points.length - 1];
+                const rwWidth = (runwayData[tp.name]?.width || 0.50);
+                const halfW = rwWidth / 2;
+                const corners = computeRunwayCorners(a, b, halfW);
+                if (!corners) return null;
+                return (
+                  <polygon
+                    key={'rwy-twy-' + i}
+                    points={corners.map(p => `${p.x},${svgY(p.z)}`).join(' ')}
+                    fill="#000"
+                    stroke="#000"
+                    strokeWidth={runwayStrokeW}
+                  />
+                );
+              })}
+
               {/* ── Layer 2b: Taxiway labels (above runways) ────────── */}
-              {taxiwayPaths.map((tp, i) => {
+              {normalTaxiwayPaths.map((tp, i) => {
                 if (!taxiwayLabelIndices.has(i)) return null;
                 const mid = tp.points[Math.floor(tp.points.length / 2)];
                 return (

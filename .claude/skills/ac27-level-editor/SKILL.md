@@ -598,10 +598,11 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
 
 **Rendering layers:**
 1. Radar-blue background (`#0a1628`)
-2. Taxiway centerlines — uniform grey (`#444`) polylines. Segments touching stand-position nodes are marked `isStandAccess: true` and rendered with square linecap + configurable width multiplier (`GROUND_MAP_STAND_ACCESS_WIDTH_MULT`). Stand-access segments are no longer excluded — they render alongside main taxiways for differentiated styling.
+2. Taxiway centerlines — uniform grey (`#444`) polylines. Segments touching stand-position nodes are marked `isStandAccess: true` and rendered with square linecap + configurable width multiplier (`GROUND_MAP_STAND_ACCESS_WIDTH_MULT`). Stand-access segments are no longer excluded — they render alongside main taxiways for differentiated styling. **Runway-named taxiway segments** (name matches a runway in `runwayData`) are excluded from this layer — they render as runway-style polygons instead (see layer 4b).
 3. Area polygons — semi-transparent fills by AreaType: blue boundary, grey apron, black buildings. Default stroke color `#444` (matches taxiways). Parsed from `SceneryData.Areas` via `_parseAreas()`.
 4. Runway rectangles — black filled polygons from threshold endpoints + width
-5. Taxiway labels — name labels at path midpoints with proximity dedup (`GROUND_MAP_TAXIWAY_LABEL_SPACING`), runway names excluded. Placed **above** runways in layer order (was below runways before v1.1.4).
+5. **Runway-named taxiway segments** — taxiway centerlines whose name matches a runway entry are rendered as black filled polygons (same style as runways), using `computeRunwayCorners()` with the matching runway's width. These represent runway surfaces stored as taxiway centerline segments.
+6. Taxiway labels — name labels at path midpoints with proximity dedup (`GROUND_MAP_TAXIWAY_LABEL_SPACING`). Placed **above** runways in layer order (was below runways before v1.1.4). Only rendered for non-runway taxiway segments.
 6. Live ground aircraft — filtered to `position.y <= 1.0` (ground-level, not airborne) with inactive aircraft hidden by default:
    - **Inactivity filter:** Aircraft at a known stand (UDP `stand` field ∈ `_standPositions`) AND within `GROUND_RADAR_STAND_PROXIMITY` (0.5 GU ≈ 50m) of that stand's midpoint are hidden as "parked/inactive"
    - **"Parked" toggle:** Push-button (i18n: `ground_map_show_all`) bypasses the inactivity filter, showing all ground-level aircraft
