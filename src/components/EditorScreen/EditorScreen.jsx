@@ -133,6 +133,9 @@ function MapOverlays({ standBtnRef, starBtnRef }) {
           buttonRef={standBtnRef}
           airportIcao={currentAirport}
           callsign={callsign}
+          taxiwayPaths={vals._taxiwayPaths}
+          runwayData={vals._runwayData}
+          areaData={vals._areaData}
         />
       )}
       {showStarMap && (

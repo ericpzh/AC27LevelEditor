@@ -5,7 +5,7 @@ import { useTranslation } from '../../../hooks/useTranslation';
 import { useElectronAPI } from '../../../hooks/useElectronAPI';
 import { useAppStore } from '../../../store/appStore';
 import useDrag from '../../../hooks/useDrag';
-import { APPROACH_MIN_TTL, MAP_PAD_RATIO, MAP_GAP, MAP_HEADER_H, MAP_LEGEND_H, MAP_SVG_FRAC, MAP_MIN_SVG, MAP_PLANE_VB, MAP_ICON_PATH, MAP_TARGET_RATIO } from '../../../utils/constants';
+import { APPROACH_MIN_TTL, MAP_PAD_RATIO, MAP_GAP, MAP_HEADER_H, MAP_LEGEND_H, MAP_SVG_FRAC, MAP_MIN_SVG, MAP_PLANE_VB, MAP_ICON_PATH, MAP_TARGET_RATIO, AIR_MAP_BG_OFFSETS } from '../../../utils/constants';
 import './StarMap.css';
 
 // ── Window size hook ─────────────────────────────────────
@@ -417,6 +417,19 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
     return { lines: transformed, viewBox: `${vbX} ${vbY} ${vbW} ${vbH}`, vbX, vbY, vbW, vbH, sortedStars, labelPositions };
   }, [starPaths, selectedRunway, starRunwayMap, runwayThresholds]);
 
+  // ── Map image layout: same algorithm as AirMapWindow ────────
+  // Image fills the viewBox, positioned via AIR_MAP_BG_OFFSETS
+  const bgCfg = AIR_MAP_BG_OFFSETS[airportIcao] || { dx: 0, dy: 0 };
+  const bgImageLayout = useMemo(() => {
+    if (!airportIcao) return null;
+    return {
+      x: vbX + (bgCfg.dx || 0),
+      y: vbY + (bgCfg.dy || 0),
+      w: bgCfg.w != null ? bgCfg.w : vbW,
+      h: vbH,
+    };
+  }, [airportIcao, bgCfg.dx, bgCfg.dy, bgCfg.w, vbX, vbY, vbW, vbH]);
+
   // ── SVG pixel size ────────────────────────────────────────
   const dataRatio = vbW / vbH;
   const svgMax = Math.max(MAP_MIN_SVG, Math.min(
@@ -558,13 +571,24 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
           <>
             <svg className="star-map-svg" viewBox={viewBox} width={svgW} height={svgH}>
               <rect className="star-map-bg" x={vbX} y={vbY} width={vbW} height={vbH} />
-              <image
-                href={`${airportIcao}_STAR.png`}
-                x={vbX} y={vbY} width={vbW} height={vbH}
-                preserveAspectRatio="xMidYMid slice"
-                opacity="0.05"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
+              {/* Map image background (from _Map.png positioned via MAP_GEO_REF) */}
+              {bgImageLayout && (
+                <>
+                  <rect
+                    x={bgImageLayout.x} y={bgImageLayout.y}
+                    width={bgImageLayout.w} height={bgImageLayout.h}
+                    fill={(AIR_MAP_BG_OFFSETS[airportIcao] || {}).bgUnder || '#000000'}
+                  />
+                  <image
+                    href={`${airportIcao}_STAR.png`}
+                    x={bgImageLayout.x} y={bgImageLayout.y}
+                    width={bgImageLayout.w} height={bgImageLayout.h}
+                    preserveAspectRatio="xMidYMid slice"
+                    opacity="0.2"
+                    onError={(e) => { e.target.style.display = 'none'; }}
+                  />
+                </>
+              )}
 
               {/* Runway threshold pairs */}
               {runwayThresholds && Object.entries(runwayThresholds).map(([key, ends]) => {

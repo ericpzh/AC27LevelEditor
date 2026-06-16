@@ -504,10 +504,11 @@ When editing a Stand cell in the flight table, a non-blocking overlay panel appe
 - **SVG map** of all stands for the current airport, with dots positioned by real x,y coordinates parsed from `SceneryData > TaxiwayNodes`
 - **4 dot states**: Current (accent, large + ring), Hovered (accent, medium), Available (accent, small), Occupied (grey, not clickable)
 - **Occupancy detection**: `computeOccupiedStands()` in FlightTable checks time-window overlaps between flights
-- **Airport background**: Semi-transparent `/{ICAO}_Stand.png` image overlaid (falls back to panel background if missing)
+- **Airport background**: Dark radar-style fill (`#0a1628`) with programmatic SVG: taxiway centerlines, runway rectangles, area polygons (boundary/apron/building) at 0.2 opacity — same data as GroundMapWindow (`_taxiwayPaths`, `_runwayData`, `_areaData` from `collect-values`)
+- **Dark mode**: Map content area forces dark mode CSS variables regardless of app theme
 - **i18n**: Title and legend use `standmap_title`, `standmap_current`, `standmap_available`, `standmap_occupied` keys
 
-**Component:** `src/components/EditorScreen/StandMap/StandMap.jsx` — portal-based, responsive (scales with window via `useWindowSize` hook), viewBox preserves data aspect ratio with a target ratio cap. Uses the shared `useDrag` hook for header-drag repositioning.
+**Component:** `src/components/EditorScreen/StandMap/StandMap.jsx` — portal-based, responsive (scales with window via `useWindowSize` hook), viewBox preserves data aspect ratio with a target ratio cap. Uses the shared `useDrag` hook for header-drag repositioning. Receives `taxiwayPaths`, `runwayData`, `areaData` from EditorScreen (already in store from `collect-values`).
 
 ### Star Map Overlay
 
@@ -519,7 +520,8 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 - **Aircraft interactivity**: Hovering an aircraft dot shows callsign + STAR + runway + ETA
 - **Click to select** a STAR path, which updates the flight's Airway field via `updateFlight(idx, { Airway: starName })`
 - **Departure flights**: Show a notice that the STAR map is unavailable (no approach data for departures)
-- **Airport background**: Semi-transparent `/{ICAO}_STAR.png` image overlaid
+- **Airport background**: `_STAR.png` (scaled-down `_Map.png` at 25% resolution) positioned via `AIR_MAP_BG_OFFSETS` — same algorithm as AirMapWindow (image fills viewBox, per-airport dx/dy/w offsets, `bgUnder` rect behind it, 0.2 opacity, `preserveAspectRatio="xMidYMid slice"`)
+- **Dark mode**: Map content area forces dark mode CSS variables regardless of app theme
 - **i18n**: Title and legend use `starmap_title`, `starmap_current`, `starmap_available`, `starmap_disabled`, `starmap_no_data` keys
 
 **Component:** `src/components/EditorScreen/StarMap/StarMap.jsx` — portal-based, draggable via `useDrag` hook, responsive viewBox scaling. Path colors cycle through a preset palette per STAR name. Runway thresholds rendered as thin colored lines matching their associated STAR paths.

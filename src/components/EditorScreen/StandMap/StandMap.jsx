@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { IoRemove } from 'react-icons/io5';
 import { useTranslation } from '../../../hooks/useTranslation';
 import useDrag from '../../../hooks/useDrag';
-import { MAP_PAD_RATIO, MAP_GAP, MAP_HEADER_H, MAP_LEGEND_H, MAP_SVG_FRAC, MAP_MIN_SVG, MAP_PLANE_VB, MAP_ICON_PATH, MAP_TARGET_RATIO } from '../../../utils/constants';
+import { MAP_PAD_RATIO, MAP_GAP, MAP_HEADER_H, MAP_LEGEND_H, MAP_SVG_FRAC, MAP_MIN_SVG, MAP_PLANE_VB, MAP_ICON_PATH, MAP_TARGET_RATIO, GROUND_MAP_STAND_ACCESS_WIDTH_MULT } from '../../../utils/constants';
 import { useAppStore } from '../../../store/appStore';
 import './StandMap.css';
 
@@ -30,7 +30,7 @@ function useWindowSize() {
 
 // ── StandMap ──────────────────────────────────────────────
 
-export default function StandMap({ stands, selectedStand, occupiedStands, onSelect, onShrink, buttonRef, airportIcao, callsign }) {
+export default function StandMap({ stands, selectedStand, occupiedStands, onSelect, onShrink, buttonRef, airportIcao, callsign, taxiwayPaths, runwayData, areaData }) {
   const { t } = useTranslation();
   const activeMap = useAppStore(s => s.activeMap);
   const setActiveMap = useAppStore(s => s.setActiveMap);
@@ -48,7 +48,7 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
   });
 
   // ── Compute viewBox + dots ────────────────────────────────
-  const { dots, viewBox, vbX, vbY, vbW, vbH } = useMemo(() => {
+  const { dots, viewBox, vbX, vbY, vbW, vbH, yMid } = useMemo(() => {
     const entries = Object.entries(stands || {});
     if (entries.length === 0) return { dots: [], viewBox: '', vbX: 0, vbY: 0, vbW: 1, vbH: 1 };
 
@@ -89,7 +89,7 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
       heading: pos.heading || 0,
     }));
 
-    return { dots, viewBox: `${vbX} ${vbY} ${vbW} ${vbH}`, vbX, vbY, vbW, vbH };
+    return { dots, viewBox: `${vbX} ${vbY} ${vbW} ${vbH}`, vbX, vbY, vbW, vbH, yMid };
   }, [stands]);
 
   // ── ViewBox-relative sizing ───────────────────────────────
@@ -188,6 +188,132 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
     }
     return null;
   }, [selectedStand, hoveredId, occupiedStands, dots]);
+
+  // ── Background area polygon styles (matching GroundMapWindow) ──
+  const AREA_TYPE_STYLES = {
+    0: { fill: '#1a3a6a', stroke: '#2a5a9a', opacity: 0.20 },
+    1: { fill: '#444', stroke: 'none', opacity: 1.0 },
+    2: { fill: '#000', stroke: 'none', opacity: 1.0 },
+  };
+
+  // ── Background SVG elements: areas, taxiways, runways ──────
+  const bgElements = useMemo(() => {
+    const els = [];
+    const vbDiag = Math.max(vbW, vbH);
+    if (!vbDiag) return els;
+    const twyW = vbDiag * 0.006;
+    // Coordinate transform matching stand dots: cy = yMid - pos.y
+    const svgY = (z) => yMid - z;
+
+    // Layer 1: Area polygons (semi-transparent by AreaType)
+    if (areaData) {
+      Object.entries(areaData).forEach(([areaTypeStr, areas]) => {
+        const areaType = parseInt(areaTypeStr, 10);
+        const style = AREA_TYPE_STYLES[areaType] || { fill: '#444', stroke: '#444', opacity: 0.20 };
+        (areas || []).forEach((area) => {
+          if (!area.enabled || !area.points || area.points.length < 3) return;
+          const pointsStr = area.points.map(p => `${p.x},${svgY(p.z)}`).join(' ');
+          els.push(
+            <polygon
+              key={'area-' + (area.guid || areaTypeStr + '-' + pointsStr.slice(0, 20))}
+              points={pointsStr}
+              fill={style.fill}
+              fillOpacity={style.opacity}
+              stroke={style.stroke}
+              strokeWidth={style.stroke === 'none' ? 0 : twyW * 0.6}
+              strokeOpacity={style.stroke === 'none' ? 0 : 0.5}
+            />
+          );
+        });
+      });
+    }
+
+    // Layer 2: Taxiway centerlines (grey)
+    if (taxiwayPaths && taxiwayPaths.paths) {
+      const twyPaths = taxiwayPaths.paths;
+      const runwayNames = new Set(Object.keys(runwayData || {}));
+
+      twyPaths.forEach((tp, i) => {
+        if (!tp.points || tp.points.length < 2) return;
+        const isRwy = runwayNames.has(tp.name) && runwayData;
+        if (isRwy && tp.points.length >= 2) {
+          // Runway-as-taxiway segments → black filled polygon
+          const a = tp.points[0];
+          const b = tp.points[tp.points.length - 1];
+          const rwWidth = (runwayData[tp.name]?.width || 0.50);
+          const halfW = rwWidth / 2;
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const len = Math.sqrt(dx * dx + dz * dz);
+          if (len < 1e-9) return;
+          const px = dz / len;
+          const pz = -dx / len;
+          const hx = px * halfW;
+          const hz = pz * halfW;
+          const corners = [
+            { x: a.x - hx, z: a.z - hz },
+            { x: a.x + hx, z: a.z + hz },
+            { x: b.x + hx, z: b.z + hz },
+            { x: b.x - hx, z: b.z - hz },
+          ];
+          els.push(
+            <polygon
+              key={'rwy-twy-' + i}
+              points={corners.map(p => `${p.x},${svgY(p.z)}`).join(' ')}
+              fill="#000" stroke="#000"
+            />
+          );
+        } else {
+          // Normal taxiway centerline
+          const width = tp.isStandAccess ? twyW * GROUND_MAP_STAND_ACCESS_WIDTH_MULT : twyW;
+          els.push(
+            <polyline
+              key={'twy-' + i}
+              points={tp.points.map(p => `${p.x},${svgY(p.z)}`).join(' ')}
+              fill="none"
+              stroke="#444"
+              strokeWidth={width}
+              strokeLinecap={tp.isStandAccess ? 'square' : 'round'}
+              strokeLinejoin="round"
+            />
+          );
+        }
+      });
+    }
+
+    // Layer 3: Runway rectangles (black)
+    if (runwayData) {
+      Object.entries(runwayData).forEach(([name, rw]) => {
+        if (!rw.thresholds || rw.thresholds.length < 2) return;
+        const a = rw.thresholds[0];
+        const b = rw.thresholds[1];
+        const halfW = (rw.width || 0.50) / 2;
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const len = Math.sqrt(dx * dx + dz * dz);
+        if (len < 1e-9) return;
+        const px = dz / len;
+        const pz = -dx / len;
+        const hx = px * halfW;
+        const hz = pz * halfW;
+        const corners = [
+          { x: a.x - hx, z: a.z - hz },
+          { x: a.x + hx, z: a.z + hz },
+          { x: b.x + hx, z: b.z + hz },
+          { x: b.x - hx, z: b.z - hz },
+        ];
+        els.push(
+          <polygon
+            key={'rwy-' + name}
+            points={corners.map(p => `${p.x},${svgY(p.z)}`).join(' ')}
+            fill="#000" stroke="#000"
+          />
+        );
+      });
+    }
+
+    return els;
+  }, [taxiwayPaths, runwayData, areaData, yMid, vbW, vbH]);
 
   // ── SVG pixel size ─────────────────────────────────────────
   const dataRatio = vbW / vbH;
@@ -314,13 +440,11 @@ export default function StandMap({ stands, selectedStand, occupiedStands, onSele
 
       <div className="stand-map-content-wrap">
         <svg className="stand-map-svg" viewBox={viewBox} width={svgW} height={svgH}>
-          <image
-            href={`${airportIcao}_Stand.png`}
-            x={vbX} y={vbY} width={vbW} height={vbH}
-            preserveAspectRatio="xMidYMid slice"
-            opacity="0.2"
-            onError={(e) => { e.target.style.display = 'none'; }}
-          />
+          {/* Dark radar-style background */}
+          <rect x={vbX} y={vbY} width={vbW} height={vbH} fill="#0a1628" />
+
+          {/* Programmatic SVG background: areas, taxiways, runways */}
+          <g opacity="0.2">{bgElements}</g>
 
           {/* ── Stand dots / static plane icons ────────────────── */}
           {dots.map(d => {

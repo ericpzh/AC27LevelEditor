@@ -84,6 +84,13 @@
 /* ── Content wrapper ── */
 
 .star-map-content-wrap {
+  /* Force dark mode for the map area regardless of app theme */
+  --bg: #0f1117;
+  --bg-surface: #1a1d27;
+  --bg-hover: #242836;
+  --text: #e1e4ed;
+  --text-muted: #5c6170;
+
   overflow: hidden;
 }
 
