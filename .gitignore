@@ -2,8 +2,6 @@
 node_modules/
 
 # Build outputs
-dist/
-dist-electron/
 out/
 release/
 build_*.txt
