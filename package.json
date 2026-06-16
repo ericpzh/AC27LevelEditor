@@ -22,9 +22,8 @@
       "output": "release"
     },
     "files": [
-      "dist",
-      "dist-electron",
-      "package.json"
+      "dist/**",
+      "dist-electron/**"
     ],
     "win": {
       "target": "portable",
