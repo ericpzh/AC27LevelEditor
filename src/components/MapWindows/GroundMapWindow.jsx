@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import useSvgZoom from './useSvgZoom';
@@ -8,6 +8,7 @@ import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
 import { IoHelpCircleOutline } from 'react-icons/io5';
 import { RAD_TO_DEG, MAP_ICON_PATH, GROUND_MAP_DEFAULT_ZOOM, GROUND_MAP_CENTER_OFFSET, GROUND_RADAR_STAND_PROXIMITY, GROUND_MAP_TAXIWAY_LABEL_SPACING, GROUND_MAP_STAND_ACCESS_WIDTH_MULT } from '../../utils/constants';
+import { witchDirection, isParked } from './witchMode';
 import './GroundMapWindow.css';
 import './MapShared.css';
 
@@ -65,6 +66,10 @@ export default function GroundMapWindow({ airportIcao }) {
   const [showTaxiwayNames, setShowTaxiwayNames] = useState(false);
   const [showAllAircraft, setShowAllAircraft] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [witchMode, setWitchMode] = useState(false);
+  const [witchFrame, setWitchFrame] = useState(0);
+  const witchTimerRef = useRef(null);
+  const labelTimerRef = useRef(null);
 
   const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs } = useUdpAircraftState();
 
@@ -101,6 +106,27 @@ export default function GroundMapWindow({ airportIcao }) {
     const id = setInterval(tick, 5000);
     return () => clearInterval(id);
   }, [selectedCallSign, udpAircraft, electronAPI]);
+
+  // ── Witch mode animation timer (500ms per frame) ──────────────
+  useEffect(() => {
+    if (!witchMode) {
+      if (witchTimerRef.current) {
+        clearInterval(witchTimerRef.current);
+        witchTimerRef.current = null;
+      }
+      setWitchFrame(0);
+      return;
+    }
+    witchTimerRef.current = setInterval(() => {
+      setWitchFrame(f => (f === 0 ? 1 : 0));
+    }, 500);
+    return () => {
+      if (witchTimerRef.current) {
+        clearInterval(witchTimerRef.current);
+        witchTimerRef.current = null;
+      }
+    };
+  }, [witchMode]);
 
   // ── Set window title ───────────────────────────────────────
   useEffect(() => {
@@ -397,24 +423,48 @@ export default function GroundMapWindow({ airportIcao }) {
                         electronAPI.selectAircraftInMap(airportIcao, ac.callSign);
                       }
                     }}>
-                    {/* Airplane icon from IoAirplane — positioned & rotated */}
-                    <g transform={`translate(${cur.x}, ${sy}) rotate(${heading}) scale(${iconScale}) translate(-256, -256)`}>
-                      <path d={MAP_ICON_PATH} fill={ac.callSign === selectedCallSign ? '#ffff00' : '#fff'} />
-                    </g>
+                    {/* Aircraft icon — either airplane SVG path or witch sprite */}
+                    {witchMode ? (
+                      (() => {
+                        const parked = isParked(ac, standPositions, GROUND_RADAR_STAND_PROXIMITY);
+                        const action = parked ? 'stand' : 'walk';
+                        const dir = parked ? '' : witchDirection(ac.noseDirection);
+                        const href = parked
+                          ? `witch/stand${witchFrame + 1}.png`
+                          : `witch/walk${dir}${witchFrame + 1}.png`;
+                        const sz = planeScale * 6.5;
+                        return (
+                          <image href={href}
+                            x={cur.x - sz / 2}
+                            y={sy - sz / 2}
+                            width={sz} height={sz}
+                            style={{ pointerEvents: 'none' }}
+                          />
+                        );
+                      })()
+                    ) : (
+                      <g transform={`translate(${cur.x}, ${sy}) rotate(${heading}) scale(${iconScale}) translate(-256, -256)`}>
+                        <path d={MAP_ICON_PATH} fill={ac.callSign === selectedCallSign ? '#ffff00' : '#fff'} />
+                      </g>
+                    )}
                     {/* Connector line */}
-                    <line
-                      x1={cur.x + planeScale * 0.9} y1={sy}
-                      x2={cur.x + labelOff} y2={sy}
-                      stroke="#fff" strokeWidth={fontSize * 0.04} opacity="0.4"
-                    />
+                    {!witchMode && (
+                      <line
+                        x1={cur.x + planeScale * 0.9} y1={sy}
+                        x2={cur.x + labelOff} y2={sy}
+                        stroke="#fff" strokeWidth={fontSize * 0.04} opacity="0.4"
+                      />
+                    )}
                     {/* Callsign label — green (yellow when selected) */}
-                    <text
-                      x={cur.x + labelOff + fontSize * 0.3}
-                      y={sy + fontSize * 0.35}
-                      textAnchor="start"
-                      fontSize={fontSize}
-                      fill={ac.callSign === selectedCallSign ? '#ffff00' : '#0f0'}
-                    >{ac.callSign}</text>
+                    {!witchMode && (
+                      <text
+                        x={cur.x + labelOff + fontSize * 0.3}
+                        y={sy + fontSize * 0.35}
+                        textAnchor="start"
+                        fontSize={fontSize}
+                        fill={ac.callSign === selectedCallSign ? '#ffff00' : '#0f0'}
+                      >{ac.callSign}</text>
+                    )}
                   </g>
                 );
               })}
@@ -437,8 +487,21 @@ export default function GroundMapWindow({ airportIcao }) {
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('ground_map_show_all')}</span>
             </div>
-            <div className={'air-map-toggle' + (showTaxiwayNames ? ' active' : '')}
-              onClick={() => setShowTaxiwayNames(v => !v)}>
+            <div className={'air-map-toggle' + (showTaxiwayNames ? ' active' : '') + (witchMode ? ' witch-active' : '')}
+              onClick={() => {
+                if (labelTimerRef.current) {
+                  // Double-click: toggle witch mode
+                  clearTimeout(labelTimerRef.current);
+                  labelTimerRef.current = null;
+                  setWitchMode(v => !v);
+                } else {
+                  // Single click: wait 300ms for potential double-click
+                  labelTimerRef.current = setTimeout(() => {
+                    labelTimerRef.current = null;
+                    setShowTaxiwayNames(v => !v);
+                  }, 300);
+                }
+              }}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('ground_map_taxiway')}</span>
             </div>

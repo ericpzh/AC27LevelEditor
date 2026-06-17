@@ -113,7 +113,7 @@ src/acl/             →  CommonJS backend modules (parser facade + 13 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Two additional window types — **Surface Radar** and **Approach Radar** — open as separate Electron windows showing live aircraft positions from the game's UDP telemetry stream.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Two additional window types — **Surface Radar** and **Approach Radar** — open as separate Electron windows showing live aircraft positions from the game's UDP telemetry stream. Double-click the Label button on either radar to toggle **witch mode** — an alternative animated-sprite display for aircraft.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
@@ -162,7 +162,8 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   │   ├── MapHelpOverlay.jsx + .css   # Context-sensitive help overlay (air or ground map)
 │   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
-│   │   │   └── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
+│   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
+│   │   │   └── witchMode.js                # Witch mode: direction mapping + parked detection
 │   │   └── common/              # Modal, Toast
 │   │
 │   ├── hooks/               # React custom hooks

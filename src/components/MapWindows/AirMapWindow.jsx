@@ -12,6 +12,7 @@ import {
   MAP_PAD_RATIO, MAP_TARGET_RATIO, MAP_PLANE_VB, MAP_ICON_PATH,
   RAD_TO_DEG, AIR_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
 } from '../../utils/constants';
+import { witchDirection } from './witchMode';
 import './AirMapWindow.css';
 import './MapShared.css';
 
@@ -66,6 +67,10 @@ export default function AirMapWindow({ airportIcao }) {
   const [apprPaths, setApprPaths] = useState({});
   const [emergencyCallSign, setEmergencyCallSign] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [witchMode, setWitchMode] = useState(false);
+  const [witchFrame, setWitchFrame] = useState(0);
+  const witchTimerRef = useRef(null);
+  const labelTimerRef = useRef(null);
   const airMapRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
@@ -112,6 +117,27 @@ export default function AirMapWindow({ airportIcao }) {
     const id = setInterval(() => setSpeedToggle(v => !v), 5000);
     return () => clearInterval(id);
   }, []);
+
+  // ── Witch mode animation timer (500ms per frame) ──────────────
+  useEffect(() => {
+    if (!witchMode) {
+      if (witchTimerRef.current) {
+        clearInterval(witchTimerRef.current);
+        witchTimerRef.current = null;
+      }
+      setWitchFrame(0);
+      return;
+    }
+    witchTimerRef.current = setInterval(() => {
+      setWitchFrame(f => (f === 0 ? 1 : 0));
+    }, 500);
+    return () => {
+      if (witchTimerRef.current) {
+        clearInterval(witchTimerRef.current);
+        witchTimerRef.current = null;
+      }
+    };
+  }, [witchMode]);
 
   // ── Fetch static data ─────────────────────────────────────
   useEffect(() => {
@@ -629,32 +655,52 @@ export default function AirMapWindow({ airportIcao }) {
                 return (
                   <g key={'ac-' + ac.callSign} className="air-map-aircraft-group"
                     onClick={(e) => handleAircraftClick(e, ac.callSign)}>
-                    {sorted.map((t, i) => {
-                      const isCurrent = i === 0;
-                      // Trailing dots: 80% of current size, uniform; opacity -15% per step
-                      const r = isCurrent ? planeScale : planeScale * 0.8;
-                      const opacity = isCurrent ? 1 : Math.max(0.1, 1 - i * 0.15);
-                      const sy = svgY(t.z);
-                      return (
-                        <circle key={'t' + t.age} cx={t.x} cy={sy} r={r}
-                          fill="#1a4a8a" opacity={opacity}
-                        />
-                      );
-                    })}
-                    {/* A/D indicator on current dot */}
-                    {sorted.length > 0 && (
-                      <text
-                        x={sorted[0].x + planeScale * 1.5}
-                        y={svgY(sorted[0].z) - planeScale * 1.5}
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                        fontSize={fontSize * 1.15}
-                        fill={ac.callSign === selectedCallSign ? '#ffff00' : labelColor}
-                        fontWeight="bold"
-                      >{isDeparture ? 'D' : 'A'}</text>
+                    {sorted.length > 0 && witchMode ? (
+                      // ── Witch sprite replaces trail dots + A/D indicator ──
+                      (() => {
+                        const cur = sorted[0];
+                        const dir = witchDirection(ac.noseDirection);
+                        const href = `witch/fly${dir}${witchFrame + 1}.png`;
+                        const sz = planeScale * 12;
+                        return (
+                          <image key="ws" href={href}
+                            x={cur.x - sz / 2}
+                            y={svgY(cur.z) - sz / 2}
+                            width={sz} height={sz}
+                            style={{ pointerEvents: 'none' }}
+                          />
+                        );
+                      })()
+                    ) : (
+                      <>
+                        {sorted.map((t, i) => {
+                          const isCurrent = i === 0;
+                          // Trailing dots: 80% of current size, uniform; opacity -15% per step
+                          const r = isCurrent ? planeScale : planeScale * 0.8;
+                          const opacity = isCurrent ? 1 : Math.max(0.1, 1 - i * 0.15);
+                          const sy = svgY(t.z);
+                          return (
+                            <circle key={'t' + t.age} cx={t.x} cy={sy} r={r}
+                              fill="#1a4a8a" opacity={opacity}
+                            />
+                          );
+                        })}
+                        {/* A/D indicator on current dot */}
+                        {sorted.length > 0 && (
+                          <text
+                            x={sorted[0].x + planeScale * 1.5}
+                            y={svgY(sorted[0].z) - planeScale * 1.5}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            fontSize={fontSize * 1.15}
+                            fill={ac.callSign === selectedCallSign ? '#ffff00' : labelColor}
+                            fontWeight="bold"
+                          >{isDeparture ? 'D' : 'A'}</text>
+                        )}
+                      </>
                     )}
                     {/* Connector line from dot to label anchor */}
-                    {conn && (
+                    {!witchMode && conn && (
                       <line
                         x1={sorted[0].x} y1={svgY(sorted[0].z)}
                         x2={conn.x} y2={conn.y}
@@ -662,7 +708,7 @@ export default function AirMapWindow({ airportIcao }) {
                       />
                     )}
                     {/* Heading line for selected aircraft */}
-                    {ac.callSign === selectedCallSign && sorted.length > 0 && ac.noseDirection && (
+                    {!witchMode && ac.callSign === selectedCallSign && sorted.length > 0 && ac.noseDirection && (
                       <line
                         x1={sorted[0].x} y1={svgY(sorted[0].z)}
                         x2={sorted[0].x + planeScale * 12 * Math.cos(headingDeg(ac.noseDirection) * Math.PI / 180)}
@@ -671,7 +717,7 @@ export default function AirMapWindow({ airportIcao }) {
                       />
                     )}
                     {/* Callsign label at current position */}
-                    {conn && (() => {
+                    {!witchMode && conn && (() => {
                       const isSel = ac.callSign === selectedCallSign;
                       const callLabelColor = isSel ? '#ffff00' : labelColor;
                       const altFt = Math.round(ac.position.y / 0.3048);
@@ -734,8 +780,21 @@ export default function AirMapWindow({ airportIcao }) {
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_appr')}</span>
             </div>
-            <div className={'air-map-toggle' + (showRouteLabels ? ' active' : '')}
-              onClick={() => setShowRouteLabels(v => !v)}>
+            <div className={'air-map-toggle' + (showRouteLabels ? ' active' : '') + (witchMode ? ' witch-active' : '')}
+              onClick={() => {
+                if (labelTimerRef.current) {
+                  // Double-click: toggle witch mode
+                  clearTimeout(labelTimerRef.current);
+                  labelTimerRef.current = null;
+                  setWitchMode(v => !v);
+                } else {
+                  // Single click: wait 300ms for potential double-click
+                  labelTimerRef.current = setTimeout(() => {
+                    labelTimerRef.current = null;
+                    setShowRouteLabels(v => !v);
+                  }, 300);
+                }
+              }}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_labels')}</span>
             </div>
