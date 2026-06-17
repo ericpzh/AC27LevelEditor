@@ -118,6 +118,8 @@ export default function BrowserScreen() {
           // Demo mode: show .demo.acl files + _emerg.acl files (whitelist)
           // Non-demo .acl files are hidden unless they are _emerg files
           allInfos[airport.icao] = infos.filter(info => {
+            // Hide levels that failed to parse (e.g. Git LFS stubs)
+            if (info.error) return false;
             const base = demoBaseName(info.filename);
             if (!DEMO_VISIBLE_BASES.has(base)) return false;
             if (info.isDemo) return true;
@@ -126,10 +128,11 @@ export default function BrowserScreen() {
         } else {
           // Normal mode: show production levels + .demo.acl slices; hide tutorial/test/endless/dev/bench/crossrunway/.Prod
           const visible = infos.filter(info => {
-            // Always show .demo.acl files
+            // Hide levels that failed to parse (e.g. Git LFS stubs)
+            if (info.error) return false;
+            // Show .demo.acl files
             if (info.isDemo) return true;
             // Show production levels; hide tutorial/test/endless/dev/bench/crossrunway/.Prod variants
-            if (info.error) return false;
             return !RE_HIDDEN.test(info.filename);
           });
           allInfos[airport.icao] = visible.sort((a, b) =>
