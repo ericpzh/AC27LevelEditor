@@ -1380,9 +1380,9 @@ node --require ./tests/integration/preload.cjs tests/integration/test_generate_t
 node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_timelines.js --acl <path>
 ```
 
-### Building
+### Local Build
 ```bash
-# ALWAYS use build.js — never npm run build:win directly
+# ALWAYS use build.js for local Windows builds — never npm run build:win directly
 node build.js        # Build Windows portable EXE → dist/AC27LevelEditor.exe
 node set_icon.js     # Post-build: embed icon.ico into the EXE
 ```
@@ -1400,6 +1400,37 @@ Copy-Item "$libDir\libcrypto.1.0.0.dylib" "$libDir\libcrypto.dylib" -Force
 Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 ```
 
+### GitHub Release
+
+The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags pushed to GitHub. It builds **Windows** (portable `.exe`) and **macOS** (`.dmg`) in parallel via `npm run build:win/build:mac -- --publish never`, then attaches both artifacts to a GitHub Release with auto-generated release notes.
+
+#### How to release a new version
+
+1. **Bump version** in `package.json` if this is a new version (not a re-tag)
+2. **Commit** all changes
+3. **Tag** the commit: `git tag v<version> <commit-ish>` (defaults to HEAD)
+4. **Push** the tag: `git push origin v<version>`
+5. **CI** builds Windows + macOS and creates the GitHub Release automatically
+
+#### How to re-release the same version (after a hotfix)
+
+If the tag already points to an old commit and you need to move it:
+
+```bash
+git tag -f v<version> <new-commit>
+git push -f origin v<version>
+```
+
+The force-push re-triggers the CI workflow, which rebuilds both platforms and updates the GitHub Release with fresh artifacts. **The tag must be force-pushed** — simply pushing a new commit without moving the tag will NOT trigger a new release.
+
+#### Important notes
+
+- The CI uses `npm run build:win/build:mac`, NOT `node build.js`. Rule 15 (never `npm run build:win`) applies to **local development only** — `build.js` auto-detects Windows and sets up portable target + icon correctly.
+- `--publish never` in CI prevents electron-builder from trying to publish to GitHub Releases (the workflow handles that via `softprops/action-gh-release`).
+- `CSC_IDENTITY_AUTO_DISCOVERY: false` disables code signing since we don't have a signing certificate.
+- Manual release: trigger the workflow via `workflow_dispatch` on GitHub Actions with an optional version input.
+- macOS builds produce a `.dmg`; Windows builds produce a portable `.exe` (no installer).
+
 ## Key Rules for Agents
 
 1. **React + Vite + zustand stack.** Frontend uses ESM, JSX, and React hooks. No global-scope scripts.
@@ -1416,7 +1447,7 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 12. **No inline `style={{}}`.** Always extract CSS to the component's `.css` file.
 13. **One `.css` per component.** Match the component filename.
 14. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
-15. **Build with `node build.js`** on Windows, never `npm run build:win`.
+15. **Build locally with `node build.js`** on Windows, never `npm run build:win` (local only — CI uses `npm run build:win` for cross-platform builds).
 16. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants.js:13` (re-exported via `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
 17. **Keep documentation in sync.** After any significant change, update BOTH:
     - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`)
