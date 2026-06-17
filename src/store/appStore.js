@@ -64,6 +64,7 @@ export const useAppStore = create((set, get) => ({
 
   // ─── Modal (declarative) ───
   modal: { open: false, title: '', body: null, actions: null, closeable: true, headerRight: null, showLangToggle: false },
+  cacheBuildProgress: null, // { current: number, total: number }
 
   // ─── Theme ───
   theme: (() => {
@@ -367,7 +368,9 @@ export const useAppStore = create((set, get) => ({
   }),
   hideModal: () => set({
     modal: { open: false, title: '', body: null, actions: null, closeable: true, headerRight: null, showLangToggle: false },
+    cacheBuildProgress: null,
   }),
+  setCacheBuildProgress: (progress) => set({ cacheBuildProgress: progress }),
 
   // ─── Actions: Radar windows ───
   setGroundRadarOpen: (icao, open) => set((s) => {

@@ -148,7 +148,7 @@ Standalone scripts in `tests/integration/`. Run directly with `node`. Some need 
 | `test_acl_json.js` | 25 | JSON pre-processor + serializer round-trips: `_fixTrailingCommas`, `_fixSpecialFloats`, `_fixTypedValues`, `preprocessUnityJson`, `serializeUnityJson` | 25/25 pass |
 | `test_acl_document.js` | 13 | `AclDocument` model: section indexing, round-trip serialization, init from JSON | 13/13 pass |
 | `test_sid_goaround.js` | 17 | SID (Type=2), Missed Approach (Type=3), and APPR (Type=1) route parsers: `extractSidRunwayMappings`, `extractMissedApproachMappings`, `buildSidPaths`, `buildMissedApproachPaths`, `extractApprRunwayMappings`, `buildApprPaths` — synthetic edge cases + ZSJN fixture | 17/17 pass |
-| `test_taxiway.js` | 10 | `parseTaxiwayPaths`: ACL structure parsing, flag values (1/2/4), stand-node exclusion, ZSJN fixture (401 paths, 189 named) | 10/10 pass |
+| `test_taxiway.js` | 10 | `parseTaxiwayPaths`: ACL structure parsing, flag values (1/2/4), stand-node marking, ZSJN fixture (582 paths, 189 named) | 10/10 pass |
 
 ```bash
 node tests/integration/test_tokenizer.js

@@ -51,6 +51,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Aircraft positions on STAR map
   getAircraftPositions: (icao, arrivals, saveSec) => ipcRenderer.invoke('get-aircraft-positions', icao, arrivals, saveSec),
 
+  // Cache build progress — main process sends file-level progress during scan
+  _cacheProgressHandlers: new Map(),
+  onCacheBuildProgress: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._cacheProgressHandlers.set(cb, handler);
+    ipcRenderer.on('cache-build-progress', handler);
+  },
+  offCacheBuildProgress: function (cb) {
+    const handler = this._cacheProgressHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('cache-build-progress', handler);
+      this._cacheProgressHandlers.delete(cb);
+    }
+  },
+
   // Cache invalidation — main process signals when cache.json is missing/corrupt
   onCacheInvalidated: (cb) => ipcRenderer.on('cache-invalidated', () => cb()),
 

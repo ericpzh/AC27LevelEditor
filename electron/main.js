@@ -447,9 +447,25 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
 
   const cache = {};
 
+  // Count airports and total .acl files for global progress
+  const airportList = [];
+  let totalAclFiles = 0;
   for (const icao of fs.readdirSync(airportsDir)) {
+    const ap = path.join(airportsDir, icao);
+    if (fs.statSync(ap).isDirectory()) {
+      const ld = path.join(ap, 'Levels');
+      if (fs.existsSync(ld)) {
+        airportList.push(icao);
+        try {
+          totalAclFiles += fs.readdirSync(ld).filter(f => f.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(f)).length;
+        } catch (_) {}
+      }
+    }
+  }
+  let processedFiles = 0;
+
+  for (const icao of airportList) {
     const airportPath = path.join(airportsDir, icao);
-    if (!fs.statSync(airportPath).isDirectory()) continue;
     const levelsDir = path.join(airportPath, 'Levels');
     if (!fs.existsSync(levelsDir)) continue;
 
@@ -474,7 +490,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       const aclPaths = [];
       try {
         for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl')) {
+          if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) {
             aclPaths.push(path.join(levelsDir, le.name));
           }
         }
@@ -490,7 +506,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       try {
         const aclFiles = [];
         for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl')) aclFiles.push(path.join(levelsDir, le.name));
+          if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) aclFiles.push(path.join(levelsDir, le.name));
         }
         if (aclFiles.length > 0) {
           const firstAclText = fs.readFileSync(aclFiles[0], 'utf-8');
@@ -510,7 +526,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     if (!areaData) {
       const aclAreaFiles = [];
       for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-        if (le.isFile() && le.name.endsWith('.acl')) aclAreaFiles.push(path.join(levelsDir, le.name));
+        if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) aclAreaFiles.push(path.join(levelsDir, le.name));
       }
       areaData = _parseAreaFromAcl(aclAreaFiles, '[INIT-CACHE]   ' + icao);
     } else {
@@ -556,7 +572,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       if (!approachData.state5ParamsMap || !approachData.appPointMap || !approachData.totalApproachTimes) {
         const approach = require('../src/acl/approach');
         try {
-          const aclFiles = fs.readdirSync(levelsDir).filter(f => f.endsWith('.acl'));
+          const aclFiles = fs.readdirSync(levelsDir).filter(f => f.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(f));
           if (aclFiles.length > 0) {
             const firstText = fs.readFileSync(path.join(levelsDir, aclFiles[0]), 'utf-8');
             const mappings = approach.extractStarRunwayMappings(firstText);
@@ -642,7 +658,15 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         }
       }
     } else {
-      approachData = buildApproachCache(levelsDir);
+      approachData = buildApproachCache(levelsDir, () => {
+        processedFiles++;
+        if (_event.sender && !_event.sender.isDestroyed()) {
+          _event.sender.send('cache-build-progress', {
+            current: processedFiles,
+            total: totalAclFiles,
+          });
+        }
+      });
       console.log('[INIT-CACHE]   ' + icao + ': approach scanned from files');
     }
 
@@ -712,9 +736,22 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
     if (!fs.existsSync(airportsDir)) return { success: false, errorCode: 'error_airports_dir_not_found', errorPath: airportsDir };
 
     const cache = {};
+    // Count airports and total .acl files for global progress
+    const airportListR = [];
+    let totalAclFilesR = 0;
     for (const icao of fs.readdirSync(airportsDir)) {
+      const ap = path.join(airportsDir, icao);
+      if (fs.statSync(ap).isDirectory()) {
+        const ld = path.join(ap, 'Levels');
+        if (fs.existsSync(ld)) {
+          airportListR.push(icao);
+          try { totalAclFilesR += fs.readdirSync(ld).filter(f => f.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(f)).length; } catch (_) {}
+        }
+      }
+    }
+    let processedFilesR = 0;
+    for (const icao of airportListR) {
       const airportPath = path.join(airportsDir, icao);
-      if (!fs.statSync(airportPath).isDirectory()) continue;
       const levelsDir = path.join(airportPath, 'Levels');
       if (!fs.existsSync(levelsDir)) continue;
 
@@ -729,7 +766,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       const aclPaths = [];
       try {
         for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl')) {
+          if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) {
             aclPaths.push(path.join(levelsDir, le.name));
           }
         }
@@ -754,8 +791,15 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         }
       }
 
-      const approachData = buildApproachCache(levelsDir);
-
+      const approachData = buildApproachCache(levelsDir, () => {
+        processedFilesR++;
+        if (_event.sender && !_event.sender.isDestroyed()) {
+          _event.sender.send('cache-build-progress', {
+            current: processedFilesR,
+            total: totalAclFilesR,
+          });
+        }
+      });
       // Parse stand positions from first .acl file
       let standPositions = {};
       try {

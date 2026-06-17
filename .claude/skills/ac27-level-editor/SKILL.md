@@ -359,7 +359,7 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 1. User selects game root directory
 2. `scan-acls` IPC → `scanGameRoot()` → returns airport list with `.acl` file paths
 3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data + dropdown values per airport:
-   - Scans all `.acl` files (includes demo/test/tutorial variants — all treated as normal levels; **excludes `.acl.bak` backups**)
+   - Scans `.acl` files matching the browser's visibility filter — **excludes** `.acl.bak` backups and all variants hidden by `RE_HIDDEN` in `constants.js` (`tutorial`, `bench`, `test`, `crossrunway`, `dev`, `endless`, `.prod`). Demo slices (`.demo.acl`) and `_emerg` files are still included.
    - **Global progress reporting:** Pre-counts total `.acl` files across ALL airports, then sends `cache-build-progress` IPC events (`{ current, total }`) per file during `buildApproachCache`. Renderer shows a progress bar + percentage via `CacheProgressBody` component.
    - Extracts `specDB` (Designator → AircraftSpec, from ALL aircraft entries regardless of State), `appPointMap` ((STAR,Runway) → AppPointList, from SceneryData Type=1 routes), `totalApproachTimes` (STAR → seconds, from SceneryData path lengths with aircraft-derived calibration), and `designatorMap` (AircraftType → Designator)
    - Extracts State=5 data: `state5ParamsMap` (runway → `{pathPointList, touchDownPosition, approachDirection, initialPosition}`), `starPaths` (STAR → waypoint array), and STAR↔runway maps from `SceneryData.Runways.Routes[Type=0]`

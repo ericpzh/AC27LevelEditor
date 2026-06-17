@@ -902,13 +902,11 @@ function _parseRunwayThresholds(aclText) {
 
   // Find Runways section
   const rwSec = sdT.findSection('Runways');
-  console.log('[RUNWAY-THRESHOLDS] found Runways section:', !!rwSec);
   if (!rwSec) return result;
 
   const rwText = sdT.substring(rwSec.valueStart, rwSec.valueEnd);
   const rwT = createTokenizer(rwText);
   const rcSec = rwT.findSection('$rcontent');
-  console.log('[RUNWAY-THRESHOLDS] found $rcontent:', !!rcSec, 'airwayNodes:', airwayNodes.size, 'taxiwayNodes:', taxiwayNodes.size);
   if (!rcSec) return result;
 
   // Resolve GUID to position: try AirwayNodes ({name, position}) then TaxiwayNodes (Vector3 directly)
@@ -925,15 +923,11 @@ function _parseRunwayThresholds(aclText) {
   let entryCount = 0;
   while (pos < rwText.length) {
     while (pos < rwText.length && ' \t\n\r'.includes(rwText[pos])) pos++;
-    const charAtPos = pos < rwText.length ? rwText[pos] : 'EOF';
-    const snippet = rwText.substring(pos, Math.min(pos + 60, rwText.length)).replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-    console.log('[RUNWAY-THRESHOLDS] LOOP iter=' + entryCount + ' pos=' + pos + ' char=' + charAtPos + ' snippet=' + snippet);
-    if (pos >= rwText.length || rwText[pos] === ']') { console.log('[RUNWAY-THRESHOLDS] BREAK at ] or EOF'); break; }
+    if (pos >= rwText.length || rwText[pos] === ']') break;
     if (rwText[pos] === ',') { pos++; continue; }
     if (rwText[pos] === '{') {
       const entryEnd = rwT.findObjectEnd(pos);
-      console.log('[RUNWAY-THRESHOLDS]   entryEnd=' + entryEnd);
-      if (entryEnd === null) { console.log('[RUNWAY-THRESHOLDS] BREAK entryEnd null'); break; }
+      if (entryEnd === null) break;
       const block = rwText.substring(pos, entryEnd);
       const vBlock = _extractValueBlock(block);
       if (vBlock) {
@@ -942,7 +936,6 @@ function _parseRunwayThresholds(aclText) {
         // Each runway pair has 2 entries sharing the same threshold points; deduplicate by physName.
         if (physName && physName.includes('/') && !result[physName]) {
           const tpgGuids = _extractGuidArray(vBlock, 'ThresholdPointGuids');
-          console.log('[RUNWAY-THRESHOLDS]   entry ' + entryCount + ' physName=' + physName + ' tpgGuids=' + (tpgGuids ? tpgGuids.length : 0));
           if (tpgGuids && tpgGuids.length >= 2) {
             const thresholds = [];
             for (const guid of tpgGuids) {
@@ -951,7 +944,6 @@ function _parseRunwayThresholds(aclText) {
             }
             if (thresholds.length === 2) {
               result[physName] = { thresholds };
-              console.log('[RUNWAY-THRESHOLDS]   ADDED ' + physName);
             }
           }
         }
@@ -959,11 +951,9 @@ function _parseRunwayThresholds(aclText) {
       entryCount++;
       pos = entryEnd;
     } else {
-      console.log('[RUNWAY-THRESHOLDS] UNEXPECTED char, advancing');
       pos++;
     }
   }
-  console.log('[RUNWAY-THRESHOLDS] DONE: ' + entryCount + ' entries, result keys: ' + Object.keys(result).join(', '));
   return result;
 }
 
@@ -2162,18 +2152,18 @@ function buildStarPaths(aclText, appPointMap, starRunwayMap) {
  * @param {string} airportDir - path to .../Airports/<ICAO>/Levels/
  * @returns {{specDB: Map, appPointMap: Map, totalApproachTimes: Map, designatorMap: Map, typeMap: Map}}
  */
-function buildApproachCache(airportDir) {
+function buildApproachCache(airportDir, progressCallback) {
   const fs = require('fs');
   const path = require('path');
   const log = (msg) => console.log('[APPROACH-CACHE]', msg);
 
-  // Find all .acl files (include demo, test, tutorial, endless, perfbench variants,
-  // and .bak backups — needed for correct saveTimeOffsets computation).
+  // Find all .acl files (exclude .acl.bak + RE_HIDDEN patterns: tutorial, bench, test, crossrunway, dev, endless, .prod)
+  const RE_SKIP = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
   let aclFiles = [];
   try {
     const files = fs.readdirSync(airportDir);
     aclFiles = files
-      .filter(f => f.endsWith('.acl') || f.endsWith('.acl.bak'))
+      .filter(f => f.endsWith('.acl') && !RE_SKIP.test(f))
       .map(f => path.join(airportDir, f));
   } catch (_) { return null; }
 
@@ -2192,10 +2182,35 @@ function buildApproachCache(airportDir) {
   const fileTypeMaps = new Map(); // per-file: basename → Map<number, string>
   let firstAclText = null;
 
-  for (const aclPath of aclFiles) {
+  const { parseTaxiwayPaths } = require('./taxiway');
+  const seenTaxiwayKeys = new Set();
+  const mergedTaxiwayPaths = [];
+
+  const total = aclFiles.length;
+  for (let i = 0; i < aclFiles.length; i++) {
+    const aclPath = aclFiles[i];
+    if (progressCallback) {
+      progressCallback({ current: i + 1, total, fileName: path.basename(aclPath) });
+    }
     try {
       const text = fs.readFileSync(aclPath, 'utf-8');
       if (!firstAclText) firstAclText = text;
+
+      // ── Taxiway paths: parse from every file, merge with dedup ──
+      // Each file uses its own TaxiwayNodes (node GUIDs can differ between files).
+      try {
+        const twResult = parseTaxiwayPaths(text);
+        for (const tp of twResult.paths) {
+          const key = (tp.name || '') + '|' + tp.points.map(p =>
+            `${p.x.toFixed(2)},${(p.z !== undefined ? p.z : 0).toFixed(2)}`
+          ).join('|');
+          if (!seenTaxiwayKeys.has(key)) {
+            seenTaxiwayKeys.add(key);
+            mergedTaxiwayPaths.push(tp);
+          }
+        }
+      } catch (_) { /* skip taxiway parse errors */ }
+
       const entries = extractApproachData(text);
       for (const e of entries) e._file = path.basename(aclPath);
       allEntries.push(...entries);
@@ -2316,13 +2331,10 @@ function buildApproachCache(airportDir) {
     ? _parseRunwayThresholds(firstAclText)
     : {};
 
-  // ── Parse taxiway paths from SceneryData (lazy require avoids circular dep) ──
-  let taxiwayPaths = { paths: [] };
-  if (firstAclText) {
-    try {
-      const { parseTaxiwayPaths } = require('./taxiway');
-      taxiwayPaths = parseTaxiwayPaths(firstAclText);
-    } catch (e) { log('  taxiway parse warning: ' + e.message); }
+  // ── Taxiway paths (already merged from all files in main loop above) ──
+  const taxiwayPaths = { paths: mergedTaxiwayPaths };
+  if (mergedTaxiwayPaths.length > 0) {
+    log('  taxiway paths: ' + mergedTaxiwayPaths.length + ' segments merged from ' + aclFiles.length + ' files');
   }
 
   // ── Parse SID + Missed Approach routes from SceneryData ──

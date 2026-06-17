@@ -4,12 +4,14 @@ import './SetupScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
+import CacheProgressBody from '../common/CacheProgressBody';
 
 export default function SetupScreen() {
   const { t, toggleLang } = useTranslation();
   const electronAPI = useElectronAPI();
   const setScreen = useAppStore(s => s.setScreen);
   const setRootPath = useAppStore(s => s.setRootPath);
+  const setCacheBuildProgress = useAppStore(s => s.setCacheBuildProgress);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -23,7 +25,7 @@ export default function SetupScreen() {
       const { showModal, hideModal } = useAppStore.getState();
       showModal(
         t => t('browser_scanning_title'),
-        t => <div className="loading-state"><div className="spinner" /><p>{t('browser_scanning_body')}</p></div>,
+        () => <CacheProgressBody />,
         null,
         false,
       );

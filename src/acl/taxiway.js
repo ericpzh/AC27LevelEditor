@@ -92,16 +92,17 @@ function _extractStandNodeGuids(sdText, sdT) {
  * isStandAccess: true for differentiated rendering (thicker lines).
  *
  * @param {string} aclText - raw ACL file content
+ * @param {Map<string,{x:number,y:number,z:number}>} [existingNodesMap] - pre-parsed node map (avoids re-parsing TaxiwayNodes)
  * @returns {{ paths: Array<{ name: string, flags: number, isStandAccess?: boolean, points: Array<{x: number, z: number}> }> }}
  */
-function parseTaxiwayPaths(aclText) {
+function parseTaxiwayPaths(aclText, existingNodesMap) {
   const paths = [];
 
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return { paths };
 
-  // Resolve nodes first
-  const nodesMap = _parseTaxiwayNodes(aclText);
+  // Resolve nodes — use pre-parsed map if provided (avoids expensive re-parse)
+  const nodesMap = existingNodesMap || _parseTaxiwayNodes(aclText);
   if (nodesMap.size === 0) return { paths };
 
   const sdText = aclText.substring(sdIdx);

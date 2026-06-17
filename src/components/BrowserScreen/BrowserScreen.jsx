@@ -8,6 +8,7 @@ import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutlin
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { RE_HIDDEN, DEMO_VISIBLE_BASES, demoBaseName } from '../../utils/constants';
+import CacheProgressBody from '../common/CacheProgressBody';
 
 function rescanGuideContent(t) {
   return (
@@ -161,7 +162,7 @@ export default function BrowserScreen() {
     const { showModal, hideModal } = useAppStore.getState();
     showModal(
       t => t('browser_scanning_title'),
-      t => <div className="loading-state"><div className="spinner" /><p>{t('browser_scanning_body')}</p></div>,
+      () => <CacheProgressBody />,
       null,
       false,
     );
