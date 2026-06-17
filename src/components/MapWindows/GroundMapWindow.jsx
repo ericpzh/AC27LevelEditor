@@ -487,15 +487,19 @@ export default function GroundMapWindow({ airportIcao }) {
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('ground_map_show_all')}</span>
             </div>
-            <div className={'air-map-toggle' + (showTaxiwayNames ? ' active' : '') + (witchMode ? ' witch-active' : '')}
+            <div className={'air-map-toggle' + (showTaxiwayNames ? ' active' : '')}
               onClick={() => {
-                if (labelTimerRef.current) {
-                  // Double-click: toggle witch mode
+                if (witchMode) {
+                  // Already in witch mode — any click exits and does normal action
+                  setWitchMode(false);
+                  setShowTaxiwayNames(v => !v);
+                } else if (labelTimerRef.current) {
+                  // Double-click: enter witch mode
                   clearTimeout(labelTimerRef.current);
                   labelTimerRef.current = null;
-                  setWitchMode(v => !v);
+                  setWitchMode(true);
                 } else {
-                  // Single click: wait 300ms for potential double-click
+                  // First click: wait for potential double-click
                   labelTimerRef.current = setTimeout(() => {
                     labelTimerRef.current = null;
                     setShowTaxiwayNames(v => !v);

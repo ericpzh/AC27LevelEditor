@@ -105,22 +105,6 @@
   color: var(--text);
 }
 
-/* Witch mode active — purple glow on toggle button */
-.air-map-toggle.witch-active .air-map-toggle-knob {
-  transform: translateY(2px) scale(0.96);
-  background: linear-gradient(180deg, #6a2a80 0%, #4a1a60 40%, #301040 100%);
-  box-shadow:
-    0 1px 0 #1a0d28,
-    0 0 8px rgba(160, 64, 224, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-.air-map-toggle.witch-active .air-map-toggle-label {
-  color: #b060e0;
-}
-.air-map-toggle.witch-active:hover .air-map-toggle-label {
-  color: #d080ff;
-}
-
 /* Help button (non-toggle, always up) */
 .map-help-btn {
   display: flex;

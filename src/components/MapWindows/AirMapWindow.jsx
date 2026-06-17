@@ -780,15 +780,19 @@ export default function AirMapWindow({ airportIcao }) {
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_appr')}</span>
             </div>
-            <div className={'air-map-toggle' + (showRouteLabels ? ' active' : '') + (witchMode ? ' witch-active' : '')}
+            <div className={'air-map-toggle' + (showRouteLabels ? ' active' : '')}
               onClick={() => {
-                if (labelTimerRef.current) {
-                  // Double-click: toggle witch mode
+                if (witchMode) {
+                  // Already in witch mode — any click exits and does normal action
+                  setWitchMode(false);
+                  setShowRouteLabels(v => !v);
+                } else if (labelTimerRef.current) {
+                  // Double-click: enter witch mode
                   clearTimeout(labelTimerRef.current);
                   labelTimerRef.current = null;
-                  setWitchMode(v => !v);
+                  setWitchMode(true);
                 } else {
-                  // Single click: wait 300ms for potential double-click
+                  // First click: wait for potential double-click
                   labelTimerRef.current = setTimeout(() => {
                     labelTimerRef.current = null;
                     setShowRouteLabels(v => !v);
