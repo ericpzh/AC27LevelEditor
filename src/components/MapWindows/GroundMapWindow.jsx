@@ -8,7 +8,7 @@ import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
 import { IoHelpCircleOutline } from 'react-icons/io5';
 import { RAD_TO_DEG, MAP_ICON_PATH, GROUND_MAP_DEFAULT_ZOOM, GROUND_MAP_CENTER_OFFSET, GROUND_RADAR_STAND_PROXIMITY, GROUND_MAP_TAXIWAY_LABEL_SPACING, GROUND_MAP_STAND_ACCESS_WIDTH_MULT } from '../../utils/constants';
-import { witchDirection, isParked, getSpriteViewBox, getSpriteSheet, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
+import { witchDirection, isParked, getSpriteViewBox, getSpriteCell, getSpriteSheet, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import './GroundMapWindow.css';
 import './MapShared.css';
 
@@ -429,14 +429,26 @@ export default function GroundMapWindow({ airportIcao }) {
                         const parked = isParked(ac, standPositions, GROUND_RADAR_STAND_PROXIMITY);
                         const action = parked ? 'stand' : 'walk';
                         const dir = parked ? '' : witchDirection(ac.noseDirection);
+                        const cell = getSpriteCell(action, dir, witchFrame + 1);
                         const vb = getSpriteViewBox(action, dir, witchFrame + 1);
                         const sz = planeScale * 6.5;
+                        const cid = 'cp-' + ac.callSign;
+                        const fid = 'glow-' + ac.callSign;
                         return (
                           <svg x={cur.x - sz / 2} y={sy - sz / 2}
-                            width={sz} height={sz} viewBox={vb}
-                            style={{ pointerEvents: 'none' }}>
+                            width={sz} height={sz} viewBox={vb}>
+                            <defs>
+                              <clipPath id={cid}>
+                                <rect x={cell.x} y={cell.y} width="256" height="256" />
+                              </clipPath>
+                              <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
+                                <feDropShadow dx="0" dy="0" stdDeviation="16" flood-color="white" flood-opacity="0.8" />
+                              </filter>
+                            </defs>
                             <image href={getSpriteSheet(ac.callSign)}
-                              width={SPRITE_SHEET_W} height={SPRITE_SHEET_H} />
+                              width={SPRITE_SHEET_W} height={SPRITE_SHEET_H}
+                              clipPath={`url(#${cid})`}
+                              {...(ac.callSign === selectedCallSign ? { filter: `url(#${fid})` } : {})} />
                           </svg>
                         );
                       })()

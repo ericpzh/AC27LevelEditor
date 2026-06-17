@@ -101,7 +101,7 @@ npm start          # Launch in dev mode (no build step needed)
 
 ```
 electron/main.js     →  Electron main process, 39 IPC handlers, file I/O, map window management
-electron/preload.js  →  contextBridge: exposes ~42 methods on window.electronAPI
+electron/preload.js  →  contextBridge: exposes ~44 methods on window.electronAPI
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state from game)
 index.html           →  Vite HTML entry, loads src/main.jsx
 src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
@@ -113,14 +113,14 @@ src/acl/             →  CommonJS backend modules (parser facade + 13 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Two additional window types — **Surface Radar** and **Approach Radar** — open as separate Electron windows showing live aircraft positions from the game's UDP telemetry stream. Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 10 round-robin character sheets.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Two additional window types — **Surface Radar** and **Approach Radar** — open as separate Electron windows showing live aircraft positions from the game's UDP telemetry stream. Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
 ### Data Flow
 
 ```
-Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths + dropdowns + runway pairs → AirportCache
+Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths (merged from all .acl files) + dropdowns + runway pairs → AirportCache. Progress bar shows global 0–100% across all airports/files.
 Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → zustand store
 Phase 2 (edit):   All edits go through zustand store actions
 Phase 3 (save):   Validation → generate AircraftStates for approach flights → write .acl + .csv + timeline .json (game compat)
@@ -132,7 +132,7 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 ```
 ├── electron/
 │   ├── main.js              # Electron main process + 36 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, ~38 methods)
+│   ├── preload.js           # contextBridge (window.electronAPI, ~40 methods)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz aircraft state + commands
 ├── index.html               # Vite HTML entry
 ├── vite.config.js           # Vite 8 + React plugin + Electron plugin
@@ -188,7 +188,7 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   ├── approach.js         # Approach AircraftState constructor (State=30 & State=5)
 │   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
 │   │   ├── scenery.js           # SceneryData parser (runway/gate GUIDs)
-│   │   ├── taxiway.js           # Taxiway centerline parser (stand-access segments marked, not excluded)
+│   │   ├── taxiway.js           # Taxiway centerline parser (merged from all .acl files, stand-access segments marked)
 │   │   ├── sid_goaround.js      # SID + Missed Approach route parser
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │

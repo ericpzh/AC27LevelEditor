@@ -56,6 +56,7 @@ export const SPRITE_SHEET_H = 768;
 const SHEETS = [
   'elaina', 'marisa', 'kowata', 'patchouli', 'atsuko',
   'lisa', 'nene', 'echidna', 'roxy', 'ranni',
+  'sherry', 'nikaido', 'ema', 'natsume', 'npa',
 ];
 
 /** Round-robin assignment: callsign → sheet index. */
@@ -96,8 +97,20 @@ const GRID = {
  * @returns {string} "x y w h" for SVG viewBox
  */
 export function getSpriteViewBox(action, dir, frame) {
+  const c = getSpriteCell(action, dir, frame);
+  return `${c.x} ${c.y} ${SPRITE_CELL} ${SPRITE_CELL}`;
+}
+
+/**
+ * Return {x, y} of a cell in the sprite sheet (pixel coords).
+ * @param {'stand'|'walk'|'fly'} action
+ * @param {'up'|'down'|'left'|'right'|''} dir
+ * @param {1|2} frame
+ * @returns {{x: number, y: number}}
+ */
+export function getSpriteCell(action, dir, frame) {
   const key = action === 'stand' ? 'stand' : `${action}${dir}`;
   const c = GRID[key]?.[frame];
-  if (!c) return '0 0 256 256';
-  return `${c[0] * SPRITE_CELL} ${c[1] * SPRITE_CELL} ${SPRITE_CELL} ${SPRITE_CELL}`;
+  if (!c) return { x: 0, y: 0 };
+  return { x: c[0] * SPRITE_CELL, y: c[1] * SPRITE_CELL };
 }

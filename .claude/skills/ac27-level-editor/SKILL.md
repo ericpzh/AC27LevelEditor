@@ -263,7 +263,9 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 - IPC channels use kebab-case strings matching the handler name
 - Every `ipcMain.handle()` must return `{ success: true/false }`
 - New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer
-- **Main→renderer events:** `mainWindow.webContents.send('cache-invalidated')` — signals renderer when `cache.json` is missing/corrupt; preload bridges via `onCacheInvalidated(cb)`
+- **Main→renderer events:**
+  - `cache-invalidated` — signals renderer when `cache.json` is missing/corrupt; preload bridges via `onCacheInvalidated(cb)`
+  - `cache-build-progress` — per-file progress during scan: `{ current: number, total: number }`; preload bridges via `onCacheBuildProgress(cb)` / `offCacheBuildProgress(cb)` (uses handler-map pattern, same function reference required for cleanup)
 
 ### Test Conventions
 
@@ -357,11 +359,12 @@ Screen transitions: `useAppStore.getState().setScreen('browser')` — `App.jsx`'
 1. User selects game root directory
 2. `scan-acls` IPC → `scanGameRoot()` → returns airport list with `.acl` file paths
 3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data + dropdown values per airport:
-   - Scans all `.acl` files (includes demo/test/tutorial variants — all treated as normal levels)
+   - Scans all `.acl` files (includes demo/test/tutorial variants — all treated as normal levels; **excludes `.acl.bak` backups**)
+   - **Global progress reporting:** Pre-counts total `.acl` files across ALL airports, then sends `cache-build-progress` IPC events (`{ current, total }`) per file during `buildApproachCache`. Renderer shows a progress bar + percentage via `CacheProgressBody` component.
    - Extracts `specDB` (Designator → AircraftSpec, from ALL aircraft entries regardless of State), `appPointMap` ((STAR,Runway) → AppPointList, from SceneryData Type=1 routes), `totalApproachTimes` (STAR → seconds, from SceneryData path lengths with aircraft-derived calibration), and `designatorMap` (AircraftType → Designator)
    - Extracts State=5 data: `state5ParamsMap` (runway → `{pathPointList, touchDownPosition, approachDirection, initialPosition}`), `starPaths` (STAR → waypoint array), and STAR↔runway maps from `SceneryData.Runways.Routes[Type=0]`
    - Extracts `runwayThresholds` from SceneryData (PhysicalName → threshold pair) for StarMap/MapWindow visualization
-   - Extracts `taxiwayPaths` (taxiway centerline polylines from `SceneryData.TaxiwaySegments` via `taxiway.js`) — used by GroundMapWindow
+   - Extracts `taxiwayPaths` (taxiway centerline polylines from `SceneryData.TaxiwaySegments` via `taxiway.js`) — **merged from ALL `.acl` files** with coordinate-based dedup (`toFixed(2)` precision), not just the first file. This ensures complete taxiway coverage even when some ACL files have missing segments (e.g. `ZSJN-17_19.acl` missing 2 taxiway A/B segments between E and N). Used by GroundMapWindow.
    - Extracts SID data: `sidPaths` (departure route polylines from `SceneryData.Runways.Routes[Type=2]`), `sidRunwayMap` (SID→[runways]), `runwaySidMap` (runway→[SIDs]) — parsed by `sid_goaround.js`
    - Extracts Missed Approach data: `missedAppPaths` (go-around route polylines from `SceneryData.Runways.Routes[Type=3]`), `missedAppMap` (MA name→runway), `runwayMissedAppMap` (runway→MA names) — parsed by `sid_goaround.js`
    - Collects dropdown values (`collectUniqueValues`) and runway pairs (`collectRunwayPairs`) from ALL .acl files
@@ -398,9 +401,9 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 
 **Re-scan flow:**
 1. Mismatch modal appears on BrowserScreen (non-closeable, with lang toggle button in top-right via `showLangToggle`)
-2. User clicks "Re-Scan" → scanning modal with spinner appears (i18n: `browser_scanning_title`/`browser_scanning_body`) → `refresh-root-scan` → rebuilds cache with `cacheVersion: CACHE_VERSION`
+2. User clicks "Re-Scan" → scanning modal with **progress bar + percentage** (`CacheProgressBody` component) appears → `refresh-root-scan` → rebuilds cache with `cacheVersion: CACHE_VERSION`. Progress counts ALL `.acl` files across ALL airports as a single global 0–100%.
 3. `init-airport-cache` and `refresh-root-scan` also stamp `cacheVersion` when writing
-4. Scanning modal also appears during initial cache build in SetupScreen (`initAirportCache`)
+4. Same progress modal appears during initial cache build in SetupScreen (`initAirportCache`)
 
 **Language persistence:**
 - `lang` field in `cache.json` provides durable backup for language preference
@@ -585,6 +588,8 @@ sendUdpCommand(commandId, callSign)     // → base64-encodes 12B callSign, invo
 debugLog(...args)                       // → ipcRenderer.invoke('debug-log', args) — logs to main terminal
 onUdpAircraftState(cb)                  // subscribe to live ~10 Hz pushes
 offUdpAircraftState(cb)                 // unsubscribe (must be SAME function reference)
+onCacheBuildProgress(cb)                // subscribe to cache build progress: cb({ current: number, total: number })
+offCacheBuildProgress(cb)               // unsubscribe (must be SAME function reference)
 ```
 
 ### GroundMapWindow (`src/components/MapWindows/GroundMapWindow.jsx`)
@@ -614,7 +619,7 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
    - **Icon:** `MAP_ICON_PATH` (IonIons IoAirplane SVG path) rotated by `noseDirection.x/z`
    - **Label:** Green callsign text with a short connector line from aircraft to label
    - **Selection highlight:** Yellow icon + label when aircraft is selected (click-to-select)
-   - **Witch mode (v1.1.5):** Double-click the Label (taxiway) button to toggle. Aircraft rendered as animated 2-frame sprites from 10 character sheets (`public/witch/*.png`, 1536×768 sprite sheet, 3×6 grid) via nested SVG viewBox clipping. Characters assigned round-robin, stable per callsign. Moving: walk sprites (direction-aware); parked/stopped: stand sprites. Any click exits witch mode. Labels and connector lines hidden.
+   - **Witch mode (v1.1.5):** Double-click the Label (taxiway) button to toggle. Aircraft rendered as animated 2-frame sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (module-level `_assignments` Map), stable per callsign. Moving: walk sprites (direction-aware via `witchDirection()`); parked/stopped: stand sprites (`isParked()` uses `taxiSpeed < 1` OR stand proximity). Any click exits witch mode. Labels and connector lines hidden.
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `GROUND_MAP_DEFAULT_ZOOM` + `GROUND_MAP_CENTER_OFFSET`, pan clamped to initial bounds.
 
@@ -652,7 +657,7 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
    - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale
    - **Label:** Callsign + speed/type (toggles every 5 seconds between airspeed/10 and aircraft type), dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show an "EM" label above the callsign in red.
    - **A/D indicator:** "A" or "D" text next to the current position dot
-   - **Witch mode (v1.1.5):** Double-click the Label button to toggle. Aircraft rendered as animated 2-frame fly sprites from 10 character sheets (`public/witch/*.png`, 1536×768 sprite sheet, 3×6 grid) via nested SVG viewBox clipping. Characters assigned round-robin, stable per callsign. Direction-aware (fly up/down/left/right based on nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden.
+   - **Witch mode (v1.1.5):** Double-click the Label button to toggle. Aircraft rendered as animated 2-frame fly sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin, stable per callsign. Direction-aware via `witchDirection()` (dominant axis of nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden.
 
 **Airspace knob:** `SpinKnob` passed via `airspaceKnob` prop to `ControlSidebar` — controls range ring density (0=10NM gap … 11=120NM gap, default 40NM). Double-click knob to reset to default.
 
@@ -967,7 +972,8 @@ Parsed by `src/acl/taxiway.js`:
 - Resolves node GUIDs via `_parseTaxiwayNodes()` (shared with `approach.js`)
 - **Stand-access segments are now included** (marked with `isStandAccess: true`) instead of being excluded — segments where ANY endpoint GUID touches a stand position (via `TailPositionGuid` / `NosePositionGuid` from `SceneryData.Stands`) get the flag; non-stand segments omit it
 - Returns `{ paths: [{ name, flags, points: [{x, z}], isStandAccess?: boolean }] }`
-- Integrated into `buildApproachCache()` and exposed via `collect-values` as `_taxiwayPaths`
+- **Accepts optional `existingNodesMap`** parameter to skip re-parsing `TaxiwayNodes` when called repeatedly for the same airport
+- **Merged from all files in `buildApproachCache()`**: each file's taxiway paths are parsed inline during the main approach-data loop (no separate second pass), with coordinate-based dedup at `toFixed(2)` precision. Exposed via `collect-values` as `_taxiwayPaths`
 
 ## Approach Aircraft Construction (State=30 & State=5)
 
