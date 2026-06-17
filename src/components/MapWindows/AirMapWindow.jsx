@@ -12,7 +12,7 @@ import {
   MAP_PAD_RATIO, MAP_TARGET_RATIO, MAP_PLANE_VB, MAP_ICON_PATH,
   RAD_TO_DEG, AIR_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
 } from '../../utils/constants';
-import { witchDirection } from './witchMode';
+import { witchDirection, getSpriteViewBox, getSpriteSheet, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import './AirMapWindow.css';
 import './MapShared.css';
 
@@ -656,19 +656,19 @@ export default function AirMapWindow({ airportIcao }) {
                   <g key={'ac-' + ac.callSign} className="air-map-aircraft-group"
                     onClick={(e) => handleAircraftClick(e, ac.callSign)}>
                     {sorted.length > 0 && witchMode ? (
-                      // ── Witch sprite replaces trail dots + A/D indicator ──
+                      // ── Witch sprite (sprite sheet via viewBox clip) ──
                       (() => {
                         const cur = sorted[0];
                         const dir = witchDirection(ac.noseDirection);
-                        const href = `witch/fly${dir}${witchFrame + 1}.png`;
+                        const vb = getSpriteViewBox('fly', dir, witchFrame + 1);
                         const sz = planeScale * 12;
                         return (
-                          <image key="ws" href={href}
-                            x={cur.x - sz / 2}
-                            y={svgY(cur.z) - sz / 2}
-                            width={sz} height={sz}
-                            style={{ pointerEvents: 'none' }}
-                          />
+                          <svg key="ws" x={cur.x - sz / 2} y={svgY(cur.z) - sz / 2}
+                            width={sz} height={sz} viewBox={vb}
+                            style={{ pointerEvents: 'none' }}>
+                            <image href={getSpriteSheet(ac.callSign)}
+                              width={SPRITE_SHEET_W} height={SPRITE_SHEET_H} />
+                          </svg>
                         );
                       })()
                     ) : (

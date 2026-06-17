@@ -45,3 +45,59 @@ export function isParked(ac, standPositions, proximity) {
   }
   return stopped || atStand;
 }
+
+// ─── Sprite sheet lookup ───────────────────────────────────────────
+
+export const SPRITE_CELL = 256;
+export const SPRITE_SHEET_W = 1536;
+export const SPRITE_SHEET_H = 768;
+
+/** Available character sheets. */
+const SHEETS = [
+  'elaina', 'marisa', 'kowata', 'patchouli', 'atsuko',
+  'lisa', 'nene', 'echidna', 'roxy', 'ranni',
+];
+
+/** Round-robin assignment: callsign → sheet index. */
+const _assignments = new Map();
+let _nextIdx = 0;
+
+/**
+ * Return the sprite sheet filename for an aircraft.
+ * Round-robin: each new callsign gets the next unused sheet, cycling through all 10.
+ * Assignment is stable — same callsign always gets the same sheet.
+ */
+export function getSpriteSheet(callSign) {
+  if (!_assignments.has(callSign)) {
+    _assignments.set(callSign, SHEETS[_nextIdx % SHEETS.length]);
+    _nextIdx++;
+  }
+  return `witch/${_assignments.get(callSign)}.png`;
+}
+
+// Grid layout in elaina.png (col,row) — 6 cols × 3 rows
+const GRID = {
+  stand:     { 1: [0,0], 2: [1,0] },
+  walkup:    { 1: [2,0], 2: [3,0] },
+  walkdown:  { 1: [4,0], 2: [5,0] },
+  walkleft:  { 1: [0,1], 2: [1,1] },
+  walkright: { 1: [2,1], 2: [3,1] },
+  flyup:     { 1: [4,1], 2: [5,1] },
+  flydown:   { 1: [0,2], 2: [1,2] },
+  flyleft:   { 1: [2,2], 2: [3,2] },
+  flyright:  { 1: [4,2], 2: [5,2] },
+};
+
+/**
+ * Return the viewBox for a sprite cell.
+ * @param {'stand'|'walk'|'fly'} action
+ * @param {'up'|'down'|'left'|'right'|''} dir
+ * @param {1|2} frame
+ * @returns {string} "x y w h" for SVG viewBox
+ */
+export function getSpriteViewBox(action, dir, frame) {
+  const key = action === 'stand' ? 'stand' : `${action}${dir}`;
+  const c = GRID[key]?.[frame];
+  if (!c) return '0 0 256 256';
+  return `${c[0] * SPRITE_CELL} ${c[1] * SPRITE_CELL} ${SPRITE_CELL} ${SPRITE_CELL}`;
+}
