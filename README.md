@@ -113,7 +113,7 @@ src/acl/             →  CommonJS backend modules (parser facade + 13 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Two additional window types — **Surface Radar** and **Approach Radar** — open as separate Electron windows showing live aircraft positions from the game's UDP telemetry stream. Double-click the Label button on either radar to toggle **witch mode** — an alternative animated-sprite display for aircraft.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Two additional window types — **Surface Radar** and **Approach Radar** — open as separate Electron windows showing live aircraft positions from the game's UDP telemetry stream. Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 10 round-robin character sheets.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 

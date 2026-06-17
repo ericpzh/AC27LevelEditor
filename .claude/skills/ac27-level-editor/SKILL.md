@@ -128,7 +128,7 @@ AC27LevelEditor/
 │   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes (incl. simTimeUnixMs)
-│   │   │   └── witchMode.js                # Witch mode utilities: direction mapping + parked detection
+│   │   │   └── witchMode.js                # Witch mode: direction, parked detection, sprite-sheet lookup, round-robin character assignment
 │   │   └── common/
 │   │       ├── Modal.jsx + .css         # Declarative modal
 │   │       └── Toast.jsx + .css         # Declarative toast
@@ -614,7 +614,7 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
    - **Icon:** `MAP_ICON_PATH` (IonIons IoAirplane SVG path) rotated by `noseDirection.x/z`
    - **Label:** Green callsign text with a short connector line from aircraft to label
    - **Selection highlight:** Yellow icon + label when aircraft is selected (click-to-select)
-   - **Witch mode (v1.1.5):** Double-click the Label (taxiway) button to toggle an alternative display. Aircraft are rendered as animated 2-frame PNG sprites from `public/witch/` instead of the airplane icon. Moving aircraft use walk sprites (direction-aware); parked/stopped aircraft use stand sprites. Labels and connector lines are hidden in this mode.
+   - **Witch mode (v1.1.5):** Double-click the Label (taxiway) button to toggle. Aircraft rendered as animated 2-frame sprites from 10 character sheets (`public/witch/*.png`, 1536×768 sprite sheet, 3×6 grid) via nested SVG viewBox clipping. Characters assigned round-robin, stable per callsign. Moving: walk sprites (direction-aware); parked/stopped: stand sprites. Any click exits witch mode. Labels and connector lines hidden.
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `GROUND_MAP_DEFAULT_ZOOM` + `GROUND_MAP_CENTER_OFFSET`, pan clamped to initial bounds.
 
@@ -652,7 +652,7 @@ offUdpAircraftState(cb)                 // unsubscribe (must be SAME function re
    - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale
    - **Label:** Callsign + speed/type (toggles every 5 seconds between airspeed/10 and aircraft type), dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show an "EM" label above the callsign in red.
    - **A/D indicator:** "A" or "D" text next to the current position dot
-   - **Witch mode (v1.1.5):** Double-click the Label button to toggle an alternative display. Aircraft are rendered as animated 2-frame PNG sprites from `public/witch/` instead of dots. Direction-aware (fly up/down/left/right based on nose vector). Labels/hides/connectors are hidden in this mode.
+   - **Witch mode (v1.1.5):** Double-click the Label button to toggle. Aircraft rendered as animated 2-frame fly sprites from 10 character sheets (`public/witch/*.png`, 1536×768 sprite sheet, 3×6 grid) via nested SVG viewBox clipping. Characters assigned round-robin, stable per callsign. Direction-aware (fly up/down/left/right based on nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden.
 
 **Airspace knob:** `SpinKnob` passed via `airspaceKnob` prop to `ControlSidebar` — controls range ring density (0=10NM gap … 11=120NM gap, default 40NM). Double-click knob to reset to default.
 
