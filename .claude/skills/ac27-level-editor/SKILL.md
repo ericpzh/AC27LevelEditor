@@ -221,6 +221,7 @@ module.exports = { publicFn, _privateFn };
 - NEVER use inline `style={{}}` — always extract to CSS classes
 - CSS class naming: BEM-like flat naming (`.modal-issues-body`, `.callsign-link`)
 - CSS custom properties (`--bg`, `--accent`, `--radius`, etc.) for theming
+- **⚠️ CSS `url()` for public assets MUST use absolute paths (`/witch/foo.png`)** — Vite needs the leading `/` to correctly rewrite paths in production builds. Without it, assets break in the packaged EXE because the CSS file lives in `dist/assets/` while public files are in `dist/`. JSX `<img src>` uses page-relative paths (e.g., `witch/help.png` or `./witch/help.png`).
 
 **State management (zustand):**
 - Single store in `src/store/appStore.js`
