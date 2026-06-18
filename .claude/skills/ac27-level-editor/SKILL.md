@@ -125,7 +125,7 @@ AC27LevelEditor/
 │   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel, gauge mode)
 │   │   │   ├── SimClock.jsx                # Shared sim-time clock (HH:MM:SS UTC, accepts className prop)
 │   │   │   ├── MapHelpOverlay.jsx + .css   # Context-sensitive help overlay (air or ground map, Escape to close, toggleable button interactivity)
-│   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations
+│   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations, witch mode UI overrides (sidebar bar.png, button.png/button_on.png toggles, knob.png spin knobs)
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes (incl. simTimeUnixMs)
 │   │   │   └── witchMode.js                # Witch mode: direction, parked detection, sprite-sheet lookup, round-robin character assignment
@@ -166,7 +166,6 @@ AC27LevelEditor/
 │       ├── i18n.js              # Chinese/English translation (T(), getLang, setLang)
 │       ├── validators.js        # validateCallsigns, runTripleValidation
 │       ├── htmlUtils.js         # escapeHtml, stripSuffixes
-│       ├── mapGeoRef.js         # _Map.png geo-reference lookup per airport (Unity game-unit coords)
 │       ├── csvIo.js             # CSV export
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
@@ -607,7 +606,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 - `GROUND_MAP_CENTER_OFFSET` — per-airport viewBox center offset (game units)
 
 **Rendering layers:**
-1. Radar-blue background (`#0a1628`)
+1. Radar-blue background (`#0a1628`). Witch mode: `witch/groundradar.png` image stretched to viewBox, background color `#24150a`.
 2. Taxiway centerlines — uniform grey (`#444`) polylines. Segments touching stand-position nodes are marked `isStandAccess: true` and rendered with square linecap + configurable width multiplier (`GROUND_MAP_STAND_ACCESS_WIDTH_MULT`). Stand-access segments are no longer excluded — they render alongside main taxiways for differentiated styling. **Runway-named taxiway segments** (name matches a runway in `runwayData`) are excluded from this layer — they render as runway-style polygons instead (see layer 4b).
 3. Area polygons — semi-transparent fills by AreaType: blue boundary, grey apron, black buildings. Default stroke color `#444` (matches taxiways). Parsed from `SceneryData.Areas` via `_parseAreas()`.
 4. Runway rectangles — black filled polygons from threshold endpoints + width
@@ -619,7 +618,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
    - **Icon:** `MAP_ICON_PATH` (IonIons IoAirplane SVG path) rotated by `noseDirection.x/z`
    - **Label:** Green callsign text with a short connector line from aircraft to label
    - **Selection highlight:** Yellow icon + label when aircraft is selected (click-to-select)
-   - **Witch mode (v1.1.5):** Double-click the Label (taxiway) button to toggle. Aircraft rendered as animated 2-frame sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (module-level `_assignments` Map), stable per callsign. Moving: walk sprites (direction-aware via `witchDirection()`); parked/stopped: stand sprites (`isParked()` uses `taxiSpeed < 1` OR stand proximity). Any click exits witch mode. Labels and connector lines hidden.
+   - **Witch mode (v1.1.5):** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (module-level `_assignments` Map), stable per callsign. Moving: walk sprites (direction-aware via `witchDirection()`); parked/stopped: stand sprites (`isParked()` uses `taxiSpeed < 1` OR stand proximity). Airport boundary (AreaType 0) is hidden. Any click exits witch mode. Labels and connector lines hidden. Background replaced with `witch/groundradar.png`, sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `GROUND_MAP_DEFAULT_ZOOM` + `GROUND_MAP_CENTER_OFFSET`, pan clamped to initial bounds.
 
@@ -643,13 +642,13 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 - `NM_TO_GU` from `src/utils/constants.js` — nautical mile to game-units conversion (18.52)
 
 **Rendering layers (bottom to top):**
-1. Background map image (toggleable): `/{ICAO}_Map.png` positioned via `bgCfg`, opacity 20%. Background color via CSS custom property `--air-map-bg`.
+1. Background map image (toggleable): `/{ICAO}_STAR.png` positioned via `bgCfg`, opacity 20%. Background color via CSS custom property `--air-map-bg`. Witch mode (see below) uses `witch/{ICAO}_STAR.png` at full opacity with independent `WITCH_MAP_BG_OFFSETS` positioning.
 2. Range rings (airspace knob, 12 levels from 10–120 NM gap): centered on geometric mean of all runway thresholds, radius labels when route labels enabled.
 3. SID / STAR / APPR routes — each independently toggleable, grey (`#888888`) at 50% opacity. STAR paths are trimmed at APPR overlap points so each category shows its unique portion.
 4. Route name labels (toggleable + per-category): positioned at path starts with vertical spreading to avoid overlaps.
 5. Runway extension lines (toggleable): 1–20 NM dashed white lines from each threshold with tick marks at 5/10/15/20 NM.
 6. Runway thresholds — runway-width lines connecting threshold pairs.
-7. Border overlay — independent SVG with white border rect and 10° tick marks with degree labels.
+7. Border overlay — independent SVG with white border rect and 10° tick marks with degree labels. Tick/label sizes scale inversely to container width via `ResizeObserver` (baseline 800px) so they stay fixed in pixels when the window resizes.
 8. Live airborne aircraft — filtered to `position.y > 1.0`:
    - **Direction-based coloring:** Outbound aircraft (`flightDirection === 0`) render with green labels/indicators (`#66ff66`); inbound aircraft (`flightDirection === 1`) use white. Dots remain `#1a4a8a` blue for all. Selected aircraft always get yellow highlights.
    - **Circle:** Small colored circle at aircraft position (unselected) or yellow (selected)
@@ -657,7 +656,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
    - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale
    - **Label:** Callsign + speed/type (toggles every 5 seconds between airspeed/10 and aircraft type), dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show an "EM" label above the callsign in red.
    - **A/D indicator:** "A" or "D" text next to the current position dot
-   - **Witch mode (v1.1.5):** Double-click the Label button to toggle. Aircraft rendered as animated 2-frame fly sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin, stable per callsign. Direction-aware via `witchDirection()` (dominant axis of nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden.
+   - **Witch mode (v1.1.5):** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame fly sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin, stable per callsign. Direction-aware via `witchDirection()` (dominant axis of nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden. Map background switches to `witch/{ICAO}_STAR.png` at full opacity with `WITCH_MAP_BG_OFFSETS`, background color `#160900`. Sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
 
 **Airspace knob:** `SpinKnob` passed via `airspaceKnob` prop to `ControlSidebar` — controls range ring density (0=10NM gap … 11=120NM gap, default 40NM). Double-click knob to reset to default.
 
@@ -744,14 +743,14 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 
 ### New Constants
 
-- **`AIR_MAP_BG_OFFSETS`** (`src/utils/constants.js`): Per-airport config for approach radar background image (renamed from `STAR_BG_OFFSETS`). Fields: `dx`/`dy` (fine-tune position offset), `w` (image width in viewBox units when height=3000), `bg` (color outside map image), `bgUnder` (color behind semi-transparent image). Entries for ZSJN and KJFK.
+- **`AIR_MAP_BG_OFFSETS`** (`src/utils/constants.js`): Per-airport config for approach radar background image (renamed from `STAR_BG_OFFSETS`). Fields: `dx`/`dy` (fine-tune position offset), `w` (image width in viewBox units when height=3000), `bg` (color outside map image), `bgUnder` (color behind semi-transparent image). Entries for ZSJN and KJFK. Witch mode uses separate `WITCH_MAP_BG_OFFSETS`.
 - **`NM_TO_GU`** (`src/utils/constants.js`): Nautical mile to game-units conversion (18.52 = 1852m ÷ 100 m/unit). Used by AirMapWindow for runway extension lines, tick marks, and range rings.
 - **`AIR_MAP_DEFAULT_ZOOM`** / **`GROUND_MAP_DEFAULT_ZOOM`** (`src/utils/constants.js`): Per-airport default zoom scale. 1.0 = full dataBounds, <1 = tighter initial view. Entries for ZSJN (0.75 ground) and KJFK (1.0 both).
 - **`GROUND_RADAR_STAND_PROXIMITY`** (`src/utils/constants.js`): Max distance (0.5 GU ≈ 50m) from aircraft position to its assigned stand midpoint to consider it "parked at stand." Used by GroundMapWindow to hide inactive aircraft.
 - **`GROUND_MAP_CENTER_OFFSET`** (`src/utils/constants.js`): Per-airport viewBox center offset in game units (`{x, z}`). Used by GroundMapWindow to fine-tune initial camera position. Entries for ZSJN and KJFK.
 - **`GROUND_MAP_TAXIWAY_LABEL_SPACING`** (`src/utils/constants.js`): Minimum distance (10.0 GU) between same-name taxiway labels to prevent label clutter. Used by GroundMapWindow for proximity dedup.
 - **`GROUND_MAP_STAND_ACCESS_WIDTH_MULT`** (`src/utils/constants.js`): Multiplier (1.0) for stand-access taxiway line width. Stand-access segments are rendered with square linecaps for differentiated styling. Change this to make stand-access stubs visually distinct from main taxiways.
-- **`MAP_GEO_REF`** (`src/utils/mapGeoRef.js`): Lookup table mapping airport ICAO → `_Map.png` top-left origin (`originX`, `originZ`) and image extent (`width`, `height`) in Unity game units (at 100 m/unit). Used by AirMapWindow to correctly position the background map image.
+- **`WITCH_MAP_BG_OFFSETS`** (`src/utils/constants.js`): Per-airport config for witch mode map background images (`witch/{ICAO}_STAR.png`). Independent of normal mode offsets. Fields: `dx`/`dy` (fine-tune position), `w` (override image width, 0 = use default). Entries for ZSJN and KJFK.
 
 ## UDP Telemetry Pipeline
 

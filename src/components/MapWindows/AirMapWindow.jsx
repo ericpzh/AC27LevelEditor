@@ -10,7 +10,7 @@ import MapHelpOverlay from './MapHelpOverlay';
 import { IoHelpCircleOutline } from 'react-icons/io5';
 import {
   MAP_PAD_RATIO, MAP_TARGET_RATIO, MAP_PLANE_VB, MAP_ICON_PATH,
-  RAD_TO_DEG, AIR_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
+  RAD_TO_DEG, AIR_MAP_BG_OFFSETS, WITCH_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
 } from '../../utils/constants';
 import { witchDirection, getSpriteViewBox, getSpriteCell, getSpriteSheet, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import './AirMapWindow.css';
@@ -60,6 +60,7 @@ export default function AirMapWindow({ airportIcao }) {
   const [speedToggle, setSpeedToggle] = useState(true);
   const [showRunwayExt, setShowRunwayExt] = useState(false);
   const [rangeRingLevel, setRangeRingLevel] = useState(3); // 0=gap10, ..., 3=gap40 (default)
+  const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [showRouteLabels, setShowRouteLabels] = useState(false);
   const [showStarPaths, setShowStarPaths] = useState(true);
   const [showSidPaths, setShowSidPaths] = useState(false);
@@ -105,12 +106,25 @@ export default function AirMapWindow({ airportIcao }) {
 
   // ── Dynamic background via CSS custom property (avoids inline style) ──
   const bgCfg = AIR_MAP_BG_OFFSETS[airportIcao] || { dx: 0, dy: 0 };
+  const witchBgCfg = WITCH_MAP_BG_OFFSETS[airportIcao] || { dx: 0, dy: 0, w: 0 };
   useEffect(() => {
     if (airMapRef.current) {
       airMapRef.current.style.setProperty('--air-map-bg',
-        showBgImage && bgCfg.bg ? bgCfg.bg : '#000000');
+        witchMode ? '#160900' : (showBgImage && bgCfg.bg ? bgCfg.bg : '#000000'));
     }
-  }, [showBgImage, bgCfg.bg]);
+  }, [showBgImage, bgCfg.bg, witchMode]);
+
+  // ── Track container pixel size for border tick scaling ──────
+  useEffect(() => {
+    const el = airMapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setContainerSize({ w: Math.round(width), h: Math.round(height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // ── 5s speed/type toggle ─────────────────────────────────
   useEffect(() => {
@@ -541,11 +555,14 @@ export default function AirMapWindow({ airportIcao }) {
 
   // ── Border rect + 10° ticks (independent overlay SVG, percentage-based so it
   //     always hugs the container edges regardless of the main SVG viewBox) ──
+  //     Tick/label sizes are scaled inversely to container size so they stay
+  //     fixed in pixels when the window resizes (baseline: ~800px wide).
   const borderOverlay = useMemo(() => {
     const els = [];
-    const MIN_TICK = 0.5, MAX_TICK = 2.0;
+    const s = 800 / Math.max(containerSize.w, 1);
+    const MIN_TICK = 0.5 * s, MAX_TICK = 2.0 * s;
     // Border rect at 0-100%
-    els.push(<rect key="b" x="0" y="0" width="100" height="100" fill="none" stroke="#fff" strokeWidth="0.12" opacity="0.6" />);
+    els.push(<rect key="b" x="0" y="0" width="100" height="100" fill="none" stroke="#fff" strokeWidth={0.12 * s} opacity="0.6" />);
     for (let d = 0; d < 360; d += 10) {
       const rad = d * Math.PI / 180, sx = Math.sin(rad), sy = -Math.cos(rad);
       const t = Math.min(Math.abs(sx) < 1e-9 ? 1e9 : 50 / Math.abs(sx), Math.abs(sy) < 1e-9 ? 1e9 : 50 / Math.abs(sy));
@@ -553,11 +570,12 @@ export default function AirMapWindow({ airportIcao }) {
       // Tick length: short at edge centres, long at corners
       const angleFromCardinal = Math.min(d % 90, 90 - (d % 90));
       const tickLen = MIN_TICK + (MAX_TICK - MIN_TICK) * (angleFromCardinal / 45);
-      els.push(<line key={'t'+d} x1={bx} y1={by} x2={bx - sx * tickLen} y2={by - sy * tickLen} stroke="#fff" strokeWidth="0.15" opacity="0.6" />);
+      els.push(<line key={'t'+d} x1={bx} y1={by} x2={bx - sx * tickLen} y2={by - sy * tickLen} stroke="#fff" strokeWidth={0.15 * s} opacity="0.6" />);
       // Label at the tick endpoint (tick points inward from border)
-      const lx = bx - sx * (tickLen + 1.2);
-      const ly = by - sy * (tickLen + 1.2);
-      els.push(<text key={'l'+d} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="1.2" opacity="0.6">{String(d).padStart(3, '0')}</text>);
+      const labelOffset = 1.2 * s;
+      const lx = bx - sx * (tickLen + labelOffset);
+      const ly = by - sy * (tickLen + labelOffset);
+      els.push(<text key={'l'+d} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize={1.2 * s} opacity="0.6">{String(d).padStart(3, '0')}</text>);
     }
     return (
       <div className="air-map-border-overlay">
@@ -566,12 +584,12 @@ export default function AirMapWindow({ airportIcao }) {
         </svg>
       </div>
     );
-  }, []);
+  }, [containerSize]);
 
   if (!initialViewBox) return null;
 
   return (
-    <div className="air-map" ref={airMapRef}>
+    <div className={'air-map' + (witchMode ? ' witch-mode' : '')} ref={airMapRef}>
       {loading && <div className="air-map-loading"><div className="spinner" /></div>}
       {error && <div className="air-map-error">{error}</div>}
       {!loading && !error && (
@@ -592,20 +610,20 @@ export default function AirMapWindow({ airportIcao }) {
               onClick={handleBgClick}
             >
               {/* Color behind the map image (shows through 20% opacity) */}
-              {showBgImage && bgCfg.bgUnder && (
+              {!witchMode && showBgImage && bgCfg.bgUnder && (
                 <rect x={dataBounds.x + bgCfg.dx} y={imgY + bgCfg.dy} width={imgW} height={imgH}
                   fill={bgCfg.bgUnder} opacity={1} />
               )}
-              {/* Map image */}
-              {showBgImage && (
+              {/* Map image — witch mode uses witch/ folder variant with own offsets */}
+              {(showBgImage || witchMode) && (
               <image
-                href={`${airportIcao}_Map.png`}
-                x={dataBounds.x + bgCfg.dx}
-                y={imgY + bgCfg.dy}
-                width={imgW}
+                href={witchMode ? `witch/${airportIcao}_STAR.png` : `${airportIcao}_STAR.png`}
+                x={dataBounds.x + (witchMode ? witchBgCfg.dx : bgCfg.dx)}
+                y={imgY + (witchMode ? witchBgCfg.dy : bgCfg.dy)}
+                width={witchMode && witchBgCfg.w ? witchBgCfg.w : imgW}
                 height={imgH}
                 preserveAspectRatio="xMidYMid slice"
-                opacity="0.2"
+                opacity={witchMode ? 1 : 0.2}
                 onError={(e) => { e.target.style.display = 'none'; }}
               />
               )}
@@ -793,24 +811,7 @@ export default function AirMapWindow({ airportIcao }) {
               <span className="air-map-toggle-label">{t('air_map_appr')}</span>
             </div>
             <div className={'air-map-toggle' + (showRouteLabels ? ' active' : '')}
-              onClick={() => {
-                if (witchMode) {
-                  // Already in witch mode — any click exits and does normal action
-                  setWitchMode(false);
-                  setShowRouteLabels(v => !v);
-                } else if (labelTimerRef.current) {
-                  // Double-click: enter witch mode
-                  clearTimeout(labelTimerRef.current);
-                  labelTimerRef.current = null;
-                  setWitchMode(true);
-                } else {
-                  // First click: wait for potential double-click
-                  labelTimerRef.current = setTimeout(() => {
-                    labelTimerRef.current = null;
-                    setShowRouteLabels(v => !v);
-                  }, 300);
-                }
-              }}>
+              onClick={() => setShowRouteLabels(v => !v)}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_labels')}</span>
             </div>
@@ -850,8 +851,22 @@ export default function AirMapWindow({ airportIcao }) {
               <span className="air-map-toggle-label">{t('map_refresh')}</span>
             </div>
             <div className="map-help-btn"
-              onClick={() => setHelpOpen(true)}>
-              <div className="map-help-btn-icon"><IoHelpCircleOutline size={22} /></div>
+              onClick={() => {
+                if (witchMode) {
+                  setWitchMode(false);
+                  setHelpOpen(true);
+                } else if (labelTimerRef.current) {
+                  clearTimeout(labelTimerRef.current);
+                  labelTimerRef.current = null;
+                  setWitchMode(true);
+                } else {
+                  labelTimerRef.current = setTimeout(() => {
+                    labelTimerRef.current = null;
+                    setHelpOpen(true);
+                  }, 300);
+                }
+              }}>
+              <div className="map-help-btn-icon">{witchMode ? <img src="witch/help.png" alt="?" className="witch-help-img" /> : <IoHelpCircleOutline size={22} />}</div>
             </div>
           </ControlSidebar>
         </>

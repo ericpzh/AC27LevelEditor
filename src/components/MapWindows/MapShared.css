@@ -146,3 +146,42 @@
 .map-help-btn:hover .map-help-btn-label {
   color: var(--text);
 }
+
+/* ─── Witch mode UI overrides ────────────────────────────── */
+
+/* Sidebar background → bar.png */
+.witch-mode .control-sidebar {
+  background: url(witch/bar.png);
+  background-size: 100% 100%;
+}
+
+/* Toggle button knobs → button.png (off) / button_on.png (active) */
+.witch-mode .air-map-toggle-knob {
+  background: url(witch/button.png) center/contain no-repeat !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+.witch-mode .air-map-toggle.active .air-map-toggle-knob {
+  background: url(witch/button_on.png) center/contain no-repeat !important;
+}
+
+/* Spin knobs → knob.png (cropped 124×129, original 48×48) */
+.witch-mode .spin-knob-svg {
+  display: none;
+}
+.witch-mode .spin-knob-svg-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 0;
+  background: url(witch/knob.png) center/contain no-repeat;
+}
+.witch-mode .spin-knob-svg-wrapper.pressed {
+  transform: none;
+}
+
+/* Help button icon (cropped 122×135) */
+.witch-help-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}

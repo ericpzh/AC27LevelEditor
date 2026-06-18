@@ -283,6 +283,8 @@ export default function GroundMapWindow({ airportIcao }) {
     const els = [];
     Object.entries(areaData || {}).forEach(([areaTypeStr, areas]) => {
       const areaType = parseInt(areaTypeStr, 10);
+      // Skip airport boundary (AreaType 0) in witch mode
+      if (witchMode && areaType === 0) return;
       const style = AREA_TYPE_STYLES[areaType] || { fill: '#444', stroke: '#444', opacity: 0.20 };
       (areas || []).forEach((area) => {
         if (!area.enabled || !area.points || area.points.length < 3) return;
@@ -301,12 +303,12 @@ export default function GroundMapWindow({ airportIcao }) {
       });
     });
     return els;
-  }, [areaData, taxiwayW]);
+  }, [areaData, taxiwayW, witchMode]);
 
   if (!initialViewBox) return null;
 
   return (
-    <div className="ground-map">
+    <div className={'ground-map' + (witchMode ? ' witch-mode' : '')}>
       {loading && <div className="ground-map-loading"><div className="spinner" /></div>}
       {error && <div className="ground-map-error">{error}</div>}
       {!loading && !error && (
@@ -329,8 +331,14 @@ export default function GroundMapWindow({ airportIcao }) {
                 }
               }}
             >
-              {/* Background — radar blue */}
-              <rect x={viewBox.x} y={viewBox.y} width={viewBox.w} height={viewBox.h} fill="#0a1628" />
+              {/* Background — radar blue, or witch ground radar image */}
+              {witchMode ? (
+                <image href="witch/groundradar.png"
+                  x={viewBox.x} y={viewBox.y} width={viewBox.w} height={viewBox.h}
+                  preserveAspectRatio="none" />
+              ) : (
+                <rect x={viewBox.x} y={viewBox.y} width={viewBox.w} height={viewBox.h} fill="#0a1628" />
+              )}
 
               {/* ── Layer 1: Taxiway centerlines (grey) ────────── */}
               {normalTaxiwayPaths.map((tp, i) => {
@@ -498,24 +506,7 @@ export default function GroundMapWindow({ airportIcao }) {
               <span className="air-map-toggle-label">{t('ground_map_show_all')}</span>
             </div>
             <div className={'air-map-toggle' + (showTaxiwayNames ? ' active' : '')}
-              onClick={() => {
-                if (witchMode) {
-                  // Already in witch mode — any click exits and does normal action
-                  setWitchMode(false);
-                  setShowTaxiwayNames(v => !v);
-                } else if (labelTimerRef.current) {
-                  // Double-click: enter witch mode
-                  clearTimeout(labelTimerRef.current);
-                  labelTimerRef.current = null;
-                  setWitchMode(true);
-                } else {
-                  // First click: wait for potential double-click
-                  labelTimerRef.current = setTimeout(() => {
-                    labelTimerRef.current = null;
-                    setShowTaxiwayNames(v => !v);
-                  }, 300);
-                }
-              }}>
+              onClick={() => setShowTaxiwayNames(v => !v)}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('ground_map_taxiway')}</span>
             </div>
@@ -525,8 +516,22 @@ export default function GroundMapWindow({ airportIcao }) {
               <span className="air-map-toggle-label">{t('map_refresh')}</span>
             </div>
             <div className="map-help-btn"
-              onClick={() => setHelpOpen(true)}>
-              <div className="map-help-btn-icon"><IoHelpCircleOutline size={22} /></div>
+              onClick={() => {
+                if (witchMode) {
+                  setWitchMode(false);
+                  setHelpOpen(true);
+                } else if (labelTimerRef.current) {
+                  clearTimeout(labelTimerRef.current);
+                  labelTimerRef.current = null;
+                  setWitchMode(true);
+                } else {
+                  labelTimerRef.current = setTimeout(() => {
+                    labelTimerRef.current = null;
+                    setHelpOpen(true);
+                  }, 300);
+                }
+              }}>
+              <div className="map-help-btn-icon">{witchMode ? <img src="witch/help.png" alt="?" className="witch-help-img" /> : <IoHelpCircleOutline size={22} />}</div>
             </div>
           </ControlSidebar>
         </>

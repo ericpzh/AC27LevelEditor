@@ -244,7 +244,13 @@ export const MAP_TARGET_RATIO = 1.35;
 // dx/dy = fine-tune position offset
 export const AIR_MAP_BG_OFFSETS = {
   ZSJN: { dx: 0, dy: 0, bg: '#232323', bgUnder: '#000000' },
-  KJFK: { dx: -875, dy: -150, w: 5600, bg:'#0c0c0c', bgUnder: '#000000' },
+  KJFK: { dx: -890, dy: -160, w: 5600, bg:'#0c0c0c', bgUnder: '#000000' },
+};
+
+// Witch mode map background offsets (independent of normal mode)
+export const WITCH_MAP_BG_OFFSETS = {
+  ZSJN: { dx: 0, dy: 0, w: 0 },
+  KJFK: { dx: -900, dy: 0, w: 0 },
 };
 
 // Per-airport default zoom scale: 1.0 = full dataBounds, <1 = tighter initial view
