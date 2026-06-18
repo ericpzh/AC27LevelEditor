@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.6)
+- **Name:** `ac27-level-editor` (v1.1.7)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -21,11 +21,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 39 ipcMain.handle() endpoints                        │
+│  - 42 ipcMain.handle() endpoints                        │
 │  - All file I/O, dialog, caching lives here             │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with ~42 methods          │
+│  - Exposes window.electronAPI with ~45 methods          │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -71,19 +71,19 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ```
 
 **Map Windows (separate BrowserWindow instances):**
-- `electron/main.js` manages `groundMapWindows` / `airMapWindows` Maps (keyed by ICAO) + `selectedCallSigns` Map (synced selection state)
-- Each map window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX` or `?window=airMap&airport=XXXX`)
+- `electron/main.js` manages `groundMapWindows` / `airMapWindows` / `flightStripsWindows` Maps (keyed by ICAO) + `selectedCallSigns` Map (synced selection state)
+- Each map window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX`, `?window=airMap&airport=XXXX`, or `?window=flightStrips&airport=XXXX`)
 - `electron/udp_listener.js` listens on `127.0.0.1:20266` for binary aircraft telemetry (10 Hz) and sends commands on `127.0.0.1:20267`
-- Live aircraft state pushed to all open map windows at 200ms interval via `udp-aircraft-state` IPC event
-- Map window click-to-select goes through centralized `select-aircraft-in-map` IPC — main process broadcasts to BOTH ground + air map windows for the same airport and sends `SelectAircraft` UDP command to game
+- Live aircraft state pushed to all open map windows (ground + air + flight strips) at 200ms interval via `udp-aircraft-state` IPC event
+- Map window click-to-select goes through centralized `select-aircraft-in-map` IPC — main process broadcasts to ALL map windows for the same airport and sends `SelectAircraft` UDP command to game
 
 ## Directory Structure
 
 ```
 AC27LevelEditor/
 ├── electron/
-│   ├── main.js              # Electron main process + 39 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, ~42 methods)
+│   ├── main.js              # Electron main process + 42 IPC handlers
+│   ├── preload.js           # contextBridge (window.electronAPI, ~45 methods)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz binary aircraft state (127.0.0.1:20266) + commands (20267)
 ├── index.html               # Vite HTML entry (<div id="root">)
 ├── vite.config.js           # Vite 8 + @vitejs/plugin-react + vite-plugin-electron
@@ -118,9 +118,10 @@ AC27LevelEditor/
 │   │   │   ├── StarMap/
 │   │   │   │   └── StarMap.jsx + .css    # Interactive STAR/approach map overlay
 │   │   │   └── TimelineEditors/
-│   │   ├── MapWindows/               # Full-window radar visualizations (separate BrowserWindow instances)
+│   │   ├── MapWindows/               # Full-window map visualizations (separate BrowserWindow instances)
 │   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, areas, ground aircraft (stand-access segments marked + help overlay)
 │   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/APPR routes, air aircraft, map bg, runway extensions, range rings, border overlay, help overlay
+│   │   │   ├── FlightStripsWindow.jsx + .css  # Flight strips: live seat-sorted strips with drag reorder, selection sync, help overlay
 │   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs (zoom/pan/airspace) + toggle buttons + help button
 │   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel, gauge mode)
 │   │   │   ├── SimClock.jsx                # Shared sim-time clock (HH:MM:SS UTC, accepts className prop)
@@ -532,19 +533,21 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 **Map overlay orchestration:** `MapOverlays` sub-component in `EditorScreen.jsx` manages visibility and prop-passing for both StandMap and StarMap. Visibility state lives in zustand (`showStandMap`, `showStarMap`, `activeMap`, `mapFlightIdx`). Only one map is "on top" at a time (controlled by `activeMap`). Both maps close when leaving the editor screen (`setScreen` clears map state).
 
-## Map Windows (Surface Radar & Approach Radar) — v1.1.3
+## Map Windows (Surface Radar, Approach Radar & Flight Strips) — v1.1.7
 
-Map windows are separate Electron `BrowserWindow` instances (one per airport ICAO + type pair), NOT React components rendered in the main window. They provide real-time radar visualization of aircraft positions streamed via UDP telemetry from the running game.
+Map windows are separate Electron `BrowserWindow` instances (one per airport ICAO + type pair), NOT React components rendered in the main window. They provide real-time radar visualization of aircraft positions streamed via UDP telemetry from the running game, plus flight strip progress boards.
 
 ### Architecture
 
-- `electron/main.js` manages two `Map` instances:
+- `electron/main.js` manages three `Map` instances:
   - `groundMapWindows` — keyed by airport ICAO, holds `BrowserWindow` for Surface Radar
   - `airMapWindows` — keyed by airport ICAO, holds `BrowserWindow` for Approach Radar
+  - `flightStripsWindows` — keyed by airport ICAO, holds `BrowserWindow` for Flight Strips
 - Each map window loads the same Vite SPA with query params:
   - `?window=groundMap&airport=XXXX&root=...` → renders `<GroundMapWindow>`
   - `?window=airMap&airport=XXXX&root=...` → renders `<AirMapWindow>`
-- `App.jsx` (lines 23-28) checks `URLSearchParams` **before** the normal screen router
+  - `?window=flightStrips&airport=XXXX&root=...` → renders `<FlightStripsWindow>`
+- `App.jsx` checks `URLSearchParams` **before** the normal screen router
 - On window `closed`, the main process deletes the entry from its Map and sends `radar-window-closed` to the main window so the UI can update its toggle state
 
 ### IPC Handlers (main → renderer)
@@ -553,12 +556,15 @@ Map windows are separate Electron `BrowserWindow` instances (one per airport ICA
 |---------|------|-----------|---------|
 | `open-ground-map` | `(airportIcao, gameRoot)` | invoke | Creates/focuses Surface Radar BrowserWindow |
 | `open-air-map` | `(airportIcao, gameRoot)` | invoke | Creates/focuses Approach Radar BrowserWindow |
+| `open-flight-strips` | `(airportIcao, gameRoot)` | invoke | Creates/focuses Flight Strips BrowserWindow |
 | `close-ground-map` | `(airportIcao)` | invoke | Closes Surface Radar window |
 | `close-air-map` | `(airportIcao)` | invoke | Closes Approach Radar window |
+| `close-flight-strips` | `(airportIcao)` | invoke | Closes Flight Strips window |
+| `get-flight-strip-data` | `(airportIcao, gameRoot)` | invoke | Scans ACL files for callsign→registration/airport/squawk mappings |
 | `radar-window-closed` | `{ icao, type }` | main→renderer | Notifies main window that user closed a map window (X button) |
 | `select-aircraft-in-map` | `(airportIcao, callSign)` | invoke | Sets selected aircraft, sends UDP SelectAircraft command, broadcasts to all map windows for that airport |
 | `get-selected-aircraft` | `(airportIcao)` | invoke | Returns currently selected callSign for an airport (or null) |
-| `aircraft-selected-in-map` | `{ icao, callSign }` | main→renderer (push) | Broadcasts selection change to ground + air map windows for the same airport |
+| `aircraft-selected-in-map` | `{ icao, callSign }` | main→renderer (push) | Broadcasts selection change to ALL map windows (ground + air + strips) for the same airport |
 | `reset-udp-aircraft` | none | invoke | Clears all UDP aircraft state (used by map refresh button) |
 | `send-udp-command` | `(commandId, payloadB64)` | invoke | Sends fire-and-forget UDP command to game on port 20267 |
 | `debug-log` | `(args[])` | invoke | Logs renderer messages to main process terminal (debug only) |
@@ -572,6 +578,9 @@ openGroundMap(airportIcao, gameRoot)    // → ipcRenderer.invoke('open-ground-m
 openAirMap(airportIcao, gameRoot)       // → ipcRenderer.invoke('open-air-map', ...)
 closeGroundMap(airportIcao)             // → ipcRenderer.invoke('close-ground-map', ...)
 closeAirMap(airportIcao)                // → ipcRenderer.invoke('close-air-map', ...)
+openFlightStrips(airportIcao, gameRoot)  // → ipcRenderer.invoke('open-flight-strips', ...)
+closeFlightStrips(airportIcao)          // → ipcRenderer.invoke('close-flight-strips', ...)
+getFlightStripData(airportIcao, gameRoot) // → ipcRenderer.invoke('get-flight-strip-data', ...)
 onRadarWindowClosed(cb)                 // → ipcRenderer.on('radar-window-closed', handler)
 
 // Linked aircraft selection (synced across ground + air map for same airport)
@@ -684,16 +693,60 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 **`useUdpAircraftState.js`:**
 - Subscribes to `electronAPI.onUdpAircraftState` on mount, unsubscribes on unmount
 - Returns `{ aircraft: Array, currentAirport: string|null, simTimeUnixMs: number }` updated at ~10 Hz
-- Used by both GroundMapWindow and AirMapWindow (simTimeUnixMs drives the SimClock component)
+- Used by GroundMapWindow, AirMapWindow, and FlightStripsWindow (simTimeUnixMs drives the SimClock component)
+
+### FlightStripsWindow (`src/components/MapWindows/FlightStripsWindow.jsx`)
+
+**Purpose:** Live flight progress strips organized by controller seat (RAMP, GROUND, TOWER, DEPARTURE, APPROACH, DELIVERY, APRON), with drag-to-reorder and cross-window selection sync.
+
+**Layout:** Horizontal row of columns (one per occupied seat) with a bottom bar containing a sim-time clock, refresh button, and help button. Strips are sorted by runway within each seat column, with runway separator bars.
+
+**Data sources:**
+- `useUdpAircraftState()` — live aircraft positions + `simTimeUnixMs` from UDP telemetry
+- `electronAPI.getFlightStripData()` — registration/airport/airway/squawk data from ACL files
+- `electronAPI.onAircraftSelectedInMap()` — cross-window selection sync with ground/air radar
+
+**Strip layout (5 sections):**
+1. **Callsign column** — bordered callsign box + aircraft type + stand label
+2. **Procedure column** — STAR/SID procedure + registration + destination/origin airport
+3. **Squawk column** — 4-digit squawk code (deterministic hash of callsign, 2000–6000)
+4. **Route column** — active taxi route (fills remaining width)
+5. **Runway column** — runway designator + seat channel box (e.g. "GND", "TWR")
+
+**Arrival vs Departure:** Orange left border + warm background for arrivals; blue for departures.
+
+**Selection sync:**
+- Click-to-select toggles the strip (click again to deselect)
+- Selection broadcasts through the same centralized `select-aircraft-in-map` IPC as GroundMapWindow/AirMapWindow
+- Selected strips scale up (1.20×) with a solid backdrop and glow shadow
+- Background click deselects
+
+**Drag reorder:**
+- Long-press (400ms) on a strip enters drag mode
+- Strip collapses to a placeholder; a floating ghost clone follows the mouse
+- Drop inserts the strip at the new position, reordering within the seat column
+- Stable ordering preserved across UDP updates (new aircraft appended to existing runway groups)
+- Quick click without movement = toggle selection (no drag conflict)
+
+**Squawk codes:**
+- Generated server-side in `get-flight-strip-data` IPC handler
+- Deterministic: same callsign always gets the same squawk (djb2 hash + linear probe)
+- Unique across all callsigns (collision-free), range 2000–6000
+
+**Help overlay:** Same `MapHelpOverlay` component as radar windows, type `"strips"`.
+
+**IPC handlers:** `open-flight-strips`, `close-flight-strips`, `get-flight-strip-data`.
+**Preload additions:** `openFlightStrips`, `closeFlightStrips`, `getFlightStripData`.
 
 ### BrowserScreen Integration
 
-- **Radar toggle buttons:** Each airport card shows two radar buttons when NOT in demo mode (`!isDemo`):
+- **Toggle buttons:** Each airport card shows up to three map toggle buttons when NOT in demo mode (`!isDemo`):
   - "Surface Radar" (`IoMapOutline` icon, i18n: `toolbar_surface_radar`)
   - "Approach Radar" (`IoNavigateOutline` icon, i18n: `toolbar_approach_radar`)
+  - "Flight Strips" (`IoListOutline` icon, i18n: `toolbar_flight_strips`)
   - Buttons have an `.active` class when the corresponding window is open for that airport
   - In demo mode (`rootPath` includes `'Airport Control 27 Demo'`), radar buttons are hidden entirely
-- **Toggle handler:** Checks `openGroundRadarAirports` / `openAirRadarAirports` Sets — if ICAO present, calls `closeXxxMap` IPC; otherwise calls `openXxxMap` IPC. Updates zustand state on both paths.
+- **Toggle handler:** Checks `openGroundRadarAirports` / `openAirRadarAirports` / `openFlightStripAirports` Sets — if ICAO present, calls `closeXxxMap` IPC; otherwise calls `openXxxMap` IPC. Updates zustand state on both paths.
 - **Window-closed sync:** `onRadarWindowClosed` listener updates zustand Sets when user closes a map window via its X button (the main process notifies the renderer so toggle state stays in sync).
 
 ### Zustand Store Additions (`appStore.js`)
@@ -702,6 +755,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 // State
 openGroundRadarAirports: new Set(),   // ICAO codes of open Surface Radar windows
 openAirRadarAirports: new Set(),      // ICAO codes of open Approach Radar windows
+openFlightStripAirports: new Set(),   // ICAO codes of open Flight Strips windows
 udpConnected: false,                   // UDP telemetry listener is receiving packets
 udpCurrentAirport: null,              // Current airport ICAO from UDP (null if no packets)
 
@@ -710,6 +764,8 @@ setGroundRadarOpen(icao, open)  // Add/remove from openGroundRadarAirports Set
 setAirRadarOpen(icao, open)     // Add/remove from openAirRadarAirports Set
 isGroundRadarOpen(icao)         // → openGroundRadarAirports.has(icao)
 isAirRadarOpen(icao)            // → openAirRadarAirports.has(icao)
+setFlightStripOpen(icao, open)  // Add/remove from openFlightStripAirports Set
+isFlightStripOpen(icao)         // → openFlightStripAirports.has(icao)
 setUdpStatus(connected, currentAirport)  // Update UDP health state
 ```
 
@@ -721,6 +777,7 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 |-----|---------|---------|
 | `toolbar_surface_radar` | 场面雷达 | Surface Radar |
 | `toolbar_approach_radar` | 进近雷达 | Approach Radar |
+| `toolbar_flight_strips` | 进程单 | Flight Strips |
 | `air_map_bg` | Map | Map |
 | `air_map_airspace` | Airspace | Airspace |
 | `air_map_runway_ext` | ILS | ILS |
@@ -741,6 +798,14 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 | `map_help_ground_knobs_heading` | 旋钮 | Knobs |
 | `map_help_ground_toggles_heading` | 按钮 | Buttons |
 | `map_help_ground_interact_heading` | 交互 | Interaction |
+| `map_help_strips_buttons_heading` | 按钮 | Buttons |
+| `map_help_strips_interact_heading` | 交互 | Interaction |
+| `flight_strips_loading` | 加载中… | Loading… |
+| `flight_strips_waiting` | 等待数据… | Waiting for data… |
+| `flight_strips_empty` | 无活跃飞机 | No active aircraft |
+| `flight_strips_runway` | 跑道 | RUNWAY |
+| `seat_1`–`seat_7` | RMP/GND/TWR/DEP/APPR/DEL/APN | RMP/GND/TWR/DEP/APPR/DEL/APN |
+| `seat_1_full`–`seat_7_full` | RAMP/GROUND/TOWER/DEPARTURE/APPROACH/DELIVERY/APRON | RAMP/GROUND/TOWER/DEPARTURE/APPROACH/DELIVERY/APRON |
 
 ### New Constants
 
@@ -845,7 +910,7 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 ### Live State Push to Map Windows
 
 - `startUdpListener()` called in `app.whenReady()` after `createWindow()`
-- `setInterval` at 200ms reads `getUdpAircraftState()` and sends `udp-aircraft-state` IPC event to all open map windows (`groundMapWindows` + `airMapWindows`)
+- `setInterval` at 200ms reads `getUdpAircraftState()` and sends `udp-aircraft-state` IPC event to all open map windows (`groundMapWindows` + `airMapWindows` + `flightStripsWindows`)
 - On `will-quit`, `stopUdpListener()` cleans up: closes socket, clears all intervals/timeouts, resets `aircraftMap`, `trailSnapshots`, etc.
 - Auto-reconnect on socket errors with 2-second delay and logging
 
@@ -1465,5 +1530,5 @@ The force-push re-triggers the CI workflow, which rebuilds both platforms and up
     - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`)
     - **README.md**
 18. **UDP listener lifecycle is managed by main process.** `startUdpListener()` is called in `app.whenReady()` after `createWindow()`, `stopUdpListener()` in `will-quit`. The listener auto-reconnects on socket errors (2s delay). Do not create multiple listeners or start/stop from the renderer.
-19. **Map windows are separate BrowserWindow instances.** They are NOT React components in the main renderer. Track them in `groundMapWindows`/`airMapWindows` Maps (keyed by ICAO). Always check for existing windows before creating (focus if exists). Clean up Map entries in the `closed` event handler. Each window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX` or `?window=airMap&airport=XXXX`).
+19. **Map windows are separate BrowserWindow instances.** They are NOT React components in the main renderer. Track them in `groundMapWindows`/`airMapWindows`/`flightStripsWindows` Maps (keyed by ICAO). Always check for existing windows before creating (focus if exists). Clean up Map entries in the `closed` event handler. Each window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX`, `?window=airMap&airport=XXXX`, or `?window=flightStrips&airport=XXXX`).
 20. **UDP state push handles cleanup.** The `udp-aircraft-state` IPC event is pushed to ALL open map windows every 200ms. Map window components subscribe via `useUdpAircraftState()` hook which wraps `onUdpAircraftState`/`offUdpAircraftState`. Always unsubscribe in `useEffect` cleanup to prevent stale callbacks or memory leaks.

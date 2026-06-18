@@ -14,6 +14,7 @@ const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAirc
 let mainWindow;
 const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
 const airMapWindows = new Map();    // key: airportIcao → BrowserWindow
+const flightStripsWindows = new Map(); // key: airportIcao → BrowserWindow
 const selectedCallSigns = new Map(); // key: airportIcao → callSign | null (synced across ground+air map)
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
@@ -154,6 +155,33 @@ function closeAirMapWindow(airportIcao) {
   const win = airMapWindows.get(key);
   if (win && !win.isDestroyed()) { win.close(); }
   airMapWindows.delete(key);
+}
+
+function openFlightStripsWindow(airportIcao, gameRoot) {
+  const key = airportIcao;
+  const existing = flightStripsWindows.get(key);
+  if (existing && !existing.isDestroyed()) { existing.focus(); return; }
+  const isDev = !app.isPackaged;
+  const win = new BrowserWindow({
+    width: 1400, height: 600, minWidth: 800, minHeight: 400,
+    title: airportIcao + ' Flight Strips',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  const rootParam = encodeURIComponent(gameRoot || '');
+  if (isDev) {
+    win.loadURL('http://localhost:5173/?window=flightStrips&airport=' + airportIcao + '&root=' + rootParam);
+  } else {
+    win.loadURL('file://' + path.join(__dirname, '..', 'dist', 'index.html') + '?window=flightStrips&airport=' + airportIcao + '&root=' + rootParam);
+  }
+  win.on('closed', () => { flightStripsWindows.delete(key); notifyRadarClosed(airportIcao, 'flightStrips'); });
+  flightStripsWindows.set(key, win);
+}
+
+function closeFlightStripsWindow(airportIcao) {
+  const key = airportIcao;
+  const win = flightStripsWindows.get(key);
+  if (win && !win.isDestroyed()) { win.close(); }
+  flightStripsWindows.delete(key);
 }
 
 // ─── IPC: Select game root ───────────────────────────────
@@ -1807,6 +1835,54 @@ ipcMain.handle('open-ground-map', async (_e, airportIcao, gameRoot) => { openGro
 ipcMain.handle('open-air-map', async (_e, airportIcao, gameRoot) => { openAirMapWindow(airportIcao, gameRoot); });
 ipcMain.handle('close-ground-map', async (_e, airportIcao) => { closeGroundMapWindow(airportIcao); });
 ipcMain.handle('close-air-map', async (_e, airportIcao) => { closeAirMapWindow(airportIcao); });
+ipcMain.handle('open-flight-strips', async (_e, airportIcao, gameRoot) => { openFlightStripsWindow(airportIcao, gameRoot); });
+ipcMain.handle('close-flight-strips', async (_e, airportIcao) => { closeFlightStripsWindow(airportIcao); });
+
+// ─── IPC: Flight strip data (scan ACL for callsign→registration/airport mappings) ──
+
+ipcMain.handle('get-flight-strip-data', async (_e, airportIcao, gameRoot) => {
+  const { loadFlights } = require('../src/acl/parser.js');
+  const levelsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports', airportIcao, 'Levels');
+  if (!fs.existsSync(levelsDir)) return { success: true, data: {} };
+
+  const files = fs.readdirSync(levelsDir).filter(f => f.endsWith('.acl'));
+  const map = {}; // callSign → { registration, airport, isDeparture, airway }
+
+  for (const f of files) {
+    try {
+      const result = loadFlights(path.join(levelsDir, f));
+      if (!result.flights) continue;
+      for (const flight of result.flights) {
+        if (!flight.CallSign) continue;
+        const airport = flight.isDeparture ? (flight.ArrivalAirport || '') : (flight.DepartureAirport || '');
+        map[flight.CallSign] = {
+          registration: flight._Registration || '',
+          airport: airport,
+          isDeparture: !!flight.isDeparture,
+          airway: flight.Airway || '',
+          runway: flight.Runway || '',
+        };
+      }
+    } catch (_) { /* skip unparseable files */ }
+  }
+
+  // Assign unique squawk codes (2000–6000) — deterministic via hash + linear probe
+  function hashCS(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+    return Math.abs(h);
+  }
+  const sorted = Object.keys(map).sort();
+  const used = new Set();
+  for (const cs of sorted) {
+    let sq = 2000 + (hashCS(cs) % 4001);
+    while (used.has(sq)) sq = 2000 + ((sq - 2000 + 1) % 4001);
+    used.add(sq);
+    map[cs].squawk = String(sq);
+  }
+
+  return { success: true, data: map, runwaySidMap: airportCache?.[airportIcao]?.approachData?.runwaySidMap || {} };
+});
 
 // ─── IPC: Aircraft selection sync (linked across ground + air map) ──
 
@@ -1868,6 +1944,9 @@ app.whenReady().then(() => {
       if (win && !win.isDestroyed()) win.webContents.send('udp-aircraft-state', state);
     }
     for (const win of airMapWindows.values()) {
+      if (win && !win.isDestroyed()) win.webContents.send('udp-aircraft-state', state);
+    }
+    for (const win of flightStripsWindows.values()) {
       if (win && !win.isDestroyed()) win.webContents.send('udp-aircraft-state', state);
     }
   }, 200);

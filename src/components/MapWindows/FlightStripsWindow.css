@@ -1,0 +1,406 @@
+/* ─── Root container ─── */
+.flight-strips {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 10px;
+  user-select: none;
+}
+
+/* ─── Bottom bar ─── */
+.flight-strips-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.flight-strips-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.flight-strips-bar .strips-bar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.flight-strips-bar .strips-bar-btn:hover {
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+.flight-strips-clock {
+  position: static !important;
+  top: auto !important;
+  left: auto !important;
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+/* ─── Body: scrollable both axes ─── */
+.flight-strips-body {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: scroll;
+  display: flex;
+  gap: 0;
+  padding: 6px;
+  align-items: flex-start;
+}
+
+/* ─── Loading / Error / Empty ─── */
+.flight-strips-loading,
+.flight-strips-error,
+.flight-strips-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.flight-strips-error { color: var(--red); }
+
+/* ─── Vertical column ─── */
+.flight-strips-column {
+  min-width: 400px;
+  max-width: 480px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-right: 1px solid var(--border);
+  padding: 0 5px 80px;
+  overflow: visible;
+}
+.flight-strips-column:last-child { border-right: none; }
+
+.flight-strips-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 0;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg);
+  color: var(--text-muted);
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+
+/* ─── Runway separator bar ─── */
+.flight-strip-runway-sep {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 0;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin: 1px 0;
+}
+
+/* ─── Individual strip ─── */
+.flight-strip {
+  display: flex;
+  align-items: stretch;
+  border-radius: 4px;
+  padding: 4px 5px;
+  border-left: 3px solid transparent;
+  min-height: 58px;
+  cursor: grab;
+  flex-shrink: 0;
+  gap: 5px;
+}
+
+.flight-strip:active {
+  cursor: grabbing;
+}
+
+.flight-strip:hover {
+  filter: brightness(1.2);
+}
+
+/* ─── Selected strip — scale up, solid backdrop, no layout shift ─── */
+.flight-strip.strip-selected {
+  transform: scale(1.20);
+  z-index: 5;
+  position: relative;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.45);
+  border-radius: 5px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  isolation: isolate;
+}
+
+.flight-strip.strip-selected::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  z-index: -1;
+}
+
+.flight-strip.strip-selected.strip-arrival {
+  border-left-color: var(--orange);
+}
+.flight-strip.strip-selected.strip-arrival::before {
+  background: var(--orange-bg, rgba(255, 159, 10, 0.18));
+}
+
+.flight-strip.strip-selected.strip-departure {
+  border-left-color: var(--blue);
+}
+.flight-strip.strip-selected.strip-departure::before {
+  background: var(--blue-bg);
+}
+
+/* ─── Floating ghost clone follows mouse ─── */
+.flight-strip.strip-drag-ghost {
+  transform: scale(1.15);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+  opacity: 0.95;
+  border-radius: 4px;
+  isolation: isolate;
+}
+
+.flight-strip.strip-drag-ghost::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  left: 0;
+  background: var(--bg-surface);
+  border-radius: 6px;
+  z-index: -1;
+}
+
+.flight-strip.strip-drag-ghost.strip-arrival::before {
+  background: var(--orange-bg, rgba(255, 159, 10, 0.18));
+}
+
+.flight-strip.strip-drag-ghost.strip-departure::before {
+  background: var(--blue-bg);
+}
+
+/* ─── Placeholder: closes original space when dragging ─── */
+.strip-drag-placeholder {
+  height: 0;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ─── End-of-column gap (when hovering past last strip) ─── */
+.strip-end-gap {
+  height: 46px;
+  flex-shrink: 0;
+  transition: height 0.2s ease;
+}
+
+/* ─── Gap above a strip (animated margin, smooth flex shift) ─── */
+.flight-strip.strip-gap-above {
+  margin-top: 46px;
+  transition: margin-top 0.2s ease;
+}
+
+.flight-strip.strip-arrival {
+  background: var(--orange-bg, rgba(255, 159, 10, 0.08));
+  border-left-color: var(--orange);
+}
+
+.flight-strip.strip-departure {
+  background: var(--blue-bg);
+  border-left-color: var(--blue);
+}
+
+/* ─── Shared bordered-box style ─── */
+.strip-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--text-muted);
+  border-radius: 3px;
+  background: rgba(0,0,0,0.18);
+  text-align: center;
+}
+
+/* ─── Section 1: Callsign column (box + type/stand below) ─── */
+.strip-col-callsign {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 78px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.callsign-box {
+  flex: 1;
+  padding: 2px 4px;
+}
+
+.strip-callsign {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strip-callsign-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.strip-type {
+  font-size: 9px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.strip-stand-label {
+  font-size: 9px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* ─── Section 2: Procedure column (STAR/SID → reg → airport stacked) ─── */
+.strip-col-proc {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex: 0 0 82px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px 0;
+}
+
+.strip-sid-star {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strip-reg {
+  font-size: 9px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strip-airport {
+  font-size: 9px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Section 3: Squawk column (vertical separators) ─── */
+.strip-col-squawk {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 40px;
+  min-width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.strip-squawk {
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+/* ─── Section 4: Taxi route column (fills remaining space, top-aligned) ─── */
+.strip-col-route {
+  display: flex;
+  align-items: flex-start;
+  flex: 1 1 0;
+  min-width: 40px;
+  overflow: hidden;
+  padding-top: 2px;
+}
+
+.strip-taxi-route {
+  font-size: 9px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Section 5: Runway + channel box (runway left of box, box full height) ─── */
+.strip-col-runway {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  flex: 0 0 68px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.strip-runway {
+  display: flex;
+  align-items: flex-end;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  padding-bottom: 2px;
+}
+
+.channel-box {
+  flex: 1;
+  padding: 2px 5px;
+}
+
+.strip-channel {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  line-height: 1.1;
+}

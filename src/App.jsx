@@ -7,6 +7,7 @@ import BrowserScreen from './components/BrowserScreen/BrowserScreen';
 import EditorScreen from './components/EditorScreen/EditorScreen';
 import GroundMapWindow from './components/MapWindows/GroundMapWindow';
 import AirMapWindow from './components/MapWindows/AirMapWindow';
+import FlightStripsWindow from './components/MapWindows/FlightStripsWindow';
 import Modal from './components/common/Modal';
 import Toast from './components/common/Toast';
 
@@ -26,6 +27,7 @@ function ScreenRouter() {
   const mapAp = sp.get('airport');
   if (mapWin === 'groundMap' && mapAp) return <I18nProvider><GroundMapWindow airportIcao={mapAp} /></I18nProvider>;
   if (mapWin === 'airMap' && mapAp)   return <I18nProvider><AirMapWindow airportIcao={mapAp} /></I18nProvider>;
+  if (mapWin === 'flightStrips' && mapAp) return <I18nProvider><FlightStripsWindow airportIcao={mapAp} /></I18nProvider>;
 
   // Restore last root on startup — runs once per app load
   useEffect(() => {

@@ -100,8 +100,8 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 39 IPC handlers, file I/O, map window management
-electron/preload.js  →  contextBridge: exposes ~44 methods on window.electronAPI
+electron/main.js     →  Electron main process, 42 IPC handlers, file I/O, map window management
+electron/preload.js  →  contextBridge: exposes ~47 methods on window.electronAPI
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state from game)
 index.html           →  Vite HTML entry, loads src/main.jsx
 src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
@@ -113,7 +113,7 @@ src/acl/             →  CommonJS backend modules (parser facade + 13 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Two additional window types — **Surface Radar** and **Approach Radar** — open as separate Electron windows showing live aircraft positions from the game's UDP telemetry stream. Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream. Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder. Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
@@ -124,7 +124,7 @@ Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-
 Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → zustand store
 Phase 2 (edit):   All edits go through zustand store actions
 Phase 3 (save):   Validation → generate AircraftStates for approach flights → write .acl + .csv + timeline .json (game compat)
-UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar)
+UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar / Flight Strips)
 ```
 
 ### Project Structure
@@ -153,9 +153,10 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   │   ├── StandMap/        # Interactive stand position map overlay
 │   │   │   ├── StarMap/         # Interactive STAR/approach chart overlay
 │   │   │   └── TimelineEditors/ # Weather, Wind, Runway editors
-│   │   ├── MapWindows/          # Full-window radar visualizations (separate windows)
+│   │   ├── MapWindows/          # Full-window map visualizations (separate windows)
 │   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, areas, ground aircraft, help overlay
 │   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/APPR routes, runway extensions, range rings, border overlay, help overlay
+│   │   │   ├── FlightStripsWindow.jsx + .css  # Flight strips: seat-sorted strips with drag reorder, selection sync, help overlay
 │   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs + push-button toggles + help button
 │   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel)
 │   │   │   ├── SimClock.jsx                # Shared sim-time clock (HH:MM:SS UTC)

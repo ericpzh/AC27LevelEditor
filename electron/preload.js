@@ -74,6 +74,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openAirMap: (airportIcao, gameRoot) => ipcRenderer.invoke('open-air-map', airportIcao, gameRoot),
   closeGroundMap: (airportIcao) => ipcRenderer.invoke('close-ground-map', airportIcao),
   closeAirMap: (airportIcao) => ipcRenderer.invoke('close-air-map', airportIcao),
+  openFlightStrips: (airportIcao, gameRoot) => ipcRenderer.invoke('open-flight-strips', airportIcao, gameRoot),
+  closeFlightStrips: (airportIcao) => ipcRenderer.invoke('close-flight-strips', airportIcao),
+  getFlightStripData: (airportIcao, gameRoot) => ipcRenderer.invoke('get-flight-strip-data', airportIcao, gameRoot),
   onRadarWindowClosed: (cb) => ipcRenderer.on('radar-window-closed', (_e, data) => cb(data)),
 
   // Linked aircraft selection (synced across ground + air map for same airport)

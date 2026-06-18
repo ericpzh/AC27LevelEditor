@@ -57,6 +57,7 @@ export const useAppStore = create((set, get) => ({
   // ─── Radar window tracking (ICAO codes of open windows) ───
   openGroundRadarAirports: new Set(),
   openAirRadarAirports: new Set(),
+  openFlightStripAirports: new Set(),
 
   // ─── UDP health ───
   udpConnected: false,
@@ -385,6 +386,12 @@ export const useAppStore = create((set, get) => ({
   }),
   isGroundRadarOpen: (icao) => get().openGroundRadarAirports.has(icao),
   isAirRadarOpen: (icao) => get().openAirRadarAirports.has(icao),
+  setFlightStripOpen: (icao, open) => set((s) => {
+    const next = new Set(s.openFlightStripAirports);
+    if (open) next.add(icao); else next.delete(icao);
+    return { openFlightStripAirports: next };
+  }),
+  isFlightStripOpen: (icao) => get().openFlightStripAirports.has(icao),
 
   // ─── Actions: UDP ───
   setUdpStatus: (connected, currentAirport) => set({ udpConnected: connected, udpCurrentAirport: currentAirport }),

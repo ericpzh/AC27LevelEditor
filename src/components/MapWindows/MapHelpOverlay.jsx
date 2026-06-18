@@ -97,6 +97,21 @@ const GROUND_SECTIONS = [
   },
 ];
 
+// ─── Flight Strips help sections ──────────────────────────
+const STRIPS_SECTIONS = [
+  {
+    id: 'buttons', headingKey: 'map_help_strips_buttons_heading',
+    bodyKeys: [
+      'map_help_strips_refresh',
+      'map_help_strips_help',
+    ],
+  },
+  {
+    id: 'interact', headingKey: 'map_help_strips_interact_heading',
+    bodyKeys: ['map_help_strips_click'],
+  },
+];
+
 // ─── Component ──────────────────────────────────────────────
 export default function MapHelpOverlay({ type, onClose }) {
   const { t } = useTranslation();
@@ -122,7 +137,7 @@ export default function MapHelpOverlay({ type, onClose }) {
     if (e.target.id === 'map-help-overlay') onClose();
   };
 
-  const sections = type === 'air' ? AIR_SECTIONS : GROUND_SECTIONS;
+  const sections = type === 'air' ? AIR_SECTIONS : type === 'ground' ? GROUND_SECTIONS : STRIPS_SECTIONS;
 
   return (
     <div id="map-help-overlay" onClick={handleOverlayClick}>

@@ -4,7 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { RE_HIDDEN, DEMO_VISIBLE_BASES, demoBaseName } from '../../utils/constants';
@@ -48,6 +48,8 @@ export default function BrowserScreen() {
   const openAirRadarAirports = useAppStore(s => s.openAirRadarAirports);
   const setGroundRadarOpen = useAppStore(s => s.setGroundRadarOpen);
   const setAirRadarOpen = useAppStore(s => s.setAirRadarOpen);
+  const openFlightStripAirports = useAppStore(s => s.openFlightStripAirports);
+  const setFlightStripOpen = useAppStore(s => s.setFlightStripOpen);
 
   const [fileInfos, setFileInfos] = useState({});
   const [loading, setLoading] = useState(true);
@@ -104,6 +106,7 @@ export default function BrowserScreen() {
     electronAPI.onRadarWindowClosed(({ icao, type }) => {
       if (type === 'ground') setGroundRadarOpen(icao, false);
       else if (type === 'air') setAirRadarOpen(icao, false);
+      else if (type === 'flightStrips') setFlightStripOpen(icao, false);
     });
   }, []);
 
@@ -223,6 +226,17 @@ export default function BrowserScreen() {
     }
   };
 
+  const handleToggleFlightStrips = (icao) => {
+    const st = useAppStore.getState();
+    if (st.openFlightStripAirports.has(icao)) {
+      electronAPI.closeFlightStrips(icao);
+      setFlightStripOpen(icao, false);
+    } else {
+      electronAPI.openFlightStrips(icao, rootPath);
+      setFlightStripOpen(icao, true);
+    }
+  };
+
   const allAirportsWithFiles = [...airports]
     .sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao))
     .filter(a => (fileInfos[a.icao] || []).length > 0);
@@ -276,6 +290,13 @@ export default function BrowserScreen() {
                     title={t('toolbar_approach_radar')}
                   >
                     <IoNavigateOutline size={13} /> {t('toolbar_approach_radar')}
+                  </button>
+                  <button
+                    className={'btn-radar-toggle' + (openFlightStripAirports.has(airport.icao) ? ' active' : '')}
+                    onClick={(e) => { e.stopPropagation(); handleToggleFlightStrips(airport.icao); }}
+                    title={t('toolbar_flight_strips')}
+                  >
+                    <IoListOutline size={13} /> {t('toolbar_flight_strips')}
                   </button>
                   </>
                   )}
