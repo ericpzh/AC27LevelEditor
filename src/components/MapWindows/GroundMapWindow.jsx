@@ -158,6 +158,8 @@ export default function GroundMapWindow({ airportIcao }) {
       if (a.position && a.position.y > 1.0) return false; // airborne → AirMapWindow
       // Hide inactive aircraft parked at a stand (unless showAllAircraft)
       if (showAllAircraft) return true;
+      // Aircraft with an active control seat is under active control → always show
+      if (a.controlSeat != null && a.controlSeat !== 0 && a.controlSeat !== 255) return true;
       if (!a.stand || !standPositions[a.stand] || !a.position) return true;
       const sp = standPositions[a.stand];
       const dx = a.position.x - sp.x;
@@ -434,7 +436,7 @@ export default function GroundMapWindow({ airportIcao }) {
                     {/* Aircraft icon — either airplane SVG path or witch sprite */}
                     {witchMode ? (
                       (() => {
-                        const parked = isParked(ac, standPositions, GROUND_RADAR_STAND_PROXIMITY);
+                        const parked = isParked(ac);
                         const action = parked ? 'stand' : 'walk';
                         const dir = parked ? '' : witchDirection(ac.noseDirection);
                         const cell = getSpriteCell(action, dir, witchFrame + 1);

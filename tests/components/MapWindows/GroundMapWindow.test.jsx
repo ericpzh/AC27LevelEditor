@@ -351,6 +351,82 @@ describe('GroundMapWindow', () => {
     });
   });
 
+  // ── controlSeat filtering ──────────────────────────────────
+
+  it('shows aircraft with active controlSeat even when at stand', async () => {
+    setupDefaultMocks({
+      'collect-values': {
+        _taxiwayPaths: { paths: [] },
+        _runwayData: {},
+        _standPositions: { 'A01': { x: 10, y: 20 } },
+        _areaData: {},
+      },
+    });
+    useUdpAircraftState.mockReturnValue({
+      aircraft: [
+        {
+          callSign: 'ACTIVE', position: { x: 10.1, y: 0, z: 20.1 },
+          noseDirection: { x: 1, z: 0 },
+          trail: [{ x: 10.1, z: 20.1, age: 0 }],
+          stand: 'A01',
+          controlSeat: 2, // Ground — actively controlled
+        },
+        {
+          callSign: 'PARKED', position: { x: 10.2, y: 0, z: 20.2 },
+          noseDirection: { x: 0, z: 1 },
+          trail: [{ x: 10.2, z: 20.2, age: 0 }],
+          stand: 'A01',
+          controlSeat: 0, // None — parked
+        },
+      ],
+      currentAirport: 'ZSJN',
+      simTimeUnixMs: 1718400000000,
+    });
+
+    const { container } = renderGroundMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.ground-map-svg')).toBeTruthy();
+    });
+
+    const acGroups = container.querySelectorAll('.ground-map-aircraft-group');
+    // ACTIVE should be visible (controlSeat=2), PARKED hidden (controlSeat=0)
+    expect(acGroups.length).toBe(1);
+  });
+
+  it('hides aircraft with controlSeat=Unknown at stand', async () => {
+    setupDefaultMocks({
+      'collect-values': {
+        _taxiwayPaths: { paths: [] },
+        _runwayData: {},
+        _standPositions: { 'A01': { x: 10, y: 20 } },
+        _areaData: {},
+      },
+    });
+    useUdpAircraftState.mockReturnValue({
+      aircraft: [
+        {
+          callSign: 'UNKNOWN', position: { x: 10.1, y: 0, z: 20.1 },
+          noseDirection: { x: 1, z: 0 },
+          trail: [{ x: 10.1, z: 20.1, age: 0 }],
+          stand: 'A01',
+          controlSeat: 255, // Unknown — treated like None
+        },
+      ],
+      currentAirport: 'ZSJN',
+      simTimeUnixMs: 1718400000000,
+    });
+
+    const { container } = renderGroundMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.ground-map-svg')).toBeTruthy();
+    });
+
+    // Should be hidden — controlSeat=Unknown treated same as None
+    expect(container.querySelectorAll('.ground-map-aircraft-group').length).toBe(0);
+  });
+
   // ── Click to select aircraft ────────────────────────────────
 
   it('selects aircraft via centralized API on click', async () => {

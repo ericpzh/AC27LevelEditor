@@ -61,7 +61,9 @@ function parseDatagram(buf) {
     const callSign = buf.toString('ascii', off, off + 12).replace(/\0/g, '').trim();
     const aircraftType = buf.toString('ascii', off + 12, off + 20).replace(/\0/g, '').trim();
     const flightDirection = buf.readUInt8(off + 20); // 0=Departure, 1=Arrival
-    // 3B reserved at offset 21
+    const controlSeat = buf.readUInt8(off + 21);      // 0=None, 1-7=active seat, 255=Unknown
+    const seatSequence = buf.readUInt8(off + 22);     // 1-based order within seat; 0=not participating
+    const telemetryStatus = buf.readUInt8(off + 23);  // 0=Unknown, 1=Active, 2=ActionRequired, 3=HandoffPending, 4=PendingAtStand, 5=CompletedAtStand
 
     const posX = buf.readFloatLE(off + 24);
     const posY = buf.readFloatLE(off + 28);
@@ -92,6 +94,7 @@ function parseDatagram(buf) {
 
     records.push({
       callSign, aircraftType, flightDirection,
+      controlSeat, seatSequence, telemetryStatus,
       position: { x: posX, y: posY, z: posZ },
       noseDirection: { x: noseX, y: noseY, z: noseZ },
       taxiSpeed, airSpeedKnot,

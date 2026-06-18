@@ -23,27 +23,18 @@ export function witchDirection(noseDir) {
 }
 
 /**
- * Return true when the aircraft is stationary (parked or speed ≈ 0).
- * Uses taxiSpeed for ground aircraft; also checks stand proximity when a stand is assigned.
+ * Return true when the aircraft is parked (no active control seat).
+ * An aircraft with a known control seat (1-7) is under active control and not parked.
+ * None (0) and Unknown (255) indicate the aircraft is parked / out of active control.
  *
- * @param {object} ac — UDP aircraft record (position, stand, taxiSpeed, airSpeedKnot)
- * @param {object} standPositions — { [standId]: {x, y} } where y is game Z
- * @param {number} proximity — max distance in game units (e.g. GROUND_RADAR_STAND_PROXIMITY)
+ * @param {object} ac — UDP aircraft record (controlSeat)
  * @returns {boolean}
  */
-export function isParked(ac, standPositions, proximity) {
-  // Stationary — taxiSpeed near zero (use taxiSpeed, not airSpeedKnot)
-  const taxiSpd = ac.taxiSpeed ?? ac.airSpeedKnot ?? 0;
-  const stopped = taxiSpd < 1;
-  // Also check if at assigned stand
-  let atStand = false;
-  if (ac.stand && standPositions && standPositions[ac.stand] && ac.position) {
-    const sp = standPositions[ac.stand];
-    const dx = ac.position.x - sp.x;
-    const dz = ac.position.z - sp.y; // sp.y stores game Z (same convention as GroundMapWindow)
-    atStand = dx * dx + dz * dz <= proximity * proximity;
-  }
-  return stopped || atStand;
+export function isParked(ac) {
+  // Active control seat (1-7) → not parked
+  if (ac.controlSeat != null && ac.controlSeat !== 0 && ac.controlSeat !== 255) return false;
+  // None (0), Unknown (255), or missing → parked
+  return true;
 }
 
 // ─── Sprite sheet lookup ───────────────────────────────────────────

@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.5)
+- **Name:** `ac27-level-editor` (v1.1.6)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -614,12 +614,12 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 5. **Runway-named taxiway segments** — taxiway centerlines whose name matches a runway entry are rendered as black filled polygons (same style as runways), using `computeRunwayCorners()` with the matching runway's width. These represent runway surfaces stored as taxiway centerline segments.
 6. Taxiway labels — name labels at path midpoints with proximity dedup (`GROUND_MAP_TAXIWAY_LABEL_SPACING`). Placed **above** runways in layer order (was below runways before v1.1.4). Only rendered for non-runway taxiway segments.
 6. Live ground aircraft — filtered to `position.y <= 1.0` (ground-level, not airborne) with inactive aircraft hidden by default:
-   - **Inactivity filter:** Aircraft at a known stand (UDP `stand` field ∈ `_standPositions`) AND within `GROUND_RADAR_STAND_PROXIMITY` (0.5 GU ≈ 50m) of that stand's midpoint are hidden as "parked/inactive"
+   - **Inactivity filter:** Aircraft are hidden when parked — determined by `controlSeat` (UDP v2 record field at offset 21). If `controlSeat` is None (0) or Unknown (255), the aircraft has no active controller → parked/hidden. If `controlSeat` is 1-7 (Ramp/Ground/Tower/Departure/Approach/Delivery/Apron), the aircraft is under active control → always shown, even when at a stand. As a fallback (pre-v2 UDP data without `controlSeat`), aircraft at a known stand within `GROUND_RADAR_STAND_PROXIMITY` (0.5 GU ≈ 50m) are hidden.
    - **"Parked" toggle:** Push-button (i18n: `ground_map_show_all`) bypasses the inactivity filter, showing all ground-level aircraft
    - **Icon:** `MAP_ICON_PATH` (IonIons IoAirplane SVG path) rotated by `noseDirection.x/z`
    - **Label:** Green callsign text with a short connector line from aircraft to label
    - **Selection highlight:** Yellow icon + label when aircraft is selected (click-to-select)
-   - **Witch mode (v1.1.5):** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (module-level `_assignments` Map), stable per callsign. Moving: walk sprites (direction-aware via `witchDirection()`); parked/stopped: stand sprites (`isParked()` uses `taxiSpeed < 1` OR stand proximity). Airport boundary (AreaType 0) is hidden. Any click exits witch mode. Labels and connector lines hidden. Background replaced with `witch/groundradar.png`, sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
+   - **Witch mode (v1.1.5):** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (module-level `_assignments` Map), stable per callsign. Moving: walk sprites (direction-aware via `witchDirection()`); parked/stopped: stand sprites (`isParked()` uses `controlSeat` — None (0) or Unknown (255) = parked; any active seat (1-7) = not parked). Airport boundary (AreaType 0) is hidden. Any click exits witch mode. Labels and connector lines hidden. Background replaced with `witch/groundradar.png`, sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `GROUND_MAP_DEFAULT_ZOOM` + `GROUND_MAP_CENTER_OFFSET`, pan clamped to initial bounds.
 
@@ -785,14 +785,17 @@ Packets from the game arrive at ~10 Hz. Format: 40-byte header + N × 112-byte r
 | Offset | Type | Field | Notes |
 |--------|------|-------|-------|
 | 0 | u32 | magic | `0x43544147` = ASCII `"GATC"` |
-| 4 | u16 | version | Currently `1` |
+| 4 | u16 | version | Currently `2` (v2 adds `controlSeat`/`seatSequence`/`telemetryStatus` at record offsets 21-23, `simFlags`/`timeScale`/`heartbeatSeq` at header offsets 32-35) |
 | 6 | u16 | headerSize | Always `40` — record data starts here |
 | 8 | u16 | recordSize | Always `112` — stride per record |
 | 10 | u16 | recordCount | Number of records in this packet |
 | 12 | 4B | airportIcao | ASCII uppercase (4 chars) |
 | 16 | u64 | simTick | Simulation tick (60 Hz) |
 | 24 | i64 | simTimeUnixMs | Sim time in Unix milliseconds |
-| 32 | 8B | reserved | Zero-filled |
+| 32 | u8 | simFlags | bit 0=isPaused, bit 1=isStarted, bit 2=hasLevel, bits 3-7 reserved |
+| 33 | u8 | timeScale | Current game speed multiplier; `0` = unknown |
+| 34 | u16 | heartbeatSeq | Increments per datagram (wrapping) |
+| 36 | 4B | reserved | Zero-filled |
 
 **Record (112 bytes each, little-endian):**
 
@@ -801,6 +804,9 @@ Packets from the game arrive at ~10 Hz. Format: 40-byte header + N × 112-byte r
 | 0 | 12B | callSign | Active segment callsign, ASCII zero-padded |
 | 12 | 8B | aircraftType | ICAO designator (e.g. `B77W`, `A320`) |
 | 20 | u8 | flightDirection | `0` = Departure, `1` = Arrival |
+| 21 | u8 | controlSeat | `0`=None, `1`=Ramp, `2`=Ground, `3`=Tower, `4`=Departure, `5`=Approach, `6`=Delivery, `7`=Apron, `255`=Unknown. Drives parked/active determination. |
+| 22 | u8 | seatSequence | 1-based order within seat; `0` = not participating, `255` = overflow |
+| 23 | u8 | telemetryStatus | `0`=Unknown, `1`=Active, `2`=ActionRequired, `3`=HandoffPending, `4`=PendingAtStand, `5`=CompletedAtStand |
 | 24 | f32×3 | position | Unity world coordinates (x, y, z) |
 | 36 | f32×3 | noseDirection | Nose heading unit vector (x, y, z) |
 | 48 | f32 | taxiSpeed | Ground taxi speed |

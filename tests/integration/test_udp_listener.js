@@ -85,7 +85,12 @@ function buildDatagram(airportIcao, simTick, simTimeUnixMs, records) {
 
     // flightDirection (u8)
     buf.writeUInt8(r.flightDirection || 0, off + 20);
-    // 3B reserved at offset 21 (already zero)
+    // controlSeat (u8)
+    buf.writeUInt8(r.controlSeat ?? 0, off + 21);
+    // seatSequence (u8)
+    buf.writeUInt8(r.seatSequence ?? 0, off + 22);
+    // telemetryStatus (u8)
+    buf.writeUInt8(r.telemetryStatus ?? 1, off + 23);
 
     // position (f32×3)
     const pos = r.position || { x: 0, y: 0, z: 0 };
@@ -446,6 +451,62 @@ async function runTests() {
     assert(ac, 'ABC should exist with trimmed callsign');
     // callsign should NOT contain trailing nulls
     assert(ac.callSign.indexOf('\0') < 0, 'callsign should not contain null bytes');
+  });
+
+  // Test 14: controlSeat, seatSequence, telemetryStatus parsing (v2)
+  await test('parses controlSeat, seatSequence, and telemetryStatus from v2 records', async () => {
+    resetAircraftState();
+    const datagram = buildDatagram('ZSJN', 100, 1718400000000, [
+      {
+        callSign: 'CTRL001',
+        aircraftType: 'A320',
+        flightDirection: 0,
+        controlSeat: 2,        // Ground
+        seatSequence: 3,
+        telemetryStatus: 1,    // Active
+        position: { x: 100, y: 0.5, z: 200 },
+      },
+      {
+        callSign: 'CTRL002',
+        aircraftType: 'B738',
+        flightDirection: 1,
+        controlSeat: 0,        // None (parked/completed)
+        seatSequence: 0,
+        telemetryStatus: 5,    // CompletedAtStand
+        position: { x: 200, y: 0.3, z: 300 },
+      },
+      {
+        callSign: 'CTRL003',
+        aircraftType: 'B77W',
+        flightDirection: 0,
+        controlSeat: 255,      // Unknown
+        seatSequence: 0,
+        telemetryStatus: 0,    // Unknown
+        position: { x: 300, y: 0.4, z: 400 },
+      },
+    ]);
+    await sendDatagram(datagram);
+    await sleep(50);
+
+    const state = getUdpAircraftState();
+    assertEq(state.aircraft.length, 3, 'should have 3 aircraft');
+
+    const ctrl1 = state.aircraft.find(a => a.callSign === 'CTRL001');
+    assert(ctrl1, 'CTRL001 should exist');
+    assertEq(ctrl1.controlSeat, 2, 'CTRL001 controlSeat should be 2 (Ground)');
+    assertEq(ctrl1.seatSequence, 3, 'CTRL001 seatSequence should be 3');
+    assertEq(ctrl1.telemetryStatus, 1, 'CTRL001 telemetryStatus should be 1 (Active)');
+
+    const ctrl2 = state.aircraft.find(a => a.callSign === 'CTRL002');
+    assert(ctrl2, 'CTRL002 should exist');
+    assertEq(ctrl2.controlSeat, 0, 'CTRL002 controlSeat should be 0 (None)');
+    assertEq(ctrl2.seatSequence, 0);
+    assertEq(ctrl2.telemetryStatus, 5, 'CTRL002 telemetryStatus should be 5 (CompletedAtStand)');
+
+    const ctrl3 = state.aircraft.find(a => a.callSign === 'CTRL003');
+    assert(ctrl3, 'CTRL003 should exist');
+    assertEq(ctrl3.controlSeat, 255, 'CTRL003 controlSeat should be 255 (Unknown)');
+    assertEq(ctrl3.telemetryStatus, 0, 'CTRL003 telemetryStatus should be 0 (Unknown)');
   });
 
   // ── Cleanup ───────────────────────────────────────────────────
