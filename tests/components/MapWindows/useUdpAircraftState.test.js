@@ -30,6 +30,8 @@ describe('useUdpAircraftState', () => {
       aircraft: [],
       currentAirport: null,
       simTimeUnixMs: 0,
+      simFlags: 0,
+      timeScale: 0,
     });
   });
 
@@ -116,6 +118,8 @@ describe('useUdpAircraftState', () => {
       aircraft: [],
       currentAirport: null,
       simTimeUnixMs: 0,
+      simFlags: 0,
+      timeScale: 0,
     });
   });
 });

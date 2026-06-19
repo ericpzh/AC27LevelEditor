@@ -22,6 +22,10 @@ const MAX_TRAIL = 5;
 let reconnectTimer = null;
 let logInterval = null;
 let lastSimTimeUnixMs = 0; // latest simTimeUnixMs from header
+let lastSimFlags = 0;        // simFlags from v2 header (offset 32)
+let lastTimeScale = 0;       // timeScale from v2 header (offset 33)
+let lastHeartbeatSeq = 0;    // heartbeat sequence from v2 header (offset 34)
+let lastHasLevel = false;    // track hasLevel (simFlags bit 2) transitions
 let packetCount = 0;
 let firstPacketLogged = false;
 
@@ -147,6 +151,22 @@ function bindSocket() {
       ? Number(buf.readBigUInt64LE(16))
       : buf.readUInt32LE(16) + buf.readUInt32LE(20) * 0x100000000;
 
+    // Parse simFlags, heartbeatSeq from v2 header (offsets 32-35)
+    if (buf.length >= 36) {
+      lastSimFlags = buf.readUInt8(32);
+      lastTimeScale = buf.readUInt8(33);
+      lastHeartbeatSeq = buf.readUInt16LE(34);
+
+      // hasLevel (bit 2) 0→1 transition → level loaded/changed → reset stale aircraft
+      const hasLevel = !!(lastSimFlags & 0x04);
+      if (hasLevel && !lastHasLevel) {
+        aircraftMap.clear();
+        trailSnapshots.clear();
+        console.log('[UDP] hasLevel transition 0→1 — aircraft state auto-reset');
+      }
+      lastHasLevel = hasLevel;
+    }
+
     // Update aircraft and trail queue
     for (const r of result.records) {
       if (!r.callSign) continue;
@@ -221,6 +241,10 @@ function stop() {
   currentAirport = null;
   lastPacketTime = 0;
   lastSimTimeUnixMs = 0;
+  lastSimFlags = 0;
+  lastTimeScale = 0;
+  lastHeartbeatSeq = 0;
+  lastHasLevel = false;
   packetCount = 0;
   firstPacketLogged = false;
   console.log('[UDP] stopped');
@@ -234,10 +258,23 @@ function getUdpStatus() {
     connected,
     lastPacketTime,
     currentAirport,
+    simFlags: lastSimFlags,
+    heartbeatSeq: lastHeartbeatSeq,
   };
 }
 
+const STALE_THRESHOLD_MS = 5000;
+
 function getUdpAircraftState() {
+  // Auto-clear if no packets for >5s (game crashed / disconnected)
+  if (lastPacketTime > 0 && (Date.now() - lastPacketTime) > STALE_THRESHOLD_MS) {
+    if (aircraftMap.size > 0 || trailSnapshots.size > 0) {
+      aircraftMap.clear();
+      trailSnapshots.clear();
+      console.log('[UDP] Stale data (>5s since last packet) — aircraft state auto-reset');
+    }
+  }
+
   const aircraft = Array.from(aircraftMap.values()).map(a => {
     const snaps = trailSnapshots.get(a.callSign) || [];
     // Live position as age=0, then queue entries as age=10,20,30,40,50...
@@ -247,7 +284,7 @@ function getUdpAircraftState() {
     }
     return { ...a, trail };
   });
-  return { aircraft, currentAirport, recordCount: aircraftMap.size, simTimeUnixMs: lastSimTimeUnixMs };
+  return { aircraft, currentAirport, recordCount: aircraftMap.size, simTimeUnixMs: lastSimTimeUnixMs, simFlags: lastSimFlags, timeScale: lastTimeScale };
 }
 
 /**
@@ -258,6 +295,7 @@ function getUdpAircraftState() {
 function resetAircraftState() {
   aircraftMap.clear();
   trailSnapshots.clear();
+  lastHasLevel = false;
   console.log('[UDP] aircraft state reset');
 }
 

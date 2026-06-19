@@ -655,8 +655,8 @@ export default function AirMapWindow({ airportIcao }) {
 
               {/* Live air aircraft — trail circles */}
               {airAircraft.map((ac) => {
-                const isDeparture = ac.flightDirection === 0;
-                const labelColor = isDeparture ? '#66ff66' : '#ffffff';
+                const seatLetter = ac.controlSeat === 3 ? 'F' : ac.controlSeat === 4 ? 'D' : ac.controlSeat === 5 ? 'A' : null;
+                const labelColor = ac.controlSeat === 3 ? '#ffffff' : '#66ff66';
                 const trail = ac.trail || [];
                 // Sort by age ascending (current first)
                 const sorted = [...trail].sort((a, b) => a.age - b.age);
@@ -715,17 +715,17 @@ export default function AirMapWindow({ airportIcao }) {
                             />
                           );
                         })}
-                        {/* A/D indicator on current dot */}
-                        {sorted.length > 0 && (
+                        {/* Seat indicator on current dot (Tower→F, Departure→D, Approach→A) */}
+                        {sorted.length > 0 && seatLetter && (
                           <text
-                            x={sorted[0].x + planeScale * 1.5}
-                            y={svgY(sorted[0].z) - planeScale * 1.5}
+                            x={sorted[0].x}
+                            y={svgY(sorted[0].z)}
                             textAnchor="middle"
                             dominantBaseline="middle"
                             fontSize={fontSize * 1.15}
                             fill={ac.callSign === selectedCallSign ? '#ffff00' : labelColor}
                             fontWeight="bold"
-                          >{isDeparture ? 'D' : 'A'}</text>
+                          >{seatLetter}</text>
                         )}
                       </>
                     )}
@@ -746,12 +746,13 @@ export default function AirMapWindow({ airportIcao }) {
                         className="air-map-heading-line"
                       />
                     )}
-                    {/* Callsign label at current position */}
+                    {/* Label at current position — full for Tower, altitude-only for Dep/App */}
                     {!witchMode && conn && (() => {
                       const isSel = ac.callSign === selectedCallSign;
                       const callLabelColor = isSel ? '#ffff00' : labelColor;
                       const altFt = Math.round(ac.position.y / 0.3048);
                       const altStr = String(altFt).padStart(3, '0');
+                      const isTower = ac.controlSeat === 3;
                       return (
                       <text
                         x={refX}
@@ -760,16 +761,22 @@ export default function AirMapWindow({ airportIcao }) {
                         fontSize={fontSize}
                         fill={callLabelColor}
                       >
-                        {emergencyCallSign === ac.callSign && (
-                          <tspan x={refX} dy="-2.4em" className="air-map-em-label">EM</tspan>
+                        {isTower || isSel ? (
+                          <>
+                            {emergencyCallSign === ac.callSign && (
+                              <tspan x={refX} dy="-2.4em" className="air-map-em-label">EM</tspan>
+                            )}
+                            <tspan x={refX} dy={emergencyCallSign === ac.callSign ? '1.2em' : '-1.2em'}>{ac.callSign}</tspan>
+                            <tspan x={refX} dy="1.2em">
+                              {altStr}{' '}
+                              {speedToggle
+                                ? String(Math.round(ac.airSpeedKnot / 10)).padStart(2, '0')
+                                : ac.aircraftType}
+                            </tspan>
+                          </>
+                        ) : (
+                          <tspan>{altStr}</tspan>
                         )}
-                        <tspan x={refX} dy={emergencyCallSign === ac.callSign ? '1.2em' : '-1.2em'}>{ac.callSign}</tspan>
-                        <tspan x={refX} dy="1.2em">
-                          {altStr}{' '}
-                          {speedToggle
-                            ? String(Math.round(ac.airSpeedKnot / 10)).padStart(2, '0')
-                            : ac.aircraftType}
-                        </tspan>
                       </text>
                       );
                     })()}

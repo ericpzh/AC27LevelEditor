@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { useTranslation } from '../../hooks/useTranslation';
+import React, { useEffect, useMemo, useState, useCallback, useRef, forwardRef } from 'react';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import useUdpAircraftState from './useUdpAircraftState';
 import SimClock from './SimClock';
@@ -7,7 +6,8 @@ import MapHelpOverlay from './MapHelpOverlay';
 import { IoHelpCircleOutline, IoRefreshOutline } from 'react-icons/io5';
 import './FlightStripsWindow.css';
 
-const SEAT_KEYS = { 1: 'seat_1', 2: 'seat_2', 3: 'seat_3', 4: 'seat_4', 5: 'seat_5', 6: 'seat_6', 7: 'seat_7' };
+const SEAT_LABELS = { 1: 'RMP', 2: 'GND', 3: 'TWR', 4: 'DEP', 5: 'APPR', 6: 'DEL', 7: 'APN' };
+const SEAT_LABELS_FULL = { 1: 'RAMP', 2: 'GROUND', 3: 'TOWER', 4: 'DEPARTURE', 5: 'APPROACH', 6: 'DELIVERY', 7: 'APRON' };
 const STRIP_HEIGHT = 61; // 58px min-height + 3px gap
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -75,11 +75,12 @@ const FlightStripContent = React.memo(function FlightStripContent({
 
 // ─── Drag ghost (floating clone of dragged strip) ────────────────
 
-function DragGhost({ ac, fd, seatLabel, sidFromMap, rectLeft, rectTop, rectW, deltaY, isArrival }) {
+const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap, rectLeft, rectTop, rectW, isArrival }, ref) {
   return (
     <div
+      ref={ref}
       className={'flight-strip strip-drag-ghost' + (isArrival ? ' strip-arrival' : ' strip-departure')}
-      style={{ position: 'fixed', left: rectLeft + 'px', top: (rectTop + deltaY) + 'px', zIndex: 9999, pointerEvents: 'none', width: rectW + 'px' }}
+      style={{ position: 'fixed', left: rectLeft + 'px', top: rectTop + 'px', zIndex: 9999, pointerEvents: 'none', width: rectW + 'px' }}
     >
       <div className="strip-col-callsign">
         <div className="strip-box callsign-box"><span className="strip-callsign">{ac.callSign}</span></div>
@@ -98,24 +99,30 @@ function DragGhost({ ac, fd, seatLabel, sidFromMap, rectLeft, rectTop, rectW, de
       </div>
     </div>
   );
-}
+});
 
 // ─── Main component ───────────────────────────────────────────────
 
 export default function FlightStripsWindow({ airportIcao }) {
-  const { t } = useTranslation();
   const electronAPI = useElectronAPI();
   const sp = new URLSearchParams(window.location.search);
   const rootPath = decodeURIComponent(sp.get('root') || '');
-  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs } = useUdpAircraftState();
+  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, timeScale } = useUdpAircraftState();
   const [helpOpen, setHelpOpen] = useState(false);
   const [flightData, setFlightData] = useState({});
   const [runwaySidMap, setRunwaySidMap] = useState({});
   const [dataLoading, setDataLoading] = useState(true);
   const [selectedCallSign, setSelectedCallSign] = useState(null);
+  const selectedCallSignRef = useRef(null);
 
-  // Drag state
-  const initialState = { isDragging: false, hasMoved: false, srcIdx: -1, hoverIdx: -1, startY: 0, deltaY: 0, seat: 0, rectTop: 0, rectLeft: 0, rectW: 0, callSign: '', ac: null };
+  // Keep ref in sync so handleDragEnd (stable callback) can read current selection
+  useEffect(() => { selectedCallSignRef.current = selectedCallSign; }, [selectedCallSign]);
+
+  // Drag state — only layout-affecting values live in React state.
+  // Pixel-level ghost tracking uses direct DOM via ghostRef (no re-render).
+  const dragMetaRef = useRef({ startY: 0, rectTop: 0, rectLeft: 0, rectW: 0, callSign: '', ac: null, srcIdx: -1, seat: 0 });
+  const ghostRef = useRef(null);
+  const initialState = { isDragging: false, hasMoved: false, hoverIdx: -1, seat: 0 };
   const [dragState, setDragState] = useState(initialState);
   const holdTimer = useRef(null);
   const mountedRef = useRef(true);
@@ -223,15 +230,23 @@ export default function FlightStripsWindow({ airportIcao }) {
   }
 
   // ─── Drag handlers ───────────────────────────────────────────
+  // Pixel-level ghost movement uses direct DOM (ghostRef) — no React re-render.
+  // Only hoverIdx changes trigger setDragState (layout-affecting).
 
-  // These use functional setState so they don't depend on render values.
   const handleDragMove = useCallback((e) => {
+    // 1) Update ghost position directly via DOM — pixel-smooth, no React render
+    if (ghostRef.current) {
+      const dy = e.clientY - dragMetaRef.current.startY;
+      ghostRef.current.style.top = (dragMetaRef.current.rectTop + dy) + 'px';
+    }
+    // 2) Only update React state when hoverIdx changes (gap position)
     setDragState((prev) => {
       if (!prev.isDragging || !prev.hasMoved) return prev;
-      const deltaY = e.clientY - prev.startY;
-      const indexShift = Math.round(deltaY / STRIP_HEIGHT);
-      const hoverIdx = Math.max(0, prev.srcIdx + indexShift);
-      return { ...prev, deltaY, hoverIdx };
+      const dy = e.clientY - dragMetaRef.current.startY;
+      const indexShift = Math.round(dy / STRIP_HEIGHT);
+      const hoverIdx = Math.max(0, dragMetaRef.current.srcIdx + indexShift);
+      if (hoverIdx === prev.hoverIdx) return prev; // bail out — no layout change
+      return { ...prev, hoverIdx };
     });
   }, []);
 
@@ -239,18 +254,19 @@ export default function FlightStripsWindow({ airportIcao }) {
     window.removeEventListener('mousemove', handleDragMove);
     window.removeEventListener('mouseup', handleDragEnd);
     if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null; }
+    const meta = dragMetaRef.current;
     setDragState((prev) => {
       if (!prev.isDragging) return prev;
-      if (prev.hasMoved && prev.srcIdx !== prev.hoverIdx) {
-        setOrderedGroups((groups) => applyReorder(groups, prev.seat, prev.srcIdx, prev.hoverIdx));
+      if (prev.hasMoved && meta.srcIdx !== prev.hoverIdx) {
+        setOrderedGroups((groups) => applyReorder(groups, meta.seat, meta.srcIdx, prev.hoverIdx));
         setSelectedCallSign(null);
       } else if (prev.hasMoved) {
         // Long hold or wiggle without changing position — cancel, no selection change
       } else {
         // Quick click without movement — toggle selection
-        const cs = prev.callSign;
-        setSelectedCallSign((cur) => cur === cs ? null : cs);
-        if (electronAPI.selectAircraftInMap) electronAPI.selectAircraftInMap(airportIcao, cs);
+        const next = selectedCallSignRef.current === meta.callSign ? null : meta.callSign;
+        setSelectedCallSign(next);
+        if (electronAPI.selectAircraftInMap) electronAPI.selectAircraftInMap(airportIcao, next);
       }
       return initialState;
     });
@@ -260,12 +276,11 @@ export default function FlightStripsWindow({ airportIcao }) {
     if (e.button !== 0) return;
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
-    setDragState({
-      isDragging: true, hasMoved: false, srcIdx: idx, hoverIdx: idx,
-      startY: e.clientY, deltaY: 0, seat,
-      rectTop: rect.top, rectLeft: rect.left, rectW: rect.width,
-      callSign: ac.callSign, ac,
-    });
+    dragMetaRef.current = {
+      startY: e.clientY, rectTop: rect.top, rectLeft: rect.left, rectW: rect.width,
+      callSign: ac.callSign, ac, srcIdx: idx, seat,
+    };
+    setDragState({ isDragging: true, hasMoved: false, hoverIdx: idx, seat });
     // Long hold without movement → enter drag after 400ms
     holdTimer.current = setTimeout(() => {
       setSelectedCallSign(null);
@@ -313,9 +328,9 @@ export default function FlightStripsWindow({ airportIcao }) {
     <div className="flight-strips">
       <div className="flight-strips-body" onClick={handleBodyClick}>
         {dataLoading && seatOrder.length === 0 ? (
-          <div className="flight-strips-empty">{t('flight_strips_loading')}</div>
+          <div className="flight-strips-empty">{'Loading…'}</div>
         ) : seatOrder.length === 0 ? (
-          <div className="flight-strips-empty">{udpAirport && udpAirport !== airportIcao ? t('flight_strips_waiting') : t('flight_strips_empty')}</div>
+          <div className="flight-strips-empty">{udpAirport && udpAirport !== airportIcao ? 'Waiting for data…' : 'No active aircraft'}</div>
         ) : (
           seatOrder.map((seat) => {
             // Build flat list of items (separators + strips) for this seat
@@ -338,13 +353,13 @@ export default function FlightStripsWindow({ airportIcao }) {
             return (
               <div key={seat} className="flight-strips-column">
                 <div className="flight-strips-column-header">
-                  <span>{t('seat_' + seat + '_full') || t(SEAT_KEYS[seat] || ('Seat ' + seat))}</span>
+                  <span>{SEAT_LABELS_FULL[seat] || SEAT_LABELS[seat] || ('Seat ' + seat)}</span>
                 </div>
                 {items.map((item) => {
                   if (item.type === 'sep') {
                     return (
                       <div key={'sep-' + item.rwy} className="flight-strip-runway-sep">
-                        <span>{t('flight_strips_runway')} {item.rwy === '__' ? '--' : item.rwy}</span>
+                        <span>{'RUNWAY'} {item.rwy === '__' ? '--' : item.rwy}</span>
                       </div>
                     );
                   }
@@ -357,9 +372,9 @@ export default function FlightStripsWindow({ airportIcao }) {
                   const sidFromMap = (!isArrival && fd.runway && runwaySidMap[fd.runway]) ? runwaySidMap[fd.runway][0] : '';
 
                   // Is this the strip being dragged?
-                  const isSrc = dragState.isDragging && dragState.hasMoved && dragState.seat === seat && dragState.srcIdx === idx;
+                  const isSrc = dragState.isDragging && dragState.hasMoved && dragState.seat === seat && dragMetaRef.current.srcIdx === idx;
                   // Open gap before this strip?
-                  const showGap = dragState.isDragging && dragState.hasMoved && dragState.seat === seat && dragState.hoverIdx === idx && dragState.srcIdx !== idx;
+                  const showGap = dragState.isDragging && dragState.hasMoved && dragState.seat === seat && dragState.hoverIdx === idx && dragMetaRef.current.srcIdx !== idx;
 
                   if (isSrc) {
                     // Placeholder collapses original space; floating clone rendered below
@@ -373,7 +388,7 @@ export default function FlightStripsWindow({ airportIcao }) {
                       isSelected={ac.callSign === selectedCallSign}
                       showGap={showGap}
                       isArrival={isArrival}
-                      seatLabel={t(SEAT_KEYS[ac.controlSeat] || '')}
+                      seatLabel={SEAT_LABELS[ac.controlSeat] || ''}
                       sidFromMap={sidFromMap}
                       onMouseDown={(e) => handleDragStart(e, seat, idx, ac)}
                     />
@@ -383,27 +398,27 @@ export default function FlightStripsWindow({ airportIcao }) {
                 {/* Gap at end of column when hovering past last strip */}
                 {dragState.isDragging && dragState.hasMoved && dragState.seat === seat && dragState.hoverIdx >= totalStrips && (() => {
                   const lastIdx = totalStrips - 1;
-                  if (lastIdx >= 0 && dragState.srcIdx !== lastIdx) {
+                  if (lastIdx >= 0 && dragMetaRef.current.srcIdx !== lastIdx) {
                     return <div key="end-gap" className="strip-end-gap" />;
                   }
                   return null;
                 })()}
 
                 {/* Floating clone of dragged strip */}
-                {dragState.isDragging && dragState.seat === seat && dragState.ac && (
+                {dragState.isDragging && dragState.seat === seat && dragMetaRef.current.ac && (
                   <DragGhost
-                    ac={dragState.ac}
-                    fd={flightData[dragState.ac.callSign] || {}}
-                    seatLabel={t(SEAT_KEYS[dragState.ac.controlSeat] || '')}
+                    ref={ghostRef}
+                    ac={dragMetaRef.current.ac}
+                    fd={flightData[dragMetaRef.current.ac.callSign] || {}}
+                    seatLabel={SEAT_LABELS[dragMetaRef.current.ac.controlSeat] || ''}
                     sidFromMap={(() => {
-                      const fd2 = flightData[dragState.ac.callSign] || {};
-                      return (!(dragState.ac.flightDirection === 1) && fd2.runway && runwaySidMap[fd2.runway]) ? runwaySidMap[fd2.runway][0] : '';
+                      const fd2 = flightData[dragMetaRef.current.ac.callSign] || {};
+                      return (!(dragMetaRef.current.ac.flightDirection === 1) && fd2.runway && runwaySidMap[fd2.runway]) ? runwaySidMap[fd2.runway][0] : '';
                     })()}
-                    rectLeft={dragState.rectLeft}
-                    rectTop={dragState.rectTop}
-                    rectW={dragState.rectW}
-                    deltaY={dragState.deltaY}
-                    isArrival={dragState.ac.flightDirection === 1}
+                    rectLeft={dragMetaRef.current.rectLeft}
+                    rectTop={dragMetaRef.current.rectTop}
+                    rectW={dragMetaRef.current.rectW}
+                    isArrival={dragMetaRef.current.ac.flightDirection === 1}
                   />
                 )}
               </div>
@@ -412,13 +427,16 @@ export default function FlightStripsWindow({ airportIcao }) {
         )}
       </div>
       <div className="flight-strips-bar">
-        <SimClock simTimeUnixMs={simTimeUnixMs} className="flight-strips-clock" />
+        <div className="flight-strips-bar-left">
+          <SimClock simTimeUnixMs={simTimeUnixMs} className="flight-strips-clock" />
+          <span className="flight-strips-timescale">{timeScale > 0 ? '×' + timeScale : ''}</span>
+        </div>
         <div className="flight-strips-bar-actions">
-          <div className="strips-bar-btn" onClick={handleRefresh} title={t('map_refresh')}><IoRefreshOutline size={16} /></div>
-          <div className="strips-bar-btn" onClick={handleHelpToggle} title={t('map_help_title')}><IoHelpCircleOutline size={16} /></div>
+          <div className="strips-bar-btn" onClick={handleRefresh} title="Refresh"><IoRefreshOutline size={16} /></div>
+          <div className="strips-bar-btn" onClick={handleHelpToggle} title="Map Help"><IoHelpCircleOutline size={16} /></div>
         </div>
       </div>
-      {helpOpen && <MapHelpOverlay type="strips" onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <MapHelpOverlay type="strips" titleKey="map_help_strips_title" onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

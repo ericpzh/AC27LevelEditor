@@ -7,7 +7,7 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
  */
 export default function useUdpAircraftState() {
   const electronAPI = useElectronAPI();
-  const [state, setState] = useState({ aircraft: [], currentAirport: null, simTimeUnixMs: 0 });
+  const [state, setState] = useState({ aircraft: [], currentAirport: null, simTimeUnixMs: 0, simFlags: 0, timeScale: 0 });
 
   useEffect(() => {
     const handler = (s) => {
@@ -15,6 +15,8 @@ export default function useUdpAircraftState() {
         aircraft: s?.aircraft || [],
         currentAirport: s?.currentAirport || null,
         simTimeUnixMs: s?.simTimeUnixMs || 0,
+        simFlags: s?.simFlags ?? 0,
+        timeScale: s?.timeScale ?? 0,
       });
     };
     if (electronAPI && electronAPI.onUdpAircraftState) {

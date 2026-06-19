@@ -1,4 +1,4 @@
----
+﻿---
 name: ac27-level-editor
 description: AC27 Level Editor — Electron desktop app for editing Airport Control 27 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, npm test, node tests/integration/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes.
 ---
@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.7)
+- **Name:** `ac27-level-editor` (v1.1.6)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -125,7 +125,7 @@ AC27LevelEditor/
 │   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs (zoom/pan/airspace) + toggle buttons + help button
 │   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel, gauge mode)
 │   │   │   ├── SimClock.jsx                # Shared sim-time clock (HH:MM:SS UTC, accepts className prop)
-│   │   │   ├── MapHelpOverlay.jsx + .css   # Context-sensitive help overlay (air or ground map, Escape to close, toggleable button interactivity)
+│   │   │   ├── MapHelpOverlay.jsx + .css   # Context-sensitive help overlay (air/ground/strips, Escape to close, toggleable buttons, optional title prop)
 │   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations, witch mode UI overrides (sidebar bar.png, button.png/button_on.png toggles, knob.png spin knobs)
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes (incl. simTimeUnixMs)
@@ -533,7 +533,7 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 **Map overlay orchestration:** `MapOverlays` sub-component in `EditorScreen.jsx` manages visibility and prop-passing for both StandMap and StarMap. Visibility state lives in zustand (`showStandMap`, `showStarMap`, `activeMap`, `mapFlightIdx`). Only one map is "on top" at a time (controlled by `activeMap`). Both maps close when leaving the editor screen (`setScreen` clears map state).
 
-## Map Windows (Surface Radar, Approach Radar & Flight Strips) — v1.1.7
+## Map Windows (Surface Radar, Approach Radar & Flight Strips) — v1.1.6
 
 Map windows are separate Electron `BrowserWindow` instances (one per airport ICAO + type pair), NOT React components rendered in the main window. They provide real-time radar visualization of aircraft positions streamed via UDP telemetry from the running game, plus flight strip progress boards.
 
@@ -590,9 +590,9 @@ onAircraftSelectedInMap(cb)                 // → ipcRenderer.on('aircraft-sele
 offAircraftSelectedInMap(cb)                // → ipcRenderer.removeListener(...)
 
 // UDP telemetry
-getUdpStatus()                          // → { connected, lastPacketTime, currentAirport }
-getUdpAircraftState()                   // → { aircraft, currentAirport, recordCount, simTimeUnixMs }
-resetUdpAircraft()                      // → clears all aircraft state (map refresh button)
+getUdpStatus()                          // → { connected, lastPacketTime, currentAirport, simFlags, heartbeatSeq }
+getUdpAircraftState()                   // → { aircraft, currentAirport, recordCount, simTimeUnixMs, simFlags, timeScale }
+resetUdpAircraft()                      // → clears all aircraft state (map refresh button); also resets lastHasLevel
 sendUdpCommand(commandId, callSign)     // → base64-encodes 12B callSign, invokes 'send-udp-command'
 debugLog(...args)                       // → ipcRenderer.invoke('debug-log', args) — logs to main terminal
 onUdpAircraftState(cb)                  // subscribe to live ~10 Hz pushes
@@ -692,19 +692,20 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 
 **`useUdpAircraftState.js`:**
 - Subscribes to `electronAPI.onUdpAircraftState` on mount, unsubscribes on unmount
-- Returns `{ aircraft: Array, currentAirport: string|null, simTimeUnixMs: number }` updated at ~10 Hz
+- Returns `{ aircraft: Array, currentAirport: string|null, simTimeUnixMs: number, simFlags: number, timeScale: number }` updated at ~200ms (5 Hz push interval)
+- `simFlags` bit field: bit 0=isPaused, bit 1=isStarted, bit 2=hasLevel; `timeScale` = game speed multiplier (0=unknown)
 - Used by GroundMapWindow, AirMapWindow, and FlightStripsWindow (simTimeUnixMs drives the SimClock component)
 
 ### FlightStripsWindow (`src/components/MapWindows/FlightStripsWindow.jsx`)
 
 **Purpose:** Live flight progress strips organized by controller seat (RAMP, GROUND, TOWER, DEPARTURE, APPROACH, DELIVERY, APRON), with drag-to-reorder and cross-window selection sync.
 
-**Layout:** Horizontal row of columns (one per occupied seat) with a bottom bar containing a sim-time clock, refresh button, and help button. Strips are sorted by runway within each seat column, with runway separator bars.
+**Layout:** Horizontal row of columns with a bottom bar: sim clock + game speed multiplier (×1/×2 from UDP `timeScale`), refresh, help. Runway separator bars have solid black (`#000`) background. i18n: strips use hardcoded English only (seat labels, headers, runway separators never translated); help overlay has full i18n.
 
 **Data sources:**
-- `useUdpAircraftState()` — live aircraft positions + `simTimeUnixMs` from UDP telemetry
-- `electronAPI.getFlightStripData()` — registration/airport/airway/squawk data from ACL files
-- `electronAPI.onAircraftSelectedInMap()` — cross-window selection sync with ground/air radar
+- `useUdpAircraftState()` — live aircraft + `simTimeUnixMs` + `timeScale` from UDP
+- `electronAPI.getFlightStripData()` — registration/airport/airway/squawk from ACL files
+- `electronAPI.onAircraftSelectedInMap()` — cross-window selection sync (broadcast now includes strips)
 
 **Strip layout (5 sections):**
 1. **Callsign column** — bordered callsign box + aircraft type + stand label
@@ -716,24 +717,23 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 **Arrival vs Departure:** Orange left border + warm background for arrivals; blue for departures.
 
 **Selection sync:**
-- Click-to-select toggles the strip (click again to deselect)
-- Selection broadcasts through the same centralized `select-aircraft-in-map` IPC as GroundMapWindow/AirMapWindow
-- Selected strips scale up (1.20×) with a solid backdrop and glow shadow
-- Background click deselects
+- Click toggles; broadcasts via `select-aircraft-in-map` → `broadcastSelectedAircraft()` sends to ground + air + strips
+- Selected strips scale up (1.20×) with solid backdrop (`#2a1a05` arr / `#0a1a2a` dep)
+- `selectedCallSignRef` keeps stable `handleDragEnd` in sync for correct toggle/deselect IPC
 
 **Drag reorder:**
-- Long-press (400ms) on a strip enters drag mode
-- Strip collapses to a placeholder; a floating ghost clone follows the mouse
-- Drop inserts the strip at the new position, reordering within the seat column
-- Stable ordering preserved across UDP updates (new aircraft appended to existing runway groups)
-- Quick click without movement = toggle selection (no drag conflict)
+- Long-press (400ms) enters drag mode
+- Pixel-level ghost tracking via direct DOM (`ghostRef`) — no React re-render; only `hoverIdx` changes trigger `setDragState`. Drag metadata in `dragMetaRef`.
+- Source position: 46px placeholder gap; target: 46px `.strip-gap-above` margin; end: `.strip-end-gap`
+- Ghost: fully opaque solid background, `will-change: transform` GPU hint
+- `applyReorder` flattens runway groups, moves item, rebuilds; stable across UDP updates
 
 **Squawk codes:**
 - Generated server-side in `get-flight-strip-data` IPC handler
 - Deterministic: same callsign always gets the same squawk (djb2 hash + linear probe)
 - Unique across all callsigns (collision-free), range 2000–6000
 
-**Help overlay:** Same `MapHelpOverlay` component as radar windows, type `"strips"`.
+**Help overlay:** `MapHelpOverlay type="strips" title="Map Help"` — 3 sections: Buttons (Refresh, Help), Display (seat columns, runway separators, arrival/departure colors), Interaction (click to select, deselect, drag reorder). Full i18n (zh + en) for overlay content; `title` prop forces English header.
 
 **IPC handlers:** `open-flight-strips`, `close-flight-strips`, `get-flight-strip-data`.
 **Preload additions:** `openFlightStrips`, `closeFlightStrips`, `getFlightStripData`.
@@ -914,22 +914,27 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 - On `will-quit`, `stopUdpListener()` cleans up: closes socket, clears all intervals/timeouts, resets `aircraftMap`, `trailSnapshots`, etc.
 - Auto-reconnect on socket errors with 2-second delay and logging
 
+**Auto-reset mechanisms (stale-data protection):**
+- **5-second stale timeout:** If `Date.now() - lastPacketTime > 5000`, `getUdpAircraftState()` auto-clears all aircraft state before returning. This prevents stale aircraft from lingering on radar/strip views when the game crashes or disconnects.
+- **`hasLevel` transition:** When `simFlags` bit 2 transitions from 0→1 (game loads/changes level), all aircraft state is auto-cleared. The `lastHasLevel` flag is tracked per-transition — staying at 1 does not re-trigger. `resetAircraftState()` also resets `lastHasLevel` to false so the next level load triggers again.
+- **Both mechanisms** operate inside `getUdpAircraftState()` and the message handler, so the 200ms push interval automatically benefits with no renderer-side changes needed.
+
 ### Public API (`electron/udp_listener.js` exports)
 
 | Export | Returns | Description |
 |--------|---------|-------------|
 | `start()` | void | Bind socket, begin parsing packets |
 | `stop()` | void | Close socket, clear intervals, reset state |
-| `getUdpStatus()` | `{ connected, lastPacketTime, currentAirport }` | Current health status |
-| `getUdpAircraftState()` | `{ aircraft: [], currentAirport, recordCount, simTimeUnixMs }` | Latest aircraft positions + trails + sim time |
-| `resetAircraftState()` | void | Clear all aircraft state (`aircraftMap` + `trailSnapshots`) — used by map window refresh button |
+| `getUdpStatus()` | `{ connected, lastPacketTime, currentAirport, simFlags, heartbeatSeq }` | Current health status + v2 header fields |
+| `getUdpAircraftState()` | `{ aircraft: [], currentAirport, recordCount, simTimeUnixMs, simFlags, timeScale }` | Latest aircraft positions + trails + sim time + v2 header flags |
+| `resetAircraftState()` | void | Clear all aircraft state (`aircraftMap` + `trailSnapshots` + `lastHasLevel`) — used by map window refresh button |
 | `sendCommand(cmdId, payloadBuf)` | `Promise<{ success, error? }>` | Fire-and-forget command to game |
 
 ### IPC Exposure
 
-- `get-udp-status` handler → `getUdpStatus()`
-- `get-udp-aircraft-state` handler → `getUdpAircraftState()`
-- `reset-udp-aircraft` handler → `resetAircraftState()` — clears stale aircraft after game level restart
+- `get-udp-status` handler → `getUdpStatus()` — now also returns `simFlags` and `heartbeatSeq` from v2 header
+- `get-udp-aircraft-state` handler → `getUdpAircraftState()` — now also returns `simFlags` and `timeScale`; auto-clears aircraft if >5s since last packet
+- `reset-udp-aircraft` handler → `resetAircraftState()` — clears stale aircraft after game level restart; also resets `lastHasLevel` so next `hasLevel` 0→1 transition triggers again
 - `send-udp-command` handler → base64-decodes `payloadB64` → `sendCommand(commandId, buf)`
 
 ### Demo .acl File Handling (v1.0.9+)

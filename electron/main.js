@@ -99,6 +99,8 @@ function broadcastSelectedAircraft(icao, callSign) {
   if (gw && !gw.isDestroyed()) gw.webContents.send('aircraft-selected-in-map', data);
   const aw = airMapWindows.get(icao);
   if (aw && !aw.isDestroyed()) aw.webContents.send('aircraft-selected-in-map', data);
+  const fw = flightStripsWindows.get(icao);
+  if (fw && !fw.isDestroyed()) fw.webContents.send('aircraft-selected-in-map', data);
 }
 
 function openGroundMapWindow(airportIcao, gameRoot) {
@@ -109,7 +111,6 @@ function openGroundMapWindow(airportIcao, gameRoot) {
   const win = new BrowserWindow({
     width: 900, height: 800, minWidth: 500, minHeight: 500,
     title: airportIcao + ' Surface Radar',
-    parent: mainWindow,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   const rootParam = encodeURIComponent(gameRoot || '');
@@ -130,7 +131,6 @@ function openAirMapWindow(airportIcao, gameRoot) {
   const win = new BrowserWindow({
     width: 900, height: 800, minWidth: 500, minHeight: 500,
     title: airportIcao + ' Approach Radar',
-    parent: mainWindow,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   const rootParam = encodeURIComponent(gameRoot || '');

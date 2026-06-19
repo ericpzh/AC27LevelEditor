@@ -28,8 +28,8 @@ function _parseSceneryData(text) {
   // Parse Runways section — each entry is a $k (GUID) / $v (runway data) pair
   _extractDictEntries(sdText, sdT, 'Runways', 'Name', runwayNameToGuid, runwayGuidToName);
 
-  // Parse StandGroup stands section
-  _extractDictEntries(sdText, sdT, 'StandGroup', 'Identifier', standIdToGuid, standGuidToId);
+  // Parse Stands section — each entry is a $k (GUID) / $v (stand data) pair
+  _extractDictEntries(sdText, sdT, 'Stands', 'Identifier', standIdToGuid, standGuidToId);
 
   return { runwayNameToGuid, standIdToGuid, runwayGuidToName, standGuidToId };
 }

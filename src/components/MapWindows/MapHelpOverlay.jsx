@@ -12,7 +12,7 @@ const MAP_BUTTONS = {
   labels:  { labelKey: 'air_map_labels',     type: 'toggle' },
   ils:     { labelKey: 'air_map_runway_ext', type: 'toggle' },
   mapbg:   { labelKey: 'air_map_bg',         type: 'toggle' },
-  refresh: { labelKey: 'map_refresh',        type: 'action' },
+  refresh: { labelKey: 'map_refresh',        type: 'action', icon: '↻' },
   // Ground Map toggles
   parked:  { labelKey: 'ground_map_show_all',type: 'toggle' },
   taxiway: { labelKey: 'ground_map_taxiway', type: 'toggle' },
@@ -24,7 +24,7 @@ const MAP_BUTTONS = {
 };
 
 // ─── Render text with {{btn:key}} tokens → inline button visual
-function renderContent(text, t, activeButtons, onToggle) {
+function renderContent(text, t, activeButtons, onToggle, mapType) {
   const parts = text.split(/(\{\{btn:\w+\}\})/);
   return parts.map((part, i) => {
     const m = part.match(/\{\{btn:(\w+)\}\}/);
@@ -33,8 +33,15 @@ function renderContent(text, t, activeButtons, onToggle) {
       const btn = MAP_BUTTONS[key];
       if (!btn) return part;
       const label = btn.labelKey ? t(btn.labelKey) : (btn.label || key);
+      const icon = btn.icon || label;
       const isActive = activeButtons.has(key);
-      const isToggle = btn.type === 'toggle' || btn.type === 'action';
+      // Strips window uses static icon buttons matching its bottom bar; radar uses knob visuals
+      const isIcon = btn.type === 'icon' || (mapType === 'strips' && (key === 'refresh'));
+      const isToggle = !isIcon && (btn.type === 'toggle' || btn.type === 'action');
+      // Icon buttons: flat span, no wrappers
+      if (isIcon) {
+        return <span key={i} className="map-help-btn-icon-symbol">{icon}</span>;
+      }
       return (
         <span
           key={i}
@@ -100,20 +107,17 @@ const GROUND_SECTIONS = [
 // ─── Flight Strips help sections ──────────────────────────
 const STRIPS_SECTIONS = [
   {
-    id: 'buttons', headingKey: 'map_help_strips_buttons_heading',
+    id: 'interact', headingKey: null,
     bodyKeys: [
       'map_help_strips_refresh',
-      'map_help_strips_help',
+      'map_help_strips_click',
+      'map_help_strips_drag',
     ],
-  },
-  {
-    id: 'interact', headingKey: 'map_help_strips_interact_heading',
-    bodyKeys: ['map_help_strips_click'],
   },
 ];
 
 // ─── Component ──────────────────────────────────────────────
-export default function MapHelpOverlay({ type, onClose }) {
+export default function MapHelpOverlay({ type, onClose, title, titleKey }) {
   const { t } = useTranslation();
   const [activeButtons, setActiveButtons] = useState(() => new Set());
 
@@ -143,7 +147,7 @@ export default function MapHelpOverlay({ type, onClose }) {
     <div id="map-help-overlay" onClick={handleOverlayClick}>
       <div id="map-help-box" onClick={(e) => e.stopPropagation()}>
         <div id="map-help-header">
-          <h2>{t('map_help_title')}</h2>
+          <h2>{titleKey ? t(titleKey) : (title || t('map_help_title'))}</h2>
           <button onClick={onClose} title={t('tutorial_close')}>
             <IoClose size={18} />
           </button>
@@ -152,19 +156,19 @@ export default function MapHelpOverlay({ type, onClose }) {
         <div id="map-help-body">
           {sections.map((s) => (
             <section key={s.id} id={'map-help-' + s.id} className="map-help-section">
-              <h2>{t(s.headingKey)}</h2>
+              {s.headingKey && <h2>{t(s.headingKey)}</h2>}
               {s.bodyKeys && s.bodyKeys.map((bk, i) => {
                 const text = t(bk);
-                const m = text.match(/^(\{\{btn:\w+\}\})\s*[—–\-：:]\s*/);
-                if (m) {
+                const isToggleRow = type !== 'strips' && text.match(/^(\{\{btn:\w+\}\})\s*[—–\-：:]\s*/);
+                if (isToggleRow) {
                   return (
                     <div key={'p' + i} className="map-help-toggle-row">
-                      <span className="map-help-toggle-btn">{renderContent(m[1], t, activeButtons, handleToggle)}</span>
-                      <span className="map-help-toggle-desc">{text.slice(m[0].length)}</span>
+                      <span className="map-help-toggle-btn">{renderContent(isToggleRow[1], t, activeButtons, handleToggle, type)}</span>
+                      <span className="map-help-toggle-desc">{text.slice(isToggleRow[0].length)}</span>
                     </div>
                   );
                 }
-                return <p key={'p' + i}>{renderContent(text, t, activeButtons, handleToggle)}</p>;
+                return <p key={'p' + i}>{renderContent(text, t, activeButtons, handleToggle, type)}</p>;
               })}
             </section>
           ))}

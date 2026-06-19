@@ -84,6 +84,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
+- **Version:** v1.1.6
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
@@ -100,9 +101,9 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 42 IPC handlers, file I/O, map window management
-electron/preload.js  →  contextBridge: exposes ~47 methods on window.electronAPI
-electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state from game)
+electron/main.js     →  Electron main process, 43 IPC handlers, file I/O, map window management
+electron/preload.js  →  contextBridge: exposes ~54 methods on window.electronAPI
+electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state v2: simFlags, timeScale, heartbeatSeq, auto-reset)
 index.html           →  Vite HTML entry, loads src/main.jsx
 src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
 src/App.jsx          →  Root component: providers + screen routing (+ map window routing)
@@ -113,7 +114,7 @@ src/acl/             →  CommonJS backend modules (parser facade + 13 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream. Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder. Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), and cross-window selection sync. Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
@@ -160,7 +161,7 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs + push-button toggles + help button
 │   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel)
 │   │   │   ├── SimClock.jsx                # Shared sim-time clock (HH:MM:SS UTC)
-│   │   │   ├── MapHelpOverlay.jsx + .css   # Context-sensitive help overlay (air or ground map)
+│   │   │   ├── MapHelpOverlay.jsx + .css   # Context-sensitive help overlay (air/ground/strips, optional title prop)
 │   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
@@ -265,7 +266,7 @@ node tests/integration/test_taxiway.js              # Taxiway centerline parser 
 
 **UDP telemetry test (mock loopback server, port 20266 must be free):**
 ```bash
-node tests/integration/test_udp_listener.js         # Binary protocol parsing + trail buffer (13 tests)
+node tests/integration/test_udp_listener.js         # Binary protocol parsing + trail buffer + v2 header + auto-reset (19 tests)
 ```
 
 **Scan-all (need game root, override with `--root`):**

@@ -2244,7 +2244,15 @@ function buildApproachCache(airportDir, progressCallback) {
 
   if (allEntries.length === 0) {
     log('WARNING: no approach aircraft found in any file');
-    return null;
+    // Don't return null — SceneryData-derived data (starRunwayMap, runwayThresholds,
+    // taxiwayPaths, sidPaths, state5ParamsMap, etc.) is still extractable even without
+    // State=30 aircraft. Airports with zero aircraft entries (e.g., KDCA smoke test)
+    // still need map data for GroundMapWindow/AirMapWindow.
+    if (!firstAclText) {
+      log('WARNING: no ACL text available — returning null');
+      return null;
+    }
+    log('Building SceneryData-only cache (no aircraft-derived data)');
   }
 
   // ── Derive path data from SceneryData (NOT from Aircraft section) ──

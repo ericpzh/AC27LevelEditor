@@ -194,3 +194,23 @@
   line-height: 1.65;
   color: var(--text-secondary);
 }
+
+/* ─── Icon symbol (flat inline square, matches strips bottom bar) ─── */
+.map-help-btn-icon-symbol {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+
+/* Hide the label row for icon buttons — symbol is self-explanatory */
+.map-help-btn-icon .map-help-btn-knob-label {
+  display: none;
+}

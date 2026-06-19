@@ -48,12 +48,25 @@
   background: var(--bg-elevated);
 }
 
+.flight-strips-bar-left {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
 .flight-strips-clock {
   position: static !important;
   top: auto !important;
   left: auto !important;
   opacity: 0.6;
   font-size: 12px;
+}
+
+.flight-strips-timescale {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0.85;
 }
 
 /* ─── Body: scrollable both axes ─── */
@@ -117,8 +130,8 @@
   align-items: center;
   justify-content: center;
   padding: 2px 0;
-  background: var(--bg);
-  color: var(--text-muted);
+  background: #000;
+  color: #fff;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -151,6 +164,7 @@
 /* ─── Selected strip — scale up, solid backdrop, no layout shift ─── */
 .flight-strip.strip-selected {
   transform: scale(1.20);
+  will-change: transform;
   z-index: 5;
   position: relative;
   box-shadow: 0 4px 20px rgba(0,0,0,0.45);
@@ -169,23 +183,26 @@
 
 .flight-strip.strip-selected.strip-arrival {
   border-left-color: var(--orange);
+  background: #2a1a05;
 }
 .flight-strip.strip-selected.strip-arrival::before {
-  background: var(--orange-bg, rgba(255, 159, 10, 0.18));
+  background: #3d2a0a;
 }
 
 .flight-strip.strip-selected.strip-departure {
   border-left-color: var(--blue);
+  background: #0a1a2a;
 }
 .flight-strip.strip-selected.strip-departure::before {
-  background: var(--blue-bg);
+  background: #0f2a3d;
 }
 
 /* ─── Floating ghost clone follows mouse ─── */
 .flight-strip.strip-drag-ghost {
   transform: scale(1.15);
+  will-change: transform, top;
   box-shadow: 0 8px 28px rgba(0,0,0,0.5);
-  opacity: 0.95;
+  opacity: 1;
   border-radius: 4px;
   isolation: isolate;
 }
@@ -195,22 +212,28 @@
   position: absolute;
   inset: -4px;
   left: 0;
-  background: var(--bg-surface);
+  background: #1a1d27;
   border-radius: 6px;
   z-index: -1;
 }
 
+.flight-strip.strip-drag-ghost.strip-arrival {
+  background: #2a1a05;
+}
 .flight-strip.strip-drag-ghost.strip-arrival::before {
-  background: var(--orange-bg, rgba(255, 159, 10, 0.18));
+  background: #3d2a0a;
 }
 
+.flight-strip.strip-drag-ghost.strip-departure {
+  background: #0a1a2a;
+}
 .flight-strip.strip-drag-ghost.strip-departure::before {
-  background: var(--blue-bg);
+  background: #0f2a3d;
 }
 
-/* ─── Placeholder: closes original space when dragging ─── */
+/* ─── Placeholder: shows gap at original position when dragging ─── */
 .strip-drag-placeholder {
-  height: 0;
+  height: 46px;
   flex-shrink: 0;
   margin: 0;
   padding: 0;

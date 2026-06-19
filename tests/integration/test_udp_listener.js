@@ -47,15 +47,21 @@ const HEADER_SIZE = 40;
  * @param {number} simTick - simulation tick
  * @param {number} simTimeUnixMs - sim time in Unix ms
  * @param {Array<Object>} records - array of record objects
+ * @param {Object} [opts] - v2 header options
+ * @param {number} [opts.version=1] - protocol version (2 enables simFlags/seq fields)
+ * @param {number} [opts.simFlags=0] - simFlags bit field (v2 only)
+ * @param {number} [opts.timeScale=0] - game speed multiplier (v2 only)
+ * @param {number} [opts.heartbeatSeq=0] - heartbeat sequence number (v2 only)
  */
-function buildDatagram(airportIcao, simTick, simTimeUnixMs, records) {
+function buildDatagram(airportIcao, simTick, simTimeUnixMs, records, opts) {
+  const version = opts?.version ?? 1;
   const recordCount = records.length;
   const totalSize = HEADER_SIZE + recordCount * RECORD_SIZE;
   const buf = Buffer.alloc(totalSize, 0);
 
   // Header
   buf.writeUInt32LE(MAGIC, 0);           // magic
-  buf.writeUInt16LE(1, 4);               // version
+  buf.writeUInt16LE(version, 4);         // version
   buf.writeUInt16LE(HEADER_SIZE, 6);     // headerSize
   buf.writeUInt16LE(RECORD_SIZE, 8);     // recordSize
   buf.writeUInt16LE(recordCount, 10);    // recordCount
@@ -69,6 +75,13 @@ function buildDatagram(airportIcao, simTick, simTimeUnixMs, records) {
 
   // simTimeUnixMs (i64 LE)
   buf.writeBigInt64LE(BigInt(simTimeUnixMs || 0), 24);
+
+  // v2 header fields (offsets 32-35)
+  if (version >= 2) {
+    buf.writeUInt8(opts?.simFlags ?? 0, 32);
+    buf.writeUInt8(opts?.timeScale ?? 0, 33);
+    buf.writeUInt16LE(opts?.heartbeatSeq ?? 0, 34);
+  }
 
   // Records
   for (let i = 0; i < recordCount; i++) {
@@ -507,6 +520,103 @@ async function runTests() {
     assert(ctrl3, 'CTRL003 should exist');
     assertEq(ctrl3.controlSeat, 255, 'CTRL003 controlSeat should be 255 (Unknown)');
     assertEq(ctrl3.telemetryStatus, 0, 'CTRL003 telemetryStatus should be 0 (Unknown)');
+  });
+
+  // Test 15: simFlags and heartbeatSeq parsing (v2 header)
+  await test('parses simFlags and heartbeatSeq from v2 header', async () => {
+    resetAircraftState();
+    const datagram = buildDatagram('ZSJN', 100, 1718400000000, [
+      { callSign: 'V2TEST', position: { x: 0, y: 0, z: 0 } },
+    ], { version: 2, simFlags: 0x07, timeScale: 1, heartbeatSeq: 42 });
+
+    await sendDatagram(datagram);
+    await sleep(50);
+
+    const status = getUdpStatus();
+    assertEq(status.simFlags, 0x07, 'simFlags should be 0x07');
+    assertEq(status.heartbeatSeq, 42, 'heartbeatSeq should be 42');
+
+    const state = getUdpAircraftState();
+    assertEq(state.simFlags, 0x07, 'state.simFlags should be 0x07');
+  });
+
+  // Test 16: hasLevel 0→1 transition triggers auto-reset
+  await test('hasLevel 0→1 transition clears aircraft', async () => {
+    resetAircraftState();
+    // First send aircraft with hasLevel=0
+    const datagram1 = buildDatagram('ZSJN', 100, 1718400000000, [
+      { callSign: 'LVL001', position: { x: 1, y: 2, z: 3 } },
+    ], { version: 2, simFlags: 0x00, heartbeatSeq: 1 });
+    await sendDatagram(datagram1);
+    await sleep(50);
+
+    const before = getUdpAircraftState();
+    assertEq(before.aircraft.length, 1, 'aircraft should exist before hasLevel trigger');
+
+    // Now send with hasLevel=1 (bit 2 set) — should trigger reset
+    const datagram2 = buildDatagram('ZSJN', 200, 1718400001000, [
+      { callSign: 'LVL002', position: { x: 4, y: 5, z: 6 } },
+    ], { version: 2, simFlags: 0x04, heartbeatSeq: 2 });
+    await sendDatagram(datagram2);
+    await sleep(50);
+
+    const after = getUdpAircraftState();
+    // After reset + receiving the new packet, only LVL002 should remain
+    assertEq(after.aircraft.length, 1, 'should have 1 aircraft after hasLevel reset');
+    assert(after.aircraft.find(a => a.callSign === 'LVL002'), 'LVL002 should exist (from post-reset packet)');
+    assert(!after.aircraft.find(a => a.callSign === 'LVL001'), 'LVL001 should be gone (cleared by reset)');
+  });
+
+  // Test 17: hasLevel stays 1 does not re-trigger reset
+  await test('hasLevel staying 1 does not re-trigger reset', async () => {
+    resetAircraftState();
+    // Send with hasLevel=1
+    const datagram1 = buildDatagram('ZSJN', 100, 1718400000000, [
+      { callSign: 'STAY01', position: { x: 1, y: 2, z: 3 } },
+    ], { version: 2, simFlags: 0x04, heartbeatSeq: 1 });
+    await sendDatagram(datagram1);
+    await sleep(50);
+
+    // Send another with hasLevel=1 — should NOT trigger a second reset
+    const datagram2 = buildDatagram('ZSJN', 200, 1718400001000, [
+      { callSign: 'STAY02', position: { x: 4, y: 5, z: 6 } },
+    ], { version: 2, simFlags: 0x04, heartbeatSeq: 2 });
+    await sendDatagram(datagram2);
+    await sleep(50);
+
+    const state = getUdpAircraftState();
+    assertEq(state.aircraft.length, 2, 'both aircraft should exist — no spurious reset');
+  });
+
+  // Test 18: getUdpAircraftState includes simFlags
+  await test('getUdpAircraftState returns simFlags', async () => {
+    resetAircraftState();
+    const datagram = buildDatagram('ZSJN', 100, 1718400000000, [
+      { callSign: 'FLAG01', position: { x: 0, y: 0, z: 0 } },
+    ], { version: 2, simFlags: 0x05, heartbeatSeq: 99 }); // isPaused + hasLevel
+
+    await sendDatagram(datagram);
+    await sleep(50);
+
+    const state = getUdpAircraftState();
+    assertEq(state.simFlags, 0x05, 'state.simFlags should be 0x05 (isPaused=1, hasLevel=1)');
+  });
+
+  // Test 19: stale timeout detection — lastPacketTime is updated
+  await test('lastPacketTime is updated on each packet', async () => {
+    resetAircraftState();
+    const beforeSend = Date.now();
+    const datagram = buildDatagram('ZSJN', 100, 1718400000000, [
+      { callSign: 'TIME01', position: { x: 0, y: 0, z: 0 } },
+    ]);
+    await sendDatagram(datagram);
+    await sleep(50);
+
+    const status = getUdpStatus();
+    assert(status.lastPacketTime >= beforeSend, 'lastPacketTime should be >= time before send');
+    assert(status.lastPacketTime <= Date.now(), 'lastPacketTime should be <= current time');
+    // Connected should be true since we just sent a packet
+    assert(status.connected, 'should be connected after fresh packet');
   });
 
   // ── Cleanup ───────────────────────────────────────────────────
