@@ -375,9 +375,9 @@ export default function AirMapWindow({ airportIcao }) {
     );
   }
 
-  // ── Helper: route labels at start of each path, offset perp away from airport center,
-  //     with vertical spreading to avoid overlaps ──
-  function renderRouteLabels(pathsObj, color) {
+  // ── Helper: route labels at start or end of each path, offset perp away from
+  //     airport center, with vertical spreading to avoid overlaps ──
+  function renderRouteLabels(pathsObj, color, atEnd = false) {
     const labelMeta = [];
     const cx = rangeCenter.x;
     const cz = rangeCenter.z;
@@ -388,10 +388,10 @@ export default function AirMapWindow({ airportIcao }) {
       if (!v) return;
       const pts = v.points || [];
       if (pts.length < 2) return;
-      const p0 = pts[0];
-      const p1 = pts[1];
-      const dx = p1.x - p0.x;
-      const dz = p1.z - p0.z;
+      const p0 = atEnd ? pts[pts.length - 1] : pts[0];
+      const pn = atEnd ? pts[pts.length - 2] : pts[1];
+      const dx = p0.x - pn.x;
+      const dz = p0.z - pn.z;
       const segLen = Math.sqrt(dx * dx + dz * dz);
       if (segLen < 1e-9) return;
       const ux = dx / segLen;
@@ -645,9 +645,9 @@ export default function AirMapWindow({ airportIcao }) {
               {showApprPaths && renderRoutePaths(apprPaths, '#888888', 'none', 0.5)}
 
               {/* Route name labels — only for categories whose toggle is on */}
-              {showRouteLabels && showStarPaths && renderRouteLabels(trimmedStarPaths, '#888888')}
-              {showRouteLabels && showSidPaths && renderRouteLabels(sidPaths, '#888888')}
-              {showRouteLabels && showApprPaths && renderRouteLabels(apprPaths, '#888888')}
+              {showRouteLabels && showStarPaths && renderRouteLabels(trimmedStarPaths, '#888888', false)}
+              {showRouteLabels && showSidPaths && renderRouteLabels(sidPaths, '#888888', true)}
+              {showRouteLabels && showApprPaths && renderRouteLabels(apprPaths, '#888888', false)}
 
               {/* Runway extension lines + ticks */}
               {runwayExtElements}

@@ -108,5 +108,12 @@ Object.defineProperty(window, 'matchMedia', {
 // Mock scrollIntoView (jsdom does not implement it)
 Element.prototype.scrollIntoView = vi.fn();
 
+// Mock ResizeObserver (jsdom does not implement it)
+global.ResizeObserver = vi.fn(function ResizeObserver(cb) {
+  this.observe = vi.fn();
+  this.unobserve = vi.fn();
+  this.disconnect = vi.fn();
+});
+
 // Export for use in test files
 export { mockIpcInvoke, mockIpcOn, mockIpcListeners };

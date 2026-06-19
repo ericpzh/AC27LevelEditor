@@ -657,7 +657,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 1. Background map image (toggleable): `/{ICAO}_STAR.png` positioned via `bgCfg`, opacity 20%. Background color via CSS custom property `--air-map-bg`. Witch mode (see below) uses `witch/{ICAO}_STAR.png` at full opacity with independent `WITCH_MAP_BG_OFFSETS` positioning.
 2. Range rings (airspace knob, 12 levels from 10–120 NM gap): centered on geometric mean of all runway thresholds, radius labels when route labels enabled.
 3. SID / STAR / APPR routes — each independently toggleable, grey (`#888888`) at 50% opacity. STAR paths are trimmed at APPR overlap points so each category shows its unique portion.
-4. Route name labels (toggleable + per-category): positioned at path starts with vertical spreading to avoid overlaps.
+4. Route name labels (toggleable + per-category): positioned with vertical spreading to avoid overlaps. STAR/APPR labels at path **start** (arrival entry points); SID labels at path **end** (departure fixes) to keep them clustered near the map edges rather than fanning out from the runway.
 5. Runway extension lines (toggleable): 1–20 NM dashed white lines from each threshold with tick marks at 5/10/15/20 NM.
 6. Runway thresholds — runway-width lines connecting threshold pairs.
 7. Border overlay — independent SVG with white border rect and 10° tick marks with degree labels. Tick/label sizes scale inversely to container width via `ResizeObserver` (baseline 800px) so they stay fixed in pixels when the window resizes.

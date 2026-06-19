@@ -257,6 +257,7 @@ export const WITCH_MAP_BG_OFFSETS = {
 export const GROUND_MAP_DEFAULT_ZOOM = {
   ZSJN: 0.75,
   KJFK: 1.0,
+  KDCA: 0.5,
 };
 // Per-airport center offset in game units: { x, z } shift from (0, 0)
 export const GROUND_MAP_CENTER_OFFSET = {
