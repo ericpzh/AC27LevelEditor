@@ -200,11 +200,19 @@
 /* ─── Floating ghost clone follows mouse ─── */
 .flight-strip.strip-drag-ghost {
   transform: scale(1.15);
-  will-change: transform, top;
+  will-change: transform, top, left;
   box-shadow: 0 8px 28px rgba(0,0,0,0.5);
   opacity: 1;
   border-radius: 4px;
   isolation: isolate;
+}
+
+/* ─── Ghost drop animation (class added by useEffect) ─── */
+.flight-strip.strip-drag-ghost.strip-dropping {
+  transform: scale(1.0);
+  opacity: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  transition: top 0.22s ease-out, left 0.22s ease-out, transform 0.22s ease-out, opacity 0.18s ease-in, box-shadow 0.22s ease-out;
 }
 
 .flight-strip.strip-drag-ghost::before {
@@ -245,6 +253,12 @@
   height: 46px;
   flex-shrink: 0;
   transition: height 0.2s ease;
+}
+
+/* ─── Gap above a runway separator (insert at end of previous group) ─── */
+.flight-strip-runway-sep.strip-sep-gap {
+  margin-top: 46px;
+  transition: margin-top 0.2s ease;
 }
 
 /* ─── Gap above a strip (animated margin, smooth flex shift) ─── */
@@ -375,14 +389,16 @@
   font-weight: 600;
 }
 
-/* ─── Section 4: Taxi route column (fills remaining space, top-aligned) ─── */
+/* ─── Section 4: Taxi route column (fills remaining space, stacked history) ─── */
 .strip-col-route {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  justify-content: flex-start;
   flex: 1 1 0;
   min-width: 40px;
   overflow: hidden;
   padding-top: 2px;
+  gap: 1px;
 }
 
 .strip-taxi-route {
@@ -391,6 +407,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+/* Struck-through route history lines */
+.strip-route-struck {
+  text-decoration: line-through;
+  opacity: 0.45;
 }
 
 /* ─── Section 5: Runway + channel box (runway left of box, box full height) ─── */
@@ -426,4 +449,27 @@
   text-transform: uppercase;
   letter-spacing: 0.3px;
   line-height: 1.1;
+}
+
+/* ─── Telemetry: ActionRequired (status 2) — muted border mixed 50% with black ─── */
+.flight-strip.strip-arrival.strip-telemetry-action-required {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orange) 50%, #000);
+}
+.flight-strip.strip-departure.strip-telemetry-action-required {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 50%, #000);
+}
+
+/* Combined with selected state */
+.flight-strip.strip-selected.strip-arrival.strip-telemetry-action-required {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.45), inset 0 0 0 1px color-mix(in srgb, var(--orange) 50%, #000);
+}
+.flight-strip.strip-selected.strip-departure.strip-telemetry-action-required {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.45), inset 0 0 0 1px color-mix(in srgb, var(--blue) 50%, #000);
+}
+
+/* ─── Telemetry: HandoffPending (3) & PendingAtStand (4) — channel box highlight ─── */
+.flight-strip.strip-telemetry-handoff-pending .channel-box,
+.flight-strip.strip-telemetry-pending-stand .channel-box {
+  border-color: var(--accent);
+  background: var(--accent-dim);
 }

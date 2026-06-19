@@ -32,6 +32,7 @@ describe('useUdpAircraftState', () => {
       simTimeUnixMs: 0,
       simFlags: 0,
       timeScale: 0,
+      udpAirportChanged: false,
     });
   });
 
@@ -120,6 +121,7 @@ describe('useUdpAircraftState', () => {
       simTimeUnixMs: 0,
       simFlags: 0,
       timeScale: 0,
+      udpAirportChanged: false,
     });
   });
 });

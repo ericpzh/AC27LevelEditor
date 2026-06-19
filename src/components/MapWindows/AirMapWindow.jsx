@@ -75,7 +75,7 @@ export default function AirMapWindow({ airportIcao }) {
   const airMapRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
-  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs } = useUdpAircraftState();
+  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, udpAirportChanged } = useUdpAircraftState();
 
   // ── Sync selected aircraft across ground + air map windows ──
   useEffect(() => {
@@ -103,6 +103,13 @@ export default function AirMapWindow({ airportIcao }) {
   useEffect(() => {
     document.title = airportIcao ? airportIcao + ' Approach Radar' : 'Approach Radar';
   }, [airportIcao]);
+
+  // Auto-reset when UDP airport transitions to match this window
+  useEffect(() => {
+    if (udpAirportChanged && udpAirport === airportIcao) {
+      if (electronAPI && electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft();
+    }
+  }, [udpAirportChanged, udpAirport, airportIcao, electronAPI]);
 
   // ── Dynamic background via CSS custom property (avoids inline style) ──
   const bgCfg = AIR_MAP_BG_OFFSETS[airportIcao] || { dx: 0, dy: 0 };

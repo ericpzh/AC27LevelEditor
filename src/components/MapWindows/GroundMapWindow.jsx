@@ -71,7 +71,7 @@ export default function GroundMapWindow({ airportIcao }) {
   const witchTimerRef = useRef(null);
   const labelTimerRef = useRef(null);
 
-  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs } = useUdpAircraftState();
+  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, udpAirportChanged } = useUdpAircraftState();
 
   // ── Sync selected aircraft across ground + air map windows ──
   useEffect(() => {
@@ -132,6 +132,13 @@ export default function GroundMapWindow({ airportIcao }) {
   useEffect(() => {
     document.title = airportIcao ? airportIcao + ' Surface Radar' : 'Surface Radar';
   }, [airportIcao]);
+
+  // Auto-reset when UDP airport transitions to match this window
+  useEffect(() => {
+    if (udpAirportChanged && udpAirport === airportIcao) {
+      if (electronAPI && electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft();
+    }
+  }, [udpAirportChanged, udpAirport, airportIcao, electronAPI]);
 
   // ── Fetch static data from ACL cache ──────────────────────
   useEffect(() => {

@@ -13,6 +13,7 @@ const dgram = require('dgram');
 let socket = null;
 let lastPacketTime = 0;
 let currentAirport = null;
+let lastAirport = null;           // previous packet's airport — detect transitions
 const aircraftMap = new Map();   // callsign → latest telemetry record
 const trailSnapshots = new Map(); // callsign → [{x, z, simTick}, ...] ring buffer, max 5
 
@@ -138,6 +139,14 @@ function bindSocket() {
 
     if (result.icao) currentAirport = result.icao;
 
+    // Airport code changed → game switched airports → reset stale aircraft
+    if (result.icao && lastAirport && result.icao !== lastAirport) {
+      aircraftMap.clear();
+      trailSnapshots.clear();
+      console.log('[UDP] Airport transition ' + lastAirport + ' → ' + result.icao + ' — aircraft state auto-reset');
+    }
+    if (result.icao) lastAirport = result.icao;
+
     // Read simTimeUnixMs from header (offset 24, i64 little-endian)
     if (buf.length >= 32) {
       const simTimeUnixMs = Number(buf.readBigInt64LE(24));
@@ -239,6 +248,7 @@ function stop() {
   aircraftMap.clear();
   trailSnapshots.clear();
   currentAirport = null;
+  lastAirport = null;
   lastPacketTime = 0;
   lastSimTimeUnixMs = 0;
   lastSimFlags = 0;
@@ -258,6 +268,7 @@ function getUdpStatus() {
     connected,
     lastPacketTime,
     currentAirport,
+    lastAirport,
     simFlags: lastSimFlags,
     heartbeatSeq: lastHeartbeatSeq,
   };
