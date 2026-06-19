@@ -9,6 +9,7 @@ import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { RE_HIDDEN, DEMO_VISIBLE_BASES, demoBaseName } from '../../utils/constants';
 import CacheProgressBody from '../common/CacheProgressBody';
+import AirportCardMap from './AirportCardMap';
 
 function rescanGuideContent(t) {
   return (
@@ -52,6 +53,7 @@ export default function BrowserScreen() {
   const setFlightStripOpen = useAppStore(s => s.setFlightStripOpen);
 
   const [fileInfos, setFileInfos] = useState({});
+  const [geomCache, setGeomCache] = useState({}); // { [icao]: { areaData, taxiwayPaths, runwayData } | null }
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [appVersion, setAppVersion] = useState('');
@@ -116,6 +118,7 @@ export default function BrowserScreen() {
       setLoading(true);
       const sorted = [...airports].sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao));
       const allInfos = {};
+      const allGeom = {};
       for (const airport of sorted) {
         const infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
         if (isDemo) {
@@ -143,8 +146,20 @@ export default function BrowserScreen() {
             (a.startTime || '99:99').localeCompare(b.startTime || '99:99')
           );
         }
+
+        // Fetch ground radar geometry for this airport's card background
+        try {
+          const vals = await electronAPI.collectValues(rootPath, airport.icao);
+          allGeom[airport.icao] = vals ? {
+            areaData: vals._areaData || {},
+            taxiwayPaths: vals._taxiwayPaths?.paths || [],
+            runwayData: vals._runwayData || {},
+          } : null;
+        } catch (_) {
+          allGeom[airport.icao] = null;
+        }
       }
-      if (!cancelled) { setFileInfos(allInfos); setLoading(false); }
+      if (!cancelled) { setFileInfos(allInfos); setGeomCache(allGeom); setLoading(false); }
     })();
     return () => { cancelled = true; };
   }, [airports, rootPath, refreshKey, isDemo]);
@@ -271,7 +286,20 @@ export default function BrowserScreen() {
         ) : (
           allAirportsWithFiles.map(airport => (
             <div key={airport.icao} className="airport-card">
-              <div className="airport-card-bg" style={{ backgroundImage: `url(./${airport.icao}.png)` }} />
+              {(() => {
+                const geom = geomCache[airport.icao];
+                const nRows = (fileInfos[airport.icao] || []).length;
+                return geom ? (
+                  <AirportCardMap
+                    areaData={geom.areaData}
+                    taxiwayPaths={geom.taxiwayPaths}
+                    runwayData={geom.runwayData}
+                    numRows={nRows}
+                  />
+                ) : (
+                  <AirportCardMap numRows={nRows} />
+                );
+              })()}
               <div className="airport-card-header">
                 <span className="airport-icao">{airportDisplayName(airport.icao, t)}</span>
                 <div className="airport-card-actions">

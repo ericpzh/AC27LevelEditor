@@ -200,7 +200,6 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │       ├── i18n.js              # Chinese/English translation system
 │       ├── validators.js        # Save validation logic
 │       ├── htmlUtils.js         # escapeHtml, stripSuffixes
-│       ├── mapGeoRef.js         # _Map.png geo-reference per airport (Unity coords)
 │       ├── csvIo.js             # CSV export
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)

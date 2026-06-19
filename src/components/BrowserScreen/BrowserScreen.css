@@ -82,22 +82,6 @@
   transition: border-color var(--transition);
 }
 
-.airport-card .airport-card-bg {
-  position: absolute;
-  inset: 0;
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  opacity: 0;
-  z-index: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
-
-.airport-card:hover .airport-card-bg {
-  opacity: 0.1;
-}
-
 .airport-card:hover { border-color: var(--accent); }
 
 /* Ensure card content stays above the background */

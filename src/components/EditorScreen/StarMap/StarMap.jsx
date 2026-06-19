@@ -571,7 +571,7 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
           <>
             <svg className="star-map-svg" viewBox={viewBox} width={svgW} height={svgH}>
               <rect className="star-map-bg" x={vbX} y={vbY} width={vbW} height={vbH} />
-              {/* Map image background (from _Map.png positioned via MAP_GEO_REF) */}
+              {/* Map image background */}
               {bgImageLayout && (
                 <>
                   <rect
@@ -580,7 +580,7 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
                     fill={(AIR_MAP_BG_OFFSETS[airportIcao] || {}).bgUnder || '#000000'}
                   />
                   <image
-                    href={`${airportIcao}_STAR.png`}
+                    href={`${airportIcao}.png`}
                     x={bgImageLayout.x} y={bgImageLayout.y}
                     width={bgImageLayout.w} height={bgImageLayout.h}
                     preserveAspectRatio="xMidYMid slice"

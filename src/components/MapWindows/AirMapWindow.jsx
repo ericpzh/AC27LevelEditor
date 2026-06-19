@@ -624,7 +624,7 @@ export default function AirMapWindow({ airportIcao }) {
               {/* Map image — witch mode uses witch/ folder variant with own offsets */}
               {(showBgImage || witchMode) && (
               <image
-                href={witchMode ? `witch/${airportIcao}_STAR.png` : `${airportIcao}_STAR.png`}
+                href={witchMode ? `witch/${airportIcao}.png` : `${airportIcao}.png`}
                 x={dataBounds.x + (witchMode ? witchBgCfg.dx : bgCfg.dx)}
                 y={imgY + (witchMode ? witchBgCfg.dy : bgCfg.dy)}
                 width={witchMode && witchBgCfg.w ? witchBgCfg.w : imgW}
