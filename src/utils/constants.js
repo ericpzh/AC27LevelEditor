@@ -10,7 +10,7 @@ export const TICKS_PER_SECOND_NUM = 10000000;
 export const TICKS_PER_DAY_NUM = 864000000000;
 
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
-export const CACHE_VERSION = 11;
+export const CACHE_VERSION = 12;
 
 // ─── Nautical mile → game units (1852 m ÷ 100 m/unit) ──────
 export const NM_TO_GU = 18.52;

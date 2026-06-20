@@ -13,6 +13,9 @@ const MAP_BUTTONS = {
   ils:     { labelKey: 'air_map_runway_ext', type: 'toggle' },
   mapbg:   { labelKey: 'air_map_bg',         type: 'toggle' },
   refresh: { labelKey: 'map_refresh',        type: 'action', icon: '↻' },
+  runways:{ labelKey: 'air_map_runways',     type: 'toggle' },
+  // Per-runway dynamic buttons are generated from runwayList prop — each
+  // gets a synthetic key like "rwy04L" with label "RWY04L" and type 'toggle'.
   // Ground Map toggles
   parked:  { labelKey: 'ground_map_show_all',type: 'toggle' },
   taxiway: { labelKey: 'ground_map_taxiway', type: 'toggle' },
@@ -117,7 +120,7 @@ const STRIPS_SECTIONS = [
 ];
 
 // ─── Component ──────────────────────────────────────────────
-export default function MapHelpOverlay({ type, onClose, title, titleKey }) {
+export default function MapHelpOverlay({ type, onClose, title, titleKey, runwayList }) {
   const { t } = useTranslation();
   const [activeButtons, setActiveButtons] = useState(() => new Set());
 
@@ -169,6 +172,26 @@ export default function MapHelpOverlay({ type, onClose, title, titleKey }) {
                   );
                 }
                 return <p key={'p' + i}>{renderContent(text, t, activeButtons, handleToggle, type)}</p>;
+              })}
+              {/* Per-runway dynamic entries — one toggle row per runway direction */}
+              {s.id === 'toggles' && type === 'air' && runwayList && runwayList.map(rwy => {
+                const rwyKey = 'rwy' + rwy.toLowerCase();
+                const isActive = activeButtons.has(rwyKey);
+                return (
+                  <div key={'rwy-' + rwy} className="map-help-toggle-row">
+                    <span className="map-help-toggle-btn">
+                      <span
+                        className={'map-help-btn-inline' + (isActive ? ' active' : '')}
+                        onClick={(e) => { e.stopPropagation(); handleToggle(rwyKey); }}
+                        title="Click to toggle"
+                      >
+                        <span className="map-help-btn-knob-visual" />
+                        <span className="map-help-btn-knob-label">RWY{rwy}</span>
+                      </span>
+                    </span>
+                    <span className="map-help-toggle-desc">{t('map_help_air_rwy_desc').replace('{rwy}', rwy)}</span>
+                  </div>
+                );
               })}
             </section>
           ))}

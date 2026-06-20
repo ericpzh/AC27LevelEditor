@@ -2592,6 +2592,8 @@ function serializeApproachCache(cache) {
   if (cache.runwayMissedAppMap) { out.runwayMissedAppMap = cache.runwayMissedAppMap; }
   if (cache.missedAppPaths) { out.missedAppPaths = cache.missedAppPaths; }
   if (cache.apprPaths) { out.apprPaths = cache.apprPaths; }
+  if (cache.apprRunwayMap) { out.apprRunwayMap = cache.apprRunwayMap; }
+  if (cache.runwayApprMap) { out.runwayApprMap = cache.runwayApprMap; }
   return out;
 }
 
@@ -2623,6 +2625,8 @@ function deserializeApproachCache(json) {
   if (json.runwayMissedAppMap && typeof json.runwayMissedAppMap === 'object') { cache.runwayMissedAppMap = json.runwayMissedAppMap; }
   if (json.missedAppPaths && typeof json.missedAppPaths === 'object') { cache.missedAppPaths = json.missedAppPaths; }
   if (json.apprPaths && typeof json.apprPaths === 'object') { cache.apprPaths = json.apprPaths; }
+  if (json.apprRunwayMap && typeof json.apprRunwayMap === 'object') { cache.apprRunwayMap = json.apprRunwayMap; }
+  if (json.runwayApprMap && typeof json.runwayApprMap === 'object') { cache.runwayApprMap = json.runwayApprMap; }
   return cache;
 }
 

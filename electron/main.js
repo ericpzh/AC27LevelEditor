@@ -370,9 +370,32 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   aclValues._missedAppPaths = cached?.approachData?.missedAppPaths || {};
   aclValues._sidRunwayMap = cached?.approachData?.sidRunwayMap || {};
   aclValues._runwaySidMap = cached?.approachData?.runwaySidMap || {};
+  aclValues._missedAppMap = cached?.approachData?.missedAppMap || {};
+  aclValues._runwayMissedAppMap = cached?.approachData?.runwayMissedAppMap || {};
 
   // Include APPR (RNAV approach) paths for AirMap category toggle
   aclValues._apprPaths = cached?.approachData?.apprPaths || {};
+  aclValues._apprRunwayMap = cached?.approachData?.apprRunwayMap || {};
+  aclValues._runwayApprMap = cached?.approachData?.runwayApprMap || {};
+
+  // Build runway designator list for the air radar runway filter sidebar.
+  // Only include runways that have actual path data: for each procedure with
+  // resolved path geometry, look up which runways it maps to via the forward
+  // maps (procedure→[runways]). Runways with no resolved paths are hidden
+  // since toggling them would have no visual effect.
+  const runwaysWithData = new Set();
+  const collectFromPaths = (pathsObj, forwardMap) => {
+    if (!pathsObj || !forwardMap) return;
+    for (const procName of Object.keys(pathsObj)) {
+      const rwys = forwardMap[procName];
+      if (rwys) rwys.forEach(r => { if (r) runwaysWithData.add(r); });
+    }
+  };
+  collectFromPaths(aclValues._starPaths, aclValues._starRunwayMap);
+  collectFromPaths(aclValues._sidPaths, aclValues._sidRunwayMap);
+  collectFromPaths(aclValues._apprPaths, aclValues._apprRunwayMap);
+  collectFromPaths(aclValues._missedAppPaths, aclValues._missedAppMap);
+  aclValues._runwayList = Array.from(runwaysWithData).sort();
 
   return aclValues;
 });

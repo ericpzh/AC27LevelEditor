@@ -135,7 +135,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 **Rendering layers (bottom to top):**
 1. Background map image (toggleable): `/{ICAO}.png` positioned via `bgCfg`, opacity 20%. Background color via CSS custom property `--air-map-bg`. Witch mode (see below) uses `witch/{ICAO}.png` at full opacity with independent `WITCH_MAP_BG_OFFSETS` positioning.
 2. Range rings (airspace knob, 12 levels from 10–120 NM gap): centered on geometric mean of all runway thresholds, radius labels when route labels enabled.
-3. SID / STAR / APPR routes — each independently toggleable, grey (`#888888`) at 50% opacity. STAR paths are trimmed at APPR overlap points so each category shows its unique portion.
+3. SID / STAR / APPR routes — each independently toggleable, grey (`#888888`) at 50% opacity. Additionally filtered by the active runway set from the left `RunwaySidebar`: only paths whose procedure-runway mapping includes at least one active runway are rendered. STAR paths are trimmed at APPR overlap points so each category shows its unique portion.
 4. Route name labels (toggleable + per-category): positioned with vertical spreading to avoid overlaps. STAR/APPR labels at path **start** (arrival entry points); SID labels at path **end** (departure fixes) to keep them clustered near the map edges rather than fanning out from the runway.
 5. Runway extension lines (toggleable): 1–20 NM dashed white lines from each threshold with tick marks at 5/10/15/20 NM.
 6. Runway thresholds — runway-width lines connecting threshold pairs.
@@ -156,6 +156,8 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 **Airport transition auto-reset (v1.1.6):** When `udpAirportChanged` is true and the new airport matches this window's ICAO, calls `electronAPI.resetUdpAircraft()` to clear stale aircraft from the previous airport.
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `AIR_MAP_DEFAULT_ZOOM`, pan clamped to initial bounds. Spin knobs show gauge positions derived from current zoom/pan relative to initial viewBox.
+
+**RunwaySidebar:** Vertical bar on left (60px black) with one RWY-prefixed toggle per runway, stacked from bottom. Reuses .air-map-toggle classes for witch mode sprites. Only runways with resolved path data appear. Each runway gets a dynamic entry in the help overlay.
 
 **Click-to-select:** Same centralized `electronAPI.selectAircraftInMap(airportIcao, callSign)` pattern as GroundMapWindow. Selection syncs across both map windows for the same airport.
 
@@ -303,6 +305,9 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 | `map_refresh` | Refresh | Refresh |
 | `knob_zoom` | Range | Range |
 | `knob_pan_h` | E-W | E-W |
+| `air_map_runways` | Runway | Runway |
+| `map_help_air_runways` | (generic help) | (generic help) |
+| `map_help_air_rwy_desc` | 显示/隐藏RWY{rwy}的STAR/SID/进近程序路径 | Show/hide STAR/SID/APPR paths for RWY{rwy} |
 | `knob_pan_v` | S-N | S-N |
 | `map_help_title` | 功能指南 | Map Help |
 | `map_help_air_knobs_heading` | 旋钮 | Knobs |

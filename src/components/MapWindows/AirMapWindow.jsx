@@ -4,6 +4,7 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
 import useSvgZoom from './useSvgZoom';
 import useUdpAircraftState from './useUdpAircraftState';
 import ControlSidebar from './ControlSidebar';
+import RunwaySidebar from './RunwaySidebar';
 import SpinKnob from './SpinKnob';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
@@ -66,6 +67,12 @@ export default function AirMapWindow({ airportIcao }) {
   const [showSidPaths, setShowSidPaths] = useState(false);
   const [showApprPaths, setShowApprPaths] = useState(false);
   const [apprPaths, setApprPaths] = useState({});
+  const [activeRunways, setActiveRunways] = useState(null); // null = uninitialized (show all), Set = active designators
+  const [starRunwayMap, setStarRunwayMap] = useState({});
+  const [sidRunwayMap, setSidRunwayMap] = useState({});
+  const [apprRunwayMap, setApprRunwayMap] = useState({});
+  const [missedAppMap, setMissedAppMap] = useState({});
+  const [runwayList, setRunwayList] = useState([]);
   const [emergencyCallSign, setEmergencyCallSign] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [witchMode, setWitchMode] = useState(false);
@@ -171,6 +178,15 @@ export default function AirMapWindow({ airportIcao }) {
         setMissedAppPaths(vals?._missedAppPaths || {});
         setApprPaths(vals?._apprPaths || {});
         setRunwayThresholds(vals?._runwayThresholds || {});
+        // Runway filter data
+        const rwyList = vals?._runwayList || [];
+        setRunwayList(rwyList);
+        setStarRunwayMap(vals?._starRunwayMap || {});
+        setSidRunwayMap(vals?._sidRunwayMap || {});
+        setApprRunwayMap(vals?._apprRunwayMap || {});
+        setMissedAppMap(vals?._missedAppMap || {});
+        // Initialize all runways as active by default
+        setActiveRunways(new Set(rwyList));
       } catch (e) {
         setError(e.message);
       } finally {
@@ -221,6 +237,16 @@ export default function AirMapWindow({ airportIcao }) {
   const handleResetZoom = useCallback(() => resetZoom(), [resetZoom]);
   const handleResetPanH = useCallback(() => resetPanH(), [resetPanH]);
   const handleResetPanV = useCallback(() => resetPanV(), [resetPanV]);
+
+  // ── Runway filter toggle ───────────────────────────────────
+  const handleRunwayToggle = useCallback((rwy) => {
+    setActiveRunways(prev => {
+      if (!prev) return prev;
+      const next = new Set(prev);
+      if (next.has(rwy)) next.delete(rwy); else next.add(rwy);
+      return next;
+    });
+  }, []);
 
   // ── Knob gauge positions ──────────────────────────────────
   const knobPositions = useMemo(() => {
@@ -355,6 +381,32 @@ export default function AirMapWindow({ airportIcao }) {
     }
     return trimmed;
   }, [starPaths, apprPaths]);
+
+  // ── Filter paths by active runways ─────────────────────────
+  // Returns a filtered copy of pathsObj containing only entries whose name
+  // is associated with at least one active runway (or all if no runway map).
+  // When activeRunways is null (uninitialized), returns pathsObj unfiltered.
+  const filterByRunway = useCallback((pathsObj, runwayMap) => {
+    if (!activeRunways || !pathsObj) return pathsObj;
+    if (!runwayMap || !Object.keys(runwayMap).length) return pathsObj;
+    const filtered = {};
+    for (const [name, variants] of Object.entries(pathsObj)) {
+      const rwys = runwayMap[name];
+      if (!rwys || rwys.some(r => activeRunways.has(r))) {
+        filtered[name] = variants;
+      }
+    }
+    return filtered;
+  }, [activeRunways]);
+
+  const filteredStarPaths = useMemo(() => filterByRunway(trimmedStarPaths, starRunwayMap),
+    [trimmedStarPaths, starRunwayMap, filterByRunway]);
+  const filteredSidPaths = useMemo(() => filterByRunway(sidPaths, sidRunwayMap),
+    [sidPaths, sidRunwayMap, filterByRunway]);
+  const filteredMissedAppPaths = useMemo(() => filterByRunway(missedAppPaths, missedAppMap),
+    [missedAppPaths, missedAppMap, filterByRunway]);
+  const filteredApprPaths = useMemo(() => filterByRunway(apprPaths, apprRunwayMap),
+    [apprPaths, apprRunwayMap, filterByRunway]);
 
   function renderRoutePaths(pathsObj, color, dashArray, opacity = 0.7) {
     return Object.entries(pathsObj || {}).map(([name, variants]) =>
@@ -601,6 +653,12 @@ export default function AirMapWindow({ airportIcao }) {
       {error && <div className="air-map-error">{error}</div>}
       {!loading && !error && (
         <>
+          {/* Runway filter sidebar — left side, only on air radar */}
+          <RunwaySidebar
+            runways={runwayList}
+            activeRunways={activeRunways}
+            onToggle={handleRunwayToggle}
+          />
           {/* Sim time clock in top-left corner */}
           <SimClock simTimeUnixMs={simTimeUnixMs} />
           <div className="air-map-svg-container" onWheel={handleWheel}>
@@ -638,16 +696,16 @@ export default function AirMapWindow({ airportIcao }) {
               {/* Range rings (behind routes) */}
               {rangeRingElements}
 
-              {/* SID / STAR / APPR routes — each toggleable */}
-              {showSidPaths && renderRoutePaths(sidPaths, '#888888', 'none', 0.5)}
-              {showSidPaths && renderRoutePaths(missedAppPaths, '#888888', 'none', 0.5)}
-              {showStarPaths && renderRoutePaths(trimmedStarPaths, '#888888', 'none', 0.5)}
-              {showApprPaths && renderRoutePaths(apprPaths, '#888888', 'none', 0.5)}
+              {/* SID / STAR / APPR routes — toggleable + filtered by active runways */}
+              {showSidPaths && renderRoutePaths(filteredSidPaths, '#888888', 'none', 0.5)}
+              {showSidPaths && renderRoutePaths(filteredMissedAppPaths, '#888888', 'none', 0.5)}
+              {showStarPaths && renderRoutePaths(filteredStarPaths, '#888888', 'none', 0.5)}
+              {showApprPaths && renderRoutePaths(filteredApprPaths, '#888888', 'none', 0.5)}
 
               {/* Route name labels — only for categories whose toggle is on */}
-              {showRouteLabels && showStarPaths && renderRouteLabels(trimmedStarPaths, '#888888', false)}
-              {showRouteLabels && showSidPaths && renderRouteLabels(sidPaths, '#888888', true)}
-              {showRouteLabels && showApprPaths && renderRouteLabels(apprPaths, '#888888', false)}
+              {showRouteLabels && showStarPaths && renderRouteLabels(filteredStarPaths, '#888888', false)}
+              {showRouteLabels && showSidPaths && renderRouteLabels(filteredSidPaths, '#888888', true)}
+              {showRouteLabels && showApprPaths && renderRouteLabels(filteredApprPaths, '#888888', false)}
 
               {/* Runway extension lines + ticks */}
               {runwayExtElements}
@@ -885,7 +943,7 @@ export default function AirMapWindow({ airportIcao }) {
           </ControlSidebar>
         </>
       )}
-      {helpOpen && <MapHelpOverlay type="air" onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <MapHelpOverlay type="air" onClose={() => setHelpOpen(false)} runwayList={runwayList} />}
     </div>
   );
 }
