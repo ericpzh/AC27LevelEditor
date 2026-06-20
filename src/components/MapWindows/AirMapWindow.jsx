@@ -63,6 +63,8 @@ export default function AirMapWindow({ airportIcao }) {
   const [rangeRingLevel, setRangeRingLevel] = useState(3); // 0=gap10, ..., 3=gap40 (default)
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [showRouteLabels, setShowRouteLabels] = useState(false);
+  const [showArrLabels, setShowArrLabels] = useState(false);
+  const [showDepLabels, setShowDepLabels] = useState(false);
   const [showStarPaths, setShowStarPaths] = useState(true);
   const [showSidPaths, setShowSidPaths] = useState(false);
   const [showApprPaths, setShowApprPaths] = useState(false);
@@ -658,6 +660,10 @@ export default function AirMapWindow({ airportIcao }) {
             runways={runwayList}
             activeRunways={activeRunways}
             onToggle={handleRunwayToggle}
+            showArrLabels={showArrLabels}
+            showDepLabels={showDepLabels}
+            onToggleArrLabels={() => setShowArrLabels(v => !v)}
+            onToggleDepLabels={() => setShowDepLabels(v => !v)}
           />
           {/* Sim time clock in top-left corner */}
           <SimClock simTimeUnixMs={simTimeUnixMs} />
@@ -735,6 +741,8 @@ export default function AirMapWindow({ airportIcao }) {
                     : conn.x + fontSize * 0.3
                   : 0;
                 const refY = conn ? conn.y + dir.refYOff : 0;
+                const labelFull = (ac.flightDirection === 1 && showArrLabels) ||
+                                  (ac.flightDirection === 0 && showDepLabels);
                 return (
                   <g key={'ac-' + ac.callSign} className="air-map-aircraft-group"
                     onClick={(e) => handleAircraftClick(e, ac.callSign)}>
@@ -811,7 +819,7 @@ export default function AirMapWindow({ airportIcao }) {
                         className="air-map-heading-line"
                       />
                     )}
-                    {/* Label at current position — full for Tower, altitude-only for Dep/App */}
+                    {/* Label at current position — full for Tower or when ARR/DEP toggle active, altitude-only otherwise */}
                     {!witchMode && conn && (() => {
                       const isSel = ac.callSign === selectedCallSign;
                       const callLabelColor = isSel ? '#ffff00' : labelColor;
@@ -826,7 +834,7 @@ export default function AirMapWindow({ airportIcao }) {
                         fontSize={fontSize}
                         fill={callLabelColor}
                       >
-                        {isTower || isSel ? (
+                        {isTower || isSel || labelFull ? (
                           <>
                             {emergencyCallSign === ac.callSign && (
                               <tspan x={refX} dy="-2.4em" className="air-map-em-label">EM</tspan>

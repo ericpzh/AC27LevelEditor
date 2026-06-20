@@ -145,7 +145,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
    - **Circle:** Small colored circle at aircraft position (unselected) or yellow (selected)
    - **Trail dots:** Ring buffer of historical positions (max 5 snapshots, minimum 600-tick gap), rendered as shrinking circles with decreasing opacity
    - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale
-   - **Label:** Callsign + speed/type (toggles every 5 seconds between airspeed/10 and aircraft type), dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show an "EM" label above the callsign in red.
+   - **Label:** By default, Tower aircraft and selected aircraft show full label (callsign + altitude + speed/type); other aircraft show altitude only. The ARR/DEP toggles on the left RunwaySidebar override this — when active, all aircraft of that direction show the full label. Speed/type toggles every 5 seconds between airspeed/10 and aircraft type. Dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show an "EM" label above the callsign in red.
    - **A/D indicator:** "A" or "D" text next to the current position dot
    - **Witch mode (v1.1.5):** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame fly sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (centralized in main process via `spriteIdx`, see GroundMapWindow witch mode docs), stable per callsign. Direction-aware via `witchDirection()` (dominant axis of nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden. Map background switches to `witch/{ICAO}.png` at full opacity with `WITCH_MAP_BG_OFFSETS`, background color `#160900`. Sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
 
@@ -157,7 +157,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `AIR_MAP_DEFAULT_ZOOM`, pan clamped to initial bounds. Spin knobs show gauge positions derived from current zoom/pan relative to initial viewBox.
 
-**RunwaySidebar:** Vertical bar on left (60px black) with one RWY-prefixed toggle per runway, stacked from bottom. Reuses .air-map-toggle classes for witch mode sprites. Only runways with resolved path data appear. Each runway gets a dynamic entry in the help overlay.
+**RunwaySidebar:** Vertical bar on left (60px black). **Top section:** ARR/DEP label toggle buttons (default off) — when active, all aircraft of that direction show full labels (callsign + altitude + type) instead of just altitude. **Bottom section:** one RWY-prefixed toggle per runway, stacked from bottom. Both sections reuse `.air-map-toggle` classes for witch mode sprites. Only runways with resolved path data appear. Each runway and the ARR/DEP buttons get dynamic entries in the help overlay.
 
 **Click-to-select:** Same centralized `electronAPI.selectAircraftInMap(airportIcao, callSign)` pattern as GroundMapWindow. Selection syncs across both map windows for the same airport.
 
@@ -327,6 +327,8 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 | `knob_pan_h` | E-W | E-W |
 | `air_map_runways` | Runway | Runway |
 | `map_help_air_runways` | (generic help) | (generic help) |
+| `map_help_air_arr` | 显示/隐藏进港航班标签 | Show/hide arrival aircraft labels |
+| `map_help_air_dep` | 显示/隐藏离港航班标签 | Show/hide departure aircraft labels |
 | `map_help_air_rwy_desc` | 显示/隐藏RWY{rwy}的STAR/SID/进近程序路径 | Show/hide STAR/SID/APPR paths for RWY{rwy} |
 | `knob_pan_v` | S-N | S-N |
 | `map_help_title` | 功能指南 | Map Help |

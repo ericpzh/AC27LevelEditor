@@ -13,6 +13,8 @@ const MAP_BUTTONS = {
   ils:     { labelKey: 'air_map_runway_ext', type: 'toggle' },
   mapbg:   { labelKey: 'air_map_bg',         type: 'toggle' },
   refresh: { labelKey: 'map_refresh',        type: 'action', icon: '↻' },
+  arr:     { label: 'ARR',                   type: 'toggle' },
+  dep:     { label: 'DEP',                   type: 'toggle' },
   runways:{ labelKey: 'air_map_runways',     type: 'toggle' },
   // Per-runway dynamic buttons are generated from runwayList prop — each
   // gets a synthetic key like "rwy04L" with label "RWY04L" and type 'toggle'.
@@ -78,6 +80,8 @@ const AIR_SECTIONS = [
       'map_help_air_labels',
       'map_help_air_ils',
       'map_help_air_map',
+      'map_help_air_arr',
+      'map_help_air_dep',
       'map_help_air_refresh',
     ],
   },

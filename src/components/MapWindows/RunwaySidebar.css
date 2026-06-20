@@ -12,6 +12,16 @@
   z-index: 10;
 }
 
+/* Arrival / Departure label toggles — fixed at top */
+.runway-sidebar-labels {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+  width: 100%;
+}
+
 .runway-sidebar-actions {
   display: flex;
   flex-direction: column;
