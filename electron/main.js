@@ -16,6 +16,9 @@ const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
 const airMapWindows = new Map();    // key: airportIcao → BrowserWindow
 const flightStripsWindows = new Map(); // key: airportIcao → BrowserWindow
 const selectedCallSigns = new Map(); // key: airportIcao → callSign | null (synced across ground+air map)
+const witchSpriteMap = new Map();   // callSign → spriteIndex (0–14), centralized round-robin
+let witchSpriteNext = 0;
+const WITCH_SHEET_COUNT = 15;
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
 
@@ -1963,6 +1966,20 @@ app.whenReady().then(() => {
   // Push live aircraft state to open map windows at 200ms
   setInterval(() => {
     const state = getUdpAircraftState();
+
+    // Augment each aircraft with a centralized sprite index so all windows
+    // show the same witch-mode character for the same callsign.
+    if (state && state.aircraft) {
+      for (let i = 0; i < state.aircraft.length; i++) {
+        const ac = state.aircraft[i];
+        if (!witchSpriteMap.has(ac.callSign)) {
+          witchSpriteMap.set(ac.callSign, witchSpriteNext % WITCH_SHEET_COUNT);
+          witchSpriteNext++;
+        }
+        state.aircraft[i] = Object.assign({}, ac, { spriteIdx: witchSpriteMap.get(ac.callSign) });
+      }
+    }
+
     for (const win of groundMapWindows.values()) {
       if (win && !win.isDestroyed()) win.webContents.send('udp-aircraft-state', state);
     }

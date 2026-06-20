@@ -50,21 +50,30 @@ const SHEETS = [
   'sherry', 'nikaido', 'ema', 'natsume', 'npa',
 ];
 
-/** Round-robin assignment: callsign → sheet index. */
-const _assignments = new Map();
-let _nextIdx = 0;
+/**
+ * djb2 hash — deterministic, cross-window consistent fallback when spriteIdx
+ * is not provided by the main process (e.g. standalone / testing).
+ */
+function hashString(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
 
 /**
  * Return the sprite sheet filename for an aircraft.
- * Round-robin: each new callsign gets the next unused sheet, cycling through all 10.
- * Assignment is stable — same callsign always gets the same sheet.
+ *
+ * When `spriteIdx` (0–SPRITE_SHEET_COUNT-1) is provided by the main process,
+ * it is used directly — this guarantees every window shows the same character
+ * for the same callsign.
+ *
+ * Without `spriteIdx` (standalone / testing), falls back to a deterministic
+ * djb2 hash of the callsign so behaviour is still stable.
  */
-export function getSpriteSheet(callSign) {
-  if (!_assignments.has(callSign)) {
-    _assignments.set(callSign, SHEETS[_nextIdx % SHEETS.length]);
-    _nextIdx++;
-  }
-  return `witch/${_assignments.get(callSign)}.png`;
+export function getSpriteSheet(callSign, spriteIdx) {
+  if (spriteIdx != null) return `witch/${SHEETS[spriteIdx]}.png`;
+  // Fallback deterministic hash for backward compat / standalone use
+  return `witch/${SHEETS[hashString(callSign) % SHEETS.length]}.png`;
 }
 
 // Grid layout in elaina.png (col,row) — 6 cols × 3 rows

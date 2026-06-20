@@ -473,3 +473,136 @@
   border-color: var(--accent);
   background: var(--accent-dim);
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   Witch mode — sprite-based themed display
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ─── Window background ─── */
+.flight-strips.witch-mode {
+  background: url(/witch/groundradar.png) center/cover no-repeat;
+}
+
+/* ─── Witch mode scrollbar ─── */
+.flight-strips.witch-mode .flight-strips-body::-webkit-scrollbar {
+  width: 8px;
+}
+.flight-strips.witch-mode .flight-strips-body::-webkit-scrollbar-track {
+  background: #2a1506;
+}
+.flight-strips.witch-mode .flight-strips-body::-webkit-scrollbar-thumb {
+  background: #5c3a1e;
+  border-radius: 4px;
+}
+.flight-strips.witch-mode .flight-strips-body::-webkit-scrollbar-thumb:hover {
+  background: #7a4e2a;
+}
+
+/* ─── Bottom bar — pre-rotated bar_h.png, stretched to fill ─── */
+.flight-strips.witch-mode .flight-strips-bar {
+  background: url(/witch/bar_h.png) center/100% 100% no-repeat;
+  border-top: none;
+}
+.flight-strips.witch-mode .flight-strips-bar-left {
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+/* ─── Strip backgrounds ─── */
+.flight-strips.witch-mode .flight-strip.strip-arrival {
+  background: url(/witch/arrivalstrip.png) center/100% no-repeat;
+  border: none;
+  border-left: none;
+}
+.flight-strips.witch-mode .flight-strip.strip-departure {
+  background: url(/witch/departurestrip.png) center/100% no-repeat;
+  border: none;
+  border-left: none;
+}
+
+/* ─── Hide all text content ─── */
+.flight-strips.witch-mode .strip-col-callsign,
+.flight-strips.witch-mode .strip-col-proc,
+.flight-strips.witch-mode .strip-col-squawk,
+.flight-strips.witch-mode .strip-col-route,
+.flight-strips.witch-mode .strip-col-runway {
+  display: none;
+}
+
+/* ─── Witch sprite container ─── */
+.flight-strips.witch-mode .strip-witch-sprite {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 30px;
+  flex: 1;
+}
+
+/* ─── Selected strip glow (instead of scale) ─── */
+.flight-strips.witch-mode .flight-strip.strip-selected {
+  transform: none;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.5);
+}
+.flight-strips.witch-mode .flight-strip.strip-selected::before {
+  display: none;
+}
+.flight-strips.witch-mode .flight-strip.strip-selected.strip-arrival {
+  background: url(/witch/arrivalstrip.png) center/100% no-repeat;
+}
+.flight-strips.witch-mode .flight-strip.strip-selected.strip-departure {
+  background: url(/witch/departurestrip.png) center/100% no-repeat;
+}
+
+/* ─── Column cosmetics ─── */
+.flight-strips.witch-mode .flight-strips-column {
+  border-right: none;
+}
+.flight-strips.witch-mode .flight-strips-column-header,
+.flight-strips.witch-mode .flight-strip-runway-sep {
+  display: none;
+}
+
+/* ─── Drag ghost in witch mode ─── */
+.flight-strips.witch-mode .flight-strip.strip-drag-ghost {
+  background: url(/witch/departurestrip.png) center/100% no-repeat;
+  transform: scale(1.08);
+}
+.flight-strips.witch-mode .flight-strip.strip-drag-ghost.strip-arrival {
+  background: url(/witch/arrivalstrip.png) center/100% no-repeat;
+}
+.flight-strips.witch-mode .flight-strip.strip-drag-ghost::before {
+  display: none;
+}
+.flight-strips.witch-mode .flight-strip.strip-drag-ghost.strip-dropping {
+  transform: scale(1.0);
+  opacity: 0;
+}
+
+/* ─── Suppress telemetry status borders in witch mode ─── */
+.flight-strips.witch-mode .flight-strip.strip-telemetry-action-required {
+  box-shadow: none;
+}
+.flight-strips.witch-mode .flight-strip.strip-selected.strip-telemetry-action-required {
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.5);
+}
+.flight-strips.witch-mode .flight-strip.strip-telemetry-handoff-pending .channel-box,
+.flight-strips.witch-mode .flight-strip.strip-telemetry-pending-stand .channel-box {
+  border-color: initial;
+  background: initial;
+}
+
+/* ─── Witch button icon sizing ─── */
+.flight-strips.witch-mode .witch-help-img,
+.flight-strips.witch-mode .witch-refresh-img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+/* ─── Hover brighten in witch mode ─── */
+.flight-strips.witch-mode .flight-strip:hover {
+  filter: brightness(1.15);
+}
+.flight-strips.witch-mode .flight-strip.strip-selected:hover {
+  filter: brightness(1.15);
+}

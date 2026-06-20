@@ -63,7 +63,7 @@ AC27LevelEditor/
 │   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations, witch mode UI overrides (sidebar bar.png, button.png/button_on.png toggles, knob.png spin knobs)
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes (incl. simTimeUnixMs)
-│   │   │   └── witchMode.js                # Witch mode: direction, parked detection, sprite-sheet lookup, round-robin character assignment
+│   │   │   └── witchMode.js                # Witch mode: direction, parked detection, sprite-sheet lookup (accepts centralized spriteIdx from main process, djb2 hash fallback)
 │   │   └── common/
 │   │       ├── Modal.jsx + .css         # Declarative modal
 │   │       └── Toast.jsx + .css         # Declarative toast

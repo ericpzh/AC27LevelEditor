@@ -104,6 +104,8 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 - On `will-quit`, `stopUdpListener()` cleans up: closes socket, clears all intervals/timeouts, resets `aircraftMap`, `trailSnapshots`, etc.
 - Auto-reconnect on socket errors with 2-second delay and logging
 
+**Sprite index augmentation (v1.1.6):** Before pushing, each aircraft is augmented with a centralized `spriteIdx` (0–14) from `witchSpriteMap` (Map<callSign, index>). New callsigns get the next round-robin index (`witchSpriteNext % 15`). This guarantees all map windows (ground, air, flight strips) show the same witch-mode character for the same callsign. The `spriteIdx` field is merged into each aircraft object via `Object.assign({}, ac, { spriteIdx })` — the original state is not mutated.
+
 **Auto-reset mechanisms (stale-data protection):**
 - **5-second stale timeout:** If `Date.now() - lastPacketTime > 5000`, `getUdpAircraftState()` auto-clears all aircraft state before returning. This prevents stale aircraft from lingering on radar/strip views when the game crashes or disconnects.
 - **`hasLevel` transition:** When `simFlags` bit 2 transitions from 0→1 (game loads/changes level), all aircraft state is auto-cleared. The `lastHasLevel` flag is tracked per-transition — staying at 1 does not re-trigger. `resetAircraftState()` also resets `lastHasLevel` to false so the next level load triggers again.

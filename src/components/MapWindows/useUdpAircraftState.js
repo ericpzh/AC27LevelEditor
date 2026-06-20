@@ -20,7 +20,7 @@ export default function useUdpAircraftState() {
       const prev = prevAirportRef.current;
       const changed = !!(newAirport && prev && newAirport !== prev);
       if (changed) {
-        console.log('[UDP hook] Airport transition detected: ' + prev + ' → ' + newAirport);
+        console.log('[UDP hook] Airport transition: ' + prev + ' → ' + newAirport);
       }
       prevAirportRef.current = newAirport;
 

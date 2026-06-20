@@ -4,6 +4,7 @@ import useUdpAircraftState from './useUdpAircraftState';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
 import { IoHelpCircleOutline, IoRefreshOutline } from 'react-icons/io5';
+import { witchDirection, isParked, getSpriteSheet, getSpriteCell, getSpriteViewBox, SPRITE_CELL, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import './FlightStripsWindow.css';
 
 const SEAT_LABELS = { 1: 'RMP', 2: 'GND', 3: 'TWR', 4: 'DEP', 5: 'APPR', 6: 'DEL', 7: 'APN' };
@@ -46,6 +47,7 @@ function applyReorder(prev, seat, srcIdx, dstIdx) {
 const FlightStripContent = React.memo(function FlightStripContent({
   ac, fd, seat, idx, isSelected, showGap, isArrival,
   seatLabel, sidFromMap, routeLines, onMouseDown,
+  witchMode, witchFrame,
 }) {
   const stripRef = useRef(null);
   const [transformOrigin, setTransformOrigin] = useState('center center');
@@ -92,6 +94,35 @@ const FlightStripContent = React.memo(function FlightStripContent({
       data-callsign={ac.callSign}
       onMouseDown={onMouseDown}
     >
+      {witchMode && (
+        <div className="strip-witch-sprite">
+          {(() => {
+            const isAirborne = ac.position && ac.position.y > 1.0;
+            const parkedOnGround = !isAirborne && isParked(ac);
+            const action = isAirborne ? 'fly' : (parkedOnGround ? 'stand' : 'walk');
+            const dir = parkedOnGround ? '' : witchDirection(ac.noseDirection);
+            const cell = getSpriteCell(action, dir, witchFrame + 1);
+            const vb = getSpriteViewBox(action, dir, witchFrame + 1);
+            const sz = 48;
+            const cid = 'cp-strip-' + ac.callSign;
+            const fid = 'glow-strip-' + ac.callSign;
+            return (
+              <svg width={sz} height={sz} viewBox={vb} style={{ marginTop: '5px' }}>
+                <defs>
+                  <clipPath id={cid}><rect x={cell.x} y={cell.y} width={SPRITE_CELL} height={SPRITE_CELL} /></clipPath>
+                  <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
+                    <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="white" flood-opacity="0.7" />
+                  </filter>
+                </defs>
+                <image href={getSpriteSheet(ac.callSign, ac.spriteIdx)}
+                  width={SPRITE_SHEET_W} height={SPRITE_SHEET_H}
+                  clipPath={`url(#${cid})`}
+                  {...(isSelected ? { filter: `url(#${fid})` } : {})} />
+              </svg>
+            );
+          })()}
+        </div>
+      )}
       <div className="strip-col-callsign">
         <div className="strip-box callsign-box"><span className="strip-callsign">{ac.callSign}</span></div>
         <div className="strip-callsign-info"><span className="strip-type">{ac.aircraftType}</span><span className="strip-stand-label">{ac.stand || ''}</span></div>
@@ -117,13 +148,41 @@ const FlightStripContent = React.memo(function FlightStripContent({
 
 // ─── Drag ghost (floating clone of dragged strip) ────────────────
 
-const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap, rectLeft, rectTop, rectW, isArrival, routeLines, telemetryClass }, ref) {
+const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap, rectLeft, rectTop, rectW, isArrival, routeLines, telemetryClass, witchMode, witchFrame }, ref) {
   return (
     <div
       ref={ref}
       className={'flight-strip strip-drag-ghost' + (isArrival ? ' strip-arrival' : ' strip-departure') + (telemetryClass ? ' ' + telemetryClass : '')}
       style={{ position: 'fixed', left: rectLeft + 'px', top: rectTop + 'px', zIndex: 9999, pointerEvents: 'none', width: rectW + 'px' }}
     >
+      {witchMode && (
+        <div className="strip-witch-sprite">
+          {(() => {
+            const isAirborne = ac.position && ac.position.y > 1.0;
+            const parkedOnGround = !isAirborne && isParked(ac);
+            const action = isAirborne ? 'fly' : (parkedOnGround ? 'stand' : 'walk');
+            const dir = parkedOnGround ? '' : witchDirection(ac.noseDirection);
+            const cell = getSpriteCell(action, dir, witchFrame + 1);
+            const vb = getSpriteViewBox(action, dir, witchFrame + 1);
+            const sz = 48;
+            const cid = 'cp-ghost-' + ac.callSign;
+            const fid = 'glow-ghost-' + ac.callSign;
+            return (
+              <svg width={sz} height={sz} viewBox={vb} style={{ marginTop: '5px' }}>
+                <defs>
+                  <clipPath id={cid}><rect x={cell.x} y={cell.y} width={SPRITE_CELL} height={SPRITE_CELL} /></clipPath>
+                  <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
+                    <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="white" flood-opacity="0.7" />
+                  </filter>
+                </defs>
+                <image href={getSpriteSheet(ac.callSign, ac.spriteIdx)}
+                  width={SPRITE_SHEET_W} height={SPRITE_SHEET_H}
+                  clipPath={`url(#${cid})`} />
+              </svg>
+            );
+          })()}
+        </div>
+      )}
       <div className="strip-col-callsign">
         <div className="strip-box callsign-box"><span className="strip-callsign">{ac.callSign}</span></div>
         <div className="strip-callsign-info"><span className="strip-type">{ac.aircraftType}</span><span className="strip-stand-label">{ac.stand || ''}</span></div>
@@ -160,6 +219,10 @@ export default function FlightStripsWindow({ airportIcao }) {
   const [dataLoading, setDataLoading] = useState(true);
   const [selectedCallSign, setSelectedCallSign] = useState(null);
   const selectedCallSignRef = useRef(null);
+  const [witchMode, setWitchMode] = useState(false);
+  const [witchFrame, setWitchFrame] = useState(0);
+  const witchTimerRef = useRef(null);
+  const helpDblClickRef = useRef(null);
 
   // Keep ref in sync so handleDragEnd (stable callback) can read current selection
   useEffect(() => { selectedCallSignRef.current = selectedCallSign; }, [selectedCallSign]);
@@ -202,6 +265,19 @@ export default function FlightStripsWindow({ airportIcao }) {
       return changed ? next : prev;
     });
   }, [udpAircraft]);
+
+  // ─── Witch mode animation timer (500ms per frame) ──────────────
+  useEffect(() => {
+    if (!witchMode) {
+      if (witchTimerRef.current) { clearInterval(witchTimerRef.current); witchTimerRef.current = null; }
+      setWitchFrame(0);
+      return;
+    }
+    witchTimerRef.current = setInterval(() => { setWitchFrame(f => (f === 0 ? 1 : 0)); }, 500);
+    return () => {
+      if (witchTimerRef.current) { clearInterval(witchTimerRef.current); witchTimerRef.current = null; }
+    };
+  }, [witchMode]);
 
   // Cleanup drag listeners on unmount (safety net)
   useEffect(() => {
@@ -476,7 +552,21 @@ export default function FlightStripsWindow({ airportIcao }) {
     if (electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft();
   }, [loadFlightData, electronAPI]);
 
-  const handleHelpToggle = useCallback(() => { setHelpOpen((v) => !v); }, []);
+  const handleHelpClick = useCallback(() => {
+    if (witchMode) {
+      setWitchMode(false);
+      setHelpOpen(true);
+    } else if (helpDblClickRef.current) {
+      clearTimeout(helpDblClickRef.current);
+      helpDblClickRef.current = null;
+      setWitchMode(true);
+    } else {
+      helpDblClickRef.current = setTimeout(() => {
+        helpDblClickRef.current = null;
+        setHelpOpen(true);
+      }, 300);
+    }
+  }, [witchMode]);
 
   const handleBodyClick = useCallback((e) => {
     if (e.target === e.currentTarget) {
@@ -501,7 +591,7 @@ export default function FlightStripsWindow({ airportIcao }) {
   // ─── Render ───────────────────────────────────────────────────
 
   return (
-    <div className="flight-strips">
+    <div className={'flight-strips' + (witchMode ? ' witch-mode' : '')}>
       <div className="flight-strips-body" onClick={handleBodyClick}>
         {dataLoading && seatOrder.length === 0 ? (
           <div className="flight-strips-empty">{'Loading…'}</div>
@@ -586,6 +676,8 @@ export default function FlightStripsWindow({ airportIcao }) {
                       sidFromMap={sidFromMap}
                       routeLines={routeHistory[ac.callSign]}
                       onMouseDown={(e) => handleDragStart(e, seat, idx, ac)}
+                      witchMode={witchMode}
+                      witchFrame={witchFrame}
                     />
                   );
                 })}
@@ -618,6 +710,8 @@ export default function FlightStripsWindow({ airportIcao }) {
                     isArrival={dragMetaRef.current.ac.flightDirection === 1}
                     routeLines={routeHistory[dragMetaRef.current.ac.callSign]}
                     telemetryClass={TELEMETRY_STRIP_CLASS[dragMetaRef.current.ac.telemetryStatus] || ''}
+                    witchMode={witchMode}
+                    witchFrame={witchFrame}
                   />
                 )}
               </div>
@@ -631,8 +725,12 @@ export default function FlightStripsWindow({ airportIcao }) {
           <span className="flight-strips-timescale">{timeScale > 0 ? '×' + timeScale : ''}</span>
         </div>
         <div className="flight-strips-bar-actions">
-          <div className="strips-bar-btn" onClick={handleRefresh} title="Refresh"><IoRefreshOutline size={16} /></div>
-          <div className="strips-bar-btn" onClick={handleHelpToggle} title="Map Help"><IoHelpCircleOutline size={16} /></div>
+          <div className="strips-bar-btn" onClick={handleRefresh} title="Refresh">
+            {witchMode ? <img src="witch/refresh.png" alt="Refresh" className="witch-refresh-img" /> : <IoRefreshOutline size={16} />}
+          </div>
+          <div className="strips-bar-btn" onClick={handleHelpClick} title="Map Help">
+            {witchMode ? <img src="witch/help.png" alt="?" className="witch-help-img" /> : <IoHelpCircleOutline size={16} />}
+          </div>
         </div>
       </div>
       {helpOpen && <MapHelpOverlay type="strips" titleKey="map_help_strips_title" onClose={() => setHelpOpen(false)} />}

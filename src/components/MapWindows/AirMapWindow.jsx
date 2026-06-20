@@ -759,7 +759,7 @@ export default function AirMapWindow({ airportIcao }) {
                                 <feDropShadow dx="0" dy="0" stdDeviation="16" flood-color="white" flood-opacity="0.8" />
                               </filter>
                             </defs>
-                            <image href={getSpriteSheet(ac.callSign)}
+                            <image href={getSpriteSheet(ac.callSign, ac.spriteIdx)}
                               width={SPRITE_SHEET_W} height={SPRITE_SHEET_H}
                               clipPath={`url(#${cid})`}
                               {...(ac.callSign === selectedCallSign ? { filter: `url(#${fid})` } : {})} />
