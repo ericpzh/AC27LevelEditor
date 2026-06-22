@@ -48,6 +48,9 @@ Map windows are separate Electron `BrowserWindow` instances (one per airport ICA
 | `send-udp-command` | `(commandId, payloadB64)` | invoke | Sends fire-and-forget UDP command to game on port 20267 |
 | `debug-log` | `(args[])` | invoke | Logs renderer messages to main process terminal (debug only) |
 | `udp-aircraft-state` | `state` | main→renderer (push) | Live aircraft state pushed every 200ms to all open map windows |
+| `set-emergency-aircraft` | `(airportIcao, callSign)` | invoke | Sets/clears emergency aircraft, broadcasts to all map windows |
+| `get-emergency-aircraft` | `(airportIcao)` | invoke | Returns current emergency callSign for an airport (or null) |
+| `emergency-aircraft-changed` | `{ icao, callSign }` | main→renderer (push) | Broadcasts EM change to ALL map windows (ground + air + strips) |
 
 ## Preload API (`window.electronAPI` additions)
 
@@ -67,6 +70,12 @@ selectAircraftInMap(airportIcao, callSign)  // → ipcRenderer.invoke('select-ai
 getSelectedAircraft(airportIcao)            // → ipcRenderer.invoke('get-selected-aircraft', ...)
 onAircraftSelectedInMap(cb)                 // → ipcRenderer.on('aircraft-selected-in-map', handler)
 offAircraftSelectedInMap(cb)                // → ipcRenderer.removeListener(...)
+
+// Emergency aircraft (EM label → squawk 7700)
+setEmergencyAircraft(airportIcao, callSign) // → ipcRenderer.invoke('set-emergency-aircraft', ...)
+getEmergencyAircraft(airportIcao)           // → ipcRenderer.invoke('get-emergency-aircraft', ...)
+onEmergencyAircraftChanged(cb)              // → ipcRenderer.on('emergency-aircraft-changed', handler)
+offEmergencyAircraftChanged(cb)             // → ipcRenderer.removeListener(...)
 
 // UDP telemetry
 getUdpStatus()                          // → { connected, lastPacketTime, currentAirport, simFlags, heartbeatSeq }
@@ -145,13 +154,13 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
    - **Circle:** Small colored circle at aircraft position (unselected) or yellow (selected)
    - **Trail dots:** Ring buffer of historical positions (max 5 snapshots, minimum 600-tick gap), rendered as shrinking circles with decreasing opacity
    - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale
-   - **Label:** By default, Tower aircraft and selected aircraft show full label (callsign + altitude + speed/type); other aircraft show altitude only. The ARR/DEP toggles on the left RunwaySidebar override this — when active, all aircraft of that direction show the full label. Speed/type toggles every 5 seconds between airspeed/10 and aircraft type. Dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show an "EM" label above the callsign in red.
+   - **Label:** By default, Tower aircraft and selected aircraft show full label (callsign + altitude + speed/type); other aircraft show altitude only. The ARR/DEP toggles on the left RunwaySidebar override this — when active, all aircraft of that direction show the full label. Speed/type toggles every 5 seconds between airspeed/10 and aircraft type. Dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show a red "EM" label — above the callsign in full-label mode, above the altitude in altitude-only mode (v1.1.6).
    - **A/D indicator:** "A" or "D" text next to the current position dot
    - **Witch mode (v1.1.5):** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame fly sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (centralized in main process via `spriteIdx`, see GroundMapWindow witch mode docs), stable per callsign. Direction-aware via `witchDirection()` (dominant axis of nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden. Map background switches to `witch/{ICAO}.png` at full opacity with `WITCH_MAP_BG_OFFSETS`, background color `#160900`. Sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
 
 **Airspace knob:** `SpinKnob` passed via `airspaceKnob` prop to `ControlSidebar` — controls range ring density (0=10NM gap … 11=120NM gap, default 40NM). Double-click knob to reset to default.
 
-**Emergency call sign:** Refresh button (double-click) randomly picks an active aircraft and marks it with a red "EM" label. Single click resets UDP aircraft state.
+**Emergency call sign (v1.1.6):** Refresh button (double-click) randomly picks an active aircraft and marks it with a red "EM" label. Single click resets UDP aircraft state. EM state is synced across all map windows via `emergencyCallSigns` Map in the main process (`set-emergency-aircraft` / `get-emergency-aircraft` IPC handlers, `emergency-aircraft-changed` push event). Flight strips override the squawk to **7700** for the EM aircraft. Airport transitions clear the EM state.
 
 **Airport transition auto-reset (v1.1.6):** When `udpAirportChanged` is true and the new airport matches this window's ICAO, calls `electronAPI.resetUdpAircraft()` to clear stale aircraft from the previous airport.
 
@@ -245,6 +254,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 - Generated server-side in `get-flight-strip-data` IPC handler
 - Deterministic: same callsign always gets the same squawk (djb2 hash + linear probe)
 - Unique across all callsigns (collision-free), range 2000–6000
+- **EM override (v1.1.6):** When an aircraft is marked as emergency (via air radar double-click refresh), its squawk overrides to **7700** in both `FlightStripContent` and `DragGhost`. Reverts to the static hash-based squawk when EM is cleared or reassigned to a different aircraft.
 
 **Help overlay:** `MapHelpOverlay type="strips" title="Map Help"` — 3 sections: Buttons (Refresh, Help), Display (seat columns, runway separators, arrival/departure colors), Interaction (click to select, deselect, drag reorder). Full i18n (zh + en) for overlay content; `title` prop forces English header.
 

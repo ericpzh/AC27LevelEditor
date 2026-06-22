@@ -16,6 +16,7 @@ const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
 const airMapWindows = new Map();    // key: airportIcao → BrowserWindow
 const flightStripsWindows = new Map(); // key: airportIcao → BrowserWindow
 const selectedCallSigns = new Map(); // key: airportIcao → callSign | null (synced across ground+air map)
+const emergencyCallSigns = new Map(); // key: airportIcao → callSign | null (EM state synced across all map windows)
 const witchSpriteMap = new Map();   // callSign → spriteIndex (0–14), centralized round-robin
 let witchSpriteNext = 0;
 const WITCH_SHEET_COUNT = 15;
@@ -104,6 +105,17 @@ function broadcastSelectedAircraft(icao, callSign) {
   if (aw && !aw.isDestroyed()) aw.webContents.send('aircraft-selected-in-map', data);
   const fw = flightStripsWindows.get(icao);
   if (fw && !fw.isDestroyed()) fw.webContents.send('aircraft-selected-in-map', data);
+}
+
+/** Broadcast emergency aircraft change to ALL map windows for a given airport. */
+function broadcastEmergencyAircraft(icao, callSign) {
+  const data = { icao, callSign: callSign || null };
+  const gw = groundMapWindows.get(icao);
+  if (gw && !gw.isDestroyed()) gw.webContents.send('emergency-aircraft-changed', data);
+  const aw = airMapWindows.get(icao);
+  if (aw && !aw.isDestroyed()) aw.webContents.send('emergency-aircraft-changed', data);
+  const fw = flightStripsWindows.get(icao);
+  if (fw && !fw.isDestroyed()) fw.webContents.send('emergency-aircraft-changed', data);
 }
 
 function openGroundMapWindow(airportIcao, gameRoot) {
@@ -1939,6 +1951,22 @@ ipcMain.handle('select-aircraft-in-map', async (_e, airportIcao, callSign) => {
 
 ipcMain.handle('get-selected-aircraft', async (_e, airportIcao) => {
   return { callSign: selectedCallSigns.get(airportIcao) || null };
+});
+
+// ─── IPC: Emergency aircraft sync (EM label → squawk 7700) ──
+
+ipcMain.handle('set-emergency-aircraft', async (_e, airportIcao, callSign) => {
+  if (callSign) {
+    emergencyCallSigns.set(airportIcao, callSign);
+  } else {
+    emergencyCallSigns.delete(airportIcao);
+  }
+  broadcastEmergencyAircraft(airportIcao, callSign || null);
+  return { success: true };
+});
+
+ipcMain.handle('get-emergency-aircraft', async (_e, airportIcao) => {
+  return { callSign: emergencyCallSigns.get(airportIcao) || null };
 });
 
 // ─── IPC: UDP telemetry status & state queries ──────────────

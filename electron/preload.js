@@ -96,6 +96,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
 
+  // Emergency aircraft (EM label → squawk 7700 synced across all map windows)
+  setEmergencyAircraft: (airportIcao, callSign) => ipcRenderer.invoke('set-emergency-aircraft', airportIcao, callSign || null),
+  getEmergencyAircraft: (airportIcao) => ipcRenderer.invoke('get-emergency-aircraft', airportIcao),
+  _emergencyAircraftHandlers: new Map(),
+  onEmergencyAircraftChanged: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._emergencyAircraftHandlers.set(cb, handler);
+    ipcRenderer.on('emergency-aircraft-changed', handler);
+  },
+  offEmergencyAircraftChanged: function (cb) {
+    const handler = this._emergencyAircraftHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('emergency-aircraft-changed', handler);
+      this._emergencyAircraftHandlers.delete(cb);
+    }
+  },
+
   // ─── UDP telemetry ───────────────────────────────────────
   getUdpStatus: () => ipcRenderer.invoke('get-udp-status'),
   getUdpAircraftState: () => ipcRenderer.invoke('get-udp-aircraft-state'),

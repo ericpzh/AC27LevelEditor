@@ -108,6 +108,27 @@ export default function AirMapWindow({ airportIcao }) {
     };
   }, [electronAPI, airportIcao]);
 
+  // ── Sync emergency aircraft across all map windows ───────────
+  useEffect(() => {
+    if (!electronAPI || !airportIcao) return;
+    if (electronAPI.getEmergencyAircraft) {
+      electronAPI.getEmergencyAircraft(airportIcao).then(r => {
+        if (r?.callSign) setEmergencyCallSign(r.callSign);
+      });
+    }
+    const handler = (data) => {
+      if (data.icao === airportIcao) setEmergencyCallSign(data.callSign || null);
+    };
+    if (electronAPI.onEmergencyAircraftChanged) {
+      electronAPI.onEmergencyAircraftChanged(handler);
+    }
+    return () => {
+      if (electronAPI.offEmergencyAircraftChanged) {
+        electronAPI.offEmergencyAircraftChanged(handler);
+      }
+    };
+  }, [electronAPI, airportIcao]);
+
   // ── Set window title ───────────────────────────────────────
   useEffect(() => {
     document.title = airportIcao ? airportIcao + ' Approach Radar' : 'Approach Radar';
@@ -116,6 +137,8 @@ export default function AirMapWindow({ airportIcao }) {
   // Auto-reset when UDP airport transitions to match this window
   useEffect(() => {
     if (udpAirportChanged && udpAirport === airportIcao) {
+      setEmergencyCallSign(null);
+      if (electronAPI && electronAPI.setEmergencyAircraft) electronAPI.setEmergencyAircraft(airportIcao, null);
       if (electronAPI && electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft();
     }
   }, [udpAirportChanged, udpAirport, airportIcao, electronAPI]);
@@ -848,7 +871,12 @@ export default function AirMapWindow({ airportIcao }) {
                             </tspan>
                           </>
                         ) : (
-                          <tspan>{altStr}</tspan>
+                          <>
+                            {emergencyCallSign === ac.callSign && (
+                              <tspan x={refX} dy="-1.2em" className="air-map-em-label">EM</tspan>
+                            )}
+                            <tspan x={refX} dy={emergencyCallSign === ac.callSign ? '1.2em' : undefined}>{altStr}</tspan>
+                          </>
                         )}
                       </text>
                       );
@@ -914,9 +942,12 @@ export default function AirMapWindow({ airportIcao }) {
                   const current = airAircraft;
                   if (current.length > 0) {
                     const ri = Math.floor(Math.random() * current.length);
-                    setEmergencyCallSign(current[ri].callSign);
+                    const emCs = current[ri].callSign;
+                    setEmergencyCallSign(emCs);
+                    if (electronAPI.setEmergencyAircraft) electronAPI.setEmergencyAircraft(airportIcao, emCs);
                   } else {
                     setEmergencyCallSign(null);
+                    if (electronAPI.setEmergencyAircraft) electronAPI.setEmergencyAircraft(airportIcao, null);
                   }
                   if (electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft();
                 } else {

@@ -68,7 +68,7 @@ function applyReorder(prev, seat, srcIdx, dstIdx) {
 const FlightStripContent = React.memo(function FlightStripContent({
   ac, fd, seat, idx, isSelected, showGap, isArrival,
   seatLabel, sidFromMap, routeLines, onMouseDown,
-  witchMode, witchFrame,
+  witchMode, witchFrame, emergencyCallSign,
 }) {
   const stripRef = useRef(null);
   const [transformOrigin, setTransformOrigin] = useState('center center');
@@ -162,7 +162,7 @@ const FlightStripContent = React.memo(function FlightStripContent({
         <span className="strip-reg">{fd.registration || ''}</span>
         <span className="strip-airport">{fd.airport || ''}</span>
       </div>
-      <div className="strip-col-squawk"><span className="strip-squawk">{fd.squawk || ''}</span></div>
+      <div className="strip-col-squawk"><span className="strip-squawk">{emergencyCallSign === ac.callSign ? '7700' : (fd.squawk || '')}</span></div>
       <div className="strip-col-route">
         {(routeLines || [{ text: ac.route || '-', struck: false }]).map((line, i) =>
           <span key={i} className={'strip-taxi-route' + (line.struck ? ' strip-route-struck' : '')}>{line.text}</span>
@@ -178,7 +178,7 @@ const FlightStripContent = React.memo(function FlightStripContent({
 
 // ─── Drag ghost (floating clone of dragged strip) ────────────────
 
-const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap, rectLeft, rectTop, rectW, isArrival, routeLines, telemetryClass, witchMode, witchFrame }, ref) {
+const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap, rectLeft, rectTop, rectW, isArrival, routeLines, telemetryClass, witchMode, witchFrame, emergencyCallSign }, ref) {
   return (
     <div
       ref={ref}
@@ -231,7 +231,7 @@ const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap,
         <span className="strip-reg">{fd.registration || ''}</span>
         <span className="strip-airport">{fd.airport || ''}</span>
       </div>
-      <div className="strip-col-squawk"><span className="strip-squawk">{fd.squawk || ''}</span></div>
+      <div className="strip-col-squawk"><span className="strip-squawk">{emergencyCallSign === ac.callSign ? '7700' : (fd.squawk || '')}</span></div>
       <div className="strip-col-route">
         {(routeLines || [{ text: ac.route || '-', struck: false }]).map((line, i) =>
           <span key={i} className={'strip-taxi-route' + (line.struck ? ' strip-route-struck' : '')}>{line.text}</span>
@@ -258,6 +258,7 @@ export default function FlightStripsWindow({ airportIcao }) {
   const [dataLoading, setDataLoading] = useState(true);
   const [selectedCallSign, setSelectedCallSign] = useState(null);
   const selectedCallSignRef = useRef(null);
+  const [emergencyCallSign, setEmergencyCallSign] = useState(null);
   const [witchMode, setWitchMode] = useState(false);
   const [witchFrame, setWitchFrame] = useState(0);
   const witchTimerRef = useRef(null);
@@ -423,6 +424,18 @@ export default function FlightStripsWindow({ airportIcao }) {
       electronAPI.getSelectedAircraft(airportIcao).then((r) => { if (r && r.callSign) setSelectedCallSign(r.callSign); });
     }
     return () => { if (electronAPI.offAircraftSelectedInMap) electronAPI.offAircraftSelectedInMap(handler); };
+  }, [airportIcao, electronAPI]);
+
+  // ─── Emergency aircraft sync (EM → squawk 7700) ──────────────
+
+  useEffect(() => {
+    if (!electronAPI.onEmergencyAircraftChanged) return;
+    const handler = (d) => { if (d.icao === airportIcao) setEmergencyCallSign(d.callSign || null); };
+    electronAPI.onEmergencyAircraftChanged(handler);
+    if (electronAPI.getEmergencyAircraft) {
+      electronAPI.getEmergencyAircraft(airportIcao).then((r) => { if (r && r.callSign) setEmergencyCallSign(r.callSign); });
+    }
+    return () => { if (electronAPI.offEmergencyAircraftChanged) electronAPI.offEmergencyAircraftChanged(handler); };
   }, [airportIcao, electronAPI]);
 
   // Reset command path when selection changes
@@ -767,6 +780,7 @@ export default function FlightStripsWindow({ airportIcao }) {
                       onMouseDown={(e) => handleDragStart(e, seat, idx, ac)}
                       witchMode={witchMode}
                       witchFrame={witchFrame}
+                      emergencyCallSign={emergencyCallSign}
                     />
                   );
                 })}
@@ -801,6 +815,7 @@ export default function FlightStripsWindow({ airportIcao }) {
                     telemetryClass={TELEMETRY_STRIP_CLASS[dragMetaRef.current.ac.telemetryStatus] || ''}
                     witchMode={witchMode}
                     witchFrame={witchFrame}
+                    emergencyCallSign={emergencyCallSign}
                   />
                 )}
               </div>
