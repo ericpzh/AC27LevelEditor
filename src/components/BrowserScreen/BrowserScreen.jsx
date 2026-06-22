@@ -7,7 +7,7 @@ import { airportDisplayName, airportSortOrder } from '../../utils/constants';
 import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { RE_HIDDEN, DEMO_VISIBLE_BASES, demoBaseName } from '../../utils/constants';
+import { RE_HIDDEN, DEMO_VISIBLE_BASES } from '../../utils/constants';
 import CacheProgressBody from '../common/CacheProgressBody';
 import AirportCardMap from './AirportCardMap';
 
@@ -127,10 +127,7 @@ export default function BrowserScreen() {
           allInfos[airport.icao] = infos.filter(info => {
             // Hide levels that failed to parse (e.g. Git LFS stubs)
             if (info.error) return false;
-            const base = demoBaseName(info.filename);
-            if (!DEMO_VISIBLE_BASES.has(base)) return false;
-            if (info.isDemo) return true;
-            return info.filename.includes('_emerg');
+            return DEMO_VISIBLE_BASES.has(info.filename);
           });
         } else {
           // Normal mode: show production levels + .demo.acl slices; hide tutorial/test/endless/dev/bench/crossrunway/.Prod

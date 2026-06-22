@@ -225,6 +225,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 - **Activation:** Double-click the help `?` button (300ms timeout between clicks). Single click still opens the help overlay. When exiting witch mode (single click while in witch mode), the help overlay opens.
 - **Animation:** 2-frame sprite animation at 500ms per frame via `setInterval` (`witchFrame` toggles 0↔1). Timer is cleaned up on unmount or when witch mode is disabled.
 - **Sprite rendering:** Each strip and drag ghost renders an inline `<svg>` (48×48) inside a `.strip-witch-sprite` container (flex, left-aligned, 30px left padding). Same `clipPath` + `<image>` pattern as ground/air maps — loads the assigned sprite sheet, clips to the correct cell, and applies `feDropShadow` glow on selected aircraft only.
+- **RPG stats (v1.1.6):** In witch mode, each strip and drag ghost displays HP/MP/ATK/DEF stats computed by `computeWitchStats()` — HP from first 2 digits of callsign (if "00" → 100), MP from last 2 digits (if "01" → 1), ATK from `airSpeedKnot / 10`, DEF from `position.y / 0.3048` (altitude in feet). Stats render in a 2×2 CSS Grid (`.strip-witch-stats`) with gold labels (`.witch-stat-label`) and white values (`.witch-stat`). Drag ghosts also show stats.
 - **Action selection:** Airborne (`position.y > 1.0`) → `'fly'` sprites; parked on ground (`isParked()` via `controlSeat`) → `'stand'` sprites; otherwise → `'walk'` sprites with direction from `witchDirection(noseDirection)`.
 - **Strip theming:** `.flight-strips.witch-mode` class on root enables themed CSS:
   - Window background: `witch/groundradar.png` cover
@@ -249,6 +250,58 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 
 **IPC handlers:** `open-flight-strips`, `close-flight-strips`, `get-flight-strip-data`.
 **Preload additions:** `openFlightStrips`, `closeFlightStrips`, `getFlightStripData`.
+
+### Strip Command Interface (v1.1.7 — planned, UI hidden)
+
+When a strip is selected (clicked), a command bar slides up above the bottom status bar showing context-sensitive ATC commands. Commands are filtered by `controlSeat`, airborne/ground status (`position.y > 1.0`), and flight direction (0=departure, 1=arrival).
+
+Branch commands (marked with `→`) navigate to a sub-menu showing dynamic options (runway designators or taxiway names). Leaf commands send a UDP command to the game and dismiss the bar.
+
+**Data files:** `src/components/MapWindows/commandTree.js` (command definitions), `FlightStripCommandBar.jsx` (UI component), `src/utils/constants.js` (`CMD_*` constants 22–47).
+
+**Taxiway names** are fetched via `collectValues` IPC → `_taxiwayPaths.paths[].name` on mount and passed to `setTaxiways()` so sub-menus can generate dynamic taxiway options.
+
+#### Command Table
+
+| Seat | Aircraft State | Commands |
+|------|---------------|----------|
+| **RAMP** (1) | Ground | PUSH BACK APPR, CHANGE RWY TO →, CONTACT GND |
+| **GROUND** (2) | Ground | PUSH BACK APPR, CHANGE RWY TO →, TAXI VIA →, HOLD SHORT →, DISPATCH TOW VIA →, CONTACT TWR, STAND BY, HOLD POSITION |
+| **TOWER** (3) | DEP — Ground | CLEAR FOR TKOF, LINE UP & WAIT, HOLD SHORT →, CHANGE RWY TO →, TAXI VIA →, HOLD SHORT →, DISPATCH TOW VIA →, STAND BY, CROSS RWY, CONTACT DEP, CONTACT GND |
+| **TOWER** (3) | ARR — Airborne | CLEARED TO LAND, GO AROUND, CONTINUE APPR, SELECT EXIT AT → |
+| **TOWER** (3) | ARR — Ground | SELECT EXIT AT →, CHANGE RWY TO →, CROSS RWY, CONTACT DEP, CONTACT GND |
+
+#### Sub-Menu Sources
+
+| Sub-Menu | Options From | Used By |
+|----------|-------------|---------|
+| `→` (runway) | `ac.runway` split on `/` (e.g. "13L/31R" → ["13L", "31R"]) | HOLD SHORT (TOWER DEP), CHANGE RWY TO (all seats) |
+| `→` (taxiway) | `_taxiwayPaths` from airport scenery cache, unique sorted names (A, B, C, A1…) | TAXI VIA, HOLD SHORT, DISPATCH TOW VIA, SELECT EXIT AT |
+
+#### Command ID Registry
+
+| Constant | ID | Used By |
+|----------|----|---------|
+| `CMD_CONTACT_TOWER` | 22 | CONTACT TWR (GROUND, also used in flight_plans.js) |
+| `CMD_CLEARED_TO_LAND` | 23 | CLEARED TO LAND (TOWER ARR, also used in flight_plans.js) |
+| `CMD_GO_AROUND` | 24 | GO AROUND (TOWER ARR) |
+| `CMD_CONTINUE_APPROACH` | 25 | CONTINUE APPR (TOWER ARR) |
+| `CMD_CLEAR_FOR_TAKEOFF` | 26 | CLEAR FOR TKOF (TOWER DEP) |
+| `CMD_LINE_UP_WAIT` | 27 | LINE UP & WAIT (TOWER DEP) |
+| `CMD_HOLD_SHORT` | 28 | HOLD SHORT of runway (TOWER DEP) |
+| `CMD_PUSH_BACK` | 31 | PUSH BACK APPR (RAMP, GROUND) |
+| `CMD_CONTACT_GROUND` | 33 | CONTACT GND (RAMP, TOWER) |
+| `CMD_HOLD_SHORT_TAXI` | 39 | HOLD SHORT at taxiway (GROUND, TOWER DEP) |
+| `CMD_HOLD_POSITION` | 40 | HOLD POSITION (GROUND) |
+| `CMD_TAXI_VIA` | 41 | TAXI VIA taxiway (GROUND, TOWER DEP) |
+| `CMD_CONTACT_DEP` | 42 | CONTACT DEP (TOWER) |
+| `CMD_CHANGE_RWY` | 43 | CHANGE RWY TO (all seats) |
+| `CMD_DISPATCH_TOW` | 44 | DISPATCH TOW VIA (GROUND, TOWER DEP) |
+| `CMD_SELECT_EXIT` | 45 | SELECT EXIT AT (TOWER ARR) |
+| `CMD_STAND_BY` | 46 | STAND BY (TOWER DEP) |
+| `CMD_CROSS_RWY` | 47 | CROSS RWY (TOWER) |
+
+> **Note:** Command IDs 22–23 are confirmed correct (used in `src/acl/flight_plans.js:805`). IDs 24–47 are placeholders pending game protocol verification.
 
 ## Shared Hooks
 

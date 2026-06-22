@@ -205,6 +205,22 @@ export const DYNAMICS_STATE_APPROACH = 2;    // State=5
 // ─── Command / channel type numbers ────────────────────────
 export const CMD_CONTACT_TOWER = 22;
 export const CMD_CLEARED_TO_LAND = 23;
+export const CMD_GO_AROUND = 24;
+export const CMD_CONTINUE_APPROACH = 25;
+export const CMD_CLEAR_FOR_TAKEOFF = 26;
+export const CMD_LINE_UP_WAIT = 27;
+export const CMD_HOLD_SHORT = 28;         // hold short of runway
+export const CMD_PUSH_BACK = 31;
+export const CMD_CONTACT_GROUND = 33;
+export const CMD_HOLD_SHORT_TAXI = 39;    // hold short at taxiway
+export const CMD_HOLD_POSITION = 40;
+export const CMD_TAXI_VIA = 41;
+export const CMD_CONTACT_DEP = 42;
+export const CMD_CHANGE_RWY = 43;
+export const CMD_DISPATCH_TOW = 44;
+export const CMD_SELECT_EXIT = 45;
+export const CMD_STAND_BY = 46;
+export const CMD_CROSS_RWY = 47;
 export const CHANNEL_TYPE_APPROACH = 5;
 export const CHANNEL_TYPE_TOWER = 3;
 
@@ -301,26 +317,19 @@ export const COMPASS_CARDINAL = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE
 export const RE_HIDDEN = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
 
 /**
- * Base filenames (without .acl or .demo.acl extension) that are visible
- * in demo mode. Only levels in this set appear when browsing the demo game root.
- * Emergency files (_emerg) are included only when explicitly listed.
+ * Full filenames (with extension) that are visible in demo mode.
+ * Only levels in this set appear when browsing the demo game root,
+ * and only these files get the 30-minute demo window treatment.
  * Update this set when demo levels are added or removed.
  */
 export const DEMO_VISIBLE_BASES = new Set([
-  'ZSJN-Morning_120min',
-  'ZSJN_17-19_emerg',
-  'KJFK_09-11',
-  'KJFK_20-22',
+  'ZSJN-Morning_120min.demo.acl',
+  'ZSJN_07-10.demo.acl',
+  'ZSJN_17-19_emerg.acl',
+  'KJFK_07-09_emerg.acl',
+  'KJFK_09-11.demo.acl',
+  'KJFK_20-22.demo.acl',
 ]);
-
-/**
- * Strip .demo.acl or .acl extension to get the base filename.
- * @param {string} filename
- * @returns {string}
- */
-export function demoBaseName(filename) {
-  return filename.replace(/\.demo\.acl$/, '').replace(/\.acl$/, '');
-}
 
 // ─── Toast types ───────────────────────────────────────────
 export const TOAST_TYPES = { SUCCESS: 'success', ERROR: 'error' };

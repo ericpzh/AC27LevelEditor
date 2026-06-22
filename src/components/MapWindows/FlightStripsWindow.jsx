@@ -5,6 +5,8 @@ import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
 import { IoHelpCircleOutline, IoRefreshOutline } from 'react-icons/io5';
 import { witchDirection, isParked, getSpriteSheet, getSpriteCell, getSpriteViewBox, SPRITE_CELL, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
+import FlightStripCommandBar from './FlightStripCommandBar';
+import { getCommandChildren, setTaxiways } from './commandTree';
 import './FlightStripsWindow.css';
 
 const SEAT_LABELS = { 1: 'RMP', 2: 'GND', 3: 'TWR', 4: 'DEP', 5: 'APPR', 6: 'DEL', 7: 'APN' };
@@ -15,6 +17,25 @@ const STRIP_HEIGHT = 61; // 58px min-height + 3px gap
 const TELEMETRY_STRIP_CLASS = { 2: 'strip-telemetry-action-required', 3: 'strip-telemetry-handoff-pending', 4: 'strip-telemetry-pending-stand' };
 
 // ─── Helpers ──────────────────────────────────────────────────────
+
+/** Compute witch mode RPG stats from callsign + aircraft telemetry. */
+function computeWitchStats(callSign, ac) {
+  const digits = (callSign || '').replace(/\D/g, '');
+  // HP: first two digits (if "00", take 100)
+  const firstTwo = digits.slice(0, 2);
+  let hp = parseInt(firstTwo, 10) || 0;
+  if (firstTwo === '00') hp = 100;
+  // MP: last two digits (if "01", take 1)
+  const lastTwo = digits.slice(-2) || '00';
+  let mp = parseInt(lastTwo, 10) || 0;
+  if (lastTwo === '01') mp = 1;
+  // ATK: speed in knots / 10
+  const atk = Math.round((ac.airSpeedKnot || 0) / 10);
+  // DEF: altitude — position.y is in game-units (1 GU = 100m), so / 0.3048
+  // already yields ft/100 (same value shown on air radar label)
+  const def = Math.round((ac.position && ac.position.y != null ? ac.position.y : 0) / 0.3048);
+  return { hp, mp, atk, def };
+}
 
 /** Stable reorder: move srcIdx → dstIdx within a seat, preserving runway groups. */
 function applyReorder(prev, seat, srcIdx, dstIdx) {
@@ -106,19 +127,28 @@ const FlightStripContent = React.memo(function FlightStripContent({
             const sz = 48;
             const cid = 'cp-strip-' + ac.callSign;
             const fid = 'glow-strip-' + ac.callSign;
+            const stats = computeWitchStats(ac.callSign, ac);
             return (
-              <svg width={sz} height={sz} viewBox={vb} style={{ marginTop: '5px' }}>
-                <defs>
-                  <clipPath id={cid}><rect x={cell.x} y={cell.y} width={SPRITE_CELL} height={SPRITE_CELL} /></clipPath>
-                  <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
-                    <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="white" flood-opacity="0.7" />
-                  </filter>
-                </defs>
-                <image href={getSpriteSheet(ac.callSign, ac.spriteIdx)}
-                  width={SPRITE_SHEET_W} height={SPRITE_SHEET_H}
-                  clipPath={`url(#${cid})`}
-                  {...(isSelected ? { filter: `url(#${fid})` } : {})} />
-              </svg>
+              <>
+                <svg width={sz} height={sz} viewBox={vb} style={{ marginTop: '5px' }}>
+                  <defs>
+                    <clipPath id={cid}><rect x={cell.x} y={cell.y} width={SPRITE_CELL} height={SPRITE_CELL} /></clipPath>
+                    <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
+                      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="white" flood-opacity="0.7" />
+                    </filter>
+                  </defs>
+                  <image href={getSpriteSheet(ac.callSign, ac.spriteIdx)}
+                    width={SPRITE_SHEET_W} height={SPRITE_SHEET_H}
+                    clipPath={`url(#${cid})`}
+                    {...(isSelected ? { filter: `url(#${fid})` } : {})} />
+                </svg>
+                <div className="strip-witch-stats">
+                  <span className="witch-stat"><span className="witch-stat-label">HP</span>{stats.hp}</span>
+                  <span className="witch-stat"><span className="witch-stat-label">MP</span>{stats.mp}</span>
+                  <span className="witch-stat"><span className="witch-stat-label">ATK</span>{stats.atk}</span>
+                  <span className="witch-stat"><span className="witch-stat-label">DEF</span>{stats.def}</span>
+                </div>
+              </>
             );
           })()}
         </div>
@@ -167,18 +197,27 @@ const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap,
             const sz = 48;
             const cid = 'cp-ghost-' + ac.callSign;
             const fid = 'glow-ghost-' + ac.callSign;
+            const stats = computeWitchStats(ac.callSign, ac);
             return (
-              <svg width={sz} height={sz} viewBox={vb} style={{ marginTop: '5px' }}>
-                <defs>
-                  <clipPath id={cid}><rect x={cell.x} y={cell.y} width={SPRITE_CELL} height={SPRITE_CELL} /></clipPath>
-                  <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
-                    <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="white" flood-opacity="0.7" />
-                  </filter>
-                </defs>
-                <image href={getSpriteSheet(ac.callSign, ac.spriteIdx)}
-                  width={SPRITE_SHEET_W} height={SPRITE_SHEET_H}
-                  clipPath={`url(#${cid})`} />
-              </svg>
+              <>
+                <svg width={sz} height={sz} viewBox={vb} style={{ marginTop: '5px' }}>
+                  <defs>
+                    <clipPath id={cid}><rect x={cell.x} y={cell.y} width={SPRITE_CELL} height={SPRITE_CELL} /></clipPath>
+                    <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
+                      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="white" flood-opacity="0.7" />
+                    </filter>
+                  </defs>
+                  <image href={getSpriteSheet(ac.callSign, ac.spriteIdx)}
+                    width={SPRITE_SHEET_W} height={SPRITE_SHEET_H}
+                    clipPath={`url(#${cid})`} />
+                </svg>
+                <div className="strip-witch-stats">
+                  <span className="witch-stat"><span className="witch-stat-label">HP</span>{stats.hp}</span>
+                  <span className="witch-stat"><span className="witch-stat-label">MP</span>{stats.mp}</span>
+                  <span className="witch-stat"><span className="witch-stat-label">ATK</span>{stats.atk}</span>
+                  <span className="witch-stat"><span className="witch-stat-label">DEF</span>{stats.def}</span>
+                </div>
+              </>
             );
           })()}
         </div>
@@ -223,6 +262,7 @@ export default function FlightStripsWindow({ airportIcao }) {
   const [witchFrame, setWitchFrame] = useState(0);
   const witchTimerRef = useRef(null);
   const helpDblClickRef = useRef(null);
+  const [commandPath, setCommandPath] = useState([]);
 
   // Keep ref in sync so handleDragEnd (stable callback) can read current selection
   useEffect(() => { selectedCallSignRef.current = selectedCallSign; }, [selectedCallSign]);
@@ -355,6 +395,16 @@ export default function FlightStripsWindow({ airportIcao }) {
   useEffect(() => { loadFlightData(); }, [loadFlightData]);
   useEffect(() => { document.title = airportIcao ? airportIcao + ' Flight Strips' : 'Flight Strips'; }, [airportIcao]);
 
+  // Fetch taxiway names for command bar sub-menus
+  useEffect(() => {
+    if (!electronAPI.collectValues || !rootPath || !airportIcao) return;
+    electronAPI.collectValues(rootPath, airportIcao).then((result) => {
+      if (result && result._taxiwayPaths) {
+        setTaxiways(result._taxiwayPaths.paths || []);
+      }
+    }).catch(() => {});
+  }, [airportIcao, rootPath, electronAPI]);
+
   // Auto-refresh when UDP airport transitions to match this window
   useEffect(() => {
     if (udpAirportChanged && udpAirport === airportIcao) {
@@ -374,6 +424,11 @@ export default function FlightStripsWindow({ airportIcao }) {
     }
     return () => { if (electronAPI.offAircraftSelectedInMap) electronAPI.offAircraftSelectedInMap(handler); };
   }, [airportIcao, electronAPI]);
+
+  // Reset command path when selection changes
+  useEffect(() => {
+    if (!selectedCallSign) setCommandPath([]);
+  }, [selectedCallSign]);
 
   // ─── UDP aircraft → seat/runway grouping ─────────────────────
 
@@ -571,9 +626,43 @@ export default function FlightStripsWindow({ airportIcao }) {
   const handleBodyClick = useCallback((e) => {
     if (e.target === e.currentTarget) {
       setSelectedCallSign(null);
+      setCommandPath([]);
       if (electronAPI.selectAircraftInMap) electronAPI.selectAircraftInMap(airportIcao, null);
     }
   }, [airportIcao, electronAPI]);
+
+  // ─── Derived values for render ───────────────────────────────
+
+  const selectedAircraft = useMemo(() => {
+    if (!selectedCallSign || !udpAircraft) return null;
+    return udpAircraft.find(a => a.callSign === selectedCallSign) || null;
+  }, [selectedCallSign, udpAircraft]);
+
+  // ─── Command bar actions ──────────────────────────────────────
+
+  const handleCommandAction = useCallback((cmd) => {
+    const children = selectedAircraft
+      ? getCommandChildren(selectedAircraft, cmd)
+      : null;
+    if (children) {
+      // Branch node: navigate deeper
+      setCommandPath(prev => [...prev, cmd.id]);
+    } else if (cmd.commandId != null) {
+      // Leaf node: send UDP command, then dismiss
+      if (electronAPI.sendUdpCommand) {
+        electronAPI.sendUdpCommand(cmd.commandId, selectedCallSign);
+      }
+      setSelectedCallSign(null);
+      setCommandPath([]);
+      if (electronAPI.selectAircraftInMap) {
+        electronAPI.selectAircraftInMap(airportIcao, null);
+      }
+    }
+  }, [airportIcao, electronAPI, selectedCallSign, selectedAircraft]);
+
+  const handleCommandBack = useCallback(() => {
+    setCommandPath(prev => prev.slice(0, -1));
+  }, []);
 
   // ─── Derived values for render ───────────────────────────────
 
@@ -719,6 +808,15 @@ export default function FlightStripsWindow({ airportIcao }) {
           })
         )}
       </div>
+      {/* TODO: re-enable command bar when game command IDs are confirmed
+      <FlightStripCommandBar
+        aircraft={selectedAircraft}
+        commandPath={commandPath}
+        onCommandAction={handleCommandAction}
+        onBack={handleCommandBack}
+        witchMode={witchMode}
+      />
+      */}
       <div className="flight-strips-bar">
         <div className="flight-strips-bar-left">
           <SimClock simTimeUnixMs={simTimeUnixMs} className="flight-strips-clock" />

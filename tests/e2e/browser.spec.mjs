@@ -40,6 +40,7 @@ test.afterAll(async () => {
 test('B1 — airport list shows up after launch', async () => {
   // The browser screen should show airport cards or level rows
   // Since our fixture only has ZSJN, we expect at least one visible level row
+  await window.waitForSelector('.level-row', { timeout: 10000 });
   const levelRows = window.locator('.level-row');
   const count = await levelRows.count();
   expect(count).toBeGreaterThanOrEqual(1);

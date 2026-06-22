@@ -90,7 +90,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
    - **Preserved segments patched:** `_expandShortFormTypes()` expands short-form `$type: N` references in `segBefore`/`segAfter` to full-form so Unity deserialization survives the Aircrafts rebuild. `_fixSingletonStateRefs()` replaces dangling `$iref` references in `GameEventScheduler.EventQueue` / `EventLogger.History` with inline empty `AircraftEvent[]` queues — these `$iref` targets lived in the original Aircrafts `$rcontent` and are lost after rebuild.
    - `_resetJetwayDockingState()` clears orphaned `DockingAircraftGuid` values in the preserved Jetways section (old aircraft GUIDs no longer exist)
    - Writes `.acl` + `.csv`
-   - **Demo `.demo.acl` files treated identically** — save writes to `.demo.acl` + same shared `.csv` + shared timeline `.json` files
+   - **Demo-window files treated identically** — all files in `DEMO_VISIBLE_BASES` (including `_emerg`) write to their `.acl`/`.demo.acl` + shared `.csv` + shared timeline `.json` files with the same 30-minute window logic via `_isDemoFile()`
 4. Timeline saves (separate IPC per type) → writes JSON files
 5. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog). For `.demo.acl` files, creates `.demo.acl.bak`
 
@@ -211,10 +211,11 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 ## Demo .acl File Handling (v1.0.9+)
 
-The game ships four 30-minute `.demo.acl` slice levels plus one `_emerg` emergency-scenario level:
+The game ships six files that receive the 30-minute demo window treatment (all controlled by `DEMO_VISIBLE_BASES` in `src/utils/constants.js`):
 - `ZSJN-Morning_120min.demo.acl` (05:45–06:15)
 - `ZSJN_07-10.demo.acl` (07:30–08:00)
-- `ZSJN_17-19_emerg.acl` — emergency scenario, **not** a 30-min demo slice (no time filtering)
+- `ZSJN_17-19_emerg.acl` — emergency scenario (also gets 30-min window)
+- `KJFK_07-09_emerg.acl` — emergency scenario (also gets 30-min window)
 - `KJFK_09-11.demo.acl` (09:30–10:00)
 - `KJFK_20-22.demo.acl` (20:30–21:00)
 
@@ -223,14 +224,12 @@ The game ships four 30-minute `.demo.acl` slice levels plus one `_emerg` emergen
 - FlightPlans, scenery, and file references are identical to the parent `.acl`
 - No matching `.aclcfg` exists — Config is read from the `.acl` file itself
 
-**`_emerg` files:** Emergency-scenario files (filenames containing `_emerg`) are regular levels, not 30-minute demo slices. The `_isEmerFile()` helper in `electron/main.js` detects them and skips the 30-min `_filterDemoFlights()` time window. When rooted in the Demo game, `_emerg` files are shown alongside `.demo.acl` files via the `DEMO_VISIBLE_BASES` whitelist in `src/utils/constants.js`.
-
-**Demo mode visibility:** The `DEMO_VISIBLE_BASES` Set in `src/utils/constants.js` is a whitelist of base filenames (without `.acl` or `.demo.acl` extension) that are visible when browsing the demo game root. `demoBaseName(filename)` strips extensions for matching. Update this set when demo levels are added or removed.
+**Demo mode visibility & window:** The `DEMO_VISIBLE_BASES` Set in `src/utils/constants.js` is the single source of truth — it controls both which files are visible in demo mode AND which files get the 30-minute demo window. Entries are full filenames (e.g. `ZSJN_07-10.demo.acl`). `_isDemoFile()` in `electron/main.js` checks exact filename via `path.basename()` against this set (NOT the `.demo.acl` extension). Update `DEMO_VISIBLE_BASES` when demo levels are added or removed.
 
 **Editor behavior:**
-- `.demo.acl` files are treated as **normal levels** — always visible, no tags, no hiding
-- **Demo mode** (root path contains "Airport Control 27 Demo"): only `.demo.acl` files **plus** `_emerg` files listed in `DEMO_VISIBLE_BASES` are shown
-- **On load:** flights in `.demo.acl` files (non-emergency) are filtered to a 30-minute window starting at `CurrentDateTime` via `_filterDemoFlights()` — centralized helper shared across load, save, import, and restore paths. Uses integer-minute bounds: `[cdtMin, cdtMin + 30)` (inclusive lower, exclusive upper). Config's `startTime`/`endTime` are overridden to match. `_emerg` files skip this filter.
-- **On save:** writes to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`. `_emerg` files save normally (no time filtering).
+- Demo files are treated as **normal levels** — always visible, no tags, no hiding
+- **Demo mode** (root path contains "Airport Control 27 Demo"): only files listed in `DEMO_VISIBLE_BASES` are shown
+- **On load:** flights in demo files are filtered to a 30-minute window starting at `CurrentDateTime` via `_filterDemoFlights()` — centralized helper shared across load, save, import, and restore paths. Uses integer-minute bounds: `[cdtMin, cdtMin + 30)` (inclusive lower, exclusive upper). Config's `startTime`/`endTime` are overridden to match.
+- **On save:** demo files write to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`.
 - **Export/Import:** packs/unpacks `.demo.acl` identically to normal `.acl` files
-- **Approach cache:** includes `.demo.acl` files (unfiltered)
+- **Approach cache:** includes demo files (unfiltered)
