@@ -16,8 +16,11 @@
 AC27LevelEditor/
 ├── electron/
 │   ├── main.js              # Electron main process + 42 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, ~45 methods)
+│   ├── preload.js           # contextBridge (window.electronAPI, ~47 methods)
+│   ├── api-server.js        # HTTP API + MCP server (port 31415, auto-starts with app)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz binary aircraft state (127.0.0.1:20266) + commands (20267)
+├── mcp/
+│   └── bridge.js            # MCP stdio↔HTTP bridge (launched by Claude Code)
 ├── index.html               # Vite HTML entry (<div id="root">)
 ├── vite.config.js           # Vite 8 + @vitejs/plugin-react + vite-plugin-electron
 ├── package.json             # scripts, electron-builder config
@@ -208,6 +211,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 - **Main→renderer events:**
   - `cache-invalidated` — signals renderer when `cache.json` is missing/corrupt; preload bridges via `onCacheInvalidated(cb)`
   - `cache-build-progress` — per-file progress during scan: `{ current: number, total: number }`; preload bridges via `onCacheBuildProgress(cb)` / `offCacheBuildProgress(cb)` (uses handler-map pattern, same function reference required for cleanup)
+  - `store-api-update` — pushes bulk state updates from MCP/API server to renderer: `{ flights, modified, ... }`; preload bridges via `onStoreApiUpdate(cb)` / `offStoreApiUpdate(cb)` (handler-map pattern). Renderer converts arrays→Sets and calls `setLegacyState()`.
 
 ### Test Conventions
 

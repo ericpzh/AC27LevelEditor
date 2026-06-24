@@ -46,6 +46,12 @@ UDP telemetry test (mock loopback server, requires port 20266 free):
 node tests/integration/test_udp_listener.js         # Binary protocol parsing + trail buffer (13 tests)
 ```
 
+MCP / API server tests (mock Electron window, no game root needed):
+```bash
+node tests/integration/test_api_server.js           # API endpoints + MCP protocol + validation (85 tests)
+node tests/integration/test_api_e2e_examples.js     # Composition examples from MCP skill (44 tests)
+```
+
 Scan-all tests (need game root, default `../../../../` from integration dir):
 ```bash
 node tests/integration/test_parse_airport.js [--root <game-root>]

@@ -12,6 +12,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
 - **App ID:** `com.ac27.level-editor`
+- **MCP Integration:** Built-in HTTP API server (port 31415) + MCP tools for AI agent control (see `ac27-editor-mcp` skill)
 
 ## Architecture Overview
 
@@ -22,9 +23,11 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - contextIsolation: true, nodeIntegration: false       │
 │  - 42 ipcMain.handle() endpoints                        │
 │  - All file I/O, dialog, caching lives here             │
+│  - electron/api-server.js — HTTP API + MCP (port 31415) │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with ~45 methods          │
+│  - Exposes window.electronAPI with ~47 methods          │
+│  - onStoreApiUpdate/offStoreApiUpdate for MCP bridge    │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
 │  index.html + src/main.jsx (Vite entry)                 │
@@ -83,6 +86,7 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 | Map Windows | `references/map-windows.md` | Working on ground/air radar, flight strips, map hooks, ControlSidebar, SpinKnob, witch mode, map i18n |
 | UDP Telemetry | `references/udp-telemetry.md` | Working on UDP listener, binary protocol, telemetry pipeline, command channel |
 | ACL Format & Approach Math | `references/acl-format.md` | Working on ACL parsing, approach aircraft, scenery data, State=30/State=5 math, TAT formula |
+| MCP / AI Agent Integration | `references/mcp-integration.md` | Working on API server, MCP tools, SSE endpoint, store-update IPC bridge, AI agent control flow |
 | Dev Commands | `references/dev-commands.md` | Running, testing, building, or releasing the app |
 
 ### Quick Summaries

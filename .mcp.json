@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ac27-editor": {
+      "command": "node",
+      "args": ["mcp/bridge.js"]
+    }
+  }
+}

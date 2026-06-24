@@ -89,7 +89,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (261 component tests, 19 files) + Playwright (E2E) + Node.js (integration, 17 scripts)
+- **Tests:** Vitest (261 component tests, 19 files) + Playwright (E2E) + Node.js (integration, 19 scripts, 129 MCP/API tests)
 
 ### Quick Start
 
@@ -102,11 +102,13 @@ npm start          # Launch in dev mode (no build step needed)
 
 ```
 electron/main.js     →  Electron main process, 43 IPC handlers, file I/O, map window management
-electron/preload.js  →  contextBridge: exposes ~54 methods on window.electronAPI
+electron/preload.js  →  contextBridge: exposes ~47 methods on window.electronAPI
+electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 7 tools)
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state v2: simFlags, timeScale, heartbeatSeq, auto-reset)
+mcp/bridge.js        →  MCP stdio↔HTTP bridge (launched by Claude Code for AI agent control)
 index.html           →  Vite HTML entry, loads src/main.jsx
 src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
-src/App.jsx          →  Root component: providers + screen routing (+ map window routing)
+src/App.jsx          →  Root component: providers + screen routing (+ map window routing + MCP store listener)
 src/components/      →  React component tree (Setup, Browser, Editor, common, MapWindows)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
@@ -126,6 +128,41 @@ Phase 1 (load):   .acl (single source of truth) → parse flights + timelines �
 Phase 2 (edit):   All edits go through zustand store actions
 Phase 3 (save):   Validation → generate AircraftStates for approach flights → write .acl + .csv + timeline .json (game compat)
 UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar / Flight Strips)
+MCP (AI agent):   Claude Code → stdio → mcp/bridge.js → HTTP :31415 → api-server.js → IPC → store → UI
+```
+
+### MCP / AI Agent Integration
+
+The editor includes a built-in MCP (Model Context Protocol) server that allows AI agents like Claude Code to control the editor — create, read, modify, and delete flights via natural language. The API server auto-starts on `127.0.0.1:31415` when the app opens.
+
+**Setup (one time):**
+
+1. Download the MCP skill file: [`.claude/skills/ac27-editor-mcp/SKILL.md`](https://github.com/ericpzh/AC27LevelEditor/blob/master/.claude/skills/ac27-editor-mcp/SKILL.md)
+   - Place it at: `%USERPROFILE%\.claude\skills\ac27-editor-mcp\SKILL.md` (Windows) or `~/.claude/skills/ac27-editor-mcp/SKILL.md` (macOS)
+   - This teaches Claude Code the flight data model, airline codes, Chinese support, validation rules, and composition patterns
+
+2. Add `.mcp.json` to your project root (or wherever you keep `.acl` files):
+```json
+{
+  "mcpServers": {
+    "ac27-editor": {
+      "command": "node",
+      "args": ["mcp/bridge.js"]
+    }
+  }
+}
+```
+   - If you cloned the repo, `mcp/bridge.js` is already there
+   - If using the packaged `.exe`, download [`mcp/bridge.js`](https://github.com/ericpzh/AC27LevelEditor/blob/master/mcp/bridge.js) and place it next to your `.mcp.json`
+
+3. Make sure Node.js is installed (the bridge is a tiny Node.js script — requires Node 18+)
+
+**7 MCP tools:** `create_flights`, `get_flights`, `modify_flights`, `delete_flights`, `get_editor_status`, `get_airport_info`, `get_validation_issues`. Supports English and Chinese (中文).
+
+**Testing:**
+```bash
+node tests/integration/test_api_server.js           # API + MCP protocol (85 tests)
+node tests/integration/test_api_e2e_examples.js     # Composition examples (44 tests)
 ```
 
 ### Project Structure

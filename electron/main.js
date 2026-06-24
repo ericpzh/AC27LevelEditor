@@ -10,6 +10,7 @@ if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
+const { startServer: startApiServer, stopServer: stopApiServer } = require('./api-server');
 
 let mainWindow;
 const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
@@ -2016,6 +2017,9 @@ app.whenReady().then(() => {
   // Start UDP telemetry listener
   startUdpListener();
 
+  // Start HTTP API server — always on port 31415 for MCP / external tool access
+  startApiServer(mainWindow, 31415, () => airportCache);
+
   // Push live aircraft state to open map windows at 200ms
   setInterval(() => {
     const state = getUdpAircraftState();
@@ -2047,6 +2051,7 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   stopUdpListener();
+  stopApiServer();
 });
 
 app.on('window-all-closed', () => {

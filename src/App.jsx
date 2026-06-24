@@ -29,6 +29,31 @@ function ScreenRouter() {
   if (mapWin === 'airMap' && mapAp)   return <I18nProvider><AirMapWindow airportIcao={mapAp} /></I18nProvider>;
   if (mapWin === 'flightStrips' && mapAp) return <I18nProvider><FlightStripsWindow airportIcao={mapAp} /></I18nProvider>;
 
+  // Listen for store updates pushed from main process (MCP / API server)
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api || !api.onStoreApiUpdate) return;
+
+    const handler = (updates) => {
+      const st = useAppStore.getState();
+      // Convert array fields back to Sets as needed
+      if (updates.selectedIndices && Array.isArray(updates.selectedIndices)) {
+        updates.selectedIndices = new Set(updates.selectedIndices);
+      }
+      if (updates.searchMatches && Array.isArray(updates.searchMatches)) {
+        updates.searchMatches = new Set(updates.searchMatches);
+      }
+      if (updates.highlightedCells && Array.isArray(updates.highlightedCells)) {
+        updates.highlightedCells = new Set(updates.highlightedCells);
+      }
+      st.setLegacyState(updates);
+    };
+    api.onStoreApiUpdate(handler);
+    return () => {
+      if (api.offStoreApiUpdate) api.offStoreApiUpdate(handler);
+    };
+  }, []);
+
   // Restore last root on startup — runs once per app load
   useEffect(() => {
     if (didInit) return;

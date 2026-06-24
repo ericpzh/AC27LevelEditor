@@ -8,6 +8,8 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
 npm test              # 261 Vitest component + store + utility + MapWindow tests (~1s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min)
+node tests/integration/test_api_server.js      # MCP/API tests: 85 tests (~1s)
+node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
 
 # Save integrity — all .acl files across both airports:
 node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root> --prod-demo
@@ -140,9 +142,16 @@ Iterates every level row in the browser: open → disable time validation → Ct
 
 ---
 
-## Layer 3 — Node.js Integration Tests (17 scripts)
+## Layer 3 — Node.js Integration Tests (19 scripts)
 
 Standalone scripts in `tests/integration/`. Run directly with `node`. Some need `--require ./tests/integration/preload.cjs` for ESM interop.
+
+### MCP / API server tests (no game root needed)
+
+| File | Tests | What it validates | Expected |
+|------|-------|-------------------|----------|
+| `test_api_server.js` | 85 | All 7 HTTP endpoints (status, airport/values, flights, create-batch, modify-batch, delete-batch, validation) + MCP protocol (initialize, tools/list, 7 tools/call) + 12-point validation suite (airline, flight number, stand, runway, aircraft compat, STAR compat, registration pair, time bounds, time order, duplicate callsigns, stand conflicts, duplicate registrations) + cascade logic. Mock Electron window — no real app needed. | 85/85 pass |
+| `test_api_e2e_examples.js` | 44 | 7 composition scenarios from the MCP skill (Section 8): create batch flights, modify by airline, delete by type+time, time shift, Chinese-language create/modify, validation rejection + recovery. | 44/44 pass |
 
 ### New parser module tests (no game root needed)
 

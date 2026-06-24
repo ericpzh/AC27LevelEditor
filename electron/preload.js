@@ -125,6 +125,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke('send-udp-command', commandId, buf.toString('base64'));
   },
 
+  // Store API bridge (MCP integration — main process pushes store updates)
+  _storeApiHandlers: new Map(),
+  onStoreApiUpdate: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._storeApiHandlers.set(cb, handler);
+    ipcRenderer.on('store-api-update', handler);
+  },
+  offStoreApiUpdate: function (cb) {
+    const handler = this._storeApiHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('store-api-update', handler);
+      this._storeApiHandlers.delete(cb);
+    }
+  },
+
   // Debug: log to main process terminal
   debugLog: (...args) => ipcRenderer.invoke('debug-log', args),
 
