@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.6)
+- **Name:** `ac27-level-editor` (v1.1.7)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -70,6 +70,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 - `electron/udp_listener.js` listens on `127.0.0.1:20266` for binary aircraft telemetry (10 Hz) and sends commands on `127.0.0.1:20267`
 - Live aircraft state pushed to all open map windows (ground + air + flight strips) at 200ms interval via `udp-aircraft-state` IPC event
 - Map window click-to-select goes through centralized `select-aircraft-in-map` IPC
+- **Voice command input (v1.1.7 — planned, UI hidden):** `voiceNumberParser.js`, `voiceCallsignParser.js`, `voiceCommandMatcher.js`, `useVoiceCommands.js`, and `VoicePTTButton.jsx` provide push-to-talk voice commands for the Flight Strips window using the Web Speech API (zero dependencies). Callsign-first flow: spoken airline name → ICAO code (via `AIRLINE_CODE_MAP`) + spoken numbers → digits → match against UDP aircraft → fuzzy-match remaining text against available ATC commands. Supports both English and Chinese. Currently commented out behind `TODO: re-enable when game command IDs are confirmed`.
 
 ## Reference Files
 
@@ -111,9 +112,10 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 14. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
 15. **Build locally with `node build.js`** on Windows, never `npm run build:win` (local only — CI uses `npm run build:win` for cross-platform builds).
 16. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants.js:13` (re-exported via `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
-17. **Keep documentation in sync.** After any significant change, update BOTH:
+17. **Keep documentation in sync.** After any significant change, update ALL of:
     - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`) and its reference files
     - **README.md**
+    - **`tests/README.md`** — whenever tests are added/removed, update the test counts (line 9, line 18, line 22), the file table (add/remove rows), MapWindows file/test counts (line 34), and expected outcomes (lines 44–53). Stale test docs mislead contributors about what's covered.
 18. **UDP listener lifecycle is managed by main process.** `startUdpListener()` is called in `app.whenReady()` after `createWindow()`, `stopUdpListener()` in `will-quit`. The listener auto-reconnects on socket errors (2s delay). Do not create multiple listeners or start/stop from the renderer.
 19. **Map windows are separate BrowserWindow instances.** They are NOT React components in the main renderer. Track them in `groundMapWindows`/`airMapWindows`/`flightStripsWindows` Maps (keyed by ICAO). Always check for existing windows before creating (focus if exists). Clean up Map entries in the `closed` event handler. Each window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX`, `?window=airMap&airport=XXXX`, or `?window=flightStrips&airport=XXXX`).
 20. **UDP state push handles cleanup.** The `udp-aircraft-state` IPC event is pushed to ALL open map windows every 200ms. Map window components subscribe via `useUdpAircraftState()` hook which wraps `onUdpAircraftState`/`offUdpAircraftState`. Always unsubscribe in `useEffect` cleanup to prevent stale callbacks or memory leaks.

@@ -65,7 +65,12 @@ AC27LevelEditor/
 │   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes (incl. simTimeUnixMs)
 │   │   │   ├── witchMode.js                # Witch mode: direction, parked detection, sprite-sheet lookup (accepts centralized spriteIdx from main process, djb2 hash fallback)
 │   │   │   ├── FlightStripCommandBar.jsx   # Strip command bar UI (v1.1.7 planned, import commented out)
-│   │   │   └── commandTree.js              # Command tree data model + filtering by seat/state/direction
+│   │   │   ├── commandTree.js              # Command tree data model + filtering by seat/state/direction
+│   │   │   ├── voiceNumberParser.js        # Spoken numbers → digits (EN + ZH aviation phraseology)
+│   │   │   ├── voiceCallsignParser.js      # Airline name→ICAO + callsign matching against UDP aircraft
+│   │   │   ├── voiceCommandMatcher.js      # Fuzzy command matching (aliases, Jaccard, Dice coefficient)
+│   │   │   ├── useVoiceCommands.js         # React hook orchestrating full voice pipeline
+│   │   │   └── VoicePTTButton.jsx          # Push-to-talk mic button (hold-to-talk, anion/pulse/flash, witch sprite)
 │   │   └── common/
 │   │       ├── Modal.jsx + .css         # Declarative modal
 │   │       └── Toast.jsx + .css         # Declarative toast
@@ -107,8 +112,8 @@ AC27LevelEditor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 198 Vitest + Playwright E2E + 17 Node.js integration tests
-│   ├── components/MapWindows/  # MapWindow component & hook tests (7 files, 90 tests)
+├── tests/               # 261 Vitest + Playwright E2E + 17 Node.js integration tests
+│   ├── components/MapWindows/  # MapWindow component & hook tests (10 files, 151 tests)
 └── dist/                # Build output (gitignored)
 ```
 
@@ -209,7 +214,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 198 tests across 16 files
+- `npm test` or `npm run test:watch` — 261 tests across 19 files
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - zustand stores are tested with the real store using `setState()` — never mock stores
 - Store auto-reset between tests via `tests/__mocks__/zustand.js`

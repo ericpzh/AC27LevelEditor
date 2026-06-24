@@ -313,6 +313,42 @@ Branch commands (marked with `→`) navigate to a sub-menu showing dynamic optio
 
 > **Note:** Command IDs 22–23 are confirmed correct (used in `src/acl/flight_plans.js:805`). IDs 24–47 are placeholders pending game protocol verification.
 
+### Voice Command Input (v1.1.7 — planned, UI hidden)
+
+Push-to-talk voice command system for the Flight Strips window using the **Web Speech API** (built into Chromium/Electron 33, zero dependencies). `electron-voice` was evaluated and rejected (no license, requires Rust + Neon + Vosk native modules).
+
+**Flow:**
+```
+PTT pressed → clear selection → capture speech → detectLanguage (EN/ZH)
+  → parseCallsign: airline name → ICAO code (via AIRLINE_CODE_MAP) + spoken numbers → digits
+  → match against live UDP aircraft list → select aircraft
+  → findBestCommandMatch: fuzzy match remaining text against getCommandsForAircraft()
+  → execute command via handleCommandAction()
+```
+
+**Source files:**
+
+| File | Purpose |
+|------|---------|
+| `voiceNumberParser.js` | `parseEnglishFlightNumber()` / `parseChineseFlightNumber()` — spoken numbers → digit candidates. Handles "eleven eleven"→1111, "triple one"→111, "幺幺幺幺"→1111, "洞四"→04. Cartesian product for ambiguous cases. |
+| `voiceCallsignParser.js` | `detectLanguage()` — CJK character check. `parseCallsign()` — longest-match airline name prefix (via `getSpokenToCode()` built from `AIRLINE_CODE_MAP`), then number parsing, then aircraft lookup. Separate EN and ZH paths (ZH uses character-level matching since no spaces). |
+| `voiceCommandMatcher.js` | `findBestCommandMatch()` — two-stage: (1) exact alias lookup against hand-curated `EN_ALIASES`/`ZH_ALIASES` maps, (2) token Jaccard similarity with partial word overlap for English, bigram Dice coefficient for Chinese. `MATCH_THRESHOLD = 0.55`. `buildSpeechGrammar()` — JSGF grammar for SpeechGrammarList. |
+| `useVoiceCommands.js` | React hook — manages `SpeechRecognition` lifecycle, silence timeout (2s auto-stop), cooldown (500ms). Orchestrates: transcript → language detection → callsign parsing → command matching. Returns `{ listening, transcript, matchedCallsign, matchedCommand, confidence, isSupported, error, startListening, stopListening }`. |
+| `VoicePTTButton.jsx` | Hold-to-talk mic button with 4 visual states: idle (gray `IoMicOutline`), listening (red `IoMic` + pulse animation), matched (green flash 300ms), error (dimmed red). Supports `witchMode` prop — renders `witch/voice.png`. |
+
+**Integration points in `FlightStripsWindow.jsx`:**
+- `handleVoicePress` clears selection before PTT
+- `handleVoiceStart` = `handleVoicePress` + `voice.startListening`
+- `useEffect` on `voice.matchedCallsign` → calls `setSelectedCallSign()` + `selectAircraftInMap()`
+- `useEffect` on `voice.matchedCommand` → calls `electronAPI.sendUdpCommand()` + clears selection
+- Both the `VoicePTTButton` and `FlightStripCommandBar` are hidden behind `{/* TODO: re-enable when game command IDs are confirmed */}`
+
+**Mic permission:** `session.defaultSession.setPermissionRequestHandler` in `electron/main.js` auto-grants `media` permission for windows with `window=flightStrips` in URL.
+
+**CSP update:** `index.html` adds `media-src 'self' mediastream:`.
+
+**Tests:** 61 Vitest tests across 3 files: `voiceNumberParser.test.js` (21), `voiceCallsignParser.test.js` (19), `voiceCommandMatcher.test.js` (21).
+
 ## Shared Hooks
 
 ### `useSvgZoom.js`

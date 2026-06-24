@@ -84,12 +84,12 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.1.6
+- **Version:** v1.1.7
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (198 component tests, 16 files) + Playwright (E2E) + Node.js (integration, 17 scripts)
+- **Tests:** Vitest (261 component tests, 19 files) + Playwright (E2E) + Node.js (integration, 17 scripts)
 
 ### Quick Start
 
@@ -114,7 +114,7 @@ src/acl/             →  CommonJS backend modules (parser facade + 13 modules)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), and cross-window selection sync. Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), cross-window selection sync, and push-to-talk voice command input (planned, UI hidden). Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
@@ -165,7 +165,13 @@ UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows
 │   │   │   ├── MapShared.css               # Shared styles: toggle buttons, clock, help button, animations
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes
-│   │   │   └── witchMode.js                # Witch mode: direction mapping + parked detection
+│   │   │   ├── witchMode.js                # Witch mode: direction mapping + parked detection
+│   │   │   ├── commandTree.js              # ATC command definitions for flight strip command bar
+│   │   │   ├── voiceNumberParser.js        # Spoken numbers → digits (EN + ZH aviation phraseology)
+│   │   │   ├── voiceCallsignParser.js      # Airline name→ICAO + callsign matching against UDP aircraft
+│   │   │   ├── voiceCommandMatcher.js      # Fuzzy command matching (aliases, Jaccard, Dice coefficient)
+│   │   │   ├── useVoiceCommands.js         # React hook orchestrating full voice pipeline
+│   │   │   └── VoicePTTButton.jsx          # Push-to-talk mic button (hold-to-talk, pulse/flash animations)
 │   │   └── common/              # Modal, Toast
 │   │
 │   ├── hooks/               # React custom hooks
@@ -228,7 +234,7 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (12 files) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 198 tests in 16 files):**
+**Component tests (Vitest — 261 tests in 19 files):**
 ```bash
 npm test              # Run all component + store + utility + MapWindow tests (~1s)
 npm run test:watch    # Watch mode — re-runs on file changes

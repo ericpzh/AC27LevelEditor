@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { initLogger, closeLogger } = require('../src/utils/logger');
@@ -1998,6 +1998,20 @@ app.whenReady().then(() => {
   console.log('[APP] __dirname:', __dirname);
   console.log('[APP] userData:', app.getPath('userData'));
   createWindow();
+
+  // ── Microphone permission: auto-grant for Flight Strips windows ──────
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    try {
+      const url = webContents.getURL();
+      if (permission === 'media' && url.includes('window=flightStrips')) {
+        callback(true);
+      } else {
+        callback(false);
+      }
+    } catch (_) {
+      callback(false);
+    }
+  });
 
   // Start UDP telemetry listener
   startUdpListener();

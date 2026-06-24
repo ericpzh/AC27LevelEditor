@@ -7,6 +7,8 @@ import { IoHelpCircleOutline, IoRefreshOutline } from 'react-icons/io5';
 import { witchDirection, isParked, getSpriteSheet, getSpriteCell, getSpriteViewBox, SPRITE_CELL, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import FlightStripCommandBar from './FlightStripCommandBar';
 import { getCommandChildren, setTaxiways } from './commandTree';
+import useVoiceCommands from './useVoiceCommands';
+import VoicePTTButton from './VoicePTTButton';
 import './FlightStripsWindow.css';
 
 const SEAT_LABELS = { 1: 'RMP', 2: 'GND', 3: 'TWR', 4: 'DEP', 5: 'APPR', 6: 'DEL', 7: 'APN' };
@@ -264,6 +266,50 @@ export default function FlightStripsWindow({ airportIcao }) {
   const witchTimerRef = useRef(null);
   const helpDblClickRef = useRef(null);
   const [commandPath, setCommandPath] = useState([]);
+
+  // ─── Voice command hook ──────────────────────────────────────────────
+  const voice = useVoiceCommands(udpAircraft);
+
+  // On PTT press: clear current selection
+  const handleVoicePress = useCallback(() => {
+    setSelectedCallSign(null);
+    setCommandPath([]);
+    if (electronAPI.selectAircraftInMap) {
+      electronAPI.selectAircraftInMap(airportIcao, null);
+    }
+  }, [airportIcao, electronAPI]);
+
+  // Wrap startListening to include selection clear
+  const handleVoiceStart = useCallback(() => {
+    handleVoicePress();
+    voice.startListening();
+  }, [handleVoicePress, voice.startListening]);
+
+  // When callsign matched via voice: select the aircraft
+  useEffect(() => {
+    if (voice.matchedCallsign && voice.matchedCallsign !== selectedCallSign) {
+      setSelectedCallSign(voice.matchedCallsign);
+      if (electronAPI.selectAircraftInMap) {
+        electronAPI.selectAircraftInMap(airportIcao, voice.matchedCallsign);
+      }
+    }
+  }, [voice.matchedCallsign]);
+
+  // When command matched via voice: execute it
+  useEffect(() => {
+    if (voice.matchedCommand && voice.confidence >= 0.55) {
+      if (voice.matchedCommand.commandId != null) {
+        if (electronAPI.sendUdpCommand) {
+          electronAPI.sendUdpCommand(voice.matchedCommand.commandId, selectedCallSign);
+        }
+        setSelectedCallSign(null);
+        setCommandPath([]);
+        if (electronAPI.selectAircraftInMap) {
+          electronAPI.selectAircraftInMap(airportIcao, null);
+        }
+      }
+    }
+  }, [voice.matchedCommand, voice.confidence]);
 
   // Keep ref in sync so handleDragEnd (stable callback) can read current selection
   useEffect(() => { selectedCallSignRef.current = selectedCallSign; }, [selectedCallSign]);
@@ -838,6 +884,19 @@ export default function FlightStripsWindow({ airportIcao }) {
           <span className="flight-strips-timescale">{timeScale > 0 ? '×' + timeScale : ''}</span>
         </div>
         <div className="flight-strips-bar-actions">
+          {/* TODO: re-enable voice command button when game command IDs are confirmed
+          <VoicePTTButton
+            listening={voice.listening}
+            transcript={voice.transcript}
+            matchedCommand={voice.matchedCommand}
+            confidence={voice.confidence}
+            isSupported={voice.isSupported}
+            error={voice.error}
+            witchMode={witchMode}
+            onPress={handleVoiceStart}
+            onRelease={voice.stopListening}
+          />
+          */}
           <div className="strips-bar-btn" onClick={handleRefresh} title="Refresh">
             {witchMode ? <img src="witch/refresh.png" alt="Refresh" className="witch-refresh-img" /> : <IoRefreshOutline size={16} />}
           </div>
