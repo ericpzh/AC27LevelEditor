@@ -140,6 +140,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
 
+  // ─── System Info ──────────────────────────────────────────
+  getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
+
+  // ─── Cloud LLM ────────────────────────────────────────────
+  getConfig: () => ipcRenderer.invoke('get-config'),
+  saveConfig: (updates) => ipcRenderer.invoke('save-config', updates),
+  cloudChat: ({ messages }) => ipcRenderer.invoke('cloud-chat', { messages }),
+
+  // Event: cloud chat (tool calls + done)
+  _cloudChatEventHandlers: new Map(),
+  onCloudChatEvent: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._cloudChatEventHandlers.set(cb, handler);
+    ipcRenderer.on('cloud-chat-event', handler);
+  },
+  offCloudChatEvent: function (cb) {
+    const handler = this._cloudChatEventHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('cloud-chat-event', handler);
+      this._cloudChatEventHandlers.delete(cb);
+    }
+  },
+
   // Debug: log to main process terminal
   debugLog: (...args) => ipcRenderer.invoke('debug-log', args),
 

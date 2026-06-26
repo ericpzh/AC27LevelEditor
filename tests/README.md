@@ -6,7 +6,7 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 
 ```bash
 npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
-npm test              # 261 Vitest component + store + utility + MapWindow tests (~1s)
+npm test              # 310 Vitest component + store + utility + electron + MapWindow tests (~1s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min)
 node tests/integration/test_api_server.js      # MCP/API tests: 85 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -17,22 +17,24 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 
 ---
 
-## Layer 1 — Vitest Component Tests (261 tests)
+## Layer 1 — Vitest Component Tests (310 tests)
 
-Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
+Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`).
 
-### `npm test` — 261 tests, all pass
+### `npm test` — 310 tests, all pass
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
 | `utils/timeUtils.test.js` | 18 | `ticksToTime` (0/0n/""→""; ticks→HH:MM:SS), `timeToTicks` (empty→0; "HH:MM:SS"→ticks; baseDate offset), `timeToMinutes` ("01:30"→90), `timeToSeconds` ("01:00:00"→3600), `minutesToTimeStr` (90→"01:30:00"; 1500 wraps to "01:00:00"), `sortTimelineByTime` (sorts by time field), `getTimelineActiveRange` (no bounds→all active; bounds→filters), `getDefaultTime` (midpoint "06:00"+"10:00"→"08:00:00"; none→"12:00:00"), `_extractBaseDateFromText` (BaseTime match; WorldState fallback; FALLBACK_BASE_DATE_TICKS) |
 | `utils/validators.test.js` | 5 | `validateCallsigns` — no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[] |
-| `store/appStore.test.jsx` | 13 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with ArrivalAirport; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all |
+| `store/appStore.test.jsx` | 23 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with ArrivalAirport; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; **Chat state (10):** panel defaults closed, vendors setup step, empty config, toggle open/closed, add+clear messages, sending state, set+clear errors, chat config, setup step change |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |
 | `components/common/Toast.test.jsx` | 4 | Renders empty by default; shows message when set; applies CSS class from type; `.show` class toggles with message |
 | `components/BrowserScreen/BrowserScreen.test.jsx` | 4 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast |
 | `components/EditorScreen/FlightTable/FlightTable.test.jsx` | 6 | Click on data cell → no selection toggle; checkbox click → toggles; drag from data cell → range-selects; dropdown/time cell clicks → no toggle; clock portal click → no toggle |
 | `components/EditorScreen/StandMap/StandMap.test.jsx` | 19 | Stand dots/labels count, selected highlight + ring, occupied plane icons + callsign labels, click-to-select, hover states, empty/null stands, legend, shrink button, portal positioning, animations, rotation on planes, disabled stands, backward-compatible no-heading |
+| **Electron backend (new):** | **49** | |
+| `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
 | **MapWindows (10 files):** | **151** | |
 | `components/MapWindows/voiceNumberParser.test.js` | 21 | `parseEnglishFlightNumber`: individual digits, "oh"→0, teens, grouped pairs, "triple X"/"double X" aviation shorthand, stop at non-numbers, >6-digit filter, empty input. `parseChineseFlightNumber`: 幺-series, 一-series, 洞/两/零 variants, multi-token, stop at non-digits. `generateCallsignCandidates` |
 | `components/MapWindows/voiceCallsignParser.test.js` | 19 | `detectLanguage`: EN/ZH/empty/mixed. `parseCallsign` (EN): "united eleven eleven"→UAL1111, full airline name, 3-letter code, "delta"→DAL, KLM, longest-match priority, teen numbers, callsign-only (no command), null on no-match/empty. `parseCallsign` (ZH): 东方/中国东方航空/国航 with digits |
@@ -51,9 +53,10 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed.
 |----------|----------|
 | Time utils | All conversions round-trip correctly. Edge cases (null, empty, overflow) handled without throw. |
 | Validators | Duplicate callsigns detected; no false positives on empty values. |
-| Store | All actions produce correct state transitions. `modified` flag set on mutations. |
+| Store | All actions produce correct state transitions. `modified` flag set on mutations. Chat panel open/close, messages, errors, config, and setup steps all correctly managed. |
 | Modal | Opens/closes via store state. Backdrop click calls `hideModal`. Internal clicks stop propagation. |
 | Toast | Renders based on store state. `show` CSS class controls visibility. |
+| Electron — cloud-llm | All VENDORS entries consistent. Model→vendor lookup correct for all 8 models. getAvailableModels filters by key presence. MCP→OpenAI tool conversion preserves schema keywords. Gemini sanitization strips OpenAI-only keywords recursively. Chat throws on missing key / unknown model. OpenAI chat completes single-turn, multi-turn tool loops, handles tool errors. Claude chat uses Anthropic SDK format (tools→input_schema, system top-level). Thinking blocks accumulated and passed to callback. Empty-content nudge triggers when model returns thinking-only. |
 | Map Window hooks | `useSvgZoom` zoom/pan bounded correctly, imperative API functions. `useUdpAircraftState` lifecycle clean. |
 | Map Window components | Loading/error states render correctly. Aircraft filtering logic (airborne, stand proximity, airport match). Click-to-select sends correct UDP command. Toggle buttons toggle state. |
 | Voice parsers | Spoken numbers → digits correct for EN (individual, teens, tens, triple/double shorthand) and ZH (幺/洞/两 variants). Callsign extraction matches airline name→ICAO + number against live aircraft. Command matching: exact aliases hit with score 1.0, fuzzy partial-word overlap recovers unmatched phrases, ZH aliases match character-for-character. |
@@ -315,7 +318,7 @@ The `test_save_integrity_all.js` script uses a **golden/result pattern**:
 
 | File | Purpose |
 |------|---------|
-| `setup.js` | Global mocks: `window.electronAPI` (26 IPC methods), `matchMedia`, `scrollIntoView` |
+| `setup.js` | Global mocks: `window.electronAPI` (26 IPC methods), `matchMedia`, `scrollIntoView`, `ResizeObserver`. Guarded with `typeof window !== 'undefined'` so node-environment tests can opt in with `@vitest-environment node`. |
 | `__mocks__/zustand.js` | Auto-reset all zustand stores to initial state between Vitest tests |
 | `integration/preload.cjs` | ESM→CJS transpiler for tests that `require()` ESM source modules |
 | `save-integrity-check.js` | S1-S3 diff analysis: compare .acl vs .bak, categorize diffs, parser round-trip |
@@ -336,10 +339,11 @@ The `test_save_integrity_all.js` script uses a **golden/result pattern**:
 ## Adding New Tests
 
 ### Vitest component test
-1. Create `tests/components/<ComponentName>/<Name>.test.jsx`
+1. Create `tests/components/<ComponentName>/<Name>.test.jsx` (or `tests/electron/<Name>.test.js` for backend modules)
 2. Import from `../../src/...`
 3. Use `useAppStore.setState()` to inject state
 4. Render with React Testing Library
+5. For Node.js backend modules that `require()` ESM packages: use `// @vitest-environment node` at the top of the test file and prime `require.cache` to stub dependencies (see `tests/electron/cloud-llm.test.js` for the pattern)
 
 ### Playwright E2E test
 1. Create `tests/e2e/<name>.spec.mjs`

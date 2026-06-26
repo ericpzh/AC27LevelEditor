@@ -88,32 +88,39 @@ vi.stubGlobal('electronAPI', {
 });
 
 // ── Mock dialog / matchMedia etc. ───────────────────────────────────
+// (jsdom only — skip in node environment)
 
-// jsdom does not implement window.matchMedia; stub it so theme/language
-// toggles don't crash components that check prefers-color-scheme.
-Object.defineProperty(window, 'matchMedia', {
-  writable: true,
-  value: vi.fn().mockImplementation((query) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  })),
-});
+if (typeof window !== 'undefined') {
+  // jsdom does not implement window.matchMedia; stub it so theme/language
+  // toggles don't crash components that check prefers-color-scheme.
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation((query) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
 
-// Mock scrollIntoView (jsdom does not implement it)
-Element.prototype.scrollIntoView = vi.fn();
+if (typeof Element !== 'undefined') {
+  // Mock scrollIntoView (jsdom does not implement it)
+  Element.prototype.scrollIntoView = vi.fn();
+}
 
 // Mock ResizeObserver (jsdom does not implement it)
-global.ResizeObserver = vi.fn(function ResizeObserver(cb) {
-  this.observe = vi.fn();
-  this.unobserve = vi.fn();
-  this.disconnect = vi.fn();
-});
+if (typeof global !== 'undefined') {
+  global.ResizeObserver = vi.fn(function ResizeObserver(cb) {
+    this.observe = vi.fn();
+    this.unobserve = vi.fn();
+    this.disconnect = vi.fn();
+  });
+}
 
 // Export for use in test files
 export { mockIpcInvoke, mockIpcOn, mockIpcListeners };

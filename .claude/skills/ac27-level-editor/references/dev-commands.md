@@ -15,10 +15,10 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 
 ## Running Tests
 
-### Component tests (198 tests across 16 files)
+### Component tests (310 tests across 19 files)
 
 ```bash
-npm test              # Run all Vitest component + store + utility + MapWindow tests
+npm test              # Run all Vitest component + store + utility + electron + MapWindow tests
 npm run test:watch    # Watch mode — re-runs on file changes
 ```
 

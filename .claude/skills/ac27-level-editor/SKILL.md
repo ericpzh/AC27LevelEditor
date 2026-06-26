@@ -13,6 +13,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
 - **App ID:** `com.ac27.level-editor`
 - **MCP Integration:** Built-in HTTP API server (port 31415) + MCP tools for AI agent control (see `ac27-editor-mcp` skill)
+- **Cloud LLM Chat:** In-app chat panel powered by DeepSeek / Gemini / Claude / Codex — 4-vendor multi-model chat with tool calling (see `references/mcp-integration.md`)
 
 ## Architecture Overview
 
@@ -24,6 +25,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - 42 ipcMain.handle() endpoints                        │
 │  - All file I/O, dialog, caching lives here             │
 │  - electron/api-server.js — HTTP API + MCP (port 31415) │
+│  - electron/cloud-llm.js — Multi-vendor cloud LLM chat    │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
 │  - Exposes window.electronAPI with ~47 methods          │
@@ -42,6 +44,8 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - EditorScreen: FlightTable, TimelineEditors,          │
 │    CellEditor, SearchBar                                │
 │  - common: Modal, Toast                                 │
+│  - ChatPanel: Floating chat panel with cloud LLM         │
+│    integration (4 vendors, tool calling)                 │
 ├─────────────────────────────────────────────────────────┤
 │  src/hooks/ (React custom hooks)                        │
 │  - useTranslation, useElectronAPI, useEditorShell,      │
@@ -49,8 +53,8 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ├─────────────────────────────────────────────────────────┤
 │  src/store/ (zustand state)                             │
 │  - appStore.js — single store: screen, flights,         │
-│    timelines, modal/toast, _windSpeedUnit, map overlay   │
-│    state, radar window tracking, UDP health              │
+│    timelines, modal/toast, chat, _windSpeedUnit,          │
+│    map overlay state, radar window tracking, UDP health   │
 ├─────────────────────────────────────────────────────────┤
 │  src/acl/ (parser facade + 13 backend modules,          │
 │    CommonJS + some ESM)                                  │
@@ -87,6 +91,7 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 | UDP Telemetry | `references/udp-telemetry.md` | Working on UDP listener, binary protocol, telemetry pipeline, command channel |
 | ACL Format & Approach Math | `references/acl-format.md` | Working on ACL parsing, approach aircraft, scenery data, State=30/State=5 math, TAT formula |
 | MCP / AI Agent Integration | `references/mcp-integration.md` | Working on API server, MCP tools, SSE endpoint, store-update IPC bridge, AI agent control flow |
+| Cloud LLM / Chat Panel | `references/mcp-integration.md` | Working on `electron/cloud-llm.js`, `ChatPanel` component, multi-vendor chat, tool-calling loop, thinking/nudge |
 | Dev Commands | `references/dev-commands.md` | Running, testing, building, or releasing the app |
 
 ### Quick Summaries
@@ -96,6 +101,7 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 - **`map-windows.md`** — Separate BrowserWindow architecture for GroundMapWindow, AirMapWindow, and FlightStripsWindow. Shared hooks (useSvgZoom, useUdpAircraftState), ControlSidebar with SpinKnobs, witch mode, cross-window selection sync, drag reorder.
 - **`udp-telemetry.md`** — Binary protocol (40B header + 112B records), trail ring buffer, outbound command channel, 200ms live state push, auto-reset mechanisms (stale timeout, hasLevel transition, airport transition).
 - **`acl-format.md`** — Unity JSON extensions, two-pass preprocessing, section types. Complete State=30/State=5 approach aircraft construction math: unified path, PR formula, 3° glideslope Y, TAT computation from SceneryData, approach ceiling, module API reference.
+- **`mcp-integration.md`** — API server (port 31415), 7 MCP tools, 12-point validation, SSE/JSON-RPC endpoints. Also covers `electron/cloud-llm.js` (DeepSeek/Gemini/Claude/Codex chat with tool calling) and the `ChatPanel` React component.
 - **`dev-commands.md`** — All npm/node commands: component tests, E2E tests, integration tests (with `--acl` and `--root` variants), local build (`node build.js`), GitHub release workflow.
 
 ## Key Rules for Agents
@@ -103,7 +109,7 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 1. **React + Vite + zustand stack.** Frontend uses ESM, JSX, and React hooks. No global-scope scripts.
 2. **No TypeScript.** This is plain JS/JSX. Do not add `tsconfig.json` or convert files to `.tsx`.
 3. **No linter/formatter.** Do not add ESLint, Prettier, or any linting config unless explicitly asked.
-4. **Testing uses Vitest (component) + Playwright (E2E) + Node.js (integration).** Component tests go in `tests/components/`, E2E specs in `tests/e2e/`, integration scripts in `tests/integration/`. Do not add Jest or Mocha.
+4. **Testing uses Vitest (component) + Playwright (E2E) + Node.js (integration).** Component tests go in `tests/components/`, electron-backend tests in `tests/electron/` (use `@vitest-environment node` + `require.cache` priming for CJS modules that require ESM SDKs), E2E specs in `tests/e2e/`, integration scripts in `tests/integration/`. Do not add Jest or Mocha.
 5. **No npm dependencies for core logic.** The app uses only Node.js built-ins. Justify any new dependency.
 6. **Preserve CommonJS for backend.** `electron/` and `src/acl/` use `require()`/`module.exports`.
 7. **ESM for frontend.** `src/components/`, `src/hooks/`, `src/store/`, `src/utils/` use `import`/`export`.

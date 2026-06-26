@@ -7,7 +7,7 @@ import { useEditorShell } from '../../hooks/useEditorShell';
 import { validateCallsigns, runTripleValidation } from '../../utils/validators';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns, MPS_TO_KNOTS, WIND_UNITS } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoMapOutline, IoNavigateOutline } from 'react-icons/io5';
+import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoMapOutline, IoNavigateOutline, IoSparkles } from 'react-icons/io5';
 
 function convertWindSpeed(entries, fromUnit, toUnit) {
   if (!entries || !entries.length) return entries;
@@ -30,6 +30,7 @@ import SearchBar, { searchAPI } from './SearchBar';
 import TutorialOverlay from './TutorialOverlay';
 import StandMap from './StandMap/StandMap';
 import StarMap from './StarMap/StarMap';
+import ChatPanel from '../ChatPanel/ChatPanel';
 
 // ─── Sub-components ────────────────────────────────────────
 
@@ -222,12 +223,17 @@ export default function EditorScreen() {
   // ── Map toggle button refs (for expand/shrink animation origin) ──
   const standBtnRef = useRef(null);
   const starBtnRef = useRef(null);
+  const chatBtnRef = useRef(null);
 
   // ── Map toggle handlers ──
   const toggleStandMap = useAppStore(s => s.toggleStandMap);
   const toggleStarMap = useAppStore(s => s.toggleStarMap);
   const showStandMap = useAppStore(s => s.showStandMap);
   const showStarMap = useAppStore(s => s.showStarMap);
+
+  // ── Chat toggle ──
+  const chatPanelOpen = useAppStore(s => s.chatPanelOpen);
+  const toggleChatPanel = useAppStore(s => s.toggleChatPanel);
 
   // Load data on mount
   useEffect(() => {
@@ -240,7 +246,7 @@ export default function EditorScreen() {
       const data = await electronAPI.loadAcl(filePath);
       if (!data.success) { showModal(t('editor_load_failed'), data.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); setLoading(false); return; }
       const st = useAppStore.getState();
-      st.setLegacyState({ currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false });
+      st.setLegacyState({ chatPanelOpen: false, currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false });
       if (rootPath && airportIcao) {
         const [vals, audio, tl, rp] = await Promise.all([electronAPI.collectValues(rootPath, airportIcao), electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
         console.log('[Editor] loaded aux data', { airportIcao, valsKeys: Object.keys(vals||{}), dropdowns: { Stand: vals?.Stand?.length, Runway: vals?.Runway?.length, AircraftType: vals?.AircraftType?.length } });
@@ -498,6 +504,7 @@ export default function EditorScreen() {
         </div>
         <div className="toolbar-spacer" />
         <div className="toolbar-group">
+          <button ref={chatBtnRef} onClick={toggleChatPanel} className={chatPanelOpen ? 'btn-map-active' : ''} title={t('chat_title')}><IoSparkles size={14} className="btn-icon" style={{color:'var(--accent)'}} /> {t('chat_title')}</button>
           <button onClick={handleBackup}><IoCloudUploadOutline size={14} className="btn-icon" /> {t('toolbar_backup')}</button>
           <button onClick={handleRestore}><IoCloudDownloadOutline size={14} className="btn-icon" /> {t('toolbar_restore')}</button>
           <button onClick={handleImport}><IoDownloadOutline size={14} className="btn-icon" /> {t('toolbar_import')}</button>
@@ -533,6 +540,12 @@ export default function EditorScreen() {
         </div>
       </div>
       <MapOverlays standBtnRef={standBtnRef} starBtnRef={starBtnRef} />
+      {chatPanelOpen && (
+        <ChatPanel
+          onShrink={() => toggleChatPanel()}
+          buttonRef={chatBtnRef}
+        />
+      )}
       <StatusBar />
       {tutorialOpen && <TutorialOverlay onClose={() => setTutorialOpen(false)} />}
     </div>

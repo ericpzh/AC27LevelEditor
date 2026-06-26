@@ -76,6 +76,17 @@ export const useAppStore = create((set, get) => ({
   // ─── Toast ───
   toast: { message: '', type: '' },
 
+  // ─── Chat (Cloud LLM) ───
+  chatPanelOpen: false,
+  chatMessages: [],
+  chatSending: false,
+  chatSetupStep: 'vendors',     // 'vendors' | 'ready'
+  chatError: null,
+  chatConfig: { deepseekKey: '', geminiKey: '', claudeKey: '', codexKey: '', selectedModel: '' },
+  chatConfigPath: '',
+  chatAvailableModels: [],
+  chatTotalRamGB: 0,
+
   // ─── Actions: Legacy sync ───
   setLegacyState: (updates) => set(updates),
 
@@ -85,6 +96,7 @@ export const useAppStore = create((set, get) => ({
 
   // ─── Actions: Editor Data ───
   initializeEditor: (data) => set({
+    chatPanelOpen: false,
     currentPath: data.currentPath,
     currentAirport: data.airportIcao,
     flights: data.flights,
@@ -410,4 +422,18 @@ export const useAppStore = create((set, get) => ({
     const timer = setTimeout(() => set({ toast: { message: '', type: '' } }), TOAST_DURATION_MS);
     set({ _toastTimer: timer });
   },
+
+  // ─── Actions: Chat (Cloud LLM) ───
+  toggleChatPanel: () => set(state => ({ chatPanelOpen: !state.chatPanelOpen })),
+  setChatSending: (val) => set({ chatSending: val }),
+  setChatSetupStep: (step) => set({ chatSetupStep: step }),
+  setChatError: (error) => set({ chatError: error }),
+  clearChatError: () => set({ chatError: null }),
+  clearChatMessages: () => set({ chatMessages: [] }),
+  setChatConfig: (config) => set({ chatConfig: config }),
+  setChatConfigPath: (p) => set({ chatConfigPath: p }),
+  setChatAvailableModels: (models) => set({ chatAvailableModels: models }),
+  addChatMessage: (msg) => set(state => ({
+    chatMessages: [...state.chatMessages, msg],
+  })),
 }));

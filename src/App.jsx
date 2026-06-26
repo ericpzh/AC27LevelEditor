@@ -60,6 +60,13 @@ function ScreenRouter() {
     didInit = true;
     (async () => {
       try {
+        // Check system RAM for LLM support (runs once)
+        const sysInfo = await electronAPI.getSystemInfo();
+        if (sysInfo && sysInfo.success) {
+          useAppStore.setState({ chatTotalRamGB: sysInfo.totalRamGB });
+        }
+      } catch (_) {}
+      try {
         const cacheState = await electronAPI.getCacheState();
         if (cacheState.state === 'no-cache') { setBooting(false); return; }
 

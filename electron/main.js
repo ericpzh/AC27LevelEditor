@@ -10,7 +10,8 @@ if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
-const { startServer: startApiServer, stopServer: stopApiServer } = require('./api-server');
+const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS } = require('./api-server');
+const cloudLLM = require('./cloud-llm');
 
 let mainWindow;
 const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
@@ -1992,6 +1993,120 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 ipcMain.handle('debug-log', async (_e, args) => {
   console.log('[RENDERER]', ...args);
   return { success: true };
+});
+
+// ─── IPC: Cloud LLM ──────────────────────────────────────────
+
+const CONFIG_PATH = path.join(app.getPath('userData'), 'ac27-config.json');
+
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')); }
+  catch (_) { return {}; }
+}
+
+function saveConfig(config) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+  console.log('[Config] Saved to', CONFIG_PATH);
+}
+
+ipcMain.handle('get-config', async () => {
+  try {
+    const config = loadConfig();
+    return {
+      success: true,
+      config: {
+        deepseekKey: config.deepseekKey || '',
+        geminiKey: config.geminiKey || '',
+        claudeKey: config.claudeKey || '',
+        codexKey: config.codexKey || '',
+        selectedModel: config.selectedModel || '',
+      },
+      configPath: CONFIG_PATH,
+    };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('save-config', async (_event, updates) => {
+  try {
+    const config = loadConfig();
+    Object.assign(config, updates);
+    saveConfig(config);
+    return { success: true, configPath: CONFIG_PATH };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// One-shot system info (RAM)
+ipcMain.handle('get-system-info', async () => {
+  const os = require('os');
+  const totalRamGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
+  return { success: true, totalRamGB };
+});
+
+ipcMain.handle('cloud-chat', async (_event, { messages }) => {
+  try {
+    const config = loadConfig();
+    if (!config.selectedModel) return { success: false, error: 'No model selected.' };
+
+    let streamedThinking = '';
+
+    const onToolCall = async (toolCall) => {
+      if (_event.sender && !_event.sender.isDestroyed()) {
+        _event.sender.send('cloud-chat-event', {
+          toolCall: { name: toolCall.function.name, args: toolCall.function.arguments },
+          thinking: streamedThinking,
+        });
+      }
+      // Reset for next iteration's thinking
+      streamedThinking = '';
+
+      const mcpMsg = {
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'tools/call',
+        params: {
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+        },
+      };
+
+      try {
+        const mcpResponse = await handleMcpMessage(mcpMsg);
+        if (_event.sender && !_event.sender.isDestroyed()) {
+          _event.sender.send('cloud-chat-event', {
+            toolResult: { name: toolCall.function.name, result: mcpResponse.result || mcpResponse.error },
+          });
+        }
+        return mcpResponse;
+      } catch (err) {
+        if (_event.sender && !_event.sender.isDestroyed()) {
+          _event.sender.send('cloud-chat-event', {
+            toolResult: { name: toolCall.function.name, error: err.message },
+          });
+        }
+        return { error: err.message };
+      }
+    };
+
+    const tools = cloudLLM.mcpToolsToOpenAITools(MCP_TOOLS);
+    const onThinking = (text) => {
+      if (_event.sender && !_event.sender.isDestroyed()) {
+        _event.sender.send('cloud-chat-event', { thinking: text });
+      }
+    };
+    const result = await cloudLLM.chat(messages, tools, onToolCall, config, onThinking);
+
+    if (_event.sender && !_event.sender.isDestroyed()) {
+      _event.sender.send('cloud-chat-event', { done: true, full: result.content, thinking: result.thinking || '' });
+    }
+
+    return { success: true, content: result.content };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
 app.whenReady().then(() => {

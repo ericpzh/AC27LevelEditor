@@ -139,3 +139,64 @@ describe('appStore — selection', () => {
     expect(useAppStore.getState().selectedIndices.size).toBe(0);
   });
 });
+
+// ── Chat state ─────────────────────────────────────────────────
+
+describe('appStore — chat', () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  it('defaults to panel closed', () => {
+    expect(useAppStore.getState().chatPanelOpen).toBe(false);
+  });
+
+  it('defaults to vendors setup step', () => {
+    expect(useAppStore.getState().chatSetupStep).toBe('vendors');
+  });
+
+  it('defaults to empty config', () => {
+    const cfg = useAppStore.getState().chatConfig;
+    expect(cfg.deepseekKey).toBe('');
+    expect(cfg.selectedModel).toBe('');
+  });
+
+  it('toggles chat panel open/closed', () => {
+    const store = useAppStore.getState();
+    store.toggleChatPanel();
+    expect(useAppStore.getState().chatPanelOpen).toBe(true);
+    store.toggleChatPanel();
+    expect(useAppStore.getState().chatPanelOpen).toBe(false);
+  });
+
+  it('adds and clears chat messages', () => {
+    const store = useAppStore.getState();
+    store.addChatMessage({ role: 'user', content: 'hello' });
+    expect(useAppStore.getState().chatMessages.length).toBe(1);
+    store.clearChatMessages();
+    expect(useAppStore.getState().chatMessages.length).toBe(0);
+  });
+
+  it('sets sending state', () => {
+    useAppStore.getState().setChatSending(true);
+    expect(useAppStore.getState().chatSending).toBe(true);
+  });
+
+  it('sets and clears chat errors', () => {
+    useAppStore.getState().setChatError('test error');
+    expect(useAppStore.getState().chatError).toBe('test error');
+    useAppStore.getState().clearChatError();
+    expect(useAppStore.getState().chatError).toBe(null);
+  });
+
+  it('sets chat config', () => {
+    useAppStore.getState().setChatConfig({ deepseekKey: 'sk-test', selectedModel: 'deepseek-v4-pro' });
+    expect(useAppStore.getState().chatConfig.deepseekKey).toBe('sk-test');
+    expect(useAppStore.getState().chatConfig.selectedModel).toBe('deepseek-v4-pro');
+  });
+
+  it('sets setup step', () => {
+    useAppStore.getState().setChatSetupStep('ready');
+    expect(useAppStore.getState().chatSetupStep).toBe('ready');
+  });
+});
