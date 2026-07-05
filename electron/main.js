@@ -2115,14 +2115,16 @@ ipcMain.handle('cloud-chat', async (_event, { messages }) => {
 
 /** Resolve the ffmpeg binary path (works in dev and packaged builds). */
 function _getFfmpegPath() {
-  try {
-    // In dev, ffmpeg-static resolves directly from node_modules
-    return require('ffmpeg-static');
-  } catch (_) {
-    // In packaged build, the binary is in extraResources
+  if (app.isPackaged) {
+    // In packaged build, the binary is unpacked into extraResources.
+    // ffmpeg-static resolves to a path inside app.asar, and you cannot
+    // spawn a native executable from inside an asar archive, so we must
+    // use the extraResources copy placed alongside the asar.
     const fname = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
     return path.join(process.resourcesPath, fname);
   }
+  // In dev, ffmpeg-static resolves directly from node_modules
+  return require('ffmpeg-static');
 }
 
 /** Discover all XXXX.webm/ folders under MainMenuVideos. */
