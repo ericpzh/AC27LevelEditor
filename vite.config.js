@@ -8,7 +8,7 @@ export default defineConfig({
     electron([
       {
         entry: 'electron/main.js',
-        vite: { build: { outDir: 'dist-electron', rollupOptions: { external: ['electron'] } } },
+        vite: { build: { outDir: 'dist-electron', rollupOptions: { external: ['electron', 'ffmpeg-static'] } } },
       },
       {
         entry: 'electron/preload.js',

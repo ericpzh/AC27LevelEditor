@@ -1,6 +1,8 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
+﻿const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
+const ffmpegPath = require('ffmpeg-static');
 const { initLogger, closeLogger } = require('../src/utils/logger');
 
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
@@ -2107,6 +2109,157 @@ ipcMain.handle('cloud-chat', async (_event, { messages }) => {
   } catch (e) {
     return { success: false, error: e.message };
   }
+});
+
+// ── Video Background Replacer ────────────────────────────────────────────
+
+/** Resolve the ffmpeg binary path (works in dev and packaged builds). */
+function _getFfmpegPath() {
+  try {
+    // In dev, ffmpeg-static resolves directly from node_modules
+    return require('ffmpeg-static');
+  } catch (_) {
+    // In packaged build, the binary is in extraResources
+    const fname = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    return path.join(process.resourcesPath, fname);
+  }
+}
+
+/** Discover all XXXX.webm/ folders under MainMenuVideos. */
+ipcMain.handle('discover-menu-videos', async () => {
+  try {
+    const cr = _readCache();
+    const gameRoot = cr?.data?.gameRoot;
+    console.log('[video-replacer] _readCache result — valid:', cr?.valid, 'gameRoot:', gameRoot);
+    if (!gameRoot) {
+      console.log('[video-replacer] NO_GAME_ROOT — cache missing, invalid, or no gameRoot set');
+      return { error: 'NO_GAME_ROOT' };
+    }
+
+    const videosDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'MainMenuVideos');
+    console.log('[video-replacer] scanning videosDir:', videosDir);
+    if (!fs.existsSync(videosDir)) {
+      console.log('[video-replacer] videosDir not found');
+      return { folders: [] };
+    }
+
+    const entries = fs.readdirSync(videosDir, { withFileTypes: true });
+    const folders = [];
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      if (!e.name.endsWith('.webm')) continue;
+      if (e.name.endsWith('.webm.bak')) continue;
+
+      const icao = e.name.replace(/\.webm$/, '').toUpperCase();
+      const dirPath = path.join(videosDir, e.name);
+      const webmFiles = fs.readdirSync(dirPath).filter(f => f.endsWith('.webm'));
+      const files = webmFiles.map(f => {
+        const st = fs.statSync(path.join(dirPath, f));
+        return { name: f, size: st.size };
+      });
+      const bakPath = dirPath + '.bak';
+      folders.push({
+        icao,
+        dirPath,
+        files,
+        totalSize: files.reduce((s, f) => s + f.size, 0),
+        backupExists: fs.existsSync(bakPath),
+      });
+    }
+    return { folders };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+/** Open native file dialog for selecting a video file. */
+ipcMain.handle('select-video-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Source Video',
+    filters: [{ name: 'Video Files', extensions: ['mp4', 'mov', 'avi', 'mkv', 'flv', 'webm', 'm4v', 'wmv'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths.length) return { canceled: true };
+  const filePath = result.filePaths[0];
+  const st = fs.statSync(filePath);
+  return { canceled: false, filePath, fileName: path.basename(filePath), fileSize: st.size };
+});
+
+/** Convert source video to VP8 WebM. Streams progress events to renderer. */
+ipcMain.handle('convert-video', async (_event, { inputPath, outputPath }) => {
+  return new Promise((resolve) => {
+    const ffmpeg = _getFfmpegPath();
+    const args = [
+      '-y', '-i', inputPath,
+      '-c:v', 'libvpx', '-b:v', '8M', '-crf', '10',
+      '-deadline', 'good', '-cpu-used', '0', '-row-mt', '1',
+      '-f', 'webm', outputPath,
+    ];
+    const proc = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    const durationRe = /Duration:\s*(\d{2}):(\d{2}):(\d{2})\.(\d{2})/;
+    const progressRe = /time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})/;
+    let totalSec = null;
+
+    proc.stderr.on('data', (data) => {
+      const str = data.toString();
+      if (totalSec === null) {
+        const dm = str.match(durationRe);
+        if (dm) totalSec = parseInt(dm[1], 10) * 3600 + parseInt(dm[2], 10) * 60 + parseInt(dm[3], 10) + parseInt(dm[4], 10) / 100;
+      }
+      const pm = str.match(progressRe);
+      if (pm && totalSec) {
+        const cur = parseInt(pm[1], 10) * 3600 + parseInt(pm[2], 10) * 60 + parseInt(pm[3], 10) + parseInt(pm[4], 10) / 100;
+        const pct = Math.min(100, Math.round((cur / totalSec) * 100));
+        if (_event.sender && !_event.sender.isDestroyed()) {
+          _event.sender.send('video-convert-progress', { percent: pct, current: cur, total: totalSec });
+        }
+      }
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outputPath)) {
+        resolve({ success: true, outputPath, size: fs.statSync(outputPath).size });
+      } else {
+        resolve({ success: false, error: `ffmpeg exited with code ${code}` });
+      }
+    });
+    proc.on('error', (err) => resolve({ success: false, error: err.message }));
+  });
+});
+
+/** Backup each airport's .webm/ folder and replace all files with the converted video. */
+ipcMain.handle('replace-menu-videos', async (_event, { convertedVideoPath, airports }) => {
+  const results = [];
+  for (let i = 0; i < airports.length; i++) {
+    const { icao, dirPath, files } = airports[i];
+    if (_event.sender && !_event.sender.isDestroyed()) {
+      _event.sender.send('video-replace-progress', { icao, step: 'backup', current: i + 1, total: airports.length });
+    }
+
+    try {
+      const bakPath = dirPath + '.bak';
+      // Only back up once — never overwrite an existing .bak so the
+      // original videos are always preserved on subsequent replaces.
+      if (!fs.existsSync(bakPath)) {
+      fs.cpSync(dirPath, bakPath, { recursive: true });
+      }
+
+      if (_event.sender && !_event.sender.isDestroyed()) {
+        _event.sender.send('video-replace-progress', { icao, step: 'replace', current: i + 1, total: airports.length });
+      }
+
+      for (const f of files) {
+        const destPath = path.join(dirPath, f.name);
+        if (fs.existsSync(destPath)) fs.rmSync(destPath);
+        fs.copyFileSync(convertedVideoPath, destPath);
+      }
+      results.push({ icao, fileCount: files.length });
+    } catch (err) {
+      return { success: false, error: `Failed at ${icao}: ${err.message}`, completed: results };
+    }
+  }
+  return { success: true, replaced: results };
 });
 
 app.whenReady().then(() => {

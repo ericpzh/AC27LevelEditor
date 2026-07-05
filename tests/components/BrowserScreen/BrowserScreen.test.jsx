@@ -280,8 +280,8 @@ describe('Version Mismatch Detection', () => {
         expect(screen.getByText('No level files found')).toBeInTheDocument();
       });
 
-      // Language toggle button
-      const langBtn = document.querySelector('.btn-lang-toggle-top');
+      // Language toggle button (now icon-only, but still has btn-lang-toggle-top)
+      const langBtn = document.querySelectorAll('.btn-lang-toggle-top')[1];
       expect(langBtn).toBeInTheDocument();
       fireEvent.mouseEnter(langBtn);
 
@@ -305,7 +305,7 @@ describe('Version Mismatch Detection', () => {
 
       const tip = document.body.querySelector('.tooltip-popup');
       expect(tip).not.toBeNull();
-      expect(tip.textContent).toBe('Help');
+      expect(tip.textContent).toBe('View help and shortcuts.');
     });
 
     it('changing hover between buttons updates tooltip text', async () => {

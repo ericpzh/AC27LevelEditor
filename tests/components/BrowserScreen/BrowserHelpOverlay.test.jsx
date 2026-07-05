@@ -46,7 +46,7 @@ describe('BrowserHelpOverlay', () => {
   it('renders inline button icons', () => {
     renderOverlay();
     const inlineButtons = document.querySelectorAll('.browser-help-btn');
-    expect(inlineButtons.length).toBeGreaterThanOrEqual(8);
+    expect(inlineButtons.length).toBeGreaterThanOrEqual(9);
   });
 
   it('calls onClose when Escape is pressed', () => {

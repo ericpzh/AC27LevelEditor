@@ -4,13 +4,14 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { RE_HIDDEN, DEMO_VISIBLE_BASES } from '../../utils/constants';
 import CacheProgressBody from '../common/CacheProgressBody';
 import AirportCardMap from './AirportCardMap';
 import BrowserHelpOverlay, { BUTTONS } from './BrowserHelpOverlay';
+import VideoReplaceOverlay from './VideoReplaceOverlay';
 import useTooltip from './useTooltip';
 
 function rescanGuideContent(t) {
@@ -60,6 +61,7 @@ export default function BrowserScreen() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [appVersion, setAppVersion] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
+  const [videoReplace, setVideoReplace] = useState({ open: false, sourcePath: '' });
   const { bind, TooltipPortal } = useTooltip();
 
   useEffect(() => {
@@ -174,6 +176,12 @@ export default function BrowserScreen() {
     electronAPI.openExternal('https://github.com/ericpzh/AC27LevelEditor/issues');
   };
 
+  const handleReplaceBackground = async () => {
+    const result = await electronAPI.selectVideoFile();
+    if (result.canceled) return;
+    setVideoReplace({ open: true, sourcePath: result.filePath });
+  };
+
   const [refreshing, setRefreshing] = useState(false);
 
   const doRefreshScan = async () => {
@@ -269,10 +277,15 @@ export default function BrowserScreen() {
           <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} {...bind(t(BUTTONS.refresh.descKey))} onClick={handleRefreshScan} disabled={refreshing}>
             <IoRefreshOutline size={14} className="btn-icon" />{refreshing ? t('browser_refreshing') : t('browser_refresh_scan')}
           </button>
-          <button className="btn-sm btn-bug-report" {...bind(t(BUTTONS.bugReport.descKey))} onClick={handleBugReport}>
-            <IoBugOutline size={14} className="btn-icon" />{t('browser_bug_report')}
+          <button className="btn-sm" {...bind(t('browser_replace_bg_desc'))} onClick={handleReplaceBackground}>
+            <IoVideocamOutline size={14} className="btn-icon" />{t('browser_replace_background')}
           </button>
-          <button className="btn-lang-toggle-top" {...bind(t(BUTTONS.lang.descKey))} onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
+          <button className="btn-lang-toggle-top btn-icon-only" {...bind(t(BUTTONS.bugReport.descKey))} onClick={handleBugReport}>
+            <IoBugOutline size={14} />
+          </button>
+          <button className="btn-lang-toggle-top btn-icon-only" {...bind(t(BUTTONS.lang.descKey))} onClick={toggleLang}>
+            <IoLanguage size={14} />
+          </button>
           <button className="btn-lang-toggle-top btn-icon-only" {...bind(t(BUTTONS.themeDark.descKey))} onClick={toggleTheme}>
             {theme === 'dark' ? <IoSunnyOutline size={14} /> : <IoMoonOutline size={14} />}
           </button>
@@ -368,6 +381,7 @@ export default function BrowserScreen() {
       {appVersion && <div className="browser-version">v{appVersion}</div>}
 
       {helpOpen && <BrowserHelpOverlay onClose={() => setHelpOpen(false)} />}
+      {videoReplace.open && <VideoReplaceOverlay sourcePath={videoReplace.sourcePath} onClose={() => setVideoReplace({ open: false, sourcePath: '' })} />}
       {TooltipPortal}
     </div>
   );

@@ -22,13 +22,13 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  electron/main.js (Electron Main Process)               │
 │  - Creates BrowserWindow (1400×880, min 1024×640)       │
 │  - contextIsolation: true, nodeIntegration: false       │
-│  - 42 ipcMain.handle() endpoints                        │
+│  - 53 ipcMain.handle() endpoints                        │
 │  - All file I/O, dialog, caching lives here             │
 │  - electron/api-server.js — HTTP API + MCP (port 31415) │
 │  - electron/cloud-llm.js — Multi-vendor cloud LLM chat    │
 ├─────────────────────────────────────────────────────────┤
 │  electron/preload.js (contextBridge)                    │
-│  - Exposes window.electronAPI with ~47 methods          │
+│  - Exposes window.electronAPI with 52 methods            │
 │  - onStoreApiUpdate/offStoreApiUpdate for MCP bridge    │
 │  - Each method = ipcRenderer.invoke(channel, ...args)   │
 ├─────────────────────────────────────────────────────────┤
@@ -41,7 +41,8 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - App.jsx — root: I18nProvider + ScreenRouter + Modal +│
 │    Toast                                                │
 │  - SetupScreen / BrowserScreen / EditorScreen           │
-│  - BrowserScreen: useTooltip (shared tooltip hook),   │
+│  - BrowserScreen: useTooltip (shared tooltip hook),
+    VideoReplaceOverlay (menu video replacer),│
 │    BrowserHelpOverlay (help overlay)                  │
 │  - EditorScreen: FlightTable, TimelineEditors,          │
 │    CellEditor, SearchBar, TutorialOverlay               │

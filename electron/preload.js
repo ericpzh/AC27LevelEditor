@@ -180,4 +180,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
       this._udpStateHandlers.delete(cb);
     }
   },
+
+  // ─── Video Background Replacer ────────────────────────────────
+  selectVideoFile: () => ipcRenderer.invoke('select-video-file'),
+  discoverMenuVideos: () => ipcRenderer.invoke('discover-menu-videos'),
+  convertVideo: (opts) => ipcRenderer.invoke('convert-video', opts),
+  replaceMenuVideos: (opts) => ipcRenderer.invoke('replace-menu-videos', opts),
+
+  _videoConvertHandlers: new Map(),
+  onVideoConvertProgress: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._videoConvertHandlers.set(cb, handler);
+    ipcRenderer.on('video-convert-progress', handler);
+  },
+  offVideoConvertProgress: function (cb) {
+    const handler = this._videoConvertHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('video-convert-progress', handler);
+      this._videoConvertHandlers.delete(cb);
+    }
+  },
+  _videoReplaceHandlers: new Map(),
+  onVideoReplaceProgress: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._videoReplaceHandlers.set(cb, handler);
+    ipcRenderer.on('video-replace-progress', handler);
+  },
+  offVideoReplaceProgress: function (cb) {
+    const handler = this._videoReplaceHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('video-replace-progress', handler);
+      this._videoReplaceHandlers.delete(cb);
+    }
+  },
 });

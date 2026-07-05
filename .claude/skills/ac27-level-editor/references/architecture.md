@@ -15,8 +15,8 @@
 ```
 AC27LevelEditor/
 ├── electron/
-│   ├── main.js              # Electron main process + 42 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, ~47 methods)
+│   ├── main.js              # Electron main process + 53 IPC handlers
+│   ├── preload.js           # contextBridge (window.electronAPI, 52 methods)
 │   ├── api-server.js        # HTTP API + MCP server (port 31415, auto-starts with app)
 │   ├── cloud-llm.js         # Multi-vendor cloud LLM chat (DeepSeek/Gemini/Claude/Codex)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz binary aircraft state (127.0.0.1:20266) + commands (20267)
@@ -42,6 +42,7 @@ AC27LevelEditor/
 │   │   │   ├── BrowserScreen.jsx + .css
 │   │   │   ├── AirportCardMap.jsx + .css  # Mini ground-radar SVG per card
 │   │   │   ├── BrowserHelpOverlay.jsx + .css  # Help overlay with button descriptions
+│   │   │   ├── VideoReplaceOverlay.jsx + .css  # Main menu background video replacer
 │   │   │   ├── useTooltip.jsx + .css  # Shared tooltip hook (used by browser + editor)
 │   │   ├── EditorScreen/    # Main editor: toolbar + table + timelines
 │   │   │   ├── EditorScreen.jsx + .css
@@ -120,7 +121,7 @@ AC27LevelEditor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 310 Vitest + Playwright E2E + 17 Node.js integration tests
+├── tests/               # 361 Vitest + 16 Playwright E2E + 22 Node.js integration tests
 │   ├── electron/cloud-llm.test.js  # cloud-llm backend tests (49 tests, node env)
 │   ├── components/MapWindows/  # MapWindow component & hook tests (10 files, 151 tests)
 └── dist/                # Build output (gitignored)
@@ -247,7 +248,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 333 tests across 23 files
+- `npm test` or `npm run test:watch` — 361 tests across 24 files
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - Electron backend tests use `@vitest-environment node` + `require.cache` priming to stub ESM SDK packages (see `tests/electron/cloud-llm.test.js`)
 - zustand stores are tested with the real store using `setState()` — never mock stores

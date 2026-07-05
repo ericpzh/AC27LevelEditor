@@ -28,6 +28,18 @@ If the editor corrupts level files, Steam can restore the originals:
 3. **Installed Files** → **Verify integrity of game files**
 4. Steam re-downloads the original level files
 
+### Replace Main Menu Background
+
+Use any video file (.mp4, .mov, .avi, etc.) as the main menu background:
+
+1. In the browser screen header, click **Replace Background** (video camera icon)
+2. Select your source video file
+3. The editor automatically converts it to VP8 WebM and replaces all airport backgrounds
+
+**Backup:** Before replacing, the editor backs up the current videos to `.bak` folders (e.g., `KJFK.webm.bak/`). To restore, manually rename the `.bak` folder back to `.webm/`.
+
+**Requires:** ffmpeg (bundled with the editor — no separate install needed).
+
 ### Clear Editor Local Cache
 
 The editor stores data under `%APPDATA%\ac27-level-editor\`. Delete the entire folder to reset the editor to its initial state (startup issues, wrong game directory, etc.):
@@ -62,6 +74,18 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 3. **已安装文件** → **验证游戏文件的完整性**
 4. Steam 会重新下载原始关卡文件
 
+### 替换主菜单背景
+
+使用任意视频文件（.mp4、.mov、.avi 等）替换主菜单背景视频：
+
+1. 在浏览器界面顶栏中，点击 **替换背景**（摄像机图标）
+2. 选择你的视频文件
+3. 编辑器自动将视频转换为 VP8 WebM 格式，并替换所有机场的背景视频
+
+**备份：** 替换前，编辑器会将当前视频备份到 `.bak` 文件夹（例如 `KJFK.webm.bak/`）。如需恢复，手动将 `.bak` 文件夹重命名为 `.webm/` 即可。
+
+**依赖：** ffmpeg（已随编辑器打包，无需单独安装）。
+
 ### 清理编辑器本地缓存
 
 编辑器在 `%APPDATA%\ac27-level-editor\` 下存储缓存文件。 如果编辑器启动异常或选择了错误的游戏目录后无法重置，删除整个文件夹即可恢复初始状态。
@@ -84,12 +108,12 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.1.7
+- **Version:** v1.1.9
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (261 component tests, 19 files) + Playwright (E2E) + Node.js (integration, 19 scripts, 129 MCP/API tests)
+- **Tests:** Vitest (361 tests, 24 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
 
 ### Quick Start
 
@@ -101,8 +125,8 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 43 IPC handlers, file I/O, map window management
-electron/preload.js  →  contextBridge: exposes ~47 methods on window.electronAPI
+electron/main.js     →  Electron main process, 53 IPC handlers, file I/O, map window management, video background replacer
+electron/preload.js  →  contextBridge: exposes 52 methods on window.electronAPI
 electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 7 tools)
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state v2: simFlags, timeScale, heartbeatSeq, auto-reset)
 mcp/bridge.js        →  MCP stdio↔HTTP bridge (launched by Claude Code for AI agent control)
@@ -169,8 +193,8 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 
 ```
 ├── electron/
-│   ├── main.js              # Electron main process + 36 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, ~40 methods)
+│   ├── main.js              # Electron main process + 53 IPC handlers
+│   ├── preload.js           # contextBridge (window.electronAPI, 52 methods)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz aircraft state + commands
 ├── index.html               # Vite HTML entry
 ├── vite.config.js           # Vite 8 + React plugin + Electron plugin
@@ -247,7 +271,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 198 Vitest + Playwright E2E + 17 Node.js integration tests
+├── tests/               # 361 Vitest + 16 Playwright E2E + 22 Node.js integration tests
 └── dist/                # Build output (gitignored)
 ```
 
@@ -271,7 +295,7 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (12 files) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 261 tests in 19 files):**
+**Component tests (Vitest — 361 tests in 24 files):**
 ```bash
 npm test              # Run all component + store + utility + MapWindow tests (~1s)
 npm run test:watch    # Watch mode — re-runs on file changes
@@ -285,7 +309,7 @@ npm run test:e2e      # UI flow tests against real game data (~3 min)
 
 **Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test.
 
-**Save integrity — all .acl files (Node.js integration — 17 scripts):**
+**Save integrity — all .acl files (Node.js integration — 22 scripts):**
 
 Test every .acl file across all airports for save→reload→compare round-trip:
 ```bash

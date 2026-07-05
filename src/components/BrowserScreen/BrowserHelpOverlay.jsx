@@ -1,15 +1,16 @@
 import React, { useEffect } from 'react';
 import './BrowserHelpOverlay.css';
 import { useTranslation } from '../../hooks/useTranslation';
-import { IoClose, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoLanguage, IoMapOutline, IoNavigateOutline, IoListOutline } from 'react-icons/io5';
+import { IoClose, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoLanguage, IoMapOutline, IoNavigateOutline, IoListOutline, IoVideocamOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 
 // ─── Button registry (icon + label key + help description) ───
 export const BUTTONS = {
   changeDir:      { icon: IoFolderOpenOutline, labelKey: 'browser_change_dir',      descKey: 'browser_help_change_dir' },
   refresh:        { icon: IoRefreshOutline,   labelKey: 'browser_refresh_scan',    descKey: 'browser_help_refresh' },
-  bugReport:      { icon: IoBugOutline,       labelKey: 'browser_bug_report',      descKey: 'browser_help_bug_report' },
-  lang:           { icon: IoLanguage,         labelKey: 'lang_switch_to',          descKey: 'browser_help_lang' },
+  replaceBg:      { icon: IoVideocamOutline,  labelKey: 'browser_replace_background', descKey: 'browser_help_replace_bg' },
+  bugReport:      { icon: IoBugOutline,       labelKey: null,                      descKey: 'browser_help_bug_report' },
+  lang:           { icon: IoLanguage,         labelKey: null,                      descKey: 'browser_help_lang' },
   themeDark:      { icon: IoSunnyOutline,     labelKey: null,                      descKey: 'browser_help_theme' },
   themeLight:     { icon: IoMoonOutline,      labelKey: null,                      descKey: 'browser_help_theme' },
   surfaceRadar:   { icon: IoMapOutline,       labelKey: 'toolbar_surface_radar',   descKey: 'browser_help_surface_radar' },
@@ -39,6 +40,7 @@ const SECTIONS = [
     items: [
       { text: '{{btn:changeDir}} — {desc}', descKey: 'browser_help_change_dir' },
       { text: '{{btn:refresh}} — {desc}', descKey: 'browser_help_refresh' },
+      { text: '{{btn:replaceBg}} — {desc}', descKey: 'browser_help_replace_bg' },
       { text: '{{btn:bugReport}} — {desc}', descKey: 'browser_help_bug_report' },
       { text: '{{btn:lang}} — {desc}', descKey: 'browser_help_lang' },
       { text: '{{btn:themeDark}} / {{btn:themeLight}} — {desc}', descKey: 'browser_help_theme' },

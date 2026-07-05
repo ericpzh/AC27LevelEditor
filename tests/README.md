@@ -5,8 +5,8 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest + save integrity (13 files) + E2E (~3 min)
-npm test              # 333 Vitest component + store + utility + electron + MapWindow tests (~1s)
+npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
+npm test              # 361 Vitest component + store + utility + electron + MapWindow tests (~1s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min)
 node tests/integration/test_api_server.js      # MCP/API tests: 85 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -17,11 +17,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 
 ---
 
-## Layer 1 — Vitest Component Tests (333 tests)
+## Layer 1 — Vitest Component Tests (361 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`).
 
-### `npm test` — 333 tests, all pass
+### `npm test` — 361 tests, all pass
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -32,6 +32,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `components/common/Toast.test.jsx` | 4 | Renders empty by default; shows message when set; applies CSS class from type; `.show` class toggles with message |
 | `components/BrowserScreen/BrowserScreen.test.jsx` | 9 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast. **Help Button (5):** renders in header, click opens overlay, Escape closes, backdrop click closes, close button works |
 | `components/BrowserScreen/BrowserHelpOverlay.test.jsx` | 9 | Help overlay renders title + section headings (Header Buttons/Airport/Levels), all button descriptions, inline button icons, Escape/backdrop/close-button dismissal, Chinese translations |
+| `components/BrowserScreen/VideoReplaceOverlay.test.jsx` | 6 | Renders progress bar + percentage; closes immediately on successful completion; shows error when conversion fails; shows error when no folders found; Escape key closes error overlay; renders progress bar in Chinese |
 | `components/BrowserScreen/useTooltip.test.jsx` | 9 | Tooltip renders/clears on hover; text switches between buttons; positions above target; flips below when no room above; centres on button; right-pins at viewport edge; width computed from text (per-char glyph widths) |
 | `components/EditorScreen/EditorTooltip.test.jsx` | 8 | Editor BUTTONS registry completeness (all descKeys, all icons, all required buttons); tooltip integration on editor toolbar buttons |
 | `components/EditorScreen/FlightTable/FlightTable.test.jsx` | 6 | Click on data cell → no selection toggle; checkbox click → toggles; drag from data cell → range-selects; dropdown/time cell clicks → no toggle; clock portal click → no toggle |
@@ -148,7 +149,7 @@ Iterates every level row in the browser: open → disable time validation → Ct
 
 ---
 
-## Layer 3 — Node.js Integration Tests (19 scripts)
+## Layer 3 — Node.js Integration Tests (22 scripts)
 
 Standalone scripts in `tests/integration/`. Run directly with `node`. Some need `--require ./tests/integration/preload.cjs` for ESM interop.
 
@@ -321,7 +322,7 @@ The `test_save_integrity_all.js` script uses a **golden/result pattern**:
 
 | File | Purpose |
 |------|---------|
-| `setup.js` | Global mocks: `window.electronAPI` (26 IPC methods), `matchMedia`, `scrollIntoView`, `ResizeObserver`. Guarded with `typeof window !== 'undefined'` so node-environment tests can opt in with `@vitest-environment node`. |
+| `setup.js` | Global mocks: `window.electronAPI` (33+ IPC methods + video replacer + UDP listeners), `matchMedia`, `scrollIntoView`, `ResizeObserver`. Guarded with `typeof window !== 'undefined'` so node-environment tests can opt in with `@vitest-environment node`. |
 | `__mocks__/zustand.js` | Auto-reset all zustand stores to initial state between Vitest tests |
 | `integration/preload.cjs` | ESM→CJS transpiler for tests that `require()` ESM source modules |
 | `save-integrity-check.js` | S1-S3 diff analysis: compare .acl vs .bak, categorize diffs, parser round-trip |

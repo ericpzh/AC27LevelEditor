@@ -1,4 +1,4 @@
-import '@testing-library/jest-dom';
+﻿import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
 // ── Mock window.electronAPI ──────────────────────────────────────────
@@ -77,6 +77,16 @@ vi.stubGlobal('electronAPI', {
   onAircraftSelectedInMap: (cb) => mockIpcOn('aircraft-selected-in-map', cb),
   offAircraftSelectedInMap: (cb) => { /* unsubscribe */ },
 
+	  // ─── Video Background Replacer ────────────────────────────
+	  selectVideoFile: () => mockIpcInvoke('select-video-file'),
+	  discoverMenuVideos: () => mockIpcInvoke('discover-menu-videos'),
+	  convertVideo: (opts) => mockIpcInvoke('convert-video', opts),
+	  replaceMenuVideos: (opts) => mockIpcInvoke('replace-menu-videos', opts),
+	  onVideoConvertProgress: (cb) => mockIpcOn('video-convert-progress', cb),
+	  offVideoConvertProgress: (cb) => { /* unsubscribe */ },
+	  onVideoReplaceProgress: (cb) => mockIpcOn('video-replace-progress', cb),
+	  offVideoReplaceProgress: (cb) => { /* unsubscribe */ },
+
   // ─── UDP telemetry ───────────────────────────────────────
   getUdpStatus: () => mockIpcInvoke('get-udp-status'),
   getUdpAircraftState: () => mockIpcInvoke('get-udp-aircraft-state'),
@@ -86,6 +96,9 @@ vi.stubGlobal('electronAPI', {
   onUdpAircraftState: (cb) => mockIpcOn('udp-aircraft-state', cb),
   offUdpAircraftState: (cb) => { /* unsubscribe */ },
 });
+if (typeof window !== 'undefined') window.electronAPI = globalThis.electronAPI;
+// Ensure electronAPI is available on window for createContext default value
+
 
 // ── Mock dialog / matchMedia etc. ───────────────────────────────────
 // (jsdom only — skip in node environment)
