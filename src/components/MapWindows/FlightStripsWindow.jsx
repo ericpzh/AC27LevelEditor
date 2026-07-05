@@ -1,5 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef, forwardRef } from 'react';
+import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
+import useTooltip from '../BrowserScreen/useTooltip';
+import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
 import useUdpAircraftState from './useUdpAircraftState';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
@@ -250,7 +253,16 @@ const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap,
 // ─── Main component ───────────────────────────────────────────────
 
 export default function FlightStripsWindow({ airportIcao }) {
+  const { t } = useTranslation();
   const electronAPI = useElectronAPI();
+  const { bind, TooltipPortal } = useTooltip();
+
+  /** Extract description from a help i18n string (strips {{btn:...}} prefix). */
+  const helpTip = useCallback((key) => t(key).replace(/^\{\{btn:\w+\}\}\s*[—–\-：:]\s*/, ''), [t]);
+
+  /** bind() wrapper gated by MAP_TOOLTIPS_ENABLED — returns {} when tooltips are off. */
+  const tipBind = useCallback((text) => MAP_TOOLTIPS_ENABLED ? bind(text) : {}, [bind]);
+
   const sp = new URLSearchParams(window.location.search);
   const rootPath = decodeURIComponent(sp.get('root') || '');
   const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, timeScale, udpAirportChanged } = useUdpAircraftState();
@@ -897,7 +909,7 @@ export default function FlightStripsWindow({ airportIcao }) {
             onRelease={voice.stopListening}
           />
           */}
-          <div className="strips-bar-btn" onClick={handleRefresh} title="Refresh">
+          <div className="strips-bar-btn" onClick={handleRefresh} {...tipBind(helpTip('map_help_strips_refresh'))}>
             {witchMode ? <img src="witch/refresh.png" alt="Refresh" className="witch-refresh-img" /> : <IoRefreshOutline size={16} />}
           </div>
           <div className="strips-bar-btn" onClick={handleHelpClick} title="Map Help">
@@ -906,6 +918,7 @@ export default function FlightStripsWindow({ airportIcao }) {
         </div>
       </div>
       {helpOpen && <MapHelpOverlay type="strips" titleKey="map_help_strips_title" onClose={() => setHelpOpen(false)} />}
+      {MAP_TOOLTIPS_ENABLED && TooltipPortal}
     </div>
   );
 }

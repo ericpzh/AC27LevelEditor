@@ -43,7 +43,7 @@ AC27LevelEditor/
 │   │   │   ├── AirportCardMap.jsx + .css  # Mini ground-radar SVG per card
 │   │   │   ├── BrowserHelpOverlay.jsx + .css  # Help overlay with button descriptions
 │   │   │   ├── VideoReplaceOverlay.jsx + .css  # Main menu background video replacer
-│   │   │   ├── useTooltip.jsx + .css  # Shared tooltip hook (used by browser + editor)
+│   │   │   ├── useTooltip.jsx + .css  # Shared tooltip hook (used by browser, editor, and map windows)
 │   │   ├── EditorScreen/    # Main editor: toolbar + table + timelines
 │   │   │   ├── EditorScreen.jsx + .css
 │   │   │   ├── SearchBar.jsx     # Ctrl+F search (extracted component)

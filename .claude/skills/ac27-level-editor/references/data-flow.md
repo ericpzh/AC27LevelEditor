@@ -213,10 +213,8 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 The game ships six files that receive the 30-minute demo window treatment (all controlled by `DEMO_VISIBLE_BASES` in `src/utils/constants.js`):
 - `ZSJN-Morning_120min.demo.acl` (05:45–06:15)
-- `ZSJN_07-10.demo.acl` (07:30–08:00)
 - `ZSJN_17-19_emerg.acl` — emergency scenario (also gets 30-min window)
 - `KJFK_07-09_emerg.acl` — emergency scenario (also gets 30-min window)
-- `KJFK_09-11.demo.acl` (09:30–10:00)
 - `KJFK_20-22.demo.acl` (20:30–21:00)
 
 **Key properties:**

@@ -12,6 +12,12 @@ export const TICKS_PER_DAY_NUM = 864000000000;
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
 export const CACHE_VERSION = 12;
 
+// ─── Map-window on-hover button tooltips (air/ground radar + flight strips) ──
+// Set to true to enable portal-based hover tooltips on all radar/strip buttons.
+// Tooltip text is extracted from the Map Help overlay content (i18n-aware).
+// The help/witch-mode toggle button is always excluded.
+export const MAP_TOOLTIPS_ENABLED = false;
+
 // ─── Nautical mile → game units (1852 m ÷ 100 m/unit) ──────
 export const NM_TO_GU = 18.52;
 
@@ -324,10 +330,8 @@ export const RE_HIDDEN = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
  */
 export const DEMO_VISIBLE_BASES = new Set([
   'ZSJN-Morning_120min.demo.acl',
-  'ZSJN_07-10.demo.acl',
   'ZSJN_17-19_emerg.acl',
   'KJFK_07-09_emerg.acl',
-  'KJFK_09-11.demo.acl',
   'KJFK_20-22.demo.acl',
 ]);
 

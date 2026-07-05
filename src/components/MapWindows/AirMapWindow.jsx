@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
+import useTooltip from '../BrowserScreen/useTooltip';
+import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
 import useSvgZoom from './useSvgZoom';
 import useUdpAircraftState from './useUdpAircraftState';
 import ControlSidebar from './ControlSidebar';
@@ -46,6 +48,14 @@ function headingDeg(noseDir) {
 export default function AirMapWindow({ airportIcao }) {
   const { t } = useTranslation();
   const electronAPI = useElectronAPI();
+  const { bind, TooltipPortal } = useTooltip();
+
+  /** Extract description from a help i18n string (strips {{btn:...}} prefix). */
+  const helpTip = useCallback((key) => t(key).replace(/^\{\{btn:\w+\}\}\s*[—–\-：:]\s*/, ''), [t]);
+
+  /** bind() wrapper gated by MAP_TOOLTIPS_ENABLED — returns {} when tooltips are off. */
+  const tipBind = useCallback((text) => MAP_TOOLTIPS_ENABLED ? bind(text) : {}, [bind]);
+
   // Read gameRoot from URL query param — zustand store is empty in separate window
   const sp = new URLSearchParams(window.location.search);
   const rootPath = decodeURIComponent(sp.get('root') || '');
@@ -687,6 +697,9 @@ export default function AirMapWindow({ airportIcao }) {
             showDepLabels={showDepLabels}
             onToggleArrLabels={() => setShowArrLabels(v => !v)}
             onToggleDepLabels={() => setShowDepLabels(v => !v)}
+            arrTooltip={helpTip('map_help_air_arr')}
+            depTooltip={helpTip('map_help_air_dep')}
+            getRunwayTooltip={(rwy) => t('map_help_air_rwy_desc').replace('{rwy}', rwy)}
           />
           {/* Sim time clock in top-left corner */}
           <SimClock simTimeUnixMs={simTimeUnixMs} />
@@ -899,37 +912,49 @@ export default function AirMapWindow({ airportIcao }) {
             onResetZoom={handleResetZoom}
             onResetPanH={handleResetPanH}
             onResetPanV={handleResetPanV}
+            knobTooltips={{
+              zoom: helpTip('map_help_air_knobs_range'),
+              panH: helpTip('map_help_air_knobs_panew'),
+              panV: helpTip('map_help_air_knobs_pansn'),
+              airspace: helpTip('map_help_air_airspace'),
+            }}
             airspaceKnob={
               <SpinKnob label="AIRSPACE" onStep={(dir) => setRangeRingLevel(l => Math.max(0, Math.min(MAX_RING_LEVEL, l + dir)))} position={rangeRingLevel / MAX_RING_LEVEL} onReset={() => setRangeRingLevel(3)} />
             }
           >
             <div className={'air-map-toggle' + (showStarPaths ? ' active' : '')}
-              onClick={() => setShowStarPaths(v => !v)}>
+              onClick={() => setShowStarPaths(v => !v)}
+              {...tipBind(helpTip('map_help_air_star'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_star')}</span>
             </div>
             <div className={'air-map-toggle' + (showSidPaths ? ' active' : '')}
-              onClick={() => setShowSidPaths(v => !v)}>
+              onClick={() => setShowSidPaths(v => !v)}
+              {...tipBind(helpTip('map_help_air_sid'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_sid')}</span>
             </div>
             <div className={'air-map-toggle' + (showApprPaths ? ' active' : '')}
-              onClick={() => setShowApprPaths(v => !v)}>
+              onClick={() => setShowApprPaths(v => !v)}
+              {...tipBind(helpTip('map_help_air_appr'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_appr')}</span>
             </div>
             <div className={'air-map-toggle' + (showRouteLabels ? ' active' : '')}
-              onClick={() => setShowRouteLabels(v => !v)}>
+              onClick={() => setShowRouteLabels(v => !v)}
+              {...tipBind(helpTip('map_help_air_labels'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_labels')}</span>
             </div>
             <div className={'air-map-toggle' + (showRunwayExt ? ' active' : '')}
-              onClick={() => setShowRunwayExt(v => !v)}>
+              onClick={() => setShowRunwayExt(v => !v)}
+              {...tipBind(helpTip('map_help_air_ils'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_runway_ext')}</span>
             </div>
             <div className={'air-map-toggle' + (showBgImage ? ' active' : '')}
-              onClick={() => setShowBgImage(v => !v)}>
+              onClick={() => setShowBgImage(v => !v)}
+              {...tipBind(helpTip('map_help_air_map'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_bg')}</span>
             </div>
@@ -957,7 +982,8 @@ export default function AirMapWindow({ airportIcao }) {
                     if (electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft();
                   }, 300);
                 }
-              }}>
+              }}
+              {...tipBind(helpTip('map_help_air_refresh'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('map_refresh')}</span>
             </div>
@@ -983,6 +1009,7 @@ export default function AirMapWindow({ airportIcao }) {
         </>
       )}
       {helpOpen && <MapHelpOverlay type="air" onClose={() => setHelpOpen(false)} runwayList={runwayList} />}
+      {MAP_TOOLTIPS_ENABLED && TooltipPortal}
     </div>
   );
 }

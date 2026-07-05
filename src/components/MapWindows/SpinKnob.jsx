@@ -1,4 +1,6 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react';
+import useTooltip from '../BrowserScreen/useTooltip';
+import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
 import './SpinKnob.css';
 
 const KNOB_SIZE = 48;
@@ -45,7 +47,7 @@ function arrowArcPath(cx, cy, r) {
  * Rotary encoder knob — click-drag or scroll-wheel to emit angular steps.
  * Accepts optional `position` (0–1) to set the indicator as an absolute gauge.
  */
-export default function SpinKnob({ label, onStep, position, onReset }) {
+export default function SpinKnob({ label, onStep, position, onReset, tooltip }) {
   const knobRef = useRef(null);
   const indicatorRef = useRef(null);
   const dragRef = useRef(null);          // { prevAngle, cumulative } when dragging
@@ -54,6 +56,11 @@ export default function SpinKnob({ label, onStep, position, onReset }) {
   const pressTimerRef = useRef(null);
   const [pressed, setPressed] = useState(false);
   const hasPosition = position !== undefined && position !== null;
+
+  // Tooltip (optional; gated by MAP_TOOLTIPS_ENABLED)
+  const tooltipHook = useTooltip();
+  const bindTooltip = (MAP_TOOLTIPS_ENABLED && tooltip) ? tooltipHook.bind(tooltip) : {};
+  const TooltipPortal = MAP_TOOLTIPS_ENABLED ? tooltipHook.TooltipPortal : null;
 
   // ── Map position 0–1 to degrees ─────────────────────────────
   // Uses the full sweep range defined by data-min-angle / data-max-angle
@@ -150,7 +157,7 @@ export default function SpinKnob({ label, onStep, position, onReset }) {
   }, [onStep]);
 
   return (
-    <div className="spin-knob">
+    <div className="spin-knob" {...bindTooltip}>
       <div
         className={'spin-knob-svg-wrapper' + (pressed ? ' pressed' : '')}
         ref={knobRef}
@@ -217,6 +224,7 @@ export default function SpinKnob({ label, onStep, position, onReset }) {
         </svg>
       </div>
       {label && <span className="spin-knob-label">{label}</span>}
+      {TooltipPortal}
     </div>
   );
 }

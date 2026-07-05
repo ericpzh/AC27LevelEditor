@@ -93,7 +93,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 
 **Purpose:** SVG surface radar for tracking aircraft movement on the ground at a specific airport.
 
-**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan), push-button toggles (parked aircraft, taxiway labels, refresh), and a **help button** (`?` icon). Sim-time clock displayed in top-left corner.
+**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan), push-button toggles (parked aircraft, taxiway labels, refresh), and a **help button** (`?` icon). All controls (except the help/witch button) have on-hover portal tooltips sourced from the map help page i18n content, gated by `MAP_TOOLTIPS_ENABLED`. Sim-time clock displayed in top-left corner.
 
 **Data sources:**
 - `_taxiwayPaths` — taxiway centerline polylines from approach cache (via `electronAPI.collectValues()`)
@@ -128,7 +128,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 
 **Purpose:** SVG approach radar for tracking airborne aircraft and visualizing STAR/SID/APPR/missed-approach routes with range rings, runway extensions, and border overlay.
 
-**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan, airspace with gauge indicators), push-button toggles (STAR, SID, APPR, Labels, ILS, Map, Refresh), and a **help button** (`?` icon). Sim-time clock in top-left corner.
+**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan, airspace with gauge indicators), push-button toggles (STAR, SID, APPR, Labels, ILS, Map, Refresh), and a **help button** (`?` icon). All controls (except the help/witch button) have on-hover portal tooltips sourced from the map help page i18n content, gated by `MAP_TOOLTIPS_ENABLED`. The left `RunwaySidebar` (ARR, DEP, per-runway toggles) also has tooltips. Sim-time clock in top-left corner.
 
 **Data sources:**
 - `_starPaths` (STAR routes, Type=0) — rendered in grey; trimmed at APPR overlap points
@@ -176,7 +176,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 
 **Purpose:** Live flight progress strips organized by controller seat (RAMP, GROUND, TOWER, DEPARTURE, APPROACH, DELIVERY, APRON), with drag-to-reorder and cross-window selection sync.
 
-**Layout:** Horizontal row of columns with a bottom bar: sim clock + game speed multiplier (×1/×2 from UDP `timeScale`), refresh, help. Runway separator bars have solid black (`#000`) background. i18n: strips use hardcoded English only (seat labels, headers, runway separators never translated); help overlay has full i18n.
+**Layout:** Horizontal row of columns with a bottom bar: sim clock + game speed multiplier (×1/×2 from UDP `timeScale`), refresh (portal tooltip from map help i18n, gated by `MAP_TOOLTIPS_ENABLED`), help (no tooltip — doubles as witch-mode toggle). Runway separator bars have solid black (`#000`) background. i18n: strips use hardcoded English only (seat labels, headers, runway separators never translated); help overlay has full i18n.
 
 **Data sources:**
 - `useUdpAircraftState()` — live aircraft + `simTimeUnixMs` + `timeScale` + `udpAirportChanged` from UDP
@@ -446,8 +446,51 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 | `seat_1`–`seat_7` | RMP/GND/TWR/DEP/APPR/DEL/APN | RMP/GND/TWR/DEP/APPR/DEL/APN |
 | `seat_1_full`–`seat_7_full` | RAMP/GROUND/TOWER/DEPARTURE/APPROACH/DELIVERY/APRON | RAMP/GROUND/TOWER/DEPARTURE/APPROACH/DELIVERY/APRON |
 
+## Map-Window Portal Tooltips (v1.1.10)
+
+All three map windows (AirMapWindow, GroundMapWindow, FlightStripsWindow) use the shared `useTooltip` hook (`src/components/BrowserScreen/useTooltip.jsx`) for on-hover button tooltips. Tooltip text is extracted from existing map help page i18n strings and is fully bilingual (EN/ZH). The entire system is gated behind `MAP_TOOLTIPS_ENABLED` in `src/utils/constants.js` (default `false`).
+
+### Pattern
+
+```js
+import useTooltip from '../BrowserScreen/useTooltip';
+import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
+
+// In component body:
+const { bind, TooltipPortal } = useTooltip();
+
+// Extract description from a help i18n string (strips {{btn:...}} — prefix)
+const helpTip = useCallback(
+  (key) => t(key).replace(/^\{\{btn:\w+\}\}\s*[—–\-：:]\s*/, ''), [t]);
+
+// Gated bind wrapper — returns {} when disabled (zero overhead)
+const tipBind = useCallback(
+  (text) => MAP_TOOLTIPS_ENABLED ? bind(text) : {}, [bind]);
+
+// On a button:
+<div className="air-map-toggle"
+  onClick={...}
+  {...tipBind(helpTip('map_help_air_star'))}>
+
+// At bottom of component:
+{MAP_TOOLTIPS_ENABLED && TooltipPortal}
+```
+
+### Component-Specific Prop Additions
+
+**SpinKnob** — accepts optional `tooltip` string prop. Uses `useTooltip` internally, spreads `bind(tooltip)` on root `.spin-knob` div. Render `{TooltipPortal}` after the label. All gated by `MAP_TOOLTIPS_ENABLED`.
+
+**RunwaySidebar** — accepts optional `arrTooltip`, `depTooltip`, `getRunwayTooltip(rwy)` props. Uses `useTooltip` internally. Replaces old `title` attributes with portal tooltips. All gated by `MAP_TOOLTIPS_ENABLED`.
+
+**ControlSidebar** — accepts optional `knobTooltips` prop: `{ zoom?, panH?, panV?, airspace? }`. Passes tooltip strings to each `SpinKnob`. For `airspaceKnob` (injected as a React element), uses `React.cloneElement` to add the `tooltip` prop when enabled.
+
+### Exclusions
+
+- The **help/witch-mode toggle button** (`map-help-btn` / help `strips-bar-btn`) never gets a tooltip — it already has native `title` attributes and its double-click behavior toggles witch mode.
+
 ## New Constants
 
+- **`MAP_TOOLTIPS_ENABLED`** (`src/utils/constants.js`): Feature flag controlling on-hover portal tooltips on all radar/strip buttons. Default `false` (OFF). When `true`, tooltips appear on mouse hover for all toggle buttons, spin knobs, refresh buttons, and runway sidebar buttons. Tooltip text is extracted from map help i18n strings (the description portion after the `{{btn:...}}` token). The help/witch-mode toggle button is always excluded. Setting this to `false` disables all map-window tooltips with zero runtime overhead (the `tipBind()` wrapper returns `{}` and `TooltipPortal` renders `null`).
 - **`AIR_MAP_BG_OFFSETS`** (`src/utils/constants.js`): Per-airport config for approach radar background image (renamed from `STAR_BG_OFFSETS`). Fields: `dx`/`dy` (fine-tune position offset), `w` (image width in viewBox units when height=3000), `bg` (color outside map image), `bgUnder` (color behind semi-transparent image). Entries for ZSJN and KJFK. Witch mode uses separate `WITCH_MAP_BG_OFFSETS`.
 - **`NM_TO_GU`** (`src/utils/constants.js`): Nautical mile to game-units conversion (18.52 = 1852m ÷ 100 m/unit). Used by AirMapWindow for runway extension lines, tick marks, and range rings.
 - **`AIR_MAP_DEFAULT_ZOOM`** / **`GROUND_MAP_DEFAULT_ZOOM`** (`src/utils/constants.js`): Per-airport default zoom scale. 1.0 = full dataBounds, <1 = tighter initial view. Entries for ZSJN (0.75 ground) and KJFK (1.0 both).

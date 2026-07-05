@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
+import useTooltip from '../BrowserScreen/useTooltip';
+import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
 import useSvgZoom from './useSvgZoom';
 import useUdpAircraftState from './useUdpAircraftState';
 import ControlSidebar from './ControlSidebar';
@@ -53,6 +55,14 @@ function computeRunwayCorners(a, b, halfWidth) {
 export default function GroundMapWindow({ airportIcao }) {
   const { t } = useTranslation();
   const electronAPI = useElectronAPI();
+  const { bind, TooltipPortal } = useTooltip();
+
+  /** Extract description from a help i18n string (strips {{btn:...}} prefix). */
+  const helpTip = useCallback((key) => t(key).replace(/^\{\{btn:\w+\}\}\s*[—–\-：:]\s*/, ''), [t]);
+
+  /** bind() wrapper gated by MAP_TOOLTIPS_ENABLED — returns {} when tooltips are off. */
+  const tipBind = useCallback((text) => MAP_TOOLTIPS_ENABLED ? bind(text) : {}, [bind]);
+
   const sp = new URLSearchParams(window.location.search);
   const rootPath = decodeURIComponent(sp.get('root') || '');
 
@@ -508,19 +518,27 @@ export default function GroundMapWindow({ airportIcao }) {
             onResetZoom={handleResetZoom}
             onResetPanH={handleResetPanH}
             onResetPanV={handleResetPanV}
+            knobTooltips={{
+              zoom: helpTip('map_help_ground_knobs_range'),
+              panH: helpTip('map_help_ground_knobs_panew'),
+              panV: helpTip('map_help_ground_knobs_pansn'),
+            }}
           >
             <div className={'air-map-toggle' + (showAllAircraft ? ' active' : '')}
-              onClick={() => setShowAllAircraft(v => !v)}>
+              onClick={() => setShowAllAircraft(v => !v)}
+              {...tipBind(helpTip('map_help_ground_parked'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('ground_map_show_all')}</span>
             </div>
             <div className={'air-map-toggle' + (showTaxiwayNames ? ' active' : '')}
-              onClick={() => setShowTaxiwayNames(v => !v)}>
+              onClick={() => setShowTaxiwayNames(v => !v)}
+              {...tipBind(helpTip('map_help_ground_labels'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('ground_map_taxiway')}</span>
             </div>
             <div className="air-map-toggle"
-              onClick={() => { if (electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft(); }}>
+              onClick={() => { if (electronAPI.resetUdpAircraft) electronAPI.resetUdpAircraft(); }}
+              {...tipBind(helpTip('map_help_ground_refresh'))}>
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('map_refresh')}</span>
             </div>
@@ -546,6 +564,7 @@ export default function GroundMapWindow({ airportIcao }) {
         </>
       )}
       {helpOpen && <MapHelpOverlay type="ground" onClose={() => setHelpOpen(false)} />}
+      {MAP_TOOLTIPS_ENABLED && TooltipPortal}
     </div>
   );
 }

@@ -1,4 +1,6 @@
 import React from 'react';
+import useTooltip from '../BrowserScreen/useTooltip';
+import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
 import './RunwaySidebar.css';
 
 /**
@@ -16,8 +18,13 @@ import './RunwaySidebar.css';
  *   showDepLabels    - boolean — departure labels visible
  *   onToggleArrLabels - () => void
  *   onToggleDepLabels - () => void
+ *   arrTooltip       - optional tooltip text for ARR button
+ *   depTooltip       - optional tooltip text for DEP button
+ *   getRunwayTooltip - optional (rwy: string) => string for per-runway buttons
  */
-export default function RunwaySidebar({ runways, activeRunways, onToggle, showArrLabels, showDepLabels, onToggleArrLabels, onToggleDepLabels }) {
+export default function RunwaySidebar({ runways, activeRunways, onToggle, showArrLabels, showDepLabels, onToggleArrLabels, onToggleDepLabels, arrTooltip, depTooltip, getRunwayTooltip }) {
+  const { bind, TooltipPortal } = useTooltip();
+
   if (!runways || runways.length === 0) return null;
 
   return (
@@ -27,7 +34,7 @@ export default function RunwaySidebar({ runways, activeRunways, onToggle, showAr
         <div
           className={'air-map-toggle' + (showArrLabels ? ' active' : '')}
           onClick={onToggleArrLabels}
-          title="Toggle arrival labels"
+          {...(MAP_TOOLTIPS_ENABLED && arrTooltip ? bind(arrTooltip) : {})}
         >
           <div className="air-map-toggle-knob" />
           <span className="air-map-toggle-label">ARR</span>
@@ -35,7 +42,7 @@ export default function RunwaySidebar({ runways, activeRunways, onToggle, showAr
         <div
           className={'air-map-toggle' + (showDepLabels ? ' active' : '')}
           onClick={onToggleDepLabels}
-          title="Toggle departure labels"
+          {...(MAP_TOOLTIPS_ENABLED && depTooltip ? bind(depTooltip) : {})}
         >
           <div className="air-map-toggle-knob" />
           <span className="air-map-toggle-label">DEP</span>
@@ -45,11 +52,13 @@ export default function RunwaySidebar({ runways, activeRunways, onToggle, showAr
       <div className="runway-sidebar-actions">
         {runways.map(rwy => {
           const isActive = !activeRunways || activeRunways.has(rwy);
+          const rwyTooltip = getRunwayTooltip ? getRunwayTooltip(rwy) : null;
           return (
             <div
               key={rwy}
               className={'air-map-toggle' + (isActive ? ' active' : '')}
               onClick={() => onToggle(rwy)}
+              {...(MAP_TOOLTIPS_ENABLED && rwyTooltip ? bind(rwyTooltip) : {})}
             >
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">RWY{rwy}</span>
@@ -57,6 +66,7 @@ export default function RunwaySidebar({ runways, activeRunways, onToggle, showAr
           );
         })}
       </div>
+      {MAP_TOOLTIPS_ENABLED && TooltipPortal}
     </div>
   );
 }
