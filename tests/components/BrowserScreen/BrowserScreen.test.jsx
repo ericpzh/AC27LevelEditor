@@ -2,7 +2,9 @@ import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { fireEvent } from '@testing-library/react';
 import BrowserScreen from '../../../src/components/BrowserScreen/BrowserScreen';
+import { BUTTONS } from '../../../src/components/BrowserScreen/BrowserHelpOverlay';
 import Modal from '../../../src/components/common/Modal';
 import { useAppStore } from '../../../src/store/appStore';
 import { mockIpcInvoke } from '../../setup';
@@ -125,4 +127,210 @@ describe('Version Mismatch Detection', () => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('refresh-root-scan', expect.any(String));
     });
   });
+
+  describe('Help Button', () => {
+    it('renders help button in the header', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      // Help button is the last btn-icon-only button (after theme toggle)
+      const iconOnlyButtons = document.querySelectorAll('.btn-icon-only');
+      const helpBtn = iconOnlyButtons[iconOnlyButtons.length - 1];
+      expect(helpBtn).toBeInTheDocument();
+      expect(helpBtn.querySelector('svg')).toBeTruthy();
+    });
+
+    it('clicking help button opens the overlay', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const iconOnlyButtons = document.querySelectorAll('.btn-icon-only');
+      const helpBtn = iconOnlyButtons[iconOnlyButtons.length - 1];
+      await user.click(helpBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Header Buttons')).toBeInTheDocument();
+      });
+    });
+
+    it('Escape closes the help overlay', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      // Open the overlay
+      const iconOnlyButtons = document.querySelectorAll('.btn-icon-only');
+      await user.click(iconOnlyButtons[iconOnlyButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(screen.getByText('Header Buttons')).toBeInTheDocument();
+      });
+
+      // Close via Escape
+      fireEvent.keyDown(document, { key: 'Escape' });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Header Buttons')).toBeNull();
+      });
+    });
+
+    it('backdrop click closes the help overlay', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const iconOnlyButtons = document.querySelectorAll('.btn-icon-only');
+      await user.click(iconOnlyButtons[iconOnlyButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(screen.getByText('Header Buttons')).toBeInTheDocument();
+      });
+
+      // Click the backdrop
+      fireEvent.click(document.getElementById('browser-help-overlay'));
+
+      await waitFor(() => {
+        expect(screen.queryByText('Header Buttons')).toBeNull();
+      });
+    });
+
+    it('close button in overlay header works', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const iconOnlyButtons = document.querySelectorAll('.btn-icon-only');
+      await user.click(iconOnlyButtons[iconOnlyButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(screen.getByText('Header Buttons')).toBeInTheDocument();
+      });
+
+      // Click the X close button in overlay header
+      const closeBtn = document.querySelector('#browser-help-header button');
+      fireEvent.click(closeBtn);
+
+      await waitFor(() => {
+        expect(screen.queryByText('Header Buttons')).toBeNull();
+      });
+    });
+  });
+
+  describe('Tooltips', () => {
+    it('shows tooltip on Change Folder button hover', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('No level files found')).toBeInTheDocument();
+      });
+
+      // Hover the Change Folder button (first .btn-sm)
+      const changeDirBtn = document.querySelector('.btn-sm');
+      expect(changeDirBtn).toBeInTheDocument();
+      fireEvent.mouseEnter(changeDirBtn);
+
+      const tip = document.body.querySelector('.tooltip-popup');
+      expect(tip).not.toBeNull();
+      expect(tip.textContent).toBe('Change the game directory. Select a different installation path.');
+    });
+
+    it('hides tooltip on mouse leave', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('No level files found')).toBeInTheDocument();
+      });
+
+      const changeDirBtn = document.querySelector('.btn-sm');
+      fireEvent.mouseEnter(changeDirBtn);
+      expect(document.body.querySelector('.tooltip-popup')).not.toBeNull();
+
+      fireEvent.mouseLeave(changeDirBtn);
+      expect(document.body.querySelector('.tooltip-popup')).toBeNull();
+    });
+
+    it('shows tooltip on language toggle hover', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('No level files found')).toBeInTheDocument();
+      });
+
+      // Language toggle button
+      const langBtn = document.querySelector('.btn-lang-toggle-top');
+      expect(langBtn).toBeInTheDocument();
+      fireEvent.mouseEnter(langBtn);
+
+      const tip = document.body.querySelector('.tooltip-popup');
+      expect(tip).not.toBeNull();
+      expect(tip.textContent).toBe('Switch the interface language.');
+    });
+
+    it('help button shows its own tooltip', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('No level files found')).toBeInTheDocument();
+      });
+
+      // The help button is the last .btn-icon-only button
+      const iconOnlyButtons = document.querySelectorAll('.btn-icon-only');
+      const helpBtn = iconOnlyButtons[iconOnlyButtons.length - 1];
+      fireEvent.mouseEnter(helpBtn);
+
+      const tip = document.body.querySelector('.tooltip-popup');
+      expect(tip).not.toBeNull();
+      expect(tip.textContent).toBe('Help');
+    });
+
+    it('changing hover between buttons updates tooltip text', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('No level files found')).toBeInTheDocument();
+      });
+
+      const headerButtons = document.querySelectorAll('.browser-actions button');
+      expect(headerButtons.length).toBeGreaterThan(2);
+
+      // Hover first button
+      fireEvent.mouseEnter(headerButtons[0]);
+      const text1 = document.body.querySelector('.tooltip-popup').textContent;
+      fireEvent.mouseLeave(headerButtons[0]);
+
+      // Hover second button
+      fireEvent.mouseEnter(headerButtons[1]);
+      const text2 = document.body.querySelector('.tooltip-popup').textContent;
+
+      // Each button should have different tooltip text
+      expect(text1).not.toBe(text2);
+    });
+  });
+
 });

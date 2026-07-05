@@ -4,12 +4,14 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { RE_HIDDEN, DEMO_VISIBLE_BASES } from '../../utils/constants';
 import CacheProgressBody from '../common/CacheProgressBody';
 import AirportCardMap from './AirportCardMap';
+import BrowserHelpOverlay, { BUTTONS } from './BrowserHelpOverlay';
+import useTooltip from './useTooltip';
 
 function rescanGuideContent(t) {
   return (
@@ -57,6 +59,8 @@ export default function BrowserScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [appVersion, setAppVersion] = useState('');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const { bind, TooltipPortal } = useTooltip();
 
   useEffect(() => {
     electronAPI.getAppVersion().then(v => setAppVersion(v)).catch(() => {});
@@ -261,16 +265,19 @@ export default function BrowserScreen() {
         <div className="browser-title"><span>{t('browser_title')}</span></div>
         <div className="browser-actions">
           <span className="browser-root-path">{rootPath || ''}</span>
-          <button className="btn-sm" onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
-          <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} onClick={handleRefreshScan} disabled={refreshing} title={t('browser_refresh_scan')}>
+          <button className="btn-sm" {...bind(t(BUTTONS.changeDir.descKey))} onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
+          <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} {...bind(t(BUTTONS.refresh.descKey))} onClick={handleRefreshScan} disabled={refreshing}>
             <IoRefreshOutline size={14} className="btn-icon" />{refreshing ? t('browser_refreshing') : t('browser_refresh_scan')}
           </button>
-          <button className="btn-sm btn-bug-report" onClick={handleBugReport} title={t('browser_bug_report')}>
+          <button className="btn-sm btn-bug-report" {...bind(t(BUTTONS.bugReport.descKey))} onClick={handleBugReport}>
             <IoBugOutline size={14} className="btn-icon" />{t('browser_bug_report')}
           </button>
-          <button className="btn-lang-toggle-top" onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
-          <button className="btn-lang-toggle-top btn-icon-only" onClick={toggleTheme}>
+          <button className="btn-lang-toggle-top" {...bind(t(BUTTONS.lang.descKey))} onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
+          <button className="btn-lang-toggle-top btn-icon-only" {...bind(t(BUTTONS.themeDark.descKey))} onClick={toggleTheme}>
             {theme === 'dark' ? <IoSunnyOutline size={14} /> : <IoMoonOutline size={14} />}
+          </button>
+          <button className="btn-lang-toggle-top btn-icon-only" {...bind(t('browser_help_help_btn'))} onClick={() => setHelpOpen(true)}>
+            <IoHelpCircleOutline size={14} />
           </button>
         </div>
       </header>
@@ -304,22 +311,22 @@ export default function BrowserScreen() {
                   <>
                   <button
                     className={'btn-radar-toggle' + (openGroundRadarAirports.has(airport.icao) ? ' active' : '')}
+                    {...bind(t(BUTTONS.surfaceRadar.descKey))}
                     onClick={(e) => { e.stopPropagation(); handleToggleSurfaceRadar(airport.icao); }}
-                    title={t('toolbar_surface_radar')}
                   >
                     <IoMapOutline size={13} /> {t('toolbar_surface_radar')}
                   </button>
                   <button
                     className={'btn-radar-toggle' + (openAirRadarAirports.has(airport.icao) ? ' active' : '')}
+                    {...bind(t(BUTTONS.approachRadar.descKey))}
                     onClick={(e) => { e.stopPropagation(); handleToggleApproachRadar(airport.icao); }}
-                    title={t('toolbar_approach_radar')}
                   >
                     <IoNavigateOutline size={13} /> {t('toolbar_approach_radar')}
                   </button>
                   <button
                     className={'btn-radar-toggle' + (openFlightStripAirports.has(airport.icao) ? ' active' : '')}
+                    {...bind(t(BUTTONS.flightStrips.descKey))}
                     onClick={(e) => { e.stopPropagation(); handleToggleFlightStrips(airport.icao); }}
-                    title={t('toolbar_flight_strips')}
                   >
                     <IoListOutline size={13} /> {t('toolbar_flight_strips')}
                   </button>
@@ -359,6 +366,9 @@ export default function BrowserScreen() {
       </main>
 
       {appVersion && <div className="browser-version">v{appVersion}</div>}
+
+      {helpOpen && <BrowserHelpOverlay onClose={() => setHelpOpen(false)} />}
+      {TooltipPortal}
     </div>
   );
 }

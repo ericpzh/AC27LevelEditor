@@ -1,0 +1,36 @@
+/* ─── Portal tooltip ────────────────────────────────────── */
+.tooltip-popup {
+  position: fixed;
+  z-index: 99999;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-align: left;
+  pointer-events: none;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.38);
+}
+
+/* Arrow — pointing down (default: tooltip above target) */
+.tooltip-arrow {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--bg-elevated);
+  bottom: -6px;
+}
+
+/* Arrow pointing up — tooltip below target */
+.tooltip-arrow.up {
+  top: -6px;
+  bottom: auto;
+  border-top: none;
+  border-bottom: 6px solid var(--bg-elevated);
+}

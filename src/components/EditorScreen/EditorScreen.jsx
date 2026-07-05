@@ -27,7 +27,8 @@ import WeatherEditor from './TimelineEditors/WeatherEditor';
 import WindEditor from './TimelineEditors/WindEditor';
 import RunwayEditor from './TimelineEditors/RunwayEditor';
 import SearchBar, { searchAPI } from './SearchBar';
-import TutorialOverlay from './TutorialOverlay';
+import TutorialOverlay, { BUTTONS } from './TutorialOverlay';
+import useTooltip from '../BrowserScreen/useTooltip';
 import StandMap from './StandMap/StandMap';
 import StarMap from './StarMap/StarMap';
 import ChatPanel from '../ChatPanel/ChatPanel';
@@ -234,6 +235,9 @@ export default function EditorScreen() {
   // ── Chat toggle ──
   const chatPanelOpen = useAppStore(s => s.chatPanelOpen);
   const toggleChatPanel = useAppStore(s => s.toggleChatPanel);
+
+  // ── Tooltips ──
+  const { bind, TooltipPortal } = useTooltip();
 
   // Load data on mount
   useEffect(() => {
@@ -495,21 +499,21 @@ export default function EditorScreen() {
     <div id="screen-editor" className="screen">
       <header id="toolbar">
         <div className="toolbar-group">
-          <button onClick={handleBack}><IoArrowBack size={14} className="btn-icon" /> {t('toolbar_back')}</button>
-          <button onClick={() => setTutorialOpen(true)} title={t('toolbar_help')}><IoHelpCircleOutline size={14} className="btn-icon" /> {t('toolbar_help')}</button>
-          <button onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
-          <button onClick={toggleTheme}>
+          <button {...bind(t(BUTTONS.back.descKey))} onClick={handleBack}><IoArrowBack size={14} className="btn-icon" /> {t('toolbar_back')}</button>
+          <button {...bind(t(BUTTONS.help.descKey))} onClick={() => setTutorialOpen(true)}><IoHelpCircleOutline size={14} className="btn-icon" /> {t('toolbar_help')}</button>
+          <button {...bind(t(BUTTONS.lang.descKey))} onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
+          <button {...bind(t('tooltip_theme'))} onClick={toggleTheme}>
             {theme === 'dark' ? <IoSunnyOutline size={14} /> : <IoMoonOutline size={14} />}
           </button>
         </div>
         <div className="toolbar-spacer" />
         <div className="toolbar-group">
-          <button ref={chatBtnRef} onClick={toggleChatPanel} className={chatPanelOpen ? 'btn-map-active' : ''} title={t('chat_title')}><IoSparkles size={14} className="btn-icon" style={{color:'var(--accent)'}} /> {t('chat_title')}</button>
-          <button onClick={handleBackup}><IoCloudUploadOutline size={14} className="btn-icon" /> {t('toolbar_backup')}</button>
-          <button onClick={handleRestore}><IoCloudDownloadOutline size={14} className="btn-icon" /> {t('toolbar_restore')}</button>
-          <button onClick={handleImport}><IoDownloadOutline size={14} className="btn-icon" /> {t('toolbar_import')}</button>
-          <button onClick={handleSaveAs}><IoShareOutline size={14} className="btn-icon" /> {t('toolbar_save_as')}</button>
-          <button className="btn-primary-sm" onClick={handleSave}><IoSave size={14} className="btn-icon" /> {t('toolbar_save')}</button>
+          <button ref={chatBtnRef} {...bind(t(BUTTONS.chat.descKey))} onClick={toggleChatPanel} className={chatPanelOpen ? 'btn-map-active' : ''}><IoSparkles size={14} className="btn-icon" style={{color:'var(--accent)'}} /> {t('chat_title')}</button>
+          <button {...bind(t(BUTTONS.backup.descKey))} onClick={handleBackup}><IoCloudUploadOutline size={14} className="btn-icon" /> {t('toolbar_backup')}</button>
+          <button {...bind(t(BUTTONS.restore.descKey))} onClick={handleRestore}><IoCloudDownloadOutline size={14} className="btn-icon" /> {t('toolbar_restore')}</button>
+          <button {...bind(t(BUTTONS.import.descKey))} onClick={handleImport}><IoDownloadOutline size={14} className="btn-icon" /> {t('toolbar_import')}</button>
+          <button {...bind(t(BUTTONS.saveAs.descKey))} onClick={handleSaveAs}><IoShareOutline size={14} className="btn-icon" /> {t('toolbar_save_as')}</button>
+          <button className="btn-primary-sm" {...bind(t(BUTTONS.save.descKey))} onClick={handleSave}><IoSave size={14} className="btn-icon" /> {t('toolbar_save')}</button>
         </div>
       </header>
       <main id="table-container">
@@ -526,17 +530,17 @@ export default function EditorScreen() {
       <SearchBar />
       <div id="secondary-toolbar">
         <div className="toolbar-group secondary-left">
-          <button ref={starBtnRef} onClick={toggleStarMap} className={showStarMap ? 'btn-map-active' : ''} title={t('starmap_title')}><IoNavigateOutline size={14} className="btn-icon" /> {t('toolbar_star_map')}</button>
-          <button ref={standBtnRef} onClick={toggleStandMap} className={showStandMap ? 'btn-map-active' : ''} title={t('standmap_title')}><IoMapOutline size={14} className="btn-icon" /> {t('toolbar_stand_map')}</button>
-          <button onClick={addArrival}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(45deg)',display:'block'}} /></span> {t('toolbar_add_arrival')}</button>
-          <button onClick={addDeparture}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(-45deg)',display:'block'}} /></span> {t('toolbar_add_departure')}</button>
+          <button ref={starBtnRef} {...bind(t(BUTTONS.starMap.descKey))} onClick={toggleStarMap} className={showStarMap ? 'btn-map-active' : ''}><IoNavigateOutline size={14} className="btn-icon" /> {t('toolbar_star_map')}</button>
+          <button ref={standBtnRef} {...bind(t(BUTTONS.standMap.descKey))} onClick={toggleStandMap} className={showStandMap ? 'btn-map-active' : ''}><IoMapOutline size={14} className="btn-icon" /> {t('toolbar_stand_map')}</button>
+          <button {...bind(t(BUTTONS.addArrival.descKey))} onClick={addArrival}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(45deg)',display:'block'}} /></span> {t('toolbar_add_arrival')}</button>
+          <button {...bind(t(BUTTONS.addDeparture.descKey))} onClick={addDeparture}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(-45deg)',display:'block'}} /></span> {t('toolbar_add_departure')}</button>
         </div>
         <div className="toolbar-time-wrap"><ConfigBar /></div>
         <div className="toolbar-group secondary-right">
-          <button onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
-          <button onClick={handleSelectAll} title={allSelected ? t('toolbar_deselect_all') : t('toolbar_select_all')}><IoCheckmarkDone size={14} className="btn-icon" /> {allSelected ? t('toolbar_deselect_all') : t('toolbar_select_all')}</button>
-          <button onClick={del}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_selected')}</button>
-          <button onClick={handleFind}><IoSearchOutline size={14} className="btn-icon" /> {t('toolbar_find')}</button>
+          <button {...bind(t(BUTTONS.copy.descKey))} onClick={copy}><IoCopyOutline size={14} className="btn-icon" /> {t('toolbar_copy')}</button>
+          <button {...bind(t(BUTTONS.selectAll.descKey))} onClick={handleSelectAll}><IoCheckmarkDone size={14} className="btn-icon" /> {allSelected ? t('toolbar_deselect_all') : t('toolbar_select_all')}</button>
+          <button {...bind(t(BUTTONS.deleteSelected.descKey))} onClick={del}><IoTrashOutline size={14} className="btn-icon" /> {t('toolbar_delete_selected')}</button>
+          <button {...bind(t(BUTTONS.find.descKey))} onClick={handleFind}><IoSearchOutline size={14} className="btn-icon" /> {t('toolbar_find')}</button>
         </div>
       </div>
       <MapOverlays standBtnRef={standBtnRef} starBtnRef={starBtnRef} />
@@ -548,6 +552,7 @@ export default function EditorScreen() {
       )}
       <StatusBar />
       {tutorialOpen && <TutorialOverlay onClose={() => setTutorialOpen(false)} />}
+      {TooltipPortal}
     </div>
   );
 }

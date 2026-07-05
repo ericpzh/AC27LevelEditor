@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.7)
+- **Name:** `ac27-level-editor` (v1.1.9)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -41,8 +41,10 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │  - App.jsx — root: I18nProvider + ScreenRouter + Modal +│
 │    Toast                                                │
 │  - SetupScreen / BrowserScreen / EditorScreen           │
+│  - BrowserScreen: useTooltip (shared tooltip hook),   │
+│    BrowserHelpOverlay (help overlay)                  │
 │  - EditorScreen: FlightTable, TimelineEditors,          │
-│    CellEditor, SearchBar                                │
+│    CellEditor, SearchBar, TutorialOverlay               │
 │  - common: Modal, Toast                                 │
 │  - ChatPanel: Floating chat panel with cloud LLM         │
 │    integration (4 vendors, tool calling)                 │

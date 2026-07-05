@@ -41,6 +41,8 @@ AC27LevelEditor/
 │   │   ├── BrowserScreen/   # Airport card listing, file browsing
 │   │   │   ├── BrowserScreen.jsx + .css
 │   │   │   ├── AirportCardMap.jsx + .css  # Mini ground-radar SVG per card
+│   │   │   ├── BrowserHelpOverlay.jsx + .css  # Help overlay with button descriptions
+│   │   │   ├── useTooltip.jsx + .css  # Shared tooltip hook (used by browser + editor)
 │   │   ├── EditorScreen/    # Main editor: toolbar + table + timelines
 │   │   │   ├── EditorScreen.jsx + .css
 │   │   │   ├── SearchBar.jsx     # Ctrl+F search (extracted component)
@@ -196,6 +198,29 @@ module.exports = { publicFn, _privateFn };
 - Never use `key={Math.random()}` — use stable keys
 - Never use `dangerouslySetInnerHTML` — render JSX elements instead
 
+### Tooltip System (`useTooltip`)
+
+Portal-based tooltip hook shared by BrowserScreen and EditorScreen (`src/components/BrowserScreen/useTooltip.jsx`). Replaces native `title` attributes.
+
+**Width calculation:** Compile-time, no DOM measurement. Per-character glyph widths at 12px system-ui:
+- Latin: `CW` lookup table (narrow 4px → extra-wide 11px)
+- CJK: 12px/char
+- `BASE = 10px` for all; CJK gets `+10px` extra breathing room
+- `calcWidth(text) = BASE + Σ charW(ch) [+ 10 if CJK]`, capped at 600px
+
+**Three-mode horizontal positioning:**
+| Mode | Trigger | Positioning |
+|------|---------|-------------|
+| Centre | Fits around button | `left: btnCenter; transform: translateX(-50%)` |
+| Left-pin | Overflows left edge | `left: MIN_PAD; transform: translateX(0)` |
+| Right-pin | Overflows right edge | `left: vw - tw - MIN_PAD; transform: translateX(0)` |
+
+**Vertical:** Box sits entirely above button (`top = rect.top - EST_H - ARROW_H`), arrow at button top. Flips below if no room.
+
+**API:** `bind(text)` → `{ onMouseEnter, onMouseLeave }`. `{TooltipPortal}` at component bottom.
+
+**Button registries** (`BrowserHelpOverlay.jsx`, `TutorialOverlay.jsx`): Exported `BUTTONS` with `descKey`/`icon`/`labelKey`. Used for both tooltip `bind()` and help overlay rendering.
+
 ### IPC Patterns
 
 ```
@@ -222,7 +247,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 310 tests across 19 files
+- `npm test` or `npm run test:watch` — 333 tests across 23 files
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - Electron backend tests use `@vitest-environment node` + `require.cache` priming to stub ESM SDK packages (see `tests/electron/cloud-llm.test.js`)
 - zustand stores are tested with the real store using `setState()` — never mock stores

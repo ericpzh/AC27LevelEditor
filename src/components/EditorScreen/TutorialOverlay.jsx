@@ -1,15 +1,27 @@
 import React, { useEffect } from 'react';
 import './TutorialOverlay.css';
 import { useTranslation } from '../../hooks/useTranslation';
-import { IoClose, IoAirplane, IoCopyOutline, IoTrashOutline, IoSearchOutline } from 'react-icons/io5';
+import { IoClose, IoAirplane, IoCopyOutline, IoTrashOutline, IoSearchOutline, IoArrowBack, IoSave, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoCheckmarkDone, IoNavigateOutline, IoMapOutline, IoSparkles, IoLanguage, IoHelpCircleOutline } from 'react-icons/io5';
 
-// ─── Button registry (icon + label key) ────────────────────
-const BUTTONS = {
-  addArrival:     { icon: IoAirplane,       labelKey: 'toolbar_add_arrival',   iconStyle: { transform:'rotate(45deg)', display:'block' }, wrapStyle: { borderBottom:'1.5px solid var(--text-secondary)', paddingBottom:'1px', display:'inline-block', lineHeight:1 } },
-  addDeparture:   { icon: IoAirplane,       labelKey: 'toolbar_add_departure', iconStyle: { transform:'rotate(-45deg)', display:'block' }, wrapStyle: { borderBottom:'1.5px solid var(--text-secondary)', paddingBottom:'1px', display:'inline-block', lineHeight:1 } },
-  copy:           { icon: IoCopyOutline,    labelKey: 'toolbar_copy' },
-  deleteSelected: { icon: IoTrashOutline,   labelKey: 'toolbar_delete_selected' },
-  find:           { icon: IoSearchOutline,  labelKey: 'toolbar_find' },
+// ─── Button registry (icon + label key + help description) ───
+export const BUTTONS = {
+  addArrival:     { icon: IoAirplane,       labelKey: 'toolbar_add_arrival',     descKey: 'tooltip_addArrival',   iconStyle: { transform:'rotate(45deg)', display:'block' }, wrapStyle: { borderBottom:'1.5px solid var(--text-secondary)', paddingBottom:'1px', display:'inline-block', lineHeight:1 } },
+  addDeparture:   { icon: IoAirplane,       labelKey: 'toolbar_add_departure',   descKey: 'tooltip_addDeparture', iconStyle: { transform:'rotate(-45deg)', display:'block' }, wrapStyle: { borderBottom:'1.5px solid var(--text-secondary)', paddingBottom:'1px', display:'inline-block', lineHeight:1 } },
+  copy:           { icon: IoCopyOutline,    labelKey: 'toolbar_copy',            descKey: 'tooltip_copy' },
+  deleteSelected: { icon: IoTrashOutline,   labelKey: 'toolbar_delete_selected', descKey: 'tooltip_deleteSelected' },
+  find:           { icon: IoSearchOutline,  labelKey: 'toolbar_find',            descKey: 'tooltip_find' },
+  back:           { icon: IoArrowBack,      labelKey: 'toolbar_back',            descKey: 'tooltip_back' },
+  lang:           { icon: IoLanguage,       labelKey: 'lang_switch_to',          descKey: 'tooltip_lang' },
+  help:           { icon: IoHelpCircleOutline, labelKey: 'toolbar_help',         descKey: 'tooltip_help' },
+  save:           { icon: IoSave,           labelKey: 'toolbar_save',            descKey: 'tooltip_save' },
+  backup:         { icon: IoCloudUploadOutline,   labelKey: 'toolbar_backup',    descKey: 'tooltip_backup' },
+  restore:        { icon: IoCloudDownloadOutline, labelKey: 'toolbar_restore',   descKey: 'tooltip_restore' },
+  import:         { icon: IoDownloadOutline,       labelKey: 'toolbar_import',   descKey: 'tooltip_import' },
+  saveAs:         { icon: IoShareOutline,          labelKey: 'toolbar_save_as',  descKey: 'tooltip_saveAs' },
+  selectAll:      { icon: IoCheckmarkDone,  labelKey: 'toolbar_select_all',     descKey: 'tooltip_selectAll' },
+  starMap:        { icon: IoNavigateOutline,labelKey: 'toolbar_star_map',       descKey: 'tooltip_starMap' },
+  standMap:       { icon: IoMapOutline,     labelKey: 'toolbar_stand_map',      descKey: 'tooltip_standMap' },
+  chat:           { icon: IoSparkles,       labelKey: 'chat_title',             descKey: 'tooltip_chat' },
 };
 
 // ─── Render text with {{btn:key}} / {{kbd:key}} tokens
