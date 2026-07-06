@@ -5,6 +5,8 @@ import useTooltip from '../BrowserScreen/useTooltip';
 import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
 import useSvgZoom from './useSvgZoom';
 import useUdpAircraftState from './useUdpAircraftState';
+import { useCrossWindowSelection } from '../../hooks/map/useCrossWindowSelection';
+import { useWitchAnimation } from '../../hooks/map/useWitchAnimation';
 import ControlSidebar from './ControlSidebar';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
@@ -77,33 +79,12 @@ export default function GroundMapWindow({ airportIcao }) {
   const [showAllAircraft, setShowAllAircraft] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [witchMode, setWitchMode] = useState(false);
-  const [witchFrame, setWitchFrame] = useState(0);
-  const witchTimerRef = useRef(null);
   const labelTimerRef = useRef(null);
 
   const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, udpAirportChanged } = useUdpAircraftState();
 
   // ── Sync selected aircraft across ground + air map windows ──
-  useEffect(() => {
-    if (!electronAPI || !airportIcao) return;
-    // Fetch current selection on mount (e.g. if air map already has one selected)
-    if (electronAPI.getSelectedAircraft) {
-      electronAPI.getSelectedAircraft(airportIcao).then(r => {
-        if (r?.callSign) setSelectedCallSign(r.callSign);
-      });
-    }
-    const handler = (data) => {
-      if (data.icao === airportIcao) setSelectedCallSign(data.callSign || null);
-    };
-    if (electronAPI.onAircraftSelectedInMap) {
-      electronAPI.onAircraftSelectedInMap(handler);
-    }
-    return () => {
-      if (electronAPI.offAircraftSelectedInMap) {
-        electronAPI.offAircraftSelectedInMap(handler);
-      }
-    };
-  }, [electronAPI, airportIcao]);
+  useCrossWindowSelection(airportIcao, electronAPI, setSelectedCallSign);
 
   // ── Debug: log selected aircraft full UDP data every 5s ────
   useEffect(() => {
@@ -118,25 +99,7 @@ export default function GroundMapWindow({ airportIcao }) {
   }, [selectedCallSign, udpAircraft, electronAPI]);
 
   // ── Witch mode animation timer (500ms per frame) ──────────────
-  useEffect(() => {
-    if (!witchMode) {
-      if (witchTimerRef.current) {
-        clearInterval(witchTimerRef.current);
-        witchTimerRef.current = null;
-      }
-      setWitchFrame(0);
-      return;
-    }
-    witchTimerRef.current = setInterval(() => {
-      setWitchFrame(f => (f === 0 ? 1 : 0));
-    }, 500);
-    return () => {
-      if (witchTimerRef.current) {
-        clearInterval(witchTimerRef.current);
-        witchTimerRef.current = null;
-      }
-    };
-  }, [witchMode]);
+  const witchFrame = useWitchAnimation(witchMode);
 
   // ── Set window title ───────────────────────────────────────
   useEffect(() => {

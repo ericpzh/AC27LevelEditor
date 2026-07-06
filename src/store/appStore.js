@@ -1,15 +1,7 @@
 import { create } from 'zustand';
-import { getAirlineCode, TOAST_DURATION_MS, FALLBACK_BASE_MINUTES, DEFAULT_TIME_OFFSET_MIN, DEFAULT_TAXI_MINUTES, STORAGE_KEY_THEME } from '../utils/constants';
-
-// Pick the first valid flight number for an airline from the canonical set
-// (_flightNums is collected during root scan from audio clips + ALL .acl files)
-function pickFirstFlightNumber(state, airlineCode) {
-  const vals = state.airportValues[state.currentAirport] || {};
-  const canonNums = vals._flightNums || {};
-  const nums = canonNums[airlineCode];
-  if (nums && nums.length > 0) return nums[0];
-  return '1'; // fallback
-}
+import { TOAST_DURATION_MS, STORAGE_KEY_THEME } from '../utils/constants';
+import { createArrivalFlight, createDepartureFlight } from './flightDefaults.js';
+import { rebuildCallSign, cascadeAirlineChange, cascadeRunwayChange, clearInternalRegistration } from './flightCascade.js';
 
 export const useAppStore = create((set, get) => ({
   // ─── Screen ───
@@ -134,41 +126,9 @@ export const useAppStore = create((set, get) => ({
     const state = get();
     const values = state.airportValues[state.currentAirport] || {};
     const audioData = state.audioCallsigns;
+    const airportValuesForNum = state.airportValues[state.currentAirport] || {};
 
-    // ── compute default times from config end ──
-    let baseMin = FALLBACK_BASE_MINUTES; // fallback 06:00
-    if (state._configEndTime) {
-      const p = String(state._configEndTime).split(':');
-      baseMin = parseInt(p[0]) * 60 + parseInt(p[1]) - DEFAULT_TIME_OFFSET_MIN;
-      if (baseMin < 0) baseMin = 0;
-    }
-    const pad = (m) => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00';
-
-    let airlineCode = 'NEW';
-    if (audioData.allAirlines && audioData.allAirlines.length > 0) airlineCode = audioData.allAirlines[0];
-    else if (values.AirlineName && values.AirlineName.length > 0) airlineCode = getAirlineCode(values.AirlineName[0]);
-
-    const newFlight = {
-      // Initialize all possible fields so getActiveColumns sees them
-      CallSign: '', DepartureAirport: '', ArrivalAirport: '',
-      Stand: '', Runway: '',
-      OffBlockTime: '', TakeoffTime: '', LandingTime: '', InBlockTime: '',
-      AirlineName: '', AircraftType: '', Airway: '',
-      Registration: '', Voice: '', Language: '',
-      // ── arrival-specific defaults ──
-      CallSign: airlineCode + pickFirstFlightNumber(get(), airlineCode),
-      ArrivalAirport: state.currentAirport || '',
-      LandingTime: pad(baseMin),
-      InBlockTime: pad(baseMin + DEFAULT_TAXI_MINUTES),
-      Language: 'en',
-      AircraftType: (values.AircraftType && values.AircraftType[0]) || '',
-      AirlineName: (values.AirlineName && values.AirlineName[0]) || '',
-      Stand: (values.Stand && values.Stand[0]) || '',
-      Runway: (values.Runway && values.Runway[0]) || '',
-      Airway: (values.Airway && values.Airway[0]) || '',
-      Registration: (values.Registration && values.Registration[0]) || '',
-      Voice: (values.Voice && values.Voice[0]) || '',
-    };
+    const newFlight = createArrivalFlight(state._configEndTime, values, audioData, state.currentAirport, airportValuesForNum);
 
     const flights = [...state.flights, newFlight];
     set({ flights, modified: true, selectedIndices: new Set([flights.length - 1]) });
@@ -178,41 +138,9 @@ export const useAppStore = create((set, get) => ({
     const state = get();
     const values = state.airportValues[state.currentAirport] || {};
     const audioData = state.audioCallsigns;
+    const airportValuesForNum = state.airportValues[state.currentAirport] || {};
 
-    // ── compute default times from config end ──
-    let baseMin = FALLBACK_BASE_MINUTES; // fallback 06:00
-    if (state._configEndTime) {
-      const p = String(state._configEndTime).split(':');
-      baseMin = parseInt(p[0]) * 60 + parseInt(p[1]) - DEFAULT_TIME_OFFSET_MIN;
-      if (baseMin < 0) baseMin = 0;
-    }
-    const pad = (m) => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00';
-
-    let airlineCode = 'NEW';
-    if (audioData.allAirlines && audioData.allAirlines.length > 0) airlineCode = audioData.allAirlines[0];
-    else if (values.AirlineName && values.AirlineName.length > 0) airlineCode = getAirlineCode(values.AirlineName[0]);
-
-    const newFlight = {
-      // Initialize all possible fields so getActiveColumns sees them
-      CallSign: '', DepartureAirport: '', ArrivalAirport: '',
-      Stand: '', Runway: '',
-      OffBlockTime: '', TakeoffTime: '', LandingTime: '', InBlockTime: '',
-      AirlineName: '', AircraftType: '', Airway: '',
-      Registration: '', Voice: '', Language: '',
-      // ── departure-specific defaults ──
-      CallSign: airlineCode + pickFirstFlightNumber(get(), airlineCode),
-      DepartureAirport: state.currentAirport || '',
-      OffBlockTime: pad(baseMin),
-      TakeoffTime: pad(baseMin + DEFAULT_TAXI_MINUTES),
-      Language: 'en',
-      AircraftType: (values.AircraftType && values.AircraftType[0]) || '',
-      AirlineName: (values.AirlineName && values.AirlineName[0]) || '',
-      Stand: (values.Stand && values.Stand[0]) || '',
-      Runway: (values.Runway && values.Runway[0]) || '',
-      Airway: (values.Airway && values.Airway[0]) || '',
-      Registration: (values.Registration && values.Registration[0]) || '',
-      Voice: (values.Voice && values.Voice[0]) || '',
-    };
+    const newFlight = createDepartureFlight(state._configEndTime, values, audioData, state.currentAirport, airportValuesForNum);
 
     const flights = [...state.flights, newFlight];
     set({ flights, modified: true, selectedIndices: new Set([flights.length - 1]) });
@@ -286,75 +214,34 @@ export const useAppStore = create((set, get) => ({
   setActiveMap: (map) => set({ activeMap: map }),
 
   updateFlight: (idx, updates) => {
-    const flights = [...get().flights];
-    const flight = { ...flights[idx], ...updates };
-    // Rebuild CallSign when FlightNum or AirlineCode changes
+    const state = get();
+    const flights = [...state.flights];
+    const oldFlight = flights[idx];
+    const flight = { ...oldFlight, ...updates };
+    const airportValues = state.airportValues[state.currentAirport] || {};
+
+    // Cascade 1: Rebuild CallSign when FlightNum or AirlineCode changes
     if ('FlightNum' in updates || 'AirlineCode' in updates) {
-      const old = flights[idx];
-      const code = flight.AirlineCode || (old.CallSign || '').substring(0, 3);
-      let num;
-      if ('FlightNum' in updates) {
-        // User explicitly picked a flight number — use their choice
-        num = flight.FlightNum;
-      } else {
-        // AirlineCode changed — auto-pick first valid number from canonical set
-        num = pickFirstFlightNumber(get(), code);
-        if (!num || num === '1') num = (old.CallSign || '').substring(3);
-      }
-      flight.CallSign = code + num;
+      flight.CallSign = rebuildCallSign(oldFlight, updates, airportValues);
 
-      // AirlineCode changed — cascade AircraftType + Registration to first valid option
+      // Cascade 2: AirlineCode change → aircraft type + registration
       if ('AirlineCode' in updates) {
-        const state = get();
-        const vals = state.airportValues[state.currentAirport] || {};
-        const compat = vals._compat || {};
-
-        // AircraftType: reset to first valid type for the new airline
-        const validTypes = compat.airlineToAircraft?.[code];
-        if (validTypes && validTypes.length > 0) {
-          const curType = flight.AircraftType || '';
-          if (!curType || !validTypes.includes(curType)) {
-            flight.AircraftType = validTypes[0];
-          }
-        }
-
-        // Registration: reset to first valid reg for airline + aircraft type
-        const acType = flight.AircraftType || '';
-        const regKey = code + '|' + acType;
-        const validRegs = vals._registrationMap?.[regKey];
-        if (validRegs && validRegs.length > 0) {
-          const curReg = flight.Registration || flight._Registration || '';
-          if (!curReg || !validRegs.includes(curReg)) {
-            flight.Registration = validRegs[0];
-            delete flight._Registration;
-          }
-        }
+        const acUpdates = cascadeAirlineChange(updates.AirlineCode, flight, airportValues);
+        Object.assign(flight, acUpdates);
       }
     }
-    // Runway changed — cascade Airway to first valid STAR for the new runway.
-    // If the new runway has no approach data (e.g. 31L at KJFK), clear the Airway
-    // so it doesn't stay on a STAR that isn't valid for this runway.
+
+    // Cascade 3: Runway change → reset Airway to first valid STAR
     if ('Runway' in updates) {
-      const state = get();
-      const vals = state.airportValues[state.currentAirport] || {};
-      const runwayStarMap = vals._runwayStarMap || {};
-      const validStars = runwayStarMap[updates.Runway] || [];
-      const curAirway = flight.Airway || '';
-      if (validStars.length > 0) {
-        if (!curAirway || !validStars.includes(curAirway)) {
-          flight.Airway = validStars[0];
-        }
-      } else {
-        // No STAR is valid for this runway — clear the stale value
-        flight.Airway = '';
-      }
+      const rwyUpdates = cascadeRunwayChange(updates.Runway, flight, airportValues);
+      Object.assign(flight, rwyUpdates);
     }
 
-    // When user explicitly edits Registration, clear the parsed _Registration
-    // so it doesn't shadow the new value (display reads _Registration first)
+    // Cleanup: explicit Registration edit clears internal _Registration
     if ('Registration' in updates) {
-      delete flight._Registration;
+      clearInternalRegistration(flight);
     }
+
     flights[idx] = flight;
     set({ flights, modified: true });
   },

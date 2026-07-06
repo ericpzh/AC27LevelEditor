@@ -88,12 +88,18 @@ AC27LevelEditor/
 │   │   ├── useTranslation.jsx   # I18n Context Provider
 │   │   ├── useElectronAPI.jsx   # electronAPI Context Provider
 │   │   ├── useEditorShell.jsx   # Keyboard shortcuts (Ctrl+S, Delete, etc.)
-│   │   ├── useSaveAcl.jsx       # Save/export/backup logic
+│   │   ├── useEditorSaveActions.jsx  # Save/export/backup/restore/import workflows
 │   │   ├── useKeyboardShortcuts.js
-│   │   └── useDrag.js          # Shared drag behavior for floating panels (StandMap, StarMap)
+│   │   ├── useDrag.js          # Shared drag behavior for floating panels (StandMap, StarMap)
+│   │   └── map/                 # Shared hooks for map windows
+│   │       ├── useCrossWindowSelection.js  # Cross-window aircraft selection + emergency sync
+│   │       ├── useWitchAnimation.js        # 500ms frame-toggle for witch mode sprites
+│   │       └── useKnobPositions.js         # SVG viewBox → 0-1 knob gauge positions
 │   │
 │   ├── store/
-│   │   └── appStore.js          # zustand store — all app state
+│   │   ├── appStore.js          # zustand store — all app state
+│   │   ├── flightDefaults.js    # Pure helpers for new flight creation defaults
+│   │   └── flightCascade.js     # Pure helpers for cascading field updates
 │   │
 │   ├── acl/                     # Backend modules (13 files; CommonJS + some ESM)
 │   │   ├── parser.js            # FACADE — re-exports all backend modules
@@ -112,11 +118,21 @@ AC27LevelEditor/
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
 │   └── utils/                   # Shared utilities (ESM + some CJS for backend)
-│       ├── constants.js         # Single source of truth: ALL app constants (fields, math, timing, layout, keys)
+│       ├── constants/           # 7 domain sub-modules (was single constants.js)
+│       │   ├── index.js         # Barrel — re-exports all sub-modules
+│       │   ├── timing.js        # Ticks, CACHE_VERSION, game timing, stand occupancy
+│       │   ├── fields.js        # FIELDS, FIELD_LABELS, COL_CLASSES
+│       │   ├── aviation.js      # Wind, approach math, dynamics, command codes
+│       │   ├── airlines.js      # AIRPORT_META, AIRLINE_CODE_MAP
+│       │   ├── acl-format.js    # ACL structure, ID offsets, spec defaults
+│       │   ├── map-config.js    # Map layout, per-airport offsets/zoom
+│       │   └── ui.js            # Storage keys, i18n, weather, compass, file filters
 │       ├── timeUtils.js         # Tick↔time conversion, timeline helpers (CJS + ESM)
 │       ├── i18n.js              # Chinese/English translation (T(), getLang, setLang)
 │       ├── validators.js        # validateCallsigns, runTripleValidation
 │       ├── htmlUtils.js         # escapeHtml, stripSuffixes
+│       ├── safeHtml.jsx         # Safe i18n HTML rendering (strong/em/br only)
+│       ├── debugLog.js          # Gated debug logging (localStorage + URL flag)
 │       ├── csvIo.js             # CSV export
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
@@ -187,7 +203,11 @@ module.exports = { publicFn, _privateFn };
 - `useTranslation()` — returns `{ t, lang, toggleLang }`
 - `useElectronAPI()` — returns the `window.electronAPI` bridge
 - `useEditorShell({ onSave })` — registers keyboard shortcuts
-- `useSaveAcl()` — returns `{ handleSave, handleSaveAs, handleBackup }`
+- `useEditorSaveActions({ electronAPI, t, showModal, hideModal, showToast, ... })` — returns `{ doSave, handleSave, handleSaveAs, handleBackup, handleRestore, handleImport, handleBack }`
+- `map/useCrossWindowSelection(airportIcao, electronAPI, setSelectedCallSign)` — shared IPC listener for cross-window aircraft selection sync
+- `map/useCrossWindowEmergency(airportIcao, electronAPI, setEmergencyCallSign)` — shared IPC listener for emergency aircraft sync
+- `map/useWitchAnimation(witchMode)` — returns `witchFrame` (0 or 1), shared 500ms frame-toggle timer
+- `map/useKnobPositions(viewBox, initialViewBox)` — returns `{ zoom, panH, panV }` 0-1 knob gauge positions
 - `useDrag({ panelRef, enabled, onDragEnd })` — shared drag behavior for floating panels; returns `{ pos, isDragging, hasDragged, setPos, headerHandlers }`
 
 **React best practices:**
@@ -197,7 +217,7 @@ module.exports = { publicFn, _privateFn };
 - Always include proper dependency arrays in `useEffect`
 - Use `didInit` guard pattern for app-wide initialization effects
 - Never use `key={Math.random()}` — use stable keys
-- Never use `dangerouslySetInnerHTML` — render JSX elements instead
+- Never use `dangerouslySetInnerHTML` — use `safeHtml()` from `src/utils/safeHtml.jsx` to render i18n strings with allowed HTML tags (`<strong>`, `<em>`, `<br>`) as safe React nodes
 
 ### Tooltip System (`useTooltip`)
 

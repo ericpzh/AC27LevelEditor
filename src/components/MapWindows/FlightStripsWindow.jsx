@@ -4,6 +4,8 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
 import useTooltip from '../BrowserScreen/useTooltip';
 import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
 import useUdpAircraftState from './useUdpAircraftState';
+import { useCrossWindowSelection, useCrossWindowEmergency } from '../../hooks/map/useCrossWindowSelection';
+import { useWitchAnimation } from '../../hooks/map/useWitchAnimation';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
 import { IoHelpCircleOutline, IoRefreshOutline } from 'react-icons/io5';
@@ -135,7 +137,7 @@ const FlightStripContent = React.memo(function FlightStripContent({
             const stats = computeWitchStats(ac.callSign, ac);
             return (
               <>
-                <svg width={sz} height={sz} viewBox={vb} style={{ marginTop: '5px' }}>
+                <svg width={sz} height={sz} viewBox={vb} className="strip-witch-sprite">
                   <defs>
                     <clipPath id={cid}><rect x={cell.x} y={cell.y} width={SPRITE_CELL} height={SPRITE_CELL} /></clipPath>
                     <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
@@ -205,7 +207,7 @@ const DragGhost = forwardRef(function DragGhost({ ac, fd, seatLabel, sidFromMap,
             const stats = computeWitchStats(ac.callSign, ac);
             return (
               <>
-                <svg width={sz} height={sz} viewBox={vb} style={{ marginTop: '5px' }}>
+                <svg width={sz} height={sz} viewBox={vb} className="strip-witch-sprite">
                   <defs>
                     <clipPath id={cid}><rect x={cell.x} y={cell.y} width={SPRITE_CELL} height={SPRITE_CELL} /></clipPath>
                     <filter id={fid} x="-100%" y="-100%" width="300%" height="300%">
@@ -274,8 +276,6 @@ export default function FlightStripsWindow({ airportIcao }) {
   const selectedCallSignRef = useRef(null);
   const [emergencyCallSign, setEmergencyCallSign] = useState(null);
   const [witchMode, setWitchMode] = useState(false);
-  const [witchFrame, setWitchFrame] = useState(0);
-  const witchTimerRef = useRef(null);
   const helpDblClickRef = useRef(null);
   const [commandPath, setCommandPath] = useState([]);
 
@@ -366,17 +366,7 @@ export default function FlightStripsWindow({ airportIcao }) {
   }, [udpAircraft]);
 
   // ─── Witch mode animation timer (500ms per frame) ──────────────
-  useEffect(() => {
-    if (!witchMode) {
-      if (witchTimerRef.current) { clearInterval(witchTimerRef.current); witchTimerRef.current = null; }
-      setWitchFrame(0);
-      return;
-    }
-    witchTimerRef.current = setInterval(() => { setWitchFrame(f => (f === 0 ? 1 : 0)); }, 500);
-    return () => {
-      if (witchTimerRef.current) { clearInterval(witchTimerRef.current); witchTimerRef.current = null; }
-    };
-  }, [witchMode]);
+  const witchFrame = useWitchAnimation(witchMode);
 
   // Cleanup drag listeners on unmount (safety net)
   useEffect(() => {
@@ -473,28 +463,10 @@ export default function FlightStripsWindow({ airportIcao }) {
   }, [udpAirportChanged, udpAirport, airportIcao, loadFlightData, electronAPI]);
 
   // ─── Selection sync with other map windows ───────────────────
-
-  useEffect(() => {
-    if (!electronAPI.onAircraftSelectedInMap) return;
-    const handler = (d) => { if (d.icao === airportIcao) setSelectedCallSign(d.callSign || null); };
-    electronAPI.onAircraftSelectedInMap(handler);
-    if (electronAPI.getSelectedAircraft) {
-      electronAPI.getSelectedAircraft(airportIcao).then((r) => { if (r && r.callSign) setSelectedCallSign(r.callSign); });
-    }
-    return () => { if (electronAPI.offAircraftSelectedInMap) electronAPI.offAircraftSelectedInMap(handler); };
-  }, [airportIcao, electronAPI]);
+  useCrossWindowSelection(airportIcao, electronAPI, setSelectedCallSign);
 
   // ─── Emergency aircraft sync (EM → squawk 7700) ──────────────
-
-  useEffect(() => {
-    if (!electronAPI.onEmergencyAircraftChanged) return;
-    const handler = (d) => { if (d.icao === airportIcao) setEmergencyCallSign(d.callSign || null); };
-    electronAPI.onEmergencyAircraftChanged(handler);
-    if (electronAPI.getEmergencyAircraft) {
-      electronAPI.getEmergencyAircraft(airportIcao).then((r) => { if (r && r.callSign) setEmergencyCallSign(r.callSign); });
-    }
-    return () => { if (electronAPI.offEmergencyAircraftChanged) electronAPI.offEmergencyAircraftChanged(handler); };
-  }, [airportIcao, electronAPI]);
+  useCrossWindowEmergency(airportIcao, electronAPI, setEmergencyCallSign);
 
   // Reset command path when selection changes
   useEffect(() => {

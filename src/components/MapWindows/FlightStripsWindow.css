@@ -781,3 +781,6 @@
 .flight-strips.witch-mode .flight-strips-command-bar {
   display: none;
 }
+
+/* ─── Witch sprite vertical spacing ─── */
+.strip-witch-sprite { margin-top: 5px; }

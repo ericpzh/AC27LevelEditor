@@ -7,6 +7,7 @@ import { airportDisplayName, airportSortOrder } from '../../utils/constants';
 import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
+import { safeHtml } from '../../utils/safeHtml';
 import { RE_HIDDEN, DEMO_VISIBLE_BASES } from '../../utils/constants';
 import CacheProgressBody from '../common/CacheProgressBody';
 import AirportCardMap from './AirportCardMap';
@@ -20,7 +21,7 @@ function rescanGuideContent(t) {
       <p>{t('browser_rescan_guide_body')}</p>
       <ol>
         <li>{t('browser_rescan_guide_step1')} <code className="guide-path">{t('browser_rescan_guide_step1_path')}</code></li>
-        <li dangerouslySetInnerHTML={{ __html: t('browser_rescan_guide_step2') }} />
+        <li>{safeHtml(t('browser_rescan_guide_step2'))}</li>
       </ol>
     </div>
   );

@@ -183,3 +183,13 @@ body {
   from { background-color: var(--red-bg); }
   to   { background-color: var(--red-bg); opacity: 0.7; }
 }
+
+/* ─── Icon utility classes (react-icons/io5 sizing via CSS) ── */
+.btn-icon,
+.icon-sm { width: 14px; height: 14px; flex-shrink: 0; }
+.icon-xs { width: 12px; height: 12px; flex-shrink: 0; }
+.icon-md { width: 18px; height: 18px; flex-shrink: 0; }
+.icon-lg { width: 24px; height: 24px; flex-shrink: 0; }
+
+/* Accent-colored icon (overrides currentColor) */
+.icon-accent { color: var(--accent); }

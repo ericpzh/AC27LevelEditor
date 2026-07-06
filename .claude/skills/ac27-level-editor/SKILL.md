@@ -7,7 +7,7 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.1.9)
+- **Name:** `ac27-level-editor` (v1.1.10)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -52,12 +52,20 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 ├─────────────────────────────────────────────────────────┤
 │  src/hooks/ (React custom hooks)                        │
 │  - useTranslation, useElectronAPI, useEditorShell,      │
-│    useSaveAcl, useKeyboardShortcuts, useDrag             │
+│    useEditorSaveActions, useKeyboardShortcuts, useDrag    │
+│  - hooks/map/ — shared hooks for map windows:            │
+│    useCrossWindowSelection, useWitchAnimation,            │
+│    useKnobPositions                                      │
 ├─────────────────────────────────────────────────────────┤
 │  src/store/ (zustand state)                             │
 │  - appStore.js — single store: screen, flights,         │
-│    timelines, modal/toast, chat, _windSpeedUnit,          │
-│    map overlay state, radar window tracking, UDP health   │
+│    timelines, modal/toast, chat, map overlay state,      │
+│    radar window tracking, UDP health                     │
+│  - flightDefaults.js — pure helpers for new flight       │
+│    creation with sensible defaults                       │
+│  - flightCascade.js — pure helpers for cascading field   │
+│    updates (CallSign rebuild, airline→type/reg,          │
+│    runway→STAR)                                          │
 ├─────────────────────────────────────────────────────────┤
 │  src/acl/ (parser facade + 13 backend modules,          │
 │    CommonJS + some ESM)                                  │
@@ -67,10 +75,15 @@ description: AC27 Level Editor — Electron desktop app for editing Airport Cont
 │    (single source of truth — add new constants there)    │
 ├─────────────────────────────────────────────────────────┤
 │  src/utils/ (shared utilities, ESM frontend + CJS back) │
-│  - constants.js — single source of truth for ALL app      │
-│    constants (fields, math, timing, layout, i18n keys)    │
+│  - constants/ — 7 domain sub-modules + barrel index.js:  │
+│    timing.js, fields.js, aviation.js, airlines.js,       │
+│    acl-format.js, map-config.js, ui.js                    │
 │  - timeUtils.js, i18n.js, validators.js, htmlUtils.js,    │
 │    csvIo.js, zipUtils.js, logger.js                       │
+│  - safeHtml.jsx — renders i18n strings w/ allowed HTML    │
+│    tags (<strong>, <em>, <br>) as safe JSX nodes          │
+│  - debugLog.js — gated debug logging (localStorage +      │
+│    URL query param toggle)                                │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -101,7 +114,7 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 
 - **`architecture.md`** — Full directory tree, backend (CJS) and frontend (ESM/React) conventions, IPC patterns, three-layer test strategy, three-screen SPA flow.
 - **`data-flow.md`** — Phase 0 cache init → Phase 1 load → Phase 2 edit → Phase 3 save pipeline. Cache version detection, stand conflict validation, stand/star map overlays, demo .acl file handling.
-- **`map-windows.md`** — Separate BrowserWindow architecture for GroundMapWindow, AirMapWindow, and FlightStripsWindow. Shared hooks (useSvgZoom, useUdpAircraftState), ControlSidebar with SpinKnobs, witch mode, cross-window selection sync, drag reorder.
+- **`map-windows.md`** — Separate BrowserWindow architecture for GroundMapWindow, AirMapWindow, and FlightStripsWindow. Shared hooks (useSvgZoom, useUdpAircraftState, useCrossWindowSelection, useWitchAnimation, useKnobPositions), ControlSidebar with SpinKnobs, witch mode, cross-window selection sync, drag reorder.
 - **`udp-telemetry.md`** — Binary protocol (40B header + 112B records), trail ring buffer, outbound command channel, 200ms live state push, auto-reset mechanisms (stale timeout, hasLevel transition, airport transition).
 - **`acl-format.md`** — Unity JSON extensions, two-pass preprocessing, section types. Complete State=30/State=5 approach aircraft construction math: unified path, PR formula, 3° glideslope Y, TAT computation from SceneryData, approach ceiling, module API reference.
 - **`mcp-integration.md`** — API server (port 31415), 7 MCP tools, 12-point validation, SSE/JSON-RPC endpoints. Also covers `electron/cloud-llm.js` (DeepSeek/Gemini/Claude/Codex chat with tool calling) and the `ChatPanel` React component.
@@ -122,13 +135,14 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 11. **`snake_case.js` for backend, `PascalCase.jsx` for components.** Match existing conventions.
 12. **No inline `style={{}}`.** Always extract CSS to the component's `.css` file.
 13. **One `.css` per component.** Match the component filename.
-14. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
-15. **Build locally with `node build.js`** on Windows, never `npm run build:win` (local only — CI uses `npm run build:win` for cross-platform builds).
-16. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants.js:13` (re-exported via `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
-17. **Keep documentation in sync.** After any significant change, update ALL of:
+14. **No `dangerouslySetInnerHTML`.** Use `safeHtml()` from `src/utils/safeHtml.jsx` to render i18n strings containing `<strong>`, `<em>`, or `<br>` as safe React nodes. It sanitises unknown tags and attribute injection as plain text.
+15. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
+16. **Build locally with `node build.js`** on Windows, never `npm run build:win` (local only — CI uses `npm run build:win` for cross-platform builds).
+17. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js` (re-exported via `src/utils/constants/index.js` and `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
+18. **Keep documentation in sync.** After any significant change, update ALL of:
     - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`) and its reference files
     - **README.md**
     - **`tests/README.md`** — whenever tests are added/removed, update the test counts (line 9, line 18, line 22), the file table (add/remove rows), MapWindows file/test counts (line 34), and expected outcomes (lines 44–53). Stale test docs mislead contributors about what's covered.
-18. **UDP listener lifecycle is managed by main process.** `startUdpListener()` is called in `app.whenReady()` after `createWindow()`, `stopUdpListener()` in `will-quit`. The listener auto-reconnects on socket errors (2s delay). Do not create multiple listeners or start/stop from the renderer.
-19. **Map windows are separate BrowserWindow instances.** They are NOT React components in the main renderer. Track them in `groundMapWindows`/`airMapWindows`/`flightStripsWindows` Maps (keyed by ICAO). Always check for existing windows before creating (focus if exists). Clean up Map entries in the `closed` event handler. Each window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX`, `?window=airMap&airport=XXXX`, or `?window=flightStrips&airport=XXXX`).
-20. **UDP state push handles cleanup.** The `udp-aircraft-state` IPC event is pushed to ALL open map windows every 200ms. Map window components subscribe via `useUdpAircraftState()` hook which wraps `onUdpAircraftState`/`offUdpAircraftState`. Always unsubscribe in `useEffect` cleanup to prevent stale callbacks or memory leaks.
+19. **UDP listener lifecycle is managed by main process.** `startUdpListener()` is called in `app.whenReady()` after `createWindow()`, `stopUdpListener()` in `will-quit`. The listener auto-reconnects on socket errors (2s delay). Do not create multiple listeners or start/stop from the renderer.
+20. **Map windows are separate BrowserWindow instances.** They are NOT React components in the main renderer. Track them in `groundMapWindows`/`airMapWindows`/`flightStripsWindows` Maps (keyed by ICAO). Always check for existing windows before creating (focus if exists). Clean up Map entries in the `closed` event handler. Each window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX`, `?window=airMap&airport=XXXX`, or `?window=flightStrips&airport=XXXX`).
+21. **UDP state push handles cleanup.** The `udp-aircraft-state` IPC event is pushed to ALL open map windows every 200ms. Map window components subscribe via `useUdpAircraftState()` hook which wraps `onUdpAircraftState`/`offUdpAircraftState`. Always unsubscribe in `useEffect` cleanup to prevent stale callbacks or memory leaks.

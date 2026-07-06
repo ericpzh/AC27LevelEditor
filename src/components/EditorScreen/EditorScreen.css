@@ -248,3 +248,26 @@
 
 /* Search bar visibility toggled via class */
 .search-bar.hidden { display: none; }
+
+/* ─── Icon styles ────────────────────────────────────────── */
+
+/* Sparkle / accent-colored icon */
+.btn-icon-accent { color: var(--accent); }
+
+/* Airplane icon rotated for arrival (nose down, 45°) */
+.btn-icon-arrival {
+  border-bottom: 1.5px solid var(--text-secondary);
+  padding-bottom: 1px;
+  display: inline-block;
+  line-height: 1;
+}
+.btn-icon-arrival svg { transform: rotate(45deg); display: block; }
+
+/* Airplane icon rotated for departure (nose up, -45°) */
+.btn-icon-departure {
+  border-bottom: 1.5px solid var(--text-secondary);
+  padding-bottom: 1px;
+  display: inline-block;
+  line-height: 1;
+}
+.btn-icon-departure svg { transform: rotate(-45deg); display: block; }

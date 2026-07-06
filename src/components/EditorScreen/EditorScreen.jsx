@@ -4,7 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { useEditorShell } from '../../hooks/useEditorShell';
-import { validateCallsigns, runTripleValidation } from '../../utils/validators';
+import { useEditorSaveActions } from '../../hooks/useEditorSaveActions';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns, MPS_TO_KNOTS, WIND_UNITS } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoMapOutline, IoNavigateOutline, IoSparkles } from 'react-icons/io5';
@@ -288,27 +288,6 @@ export default function EditorScreen() {
 
   const handleFind = () => { const api = searchAPI.current; if (api) { api.setOpen(true); setTimeout(() => api.inputRef?.current?.focus(), 0); } };
 
-  const doSave = async (createBackup, silent) => {
-    const st = useAppStore.getState();
-    try {
-      const nativeWind = convertWindSpeed(st.windTimeline, WIND_UNITS.KNOTS, st._windSpeedUnit || WIND_UNITS.KNOTS);
-      const result = await electronAPI.saveAcl({ filePath: st.currentPath, flights: st.flights, before: st.before, after: st.after, arrayContent: st.arrayContent, originalBlocks: st.originalBlocks, earliestTime: st._earliestTime, createBackup, weatherTimeline: st.weatherTimeline, windTimeline: nativeWind, runwayTimeline: st.runwayTimeline });
-      if (!result.success) { showModal(t('modal_save_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return false; }
-      if (st.weatherPath && st.timelineModified.weather) { await electronAPI.saveWeatherTimeline({ filePath: st.weatherPath, data: st.weatherTimeline }); useAppStore.getState().setTimelineModified('weather', false); }
-      if (st.windPath && st.timelineModified.wind) { await electronAPI.saveWindTimeline({ filePath: st.windPath, data: nativeWind }); useAppStore.getState().setTimelineModified('wind', false); }
-      if (st.runwayTimelinePath && st.timelineModified.runway) { await electronAPI.saveRunwayTimeline({ filePath: st.runwayTimelinePath, data: st.runwayTimeline }); useAppStore.getState().setTimelineModified('runway', false); }
-      useAppStore.setState({ modified: false });
-      if (!silent) {
-        showModal(
-          t('modal_save_success'),
-          '',
-          <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>
-        );
-      }
-      return true;
-    } catch (err) { showModal(t('modal_save_failed'), err.message, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return false; }
-  };
-
   const jumpToCallsign = (callsign) => {
     hideModal();
     const api = searchAPI.current;
@@ -341,148 +320,11 @@ export default function EditorScreen() {
     );
   };
 
-  const handleSave = async () => {
-    const st = useAppStore.getState();
-    if (!st.currentPath) { showToast(t('toast_no_file'),'error'); return; }
-    if (!st.flights.length) { showToast(t('toast_no_flight_data'),'error'); return; }
-    const dupes = validateCallsigns(st.flights);
-    if (dupes.length > 0) {
-      showModal(
-        t('modal_duplicate_title'),
-        <div>{t('modal_duplicate_body')}<br/><br/>{dupes.map((d, i) => [i > 0 && <br key={`sep-${d}`} />, <strong key={d} className="callsign-link" onClick={() => { hideModal(); jumpToCallsign(d); }}>{d}</strong>])}<br/><br/><span className="modal-hint-error">{t('modal_duplicate_save_cancelled')}</span></div>,
-        <div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_close')}</button></div>
-      );
-      return;
-    }
-    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline);
-    if (issues.length > 0) { showModal(t('modal_issues_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((issue,i)=><p key={i} className="modal-issue-item">{renderCallsignLink(issue)}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_save')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
-    showModal(t('modal_backup_title'), <label className="modal-checkbox-row"><input type="checkbox" id="chk-save-backup" defaultChecked className="modal-checkbox" /><span>{t('modal_backup_checkbox')}</span></label>,
-      <div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button><button className="btn-confirm" onClick={async()=>{const cb=document.getElementById('chk-save-backup');hideModal();await doSave(cb?cb.checked:true);}}>{t('modal_btn_confirm_save')}</button></div>);
-  };
-
-  const handleSaveAs = async () => {
-    const st = useAppStore.getState();
-    if (!st.currentPath) { showToast(t('toast_no_file'),'error'); return; }
-    if (!st.flights.length) { showToast(t('toast_no_flight_data'),'error'); return; }
-    const dupes = validateCallsigns(st.flights);
-    if (dupes.length > 0) {
-      showModal(
-        t('modal_duplicate_title'),
-        <span>{t('modal_duplicate_body')}<br/><br/><span className="modal-hint-error">{t('modal_duplicate_export_cancelled')}</span></span>,
-        <div className="modal-actions-row"><button className="btn-cancel" onClick={hideModal}>{t('modal_btn_close')}</button></div>
-      );
-      return;
-    }
-    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline);
-    if (issues.length > 0) { showModal(t('modal_issues_export_title',{n:issues.length}), <div className="modal-issues-body">{issues.map((i,idx)=><p key={idx} className="modal-issue-item">{i}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_export')}</p></div>, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>); return; }
-    await doSave(false, true);
-    const result = await electronAPI.exportZip({ aclPath: st.currentPath });
-    if (result.canceled) return;
-    if (result.error) { showModal(t('modal_export_failed'), result.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
-    showToast(t('toast_exported', { name: result.path.split(/[/\\]/).pop() }), 'success');
-  };
-
-  const handleBack = () => {
-    const st = useAppStore.getState();
-    // Close any open map overlays
-    st.closeStandMap();
-    st.closeStarMap();
-    const hasMod = st.modified || st.timelineModified.weather || st.timelineModified.wind || st.timelineModified.runway;
-    if (!hasMod) { setScreen('browser'); return; }
-    showModal(t('modal_unsaved_title'), <p>{t('modal_unsaved_body')}</p>,
-      <div className="modal-actions-row">
-        <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
-        <button className="btn-confirm" onClick={() => { hideModal(); useAppStore.setState({ modified: false, timelineModified: { weather: false, wind: false, runway: false }, selectedIndices: new Set() }); setScreen('browser'); }}>{t('modal_btn_discard')}</button>
-      </div>);
-  };
-
-  const handleBackup = async () => {
-    const st = useAppStore.getState();
-    if (!st.currentPath) { showToast(t('toast_no_file'), 'error'); return; }
-    const doBackup = async () => {
-      const r = await electronAPI.manualBackup(st.currentPath);
-      if (r.canceled) return;
-      if (r.error) showModal(t('modal_backup_failed'), r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>);
-      else showToast(t('toast_backup_saved', { name: r.path.split(/[/\\]/).pop() }), 'success');
-    };
-    const check = await electronAPI.checkBackupExists(st.currentPath);
-    if (check.success && check.exists) {
-      showModal(
-        t('modal_backup_overwrite_title'),
-        <p className="modal-warning-text" dangerouslySetInnerHTML={{ __html: t('modal_backup_overwrite_body', { name: st.currentPath.split(/[/\\]/).pop() + '.bak' }) }} />,
-        <div className="modal-actions-row">
-          <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
-          <button className="btn-confirm" onClick={() => { hideModal(); doBackup(); }}>{t('modal_btn_overwrite')}</button>
-        </div>
-      );
-    } else {
-      doBackup();
-    }
-  };
-
-  const handleRestore = async () => {
-    const st = useAppStore.getState();
-    if (!st.currentPath) { showToast(t('toast_no_file'), 'error'); return; }
-    // Check backup exists before showing confirmation modal
-    const check = await electronAPI.checkBackupExists(st.currentPath);
-    if (!check.success || !check.exists) {
-      showModal(t('modal_restore_failed'), t('modal_restore_no_backup'),
-        <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>
-      );
-      return;
-    }
-    showModal(
-      t('modal_restore_title'),
-      <p className="modal-warning-text">{t('modal_restore_warning')}</p>,
-      <div className="modal-actions-row">
-        <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
-        <button className="btn-confirm" onClick={async () => {
-          hideModal();
-          const r = await electronAPI.restoreBackup(st.currentPath);
-          if (!r.success) { showModal(t('modal_restore_failed'), r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false });
-
-          const tl = await electronAPI.loadTimelines(st.currentPath);
-          if (tl.success) { const wsu2 = tl.windSpeedUnit || WIND_UNITS.KNOTS; st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu2, WIND_UNITS.KNOTS), runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] }, _windSpeedUnit: wsu2 }); }
-          const rp = await electronAPI.scanRunwayPairs(rootPath, st.currentAirport);
-          if (rp?.success) st.setLegacyState({ _runwayPairs: rp.pairs || [] });
-          showToast(t('toast_restored_n', { n: r.flights.length }), 'success');
-        }}>{t('modal_btn_restore')}</button>
-      </div>
-    );
-  };
-
-  const handleImport = () => {
-    const st = useAppStore.getState();
-    if (!st.currentPath) { showToast(t('toast_no_file'), 'error'); return; }
-    showModal(
-      t('modal_import_backup_title'),
-      <div>
-        <label className="modal-checkbox-row">
-          <input type="checkbox" id="chk-import-backup" defaultChecked className="modal-checkbox" />
-          <span>{t('modal_import_checkbox')}</span>
-        </label>
-      </div>,
-      <div className="modal-actions-row">
-        <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
-        <button className="btn-confirm" onClick={async () => {
-          const cb = document.getElementById('chk-import-backup');
-          hideModal();
-          if (cb?.checked) { try { await doSave(true); } catch (_) {} }
-          const r = await electronAPI.importZip({ aclPath: st.currentPath, createBackup: cb?.checked ?? true });
-          if (r.canceled) return;
-          if (r.error) { showModal(t('modal_import_failed'), r.error === 'Level mismatch' ? t('modal_import_level_mismatch') : r.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); return; }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false });
-
-          const tl = await electronAPI.loadTimelines(st.currentPath);
-          if (tl.success) { const wsu3 = tl.windSpeedUnit || WIND_UNITS.KNOTS; st.setLegacyState({ weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu3, WIND_UNITS.KNOTS), runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] }, _windSpeedUnit: wsu3 }); }
-          const rp = await electronAPI.scanRunwayPairs(rootPath, st.currentAirport);
-          if (rp?.success) st.setLegacyState({ _runwayPairs: rp.pairs || [] });
-          showToast(t('toast_imported_n', { n: r.flights.length }), 'success');
-        }}>{t('modal_btn_import')}</button>
-      </div>
-    );
-  };
+  const { handleSave, handleSaveAs, handleBackup, handleRestore, handleImport, handleBack } = useEditorSaveActions({
+    electronAPI, t, showModal, hideModal, showToast,
+    convertWindSpeed, WIND_UNITS, rootPath,
+    renderCallsignLink, jumpToCallsign, setScreen,
+  });
 
   // Keyboard shortcuts
   useEditorShell({ onSave: handleSave });
@@ -508,7 +350,7 @@ export default function EditorScreen() {
         </div>
         <div className="toolbar-spacer" />
         <div className="toolbar-group">
-          <button ref={chatBtnRef} {...bind(t(BUTTONS.chat.descKey))} onClick={toggleChatPanel} className={chatPanelOpen ? 'btn-map-active' : ''}><IoSparkles size={14} className="btn-icon" style={{color:'var(--accent)'}} /> {t('chat_title')}</button>
+          <button ref={chatBtnRef} {...bind(t(BUTTONS.chat.descKey))} onClick={toggleChatPanel} className={chatPanelOpen ? 'btn-map-active' : ''}><IoSparkles size={14} className="btn-icon btn-icon-accent" /> {t('chat_title')}</button>
           <button {...bind(t(BUTTONS.backup.descKey))} onClick={handleBackup}><IoCloudUploadOutline size={14} className="btn-icon" /> {t('toolbar_backup')}</button>
           <button {...bind(t(BUTTONS.restore.descKey))} onClick={handleRestore}><IoCloudDownloadOutline size={14} className="btn-icon" /> {t('toolbar_restore')}</button>
           <button {...bind(t(BUTTONS.import.descKey))} onClick={handleImport}><IoDownloadOutline size={14} className="btn-icon" /> {t('toolbar_import')}</button>
@@ -532,8 +374,8 @@ export default function EditorScreen() {
         <div className="toolbar-group secondary-left">
           <button ref={starBtnRef} {...bind(t(BUTTONS.starMap.descKey))} onClick={toggleStarMap} className={showStarMap ? 'btn-map-active' : ''}><IoNavigateOutline size={14} className="btn-icon" /> {t('toolbar_star_map')}</button>
           <button ref={standBtnRef} {...bind(t(BUTTONS.standMap.descKey))} onClick={toggleStandMap} className={showStandMap ? 'btn-map-active' : ''}><IoMapOutline size={14} className="btn-icon" /> {t('toolbar_stand_map')}</button>
-          <button {...bind(t(BUTTONS.addArrival.descKey))} onClick={addArrival}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(45deg)',display:'block'}} /></span> {t('toolbar_add_arrival')}</button>
-          <button {...bind(t(BUTTONS.addDeparture.descKey))} onClick={addDeparture}><span className="btn-icon-wrap" style={{borderBottom:'1.5px solid var(--text-secondary)',paddingBottom:'1px',display:'inline-block',lineHeight:1}}><IoAirplane size={14} style={{transform:'rotate(-45deg)',display:'block'}} /></span> {t('toolbar_add_departure')}</button>
+          <button {...bind(t(BUTTONS.addArrival.descKey))} onClick={addArrival}><span className="btn-icon-wrap btn-icon-arrival"><IoAirplane size={14} /></span> {t('toolbar_add_arrival')}</button>
+          <button {...bind(t(BUTTONS.addDeparture.descKey))} onClick={addDeparture}><span className="btn-icon-wrap btn-icon-departure"><IoAirplane size={14} /></span> {t('toolbar_add_departure')}</button>
         </div>
         <div className="toolbar-time-wrap"><ConfigBar /></div>
         <div className="toolbar-group secondary-right">
