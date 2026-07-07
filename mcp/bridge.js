@@ -1,5 +1,5 @@
 /**
- * MCP stdio↔HTTP bridge for AC27 Level Editor
+ * MCP stdio↔HTTP bridge for AC27 Editor
  *
  * Launched by Claude Code via stdio. Reads JSON-RPC from stdin,
  * relays to the editor's HTTP API, writes responses to stdout.

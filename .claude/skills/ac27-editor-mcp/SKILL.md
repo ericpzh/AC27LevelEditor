@@ -1,13 +1,13 @@
 ﻿---
 name: ac27-editor-mcp
-description: Control the AC27 Level Editor from Claude Code via MCP tools. Create, read, modify, and delete flights in the currently-open .acl schedule file. Supports English and Chinese (中文) interaction.
+description: Control the AC27 Editor from Claude Code via MCP tools. Create, read, modify, and delete flights in the currently-open .acl schedule file. Supports English and Chinese (中文) interaction.
 ---
 
 # AC27 Editor MCP — Skill
 
 ## 1. What This Skill Enables
 
-Control the AC27 Level Editor from Claude Code. Create, read, modify, and delete flights in the currently-open .acl schedule file. The user is responsible for opening and saving files via the editor UI — the MCP operates on whatever level is currently open.
+Control the AC27 Editor from Claude Code. Create, read, modify, and delete flights in the currently-open .acl schedule file. The user is responsible for opening and saving files via the editor UI — the MCP operates on whatever level is currently open.
 
 ## 2. Prerequisites
 

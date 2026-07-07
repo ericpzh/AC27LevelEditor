@@ -13,7 +13,7 @@
 ## Directory Structure
 
 ```
-AC27LevelEditor/
+AC27Editor/
 ├── electron/
 │   ├── main.js              # Electron main process + 53 IPC handlers
 │   ├── preload.js           # contextBridge (window.electronAPI, 52 methods)

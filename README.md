@@ -1,4 +1,4 @@
-# AC27 Level Editor
+# AC27 Editor
 
 Cross-platform desktop level editor for **Airport Control 27** `.acl` flight schedule files. Built with **Electron 33 + React 19 + Vite 8 + zustand 5**.
 
@@ -56,8 +56,8 @@ tests/                    # 361 Vitest + 16 Playwright + 22 Node.js integration 
 
 This project uses a **CLAUDE.md skill system** for AI-assisted development. See:
 
-- `.claude/skills/ac27-level-editor/SKILL.md` — main skill: conventions, architecture, rules
-- `.claude/skills/ac27-level-editor/references/` — detailed reference files
+- `.claude/skills/ac27-editor/SKILL.md` — main skill: conventions, architecture, rules
+- `.claude/skills/ac27-editor/references/` — detailed reference files
 
 ### Key Conventions
 
@@ -85,4 +85,4 @@ For detailed test documentation, see `tests/README.md`.
 
 ## License
 
-Proprietary — Airport Control 27 Level Editor.
+Proprietary — Airport Control 27 Editor.

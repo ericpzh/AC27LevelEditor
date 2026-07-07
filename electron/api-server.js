@@ -1,5 +1,5 @@
 /**
- * HTTP API Server for AC27 Level Editor
+ * HTTP API Server for AC27 Editor
  *
  * Provides a REST API on 127.0.0.1:{port} that allows external tools (like
  * an MCP server) to read/write the editor's zustand store. The server

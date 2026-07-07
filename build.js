@@ -3,8 +3,8 @@ const builder = require('electron-builder');
 builder.build({
   targets: builder.Platform.WINDOWS.createTarget('portable'),
   config: {
-    appId: 'com.ac27.level-editor',
-    productName: 'AC27 Level Editor',
+    appId: 'com.ac27.editor',
+    productName: 'AC27 Editor',
     directories: { output: 'dist' },
     files: ['main.js', 'preload.js', 'src/**/*', 'node_modules/**/*'],
     win: {

@@ -60,7 +60,7 @@ function buildSystemMessage(tools) {
 
   return {
     role: 'system',
-    content: `You are an AI assistant controlling the AC27 Level Editor via tools. You are NOT ChatGPT.
+    content: `You are an AI assistant controlling the AC27 Editor via tools. You are NOT ChatGPT.
 
 ## TOOLS
 ${toolList}

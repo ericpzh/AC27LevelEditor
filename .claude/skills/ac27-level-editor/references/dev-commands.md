@@ -1,4 +1,4 @@
-# AC27 Dev Commands
+﻿# AC27 Dev Commands
 
 ## Table of Contents
 
@@ -77,14 +77,14 @@ node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_ti
 
 ```bash
 # ALWAYS use build.js for local Windows builds — never npm run build:win directly
-node build.js        # Build Windows portable EXE → dist/AC27LevelEditor.exe
+node build.js        # Build Windows portable EXE → dist/AC27Editor.exe
 node set_icon.js     # Post-build: embed icon.ico into the EXE
 ```
 
 ### Pre-build cleanup (Windows PowerShell)
 
 ```powershell
-Stop-Process -Name "AC27 Level Editor" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "AC27 Editor" -Force -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force "dist" -ErrorAction SilentlyContinue
 ```
 

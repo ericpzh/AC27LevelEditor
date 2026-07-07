@@ -1,6 +1,6 @@
 ﻿const STR = {
   zh: {
-    setup_title:'AC27 Level Editor',
+    setup_title:'AC27编辑器',
     setup_sub:'请先定位游戏安装目录以扫描所有关卡文件',
     setup_steam_title:'如何通过 Steam 找到游戏目录',
     setup_steam_step1:'打开 Steam 库 → 找到 <strong>Airport Control 27</strong>',
@@ -258,7 +258,7 @@
 	    vr_no_game_root:'u6e38u620fu6839u76eeu5f55u672au914du7f6eu3002u8bf7u5148u9009u62e9u6e38u620fu5b89u88c5u76eeu5f55u3002',
   },
   en: {
-    setup_title:'AC27 Level Editor',
+    setup_title:'AC27 Editor',
     setup_sub:'Select the game installation directory to scan all level files',
     setup_steam_title:'How to find the game directory via Steam',
     setup_steam_step1:'Steam Library → right-click <strong>Airport Control 27</strong>',

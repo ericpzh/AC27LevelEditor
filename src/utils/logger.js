@@ -1,5 +1,5 @@
 /**
- * Persistent file logger for AC27 Level Editor.
+ * Persistent file logger for AC27 Editor.
  * At startup, redirects console.log / console.error to also write to a dated log file.
  */
 const fs = require('fs');

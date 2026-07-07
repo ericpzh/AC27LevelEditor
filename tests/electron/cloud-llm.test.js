@@ -418,7 +418,7 @@ describe('cloud-llm — chat success (OpenAI path)', () => {
     // Auto-generated system message
     const sysMsg = body.messages.find(m => m.role === 'system');
     expect(sysMsg).toBeTruthy();
-    expect(sysMsg.content).toContain('AC27 Level Editor');
+    expect(sysMsg.content).toContain('AC27 Editor');
   });
 
   it('preserves existing system message instead of auto-generating', async () => {

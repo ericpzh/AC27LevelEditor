@@ -53,7 +53,7 @@ async function createWindow() {
     height: 880,
     minWidth: 1024,
     minHeight: 640,
-    title: 'AC27 Level Editor',
+    title: 'AC27 Editor',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

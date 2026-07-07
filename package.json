@@ -1,5 +1,5 @@
 {
-  "name": "ac27-level-editor",
+  "name": "ac27-editor",
   "version": "1.2.0",
   "description": "Cross-platform Level Editor for Airport Control 27 .acl flight schedules",
   "main": "dist-electron/main.js",
@@ -16,8 +16,8 @@
     "build:all": "vite build && electron-builder --win --mac"
   },
   "build": {
-    "appId": "com.ac27.level-editor",
-    "productName": "AC27 Level Editor",
+    "appId": "com.ac27.editor",
+    "productName": "AC27 Editor",
     "directories": {
       "output": "release"
     },
@@ -35,7 +35,7 @@
     "win": {
       "target": "portable",
       "icon": "icon.ico",
-      "artifactName": "AC27LevelEditor.${ext}",
+      "artifactName": "AC27Editor.${ext}",
       "extraResources": [
         {
           "from": "node_modules/ffmpeg-static/ffmpeg.exe",
@@ -47,7 +47,7 @@
       "target": "dmg",
       "icon": "icon.png",
       "category": "public.app-category.utilities",
-      "artifactName": "AC27LevelEditor.${ext}",
+      "artifactName": "AC27Editor.${ext}",
       "extraResources": [
         {
           "from": "node_modules/ffmpeg-static/ffmpeg",

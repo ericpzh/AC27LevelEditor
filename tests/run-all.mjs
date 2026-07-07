@@ -56,7 +56,7 @@ function runStep(label, cmd) {
 // ── Main ──────────────────────────────────────────────────────────
 
 console.log('╔══════════════════════════════════════════════════════╗');
-console.log('║        AC27 Level Editor — Full Test Suite          ║');
+console.log('║        AC27 Editor — Full Test Suite          ║');
 console.log('╚══════════════════════════════════════════════════════╝');
 console.log(`\nGame root: ${GAME_ROOT}`);
 

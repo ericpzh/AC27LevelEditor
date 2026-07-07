@@ -1,10 +1,10 @@
----
+﻿---
 name: react-best-practices
 description: React performance optimization guidelines for desktop and client-rendered apps (Electron, Vite SPAs, zustand). Covers re-render prevention, JavaScript micro-optimizations, bundle optimization, and rendering performance. Use when writing, reviewing, or refactoring React components, implementing data loading, optimizing bundles, or fixing performance issues. Applies to any client-rendered React app — not just web.
 license: MIT
 metadata:
   author: vercel
-  adapted_for: ac27-level-editor
+  adapted_for: ac27-editor
   version: "2.0.0"
 ---
 

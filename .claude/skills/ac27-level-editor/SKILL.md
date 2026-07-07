@@ -1,17 +1,17 @@
 ﻿---
-name: ac27-level-editor
-description: AC27 Level Editor â€” Electron desktop app for editing Airport Control 27 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, npm test, node tests/integration/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes.
+name: ac27-editor
+description: AC27 Editor â€” Electron desktop app for editing Airport Control 27 .acl flight schedule files. Use this skill whenever working in this repo, editing any source file, running commands (npm start, node build.js, npm test, node tests/integration/*), adding features, fixing bugs, or discussing the app's architecture. This skill documents the full project structure, coding conventions, IPC patterns, save/load flow, timeline system, build process, and all dev commands. Always consult this skill before making changes.
 ---
 
-# AC27 Level Editor â€” Repo Skill
+# AC27 Editor â€” Repo Skill
 
 ## Project Identity
 
-- **Name:** `ac27-level-editor` (v1.2.0)
+- **Name:** `ac27-editor` (v1.2.0)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
-- **App ID:** `com.ac27.level-editor`
+- **App ID:** `com.ac27.editor`
 - **MCP Integration:** Built-in HTTP API server (port 31415) + MCP tools for AI agent control (see `ac27-editor-mcp` skill)
 - **Cloud LLM Chat:** In-app chat panel powered by DeepSeek / Gemini / Claude / Codex â€” 4-vendor multi-model chat with tool calling (see `references/mcp-integration.md`)
 
@@ -139,9 +139,9 @@ This skill uses **progressive disclosure** â€” the central SKILL.md (this f
 15. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
 16. **Build locally with `node build.js`** on Windows, never `npm run build:win` (local only â€” CI uses `npm run build:win` for cross-platform builds).
 17. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js` (re-exported via `src/utils/constants/index.js` and `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
-18. **Semantic versioning for releases.** Version tags use `v<MAJOR>.<MINOR>.<PATCH>` (e.g. `v1.2.0`). Bump PATCH for bug fixes, MINOR for new features/refactors, MAJOR for breaking changes. Every release MUST bump the version in ALL of: (a) `.claude/skills/ac27-level-editor/SKILL.md` Project Identity line, (b) `package.json` `version` field, (c) the git tag itself. These three must stay in sync.
+18. **Semantic versioning for releases.** Version tags use `v<MAJOR>.<MINOR>.<PATCH>` (e.g. `v1.2.0`). Bump PATCH for bug fixes, MINOR for new features/refactors, MAJOR for breaking changes. Every release MUST bump the version in ALL of: (a) `.claude/skills/ac27-editor/SKILL.md` Project Identity line, (b) `package.json` `version` field, (c) the git tag itself. These three must stay in sync.
 19. **Keep documentation in sync.** After any significant change, update ALL of:
-    - **This skill** (`.claude/skills/ac27-level-editor/SKILL.md`) and its reference files
+    - **This skill** (`.claude/skills/ac27-editor/SKILL.md`) and its reference files
     - **README.md**
     - **`tests/README.md`** â€” whenever tests are added/removed, update the test counts (line 9, line 18, line 22), the file table (add/remove rows), MapWindows file/test counts (line 34), and expected outcomes (lines 44â€“53). Stale test docs mislead contributors about what's covered.
 20. **UDP listener lifecycle is managed by main process.** `startUdpListener()` is called in `app.whenReady()` after `createWindow()`, `stopUdpListener()` in `will-quit`. The listener auto-reconnects on socket errors (2s delay). Do not create multiple listeners or start/stop from the renderer.

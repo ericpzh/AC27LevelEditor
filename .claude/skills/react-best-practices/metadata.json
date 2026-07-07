@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
   "based_on": "Vercel Engineering React Best Practices (v1.0.0)",
-  "adapted_for": "ac27-level-editor — Electron + Vite + React 19 + zustand",
+  "adapted_for": "ac27-editor — Electron + Vite + React 19 + zustand",
   "abstract": "Performance optimization guide for client-rendered React applications, tailored for Electron desktop apps and Vite SPAs. Contains 57 rules across 7 categories covering waterfall elimination, bundle optimization, client-side patterns, re-render prevention, rendering performance, JavaScript micro-optimizations, and advanced patterns. Server-side/SSR/Next.js rules removed. Examples adapted for IPC calls, zustand state, and Vite code-splitting.",
   "references": [
     "https://react.dev",

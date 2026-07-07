@@ -1,4 +1,4 @@
-# AC27 Level Editor — Test Suite
+# AC27 Editor — Test Suite
 
 Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.js (integration)**.
 

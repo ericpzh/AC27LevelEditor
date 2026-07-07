@@ -35,8 +35,8 @@ jobs:
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AC27-Level-Editor-Windows
-          path: release/AC27LevelEditor.exe
+          name: AC27-Editor-Windows
+          path: release/AC27Editor.exe
           if-no-files-found: error
 
   build-macos:
@@ -60,7 +60,7 @@ jobs:
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AC27-Level-Editor-macOS
+          name: AC27-Editor-macOS
           path: release/*.dmg
           if-no-files-found: error
 
@@ -74,12 +74,12 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: AC27-Level-Editor-Windows
+          name: AC27-Editor-Windows
 
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: AC27-Level-Editor-macOS
+          name: AC27-Editor-macOS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

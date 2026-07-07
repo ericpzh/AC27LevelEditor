@@ -14,7 +14,7 @@ The editor has two AI integration paths:
 ### Architecture
 
 ```
-Claude Code (LLM)                    AC27 Level Editor (Electron)
+Claude Code (LLM)                    AC27 Editor (Electron)
 ┌──────────────┐   stdio    ┌──────────────┐   HTTP    ┌──────────────────┐
 │  MCP Client  │───────────→│ mcp/bridge.js│─────────→│ electron/        │
 │  (built-in)  │←───────────│ (child proc) │←─────────│ api-server.js    │
