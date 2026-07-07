@@ -22,13 +22,13 @@ description: AC27 Editor â€” Electron desktop app for editing Airport Contr
 â”‚  electron/main.js (Electron Main Process)               â”‚
 â”‚  - Creates BrowserWindow (1400Ã—880, min 1024Ã—640)       â”‚
 â”‚  - contextIsolation: true, nodeIntegration: false       â”‚
-â”‚  - 53 ipcMain.handle() endpoints                        â”‚
+â”‚  - 58 ipcMain.handle() endpoints                        â”‚
 â”‚  - All file I/O, dialog, caching lives here             â”‚
 â”‚  - electron/api-server.js â€” HTTP API + MCP (port 31415) â”‚
 â”‚  - electron/cloud-llm.js â€” Multi-vendor cloud LLM chat    â”‚
 â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
 â”‚  electron/preload.js (contextBridge)                    â”‚
-â”‚  - Exposes window.electronAPI with 52 methods            â”‚
+â”‚  - Exposes window.electronAPI with 59 methods            â”‚
 â”‚  - onStoreApiUpdate/offStoreApiUpdate for MCP bridge    â”‚
 â”‚  - Each method = ipcRenderer.invoke(channel, ...args)   â”‚
 â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
@@ -43,6 +43,7 @@ description: AC27 Editor â€” Electron desktop app for editing Airport Contr
 â”‚  - SetupScreen / BrowserScreen / EditorScreen           â”‚
 â”‚  - BrowserScreen: useTooltip (shared tooltip hook),
     VideoReplaceOverlay (menu video replacer),â”‚
+    VideoBackgroundModal (video replace/restore modal),
 â”‚    BrowserHelpOverlay (help overlay)                  â”‚
 â”‚  - EditorScreen: FlightTable, TimelineEditors,          â”‚
 â”‚    CellEditor, SearchBar, TutorialOverlay               â”‚
@@ -139,7 +140,7 @@ This skill uses **progressive disclosure** â€” the central SKILL.md (this f
 15. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
 16. **Build locally with `node build.js`** on Windows, never `npm run build:win` (local only â€” CI uses `npm run build:win` for cross-platform builds).
 17. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js` (re-exported via `src/utils/constants/index.js` and `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
-18. **Semantic versioning for releases.** Version tags use `v<MAJOR>.<MINOR>.<PATCH>` (e.g. `v1.2.0`). Bump PATCH for bug fixes, MINOR for new features/refactors, MAJOR for breaking changes. Every release MUST bump the version in ALL of: (a) `.claude/skills/ac27-editor/SKILL.md` Project Identity line, (b) `package.json` `version` field, (c) the git tag itself. These three must stay in sync.
+18. **Version tags for releases.** Version tags use `v<MAJOR>.<MINOR>.<PATCH>` (e.g. `v1.2.0`). Keep these three in sync: (a) `.claude/skills/ac27-editor/SKILL.md` Project Identity line, (b) `package.json` `version` field, (c) the git tag. The user decides when to bump; you can re-tag the same version to include new changes.
 19. **Keep documentation in sync.** After any significant change, update ALL of:
     - **This skill** (`.claude/skills/ac27-editor/SKILL.md`) and its reference files
     - **README.md**

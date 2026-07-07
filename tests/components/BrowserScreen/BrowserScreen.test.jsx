@@ -27,6 +27,8 @@ function setupDefaultMocks(overrides = {}) {
     switch (channel) {
       case 'get-app-version':
         return Promise.resolve('1.0.10');
+      case 'check-bepinex':
+        return Promise.resolve({ installed: false });
       case 'get-cache-state':
         return Promise.resolve({ state: 'ready', gameRoot: 'D:\\Games\\Airport Control 27', lang: null, airports: ['ZSJN'] });
       case 'get-airport-files-info':
@@ -237,6 +239,70 @@ describe('Version Mismatch Detection', () => {
     });
   });
 
+  describe('Debug Mode Toggle', () => {
+    it('renders debug mode toggle button in the header', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Debug Mode')).toBeInTheDocument();
+    });
+
+    it('shows active state when BepInEx is installed', async () => {
+      setupDefaultMocks({
+        'check-bepinex': Promise.resolve({ installed: true }),
+      });
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Debug Mode')).toBeInTheDocument();
+      });
+
+      const debugBtn = screen.getByText('Debug Mode').closest('button');
+      expect(debugBtn.className).toContain('btn-debug-active');
+    });
+
+    it('has tooltip text on hover', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const debugBtn = screen.getByText('Debug Mode').closest('button');
+      fireEvent.mouseEnter(debugBtn);
+
+      const tip = document.body.querySelector('.tooltip-popup');
+      expect(tip).not.toBeNull();
+      expect(tip.textContent).toContain('BepInEx');
+    });
+
+    it('is disabled while loading', async () => {
+      setupDefaultMocks({
+        'check-bepinex': Promise.resolve({ installed: true }),
+        'uninstall-bepinex': new Promise(() => {}), // never resolves
+      });
+      const user = userEvent.setup();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Debug Mode')).toBeInTheDocument();
+      });
+
+      const debugBtn = screen.getByText('Debug Mode').closest('button');
+      await user.click(debugBtn);
+
+      // Button should now be disabled while uninstall is in progress
+      await waitFor(() => {
+        expect(debugBtn.disabled).toBe(true);
+      });
+    });
+  });
+
   describe('Tooltips', () => {
     it('shows tooltip on Change Folder button hover', async () => {
       setupDefaultMocks();
@@ -287,7 +353,7 @@ describe('Version Mismatch Detection', () => {
 
       const tip = document.body.querySelector('.tooltip-popup');
       expect(tip).not.toBeNull();
-      expect(tip.textContent).toBe('Switch the interface language.');
+      expect(tip.textContent).toBe('Switch the UI language.');
     });
 
     it('help button shows its own tooltip', async () => {

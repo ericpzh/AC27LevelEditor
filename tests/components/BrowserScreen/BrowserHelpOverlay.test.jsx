@@ -35,7 +35,7 @@ describe('BrowserHelpOverlay', () => {
     expect(screen.getByText(/Change the game directory/)).toBeInTheDocument();
     expect(screen.getByText(/Re-scan the current directory/)).toBeInTheDocument();
     expect(screen.getByText(/Report a bug/)).toBeInTheDocument();
-    expect(screen.getByText(/Switch the interface language/)).toBeInTheDocument();
+    expect(screen.getByText(/Switch the UI language/)).toBeInTheDocument();
     expect(screen.getByText(/Toggle dark.light mode/)).toBeInTheDocument();
     expect(screen.getByText(/ground\/surface radar view/)).toBeInTheDocument();
     expect(screen.getByText(/approach radar view/)).toBeInTheDocument();

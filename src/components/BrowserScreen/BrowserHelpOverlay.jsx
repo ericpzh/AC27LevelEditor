@@ -1,13 +1,14 @@
 import React, { useEffect } from 'react';
 import './BrowserHelpOverlay.css';
 import { useTranslation } from '../../hooks/useTranslation';
-import { IoClose, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoLanguage, IoMapOutline, IoNavigateOutline, IoListOutline, IoVideocamOutline } from 'react-icons/io5';
+import { IoClose, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoLanguage, IoMapOutline, IoNavigateOutline, IoListOutline, IoVideocamOutline, IoCodeSlash } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 
 // ─── Button registry (icon + label key + help description) ───
 export const BUTTONS = {
   changeDir:      { icon: IoFolderOpenOutline, labelKey: 'browser_change_dir',      descKey: 'browser_help_change_dir' },
   refresh:        { icon: IoRefreshOutline,   labelKey: 'browser_refresh_scan',    descKey: 'browser_help_refresh' },
+  debugMode:      { icon: IoCodeSlash,        labelKey: 'browser_debug_mode',      descKey: 'browser_help_debug_mode' },
   replaceBg:      { icon: IoVideocamOutline,  labelKey: 'browser_replace_background', descKey: 'browser_help_replace_bg' },
   bugReport:      { icon: IoBugOutline,       labelKey: null,                      descKey: 'browser_help_bug_report' },
   lang:           { icon: IoLanguage,         labelKey: null,                      descKey: 'browser_help_lang' },
@@ -40,6 +41,7 @@ const SECTIONS = [
     items: [
       { text: '{{btn:changeDir}} — {desc}', descKey: 'browser_help_change_dir' },
       { text: '{{btn:refresh}} — {desc}', descKey: 'browser_help_refresh' },
+      { text: '{{btn:debugMode}} — {desc}', descKey: 'browser_help_debug_mode' },
       { text: '{{btn:replaceBg}} — {desc}', descKey: 'browser_help_replace_bg' },
       { text: '{{btn:bugReport}} — {desc}', descKey: 'browser_help_bug_report' },
       { text: '{{btn:lang}} — {desc}', descKey: 'browser_help_lang' },

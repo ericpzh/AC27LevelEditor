@@ -186,6 +186,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   discoverMenuVideos: () => ipcRenderer.invoke('discover-menu-videos'),
   convertVideo: (opts) => ipcRenderer.invoke('convert-video', opts),
   replaceMenuVideos: (opts) => ipcRenderer.invoke('replace-menu-videos', opts),
+  checkVideoBackupExists: () => ipcRenderer.invoke('check-video-backup-exists'),
+  restoreVideoBackup: () => ipcRenderer.invoke('restore-video-backup'),
 
   _videoConvertHandlers: new Map(),
   onVideoConvertProgress: function (cb) {
@@ -211,6 +213,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     if (handler) {
       ipcRenderer.removeListener('video-replace-progress', handler);
       this._videoReplaceHandlers.delete(cb);
+    }
+  },
+
+  // ─── BepInEx Debug Mode ──────────────────────────────────
+  checkBepInEx: () => ipcRenderer.invoke('check-bepinex'),
+  installBepInEx: () => ipcRenderer.invoke('install-bepinex'),
+  uninstallBepInEx: () => ipcRenderer.invoke('uninstall-bepinex'),
+
+  _bepInExProgressHandlers: new Map(),
+  onBepInExInstallProgress: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._bepInExProgressHandlers.set(cb, handler);
+    ipcRenderer.on('bepinex-install-progress', handler);
+  },
+  offBepInExInstallProgress: function (cb) {
+    const handler = this._bepInExProgressHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('bepinex-install-progress', handler);
+      this._bepInExProgressHandlers.delete(cb);
     }
   },
 });

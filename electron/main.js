@@ -4,6 +4,7 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const { initLogger, closeLogger } = require('../src/utils/logger');
+const bepinex = require('./bepinex');
 
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
 // Skip file logging in E2E tests so we can see console output
@@ -51,7 +52,7 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 880,
-    minWidth: 1024,
+    minWidth: 1280,
     minHeight: 640,
     title: 'AC27 Editor',
     webPreferences: {
@@ -2127,6 +2128,59 @@ function _getFfmpegPath() {
   return require('ffmpeg-static');
 }
 
+// ─── IPC: BepInEx Debug Mode ──────────────────────────────
+
+ipcMain.handle('check-bepinex', async () => {
+  const cr = _readCache();
+  const gameRoot = cr?.data?.gameRoot;
+  if (!gameRoot) return { installed: false, error: 'NO_GAME_ROOT' };
+  return bepinex.checkStatus(gameRoot);
+});
+
+ipcMain.handle('install-bepinex', async (_event) => {
+  const cr = _readCache();
+  const gameRoot = cr?.data?.gameRoot;
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+
+  const notify = (data) => {
+    if (_event.sender && !_event.sender.isDestroyed()) {
+      _event.sender.send('bepinex-install-progress', data);
+    }
+  };
+
+  try {
+    const result = await bepinex.installLatest(gameRoot, notify);
+    if (result.success && cr.data) {
+      cr.data.debugMode = true;
+      _writeCache(cr.data);
+    }
+    return result;
+  } catch (err) {
+    console.error('[BepInEx] install failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('uninstall-bepinex', async () => {
+  const cr = _readCache();
+  const gameRoot = cr?.data?.gameRoot;
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+
+  try {
+    const result = bepinex.removeFiles(gameRoot);
+    if (cr.data) {
+      cr.data.debugMode = false;
+      _writeCache(cr.data);
+    }
+    return { success: true, removed: result.removed, errors: result.errors };
+  } catch (err) {
+    console.error('[BepInEx] uninstall failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Video Background Replacer ────────────────────────
+
 /** Discover all XXXX.webm/ folders under MainMenuVideos. */
 ipcMain.handle('discover-menu-videos', async () => {
   try {
@@ -2262,6 +2316,69 @@ ipcMain.handle('replace-menu-videos', async (_event, { convertedVideoPath, airpo
     }
   }
   return { success: true, replaced: results };
+});
+
+/** Check whether any .webm.bak backup folders exist under MainMenuVideos. */
+ipcMain.handle('check-video-backup-exists', async () => {
+  try {
+    const cr = _readCache();
+    const gameRoot = cr?.data?.gameRoot;
+    if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+
+    const videosDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'MainMenuVideos');
+    if (!fs.existsSync(videosDir)) return { success: true, exists: false };
+
+    const entries = fs.readdirSync(videosDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      if (!e.name.endsWith('.webm')) continue;
+      if (e.name.endsWith('.webm.bak')) continue;
+      if (fs.existsSync(path.join(videosDir, e.name + '.bak'))) {
+        return { success: true, exists: true };
+      }
+    }
+    return { success: true, exists: false };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+/** Restore all XXXX.webm.bak/ backup folders back to XXXX.webm/. */
+ipcMain.handle('restore-video-backup', async () => {
+  try {
+    const cr = _readCache();
+    const gameRoot = cr?.data?.gameRoot;
+    if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+
+    const videosDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'MainMenuVideos');
+    if (!fs.existsSync(videosDir)) return { success: true, restored: [] };
+
+    const entries = fs.readdirSync(videosDir, { withFileTypes: true });
+    const restored = [];
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      if (!e.name.endsWith('.webm.bak')) continue;
+
+      const bakDirPath = path.join(videosDir, e.name);
+      const origName = e.name.replace(/\.bak$/, '');
+      const origDirPath = path.join(videosDir, origName);
+      const icao = origName.replace(/\.webm$/, '').toUpperCase();
+
+      // Count files in backup for reporting
+      const bakFiles = fs.readdirSync(bakDirPath).filter(f => f.endsWith('.webm'));
+
+      // Remove current folder (if exists) and restore backup
+      if (fs.existsSync(origDirPath)) {
+        fs.rmSync(origDirPath, { recursive: true, force: true });
+      }
+      fs.renameSync(bakDirPath, origDirPath);
+
+      restored.push({ icao, fileCount: bakFiles.length });
+    }
+    return { success: true, restored };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 app.whenReady().then(() => {

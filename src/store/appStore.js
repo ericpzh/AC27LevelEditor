@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { TOAST_DURATION_MS, STORAGE_KEY_THEME } from '../utils/constants';
+import { TOAST_DURATION_MS, TOAST_ERROR_DURATION_MS, STORAGE_KEY_THEME } from '../utils/constants';
 import { createArrivalFlight, createDepartureFlight } from './flightDefaults.js';
 import { rebuildCallSign, cascadeAirlineChange, cascadeRunwayChange, clearInternalRegistration } from './flightCascade.js';
 
@@ -306,7 +306,8 @@ export const useAppStore = create((set, get) => ({
   showToast: (message, type) => {
     set({ toast: { message, type } });
     clearTimeout(get()._toastTimer);
-    const timer = setTimeout(() => set({ toast: { message: '', type: '' } }), TOAST_DURATION_MS);
+    const dur = type === 'error' ? TOAST_ERROR_DURATION_MS : TOAST_DURATION_MS;
+    const timer = setTimeout(() => set({ toast: { message: '', type: '' } }), dur);
     set({ _toastTimer: timer });
   },
 

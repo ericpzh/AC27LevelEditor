@@ -22,6 +22,7 @@ export const MIDNIGHT_CROSS_START_HOUR = 18;      // 6PM
 
 // ─── UI timing ─────────────────────────────────────────────
 export const TOAST_DURATION_MS = 2500;
+export const TOAST_ERROR_DURATION_MS = 10000;
 
 // ─── Default flight creation time offsets (minutes) ────────
 export const FALLBACK_BASE_MINUTES = 360;   // 06:00

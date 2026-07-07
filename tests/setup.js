@@ -82,10 +82,19 @@ vi.stubGlobal('electronAPI', {
 	  discoverMenuVideos: () => mockIpcInvoke('discover-menu-videos'),
 	  convertVideo: (opts) => mockIpcInvoke('convert-video', opts),
 	  replaceMenuVideos: (opts) => mockIpcInvoke('replace-menu-videos', opts),
+	  checkVideoBackupExists: () => mockIpcInvoke('check-video-backup-exists'),
+	  restoreVideoBackup: () => mockIpcInvoke('restore-video-backup'),
 	  onVideoConvertProgress: (cb) => mockIpcOn('video-convert-progress', cb),
 	  offVideoConvertProgress: (cb) => { /* unsubscribe */ },
 	  onVideoReplaceProgress: (cb) => mockIpcOn('video-replace-progress', cb),
 	  offVideoReplaceProgress: (cb) => { /* unsubscribe */ },
+
+  // ─── BepInEx Debug Mode ──────────────────────────────────
+  checkBepInEx: () => mockIpcInvoke('check-bepinex'),
+  installBepInEx: () => mockIpcInvoke('install-bepinex'),
+  uninstallBepInEx: () => mockIpcInvoke('uninstall-bepinex'),
+  onBepInExInstallProgress: (cb) => mockIpcOn('bepinex-install-progress', cb),
+  offBepInExInstallProgress: (cb) => { /* unsubscribe */ },
 
   // ─── UDP telemetry ───────────────────────────────────────
   getUdpStatus: () => mockIpcInvoke('get-udp-status'),

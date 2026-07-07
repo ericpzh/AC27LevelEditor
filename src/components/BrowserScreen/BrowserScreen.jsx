@@ -4,7 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { safeHtml } from '../../utils/safeHtml';
@@ -13,6 +13,8 @@ import CacheProgressBody from '../common/CacheProgressBody';
 import AirportCardMap from './AirportCardMap';
 import BrowserHelpOverlay, { BUTTONS } from './BrowserHelpOverlay';
 import VideoReplaceOverlay from './VideoReplaceOverlay';
+import VideoBackgroundModal from './VideoBackgroundModal';
+import BepInExInstallOverlay from './BepInExInstallOverlay';
 import useTooltip from './useTooltip';
 
 function rescanGuideContent(t) {
@@ -63,10 +65,20 @@ export default function BrowserScreen() {
   const [appVersion, setAppVersion] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
   const [videoReplace, setVideoReplace] = useState({ open: false, sourcePath: '' });
+  const [showBackgroundModal, setShowBackgroundModal] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
+  const [bepInExLoading, setBepInExLoading] = useState(false);
+  const [bepInExInstallOpen, setBepInExInstallOpen] = useState(false);
   const { bind, TooltipPortal } = useTooltip();
 
   useEffect(() => {
     electronAPI.getAppVersion().then(v => setAppVersion(v)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    electronAPI.checkBepInEx().then(result => {
+      setDebugMode(result.installed);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -177,10 +189,58 @@ export default function BrowserScreen() {
     electronAPI.openExternal('https://github.com/ericpzh/AC27LevelEditor/issues');
   };
 
-  const handleReplaceBackground = async () => {
+  const handleReplaceBackground = () => {
+    setShowBackgroundModal(true);
+  };
+
+  const handleModalReplace = async () => {
+    setShowBackgroundModal(false);
     const result = await electronAPI.selectVideoFile();
     if (result.canceled) return;
     setVideoReplace({ open: true, sourcePath: result.filePath });
+  };
+
+  const handleModalRestore = async () => {
+    setShowBackgroundModal(false);
+    try {
+      const result = await electronAPI.restoreVideoBackup();
+      if (result.success) {
+        const { showToast } = useAppStore.getState();
+        showToast(t('vbg_restore_success'), 'success');
+      } else {
+        const { showToast } = useAppStore.getState();
+        showToast(result.error || t('vbg_restore_failed'), 'error');
+      }
+    } catch (err) {
+      const { showToast } = useAppStore.getState();
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleToggleDebugMode = async () => {
+    if (bepInExLoading) return;
+
+    if (debugMode) {
+      setBepInExLoading(true);
+      try {
+        const result = await electronAPI.uninstallBepInEx();
+        if (result.success) {
+          setDebugMode(false);
+          const { showToast } = useAppStore.getState();
+          showToast(t('bepinex_uninstalled'), 'success');
+        } else {
+          const { showToast } = useAppStore.getState();
+          showToast(result.error || 'Uninstall failed', 'error');
+        }
+      } catch (err) {
+        const { showToast } = useAppStore.getState();
+        showToast(err.message, 'error');
+      } finally {
+        setBepInExLoading(false);
+      }
+    } else {
+      setBepInExInstallOpen(true);
+    }
   };
 
   const [refreshing, setRefreshing] = useState(false);
@@ -277,6 +337,9 @@ export default function BrowserScreen() {
           <button className="btn-sm" {...bind(t(BUTTONS.changeDir.descKey))} onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
           <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} {...bind(t(BUTTONS.refresh.descKey))} onClick={handleRefreshScan} disabled={refreshing}>
             <IoRefreshOutline size={14} className="btn-icon" />{refreshing ? t('browser_refreshing') : t('browser_refresh_scan')}
+          </button>
+          <button className={`btn-sm ${debugMode ? 'btn-debug-active' : ''}`} {...bind(t('browser_debug_mode_desc'))} onClick={handleToggleDebugMode} disabled={bepInExLoading}>
+            <IoCodeSlash size={14} className="btn-icon" />{t('browser_debug_mode')}
           </button>
           <button className="btn-sm" {...bind(t('browser_replace_bg_desc'))} onClick={handleReplaceBackground}>
             <IoVideocamOutline size={14} className="btn-icon" />{t('browser_replace_background')}
@@ -382,7 +445,26 @@ export default function BrowserScreen() {
       {appVersion && <div className="browser-version">v{appVersion}</div>}
 
       {helpOpen && <BrowserHelpOverlay onClose={() => setHelpOpen(false)} />}
+      {showBackgroundModal && (
+        <VideoBackgroundModal
+          onClose={() => setShowBackgroundModal(false)}
+          onReplace={handleModalReplace}
+          onRestore={handleModalRestore}
+        />
+      )}
       {videoReplace.open && <VideoReplaceOverlay sourcePath={videoReplace.sourcePath} onClose={() => setVideoReplace({ open: false, sourcePath: '' })} />}
+      {bepInExInstallOpen && (
+        <BepInExInstallOverlay
+          onClose={(success) => {
+            setBepInExInstallOpen(false);
+            if (success) {
+              setDebugMode(true);
+              const { showToast } = useAppStore.getState();
+              showToast(t('bepinex_installed'), 'success');
+            }
+          }}
+        />
+      )}
       {TooltipPortal}
     </div>
   );

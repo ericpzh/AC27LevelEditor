@@ -139,6 +139,18 @@
   border-color: var(--accent-hover, var(--accent));
 }
 
+/* Debug mode toggle active state — overrides .btn-sm */
+.btn-sm.btn-debug-active {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+}
+.btn-sm.btn-debug-active:hover {
+  background: var(--accent-hover, var(--accent));
+  border-color: var(--accent-hover, var(--accent));
+  color: #fff;
+}
+
 /* Level rows */
 .level-row {
   display: grid;
