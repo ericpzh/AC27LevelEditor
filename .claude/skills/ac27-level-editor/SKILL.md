@@ -7,7 +7,7 @@ description: AC27 Editor â€” Electron desktop app for editing Airport Contr
 
 ## Project Identity
 
-- **Name:** `ac27-editor` (v1.2.0)
+- **Name:** `ac27-editor` (v1.2.1)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -63,7 +63,9 @@ description: AC27 Editor â€” Electron desktop app for editing Airport Contr
 â”‚    timelines, modal/toast, chat, map overlay state,      â”‚
 â”‚    radar window tracking, UDP health                     â”‚
 â”‚  - flightDefaults.js â€” pure helpers for new flight       â”‚
-â”‚    creation with sensible defaults                       â”‚
+â”‚    creation: random airline code (audio â†’ AirlineCode    â”‚
+â”‚    dropdown â†’ AirlineName â†’ 'NEW'), cascaded aircraft    â”‚
+â”‚    type + registration, non-conflicting random stand      â”‚
 â”‚  - flightCascade.js â€” pure helpers for cascading field   â”‚
 â”‚    updates (CallSign rebuild, airlineâ†’type/reg,          â”‚
 â”‚    runwayâ†’STAR)                                          â”‚

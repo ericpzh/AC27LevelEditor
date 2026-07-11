@@ -122,12 +122,12 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.2.0
+- **Version:** v1.2.1
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (403 tests, 27 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
+- **Tests:** Vitest (461 tests, 28 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
 
 ### Quick Start
 
@@ -260,7 +260,9 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │   └── useDrag.js          # Shared drag behavior for floating panels
 │   │
 │   ├── store/
-│   │   └── appStore.js      # zustand store — all app state
+│   │   ├── appStore.js          # zustand store — all app state
+│   │   ├── flightDefaults.js    # new flight creation (random airline, cascaded fields, non-conflicting stand)
+│   │   └── flightCascade.js     # cascading field updates (CallSign rebuild, airline→type/reg, runway→STAR)
 │   │
 │   ├── acl/                 # Backend modules (CommonJS)
 │   │   ├── parser.js            # FACADE — main.js imports everything through here
@@ -311,7 +313,7 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (12 files) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 390 tests in 26 files):**
+**Component tests (Vitest — 461 tests in 28 files):**
 ```bash
 npm test              # Run all component + store + utility + MapWindow tests (~1s)
 npm run test:watch    # Watch mode — re-runs on file changes
