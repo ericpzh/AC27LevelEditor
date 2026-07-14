@@ -23,8 +23,8 @@ export const RE_HIDDEN = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
  */
 export const DEMO_VISIBLE_BASES = new Set([
   'ZSJN-Morning_120min.demo.acl',
-  'ZSJN_17-19_emerg.acl',
-  'KJFK_07-09_emerg.acl',
+  'ZSJN_17-19_emerg.demo.acl',
+  'KJFK_07-09_emerg.demo.acl',
   'KJFK_20-22.demo.acl',
 ]);
 
