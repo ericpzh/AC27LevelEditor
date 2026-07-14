@@ -154,7 +154,7 @@
 /* Level rows */
 .level-row {
   display: grid;
-  grid-template-columns: 70px 90px 1fr auto auto auto;
+  grid-template-columns: var(--tod-width, 70px) 90px 1fr auto auto auto;
   align-items: center;
   gap: 0;
   padding: 10px 20px;

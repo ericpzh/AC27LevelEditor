@@ -347,7 +347,7 @@ npm run build         # Build required first (produces dist-electron/main.js)
 npm run test:e2e      # UI flow tests against real game data (~3 min)
 ```
 
-**Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test.
+**Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test. The 30-min demo window end time is rounded to the nearest 5-minute boundary (:X0 or :X5). Emergency (`_emerg`) files show "Challenge Level" / "挑战关卡" as their time-of-day label instead of dawn/morning/etc.
 
 **Save integrity — all .acl files (Node.js integration — 22 scripts):**
 

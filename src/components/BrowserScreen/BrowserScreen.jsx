@@ -40,10 +40,15 @@ function computeTodLabel(startTime, t) {
   return { label: t('browser_tod_night'), type: 'night' };
 }
 
+function sortLevelRows(a, b) {
+  // _emerg files always last; within each group sort by startTime
+  if (a.isEmer !== b.isEmer) return a.isEmer ? 1 : -1;
+  return (a.startTime || '99:99').localeCompare(b.startTime || '99:99');
+}
 function toHHMM(s) { return String(s).substring(0, 5); }
 
 export default function BrowserScreen() {
-  const { t, toggleLang } = useTranslation();
+  const { t, toggleLang, lang } = useTranslation();
   const electronAPI = useElectronAPI();
   const rootPath = useAppStore(s => s.rootPath);
   const airports = useAppStore(s => s.airports);
@@ -150,7 +155,7 @@ export default function BrowserScreen() {
             // Hide levels that failed to parse (e.g. Git LFS stubs)
             if (info.error) return false;
             return DEMO_VISIBLE_BASES.has(info.filename);
-          });
+          }).sort(sortLevelRows);
         } else {
           // Normal mode: show production levels + .demo.acl slices; hide tutorial/test/endless/dev/bench/crossrunway/.Prod
           const visible = infos.filter(info => {
@@ -161,9 +166,7 @@ export default function BrowserScreen() {
             // Show production levels; hide tutorial/test/endless/dev/bench/crossrunway/.Prod variants
             return !RE_HIDDEN.test(info.filename);
           });
-          allInfos[airport.icao] = visible.sort((a, b) =>
-            (a.startTime || '99:99').localeCompare(b.startTime || '99:99')
-          );
+          allInfos[airport.icao] = visible.sort(sortLevelRows);
         }
 
         // Fetch ground radar geometry for this airport's card background
@@ -380,7 +383,7 @@ export default function BrowserScreen() {
   const totalFileCount = Object.values(fileInfos).flat().length;
 
   return (
-    <div id="screen-browser" className="screen">
+    <div id="screen-browser" className="screen" style={{ '--tod-width': lang === 'zh' ? '70px' : '120px' }}>
       <header className="browser-header">
         <div className="browser-title"><span>{t('browser_title')}</span></div>
         <div className="browser-actions">
@@ -477,6 +480,7 @@ export default function BrowserScreen() {
                 );
                 const displayName = stripSuffixes(info.filename);
                 const todInfo = computeTodLabel(info.startTime, t);
+                if (info.isEmer) todInfo.label = t('browser_emerg_level');
                 const timeRange = info.startTime && info.endTime ? toHHMM(info.startTime) + '-' + toHHMM(info.endTime) : '';
                 return (
                   <div key={i} className="level-row" onClick={() => handleOpenFile(info.path, airport.icao)}>

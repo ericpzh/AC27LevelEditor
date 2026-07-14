@@ -227,7 +227,8 @@ The game ships six files that receive the 30-minute demo window treatment (all c
 **Editor behavior:**
 - Demo files are treated as **normal levels** — always visible, no tags, no hiding
 - **Demo mode** (root path contains "Airport Control 27 Demo"): only files listed in `DEMO_VISIBLE_BASES` are shown
-- **On load:** flights in demo files are filtered to a 30-minute window starting at `CurrentDateTime` via `_filterDemoFlights()` — centralized helper shared across load, save, import, and restore paths. Uses integer-minute bounds: `[cdtMin, cdtMin + 30)` (inclusive lower, exclusive upper). Config's `startTime`/`endTime` are overridden to match.
-- **On save:** demo files write to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`.
+- **On load:** flights in demo files are filtered to a 30-minute window starting at `CurrentDateTime` via `_filterDemoFlights()` — centralized helper shared across load, save, import, and restore paths. Uses integer-minute bounds: `[cdtMin, cdtMaxMin)` where `cdtMaxMin = _roundNearest5(cdtMin + 30)` — the end time is rounded to the nearest 5-minute boundary (:X0 or :X5). Config's `startTime`/`endTime` are overridden to match. Start time is NOT rounded.
+- **On save:** demo files write to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`. End time is rounded to nearest :X0/:X5 (same as load).
 - **Export/Import:** packs/unpacks `.demo.acl` identically to normal `.acl` files
 - **Approach cache:** includes demo files (unfiltered)
+- **Challenge Level display:** Files with `_emerg` in their name show "Challenge Level" / "挑战关卡" (localized) as their time-of-day label (replacing dawn/morning/dusk/etc.), in both demo and non-demo mode. The `isEmer` flag is exposed via `get-airport-files-info` IPC and checked in `BrowserScreen`.

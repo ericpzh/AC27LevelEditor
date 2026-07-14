@@ -12,7 +12,7 @@ const bepinex = require('./bepinex');
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
-const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
+const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
@@ -260,6 +260,7 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
     const isDemo = _isDemoFile(f.filename);
     const isEmer = _isEmerFile(f.filename);
     info.isDemo = isDemo;
+    info.isEmer = isEmer;
     // For .demo.acl files (including _emerg): extract CurrentDateTime for 30-min window display
     if (isDemo) {
       try {
@@ -268,13 +269,13 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
         console.log('[IPC] get-airport-files-info: demo file', f.filename, '— extractCurrentDateTime returned', cdt ? ('timeString=' + cdt.timeString) : 'NULL');
         if (cdt) {
           info.currentDateTime = cdt.timeString;
-          // Compute 30-min window end: CurrentDateTime + 30 min
+          // Compute 30-min window end rounded to nearest :X0/:X5
           const ssm = cdt.secSinceMidnight;
-          const endSec = ssm + DEMO_WINDOW_SEC;
-          const eh = Math.floor((endSec % 86400) / 3600) % 24;
-          const em = Math.floor((endSec % 3600) / 60);
-          const es = endSec % 60;
-          info.demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':' + String(es).padStart(2, '0');
+          const cdtMin = Math.floor(ssm / 60);
+          const roundedEndMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN);
+          const eh = Math.floor(roundedEndMin / 60) % 24;
+          const em = roundedEndMin % 60;
+          info.demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':00';
           // Override startTime/endTime to show the 30-min demo window
           info.startTime = cdt.timeString;
           info.endTime = info.demoEndTime;
@@ -956,6 +957,16 @@ function _isDemoFile(filePathOrName) {
 }
 
 /**
+ * Rounds minutes to the nearest 5-minute boundary (:X0 or :X5).
+ * Used by the demo 30-min window to produce tidy end times.
+ * @param {number} minutes
+ * @returns {number}
+ */
+function _roundNearest5(minutes) {
+  return Math.round(minutes / 5) * 5;
+}
+
+/**
  * For demo files (as determined by _isDemoFile): filter flights to a 30-minute window starting at
  * CurrentDateTime, and override config startTime/endTime to match.
  * Uses integer minutes (Math.floor) so flights at the boundary minute are
@@ -975,7 +986,7 @@ function _filterDemoFlights(filePath, flights, config) {
       // times are HH:MM only.  Without floor, a flight at 05:45 (345 min) would
       // fail 345 >= 345.5 and be incorrectly removed.
       const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
-      const cdtMaxMin = cdtMin + 30; // 30-min demo window
+      const cdtMaxMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN); // 30-min demo window, rounded to nearest :X0/:X5
 
       const toMin = t => {
         const p = String(t).split(':');
@@ -994,12 +1005,10 @@ function _filterDemoFlights(filePath, flights, config) {
         console.log('[DEMO] removed ' + removedCount + ' flights outside [' + _currentDateTime + ', +30min] window');
       }
 
-      // Override config to match demo window
-      const endSec = cdt.secSinceMidnight + DEMO_WINDOW_SEC;
-      const eh = Math.floor((endSec % 86400) / 3600) % 24;
-      const em = Math.floor((endSec % 3600) / 60);
-      const es = endSec % 60;
-      const demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':' + String(es).padStart(2, '0');
+      // Override config end time to rounded boundary
+      const eh = Math.floor(cdtMaxMin / 60) % 24;
+      const em = cdtMaxMin % 60;
+      const demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':00';
 
       if (config) {
         config.startTime = _currentDateTime;
@@ -1143,11 +1152,11 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
       const cdt = extractCurrentDateTime(text);
       if (isDemoSave && cdt && cdt.timeString) {
         aclcfgStartTime = cdt.timeString;
-        const endSec = cdt.secSinceMidnight + DEMO_WINDOW_SEC;
-        const eh = Math.floor((endSec % 86400) / 3600) % 24;
-        const em = Math.floor((endSec % 3600) / 60);
-        const es = endSec % 60;
-        aclcfgEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':' + String(es).padStart(2, '0');
+        const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
+        const roundedEndMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN);
+        const eh = Math.floor(roundedEndMin / 60) % 24;
+        const em = roundedEndMin % 60;
+        aclcfgEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':00';
         console.log('[IPC] save-acl: demo — aclcfgStartTime=' + aclcfgStartTime + ' aclcfgEndTime=' + aclcfgEndTime);
       }
     } catch (_) {}

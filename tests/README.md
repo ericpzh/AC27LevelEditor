@@ -140,17 +140,17 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | File | Status | Note |
 |------|--------|------|
 | ZSJN-Morning_120min | ✓ | 48 flights, all state identical |
-| ZSJN-Morning_120min.demo | ✓ | Save completes, flight data intact. Demo saves strip CurrentDateTime content — flight data preserved. |
+| ZSJN-Morning_120min.demo | ✓ | Save completes, flight data intact. Demo saves round endTime to nearest :X0/:X5 and strip CurrentDateTime content — flight data preserved. |
 | ZSJN_07-10 | ✓ | 60 flights, all state identical |
-| ZSJN_07-10.demo | ✓ | Same demo behavior as above |
+| ZSJN_07-10.demo | ✓ | Same demo behavior as above (endTime rounded to nearest :X0/:X5) |
 | ZSJN-Evening_120min | ✓ | 48 flights |
 | ZSJN_19-21 | ✓ | 72 flights |
 | KJFK_07-09 | ✓ | 52 flights |
 | KJFK_09-11 | ✓ | 56 flights |
-| KJFK_09-11.demo | ✓ | 56 flights |
+| KJFK_09-11.demo | ✓ | 56 flights, endTime rounded to nearest :X0/:X5 |
 | KJFK_17-20 | ✓ | 63 flights |
 | KJFK_20-22 | ✓ | 57 flights |
-| KJFK_20-22.demo | ✓ | Same demo behavior as above |
+| KJFK_20-22.demo | ✓ | Same demo behavior as above (endTime rounded to nearest :X0/:X5) |
 
 ---
 
