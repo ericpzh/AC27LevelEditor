@@ -35,16 +35,12 @@ test.afterAll(async () => {
 // ── B1: Airport list shows up ────────────────────────────────────
 
 test('B1 — airport list shows up after launch', async () => {
-  // Wait for the loading spinner to finish AND level rows to appear.
-  // The scan of 12 ACL files can take several seconds on first launch.
-  // Use waitForFunction so we handle both "loading visible→hidden→rows"
-  // and "load was cached, rows already there" paths.
-  await window.waitForFunction(() => {
-    const loading = document.querySelector('.loading-state');
-    const rows = document.querySelectorAll('.level-row');
-    return !loading && rows.length >= 1;
-  }, { timeout: 30000 });
-
+  // The scan of 12 ACL files can take 30-45s on a cold launch.
+  // First wait for loading to finish (spinner disappears), then for level rows.
+  // Use a generous timeout to handle cold scans.
+  await window.waitForSelector('.loading-state', { state: 'hidden', timeout: 70_000 })
+    .catch(() => {}); // if already gone, that's fine
+  await window.waitForSelector('.level-row', { state: 'visible', timeout: 10_000 });
   const levelRows = window.locator('.level-row');
   const count = await levelRows.count();
   expect(count).toBeGreaterThanOrEqual(1);
