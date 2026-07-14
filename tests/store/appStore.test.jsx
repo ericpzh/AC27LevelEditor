@@ -72,7 +72,7 @@ describe('appStore — editor state', () => {
 });
 
 describe('appStore — addArrivalFlight', () => {
-  it('adds a new arrival flight', () => {
+  it('adds a new arrival flight with randomized cascade values', () => {
     useAppStore.getState().initializeEditor({
       currentPath: '/test/file.acl',
       airportIcao: 'ZSJN',
@@ -82,8 +82,27 @@ describe('appStore — addArrivalFlight', () => {
       earliestTime: '05:00', _saveSec: 36000,
     });
     useAppStore.getState().setAuxData(
-      { ZSJN: { AircraftType: ['B738'], AirlineName: ['China Eastern'], Stand: ['G1'], Runway: ['01'], Airway: ['STAR1'], Registration: ['B-1234'], Voice: ['M'] } },
-      { byAirline: {}, allCallsigns: [], allAirlines: ['CES'] },
+      {
+        ZSJN: {
+          AirlineCode: ['CCA', 'CES', 'CSN'],
+          AircraftType: ['B738', 'A320'],
+          AirlineName: ['China Eastern'],
+          Stand: ['G1', 'G2', 'G3'],
+          Runway: ['01'],
+          Airway: ['STAR1'],
+          Registration: ['B-1234'],
+          Voice: ['M'],
+          _flightNums: { CCA: ['1234'], CES: ['5678'], CSN: ['9012'] },
+          _compat: {
+            airlineToAircraft: { CCA: ['B738', 'A320'], CES: ['B738'], CSN: ['A320'] },
+          },
+          _registrationMap: {
+            'CCA|B738': ['B-1111'], 'CCA|A320': ['B-2222'],
+            'CES|B738': ['B-3333'], 'CSN|A320': ['B-4444'],
+          },
+        },
+      },
+      { byAirline: {}, allCallsigns: [], allAirlines: [] },
       { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
       [],
     );
@@ -94,6 +113,101 @@ describe('appStore — addArrivalFlight', () => {
     expect(state.flights[0].ArrivalAirport).toBe('ZSJN');
     expect(state.modified).toBe(true);
   });
+
+  it('addArrivalFlight — airline is from dropdown, not "NEW"', () => {
+		useAppStore.getState().initializeEditor({
+			currentPath: '/test/file.acl',
+			airportIcao: 'ZSJN',
+			flights: [],
+			before: '', after: '', arrayContent: '', originalBlocks: [],
+			configStartTime: '06:00', configEndTime: '18:00',
+			earliestTime: '05:00', _saveSec: 36000,
+		});
+		// Set AirlineCode dropdown values but EMPTY audio allAirlines and AirlineName
+		useAppStore.getState().setAuxData(
+			{
+				ZSJN: {
+					AirlineCode: ['CCA', 'CES', 'CSN'],
+					AircraftType: ['B738'],
+					Stand: ['G1'],
+					Runway: ['01'],
+					Airway: ['STAR1'],
+					Registration: ['B-1234'],
+					Voice: ['M'],
+					_flightNums: { CCA: ['1234'], CES: ['5678'], CSN: ['9012'] },
+				},
+			},
+			{ byAirline: {}, allCallsigns: [], allAirlines: [] },
+			{ weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+			[],
+		);
+
+		// Run multiple times to ensure randomness never produces "NEW"
+		for (let i = 0; i < 5; i++) {
+			useAppStore.getState().initializeEditor({
+				currentPath: '/test/file.acl',
+				airportIcao: 'ZSJN',
+				flights: [],
+				before: '', after: '', arrayContent: '', originalBlocks: [],
+				configStartTime: '06:00', configEndTime: '18:00',
+				earliestTime: '05:00', _saveSec: 36000,
+			});
+			useAppStore.getState().addArrivalFlight();
+			const state = useAppStore.getState();
+			const airlineCode = (state.flights[0].CallSign || '').substring(0, 3);
+			expect(airlineCode).not.toBe('NEW');
+			expect(['CCA', 'CES', 'CSN']).toContain(airlineCode);
+		}
+	});
+
+	it('addArrivalFlight — stand does not conflict with existing flights', () => {
+		useAppStore.getState().initializeEditor({
+			currentPath: '/test/file.acl',
+			airportIcao: 'ZSJN',
+			flights: [
+				{ CallSign: 'CCA1234', Stand: 'G1', ArrivalAirport: 'ZSJN', LandingTime: '10:00:00', InBlockTime: '10:20:00' },
+				{ CallSign: 'CES5678', Stand: 'G2', ArrivalAirport: 'ZSJN', LandingTime: '10:00:00', InBlockTime: '10:20:00' },
+			],
+			before: '', after: '', arrayContent: '', originalBlocks: [],
+			configStartTime: '06:00', configEndTime: '18:00',
+			earliestTime: '05:00', _saveSec: 36000,
+		});
+		useAppStore.getState().setAuxData(
+			{
+				ZSJN: {
+					AirlineCode: ['CCA'],
+					AircraftType: ['B738'],
+					Stand: ['G1', 'G2', 'G3'],
+					Runway: ['01'],
+					Airway: ['STAR1'],
+					Registration: ['B-1234'],
+					Voice: ['M'],
+					_flightNums: { CCA: ['1234'] },
+				},
+			},
+			{ byAirline: {}, allCallsigns: [], allAirlines: ['CCA'] },
+			{ weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+			[],
+		);
+
+		// G1 and G2 are taken — new flight must get G3 each time
+		for (let i = 0; i < 10; i++) {
+			useAppStore.getState().initializeEditor({
+				currentPath: '/test/file.acl',
+				airportIcao: 'ZSJN',
+				flights: [
+					{ CallSign: 'CCA1234', Stand: 'G1', ArrivalAirport: 'ZSJN', LandingTime: '10:00:00', InBlockTime: '10:20:00' },
+					{ CallSign: 'CES5678', Stand: 'G2', ArrivalAirport: 'ZSJN', LandingTime: '10:00:00', InBlockTime: '10:20:00' },
+				],
+				before: '', after: '', arrayContent: '', originalBlocks: [],
+				configStartTime: '06:00', configEndTime: '18:00',
+				earliestTime: '05:00', _saveSec: 36000,
+			});
+			useAppStore.getState().addArrivalFlight();
+			const state = useAppStore.getState();
+			expect(state.flights[2].Stand).toBe('G3');
+		}
+	});
 });
 
 describe('appStore — selection', () => {

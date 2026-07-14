@@ -54,7 +54,7 @@ function summarizeFlight(flight, idx) {
 
 function testAirport(icao, levelsDir) {
   if (!fs.existsSync(levelsDir) || !fs.statSync(levelsDir).isDirectory()) {
-    return { icao, files: 0, ok: 0, fail: 0, totalFlights: 0, errors: [] };
+    return { icao, files: 0, ok: 0, fail: 0, totalFlights: 0, details: [] };
   }
 
   const aclFiles = fs.readdirSync(levelsDir).filter(f =>

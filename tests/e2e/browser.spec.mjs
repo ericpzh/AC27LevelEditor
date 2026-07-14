@@ -26,9 +26,6 @@ test.beforeAll(async () => {
 
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
-
-  // Wait for browser screen to load (skip setup because lastRoot.json exists)
-  await window.waitForTimeout(2000);
 });
 
 test.afterAll(async () => {
@@ -38,9 +35,16 @@ test.afterAll(async () => {
 // ── B1: Airport list shows up ────────────────────────────────────
 
 test('B1 — airport list shows up after launch', async () => {
-  // The browser screen should show airport cards or level rows
-  // Since our fixture only has ZSJN, we expect at least one visible level row
-  await window.waitForSelector('.level-row', { timeout: 10000 });
+  // Wait for the loading spinner to finish AND level rows to appear.
+  // The scan of 12 ACL files can take several seconds on first launch.
+  // Use waitForFunction so we handle both "loading visible→hidden→rows"
+  // and "load was cached, rows already there" paths.
+  await window.waitForFunction(() => {
+    const loading = document.querySelector('.loading-state');
+    const rows = document.querySelectorAll('.level-row');
+    return !loading && rows.length >= 1;
+  }, { timeout: 30000 });
+
   const levelRows = window.locator('.level-row');
   const count = await levelRows.count();
   expect(count).toBeGreaterThanOrEqual(1);

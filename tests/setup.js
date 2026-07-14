@@ -96,6 +96,13 @@ vi.stubGlobal('electronAPI', {
   onBepInExInstallProgress: (cb) => mockIpcOn('bepinex-install-progress', cb),
   offBepInExInstallProgress: (cb) => { /* unsubscribe */ },
 
+  // ─── Livery Install ───────────────────────────────────
+  selectLiveryZip: () => mockIpcInvoke('select-livery-zip'),
+  installLivery: (zipPath) => mockIpcInvoke('install-livery', zipPath),
+  downloadLivery: () => mockIpcInvoke('download-livery'),
+  onLiveryDownloadProgress: (cb) => mockIpcOn('livery-download-progress', cb),
+  offLiveryDownloadProgress: (cb) => { /* unsubscribe */ },
+
   // ─── UDP telemetry ───────────────────────────────────────
   getUdpStatus: () => mockIpcInvoke('get-udp-status'),
   getUdpAircraftState: () => mockIpcInvoke('get-udp-aircraft-state'),

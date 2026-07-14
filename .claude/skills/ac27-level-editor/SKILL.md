@@ -7,7 +7,7 @@ description: AC27 Editor â€” Electron desktop app for editing Airport Contr
 
 ## Project Identity
 
-- **Name:** `ac27-editor` (v1.2.1)
+- **Name:** `ac27-editor` (v1.2.2)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -22,13 +22,13 @@ description: AC27 Editor â€” Electron desktop app for editing Airport Contr
 â”‚  electron/main.js (Electron Main Process)               â”‚
 â”‚  - Creates BrowserWindow (1400Ã—880, min 1024Ã—640)       â”‚
 â”‚  - contextIsolation: true, nodeIntegration: false       â”‚
-â”‚  - 58 ipcMain.handle() endpoints                        â”‚
+â”‚  - 61 ipcMain.handle() endpoints                        â”‚
 â”‚  - All file I/O, dialog, caching lives here             â”‚
 â”‚  - electron/api-server.js â€” HTTP API + MCP (port 31415) â”‚
 â”‚  - electron/cloud-llm.js â€” Multi-vendor cloud LLM chat    â”‚
 â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
 â”‚  electron/preload.js (contextBridge)                    â”‚
-â”‚  - Exposes window.electronAPI with 59 methods            â”‚
+â”‚  - Exposes window.electronAPI with 64 methods            â”‚
 â”‚  - onStoreApiUpdate/offStoreApiUpdate for MCP bridge    â”‚
 â”‚  - Each method = ipcRenderer.invoke(channel, ...args)   â”‚
 â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
@@ -44,7 +44,7 @@ description: AC27 Editor â€” Electron desktop app for editing Airport Contr
 â”‚  - BrowserScreen: useTooltip (shared tooltip hook),
     VideoReplaceOverlay (menu video replacer),â”‚
     VideoBackgroundModal (video replace/restore modal),
-â”‚    BrowserHelpOverlay (help overlay)                  â”‚
+â”‚    BrowserHelpOverlay (help overlay), Livery install                  â”‚
 â”‚  - EditorScreen: FlightTable, TimelineEditors,          â”‚
 â”‚    CellEditor, SearchBar, TutorialOverlay               â”‚
 â”‚  - common: Modal, Toast                                 â”‚

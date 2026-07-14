@@ -52,6 +52,17 @@ Enable in-game debugging by installing BepInEx (IL2CPP) with one click:
 
 **Requirements:** Internet connection (for download only). Windows only.
 
+### Install Realistic Aircraft Livery
+
+Replace default aircraft liveries with realistic paint schemes via ZIP file:
+
+1. Download the livery ZIP file (e.g., `AC27 Realistic Aircraft Livery v26.06.0.zip`)
+2. In the browser screen header, click **Livery** (palette icon)
+3. Select the downloaded ZIP file in the file dialog
+4. The editor extracts the contents to the game's `Mods/` folder automatically
+
+**Note:** If the `Mods/` folder does not exist in the game root, the editor creates it automatically.
+
 ### Clear Editor Local Cache
 
 The editor stores data under `%APPDATA%\ac27-level-editor\`. Delete the entire folder to reset the editor to its initial state (startup issues, wrong game directory, etc.):
@@ -100,6 +111,17 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 **依赖：** ffmpeg（已随编辑器打包，无需单独安装）。
 
+### 安装真实飞机涂装
+
+通过 ZIP 文件一键安装真实飞机涂装：
+
+1. 下载涂装 ZIP 文件（例如 `AC27 Realistic Aircraft Livery v26.06.0.zip`）
+2. 在浏览器界面顶栏中，点击 **涂装**（调色板图标）
+3. 在弹出的文件选择对话框中选择下载的 ZIP 文件
+4. 编辑器自动将内容解压到游戏根目录下的 `Mods/` 文件夹
+
+**注意：** 如果 `Mods/` 文件夹不存在，编辑器会自动创建。
+
 ### 清理编辑器本地缓存
 
 编辑器在 `%APPDATA%\ac27-level-editor\` 下存储缓存文件。 如果编辑器启动异常或选择了错误的游戏目录后无法重置，删除整个文件夹即可恢复初始状态。
@@ -122,7 +144,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.2.1
+- **Version:** v1.2.2
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
@@ -139,8 +161,8 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 58 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode
-electron/preload.js  →  contextBridge: exposes 59 methods on window.electronAPI
+electron/main.js     →  Electron main process, 61 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install
+electron/preload.js  →  contextBridge: exposes 64 methods on window.electronAPI
 electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 7 tools)
 electron/bepinex.js     →  BepInEx debug mode — download, install, uninstall (IL2CPP bleeding edge)
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state v2: simFlags, timeScale, heartbeatSeq, auto-reset)
@@ -209,7 +231,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 ```
 ├── electron/
 │   ├── main.js              # Electron main process + 58 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, 57 methods)
+│   ├── preload.js           # contextBridge (window.electronAPI, 64 methods)
 │   ├── bepinex.js           # BepInEx debug mode — one-click install/uninstall
 │   └── udp_listener.js      # UDP telemetry — 10 Hz aircraft state + commands
 ├── index.html               # Vite HTML entry

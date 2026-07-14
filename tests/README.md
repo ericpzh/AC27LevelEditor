@@ -5,10 +5,10 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
-npm test              # 403 Vitest component + store + utility + electron + MapWindow tests (~1s)
-npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min)
-node tests/integration/test_api_server.js      # MCP/API tests: 85 tests (~1s)
+npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~6 min)
+npm test              # 468 Vitest component + store + utility + electron + MapWindow tests (~3s)
+npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~4 min)
+node tests/integration/test_api_server.js      # MCP/API tests: 105 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
 
 # Save integrity — all .acl files across both airports:
@@ -17,20 +17,22 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 
 ---
 
-## Layer 1 — Vitest Component Tests (403 tests)
+## Layer 1 — Vitest Component Tests (468 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`).
 
-### `npm test` — 403 tests, all pass
+### `npm test` — 468 tests, all pass
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
 | `utils/timeUtils.test.js` | 18 | `ticksToTime` (0/0n/""→""; ticks→HH:MM:SS), `timeToTicks` (empty→0; "HH:MM:SS"→ticks; baseDate offset), `timeToMinutes` ("01:30"→90), `timeToSeconds` ("01:00:00"→3600), `minutesToTimeStr` (90→"01:30:00"; 1500 wraps to "01:00:00"), `sortTimelineByTime` (sorts by time field), `getTimelineActiveRange` (no bounds→all active; bounds→filters), `getDefaultTime` (midpoint "06:00"+"10:00"→"08:00:00"; none→"12:00:00"), `_extractBaseDateFromText` (BaseTime match; WorldState fallback; FALLBACK_BASE_DATE_TICKS) |
 | `utils/validators.test.js` | 5 | `validateCallsigns` — no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[] |
-| `store/appStore.test.jsx` | 23 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with ArrivalAirport; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; **Chat state (10):** panel defaults closed, vendors setup step, empty config, toggle open/closed, add+clear messages, sending state, set+clear errors, chat config, setup step change |
+| `store/flightDefaults.test.js` | 56 | `randomPick`: null/undefined/empty→null, single/multi→valid. `pickRandomAirlineCode`: audio first→AirlineCode fallback→AirlineName→'NEW'; key regression: never 'NEW' when AirlineCode dropdown populated. `pickRandomFlightNumber`: from `_flightNums`, '1' fallback. `pickRandomUnusedStand`: unused only, reuse when all taken, empty when no stands. `pickFirstFlightNumber`/`pickDefaultAirlineCode` (existing): first-element behaviour preserved. `makeEmptyFlight`: 15 empty-string fields. `computeDefaultBaseMin`: config end time−offset, clamp≥0. `minutesToTimeString`: HH:MM:00 format. `createDefaultFlight`: random airline+cascaded aircraft/reg+non-conflicting stand; arrival vs departure direction. `createArrivalFlight`: LandingTime<InBlockTime (5 min gap), no departure times. `createDepartureFlight`: OffBlockTime<TakeoffTime (5 min gap), no arrival times. Stand conflict forwarding. |
+| `store/appStore.test.jsx` | 25 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with randomized cascade (airline from dropdown, valid aircraft/reg, non-conflicting stand); `addArrivalFlight` regression: airline never "NEW" when AirlineCode dropdown populated; stand conflict avoidance with existing flights; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; **Chat state (10):** panel defaults closed, vendors setup step, empty config, toggle open/closed, add+clear messages, sending state, set+clear errors, chat config, setup step change |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |
 | `components/common/Toast.test.jsx` | 4 | Renders empty by default; shows message when set; applies CSS class from type; `.show` class toggles with message |
-| `components/BrowserScreen/BrowserScreen.test.jsx` | 13 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast. **Help Button (5):** renders in header, click opens overlay, Escape closes, backdrop click closes, close button works. **Debug Mode (4):** renders toggle button, shows active state when installed, tooltip on hover, disabled while loading |
+| `components/BrowserScreen/BrowserScreen.test.jsx` | 25 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast. **Help Button (5):** renders in header, click opens overlay, Escape closes, backdrop click closes, close button works. **Debug Mode (4):** renders toggle button, shows active state when installed, tooltip on hover, disabled while loading. **Livery Install (7):** renders button, tooltip on hover, progress overlay + disabled state, download+install success, fallback to file dialog on download fail, cancel after download fail, install error toast |
+| `components/BrowserScreen/VideoBackgroundModal.test.jsx` | 6 | Video background replace/restore confirmation modal: renders when show=true, Cancel calls onCancel, Replace calls onReplace, Restore calls onRestore, hides when show=false, renders Chinese translations |
 | `components/BrowserScreen/BrowserHelpOverlay.test.jsx` | 9 | Help overlay renders title + section headings (Header Buttons/Airport/Levels), all button descriptions, inline button icons, Escape/backdrop/close-button dismissal, Chinese translations |
 | `components/BrowserScreen/VideoReplaceOverlay.test.jsx` | 6 | Renders progress bar + percentage; closes immediately on successful completion; shows error when conversion fails; shows error when no folders found; Escape key closes error overlay; renders progress bar in Chinese |
 | `components/BrowserScreen/BepInExInstallOverlay.test.jsx` | 7 | Progress bar + percentage; success closes overlay; error on failure; Escape closes error; close button works; localized NO_GAME_ROOT error; progress events update UI |
@@ -39,6 +41,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `components/EditorScreen/FlightTable/FlightTable.test.jsx` | 6 | Click on data cell → no selection toggle; checkbox click → toggles; drag from data cell → range-selects; dropdown/time cell clicks → no toggle; clock portal click → no toggle |
 | `components/EditorScreen/StandMap/StandMap.test.jsx` | 19 | Stand dots/labels count, selected highlight + ring, occupied plane icons + callsign labels, click-to-select, hover states, empty/null stands, legend, shrink button, portal positioning, animations, rotation on planes, disabled stands, backward-compatible no-heading |
 | `electron/bepinex.test.js` | 18 | checkStatus (null, partial, full, empty); findDownloadUrl (URL extraction, artifact not found, HTTP error); downloadZip (todo — tested via installLatest); extractZip (non-Windows guard); installFiles (subdirectory, missing items, flat structure); removeFiles (all items, partial, non-existent); installLatest (full pipeline, error cleanup, download progress normalization) |
+| `integration/stand_positions.test.js` | 41 | `_parseStandPositions` unit tests: ZSJN fixture parsing (53 stands), structure validation (position arrays, labels, disabled flags, airline assignments), edge cases (null/empty input) |
 | **Electron backend (existing):** | **49** | |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
 | **MapWindows (10 files):** | **151** | |
@@ -73,7 +76,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 
 Launches the real Electron app against a temp copy of real game data (via `E2E_GAME_ROOT` env var set by `run-all.mjs`). File isolation is guaranteed — the real game installation is never touched.
 
-### `npm run test:e2e` — all pass (requires `npm run build` first)
+### `npm run test:e2e` — 14 pass, 1 skip, 1 may flake (requires `npm run build` first)
 
 ### Browser Screen (4 tests)
 
@@ -111,7 +114,7 @@ Launches the real Electron app against a temp copy of real game data (via `E2E_G
 
 | ID | Test | Expected |
 |----|------|----------|
-| **E12a** | Help button | Click "Help" → tutorial overlay appears; Escape closes it |
+| **E12a** | Help button | Click "Help" → tutorial overlay appears; Escape closes it (⚠ occasionally skipped — overlay selector timing) |
 | **E12d** | Back button (no changes) | Click Back → returns to Browser screen without unsaved-changes modal |
 
 ### Save Integrity — single file (1 test, fixture-based)
@@ -122,9 +125,9 @@ Launches the real Electron app against a temp copy of real game data (via `E2E_G
 
 ### Save Integrity — all 12 prod+demo files (E2E, requires `E2E_GAME_ROOT`)
 
-| Spec | Coverage | Expected |
-|------|----------|----------|
-| `save-integrity-all-e2e.spec.mjs` | 8 production + 4 demo across ZSJN + KJFK | 12 passed, 0 skipped |
+| ID | Spec | Coverage | Expected |
+|----|------|----------|----------|
+| **S1b** | `save-integrity-all-e2e.spec.mjs` | 8 production + 4 demo across ZSJN + KJFK | 12 passed, 0 skipped |
 
 ```bash
 # Run standalone (requires E2E_GAME_ROOT env var):
@@ -151,7 +154,7 @@ Iterates every level row in the browser: open → disable time validation → Ct
 
 ---
 
-## Layer 3 — Node.js Integration Tests (22 scripts)
+## Layer 3 — Node.js Integration Tests (25 scripts)
 
 Standalone scripts in `tests/integration/`. Run directly with `node`. Some need `--require ./tests/integration/preload.cjs` for ESM interop.
 
@@ -159,7 +162,7 @@ Standalone scripts in `tests/integration/`. Run directly with `node`. Some need 
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_api_server.js` | 85 | All 7 HTTP endpoints (status, airport/values, flights, create-batch, modify-batch, delete-batch, validation) + MCP protocol (initialize, tools/list, 7 tools/call) + 12-point validation suite (airline, flight number, stand, runway, aircraft compat, STAR compat, registration pair, time bounds, time order, duplicate callsigns, stand conflicts, duplicate registrations) + cascade logic. Mock Electron window — no real app needed. | 85/85 pass |
+| `test_api_server.js` | 105 | All 7 HTTP endpoints (status, airport/values, flights, create-batch, modify-batch, delete-batch, validation) + MCP protocol (initialize, tools/list, 7 tools/call) + 12-point validation suite (airline, flight number, stand, runway, aircraft compat, STAR compat, registration pair, time bounds, time order, duplicate callsigns, stand conflicts, duplicate registrations) + cascade logic + AND-match regression tests. Mock Electron window — no real app needed. | 105/105 pass |
 | `test_api_e2e_examples.js` | 44 | 7 composition scenarios from the MCP skill (Section 8): create batch flights, modify by airline, delete by type+time, time shift, Chinese-language create/modify, validation rejection + recovery. | 44/44 pass |
 
 ### New parser module tests (no game root needed)
@@ -184,24 +187,40 @@ node tests/integration/test_taxiway.js
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_udp_listener.js` | 13 | Binary protocol parsing (40B header + N×112B records, little-endian), aircraft state tracking, trail ring buffer (600-tick gap, max 5), empty packets, bad magic rejection, flight direction 0/1, callsign trimming, reset/clear, simTimeUnixMs tracking | 13/13 pass |
+| `test_udp_listener.js` | 13 | Binary protocol parsing (40B header + N×112B records, little-endian), aircraft state tracking, trail ring buffer (600-tick gap, max 5), empty packets, bad magic rejection, flight direction 0/1, callsign trimming, reset/clear, simTimeUnixMs tracking | 13/13 pass (skips when port 20266 in use) |
+| `test_type_number_integrity.js` | 6 | Save→reload type number stability: verifies that after generating `_rebuildWorldStateSections`, all `$type` numbers in the output match the `.bak` snapshot — catches type-number shift regressions. | 6/6 pass |
 
 ```bash
 node tests/integration/test_udp_listener.js
+node --require ./tests/integration/preload.cjs tests/integration/test_type_number_integrity.js --root <game-root>
 ```
 
 ### Scan-all tests (need game root, override with `--root`)
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_parse_airport.js` | varies | Parses all airports + .acl files; reports stats | All airports parse without error |
-| `test_callsign_gen.js` | varies | Callsign consistency across all `flight_schedule_*.csv` files | Generated callsigns match CSV values |
+| `test_parse_airport.js` | varies | Parses all airports + .acl files; reports stats | All airports parse OK. EGLC/ZGSZ have 0 .acl files (dev-mode airports); KJFK/KDCA/ZSJN parse OK |
+| `test_callsign_gen.js` | varies | Callsign consistency across all `flight_schedule_*.csv` files | ⚠ 1 known mismatch: AAL0101 vs AAL101 (flight number zero-padding) in KJFK CrossRunway; 19/20 files all-OK |
 | `test_approach_aircraft.js` | 8 sections (T1-T8) | Approach aircraft algorithms: spec extraction, AppPoint mapping, ProgressRatio formula, FlyApproach resolution, Position/Direction reconstruction, block assembly | All 8 verification sections pass against production files |
 
 ```bash
 node tests/integration/test_parse_airport.js [--root <game-root>]
 node --require ./tests/integration/preload.cjs tests/integration/test_callsign_gen.js [--root <game-root>]
 node --require ./tests/integration/preload.cjs tests/integration/test_approach_aircraft.js [--root <game-root>]
+```
+
+### Analysis / research scripts (no pass/fail — produce reports)
+
+| File | What it validates | Expected |
+|------|-------------------|----------|
+| `test_compare_tat.js` | Per-STAR TAT comparison (scenery vs aircraft vs model-A): extracts approach data from 8 production .acl files, computes ground-truth TAT from aircraft pairs, calibrates Model A per airport, reports RMSE/MaxErr for scenery and model methods. | Generates 6-phase report |
+| `test_scaled_tat.js` | Runway-scale-factor corrected TAT: maps game-unit path lengths to real-world meters using per-runway scale factors, compares against aircraft-pair TAT. | Generates summary table |
+| `test_full_path.js` | Full path TAT: extends path length to include the entire STAR route (all AppPoints), not just FlyApproach points. | Generates comparison table |
+
+```bash
+node --require ./tests/integration/preload.cjs tests/integration/test_compare_tat.js [--root <game-root>]
+node --require ./tests/integration/preload.cjs tests/integration/test_scaled_tat.js [--root <game-root>]
+node --require ./tests/integration/preload.cjs tests/integration/test_full_path.js [--root <game-root>]
 ```
 
 ### Single-ACL tests (require `--acl <path>`)
@@ -222,9 +241,9 @@ node tests/integration/test_acl_linkage.js --acl <path>
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_timeline_comparison.js` | varies | JSON timeline files vs ACL-embedded timeline data field-by-field | JSON and ACL sections match |
-| `test_generate_timelines.js` | 4 sub-tests | `_generateFramesSection`, `_generateRunwayTimelineSection` produce identical output | Generated output = original ACL sections |
-| `test_rebuild_timelines.js` | 6 sub-tests | `_rebuildTimelineSections`: WeatherFrames, WindFrames, RunwayTimeline (empty, with changes, all-three, round-trip) | Rebuilt sections match expected |
+| `test_timeline_comparison.js` | varies | JSON timeline files vs ACL-embedded timeline data field-by-field | ⚠ May have minor preset/speed diffs if JSON timelines were edited independently of the ACL |
+| `test_generate_timelines.js` | 4 sub-tests | `_generateFramesSection`, `_generateRunwayTimelineSection` produce identical output | ⚠ Wind/Weather sections may differ if JSON timelines have been edited externally; RunwayTimeline always matches |
+| `test_rebuild_timelines.js` | 6 sub-tests | `_rebuildTimelineSections`: WeatherFrames, WindFrames, RunwayTimeline (empty, with changes, all-three, round-trip) | ⚠ Weather/Wind round-trip may differ when JSON source differs from ACL-embedded data; RunwayTimeline round-trip always matches |
 
 ```bash
 node --require ./tests/integration/preload.cjs tests/integration/test_timeline_comparison.js <acl-path>

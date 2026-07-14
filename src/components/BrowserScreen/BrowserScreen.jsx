@@ -4,7 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { safeHtml } from '../../utils/safeHtml';
@@ -15,6 +15,7 @@ import BrowserHelpOverlay, { BUTTONS } from './BrowserHelpOverlay';
 import VideoReplaceOverlay from './VideoReplaceOverlay';
 import VideoBackgroundModal from './VideoBackgroundModal';
 import BepInExInstallOverlay from './BepInExInstallOverlay';
+import LiveryInstallOverlay from './LiveryInstallOverlay';
 import useTooltip from './useTooltip';
 
 function rescanGuideContent(t) {
@@ -69,6 +70,8 @@ export default function BrowserScreen() {
   const [debugMode, setDebugMode] = useState(false);
   const [bepInExLoading, setBepInExLoading] = useState(false);
   const [bepInExInstallOpen, setBepInExInstallOpen] = useState(false);
+  const [liveryLoading, setLiveryLoading] = useState(false);
+  const [liveryOverlayOpen, setLiveryOverlayOpen] = useState(false);
   const { bind, TooltipPortal } = useTooltip();
 
   useEffect(() => {
@@ -243,6 +246,54 @@ export default function BrowserScreen() {
     }
   };
 
+  const handleInstallLivery = () => {
+    if (liveryLoading) return;
+    setLiveryLoading(true);
+    setLiveryOverlayOpen(true);
+  };
+
+  const handleLiveryDownloadComplete = async (downloadedPath) => {
+    setLiveryOverlayOpen(false);
+    try {
+      const result = await electronAPI.installLivery(downloadedPath);
+      const { showToast } = useAppStore.getState();
+      if (result.success) {
+        showToast(t('livery_installed'), 'success');
+      } else {
+        showToast(result.error === 'NO_GAME_ROOT' ? t('vr_no_game_root') : (result.error || t('livery_failed')), 'error');
+      }
+    } catch (err) {
+      const { showToast } = useAppStore.getState();
+      showToast(err.message, 'error');
+    } finally {
+      setLiveryLoading(false);
+    }
+  };
+
+  const handleLiveryDownloadError = async () => {
+    setLiveryOverlayOpen(false);
+    setLiveryLoading(false);
+
+    const dialogResult = await electronAPI.selectLiveryZip();
+    if (dialogResult.canceled) return;
+
+    setLiveryLoading(true);
+    try {
+      const result = await electronAPI.installLivery(dialogResult.filePath);
+      const { showToast } = useAppStore.getState();
+      if (result.success) {
+        showToast(t('livery_installed'), 'success');
+      } else {
+        showToast(result.error === 'NO_GAME_ROOT' ? t('vr_no_game_root') : (result.error || t('livery_failed')), 'error');
+      }
+    } catch (err) {
+      const { showToast } = useAppStore.getState();
+      showToast(err.message, 'error');
+    } finally {
+      setLiveryLoading(false);
+    }
+  };
+
   const [refreshing, setRefreshing] = useState(false);
 
   const doRefreshScan = async () => {
@@ -337,6 +388,9 @@ export default function BrowserScreen() {
           <button className="btn-sm" {...bind(t(BUTTONS.changeDir.descKey))} onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
           <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} {...bind(t(BUTTONS.refresh.descKey))} onClick={handleRefreshScan} disabled={refreshing}>
             <IoRefreshOutline size={14} className="btn-icon" />{refreshing ? t('browser_refreshing') : t('browser_refresh_scan')}
+          </button>
+          <button className="btn-sm" {...bind(t('browser_livery_desc'))} onClick={handleInstallLivery} disabled={liveryLoading}>
+            <IoColorPaletteOutline size={14} className="btn-icon" />{t('browser_livery')}
           </button>
           <button className={`btn-sm ${debugMode ? 'btn-debug-active' : ''}`} {...bind(t('browser_debug_mode_desc'))} onClick={handleToggleDebugMode} disabled={bepInExLoading}>
             <IoCodeSlash size={14} className="btn-icon" />{t('browser_debug_mode')}
@@ -463,6 +517,12 @@ export default function BrowserScreen() {
               showToast(t('bepinex_installed'), 'success');
             }
           }}
+        />
+      )}
+      {liveryOverlayOpen && (
+        <LiveryInstallOverlay
+          onComplete={handleLiveryDownloadComplete}
+          onError={handleLiveryDownloadError}
         />
       )}
       {TooltipPortal}

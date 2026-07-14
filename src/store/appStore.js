@@ -128,7 +128,7 @@ export const useAppStore = create((set, get) => ({
     const audioData = state.audioCallsigns;
     const airportValuesForNum = state.airportValues[state.currentAirport] || {};
 
-    const newFlight = createArrivalFlight(state._configEndTime, values, audioData, state.currentAirport, airportValuesForNum);
+    const newFlight = createArrivalFlight(state._configEndTime, values, audioData, state.currentAirport, airportValuesForNum, state.flights);
 
     const flights = [...state.flights, newFlight];
     set({ flights, modified: true, selectedIndices: new Set([flights.length - 1]) });
@@ -140,7 +140,7 @@ export const useAppStore = create((set, get) => ({
     const audioData = state.audioCallsigns;
     const airportValuesForNum = state.airportValues[state.currentAirport] || {};
 
-    const newFlight = createDepartureFlight(state._configEndTime, values, audioData, state.currentAirport, airportValuesForNum);
+    const newFlight = createDepartureFlight(state._configEndTime, values, audioData, state.currentAirport, airportValuesForNum, state.flights);
 
     const flights = [...state.flights, newFlight];
     set({ flights, modified: true, selectedIndices: new Set([flights.length - 1]) });

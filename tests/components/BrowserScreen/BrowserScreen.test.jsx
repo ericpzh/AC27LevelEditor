@@ -6,6 +6,7 @@ import { fireEvent } from '@testing-library/react';
 import BrowserScreen from '../../../src/components/BrowserScreen/BrowserScreen';
 import { BUTTONS } from '../../../src/components/BrowserScreen/BrowserHelpOverlay';
 import Modal from '../../../src/components/common/Modal';
+import Toast from '../../../src/components/common/Toast';
 import { useAppStore } from '../../../src/store/appStore';
 import { mockIpcInvoke } from '../../setup';
 import { I18nProvider } from '../../../src/hooks/useTranslation';
@@ -16,6 +17,7 @@ function renderBrowser() {
     <I18nProvider>
       <BrowserScreen />
       <Modal />
+      <Toast />
     </I18nProvider>
   );
 }
@@ -299,6 +301,140 @@ describe('Version Mismatch Detection', () => {
       // Button should now be disabled while uninstall is in progress
       await waitFor(() => {
         expect(debugBtn.disabled).toBe(true);
+      });
+    });
+  });
+
+  describe('Livery Install', () => {
+    it('renders livery install button in the header', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Livery')).toBeInTheDocument();
+    });
+
+    it('has tooltip text on hover', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const liveryBtn = screen.getByText('Livery').closest('button');
+      fireEvent.mouseEnter(liveryBtn);
+
+      const tip = document.body.querySelector('.tooltip-popup');
+      expect(tip).not.toBeNull();
+      expect(tip.textContent).toContain('Realistic Aircraft Livery');
+    });
+
+    it('shows progress overlay on click and disables button', async () => {
+      setupDefaultMocks({
+        'download-livery': new Promise(() => {}), // never resolves — overlay stays open
+      });
+      const user = userEvent.setup();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const liveryBtn = screen.getByText('Livery').closest('button');
+      await user.click(liveryBtn);
+
+      // Button should be disabled while overlay is open
+      await waitFor(() => {
+        expect(liveryBtn.disabled).toBe(true);
+      });
+
+      // Overlay should be visible
+      expect(document.getElementById('livery-overlay')).toBeInTheDocument();
+    });
+
+    it('downloads and installs successfully', async () => {
+      setupDefaultMocks({
+        'download-livery': Promise.resolve({ success: true, filePath: '/tmp/livery.zip' }),
+        'install-livery': Promise.resolve({ success: true }),
+      });
+      const user = userEvent.setup();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const liveryBtn = screen.getByText('Livery').closest('button');
+      await user.click(liveryBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Livery installed successfully')).toBeInTheDocument();
+      });
+    });
+
+    it('falls back to file dialog on download failure', async () => {
+      setupDefaultMocks({
+        'download-livery': Promise.resolve({ success: false, error: 'LIVERY_DOWNLOAD_HTTP_404' }),
+        'select-livery-zip': Promise.resolve({ canceled: false, filePath: '/tmp/livery.zip' }),
+        'install-livery': Promise.resolve({ success: true }),
+      });
+      const user = userEvent.setup();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const liveryBtn = screen.getByText('Livery').closest('button');
+      await user.click(liveryBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Livery installed successfully')).toBeInTheDocument();
+      });
+    });
+
+    it('handles canceled file dialog after download failure', async () => {
+      setupDefaultMocks({
+        'download-livery': Promise.resolve({ success: false, error: 'LIVERY_DOWNLOAD_TIMEOUT' }),
+        'select-livery-zip': Promise.resolve({ canceled: true }),
+      });
+      const user = userEvent.setup();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const liveryBtn = screen.getByText('Livery').closest('button');
+      await user.click(liveryBtn);
+
+      // Wait briefly — no toast should appear for cancel
+      await new Promise(r => setTimeout(r, 100));
+      expect(screen.queryByText('Livery installed successfully')).toBeNull();
+      expect(document.getElementById('livery-overlay')).toBeNull();
+    });
+
+    it('shows error toast when install fails after download', async () => {
+      setupDefaultMocks({
+        'download-livery': Promise.resolve({ success: true, filePath: '/tmp/livery.zip' }),
+        'install-livery': Promise.resolve({ success: false, error: 'CRC mismatch' }),
+      });
+      const user = userEvent.setup();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      const liveryBtn = screen.getByText('Livery').closest('button');
+      await user.click(liveryBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('CRC mismatch')).toBeInTheDocument();
       });
     });
   });

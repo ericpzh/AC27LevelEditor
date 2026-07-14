@@ -5,6 +5,16 @@
 import { getAirlineCode, FALLBACK_BASE_MINUTES, DEFAULT_TIME_OFFSET_MIN, DEFAULT_TAXI_MINUTES } from '../utils/constants';
 
 /**
+ * Pick a random element from an array.
+ * @param {Array|undefined} arr
+ * @returns {*} random element, or null if array is empty/undefined
+ */
+export function randomPick(arr) {
+  if (!arr || arr.length === 0) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/**
  * Compute a default base time (in minutes from midnight) for new flights.
  * Uses configEndTime minus DEFAULT_TIME_OFFSET_MIN, clamped to >= 0,
  * falling back to FALLBACK_BASE_MINUTES (06:00).
@@ -45,6 +55,19 @@ export function pickFirstFlightNumber(airportValues, airlineCode) {
 }
 
 /**
+ * Pick a random valid flight number for an airline from the canonical set.
+ * @param {object} airportValues - airportValues[currentAirport]
+ * @param {string} airlineCode - 3-letter ICAO airline code
+ * @returns {string} flight number
+ */
+export function pickRandomFlightNumber(airportValues, airlineCode) {
+  const canonNums = (airportValues || {})._flightNums || {};
+  const nums = canonNums[airlineCode];
+  if (nums && nums.length > 0) return randomPick(nums);
+  return '1'; // fallback
+}
+
+/**
  * Choose the best default airline code.
  * Prefers first entry from audio callsigns, then first AirlineName from airport values.
  * @param {object} audioData - state.audioCallsigns
@@ -59,6 +82,44 @@ export function pickDefaultAirlineCode(audioData, values) {
     return getAirlineCode(values.AirlineName[0]);
   }
   return 'NEW';
+}
+
+/**
+ * Pick a random airline code from available sources.
+ * Priority: audio callsigns → AirlineCode dropdown values → AirlineName → 'NEW' fallback.
+ * @param {object} audioData - state.audioCallsigns
+ * @param {object} values - airportValues[currentAirport]
+ * @returns {string} 3-letter airline code
+ */
+export function pickRandomAirlineCode(audioData, values) {
+  if (audioData.allAirlines && audioData.allAirlines.length > 0) {
+    return randomPick(audioData.allAirlines);
+  }
+  if (values.AirlineCode && values.AirlineCode.length > 0) {
+    return randomPick(values.AirlineCode);
+  }
+  if (values.AirlineName && values.AirlineName.length > 0) {
+    return getAirlineCode(randomPick(values.AirlineName));
+  }
+  return 'NEW';
+}
+
+/**
+ * Pick a random stand that is not already used by existing flights.
+ * @param {object} values - airportValues[currentAirport]
+ * @param {Array} existingFlights - current flights array
+ * @returns {string} stand name, or empty string if none available
+ */
+export function pickRandomUnusedStand(values, existingFlights) {
+  const allStands = values.Stand || [];
+  if (allStands.length === 0) return '';
+  const usedStands = new Set(
+    (existingFlights || []).map(f => f.Stand).filter(Boolean)
+  );
+  const available = allStands.filter(s => !usedStands.has(s));
+  if (available.length > 0) return randomPick(available);
+  // All stands are taken — reuse a random one
+  return randomPick(allStands);
 }
 
 /**
@@ -87,28 +148,48 @@ function firstOrEmpty(arr) {
 
 /**
  * Build a fully-populated default flight object (arrival or departure).
+ *
+ * Uses random selection for airline, flight number, aircraft type,
+ * registration, and stand — with proper field cascading so that
+ * aircraft type and registration are compatible with the chosen airline.
+ *
  * @param {'arrival'|'departure'} type
  * @param {object} values - airportValues[currentAirport]
  * @param {object} audioData - state.audioCallsigns
  * @param {string} currentAirport - ICAO code
- * @param {object} airportValues - full airportValues for pickFirstFlightNumber
+ * @param {object} airportValuesForNum - full airportValues for _flightNums / _compat / _registrationMap
+ * @param {Array} existingFlights - current flights array (for stand conflict avoidance)
  * @returns {object} new flight object
  */
-export function createDefaultFlight(type, values, audioData, currentAirport, airportValuesForNum) {
+export function createDefaultFlight(type, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
   const baseMin = computeDefaultBaseMin(null); // will be overridden by caller
-  const airlineCode = pickDefaultAirlineCode(audioData, values);
-  const flightNum = pickFirstFlightNumber(airportValuesForNum, airlineCode);
+  const airlineCode = pickRandomAirlineCode(audioData, values);
+  const flightNum = pickRandomFlightNumber(airportValuesForNum, airlineCode);
+
+  // Pick aircraft type valid for this airline (cascade: airline → aircraft)
+  const compat = (airportValuesForNum || {})._compat || {};
+  const validTypes = compat.airlineToAircraft?.[airlineCode] || values.AircraftType || [];
+  const aircraftType = randomPick(validTypes) || firstOrEmpty(values.AircraftType);
+
+  // Pick registration valid for this airline + aircraft combo (cascade: aircraft → reg)
+  const regKey = airlineCode + '|' + aircraftType;
+  const regMap = (airportValuesForNum || {})._registrationMap || {};
+  const validRegs = regMap[regKey] || values.Registration || [];
+  const registration = randomPick(validRegs) || firstOrEmpty(values.Registration);
+
+  // Pick random unused stand (avoids conflicts with existing flights)
+  const stand = pickRandomUnusedStand(values, existingFlights) || firstOrEmpty(values.Stand);
 
   const flight = {
     ...makeEmptyFlight(),
     CallSign: airlineCode + flightNum,
     Language: 'en',
-    AircraftType: firstOrEmpty(values.AircraftType),
+    AircraftType: aircraftType,
     AirlineName: firstOrEmpty(values.AirlineName),
-    Stand: firstOrEmpty(values.Stand),
+    Stand: stand,
     Runway: firstOrEmpty(values.Runway),
     Airway: firstOrEmpty(values.Airway),
-    Registration: firstOrEmpty(values.Registration),
+    Registration: registration,
     Voice: firstOrEmpty(values.Voice),
   };
 
@@ -125,9 +206,9 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
 /**
  * Build a complete arrival flight with time defaults.
  */
-export function createArrivalFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum) {
+export function createArrivalFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
   const baseMin = computeDefaultBaseMin(configEndTime);
-  const flight = createDefaultFlight('arrival', values, audioData, currentAirport, airportValuesForNum);
+  const flight = createDefaultFlight('arrival', values, audioData, currentAirport, airportValuesForNum, existingFlights);
   flight.LandingTime = minutesToTimeString(baseMin);
   flight.InBlockTime = minutesToTimeString(baseMin + DEFAULT_TAXI_MINUTES);
   return flight;
@@ -136,9 +217,9 @@ export function createArrivalFlight(configEndTime, values, audioData, currentAir
 /**
  * Build a complete departure flight with time defaults.
  */
-export function createDepartureFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum) {
+export function createDepartureFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
   const baseMin = computeDefaultBaseMin(configEndTime);
-  const flight = createDefaultFlight('departure', values, audioData, currentAirport, airportValuesForNum);
+  const flight = createDefaultFlight('departure', values, audioData, currentAirport, airportValuesForNum, existingFlights);
   flight.OffBlockTime = minutesToTimeString(baseMin);
   flight.TakeoffTime = minutesToTimeString(baseMin + DEFAULT_TAXI_MINUTES);
   return flight;

@@ -188,9 +188,20 @@ function extractZip(zipPath, targetDir) {
     // Verify CRC
     if (crc32(data) !== crc) throw new Error(`CRC mismatch for ${name}`);
 
-    const outPath = path.join(targetDir, name);
-    if (!fs.existsSync(path.dirname(outPath))) fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    fs.writeFileSync(outPath, data);
+    // Normalize separators to platform separator (ZIPs may use / on Windows)
+    const normalizedName = name.replace(/[/\\]/g, path.sep);
+    const outPath = path.join(targetDir, normalizedName);
+
+    // Skip directory entries (trailing separator or zero-size entries that represent dirs)
+    const isDir = normalizedName.endsWith(path.sep) || (uncompSize === 0 && compSize === 0);
+    if (isDir) {
+      if (!fs.existsSync(outPath)) fs.mkdirSync(outPath, { recursive: true });
+    } else {
+      // Always ensure parent directory exists — unconditional mkdirSync avoids
+      // edge cases where existsSync returns a false negative on Windows.
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, data);
+    }
 
     pos += 46 + nameLen + extraLen + commentLen;
   }

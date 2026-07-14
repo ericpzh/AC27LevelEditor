@@ -1,6 +1,7 @@
 ﻿const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const { initLogger, closeLogger } = require('../src/utils/logger');
@@ -2175,6 +2176,117 @@ ipcMain.handle('uninstall-bepinex', async () => {
     return { success: true, removed: result.removed, errors: result.errors };
   } catch (err) {
     console.error('[BepInEx] uninstall failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Livery Install ─────────────────────────────────
+
+ipcMain.handle('select-livery-zip', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Realistic Aircraft Livery ZIP',
+    filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths.length) return { canceled: true };
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+ipcMain.handle('install-livery', async (_event, zipPath) => {
+  const cr = _readCache();
+  const gameRoot = cr?.data?.gameRoot;
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+
+  const targetDir = path.join(gameRoot, 'Mods');
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    extractZip(zipPath, targetDir);
+    return { success: true };
+  } catch (err) {
+    console.error('[Livery] install failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Livery Download ───────────────────────────────
+
+const LIVERY_DOWNLOAD_URL = 'https://ericpzh.rest/livery';
+
+ipcMain.handle('download-livery', async (_event) => {
+  const tmpDir = path.join(app.getPath('temp'), 'ac27-livery-' + Date.now());
+  const zipPath = path.join(tmpDir, 'livery.zip');
+
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    const notify = (percent) => {
+      if (_event.sender && !_event.sender.isDestroyed()) {
+        _event.sender.send('livery-download-progress', { percent });
+      }
+    };
+
+    // Download with progress
+    await new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(zipPath);
+      let received = 0;
+      let total = 0;
+
+      const doGet = (target, redirectsLeft) => {
+        const req = https.get(target, { timeout: 30000 }, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
+            const redirectUrl = new URL(res.headers.location, target).toString();
+            res.resume();
+            doGet(redirectUrl, redirectsLeft - 1);
+            return;
+          }
+
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            file.close();
+            try { fs.unlinkSync(zipPath); } catch (_) {}
+            reject(new Error('LIVERY_DOWNLOAD_HTTP_' + res.statusCode));
+            return;
+          }
+
+          const contentLength = res.headers['content-length'];
+          if (contentLength) total = parseInt(contentLength, 10);
+
+          res.on('data', (chunk) => {
+            received += chunk.length;
+            file.write(chunk);
+            if (total > 0) {
+              notify(Math.round((received / total) * 100));
+            }
+          });
+
+          res.on('end', () => {
+            file.end();
+            resolve();
+          });
+        });
+
+        req.on('error', (err) => {
+          file.close();
+          try { fs.unlinkSync(zipPath); } catch (_) {}
+          reject(err);
+        });
+        req.on('timeout', () => {
+          req.destroy();
+          file.close();
+          try { fs.unlinkSync(zipPath); } catch (_) {}
+          reject(new Error('LIVERY_DOWNLOAD_TIMEOUT'));
+        });
+      };
+
+      doGet(LIVERY_DOWNLOAD_URL, 5);
+    });
+
+    notify(100);
+    return { success: true, filePath: zipPath };
+  } catch (err) {
+    console.error('[Livery] download failed:', err.message);
+    try { if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
     return { success: false, error: err.message };
   }
 });

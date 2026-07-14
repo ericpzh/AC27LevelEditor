@@ -234,4 +234,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
       this._bepInExProgressHandlers.delete(cb);
     }
   },
+
+  // ─── Livery Install ───────────────────────────────────
+  selectLiveryZip: () => ipcRenderer.invoke('select-livery-zip'),
+  installLivery: (zipPath) => ipcRenderer.invoke('install-livery', zipPath),
+
+  downloadLivery: () => ipcRenderer.invoke('download-livery'),
+
+  _liveryProgressHandlers: new Map(),
+  onLiveryDownloadProgress: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._liveryProgressHandlers.set(cb, handler);
+    ipcRenderer.on('livery-download-progress', handler);
+  },
+  offLiveryDownloadProgress: function (cb) {
+    const handler = this._liveryProgressHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('livery-download-progress', handler);
+      this._liveryProgressHandlers.delete(cb);
+    }
+  },
 });
