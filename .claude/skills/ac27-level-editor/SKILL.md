@@ -65,7 +65,9 @@ description: AC27 Editor â€” Electron desktop app for editing Airport Contr
 â”‚  - flightDefaults.js â€” pure helpers for new flight       â”‚
 â”‚    creation: random airline code (audio â†’ AirlineCode    â”‚
 â”‚    dropdown â†’ AirlineName â†’ 'NEW'), cascaded aircraft    â”‚
-â”‚    type + registration, non-conflicting random stand      â”‚
+â”‚    type + registration, non-conflicting random stand,
+random runway with STAR constrained to runway's valid
+procedures (departure SID auto-derived at runtime)      â”‚
 â”‚  - flightCascade.js â€” pure helpers for cascading field   â”‚
 â”‚    updates (CallSign rebuild, airlineâ†’type/reg,          â”‚
 â”‚    runwayâ†’STAR)                                          â”‚

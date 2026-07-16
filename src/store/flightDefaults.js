@@ -180,6 +180,20 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
   // Pick random unused stand (avoids conflicts with existing flights)
   const stand = pickRandomUnusedStand(values, existingFlights) || firstOrEmpty(values.Stand);
 
+  // Randomize runway, then constrain STAR/SID to the selected runway
+  const runway = randomPick(values.Runway) || firstOrEmpty(values.Runway);
+
+  let airway = firstOrEmpty(values.Airway);
+  if (type === 'arrival') {
+    const runwayStarMap = (airportValuesForNum || {})._runwayStarMap || {};
+    const validStars = runwayStarMap[runway] || [];
+    if (validStars.length > 0) {
+      airway = randomPick(validStars);
+    }
+  }
+  // For departures: SID is derived at runtime from runway via runwaySidMap;
+  // no separate SID field exists on the flight object (DEPARTURE_FIELDS excludes Airway).
+
   const flight = {
     ...makeEmptyFlight(),
     CallSign: airlineCode + flightNum,
@@ -187,8 +201,8 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
     AircraftType: aircraftType,
     AirlineName: firstOrEmpty(values.AirlineName),
     Stand: stand,
-    Runway: firstOrEmpty(values.Runway),
-    Airway: firstOrEmpty(values.Airway),
+    Runway: runway,
+    Airway: airway,
     Registration: registration,
     Voice: firstOrEmpty(values.Voice),
   };
