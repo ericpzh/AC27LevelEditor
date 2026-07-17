@@ -7,7 +7,7 @@ description: AC27 Editor — Electron desktop app for editing Airport Control 27
 
 ## Project Identity
 
-- **Name:** `ac27-editor` (v1.2.2)
+- **Name:** `ac27-editor` (v1.2.3)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
