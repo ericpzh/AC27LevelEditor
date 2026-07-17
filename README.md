@@ -71,9 +71,19 @@ The editor checks for new versions on startup and offers a one-click update when
 2. If a new version is detected, a dialog appears with the update prompt
 3. Click **Download & Install** — the editor downloads the latest `.exe` and replaces itself
 4. The old `.exe` is renamed to `.old` as a safety fallback
-5. Click **Skip This Version** to dismiss the prompt until the next release
+5. Click **Later** to dismiss the prompt until the next app restart
 
 **How it works:** The editor compares the MD5 hash of the running `.exe` against the ETag of the latest build on Cloudflare R2. If they differ, an update is available. No `version.json` needed — the comparison uses R2's built-in object metadata.
+
+**Logging:** Every update decision is logged to both the console and `<userData>/updater.log`, making it possible to diagnose issues in packaged builds with no visible console.
+
+**Dev-mode testing:** By default, `npm start` skips the update check. Opt in with:
+- `AC27_UPDATE_DEV_CHECK=1` — auto-discovers a build artifact under the project root
+- `AC27_UPDATE_TARGET=<path>` — explicit path to an exe to compare
+
+In dev mode, `installUpdate()` defaults to a dry-run (no `.bat` spawn). Override with `AC27_UPDATE_DRY_RUN=0`.
+
+See `.claude/skills/ac27-editor/references/dev-commands.md` for full env-var reference and mock-server testing.
 
 **macOS:** Auto-update is Windows-only (`.exe` portable build). macOS DMG builds are not affected.
 
@@ -163,8 +173,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (482 tests, 29 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
-- **Tests:** Vitest (482 tests, 29 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
+- **Tests:** Vitest (493 tests + 1 todo, 29 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
 
 ### Quick Start
 
@@ -176,9 +185,9 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 65 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install, auto-update check & install
-electron/preload.js  →  contextBridge: exposes 68 methods on window.electronAPI
-electron/updater.js  →  Auto-update: HEAD check (R2 ETag), MD5 comparison, exe download, batch script generation
+electron/main.js     →  Electron main process, 64 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install, auto-update check & install
+electron/preload.js  →  contextBridge: exposes ~90 methods on window.electronAPI
+electron/updater.js  →  Auto-update: HEAD check (R2 ETag), MD5 comparison, file-based logging to updater.log, resolveTargetExe (dev-mode support), exe download, batch script generation
 electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 7 tools)
 electron/bepinex.js     →  BepInEx debug mode — download, install, uninstall (IL2CPP bleeding edge)
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state v2: simFlags, timeScale, heartbeatSeq, auto-reset)
@@ -247,8 +256,8 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 ```
 ├── electron/
 │   ├── main.js              # Electron main process + 65 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, 68 methods)
-│   ├── updater.js           # Auto-update: HEAD check, MD5, download, batch script
+│   ├── preload.js           # contextBridge (window.electronAPI, ~90 methods)
+│   ├── updater.js           # Auto-update: HEAD check, MD5, file logging, resolveTargetExe, download, batch script
 │   ├── bepinex.js           # BepInEx debug mode — one-click install/uninstall
 │   └── udp_listener.js      # UDP telemetry — 10 Hz aircraft state + commands
 ├── index.html               # Vite HTML entry

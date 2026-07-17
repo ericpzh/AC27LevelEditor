@@ -7,7 +7,7 @@ description: AC27 Editor — Electron desktop app for editing Airport Control 27
 
 ## Project Identity
 
-- **Name:** `ac27-editor` (v1.2.3)
+- **Name:** `ac27-editor` (v1.2.2)
 - **Purpose:** Cross-platform desktop level editor for Airport Control 27 `.acl` flight schedule files
 - **Stack:** Electron 33 + React 19 + Vite 8 + zustand 5
 - **Entry:** `electron/main.js` (Electron main process) + `src/main.jsx` (React renderer)
@@ -19,11 +19,11 @@ description: AC27 Editor — Electron desktop app for editing Airport Control 27
 
 | Layer | Key Files | Details |
 |-------|-----------|---------|
-| **Electron Main Process** | `electron/main.js` | Creates BrowserWindow (1400×880, min 1024×640), contextIsolation: true, nodeIntegration: false, 65 ipcMain.handle() endpoints, all file I/O/dialog/caching |
-| | `electron/updater.js` | Auto-update: HEAD check (R2 ETag), MD5 comparison, exe download, batch script generation |
+| **Electron Main Process** | `electron/main.js` | Creates BrowserWindow (1400×880, min 1024×640), contextIsolation: true, nodeIntegration: false, 64 ipcMain.handle() endpoints, all file I/O/dialog/caching |
+| | `electron/updater.js` | Auto-update: HEAD check (R2 ETag), MD5 comparison, file-based logging to `<userData>/updater.log`, `resolveTargetExe()` (dev-mode support), exe download, batch script generation |
 | | `electron/api-server.js` | HTTP API + MCP (port 31415) |
 | | `electron/cloud-llm.js` | Multi-vendor cloud LLM chat |
-| **Preload Bridge** | `electron/preload.js` | contextBridge exposing `window.electronAPI` with 68 methods, onStoreApiUpdate/offStoreApiUpdate for MCP bridge, each method = ipcRenderer.invoke(channel, ...args) |
+| **Preload Bridge** | `electron/preload.js` | contextBridge exposing `window.electronAPI` with ~90 methods (checkForUpdate, downloadUpdate, installUpdate — no longer exposes skipUpdate), onStoreApiUpdate/offStoreApiUpdate for MCP bridge, each method = ipcRenderer.invoke(channel, ...args) |
 | **Vite + React Entry** | `index.html`, `src/main.jsx` | `<div id="root">` rendered by ReactDOM.createRoot, Vite bundles `src/` → `dist/`, three screens: setup → browser → editor |
 | **React Components** | `src/components/` | |
 | | `App.jsx` | Root: I18nProvider + ScreenRouter + Modal + Toast |

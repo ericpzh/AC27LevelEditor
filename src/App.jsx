@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { I18nProvider } from './hooks/useTranslation';
 import { useAppStore } from './store/appStore';
 import { useElectronAPI } from './hooks/useElectronAPI';
@@ -91,39 +91,70 @@ function ScreenRouter() {
   const [updateState, setUpdateState] = useState('idle');
   const [updateInfo, setUpdateInfo] = useState(null);
   const [downloadResult, setDownloadResult] = useState(null);
+  const updateCheckedRef = useRef(false);
 
-  // Listen for update-check-result pushed from main process on startup
+  // Check for updates on startup.
+  // Two paths: (1) main process pushes result via 'update-check-result' event,
+  // (2) renderer actively calls checkForUpdate() as fallback in case the push
+  // was sent before the renderer was ready (race condition). The ref prevents
+  // double-processing.
   useEffect(() => {
     const api = window.electronAPI;
-    if (!api || !api.onUpdateCheckResult) return;
+    if (!api) return;
 
-    const handler = (result) => {
+    const handleResult = (result, source) => {
+      if (updateCheckedRef.current) {
+        console.log('[App] update result via', source, 'DROPPED (already processed):', JSON.stringify(result));
+        return;
+      }
+      updateCheckedRef.current = true;
+      console.log('[App] update result via', source, 'ACCEPTED:', JSON.stringify(result));
       if (result.hasUpdate) {
         setUpdateInfo(result);
         setUpdateState('prompt');
       }
-      // Network errors or no-update: stay idle, never block the user
     };
+    const handlePush = (result) => handleResult(result, 'push');
 
-    api.onUpdateCheckResult(handler);
+    // Path 1: listen for push from main process
+    if (api.onUpdateCheckResult) {
+      console.log('[App] registering update-check-result listener');
+      api.onUpdateCheckResult(handlePush);
+    }
+
+    // Path 2: actively call (handles race condition where push was already sent)
+    if (api.checkForUpdate) {
+      console.log('[App] invoking checkForUpdate() fallback');
+      api.checkForUpdate().then((result) => handleResult(result, 'invoke'));
+    }
+
     return () => {
-      if (api.offUpdateCheckResult) api.offUpdateCheckResult(handler);
+      if (api.offUpdateCheckResult) api.offUpdateCheckResult(handlePush);
     };
   }, []);
 
-  // Show update prompt modal
+  // Show update prompt modal. The modal is a singleton — BrowserScreen's version
+  // mismatch / cache-invalidated modals can collide with it. If another modal is
+  // open, defer: the effect re-runs when modal.open/title change and shows the
+  // prompt once the other modal closes (or if something overwrote ours).
+  const modalOpen = useAppStore(s => s.modal.open);
+  const modalTitle = useAppStore(s => s.modal.title);
   useEffect(() => {
     if (updateState !== 'prompt' || !updateInfo) return;
+    if (modalOpen) {
+      if (modalTitle === 'Update Available') return; // already showing
+      console.log('[App] deferring update prompt — modal already open:', String(modalTitle));
+      return;
+    }
 
+    console.log('[App] showing update prompt modal');
     useAppStore.getState().showModal(
-      'Update Available',
+      (t) => t('update_modal_title'),
       (t) => (
         <div>
-          <p>A new version of AC27 Editor is available.</p>
-          <p><strong>Current:</strong> {updateInfo.currentVersion} &rarr; <strong>New:</strong> {updateInfo.remoteDate || 'latest'}</p>
           {updateInfo.contentLength > 0 && (
             <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
-              Download size: {Math.round(updateInfo.contentLength / (1024 * 1024))} MB
+              {t('update_modal_size')}{Math.round(updateInfo.contentLength / (1024 * 1024))} {t('update_modal_mb')}
             </p>
           )}
         </div>
@@ -132,22 +163,22 @@ function ScreenRouter() {
         <div className="modal-actions-row">
           <button className="btn-cancel" onClick={() => {
             useAppStore.getState().hideModal();
-            window.electronAPI.skipUpdate(updateInfo.remoteMd5);
-            setUpdateState('idle');
-          }}>Skip This Version</button>
+setUpdateState('idle');
+          }}>{t('update_modal_skip')}</button>
           <button className="btn-confirm" onClick={() => {
             useAppStore.getState().hideModal();
             setUpdateState('downloading');
-          }}>Download &amp; Install</button>
+          }}>{t('update_modal_download')}</button>
         </div>
       ),
       false, // not closeable — user must choose
     );
-  }, [updateState, updateInfo]);
+  }, [updateState, updateInfo, modalOpen, modalTitle]);
 
   // Trigger install when download completes
   useEffect(() => {
     if (updateState !== 'installing' || !downloadResult) return;
+    console.log('[App] installing update:', JSON.stringify(downloadResult));
     window.electronAPI.installUpdate({
       updateDir: downloadResult.updateDir,
       currentExePath: downloadResult.currentExePath,

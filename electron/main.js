@@ -63,9 +63,10 @@ async function createWindow() {
       nodeIntegration: false,
     },
   });
-  // Capture renderer console to log file
+  // Capture renderer console to log file (also lands in <userData>/updater.log
+  // so modal/update logs are visible for packaged builds with no console)
   mainWindow.webContents.on('console-message', (event, level, message) => {
-    console.log('[RENDERER] ' + message);
+    updater.log('[RENDERER] ' + message);
   });
   // In dev (npm run dev): Vite dev server at localhost:5173
   // In production: dist/index.html
@@ -2352,15 +2353,6 @@ ipcMain.handle('install-update', async (_event, { updateDir, currentExePath, new
   }
 });
 
-ipcMain.handle('skip-update', async (_event, remoteMd5) => {
-  try {
-    const skipPath = path.join(app.getPath('userData'), 'skipped-update.json');
-    fs.writeFileSync(skipPath, JSON.stringify({ etag: remoteMd5, skippedAt: Date.now() }), 'utf-8');
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
 
 // ─── IPC: Video Background Replacer ────────────────────────
 
@@ -2587,12 +2579,17 @@ app.whenReady().then(() => {
   // ── Auto-update check: fires on startup, result pushed to renderer ──
   (async () => {
     try {
+      updater.log('[Updater] startup check beginning');
       const result = await updater.checkForUpdate();
+      updater.log('[Updater] startup check result:', JSON.stringify(result));
       if (mainWindow && !mainWindow.isDestroyed()) {
+        updater.log('[Updater] pushing update-check-result to renderer');
         mainWindow.webContents.send('update-check-result', result);
+      } else {
+        updater.log('[Updater] mainWindow unavailable — result not pushed (renderer fallback will invoke)');
       }
     } catch (err) {
-      console.error('[Updater] startup check error:', err.message);
+      updater.log('[Updater] startup check error:', err.message);
     }
   })();
 

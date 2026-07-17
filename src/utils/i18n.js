@@ -1,4 +1,4 @@
-﻿const STR = {
+const STR = {
   zh: {
     setup_title:'AC27编辑器',
     setup_sub:'请先定位游戏安装目录以扫描所有关卡文件',
@@ -20,6 +20,11 @@
 			    livery_installed:'涂装安装成功', livery_failed:'涂装安装失败',
 			    livery_downloading:'下载中…',
 				    update_title:'发现新版本', update_downloading:'正在下载更新…',
+	    update_modal_title:'发现新版本',
+	    update_modal_body:'AC27编辑器 新版已发布。',
+	    update_modal_current:'当前版本：', update_modal_new:'新版本：',
+	    update_modal_size:'下载大小：', update_modal_mb:'MB',
+	    update_modal_skip:'下次再说', update_modal_download:'下载并安装',
     browser_refresh_scan:'重新扫描', browser_refreshing:'扫描中…',
     browser_scanning_title:'扫描中…', browser_scanning_body:'正在扫描机场数据，请稍候…',
     browser_rescan_guide_title:'重新扫描前',
@@ -298,6 +303,11 @@
 			    livery_installed:'Livery installed successfully', livery_failed:'Livery installation failed',
 			    livery_downloading:'Downloading…',
 			    update_title:'Update Available', update_downloading:'Downloading update…',
+			    update_modal_title:'Update Available',
+			    update_modal_body:'A new version of AC27 Editor is available.',
+			    update_modal_current:'Current: ', update_modal_new:'New: ',
+			    update_modal_size:'Download size: ', update_modal_mb:'MB',
+			    update_modal_skip:'Later', update_modal_download:'Download & Install',
     browser_refresh_scan:'Re-Scan', browser_refreshing:'Scanning...',
     browser_scanning_title:'Scanning...', browser_scanning_body:'Please wait while airports are being scanned.',
     browser_rescan_guide_title:'Before Re-Scanning',

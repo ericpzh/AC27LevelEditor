@@ -26,6 +26,7 @@ function setPlatform(platform) {
 const mockApp = {
   getVersion: vi.fn(() => '1.2.2'),
   getPath: vi.fn(() => os.tmpdir()),
+  getAppPath: vi.fn(() => os.tmpdir()),
   isPackaged: true,
   quit: vi.fn(),
 };
@@ -51,6 +52,7 @@ beforeEach(() => {
   mockApp.isPackaged = true;
   mockApp.getVersion.mockReturnValue('1.2.2');
   mockApp.getPath.mockReturnValue(os.tmpdir());
+  mockApp.getAppPath.mockReturnValue(os.tmpdir());
   primeCache();
 });
 
@@ -58,6 +60,8 @@ afterEach(() => {
   clearCache();
   delete process.env.AC27_UPDATE_SERVER;
   delete process.env.AC27_UPDATE_DRY_RUN;
+  delete process.env.AC27_UPDATE_TARGET;
+  delete process.env.AC27_UPDATE_DEV_CHECK;
   delete process.env.PORTABLE_EXECUTABLE_FILE;
 });
 
@@ -248,6 +252,145 @@ describe('checkForUpdate', () => {
     fs.unlinkSync(tmpExe);
     fs.unlinkSync(skipPath);
     process.env.PORTABLE_EXECUTABLE_FILE = path.join(os.tmpdir(), 'AC27Editor.exe');
+  });
+});
+
+// ── resolveTargetExe ───────────────────────────────────────────
+
+describe('resolveTargetExe', () => {
+  it('returns PORTABLE_EXECUTABLE_FILE when set (packaged portable)', () => {
+    const updater = getUpdater();
+    expect(updater.resolveTargetExe()).toBe(process.env.PORTABLE_EXECUTABLE_FILE);
+  });
+
+  it('returns process.execPath when packaged without PORTABLE_EXECUTABLE_FILE', () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    const updater = getUpdater();
+    expect(updater.resolveTargetExe()).toBe(process.execPath);
+  });
+
+  it('returns AC27_UPDATE_TARGET in dev mode', () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    mockApp.isPackaged = false;
+    const target = createTempFile('dev-target');
+    process.env.AC27_UPDATE_TARGET = target;
+    const updater = getUpdater();
+    expect(updater.resolveTargetExe()).toBe(path.resolve(target));
+    fs.unlinkSync(target);
+  });
+
+  it('finds a build artifact under the project root in dev mode', () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    mockApp.isPackaged = false;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-root-'));
+    const exe = path.join(root, 'release', 'AC27Editor.exe');
+    fs.mkdirSync(path.dirname(exe), { recursive: true });
+    fs.writeFileSync(exe, 'dummy');
+    mockApp.getAppPath.mockReturnValue(root);
+    const updater = getUpdater();
+    expect(updater.resolveTargetExe()).toBe(exe);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('returns null in dev mode when no candidate exists', () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    mockApp.isPackaged = false;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-empty-'));
+    mockApp.getAppPath.mockReturnValue(root);
+    const updater = getUpdater();
+    expect(updater.resolveTargetExe()).toBe(null);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// ── checkForUpdate: gate behavior ─────────────────────────────
+
+describe('checkForUpdate gates', () => {
+  it('skips without a network attempt when packaged but not portable', async () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    process.env.AC27_UPDATE_SERVER = 'https://127.0.0.1:1'; // would fail fast if reached
+    const updater = getUpdater();
+    const result = await updater.checkForUpdate();
+    expect(result.hasUpdate).toBe(false);
+    expect(result.error).toBeUndefined(); // gated before HEAD — no network error
+  });
+
+  it('proceeds past the gate in dev mode with AC27_UPDATE_TARGET', async () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    mockApp.isPackaged = false;
+    const target = createTempFile('dev-exe-content');
+    process.env.AC27_UPDATE_TARGET = target;
+    process.env.AC27_UPDATE_SERVER = 'https://127.0.0.1:1'; // unreachable → fast failure
+    const updater = getUpdater();
+    const result = await updater.checkForUpdate();
+    expect(result.hasUpdate).toBe(false);
+    expect(result.error).toBeDefined(); // reached the HEAD request (past the gate)
+    fs.unlinkSync(target);
+  });
+
+  it('skips in dev mode by default (no opt-in), even if a build artifact exists', async () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    mockApp.isPackaged = false;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-optout-'));
+    const exe = path.join(root, 'release', 'AC27Editor.exe');
+    fs.mkdirSync(path.dirname(exe), { recursive: true });
+    fs.writeFileSync(exe, 'dummy');
+    mockApp.getAppPath.mockReturnValue(root);
+    process.env.AC27_UPDATE_SERVER = 'https://127.0.0.1:1'; // would fail fast if reached
+    const updater = getUpdater();
+    const result = await updater.checkForUpdate();
+    expect(result.hasUpdate).toBe(false);
+    expect(result.error).toBeUndefined(); // gated before HEAD — no network attempt
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('proceeds in dev mode with AC27_UPDATE_DEV_CHECK=1 (auto-discovered artifact)', async () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    mockApp.isPackaged = false;
+    process.env.AC27_UPDATE_DEV_CHECK = '1';
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-optin-'));
+    const exe = path.join(root, 'release', 'AC27Editor.exe');
+    fs.mkdirSync(path.dirname(exe), { recursive: true });
+    fs.writeFileSync(exe, 'dummy');
+    mockApp.getAppPath.mockReturnValue(root);
+    process.env.AC27_UPDATE_SERVER = 'https://127.0.0.1:1'; // unreachable → fast failure
+    const updater = getUpdater();
+    const result = await updater.checkForUpdate();
+    expect(result.hasUpdate).toBe(false);
+    expect(result.error).toBeDefined(); // reached the HEAD request (past the gate)
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('skips in dev mode when no target exe can be resolved', async () => {
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+    mockApp.isPackaged = false;
+    process.env.AC27_UPDATE_DEV_CHECK = '1'; // opted in, but no artifact to compare
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-empty-'));
+    mockApp.getAppPath.mockReturnValue(root);
+    process.env.AC27_UPDATE_SERVER = 'https://127.0.0.1:1';
+    const updater = getUpdater();
+    const result = await updater.checkForUpdate();
+    expect(result.hasUpdate).toBe(false);
+    expect(result.error).toBeUndefined(); // no network attempt
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// ── installUpdate (dev-mode dry-run default) ──────────────────
+
+describe('installUpdate dev-mode dry-run', () => {
+  it('defaults to dry-run in dev mode without AC27_UPDATE_DRY_RUN', () => {
+    mockApp.isPackaged = false;
+    const updater = getUpdater();
+
+    const currentExe = path.join(os.tmpdir(), 'AC27Editor.exe');
+    fs.writeFileSync(currentExe, 'dummy');
+
+    expect(() => updater.installUpdate(os.tmpdir(), currentExe, path.join(os.tmpdir(), 'AC27Editor_new.exe'))).not.toThrow();
+    expect(mockApp.quit).not.toHaveBeenCalled();
+
+    try { fs.unlinkSync(currentExe); } catch (_) {}
+    try { fs.unlinkSync(path.join(os.tmpdir(), 'update.bat')); } catch (_) {}
   });
 });
 

@@ -15,7 +15,7 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 
 ## Running Tests
 
-### Component tests (482 tests across 29 files)
+### Component tests (493 tests across 29 files)
 
 ```bash
 npm test              # Run all Vitest component + store + utility + electron + MapWindow + updater tests
@@ -101,6 +101,15 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ## Auto-Update Testing
 
+### Summary of changes in this diff (auto-update refactor)
+
+- **`log()` function added** — every decision step writes to both console and `<userData>/updater.log`
+- **`resolveTargetExe()`** — resolves the exe to compare: `PORTABLE_EXECUTABLE_FILE` (packaged portable), `process.execPath` (packaged non-portable), `AC27_UPDATE_TARGET` (dev mode explicit path), or auto-discovered build artifact (`release/AC27Editor.exe`, `dist/AC27 Editor.exe`, etc.) in dev mode
+- **Dev mode gating** — `npm start` skips the check by default. Opt in with `AC27_UPDATE_DEV_CHECK=1` (auto-discover) or `AC27_UPDATE_TARGET=<path>` (explicit)
+- **`skip-update` IPC removed** — no more `skipped-update.json`. The "Later" button is ephemeral (next restart re-prompts)
+- **DRY_RUN defaults** differ by context: `false` for packaged (real install), `true` for dev (safe). Override with `AC27_UPDATE_DRY_RUN=0` / `=1`
+- **Renderer fallback** — `App.jsx` actively invokes `checkForUpdate()` as fallback if the main-process push arrives before the renderer is ready (race condition guarded by `useRef(false)`)
+
 ### Mock update server (local dev testing)
 
 ```bash
@@ -109,6 +118,8 @@ node tests/update-mock-server.js   # Start mock update server on port 9999
 
 Then launch the app pointed at the mock:
 ```powershell
+# Dev mode: opt in and point at the mock
+set AC27_UPDATE_DEV_CHECK=1
 set AC27_UPDATE_SERVER=http://localhost:9999
 set AC27_UPDATE_DRY_RUN=1           # optional — skips actual .bat spawn
 npm start
@@ -116,10 +127,15 @@ npm start
 
 The mock returns a random ETag that never matches any local exe, so the update prompt always appears.
 
-| Env Var | Effect |
-|---------|--------|
-| `AC27_UPDATE_SERVER=http://localhost:9999` | Redirect update checks to a local mock server |
-| `AC27_UPDATE_DRY_RUN=1` | Full check + modal flow, but skips actual spawn of `updater.bat` |
+### Dev-mode env vars
+
+| Env Var | Default | Effect |
+|---------|---------|--------|
+| `AC27_UPDATE_SERVER=<url>` | `https://ericpzh.rest/editor` | Redirect update checks to a custom/mock server |
+| `AC27_UPDATE_DRY_RUN=1` / `=0` | `1` (dev) / `0` (packaged) | `1` = skip actual `.bat` spawn for `installUpdate()` |
+| `AC27_UPDATE_DEV_CHECK=1` | unset | Dev only: enables the check under `npm start` (auto-discovers a build artifact) |
+| `AC27_UPDATE_TARGET=<path>` | unset | Dev only: explicit path to the exe whose MD5 is compared (also enables the check) |
+| `AC27_UPDATE_DRY_RUN=0` | — | Dev only: forces a real install (spawns `updater.bat`) — use with caution |
 
 ## GitHub Release
 

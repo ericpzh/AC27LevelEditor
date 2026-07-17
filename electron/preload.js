@@ -259,7 +259,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: (opts) => ipcRenderer.invoke('install-update', opts),
-  skipUpdate: (remoteMd5) => ipcRenderer.invoke('skip-update', remoteMd5),
 
   // Event: update check result (pushed from main process on startup)
   _updateCheckHandlers: new Map(),

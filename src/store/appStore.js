@@ -263,13 +263,25 @@ export const useAppStore = create((set, get) => ({
   })),
 
   // ─── Actions: Modal ───
-  showModal: (title, body, actions, closeable = true, headerRight = null, showLangToggle = false) => set({
-    modal: { open: true, title, body, actions, closeable, headerRight, showLangToggle },
-  }),
-  hideModal: () => set({
-    modal: { open: false, title: '', body: null, actions: null, closeable: true, headerRight: null, showLangToggle: false },
-    cacheBuildProgress: null,
-  }),
+  // The modal is a singleton — log open/overwrite/hide so collisions between
+  // callers (update prompt vs. scanner modals) are visible in the console/log.
+  showModal: (title, body, actions, closeable = true, headerRight = null, showLangToggle = false) => {
+    const prev = get().modal;
+    const name = (v) => (typeof v === 'function' ? '(dynamic)' : String(v));
+    if (prev.open) console.log(`[Modal] OVERWRITE: "${name(prev.title)}" -> "${name(title)}"`);
+    else console.log(`[Modal] OPEN: "${name(title)}"`);
+    set({
+      modal: { open: true, title, body, actions, closeable, headerRight, showLangToggle },
+    });
+  },
+  hideModal: () => {
+    const prev = get().modal;
+    if (prev.open) console.log(`[Modal] HIDE: "${typeof prev.title === 'function' ? '(dynamic)' : String(prev.title)}"`);
+    set({
+      modal: { open: false, title: '', body: null, actions: null, closeable: true, headerRight: null, showLangToggle: false },
+      cacheBuildProgress: null,
+    });
+  },
   setCacheBuildProgress: (progress) => set({ cacheBuildProgress: progress }),
 
   // ─── Actions: Radar windows ───

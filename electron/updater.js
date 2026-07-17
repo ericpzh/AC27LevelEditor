@@ -8,12 +8,20 @@
  * and returns it as the ETag header. The Worker proxies HEAD to R2 and augments the
  * response with the real MD5. No version.json manifest needed.
  *
- * Platform gating: only Windows portable builds are supported. macOS (DMG) and
- * dev mode (!app.isPackaged) are no-ops.
+ * Platform gating: packaged builds must be Windows portable (PORTABLE_EXECUTABLE_FILE
+ * set by the electron-builder portable launcher). macOS (DMG) is a no-op. Dev mode
+ * (!app.isPackaged) skips the check by default so `npm start` never prompts —
+ * opt in with AC27_UPDATE_DEV_CHECK=1 or AC27_UPDATE_TARGET to debug the flow
+ * against a local build artifact (see resolveTargetExe); install is forced to
+ * dry-run in dev.
+ *
+ * Every decision step is logged via log() — console + <userData>/updater.log.
  *
  * ## Env var overrides (for testing)
- *   AC27_UPDATE_SERVER   — base URL for update checks (default: https://ericpzh.rest/editor)
- *   AC27_UPDATE_DRY_RUN  — if '1', skips actual spawn of updater.bat
+ *   AC27_UPDATE_SERVER    — base URL for update checks (default: https://ericpzh.rest/editor)
+ *   AC27_UPDATE_DRY_RUN   — '1' skips actual spawn of updater.bat ('0' forces real install in dev)
+ *   AC27_UPDATE_DEV_CHECK — dev only: '1' enables the check under npm start (auto-discovers a build artifact)
+ *   AC27_UPDATE_TARGET    — dev only: explicit path to the exe whose MD5 is compared (also enables the check)
  */
 
 const https = require('https');
@@ -23,11 +31,28 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { app } = require('electron');
 
+// ─── Logger ────────────────────────────────────────────────
+// Packaged portable exes have no visible console, so every decision is also
+// appended to <userData>/updater.log (best-effort — never blocks the app).
+
+let _logPath = null;
+function log(...args) {
+  console.log(...args);
+  try {
+    if (!_logPath) _logPath = path.join(app.getPath('userData'), 'updater.log');
+    fs.appendFileSync(_logPath, `[${new Date().toISOString()}] ${args.join(' ')}\n`, 'utf-8');
+  } catch (_) { /* best-effort */ }
+}
+
 // ─── Constants ─────────────────────────────────────────────
 
 const UPDATE_BASE = process.env.AC27_UPDATE_SERVER || 'https://ericpzh.rest/editor';
 const HEAD_TIMEOUT = 10000;   // 10s — fail silent if no response
-const DRY_RUN = process.env.AC27_UPDATE_DRY_RUN === '1';
+// In dev mode installUpdate() defaults to dry-run so the update .bat never
+// swaps/relaunches dev files — opt in to a real install with AC27_UPDATE_DRY_RUN=0.
+const DRY_RUN = app.isPackaged
+  ? process.env.AC27_UPDATE_DRY_RUN === '1'
+  : process.env.AC27_UPDATE_DRY_RUN !== '0';
 
 // ─── Self-reference for spy-able calls ─────────────────────
 const api = module.exports;
@@ -135,49 +160,88 @@ function headRemoteExeWithUrl(url) {
 // ─── Update check ─────────────────────────────────────────
 
 /**
+ * Resolve the exe whose MD5 is compared against the remote build.
+ * Packaged behavior is unchanged: PORTABLE_EXECUTABLE_FILE, else process.execPath.
+ * Dev mode (!app.isPackaged): AC27_UPDATE_TARGET env var, else the first existing
+ * known build artifact under the project root.
+ * @returns {string|null} absolute path, or null if no candidate exists (dev only)
+ */
+function resolveTargetExe() {
+  if (process.env.PORTABLE_EXECUTABLE_FILE) return process.env.PORTABLE_EXECUTABLE_FILE;
+  if (app.isPackaged) return process.execPath;
+
+  if (process.env.AC27_UPDATE_TARGET) return path.resolve(process.env.AC27_UPDATE_TARGET);
+
+  const root = app.getAppPath(); // project root in dev
+  const candidates = [
+    path.join(root, 'release', 'AC27Editor.exe'),
+    path.join(root, 'release', 'AC27LevelEditor.exe'), // older artifactName
+    path.join(root, 'dist', 'AC27 Editor.exe'),
+    path.join(root, 'dist', 'win-unpacked', 'AC27 Editor.exe'),
+  ];
+  return candidates.find((c) => fs.existsSync(c)) || null;
+}
+
+/**
  * Check whether a newer version is available on the update server.
  *
  * Sends a HEAD request to get the remote ETag (real MD5 from companion .md5 file),
- * computes MD5 of the running portable exe, and compares.
+ * computes MD5 of the target exe (see resolveTargetExe), and compares.
+ * Packaged decision logic is identical to isUpdateSupported(); the gate is inlined
+ * here so every skip reason gets logged.
  *
  * @returns {Promise<{ hasUpdate: boolean, currentVersion?: string, currentMd5?: string, remoteMd5?: string, remoteDate?: string, contentLength?: number, error?: string }>}
  */
 async function checkForUpdate() {
-  // Gate: only Windows portable builds
-  if (!isUpdateSupported()) {
+  log('[Updater] check start — platform:', process.platform,
+    '| isPackaged:', app.isPackaged,
+    '| PORTABLE_EXECUTABLE_FILE:', process.env.PORTABLE_EXECUTABLE_FILE || '(unset)',
+    '| server:', UPDATE_BASE);
+
+  if (process.platform !== 'win32') {
+    log('[Updater] unsupported platform — skipping');
+    return { hasUpdate: false };
+  }
+  if (app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE) {
+    log('[Updater] packaged but not portable (no PORTABLE_EXECUTABLE_FILE) — skipping');
+    return { hasUpdate: false };
+  }
+  // Dev mode is opt-in: skip by default so `npm start` never prompts. Setting
+  // AC27_UPDATE_TARGET (explicit exe) or AC27_UPDATE_DEV_CHECK=1 (auto-discover
+  // a build artifact) re-enables the check for debugging.
+  if (!app.isPackaged && process.env.AC27_UPDATE_DEV_CHECK !== '1' && !process.env.AC27_UPDATE_TARGET) {
+    log('[Updater] dev mode — check disabled by default (set AC27_UPDATE_DEV_CHECK=1 or AC27_UPDATE_TARGET to enable) — skipping');
+    return { hasUpdate: false };
+  }
+
+  const targetPath = resolveTargetExe();
+  log('[Updater] target exe:', targetPath || '(none found)');
+  if (!targetPath) {
+    log('[Updater] dev mode: no build artifact to compare (set AC27_UPDATE_TARGET or run npm run build:win) — skipping');
+    return { hasUpdate: false };
+  }
+  if (!fs.existsSync(targetPath)) {
+    log('[Updater] target exe not found:', targetPath, '— skipping');
     return { hasUpdate: false };
   }
 
   try {
     const remote = await headRemoteExe();
-    const targetPath = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
-
-    if (!fs.existsSync(targetPath)) {
-      console.error('[Updater] target exe not found:', targetPath);
-      return { hasUpdate: false };
-    }
+    log('[Updater] HEAD ok — etag:', remote.etag,
+      '| lastModified:', remote.lastModified,
+      '| contentLength:', remote.contentLength);
 
     const localMd5 = await computeFileMd5(targetPath);
+    log('[Updater] local MD5:', localMd5, '| remote MD5:', remote.etag, '| match:', localMd5 === remote.etag);
 
     // The Worker returns the real MD5 (from the companion .md5 file) as the ETag header.
     // We compare it directly against our locally computed MD5.
     if (localMd5 === remote.etag) {
+      log('[Updater] up to date — no update');
       return { hasUpdate: false };
     }
 
-    console.log('[Updater] Update available — local MD5:', localMd5, 'remote MD5:', remote.etag);
-
-    // Check if user previously skipped this exact build
-    const skipPath = path.join(app.getPath('userData'), 'skipped-update.json');
-    if (fs.existsSync(skipPath)) {
-      try {
-        const skipped = JSON.parse(fs.readFileSync(skipPath, 'utf-8'));
-        if (skipped.etag === remote.etag) {
-          console.log('[Updater] build previously skipped by user, not prompting');
-          return { hasUpdate: false };
-        }
-      } catch (_) { /* corrupt skip file — ignore and prompt */ }
-    }
+    log('[Updater] Update available — local MD5:', localMd5, 'remote MD5:', remote.etag);
 
     return {
       hasUpdate: true,
@@ -189,7 +253,7 @@ async function checkForUpdate() {
     };
   } catch (err) {
     // Network errors → fail silently, don't block the user
-    console.error('[Updater] check failed:', err.message);
+    log('[Updater] check failed:', err.message);
     return { hasUpdate: false, error: err.message };
   }
 }
@@ -353,9 +417,9 @@ function installUpdate(updateDir, currentExePath, newExePath) {
   const scriptPath = createUpdaterScript(updateDir, currentExePath, newExePath);
 
   if (DRY_RUN) {
-    console.log('[Updater] DRY RUN — would execute:', scriptPath);
-    console.log('[Updater]   current:', currentExePath);
-    console.log('[Updater]   new:    ', newExePath);
+    log('[Updater] DRY RUN — would execute:', scriptPath);
+    log('[Updater]   current:', currentExePath);
+    log('[Updater]   new:    ', newExePath);
     return;
   }
 
@@ -384,4 +448,6 @@ Object.assign(api, {
   computeFileMd5,
   headRemoteExe,
   headRemoteExeWithUrl,
+  resolveTargetExe,
+  log,
 });
