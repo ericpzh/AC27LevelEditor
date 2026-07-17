@@ -4,8 +4,9 @@
  * All functions run in the Electron main process. The module uses only Node.js
  * built-ins (https, fs, path, crypto, child_process) so it adds zero dependencies.
  *
- * Update detection uses R2 object metadata (ETag = MD5 for single-part uploads)
- * via a HEAD request. No version.json manifest needed.
+ * Update detection fetches a companion .md5 file stored alongside the exe in R2
+ * and returns it as the ETag header. The Worker proxies HEAD to R2 and augments the
+ * response with the real MD5. No version.json manifest needed.
  *
  * Platform gating: only Windows portable builds are supported. macOS (DMG) and
  * dev mode (!app.isPackaged) are no-ops.
@@ -66,8 +67,8 @@ function computeFileMd5(filePath) {
 
 /**
  * Send a HEAD request to the update server and return R2 object metadata.
- * The Worker forwards HEAD to R2, which returns the object's etag (MD5),
- * last-modified, and content-length.
+ * The Worker fetches the real MD5 from the companion .md5 file and returns it
+ * as the `etag` header, alongside last-modified and content-length from R2.
  * @returns {Promise<{ etag: string, lastModified: string|null, contentLength: number }>}
  */
 function headRemoteExe() {
@@ -136,7 +137,7 @@ function headRemoteExeWithUrl(url) {
 /**
  * Check whether a newer version is available on the update server.
  *
- * Sends a HEAD request to get the remote ETag (MD5 hash of the R2 object),
+ * Sends a HEAD request to get the remote ETag (real MD5 from companion .md5 file),
  * computes MD5 of the running portable exe, and compares.
  *
  * @returns {Promise<{ hasUpdate: boolean, currentVersion?: string, currentMd5?: string, remoteMd5?: string, remoteDate?: string, contentLength?: number, error?: string }>}
@@ -158,8 +159,8 @@ async function checkForUpdate() {
 
     const localMd5 = await computeFileMd5(targetPath);
 
-    // R2 ETag is the MD5 hash for single-part uploads (< 5 GB).
-    // Our .exe is ~300 MB — well within range.
+    // The Worker returns the real MD5 (from the companion .md5 file) as the ETag header.
+    // We compare it directly against our locally computed MD5.
     if (localMd5 === remote.etag) {
       return { hasUpdate: false };
     }
