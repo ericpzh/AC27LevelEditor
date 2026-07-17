@@ -39,6 +39,15 @@ jobs:
           path: release/AC27Editor.exe
           if-no-files-found: error
 
+      - name: Upload to R2 (auto-update)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          AWS_REGION: auto
+        run: |
+          aws s3 cp release/AC27Editor.exe s3://ac27editor/AC27Editor.exe --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto
+
   build-macos:
     runs-on: macos-latest
     steps:

@@ -63,6 +63,20 @@ Replace default aircraft liveries with realistic paint schemes via ZIP file:
 
 **Note:** If the `Mods/` folder does not exist in the game root, the editor creates it automatically.
 
+### Auto-Update (Windows)
+
+The editor checks for new versions on startup and offers a one-click update when a newer build is available:
+
+1. On launch, the editor sends a lightweight HEAD request to check for a newer build
+2. If a new version is detected, a dialog appears with the update prompt
+3. Click **Download & Install** — the editor downloads the latest `.exe` and replaces itself
+4. The old `.exe` is renamed to `.old` as a safety fallback
+5. Click **Skip This Version** to dismiss the prompt until the next release
+
+**How it works:** The editor compares the MD5 hash of the running `.exe` against the ETag of the latest build on Cloudflare R2. If they differ, an update is available. No `version.json` needed — the comparison uses R2's built-in object metadata.
+
+**macOS:** Auto-update is Windows-only (`.exe` portable build). macOS DMG builds are not affected.
+
 ### Clear Editor Local Cache
 
 The editor stores data under `%APPDATA%\ac27-level-editor\`. Delete the entire folder to reset the editor to its initial state (startup issues, wrong game directory, etc.):
@@ -149,7 +163,8 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (461 tests, 28 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
+- **Tests:** Vitest (482 tests, 29 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
+- **Tests:** Vitest (482 tests, 29 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
 
 ### Quick Start
 
@@ -161,8 +176,9 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 61 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install
-electron/preload.js  →  contextBridge: exposes 64 methods on window.electronAPI
+electron/main.js     →  Electron main process, 65 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install, auto-update check & install
+electron/preload.js  →  contextBridge: exposes 68 methods on window.electronAPI
+electron/updater.js  →  Auto-update: HEAD check (R2 ETag), MD5 comparison, exe download, batch script generation
 electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 7 tools)
 electron/bepinex.js     →  BepInEx debug mode — download, install, uninstall (IL2CPP bleeding edge)
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state v2: simFlags, timeScale, heartbeatSeq, auto-reset)
@@ -230,8 +246,9 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 
 ```
 ├── electron/
-│   ├── main.js              # Electron main process + 58 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, 64 methods)
+│   ├── main.js              # Electron main process + 65 IPC handlers
+│   ├── preload.js           # contextBridge (window.electronAPI, 68 methods)
+│   ├── updater.js           # Auto-update: HEAD check, MD5, download, batch script
 │   ├── bepinex.js           # BepInEx debug mode — one-click install/uninstall
 │   └── udp_listener.js      # UDP telemetry — 10 Hz aircraft state + commands
 ├── index.html               # Vite HTML entry
@@ -424,4 +441,4 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ### CI/CD
 
-GitHub Actions workflow (`.github/workflows/release.yml`): pushes to `v*` tags trigger Windows + macOS builds and create a GitHub Release with both artifacts.
+The release workflow (`.github/workflows/release.yml`) pushes to `v*` tags triggers **Windows** (portable `.exe`) and **macOS** (`.dmg`) builds in parallel. The Windows build is also uploaded to Cloudflare R2 for auto-update delivery. Both artifacts are attached to a GitHub Release with auto-generated release notes.

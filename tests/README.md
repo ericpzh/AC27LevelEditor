@@ -6,7 +6,7 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 
 ```bash
 npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~6 min)
-npm test              # 468 Vitest component + store + utility + electron + MapWindow tests (~3s)
+npm test              # 482 Vitest component + store + utility + electron + MapWindow + updater tests (~3s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~4 min)
 node tests/integration/test_api_server.js      # MCP/API tests: 105 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -17,11 +17,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 
 ---
 
-## Layer 1 — Vitest Component Tests (468 tests)
+## Layer 1 — Vitest Component Tests (482 tests)
 
-Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`).
+Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 468 tests, all pass
+### `npm test` — 482 tests, all pass
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -44,6 +44,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `integration/stand_positions.test.js` | 7 | `_parseStandPositions` unit tests: ZSJN fixture parsing (53 stands), structure validation (position arrays, labels, disabled flags, airline assignments), edge cases (null/empty input) |
 | **Electron backend (existing):** | **49** | |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
+| `electron/updater.test.js` | 14 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **isUpdateSupported (4):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set. **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skip-file recognized. **installUpdate (1):** dry-run mode skips spawn + quit. |
 | **MapWindows (10 files):** | **151** | |
 | `components/MapWindows/voiceNumberParser.test.js` | 21 | `parseEnglishFlightNumber`: individual digits, "oh"→0, teens, grouped pairs, "triple X"/"double X" aviation shorthand, stop at non-numbers, >6-digit filter, empty input. `parseChineseFlightNumber`: 幺-series, 一-series, 洞/两/零 variants, multi-token, stop at non-digits. `generateCallsignCandidates` |
 | `components/MapWindows/voiceCallsignParser.test.js` | 19 | `detectLanguage`: EN/ZH/empty/mixed. `parseCallsign` (EN): "united eleven eleven"→UAL1111, full airline name, 3-letter code, "delta"→DAL, KLM, longest-match priority, teen numbers, callsign-only (no command), null on no-match/empty. `parseCallsign` (ZH): 东方/中国东方航空/国航 with digits |

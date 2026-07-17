@@ -15,8 +15,9 @@
 ```
 AC27Editor/
 ├── electron/
-│   ├── main.js              # Electron main process + 53 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, 52 methods)
+│   ├── main.js              # Electron main process + 65 IPC handlers
+│   ├── preload.js           # contextBridge (window.electronAPI, 68 methods)
+│   ├── updater.js           # Auto-update: HEAD check (R2 ETag), MD5 comparison, exe download, batch script generator
 │   ├── api-server.js        # HTTP API + MCP server (port 31415, auto-starts with app)
 │   ├── cloud-llm.js         # Multi-vendor cloud LLM chat (DeepSeek/Gemini/Claude/Codex)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz binary aircraft state (127.0.0.1:20266) + commands (20267)
@@ -80,6 +81,7 @@ AC27Editor/
 │   │   │   └── VoicePTTButton.jsx          # Push-to-talk mic button (hold-to-talk, anion/pulse/flash, witch sprite)
 │   │   ├── ChatPanel/
 │   │   │   ├── ChatPanel.jsx + .css     # Floating cloud-LLM chat panel (4 vendors)
+│   │   ├── UpdateOverlay.jsx + .css  # Auto-update download progress overlay
 │   │   └── common/
 │   │       ├── Modal.jsx + .css         # Declarative modal
 │   │       └── Toast.jsx + .css         # Declarative toast
@@ -137,8 +139,9 @@ AC27Editor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 361 Vitest + 16 Playwright E2E + 22 Node.js integration tests
+├── tests/               # 482 Vitest + 16 Playwright E2E + 22 Node.js integration tests
 │   ├── electron/cloud-llm.test.js  # cloud-llm backend tests (49 tests, node env)
+│   ├── electron/updater.test.js    # updater backend tests (14 tests, node env)
 │   ├── components/MapWindows/  # MapWindow component & hook tests (10 files, 151 tests)
 └── dist/                # Build output (gitignored)
 ```
@@ -262,13 +265,15 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
   - `cache-invalidated` — signals renderer when `cache.json` is missing/corrupt; preload bridges via `onCacheInvalidated(cb)`
   - `cache-build-progress` — per-file progress during scan: `{ current: number, total: number }`; preload bridges via `onCacheBuildProgress(cb)` / `offCacheBuildProgress(cb)` (uses handler-map pattern, same function reference required for cleanup)
   - `store-api-update` — pushes bulk state updates from MCP/API server to renderer: `{ flights, modified, ... }`; preload bridges via `onStoreApiUpdate(cb)` / `offStoreApiUpdate(cb)` (handler-map pattern). Renderer converts arrays→Sets and calls `setLegacyState()`.
+  - `update-check-result` — pushed from main process on startup after HEAD check: `{ hasUpdate, currentVersion, remoteMd5, remoteDate, contentLength }`; preload bridges via `onUpdateCheckResult(cb)` / `offUpdateCheckResult(cb)` (handler-map pattern). Renderer shows update modal when `hasUpdate` is true.
+  - `update-download-progress` — download progress during update: `{ percent: number }`; preload bridges via `onUpdateDownloadProgress(cb)` / `offUpdateDownloadProgress(cb)` (handler-map pattern). Used by UpdateOverlay component.
 
 ### Test Conventions
 
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 361 tests across 24 files
+- `npm test` or `npm run test:watch` — 482 tests across 29 files
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - Electron backend tests use `@vitest-environment node` + `require.cache` priming to stub ESM SDK packages (see `tests/electron/cloud-llm.test.js`)
 - zustand stores are tested with the real store using `setState()` — never mock stores

@@ -254,4 +254,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
       this._liveryProgressHandlers.delete(cb);
     }
   },
+
+  // ─── Auto-Update ───────────────────────────────────
+  checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate: (opts) => ipcRenderer.invoke('install-update', opts),
+  skipUpdate: (remoteMd5) => ipcRenderer.invoke('skip-update', remoteMd5),
+
+  // Event: update check result (pushed from main process on startup)
+  _updateCheckHandlers: new Map(),
+  onUpdateCheckResult: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._updateCheckHandlers.set(cb, handler);
+    ipcRenderer.on('update-check-result', handler);
+  },
+  offUpdateCheckResult: function (cb) {
+    const handler = this._updateCheckHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('update-check-result', handler);
+      this._updateCheckHandlers.delete(cb);
+    }
+  },
+
+  // Event: download progress
+  _updateDownloadHandlers: new Map(),
+  onUpdateDownloadProgress: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._updateDownloadHandlers.set(cb, handler);
+    ipcRenderer.on('update-download-progress', handler);
+  },
+  offUpdateDownloadProgress: function (cb) {
+    const handler = this._updateDownloadHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('update-download-progress', handler);
+      this._updateDownloadHandlers.delete(cb);
+    }
+  },
 });

@@ -19,10 +19,11 @@ description: AC27 Editor — Electron desktop app for editing Airport Control 27
 
 | Layer | Key Files | Details |
 |-------|-----------|---------|
-| **Electron Main Process** | `electron/main.js` | Creates BrowserWindow (1400×880, min 1024×640), contextIsolation: true, nodeIntegration: false, 61 ipcMain.handle() endpoints, all file I/O/dialog/caching |
+| **Electron Main Process** | `electron/main.js` | Creates BrowserWindow (1400×880, min 1024×640), contextIsolation: true, nodeIntegration: false, 65 ipcMain.handle() endpoints, all file I/O/dialog/caching |
+| | `electron/updater.js` | Auto-update: HEAD check (R2 ETag), MD5 comparison, exe download, batch script generation |
 | | `electron/api-server.js` | HTTP API + MCP (port 31415) |
 | | `electron/cloud-llm.js` | Multi-vendor cloud LLM chat |
-| **Preload Bridge** | `electron/preload.js` | contextBridge exposing `window.electronAPI` with 64 methods, onStoreApiUpdate/offStoreApiUpdate for MCP bridge, each method = ipcRenderer.invoke(channel, ...args) |
+| **Preload Bridge** | `electron/preload.js` | contextBridge exposing `window.electronAPI` with 68 methods, onStoreApiUpdate/offStoreApiUpdate for MCP bridge, each method = ipcRenderer.invoke(channel, ...args) |
 | **Vite + React Entry** | `index.html`, `src/main.jsx` | `<div id="root">` rendered by ReactDOM.createRoot, Vite bundles `src/` → `dist/`, three screens: setup → browser → editor |
 | **React Components** | `src/components/` | |
 | | `App.jsx` | Root: I18nProvider + ScreenRouter + Modal + Toast |

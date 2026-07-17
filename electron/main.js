@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const { initLogger, closeLogger } = require('../src/utils/logger');
 const bepinex = require('./bepinex');
+const updater = require('./updater');
 
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
 // Skip file logging in E2E tests so we can see console output
@@ -2300,6 +2301,67 @@ ipcMain.handle('download-livery', async (_event) => {
   }
 });
 
+// ─── IPC: Auto-Update ─────────────────────────────────
+
+ipcMain.handle('check-for-update', async () => {
+  return await updater.checkForUpdate();
+});
+
+ipcMain.handle('download-update', async (_event) => {
+  const updateDir = path.join(app.getPath('temp'), 'ac27-update-' + Date.now());
+  try {
+    fs.mkdirSync(updateDir, { recursive: true });
+    const newExePath = await updater.downloadUpdate(_event, updateDir);
+
+    // Verify the downloaded file's MD5 matches the remote ETag before installing
+    // (the remote ETag was captured during the check-for-update call)
+    // We re-HEAD to get the current remote ETag for verification
+    let remoteMd5 = null;
+    try {
+      const remote = await updater.headRemoteExe();
+      remoteMd5 = remote.etag;
+      const downloadedMd5 = await updater.computeFileMd5(newExePath);
+      if (downloadedMd5 !== remoteMd5) {
+        throw new Error('UPDATE_MD5_MISMATCH');
+      }
+    } catch (verifyErr) {
+      console.error('[Updater] MD5 verification failed:', verifyErr.message);
+      try { if (fs.existsSync(updateDir)) fs.rmSync(updateDir, { recursive: true, force: true }); } catch (_) {}
+      return { success: false, error: verifyErr.message };
+    }
+
+    return {
+      success: true, updateDir, newExePath,
+      currentExePath: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
+      remoteMd5,
+    };
+  } catch (err) {
+    console.error('[Updater] download failed:', err.message);
+    try { if (fs.existsSync(updateDir)) fs.rmSync(updateDir, { recursive: true, force: true }); } catch (_) {}
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('install-update', async (_event, { updateDir, currentExePath, newExePath }) => {
+  try {
+    updater.installUpdate(updateDir, currentExePath, newExePath);
+    return { success: true };
+  } catch (err) {
+    console.error('[Updater] install failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('skip-update', async (_event, remoteMd5) => {
+  try {
+    const skipPath = path.join(app.getPath('userData'), 'skipped-update.json');
+    fs.writeFileSync(skipPath, JSON.stringify({ etag: remoteMd5, skippedAt: Date.now() }), 'utf-8');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ─── IPC: Video Background Replacer ────────────────────────
 
 /** Discover all XXXX.webm/ folders under MainMenuVideos. */
@@ -2521,6 +2583,18 @@ app.whenReady().then(() => {
       callback(false);
     }
   });
+
+  // ── Auto-update check: fires on startup, result pushed to renderer ──
+  (async () => {
+    try {
+      const result = await updater.checkForUpdate();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-check-result', result);
+      }
+    } catch (err) {
+      console.error('[Updater] startup check error:', err.message);
+    }
+  })();
 
   // Start UDP telemetry listener
   startUdpListener();

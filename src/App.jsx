@@ -8,6 +8,7 @@ import EditorScreen from './components/EditorScreen/EditorScreen';
 import GroundMapWindow from './components/MapWindows/GroundMapWindow';
 import AirMapWindow from './components/MapWindows/AirMapWindow';
 import FlightStripsWindow from './components/MapWindows/FlightStripsWindow';
+import UpdateOverlay from './components/UpdateOverlay';
 import Modal from './components/common/Modal';
 import Toast from './components/common/Toast';
 
@@ -85,12 +86,83 @@ function ScreenRouter() {
     })();
   }, []);
 
+  // ── Auto-update state machine ──────────────────────────
+  // 'idle' | 'prompt' | 'downloading' | 'installing' | 'error'
+  const [updateState, setUpdateState] = useState('idle');
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [downloadResult, setDownloadResult] = useState(null);
+
+  // Listen for update-check-result pushed from main process on startup
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api || !api.onUpdateCheckResult) return;
+
+    const handler = (result) => {
+      if (result.hasUpdate) {
+        setUpdateInfo(result);
+        setUpdateState('prompt');
+      }
+      // Network errors or no-update: stay idle, never block the user
+    };
+
+    api.onUpdateCheckResult(handler);
+    return () => {
+      if (api.offUpdateCheckResult) api.offUpdateCheckResult(handler);
+    };
+  }, []);
+
+  // Show update prompt modal
+  useEffect(() => {
+    if (updateState !== 'prompt' || !updateInfo) return;
+
+    useAppStore.getState().showModal(
+      'Update Available',
+      (t) => (
+        <div>
+          <p>A new version of AC27 Editor is available.</p>
+          <p><strong>Current:</strong> {updateInfo.currentVersion} &rarr; <strong>New:</strong> {updateInfo.remoteDate || 'latest'}</p>
+          {updateInfo.contentLength > 0 && (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
+              Download size: {Math.round(updateInfo.contentLength / (1024 * 1024))} MB
+            </p>
+          )}
+        </div>
+      ),
+      (t) => (
+        <div className="modal-actions-row">
+          <button className="btn-cancel" onClick={() => {
+            useAppStore.getState().hideModal();
+            window.electronAPI.skipUpdate(updateInfo.remoteMd5);
+            setUpdateState('idle');
+          }}>Skip This Version</button>
+          <button className="btn-confirm" onClick={() => {
+            useAppStore.getState().hideModal();
+            setUpdateState('downloading');
+          }}>Download &amp; Install</button>
+        </div>
+      ),
+      false, // not closeable — user must choose
+    );
+  }, [updateState, updateInfo]);
+
+  // Trigger install when download completes
+  useEffect(() => {
+    if (updateState !== 'installing' || !downloadResult) return;
+    window.electronAPI.installUpdate({
+      updateDir: downloadResult.updateDir,
+      currentExePath: downloadResult.currentExePath,
+      newExePath: downloadResult.newExePath,
+    });
+  }, [updateState, downloadResult]);
+
+  // ── End auto-update state machine ──────────────────────
+
   if (booting) return <div className="screen"><div className="loading-state"><div className="spinner" /></div></div>;
 
   switch (screen) {
-    case 'setup':   return <SetupScreen />;
-    case 'browser': return <BrowserScreen />;
-    case 'editor':  return <EditorScreen />;
+    case 'setup':   return <><SetupScreen />{updateState === 'downloading' && <UpdateOverlay onComplete={(result) => { setDownloadResult(result); setUpdateState('installing'); }} onError={(errorMsg) => { setUpdateState('error'); useAppStore.getState().showToast(errorMsg, 'error'); }} />}</>;
+    case 'browser': return <><BrowserScreen />{updateState === 'downloading' && <UpdateOverlay onComplete={(result) => { setDownloadResult(result); setUpdateState('installing'); }} onError={(errorMsg) => { setUpdateState('error'); useAppStore.getState().showToast(errorMsg, 'error'); }} />}</>;
+    case 'editor':  return <><EditorScreen />{updateState === 'downloading' && <UpdateOverlay onComplete={(result) => { setDownloadResult(result); setUpdateState('installing'); }} onError={(errorMsg) => { setUpdateState('error'); useAppStore.getState().showToast(errorMsg, 'error'); }} />}</>;
     default:        return null;
   }
 }

@@ -1,0 +1,82 @@
+/* ─── Update download overlay ────────────────────────────── */
+
+#update-overlay {
+  position: fixed; inset: 0;
+  background: var(--overlay);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 110;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+#update-box {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 90vw;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+  animation: updateFadeIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes updateFadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+#update-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 0;
+}
+
+#update-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+#update-body {
+  padding: 22px;
+}
+
+.update-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Progress bar track */
+.update-progress-wrap {
+  width: 100%;
+  height: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Progress bar fill */
+.update-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  min-width: 2px;
+}
+
+.update-pct {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.update-status {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0;
+}

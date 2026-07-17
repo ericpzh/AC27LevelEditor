@@ -15,11 +15,14 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 
 ## Running Tests
 
-### Component tests (361 tests across 24 files)
+### Component tests (482 tests across 29 files)
 
 ```bash
-npm test              # Run all Vitest component + store + utility + electron + MapWindow tests
+npm test              # Run all Vitest component + store + utility + electron + MapWindow + updater tests
 npm run test:watch    # Watch mode — re-runs on file changes
+
+# Run only updater tests
+npx vitest run tests/electron/updater.test.js
 ```
 
 ### E2E tests
@@ -96,9 +99,31 @@ Copy-Item "$libDir\libcrypto.1.0.0.dylib" "$libDir\libcrypto.dylib" -Force
 Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 ```
 
+## Auto-Update Testing
+
+### Mock update server (local dev testing)
+
+```bash
+node tests/update-mock-server.js   # Start mock update server on port 9999
+```
+
+Then launch the app pointed at the mock:
+```powershell
+set AC27_UPDATE_SERVER=http://localhost:9999
+set AC27_UPDATE_DRY_RUN=1           # optional — skips actual .bat spawn
+npm start
+```
+
+The mock returns a random ETag that never matches any local exe, so the update prompt always appears.
+
+| Env Var | Effect |
+|---------|--------|
+| `AC27_UPDATE_SERVER=http://localhost:9999` | Redirect update checks to a local mock server |
+| `AC27_UPDATE_DRY_RUN=1` | Full check + modal flow, but skips actual spawn of `updater.bat` |
+
 ## GitHub Release
 
-The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags pushed to GitHub. It builds **Windows** (portable `.exe`) and **macOS** (`.dmg`) in parallel via `npm run build:win/build:mac -- --publish never`, then attaches both artifacts to a GitHub Release with auto-generated release notes.
+The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags pushed to GitHub. It builds **Windows** (portable `.exe`) and **macOS** (`.dmg`) in parallel via `npm run build:win/build:mac -- --publish never`. The Windows build is also uploaded to Cloudflare R2 (`ac27editor/AC27Editor.exe`) for auto-update delivery. Both artifacts are attached to a GitHub Release with auto-generated release notes.
 
 ### How to release a new version
 
