@@ -37,8 +37,11 @@ description: AC27 Editor — Electron desktop app for editing Airport Control 27
 | **State Management** | `src/store/appStore.js` | Zustand single store: screen, flights, timelines, modal/toast, chat, map overlay state, radar window tracking, UDP health |
 | | `src/store/flightDefaults.js` | Pure helpers for new flight creation: random airline code (audio → AirlineCode dropdown → AirlineName → 'NEW'), cascaded aircraft type + registration, non-conflicting random stand, random runway with STAR constrained to runway's valid procedures (departure SID auto-derived at runtime) |
 | | `src/store/flightCascade.js` | Pure helpers for cascading field updates (CallSign rebuild, airline→type/reg, runway→STAR) |
-| **ACL Backend** | `src/acl/parser.js` | **Facade** — main.js imports ALL backend modules through it only (13 modules, CommonJS + some ESM) |
+| **ACL Backend** | `src/acl/parser.js` | **Facade** — main.js imports ALL backend modules through it only (16 modules, CommonJS + some ESM). Exports `detectSchemaVersion()` for v2/v3 vs v4 routing |
 | | `src/acl/constants.js` | CJS re-export of utils/constants.js (single source of truth — add new constants there) |
+| | `src/acl/gatcarc.js` | **GATCARC4 binary container** — universal `readAclText()` / `writeAcl()` for transparent read/write of both legacy text `.acl` and new binary GATCARC4 format (magic: "GATCARC4", SHA-256 integrity, append checkpoint frames) |
+| | `src/acl/v4_pk_index.js` | **v4 PK index builder** — indexed lookup of `StaticData.$blobdoc.PKStaticEntities.$rcontent` entities by type prefix (`runway:`, `stand:`, `taxiway-segment:`, etc.) with `$iref` → `$id` resolution. Field helpers: `extractVector3FromV4`, `extractStringFromV4`, `extractIrefArray`, `extractSingleIref`, `extractIntFromV4` |
+| | `src/acl/odin/` | **OdinSerializer binary codec** — `binary_reader.js` / `binary_writer.js` (binary Odin format), `json_reader.js` / `json_writer.js` (Odin JSON text), `dotnet_values.js` (.NET primitives), `binary_entry_types.js` (entry type definitions) |
 | **Shared Utilities** | `src/utils/constants/` | 7 domain sub-modules + barrel index.js: timing.js, fields.js, aviation.js, airlines.js, acl-format.js, map-config.js, ui.js |
 | | `src/utils/` | timeUtils.js, i18n.js, validators.js, htmlUtils.js, csvIo.js, zipUtils.js, logger.js, safeHtml.jsx (renders i18n strings w/ allowed HTML tags `<strong>`, `<em>`, `<br>` as safe JSX nodes), debugLog.js (gated debug logging via localStorage + URL query param toggle) |
 
@@ -71,9 +74,21 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 - **`data-flow.md`** — Phase 0 cache init → Phase 1 load → Phase 2 edit → Phase 3 save pipeline. Cache version detection, stand conflict validation, stand/star map overlays, demo .acl file handling.
 - **`map-windows.md`** — Separate BrowserWindow architecture for GroundMapWindow, AirMapWindow, and FlightStripsWindow. Shared hooks (useSvgZoom, useUdpAircraftState, useCrossWindowSelection, useWitchAnimation, useKnobPositions), ControlSidebar with SpinKnobs, witch mode, cross-window selection sync, drag reorder.
 - **`udp-telemetry.md`** — Binary protocol (40B header + 112B records), trail ring buffer, outbound command channel, 200ms live state push, auto-reset mechanisms (stale timeout, hasLevel transition, airport transition).
-- **`acl-format.md`** — Unity JSON extensions, two-pass preprocessing, section types. Complete State=30/State=5 approach aircraft construction math: unified path, PR formula, 3° glideslope Y, TAT computation from SceneryData, approach ceiling, module API reference.
+- **`acl-format.md`** — Unity JSON extensions, two-pass preprocessing, section types, format versions (v2/v3 text vs v4 GATCARC4 binary), $blobdoc nested documents, PKStaticEntities $iref/$id. Complete State=30/State=5 approach aircraft construction math: unified path, PR formula, 3° glideslope Y, TAT computation from SceneryData, approach ceiling, module API reference.
 - **`mcp-integration.md`** — API server (port 31415), 7 MCP tools, 12-point validation, SSE/JSON-RPC endpoints. Also covers `electron/cloud-llm.js` (DeepSeek/Gemini/Claude/Codex chat with tool calling) and the `ChatPanel` React component.
 - **`dev-commands.md`** — All npm/node commands: component tests, E2E tests, integration tests (with `--acl` and `--root` variants), local build (`node build.js`), GitHub release workflow.
+
+## v4 Schema Architecture
+
+The 2026-07 game update introduced **v4 schema** `.acl` files. The editor supports both v2/v3 and v4 transparently:
+
+- **Detection:** `parser.detectSchemaVersion(text)` returns 4 (StaticData.$blobdoc) or 3 (WorldState/SceneryData). Called once per file on load.
+- **`isV4` threading:** Every major parse/extract/build function accepts an optional `isV4` param. Auto-detects from text if omitted (backward compat). Dual code paths: v2/v3 uses SceneryData/WorldState; v4 uses `buildPkIndex()` → `PKStaticEntities` + `$blobdoc` navigation.
+- **Binary container:** Files are stored on disk as GATCARC4 binary (magic "GATCARC4", SHA-256 payload integrity, append checkpoint frames). `readAclText()` decodes transparently; `writeAcl()` preserves the on-disk format. Legacy text `.acl` files pass through unchanged.
+- **Flight plans:** v4 stores flight-plan entries in `StaticData.$blobdoc.StaticItems.$rcontent` with `flight-plan:` key prefix. Uses `InitialArrival`/`InitialDeparture` field names instead of v3's `Arrival`/`Departure`. InBlockTime/TakeoffTime always 0 (game computes dynamically).
+- **Type numbering:** v4 `$blobdoc` sections have **independent type numbering** from the outer document. Type N inside a `$blobdoc` can mean a completely different type than type N outside it. Both save and load paths maintain separate type maps.
+- **Frontend integration:** `isV4` flag in zustand store. Hides InBlockTime/TakeoffTime columns for v4 files. Skips time-order validation (InBlockTime/TakeoffTime always 0/unset). New flights skip InBlockTime/TakeoffTime defaults for v4.
+- **No pre-spawned aircraft:** v4 files have no WorldState section and no pre-spawned State=30 or State=5 aircraft. Approach/State-5 extraction functions return empty for v4.
 
 ## Key Rules for Agents
 
@@ -91,14 +106,15 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 12. **No inline `style={{}}`.** Always extract CSS to the component's `.css` file.
 13. **One `.css` per component.** Match the component filename.
 14. **No `dangerouslySetInnerHTML`.** Use `safeHtml()` from `src/utils/safeHtml.jsx` to render i18n strings containing `<strong>`, `<em>`, or `<br>` as safe React nodes. It sanitises unknown tags and attribute injection as plain text.
-15. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
-16. **Build locally with `node build.js`** on Windows, never `npm run build:win` (local only — CI uses `npm run build:win` for cross-platform builds).
-17. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js` (re-exported via `src/utils/constants/index.js` and `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
-18. **Version tags for releases.** Version tags use `v<MAJOR>.<MINOR>.<PATCH>` (e.g. `v1.2.0`). Keep these three in sync: (a) `.claude/skills/ac27-editor/SKILL.md` Project Identity line, (b) `package.json` `version` field, (c) the git tag. The user decides when to bump; you can re-tag the same version to include new changes.
-19. **Keep documentation in sync.** After any significant change, update ALL of:
+15. **Use `readAclText()` / `writeAcl()` for all ACL I/O.** Never use `fs.readFileSync(path, 'utf-8')` or `fs.writeFileSync(path, text, 'utf-8')` for `.acl` files. Always go through `gatcarc.js` to transparently handle both legacy text and GATCARC4 binary formats. This applies to `electron/main.js`, all backend modules, and all integration tests.
+16. **Update the facade.** New backend modules must be re-exported through `src/acl/parser.js`.
+17. **Build locally with `node build.js`** on Windows, never `npm run build:win` (local only — CI uses `npm run build:win` for cross-platform builds).
+18. **Bump `CACHE_VERSION` when cache.json schema changes.** Any change to the structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, `state5ParamsMap`, `taxiwayPaths`, `sidPaths`, `missedAppPaths`, or new top-level keys in cache.json MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js` (re-exported via `src/utils/constants/index.js` and `src/acl/constants.js` for CJS backward compat). Stale caches silently corrupt saves.
+19. **Version tags for releases.** Version tags use `v<MAJOR>.<MINOR>.<PATCH>` (e.g. `v1.2.0`). Keep these three in sync: (a) `.claude/skills/ac27-editor/SKILL.md` Project Identity line, (b) `package.json` `version` field, (c) the git tag. The user decides when to bump; you can re-tag the same version to include new changes.
+20. **Keep documentation in sync.** After any significant change, update ALL of:
     - **This skill** (`.claude/skills/ac27-editor/SKILL.md`) and its reference files
     - **README.md**
     - **`tests/README.md`** — whenever tests are added/removed, update the test counts (line 9, line 18, line 22), the file table (add/remove rows), MapWindows file/test counts (line 34), and expected outcomes (lines 44–53). Stale test docs mislead contributors about what's covered.
-20. **UDP listener lifecycle is managed by main process.** `startUdpListener()` is called in `app.whenReady()` after `createWindow()`, `stopUdpListener()` in `will-quit`. The listener auto-reconnects on socket errors (2s delay). Do not create multiple listeners or start/stop from the renderer.
-21. **Map windows are separate BrowserWindow instances.** They are NOT React components in the main renderer. Track them in `groundMapWindows`/`airMapWindows`/`flightStripsWindows` Maps (keyed by ICAO). Always check for existing windows before creating (focus if exists). Clean up Map entries in the `closed` event handler. Each window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX`, `?window=airMap&airport=XXXX`, or `?window=flightStrips&airport=XXXX`).
-22. **UDP state push handles cleanup.** The `udp-aircraft-state` IPC event is pushed to ALL open map windows every 200ms. Map window components subscribe via `useUdpAircraftState()` hook which wraps `onUdpAircraftState`/`offUdpAircraftState`. Always unsubscribe in `useEffect` cleanup to prevent stale callbacks or memory leaks.
+21. **UDP listener lifecycle is managed by main process.** `startUdpListener()` is called in `app.whenReady()` after `createWindow()`, `stopUdpListener()` in `will-quit`. The listener auto-reconnects on socket errors (2s delay). Do not create multiple listeners or start/stop from the renderer.
+22. **Map windows are separate BrowserWindow instances.** They are NOT React components in the main renderer. Track them in `groundMapWindows`/`airMapWindows`/`flightStripsWindows` Maps (keyed by ICAO). Always check for existing windows before creating (focus if exists). Clean up Map entries in the `closed` event handler. Each window loads the same Vite SPA with query params (`?window=groundMap&airport=XXXX`, `?window=airMap&airport=XXXX`, or `?window=flightStrips&airport=XXXX`).
+23. **UDP state push handles cleanup.** The `udp-aircraft-state` IPC event is pushed to ALL open map windows every 200ms. Map window components subscribe via `useUdpAircraftState()` hook which wraps `onUdpAircraftState`/`offUdpAircraftState`. Always unsubscribe in `useEffect` cleanup to prevent stale callbacks or memory leaks.

@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ticksToTime } = require('../../src/utils/timeUtils');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 // ─── CLI ──────────────────────────────────────────────────────
 if (process.argv.length < 3 || process.argv[2] === '--help' || process.argv[2] === '-h') {
@@ -232,7 +233,7 @@ function compareRunwayEntries(jsonData, aclData) {
 console.log('Test: Timeline Comparison (JSON vs ACL)');
 console.log('ACL: ' + aclPath + '\n');
 
-const aclText = fs.readFileSync(aclPath, 'utf-8');
+const aclText = readAclText(aclPath);
 const dir = path.dirname(aclPath);
 const base = path.basename(aclPath, '.acl');
 let totalDiffs = 0, totalOk = 0;

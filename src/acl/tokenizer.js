@@ -217,6 +217,76 @@ function createTokenizer(text) {
   }
 
   /**
+   * Find a specific key at a given depth within an object region and return
+   * its value range. Only matches when the key is found at exactly `targetDepth`
+   * (depth 1 = direct child of the object at `start`).
+   *
+   * This replaces both manual depth-counting (extractStringFromV4) and
+   * regex-based key extraction (_extractString / _extractInt / _extractFloat)
+   * with a single string-aware structural primitive.
+   *
+   * @param {number} start - Position of the opening { of the object to search
+   * @param {number} end - Position after the closing } of the object
+   * @param {string} key - The key name to find (without quotes)
+   * @param {number} [targetDepth=1] - Depth at which the key must be found
+   * @returns {{ valueStart: number, valueEnd: number } | null}
+   */
+  function findKeyAtDepth(start, end, key, targetDepth) {
+    if (targetDepth === undefined) targetDepth = 1;
+    const searchStr = '"' + key + '"';
+    let depth = 0;
+    let inString = false;
+
+    for (let i = start; i < end; i++) {
+      const c = text[i];
+      if (c === '"' && (i === 0 || text[i - 1] !== '\\')) {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (c === '{') {
+        depth++;
+      } else if (c === '}') {
+        depth--;
+      } else if (depth === targetDepth && text.substring(i, i + searchStr.length) === searchStr) {
+        // Found the key at the correct depth — find its value
+        const colonPos = text.indexOf(':', i + searchStr.length);
+        if (colonPos < 0 || colonPos >= end) return null;
+
+        let valStart = colonPos + 1;
+        while (valStart < end && ' \t\n\r'.includes(text[valStart])) valStart++;
+        if (valStart >= end) return null;
+
+        // Determine value type and find its end
+        let valEnd;
+        if (text[valStart] === '"') {
+          const strEnd = _skipString(valStart);
+          if (strEnd === null) return null;
+          valEnd = strEnd + 1;
+        } else if (text[valStart] === '{') {
+          const objEnd = _findObjectEndRaw(valStart);
+          if (objEnd === null) return null;
+          valEnd = objEnd;
+        } else if (text[valStart] === '[') {
+          const arrEnd = findArrayEnd(valStart);
+          if (arrEnd === null) return null;
+          valEnd = arrEnd;
+        } else if (text.substring(valStart, valStart + 4) === 'null') {
+          valEnd = valStart + 4;
+        } else {
+          // Number or boolean — scan to next structural break
+          valEnd = valStart;
+          while (valEnd < end && !',\r\n\t }]'.includes(text[valEnd])) valEnd++;
+        }
+
+        return { valueStart: valStart, valueEnd: valEnd };
+      }
+    }
+    return null;
+  }
+
+  /**
    * Get all top-level key names in an object region.
    * Scans for quoted keys at depth 1 (inside the outermost {}).
    * String-aware.
@@ -265,6 +335,7 @@ function createTokenizer(text) {
     findObjectEnd,
     skipString,
     findNextOutsideString,
+    findKeyAtDepth,
     getTopLevelKeys,
     substring,
     getText: () => text,

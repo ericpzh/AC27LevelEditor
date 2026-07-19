@@ -7,23 +7,37 @@
  */
 const fs = require('fs');
 const path = require('path');
-import { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND } from './constants';
+const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND } = require('./constants');
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
-const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, computeApproachCap, _vec3Sub, _vec3Normalize, _vec3Dist } = require('./approach');
+const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, computeApproachCap, _vec3Sub, _vec3Normalize, _vec3Dist, _detectSchemaVersion } = require('./approach');
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
+const { readAclText, writeAcl } = require('./gatcarc');
 
 // ─── Parse WorldState.FlightPlans ─────────────────────────────
 
-function _parseWorldStateFlightPlans(text) {
+function _parseWorldStateFlightPlans(text, isV4) {
   const log = (msg) => console.log('[ACL-FP]', msg);
   log('_parseWorldStateFlightPlans() START');
 
-  // Use tokenizer to verify FlightPlans is a child of WorldState
+  // Auto-detect for backward compat with callers that don't pass isV4
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(text) === 4;
+  }
+
+  // v4 schema: use StaticData.$blobdoc.StaticItems path
+  if (isV4) {
+    return _parseStaticDataFlightPlans(text);
+  }
+
+  // v2/v3 schema: FlightPlans inside WorldState
   const t = createTokenizer(text);
   const wsSec = t.findSection('WorldState');
-  if (!wsSec) return null;
+  if (!wsSec) {
+    log('WorldState NOT FOUND');
+    return null;
+  }
 
   // Find FlightPlans within WorldState
   const wsText = t.substring(wsSec.valueStart, wsSec.valueEnd);
@@ -46,7 +60,7 @@ function _parseWorldStateFlightPlans(text) {
   const rcEnd = fpT.findArrayEnd(rcStart);
   if (rcEnd === null) { log('cannot find $rcontent end'); return null; }
 
-  // Extract $rlength
+  // Extract $rlength — v2/v3 regex (byte-identical to original editor output)
   const rlMatch = fpText.match(/"\$rlength"\s*:\s*(\d+)/);
   const originalLength = rlMatch ? parseInt(rlMatch[1], 10) : 0;
   log('$rlength: ' + originalLength);
@@ -76,12 +90,100 @@ function _parseWorldStateFlightPlans(text) {
 
   const flights = [];
   for (const entry of fpData.fpEntries) {
-    const flight = _parseFlightPlanEntry(entry.vBlock);
+    const flight = _parseFlightPlanEntry(entry.vBlock, false);
     if (flight) flights.push(flight);
   }
   log('converted flights: ' + flights.length);
 
   if (flights.length === 0) return null;
+  return { flights, fpData };
+}
+
+// ─── Parse v4 StaticData.$blobdoc.StaticItems ─────────────
+
+function _parseStaticDataFlightPlans(text) {
+  const log = (msg) => console.log('[ACL-FP]', msg);
+
+  // Navigate: StaticData → $blobdoc → StaticItems → $rcontent
+  const t = createTokenizer(text);
+  const sdSec = t.findSection('StaticData');
+  if (!sdSec) { log('StaticData NOT FOUND'); return null; }
+
+  const sdText = t.substring(sdSec.valueStart, sdSec.valueEnd);
+  const sdT = createTokenizer(sdText);
+
+  // Find $blobdoc (the decoded nested binary document)
+  const bdSec = sdT.findSection('$blobdoc');
+  if (!bdSec) { log('$blobdoc NOT FOUND inside StaticData'); return null; }
+
+  const bdText = sdT.substring(bdSec.valueStart, bdSec.valueEnd);
+  const bdT = createTokenizer(bdText);
+
+  // Find StaticItems (the dictionary of static items including flight-plan entries)
+  const siSec = bdT.findSection('StaticItems');
+  if (!siSec) { log('StaticItems NOT FOUND inside $blobdoc'); return null; }
+
+  const siText = bdT.substring(siSec.valueStart, siSec.valueEnd);
+  const siT = createTokenizer(siText);
+
+  // Find $rcontent array
+  const rcSec = siT.findSection('$rcontent');
+  if (!rcSec) { log('$rcontent NOT FOUND in StaticItems'); return null; }
+
+  const rcStart = rcSec.valueStart;
+  if (siText[rcStart] !== '[') { log('$rcontent value is not an array'); return null; }
+
+  const rcEnd = siT.findArrayEnd(rcStart);
+  if (rcEnd === null) { log('cannot find $rcontent end'); return null; }
+
+  // Extract $rlength — structural, no regex
+  const rlSec = siT.findSection('$rlength');
+  const originalLength = rlSec ? parseInt(siText.substring(rlSec.valueStart, rlSec.valueEnd), 10) : 0;
+  log('StaticItems $rlength: ' + originalLength);
+
+  // Absolute positions in original text
+  const absSdStart = sdSec.valueStart;
+  const absBdStart = absSdStart + bdSec.valueStart;
+  const absSiStart = absBdStart + siSec.valueStart;
+  const absRcPos = absSiStart + rcStart;
+  const absRcEnd = absSiStart + rcEnd;
+
+  const fpData = {
+    fpStart: absSiStart,
+    fpBefore: text.substring(0, absRcPos),
+    fpAfter: text.substring(absRcEnd),
+    fpEntries: [],
+    fpRlength: originalLength,
+    _isV4: true,
+  };
+
+  // Parse $rcontent entries — same $k/$v structure as old format
+  const arrayContent = text.substring(absRcPos, absRcEnd);
+  const arrayT = createTokenizer(arrayContent);
+
+  // Parse all entries, then filter to flight-plan: entries only
+  _parseDictEntriesToFpData(arrayContent, arrayT, fpData, absRcPos);
+
+  log('parsed StaticItems entries (all types): ' + fpData.fpEntries.length);
+
+  // Filter to flight-plan entries only (keys start with "flight-plan:")
+  const flightEntries = fpData.fpEntries.filter(e => e.k && e.k.startsWith('flight-plan:'));
+  log('flight-plan entries: ' + flightEntries.length);
+
+  const flights = [];
+  for (const entry of flightEntries) {
+    const flight = _parseFlightPlanEntry(entry.vBlock, true);
+    if (flight) {
+      // Extract the flight plan GUID from the key (format: "flight-plan:REGISTRATION")
+      flight._fpGuid = entry.k;
+      flights.push(flight);
+    }
+  }
+  log('converted flights: ' + flights.length);
+
+  if (flights.length === 0) return null;
+  // Replace fpEntries with filtered set for save/rebuild
+  fpData.fpEntries = flightEntries;
   return { flights, fpData };
 }
 
@@ -127,14 +229,14 @@ function _parseDictEntriesToFpData(content, contentT, fpData, baseOffset) {
 
 // ─── Parse single FlightPlanState entry (type 37) ─────────────
 
-function _parseFlightPlanEntry(vBlock) {
+function _parseFlightPlanEntry(vBlock, isV4) {
   try {
     const cleaned = preprocessUnityJson(vBlock);
     const obj = JSON.parse(cleaned);
-    return _extractFlightFromParsed(obj);
+    return _extractFlightFromParsed(obj, isV4);
   } catch (e) {
     // Fallback to regex extraction for compatibility
-    return _parseFlightPlanEntryRegex(vBlock);
+    return _parseFlightPlanEntryRegex(vBlock, isV4);
   }
 }
 
@@ -143,7 +245,7 @@ function _parseFlightPlanEntry(vBlock) {
  * The object was produced by pre-processor + JSON.parse, so DateTime
  * fields have __v sentinel arrays (e.g., { "$type": 3, "__v": ["<ticks>"] }).
  */
-function _extractFlightFromParsed(obj) {
+function _extractFlightFromParsed(obj, isV4) {
   const f = {};
 
   f._Registration = obj.Registration || '';
@@ -153,9 +255,9 @@ function _extractFlightFromParsed(obj) {
   f.Language = obj.Language || '';
   f._fpGuid = '';
 
-  // Determine arrival vs departure from parsed object
-  const arrLeg = obj.Arrival;
-  const depLeg = obj.Departure;
+  // v4 schema uses InitialArrival/InitialDeparture; v2/v3 uses Arrival/Departure
+  const arrLeg = isV4 ? obj.InitialArrival : obj.Arrival;
+  const depLeg = isV4 ? obj.InitialDeparture : obj.Departure;
 
   if (arrLeg && arrLeg !== null) {
     f.isDeparture = false;
@@ -216,7 +318,7 @@ function _extractFlightFromParsed(obj) {
  * Kept for backward compatibility with edge-case ACL files that
  * can't be parsed by the pre-processor + JSON.parse path.
  */
-function _parseFlightPlanEntryRegex(vBlock) {
+function _parseFlightPlanEntryRegex(vBlock, isV4) {
   const f = {};
 
   const regMatch = vBlock.match(/"Registration"\s*:\s*"([^"]*)"/);
@@ -232,14 +334,19 @@ function _parseFlightPlanEntryRegex(vBlock) {
   f.Language = langMatch ? langMatch[1] : '';
   f._fpGuid = '';
 
-  const arrNull = vBlock.match(/"Arrival"\s*:\s*null/);
-  const depNull = vBlock.match(/"Departure"\s*:\s*null/);
-  const arrIdx = vBlock.indexOf('"Arrival"');
-  const depIdx = vBlock.indexOf('"Departure"');
+  // v4 uses InitialArrival/InitialDeparture; v2/v3 uses Arrival/Departure
+  const arrField = isV4 ? 'InitialArrival' : 'Arrival';
+  const depField = isV4 ? 'InitialDeparture' : 'Departure';
+  const arrNull = vBlock.match(new RegExp('"' + arrField + '"\\s*:\\s*null'));
+  const depNull = vBlock.match(new RegExp('"' + depField + '"\\s*:\\s*null'));
+  const arrIdx = vBlock.indexOf('"' + arrField + '"');
+  const depIdx = vBlock.indexOf('"' + depField + '"');
+  const hasArrival = arrIdx >= 0 && !arrNull;
+  const hasDeparture = depIdx >= 0 && !depNull;
 
-  if (arrIdx >= 0 && !arrNull) {
+  if (hasArrival) {
     f.isDeparture = false;
-    const arrMatch = vBlock.match(/"Arrival"\s*:\s*\{/);
+    const arrMatch = vBlock.match(new RegExp('"' + arrField + '"\\s*:\\s*\\{'));
     if (arrMatch) {
       const objStart = arrMatch.index + arrMatch[0].length;
       let aDepth = 1;
@@ -269,9 +376,9 @@ function _parseFlightPlanEntryRegex(vBlock) {
       f.OffBlockTime = '';
       f.TakeoffTime = '';
     }
-  } else if (depIdx >= 0 && !depNull) {
+  } else if (hasDeparture) {
     f.isDeparture = true;
-    const depMatch = vBlock.match(/"Departure"\s*:\s*\{/);
+    const depMatch = vBlock.match(new RegExp('"' + depField + '"\\s*:\\s*\\{'));
     if (depMatch) {
       const objStart = depMatch.index + depMatch[0].length;
       let dDepth = 1;
@@ -370,7 +477,7 @@ function _buildFlightPlanDepartureLeg(flight, id, baseDateTicks, depTypeNum) {
 
 function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCache, aclcfgStartTime, _saveSec) {
   const log = (msg) => console.log('[ACL-REBUILD]', msg);
-  const text = fs.readFileSync(aclPath, 'utf-8');
+  const text = readAclText(aclPath);
   const bdt = baseDateTicks || _extractBaseDateFromText(text);
   // Extract ICAO from path: .../Airports/<ICAO>/Levels/...
   const icaoMatch = aclPath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
@@ -437,6 +544,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       // `List`1[[...` or similar generic types contain a backtick and must be allowed
       // through, otherwise List<Vector3> types silently fall back to a colliding default.
       if (fullName.startsWith('System.Collections.Generic') && !search.includes('`')) continue;
+      // Legacy exact-substring match (v2/v3 compatibility — byte-identical output)
       if (fullName.includes(search)) return num;
     }
     return null;
@@ -947,8 +1055,9 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   // (DateTime=3, Vector3=16, etc.) are not in typeMap and are left untouched.
   newText = _expandShortFormTypes(newText, typeMap);
 
+  // v2/v3: write as plain text (byte-identical to original editor output)
   fs.writeFileSync(aclPath, newText, 'utf-8');
-  log('SUCCESS – file written (' + (newText.length / 1024).toFixed(0) + ' KB)');
+  log('SUCCESS – file written (' + (newText.length / 1024).toFixed(0) + ' KB, utf-8)');
 }
 
 // ─── Build FlightPlanStateEntry with preset GUID ────────────────
@@ -1208,7 +1317,6 @@ function _extractAppChannelGuid(segAfter) {
   const parts = chContent.split(/"\$v":\s*\{/);
   for (let i = 1; i < parts.length; i++) {
     const block = parts[i];
-    // Check for Type=5 (Approach) or ShortCode "APP"
     if (/"Type":\s*5\b/.test(block) || /"ShortCode":\s*"APP"/.test(block)) {
       const guidM = block.match(/"Guid":\s*"([\da-f-]+)"/);
       if (guidM) return guidM[1];
@@ -1236,10 +1344,10 @@ function _extractTowerChannelGuid(segAfter) {
   }
   if (chRcEnd === null) return '';
   const chContent = segAfter.substring(chRcStart, chRcEnd);
+  // Split on $v blocks to find the TWR channel (Type=3 or ShortCode="TWR").
   const parts = chContent.split(/"\$v":\s*\{/);
   for (let i = 1; i < parts.length; i++) {
     const block = parts[i];
-    // Check for Type=3 (Tower) or ShortCode "TWR"
     if (/"Type":\s*3\b/.test(block) || /"ShortCode":\s*"TWR"/.test(block)) {
       const guidM = block.match(/"Guid":\s*"([\da-f-]+)"/);
       if (guidM) return guidM[1];
@@ -1518,9 +1626,9 @@ function _metaRunway(sectionText) {
  * Patches WindFrames, WeatherFrames, and RunwayTimeline sections in the .acl file
  * to match the current timeline data.
  */
-function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runwayTimeline) {
+function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runwayTimeline, isV4) {
   const log = (msg) => console.log('[ACL-TIMELINE]', msg);
-  let text = fs.readFileSync(aclPath, 'utf-8');
+  let text = isV4 ? readAclText(aclPath) : fs.readFileSync(aclPath, 'utf-8');
 
   // Sort timelines by time
   const _toSec = (t) => { const p = String(t || '').split(':'); return (parseInt(p[0]) || 0) * 3600 + (parseInt(p[1]) || 0) * 60 + (parseInt(p[2]) || 0); };
@@ -1580,8 +1688,13 @@ function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runway
     }
   }
 
-  fs.writeFileSync(aclPath, text, 'utf-8');
-  log('Timeline sections written to ACL');
+  if (isV4) {
+    writeAcl(aclPath, text);
+    log('Timeline sections written to ACL (' + (isV4 ? 'v4' : 'v2/v3') + ')');
+  } else {
+    fs.writeFileSync(aclPath, text, 'utf-8');
+    log('Timeline sections written to ACL (v2/v3)');
+  }
 }
 
 // ─── Parse timeline sections from ACL text ────────────────────
@@ -1731,12 +1844,363 @@ function _parseRunwayTimeline(text) {
   return result;
 }
 
+// ─── V4 Save: rebuild StaticData.$blobdoc.StaticItems flight-plan entries ──
+
+function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCache) {
+  const log = (msg) => console.log('[ACL-REBUILD-V4]', msg);
+  const text = readAclText(aclPath);
+  const bdt = BigInt(baseDateTicks || FALLBACK_BASE_DATE_TICKS);
+
+  // Build per-file typeMap (same pattern as _rebuildWorldStateSections)
+  // Type numbers are per-file in Unity's JSON serialization — each .acl file gets
+  // its own assignments. We seed from the current file first (ground truth), then
+  // fill in missing types from the per-file cache (built during initial scan).
+  const typeMap = new Map();
+  const typeDeclRegex = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+  let tdMatch;
+  while ((tdMatch = typeDeclRegex.exec(text)) !== null) {
+    const num = parseInt(tdMatch[1], 10);
+    if (!typeMap.has(num)) typeMap.set(num, tdMatch[2]);
+  }
+  const typeMapFromFile = typeMap.size;
+  const fileKey = path.basename(aclPath);
+  if (approachCache && approachCache.fileTypeMaps) {
+    const cachedFileTypes = approachCache.fileTypeMaps.get(fileKey);
+    if (cachedFileTypes) {
+      for (const [k, v] of cachedFileTypes) {
+        if (!typeMap.has(k)) typeMap.set(k, v);
+      }
+    }
+  }
+  let nextFallbackNum = TYPE_NUM_FALLBACK_START;
+  for (const num of typeMap.keys()) {
+    if (num >= nextFallbackNum) nextFallbackNum = num + 1;
+  }
+  const _tn = (search) => {
+    for (const [num, fullName] of typeMap) {
+      if (fullName.startsWith('System.Collections.Generic') && !search.includes('`')) continue;
+      // Boundary-aware match: prevent "Vector4[]," from matching search "Vector4,"
+      const idx = fullName.indexOf(search);
+      if (idx === -1) continue;
+      const nextChar = fullName[idx + search.length];
+      if (nextChar === undefined || nextChar === ' ' || nextChar === ',') return num;
+    }
+    return null;
+  };
+
+  log('flights: ' + (flights ? flights.length : 0) + ' baseDateTicks: ' + bdt + ' typeMap: ' + typeMap.size + ' (' + typeMapFromFile + ' from file)');
+
+  if (!flights || flights.length === 0) {
+    log('WARNING: empty flights array, skipping rebuild');
+    return;
+  }
+
+  const t = createTokenizer(text);
+
+  // 1. Navigate to StaticData.$blobdoc.StaticItems.$rcontent
+  const sdSec = t.findSection('StaticData');
+  if (!sdSec) { log('ERROR: no StaticData section'); return; }
+  const sdText = t.substring(sdSec.valueStart, sdSec.valueEnd);
+  const sdT = createTokenizer(sdText);
+
+  const bdSec = sdT.findSection('$blobdoc');
+  if (!bdSec) { log('ERROR: no $blobdoc section'); return; }
+  const bdText = sdT.substring(bdSec.valueStart, bdSec.valueEnd);
+  const bdT = createTokenizer(bdText);
+
+  // Build blobdoc-scoped type map — each $blobdoc has its own independent
+  // type numbering. Type X in the outer document can mean something completely
+  // different from type X inside the blobdoc.
+  const bdTypeMap = new Map();
+  const bdTypeDeclRegex = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+  let bdTm;
+  while ((bdTm = bdTypeDeclRegex.exec(bdText)) !== null) {
+    const num = parseInt(bdTm[1], 10);
+    if (!bdTypeMap.has(num)) bdTypeMap.set(num, bdTm[2]);
+  }
+  const _bdTn = (search) => {
+    // Helper: boundary-aware type name match
+    const _match = (fullName, search) => {
+      const idx = fullName.indexOf(search);
+      if (idx === -1) return false;
+      const nextChar = fullName[idx + search.length];
+      return nextChar === undefined || nextChar === ' ' || nextChar === ',';
+    };
+    for (const [num, fullName] of bdTypeMap) {
+      if (fullName.startsWith('System.Collections.Generic') && !search.includes('`')) continue;
+      if (_match(fullName, search)) return num;
+    }
+    // Fall back to global typeMap, but only if the number isn't already
+    // claimed by a different type in this blobdoc (type numbering is per-scope)
+    for (const [num, fullName] of typeMap) {
+      if (fullName.startsWith('System.Collections.Generic') && !search.includes('`')) continue;
+      if (_match(fullName, search)) {
+        if (!bdTypeMap.has(num)) return num;
+        // Number already taken in blobdoc — keep searching for an unclaimed match
+      }
+    }
+    return null;
+  };
+
+  const dtTypeNum = _bdTn('System.DateTime,') || 3;
+  const arrLegTypeNum = _bdTn('FlightPlanArrivalLeg,') || nextFallbackNum++;
+  const depLegTypeNum = _bdTn('FlightPlanDepartureLeg,') || nextFallbackNum++;
+
+  const dtTypeFull = '"' + dtTypeNum + '|System.DateTime, mscorlib"';
+  const arrLegTypeFull = '"' + arrLegTypeNum + '|ContextCross.Models.FlightPlanArrivalLeg, GroundATC.Core"';
+  const depLegTypeFull = '"' + depLegTypeNum + '|ContextCross.Models.FlightPlanDepartureLeg, GroundATC.Core"';
+
+  log('blobdoc typeMap: ' + bdTypeMap.size + ' types, typeNums: DateTime=' + dtTypeNum + ' ArrivalLeg=' + arrLegTypeNum + ' DepartureLeg=' + depLegTypeNum);
+
+  // Scan $blobdoc for max existing $id to seed our unique counter
+  // $id values inside the blobdoc form a flat namespace — we must not collide
+  let nextId = 1;
+  const idRe = /"\$id":\s*(\d+)/g;
+  let idMatch;
+  while ((idMatch = idRe.exec(bdText)) !== null) {
+    const val = parseInt(idMatch[1], 10);
+    if (val >= nextId) nextId = val + 1;
+  }
+  log('max $id in blobdoc: ' + (nextId - 1) + ', nextId: ' + nextId);
+
+  const siSec = bdT.findSection('StaticItems');
+  if (!siSec) { log('ERROR: no StaticItems section'); return; }
+  const siText = bdT.substring(siSec.valueStart, siSec.valueEnd);
+  const siT = createTokenizer(siText);
+
+  const rcSec = siT.findSection('$rcontent');
+  if (!rcSec) { log('ERROR: no $rcontent in StaticItems'); return; }
+  const rcStart = rcSec.valueStart;
+  if (siText[rcStart] !== '[') { log('ERROR: $rcontent is not an array'); return; }
+  const rcEnd = siT.findArrayEnd(rcStart);
+  if (rcEnd === null) { log('ERROR: cannot find $rcontent end'); return; }
+
+  log('StaticItems $rcontent: ' + rcStart + ' → ' + rcEnd);
+
+  // 2. Find all flight-plan entries within the $rcontent array
+  const arrayContent = siText.substring(rcStart + 1, rcEnd - 1); // inside [...]
+  const arrT = createTokenizer(siText);
+
+  // Locate the first and last flight-plan entry to determine the replacement range
+  // Also capture the $type from the first flight-plan entry (varies per file)
+  let fpFirstStart = -1, fpLastEnd = -1;
+  const fpItemNum = _tn('ContextCross.Models.FlightPlanStaticItem,') || nextFallbackNum++;
+  let fpTypeStr = `"$type": "${fpItemNum}|ContextCross.Models.FlightPlanStaticItem, GroundATC.Core"`;
+  let pos = rcStart + 1;
+  while (pos < rcEnd) {
+    while (pos < rcEnd && ' \t\n\r'.includes(siText[pos])) pos++;
+    if (pos >= rcEnd || siText[pos] === ']') break;
+    if (siText[pos] === ',') { pos++; continue; }
+    if (siText[pos] !== '{') { pos++; continue; }
+
+    const entryEnd = arrT.findObjectEnd(pos);
+    if (entryEnd === null) break;
+    const entryBlock = siText.substring(pos, entryEnd);
+
+    // Check if this is a flight-plan entry
+    if (entryBlock.includes('"$k": "flight-plan:')) {
+      if (fpFirstStart < 0) {
+        fpFirstStart = pos;
+        // Capture the $type from the first flight-plan entry (varies per file)
+        const typeMatch = entryBlock.match(/"\$type":\s*("[^"]*"|\d+)/);
+        if (typeMatch) fpTypeStr = '"$type": ' + typeMatch[1];
+      }
+      fpLastEnd = entryEnd;
+      // Skip commas after flight-plan entries
+      let afterEnd = entryEnd;
+      while (afterEnd < rcEnd && ' \t\n\r'.includes(siText[afterEnd])) afterEnd++;
+      if (afterEnd < rcEnd && siText[afterEnd] === ',') fpLastEnd = afterEnd + 1;
+    }
+
+    pos = entryEnd;
+  }
+
+  // Also find the end of the last entry before flight-plans (for the leading comma)
+  if (fpFirstStart >= 0) {
+    // Walk backward from fpFirstStart to find the preceding entry's end
+    let beforeFp = fpFirstStart - 1;
+    while (beforeFp > rcStart && ' \t\n\r'.includes(siText[beforeFp])) beforeFp--;
+    if (beforeFp > rcStart && siText[beforeFp] === ',') {
+      // Include the leading comma in the replacement
+      fpFirstStart = beforeFp;
+      while (fpFirstStart > rcStart && ' \t\n\r'.includes(siText[fpFirstStart - 1])) fpFirstStart--;
+    }
+  }
+
+  log('flight-plan range: ' + fpFirstStart + ' → ' + fpLastEnd +
+      ' (found=' + (fpFirstStart >= 0) + ')');
+
+  // 3. Build the replacement text
+  const segBefore = fpFirstStart >= 0 ? siText.substring(0, fpFirstStart) : siText.substring(0, rcStart + 1);
+  const segAfter = fpLastEnd >= 0 ? siText.substring(fpLastEnd) : siText.substring(rcStart + 1);
+
+  // Generate v4 flight-plan entries
+  const fpEntries = [];
+  const RESOLVER = { createTokenizer, preprocessUnityJson, findArrayEnd: (txt, start) => createTokenizer(txt).findArrayEnd(start) };
+
+  for (const fl of flights) {
+    // Time conversion helpers
+    const _timeToTicks = (t) => {
+      if (!t) return 0n;
+      const p = String(t).split(':');
+      const sec = +p[0] * 3600 + (+p[1] || 0) * 60 + (+p[2] || 0);
+      return bdt + BigInt(Math.round(sec * 10000000));
+    };
+
+    const isDeparture = fl.isDeparture === true;
+    const registration = fl._Registration || fl.Registration || '';
+
+    // Build InitialArrival or InitialDeparture leg
+    // Each leg sub-object gets its own $id and $type (v4 OdinSerializer requirement)
+    const legId = nextId++;
+    let legBlock = '';
+    if (isDeparture) {
+      const obtTicks = _timeToTicks(fl.OffBlockTime);
+      // v4: TakeoffTime always 0 (game computes it dynamically)
+      legBlock = [
+        '                                "$id": ' + legId + ',',
+        '                                "$type": ' + depLegTypeFull + ',',
+        '                                "CallSign": "' + (fl.CallSign || '') + '",',
+        '                                "DestinationAirport": "' + (fl.ArrivalAirport || '') + '",',
+        '                                "OffBlockTime": {',
+        '                                    "$type": ' + dtTypeFull + ',',
+        '                                    ' + obtTicks,
+        '                                },',
+        '                                "TakeoffTime": {',
+        '                                    "$type": ' + dtTypeFull + ',',
+        '                                    0',
+        '                                },',
+        '                                "Runway": "' + (fl.Runway || '') + '",',
+        '                                "Stand": "' + (fl.Stand || '') + '"',
+      ].join('\n');
+    } else {
+      const ldtTicks = _timeToTicks(fl.LandingTime);
+      // v4: InBlockTime always 0 (game computes it dynamically)
+      legBlock = [
+        '                                "$id": ' + legId + ',',
+        '                                "$type": ' + arrLegTypeFull + ',',
+        '                                "CallSign": "' + (fl.CallSign || '') + '",',
+        '                                "OriginAirport": "' + (fl.DepartureAirport || '') + '",',
+        '                                "LandingTime": {',
+        '                                    "$type": ' + dtTypeFull + ',',
+        '                                    ' + ldtTicks,
+        '                                },',
+        '                                "InBlockTime": {',
+        '                                    "$type": ' + dtTypeFull + ',',
+        '                                    0',
+        '                                },',
+        '                                "ActualInBlockTime": {',
+        '                                    "$type": ' + dtTypeFull + ',',
+        '                                    0',
+        '                                },',
+        '                                "Runway": "' + (fl.Runway || '') + '",',
+        '                                "Stand": "' + (fl.Stand || '') + '",',
+        '                                "STAR": "' + (fl.Airway || '') + '"',
+      ].join('\n');
+    }
+
+    const entry = [
+      '                    {',
+      '                        "$k": "flight-plan:' + registration + '",',
+      '                        "$v": {',
+      '                            "$id": ' + nextId++ + ',',
+      '                            ' + fpTypeStr + ',',
+      '                            "Registration": "' + registration + '",',
+      '                            "AircraftType": "' + (fl.AircraftType || '') + '",',
+      '                            "AirlineName": "' + (fl.AirlineName || '') + '",',
+      '                            "Voice": "' + (fl.Voice || '') + '",',
+      '                            "Language": "' + (fl.Language || '') + '",',
+      '                            "InitialArrival": ' + (isDeparture ? 'null' : '{\n' + legBlock + '\n                                }') + ',',
+      '                            "InitialDeparture": ' + (isDeparture ? '{\n' + legBlock + '\n                                }' : 'null'),
+      '                        }',
+      '                    }',
+    ].join('\n');
+
+    fpEntries.push(entry);
+  }
+
+  // 4. Assemble: count existing non-flight-plan entries for $rlength update
+  const nonFpCount = (fpFirstStart >= 0)
+    ? _countArrayEntries(siText.substring(rcStart + 1, fpFirstStart)) +
+      _countArrayEntries(siText.substring(fpLastEnd, rcEnd - 1))
+    : _countArrayEntries(siText.substring(rcStart + 1, rcEnd - 1));
+
+  const newRlength = nonFpCount + fpEntries.length;
+  log('non-fp entries: ' + nonFpCount + ', fp entries: ' + fpEntries.length + ', total $rlength: ' + newRlength);
+
+  // Update $rlength in StaticItems
+  const fpContent = fpEntries.length > 0 ? '\n' + fpEntries.join(',\n') + '\n                ' : '';
+
+  let newSiText;
+  if (fpFirstStart >= 0) {
+    // Flight-plan entries existed — replace them in-place within siText
+    newSiText = segBefore + fpContent + segAfter;
+  } else {
+    // No flight-plan entries yet — insert at start of $rcontent array
+    const bracketIdx = siText.indexOf('[', rcSec.valueStart);
+    const afterBracket = siText.substring(bracketIdx + 1);
+    newSiText = siText.substring(0, bracketIdx + 1) + fpContent + afterBracket;
+  }
+
+  // Apply $rlength update to the final section text — use structural scan
+  // to find only the section-level "$rlength" (depth 1) and replace its value,
+  // avoiding nested $rlength inside entries' $v blocks.
+  const finalSiText = (function() {
+    let depth = 0;
+    const keyStr = '"$rlength"';
+    for (let i = 0; i < newSiText.length - keyStr.length; i++) {
+      if (newSiText[i] === '{') { depth++; continue; }
+      if (newSiText[i] === '}') { depth--; continue; }
+      if (depth === 1 && newSiText.substring(i, i + keyStr.length) === keyStr) {
+        const colon = i + keyStr.length;
+        let vs = newSiText.indexOf(':', colon) + 1;
+        while (vs < newSiText.length && ' \t\n\r'.includes(newSiText[vs])) vs++;
+        let ve = vs;
+        while (ve < newSiText.length && newSiText[ve] >= '0' && newSiText[ve] <= '9') ve++;
+        return newSiText.substring(0, vs) + String(newRlength) + newSiText.substring(ve);
+      }
+    }
+    return newSiText;
+  })();
+
+  // 6. Write — convert section offsets from bdT space to full text space
+  const secKeyGlobal = sdSec.valueStart + bdSec.valueStart + siSec.keyStart;
+  const secValueStartGlobal = sdSec.valueStart + bdSec.valueStart + siSec.valueStart;
+  const secValueEndGlobal = sdSec.valueStart + bdSec.valueStart + siSec.valueEnd;
+
+  // Reconstruct the full section: "StaticItems": { ... }
+  const secPrefix = text.substring(secKeyGlobal, secValueStartGlobal); // e.g. "StaticItems":
+  const fullBefore = text.substring(0, secKeyGlobal);
+  const fullAfter = text.substring(secValueEndGlobal);
+  const newText = fullBefore + secPrefix + finalSiText + fullAfter;
+
+  const { writeAcl } = require('./gatcarc');
+  const savedFormat = writeAcl(aclPath, newText);
+  log('SUCCESS – file written (' + (newText.length / 1024).toFixed(0) + ' KB, ' + savedFormat + ' container)');
+}
+
+function _countArrayEntries(arrText) {
+  if (!arrText) return 0;
+  let count = 0;
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < arrText.length; i++) {
+    const c = arrText[i];
+    if (c === '"' && (i === 0 || arrText[i - 1] !== '\\')) { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) count++; }
+  }
+  return count;
+}
+
 module.exports = {
   _parseWorldStateFlightPlans,
   _parseFlightPlanEntry,
   _buildFlightPlanArrivalLeg,
   _buildFlightPlanDepartureLeg,
   _rebuildWorldStateSections,
+  _rebuildStaticDataSections,
   _rebuildTimelineSections,
   _extractSection, _extractConfig,
   _extractAppChannelGuid,

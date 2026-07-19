@@ -39,11 +39,14 @@ export const COL_CLASSES = {
 export const ARRIVAL_FIELDS = ['AirlineCode', 'FlightNum', 'DepartureAirport', 'Stand', 'Runway', 'LandingTime', 'InBlockTime', 'AircraftType', 'Airway', 'Registration', 'Voice', 'Language'];
 export const DEPARTURE_FIELDS = ['AirlineCode', 'FlightNum', 'ArrivalAirport', 'Stand', 'Runway', 'OffBlockTime', 'TakeoffTime', 'AircraftType', 'Registration', 'Voice', 'Language'];
 
-export function getActiveColumns(flights, fieldList) {
+export function getActiveColumns(flights, fieldList, isV4) {
   const cols = ['AirlineCode', 'FlightNum'];
   for (const [fn] of FIELDS) {
     if (fn === 'AirlineCode' || fn === 'FlightNum') continue;
-    if (fieldList.includes(fn)) cols.push(fn);
+    if (!fieldList.includes(fn)) continue;
+    // v4 files always store InBlockTime/TakeoffTime as 0 (unset) — hide the column.
+    if (isV4 && (fn === 'InBlockTime' || fn === 'TakeoffTime')) continue;
+    cols.push(fn);
   }
   return cols;
 }

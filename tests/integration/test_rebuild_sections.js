@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let aclSrc = null;
@@ -54,11 +55,11 @@ console.log('Temp: ' + path.basename(ACL_TEMP) + '\n');
 
 // [1] Parse source ACL
 console.log('[1] Reading source ACL...');
-const srcText = fs.readFileSync(aclSrc, 'utf-8');
+const srcText = readAclText(aclSrc);
 console.log('  Source size: ' + (srcText.length / 1024).toFixed(0) + ' KB');
 
 // Parse FlightPlans to get existing flights
-const fpData = parser._parseWorldStateFlightPlans(srcText);
+const fpData = parser._parseWorldStateFlightPlans(srcText, false);
 if (!fpData || !fpData.flights || fpData.flights.length === 0) {
   console.error('  FAILED: Could not parse FlightPlans from source');
   process.exit(1);
@@ -91,7 +92,7 @@ try {
 
 // [5] Validate output
 console.log('\n[5] Validating output...');
-const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
+const outText = readAclText(ACL_TEMP);
 const outSize = outText.length;
 console.log('  Output size: ' + (outSize / 1024).toFixed(0) + ' KB (source: ' + (srcText.length / 1024).toFixed(0) + ' KB)');
 

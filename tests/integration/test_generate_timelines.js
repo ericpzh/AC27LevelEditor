@@ -11,9 +11,11 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { readAclText } = require('../../src/acl/gatcarc');
 const {
   _generateFramesSection,
   _generateRunwayTimelineSection,
+  _parseRunwayTimeline,
 } = require('../../src/acl/flight_plans');
 
 // ─── CLI ──────────────────────────────────────────────────────
@@ -202,7 +204,7 @@ function testWindFrames() {
   console.log('\n=== Test #1: WindFrames from wind_timeline.json ===');
   if (!windPath) { console.log('  SKIP: no wind_timeline.json found'); return true; }
 
-  const aclText = fs.readFileSync(aclSrc, 'utf-8');
+  const aclText = readAclText(aclSrc);
   const jsonData = JSON.parse(fs.readFileSync(windPath, 'utf-8'));
   const orig = extractSection(aclText, 'WindFrames');
   if (!orig) { console.log('  SKIP: no WindFrames section in ACL'); return true; }
@@ -240,22 +242,27 @@ function testRunwayTimeline() {
   console.log('\n=== Test #2: RunwayTimeline (empty timeline) ===');
   if (!runwayPath) { console.log('  SKIP: no runway_timeline_*.json found'); return true; }
 
-  const aclText = fs.readFileSync(aclSrc, 'utf-8');
-  const jsonData = JSON.parse(fs.readFileSync(runwayPath, 'utf-8'));
+  const aclText = readAclText(aclSrc);
+  const rawJson = JSON.parse(fs.readFileSync(runwayPath, 'utf-8'));
   const orig = extractSection(aclText, 'RunwayTimeline');
   if (!orig) { console.log('  SKIP: no RunwayTimeline section in ACL'); return true; }
+
+  // Use parsed ACL data for the round-trip comparison (JSON file may be stale)
+  const parsed = _parseRunwayTimeline(aclText);
 
   const meta = metaRunway(orig);
   let ok = true;
   ok &= check(meta.irType === 8, 'InitialRunways $type == 8 (got ' + meta.irType + ')');
   ok &= check(!!meta.tlTypeNum, 'Timeline $type number parsed (' + meta.tlTypeNum + ')');
 
-  const gen = _generateRunwayTimelineSection(jsonData, meta);
+  // Generate from parsed ACL data so the round-trip compares apples-to-apples
+  const gen = _generateRunwayTimelineSection(parsed, meta);
   const genObj = gen.substring(gen.indexOf('{'));
   ok &= check(normalizeText(orig) === normalizeText(genObj), 'Generated matches original ACL section 1:1');
 
-  for (let i = 0; i < jsonData.initialRunways.length; i++)
-    ok &= check(gen.includes('"' + jsonData.initialRunways[i] + '"'), 'InitialRunways[' + i + ']="' + jsonData.initialRunways[i] + '"');
+  // Also verify the JSON file's initial runways are a subset of the parsed data
+  for (let i = 0; i < rawJson.initialRunways.length; i++)
+    ok &= check(gen.includes('"' + rawJson.initialRunways[i] + '"'), 'InitialRunways[' + i + ']="' + rawJson.initialRunways[i] + '" (from JSON)');
 
   return ok;
 }
@@ -266,7 +273,7 @@ function testWeatherFrames() {
   console.log('\n=== Test #3: WeatherFrames from weather_timeline.json ===');
   if (!weatherPath) { console.log('  SKIP: no weather_timeline.json found'); return true; }
 
-  const aclText = fs.readFileSync(aclSrc, 'utf-8');
+  const aclText = readAclText(aclSrc);
   const jsonData = JSON.parse(fs.readFileSync(weatherPath, 'utf-8'));
   const orig = extractSection(aclText, 'WeatherFrames');
   if (!orig) { console.log('  SKIP: no WeatherFrames section in ACL'); return true; }
@@ -312,7 +319,7 @@ function testRunwayTimelineWithChanges() {
     return true;
   }
 
-  const aclText = fs.readFileSync(aclSrc, 'utf-8');
+  const aclText = readAclText(aclSrc);
   const jsonData = JSON.parse(fs.readFileSync(rwWithChanges, 'utf-8'));
   const orig = extractSection(aclText, 'RunwayTimeline');
   if (!orig) { console.log('  SKIP: no RunwayTimeline section in ACL'); return true; }

@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let aclOriginal = null;
@@ -38,7 +39,7 @@ const CSV_TEMP = path.join(TEST_DIR, '_e2e_temp_' + aclBase + '.csv');
 // Derive CSV path from ACL's Config block, or by convention
 function findCsvPath(aclPath) {
   try {
-    const text = fs.readFileSync(aclPath, 'utf-8');
+    const text = readAclText(aclPath);
     const config = parser._extractConfig(text);
     if (config && config.flightScheduleFile) {
       const csvPath = path.join(path.dirname(aclPath), config.flightScheduleFile + '.csv');

@@ -172,7 +172,7 @@ export function validateCallsigns(flights) {
   return dupes;
 }
 
-export function runTripleValidation(flights, airportValues, currentAirport, audioCallsigns, _saveSec, _configStartTime, _configEndTime, runwayTimeline) {
+export function runTripleValidation(flights, airportValues, currentAirport, audioCallsigns, _saveSec, _configStartTime, _configEndTime, runwayTimeline, isV4) {
   const issues = [];
   const values = airportValues[currentAirport] || {};
   const audioData = audioCallsigns || { byAirline: {}, allCallsigns: [], allAirlines: [] };
@@ -273,17 +273,19 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     });
   }
 
-  // Time order validation
-  flights.forEach((fl) => {
-    const landing = (fl.LandingTime || '').trim(), inblock = (fl.InBlockTime || '').trim();
-    if (landing && inblock && inblock <= landing) {
-      issues.push(T('val_inblock_after_landing', { cs: fl.CallSign || '?', ib: inblock, ld: landing }));
-    }
-    const offblock = (fl.OffBlockTime || '').trim(), takeoff = (fl.TakeoffTime || '').trim();
-    if (offblock && takeoff && offblock >= takeoff) {
-      issues.push(T('val_offblock_before_takeoff', { cs: fl.CallSign || '?', ob: offblock, to: takeoff }));
-    }
-  });
+  // Time order validation (skipped for v4 — InBlockTime/TakeoffTime are always 0/unset)
+  if (!isV4) {
+    flights.forEach((fl) => {
+      const landing = (fl.LandingTime || '').trim(), inblock = (fl.InBlockTime || '').trim();
+      if (landing && inblock && inblock <= landing) {
+        issues.push(T('val_inblock_after_landing', { cs: fl.CallSign || '?', ib: inblock, ld: landing }));
+      }
+      const offblock = (fl.OffBlockTime || '').trim(), takeoff = (fl.TakeoffTime || '').trim();
+      if (offblock && takeoff && offblock >= takeoff) {
+        issues.push(T('val_offblock_before_takeoff', { cs: fl.CallSign || '?', ob: offblock, to: takeoff }));
+      }
+    });
+  }
 
   // Runway timeline validation
   if (_configStartTime && _configEndTime && runwayTimeline && runwayTimeline.timeline) {

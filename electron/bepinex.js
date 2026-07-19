@@ -113,6 +113,8 @@ async function findDownloadUrl() {
 function downloadZip(url, destPath, onProgress) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(destPath);
+    // Suppress deferred stream errors during cleanup (file may not be open yet)
+    file.on('error', () => {});
     let received = 0;
     let total = 0;
 
@@ -146,8 +148,7 @@ function downloadZip(url, destPath, onProgress) {
         });
 
         res.on('end', () => {
-          file.end();
-          resolve(destPath);
+          file.end(() => resolve(destPath));
         });
       });
 

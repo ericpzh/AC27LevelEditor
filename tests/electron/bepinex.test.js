@@ -14,6 +14,8 @@ import Module from 'module';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import https from 'https';
+import { PassThrough } from 'stream';
 
 // ── Prime electron mock in require cache before module loads ──
 const mockApp = { getPath: vi.fn(() => os.tmpdir()) };
@@ -155,28 +157,148 @@ describe('findDownloadUrl', () => {
 // ══════════════════════════════════════════════════════════════
 
 describe('downloadZip', () => {
-  it('downloads file and reports progress', async () => {
+  let httpsGetSpy;
+
+  afterEach(() => {
+    httpsGetSpy?.mockRestore();
+    httpsGetSpy = null;
+  });
+
+  /** Mock https.get to simulate a download response stream. */
+  function mockHttpsResponse(statusCode, headers, chunks) {
+    const response = new PassThrough();
+    response.statusCode = statusCode;
+    response.headers = { ...headers };
+
+    const mockReq = { on: vi.fn().mockReturnThis(), destroy: vi.fn() };
+    httpsGetSpy = vi.spyOn(https, 'get').mockImplementation((url, opts, cb) => {
+      if (typeof opts === 'function') { cb = opts; opts = undefined; }
+      cb(response); // synchronous — lets downloadZip register data/end listeners
+      if (chunks && chunks.length > 0) {
+        for (const chunk of chunks) response.write(chunk);
+        response.end();
+      }
+      return mockReq;
+    });
+
+    return { response, mockReq };
+  }
+
+  it('downloads file to disk with correct content and reports 0→100% progress', async () => {
     const dir = tmpDir();
     const destPath = path.join(dir, 'bep.zip');
 
-    const bep = getBepInEx();
-    // Spy on _httpsGet to simulate a download response
-    const fakeData = Buffer.alloc(1000);
-    vi.spyOn(bep, '_httpsGet').mockResolvedValue({
-      statusCode: 200,
-      headers: { 'content-length': '1000' },
-      // The downloadZip function reads the body as a stream, but _httpsGet returns the full body already.
-      // We need to make downloadZip work with this. Actually downloadZip uses https.get directly, not _httpsGet.
-    });
+    const content = Buffer.alloc(1000, 'X');
+    mockHttpsResponse(200, { 'content-length': '1000' }, [content]);
 
-    // Hmm, downloadZip calls https.get directly. We need to mock https module.
-    // This is a CJS module, so let's use require.cache.
-    // Actually, let me just skip testing downloadZip at this level since it's hard to mock
-    // https.get for CJS. It will be tested via the integration test layer.
+    const bep = getBepInEx();
+    const progressCb = vi.fn();
+    const result = await bep.downloadZip('https://example.com/bep.zip', destPath, progressCb);
+
+    expect(result).toBe(destPath);
+    expect(fs.existsSync(destPath)).toBe(true);
+    const onDisk = fs.readFileSync(destPath);
+    expect(onDisk.length).toBe(1000);
+    // All content should be 'X'
+    expect(onDisk.every(b => b === 0x58)).toBe(true);
+    // Progress reached 100%
+    expect(progressCb).toHaveBeenCalled();
+    expect(progressCb).toHaveBeenLastCalledWith(100);
+    // Was called at least once with some value
+    expect(progressCb.mock.calls[0][0]).toBeGreaterThanOrEqual(0);
   });
 
-  // downloadZip is tested indirectly via installLatest with mocked sub-functions
-  it.todo('downloadZip — tested indirectly via installLatest');
+  it('reports incremental progress for multi-chunk downloads', async () => {
+    const dir = tmpDir();
+    const destPath = path.join(dir, 'bep.zip');
+
+    const { response, mockReq } = mockHttpsResponse(200, { 'content-length': '100' }, []);
+    // Replace the mock to send 3 chunks manually with intermediate progress
+    httpsGetSpy.mockImplementation((url, opts, cb) => {
+      if (typeof opts === 'function') { cb = opts; opts = undefined; }
+      cb(response);
+      response.write(Buffer.alloc(20, 'A'));
+      response.write(Buffer.alloc(30, 'B'));
+      response.write(Buffer.alloc(50, 'C'));
+      response.end();
+      return mockReq;
+    });
+
+    const bep = getBepInEx();
+    const progressCb = vi.fn();
+    await bep.downloadZip('https://example.com/bep.zip', destPath, progressCb);
+
+    // Should have reported progress after each chunk: 20%, 50%, 100%
+    expect(progressCb.mock.calls.map(c => c[0])).toEqual([20, 50, 100]);
+    expect(fs.existsSync(destPath)).toBe(true);
+    expect(fs.statSync(destPath).size).toBe(100);
+  });
+
+  it('rejects with BEPINEX_DOWNLOAD_HTTP_404 on 404 status', async () => {
+    const dir = tmpDir();
+    const destPath = path.join(dir, 'bep.zip');
+
+    mockHttpsResponse(404, {}, [Buffer.alloc(10)]);
+
+    const bep = getBepInEx();
+    await expect(
+      bep.downloadZip('https://example.com/bep.zip', destPath, vi.fn())
+    ).rejects.toThrow('BEPINEX_DOWNLOAD_HTTP_404');
+
+    // File should be cleaned up on error
+    expect(fs.existsSync(destPath)).toBe(false);
+  });
+
+  it('rejects on request error', async () => {
+    const dir = tmpDir();
+    const destPath = path.join(dir, 'bep.zip');
+
+    const { mockReq } = mockHttpsResponse(200, {}, []);
+    httpsGetSpy.mockImplementation((url, opts, cb) => {
+      if (typeof opts === 'function') { cb = opts; opts = undefined; }
+      // Need headers/statusCode so the response callback doesn't crash on res.headers
+      const res = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
+      cb(res);
+      // Trigger error asynchronously so req.on('error') is registered first
+      setImmediate(() => {
+        const errCb = mockReq.on.mock.calls.find(c => c[0] === 'error')?.[1];
+        if (errCb) errCb(new Error('ECONNREFUSED'));
+      });
+      return mockReq;
+    });
+
+    const bep = getBepInEx();
+    await expect(
+      bep.downloadZip('https://example.com/bep.zip', destPath, vi.fn())
+    ).rejects.toThrow('ECONNREFUSED');
+
+    expect(fs.existsSync(destPath)).toBe(false);
+  });
+
+  it('rejects with BEPINEX_DOWNLOAD_TIMEOUT on timeout', async () => {
+    const dir = tmpDir();
+    const destPath = path.join(dir, 'bep.zip');
+
+    const { mockReq } = mockHttpsResponse(200, {}, []);
+    httpsGetSpy.mockImplementation((url, opts, cb) => {
+      if (typeof opts === 'function') { cb = opts; opts = undefined; }
+      const res = Object.assign(new PassThrough(), { statusCode: 200, headers: {} });
+      cb(res);
+      // Trigger timeout asynchronously so req.on('timeout') is registered first
+      setImmediate(() => {
+        const timeoutCb = mockReq.on.mock.calls.find(c => c[0] === 'timeout')?.[1];
+        if (timeoutCb) timeoutCb();
+      });
+      return mockReq;
+    });
+
+    const bep = getBepInEx();
+    await expect(
+      bep.downloadZip('https://example.com/bep.zip', destPath, vi.fn())
+    ).rejects.toThrow('BEPINEX_DOWNLOAD_TIMEOUT');
+
+    expect(fs.existsSync(destPath)).toBe(false);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════

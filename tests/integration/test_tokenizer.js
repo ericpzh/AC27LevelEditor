@@ -222,7 +222,7 @@ if (opts.root) {
       for (const file of files.slice(0, 2)) { // Test first 2 files per airport
         const filePath = path.join(levelsDir, file);
         test('Real file sections: ' + icao + '/' + file, () => {
-          const text = fs.readFileSync(filePath, 'utf-8');
+          const text = require('../../src/acl/gatcarc').readAclText(filePath);
           const t = createTokenizer(text);
 
           // Verify key sections exist

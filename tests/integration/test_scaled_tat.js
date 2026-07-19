@@ -17,6 +17,7 @@ for (let i = 2; i < process.argv.length; i++) {
 
 const dataDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
 const approach = require('../../src/acl/approach');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 // Real-world runway lengths (meters)
 const RWY_REAL = {
@@ -57,7 +58,7 @@ function extractVector3(block) {
 }
 
 function computeRunwayScales(aclPath, icao) {
-  const text = fs.readFileSync(aclPath, 'utf-8');
+  const text = readAclText(aclPath);
   const sdText = text.substring(text.indexOf('"SceneryData"'));
 
   // Find Runways section and iterate entries
@@ -212,7 +213,7 @@ const fixedResults = [];
 for (const f of files) {
   const aclPath = path.join(dataDir, f.icao, 'Levels', f.name + '.acl');
   if (!fs.existsSync(aclPath)) continue;
-  const text = fs.readFileSync(aclPath, 'utf-8');
+  const text = readAclText(aclPath);
   const entries = approach.extractApproachData(text).filter(e => e.landingTimeTicks > 0 && e.route && e.runway);
 
   const byKey = new Map();
@@ -288,7 +289,7 @@ const allResults = [];
 for (const f of files) {
   const aclPath = path.join(dataDir, f.icao, 'Levels', f.name + '.acl');
   if (!fs.existsSync(aclPath)) continue;
-  const text = fs.readFileSync(aclPath, 'utf-8');
+  const text = readAclText(aclPath);
   const entries = approach.extractApproachData(text).filter(
     e => e.landingTimeTicks > 0 && e.route && e.runway
   );

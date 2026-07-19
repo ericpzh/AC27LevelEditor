@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { loadFlights, generateFullAcl, sortFlightsChronologically, extractTypeMap } = require('../../src/acl/parser');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 const FIXTURE_ACL = path.join(__dirname, '..', 'fixtures', 'game-root', 'GroundATC_Data',
   'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.acl');
@@ -37,7 +38,7 @@ fs.copyFileSync(FIXTURE_ACL, TEMP_BAK);
 
 // [2] Extract typeMap from .bak (source of truth)
 console.log('[2] Extracting typeMap from .bak...');
-const bakText = fs.readFileSync(TEMP_BAK, 'utf-8');
+const bakText = readAclText(TEMP_BAK);
 const bakTypeMap = extractTypeMap(bakText);
 console.log('  .bak typeMap: ' + bakTypeMap.size + ' type declarations');
 check(bakTypeMap.size > 0, '.bak typeMap is non-empty');
@@ -58,7 +59,7 @@ generateFullAcl(TEMP_ACL, sorted, null, null, null, null, null, null, null, null
 
 // [5] Read saved output
 console.log('[5] Analyzing saved output...');
-const outText = fs.readFileSync(TEMP_ACL, 'utf-8');
+const outText = readAclText(TEMP_ACL);
 console.log('  Output size: ' + (outText.length / 1024).toFixed(0) + ' KB');
 
 // [6] Extract all full-form $type declarations from saved output

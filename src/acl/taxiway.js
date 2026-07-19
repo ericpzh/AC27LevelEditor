@@ -11,20 +11,36 @@
  */
 
 const { createTokenizer } = require('./tokenizer');
-const { _parseTaxiwayNodes } = require('./approach');
+const { _parseTaxiwayNodes, _detectSchemaVersion } = require('./approach');
 
-// ─── Helpers ───────────────────────────────────────────────────
+// ─── Helpers (structural, no regex) ────────────────────────────
 
-function _extractString(text, key) {
-  const re = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*"([^"]*)"');
-  const m = text.match(re);
-  return m ? m[1] : null;
+function _extractString(text, key, isV4) {
+  if (isV4) {
+    const t = createTokenizer(text);
+    const sec = t.findSection(key);
+    if (!sec || text[sec.valueStart] !== '"') return null;
+    const strEnd = t.skipString(sec.valueStart);
+    if (strEnd === null) return null;
+    return text.substring(sec.valueStart + 1, strEnd - 1);
+  } else {
+    const re = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*"([^"]*)"');
+    const m = text.match(re);
+    return m ? m[1] : null;
+  }
 }
 
-function _extractInt(text, key) {
-  const re = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*(-?\\d+)');
-  const m = text.match(re);
-  return m ? parseInt(m[1], 10) : null;
+function _extractInt(text, key, isV4) {
+  if (isV4) {
+    const t = createTokenizer(text);
+    const sec = t.findSection(key);
+    if (!sec) return null;
+    return parseInt(text.substring(sec.valueStart, sec.valueEnd), 10);
+  } else {
+    const re = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*(-?\\d+)');
+    const m = text.match(re);
+    return m ? parseInt(m[1], 10) : null;
+  }
 }
 
 /**
@@ -95,9 +111,57 @@ function _extractStandNodeGuids(sdText, sdT) {
  * @param {Map<string,{x:number,y:number,z:number}>} [existingNodesMap] - pre-parsed node map (avoids re-parsing TaxiwayNodes)
  * @returns {{ paths: Array<{ name: string, flags: number, isStandAccess?: boolean, points: Array<{x: number, z: number}> }> }}
  */
-function parseTaxiwayPaths(aclText, existingNodesMap) {
+function parseTaxiwayPaths(aclText, existingNodesMap, isV4) {
   const paths = [];
 
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+
+  if (isV4) {
+    // v4: iterate taxiway-segment:* entries from PKStaticEntities
+    const { buildPkIndex, getPkEntriesByType, resolveIref, extractVector3FromV4, extractStringFromV4, extractIrefArray, extractIntFromV4, extractSingleIref } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+
+    // Build set of stand-associated node $ids for marking stand-access segments
+    const standNodeIds = new Set();
+    const stands = getPkEntriesByType(pkIndex, 'stand');
+    for (const st of stands) {
+      // TailPosition and NosePosition are $iref references — structural, no regex
+      const tailIref = extractSingleIref(st.block, 'TailPosition');
+      const noseIref = extractSingleIref(st.block, 'NosePosition');
+      if (tailIref !== null) standNodeIds.add(tailIref);
+      if (noseIref !== null) standNodeIds.add(noseIref);
+    }
+
+    // Iterate taxiway segments
+    const segments = getPkEntriesByType(pkIndex, 'taxiway-segment');
+    for (const seg of segments) {
+      const name = extractStringFromV4(seg.block, 'Name') || '';
+      const flags = extractIntFromV4(seg.block, 'Flags') || 1;
+      const nodeIrefs = extractIrefArray(seg.block, 'Nodes');
+
+      if (nodeIrefs.length >= 2) {
+        const segPoints = [];
+        for (const iref of nodeIrefs) {
+          const resolved = resolveIref(pkIndex, iref);
+          if (resolved) {
+            const pos = extractVector3FromV4(resolved.block);
+            if (pos) segPoints.push({ x: pos.x, z: pos.z });
+          }
+        }
+        if (segPoints.length >= 2) {
+          const isStandAccess = nodeIrefs.some(id => standNodeIds.has(id));
+          paths.push({ name, flags, points: segPoints, ...(isStandAccess && { isStandAccess: true }) });
+        }
+      }
+    }
+
+    return { paths };
+  }
+
+  // v2/v3: SceneryData.TaxiwaySegments
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return { paths };
 
@@ -148,8 +212,8 @@ function parseTaxiwayPaths(aclText, existingNodesMap) {
       }
       if (!actualVBlock) actualVBlock = block;
 
-      const name = _extractString(actualVBlock, 'Name') || '';
-      const flags = _extractInt(actualVBlock, 'Flags') || 1;
+      const name = _extractString(actualVBlock, 'Name', isV4) || '';
+      const flags = _extractInt(actualVBlock, 'Flags', isV4) || 1;
       const guids = _extractNodesGuids(actualVBlock);
 
       // Keep all segments, mark stand-access stubs for differentiated rendering

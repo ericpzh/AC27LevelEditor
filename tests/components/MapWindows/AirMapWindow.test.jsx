@@ -320,6 +320,33 @@ describe('AirMapWindow', () => {
     });
   });
 
+  it('renders only active-runway variants for v4 files', async () => {
+    setupDefaultMocks({
+      'collect-values': {
+        _starPaths: {
+          'UBSS6W': [
+            { runway: '19', points: [{ x: 0, z: 0 }, { x: 50, z: -100 }, { x: 100, z: -200 }] },
+            { runway: '01', points: [{ x: 0, z: 0 }, { x: -50, z: 100 }, { x: -100, z: 200 }] },
+          ],
+        },
+        _sidPaths: {},
+        _missedAppPaths: {},
+        _apprPaths: {},
+        _runwayThresholds: {},
+        _runwayList: ['19'],
+        _isV4: true,
+      },
+    });
+
+    const { container } = renderAirMap();
+
+    await waitFor(() => {
+      const polylines = container.querySelectorAll('.air-map-svg polyline');
+      // Only runway 19 variant should render (1 line), not runway 01 variant
+      expect(polylines.length).toBe(1);
+    });
+  });
+
   // ── Range rings ─────────────────────────────────────────────
 
   it('renders range rings when runway thresholds exist', async () => {

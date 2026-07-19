@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const approach = require('../../src/acl/approach');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 const BASE = 'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports';
 const SPEED = 240 * 0.514444;
@@ -22,12 +23,12 @@ const RWY_REAL = {
 };
 
 function processAirport(icao, files) {
-  const firstText = fs.readFileSync(BASE + '/' + icao + '/Levels/' + files[0] + '.acl', 'utf-8');
+  const firstText = readAclText(BASE + '/' + icao + '/Levels/' + files[0] + '.acl');
 
   // Collect all entries across all files
   const allEntries = [];
   for (const file of files) {
-    const text = fs.readFileSync(BASE + '/' + icao + '/Levels/' + file + '.acl', 'utf-8');
+    const text = readAclText(BASE + '/' + icao + '/Levels/' + file + '.acl');
     const entries = approach.extractApproachData(text).filter(e => e.landingTimeTicks > 0 && e.route && e.runway);
     for (const e of entries) e._file = file;
     allEntries.push(...entries);

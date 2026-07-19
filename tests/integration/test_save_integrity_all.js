@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 const {
   loadFlights, generateFullAcl,
@@ -257,7 +258,7 @@ for (const file of aclFiles) {
   try {
     // ── Step 1: Copy original + timeline JSONs → golden/ ──────────
     const goldenAcl = copyLevelFiles(file.sourcePath, file.sourceDir, goldenSubDir, file.name);
-    const goldenText = fs.readFileSync(goldenAcl, 'utf-8');
+    const goldenText = readAclText(goldenAcl);
 
     // ── Step 2: Load golden → snapshot ────────────────────────────
     const goldenResult = loadFlights(goldenAcl);
@@ -299,7 +300,7 @@ for (const file of aclFiles) {
     if (!savedResult || !savedResult.flights.length) {
       throw new Error('Result loadFlights returned empty after save');
     }
-    const savedText = fs.readFileSync(resultAcl, 'utf-8');
+    const savedText = readAclText(resultAcl);
     const savedCfg = _extractConfig(savedText) || {};
     const savedWeather = countTimeline(_parseWeatherFrames(savedText));
     const savedWind = countTimeline(_parseWindFrames(savedText));

@@ -220,21 +220,21 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
 /**
  * Build a complete arrival flight with time defaults.
  */
-export function createArrivalFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
+export function createArrivalFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights, isV4) {
   const baseMin = computeDefaultBaseMin(configEndTime);
   const flight = createDefaultFlight('arrival', values, audioData, currentAirport, airportValuesForNum, existingFlights);
   flight.LandingTime = minutesToTimeString(baseMin);
-  flight.InBlockTime = minutesToTimeString(baseMin + DEFAULT_TAXI_MINUTES);
+  if (!isV4) flight.InBlockTime = minutesToTimeString(baseMin + DEFAULT_TAXI_MINUTES);
   return flight;
 }
 
 /**
  * Build a complete departure flight with time defaults.
  */
-export function createDepartureFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
+export function createDepartureFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights, isV4) {
   const baseMin = computeDefaultBaseMin(configEndTime);
   const flight = createDefaultFlight('departure', values, audioData, currentAirport, airportValuesForNum, existingFlights);
   flight.OffBlockTime = minutesToTimeString(baseMin);
-  flight.TakeoffTime = minutesToTimeString(baseMin + DEFAULT_TAXI_MINUTES);
+  if (!isV4) flight.TakeoffTime = minutesToTimeString(baseMin + DEFAULT_TAXI_MINUTES);
   return flight;
 }

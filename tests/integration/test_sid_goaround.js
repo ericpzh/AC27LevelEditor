@@ -14,9 +14,11 @@ const {
   extractApprRunwayMappings,
   buildApprPaths,
 } = require('../../src/acl/sid_goaround');
+const { resolveFlyApproachPoints } = require('../../src/acl/approach');
 
 const fs = require('fs');
 const path = require('path');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 let passed = 0;
 let failed = 0;
@@ -198,7 +200,7 @@ if (aclArgIdx >= 0) {
 
   let aclText;
   try {
-    aclText = fs.readFileSync(aclPath, 'utf8');
+    aclText = readAclText(aclPath);
   } catch (e) {
     console.log('  SKIP: cannot read ACL file (' + e.message + ')');
     aclText = null;
@@ -276,7 +278,7 @@ const fixtureAcl = path.join(__dirname, '..', 'fixtures', 'game-root',
   'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.acl');
 if (fs.existsSync(fixtureAcl) && !aclArgIdx) {
   console.log('\n--- Integration (fixture ACL: ZSJN-Morning_120min) ---');
-  const aclText = fs.readFileSync(fixtureAcl, 'utf8');
+  const aclText = readAclText(fixtureAcl);
 
   test('extractSidRunwayMappings on ZSJN fixture', () => {
     const result = extractSidRunwayMappings(aclText);
@@ -306,6 +308,109 @@ if (fs.existsSync(fixtureAcl) && !aclArgIdx) {
     }
   });
 }
+
+// ── v4 Synthetic Tests (runway-scoped route resolution) ──────────
+
+console.log('\n--- v4 Synthetic (runway-scoped resolution) ---');
+
+/**
+ * Build a minimal v4 ACL with PKStaticEntities.
+ * Each entity is an object:
+ *   { type: 'airway-node', id, x, z }
+ *   { type: 'runway', name, physName, id, routes: [{ name, routeType, nodeIds }] }
+ *   { type: 'airway-segment', osmId, id, name, nodeIds }
+ */
+function makeV4Acl(entities) {
+  const rcEntries = entities.map(e => {
+    if (e.type === 'airway-node') {
+      return '{"$k":"airway-node:' + e.id + '","$v":{"$id":' + e.id + ',"Position":{"$type":5,' + e.x + ',0,' + e.z + '}}}';
+    } else if (e.type === 'runway') {
+      const routes = e.routes.map(r => {
+        const irefs = r.nodeIds.map(id => '$iref:' + id).join(',');
+        return '{"AirwayNodes":{"$rcontent":[' + irefs + ']},"Name":"' + r.name + '","RouteType":' + r.routeType + '}';
+      }).join(',');
+      return '{"$k":"runway:' + e.name + '","$v":{"$id":' + e.id + ',"Name":"' + e.name + '","PhysicalName":"' + e.physName + '","Routes":{"$rcontent":[' + routes + ']}}}';
+    } else if (e.type === 'airway-segment') {
+      const irefs = e.nodeIds.map(id => '$iref:' + id).join(',');
+      return '{"$k":"airway-segment:' + e.osmId + '","$v":{"$id":' + e.id + ',"Name":"' + e.name + '","Nodes":{"$rcontent":[' + irefs + ']}}}';
+    }
+    return '';
+  }).join(',');
+
+  return '{"StaticData":{"$blobdoc":{"PKStaticEntities":{"$rcontent":[' + rcEntries + ']}}}}';
+}
+
+// SID test: same route name, different node counts per runway
+test('v4: buildSidPaths returns runway-specific node counts for shared SID name', () => {
+  const v4acl = makeV4Acl([
+    { type: 'airway-node', id: 100, x: 0, z: 0 },
+    { type: 'airway-node', id: 101, x: 1, z: 0 },
+    { type: 'airway-node', id: 102, x: 2, z: 0 },
+    { type: 'airway-node', id: 103, x: 3, z: 0 },
+    { type: 'airway-node', id: 200, x: 10, z: 0 },
+    { type: 'airway-node', id: 201, x: 11, z: 0 },
+    { type: 'runway', name: '31L', physName: '13R/31L', id: 1000, routes: [
+      { name: 'JFK5.JFK', routeType: 2, nodeIds: [100, 101, 102, 103] },
+    ]},
+    { type: 'runway', name: '22R', physName: '04/22R', id: 2000, routes: [
+      { name: 'JFK5.JFK', routeType: 2, nodeIds: [200, 201] },
+    ]},
+  ]);
+
+  const mappings = extractSidRunwayMappings(v4acl);
+  assert(mappings.sidRunwayMap['JFK5.JFK'] !== undefined, 'JFK5.JFK should be in SID map');
+  assertEq(mappings.sidRunwayMap['JFK5.JFK'].length, 2, 'JFK5.JFK should map to 2 runways');
+
+  const paths = buildSidPaths(v4acl, mappings.sidRunwayMap);
+  const variants = paths['JFK5.JFK'];
+  assert(Array.isArray(variants), 'JFK5.JFK should have variants array');
+  assertEq(variants.length, 2, 'JFK5.JFK should have 2 runway variants');
+
+  const v31L = variants.find(v => v.runway === '31L');
+  const v22R = variants.find(v => v.runway === '22R');
+  assert(v31L, 'should have 31L variant');
+  assert(v22R, 'should have 22R variant');
+  assertEq(v31L.points.length, 4, '31L should have 4 points');
+  assertEq(v22R.points.length, 2, '22R should have 2 points');
+});
+
+// STAR test: resolveFlyApproachPoints with runway-scoped resolution,
+// plus bogus airway-segment entries to verify fallback is NOT used
+test('v4: resolveFlyApproachPoints returns runway-specific points (ignores airway-segment fallback)', () => {
+  const v4acl = makeV4Acl([
+    // Airway nodes for runway 31L STAR (4 nodes)
+    { type: 'airway-node', id: 100, x: 0, z: 0 },
+    { type: 'airway-node', id: 101, x: 1, z: 0 },
+    { type: 'airway-node', id: 102, x: 2, z: 0 },
+    { type: 'airway-node', id: 103, x: 3, z: 0 },
+    // Airway nodes for runway 22R STAR (2 nodes)
+    { type: 'airway-node', id: 200, x: 10, z: 0 },
+    { type: 'airway-node', id: 201, x: 11, z: 0 },
+    // Bogus airway nodes for the airway-segment fallback trap
+    { type: 'airway-node', id: 999, x: 99, z: 99 },
+    { type: 'airway-node', id: 998, x: 98, z: 98 },
+    // Runway 31L: STAR1 with 4 nodes (RouteType 0 = STAR)
+    { type: 'runway', name: '31L', physName: '13R/31L', id: 1000, routes: [
+      { name: 'STAR1', routeType: 0, nodeIds: [100, 101, 102, 103] },
+    ]},
+    // Runway 22R: STAR1 with 2 nodes (RouteType 0 = STAR)
+    { type: 'runway', name: '22R', physName: '04/22R', id: 2000, routes: [
+      { name: 'STAR1', routeType: 0, nodeIds: [200, 201] },
+    ]},
+    // Airway-segment with same name but WRONG nodes — must NOT be used
+    { type: 'airway-segment', osmId: -99999, id: 9000, name: 'STAR1', nodeIds: [999, 998] },
+  ]);
+
+  const points31L = resolveFlyApproachPoints(v4acl, 'STAR1', '31L');
+  assertEq(points31L.length, 4, '31L should get 4 points from its Routes, not 2 from airway-segment fallback');
+
+  const points22R = resolveFlyApproachPoints(v4acl, 'STAR1', '22R');
+  assertEq(points22R.length, 2, '22R should get 2 points from its Routes');
+
+  // Verify positions are from correct nodes (not bogus 999/998)
+  assertEq(points31L[0].x, 0, '31L first point x should be 0');
+  assertEq(points22R[0].x, 10, '22R first point x should be 10');
+});
 
 // ── Summary ─────────────────────────────────────────────────────
 

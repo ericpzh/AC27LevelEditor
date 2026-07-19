@@ -52,6 +52,7 @@ const PROD_FILES = [
 // ─── Import approach module ───────────────────────────────────────
 
 const approach = require('../../src/acl/approach');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 const {
   extractGameTime,
@@ -92,7 +93,7 @@ for (const f of PROD_FILES) {
     continue;
   }
 
-  const aclText = fs.readFileSync(aclPath, 'utf-8');
+  const aclText = readAclText(aclPath);
   console.log(`\n  File: ${f.icao}/${f.name}.acl (${(aclText.length / 1024 / 1024).toFixed(1)} MB)`);
 
   // 1a. Save time

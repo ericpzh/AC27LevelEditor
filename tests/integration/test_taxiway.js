@@ -8,6 +8,7 @@
 const { parseTaxiwayPaths } = require('../../src/acl/taxiway');
 const fs = require('fs');
 const path = require('path');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 let passed = 0;
 let failed = 0;
@@ -170,7 +171,7 @@ const fixtureAcl = path.join(__dirname, '..', 'fixtures', 'game-root',
 
 if (fs.existsSync(fixtureAcl)) {
   console.log('\n--- Integration (fixture ACL: ZSJN-Morning_120min) ---');
-  const aclText = fs.readFileSync(fixtureAcl, 'utf8');
+  const aclText = readAclText(fixtureAcl);
 
   test('parseTaxiwayPaths on ZSJN fixture returns paths', () => {
     const result = parseTaxiwayPaths(aclText);
@@ -208,7 +209,7 @@ if (aclArgIdx >= 0) {
 
   let aclText;
   try {
-    aclText = fs.readFileSync(aclPath, 'utf8');
+    aclText = readAclText(aclPath);
   } catch (e) {
     console.log('  SKIP: cannot read ACL file (' + e.message + ')');
     aclText = null;

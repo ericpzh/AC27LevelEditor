@@ -13,6 +13,7 @@ import { createRequire } from 'module';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { _parseStandPositions } = require('../../src/acl/scenery');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 const FIXTURE_PATH = path.join(
   __dirname,
@@ -20,8 +21,8 @@ const FIXTURE_PATH = path.join(
   'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.acl'
 );
 
-const text = fs.readFileSync(FIXTURE_PATH, 'utf-8');
-const stands = _parseStandPositions(text);
+const text = readAclText(FIXTURE_PATH);
+const stands = _parseStandPositions(text, false);
 
 describe('_parseStandPositions', () => {
   it('should parse stands from ZSJN fixture (53 stands)', () => {
@@ -63,8 +64,8 @@ describe('_parseStandPositions', () => {
   });
 
   it('should return empty object for non-ACL text', () => {
-    expect(_parseStandPositions('not a valid acl')).toEqual({});
-    expect(_parseStandPositions('')).toEqual({});
-    expect(_parseStandPositions('{"SceneryData": {}}')).toEqual({});
+    expect(_parseStandPositions('not a valid acl', false)).toEqual({});
+    expect(_parseStandPositions('', false)).toEqual({});
+    expect(_parseStandPositions('{"SceneryData": {}}', false)).toEqual({});
   });
 });

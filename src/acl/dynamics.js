@@ -5,6 +5,7 @@ const fs = require('fs');
 const { _generateGuid } = require('./world_state');
 const { scanGameRoot } = require('./scanner');
 const { ID_OFFSET_DYNAMICS } = require('./constants');
+const { readAclText } = require('./gatcarc');
 
 // ─── calcProgressRatio ─────────────────────────────────────────────
 
@@ -25,7 +26,7 @@ function captureAllDynamicsTemplates(gameRoot) {
   for (const airport of scan.airports) {
     for (const aclFile of airport.aclFiles) {
       try {
-        const text = fs.readFileSync(aclFile.path, 'utf-8');
+        const text = readAclText(aclFile.path);
         const fpMap = _parseFlightPlanArrivalData(text);
         if (!fpMap || fpMap.size === 0) continue;
         const entries = _parseAircraftsEntries(text);

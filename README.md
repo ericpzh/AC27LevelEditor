@@ -168,12 +168,12 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.2.2
+- **Version:** v1.2.3
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (493 tests + 1 todo, 29 files) + Playwright (E2E) + Node.js (integration, 22 scripts, 129 MCP/API tests)
+- **Tests:** Vitest (493 tests + 1 todo, 29 files) + Playwright (E2E) + Node.js (integration, 25 scripts, 129 MCP/API tests)
 
 ### Quick Start
 
@@ -198,7 +198,10 @@ src/App.jsx          →  Root component: providers + screen routing (+ map wind
 src/components/      →  React component tree (Setup, Browser, Editor, common, MapWindows)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
-src/acl/             →  CommonJS backend modules (parser facade + 13 modules)
+src/acl/             →  CommonJS backend modules (parser facade + 16 modules + OdinSerializer binary codec)
+src/acl/gatcarc.js   →  GATCARC4 binary container: readAclText/writeAcl universal I/O (binary + text)
+src/acl/v4_pk_index.js → v4 PK entity index: $iref→$id lookup, vector3/string/iref extraction helpers
+src/acl/odin/        →  OdinSerializer binary codec (reader, writer, JSON reader/writer, .NET values)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
@@ -209,10 +212,10 @@ All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The ren
 ### Data Flow
 
 ```
-Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths (merged from all .acl files) + dropdowns + runway pairs → AirportCache. Progress bar shows global 0–100% across all airports/files.
-Phase 1 (load):   .acl (single source of truth) → parse flights + timelines → zustand store
-Phase 2 (edit):   All edits go through zustand store actions
-Phase 3 (save):   Validation → generate AircraftStates for approach flights → write .acl + .csv + timeline .json (game compat)
+Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths (merged from all .acl files) + dropdowns + runway pairs → AirportCache. Progress bar shows global 0–100% across all airports/files. Detects v2/v3 vs v4 schema from first file.
+Phase 1 (load):   .acl → readAclText() (GATCARC4 decode if binary) → parse flights + timelines → zustand store. Dual parser paths: v2/v3 uses WorldState.FlightPlans, v4 uses StaticData.$blobdoc.StaticItems (flight-plan: entries).
+Phase 2 (edit):   All edits go through zustand store actions. v4 files hide InBlockTime/TakeoffTime columns.
+Phase 3 (save):   Validation → generate flights → writeAcl() to .acl + .csv + timeline .json. v4: rebuilds StaticData.$blobdoc.StaticItems (no AircraftStates), v2/v3: rebuilds WorldState.FlightPlans + Aircrafts. Container format auto-preserved (binary stays binary, text stays text).
 UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar / Flight Strips)
 MCP (AI agent):   Claude Code → stdio → mcp/bridge.js → HTTP :31415 → api-server.js → IPC → store → UI
 ```
@@ -314,6 +317,9 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │
 │   ├── acl/                 # Backend modules (CommonJS)
 │   │   ├── parser.js            # FACADE — main.js imports everything through here
+│   │   ├── gatcarc.js           # GATCARC4 binary container (universal readAclText/writeAcl)
+│   │   ├── v4_pk_index.js       # v4 PK entity index + $iref resolution
+│   │   ├── odin/                # OdinSerializer binary codec (reader, writer, JSON, .NET values)
 │   │   ├── tokenizer.js         # String-aware section boundary scanner
 │   │   ├── acl_json.js          # Pre-processor (Unity JSON → valid JSON) + serializer
 │   │   ├── acl_document.js      # In-memory document model (lazy parsing, mutation tracking)
@@ -337,7 +343,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 390 Vitest + 16 Playwright E2E + 22 Node.js integration tests
+├── tests/               # 390 Vitest + 16 Playwright E2E + 25 Node.js integration tests
 └── dist/                # Build output (gitignored)
 ```
 
@@ -375,7 +381,7 @@ npm run test:e2e      # UI flow tests against real game data (~3 min)
 
 **Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test. The 30-min demo window end time is rounded to the nearest 5-minute boundary (:X0 or :X5). Emergency (`_emerg`) files show "Challenge Level" / "挑战关卡" as their time-of-day label instead of dawn/morning/etc.
 
-**Save integrity — all .acl files (Node.js integration — 22 scripts):**
+**Save integrity — all .acl files (Node.js integration — 25 scripts):**
 
 Test every .acl file across all airports for save→reload→compare round-trip:
 ```bash
@@ -387,13 +393,16 @@ node --require ./tests/integration/preload.cjs tests/integration/test_save_integ
 ```
 Validates flights (all 14 fields), config (startTime/endTime), scenery maps, embedded timelines, and source format for each file.
 
-**Parser module tests (no game root needed):**
+**Parser/module tests (no game root needed):**
 ```bash
 node tests/integration/test_tokenizer.js            # String-aware scanner (18 tests)
 node tests/integration/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
 node tests/integration/test_acl_document.js         # Document model integration (13 tests)
 node tests/integration/test_sid_goaround.js         # SID + missed approach route parsers (17 tests)
 node tests/integration/test_taxiway.js              # Taxiway centerline parser (10 tests)
+node tests/integration/test_demo_filter.js          # Demo-level flight filtering v2/v3 + v4 (13 tests)
+node tests/integration/test_gatcarc_roundtrip.js    # GATCARC4 binary round-trip encode/decode
+node tests/integration/test_real_kjfk_jfk5.js       # Real KJFK/JFK5 data parsing
 ```
 
 **UDP telemetry test (mock loopback server, port 20266 must be free):**

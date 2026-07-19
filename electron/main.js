@@ -12,8 +12,9 @@ const updater = require('./updater');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, detectSchemaVersion, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
+const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
@@ -34,7 +35,7 @@ let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns
 function _parseAreaFromAcl(aclPaths, logPrefix) {
   try {
     if (aclPaths.length > 0) {
-      const firstAclText = fs.readFileSync(aclPaths[0], 'utf-8');
+      const firstAclText = readAclText(aclPaths[0]);
       const areaData = _parseAreas(firstAclText);
       if (logPrefix) {
         console.log(logPrefix + ': area polygons parsed from ' + path.basename(aclPaths[0]) +
@@ -266,7 +267,7 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
     // For .demo.acl files (including _emerg): extract CurrentDateTime for 30-min window display
     if (isDemo) {
       try {
-        const text = fs.readFileSync(f.path, 'utf-8');
+        const text = readAclText(f.path);
         const cdt = extractCurrentDateTime(text);
         console.log('[IPC] get-airport-files-info: demo file', f.filename, '— extractCurrentDateTime returned', cdt ? ('timeString=' + cdt.timeString) : 'NULL');
         if (cdt) {
@@ -420,6 +421,9 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   collectFromPaths(aclValues._apprPaths, aclValues._apprRunwayMap);
   collectFromPaths(aclValues._missedAppPaths, aclValues._missedAppMap);
   aclValues._runwayList = Array.from(runwaysWithData).sort();
+
+  // Pass schema version so AirMapWindow can gate variant-level filtering
+  aclValues._isV4 = cached?.approachData?.isV4 || false;
 
   return aclValues;
 });
@@ -584,7 +588,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
           if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) aclFiles.push(path.join(levelsDir, le.name));
         }
         if (aclFiles.length > 0) {
-          const firstAclText = fs.readFileSync(aclFiles[0], 'utf-8');
+          const firstAclText = readAclText(aclFiles[0]);
           standPositions = _parseStandPositions(firstAclText);
           console.log('[INIT-CACHE]   ' + icao + ': stand positions parsed from ' + path.basename(aclFiles[0]) + ' (' + Object.keys(standPositions).length + ' stands)');
         }
@@ -649,7 +653,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         try {
           const aclFiles = fs.readdirSync(levelsDir).filter(f => f.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(f));
           if (aclFiles.length > 0) {
-            const firstText = fs.readFileSync(path.join(levelsDir, aclFiles[0]), 'utf-8');
+            const firstText = readAclText(path.join(levelsDir, aclFiles[0]));
             const mappings = approach.extractStarRunwayMappings(firstText);
 
             // Rebuild state5ParamsMap (approach procedure params per runway)
@@ -879,7 +883,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       let standPositions = {};
       try {
         if (aclPaths.length > 0) {
-          const firstAclText = fs.readFileSync(aclPaths[0], 'utf-8');
+          const firstAclText = readAclText(aclPaths[0]);
           standPositions = _parseStandPositions(firstAclText);
         }
       } catch (e) { standPositions = {}; }
@@ -980,8 +984,15 @@ function _roundNearest5(minutes) {
  */
 function _filterDemoFlights(filePath, flights, config) {
   try {
-    const rawText = fs.readFileSync(filePath, 'utf-8');
-    const cdt = extractCurrentDateTime(rawText);
+    const rawText = readAclText(filePath);
+    const cdt = extractCurrentDateTime(rawText, isV4);
+
+    const toMin = t => {
+      const p = String(t).split(':');
+      return parseInt(p[0]) * 60 + parseInt(p[1]);
+    };
+
+    // v2/v3: use GameTime.CurrentDateTime + 30-min window
     if (cdt && cdt.timeString) {
       const _currentDateTime = cdt.timeString;
       // Use integer minutes — secSinceMidnight can include seconds, but flight
@@ -989,11 +1000,6 @@ function _filterDemoFlights(filePath, flights, config) {
       // fail 345 >= 345.5 and be incorrectly removed.
       const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
       const cdtMaxMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN); // 30-min demo window, rounded to nearest :X0/:X5
-
-      const toMin = t => {
-        const p = String(t).split(':');
-        return parseInt(p[0]) * 60 + parseInt(p[1]);
-      };
 
       const before = flights.length;
       flights = flights.filter(fl => {
@@ -1021,6 +1027,27 @@ function _filterDemoFlights(filePath, flights, config) {
 
       console.log('[DEMO] window [' + _currentDateTime + ' ~ ' + demoEndTime + '] (30min cap)');
       return { flights, config, _currentDateTime, removedCount };
+    }
+
+    // v4: no GameTime.CurrentDateTime — use MetaData.Config.startTime/endTime directly.
+    // v4 demo levels already have their intended window set in Config.
+    const isV4 = detectSchemaVersion(rawText) === 4;
+    if (isV4 && config && config.startTime && config.endTime) {
+      const startMin = toMin(config.startTime);
+      const endMin = toMin(config.endTime);
+      const before = flights.length;
+      flights = flights.filter(fl => {
+        const lt = (fl.LandingTime || '').trim();
+        const ob = (fl.OffBlockTime || '').trim();
+        const flightMin = lt ? toMin(lt) : (ob ? toMin(ob) : Infinity);
+        return flightMin >= startMin && flightMin < endMin;
+      });
+      const removedCount = before - flights.length;
+      if (removedCount > 0) {
+        console.log('[DEMO] v4: removed ' + removedCount + ' flights outside [' + config.startTime + ' ~ ' + config.endTime + ']');
+      }
+      console.log('[DEMO] v4: window [' + config.startTime + ' ~ ' + config.endTime + '] (from MetaData.Config)');
+      return { flights, config, _currentDateTime: config.startTime, removedCount };
     }
   } catch (e) {
     console.log('[DEMO] flight filtering failed:', e.message);
@@ -1085,7 +1112,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
     // then to config.startTime + warmup so _saveSec is never null when config exists
     let _saveSec = null;
     try {
-      const rawText = fs.readFileSync(filePath, 'utf-8');
+      const rawText = readAclText(filePath);
       _saveSec = extractGameTime(rawText);
       if (_saveSec !== null) {
         console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from GameTime.CurrentDateTime');
@@ -1138,10 +1165,12 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     let aclcfgStartTime = null;
     let aclcfgEndTime = null;
     let config = null;
+    let aclText = null;
     const isDemoSave = _isDemoFile(filePath);
     const isEmerSave = _isEmerFile(filePath);
     try {
-      const text = fs.readFileSync(filePath, 'utf-8');
+      aclText = readAclText(filePath);
+      const text = aclText;
       config = _extractConfig(text);
       if (config) {
         aclcfgStartTime = config.startTime || null;
@@ -1168,11 +1197,14 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     const icao = icaoMatch ? icaoMatch[1] : '';
     const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
 
+    // Detect schema version for save routing
+    const isV4 = aclText ? detectSchemaVersion(aclText) === 4 : false;
+
     // Generate full ACL from scratch, preserving header structure
-    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime, _saveSec);
+    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime, _saveSec, isV4);
 
     // ── Patch timeline sections into ACL ──
-    _rebuildTimelineSections(filePath, weatherTimeline, windTimeline, runwayTimeline);
+    _rebuildTimelineSections(filePath, weatherTimeline, windTimeline, runwayTimeline, isV4);
 
     // ── Also sync the CSV that the game loads ──
     let csvSynced = false;
@@ -1215,7 +1247,7 @@ function getLevelFilePaths(aclPath) {
   // Read Config block from ACL for file references (single source of truth)
   let config = null;
   try {
-    const text = fs.readFileSync(aclPath, 'utf-8');
+    const text = readAclText(aclPath);
     config = _extractConfig(text);
   } catch (_) {}
 
@@ -1393,7 +1425,7 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     // 9) Extract saveTime (same as load-acl handler)
     let _saveSec = null;
     try {
-      const rawText = fs.readFileSync(newAclPath, 'utf-8');
+      const rawText = readAclText(newAclPath);
       _saveSec = extractGameTime(rawText);
       if (_saveSec !== null) {
         console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from GameTime.CurrentDateTime');
@@ -1451,7 +1483,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     // 2) Read config from restored ACL's Config block for file references
     let config = null;
     try {
-      const text = fs.readFileSync(filePath, 'utf-8');
+      const text = readAclText(filePath);
       config = _extractConfig(text);
     } catch (_) {}
 
@@ -1515,7 +1547,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
 
     let _saveSec = null;
     try {
-      const rawText = fs.readFileSync(filePath, 'utf-8');
+      const rawText = readAclText(filePath);
       _saveSec = extractGameTime(rawText);
       if (_saveSec == null) {
         const icaoMatch = filePath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
@@ -1662,7 +1694,7 @@ ipcMain.handle('load-timelines', async (_event, aclPath) => {
     const levelsDir = path.dirname(aclPath);
 
     // Parse timelines directly from ACL (single source of truth)
-    const aclText = fs.readFileSync(aclPath, 'utf-8');
+    const aclText = readAclText(aclPath);
     const config = _extractConfig(aclText);
     console.log('[IPC] load-timelines: config from ACL ->', config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime + ' runwayTimelineFile=' + config.runwayTimelineFile) : 'NULL');
     const weatherTimeline = _parseWeatherFrames(aclText);

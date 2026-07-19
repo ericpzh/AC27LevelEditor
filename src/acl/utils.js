@@ -7,6 +7,7 @@ const { DROPDOWN_FIELDS } = require('./constants.js');
 const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./world_state');
 const { _parseSceneryData } = require('./scenery');
 const { _parseWorldStateFlightPlans, _extractConfig, _parseRunwayTimeline } = require('./flight_plans');
+const { readAclText } = require('./gatcarc');
 
 
 
@@ -31,7 +32,7 @@ function collectUniqueValues(aclPaths) {
   const regMap = new Map();
 
   for (const aclPath of aclPaths) {
-    const text = fs.readFileSync(aclPath, 'utf-8');
+    const text = readAclText(aclPath);
     let flights;
     const fpResult = _parseWorldStateFlightPlans(text);
     if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
@@ -126,7 +127,7 @@ function collectRunwayPairs(aclPaths) {
   const pairSet = new Set();
   for (const aclPath of aclPaths) {
     try {
-      const text = fs.readFileSync(aclPath, 'utf-8');
+      const text = readAclText(aclPath);
       const data = _parseRunwayTimeline(text);
       if (!data || !data.timeline || !Array.isArray(data.timeline)) continue;
       for (const entry of data.timeline) {
@@ -152,7 +153,7 @@ function collectRunwayPairs(aclPaths) {
 function getFileInfo(aclPath) {
   try {
     const stat = fs.statSync(aclPath);
-    const text = fs.readFileSync(aclPath, 'utf-8');
+    const text = readAclText(aclPath);
     let flights;
     let error = null;
     const fpResult = _parseWorldStateFlightPlans(text);

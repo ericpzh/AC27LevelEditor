@@ -15,16 +15,32 @@ const { createTokenizer } = require('./tokenizer');
 
 // ─── Helpers (inline to avoid circular deps on approach.js internals) ───
 
-function _extractString(text, key) {
-  const re = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*"([^"]*)"');
-  const m = text.match(re);
-  return m ? m[1] : null;
+function _extractString(text, key, isV4) {
+  if (isV4) {
+    const t = createTokenizer(text);
+    const sec = t.findSection(key);
+    if (!sec || text[sec.valueStart] !== '"') return null;
+    const strEnd = t.skipString(sec.valueStart);
+    if (strEnd === null) return null;
+    return text.substring(sec.valueStart + 1, strEnd - 1);
+  } else {
+    const re = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*"([^"]*)"');
+    const m = text.match(re);
+    return m ? m[1] : null;
+  }
 }
 
-function _extractInt(text, key) {
-  const re = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*(-?\\d+)');
-  const m = text.match(re);
-  return m ? parseInt(m[1], 10) : null;
+function _extractInt(text, key, isV4) {
+  if (isV4) {
+    const t = createTokenizer(text);
+    const sec = t.findSection(key);
+    if (!sec) return null;
+    return parseInt(text.substring(sec.valueStart, sec.valueEnd), 10);
+  } else {
+    const re = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*:\\s*(-?\\d+)');
+    const m = text.match(re);
+    return m ? parseInt(m[1], 10) : null;
+  }
 }
 
 function _extractNestedObject(text, key) {
@@ -49,14 +65,79 @@ function _extractNestedObject(text, key) {
  * @param {number} routeType - 2 for SID, 3 for Missed Approach
  * @returns {{ routeRunwayMap: Object, runwayRouteMap: Object }}
  */
-function _extractRouteMappingsByType(aclText, routeType) {
+function _extractRouteMappingsByType(aclText, routeType, isV4) {
   const routeRunwayMap = {};  // { routeName → [runway, ...] }
   const runwayRouteMap = {};  // { runway → [routeName, ...] }
 
   if (!aclText) return { routeRunwayMap, runwayRouteMap };
 
-  // Lazily import helpers from approach.js (avoids circular dependency at module load)
-  const { _extractValueBlock } = require('./approach');
+  // Lazily import helpers from approach.js (inside function body, not module-level,
+  // to avoid circular dependency at module load time).
+  const { _extractValueBlock, _detectSchemaVersion } = require('./approach');
+
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+
+  // RouteType values are identical across all file formats:
+  // 0=STAR, 1=Approach, 2=SID, 3=Missed Approach
+  const targetType = routeType;
+  const typeField = isV4 ? 'RouteType' : 'Type';
+
+  if (isV4) {
+    // v4: iterate runway:* entries from PKStaticEntities
+    const { buildPkIndex, getPkEntriesByType, extractStringFromV4 } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+    const runways = getPkEntriesByType(pkIndex, 'runway');
+
+    for (const rw of runways) {
+      const runwayName = extractStringFromV4(rw.block, 'Name');
+      const physName = extractStringFromV4(rw.block, 'PhysicalName');
+      if (!runwayName || !physName || !physName.includes('/')) continue;
+
+      // Navigate Routes.$rcontent
+      const { createTokenizer: ct } = require('./tokenizer');
+      const routesBlock = _extractNestedObject(rw.block, 'Routes');
+      if (!routesBlock) continue;
+
+      const routesT = ct(routesBlock);
+      const routesRc = routesT.findSection('$rcontent');
+      if (!routesRc) continue;
+
+      let rp = routesRc.valueStart + 1;
+      while (rp < routesBlock.length) {
+        while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+        if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+        if (routesBlock[rp] === ',') { rp++; continue; }
+        if (routesBlock[rp] === '{') {
+          const reEnd = routesT.findObjectEnd(rp);
+          if (reEnd === null) break;
+          const routeEntry = routesBlock.substring(rp, reEnd);
+          const rt = _extractInt(routeEntry, typeField, isV4);
+          if (rt === targetType) {
+            const routeName = _extractString(routeEntry, 'Name', isV4);
+            if (routeName) {
+              // Check for AirwayNodes data
+              const { extractIrefArray } = require('./v4_pk_index');
+              const irefs = extractIrefArray(routeEntry, 'AirwayNodes');
+              if (irefs.length > 0) {
+                if (!routeRunwayMap[routeName]) routeRunwayMap[routeName] = [];
+                if (!routeRunwayMap[routeName].includes(runwayName)) routeRunwayMap[routeName].push(runwayName);
+                if (!runwayRouteMap[runwayName]) runwayRouteMap[runwayName] = [];
+                if (!runwayRouteMap[runwayName].includes(routeName)) runwayRouteMap[runwayName].push(routeName);
+              }
+            }
+          }
+          rp = reEnd;
+        } else { rp++; }
+      }
+    }
+    return { routeRunwayMap, runwayRouteMap };
+  }
+
+  // v2/v3: SceneryData → Runways
+  // (helpers already imported at top of function)
 
   // 1. Navigate to SceneryData → Runways
   const sdIdx = aclText.indexOf('"SceneryData"');
@@ -123,7 +204,7 @@ function _extractRouteMappingsByType(aclText, routeType) {
             break;
           }
         }
-        const physName = _extractString(vBlock, 'PhysicalName');
+        const physName = _extractString(vBlock, 'PhysicalName', isV4);
 
         // Only process actual runway entries (PhysicalName contains '/')
         if (runwayName && physName && physName.includes('/')) {
@@ -142,9 +223,9 @@ function _extractRouteMappingsByType(aclText, routeType) {
                   const reEnd = routesT.findObjectEnd(rp);
                   if (reEnd === null) break;
                   const routeEntry = routesBlock.substring(rp, reEnd);
-                  const type = _extractInt(routeEntry, 'Type');
+                  const type = _extractInt(routeEntry, 'Type', isV4);
                   if (type === routeType) {
-                    const routeName = _extractString(routeEntry, 'Name');
+                    const routeName = _extractString(routeEntry, 'Name', isV4);
                     // Skip stub routes with no waypoint data ($rlength: 0)
                     const guids = [];
                     const gReG = /"([a-f0-9-]{36})"/g;
@@ -181,12 +262,93 @@ function _extractRouteMappingsByType(aclText, routeType) {
  * @param {Object} routeRunwayMap — { routeName → [runway, ...] }
  * @returns {Object} — { [routeName]: [{ runway, points: Array<{x,z}> }] }
  */
-function _buildRoutePaths(aclText, routeRunwayMap) {
+function _buildRoutePaths(aclText, routeRunwayMap, isV4) {
   const paths = {};
   if (!aclText || !routeRunwayMap) return paths;
 
+  // Lazily import helpers from approach.js (inside function body to avoid
+  // circular dependency at module load time).
+  const { _parseAirwayNodes, _extractValueBlock, _detectSchemaVersion } = require('./approach');
+
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+
+  if (isV4) {
+    // v4: resolve paths per-runway from routeRunwayMap
+    // Each runway's Routes array is the authoritative source for that runway's
+    // AirwayNodes — same route name may have different node counts per runway.
+    const { buildPkIndex, getPkEntriesByType, resolveIref, extractVector3FromV4, extractStringFromV4, extractIrefArray } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+
+    for (const [routeName, runways] of Object.entries(routeRunwayMap)) {
+      const runwaySegments = [];
+
+      for (const runway of runways) {
+        // Find this specific runway entry by Name
+        const allRunways = getPkEntriesByType(pkIndex, 'runway');
+        let rwEntry = null;
+        for (const rw of allRunways) {
+          const rwName = extractStringFromV4(rw.block, 'Name');
+          if (rwName === runway) { rwEntry = rw; break; }
+        }
+        if (!rwEntry) continue;
+
+        // Navigate this runway's Routes to find the route by Name
+        const routesBlock = _extractNestedObject(rwEntry.block, 'Routes');
+        if (!routesBlock) continue;
+
+        const routesT = createTokenizer(routesBlock);
+        const routesRc = routesT.findSection('$rcontent');
+        if (!routesRc) continue;
+
+        let routeIrefs = null;
+        let rp = routesRc.valueStart + 1;
+        while (rp < routesBlock.length) {
+          while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+          if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+          if (routesBlock[rp] === ',') { rp++; continue; }
+          if (routesBlock[rp] === '{') {
+            const entryEnd = routesT.findObjectEnd(rp);
+            if (entryEnd === null) break;
+            const entry = routesBlock.substring(rp, entryEnd);
+            const name = _extractString(entry, 'Name', isV4);
+            if (name === routeName) {
+              routeIrefs = extractIrefArray(entry, 'AirwayNodes');
+              break;
+            }
+            rp = entryEnd;
+          } else { rp++; }
+        }
+
+        if (!routeIrefs || routeIrefs.length === 0) continue;
+
+        // Resolve each $iref to a position
+        const points = [];
+        for (const iref of routeIrefs) {
+          const resolved = resolveIref(pkIndex, iref);
+          if (resolved) {
+            const pos = extractVector3FromV4(resolved.block);
+            if (pos) points.push({ x: pos.x, z: pos.z });
+          }
+        }
+
+        if (points.length >= 2) {
+          runwaySegments.push({ runway, points });
+        }
+      }
+
+      if (runwaySegments.length > 0) {
+        paths[routeName] = runwaySegments;
+      }
+    }
+    return paths;
+  }
+
+  // v2/v3: SceneryData
   // Resolve AirwayNodes and _extractValueBlock once
-  const { _parseAirwayNodes, _extractValueBlock } = require('./approach');
+  // (helpers already imported at top of function)
   const airwayNodes = _parseAirwayNodes(aclText);
 
   // Find AirwaySegments section for route→GUID chain lookups
@@ -212,7 +374,7 @@ function _buildRoutePaths(aclText, routeRunwayMap) {
           const entryEnd = asT.findObjectEnd(pos);
           if (entryEnd === null) break;
           const entry = asText.substring(pos, entryEnd);
-          const name = _extractString(entry, 'Name');
+          const name = _extractString(entry, 'Name', isV4);
           if (name) {
             const guids = [];
             const gRe = /"([a-f0-9-]{36})"/g;
@@ -315,31 +477,31 @@ function _buildRoutePaths(aclText, routeRunwayMap) {
 
 // ─── C. Public API ──────────────────────────────────────────────────
 
-function extractSidRunwayMappings(aclText) {
-  const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 2);
+function extractSidRunwayMappings(aclText, isV4) {
+  const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 2, isV4);
   return { sidRunwayMap: routeRunwayMap, runwaySidMap: runwayRouteMap };
 }
 
-function extractMissedApproachMappings(aclText) {
-  const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 3);
+function extractMissedApproachMappings(aclText, isV4) {
+  const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 3, isV4);
   return { missedAppMap: routeRunwayMap, runwayMissedAppMap: runwayRouteMap };
 }
 
-function buildSidPaths(aclText, sidRunwayMap) {
-  return _buildRoutePaths(aclText, sidRunwayMap);
+function buildSidPaths(aclText, sidRunwayMap, isV4) {
+  return _buildRoutePaths(aclText, sidRunwayMap, isV4);
 }
 
-function buildMissedApproachPaths(aclText, missedAppMap) {
-  return _buildRoutePaths(aclText, missedAppMap);
+function buildMissedApproachPaths(aclText, missedAppMap, isV4) {
+  return _buildRoutePaths(aclText, missedAppMap, isV4);
 }
 
-function extractApprRunwayMappings(aclText) {
-  const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 1);
+function extractApprRunwayMappings(aclText, isV4) {
+  const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 1, isV4);
   return { apprRunwayMap: routeRunwayMap, runwayApprMap: runwayRouteMap };
 }
 
-function buildApprPaths(aclText, apprRunwayMap) {
-  return _buildRoutePaths(aclText, apprRunwayMap);
+function buildApprPaths(aclText, apprRunwayMap, isV4) {
+  return _buildRoutePaths(aclText, apprRunwayMap, isV4);
 }
 
 module.exports = {

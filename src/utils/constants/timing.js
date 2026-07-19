@@ -10,7 +10,7 @@ export const TICKS_PER_SECOND_NUM = 10000000;
 export const TICKS_PER_DAY_NUM = 864000000000;
 
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
-export const CACHE_VERSION = 12;
+export const CACHE_VERSION = 13;
 
 // ─── Game timing / scenario ────────────────────────────────
 export const WARMUP_SEC = 780;             // 13-minute game warmup

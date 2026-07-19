@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const parser = require('../src/acl/parser');
+const { readAclText } = require('../src/acl/gatcarc');
 
 const {
   loadFlights,
@@ -78,7 +79,7 @@ const diffs = [];
 
 // ── Demo mode: parsability + flight data validation only ─────────
 if (isDemo) {
-  const savedText = fs.readFileSync(aclPath, 'utf-8');
+  const savedText = readAclText(aclPath);
   const savedCfg = _extractConfig(savedText) || {};
 
   // Verify every flight has required key fields
@@ -175,8 +176,8 @@ if (isDemo) {
   }
 
   // 4. Config
-  const savedCfg = _extractConfig(fs.readFileSync(aclPath, 'utf-8')) || {};
-  const origCfg = _extractConfig(fs.readFileSync(bakPath, 'utf-8')) || {};
+  const savedCfg = _extractConfig(readAclText(aclPath)) || {};
+  const origCfg = _extractConfig(readAclText(bakPath)) || {};
   let cfgOk = true;
   for (const f of CFG_FIELDS) {
     if ((savedCfg[f]||'') !== (origCfg[f]||'')) { diffs.push(`Config.${f}: "${origCfg[f]}" → "${savedCfg[f]}"`); cfgOk = false; }
@@ -197,8 +198,8 @@ if (isDemo) {
   else { diffs.push('Source format changed'); pass = false; }
 
   // 7. Embedded timelines
-  const savedText = fs.readFileSync(aclPath, 'utf-8');
-  const origText = fs.readFileSync(bakPath, 'utf-8');
+  const savedText = readAclText(aclPath);
+  const origText = readAclText(bakPath);
   const sw2 = countTimeline(_parseWeatherFrames(savedText)), ow2 = countTimeline(_parseWeatherFrames(origText));
   const sWi2 = countTimeline(_parseWindFrames(savedText)), oWi2 = countTimeline(_parseWindFrames(origText));
   const sr2 = countTimeline(_parseRunwayTimeline(savedText)), or2 = countTimeline(_parseRunwayTimeline(origText));

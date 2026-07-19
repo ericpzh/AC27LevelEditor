@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 let aclPath = null;
 for (let i = 2; i < process.argv.length; i++) {
@@ -29,7 +30,7 @@ if (!aclPath) {
 }
 
 console.log('ACL:', aclPath);
-const text = fs.readFileSync(aclPath, 'utf-8');
+const text = readAclText(aclPath);
 
 // ─── Parse helpers ────────────────────────────────────────────
 function findArrayEnd(t, start) {

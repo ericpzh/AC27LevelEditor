@@ -217,6 +217,7 @@ export default function EditorScreen() {
   const allSelected = flights.length > 0 && selectedIndices.size === flights.length;
   const _configStartTime = useAppStore(s => s._configStartTime);
   const _configEndTime = useAppStore(s => s._configEndTime);
+  const isV4 = useAppStore(s => s.isV4);
 
   const [loading, setLoading] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
@@ -250,7 +251,7 @@ export default function EditorScreen() {
       const data = await electronAPI.loadAcl(filePath);
       if (!data.success) { showModal(t('editor_load_failed'), data.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); setLoading(false); return; }
       const st = useAppStore.getState();
-      st.setLegacyState({ chatPanelOpen: false, currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false });
+      st.setLegacyState({ chatPanelOpen: false, currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false, isV4: data.isV4 || false });
       if (rootPath && airportIcao) {
         const [vals, audio, tl, rp] = await Promise.all([electronAPI.collectValues(rootPath, airportIcao), electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
         console.log('[Editor] loaded aux data', { airportIcao, valsKeys: Object.keys(vals||{}), dropdowns: { Stand: vals?.Stand?.length, Runway: vals?.Runway?.length, AircraftType: vals?.AircraftType?.length } });
@@ -332,8 +333,8 @@ export default function EditorScreen() {
   // Compute table data
   const arrivals = useMemo(() => flights.filter(fl => (fl.LandingTime || '').trim()).sort((a, b) => (a.LandingTime || '').localeCompare(b.LandingTime || '')), [flights]);
   const departures = useMemo(() => flights.filter(fl => !(fl.LandingTime || '').trim()).sort((a, b) => (a.OffBlockTime || '99:99').localeCompare(b.OffBlockTime || '99:99')), [flights]);
-  const arrCols = useMemo(() => getActiveColumns(arrivals, ARRIVAL_FIELDS), [arrivals]);
-  const depCols = useMemo(() => getActiveColumns(departures, DEPARTURE_FIELDS), [departures]);
+  const arrCols = useMemo(() => getActiveColumns(arrivals, ARRIVAL_FIELDS, isV4), [arrivals, isV4]);
+  const depCols = useMemo(() => getActiveColumns(departures, DEPARTURE_FIELDS, isV4), [departures, isV4]);
 
   if (loading) return <div className="screen"><div className="loading-state"><div className="spinner" /><p>{t('editor_loading')}</p></div></div>;
 

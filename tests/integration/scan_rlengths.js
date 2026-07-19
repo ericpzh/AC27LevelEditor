@@ -4,6 +4,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 const levelsDir = process.argv[2] ||
   'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels';
@@ -18,7 +19,7 @@ console.log('-'.repeat(85));
 let baselineSegs = null;
 
 for (const f of aclFiles) {
-  const text = fs.readFileSync(path.join(levelsDir, f), 'utf-8');
+  const text = readAclText(path.join(levelsDir, f));
 
   let segs = null, nodes = null;
 

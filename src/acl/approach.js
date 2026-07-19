@@ -12,6 +12,7 @@
 
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
+const { readAclText } = require('./gatcarc');
 const { APPROACH_EFFECTIVE_SPEED, APPROACH_SPEED_MS, DEFAULT_AIRPORT_SCALE, APPROACH_CEILING_M, TAN_3_DEG, DEFAULT_TAT, TD_FALLBACK_EXTEND, EPSILON_NORMALIZE, EPSILON_PR, EPSILON_IAF_JOIN } = require('./constants');
 
 // ─── GUID generator (inlined to avoid ESM import chain issues in tests) ──
@@ -25,6 +26,17 @@ function _generateGuid() {
     const r = Math.random() * 16 | 0;
     return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
   });
+}
+
+// ─── Schema version detection ──────────────────────────────────
+
+function _detectSchemaVersion(text) {
+  const t = createTokenizer(text);
+  const sdSec = t.findSection('StaticData');
+  if (!sdSec) return 3;
+  const sdText = t.substring(sdSec.valueStart, sdSec.valueEnd);
+  const sdT = createTokenizer(sdText);
+  return sdT.findSection('$blobdoc') ? 4 : 3;
 }
 
 // ─── Vector math helpers ──────────────────────────────────────────
@@ -91,6 +103,19 @@ function _extractValueBlock(block) {
   return t.substring(vSec.valueStart, vSec.valueEnd);
 }
 
+/**
+ * Extract the `$k` (GUID key) from a dictionary entry block.
+ * Replaces the regex pattern /"\$k"\s*:\s*"([^"]+)"/ across the codebase.
+ */
+function _extractK(block) {
+  const t = createTokenizer(block);
+  const kSec = t.findSection('$k');
+  if (!kSec || block[kSec.valueStart] !== '"') return null;
+  const strEnd = t.skipString(kSec.valueStart);
+  if (strEnd === null) return null;
+  return block.substring(kSec.valueStart + 1, strEnd - 1);
+}
+
 function _extractNestedObject(text, key) {
   const t = createTokenizer(text);
   const sec = t.findSection(key);
@@ -98,62 +123,201 @@ function _extractNestedObject(text, key) {
   return t.substring(sec.valueStart, sec.valueEnd);
 }
 
-function _extractFloat(text, key) {
-  const re = new RegExp('"' + key + '"\\s*:\\s*([\\d.eE+\\-]+)');
-  const m = text.match(re);
-  return m ? parseFloat(m[1]) : null;
-}
-
-function _extractInt(text, key) {
-  // Try direct: "key": value
-  let re = new RegExp('"' + key + '"\\s*:\\s*(-?\\d+)');
-  let m = text.match(re);
-  if (m) return parseInt(m[1], 10);
-  // Try DateTime format: "key": { "$type": 3, value }
-  re = new RegExp('"' + key + '"\\s*:\\s*\\{\\s*"\\$type"\\s*:\\s*3\\s*,\\s*(-?\\d+)\\s*\\}');
-  m = text.match(re);
-  if (m) return parseInt(m[1], 10);
-  return null;
-}
-
-function _extractString(text, key) {
-  const re = new RegExp('"' + key + '"\\s*:\\s*"([^"]*)"');
-  const m = text.match(re);
-  return m ? m[1] : null;
-}
-
-function _extractVector3(objText) {
-  // The Position or Direction in AircraftState is a direct Vector3: { "x": 1.0, "y": 0, "z": 2.0 }
-  // or "$type": 16, x, y, z format
-  const m16 = objText.match(/"\$type"\s*:\s*(?:16|"16\|[^"]+")\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)/);
-  if (m16) return { x: parseFloat(m16[1]), y: parseFloat(m16[2]), z: parseFloat(m16[3]) };
-  // Try "x":, "y":, "z": format (float3 type 35)
-  const xm = objText.match(/"x"\s*:\s*([\d.eE+\-]+)/);
-  const ym = objText.match(/"y"\s*:\s*([\d.eE+\-]+)/);
-  const zm = objText.match(/"z"\s*:\s*([\d.eE+\-]+)/);
-  if (xm && ym && zm) return { x: parseFloat(xm[1]), y: parseFloat(ym[1]), z: parseFloat(zm[1]) };
-  return null;
-}
-
-function _extractVector3Array(text, key) {
-  // Find array of Vector3 under key
-  const idx = text.indexOf('"' + key + '"');
-  if (idx < 0) return null;
-  const rcMatch = text.substring(idx).match(/"\$rcontent"\s*:\s*\[/);
-  if (!rcMatch) return null;
-  const absRc = idx + rcMatch.index + rcMatch[0].length;
-  const endPos = _findArrayEnd(text, absRc);
-  if (!endPos) return null;
-
-  const arr = text.substring(absRc, endPos);
-  const points = [];
-  // Each Vector3: integer format { "$type": 16, x, 0.0, z } or namespace format
-  const vecRe = /\{\s*"\$type"\s*:\s*(?:16|"16\|[^"]+")\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*\}/g;
-  let m;
-  while ((m = vecRe.exec(arr)) !== null) {
-    points.push({ x: parseFloat(m[1]), y: parseFloat(m[2]), z: parseFloat(m[3]) });
+function _extractFloat(text, key, isV4) {
+  if (isV4) {
+    const t = createTokenizer(text);
+    const sec = t.findSection(key);
+    if (!sec) return null;
+    const valText = text.substring(sec.valueStart, sec.valueEnd);
+    return parseFloat(valText);
+  } else {
+    const re = new RegExp('"' + key + '"\\s*:\\s*([\\d.eE+\\-]+)');
+    const m = text.match(re);
+    return m ? parseFloat(m[1]) : null;
   }
-  return points.length > 0 ? points : null;
+}
+
+function _extractInt(text, key, isV4) {
+  if (isV4) {
+    const t = createTokenizer(text);
+    const sec = t.findSection(key);
+    if (!sec) return null;
+    const valText = text.substring(sec.valueStart, sec.valueEnd);
+    const direct = parseInt(valText, 10);
+    if (!isNaN(direct)) return direct;
+    // DateTime object: {"$type":3, ticks}
+    if (text[sec.valueStart] === '{') {
+      const dtT = createTokenizer(valText);
+      const typeSec = dtT.findSection('$type');
+      if (typeSec) {
+        let afterType = typeSec.valueEnd;
+        while (afterType < valText.length && ' \t\n\r,'.includes(valText[afterType])) afterType++;
+        if (afterType < valText.length) {
+          return parseInt(valText.substring(afterType), 10);
+        }
+      }
+    }
+    return null;
+  } else {
+    // Try direct: "key": value
+    let re = new RegExp('"' + key + '"\\s*:\\s*(-?\\d+)');
+    let m = text.match(re);
+    if (m) return parseInt(m[1], 10);
+    // Try DateTime format: "key": { "$type": 3, value }
+    re = new RegExp('"' + key + '"\\s*:\\s*\\{\\s*"\\$type"\\s*:\\s*3\\s*,\\s*(-?\\d+)\\s*\\}');
+    m = text.match(re);
+    if (m) return parseInt(m[1], 10);
+    return null;
+  }
+}
+
+function _extractString(text, key, isV4) {
+  if (isV4) {
+    const t = createTokenizer(text);
+    const sec = t.findSection(key);
+    if (!sec || text[sec.valueStart] !== '"') return null;
+    const strEnd = t.skipString(sec.valueStart);
+    if (strEnd === null) return null;
+    return text.substring(sec.valueStart + 1, strEnd - 1);
+  } else {
+    const re = new RegExp('"' + key + '"\\s*:\\s*"([^"]*)"');
+    const m = text.match(re);
+    return m ? m[1] : null;
+  }
+}
+
+function _extractVector3(objText, isV4) {
+  if (isV4) {
+    const t = createTokenizer(objText);
+    // Try "x":, "y":, "z": format (float3 type 35)
+    const xSec = t.findSection('x');
+    const ySec = t.findSection('y');
+    const zSec = t.findSection('z');
+    if (xSec && ySec && zSec) {
+      return {
+        x: parseFloat(objText.substring(xSec.valueStart, xSec.valueEnd)),
+        y: parseFloat(objText.substring(ySec.valueStart, ySec.valueEnd)),
+        z: parseFloat(objText.substring(zSec.valueStart, zSec.valueEnd)),
+      };
+    }
+    // Try $type:16 bare-value format: { "$type": 16, x, y, z }
+    const typeSec = t.findSection('$type');
+    if (typeSec) {
+      let after = typeSec.valueEnd;
+      while (after < objText.length && ' \t\n\r,'.includes(objText[after])) after++;
+      const bareVals = _parseBareNumbers(objText, after, 3);
+      if (bareVals && bareVals.length >= 3) {
+        return { x: bareVals[0], y: bareVals[1], z: bareVals[2] };
+      }
+    }
+    return null;
+  } else {
+    const m16 = objText.match(/"\$type"\s*:\s*(?:16|"16\|[^"]+")\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)/);
+    if (m16) return { x: parseFloat(m16[1]), y: parseFloat(m16[2]), z: parseFloat(m16[3]) };
+    const xm = objText.match(/"x"\s*:\s*([\d.eE+\-]+)/);
+    const ym = objText.match(/"y"\s*:\s*([\d.eE+\-]+)/);
+    const zm = objText.match(/"z"\s*:\s*([\d.eE+\-]+)/);
+    if (xm && ym && zm) return { x: parseFloat(xm[1]), y: parseFloat(ym[1]), z: parseFloat(zm[1]) };
+    return null;
+  }
+}
+
+/**
+ * Parse N bare comma-separated numbers from a position inside an object.
+ * Stops at } or end of text.
+ */
+function _parseBareNumbers(text, start, count) {
+  const nums = [];
+  let pos = start;
+  while (pos < text.length && nums.length < count) {
+    while (pos < text.length && ' \t\n\r'.includes(text[pos])) pos++;
+    if (pos >= text.length || text[pos] === '}') break;
+    if (text[pos] === ',') { pos++; continue; }
+    // Number
+    let numStart = pos;
+    if (text[pos] === '-') pos++;
+    while (pos < text.length && '0123456789.eE+-'.includes(text[pos])) pos++;
+    const numStr = text.substring(numStart, pos);
+    const num = parseFloat(numStr);
+    if (!isNaN(num)) nums.push(num);
+    else { pos++; } // skip unrecognized char to prevent infinite loop on "$type": etc.
+  }
+  return nums;
+}
+
+function _extractVector3Array(text, key, isV4) {
+  if (isV4) {
+    // v4: structural tokenizer-based array traversal
+    const t = createTokenizer(text);
+    const keySec = t.findSection(key);
+    if (!keySec) return null;
+
+    const valText = text.substring(keySec.valueStart, keySec.valueEnd);
+    const valT = createTokenizer(valText);
+    const rcSec = valT.findSection('$rcontent');
+    if (!rcSec) return null;
+
+    const arrStart = rcSec.valueStart;
+    const arrEnd = valT.findArrayEnd(arrStart);
+    if (arrEnd === null) return null;
+
+    const arr = valText.substring(arrStart, arrEnd);
+    const arrTokenizer = createTokenizer(arr);
+    const points = [];
+    let pos = 1;
+    while (pos < arr.length) {
+      while (pos < arr.length && ' \t\n\r'.includes(arr[pos])) pos++;
+      if (pos >= arr.length || arr[pos] === ']') break;
+      if (arr[pos] === ',') { pos++; continue; }
+      if (arr[pos] === '{') {
+        const objEnd = arrTokenizer.findObjectEnd(pos);
+        if (objEnd === null) break;
+        const objText = arr.substring(pos + 1, objEnd - 1);
+        const vec = _extractVector3FromBare(objText);
+        if (vec) points.push(vec);
+        pos = objEnd;
+      } else {
+        pos++;
+      }
+    }
+    return points.length > 0 ? points : null;
+  } else {
+    // v2/v3: regex-based array parse
+    const idx = text.indexOf('"' + key + '"');
+    if (idx < 0) return null;
+    const rcMatch = text.substring(idx).match(/"\$rcontent"\s*:\s*\[/);
+    if (!rcMatch) return null;
+    const absRc = idx + rcMatch.index + rcMatch[0].length;
+    const endPos = _findArrayEnd(text, absRc);
+    if (!endPos) return null;
+
+    const arr = text.substring(absRc, endPos);
+    const points = [];
+    const vecRe = /\{\s*"\$type"\s*:\s*(?:16|"16\|[^"]+")\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*\}/g;
+    let m;
+    while ((m = vecRe.exec(arr)) !== null) {
+      points.push({ x: parseFloat(m[1]), y: parseFloat(m[2]), z: parseFloat(m[3]) });
+    }
+    return points.length > 0 ? points : null;
+  }
+}
+
+/**
+ * Extract Vector3 from bare object content (inside the {}).
+ * Handles both { "$type": 16, x, y, z } and unnamed { x, y, z }.
+ */
+function _extractVector3FromBare(objInner) {
+  // Skip $type prefix if present: "$type": N, x, y, z
+  let startPos = 0;
+  if (objInner.startsWith('"$type"')) {
+    const commaIdx = objInner.indexOf(',', objInner.indexOf(':', 1));
+    if (commaIdx >= 0) startPos = commaIdx + 1;
+  }
+  const nums = _parseBareNumbers(objInner, startPos, 3);
+  if (nums && nums.length >= 3) {
+    return { x: nums[0], y: nums[1], z: nums[2] };
+  }
+  return null;
 }
 
 // ─── 1. Specification DB ──────────────────────────────────────────
@@ -162,8 +326,20 @@ function _extractVector3Array(text, key) {
  * Extract a complete Designator → AircraftSpecificationState mapping from ACL text.
  * Returns Map<string, object> where keys are Designator codes (e.g., "B738").
  */
-function extractSpecificationDB(aclText) {
+function extractSpecificationDB(aclText, isV4) {
   const db = new Map();
+
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+  if (isV4) {
+    // v4: specifications come from StaticItems flight-plan entries (AircraftType field).
+    // For now, return empty — v4 approach cache doesn't need per-aircraft spec data
+    // since there are no pre-spawned State=30/5 aircraft.
+    return db;
+  }
+
   const acEntries = _parseAircraftEntries(aclText);
 
   for (const entry of acEntries) {
@@ -191,24 +367,62 @@ function extractSpecificationDB(aclText) {
   return db;
 }
 
-function _extractVector4Array(text, key) {
-  const idx = text.indexOf('"' + key + '"');
-  if (idx < 0) return null;
-  const rcMatch = text.substring(idx).match(/"\$rcontent"\s*:\s*\[/);
-  if (!rcMatch) return null;
-  const absRc = idx + rcMatch.index + rcMatch[0].length;
-  const endPos = _findArrayEnd(text, absRc);
-  if (!endPos) return null;
+function _extractVector4Array(text, key, isV4) {
+  if (isV4) {
+    const t = createTokenizer(text);
+    const keySec = t.findSection(key);
+    if (!keySec) return null;
 
-  const arr = text.substring(absRc, endPos);
-  const results = [];
-  // Vector4: { "$type": 37, a, b, c, d }
-  const v4Re = /\{\s*"\$type"\s*:\s*(?:37|39|"37\|[^"]+"|"39\|[^"]+")\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*\}/g;
-  let m;
-  while ((m = v4Re.exec(arr)) !== null) {
-    results.push({ x: parseFloat(m[1]), y: parseFloat(m[2]), z: parseFloat(m[3]), w: parseFloat(m[4]) });
+    const valText = text.substring(keySec.valueStart, keySec.valueEnd);
+    const valT = createTokenizer(valText);
+    const rcSec = valT.findSection('$rcontent');
+    if (!rcSec) return null;
+
+    const arrStart = rcSec.valueStart;
+    const arrEnd = valT.findArrayEnd(arrStart);
+    if (arrEnd === null) return null;
+
+    const arr = valText.substring(arrStart, arrEnd);
+    const arrTokenizer = createTokenizer(arr);
+    const results = [];
+    let pos = 1;
+    while (pos < arr.length) {
+      while (pos < arr.length && ' \t\n\r'.includes(arr[pos])) pos++;
+      if (pos >= arr.length || arr[pos] === ']') break;
+      if (arr[pos] === ',') { pos++; continue; }
+      if (arr[pos] === '{') {
+        const objEnd = arrTokenizer.findObjectEnd(pos);
+        if (objEnd === null) break;
+        const objInner = arr.substring(pos + 1, objEnd - 1);
+        const nums = _parseBareNumbers(objInner, 0, 4);
+        if (nums && nums.length >= 4) {
+          results.push({ x: nums[0], y: nums[1], z: nums[2], w: nums[3] });
+        }
+        pos = objEnd;
+      } else {
+        pos++;
+      }
+    }
+    return results;
+  } else {
+    const idx = text.indexOf('"' + key + '"');
+    if (idx < 0) return null;
+    const rcMatch = text.substring(idx).match(/"\$rcontent"\s*:\s*\[/);
+    if (!rcMatch) return null;
+    const absRc = idx + rcMatch.index + rcMatch[0].length;
+    const endPos = _findArrayEnd(text, absRc);
+    if (!endPos) return null;
+
+    const arr = text.substring(absRc, endPos);
+    const results = [];
+    // Vector4: { "$type": 37/39, a, b, c, d }
+    const v4Re = /\{\s*"\$type"\s*:\s*(?:37|39|"37\|[^"]+"|"39\|[^"]+")\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*\}/g;
+    let m;
+    while ((m = v4Re.exec(arr)) !== null) {
+      results.push({ x: parseFloat(m[1]), y: parseFloat(m[2]), z: parseFloat(m[3]), w: parseFloat(m[4]) });
+    }
+    return results;
   }
-  return results;
 }
 
 // ─── 2. Approach Data Extraction ─────────────────────────────────
@@ -218,8 +432,18 @@ function _extractVector4Array(text, key) {
  * Returns array of { guid, route, runway, flightPlanGuid, progressRatio, landingTimeTicks,
  *                     flyApproachPoints, appPoints, designator, callsign, direction, position }
  */
-function extractApproachData(aclText) {
+function extractApproachData(aclText, isV4) {
   const results = [];
+
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+  if (isV4) {
+    // v4: no pre-spawned aircraft — the game computes state from flight plans at runtime
+    return results;
+  }
+
   const fpMap = _parseFlightPlanData(aclText); // guid → { star, runway, landingTimeTicks, callsign }
   const acEntries = _parseAircraftEntries(aclText); // all aircraft
 
@@ -277,8 +501,13 @@ function extractApproachData(aclText) {
  * Returns array of { route, runway, touchDownPosition, approachDirection,
  *                     initialPosition, pathPointList }
  */
-function extractState5Data(aclText) {
+function extractState5Data(aclText, isV4) {
   const results = [];
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+  if (isV4) return results; // v4: no pre-spawned aircraft
+
   const fpMap = _parseFlightPlanData(aclText);
   const acEntries = _parseAircraftEntries(aclText);
 
@@ -531,9 +760,72 @@ function computeApproachTimesFromScenery(aclText, starMappings, appPointMap, ref
  * Traces: Runways[runway].Routes[route].AirwayNodeGuids → AirwayNodes[guid].Position
  * Returns Vector3[] or empty array if not found.
  */
-function resolveFlyApproachPoints(aclText, route, runway) {
+function resolveFlyApproachPoints(aclText, route, runway, isV4) {
   if (!route || !runway) return [];
 
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+
+  if (isV4) {
+    // v4: navigate runway → Routes → find route by Name → resolve AirwayNodes $iref → positions
+    const { buildPkIndex, getPkEntriesByType, resolveIref, extractStringFromV4, extractVector3FromV4, extractIrefArray } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+
+    // Find runway entry
+    const runwayPk = _findRunwayGuid(aclText, runway, true);
+    if (!runwayPk) return [];
+
+    const rwTypeMap = pkIndex.byType.get('runway');
+    const rwEntry = rwTypeMap ? rwTypeMap.get(runwayPk) : null;
+    if (!rwEntry) return [];
+
+    // Navigate Routes.$rcontent to find route by Name
+    const routesBlock = _extractNestedObject(rwEntry.block, 'Routes');
+    if (!routesBlock) return [];
+
+    const routesT = createTokenizer(routesBlock);
+    const routesRc = routesT.findSection('$rcontent');
+    if (!routesRc) return [];
+
+    let routeEntryIrefs = null;
+    let rp = routesRc.valueStart + 1;
+    while (rp < routesBlock.length) {
+      while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+      if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+      if (routesBlock[rp] === ',') { rp++; continue; }
+      if (routesBlock[rp] === '{') {
+        const reEnd = routesT.findObjectEnd(rp);
+        if (reEnd === null) break;
+        const candidate = routesBlock.substring(rp, reEnd);
+        const name = _extractString(candidate, 'Name');
+        const routeType = _extractInt(candidate, 'RouteType');
+        if (name === route && routeType === 0) {
+          routeEntryIrefs = extractIrefArray(candidate, 'AirwayNodes');
+          break;
+        }
+        rp = reEnd;
+      } else { rp++; }
+    }
+
+    if (!routeEntryIrefs || routeEntryIrefs.length === 0) {
+      return [];
+    }
+
+    // Resolve each $iref to a position
+    const points = [];
+    for (const iref of routeEntryIrefs) {
+      const resolved = resolveIref(pkIndex, iref);
+      if (resolved) {
+        const pos = extractVector3FromV4(resolved.block);
+        if (pos) points.push(pos);
+      }
+    }
+    return points;
+  }
+
+  // v2/v3: SceneryData → Runways → Routes
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return [];
 
@@ -597,7 +889,40 @@ function resolveFlyApproachPoints(aclText, route, runway) {
   return points;
 }
 
-function _findRunwayGuid(text, runwayName) {
+function _findRunwayGuid(text, runwayName, isV4) {
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(text) === 4;
+  }
+
+  if (isV4) {
+    // v4: search PKStaticEntities for runway:* entries by Name/PhysicalName
+    const { buildPkIndex, getPkEntriesByType, extractStringFromV4 } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(text);
+    const runways = getPkEntriesByType(pkIndex, 'runway');
+    const normTarget = _normalizeRunway(runwayName);
+    let physFallback = null;
+    for (const rw of runways) {
+      const name = extractStringFromV4(rw.block, 'Name');
+      if (name && _normalizeRunway(name) === normTarget) return rw.pk;
+      // PhysicalName fallback (e.g., "15/33")
+      if (!physFallback) {
+        const physName = extractStringFromV4(rw.block, 'PhysicalName');
+        if (physName) {
+          const ends = physName.split('/');
+          for (const end of ends) {
+            if (_normalizeRunway(end.trim()) === normTarget) {
+              physFallback = rw.pk;
+              break;
+            }
+          }
+        }
+      }
+    }
+    return physFallback || null;
+  }
+
+  // v2/v3: SceneryData.Runways
   const sdIdx = text.indexOf('"SceneryData"');
   if (sdIdx < 0) return null;
   const sdText = text.substring(sdIdx);
@@ -636,9 +961,11 @@ function _findRunwayGuid(text, runwayName) {
       const entryEnd = rwT.findObjectEnd(pos);
       if (entryEnd === null) break;
       const block = rwText.substring(pos, entryEnd);
+      // v2/v3: regex $k GUID extraction
       const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+      const kGuid = kMatch ? kMatch[1] : null;
       const vBlock = _extractValueBlock(block);
-      if (kMatch && vBlock) {
+      if (kGuid && vBlock) {
         // Use depth-aware Name extraction (same pattern as extractStarRunwayMappings).
         // _extractString(vBlock, 'Name') would grab the FIRST "Name" anywhere in the
         // vBlock, which is often a nested Entry/route name like "A14" or "A1" inside
@@ -666,7 +993,7 @@ function _findRunwayGuid(text, runwayName) {
         // Prefer exact Name match over PhysicalName fallback.
         // Normalize both sides so "1" matches "01" and vice versa.
         if (name && _normalizeRunway(name) === _normalizeRunway(runwayName)) {
-          return kMatch[1];
+          return kGuid;
         }
         // Fallback: split PhysicalName by "/" and compare each runway end
         // using normalized names. This avoids false positives where
@@ -677,7 +1004,7 @@ function _findRunwayGuid(text, runwayName) {
             const runwayEnds = physName.split('/');
             for (const end of runwayEnds) {
               if (_normalizeRunway(end.trim()) === normTarget) {
-                _physFallback = kMatch[1];
+                _physFallback = kGuid;
                 break;
               }
             }
@@ -707,6 +1034,7 @@ function _findDictionaryEntry(sectionText, keyGuid) {
       const entryEnd = t.findObjectEnd(pos);
       if (entryEnd === null) break;
       const block = sectionText.substring(pos, entryEnd);
+      // v2/v3: use regex for $k (section text, not full ACL — no schema concept)
       const kMatch = block.match(/"\$k"\s*:\s*"([^"]+)"/);
       if (kMatch && kMatch[1] === keyGuid) {
         return _extractValueBlock(block);
@@ -747,8 +1075,38 @@ function _extractGuidArray(text, key) {
   return guids;
 }
 
-function _resolveFromAirwaySegments(aclText, route) {
-  // Find route by Name in AirwaySegments using tokenizer for all boundaries
+function _resolveFromAirwaySegments(aclText, route, isV4) {
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+
+  if (isV4) {
+    // v4: search airway-segment:* entries by Name
+    const { buildPkIndex, getPkEntriesByType, resolveIref, extractStringFromV4, extractVector3FromV4, extractIrefArray } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+    const segments = getPkEntriesByType(pkIndex, 'airway-segment');
+    for (const seg of segments) {
+      const name = extractStringFromV4(seg.block, 'Name');
+      if (name === route) {
+        const irefs = extractIrefArray(seg.block, 'Nodes');
+        if (irefs.length > 0) {
+          const points = [];
+          for (const iref of irefs) {
+            const resolved = resolveIref(pkIndex, iref);
+            if (resolved) {
+              const pos = extractVector3FromV4(resolved.block);
+              if (pos) points.push(pos);
+            }
+          }
+          return points;
+        }
+      }
+    }
+    return [];
+  }
+
+  // v2/v3: SceneryData.AirwaySegments
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return [];
   const sdText = aclText.substring(sdIdx);
@@ -795,8 +1153,28 @@ function _resolveFromAirwaySegments(aclText, route) {
   return [];
 }
 
-function _parseAirwayNodes(aclText) {
-  const map = new Map(); // guid → { name, position }
+function _parseAirwayNodes(aclText, isV4) {
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+  const map = new Map(); // v3: guid → { name, position }; v4: $id → { name, position }
+
+  if (isV4) {
+    const { buildPkIndex, getPkEntriesByType, extractVector3FromV4, extractStringFromV4 } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+    const entries = getPkEntriesByType(pkIndex, 'airway-node');
+    for (const entry of entries) {
+      const pos = extractVector3FromV4(entry.block);
+      const name = extractStringFromV4(entry.block, 'Name');
+      if (pos && entry.id !== null) {
+        map.set(entry.id, { name: name || '', position: pos });
+      }
+    }
+    return map;
+  }
+
+  // v2/v3: SceneryData.AirwayNodes
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return map;
   const sdText = aclText.substring(sdIdx);
@@ -819,13 +1197,15 @@ function _parseAirwayNodes(aclText) {
       const entryEnd = anT.findObjectEnd(pos);
       if (entryEnd === null) break;
       const block = anText.substring(pos, entryEnd);
+      // v2/v3: regex $k GUID extraction
       const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+      const kGuid = kMatch ? kMatch[1] : null;
       const vBlock = _extractValueBlock(block);
-      if (kMatch && vBlock) {
+      if (kGuid && vBlock) {
         const name = _extractString(vBlock, 'Name');
         const posVec = _extractVector3(vBlock);
         if (posVec) {
-          map.set(kMatch[1], { name: name || '', position: posVec });
+          map.set(kGuid, { name: name || '', position: posVec });
         }
       }
       pos = entryEnd;
@@ -840,8 +1220,27 @@ function _parseAirwayNodes(aclText) {
  * Parse TaxiwayNodes from SceneryData into a Map<guid, Position>.
  * Used to resolve TouchDownPointGuid → TouchDownPosition for approach procedures.
  */
-function _parseTaxiwayNodes(aclText) {
-  const map = new Map();
+function _parseTaxiwayNodes(aclText, isV4) {
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+  const map = new Map(); // v3: guid → Position; v4: $id → Position
+
+  if (isV4) {
+    const { buildPkIndex, getPkEntriesByType, extractVector3FromV4 } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+    const entries = getPkEntriesByType(pkIndex, 'taxiway-node');
+    for (const entry of entries) {
+      const pos = extractVector3FromV4(entry.block);
+      if (pos && entry.id !== null) {
+        map.set(entry.id, pos);
+      }
+    }
+    return map;
+  }
+
+  // v2/v3: SceneryData.TaxiwayNodes
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return map;
   const sdText = aclText.substring(sdIdx);
@@ -863,12 +1262,14 @@ function _parseTaxiwayNodes(aclText) {
       const entryEnd = tnT.findObjectEnd(pos);
       if (entryEnd === null) break;
       const block = tnText.substring(pos, entryEnd);
+      // v2/v3: regex $k GUID extraction
       const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+      const kGuid = kMatch ? kMatch[1] : null;
       const vBlock = _extractValueBlock(block);
-      if (kMatch && vBlock) {
+      if (kGuid && vBlock) {
         const posVec = _extractVector3(vBlock);
         if (posVec) {
-          map.set(kMatch[1], posVec);
+          map.set(kGuid, posVec);
         }
       }
       pos = entryEnd;
@@ -889,8 +1290,46 @@ function _parseTaxiwayNodes(aclText) {
  * @param {string} aclText - raw ACL text
  * @returns {{[name: string]: {thresholds: Array<{x: number, z: number}>}}}
  */
-function _parseRunwayThresholds(aclText) {
+function _parseRunwayThresholds(aclText, isV4) {
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+
   const result = {};
+  if (isV4) {
+    // v4: resolve ThresholdPoints $iref → taxiway-node positions via pkIndex.
+    // Each runway entry has "ThresholdPoints": { "$rcontent": [$iref:A, $iref:B] }
+    // where both resolve to taxiway-node entities with ReactivePosition.
+    const { buildPkIndex, resolveIref, extractVector3FromV4, extractStringFromV4, extractIrefArray } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+    const rwMap = pkIndex.byType.get('runway');
+    if (!rwMap) return result;
+
+    for (const [, rwEntry] of rwMap) {
+      const physName = extractStringFromV4(rwEntry.block, 'PhysicalName');
+      if (!physName || !physName.includes('/')) continue;
+      if (result[physName]) continue; // deduplicate by physical name
+
+      const tpIrefs = extractIrefArray(rwEntry.block, 'ThresholdPoints');
+      if (tpIrefs && tpIrefs.length >= 2) {
+        const thresholds = [];
+        for (const iref of tpIrefs) {
+          const resolved = resolveIref(pkIndex, iref);
+          if (resolved) {
+            const pos = extractVector3FromV4(resolved.block);
+            if (pos) thresholds.push({ x: pos.x, z: pos.z });
+          }
+        }
+        if (thresholds.length === 2) {
+          result[physName] = { thresholds };
+        }
+      }
+    }
+    return result;
+  }
+
+  // v2/v3
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return result;
   const sdText = aclText.substring(sdIdx);
@@ -1041,12 +1480,67 @@ function computeFullTerminalPath(aclText, star, runway) {
  * @param {string} aclText - raw ACL file content
  * @returns {{starRunwayMap: Object<string, string[]>, runwayStarMap: Object<string, string[]>}}
  */
-function extractStarRunwayMappings(aclText) {
+function extractStarRunwayMappings(aclText, isV4) {
   const starRunwayMap = {};  // { starName → [runway, ...] }
   const runwayStarMap = {};  // { runway → [starName, ...] }
   if (!aclText) return { starRunwayMap, runwayStarMap };
 
-  // 1. Navigate to SceneryData → Runways
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+
+  if (isV4) {
+    // v4: iterate runway:* entries from PKStaticEntities
+    const { buildPkIndex, getPkEntriesByType, extractStringFromV4, extractIrefArray } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+    const runways = getPkEntriesByType(pkIndex, 'runway');
+
+    for (const rw of runways) {
+      const runwayName = extractStringFromV4(rw.block, 'Name');
+      const physName = extractStringFromV4(rw.block, 'PhysicalName');
+      if (!runwayName || !physName || !physName.includes('/')) continue;
+
+      // Navigate Routes.$rcontent within the runway block
+      const routesBlock = _extractNestedObject(rw.block, 'Routes');
+      if (!routesBlock) continue;
+
+      const routesT = createTokenizer(routesBlock);
+      const routesRc = routesT.findSection('$rcontent');
+      if (!routesRc) continue;
+
+      let rp = routesRc.valueStart + 1; // skip opening [
+      while (rp < routesBlock.length) {
+        while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+        if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+        if (routesBlock[rp] === ',') { rp++; continue; }
+        if (routesBlock[rp] === '{') {
+          const reEnd = routesT.findObjectEnd(rp);
+          if (reEnd === null) break;
+          const routeEntry = routesBlock.substring(rp, reEnd);
+          // RouteType 0 = STAR (same numbering as v2/v3 Type field)
+          const routeType = _extractInt(routeEntry, 'RouteType');
+          if (routeType === 0) {
+            const starName = _extractString(routeEntry, 'Name');
+            // v4 uses AirwayNodes.$rcontent with $iref values
+            const irefs = extractIrefArray(routeEntry, 'AirwayNodes');
+            if (starName && irefs.length > 0) {
+              if (!starRunwayMap[starName]) starRunwayMap[starName] = [];
+              if (!starRunwayMap[starName].includes(runwayName)) starRunwayMap[starName].push(runwayName);
+              if (!runwayStarMap[runwayName]) runwayStarMap[runwayName] = [];
+              if (!runwayStarMap[runwayName].includes(starName)) runwayStarMap[runwayName].push(starName);
+            }
+          }
+          rp = reEnd;
+        } else {
+          rp++;
+        }
+      }
+    }
+    return { starRunwayMap, runwayStarMap };
+  }
+
+  // v2/v3: SceneryData → Runways
   const sdIdx = aclText.indexOf('"SceneryData"');
   if (sdIdx < 0) return { starRunwayMap, runwayStarMap };
   const sdText = aclText.substring(sdIdx);
@@ -1184,9 +1678,107 @@ function extractStarRunwayMappings(aclText) {
  *   of the STAR; used to select the correct variant when multiple exist
  * @returns {{pathPointList, touchDownPosition, approachDirection, initialPosition} | null}
  */
-function resolveApproachProcedureData(aclText, runway, hintPosition) {
+function resolveApproachProcedureData(aclText, runway, hintPosition, isV4) {
   if (!runway) return null;
 
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+
+  if (isV4) {
+    // v4: navigate runway → Routes for RouteType=1 (Approach), resolve AirwayNodes $iref → positions
+    const { buildPkIndex, getPkEntriesByType, resolveIref, extractStringFromV4, extractVector3FromV4, extractIrefArray } = require('./v4_pk_index');
+    const pkIndex = buildPkIndex(aclText);
+
+    // Find runway entry
+    const runwayPk = _findRunwayGuid(aclText, runway, true);
+    if (!runwayPk) return null;
+
+    const rwTypeMap = pkIndex.byType.get('runway');
+    const rwEntry = rwTypeMap ? rwTypeMap.get(runwayPk) : null;
+    if (!rwEntry) return null;
+
+    // Navigate Routes.$rcontent for RouteType=1
+    const routesBlock = _extractNestedObject(rwEntry.block, 'Routes');
+    if (!routesBlock) return null;
+
+    const routesT = createTokenizer(routesBlock);
+    const routesRc = routesT.findSection('$rcontent');
+    if (!routesRc) return null;
+
+    // Collect all RouteType=1 variants
+    const variants = [];
+    let rp = routesRc.valueStart + 1;
+    while (rp < routesBlock.length) {
+      while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+      if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+      if (routesBlock[rp] === ',') { rp++; continue; }
+      if (routesBlock[rp] === '{') {
+        const entryEnd = routesT.findObjectEnd(rp);
+        if (entryEnd === null) break;
+        const routeEntry = routesBlock.substring(rp, entryEnd);
+        const routeType = _extractInt(routeEntry, 'RouteType');
+        if (routeType === 1) {
+          const irefs = extractIrefArray(routeEntry, 'AirwayNodes');
+          if (irefs.length >= 2) {
+            const points = [];
+            for (const iref of irefs) {
+              const resolved = resolveIref(pkIndex, iref);
+              if (resolved) {
+                const pos = extractVector3FromV4(resolved.block);
+                if (pos) points.push(pos);
+              }
+            }
+            if (points.length >= 2) {
+              variants.push({ pathPointList: points, firstPoint: points[0] });
+            }
+          }
+        }
+        rp = entryEnd;
+      } else { rp++; }
+    }
+
+    if (variants.length === 0) return null;
+
+    // Pick correct variant
+    let pathPointList;
+    if (hintPosition && variants.length > 1) {
+      let bestDist = Infinity;
+      for (const v of variants) {
+        const dx = v.firstPoint.x - hintPosition.x;
+        const dz = v.firstPoint.z - hintPosition.z;
+        const dist = dx * dx + dz * dz;
+        if (dist < bestDist) {
+          bestDist = dist;
+          pathPointList = v.pathPointList;
+        }
+      }
+    } else {
+      pathPointList = variants[0].pathPointList;
+    }
+
+    // v4: no TouchDownPointGuid — derive touchdown from last segment
+    const lastPt = pathPointList[pathPointList.length - 1];
+    const prevPt = pathPointList[pathPointList.length - 2];
+    const approachDirection = _vec3Normalize(_vec3Sub(lastPt, prevPt));
+    // Extend past last point to approximate runway threshold
+    const tdExtend = _vec3Dist(lastPt, prevPt);
+    const tdPos = {
+      x: lastPt.x + approachDirection.x * tdExtend,
+      y: 0,
+      z: lastPt.z + approachDirection.z * tdExtend,
+    };
+
+    return {
+      pathPointList,
+      touchDownPosition: tdPos,
+      approachDirection,
+      initialPosition: { ...pathPointList[0] },
+    };
+  }
+
+  // v2/v3: SceneryData.Runways
   // 1. Find the Runway entry GUID
   const runwayGuid = _findRunwayGuid(aclText, runway);
   if (!runwayGuid) return null;
@@ -1235,8 +1827,10 @@ function resolveApproachProcedureData(aclText, runway, hintPosition) {
       const entryEnd = rwT.findObjectEnd(pos);
       if (entryEnd === null) break;
       const block = rwText.substring(pos, entryEnd);
+      // v2/v3: regex $k GUID extraction
       const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
-      if (kMatch && kMatch[1] === runwayGuid) {
+      const kGuid = kMatch ? kMatch[1] : null;
+      if (kGuid === runwayGuid) {
         const vBlock = _extractValueBlock(block);
         if (vBlock) rwEntry = vBlock;
         break;
@@ -1907,8 +2501,13 @@ function buildState5AircraftBlock(opts) {
 
 // ─── Internal helpers ─────────────────────────────────────────────
 
-function _parseAircraftEntries(text) {
+function _parseAircraftEntries(text, isV4) {
   const entries = [];
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(text) === 4;
+  }
+  if (isV4) return entries; // v4: no WorldState.Aircrafts
+
   const wsIdx = text.indexOf('"WorldState"');
   if (wsIdx < 0) return entries;
   const wsText = text.substring(wsIdx);
@@ -1931,10 +2530,12 @@ function _parseAircraftEntries(text) {
       depth--;
       if (depth === 0 && start >= 0) {
         const block = arr.substring(start, i + 1);
+        // v2/v3: regex $k GUID extraction
         const kMatch = block.match(/"\$k"\s*:\s*"([a-f0-9-]+)"/);
+        const kGuid = kMatch ? kMatch[1] : null;
         const vBlock = _extractValueBlock(block);
-        if (kMatch && vBlock) {
-          entries.push({ guid: kMatch[1], block, vBlock });
+        if (kGuid && vBlock) {
+          entries.push({ guid: kGuid, block, vBlock });
         }
         start = -1;
       }
@@ -1943,8 +2544,13 @@ function _parseAircraftEntries(text) {
   return entries;
 }
 
-function _parseFlightPlanData(text) {
+function _parseFlightPlanData(text, isV4) {
   const map = new Map(); // guid → { star, runway, landingTimeTicks, callsign }
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(text) === 4;
+  }
+  if (isV4) return map; // v4: flight plans in StaticItems, no WorldState.FlightPlans
+
   const fpIdx = text.indexOf('"FlightPlans"');
   if (fpIdx < 0) return map;
 
@@ -1993,8 +2599,13 @@ function _parseFlightPlanData(text) {
  * Cross-references FlightPlans with AircraftStates in ACL text.
  * Returns Map<string, string> e.g., "BOEING 737-800" → "B738".
  */
-function buildDesignatorMapping(aclText) {
+function buildDesignatorMapping(aclText, isV4) {
   const map = new Map();
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+  if (isV4) return map; // v4: designator mapping not needed (no pre-spawned aircraft)
+
   const fpMap = new Map(); // guid → AircraftType
   const fpIdx = aclText.indexOf('"FlightPlans"');
   if (fpIdx < 0) return map;
@@ -2083,8 +2694,13 @@ function extractTypeMap(aclText) {
  * @param {Object<string, string[]>} [starRunwayMap] - { starName → [runway, ...] } from SceneryData
  * @returns {{[starName: string]: Array<{runway: string, points: Vector3[]}>}}
  */
-function buildStarPaths(aclText, appPointMap, starRunwayMap) {
+function buildStarPaths(aclText, appPointMap, starRunwayMap, isV4) {
   if (!aclText) return {};
+
+  // Auto-detect for backward compat
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
 
   const starPaths = {};
 
@@ -2106,7 +2722,7 @@ function buildStarPaths(aclText, appPointMap, starRunwayMap) {
       const routePaths = [];
       for (const { runway, appPoints } of entries) {
         // Resolve fly approach points from SceneryData AirwayNodes
-        const flyPoints = resolveFlyApproachPoints(aclText, route, runway);
+        const flyPoints = resolveFlyApproachPoints(aclText, route, runway, isV4);
         // Build full path: fly approach + final approach points
         const fullPath = buildFullPath(flyPoints, appPoints, null);
         if (fullPath.length >= 2) {
@@ -2123,17 +2739,14 @@ function buildStarPaths(aclText, appPointMap, starRunwayMap) {
   }
 
   // ── Pass 2: starRunwayMap-driven paths (from SceneryData Routes Type=0) ──
-  // Covers STAR+runway combos that exist in SceneryData but have no State=30
-  // aircraft (so they're absent from appPointMap). Paths use only FlyApproach
-  // waypoints from AirwayNodes — no AppPointList available.
   if (starRunwayMap) {
     for (const [starName, runways] of Object.entries(starRunwayMap)) {
       const existingRunways = new Set(
         (starPaths[starName] || []).map(v => v.runway)
       );
       for (const runway of runways) {
-        if (existingRunways.has(runway)) continue; // already handled by Pass 1
-        const flyPoints = resolveFlyApproachPoints(aclText, starName, runway);
+        if (existingRunways.has(runway)) continue;
+        const flyPoints = resolveFlyApproachPoints(aclText, starName, runway, isV4);
         if (flyPoints.length >= 2) {
           if (!starPaths[starName]) starPaths[starName] = [];
           starPaths[starName].push({ runway, points: flyPoints });
@@ -2181,6 +2794,7 @@ function buildApproachCache(airportDir, progressCallback) {
   const typeMap = new Map(); // per-airport: type_number → type_name
   const fileTypeMaps = new Map(); // per-file: basename → Map<number, string>
   let firstAclText = null;
+  let isV4 = false; // schema version detected from first file
 
   const { parseTaxiwayPaths } = require('./taxiway');
   const seenTaxiwayKeys = new Set();
@@ -2193,13 +2807,17 @@ function buildApproachCache(airportDir, progressCallback) {
       progressCallback({ current: i + 1, total, fileName: path.basename(aclPath) });
     }
     try {
-      const text = fs.readFileSync(aclPath, 'utf-8');
-      if (!firstAclText) firstAclText = text;
+      const text = readAclText(aclPath);
+      if (!firstAclText) {
+        firstAclText = text;
+        // Detect schema version from first file
+        isV4 = _detectSchemaVersion(text) === 4;
+        log('Schema: ' + (isV4 ? 'v4' : 'v2/v3'));
+      }
 
       // ── Taxiway paths: parse from every file, merge with dedup ──
-      // Each file uses its own TaxiwayNodes (node GUIDs can differ between files).
       try {
-        const twResult = parseTaxiwayPaths(text);
+        const twResult = parseTaxiwayPaths(text, null, isV4);
         for (const tp of twResult.paths) {
           const key = (tp.name || '') + '|' + tp.points.map(p =>
             `${p.x.toFixed(2)},${(p.z !== undefined ? p.z : 0).toFixed(2)}`
@@ -2211,29 +2829,26 @@ function buildApproachCache(airportDir, progressCallback) {
         }
       } catch (_) { /* skip taxiway parse errors */ }
 
-      const entries = extractApproachData(text);
+      const entries = extractApproachData(text, isV4);
       for (const e of entries) e._file = path.basename(aclPath);
       allEntries.push(...entries);
 
-      // Merge specDB from each file (byte-identical per Designator, safe to merge)
-      const fileSpecs = extractSpecificationDB(text);
+      // Merge specDB from each file
+      const fileSpecs = extractSpecificationDB(text, isV4);
       for (const [k, v] of fileSpecs) {
         if (!specDB.has(k)) specDB.set(k, v);
       }
 
       // Designator mapping from each file
-      const dm = buildDesignatorMapping(text);
+      const dm = buildDesignatorMapping(text, isV4);
       for (const [k, v] of dm) designatorMap.set(k, v);
 
-      // Type map from each file (first-write-wins across files within this airport)
+      // Type map from each file
       const fileTypeMap = extractTypeMap(text);
       for (const [k, v] of fileTypeMap) {
         if (!typeMap.has(k)) typeMap.set(k, v);
       }
 
-      // Store per-file typeMap (keyed by basename) for save-time expansion.
-      // Type numbers are per-file in Unity's JSON serialization — each .acl file
-      // gets its own assignments. The per-file map survives repeated saves.
       fileTypeMaps.set(path.basename(aclPath), fileTypeMap);
 
       log('  ' + path.basename(aclPath) + ': ' + entries.length + ' approach a/c, ' + fileSpecs.size + ' specs, ' + fileTypeMap.size + ' types');
@@ -2260,7 +2875,7 @@ function buildApproachCache(airportDir, progressCallback) {
   // Extract authoritative STAR↔runway mappings from SceneryData.
   // This captures ALL valid combos (not just those with State=30 aircraft).
   const starMappings = firstAclText
-    ? extractStarRunwayMappings(firstAclText)
+    ? extractStarRunwayMappings(firstAclText, isV4)
     : { starRunwayMap: {}, runwayStarMap: {} };
 
   // Build state5ParamsMap from SceneryData for all runways.
@@ -2273,7 +2888,7 @@ function buildApproachCache(airportDir, progressCallback) {
   const state5ParamsMap = new Map();
   if (firstAclText && starMappings.runwayStarMap) {
     for (const runway of Object.keys(starMappings.runwayStarMap)) {
-      const data = resolveApproachProcedureData(firstAclText, runway);
+      const data = resolveApproachProcedureData(firstAclText, runway, undefined, isV4);
       if (data) {
         state5ParamsMap.set(runway, data);
         const normalized = _normalizeRunway(runway);
@@ -2292,13 +2907,13 @@ function buildApproachCache(airportDir, progressCallback) {
   for (const [runway, stars] of Object.entries(starMappings.runwayStarMap)) {
     for (const star of stars) {
       // Resolve FlyApproach points to find the STAR's exit (IAF) point
-      const flyPoints = resolveFlyApproachPoints(firstAclText, star, runway);
+      const flyPoints = resolveFlyApproachPoints(firstAclText, star, runway, isV4);
       const hintPos = (flyPoints && flyPoints.length > 0)
         ? flyPoints[flyPoints.length - 1]
         : null;
 
       // Get variant-correct approach procedure data for this STAR
-      const s5 = resolveApproachProcedureData(firstAclText, runway, hintPos);
+      const s5 = resolveApproachProcedureData(firstAclText, runway, hintPos, isV4);
       if (!s5 || !s5.pathPointList || s5.pathPointList.length < 2) continue;
 
       appPointMap.set(star + '|' + runway, s5.pathPointList);
@@ -2313,11 +2928,11 @@ function buildApproachCache(airportDir, progressCallback) {
     const normRunway = _normalizeRunway(runway);
     if (normRunway !== runway) {
       for (const star of stars) {
-        const flyPoints = resolveFlyApproachPoints(firstAclText, star, normRunway);
+        const flyPoints = resolveFlyApproachPoints(firstAclText, star, normRunway, isV4);
         const hintPos = (flyPoints && flyPoints.length > 0)
           ? flyPoints[flyPoints.length - 1]
           : null;
-        const s5n = resolveApproachProcedureData(firstAclText, normRunway, hintPos);
+        const s5n = resolveApproachProcedureData(firstAclText, normRunway, hintPos, isV4);
         if (!s5n || !s5n.pathPointList) continue;
         const key = star + '|' + normRunway;
         if (!appPointMap.has(key)) appPointMap.set(key, s5n.pathPointList);
@@ -2333,10 +2948,10 @@ function buildApproachCache(airportDir, progressCallback) {
   // Pass 1 uses appPointMap (now SceneryData-derived, covers all STARs).
   // Pass 2 uses starRunwayMap to add any STARs still missing (FlyApproach-only).
   const starPaths = firstAclText
-    ? buildStarPaths(firstAclText, appPointMap, starMappings.starRunwayMap)
+    ? buildStarPaths(firstAclText, appPointMap, starMappings.starRunwayMap, isV4)
     : {};
   const runwayThresholds = firstAclText
-    ? _parseRunwayThresholds(firstAclText)
+    ? _parseRunwayThresholds(firstAclText, isV4)
     : {};
 
   // ── Taxiway paths (already merged from all files in main loop above) ──
@@ -2355,14 +2970,14 @@ function buildApproachCache(airportDir, progressCallback) {
   if (firstAclText) {
     try {
       const { extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('./sid_goaround');
-      const sidMappings = extractSidRunwayMappings(firstAclText);
+      const sidMappings = extractSidRunwayMappings(firstAclText, isV4);
       sidRunwayMap = sidMappings.sidRunwayMap || {};
       runwaySidMap = sidMappings.runwaySidMap || {};
-      const maMappings = extractMissedApproachMappings(firstAclText);
+      const maMappings = extractMissedApproachMappings(firstAclText, isV4);
       missedAppMap = maMappings.missedAppMap || {};
       runwayMissedAppMap = maMappings.runwayMissedAppMap || {};
-      sidPaths = buildSidPaths(firstAclText, sidRunwayMap);
-      missedAppPaths = buildMissedApproachPaths(firstAclText, missedAppMap);
+      sidPaths = buildSidPaths(firstAclText, sidRunwayMap, isV4);
+      missedAppPaths = buildMissedApproachPaths(firstAclText, missedAppMap, isV4);
     } catch (e) { log('  SID/go-around parse warning: ' + e.message); }
   }
 
@@ -2373,10 +2988,10 @@ function buildApproachCache(airportDir, progressCallback) {
   if (firstAclText) {
     try {
       const { extractApprRunwayMappings, buildApprPaths } = require('./sid_goaround');
-      const apprMappings = extractApprRunwayMappings(firstAclText);
+      const apprMappings = extractApprRunwayMappings(firstAclText, isV4);
       apprRunwayMap = apprMappings.apprRunwayMap || {};
       runwayApprMap = apprMappings.runwayApprMap || {};
-      apprPaths = buildApprPaths(firstAclText, apprRunwayMap);
+      apprPaths = buildApprPaths(firstAclText, apprRunwayMap, isV4);
     } catch (e) { log('  APPR path parse warning: ' + e.message); }
   }
 
@@ -2445,6 +3060,7 @@ function buildApproachCache(airportDir, progressCallback) {
     sidRunwayMap, runwaySidMap, sidPaths,
     missedAppMap, runwayMissedAppMap, missedAppPaths,
     apprRunwayMap, runwayApprMap, apprPaths,
+    isV4,
   };
 }
 
@@ -2519,7 +3135,12 @@ function extractGameTime(aclText) {
 
 // ─── 10c. Extract saveTime from ACL approach entries ──────────────
 
-function extractSaveTime(aclText, totalApproachTimes) {
+function extractSaveTime(aclText, totalApproachTimes, isV4) {
+  if (isV4 === undefined) {
+    isV4 = _detectSchemaVersion(aclText) === 4;
+  }
+  if (isV4) return null; // v4: use MetaData.BaseTime instead (handled by extractCurrentDateTime)
+
   const wsIdx = aclText.indexOf('"WorldState"');
   if (wsIdx < 0) return null;
   const acIdx = aclText.indexOf('"Aircrafts"', wsIdx);
@@ -2677,6 +3298,7 @@ module.exports = {
   _interpolateAlongPath, _tangentAlongPath,
   _findArrayEnd, _extractValueBlock, _extractNestedObject,
   _extractFloat, _extractInt, _extractString, _extractVector3, _extractVector3Array,
+  _detectSchemaVersion,
   _parseAircraftEntries, _parseFlightPlanData, _parseAirwayNodes, _parseTaxiwayNodes,
   _parseRunwayThresholds,
   _resolveFromAirwaySegments, _findRunwayGuid,

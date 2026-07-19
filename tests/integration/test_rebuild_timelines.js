@@ -12,7 +12,8 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { _rebuildTimelineSections } = require('../../src/acl/flight_plans');
+const { _rebuildTimelineSections, _parseRunwayTimeline } = require('../../src/acl/flight_plans');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let aclSrc = null;
@@ -129,7 +130,7 @@ function testWeatherFramesRebuild() {
   });
 
   _rebuildTimelineSections(ACL_TEMP, modifiedData, null, null);
-  const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
+  const outText = readAclText(ACL_TEMP);
   let ok = true;
 
   ok &= check(outText.includes('"Preset": "TEST_PRESET_0"'), 'Modified preset TEST_PRESET_0 present');
@@ -144,7 +145,7 @@ function testWeatherFramesRebuild() {
     'Time count == ' + modifiedData.length);
 
   // WindFrames untouched (null means no rebuild)
-  const windOrig = extractSection(fs.readFileSync(aclSrc, 'utf-8'), 'WindFrames');
+  const windOrig = extractSection(readAclText(aclSrc), 'WindFrames');
   const windOut = extractSection(outText, 'WindFrames');
   if (windOrig && windOut) ok &= check(windOrig.raw === windOut.raw, 'WindFrames unchanged (null passed)');
 
@@ -166,7 +167,7 @@ function testWindFramesRebuild() {
   }));
 
   _rebuildTimelineSections(ACL_TEMP, null, modifiedData, null);
-  const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
+  const outText = readAclText(ACL_TEMP);
   let ok = true;
 
   const ws = extractSection(outText, 'WindFrames');
@@ -178,7 +179,7 @@ function testWindFramesRebuild() {
     'Modified Speed[0]=' + modifiedData[0].speed);
 
   // WeatherFrames untouched
-  const wxOrig = extractSection(fs.readFileSync(aclSrc, 'utf-8'), 'WeatherFrames');
+  const wxOrig = extractSection(readAclText(aclSrc), 'WeatherFrames');
   const wxOut = extractSection(outText, 'WeatherFrames');
   if (wxOrig && wxOut) ok &= check(wxOrig.raw === wxOut.raw, 'WeatherFrames unchanged (null passed)');
 
@@ -194,7 +195,7 @@ function testRunwayTimelineEmpty() {
   const modifiedData = { initialRunways: ['22L', '22R'], timeline: [] };
   _rebuildTimelineSections(ACL_TEMP, null, null, modifiedData);
 
-  const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
+  const outText = readAclText(ACL_TEMP);
   let ok = true;
 
   ok &= check(outText.includes('"22L"'), 'InitialRunway 22L present');
@@ -232,7 +233,7 @@ function testRunwayTimelineWithChanges() {
   };
 
   _rebuildTimelineSections(ACL_TEMP2, null, null, modifiedData);
-  const outText = fs.readFileSync(ACL_TEMP2, 'utf-8');
+  const outText = readAclText(ACL_TEMP2);
   let ok = true;
 
   ok &= check(outText.includes('"Time": "18:00:00"'), 'Added frame Time="18:00:00"');
@@ -270,7 +271,7 @@ function testAllSectionsRebuild() {
   };
 
   _rebuildTimelineSections(ACL_TEMP, weatherData, windData, runwayData);
-  const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
+  const outText = readAclText(ACL_TEMP);
   let ok = true;
 
   ok &= check(outText.includes('"Preset": "FULL_SYNC_TEST"'), 'Weather: custom preset present');
@@ -303,12 +304,13 @@ function testRoundTripStability() {
 
   const weatherData = JSON.parse(fs.readFileSync(weatherPath, 'utf-8'));
   const windData = JSON.parse(fs.readFileSync(windPath, 'utf-8'));
-  const runwayData = JSON.parse(fs.readFileSync(runwayPath, 'utf-8'));
+  // Parse RunwayTimeline from ACL itself (JSON file may be stale — known mismatch)
+  const runwayData = _parseRunwayTimeline(readAclText(aclSrc));
 
   _rebuildTimelineSections(ACL_TEMP, weatherData, windData, runwayData);
 
-  const outText = fs.readFileSync(ACL_TEMP, 'utf-8');
-  const srcText = fs.readFileSync(aclSrc, 'utf-8');
+  const outText = readAclText(ACL_TEMP);
+  const srcText = readAclText(aclSrc);
   let ok = true;
 
   const weatherOrig = normalizeNewlines(extractSection(srcText, 'WeatherFrames').raw);

@@ -87,7 +87,7 @@ export function useEditorSaveActions({
       );
       return;
     }
-    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline);
+    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline, st.isV4);
     if (issues.length > 0) {
       showModal(t('modal_issues_title', { n: issues.length }),
         <div className="modal-issues-body">{issues.map((issue, i) => <p key={i} className="modal-issue-item">{renderCallsignLink(issue)}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_save')}</p></div>,
@@ -113,7 +113,7 @@ export function useEditorSaveActions({
       );
       return;
     }
-    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline);
+    const issues = runTripleValidation(st.flights, st.airportValues, st.currentAirport, st.audioCallsigns, st._saveSec, st._configStartTime, st._configEndTime, st.runwayTimeline, st.isV4);
     if (issues.length > 0) {
       showModal(t('modal_issues_export_title', { n: issues.length }),
         <div className="modal-issues-body">{issues.map((i, idx) => <p key={idx} className="modal-issue-item">{i}</p>)}<p className="modal-hint-error">{t('modal_issues_fix_hint_export')}</p></div>,
@@ -178,7 +178,7 @@ export function useEditorSaveActions({
               <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>);
             return;
           }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false });
+          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false, isV4: r.isV4 || false });
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) {
             const wsu2 = tl.windSpeedUnit || WIND_UNITS.KNOTS;
@@ -216,7 +216,7 @@ export function useEditorSaveActions({
               <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>);
             return;
           }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false });
+          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false, isV4: r.isV4 || false });
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) {
             const wsu3 = tl.windSpeedUnit || WIND_UNITS.KNOTS;

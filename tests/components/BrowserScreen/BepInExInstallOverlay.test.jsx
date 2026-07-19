@@ -79,7 +79,7 @@ describe('BepInExInstallOverlay', () => {
     await waitFor(() => {
       expect(screen.getByText('fail')).toBeInTheDocument();
     }, { timeout: 3000 });
-    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledWith(false);
   });
 

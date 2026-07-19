@@ -21,6 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 // Parse CLI args
 let gameRoot = path.resolve(__dirname, '..', '..', '..');
@@ -81,7 +82,7 @@ const files = [];
 for (const f of PROD_FILES) {
   const p = path.join(dataDir, f.icao, 'Levels', f.name + '.acl');
   try {
-    const text = fs.readFileSync(p, 'utf-8');
+    const text = readAclText(p);
     files.push({ ...f, path: p, text, size: text.length });
     console.log(`  ${f.icao}/${f.name}.acl — ${(text.length / 1024 / 1024).toFixed(1)} MB`);
   } catch (e) {
