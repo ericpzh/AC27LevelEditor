@@ -173,7 +173,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (493 tests + 1 todo, 29 files) + Playwright (E2E) + Node.js (integration, 25 scripts, 129 MCP/API tests)
+- **Tests:** Vitest (501 tests + 0 todo, 29 files) + Playwright (E2E) + Node.js (integration, 27 scripts, 149 MCP/API tests)
 
 ### Quick Start
 
@@ -198,14 +198,15 @@ src/App.jsx          →  Root component: providers + screen routing (+ map wind
 src/components/      →  React component tree (Setup, Browser, Editor, common, MapWindows)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
-src/acl/             →  CommonJS backend modules (parser facade + 16 modules + OdinSerializer binary codec)
+src/acl/             →  CommonJS backend modules (parser facade + 17 modules + OdinSerializer binary codec)
+src/acl/config.js    →  Centralized config time resolution: resolveConfigTime (CDT override), resolveDisplayTimes
 src/acl/gatcarc.js   →  GATCARC4 binary container: readAclText/writeAcl universal I/O (binary + text)
 src/acl/v4_pk_index.js → v4 PK entity index: $iref→$id lookup, vector3/string/iref extraction helpers
 src/acl/odin/        →  OdinSerializer binary codec (reader, writer, JSON reader/writer, .NET values)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), cross-window selection sync, and push-to-talk voice command input (planned, UI hidden). Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. All time display uses `resolveConfigTime()` — a centralized resolver that extracts Config.startTime from the ACL and overrides it with `GameTime.CurrentDateTime` (the player's actual in-game time including warmup). Demo files show a 30-min window at CurrentDateTime. The browser screen caches file infos and geometry data in the zustand store across editor→browser navigation, avoiding a full re-scan on return. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), cross-window selection sync, and push-to-talk voice command input (planned, UI hidden). Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
@@ -213,7 +214,7 @@ All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The ren
 
 ```
 Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths (merged from all .acl files) + dropdowns + runway pairs → AirportCache. Progress bar shows global 0–100% across all airports/files. Detects v2/v3 vs v4 schema from first file.
-Phase 1 (load):   .acl → readAclText() (GATCARC4 decode if binary) → parse flights + timelines → zustand store. Dual parser paths: v2/v3 uses WorldState.FlightPlans, v4 uses StaticData.$blobdoc.StaticItems (flight-plan: entries).
+Phase 1 (load):   .acl → readAclText() (GATCARC4 decode if binary) → parse flights + timelines → zustand store. Dual parser paths: v2/v3 uses WorldState.FlightPlans, v4 uses StaticData.$blobdoc.StaticItems (flight-plan: entries). Config startTime resolved via resolveConfigTime (overrides with GameTime.CurrentDateTime if present).
 Phase 2 (edit):   All edits go through zustand store actions. v4 files hide InBlockTime/TakeoffTime columns.
 Phase 3 (save):   Validation → generate flights → writeAcl() to .acl + .csv + timeline .json. v4: rebuilds StaticData.$blobdoc.StaticItems (no AircraftStates), v2/v3: rebuilds WorldState.FlightPlans + Aircrafts. Container format auto-preserved (binary stays binary, text stays text).
 UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar / Flight Strips)
@@ -316,6 +317,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │   └── flightCascade.js     # cascading field updates (CallSign rebuild, airline→type/reg, runway→STAR)
 │   │
 │   ├── acl/                 # Backend modules (CommonJS)
+│   │   ├── config.js            # Centralized time resolution (resolveConfigTime, CDT override)
 │   │   ├── parser.js            # FACADE — main.js imports everything through here
 │   │   ├── gatcarc.js           # GATCARC4 binary container (universal readAclText/writeAcl)
 │   │   ├── v4_pk_index.js       # v4 PK entity index + $iref resolution
@@ -343,7 +345,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 390 Vitest + 16 Playwright E2E + 25 Node.js integration tests
+├── tests/               # 501 Vitest + 16 Playwright E2E + 27 Node.js integration tests
 └── dist/                # Build output (gitignored)
 ```
 

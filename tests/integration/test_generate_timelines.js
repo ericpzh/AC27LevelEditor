@@ -136,7 +136,7 @@ function metaFrames(sectionText) {
 function metaRunway(sectionText) {
   const parent = sectionMeta(sectionText);
 
-  let irId = 0, irType = 8;
+  let irId = 0, irTypeNum = null, irTypeStr = null;
   const irIdx = sectionText.indexOf('"InitialRunways"');
   if (irIdx >= 0) {
     let depth = 0, start = -1, end = -1;
@@ -147,7 +147,12 @@ function metaRunway(sectionText) {
     if (start >= 0) {
       const ir = sectionText.substring(start, end);
       irId = parseInt((ir.match(/"\$id"\s*:\s*(\d+)/) || [0, 0])[1], 10);
-      irType = parseInt((ir.match(/"\$type"\s*:\s*(\d+)/) || [0, 8])[1], 10);
+      // Match both full "$type": "N|TypeName" and bare "$type": N forms
+      const tm = ir.match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+      if (tm) {
+        if (tm[1]) { irTypeStr = tm[1]; irTypeNum = parseTypeNum(tm[1]); }
+        else { irTypeNum = parseInt(tm[2], 10); }
+      }
     }
   }
 
@@ -193,7 +198,7 @@ function metaRunway(sectionText) {
 
   return {
     parentId: parent.id, parentTypeNum: parent.typeNum, parentTypeStr: parent.typeStr,
-    irId, irType, tlId, tlTypeNum, tlTypeStr, tlElemTypeNum,
+    irId, irTypeNum, irTypeStr, tlId, tlTypeNum, tlTypeStr, tlElemTypeNum,
     changesArrTypeNum, changeElemTypeNum,
   };
 }
@@ -252,7 +257,8 @@ function testRunwayTimeline() {
 
   const meta = metaRunway(orig);
   let ok = true;
-  ok &= check(meta.irType === 8, 'InitialRunways $type == 8 (got ' + meta.irType + ')');
+  ok &= check(meta.irTypeNum === 8, 'InitialRunways $type num == 8 (got ' + meta.irTypeNum + ')');
+  ok &= check(meta.irTypeStr === null, 'InitialRunways $type is bare integer (v2/v3 format preserved)');
   ok &= check(!!meta.tlTypeNum, 'Timeline $type number parsed (' + meta.tlTypeNum + ')');
 
   // Generate from parsed ACL data so the round-trip compares apples-to-apples

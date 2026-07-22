@@ -14,6 +14,8 @@ const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, build
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
 const { readAclText, writeAcl } = require('./gatcarc');
+// resolveConfigTime imported lazily inside _rebuildWorldStateSections
+// to avoid circular dependency: config.js requires flight_plans.js for _extractConfig
 
 // ─── Parse WorldState.FlightPlans ─────────────────────────────
 
@@ -483,9 +485,11 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
   const icaoMatch = aclPath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
   const icao = icaoMatch ? icaoMatch[1] : '';
   // Fallback: read startTime from ACL's Config block if not passed
+  // Lazy require to avoid circular dependency (config.js → flight_plans.js → config.js)
   if (!aclcfgStartTime) {
     try {
-      const config = _extractConfig(text);
+      const { resolveConfigTime } = require('./config');
+      const config = resolveConfigTime(text);
       if (config && config.startTime) {
         aclcfgStartTime = config.startTime;
       }
@@ -1412,9 +1416,152 @@ function _resetJetwayDockingState(segAfter, log) {
   return jwBefore + entries.join('') + jwAfter;
 }
 
+/**
+ * v4: Reset docking state on jetway entries in the checkpoint frame's
+ * RuntimeData blobdoc. When flights are deleted, jetway entries in the
+ * frame may still have non-null DockingAircraft fields containing embedded
+ * Aircraft objects whose flight-plan $fstrref references are now stale.
+ * We detect these by checking $fstrref:"flight-plan:REG" inside the
+ * DockingAircraft value against the set of valid registrations, and reset
+ * the docking fields: Status→0, Progress→0, DockingAircraft→null,
+ * DockingDoorIndex→-1.
+ */
+function _resetFrameJetwayDockingState(frameText, validRegs, log) {
+  // Locate RuntimeEntities $rcontent boundaries
+  const reIdx = frameText.indexOf('"RuntimeEntities"');
+  if (reIdx < 0) return { text: frameText, resetCount: 0 };
+
+  const rcIdx = frameText.indexOf('"$rcontent": [', reIdx);
+  if (rcIdx < 0) return { text: frameText, resetCount: 0 };
+  const rcStart = rcIdx + '"$rcontent": ['.length;
+  while (rcStart < frameText.length && ' \t\n\r'.includes(frameText[rcStart])) { /* skip whitespace */ break; }
+
+  // Find the matching ] for the $rcontent array
+  let depth = 0, rcEnd = -1;
+  for (let i = rcStart; i < frameText.length; i++) {
+    if (frameText[i] === '{') depth++;
+    else if (frameText[i] === '}') depth--;
+    else if (frameText[i] === ']' && depth === 0) { rcEnd = i; break; }
+  }
+  if (rcEnd < 0) return { text: frameText, resetCount: 0 };
+
+  const before = frameText.substring(0, rcStart);
+  const content = frameText.substring(rcStart, rcEnd);
+  const after = frameText.substring(rcEnd);
+
+  // Split content on "$k": "jetway: to find jetway entries
+  // Each jetway entry: { "$k": "jetway:XX", "$v": { ... } }
+  let resetCount = 0;
+  const segments = [];
+  let pos = 0;
+
+  while (pos < content.length) {
+    // Find next jetway entry
+    const jwStart = content.indexOf('"$k": "jetway:', pos);
+    if (jwStart < 0) {
+      // No more jetway entries — push remainder
+      if (pos < content.length) segments.push(content.substring(pos));
+      break;
+    }
+
+    // Push text before this entry
+    if (jwStart > pos) segments.push(content.substring(pos, jwStart));
+
+    // Find the opening { of this entry
+    let entryStart = jwStart;
+    while (entryStart > 0 && content[entryStart] !== '{') entryStart--;
+
+    // Find the matching closing }
+    let entryDepth = 0, entryEnd = -1;
+    for (let i = entryStart; i < content.length; i++) {
+      if (content[i] === '{') entryDepth++;
+      else if (content[i] === '}') {
+        entryDepth--;
+        if (entryDepth === 0) { entryEnd = i + 1; break; }
+      }
+    }
+    if (entryEnd < 0) {
+      segments.push(content.substring(pos));
+      break;
+    }
+
+    const entry = content.substring(entryStart, entryEnd);
+
+    // Check if this jetway has non-null DockingAircraft referencing a deleted aircraft
+    const daIdx = entry.indexOf('"DockingAircraft"');
+    let needsReset = false;
+    if (daIdx >= 0) {
+      // Find the DockingAircraft value block
+      let afterKey = daIdx + 17;
+      while (afterKey < entry.length && ' \t\n\r'.includes(entry[afterKey])) afterKey++;
+      if (entry[afterKey] === ':') {
+        afterKey++;
+        while (afterKey < entry.length && ' \t\n\r'.includes(entry[afterKey])) afterKey++;
+        if (entry[afterKey] === '{') {
+          let daDepth = 0, daEnd = -1;
+          for (let i = afterKey; i < entry.length; i++) {
+            if (entry[i] === '{') daDepth++;
+            else if (entry[i] === '}') {
+              daDepth--;
+              if (daDepth === 0) { daEnd = i + 1; break; }
+            }
+          }
+          if (daEnd > 0) {
+            const daValue = entry.substring(afterKey, daEnd);
+            // Check if non-null (has embedded object, not the null keyword)
+            // and references a deleted registration
+            const refs = daValue.match(/\$fstrref:"flight-plan:([^"]+)"/g);
+            if (refs) {
+              for (const ref of refs) {
+                const regMatch = ref.match(/\$fstrref:"flight-plan:([^"]+)"/);
+                if (regMatch && !validRegs.has(regMatch[1])) {
+                  needsReset = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (needsReset) {
+      // Reset docking fields: Status→0, Progress→0, DockingAircraft→null, DockingDoorIndex→-1
+      let resetEntry = entry
+        .replace(/"Status":\s*\d+/, '"Status": 0')
+        .replace(/"DockingDoorIndex":\s*\{[^}]+(-?\d+)\s*\}/, (m) =>
+          m.replace(/(-?\d+)(\s*\})/, '-1$2'));
+      // Reset Progress: find the value inside Progress (the number after $type)
+      resetEntry = resetEntry.replace(/"Progress":\s*\{[^}]+(\d+)\s*\}/, (m) =>
+        m.replace(/(\d+)(\s*\})/, '0$2'));
+      // Reset DockingAircraft: replace the embedded Aircraft with null
+      // Find the DockingAircraft value and replace its inner content
+      resetEntry = resetEntry.replace(
+        /("DockingAircraft":\s*\{[^}]*"(\$type)":\s*\d+,\s*)\{[\s\S]*?\}\s*\}/,
+        '$1null }'
+      );
+      if (resetEntry !== entry) {
+        segments.push(resetEntry);
+        resetCount++;
+      } else {
+        segments.push(entry);
+      }
+    } else {
+      segments.push(entry);
+    }
+
+    pos = entryEnd;
+  }
+
+  if (resetCount > 0) {
+    return { text: before + segments.join('') + after, resetCount };
+  }
+  return { text: frameText, resetCount: 0 };
+}
+
 function _sectionMeta(sectionText) {
   const idMatch = sectionText.match(/"\$id"\s*:\s*(\d+)/);
-  const typeMatch = sectionText.match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+  const typeMatch = sectionText.match(/"\$type"\s*:\s*"([^"]+)"|"\$type"\s*:\s*(\d+)/);
   let typeStr = null, typeNum = null;
   if (typeMatch) {
     typeStr = typeMatch[1] || null;
@@ -1429,7 +1576,7 @@ function _elemTypeFromRcontent(sectionText) {
   const after = sectionText.substring(rcMatch.index + rcMatch[0].length);
   const brace = after.indexOf('{');
   if (brace < 0) return null;
-  const m = after.substring(brace).match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+  const m = after.substring(brace).match(/"\$type"\s*:\s*"([^"]+)"|"\$type"\s*:\s*(\d+)/);
   if (!m) return null;
   return m[1] ? _parseTypeNum(m[1]) : parseInt(m[2], 10);
 }
@@ -1484,7 +1631,13 @@ function _generateRunwayTimelineSection(data, meta) {
 
   L.push(`${I}    "InitialRunways": {`);
   L.push(`${I}        "$id": ${meta.irId},`);
-  L.push(`${I}        "$type": ${meta.irType},`);
+  // Always emit full-form type declaration so the section is self-contained
+  // and doesn't depend on type registration order elsewhere in the file.
+  // When irTypeNum is null (should not happen with well-formed input), derive
+  // from parent RunwayTimeline type — System.String[] is typically the next
+  // sequential type number.
+  const irTypeNum = meta.irTypeNum != null ? meta.irTypeNum : (meta.parentTypeNum + 1);
+  L.push(`${I}        "$type": "${irTypeNum}|System.String[], mscorlib",`);
   L.push(`${I}        "$rlength": ${ir.length},`);
   L.push(`${I}        "$rcontent": [`);
   for (let i = 0; i < ir.length; i++)
@@ -1494,10 +1647,9 @@ function _generateRunwayTimelineSection(data, meta) {
 
   L.push(`${I}    "Timeline": {`);
   L.push(`${I}        "$id": ${meta.tlId},`);
-  if (meta.tlTypeStr)
-    L.push(`${I}        "$type": "${meta.tlTypeNum}|ContextCross.States.RunwayChangeFrame[], GroundATC.Core",`);
-  else
-    L.push(`${I}        "$type": ${meta.tlTypeNum},`);
+  // Always emit full-form type declaration — same reasoning as InitialRunways above.
+  const tlTypeNum = meta.tlTypeNum != null ? meta.tlTypeNum : (meta.parentTypeNum + 2);
+  L.push(`${I}        "$type": "${tlTypeNum}|ContextCross.States.RunwayChangeFrame[], GroundATC.Core",`);
   L.push(`${I}        "$rlength": ${tl.length},`);
   L.push(`${I}        "$rcontent": [`);
 
@@ -1550,7 +1702,7 @@ function _metaRunway(sectionText) {
 
   // InitialRunways
   const irIdx = sectionText.indexOf('"InitialRunways"');
-  let irId = 0, irType = 8;
+  let irId = 0, irTypeNum = null, irTypeStr = null;
   if (irIdx >= 0) {
     let depth = 0, start = -1, end = -1;
     for (let i = irIdx; i < sectionText.length; i++) {
@@ -1561,8 +1713,12 @@ function _metaRunway(sectionText) {
       const ir = sectionText.substring(start, end);
       const m = ir.match(/"\$id"\s*:\s*(\d+)/);
       irId = m ? parseInt(m[1], 10) : 0;
-      const tm = ir.match(/"\$type"\s*:\s*(\d+)/);
-      irType = tm ? parseInt(tm[1], 10) : 8;
+      // Match both full "$type": "N|TypeName" and bare "$type": N forms
+      const tm = ir.match(/"\$type"\s*:\s*"([^"]+)"|"\$type"\s*:\s*(\d+)/);
+      if (tm) {
+        if (tm[1]) { irTypeStr = tm[1]; irTypeNum = _parseTypeNum(tm[1]); }
+        else { irTypeNum = parseInt(tm[2], 10); }
+      }
     }
   }
 
@@ -1581,7 +1737,7 @@ function _metaRunway(sectionText) {
       const tl = sectionText.substring(start, end);
       const tm = tl.match(/"\$id"\s*:\s*(\d+)/);
       tlId = tm ? parseInt(tm[1], 10) : 0;
-      const ttm = tl.match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+      const ttm = tl.match(/"\$type"\s*:\s*"([^"]+)"|"\$type"\s*:\s*(\d+)/);
       if (ttm) {
         tlTypeStr = ttm[1] || null;
         tlTypeNum = ttm[1] ? _parseTypeNum(ttm[1]) : parseInt(ttm[2], 10);
@@ -1597,7 +1753,7 @@ function _metaRunway(sectionText) {
         }
         if (chStart >= 0) {
           const ch = tl.substring(chStart, chEnd);
-          const ctm = ch.match(/"\$type"\s*:\s*"([^"]+)"|\$type"\s*:\s*(\d+)/);
+          const ctm = ch.match(/"\$type"\s*:\s*"([^"]+)"|"\$type"\s*:\s*(\d+)/);
           if (ctm) changesArrTypeNum = ctm[1] ? _parseTypeNum(ctm[1]) : parseInt(ctm[2], 10);
           changeElemTypeNum = _elemTypeFromRcontent(ch);
         }
@@ -1617,7 +1773,7 @@ function _metaRunway(sectionText) {
 
   return {
     parentId: parent.id, parentTypeNum: parent.typeNum, parentTypeStr: parent.typeStr,
-    irId, irType, tlId, tlTypeNum, tlTypeStr, tlElemTypeNum,
+    irId, irTypeNum, irTypeStr, tlId, tlTypeNum, tlTypeStr, tlElemTypeNum,
     changesArrTypeNum, changeElemTypeNum,
   };
 }
@@ -2172,7 +2328,68 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   const secPrefix = text.substring(secKeyGlobal, secValueStartGlobal); // e.g. "StaticItems":
   const fullBefore = text.substring(0, secKeyGlobal);
   const fullAfter = text.substring(secValueEndGlobal);
-  const newText = fullBefore + secPrefix + finalSiText + fullAfter;
+  let newText = fullBefore + secPrefix + finalSiText + fullAfter;
+
+  // 7. Clean up stale $fstrref:"flight-plan:REG" references and reset
+  // orphaned jetway docking state in the checkpoint frame.
+  //
+  // When flights are deleted or their registrations change, the rebuilt
+  // flight-plan keys ($k) no longer match preserved $fstrref references in
+  // the checkpoint frame. Unity cannot resolve these stale
+  // ExternalReferenceByString values and throws:
+  //   "Data layout mismatch; skipping past node boundary when exiting array"
+  //
+  // Additionally, jetway entries in the frame's RuntimeData blobdoc may
+  // have non-null DockingAircraft fields containing embedded Aircraft
+  // objects whose $fstrref also points to a deleted registration. We reset
+  // these jetway entries to their undocked state (Status→0, Progress→0,
+  // DockingAircraft→null, DockingDoorIndex→-1).
+  {
+    const { RE_FRAME_SENTINEL } = require('./gatcarc');
+
+    const validRegs = new Set();
+    for (const fl of flights) {
+      const reg = fl._Registration || fl.Registration || '';
+      if (reg) validRegs.add(reg);
+    }
+
+    // 7a. Replace stale $fstrref → null everywhere
+    let staleReplaced = 0;
+    newText = newText.replace(
+      /\$fstrref:"flight-plan:([^"]+)"/g,
+      (match, reg) => {
+        if (validRegs.has(reg)) return match;
+        staleReplaced++;
+        return 'null';
+      }
+    );
+    if (staleReplaced > 0) {
+      log('Cleaned up ' + staleReplaced + ' stale $fstrref reference(s) → null');
+    }
+
+    // 7b. Reset jetway docking state in checkpoint frames
+    const frameDocs = newText.split(RE_FRAME_SENTINEL);
+    if (frameDocs.length > 1) {
+      const sentinelMatch = newText.match(RE_FRAME_SENTINEL);
+      const exactSentinel = sentinelMatch ? sentinelMatch[0] : '';
+      let frameModified = false;
+      let totalJwReset = 0;
+
+      for (let fi = 1; fi < frameDocs.length; fi++) {
+        const result = _resetFrameJetwayDockingState(frameDocs[fi], validRegs, log);
+        if (result.resetCount > 0) {
+          frameDocs[fi] = result.text;
+          frameModified = true;
+          totalJwReset += result.resetCount;
+        }
+      }
+
+      if (frameModified) {
+        newText = frameDocs.join(exactSentinel);
+        log('Reset ' + totalJwReset + ' jetway docking state(s) for deleted aircraft');
+      }
+    }
+  }
 
   const { writeAcl } = require('./gatcarc');
   const savedFormat = writeAcl(aclPath, newText);

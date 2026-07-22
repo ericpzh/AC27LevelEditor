@@ -32,11 +32,20 @@ function rescanGuideContent(t) {
 
 function computeTodLabel(startTime, t) {
   if (!startTime) return { label: '', type: '' };
-  const startH = parseInt(String(startTime).substring(0, 2));
-  if (startH >= 5 && startH < 7) return { label: t('browser_tod_dawn'), type: 'dawn' };
-  if (startH >= 7 && startH < 12) return { label: t('browser_tod_morning'), type: 'morning' };
-  if (startH >= 12 && startH < 17) return { label: t('browser_tod_afternoon'), type: 'afternoon' };
-  if (startH >= 17 && startH < 19) return { label: t('browser_tod_dusk'), type: 'dusk' };
+  const s = String(startTime).substring(0, 5); // "HH:MM"
+  const parts = s.split(':');
+  const mins = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+  // dawn:     04:00 – 06:00
+  if (mins >= 4 * 60 && mins < 6 * 60) return { label: t('browser_tod_dawn'), type: 'dawn' };
+  // morning:  06:00 – 12:00
+  if (mins >= 6 * 60 && mins < 12 * 60) return { label: t('browser_tod_morning'), type: 'morning' };
+  // afternoon: 12:00 – 16:50
+  if (mins >= 12 * 60 && mins < 16 * 60 + 50) return { label: t('browser_tod_afternoon'), type: 'afternoon' };
+  // dusk:     16:50 – 18:50
+  if (mins >= 16 * 60 + 50 && mins < 18 * 60 + 50) return { label: t('browser_tod_dusk'), type: 'dusk' };
+  // night:    18:50 – 21:00
+  if (mins >= 18 * 60 + 50 && mins < 21 * 60) return { label: t('browser_tod_night'), type: 'night' };
+  // fallback (00:00 – 04:00)
   return { label: t('browser_tod_night'), type: 'night' };
 }
 
@@ -55,7 +64,6 @@ export default function BrowserScreen() {
   const setScreen = useAppStore(s => s.setScreen);
   const theme = useAppStore(s => s.theme);
   const toggleTheme = useAppStore(s => s.toggleTheme);
-
   const isDemo = rootPath && rootPath.includes('Airport Control 27 Demo');
   const openGroundRadarAirports = useAppStore(s => s.openGroundRadarAirports);
   const openAirRadarAirports = useAppStore(s => s.openAirRadarAirports);
@@ -64,8 +72,10 @@ export default function BrowserScreen() {
   const openFlightStripAirports = useAppStore(s => s.openFlightStripAirports);
   const setFlightStripOpen = useAppStore(s => s.setFlightStripOpen);
 
-  const [fileInfos, setFileInfos] = useState({});
-  const [geomCache, setGeomCache] = useState({}); // { [icao]: { areaData, taxiwayPaths, runwayData } | null }
+  const fileInfos = useAppStore(s => s.fileInfos);
+  const geomCache = useAppStore(s => s.geomCache);
+  const browserDataLoaded = useAppStore(s => s.browserDataLoaded);
+  const setBrowserCache = useAppStore(s => s.setBrowserCache);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [appVersion, setAppVersion] = useState('');
@@ -142,6 +152,11 @@ export default function BrowserScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Skip full scan if cache is already populated (e.g. returning from editor)
+      if (browserDataLoaded && refreshKey === 0) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       const sorted = [...airports].sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao));
       const allInfos = {};
@@ -157,12 +172,12 @@ export default function BrowserScreen() {
             return DEMO_VISIBLE_BASES.has(info.filename);
           }).sort(sortLevelRows);
         } else {
-          // Normal mode: show production levels + .demo.acl slices; hide tutorial/test/endless/dev/bench/crossrunway/.Prod
+          // Normal mode: show production levels; hide .demo (v4 only), tutorial/test/endless/dev/bench/crossrunway/.Prod
           const visible = infos.filter(info => {
             // Hide levels that failed to parse (e.g. Git LFS stubs)
             if (info.error) return false;
-            // Show .demo.acl files
-            if (info.isDemo) return true;
+            // Hide all .demo files in non-demo mode
+            if (info.isDemo || /\.demo/i.test(info.filename)) return false;
             // Show production levels; hide tutorial/test/endless/dev/bench/crossrunway/.Prod variants
             return !RE_HIDDEN.test(info.filename);
           });
@@ -181,7 +196,7 @@ export default function BrowserScreen() {
           allGeom[airport.icao] = null;
         }
       }
-      if (!cancelled) { setFileInfos(allInfos); setGeomCache(allGeom); setLoading(false); }
+      if (!cancelled) { setBrowserCache(allInfos, allGeom); setLoading(false); }
     })();
     return () => { cancelled = true; };
   }, [airports, rootPath, refreshKey, isDemo]);
@@ -482,6 +497,8 @@ export default function BrowserScreen() {
                 const todInfo = computeTodLabel(info.startTime, t);
                 if (info.isEmer) todInfo.label = t('browser_emerg_level');
                 const timeRange = info.startTime && info.endTime ? toHHMM(info.startTime) + '-' + toHHMM(info.endTime) : '';
+                console.log('[BrowserScreen] card:', info.filename,
+                  'startTime=' + info.startTime, 'endTime=' + info.endTime, 'isDemo=' + info.isDemo);
                 return (
                   <div key={i} className="level-row" onClick={() => handleOpenFile(info.path, airport.icao)}>
                     <span className="level-tod">{todInfo.label}</span>

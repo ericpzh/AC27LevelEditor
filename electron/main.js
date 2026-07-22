@@ -13,6 +13,7 @@ const updater = require('./updater');
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, detectSchemaVersion, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
@@ -246,7 +247,41 @@ ipcMain.handle('scan-acls', async (_event, rootPath) => {
 // ─── IPC: Get file info (lightweight) ────────────────────
 
 ipcMain.handle('get-file-info', async (_event, filePath) => {
-  return getFileInfo(filePath);
+  const info = getFileInfo(filePath);
+  if (info && !info.error) {
+    try {
+      const isDemo = _isDemoFile(filePath);
+      info.isDemo = isDemo;
+      info.isEmer = _isEmerFile(filePath);
+
+      if (isDemo) {
+        // For demo files: compute the 30-min window (matching get-airport-files-info)
+        const text = readAclText(filePath);
+        const cdt = extractCurrentDateTime(text);
+        if (cdt && cdt.timeString) {
+          info.currentDateTime = cdt.timeString;
+          const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
+          const roundedEndMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN);
+          const eh = Math.floor(roundedEndMin / 60) % 24;
+          const em = roundedEndMin % 60;
+          info.demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':00';
+          info.endTime = info.demoEndTime;
+          console.log('[IPC] get-file-info: demo file', path.basename(filePath),
+            '— window [' + (info.startTime || 'none') + ' ~ ' + (info.endTime || 'none') + ']');
+        } else {
+          console.log('[IPC] get-file-info: demo file', path.basename(filePath),
+            '— no CDT, using config range [' + (info.startTime || 'none') + ' ~ ' + (info.endTime || 'none') + ']');
+        }
+      } else {
+        // Non-demo: getFileInfo() already returns CDT-corrected startTime via resolveConfigTime
+        console.log('[IPC] get-file-info:', path.basename(filePath),
+          '— startTime=' + (info.startTime || 'none') + ' endTime=' + (info.endTime || 'none'));
+      }
+    } catch (e) {
+      console.log('[IPC] get-file-info: ERROR for', path.basename(filePath), ':', e.message);
+    }
+  }
+  return info;
 });
 
 // ─── IPC: Get file infos for an airport ──────────────────
@@ -264,42 +299,32 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
     const isEmer = _isEmerFile(f.filename);
     info.isDemo = isDemo;
     info.isEmer = isEmer;
-    // For .demo.acl files (including _emerg): extract CurrentDateTime for 30-min window display
+    // getFileInfo() now returns CDT-corrected startTime via resolveConfigTime.
+    // For .demo.acl files: override endTime with the 30-min demo window.
     if (isDemo) {
       try {
         const text = readAclText(f.path);
         const cdt = extractCurrentDateTime(text);
-        console.log('[IPC] get-airport-files-info: demo file', f.filename, '— extractCurrentDateTime returned', cdt ? ('timeString=' + cdt.timeString) : 'NULL');
-        if (cdt) {
+        console.log('[IPC] get-airport-files-info: demo file', f.filename,
+          '— startTime=' + (info.startTime || 'none'),
+          '— extractCurrentDateTime returned', cdt ? ('timeString=' + cdt.timeString) : 'NULL');
+        if (cdt && cdt.timeString) {
           info.currentDateTime = cdt.timeString;
-          // Compute 30-min window end rounded to nearest :X0/:X5
-          const ssm = cdt.secSinceMidnight;
-          const cdtMin = Math.floor(ssm / 60);
+          const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
           const roundedEndMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN);
           const eh = Math.floor(roundedEndMin / 60) % 24;
           const em = roundedEndMin % 60;
           info.demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':00';
-          // Override startTime/endTime to show the 30-min demo window
-          info.startTime = cdt.timeString;
           info.endTime = info.demoEndTime;
-          console.log('[IPC] get-airport-files-info: demo file', f.filename, '— window [' + cdt.timeString + ' ~ ' + info.demoEndTime + ']');
+          console.log('[IPC] get-airport-files-info: demo file', f.filename,
+            '— window [' + info.startTime + ' ~ ' + info.demoEndTime + ']');
         } else {
-          console.log('[IPC] get-airport-files-info: demo file', f.filename, '— FALLBACK to config range [' + (info.startTime || 'none') + ' ~ ' + (info.endTime || 'none') + ']');
+          console.log('[IPC] get-airport-files-info: demo file', f.filename,
+            '— no CDT, using config range [' + (info.startTime || 'none') + ' ~ ' + (info.endTime || 'none') + ']');
         }
-      } catch (e) { console.log('[IPC] get-airport-files-info: demo file', f.filename, '— ERROR:', e.message); /* keep config startTime/endTime as fallback */ }
-    } else {
-      // getFileInfo now extracts startTime/endTime from ACL's Config block (single source of truth)
-      if (info.startTime) {
-        // Config startTime has 10-min warmup — add 10 min to match in-game display
-        const p = String(info.startTime).split(':');
-        const m = parseInt(p[0]) * 60 + parseInt(p[1]) + 10;
-        const h = Math.floor(m / 60) % 24;
-        info.startTime = String(h).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ':00';
-      } else {
-        info.startTime = info.earliestTime || null;
-      }
-      info.endTime = info.endTime || null;
+      } catch (e) { console.log('[IPC] get-airport-files-info: demo file', f.filename, '— ERROR:', e.message); }
     }
+    // Non-demo: getFileInfo() already returns CDT-corrected startTime/endTime — no override needed.
     console.log('[IPC]   file', i, f.filename, '->', info.error ? ('ERROR: ' + info.error) : ('OK arrivals=' + info.arrivals + ' departures=' + info.departures + ' startTime=' + (info.startTime || 'none') + ' endTime=' + (info.endTime || 'none') + (isDemo ? ' [DEMO]' : '')));
     return info;
   });
@@ -1063,14 +1088,9 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
     const data = loadFlights(filePath);
     console.log('[IPC] load-acl OK: flights=' + data.flights.length + ' fromFlightPlans=' + (data._fromFlightPlans || false) + ' fromWorldState=' + (data._fromWorldState || false));
 
-    // Extract config from ACL's Config block (single source of truth)
-    let config = null;
-    if (data._rawText) {
-      config = _extractConfig(data._rawText);
-      console.log('[IPC] load-acl: config from ACL ->', config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime) : 'NULL');
-    } else {
-      console.log('[IPC] load-acl: WARNING data._rawText is falsy!');
-    }
+    // Extract config from ACL (single source: resolveConfigTime applies CDT override)
+    let config = data._rawText ? resolveConfigTime(data._rawText) : null;
+    console.log('[IPC] load-acl: config from ACL ->', config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime) : 'NULL');
 
     const isDemo = _isDemoFile(filePath);
     const isEmer = _isEmerFile(filePath);
@@ -1085,27 +1105,6 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
       config = result.config;
       _currentDateTime = result._currentDateTime;
       removedCount = result.removedCount;
-    }
-
-    // Compute earliest flight time from loaded data (handles midnight-crossing)
-    let earliestTime = null, earliestMin = Infinity;
-    if (data.flights) {
-      const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
-      // If level starts in the evening, treat post-midnight times as next-day
-      const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
-      const crossesMidnight = startH >= MIDNIGHT_CROSS_START_HOUR;
-      for (const fl of data.flights) {
-        for (const field of ['LandingTime', 'OffBlockTime']) {
-          const t = fl[field];
-          if (!t) continue;
-          let tm = toMin(t);
-          if (crossesMidnight && tm < MIDNIGHT_CROSS_THRESHOLD_MIN) tm += MINUTES_PER_DAY; // times before 06:00 are next day
-          if (tm < earliestMin) {
-            earliestTime = t;
-            earliestMin = tm;
-          }
-        }
-      }
     }
 
     // Extract saveTime: prefer GameTime.CurrentDateTime, fall back to approach entries,
@@ -1134,7 +1133,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
       console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from config.startTime + warmup (final fallback)');
     }
 
-    return { success: true, path: filePath, config, earliestTime, _saveSec, _currentDateTime, isDemo, ...data };
+    return { success: true, path: filePath, config, _saveSec, _currentDateTime, isDemo, ...data };
   } catch (err) {
     console.error('[IPC] load-acl FAIL:', filePath, '|', err.message, '|', err.stack);
     return { success: false, error: err.message };
@@ -1171,18 +1170,15 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     try {
       aclText = readAclText(filePath);
       const text = aclText;
-      config = _extractConfig(text);
+      config = resolveConfigTime(text);
       if (config) {
         aclcfgStartTime = config.startTime || null;
         aclcfgEndTime = config.endTime || null;
       }
-      // For .demo.acl files (including _emerg), override startTime/endTime from CDT.
-      // NOTE: We do NOT override _saveSec from CDT — the wall-clock timestamp
-      // is not the scenario save point. saveSec comes from the approach cache's
-      // saveTimeOffsets (derived from landingTime - (1-PR)*TAT during init scan).
+      // For .demo.acl files (including _emerg): override endTime with 30-min demo window.
+      // startTime is already CDT-overridden by resolveConfigTime above.
       const cdt = extractCurrentDateTime(text);
       if (isDemoSave && cdt && cdt.timeString) {
-        aclcfgStartTime = cdt.timeString;
         const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
         const roundedEndMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN);
         const eh = Math.floor(roundedEndMin / 60) % 24;
@@ -1384,11 +1380,8 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     const isDemo = _isDemoFile(aclFile);
     const isEmer = _isEmerFile(aclFile);
 
-    // 6b) Extract config first (needed by demo filter to override startTime/endTime)
-    let config = null;
-    if (data._rawText) {
-      config = _extractConfig(data._rawText);
-    }
+    // 6b) Extract config (single source: resolveConfigTime applies CDT override)
+    let config = data._rawText ? resolveConfigTime(data._rawText) : null;
 
     // 6c) For .demo.acl (including _emerg): filter flights to 30-min window at CurrentDateTime
     let _currentDateTime = null;
@@ -1402,27 +1395,7 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
       }
     }
 
-    // 8) Compute earliest flight time (same as load-acl handler)
-    let earliestTime = null, earliestMin = Infinity;
-    if (data.flights) {
-      const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
-      const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
-      const crossesMidnight = startH >= MIDNIGHT_CROSS_START_HOUR;
-      for (const fl of data.flights) {
-        for (const field of ['LandingTime', 'OffBlockTime']) {
-          const t = fl[field];
-          if (!t) continue;
-          let tm = toMin(t);
-          if (crossesMidnight && tm < MIDNIGHT_CROSS_THRESHOLD_MIN) tm += MINUTES_PER_DAY;
-          if (tm < earliestMin) {
-            earliestTime = t;
-            earliestMin = tm;
-          }
-        }
-      }
-    }
-
-    // 9) Extract saveTime (same as load-acl handler)
+    // 8) Extract saveTime (same as load-acl handler)
     let _saveSec = null;
     try {
       const rawText = readAclText(newAclPath);
@@ -1446,7 +1419,7 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
       console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from config.startTime + warmup (final fallback)');
     }
 
-    return { canceled: false, path: newAclPath, config, earliestTime, _saveSec, _currentDateTime, isDemo, ...data };
+    return { canceled: false, path: newAclPath, config, _saveSec, _currentDateTime, isDemo, ...data };
   } catch (err) {
     return { canceled: false, error: err.message };
   }
@@ -1480,11 +1453,10 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     fs.copyFileSync(aclBak, filePath);
     restored.push('flight schedule');
 
-    // 2) Read config from restored ACL's Config block for file references
+    // 2) Read config from restored ACL (single source: resolveConfigTime applies CDT override)
     let config = null;
     try {
-      const text = readAclText(filePath);
-      config = _extractConfig(text);
+      config = resolveConfigTime(readAclText(filePath));
     } catch (_) {}
 
     // 3) Restore CSV .bak → .csv
@@ -1528,23 +1500,6 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
       _currentDateTime = result._currentDateTime;
     }
 
-    // 6) Compute earliest flight time + saveTime (same as load-acl handler)
-    let earliestTime = null, earliestMin = Infinity;
-    if (data.flights) {
-      const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
-      const startH = config && config.startTime ? parseInt(String(config.startTime).substring(0, 2)) : 0;
-      const crossesMidnight = startH >= MIDNIGHT_CROSS_START_HOUR;
-      for (const fl of data.flights) {
-        for (const field of ['LandingTime', 'OffBlockTime']) {
-          const t = fl[field];
-          if (!t) continue;
-          let tm = toMin(t);
-          if (crossesMidnight && tm < MIDNIGHT_CROSS_THRESHOLD_MIN) tm += MINUTES_PER_DAY;
-          if (tm < earliestMin) { earliestTime = t; earliestMin = tm; }
-        }
-      }
-    }
-
     let _saveSec = null;
     try {
       const rawText = readAclText(filePath);
@@ -1561,7 +1516,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
       _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + WARMUP_SEC;
     }
 
-    return { success: true, path: filePath, restored, config, earliestTime, _saveSec, _currentDateTime, isDemo, ...data };
+    return { success: true, path: filePath, restored, config, _saveSec, _currentDateTime, isDemo, ...data };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -1693,9 +1648,9 @@ ipcMain.handle('load-timelines', async (_event, aclPath) => {
   try {
     const levelsDir = path.dirname(aclPath);
 
-    // Parse timelines directly from ACL (single source of truth)
+    // Parse timelines directly from ACL (single source of truth: resolveConfigTime applies CDT override)
     const aclText = readAclText(aclPath);
-    const config = _extractConfig(aclText);
+    const config = resolveConfigTime(aclText);
     console.log('[IPC] load-timelines: config from ACL ->', config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime + ' runwayTimelineFile=' + config.runwayTimelineFile) : 'NULL');
     const weatherTimeline = _parseWeatherFrames(aclText);
     const windTimeline = _parseWindFrames(aclText);

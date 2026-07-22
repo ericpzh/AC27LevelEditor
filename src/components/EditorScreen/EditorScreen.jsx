@@ -163,20 +163,10 @@ function MapOverlays({ standBtnRef, starBtnRef }) {
 
 function ConfigBar() {
   const { t } = useTranslation();
-  const _saveSec = useAppStore(s => s._saveSec);
   const _cs = useAppStore(s => s._configStartTime);
   const _e = useAppStore(s => s._configEndTime);
-  // Resolve display start: _saveSec first, fall back to config.startTime + 13min warmup
-  let saveSec = _saveSec;
-  if (saveSec == null && _cs) {
-    const p = String(_cs).split(':');
-    saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + 780;
-  }
-  if (saveSec == null || !_e) return <span id="toolbar-time-range">{t('editor_time_range')}-</span>;
-  const h = Math.floor(saveSec / 3600) % 24;
-  const m = Math.floor((saveSec % 3600) / 60);
-  const start = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
-  return <span id="toolbar-time-range">{t('editor_time_range')}{start} ~ {String(_e).substring(0, 5)}</span>;
+  if (!_cs || !_e) return <span id="toolbar-time-range">{t('editor_time_range')}-</span>;
+  return <span id="toolbar-time-range">{t('editor_time_range')}{String(_cs).substring(0, 5)} ~ {String(_e).substring(0, 5)}</span>;
 }
 
 function StatusBar() {
@@ -251,7 +241,7 @@ export default function EditorScreen() {
       const data = await electronAPI.loadAcl(filePath);
       if (!data.success) { showModal(t('editor_load_failed'), data.error, <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>); setLoading(false); return; }
       const st = useAppStore.getState();
-      st.setLegacyState({ chatPanelOpen: false, currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _earliestTime: data.earliestTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false, isV4: data.isV4 || false });
+      st.setLegacyState({ chatPanelOpen: false, currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false, isV4: data.isV4 || false });
       if (rootPath && airportIcao) {
         const [vals, audio, tl, rp] = await Promise.all([electronAPI.collectValues(rootPath, airportIcao), electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
         console.log('[Editor] loaded aux data', { airportIcao, valsKeys: Object.keys(vals||{}), dropdowns: { Stand: vals?.Stand?.length, Runway: vals?.Runway?.length, AircraftType: vals?.AircraftType?.length } });
@@ -321,14 +311,14 @@ export default function EditorScreen() {
     );
   };
 
-  const { handleSave, handleSaveAs, handleBackup, handleRestore, handleImport, handleBack } = useEditorSaveActions({
+  const { handleSave, handleSaveAs, handleBackup, handleRestore, handleImport, handleBack, patchEditedFileInfo } = useEditorSaveActions({
     electronAPI, t, showModal, hideModal, showToast,
     convertWindSpeed, WIND_UNITS, rootPath,
     renderCallsignLink, jumpToCallsign, setScreen,
   });
 
   // Keyboard shortcuts
-  useEditorShell({ onSave: handleSave });
+  useEditorShell({ onSave: handleSave, onBeforeNavigate: patchEditedFileInfo });
 
   // Compute table data
   const arrivals = useMemo(() => flights.filter(fl => (fl.LandingTime || '').trim()).sort((a, b) => (a.LandingTime || '').localeCompare(b.LandingTime || '')), [flights]);

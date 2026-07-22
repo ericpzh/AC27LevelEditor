@@ -41,11 +41,16 @@ export const useAppStore = create((set, get) => ({
   _configStartTime: null, _configEndTime: null,
   _windSpeedUnit: 'knots',
   _runwayPairs: [],
-  _earliestTime: null,
+
   _saveSec: null,
   _currentDateTime: null,
   isDemo: false,
   isV4: false,
+
+  // ─── Browser Screen Cache (persisted across mounts) ───
+  fileInfos: {},
+  geomCache: {},
+  browserDataLoaded: false,
 
   // ─── Radar window tracking (ICAO codes of open windows) ───
   openGroundRadarAirports: new Set(),
@@ -85,7 +90,17 @@ export const useAppStore = create((set, get) => ({
 
   // ─── Actions: Screen ───
   setScreen: (screen) => set({ screen, ...(screen !== 'editor' ? { showStandMap: false, showStarMap: false, activeMap: null } : {}) }),
-  setRootPath: (rootPath, airports) => set({ rootPath, airports }),
+  setRootPath: (rootPath, airports) => set({ rootPath, airports, fileInfos: {}, geomCache: {}, browserDataLoaded: false }),
+
+  // ─── Actions: Browser Cache ───
+  setBrowserCache: (fileInfos, geomCache) => set({ fileInfos, geomCache, browserDataLoaded: true }),
+  updateSingleFileInfo: (icao, filePath, newInfo) => set((state) => {
+    const oldList = state.fileInfos[icao] || [];
+    const newList = oldList.map(info =>
+      info.path === filePath ? { ...info, ...newInfo } : info
+    );
+    return { fileInfos: { ...state.fileInfos, [icao]: newList } };
+  }),
 
   // ─── Actions: Editor Data ───
   initializeEditor: (data) => set({
@@ -105,7 +120,7 @@ export const useAppStore = create((set, get) => ({
     editingWidget: null,
     _configStartTime: data.configStartTime,
     _configEndTime: data.configEndTime,
-    _earliestTime: data.earliestTime,
+
     _saveSec: data._saveSec,
     _currentDateTime: data._currentDateTime || null,
     isDemo: data.isDemo || false,

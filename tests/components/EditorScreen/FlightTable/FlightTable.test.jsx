@@ -24,7 +24,7 @@ function setupStore(flights = TEST_FLIGHTS) {
     flights,
     before: '', after: '', arrayContent: '', originalBlocks: [],
     configStartTime: '06:00', configEndTime: '18:00',
-    earliestTime: '05:00', _saveSec: 36000,
+    _saveSec: 36000,
   });
   useAppStore.getState().setAuxData(
     { KJFK: { AircraftType: ['B738', 'A320', 'B77W'], Stand: ['G1', 'G2', 'G3'] } },

@@ -86,13 +86,11 @@ export function getTimelineActiveRange(timeline, configStartTime, configEndTime)
  *   null means "no bounds validation for this field" (matches save behaviour).
  */
 export function getTimeValidationBounds(col, _saveSec, _configStartTime, _configEndTime) {
-  // Flight fields OffBlockTime & LandingTime → bound by [_saveSec, _configEndTime]
+  // Flight fields OffBlockTime & LandingTime → bound by [_configStartTime, _configEndTime]
   if (col === 'OffBlockTime' || col === 'LandingTime') {
-    if (_saveSec != null && _configEndTime) {
-      const sh = Math.floor(_saveSec / 3600) % 24;
-      const sm = Math.floor((_saveSec % 3600) / 60);
+    if (_configStartTime && _configEndTime) {
       return {
-        minTime: String(sh).padStart(2, '0') + ':' + String(sm).padStart(2, '0') + ':00',
+        minTime: String(_configStartTime).substring(0, 8),
         maxTime: _configEndTime,
       };
     }

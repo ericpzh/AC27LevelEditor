@@ -535,4 +535,76 @@ describe('Version Mismatch Detection', () => {
     });
   });
 
+  describe('Demo File Filtering', () => {
+    const nonWhitelistedDemo = {
+      filename: 'ASJN_07-10.demo.acl',
+      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ASJN_07-10.demo.acl',
+      isDemo: false,
+      isEmer: false,
+      startTime: '07:00',
+      endTime: '10:00',
+      arrivals: 8,
+      departures: 2,
+    };
+
+    const prodFile = {
+      filename: 'ZSJN-Morning_120min.acl',
+      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN-Morning_120min.acl',
+      isDemo: false,
+      isEmer: false,
+      startTime: '06:00',
+      endTime: '08:00',
+      arrivals: 10,
+      departures: 0,
+    };
+
+    const demoFile = {
+      filename: 'ZSJN-Morning_120min.demo.acl',
+      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN-Morning_120min.demo.acl',
+      isDemo: true,
+      isEmer: false,
+      startTime: '06:50',
+      endTime: '07:20',
+      arrivals: 5,
+      departures: 0,
+    };
+
+    it('hides whitelisted .demo files in non-demo mode', async () => {
+      setupDefaultMocks({
+        'get-airport-files-info': Promise.resolve([prodFile, demoFile]),
+      });
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('ZSJN-Morning 120min')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('ZSJN-Morning 120min.demo')).toBeNull();
+    });
+
+    it('hides non-whitelisted .demo files in non-demo mode', async () => {
+      setupDefaultMocks({
+        'get-airport-files-info': Promise.resolve([prodFile, nonWhitelistedDemo]),
+      });
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('ZSJN-Morning 120min')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('ASJN 07-10.demo')).toBeNull();
+    });
+
+    it('shows whitelisted .demo files in demo mode', async () => {
+      useAppStore.setState({
+        rootPath: 'D:\\Games\\Airport Control 27 Demo',
+      });
+      setupDefaultMocks({
+        'get-airport-files-info': Promise.resolve([prodFile, demoFile]),
+      });
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('ZSJN-Morning 120min.demo')).toBeInTheDocument();
+      });
+    });
+  });
 });

@@ -231,6 +231,7 @@ module.exports = {
   FRAME_COMMIT,
   STORAGE_VERSION,
   FRAME_SENTINEL,
+  RE_FRAME_SENTINEL,
   isGatcArchive,
   parseArchive,
   decodeArchive,

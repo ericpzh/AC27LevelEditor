@@ -8,7 +8,7 @@ Covers both **v2/v3 text-format** and **v4 GATCArc binary-format** save/load pat
 
 ```bash
 npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~6 min)
-npm test              # 498 Vitest component + store + utility + electron + MapWindow + updater tests (~3s)
+npm test              # 501 Vitest component + store + utility + electron + MapWindow + updater tests (~3s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~4 min)
 node tests/integration/test_api_server.js      # MCP/API tests: 105 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -25,11 +25,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (498 tests)
+## Layer 1 — Vitest Component Tests (501 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 498 pass (29 test files)
+### `npm test` — 501 pass (29 test files)
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -39,7 +39,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `store/appStore.test.jsx` | 25 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with randomized cascade (airline from dropdown, valid aircraft/reg, non-conflicting stand); `addArrivalFlight` regression: airline never "NEW" when AirlineCode dropdown populated; stand conflict avoidance with existing flights; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; **Chat state (10):** panel defaults closed, vendors setup step, empty config, toggle open/closed, add+clear messages, sending state, set+clear errors, chat config, setup step change |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |
 | `components/common/Toast.test.jsx` | 4 | Renders empty by default; shows message when set; applies CSS class from type; `.show` class toggles with message |
-| `components/BrowserScreen/BrowserScreen.test.jsx` | 25 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast. **Help Button (5):** renders in header, click opens overlay, Escape closes, backdrop click closes, close button works. **Debug Mode (4):** renders toggle button, shows active state when installed, tooltip on hover, disabled while loading. **Livery Install (7):** renders button, tooltip on hover, progress overlay + disabled state, download+install success, fallback to file dialog on download fail, cancel after download fail, install error toast |
+| `components/BrowserScreen/BrowserScreen.test.jsx` | 28 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast. **Help Button (5):** renders in header, click opens overlay, Escape closes, backdrop click closes, close button works. **Debug Mode (4):** renders toggle button, shows active state when installed, tooltip on hover, disabled while loading. **Livery Install (7):** renders button, tooltip on hover, progress overlay + disabled state, download+install success, fallback to file dialog on download fail, cancel after download fail, install error toast. **Demo File Filtering (3):** hides whitelisted .demo files in non-demo mode, hides non-whitelisted .demo files, shows whitelisted .demo files in demo mode |
 | `components/BrowserScreen/VideoBackgroundModal.test.jsx` | 13 | Video background replace/restore confirmation modal: renders when show=true, Cancel calls onCancel, Replace calls onReplace, Restore calls onRestore, hides when show=false, renders Chinese translations. **Full workflow (7):** download progress tracking, conversion progress tracking, success closes overlay, error on conversion failure, error when no folders found, retry on error, error overlay closeable via Escape + close button. |
 | `components/BrowserScreen/BrowserHelpOverlay.test.jsx` | 9 | Help overlay renders title + section headings (Header Buttons/Airport/Levels), all button descriptions, inline button icons, Escape/backdrop/close-button dismissal, Chinese translations |
 | `components/BrowserScreen/VideoReplaceOverlay.test.jsx` | 6 | Renders progress bar + percentage; closes immediately on successful completion; shows error when conversion fails; shows error when no folders found; Escape key closes error overlay; renders progress bar in Chinese |
@@ -53,7 +53,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | **Electron backend (existing):** | **74** | |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
 | `electron/updater.test.js` | 25 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **isUpdateSupported (4):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set. **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skipped etag recognized. **resolveTargetExe (5):** PORTABLE_EXECUTABLE_FILE, execPath fallback, AC27_UPDATE_TARGET in dev, auto-discovered artifact, null when no candidate. **checkForUpdate gates (5):** packaged but not portable, dev with AC27_UPDATE_TARGET, dev by default (opt-out), dev with AC27_UPDATE_DEV_CHECK=1, dev with no target exe. **installUpdate dev dry-run (2):** defaults to dry-run in dev, dry-run skips spawn+quit. |
-| **MapWindows (10 files):** | **153** | |
+| **MapWindows (10 files):** | **154** | |
 | `components/MapWindows/voiceNumberParser.test.js` | 21 | `parseEnglishFlightNumber`: individual digits, "oh"→0, teens, grouped pairs, "triple X"/"double X" aviation shorthand, stop at non-numbers, >6-digit filter, empty input. `parseChineseFlightNumber`: 幺-series, 一-series, 洞/两/零 variants, multi-token, stop at non-digits. `generateCallsignCandidates` |
 | `components/MapWindows/voiceCallsignParser.test.js` | 19 | `detectLanguage`: EN/ZH/empty/mixed. `parseCallsign` (EN): "united eleven eleven"→UAL1111, full airline name, 3-letter code, "delta"→DAL, KLM, longest-match priority, teen numbers, callsign-only (no command), null on no-match/empty. `parseCallsign` (ZH): 东方/中国东方航空/国航 with digits |
 | `components/MapWindows/voiceCommandMatcher.test.js` | 21 | Exact alias matching (EN): cleared to land, clear for takeoff, go around, line up and wait, contact ground/tower, push back, taxi via with sub-item, stand by, hold position. Fuzzy fallback with partial word overlap. Chinese aliases: 可以落地/可以起飞/复飞/联系地面/等待/穿越跑道. `buildSpeechGrammar` JSGF output |
@@ -63,7 +63,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `components/MapWindows/SpinKnob.test.jsx` | 16 | Rendering with/without label, SVG structure (bezel, face, ticks, center, indicator, arrow), position→angle mapping at 0/0.5/1/clamp, indicator sync, scroll up/down direction, click-reset |
 | `components/MapWindows/ControlSidebar.test.jsx` | 6 | 3 spin knobs rendered, actions section, children in actions, airspaceKnob optional, label presence |
 | `components/MapWindows/GroundMapWindow.test.jsx` | 19 | Loading/error states, data fetch args, window title, SVG rendering, aircraft filtering (airborne y>1, stand proximity), Show All toggle, click-to-select UDP command, taxiway polylines, runway polygons, non-aircraft type=0 filtered out, type=4 (unknown) renders |
-| `components/MapWindows/AirMapWindow.test.jsx` | 18 | Loading/error states, border overlay, airport mismatch filter, airborne filter, click-to-select UDP command, bg image toggle, range rings, runway thresholds, route polylines, toggle states, emergency double-click, airspace knob, non-aircraft entity filtering (type=0 excluded, type=4 shown) |
+| `components/MapWindows/AirMapWindow.test.jsx` | 19 | Loading/error states, border overlay, airport mismatch filter, airborne filter, click-to-select UDP command, bg image toggle, range rings, runway thresholds, route polylines, toggle states, emergency double-click, airspace knob, non-aircraft entity filtering (type=0 excluded, type=4 shown), v4 active-runway variant filtering |
 
 ### Expected outcomes
 
@@ -73,16 +73,17 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | Validators | Duplicate callsigns detected; no false positives on empty values. Time-order validation enforces Landing<InBlock and OffBlock<Takeoff. Start/end-time bounds checked against config. Field-level validators cover airline, flight number, stand, aircraft, reg, runway. Aggregate `validateAll` calls all validators. |
 | Store | All actions produce correct state transitions. `modified` flag set on mutations. Chat panel open/close, messages, errors, config, and setup steps all correctly managed. |
 | Modal | Opens/closes via store state. Backdrop click calls `hideModal`. Internal clicks stop propagation. |
+| BrowserScreen | Version mismatch detection, help overlay, debug mode toggle, livery install flow, demo file filtering (whitelisted/non-whitelisted .demo files hidden in non-demo mode, shown in demo mode), tooltip positioning. |
 | Toast | Renders based on store state. `show` CSS class controls visibility. |
 | Electron — cloud-llm | All VENDORS entries consistent. Model→vendor lookup correct for all 8 models. getAvailableModels filters by key presence. MCP→OpenAI tool conversion preserves schema keywords. Gemini sanitization strips OpenAI-only keywords recursively. Chat throws on missing key / unknown model. OpenAI chat completes single-turn, multi-turn tool loops, handles tool errors. Claude chat uses Anthropic SDK format (tools→input_schema, system top-level). Thinking blocks accumulated and passed to callback. Empty-content nudge triggers when model returns thinking-only. |
 | Electron — updater | MD5 computed correctly. Platform/package gates prevent unsupported updates. createUpdaterScript generates valid .bat with path-safe quoting + stale .old cleanup. checkForUpdate gates correctly: skips non-portable, enforces dev opt-in (AC27_UPDATE_DEV_CHECK / AC27_UPDATE_TARGET), reaches HEAD when past gates. resolveTargetExe resolves correctly for all modes. installUpdate defaults to dry-run in dev mode. |
 | Map Window hooks | `useSvgZoom` zoom/pan bounded correctly, imperative API functions. `useUdpAircraftState` lifecycle clean. |
-| Map Window components | Loading/error states render correctly. Aircraft filtering logic (airborne, stand proximity, airport match). Click-to-select sends correct UDP command. Toggle buttons toggle state. |
+| Map Window components | Loading/error states render correctly. Aircraft filtering logic (airborne, stand proximity, airport match). v4 active-runway variant filtering. Click-to-select sends correct UDP command. Toggle buttons toggle state. |
 | Voice parsers | Spoken numbers → digits correct for EN (individual, teens, tens, triple/double shorthand) and ZH (幺/洞/两 variants). Callsign extraction matches airline name→ICAO + number against live aircraft. Command matching: exact aliases hit with score 1.0, fuzzy partial-word overlap recovers unmatched phrases, ZH aliases match character-for-character. |
 
 ### Known Vitest failures (none)
 
-All 498 tests pass. The three previously failing/todo items have been fixed:
+All 501 tests pass. The three previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 

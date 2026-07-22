@@ -6,7 +6,8 @@ const path = require('path');
 const { DROPDOWN_FIELDS } = require('./constants.js');
 const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./world_state');
 const { _parseSceneryData } = require('./scenery');
-const { _parseWorldStateFlightPlans, _extractConfig, _parseRunwayTimeline } = require('./flight_plans');
+const { _parseWorldStateFlightPlans, _parseRunwayTimeline } = require('./flight_plans');
+const { resolveConfigTime } = require('./config');
 const { readAclText } = require('./gatcarc');
 
 
@@ -169,17 +170,15 @@ function getFileInfo(aclPath) {
     }
     if (error) return { error, filename: path.basename(aclPath), size: stat.size };
 
-    // Extract level config from ACL's Config block (single source of truth)
-    const config = _extractConfig(text);
+    // Extract level config via the centralized resolver (applies CDT override)
+    const config = resolveConfigTime(text);
+    console.log('[getFileInfo]', path.basename(aclPath),
+      'resolveConfigTime -> startTime=' + (config ? config.startTime : null),
+      'endTime=' + (config ? config.endTime : null));
     let arrivals = 0, departures = 0;
-    let earliestTime = null;
     for (const fl of flights) {
       if ((fl.LandingTime || '').trim()) arrivals++;
       else if ((fl.OffBlockTime || '').trim()) departures++;
-      for (const field of ['LandingTime', 'OffBlockTime']) {
-        const t = fl[field];
-        if (t && (!earliestTime || t < earliestTime)) earliestTime = t;
-      }
     }
     return {
       filename: path.basename(aclPath),
@@ -188,7 +187,6 @@ function getFileInfo(aclPath) {
       flightCount: flights.length,
       arrivals,
       departures,
-      earliestTime,
       startTime: config ? config.startTime : null,
       endTime: config ? config.endTime : null,
     };

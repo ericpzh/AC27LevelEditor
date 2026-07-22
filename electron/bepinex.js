@@ -112,11 +112,37 @@ async function findDownloadUrl() {
  */
 function downloadZip(url, destPath, onProgress) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
+    let file;
+    let fileFd = null;
+    try {
+      // Open synchronously so file.fd is available immediately for cleanup.
+      // On Windows, createWriteStream's async fs.open may not complete before
+      // an error fires, making fd-based closeSync a no-op and unlinkSync racy.
+      fileFd = fs.openSync(destPath, 'w');
+      file = fs.createWriteStream(destPath, { fd: fileFd });
+    } catch (_) {
+      reject(new Error('BEPINEX_DOWNLOAD_FILE_ERROR'));
+      return;
+    }
     // Suppress deferred stream errors during cleanup (file may not be open yet)
     file.on('error', () => {});
     let received = 0;
     let total = 0;
+
+    /**
+     * Close the file and remove it from disk synchronously.
+     * Uses the pre-opened fd to guarantee the OS handle is released.
+     */
+    function closeAndRemove() {
+      try {
+        if (fileFd !== null) {
+          fs.closeSync(fileFd);
+          fileFd = null;
+        }
+      } catch (_) { /* ignore */ }
+      file.close();
+      try { fs.unlinkSync(destPath); } catch (_) { /* ignore */ }
+    }
 
     const doGet = (target, redirectsLeft) => {
       const req = https.get(target, { timeout: 30000 }, (res) => {
@@ -129,8 +155,7 @@ function downloadZip(url, destPath, onProgress) {
         }
 
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          file.close();
-          try { fs.unlinkSync(destPath); } catch (_) { /* ignore */ }
+          closeAndRemove();
           reject(new Error('BEPINEX_DOWNLOAD_HTTP_' + res.statusCode));
           return;
         }
@@ -153,14 +178,12 @@ function downloadZip(url, destPath, onProgress) {
       });
 
       req.on('error', (err) => {
-        file.close();
-        try { fs.unlinkSync(destPath); } catch (_) { /* ignore */ }
+        closeAndRemove();
         reject(err);
       });
       req.on('timeout', () => {
         req.destroy();
-        file.close();
-        try { fs.unlinkSync(destPath); } catch (_) { /* ignore */ }
+        closeAndRemove();
         reject(new Error('BEPINEX_DOWNLOAD_TIMEOUT'));
       });
     };

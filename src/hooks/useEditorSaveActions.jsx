@@ -39,7 +39,7 @@ export function useEditorSaveActions({
         filePath: st.currentPath, flights: st.flights,
         before: st.before, after: st.after,
         arrayContent: st.arrayContent, originalBlocks: st.originalBlocks,
-        earliestTime: st._earliestTime, createBackup,
+        _saveSec: st._saveSec, createBackup,
         weatherTimeline: st.weatherTimeline, windTimeline: nativeWind,
         runwayTimeline: st.runwayTimeline,
       });
@@ -178,7 +178,7 @@ export function useEditorSaveActions({
               <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>);
             return;
           }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false, isV4: r.isV4 || false });
+          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false, isV4: r.isV4 || false });
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) {
             const wsu2 = tl.windSpeedUnit || WIND_UNITS.KNOTS;
@@ -216,7 +216,7 @@ export function useEditorSaveActions({
               <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button></div>);
             return;
           }
-          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _earliestTime: r.earliestTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false, isV4: r.isV4 || false });
+          st.setLegacyState({ flights: r.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: r.config?.startTime || null, _configEndTime: r.config?.endTime || null, _saveSec: r._saveSec, _currentDateTime: r._currentDateTime || null, isDemo: r.isDemo || false, isV4: r.isV4 || false });
           const tl = await electronAPI.loadTimelines(st.currentPath);
           if (tl.success) {
             const wsu3 = tl.windSpeedUnit || WIND_UNITS.KNOTS;
@@ -230,18 +230,46 @@ export function useEditorSaveActions({
     );
   };
 
-  const handleBack = () => {
+  const patchEditedFileInfo = async () => {
+    const st = useAppStore.getState();
+    const { currentPath, currentAirport } = st;
+    if (!currentPath || !currentAirport) return;
+    // Only patch if we have cached data for this airport
+    if (!st.fileInfos?.[currentAirport]) {
+      console.log('[patchEditedFileInfo] SKIP: no cache for', currentAirport);
+      return;
+    }
+    try {
+      const updatedInfo = await electronAPI.getFileInfo(currentPath);
+      console.log('[patchEditedFileInfo] got updated info:', updatedInfo.filename,
+        'startTime=' + updatedInfo.startTime, 'endTime=' + updatedInfo.endTime);
+      if (updatedInfo && !updatedInfo.error) {
+        useAppStore.getState().updateSingleFileInfo(
+          currentAirport, currentPath, updatedInfo
+        );
+        console.log('[patchEditedFileInfo] cache updated for', currentAirport, currentPath);
+      }
+    } catch (e) {
+      console.warn('[patchEditedFileInfo] failed:', e);
+    }
+  };
+
+  const handleBack = async () => {
     const st = useAppStore.getState();
     st.closeStandMap();
     st.closeStarMap();
     const hasMod = st.modified || st.timelineModified.weather || st.timelineModified.wind || st.timelineModified.runway;
-    if (!hasMod) { setScreen('browser'); return; }
+    if (!hasMod) {
+      await patchEditedFileInfo();
+      setScreen('browser');
+      return;
+    }
     showModal(t('modal_unsaved_title'), <p>{t('modal_unsaved_body')}</p>,
       <div className="modal-actions-row">
         <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
-        <button className="btn-confirm" onClick={() => { hideModal(); useAppStore.setState({ modified: false, timelineModified: { weather: false, wind: false, runway: false }, selectedIndices: new Set() }); setScreen('browser'); }}>{t('modal_btn_discard')}</button>
+        <button className="btn-confirm" onClick={async () => { hideModal(); useAppStore.setState({ modified: false, timelineModified: { weather: false, wind: false, runway: false }, selectedIndices: new Set() }); await patchEditedFileInfo(); setScreen('browser'); }}>{t('modal_btn_discard')}</button>
       </div>);
   };
 
-  return { doSave, handleSave, handleSaveAs, handleBackup, handleRestore, handleImport, handleBack };
+  return { doSave, handleSave, handleSaveAs, handleBackup, handleRestore, handleImport, handleBack, patchEditedFileInfo };
 }

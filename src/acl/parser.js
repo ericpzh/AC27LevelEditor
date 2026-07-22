@@ -148,8 +148,38 @@ function extractCurrentDateTime(aclText, isV4) {
   if (isV4 === undefined) isV4 = detectSchemaVersion(aclText) === 4;
 
   if (isV4) {
-    // v4 schema: MetaData.BaseTime — inline { "$type": 2, <ticks> }
     const t = createTokenizer(aclText);
+    // ── v4: Try GameTime.CurrentDateTime first (WorldState snapshot) ──
+    // For scenario files this is the post-warmup snapshot time.
+    // For demo files it matches MetaData.BaseTime (both = save snapshot).
+    const cdtIdx = aclText.indexOf('"CurrentDateTime"');
+    if (cdtIdx >= 0) {
+      const afterKey = aclText.indexOf(':', cdtIdx);
+      if (afterKey >= 0) {
+        let vStart = afterKey + 1;
+        while (vStart < aclText.length && ' \t\n\r'.includes(aclText[vStart])) vStart++;
+        if (aclText[vStart] === '{') {
+          // v4 structure: "CurrentDateTime": { "$id":N, "$type":"...", { "$type":N, <ticks> } }
+          const sub = aclText.substring(vStart, vStart + 2000);
+          const tickMatch = sub.match(/\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
+          if (tickMatch) {
+            const ticks = BigInt(tickMatch[1]);
+            const { TICKS_PER_DAY } = require('./constants.js');
+            const baseTicks = (ticks / TICKS_PER_DAY) * TICKS_PER_DAY;
+            const secSinceMidnight = Number((ticks - baseTicks) / 10000000n);
+            const h = Math.floor(secSinceMidnight / 3600);
+            const m = Math.floor((secSinceMidnight % 3600) / 60);
+            const s = secSinceMidnight % 60;
+            const timeString = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            console.log('[extractCurrentDateTime] v4 GameTime.CurrentDateTime SUCCESS: timeString=' + timeString + ' secSinceMidnight=' + secSinceMidnight);
+            return { ticks, secSinceMidnight, timeString };
+          }
+        }
+      }
+      console.log('[extractCurrentDateTime] v4 GameTime.CurrentDateTime NOT PARSED, falling back to MetaData.BaseTime');
+    }
+
+    // v4 fallback: MetaData.BaseTime — inline { "$type": 2, <ticks> }
     const mdSec = t.findSection('MetaData');
     if (mdSec) {
       const mdText = t.substring(mdSec.valueStart, mdSec.valueEnd);

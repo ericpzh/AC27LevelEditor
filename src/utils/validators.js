@@ -242,16 +242,16 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     });
   }
 
-  if (_saveSec != null && _configEndTime) {
-    // _saveSec = scenario snapshot time (warmup end), _configEndTime = scenario end
+  if (_configStartTime && _configEndTime) {
+    // _configStartTime = scenario start, _configEndTime = scenario end
     // Only OffBlockTime and LandingTime are bounded; InBlockTime and TakeoffTime are free
     const ceParts = String(_configEndTime).split(':');
     const ceH = parseInt(ceParts[0], 10), ceM = parseInt(ceParts[1], 10);
 
-    const sh = Math.floor(_saveSec / 3600) % 24;
-    const sm = Math.floor((_saveSec % 3600) / 60);
-    const startTime = sh * 100 + sm;
-    const startLabel = String(sh).padStart(2, '0') + ':' + String(sm).padStart(2, '0');
+    const csParts = String(_configStartTime).split(':');
+    const csH = parseInt(csParts[0], 10), csM = parseInt(csParts[1], 10);
+    const startTime = csH * 100 + csM;
+    const startLabel = String(csH).padStart(2, '0') + ':' + String(csM).padStart(2, '0');
     const endTime = ceH * 100 + ceM;
     const endLabel = String(ceH).padStart(2, '0') + ':' + String(ceM).padStart(2, '0');
 

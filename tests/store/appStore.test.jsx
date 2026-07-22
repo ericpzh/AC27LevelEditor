@@ -61,7 +61,7 @@ describe('appStore — editor state', () => {
       flights: [{ CallSign: 'CES1234' }],
       before: '', after: '', arrayContent: '', originalBlocks: [],
       configStartTime: '06:00', configEndTime: '18:00',
-      earliestTime: '05:00', _saveSec: 36000,
+      _saveSec: 36000,
     });
     const state = useAppStore.getState();
     expect(state.currentPath).toBe('/test/file.acl');
@@ -79,7 +79,7 @@ describe('appStore — addArrivalFlight', () => {
       flights: [],
       before: '', after: '', arrayContent: '', originalBlocks: [],
       configStartTime: '06:00', configEndTime: '18:00',
-      earliestTime: '05:00', _saveSec: 36000,
+      _saveSec: 36000,
     });
     useAppStore.getState().setAuxData(
       {
@@ -121,7 +121,7 @@ describe('appStore — addArrivalFlight', () => {
 			flights: [],
 			before: '', after: '', arrayContent: '', originalBlocks: [],
 			configStartTime: '06:00', configEndTime: '18:00',
-			earliestTime: '05:00', _saveSec: 36000,
+			_saveSec: 36000,
 		});
 		// Set AirlineCode dropdown values but EMPTY audio allAirlines and AirlineName
 		useAppStore.getState().setAuxData(
@@ -150,7 +150,7 @@ describe('appStore — addArrivalFlight', () => {
 				flights: [],
 				before: '', after: '', arrayContent: '', originalBlocks: [],
 				configStartTime: '06:00', configEndTime: '18:00',
-				earliestTime: '05:00', _saveSec: 36000,
+				_saveSec: 36000,
 			});
 			useAppStore.getState().addArrivalFlight();
 			const state = useAppStore.getState();
@@ -170,7 +170,7 @@ describe('appStore — addArrivalFlight', () => {
 			],
 			before: '', after: '', arrayContent: '', originalBlocks: [],
 			configStartTime: '06:00', configEndTime: '18:00',
-			earliestTime: '05:00', _saveSec: 36000,
+			_saveSec: 36000,
 		});
 		useAppStore.getState().setAuxData(
 			{
@@ -201,7 +201,7 @@ describe('appStore — addArrivalFlight', () => {
 				],
 				before: '', after: '', arrayContent: '', originalBlocks: [],
 				configStartTime: '06:00', configEndTime: '18:00',
-				earliestTime: '05:00', _saveSec: 36000,
+				_saveSec: 36000,
 			});
 			useAppStore.getState().addArrivalFlight();
 			const state = useAppStore.getState();
@@ -230,7 +230,7 @@ describe('appStore — selection', () => {
       flights: [{ CallSign: 'A' }, { CallSign: 'B' }, { CallSign: 'C' }],
       before: '', after: '', arrayContent: '', originalBlocks: [],
       configStartTime: '06:00', configEndTime: '18:00',
-      earliestTime: '05:00', _saveSec: 36000,
+      _saveSec: 36000,
     });
     useAppStore.getState().toggleSelectAll();
     const sel = useAppStore.getState().selectedIndices;
@@ -246,7 +246,7 @@ describe('appStore — selection', () => {
       flights: [{ CallSign: 'A' }, { CallSign: 'B' }],
       before: '', after: '', arrayContent: '', originalBlocks: [],
       configStartTime: '06:00', configEndTime: '18:00',
-      earliestTime: '05:00', _saveSec: 36000,
+      _saveSec: 36000,
     });
     useAppStore.getState().toggleSelectAll(); // select all
     useAppStore.getState().toggleSelectAll(); // deselect all
