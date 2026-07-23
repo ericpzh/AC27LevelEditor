@@ -155,21 +155,47 @@ function _parseStandPositions(text, isV4) {
       const tailIref = extractSingleIref(st.block, 'TailPosition');
       const noseIref = extractSingleIref(st.block, 'NosePosition');
 
-      let x = null, y = null;
       if (tailIref !== null && noseIref !== null) {
         const tailRef = resolveIref(pkIndex, tailIref);
         const noseRef = resolveIref(pkIndex, noseIref);
         const tailPos = tailRef ? extractVector3FromV4(tailRef.block) : null;
         const nosePos = noseRef ? extractVector3FromV4(noseRef.block) : null;
         if (tailPos && nosePos) {
-          // Midpoint of tail and nose positions
-          x = (tailPos.x + nosePos.x) / 2;
-          y = (tailPos.z + nosePos.z) / 2; // z in 3D = y in 2D map
+          const dx = nosePos.x - tailPos.x;
+          const dz = nosePos.z - tailPos.z;
+          let heading = Math.atan2(-dz, dx) * RAD_TO_DEG;
+          heading = ((heading % 360) + 360) % 360;
+          result[identifier] = {
+            x: (tailPos.x + nosePos.x) / 2,
+            y: (tailPos.z + nosePos.z) / 2, // z in 3D = y in 2D map
+            heading,
+            tailX: tailPos.x, tailZ: tailPos.z,
+            noseX: nosePos.x, noseZ: nosePos.z,
+          };
+          continue;
         }
       }
 
-      if (x === null || y === null) continue;
-      result[identifier] = { x, y };
+      // Fallback: use whichever position is available
+      if (tailIref !== null) {
+        const tailRef = resolveIref(pkIndex, tailIref);
+        const tailPos = tailRef ? extractVector3FromV4(tailRef.block) : null;
+        if (tailPos) {
+          result[identifier] = { x: tailPos.x, y: tailPos.z, heading: 0 };
+          continue;
+        }
+      }
+      if (noseIref !== null) {
+        const noseRef = resolveIref(pkIndex, noseIref);
+        const nosePos = noseRef ? extractVector3FromV4(noseRef.block) : null;
+        if (nosePos) {
+          result[identifier] = { x: nosePos.x, y: nosePos.z, heading: 0 };
+          continue;
+        }
+      }
+
+      // Neither position resolved — skip this stand
+      continue;
     }
     return result;
   }
