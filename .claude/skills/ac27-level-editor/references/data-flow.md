@@ -88,7 +88,12 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
    - FlightPlans rebuilt from scratch with new GUIDs
    - **AircraftState entries generated for arrival flights** where `0 < ProgressRatio < 1.0` (mid-approach at snapshot time), using `approach.js` verified algorithm: AppPointList lookup, FlyApproach resolution from SceneryData, PR formula, Position/Direction interpolation
    - **Preserved segments patched:** `_expandShortFormTypes()` expands short-form `$type: N` references in `segBefore`/`segAfter` to full-form so Unity deserialization survives the Aircrafts rebuild. `_fixSingletonStateRefs()` replaces dangling `$iref` references in `GameEventScheduler.EventQueue` / `EventLogger.History` with inline empty `AircraftEvent[]` queues — these `$iref` targets lived in the original Aircrafts `$rcontent` and are lost after rebuild.
-   - `_resetJetwayDockingState()` clears orphaned `DockingAircraftGuid` values in the preserved Jetways section (old aircraft GUIDs no longer exist)
+   - **Multi-stage cleanup (steps 7a-7d) across ALL segments (header + frames):**
+     - **$fstrref cleanup & remapping:** Scans for `$fstrref:"flight-plan:REG"` -- replaces stale refs with `null`, remaps renamed registrations (detected by matching old CallSign to new flight CallSign).
+     - **Pre-expand short-form $type refs:** Expands bare `$type: N` to fully-qualified before removal steps, using per-segment type maps to prevent orphaned type-number refs.
+     - **Reset jetway docking state (`_resetFrameJetwayDockingState`):** Resets `Status->0`, `Progress->0`, `DockingAircraft->null`, `DockingDoorIndex->-1` on jetway entries with stale `$fstrref` refs. Uses tokenizer-based structural parsing (no longer regex). Applied to ALL segments including header, not just checkpoint frames.
+     - **Remove orphaned RuntimeEntities (`_removeOrphanedFlightEntities`):** Removes or renames `$k` entries (`flight-plan:REG`, `aircraft:REG`, `aircraft-animator:aircraft:REG`) whose registration no longer exists in rebuilt StaticItems. Handles rename via `renameMap` and falls back to `StaticItem.$fstrref` for corrupted saves.
+     - **Cleanup EventLog LatestEvents (`_cleanupEventLogLatestEvents`):** Removes stale `aircraft:REG` keys from the nested `singleton:event-log.$v.LatestEvents.$rcontent` dictionary -- invisible to step 7c due to its nesting depth.
    - Writes `.acl` + `.csv`
    - **Demo-window files treated identically** — all files in `DEMO_VISIBLE_BASES` (including `_emerg`) write to their `.acl`/`.demo.acl` + shared `.csv` + shared timeline `.json` files with the same 30-minute window logic via `_isDemoFile()`
 4. Timeline saves (separate IPC per type) → writes JSON files

@@ -220,6 +220,21 @@ Key differences from v2/v3:
 
 Each `$blobdoc` section has its **own independent type number space**. Type `42` inside a `$blobdoc` is not the same type as `42` in the outer document. The save path (`_rebuildStaticDataSections`) maintains a separate `bdTypeMap` for the blobdoc scope. When type numbers must be created for new content, the code scans for unused numbers within the blobdoc's own type namespace.
 
+#### Scope-Aware Type Expansion During Save
+
+Before the save pipeline removes orphaned entries (which may carry the only declaration of a type number), all bare `$type: N` references are pre-expanded to their fully-qualified form using **per-segment type maps**. Each GATCARC4 segment (header + checkpoint frames) is an independent Odin binary document with its own type numbering, so expansion uses that segment's own declarations:
+
+```
+frameDocs[fi] → extract "$type": "N|TypeName" declarations → per-segment typeMap
+              → _expandShortFormTypes(frameDocs[fi], segTypeMap)
+              → all bare "$type": N become "$type": "N|TypeName"
+              → cleanup steps proceed without risk of orphaned type refs
+```
+
+The expansion function is scope-aware at every level: `_expandWithBlobdocScopes` walks the JSON text, identifies `$blobdoc` entries (which are nested Odin binary documents with their own type numbering), extracts their type declarations, and recurses so that bare references inside a blobdoc are expanded against that blobdoc's scope — not the outer document's. A standalone `_replaceBareTypeRefs` handles single-scope regex expansion for non-blobdoc text.
+
+This prevents "unknown type id N" / "Type id N claimed by both" encoding errors when cleanup removes entries containing type declarations that other entries still reference.
+
 ## SceneryData Runway Routes
 
 `SceneryData.Runways` is a dictionary (`$k`/`$v`) where each entry represents one runway direction. Each `$v` block contains:
