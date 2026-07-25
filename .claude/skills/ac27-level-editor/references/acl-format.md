@@ -231,7 +231,7 @@ frameDocs[fi] → extract "$type": "N|TypeName" declarations → per-segment typ
               → cleanup steps proceed without risk of orphaned type refs
 ```
 
-The expansion function is scope-aware at every level: `_expandWithBlobdocScopes` walks the JSON text, identifies `$blobdoc` entries (which are nested Odin binary documents with their own type numbering), extracts their type declarations, and recurses so that bare references inside a blobdoc are expanded against that blobdoc's scope — not the outer document's. A standalone `_replaceBareTypeRefs` handles single-scope regex expansion for non-blobdoc text.
+The expansion function is scope-aware at every level: `_expandWithBlobdocScopes` walks the JSON text, identifies `$blobdoc` entries (which are nested Odin binary documents with their own type numbering), extracts their type declarations, and recurses so that bare references inside a blobdoc are expanded against that blobdoc's scope — not the outer document's. A standalone `_replaceBareTypeRefs` handles single-scope regex expansion for non-blobdoc text. This replaces the previous single-pass regex approach that conflated type numbers across all scopes.
 
 This prevents "unknown type id N" / "Type id N claimed by both" encoding errors when cleanup removes entries containing type declarations that other entries still reference.
 

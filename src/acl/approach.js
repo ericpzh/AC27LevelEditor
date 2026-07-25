@@ -13,6 +13,13 @@
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
 const { readAclText } = require('./gatcarc');
+const {
+  DEFAULT_RUNWAY_TAKEOFF_LENGTH,
+  DEFAULT_MODEL_OFFSET,
+  DEFAULT_AERODROME_CODE,
+  DEFAULT_WAKE_CATEGORY,
+  DEFAULT_RUNWAY_VR_SPEED,
+} = require('../utils/constants/acl-format');
 const { APPROACH_EFFECTIVE_SPEED, APPROACH_SPEED_MS, DEFAULT_AIRPORT_SCALE, APPROACH_CEILING_M, TAN_3_DEG, DEFAULT_TAT, TD_FALLBACK_EXTEND, EPSILON_NORMALIZE, EPSILON_PR, EPSILON_IAF_JOIN } = require('./constants');
 
 // ─── GUID generator (inlined to avoid ESM import chain issues in tests) ──
@@ -334,9 +341,39 @@ function extractSpecificationDB(aclText, isV4) {
     isV4 = _detectSchemaVersion(aclText) === 4;
   }
   if (isV4) {
-    // v4: specifications come from StaticItems flight-plan entries (AircraftType field).
-    // For now, return empty — v4 approach cache doesn't need per-aircraft spec data
-    // since there are no pre-spawned State=30/5 aircraft.
+    // v4: scan the entire decoded text for Specification objects.
+    // They appear in jetway DockingAircraft entries and RuntimeData aircraft
+    // entries — not in the traditional WorldState.Aircrafts section.
+    const t = createTokenizer(aclText);
+    const specPattern = /"Specification":\s*\{/g;
+    let match;
+    while ((match = specPattern.exec(aclText)) !== null) {
+      const specStart = match.index + match[0].length - 1; // '{' after "Specification":
+      const specEnd = t.findObjectEnd(specStart);
+      if (!specEnd) continue;
+      const specObj = aclText.slice(specStart, specEnd);
+
+      const des = _extractString(specObj, 'Designator', true);
+      if (!des || db.has(des)) continue;
+
+      // Extract ModelOffset sub-object before passing to _extractVector3,
+      // since the function expects just the float3 object, not the full spec.
+      const moObj = _extractNestedObject(specObj, 'ModelOffset');
+      const modelOffset = moObj ? _extractVector3(moObj, true) : null;
+
+      const spec = {
+        Designator: des,
+        AerodromeCode: _extractInt(specObj, 'AerodromeCode', true) ?? DEFAULT_AERODROME_CODE,
+        WakeTurbulenceCategory: _extractInt(specObj, 'WakeTurbulenceCategory', true) ?? DEFAULT_WAKE_CATEGORY,
+        WheelBase: _extractFloat(specObj, 'WheelBase', true) ?? 0,
+        WingSpan: _extractFloat(specObj, 'WingSpan', true) ?? 0,
+        RunwayVRSpeed: _extractInt(specObj, 'RunwayVRSpeed', true) ?? DEFAULT_RUNWAY_VR_SPEED,
+        RunwayTakeOffLength: _extractInt(specObj, 'RunwayTakeOffLength', true) ?? DEFAULT_RUNWAY_TAKEOFF_LENGTH,
+        ModelOffset: modelOffset ?? DEFAULT_MODEL_OFFSET,
+        DockingPositions: _extractVector4Array(specObj, 'DockingPositions', true) ?? [],
+      };
+      db.set(des, spec);
+    }
     return db;
   }
 
@@ -353,18 +390,47 @@ function extractSpecificationDB(aclText, isV4) {
 
     const spec = {
       Designator: des,
-      AerodromeCode: _extractInt(specObj, 'AerodromeCode') || 67,
-      WakeTurbulenceCategory: _extractInt(specObj, 'WakeTurbulenceCategory') || 77,
-      WheelBase: _extractFloat(specObj, 'WheelBase') || 0,
-      WingSpan: _extractFloat(specObj, 'WingSpan') || 0,
-      RunwayVRSpeed: _extractInt(specObj, 'RunwayVRSpeed') || 140,
-      RunwayTakeOffLength: _extractInt(specObj, 'RunwayTakeOffLength') || 2000,
-      ModelOffset: _extractVector3(specObj) || { x: 0.19, y: -0.05, z: -0.20 },
-      DockingPositions: _extractVector4Array(specObj, 'DockingPositions') || [],
+      AerodromeCode: _extractInt(specObj, 'AerodromeCode') ?? DEFAULT_AERODROME_CODE,
+      WakeTurbulenceCategory: _extractInt(specObj, 'WakeTurbulenceCategory') ?? DEFAULT_WAKE_CATEGORY,
+      WheelBase: _extractFloat(specObj, 'WheelBase') ?? 0,
+      WingSpan: _extractFloat(specObj, 'WingSpan') ?? 0,
+      RunwayVRSpeed: _extractInt(specObj, 'RunwayVRSpeed') ?? DEFAULT_RUNWAY_VR_SPEED,
+      RunwayTakeOffLength: _extractInt(specObj, 'RunwayTakeOffLength') ?? DEFAULT_RUNWAY_TAKEOFF_LENGTH,
+      ModelOffset: _extractVector3(specObj) ?? DEFAULT_MODEL_OFFSET,
+      DockingPositions: _extractVector4Array(specObj, 'DockingPositions') ?? [],
     };
     db.set(des, spec);
   }
   return db;
+}
+
+/**
+ * Extract a single Specification from an arbitrary text block (v4 tokenizer path).
+ * Used as a fallback when the approachCache specDB/designatorMap don't have
+ * the needed designator (e.g., v4 files where buildDesignatorMapping returns empty).
+ * Returns null if no Specification is found.
+ */
+function _extractFallbackSpec(text) {
+  const specObj = _extractNestedObject(text, 'Specification');
+  if (!specObj) return null;
+
+  const des = _extractString(specObj, 'Designator', true);
+  if (!des) return null;
+
+  return {
+    Designator: des,
+    AerodromeCode: _extractInt(specObj, 'AerodromeCode', true) ?? DEFAULT_AERODROME_CODE,
+    WakeTurbulenceCategory: _extractInt(specObj, 'WakeTurbulenceCategory', true) ?? DEFAULT_WAKE_CATEGORY,
+    WheelBase: _extractFloat(specObj, 'WheelBase', true) ?? 0,
+    WingSpan: _extractFloat(specObj, 'WingSpan', true) ?? 0,
+    RunwayVRSpeed: _extractInt(specObj, 'RunwayVRSpeed', true) ?? DEFAULT_RUNWAY_VR_SPEED,
+    RunwayTakeOffLength: _extractInt(specObj, 'RunwayTakeOffLength', true) ?? DEFAULT_RUNWAY_TAKEOFF_LENGTH,
+    ModelOffset: (function() {
+      const moObj = _extractNestedObject(specObj, 'ModelOffset');
+      return moObj ? _extractVector3(moObj, true) : null;
+    })() ?? DEFAULT_MODEL_OFFSET,
+    DockingPositions: _extractVector4Array(specObj, 'DockingPositions', true) ?? [],
+  };
 }
 
 function _extractVector4Array(text, key, isV4) {
@@ -2134,7 +2200,7 @@ function buildApproachAircraftBlock(opts) {
   const nsStrArr = '"8|System.String[], mscorlib"';
 
   const fmtV3 = (v) => `{\n  "$type": ${nsVec3},\n  ${v.x},\n  0,\n  ${v.z}\n}`;
-  const fmtFloat3 = (v) => `{\n  "$type": ${T.float3},\n  "x": ${v.x},\n  "y": ${v.y},\n  "z": ${v.z}\n}`;
+  const fmtFloat3 = (v) => `{\n  "$type": ${T.float3},\n  ${v.x},\n  ${v.y},\n  ${v.z}\n}`;
 
   // Build FlyApproachPathPointList
   let flyPointsStr = '';
@@ -2167,6 +2233,8 @@ function buildApproachAircraftBlock(opts) {
   // Position and Direction
   const pos = computePosition(flyPoints, appPoints, progressRatio, touchDownPosition, approachCap);
   const dir = computeDirection(flyPoints, appPoints, progressRatio, touchDownPosition);
+
+  const _coordEmptyStrArrId = id++;
 
   const block = `{
     "$id": ${id++},
@@ -2214,11 +2282,11 @@ function buildApproachAircraftBlock(opts) {
       "$type": ${T.acRwy},
       "Guid": null,
       "Enabled": false,
-      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "TaxiBlockingRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "RunwayFenceCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "RunwayGuardCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "CrossRunwayPermissions": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${_coordEmptyStrArrId}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "TaxiBlockingRunwayNames": $iref:${_coordEmptyStrArrId},
+      "RunwayFenceCurrentEnterRunways": $iref:${_coordEmptyStrArrId},
+      "RunwayGuardCurrentEnterRunways": $iref:${_coordEmptyStrArrId},
+      "CrossRunwayPermissions": $iref:${_coordEmptyStrArrId},
       "RunwaySetterIdx": 0
     },
     "FlightPlanGuid": "${flightPlanGuid}",
@@ -2322,7 +2390,7 @@ function buildState5AircraftBlock(opts) {
   const nsStrArr = '"8|System.String[], mscorlib"';
 
   const fmtV3 = (v) => `{\n  "$type": ${nsVec3},\n  ${v.x},\n  0,\n  ${v.z}\n}`;
-  const fmtFloat3 = (v) => `{\n  "$type": ${T.float3},\n  "x": ${v.x},\n  "y": ${v.y},\n  "z": ${v.z}\n}`;
+  const fmtFloat3 = (v) => `{\n  "$type": ${T.float3},\n  ${v.x},\n  ${v.y},\n  ${v.z}\n}`;
 
   // Standard ILS glideslope — 3 degrees.
   // All AirwayNodes and PathPointList points have y=0 in the ACL
@@ -2396,6 +2464,8 @@ function buildState5AircraftBlock(opts) {
   // follows the approach path through turns before that (e.g., SIE.CAMRM5→13L).
   const dir = _tangentAlongPath(posFullPath, targetDist);
 
+  const _coordEmptyStrArrId = id++;
+
   const block = `{
     "$id": ${id++},
     "$type": ${T.ac},
@@ -2450,11 +2520,11 @@ function buildState5AircraftBlock(opts) {
       "$type": ${T.acRwy},
       "Guid": null,
       "Enabled": false,
-      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "TaxiBlockingRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "RunwayFenceCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "RunwayGuardCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "CrossRunwayPermissions": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${_coordEmptyStrArrId}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "TaxiBlockingRunwayNames": $iref:${_coordEmptyStrArrId},
+      "RunwayFenceCurrentEnterRunways": $iref:${_coordEmptyStrArrId},
+      "RunwayGuardCurrentEnterRunways": $iref:${_coordEmptyStrArrId},
+      "CrossRunwayPermissions": $iref:${_coordEmptyStrArrId},
       "RunwaySetterIdx": 0
     },
     "FlightPlanGuid": "${flightPlanGuid}",
@@ -3256,6 +3326,7 @@ function deserializeApproachCache(json) {
 module.exports = {
   // Data extraction
   extractSpecificationDB,
+  _extractFallbackSpec,
   extractApproachData,
   extractState5Data,
   extractTypeMap,

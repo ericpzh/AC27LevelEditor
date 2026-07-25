@@ -323,6 +323,32 @@ for (const file of aclFiles) {
       allDiffs.push(`Source format: FlightPlans changed`);
     }
 
+    // ── Text-level _departureTakeoffTime / _arrivalInBlockTime validation ──
+    {
+      const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":[^,]+,\s*(-?\d+)\s*\}/g;
+      let dtZero = 0, dtTotal = 0;
+      let dtMatch;
+      while ((dtMatch = depTtRe.exec(savedText)) !== null) {
+        dtTotal++;
+        if (dtMatch[1] === '0') dtZero++;
+      }
+      const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":[^,]+,\s*(-?\d+)\s*\}/g;
+      let aiZero = 0, aiTotal = 0;
+      let aiMatch;
+      while ((aiMatch = arrIbRe.exec(savedText)) !== null) {
+        aiTotal++;
+        if (aiMatch[1] === '0') aiZero++;
+      }
+      const depCount = savedResult.flights.filter(f => f.isDeparture === true).length;
+      const arrCount = savedResult.flights.filter(f => f.isDeparture === false).length;
+      if (dtZero === dtTotal && dtTotal > 0 && depCount > 0) {
+        allDiffs.push(`_departureTakeoffTime: ALL ${dtTotal} zero (${depCount} dep flights)`);
+      }
+      if (aiZero === aiTotal && aiTotal > 0 && arrCount > 0) {
+        allDiffs.push(`_arrivalInBlockTime: ALL ${aiTotal} zero (${arrCount} arr flights)`);
+      }
+    }
+
     fileReport.diffs = allDiffs;
 
     if (allDiffs.length === 0) {

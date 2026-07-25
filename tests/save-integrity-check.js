@@ -213,6 +213,46 @@ if (isDemo) {
 }
 
 // ── Timeline JSONs (common) ──────────────────────────────────────
+
+// ── 8. Text-level _departureTakeoffTime / _arrivalInBlockTime validation ─
+{
+  const savedText = readAclText(aclPath);
+  // Count all _departureTakeoffTime values that are 0 in the saved text.
+  // These appear in both arrival and departure flight-plan entries.
+  // For arrivals: _departureTakeoffTime=0 is expected (departure side unused).
+  // For departures: _departureTakeoffTime should be non-zero.
+  const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":[^,]+,\s*(-?\d+)\s*\}/g;
+  let dtZero = 0, dtTotal = 0;
+  let dtMatch;
+  while ((dtMatch = depTtRe.exec(savedText)) !== null) {
+    dtTotal++;
+    if (dtMatch[1] === '0') dtZero++;
+  }
+  // Count _arrivalInBlockTime zeros
+  const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":[^,]+,\s*(-?\d+)\s*\}/g;
+  let aiZero = 0, aiTotal = 0;
+  let aiMatch;
+  while ((aiMatch = arrIbRe.exec(savedText)) !== null) {
+    aiTotal++;
+    if (aiMatch[1] === '0') aiZero++;
+  }
+
+  const depCount = savedResult.flights.filter(f => f.isDeparture === true).length;
+  const arrCount = savedResult.flights.filter(f => f.isDeparture === false).length;
+
+  // _departureTakeoffTime: must not be ALL zero when there are departure flights
+  if (dtZero === dtTotal && dtTotal > 0 && depCount > 0) {
+    diffs.push(`_departureTakeoffTime: ALL ${dtTotal} values are 0 (${depCount} departure flights) — departures should have non-zero takeoff time`);
+    pass = false;
+  }
+  // _arrivalInBlockTime: must not be ALL zero when there are arrival flights
+  if (aiZero === aiTotal && aiTotal > 0 && arrCount > 0) {
+    diffs.push(`_arrivalInBlockTime: ALL ${aiTotal} values are 0 (${arrCount} arrival flights) — arrivals should have non-zero in-block time`);
+    pass = false;
+  }
+  console.log(`  [OK] _departureTakeoffTime: ${dtTotal} values (${dtZero} zero), _arrivalInBlockTime: ${aiTotal} values (${aiZero} zero)`);
+}
+
 try {
   const tlDir = path.dirname(aclPath);
   for (const [name, file] of [['weather', 'weather_timeline.json'], ['wind', 'wind_timeline.json']]) {

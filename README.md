@@ -173,7 +173,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (501 tests + 0 todo, 29 files) + Playwright (E2E) + Node.js (integration, 27 scripts, 149 MCP/API tests)
+- **Tests:** Vitest (501 tests + 0 todo, 29 files) + Playwright (E2E) + Node.js (integration, 28 scripts, 149 MCP/API tests)
 
 ### Quick Start
 
@@ -366,12 +366,12 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 
 **Master test runner (all layers):**
 ```bash
-npm run test:all      # Vitest + save integrity (12 files) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
+npm run test:all      # Vitest + save integrity (12 files) + jetway rebuild (12 v4) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 461 tests in 28 files):**
+**Component tests (Vitest — 501 tests in 29 files):**
 ```bash
-npm test              # Run all component + store + utility + MapWindow tests (~1s)
+npm test              # Run all component + store + utility + MapWindow tests (~4s)
 npm run test:watch    # Watch mode — re-runs on file changes
 ```
 
@@ -383,7 +383,7 @@ npm run test:e2e      # UI flow tests against real game data (~3 min)
 
 **Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test. The 30-min demo window end time is rounded to the nearest 5-minute boundary (:X0 or :X5). Emergency (`_emerg`) files show "Challenge Level" / "挑战关卡" as their time-of-day label instead of dawn/morning/etc.
 
-**Save integrity — all .acl files (Node.js integration — 25 scripts):**
+**Save integrity — all .acl files (Node.js integration — 26 scripts):**
 
 Test every .acl file across all airports for save→reload→compare round-trip:
 ```bash
@@ -400,11 +400,12 @@ Validates flights (all 14 fields), config (startTime/endTime), scenery maps, emb
 node tests/integration/test_tokenizer.js            # String-aware scanner (18 tests)
 node tests/integration/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
 node tests/integration/test_acl_document.js         # Document model integration (13 tests)
-node tests/integration/test_sid_goaround.js         # SID + missed approach route parsers (17 tests)
+node tests/integration/test_sid_goaround.js         # SID + missed approach route parsers (19 tests)
 node tests/integration/test_taxiway.js              # Taxiway centerline parser (10 tests)
 node tests/integration/test_demo_filter.js          # Demo-level flight filtering v2/v3 + v4 (13 tests)
-node tests/integration/test_gatcarc_roundtrip.js    # GATCARC4 binary round-trip encode/decode
-node tests/integration/test_real_kjfk_jfk5.js       # Real KJFK/JFK5 data parsing
+node tests/integration/test_gatcarc_roundtrip.js    # GATCARC4 binary round-trip (96 tests, 32 files)
+node tests/integration/test_real_kjfk_jfk5.js       # Real KJFK/JFK5 data parsing (8 tests)
+node tests/integration/test_jetway_rebuild.js       # v4 jetway rebuild round-trip (12 prod+demo files)
 ```
 
 **UDP telemetry test (mock loopback server, port 20266 must be free):**

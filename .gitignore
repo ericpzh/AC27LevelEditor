@@ -23,6 +23,7 @@ tests/tmp-e2e/
 tests/tmp-e2e-userdata/
 tests/integration/_tmp/
 tests/_reports_/
+tests/_debug/
 
 # OS
 Thumbs.db

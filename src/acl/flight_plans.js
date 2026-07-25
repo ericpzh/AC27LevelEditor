@@ -7,7 +7,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND } = require('./constants');
+const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS } = require('./constants');
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
 const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, computeApproachCap, _vec3Sub, _vec3Normalize, _vec3Dist, _detectSchemaVersion } = require('./approach');
@@ -16,6 +16,74 @@ const { preprocessUnityJson } = require('./acl_json');
 const { readAclText, writeAcl } = require('./gatcarc');
 // resolveConfigTime imported lazily inside _rebuildWorldStateSections
 // to avoid circular dependency: config.js requires flight_plans.js for _extractConfig
+
+/**
+ * Compute _departureTakeoffTime ticks, falling back to OffBlockTime + taxi-constant
+ * when TakeoffTime is empty/0 (the v4 default, where the game computes it dynamically).
+ *
+ * @param {string|number} takeoffTime — TakeoffTime value (HH:MM:SS, ticks string, or falsy)
+ * @param {string|number} offBlockTime — OffBlockTime value (HH:MM:SS or ticks string)
+ * @param {number|string} baseDateTicks — base date ticks for this scenario
+ * @param {string} [icao] — airport ICAO code for per-airport taxi override
+ * @returns {string} ticks string, or '0' if no data available
+ */
+function _computeTakeoffTicks(takeoffTime, offBlockTime, baseDateTicks, icao) {
+  const bdt = BigInt(baseDateTicks || FALLBACK_BASE_DATE_TICKS);
+  const _toTicks = (t) => {
+    if (!t) return 0n;
+    const s = String(t);
+    if (/^\d+$/.test(s)) return BigInt(s);
+    const p = s.split(':');
+    const sec = +p[0] * 3600 + (+p[1] || 0) * 60 + (+p[2] || 0);
+    return bdt + BigInt(Math.round(sec * 10000000));
+  };
+  // If TakeoffTime is set (non-empty, non-zero), use it
+  if (takeoffTime) {
+    const ticks = _toTicks(takeoffTime);
+    if (ticks !== 0n) return String(ticks);
+  }
+  // Fallback: OffBlockTime + per-airport taxi constant
+  const obTicks = _toTicks(offBlockTime || 0);
+  if (obTicks === 0n) return '0';
+  const key = (icao || '').toUpperCase();
+  const taxiSec = DEPARTURE_TAXI_SECONDS[key] ?? DEPARTURE_TAXI_SECONDS.default;
+  const taxiTicksNum = taxiSec * TICKS_PER_SECOND_NUM;
+  return String(obTicks + BigInt(taxiTicksNum));
+}
+
+/**
+ * Compute _arrivalInBlockTime ticks, falling back to LandingTime + taxi-constant
+ * when InBlockTime is empty/0 (the v4 default, where the game computes it dynamically).
+ *
+ * @param {string|number} landingTime — LandingTime value (HH:MM:SS, ticks string, or falsy)
+ * @param {string|number} inBlockTime — InBlockTime value (HH:MM:SS, ticks string, or falsy)
+ * @param {number|string|bigint} baseDateTicks — base date ticks for this scenario
+ * @param {string} [icao] — airport ICAO code for per-airport taxi override
+ * @returns {string} ticks string, or '0' if no data available
+ */
+function _computeArrivalInBlockTicks(landingTime, inBlockTime, baseDateTicks, icao) {
+  const bdt = (baseDateTicks != null) ? BigInt(baseDateTicks) : BigInt(FALLBACK_BASE_DATE_TICKS);
+  const _toTicks = (t) => {
+    if (!t) return 0n;
+    const s = String(t);
+    if (/^\d+$/.test(s)) return BigInt(s);
+    const p = s.split(':');
+    const sec = +p[0] * 3600 + (+p[1] || 0) * 60 + (+p[2] || 0);
+    return bdt + BigInt(Math.round(sec * 10000000));
+  };
+  // If InBlockTime is set (non-empty, non-zero), use it
+  if (inBlockTime) {
+    const ticks = _toTicks(inBlockTime);
+    if (ticks !== 0n) return String(ticks);
+  }
+  // Fallback: LandingTime + per-airport taxi-in constant
+  const ltTicks = _toTicks(landingTime || 0);
+  if (ltTicks === 0n) return '0';
+  const key = (icao || '').toUpperCase();
+  const taxiSec = ARRIVAL_TAXI_SECONDS[key] ?? ARRIVAL_TAXI_SECONDS.default;
+  const taxiTicksNum = taxiSec * TICKS_PER_SECOND_NUM;
+  return String(ltTicks + BigInt(taxiTicksNum));
+}
 
 // ─── Parse WorldState.FlightPlans ─────────────────────────────
 
@@ -1176,8 +1244,7 @@ function _parseTypeNum(typeStr) {
  */
 function _expandShortFormTypes(text, typeMap) {
   if (!typeMap || typeMap.size === 0) return text;
-  // Protect CurrentDateTime blocks from expansion — the System.DateTime type (3)
-  // is a standard .NET type, not a custom GroundATC type, and its short-form
+  // Protect CurrentDateTime blocks from expansion — the System.DateTime short-form
   // representation must be preserved for extractCurrentDateTime / extractGameTime.
   const protectedBlocks = [];
   const textWithPlaceholders = text.replace(
@@ -1187,7 +1254,112 @@ function _expandShortFormTypes(text, typeMap) {
       return '<<<CDT_BLOCK_' + (protectedBlocks.length - 1) + '>>>';
     }
   );
-  const expanded = textWithPlaceholders.replace(/"\$type":\s*(\d+)\s*([,\}\]])/g, (match, numStr, delimiter) => {
+  const expanded = _expandWithBlobdocScopes(textWithPlaceholders, typeMap);
+  // Restore protected CurrentDateTime blocks
+  return expanded.replace(/<<<CDT_BLOCK_(\d+)>>>/g, (_, idx) => protectedBlocks[parseInt(idx, 10)]);
+}
+
+/**
+ * Scope-aware bare $type reference expansion.
+ *
+ * Each $blobdoc in the Odin JSON text is an independent nested document with its
+ * own type-numbering scope.  A bare "$type": 3 inside a blobdoc must be expanded
+ * using that blobdoc's type declarations, NOT the outer document's assignments.
+ * Otherwise the same numeric id can resolve to different type names depending on
+ * which scope it lives in, producing "Type id N claimed by both …" during encode.
+ *
+ * Recurses into nested blobdocs so every bare reference expands against the
+ * correct scope's typeMap.
+ */
+function _expandWithBlobdocScopes(text, outerTypeMap) {
+  if (outerTypeMap.size === 0) return text;
+
+  const t = createTokenizer(text);
+  const KEY = '"$blobdoc"';
+  const KEY_LEN = KEY.length;
+
+  let result = '';
+  let pos = 0;
+
+  while (pos < text.length) {
+    const keyIdx = text.indexOf(KEY, pos);
+    if (keyIdx < 0) {
+      // No more blobdocs — expand remaining text with the outer typeMap
+      result += _replaceBareTypeRefs(text.substring(pos), outerTypeMap);
+      break;
+    }
+
+    // Only match when "$blobdoc" is a JSON key (preceded by { or , with optional
+    // whitespace), not when it appears inside a string value.
+    let before = keyIdx - 1;
+    while (before >= 0 && ' \t\n\r'.includes(text[before])) before--;
+    if (before < 0 || (text[before] !== '{' && text[before] !== ',')) {
+      // False positive — inside a string value or not a key. Skip past it.
+      result += text.substring(pos, keyIdx + KEY_LEN);
+      pos = keyIdx + KEY_LEN;
+      continue;
+    }
+
+    // Find the colon after the key
+    let colonIdx = -1;
+    for (let i = keyIdx + KEY_LEN; i < text.length; i++) {
+      if (text[i] === ':') { colonIdx = i; break; }
+      if (!' \t\n\r'.includes(text[i])) break;
+    }
+    if (colonIdx < 0) {
+      result += text.substring(pos);
+      break;
+    }
+
+    let valStart = colonIdx + 1;
+    while (valStart < text.length && ' \t\n\r'.includes(text[valStart])) valStart++;
+    if (valStart >= text.length || text[valStart] !== '{') {
+      // Value is not an object — skip
+      result += text.substring(pos, valStart);
+      pos = valStart;
+      continue;
+    }
+
+    // Find the blobdoc object end (string-aware brace matching)
+    const valEnd = t.findObjectEnd(valStart);
+    if (valEnd === null) {
+      result += text.substring(pos);
+      break;
+    }
+
+    // Expand text before the blobdoc key with the outer typeMap
+    result += _replaceBareTypeRefs(text.substring(pos, keyIdx), outerTypeMap);
+
+    // Copy the "$blobdoc": prefix verbatim
+    result += text.substring(keyIdx, valStart);
+
+    // Build blobdoc-specific typeMap from declarations inside this blobdoc
+    const blobdocText = text.substring(valStart, valEnd);
+    const blobMap = new Map();
+    const blobDeclRe = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+    let bm;
+    while ((bm = blobDeclRe.exec(blobdocText)) !== null) {
+      const num = parseInt(bm[1], 10);
+      if (!blobMap.has(num)) blobMap.set(num, bm[2]);
+    }
+
+    // Recurse into blobdoc with its own typeMap (handles nested blobdocs)
+    if (blobMap.size > 0) {
+      result += _expandWithBlobdocScopes(blobdocText, blobMap);
+    } else {
+      result += _expandWithBlobdocScopes(blobdocText, outerTypeMap);
+    }
+
+    pos = valEnd;
+  }
+
+  return result;
+}
+
+/** Regex-based bare $type reference expansion for a single scope. */
+function _replaceBareTypeRefs(text, typeMap) {
+  if (!typeMap || typeMap.size === 0) return text;
+  return text.replace(/"\$type":\s*(\d+)\s*([,\}\]])/g, (match, numStr, delimiter) => {
     const num = parseInt(numStr, 10);
     const fullType = typeMap.get(num);
     if (fullType) {
@@ -1195,8 +1367,86 @@ function _expandShortFormTypes(text, typeMap) {
     }
     return match;
   });
-  // Restore protected CurrentDateTime blocks
-  return expanded.replace(/<<<CDT_BLOCK_(\d+)>>>/g, (_, idx) => protectedBlocks[parseInt(idx, 10)]);
+}
+
+/**
+ * Centralized ID mapper for tracking old → new $id assignments during save.
+ *
+ * When the save pipeline rebuilds entries (e.g. flight-plan:REG, jetway, aircraft),
+ * existing $id values may be replaced with new ones.  Preserved entries that
+ * reference the old $id via $iref:N must be updated to point to the new $id.
+ *
+ * The IdMapper acts as a union-find (disjoint-set) structure:
+ *   - map(oldId, newId)  registers a move
+ *   - resolve(id)        follows the chain to the canonical current ID
+ *   - remapIrefs(text)   rewrites all $iref:N tokens in text where N has been mapped
+ *
+ * Create one IdMapper per segment (each $blobdoc has its own $id namespace).
+ */
+class _IdMapper {
+  constructor() { this._map = new Map(); }
+
+  /** Register that oldId has been reassigned to newId. No-op if identical or null. */
+  map(oldId, newId) {
+    if (oldId !== newId && oldId != null && newId != null) {
+      this._map.set(oldId, newId);
+    }
+  }
+
+  /**
+   * Follow the mapping chain to find the canonical current ID.
+   * Returns id unchanged if not mapped.  Handles transitive chains:
+   * if 738→1042 and 1042→1500, resolve(738) returns 1500.
+   */
+  resolve(id) {
+    let cur = id;
+    const visited = new Set();
+    while (this._map.has(cur)) {
+      if (visited.has(cur)) break; // cycle guard
+      visited.add(cur);
+      cur = this._map.get(cur);
+    }
+    return cur;
+  }
+
+  /**
+   * Scan text for all $iref:N tokens and replace N with resolve(N) where changed.
+   * Uses indexOf (not regex) because $iref: is a bare Odin token — it never
+   * appears inside JSON string values.  Applies replacements back-to-front
+   * to avoid position drift.
+   *
+   * @param {string} text
+   * @returns {{ text: string, count: number }}
+   */
+  remapIrefs(text) {
+    if (this._map.size === 0) return { text, count: 0 };
+    const prefix = '$iref:';
+    const replacements = [];
+    let idx = 0;
+    while ((idx = text.indexOf(prefix, idx)) !== -1) {
+      const numStart = idx + prefix.length;
+      let numEnd = numStart;
+      while (numEnd < text.length && text[numEnd] >= '0' && text[numEnd] <= '9') numEnd++;
+      if (numEnd > numStart) {
+        const oldId = parseInt(text.substring(numStart, numEnd), 10);
+        const newId = this.resolve(oldId);
+        if (newId !== oldId) {
+          replacements.push({ start: numStart, end: numEnd, replacement: String(newId) });
+        }
+      }
+      idx = numEnd;
+    }
+    if (replacements.length === 0) return { text, count: 0 };
+    // Apply back-to-front (no position drift)
+    replacements.sort((a, b) => b.start - a.start);
+    let result = text;
+    for (const r of replacements) {
+      result = result.substring(0, r.start) + r.replacement + result.substring(r.end);
+    }
+    return { text: result, count: replacements.length };
+  }
+
+  get size() { return this._map.size; }
 }
 
 /**
@@ -1426,135 +1676,1693 @@ function _resetJetwayDockingState(segAfter, log) {
  * the docking fields: Status→0, Progress→0, DockingAircraft→null,
  * DockingDoorIndex→-1.
  */
-function _resetFrameJetwayDockingState(frameText, validRegs, log) {
-  // Locate RuntimeEntities $rcontent boundaries
-  const reIdx = frameText.indexOf('"RuntimeEntities"');
-  if (reIdx < 0) return { text: frameText, resetCount: 0 };
+/**
+ * Remove orphaned RuntimeEntities entries whose $k references a registration
+ * that no longer exists in the header's StaticItems dictionary.
+ *
+ * When flights are deleted or their registrations change, the rebuilt header
+ * StaticItems may not include all the keys referenced by checkpoint frame
+ * RuntimeEntities. This causes Unity to throw errors like:
+ *
+ *   "FlightPlan: static item 'flight-plan:B-OLD' does not exist in
+ *    CurrentLevel.StaticField.StaticItems"       (stale flight-plan $k)
+ *   "Aircraft 'aircraft:B-OLD' has no flight plan reference"
+ *                                                 (orphaned aircraft $k)
+ *
+ * Step 7a already nulls stale $fstrref values inside the $v blocks, but the
+ * $k keys themselves must also be cleaned up.  All three entry types
+ * (flight-plan:REG, aircraft:REG, aircraft-animator:aircraft:REG) are fully
+ * removed from the $rcontent array when their registration is stale.
+ *
+ * This is safe because _resetFrameJetwayDockingState preserves the Aircraft
+ * object (and its $id namespace with nested shared $iref targets) inside
+ * the jetway's DockingAircraft field.  The orphaned aircraft entries use
+ * $v: $iref:N to reference that Aircraft — when the orphan is removed the
+ * $id:N still lives in the jetway, so surviving entries' $iref references
+ * remain valid.
+ *
+ * @param {string} frameText - Decoded checkpoint frame text
+ * @param {Set<string>} validRegs - Set of valid flight registrations
+ * @param {Function} log
+ * @returns {{ text: string, removed: number }}
+ */
+function _removeOrphanedFlightEntities(frameText, validRegs, renameMap, log) {
+  let renamed = 0;
 
-  const rcIdx = frameText.indexOf('"$rcontent": [', reIdx);
-  if (rcIdx < 0) return { text: frameText, resetCount: 0 };
-  const rcStart = rcIdx + '"$rcontent": ['.length;
-  while (rcStart < frameText.length && ' \t\n\r'.includes(frameText[rcStart])) { /* skip whitespace */ break; }
+  // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
+  const t = createTokenizer(frameText);
+  const reSec = t.findSection('RuntimeEntities');
+  if (!reSec) return { text: frameText, removed: 0, renamed: 0 };
 
-  // Find the matching ] for the $rcontent array
-  let depth = 0, rcEnd = -1;
-  for (let i = rcStart; i < frameText.length; i++) {
-    if (frameText[i] === '{') depth++;
-    else if (frameText[i] === '}') depth--;
-    else if (frameText[i] === ']' && depth === 0) { rcEnd = i; break; }
-  }
-  if (rcEnd < 0) return { text: frameText, resetCount: 0 };
+  const reText = t.substring(reSec.valueStart, reSec.valueEnd);
+  const reT = createTokenizer(reText);
+  const rcSec = reT.findSection('$rcontent');
+  if (!rcSec) return { text: frameText, removed: 0, renamed: 0 };
 
-  const before = frameText.substring(0, rcStart);
-  const content = frameText.substring(rcStart, rcEnd);
-  const after = frameText.substring(rcEnd);
+  const rcStart = rcSec.valueStart;
+  if (reText[rcStart] !== '[') return { text: frameText, removed: 0, renamed: 0 };
+  const rcEnd = reT.findArrayEnd(rcStart);
+  if (rcEnd === null) return { text: frameText, removed: 0, renamed: 0 };
 
-  // Split content on "$k": "jetway: to find jetway entries
-  // Each jetway entry: { "$k": "jetway:XX", "$v": { ... } }
-  let resetCount = 0;
-  const segments = [];
+  // Extract parts for later reassembly. Positions are in frameText space:
+  //   beforeRc = everything up to and including [
+  //   content  = text between [ and ] (the array entries)
+  //   afterRc  = everything from ] onward
+  const frameReStart = reSec.valueStart;
+  const beforeRc = frameText.substring(0, frameReStart + rcStart + 1);
+  const content = reText.substring(rcStart + 1, rcEnd - 1);
+  const afterRc = frameText.substring(frameReStart + rcEnd - 1);
+  const contentT = createTokenizer(content);
+
+  // ── Single-pass entry iteration ─────────────────────────────────
+  const entries = [];  // { text, orphan } — orphan removes entry from RuntimeEntities
   let pos = 0;
-
   while (pos < content.length) {
-    // Find next jetway entry
-    const jwStart = content.indexOf('"$k": "jetway:', pos);
-    if (jwStart < 0) {
-      // No more jetway entries — push remainder
-      if (pos < content.length) segments.push(content.substring(pos));
-      break;
-    }
+    while (pos < content.length && ' \t\n\r'.includes(content[pos])) pos++;
+    if (pos >= content.length) break;
+    if (content[pos] === ',') { pos++; continue; }
+    if (content[pos] !== '{') { pos++; continue; }
 
-    // Push text before this entry
-    if (jwStart > pos) segments.push(content.substring(pos, jwStart));
+    const entryEnd = contentT.findObjectEnd(pos);
+    if (entryEnd === null) break;
+    const entryText = content.substring(pos, entryEnd);
+    const entryT = createTokenizer(entryText);
 
-    // Find the opening { of this entry
-    let entryStart = jwStart;
-    while (entryStart > 0 && content[entryStart] !== '{') entryStart--;
+    // Extract $k value structurally (no regex)
+    const kSec = entryT.findSection('$k');
+    let modifiedEntry = entryText;
+    let isOrphan = false;
 
-    // Find the matching closing }
-    let entryDepth = 0, entryEnd = -1;
-    for (let i = entryStart; i < content.length; i++) {
-      if (content[i] === '{') entryDepth++;
-      else if (content[i] === '}') {
-        entryDepth--;
-        if (entryDepth === 0) { entryEnd = i + 1; break; }
-      }
-    }
-    if (entryEnd < 0) {
-      segments.push(content.substring(pos));
-      break;
-    }
+    if (kSec) {
+      const kStrEnd = entryT.skipString(kSec.valueStart);
+      if (kStrEnd) {
+        const key = entryText.substring(kSec.valueStart + 1, kStrEnd - 1);
 
-    const entry = content.substring(entryStart, entryEnd);
+        const fpPrefix = 'flight-plan:';
+        const acPrefix = 'aircraft:';
+        const aaPrefix = 'aircraft-animator:aircraft:';
 
-    // Check if this jetway has non-null DockingAircraft referencing a deleted aircraft
-    const daIdx = entry.indexOf('"DockingAircraft"');
-    let needsReset = false;
-    if (daIdx >= 0) {
-      // Find the DockingAircraft value block
-      let afterKey = daIdx + 17;
-      while (afterKey < entry.length && ' \t\n\r'.includes(entry[afterKey])) afterKey++;
-      if (entry[afterKey] === ':') {
-        afterKey++;
-        while (afterKey < entry.length && ' \t\n\r'.includes(entry[afterKey])) afterKey++;
-        if (entry[afterKey] === '{') {
-          let daDepth = 0, daEnd = -1;
-          for (let i = afterKey; i < entry.length; i++) {
-            if (entry[i] === '{') daDepth++;
-            else if (entry[i] === '}') {
-              daDepth--;
-              if (daDepth === 0) { daEnd = i + 1; break; }
-            }
-          }
-          if (daEnd > 0) {
-            const daValue = entry.substring(afterKey, daEnd);
-            // Check if non-null (has embedded object, not the null keyword)
-            // and references a deleted registration
-            const refs = daValue.match(/\$fstrref:"flight-plan:([^"]+)"/g);
-            if (refs) {
-              for (const ref of refs) {
-                const regMatch = ref.match(/\$fstrref:"flight-plan:([^"]+)"/);
-                if (regMatch && !validRegs.has(regMatch[1])) {
-                  needsReset = true;
-                  break;
+        if (key.startsWith(fpPrefix)) {
+          // ── flight-plan:REG ──
+          const reg = key.substring(fpPrefix.length);
+          if (!validRegs.has(reg)) {
+            if (renameMap && renameMap.has(reg)) {
+              // Rename: replace $k value at exact tokenizer-found positions
+              const newReg = renameMap.get(reg);
+              modifiedEntry =
+                entryText.substring(0, kSec.valueStart + 1) +
+                fpPrefix + newReg +
+                entryText.substring(kStrEnd - 1);
+              renamed++;
+            } else {
+              // Fallback: try StaticItem $fstrref for already-corrupted saves
+              const siSec = entryT.findSection('StaticItem');
+              let resolved = false;
+              if (siSec) {
+                const siVal = entryText.substring(siSec.valueStart, siSec.valueEnd);
+                const siFpPrefix = '$fstrref:"flight-plan:';
+                if (siVal.startsWith(siFpPrefix) && siVal.endsWith('"')) {
+                  const siReg = siVal.substring(siFpPrefix.length, siVal.length - 1);
+                  if (validRegs.has(siReg)) {
+                    modifiedEntry =
+                      entryText.substring(0, kSec.valueStart + 1) +
+                      fpPrefix + siReg +
+                      entryText.substring(kStrEnd - 1);
+                    renamed++;
+                    resolved = true;
+                  }
                 }
               }
+              if (!resolved) {
+                isOrphan = true;
+              }
+            }
+          }
+        } else if (key.startsWith(acPrefix) && !key.startsWith(aaPrefix)) {
+          // ── aircraft:REG (exclude aircraft-animator:aircraft:REG) ──
+          const reg = key.substring(acPrefix.length);
+          if (!validRegs.has(reg)) {
+            if (renameMap && renameMap.has(reg)) {
+              const newReg = renameMap.get(reg);
+              modifiedEntry =
+                entryText.substring(0, kSec.valueStart + 1) +
+                acPrefix + newReg +
+                entryText.substring(kStrEnd - 1);
+              renamed++;
+            } else {
+              // Full removal. The orphaned entry's $id values may be
+              // referenced via $iref from survivors, but those $id values
+              // are owned by the Aircraft inside jetway DockingAircraft
+              // (preserved by _resetFrameJetwayDockingState), not by this
+              // entry which uses $v: $iref:N.
+              isOrphan = true;
+            }
+          }
+        } else if (key.startsWith(aaPrefix)) {
+          // ── aircraft-animator:aircraft:REG ──
+          const reg = key.substring(aaPrefix.length);
+          if (!validRegs.has(reg)) {
+            if (renameMap && renameMap.has(reg)) {
+              const newReg = renameMap.get(reg);
+              modifiedEntry =
+                entryText.substring(0, kSec.valueStart + 1) +
+                aaPrefix + newReg +
+                entryText.substring(kStrEnd - 1);
+              renamed++;
+            } else {
+              isOrphan = true;
             }
           }
         }
       }
     }
 
-    if (needsReset) {
-      // Reset docking fields: Status→0, Progress→0, DockingAircraft→null, DockingDoorIndex→-1
-      let resetEntry = entry
-        .replace(/"Status":\s*\d+/, '"Status": 0')
-        .replace(/"DockingDoorIndex":\s*\{[^}]+(-?\d+)\s*\}/, (m) =>
-          m.replace(/(-?\d+)(\s*\})/, '-1$2'));
-      // Reset Progress: find the value inside Progress (the number after $type)
-      resetEntry = resetEntry.replace(/"Progress":\s*\{[^}]+(\d+)\s*\}/, (m) =>
-        m.replace(/(\d+)(\s*\})/, '0$2'));
-      // Reset DockingAircraft: replace the embedded Aircraft with null
-      // Find the DockingAircraft value and replace its inner content
-      resetEntry = resetEntry.replace(
-        /("DockingAircraft":\s*\{[^}]*"(\$type)":\s*\d+,\s*)\{[\s\S]*?\}\s*\}/,
-        '$1null }'
-      );
-      if (resetEntry !== entry) {
-        segments.push(resetEntry);
-        resetCount++;
-      } else {
-        segments.push(entry);
+    entries.push({ text: modifiedEntry, orphan: isOrphan });
+    pos = entryEnd;
+  }
+
+  // ── Reconstruct ─────────────────────────────────────────────────
+  const kept = entries.filter(e => !e.orphan);
+  const removed = entries.length - kept.length;
+  let result = frameText;
+
+  if (removed > 0 || renamed > 0) {
+    const newContent = kept.map(e => e.text).join(',\n');
+    let newBeforeRc = beforeRc;
+
+    // Update $rlength if entries were removed
+    if (removed > 0) {
+      const rlSec = reT.findSection('$rlength');
+      if (rlSec) {
+        // rlSec positions are in reText space → map to frameText space
+        const oldRlen = parseInt(reText.substring(rlSec.valueStart, rlSec.valueEnd), 10);
+        const newRlen = Math.max(0, oldRlen - removed);
+        const rlStartF = frameReStart + rlSec.valueStart;
+        const rlEndF = frameReStart + rlSec.valueEnd;
+        newBeforeRc =
+          beforeRc.substring(0, rlStartF) + String(newRlen) +
+          beforeRc.substring(rlEndF);
       }
-    } else {
-      segments.push(entry);
     }
 
+    result = newBeforeRc + newContent + afterRc;
+  }
+
+  return { text: result, removed, renamed };
+}
+
+/**
+ * Remove stale "aircraft:REG" entries from the EventLog's LatestEvents
+ * dictionary nested inside the "singleton:event-log" RuntimeEntity entry.
+ *
+ * When a flight is deleted, _removeOrphanedFlightEntities handles the
+ * top-level RuntimeEntities entries but does not descend into nested
+ * dictionaries.  The EventLogEntity stores per-aircraft event lists in
+ * LatestEvents keyed by "aircraft:REG" — stale keys here cause:
+ *   "Aircraft 'aircraft:B-OLD' has no flight plan reference"
+ *
+ * This function also handles registration renames via renameMap.
+ */
+function _cleanupEventLogLatestEvents(frameText, validRegs, renameMap, log) {
+  // ── Navigate to RuntimeEntities.$rcontent ───────────────────────
+  const t = createTokenizer(frameText);
+  const reSec = t.findSection('RuntimeEntities');
+  if (!reSec) return { text: frameText, removed: 0, renamed: 0 };
+
+  const reText = t.substring(reSec.valueStart, reSec.valueEnd);
+  const reT = createTokenizer(reText);
+  const rcSec = reT.findSection('$rcontent');
+  if (!rcSec) return { text: frameText, removed: 0, renamed: 0 };
+
+  const rcStart = rcSec.valueStart;
+  if (reText[rcStart] !== '[') return { text: frameText, removed: 0, renamed: 0 };
+  const rcEnd = reT.findArrayEnd(rcStart);
+  if (rcEnd === null) return { text: frameText, removed: 0, renamed: 0 };
+
+  const frameReStart = reSec.valueStart;
+
+  // ── Find the singleton:event-log entry within RuntimeEntities ────
+  const reContent = reText.substring(rcStart + 1, rcEnd - 1);
+  const reContentT = createTokenizer(reContent);
+
+  let elPos = -1;
+  let elEntryText = null;
+  let pos = 0;
+  while (pos < reContent.length) {
+    while (pos < reContent.length && ' \t\n\r'.includes(reContent[pos])) pos++;
+    if (pos >= reContent.length) break;
+    if (reContent[pos] === ',') { pos++; continue; }
+    if (reContent[pos] !== '{') { pos++; continue; }
+
+    const entryEnd = reContentT.findObjectEnd(pos);
+    if (entryEnd === null) break;
+    const entryText = reContent.substring(pos, entryEnd);
+    const entryT = createTokenizer(entryText);
+    const kSec = entryT.findSection('$k');
+    if (kSec) {
+      const kStrEnd = entryT.skipString(kSec.valueStart);
+      if (kStrEnd) {
+        const key = entryText.substring(kSec.valueStart + 1, kStrEnd - 1);
+        if (key === 'singleton:event-log') {
+          elPos = pos;
+          elEntryText = entryText;
+          break;
+        }
+      }
+    }
+    pos = entryEnd;
+  }
+
+  if (elPos < 0) return { text: frameText, removed: 0, renamed: 0 };
+
+  // ── Navigate into $v.LatestEvents.$rcontent ─────────────────────
+  const elT = createTokenizer(elEntryText);
+  const vSec = elT.findSection('$v');
+  if (!vSec) return { text: frameText, removed: 0, renamed: 0 };
+
+  const vText = elEntryText.substring(vSec.valueStart, vSec.valueEnd);
+  const vT = createTokenizer(vText);
+  const leSec = vT.findSection('LatestEvents');
+  if (!leSec) return { text: frameText, removed: 0, renamed: 0 };
+
+  const leText = vText.substring(leSec.valueStart, leSec.valueEnd);
+  const leT = createTokenizer(leText);
+  const leRcSec = leT.findSection('$rcontent');
+  if (!leRcSec) return { text: frameText, removed: 0, renamed: 0 };
+
+  const leRcStart = leRcSec.valueStart;
+  if (leText[leRcStart] !== '[') return { text: frameText, removed: 0, renamed: 0 };
+  const leRcEnd = leT.findArrayEnd(leRcStart);
+  if (leRcEnd === null) return { text: frameText, removed: 0, renamed: 0 };
+
+  // Parts for reassembly (positions relative to leText)
+  const leContent = leText.substring(leRcStart + 1, leRcEnd - 1);
+  const leContentT = createTokenizer(leContent);
+
+  // ── Walk LatestEvents $rcontent entries ─────────────────────────
+  const leEntries = [];
+  let lePos = 0;
+  let leRenamed = 0;
+  while (lePos < leContent.length) {
+    while (lePos < leContent.length && ' \t\n\r'.includes(leContent[lePos])) lePos++;
+    if (lePos >= leContent.length) break;
+    if (leContent[lePos] === ',') { lePos++; continue; }
+    if (leContent[lePos] !== '{') { lePos++; continue; }
+
+    const entryEnd = leContentT.findObjectEnd(lePos);
+    if (entryEnd === null) break;
+    const entryText = leContent.substring(lePos, entryEnd);
+    const entryT = createTokenizer(entryText);
+    const kSec2 = entryT.findSection('$k');
+    let modifiedEntry = entryText;
+    let isOrphan = false;
+
+    if (kSec2) {
+      const kStrEnd2 = entryT.skipString(kSec2.valueStart);
+      if (kStrEnd2) {
+        const key = entryText.substring(kSec2.valueStart + 1, kStrEnd2 - 1);
+        const acPrefix = 'aircraft:';
+        if (key.startsWith(acPrefix)) {
+          const reg = key.substring(acPrefix.length);
+          if (!validRegs.has(reg)) {
+            if (renameMap && renameMap.has(reg)) {
+              const newReg = renameMap.get(reg);
+              modifiedEntry =
+                entryText.substring(0, kSec2.valueStart + 1) +
+                acPrefix + newReg +
+                entryText.substring(kStrEnd2 - 1);
+              leRenamed++;
+            } else {
+              isOrphan = true;
+            }
+          }
+        }
+      }
+    }
+
+    leEntries.push({ text: modifiedEntry, orphan: isOrphan });
+    lePos = entryEnd;
+  }
+
+  const leKept = leEntries.filter(e => !e.orphan);
+  const leRemoved = leEntries.length - leKept.length;
+
+  if (leRemoved === 0 && leRenamed === 0) {
+    return { text: frameText, removed: 0, renamed: 0 };
+  }
+
+  // ── Reconstruct LatestEvents ────────────────────────────────────
+  const newLeContent = leKept.map(e => e.text).join(',\n');
+
+  // Update LatestEvents.$rlength
+  const leRlSec = leT.findSection('$rlength');
+  let newLeBeforeRc = leText.substring(0, leRcStart + 1);
+  if (leRlSec && leRemoved > 0) {
+    const oldRlen = parseInt(leText.substring(leRlSec.valueStart, leRlSec.valueEnd), 10);
+    const newRlen = Math.max(0, oldRlen - leRemoved);
+    newLeBeforeRc =
+      leText.substring(0, leRlSec.valueStart) + String(newRlen) +
+      leText.substring(leRlSec.valueEnd, leRcStart + 1);
+  }
+  const newLeText = newLeBeforeRc + newLeContent + leText.substring(leRcEnd - 1);
+
+  // ── Reconstruct $v ──────────────────────────────────────────────
+  const leStartInV = leSec.valueStart;
+  const newVText =
+    vText.substring(0, leStartInV) + newLeText + vText.substring(leStartInV + leText.length);
+
+  // ── Reconstruct event-log entry ─────────────────────────────────
+  const vStartInEl = vSec.valueStart;
+  const newElEntry =
+    elEntryText.substring(0, vStartInEl) + newVText + elEntryText.substring(vStartInEl + vText.length);
+
+  // ── Reconstruct the full frame ──────────────────────────────────
+  const elStartInRe = frameReStart + rcStart + 1 + elPos;
+  const result =
+    frameText.substring(0, elStartInRe) + newElEntry +
+    frameText.substring(elStartInRe + elEntryText.length);
+
+  return { text: result, removed: leRemoved, renamed: leRenamed };
+}
+
+/**
+ * v4: Constructively rebuild jetway RuntimeEntities entries.
+ *
+ * For each jetway entry in RuntimeEntities, checks if a DEP flight exists
+ * on the matching stand.  If no DEP flight exists and the DockingAircraft
+ * is non-null, replaces the ENTIRE entry with a clean empty state built
+ * from template constants (not patched from the original text).
+ *
+ * This replaces the modification-based _resetFrameJetwayDockingState with
+ * a constructive approach: empty entries are built from scratch, ensuring
+ * no stale fields survive.  Active (docked) entries are left as-is since
+ * the game's serialization is correct for them.
+ *
+ * Two-pass design:
+ *   Pass 1 — Identify stale jetways and collect $id→$type mappings for
+ *             shared resources that other entries $iref to.
+ *   Pass 2 — Build replacement text.  Entries that $iref to $id values
+ *             orphaned by a cleared jetway get inline replacements.
+ */
+
+/**
+ * Extract the $id of the inner AircraftEvent[] from a $v block's
+ * _receivedEvents section.  Returns the numeric $id if the entry has
+ * an inline AircraftEvent[] definition, or null if it uses $iref
+ * or has no _receivedEvents.
+ */
+function _extractRecvEventsInnerId(vBlock) {
+  if (!vBlock) return null;
+  const t = createTokenizer(vBlock);
+  const reSec = t.findSection('_receivedEvents');
+  if (!reSec) return null;
+  const reObjText = vBlock.substring(reSec.valueStart, reSec.valueEnd);
+  if (!reObjText || reObjText[0] !== '{') return null;
+  // The _receivedEvents value is an object with "$id", "$type", and inner value
+  const rt = createTokenizer(reObjText);
+  // Skip past "$id" and "$type" entries to find the inner value
+  const typeSec = rt.findSection('$type');
+  if (!typeSec) return null;
+  // Inner value starts after $type's value + comma
+  let pos = typeSec.valueEnd;
+  while (pos < reObjText.length && ' \t\n\r,'.includes(reObjText[pos])) pos++;
+  if (pos >= reObjText.length) return null;
+  if (reObjText.substring(pos).startsWith('$iref:')) return null; // reference, not definition
+  if (reObjText[pos] !== '{') return null;
+  // Inline object — extract its $id
+  const innerEnd = rt.findObjectEnd ? (function() {
+    const tt = createTokenizer(reObjText);
+    return tt.findObjectEnd(pos);
+  })() : null;
+  if (innerEnd === null) return null;
+  const innerObj = reObjText.substring(pos, innerEnd);
+  const it = createTokenizer(innerObj);
+  const idSec = it.findSection('$id');
+  if (!idSec) return null;
+  return parseInt(innerObj.substring(idSec.valueStart, idSec.valueEnd), 10);
+}
+
+/**
+ * Extract the inner ECommand[] $id from a jetway $v block's _waitingForCommands.
+ * Returns null if the entry uses $iref (reference, not definition) or is missing.
+ * @param {string} vBlock - the $v value of a jetway entry
+ * @returns {number|null} inner ECommand[] $id, or null
+ */
+function _extractWaitingCmdsInnerId(vBlock) {
+  if (!vBlock) return null;
+  const t = createTokenizer(vBlock);
+  const wcSec = t.findSection('_waitingForCommands');
+  if (!wcSec) return null;
+  const wcObjText = vBlock.substring(wcSec.valueStart, wcSec.valueEnd);
+  if (!wcObjText || wcObjText[0] !== '{') return null;
+  const wt = createTokenizer(wcObjText);
+  const typeSec = wt.findSection('$type');
+  if (!typeSec) return null;
+  let pos = typeSec.valueEnd;
+  while (pos < wcObjText.length && ' \t\n\r,'.includes(wcObjText[pos])) pos++;
+  if (pos >= wcObjText.length) return null;
+  if (wcObjText.substring(pos).startsWith('$iref:')) return null;
+  if (wcObjText[pos] !== '{') return null;
+  const innerEnd = wt.findObjectEnd ? (function() {
+    const tt = createTokenizer(wcObjText);
+    return tt.findObjectEnd(pos);
+  })() : null;
+  if (innerEnd === null) return null;
+  const innerObj = wcObjText.substring(pos, innerEnd);
+  const it = createTokenizer(innerObj);
+  const idSec = it.findSection('$id');
+  if (!idSec) return null;
+  return parseInt(innerObj.substring(idSec.valueStart, idSec.valueEnd), 10);
+}
+
+/**
+ * Rebuild the _receivedEvents field inside an aircraft entry's $v block
+ * to use the shared canonical AircraftEvent[] definition.
+ *
+ * If recvEventsCache.canonicalId is set, replaces the inner value with
+ * $iref:<canonicalId>.  If not yet set (first aircraft), keeps the inline
+ * definition and caches its $id as the canonical one.
+ *
+ * @param {string} entryText - full $k/$v entry text (e.g. {"$k": "aircraft:B-1234", "$v": {...}})
+ * @param {object} recvEventsCache - { canonicalId: number|null }
+ * @returns {string} entryText with _receivedEvents inner value rebuilt
+ */
+function _rebuildReceivedEventsInEntry(entryText, recvEventsCache) {
+  const t = createTokenizer(entryText);
+
+  // Find the $v block
+  const vSec = t.findSection('$v');
+  if (!vSec) return entryText;
+  const vBlock = entryText.substring(vSec.valueStart, vSec.valueEnd);
+  if (!vBlock || vBlock[0] !== '{') return entryText;
+
+  // Find _receivedEvents inside $v
+  const vt = createTokenizer(vBlock);
+  const reSec = vt.findSection('_receivedEvents');
+  if (!reSec) return entryText;
+
+  // The _receivedEvents value object
+  const reStart = reSec.valueStart;
+  const reEnd = vt.findObjectEnd(reStart);
+  if (reEnd === null) return entryText;
+  const reObj = vBlock.substring(reStart, reEnd);
+
+  // Find the inner value (after "$id" and "$type" entries)
+  const rt = createTokenizer(reObj);
+  const typeSec = rt.findSection('$type');
+  if (!typeSec) return entryText;
+
+  // Inner value starts after $type's value end + commas/whitespace
+  let innerStart = typeSec.valueEnd;
+  while (innerStart < reObj.length && ' \t\n\r,'.includes(reObj[innerStart])) innerStart++;
+  if (innerStart >= reObj.length) return entryText;
+
+  // Find inner value end
+  let innerEnd;
+  if (reObj.substring(innerStart).startsWith('$iref:')) {
+    // $iref:N — scan past the digits
+    innerEnd = innerStart + 6; // skip "$iref:"
+    while (innerEnd < reObj.length && reObj[innerEnd] >= '0' && reObj[innerEnd] <= '9') innerEnd++;
+  } else if (reObj[innerStart] === '{') {
+    innerEnd = rt.findObjectEnd(innerStart);
+    if (innerEnd === null) return entryText;
+  } else {
+    return entryText; // unrecognized format
+  }
+
+  const innerVal = reObj.substring(innerStart, innerEnd);
+
+  if (recvEventsCache.canonicalId !== null) {
+    // Already have a canonical definition — replace this inner value with $iref
+    const newInner = '$iref:' + recvEventsCache.canonicalId;
+    if (innerVal === newInner) return entryText; // already correct
+    const before = entryText.substring(0, vSec.valueStart + reStart + innerStart);
+    const after = entryText.substring(vSec.valueStart + reStart + innerEnd);
+    return before + newInner + after;
+  } else {
+    // First occurrence — extract its $id as the canonical one
+    if (reObj[innerStart] === '{') {
+      const it = createTokenizer(innerVal);
+      const idSec = it.findSection('$id');
+      if (idSec) {
+        recvEventsCache.canonicalId = parseInt(innerVal.substring(idSec.valueStart, idSec.valueEnd), 10);
+      }
+    }
+    // If it's an $iref with no canonical set, that's fine — this is the first entry
+    // and it's already a reference. The inline definition must be elsewhere in the segment.
+    // We just don't set canonicalId in this case.
+    return entryText;
+  }
+}
+
+/**
+ * Rebuild the _waitingForCommands field inside an aircraft entry's $v block
+ * to use the shared canonical ECommand[] definition.
+ *
+ * If waitingCmdsCache.canonicalId is set, replaces the inner value with
+ * $iref:<canonicalId>.  If not yet set (first aircraft), keeps the inline
+ * definition and caches its $id as the canonical one.
+ *
+ * @param {string} entryText - full $k/$v entry text (e.g. {"$k": "aircraft:B-1234", "$v": {...}})
+ * @param {object} waitingCmdsCache - { canonicalId: number|null }
+ * @returns {string} entryText with _waitingForCommands inner value rebuilt
+ */
+function _rebuildWaitingCommandsInEntry(entryText, waitingCmdsCache) {
+  const t = createTokenizer(entryText);
+
+  // Find the $v block
+  const vSec = t.findSection('$v');
+  if (!vSec) return entryText;
+  const vBlock = entryText.substring(vSec.valueStart, vSec.valueEnd);
+  if (!vBlock || vBlock[0] !== '{') return entryText;
+
+  // Find _waitingForCommands inside $v
+  const vt = createTokenizer(vBlock);
+  const wcSec = vt.findSection('_waitingForCommands');
+  if (!wcSec) return entryText;
+
+  // The _waitingForCommands value object
+  const wcStart = wcSec.valueStart;
+  const wcEnd = vt.findObjectEnd(wcStart);
+  if (wcEnd === null) return entryText;
+  const wcObj = vBlock.substring(wcStart, wcEnd);
+
+  // Find the inner value (after "$id" and "$type" entries)
+  const wt = createTokenizer(wcObj);
+  const typeSec = wt.findSection('$type');
+  if (!typeSec) return entryText;
+
+  // Inner value starts after $type's value end + commas/whitespace
+  let innerStart = typeSec.valueEnd;
+  while (innerStart < wcObj.length && ' \t\n\r,'.includes(wcObj[innerStart])) innerStart++;
+  if (innerStart >= wcObj.length) return entryText;
+
+  // Find inner value end
+  let innerEnd;
+  if (wcObj.substring(innerStart).startsWith('$iref:')) {
+    // $iref:N — scan past the digits
+    innerEnd = innerStart + 6; // skip "$iref:"
+    while (innerEnd < wcObj.length && wcObj[innerEnd] >= '0' && wcObj[innerEnd] <= '9') innerEnd++;
+  } else if (wcObj[innerStart] === '{') {
+    innerEnd = wt.findObjectEnd(innerStart);
+    if (innerEnd === null) return entryText;
+  } else {
+    return entryText; // unrecognized format
+  }
+
+  const innerVal = wcObj.substring(innerStart, innerEnd);
+
+  if (waitingCmdsCache.canonicalId !== null) {
+    // Already have a canonical definition — replace this inner value with $iref
+    const newInner = '$iref:' + waitingCmdsCache.canonicalId;
+    if (innerVal === newInner) return entryText; // already correct
+    const before = entryText.substring(0, vSec.valueStart + wcStart + innerStart);
+    const after = entryText.substring(vSec.valueStart + wcStart + innerEnd);
+    return before + newInner + after;
+  } else {
+    // First occurrence — extract its $id as the canonical one
+    if (wcObj[innerStart] === '{') {
+      const it = createTokenizer(innerVal);
+      const idSec = it.findSection('$id');
+      if (idSec) {
+        waitingCmdsCache.canonicalId = parseInt(innerVal.substring(idSec.valueStart, idSec.valueEnd), 10);
+      }
+    }
+    return entryText;
+  }
+}
+
+function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao) {
+  // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
+  const t = createTokenizer(segmentText);
+  const reSec = t.findSection('RuntimeEntities');
+  if (!reSec) return { text: segmentText, resetCount: 0, activeJetways: [], recvEventsCache: { canonicalId: null }, waitingCmdsCache: { canonicalId: null } };
+
+  const reText = t.substring(reSec.valueStart, reSec.valueEnd);
+  const reT = createTokenizer(reText);
+  const rcSec = reT.findSection('$rcontent');
+  if (!rcSec) return { text: segmentText, resetCount: 0, activeJetways: [], recvEventsCache: { canonicalId: null }, waitingCmdsCache: { canonicalId: null } };
+
+  const rcStart = rcSec.valueStart;
+  if (reText[rcStart] !== '[') return { text: segmentText, resetCount: 0, activeJetways: [], recvEventsCache: { canonicalId: null }, waitingCmdsCache: { canonicalId: null } };
+  const rcEnd = reT.findArrayEnd(rcStart);
+  if (rcEnd === null) return { text: segmentText, resetCount: 0, activeJetways: [], recvEventsCache: { canonicalId: null }, waitingCmdsCache: { canonicalId: null } };
+
+  const frameReStart = reSec.valueStart;
+  const content = reText.substring(rcStart + 1, rcEnd - 1);
+  const contentT = createTokenizer(content);
+
+  // Build stand → flight lookup (DEP flights only)
+  const standFlights = new Map();
+  for (const fl of flights) {
+    const isDep = fl.isDeparture === true;
+    if (isDep && fl.Stand) {
+      const standKey = String(fl.Stand).replace(/^0+/, ''); // normalize "02" → "2"
+      standFlights.set(standKey, fl);
+    }
+  }
+
+  // ── PASS 1: Parse entry metadata ──────────────────────────────────
+  const entryInfos = []; // { entryText, key, isJetway, entryId, vBlock }
+  let pos = 0;
+
+  while (pos < content.length) {
+    while (pos < content.length && ' \t\n\r'.includes(content[pos])) pos++;
+    if (pos >= content.length) break;
+    if (content[pos] === ',') { pos++; continue; }
+    if (content[pos] !== '{') { pos++; continue; }
+
+    const entryEnd = contentT.findObjectEnd(pos);
+    if (entryEnd === null) break;
+    const entryText = content.substring(pos, entryEnd);
+    const entryT = createTokenizer(entryText);
+
+    const info = { entryText, key: '', isJetway: false, entryId: 0, vBlock: '' };
+    const kSec = entryT.findSection('$k');
+    if (kSec) {
+      const kStrEnd = entryT.skipString(kSec.valueStart);
+      if (kStrEnd) {
+        info.key = entryText.substring(kSec.valueStart + 1, kStrEnd - 1);
+        info.isJetway = info.key.startsWith('jetway:');
+      }
+    }
+    // Extract the $v block to find sub-object $ids later
+    const vSec = entryT.findSection('$v');
+    if (vSec) info.vBlock = entryText.substring(vSec.valueStart, vSec.valueEnd);
+    const idSec = entryT.findSection('$id');
+    if (idSec) info.entryId = parseInt(entryText.substring(idSec.valueStart, idSec.valueEnd), 10);
+
+    entryInfos.push(info);
+    pos = entryEnd;
+  }
+
+  // ---- Extract full-form type declarations from the original text ----
+  // When we replace jetway entries in PASS 2, the full-form "$type": "3|..."
+  // declarations inside those entries are lost.  If another entry still
+  // uses bare "$type": 3, the JSON→binary encoder fails with "unknown type
+  // id 3" because the type was never registered in that blobdoc scope.
+  // We extract these declarations before rebuilding so the new entries can
+  // carry their own full-form type strings.
+  const jwTypeMap = new Map();
+  const jwDeclRe = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+  let jm;
+  while ((jm = jwDeclRe.exec(content)) !== null) {
+    const num = parseInt(jm[1], 10);
+    if (!jwTypeMap.has(num)) jwTypeMap.set(num, jm[2]);
+  }
+
+  // ---- Pre-scan: collect old _receivedEvents AircraftEvent[] $id values ----
+  // so we can register old→new mappings in the IdMapper after rebuild.
+  const oldRecvEventIds = [];
+  const oldWaitingCmdIds = [];
+  for (const info of entryInfos) {
+    if (info.isJetway) {
+      const oldId = _extractRecvEventsInnerId(info.vBlock);
+      if (oldId !== null) oldRecvEventIds.push(oldId);
+      const oldWcId = _extractWaitingCmdsInnerId(info.vBlock);
+      if (oldWcId !== null) oldWaitingCmdIds.push(oldWcId);
+    }
+  }
+  // Caches for the canonical AircraftEvent[] and ECommand[] $ids shared across all entries
+  const recvEventsCache = { canonicalId: null };
+  const waitingCmdsCache = { canonicalId: null };
+
+  // ---- PASS 2: Rebuild each entry constructively ---------------------
+  const segments = [];
+  let resetCount = 0;
+  const activeJetways = [];
+  const exhaustedStands = new Set();
+  const exhaustedFlights = new Set();
+
+  for (const info of entryInfos) {
+    if (!info.isJetway) {
+      segments.push(info.entryText);
+      continue;
+    }
+
+    const jwNum = info.key.substring('jetway:'.length);
+    const standId = String(parseInt(jwNum, 10));
+    const depFlight = standFlights.get(standId);
+    const flightReg = depFlight ? (depFlight._Registration || depFlight.Registration || '') : '';
+
+    // Bilateral exhaustion: both stand AND flight must be fresh.
+    // If either was already assigned to a previous jetway, skip → empty jetway.
+    if (depFlight && !exhaustedStands.has(standId) && !exhaustedFlights.has(flightReg)) {
+      exhaustedStands.add(standId);
+      exhaustedFlights.add(flightReg);
+
+      // ---- Active jetway: rebuild DockingAircraft with flight data ----
+      const built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache);
+      if (built.text !== info.entryText) resetCount++;
+      segments.push(built.text);
+      activeJetways.push({
+        stand: standId,
+        reg: built.reg,
+        flightPlanId: built.flightPlanId,
+        aircraftId: built.aircraftId,
+      });
+    } else {
+      // ---- Empty jetway: write cleared format ---------------------
+      const entryT = createTokenizer(info.entryText);
+      const idSec = entryT.findSection('$id');
+      const entryId = idSec ? parseInt(info.entryText.substring(idSec.valueStart, idSec.valueEnd), 10) : 0;
+
+      const origProgressId = _extractSubId(info.entryText, 'Progress');
+      const origDaId = _extractSubId(info.entryText, 'DockingAircraft');
+      const origDdiId = _extractSubId(info.entryText, 'DockingDoorIndex');
+      const progressId = origProgressId || (entryId + 1);
+      const daId = origDaId || (progressId + 1);
+      const ddiId = origDdiId || (daId + 1);
+
+      // Use full-form type strings extracted from the original RuntimeEntities
+      // so the new entries declare their types even if the original declarations
+      // were in the entries being replaced.
+      const T3 = jwTypeMap.has(3) ? '"3|' + jwTypeMap.get(3) + '"' : '3';
+      const T4 = jwTypeMap.has(4) ? '"4|' + jwTypeMap.get(4) + '"' : '4';
+      const T5 = jwTypeMap.has(5) ? '"5|' + jwTypeMap.get(5) + '"' : '5';
+      const T6 = jwTypeMap.has(6) ? '"6|' + jwTypeMap.get(6) + '"' : '6';
+
+      segments.push([
+        '                            {',
+        '                                "$k": "' + info.key + '",',
+        '                                "$v": {',
+        '                                    "$id": ' + entryId + ',',
+        '                                    "$type": ' + T3 + ',',
+        '                                    "Status": 0,',
+        '                                    "Progress": {',
+        '                                        "$id": ' + progressId + ',',
+        '                                        "$type": ' + T4 + ',',
+        '                                        0',
+        '                                    },',
+        '                                    "DockingAircraft": {',
+        '                                        "$id": ' + daId + ',',
+        '                                        "$type": ' + T5 + ',',
+        '                                        null',
+        '                                    },',
+        '                                    "DockingDoorIndex": {',
+        '                                        "$id": ' + ddiId + ',',
+        '                                        "$type": ' + T6 + ',',
+        '                                        -1',
+        '                                    },',
+        '                                    "TrigEvent": false,',
+        '                                    "AutoUndockFinished": false',
+        '                                }',
+        '                            }',
+      ].join('\n'));
+      resetCount++;
+    }
+  }
+
+  // Register old→new _receivedEvents AircraftEvent[] $id mappings
+  // so the centralized $iref remap step can fix preserved entries
+  if (recvEventsCache.canonicalId !== null && idMapper) {
+    for (const oldId of oldRecvEventIds) {
+      idMapper.map(oldId, recvEventsCache.canonicalId);
+    }
+  }
+  if (waitingCmdsCache.canonicalId !== null && idMapper) {
+    for (const oldId of oldWaitingCmdIds) {
+      idMapper.map(oldId, waitingCmdsCache.canonicalId);
+    }
+  }
+
+  if (resetCount === 0 && activeJetways.length === 0) return { text: segmentText, resetCount: 0, activeJetways: [], recvEventsCache, waitingCmdsCache };
+
+  // Reconstruct the $rcontent with correct $rlength
+  const beforeRc = segmentText.substring(0, frameReStart + rcStart + 1);
+  const afterRc = segmentText.substring(frameReStart + rcEnd - 1);
+  const newContent = segments.join(',\n');
+  const newRlen = segments.length;
+
+  const rlSec = reT.findSection('$rlength');
+  let newBeforeRc = beforeRc;
+  if (rlSec) {
+    const rlStartF = frameReStart + rlSec.valueStart;
+    const rlEndF = frameReStart + rlSec.valueEnd;
+    newBeforeRc = beforeRc.substring(0, rlStartF) + String(newRlen) + beforeRc.substring(rlEndF);
+  }
+
+  log('Reset ' + resetCount + ' jetway docking state(s) (constructive)');
+  return { text: newBeforeRc + newContent + afterRc, resetCount, activeJetways, recvEventsCache, waitingCmdsCache };
+}
+
+/**
+ * Constructively rebuild flight-plan:REG entries in RuntimeEntities after jetway
+ * entries have been rebuilt (Step 7b-1).
+ *
+ * _buildActiveJetwayEntry regenerates _flightPlan inside DockingAircraft with new
+ * $id values. The pre-existing flight-plan:REG entries in RuntimeEntities retain
+ * stale $iref values pointing to OLD $id values, causing:
+ *   WireAllIdentities: runtime 字典 key 'flight-plan:REG' 对应实体为 null
+ *
+ * This function deletes ALL flight-plan:REG entries and rebuilds them from the
+ * editor state. For DEP flights at jetway stands (whose _flightPlan is embedded
+ * inside the jetway's DockingAircraft), it generates $iref-style entries pointing
+ * to the correct _flightPlan.$id. For all other flights, it builds full inline
+ * entries with time fields populated from the flight object.
+ *
+ * @param {string} segmentText - decoded text of one segment
+ * @param {Array} flights - editor state flight objects
+ * @param {BigInt} baseDateTicks - base date in .NET ticks for time conversion
+ * @param {Set} validRegs - set of valid registration strings
+ * @param {Array} activeJetways - [{ stand, reg, flightPlanId, aircraftId }] from _rebuildJetwayEntries
+ * @param {Map} segTypeMap - per-segment type-number→full-name map (from Step 7a-2)
+ * @param {Function} log - logging function
+ * @returns {{ text: string, removed: number, added: number }}
+ */
+function _rebuildFlightPlanRuntimeEntities(segmentText, flights, baseDateTicks, validRegs, activeJetways, segTypeMap, log, idMapper, icao, recvEventsCache, waitingCmdsCache) {
+  // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
+  const t = createTokenizer(segmentText);
+  const reSec = t.findSection('RuntimeEntities');
+  if (!reSec) return { text: segmentText, removed: 0, added: 0 };
+
+  const reText = t.substring(reSec.valueStart, reSec.valueEnd);
+  const reT = createTokenizer(reText);
+  const rcSec = reT.findSection('$rcontent');
+  if (!rcSec) return { text: segmentText, removed: 0, added: 0 };
+
+  const rcStart = rcSec.valueStart;
+  if (reText[rcStart] !== '[') return { text: segmentText, removed: 0, added: 0 };
+  const rcEnd = reT.findArrayEnd(rcStart);
+  if (rcEnd === null) return { text: segmentText, removed: 0, added: 0 };
+
+  const frameReStart = reSec.valueStart;
+  const beforeRc = segmentText.substring(0, frameReStart + rcStart + 1);
+  const content = reText.substring(rcStart + 1, rcEnd - 1);
+  const afterRc = segmentText.substring(frameReStart + rcEnd - 1);
+  const contentT = createTokenizer(content);
+
+  // ── Resolve type numbers from segment's type map ────────────────
+  // Fully-qualified type strings so entries are self-contained
+  let fpTypeFull = '18|ContextCross.Models.FlightPlan, GroundATC.Core';
+  let dtTypeFull = '19|System.DateTime, mscorlib';
+  if (segTypeMap) {
+    for (const [num, name] of segTypeMap) {
+      if (name.startsWith('ContextCross.Models.FlightPlan,')) {
+        fpTypeFull = num + '|' + name;
+      }
+      if (name.startsWith('System.DateTime,')) {
+        dtTypeFull = num + '|' + name;
+      }
+    }
+  }
+  const FP_TYPE_STR = '"' + fpTypeFull + '"';
+  const DT_TYPE_STR = '"' + dtTypeFull + '"';
+
+  // Build reg → flight lookup
+  const regFlights = new Map();
+  for (const fl of flights) {
+    const reg = fl._Registration || fl.Registration || '';
+    if (reg) regFlights.set(reg, fl);
+  }
+
+  // ── PASS 1: Parse entries, identify flight-plan:REG for removal ──
+  const keptEntries = [];    // non-flight-plan entries preserved as-is
+  const removedKeys = [];    // flight-plan keys removed
+  const oldIdMap = new Map(); // reg → old $id (for $iref remapping)
+  let pos = 0;
+  while (pos < content.length) {
+    while (pos < content.length && ' \t\n\r'.includes(content[pos])) pos++;
+    if (pos >= content.length) break;
+    if (content[pos] === ',') { pos++; continue; }
+    if (content[pos] !== '{') { pos++; continue; }
+
+    const entryEnd = contentT.findObjectEnd(pos);
+    if (entryEnd === null) break;
+    const entryText = content.substring(pos, entryEnd);
+
+    // Check $k value
+    const entryT = createTokenizer(entryText);
+    const kSec = entryT.findSection('$k');
+    let isFlightPlan = false;
+    if (kSec) {
+      const kStrEnd = entryT.skipString(kSec.valueStart);
+      if (kStrEnd) {
+        const key = entryText.substring(kSec.valueStart + 1, kStrEnd - 1);
+        if (key.startsWith('flight-plan:')) {
+          isFlightPlan = true;
+          const reg = key.substring('flight-plan:'.length);
+          removedKeys.push(reg);
+          // Extract old $id from the $v block for $iref remapping later
+          const oldId = _extractEntryVId(entryText);
+          if (oldId !== null) oldIdMap.set(reg, oldId);
+        }
+      }
+    }
+
+    if (!isFlightPlan) {
+      // Rebuild _receivedEvents in aircraft:REG entries using the shared cache.
+      // Rebuild _receivedEvents and _waitingForCommands in aircraft:REG entries
+      // using the shared cache. aircraft-animator: entries pass through.
+      if (kSec && (recvEventsCache || waitingCmdsCache)) {
+        const kStrEnd2 = entryT.skipString(kSec.valueStart);
+        if (kStrEnd2) {
+          const key2 = entryText.substring(kSec.valueStart + 1, kStrEnd2 - 1);
+          if (key2.startsWith('aircraft:') && !key2.startsWith('aircraft-animator:')) {
+            let rebuilt = entryText;
+            if (recvEventsCache) rebuilt = _rebuildReceivedEventsInEntry(rebuilt, recvEventsCache);
+            if (waitingCmdsCache) rebuilt = _rebuildWaitingCommandsInEntry(rebuilt, waitingCmdsCache);
+            keptEntries.push(rebuilt);
+          } else {
+            keptEntries.push(entryText);
+          }
+        } else {
+          keptEntries.push(entryText);
+        }
+      } else {
+        keptEntries.push(entryText);
+      }
+    }
+    pos = entryEnd;
+  }
+
+  // ── Scan kept entries for max existing $id ──────────────────────
+  const allKeptText = keptEntries.join(',\n');
+  let maxId = 0;
+  const idRe = /"\$id":\s*(\d+)/g;
+  let idMatch;
+  while ((idMatch = idRe.exec(allKeptText)) !== null) {
+    const val = parseInt(idMatch[1], 10);
+    if (val > maxId) maxId = val;
+  }
+  let nextId = maxId + 1;
+
+  // ── PASS 2: Build new flight-plan:REG entries ──────────────────
+  // All flight-plan entries use the full inline format with their own $id.
+  // They MUST come BEFORE aircraft/animator/jetway entries so the game
+  // processes arrivals and departures in their correct interleaved order
+  // (departures before arrivals for shared stands).  Placing departures
+  // after aircraft entries causes stand allocation failures because
+  // arrivals claim stands with infinite occupancy first.
+  const allFpEntries = [];
+
+  for (const [reg, fl] of regFlights) {
+    if (!validRegs.has(reg)) continue;
+    const isDep = fl.isDeparture === true;
+
+    const arrRunway = isDep ? 'null' : '"' + (fl.Runway || '') + '"';
+    const arrStand = isDep ? 'null' : '"' + (fl.Stand || '') + '"';
+    const arrTicks = isDep ? '0' : _computeArrivalInBlockTicks(fl.LandingTime, fl.InBlockTime, baseDateTicks, icao);
+    const depRunway = isDep ? '"' + (fl.Runway || '') + '"' : 'null';
+    const depStand = isDep ? '"' + (fl.Stand || '') + '"' : 'null';
+    const depTicks = isDep ? _computeTakeoffTicks(fl.TakeoffTime, fl.OffBlockTime, baseDateTicks, icao) : '0';
+
+    const fpId = nextId++;
+    // Register old→new $id mapping for $iref remapping
+    if (idMapper && oldIdMap.has(reg)) {
+      idMapper.map(oldIdMap.get(reg), fpId);
+    }
+
+    allFpEntries.push([
+      '                        {',
+      '                            "$k": "flight-plan:' + reg + '",',
+      '                            "$v": {',
+      '                                "$id": ' + fpId + ',',
+      '                                "$type": ' + FP_TYPE_STR + ',',
+      '                                "StaticItem": $fstrref:"flight-plan:' + reg + '",',
+      '                                "_arrivalInBlockTime": {',
+      '                                    "$type": ' + DT_TYPE_STR + ',',
+      '                                    ' + arrTicks,
+      '                                },',
+      '                                "_arrivalActualInBlockTime": {',
+      '                                    "$type": ' + DT_TYPE_STR + ',',
+      '                                    0',
+      '                                },',
+      '                                "_arrivalRunway": ' + arrRunway + ',',
+      '                                "_arrivalStand": ' + arrStand + ',',
+      '                                "_departureTakeoffTime": {',
+      '                                    "$type": ' + DT_TYPE_STR + ',',
+      '                                    ' + depTicks,
+      '                                },',
+      '                                "_departureRunway": ' + depRunway + ',',
+      '                                "_departureStand": ' + depStand,
+      '                            }',
+      '                        }',
+    ].join('\n'));
+  }
+
+  const removedCount = removedKeys.length;
+  const addedCount = allFpEntries.length;
+
+  if (removedCount === 0 && addedCount === 0) {
+    return { text: segmentText, removed: 0, added: 0 };
+  }
+
+  // ── Reconstruct RuntimeEntities.$rcontent ──────────────────────
+  // Ordering is critical: the game deserializes entries sequentially and
+  // cannot forward-reference $iref targets.  All $id values must come
+  // before the $iref references that point to them:
+  //   1. allFpEntries — flight-plan entries (define $id:N, placed first
+  //                     so arrivals and departures are interleaved)
+  //   2. keptEntries  — aircraft, animator, jetway entries (aircraft
+  //                     $iref to $id:N from position 1)
+  const allEntries = allFpEntries.concat(keptEntries);
+  const newContent = allEntries.join(',\n');
+  const newRlen = allEntries.length;
+
+  // Update $rlength
+  const rlSec = reT.findSection('$rlength');
+  let newBeforeRc = beforeRc;
+  if (rlSec) {
+    const rlStartF = frameReStart + rlSec.valueStart;
+    const rlEndF = frameReStart + rlSec.valueEnd;
+    newBeforeRc = beforeRc.substring(0, rlStartF) + String(newRlen) + beforeRc.substring(rlEndF);
+  }
+
+  log('Rebuilt ' + addedCount + ' flight-plan RuntimeEntities entry(s) (removed ' + removedCount + ' stale)');
+  return { text: newBeforeRc + newContent + afterRc, removed: removedCount, added: addedCount };
+}
+
+/**
+ * Build a complete active jetway entry from scratch using a hardcoded template.
+ * Constructs a full DockingAircraft with Aircraft object for the departure flight.
+ * Mirrors the empty-case pattern (hardcoded template with string substitution)
+ * but includes the ~35-field Aircraft structure inside DockingAircraft.
+ */
+function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache) {
+  const entryId = info.entryId;
+  const id = (offset) => entryId + offset;
+
+  const reg = depFlight._Registration || depFlight.Registration || '';
+  const runway = depFlight.Runway || '';
+  const stand = depFlight.Stand || '';
+  const takeoffTicks = _computeTakeoffTicks(
+    depFlight.TakeoffTime || depFlight._departureTakeoffTime,
+    depFlight.OffBlockTime,
+    baseDateTicks,
+    icao
+  );
+  const fstrref = '$fstrref:"flight-plan:' + reg + '"';
+
+  // Resolve aircraft spec from approachCache, falling back to original entry
+  const acType = depFlight.AircraftType || '';
+  let spec = null;
+  const designator = approachCache && approachCache.designatorMap
+    ? approachCache.designatorMap.get(acType) : null;
+  if (designator && approachCache && approachCache.specDB) {
+    spec = approachCache.specDB.get(designator) || null;
+  }
+  // Fallback: extract spec from the original jetway entry's DockingAircraft
+  // (needed for v4 where designatorMap is not populated)
+  if (!spec && info.vBlock) {
+    const { _extractFallbackSpec } = require('./approach');
+    spec = _extractFallbackSpec(info.vBlock);
+  }
+
+  const designatorVal = spec?.Designator ?? 'B738';
+  const wakeCat = spec?.WakeTurbulenceCategory ?? DEFAULT_WAKE_CATEGORY;
+  const wheelBase = spec?.WheelBase ?? 0;
+  const wingSpan = spec?.WingSpan ?? 0;
+  const runwayVR = spec?.RunwayVRSpeed ?? DEFAULT_RUNWAY_VR_SPEED;
+  const runwayTO = spec?.RunwayTakeOffLength ?? DEFAULT_RUNWAY_TAKEOFF_LENGTH;
+  const mo = spec?.ModelOffset ?? DEFAULT_MODEL_OFFSET;
+  const dockPoses = spec?.DockingPositions ?? [{ x: -1.742, y: 2.68, z: 14.75, w: 90 }];
+
+  // Fully-qualified type strings — no dependency on segment type declarations.
+  // These match the types used in the game's jetway save-state serialization.
+  const T = {
+    ac:      '"7|ContextCross.Aircrafts.Aircraft, GroundATC.Core"',
+    spec:    '"8|ContextCross.Models.AircraftSpecification, GroundATC.Core"',
+    float3:  '"9|Unity.Mathematics.float3, Unity.Mathematics"',
+    vec4Arr: '"10|UnityEngine.Vector4[], UnityEngine.CoreModule"',
+    vec4:    '"11|UnityEngine.Vector4, UnityEngine.CoreModule"',
+    dyn:     '"12|ContextCross.Dynamics.AircraftDynamicsData, GroundATC.Core"',
+    dynSt:   '"13|R3.ReactiveProperty`1[[ContextCross.Dynamics.Enums.State, GroundATC.Core]], R3"',
+    coord:   '"14|ContextCross.Aircrafts.AircraftRunwayCoordinator, GroundATC.Core"',
+    rpStrArr:'"15|R3.ReactiveProperty`1[[System.String[], mscorlib]], R3"',
+    strArr:  '"16|System.String[], mscorlib"',
+    vec3:    '"17|UnityEngine.Vector3, UnityEngine.CoreModule"',
+    fp:      '"18|ContextCross.Models.FlightPlan, GroundATC.Core"',
+    dt:      '"19|System.DateTime, mscorlib"',
+    rpState: '"20|R3.ReactiveProperty`1[[ContextCross.Aircrafts.Enums.EAircraftState, GroundATC.Core]], R3"',
+    rpDir:   '"21|R3.ReactiveProperty`1[[ContextCross.Aircrafts.Enums.EFlightDirection, GroundATC.Core]], R3"',
+    rpChan:  '"22|R3.ReactiveProperty`1[[ContextCross.Models.RadioChannel, GroundATC.Core]], R3"',
+    rpPath:  '"23|R3.ReactiveProperty`1[[ContextCross.Models.Path, GroundATC.Core]], R3"',
+    rpStr:   '"24|R3.ReactiveProperty`1[[System.String, mscorlib]], R3"',
+    rpCmdArr:'"25|R3.ReactiveProperty`1[[ContextCross.Enums.ECommand[], GroundATC.Core]], R3"',
+    cmdArr:  '"26|ContextCross.Enums.ECommand[], GroundATC.Core"',
+    rpEvtArr:'"27|R3.ReactiveProperty`1[[ContextCross.Events.AircraftEvent[], GroundATC.Core]], R3"',
+    evtArr:  '"28|ContextCross.Events.AircraftEvent[], GroundATC.Core"',
+    rpVec3:  '"29|R3.ReactiveProperty`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], R3"',
+  };
+
+  // Use full-form type strings for the top-level RuntimeEntity fields (3-6)
+  // extracted from the original segment.  When we replace this entry, its
+  // original "$type": "3|..." declaration is lost.  If no other entry declares
+  // type 3 in this blobdoc scope, bare "$type": 3 references fail to encode.
+  const JT3 = (jwTypeMap && jwTypeMap.has(3)) ? '"3|' + jwTypeMap.get(3) + '"' : '3';
+  const JT4 = (jwTypeMap && jwTypeMap.has(4)) ? '"4|' + jwTypeMap.get(4) + '"' : '4';
+  const JT5 = (jwTypeMap && jwTypeMap.has(5)) ? '"5|' + jwTypeMap.get(5) + '"' : '5';
+  const JT6 = (jwTypeMap && jwTypeMap.has(6)) ? '"6|' + jwTypeMap.get(6) + '"' : '6';
+
+  // Build DockingPositions array
+  const dockLines = [];
+  for (let i = 0; i < dockPoses.length; i++) {
+    const p = dockPoses[i];
+    if (i > 0) dockLines.push(',');
+    dockLines.push(
+      '                                                    {',
+      '                                                        "$type": ' + T.vec4 + ',',
+      '                                                        ' + p.x + ',',
+      '                                                        ' + p.y + ',',
+      '                                                        ' + p.z + ',',
+      '                                                        ' + p.w,
+      '                                                    }');
+  }
+  const dockInner = dockLines.join('\n');
+  const dockStr = dockPoses.length > 0
+    ? ('{\n' +
+       '                                                    "$id": ' + id(5) + ',\n' +
+       '                                                    "$type": ' + T.vec4Arr + ',\n' +
+       '                                                    "$rlength": ' + dockPoses.length + ',\n' +
+       '                                                    "$rcontent": [\n' + dockInner + '\n' +
+       '                                                    ]\n' +
+       '                                                }')
+    : ('{\n' +
+       '                                                    "$id": ' + id(5) + ',\n' +
+       '                                                    "$type": ' + T.vec4Arr + ',\n' +
+       '                                                    "$rlength": 0,\n' +
+       '                                                    "$rcontent": []\n' +
+       '                                                }');
+
+  // Shared empty string[] that all RunwayCoordinator fields $iref
+  const emptyArrStr = (
+    '{\n' +
+    '                                                    "$id": ' + id(10) + ',\n' +
+    '                                                    "$type": ' + T.strArr + ',\n' +
+    '                                                    "$rlength": 0,\n' +
+    '                                                    "$rcontent": [\n' +
+    '                                                    ]\n' +
+    '                                                }');
+
+  const entryText = [
+    '                            {',
+    '                                "$k": "' + info.key + '",',
+    '                                "$v": {',
+    '                                    "$id": ' + entryId + ',',
+    '                                    "$type": ' + JT3 + ',',
+    '                                    "Status": 2,',
+    '                                    "Progress": {',
+    '                                        "$id": ' + id(1) + ',',
+    '                                        "$type": ' + JT4 + ',',
+    '                                        1',
+    '                                    },',
+    '                                    "DockingAircraft": {',
+    '                                        "$id": ' + id(2) + ',',
+    '                                        "$type": ' + JT5 + ',',
+    '                                        {',
+    '                                            "$id": ' + id(3) + ',',
+    '                                            "$type": ' + T.ac + ',',
+    '                                            "Specification": {',
+    '                                                "$id": ' + id(4) + ',',
+    '                                                "$type": ' + T.spec + ',',
+    '                                                "Designator": "' + designatorVal + '",',
+    '                                                "AerodromeCode": 67,',
+    '                                                "WakeTurbulenceCategory": ' + wakeCat + ',',
+    '                                                "WheelBase": ' + wheelBase + ',',
+    '                                                "ModelOffset": {',
+    '                                                    "$type": ' + T.float3 + ',',
+    '                                                    ' + mo.x + ',',
+    '                                                    ' + mo.y + ',',
+    '                                                    ' + mo.z,
+    '                                                },',
+    '                                                "WingSpan": ' + wingSpan + ',',
+    '                                                "DockingPositions": ' + dockStr + ',',
+    '                                                "RunwayVRSpeed": ' + runwayVR + ',',
+    '                                                "RunwayTakeOffLength": ' + runwayTO,
+    '                                            },',
+    '                                            "DynamicsData": {',
+    '                                                "$id": ' + id(6) + ',',
+    '                                                "$type": ' + T.dyn + ',',
+    '                                                "DynamicsState": {',
+    '                                                    "$id": ' + id(7) + ',',
+    '                                                    "$type": ' + T.dynSt + ',',
+    '                                                    0',
+    '                                                },',
+    '                                                "TaxiSpeed": 0,',
+    '                                                "ForwardSpeed": true,',
+    '                                                "TargetTaxiSpeed": 0,',
+    '                                                "PositiveTaxiAcceleration": 0,',
+    '                                                "NegativeTaxiAcceleration": 0,',
+    '                                                "DynamicsTargetTaxiSpeed": 0,',
+    '                                                "DynamicsPositiveTaxiAcceleration": 0,',
+    '                                                "DynamicsNegativeTaxiAcceleration": 0,',
+    '                                                "PushbackStopRequested": false,',
+    '                                                "TaxiArrivalToSpotPath": null,',
+    '                                                "TaxiArrivalToHoldingPointPath": null,',
+    '                                                "FrontWheelSteeringAngle": 0,',
+    '                                                "DynamicsParams": null',
+    '                                            },',
+    '                                            "AircraftRunwayCoordinator": {',
+    '                                                "$id": ' + id(8) + ',',
+    '                                                "$type": ' + T.coord + ',',
+    '                                                "TaxiPathUnPassedIntersectionRunwayNames": {',
+    '                                                    "$id": ' + id(9) + ',',
+    '                                                    "$type": ' + T.rpStrArr + ',',
+    '                                                    ' + emptyArrStr,
+    '                                                },',
+    '                                                "TaxiBlockingRunwayNames": {',
+    '                                                    "$id": ' + id(11) + ',',
+    '                                                    "$type": ' + T.rpStrArr + ',',
+    '                                                    $iref:' + id(10),
+    '                                                },',
+    '                                                "RunwayFenceCurrentEnterRunways": {',
+    '                                                    "$id": ' + id(12) + ',',
+    '                                                    "$type": ' + T.rpStrArr + ',',
+    '                                                    $iref:' + id(10),
+    '                                                },',
+    '                                                "RunwayGuardCurrentEnterRunway": {',
+    '                                                    "$id": ' + id(13) + ',',
+    '                                                    "$type": ' + T.rpStrArr + ',',
+    '                                                    $iref:' + id(10),
+    '                                                },',
+    '                                                "CrossRunwayPermissions": {',
+    '                                                    "$id": ' + id(14) + ',',
+    '                                                    "$type": ' + T.rpStrArr + ',',
+    '                                                    $iref:' + id(10),
+    '                                                },',
+    '                                                "HoldShortAcknowledgedRunwayNames": {',
+    '                                                    "$id": ' + id(15) + ',',
+    '                                                    "$type": ' + T.rpStrArr + ',',
+    '                                                    $iref:' + id(10),
+    '                                                },',
+    '                                                "RunwaySetter": 0',
+    '                                            },',
+    '                                            "TaxiPathStartingPosition": {',
+    '                                                "$type": ' + T.vec3 + ',',
+    '                                                0,',
+    '                                                0,',
+    '                                                0',
+    '                                            },',
+    '                                            "RollingPresetTaxiPathStartingPosition": {',
+    '                                                "$type": ' + T.vec3 + ',',
+    '                                                0,',
+    '                                                0,',
+    '                                                0',
+    '                                            },',
+    '                                            "SelectedRunwayEntryIndex": -1,',
+    '                                            "SelectedRunwayExitIndex": -1,',
+    '                                            "_flightPlan": {',
+    '                                                "$id": ' + id(16) + ',',
+    '                                                "$type": ' + T.fp + ',',
+    '                                                "StaticItem": ' + fstrref + ',',
+    '                                                "_arrivalInBlockTime": {',
+    '                                                    "$type": ' + T.dt + ',',
+    '                                                    0',
+    '                                                },',
+    '                                                "_arrivalActualInBlockTime": {',
+    '                                                    "$type": ' + T.dt + ',',
+    '                                                    0',
+    '                                                },',
+    '                                                "_arrivalRunway": null,',
+    '                                                "_arrivalStand": null,',
+    '                                                "_departureTakeoffTime": {',
+    '                                                    "$type": ' + T.dt + ',',
+    '                                                    ' + takeoffTicks,
+    '                                                },',
+    '                                                "_departureRunway": "' + runway + '",',
+    '                                                "_departureStand": "' + stand + '"',
+    '                                            },',
+    '                                            "_state": {',
+    '                                                "$id": ' + id(17) + ',',
+    '                                                "$type": ' + T.rpState + ',',
+    '                                                10',
+    '                                            },',
+    '                                            "_flightDirection": {',
+    '                                                "$id": ' + id(18) + ',',
+    '                                                "$type": ' + T.rpDir + ',',
+    '                                                0',
+    '                                            },',
+    '                                            "_radioChannel": {',
+    '                                                "$id": ' + id(19) + ',',
+    '                                                "$type": ' + T.rpChan + ',',
+    '                                                null',
+    '                                            },',
+    '                                            "_jurisdictionRadioChannel": {',
+    '                                                "$id": ' + id(20) + ',',
+    '                                                "$type": ' + T.rpChan + ',',
+    '                                                null',
+    '                                            },',
+    '                                            "_taxiPath": {',
+    '                                                "$id": ' + id(21) + ',',
+    '                                                "$type": ' + T.rpPath + ',',
+    '                                                null',
+    '                                            },',
+    '                                            "_rollingPresetTaxiPath": {',
+    '                                                "$id": ' + id(22) + ',',
+    '                                                "$type": ' + T.rpPath + ',',
+    '                                                null',
+    '                                            },',
+    '                                            "_selectedRunwayEntryRunway": null,',
+    '                                            "_route": {',
+    '                                                "$id": ' + id(23) + ',',
+    '                                                "$type": ' + T.rpStr + ',',
+    '                                                ""',
+    '                                            },',
+    (waitingCmdsCache && waitingCmdsCache.canonicalId !== null
+                                            ? '                                            "_waitingForCommands": {\n' +
+                                            '                                                "$id": ' + id(24) + ',\n' +
+                                            '                                                "$type": ' + T.rpCmdArr + ',\n' +
+                                            '                                                $iref:' + waitingCmdsCache.canonicalId + '\n' +
+                                            '                                            },'
+                                            : ((waitingCmdsCache ? waitingCmdsCache.canonicalId = id(25) : null),
+                                            '                                            "_waitingForCommands": {\n' +
+                                            '                                                "$id": ' + id(24) + ',\n' +
+                                            '                                                "$type": ' + T.rpCmdArr + ',\n' +
+                                            '                                                {\n' +
+                                            '                                                    "$id": ' + id(25) + ',\n' +
+                                            '                                                    "$type": ' + T.cmdArr + ',\n' +
+                                            '                                                    "$rlength": 0,\n' +
+                                            '                                                    "$rcontent": [\n' +
+                                            '                                                    ]\n' +
+                                            '                                                }\n' +
+                                            '                                            },')),
+    (recvEventsCache && recvEventsCache.canonicalId !== null
+                                            ? '                                            "_receivedEvents": {\n' +
+                                            '                                                "$id": ' + id(26) + ',\n' +
+                                            '                                                "$type": ' + T.rpEvtArr + ',\n' +
+                                            '                                                $iref:' + recvEventsCache.canonicalId + '\n' +
+                                            '                                            },'
+                                            : ((recvEventsCache ? recvEventsCache.canonicalId = id(27) : null),
+                                            '                                            "_receivedEvents": {\n' +
+                                            '                                                "$id": ' + id(26) + ',\n' +
+                                            '                                                "$type": ' + T.rpEvtArr + ',\n' +
+                                            '                                                {\n' +
+                                            '                                                    "$id": ' + id(27) + ',\n' +
+                                            '                                                    "$type": ' + T.evtArr + ',\n' +
+                                            '                                                    "$rlength": 0,\n' +
+                                            '                                                    "$rcontent": [\n' +
+                                            '                                                    ]\n' +
+                                            '                                                }\n' +
+                                            '                                            },')),
+    '                                            "_position": {',
+    '                                                "$id": ' + id(28) + ',',
+    '                                                "$type": ' + T.rpVec3 + ',',
+    '                                                {',
+    '                                                    "$type": ' + T.vec3 + ',',
+    '                                                    -5.728619,',
+    '                                                    0,',
+    '                                                    -12.5395947',
+    '                                                }',
+    '                                            },',
+    '                                            "_direction": {',
+    '                                                "$id": ' + id(29) + ',',
+    '                                                "$type": ' + T.rpVec3 + ',',
+    '                                                {',
+    '                                                    "$type": ' + T.vec3 + ',',
+    '                                                    0.422497481,',
+    '                                                    0,',
+    '                                                    0.906364143',
+    '                                                }',
+    '                                            },',
+    '                                            "SelectedPushbackLimitPosition": null,',
+    '                                            "SelectedTowPosition": null,',
+    '                                            "_isFirstTaxi": false',
+    '                                        }',
+    '                                    },',
+    '                                    "DockingDoorIndex": {',
+    '                                        "$id": ' + id(30) + ',',
+    '                                        "$type": ' + JT6 + ',',
+    '                                        0',
+    '                                    },',
+    '                                    "TrigEvent": true,',
+    '                                    "AutoUndockFinished": false',
+    '                                }',
+    '                            }',
+  ].join('\n');
+  return {
+    text: entryText,
+    flightPlanId: id(16),
+    aircraftId: id(3),
+    reg: reg,
+    isDeparture: true,
+  };
+}
+
+
+/**
+ * Extract the $id value of a named sub-object from an entry's text.
+ */
+function _extractSubId(entryText, fieldName) {
+  const idx = entryText.indexOf('"' + fieldName + '"');
+  if (idx < 0) return null;
+  const subText = entryText.substring(idx);
+  const idIdx = subText.indexOf('"$id"');
+  if (idIdx < 0) return null;
+  const afterColon = subText.indexOf(':', idIdx);
+  if (afterColon < 0) return null;
+  let vs = afterColon + 1;
+  while (vs < subText.length && ' \t\n\r'.includes(subText[vs])) vs++;
+  let ve = vs;
+  while (ve < subText.length && subText[ve] >= '0' && subText[ve] <= '9') ve++;
+  if (ve > vs) return parseInt(subText.substring(vs, ve), 10);
+  return null;
+}
+
+/**
+ * Extract the $id (or $iref target) from a $k/$v entry's $v block.
+ * Used by _rebuildFlightPlanRuntimeEntities to capture the old $id of
+ * removed flight-plan:REG entries for $iref remapping later.
+ *
+ * Handles two formats:
+ *   "$v": { "$id": 738, ... }   → returns 738 (inline object)
+ *   "$v": $iref:738             → returns 738 (indirect reference)
+ *
+ * @param {string} entryText - full text of a $k/$v dictionary entry
+ * @returns {number|null}
+ */
+function _extractEntryVId(entryText) {
+  const t = createTokenizer(entryText);
+  const vSec = t.findSection('$v');
+  if (!vSec) return null;
+  const vVal = entryText.substring(vSec.valueStart, vSec.valueEnd);
+  if (vVal.startsWith('{')) {
+    // Inline object: { "$id": N, ... }
+    const idIdx = vVal.indexOf('"$id"');
+    if (idIdx < 0) return null;
+    const colon = vVal.indexOf(':', idIdx) + 1;
+    let s = colon;
+    while (s < vVal.length && ' \t\n\r'.includes(vVal[s])) s++;
+    let e = s;
+    while (e < vVal.length && vVal[e] >= '0' && vVal[e] <= '9') e++;
+    return e > s ? parseInt(vVal.substring(s, e), 10) : null;
+  }
+  if (vVal.startsWith('$iref:')) {
+    // Indirect reference: $iref:N
+    const numPart = vVal.substring(6);
+    const digits = numPart.match(/^(\d+)/);
+    return digits ? parseInt(digits[1], 10) : null;
+  }
+  return null;
+}
+
+function _resetFrameJetwayDockingState(frameText, validRegs, renameMap, log) {
+  // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
+  const t = createTokenizer(frameText);
+  const reSec = t.findSection('RuntimeEntities');
+  if (!reSec) return { text: frameText, resetCount: 0 };
+
+  const reText = t.substring(reSec.valueStart, reSec.valueEnd);
+  const reT = createTokenizer(reText);
+  const rcSec = reT.findSection('$rcontent');
+  if (!rcSec) return { text: frameText, resetCount: 0 };
+
+  const rcStart = rcSec.valueStart;
+  if (reText[rcStart] !== '[') return { text: frameText, resetCount: 0 };
+  const rcEnd = reT.findArrayEnd(rcStart);
+  if (rcEnd === null) return { text: frameText, resetCount: 0 };
+
+  const frameReStart = reSec.valueStart;
+  const beforeRc = frameText.substring(0, frameReStart + rcStart + 1);
+  const content = reText.substring(rcStart + 1, rcEnd - 1);
+  const afterRc = frameText.substring(frameReStart + rcEnd - 1);
+  const contentT = createTokenizer(content);
+
+  // ── Iterate entries ─────────────────────────────────────────────
+  const segments = [];
+  let resetCount = 0;
+  let pos = 0;
+
+  while (pos < content.length) {
+    while (pos < content.length && ' \t\n\r'.includes(content[pos])) pos++;
+    if (pos >= content.length) break;
+    if (content[pos] === ',') { pos++; continue; }
+    if (content[pos] !== '{') { pos++; continue; }
+
+    const entryEnd = contentT.findObjectEnd(pos);
+    if (entryEnd === null) break;
+    const entryText = content.substring(pos, entryEnd);
+    const entryT = createTokenizer(entryText);
+
+    const kSec = entryT.findSection('$k');
+    let modifiedEntry = entryText;
+
+    if (kSec) {
+      const kStrEnd = entryT.skipString(kSec.valueStart);
+      if (kStrEnd) {
+        const key = entryText.substring(kSec.valueStart + 1, kStrEnd - 1);
+
+        if (key.startsWith('jetway:')) {
+          // Check DockingAircraft for stale references
+          const daSec = entryT.findSection('DockingAircraft');
+          let needsReset = false;
+
+          if (daSec && daSec.valueStart < entryText.length &&
+              entryText[daSec.valueStart] === '{') {
+            // Scan the bounded DockingAircraft value block for stale $fstrref refs.
+            // $fstrref is a value format (not a JSON key) so indexOf is the right
+            // tool here — but the scan boundary is structurally correct.
+            const daValue = entryText.substring(daSec.valueStart, daSec.valueEnd);
+            const fpRefPrefix = '$fstrref:"flight-plan:';
+            let searchFp = 0;
+            while (searchFp < daValue.length) {
+              const refIdx = daValue.indexOf(fpRefPrefix, searchFp);
+              if (refIdx < 0) break;
+              const regStart = refIdx + fpRefPrefix.length;
+              const regEnd = daValue.indexOf('"', regStart);
+              if (regEnd < 0) break;
+              const refReg = daValue.substring(regStart, regEnd);
+              if (!validRegs.has(refReg) && !renameMap.has(refReg)) {
+                needsReset = true;
+                break;
+              }
+              searchFp = regEnd + 1;
+            }
+            // Fallback: if $fstrref scan found nothing, the embedded Aircraft
+            // may still be stale with "StaticItem": null (step 7a already nulled
+            // the $fstrref in a prior pass, or the file was already broken).
+            // A valid flight-plan always has a non-null StaticItem.
+            if (!needsReset && daValue.includes('"StaticItem": null')) {
+              needsReset = true;
+            }
+          }
+
+          if (needsReset) {
+            // Collect all modifications as { start, end, replacement }
+            // (positions relative to entryText), then apply back-to-front.
+            const mods = [];
+
+            // ── Status → 0 ──
+            const statusSec = entryT.findSection('Status');
+            if (statusSec) {
+              mods.push({
+                start: statusSec.valueStart, end: statusSec.valueEnd,
+                replacement: '0'
+              });
+            }
+
+            // ── Progress → 0 (Unity struct: { $type:N, VALUE }) ──
+            const progSec = entryT.findSection('Progress');
+            if (progSec) {
+              const progVal = entryText.substring(progSec.valueStart, progSec.valueEnd);
+              const progT = createTokenizer(progVal);
+              const progTypeSec = progT.findSection('$type');
+              if (progTypeSec) {
+                let vp = progTypeSec.valueEnd;
+                while (vp < progVal.length && ', \t\n\r'.includes(progVal[vp])) vp++;
+                let ve = vp;
+                while (ve < progVal.length && progVal[ve] >= '0' && progVal[ve] <= '9') ve++;
+                if (ve > vp) {
+                  mods.push({
+                    start: progSec.valueStart + vp, end: progSec.valueStart + ve,
+                    replacement: '0'
+                  });
+                }
+              }
+            }
+
+            // ── DockingDoorIndex → -1 (Unity struct: { $type:N, VALUE }) ──
+            const ddiSec = entryT.findSection('DockingDoorIndex');
+            if (ddiSec) {
+              const ddiVal = entryText.substring(ddiSec.valueStart, ddiSec.valueEnd);
+              const ddiT = createTokenizer(ddiVal);
+              const ddiTypeSec = ddiT.findSection('$type');
+              if (ddiTypeSec) {
+                let vp = ddiTypeSec.valueEnd;
+                while (vp < ddiVal.length && ', \t\n\r'.includes(ddiVal[vp])) vp++;
+                let ve = vp;
+                if (ddiVal[ve] === '-') ve++;
+                while (ve < ddiVal.length && ddiVal[ve] >= '0' && ddiVal[ve] <= '9') ve++;
+                if (ve > vp) {
+                  mods.push({
+                    start: ddiSec.valueStart + vp, end: ddiSec.valueStart + ve,
+                    replacement: '-1'
+                  });
+                }
+              }
+            }
+
+            // ── DockingAircraft Aircraft: null _flightPlan.StaticItem ──
+            // Instead of replacing the entire inner Aircraft object with null
+            // (which destroys $id:10 and nested $id:17/32/34 that other entries
+            // reference via $iref), keep the structure and null _flightPlan's
+            // $fstrref reference.  Step 7a will handle the $fstrref → null
+            // replacement globally later — we just mark this jetway as stale.
+            const daSec2 = entryT.findSection('DockingAircraft');
+            if (daSec2) {
+              const daValue2 = entryText.substring(daSec2.valueStart, daSec2.valueEnd);
+              if (daValue2[0] === '{') {
+                const daT = createTokenizer(daValue2);
+                const daTypeSec = daT.findSection('$type');
+                if (daTypeSec) {
+                  // Skip past $type to find the Aircraft inner object
+                  let innerPos = daTypeSec.valueEnd;
+                  while (innerPos < daValue2.length &&
+                         ', \t\n\r'.includes(daValue2[innerPos])) innerPos++;
+                  if (innerPos < daValue2.length && daValue2[innerPos] === '{') {
+                    const innerEnd = daT.findObjectEnd(innerPos);
+                    if (innerEnd !== null) {
+                      const acText = daValue2.substring(innerPos, innerEnd);
+                      const acT = createTokenizer(acText);
+                      const fpSec = acT.findSection('_flightPlan');
+                      if (fpSec) {
+                        const fpText = acText.substring(fpSec.valueStart, fpSec.valueEnd);
+                        const fpT = createTokenizer(fpText);
+                        const siSec = fpT.findSection('StaticItem');
+                        if (siSec) {
+                          const siVal = fpText.substring(siSec.valueStart, siSec.valueEnd);
+                          if (siVal !== 'null' && !siVal.startsWith('$fstrref:"')) {
+                            // Already handled — skip
+                          } else {
+                            // Null the entire $fstrref or existing null
+                            mods.push({
+                              start: daSec2.valueStart + innerPos + fpSec.valueStart + siSec.valueStart,
+                              end: daSec2.valueStart + innerPos + fpSec.valueStart + siSec.valueEnd,
+                              replacement: 'null'
+                            });
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            // Apply modifications back-to-front (no position drift)
+            if (mods.length > 0) {
+              mods.sort((a, b) => b.start - a.start);
+              for (const mod of mods) {
+                modifiedEntry =
+                  modifiedEntry.substring(0, mod.start) + mod.replacement +
+                  modifiedEntry.substring(mod.end);
+              }
+              resetCount++;
+            }
+          }
+        }
+      }
+    }
+
+    segments.push(modifiedEntry);
     pos = entryEnd;
   }
 
   if (resetCount > 0) {
-    return { text: before + segments.join('') + after, resetCount };
+    return {
+      text: beforeRc + segments.join(',\n') + afterRc,
+      resetCount
+    };
   }
   return { text: frameText, resetCount: 0 };
 }
@@ -2006,6 +3814,8 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   const log = (msg) => console.log('[ACL-REBUILD-V4]', msg);
   const text = readAclText(aclPath);
   const bdt = BigInt(baseDateTicks || FALLBACK_BASE_DATE_TICKS);
+  const icaoMatch = aclPath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+  const icao = icaoMatch ? icaoMatch[1] : '';
 
   // Build per-file typeMap (same pattern as _rebuildWorldStateSections)
   // Type numbers are per-file in Unity's JSON serialization — each .acl file gets
@@ -2139,9 +3949,11 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
 
   // Locate the first and last flight-plan entry to determine the replacement range
   // Also capture the $type from the first flight-plan entry (varies per file)
+  // And extract CallSign from each old entry for rename detection
   let fpFirstStart = -1, fpLastEnd = -1;
   const fpItemNum = _tn('ContextCross.Models.FlightPlanStaticItem,') || nextFallbackNum++;
   let fpTypeStr = `"$type": "${fpItemNum}|ContextCross.Models.FlightPlanStaticItem, GroundATC.Core"`;
+  const oldFpData = []; // [{ oldReg, callsign }]
   let pos = rcStart + 1;
   while (pos < rcEnd) {
     while (pos < rcEnd && ' \t\n\r'.includes(siText[pos])) pos++;
@@ -2155,6 +3967,18 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
 
     // Check if this is a flight-plan entry
     if (entryBlock.includes('"$k": "flight-plan:')) {
+      // Extract old registration for rename detection
+      const oldRegMatch = entryBlock.match(/"\$k":\s*"flight-plan:([^"]+)"/);
+      if (oldRegMatch) {
+        // Extract CallSign from leg data (arrival or departure)
+        let callsign = '';
+        const csArrivalMatch = entryBlock.match(/"InitialArrival":\s*\{[^}]*"CallSign":\s*"([^"]+)"/s);
+        const csDepartMatch = entryBlock.match(/"InitialDeparture":\s*\{[^}]*"CallSign":\s*"([^"]+)"/s);
+        if (csArrivalMatch) callsign = csArrivalMatch[1];
+        else if (csDepartMatch) callsign = csDepartMatch[1];
+        oldFpData.push({ oldReg: oldRegMatch[1], callsign });
+      }
+
       if (fpFirstStart < 0) {
         fpFirstStart = pos;
         // Capture the $type from the first flight-plan entry (varies per file)
@@ -2197,10 +4021,12 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   for (const fl of flights) {
     // Time conversion helpers
     const _timeToTicks = (t) => {
-      if (!t) return 0n;
-      const p = String(t).split(':');
+      if (!t) return '0';
+      const s = String(t);
+      if (/^\d+$/.test(s)) return s; // already numeric ticks
+      const p = s.split(':');
       const sec = +p[0] * 3600 + (+p[1] || 0) * 60 + (+p[2] || 0);
-      return bdt + BigInt(Math.round(sec * 10000000));
+      return String(bdt + BigInt(Math.round(sec * 10000000)));
     };
 
     const isDeparture = fl.isDeparture === true;
@@ -2353,41 +4179,273 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
       if (reg) validRegs.add(reg);
     }
 
-    // 7a. Replace stale $fstrref → null everywhere
-    let staleReplaced = 0;
-    newText = newText.replace(
-      /\$fstrref:"flight-plan:([^"]+)"/g,
-      (match, reg) => {
-        if (validRegs.has(reg)) return match;
-        staleReplaced++;
-        return 'null';
+    // Build renameMap: detect registration renames by matching old entries'
+    // CallSign to new flights' CallSign. This prevents the save pipeline
+    // from orphaning aircraft entities when only the registration changed.
+    const renameMap = new Map(); // oldReg → newReg
+    {
+      // Build new callsign → registration lookup from current flights
+      const csToNewReg = new Map();
+      for (const fl of flights) {
+        const cs = (fl.CallSign || '').trim();
+        if (cs) csToNewReg.set(cs, fl._Registration || fl.Registration || '');
       }
-    );
+
+      for (const { oldReg, callsign } of oldFpData) {
+        if (validRegs.has(oldReg)) continue; // still valid, not a rename
+        const cs = callsign.trim();
+        if (!cs) continue;
+        const newReg = csToNewReg.get(cs);
+        // Only map if the callsign uniquely identifies a new flight with a
+        // different registration (avoid ambiguous matches)
+        if (newReg && newReg !== oldReg) {
+          renameMap.set(oldReg, newReg);
+          // Also add oldReg to validRegs so the renamed entries survive cleanup
+        }
+      }
+      if (renameMap.size > 0) {
+        log('Detected ' + renameMap.size + ' registration rename(s): ' +
+          [...renameMap].map(([o, n]) => o + ' → ' + n).join(', '));
+      }
+    }
+
+    // 7b. Reset jetway docking state and remove orphaned RuntimeEntities entries.
+    // IMPORTANT: 7b MUST run before 7a (stale $fstrref cleanup). 7a nulls
+    // $fstrref references that 7b relies on for stale-jetway detection, so
+    // 7b is placed first to see the intact $fstrref values in DockingAircraft.
+    // RuntimeEntities exist in the header's RuntimeData blob AND in checkpoint
+    // frames. We must process all segments — not just frames — otherwise
+    // registration renames leave stale $k keys in single-segment archives.
+    const frameDocs = newText.split(RE_FRAME_SENTINEL);
+    const sentinelMatch = newText.match(RE_FRAME_SENTINEL);
+    const exactSentinel = sentinelMatch ? sentinelMatch[0] : '';
+    let frameModified = false;
+
+    // 7a-2. Expand short-form $type references to fully-qualified strings
+    // BEFORE any cleanup steps that might remove type declarations.
+    //
+    // When entries containing "$type": "39|SomeType" declarations are
+    // removed from the text (e.g. orphaned aircraft entries in step 7c),
+    // any surviving bare "$type": 39 references become unresolvable,
+    // causing "unknown type id 39" during binary encoding.  Expanding
+    // them first makes every reference self-contained.
+    const segTypeMaps = [];
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      // Build per-segment typeMap from THIS segment's own declarations.
+      // Each GATCARC4 segment is an independent Odin binary document with its
+      // own type numbering. Using the global typeMap (conflated from ALL segments)
+      // would expand bare $type refs to types from wrong segments, producing
+      // "Type id N claimed by both …" errors during binary encoding.
+      const segTypeMap = new Map();
+      const segDeclRe = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+      let sm;
+      while ((sm = segDeclRe.exec(frameDocs[fi])) !== null) {
+        const num = parseInt(sm[1], 10);
+        if (!segTypeMap.has(num)) segTypeMap.set(num, sm[2]);
+      }
+      segTypeMaps[fi] = segTypeMap;
+      const expanded = _expandShortFormTypes(frameDocs[fi], segTypeMap);
+      if (expanded !== frameDocs[fi]) {
+        frameDocs[fi] = expanded;
+        frameModified = true;
+      }
+    }
+
+    // 7b-1. Rebuild jetway entries constructively in ALL segments (header + frames).
+    // Each segment has its own $blobdoc with independent $id namespace, so we create
+    // one _IdMapper per segment to track old→new $id mappings for $iref remapping.
+    const segIdMappers = [];
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      segIdMappers[fi] = new _IdMapper();
+    }
+    let totalJwReset = 0;
+    const segActiveJetways = [];
+    const segRecvEventsCaches = [];
+    const segWaitingCmdsCaches = [];
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      const result = _rebuildJetwayEntries(frameDocs[fi], flights, validRegs, approachCache, log, segIdMappers[fi], bdt, icao);
+      if (result.resetCount > 0) {
+        frameDocs[fi] = result.text;
+        frameModified = true;
+        totalJwReset += result.resetCount;
+      }
+      segActiveJetways[fi] = result.activeJetways || [];
+      segRecvEventsCaches[fi] = result.recvEventsCache || { canonicalId: null };
+      segWaitingCmdsCaches[fi] = result.waitingCmdsCache || { canonicalId: null };
+    }
+
+    // 7b-2. Re-expand bare $type refs in segments modified by 7b-1.
+    // _rebuildJetwayEntries injects new jetway entries with bare "$type": N
+    // (integers 3-6 for the top-level RuntimeEntity fields). The full-form
+    // type declarations for these ids existed in the ORIGINAL entries that
+    // were replaced, so they are no longer in the segment text. We re-expand
+    // using the typeMap saved from step 7a-2 (pre-modification) to make every
+    // reference self-contained before binary encoding.
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      const sm = segTypeMaps[fi];
+      if (sm && sm.size > 0) {
+        const reexpanded = _expandShortFormTypes(frameDocs[fi], sm);
+        if (reexpanded !== frameDocs[fi]) {
+          frameDocs[fi] = reexpanded;
+          frameModified = true;
+        }
+      }
+    }
+
+    // 7b-3. Rebuild flight-plan:REG entries in RuntimeEntities constructively.
+    // _buildActiveJetwayEntry (called in 7b-1) regenerates _flightPlan inside
+    // DockingAircraft with new $id values. The pre-existing flight-plan:REG
+    // entries in RuntimeEntities retain stale $iref values pointing to old
+    // $id values, causing WireAllIdentities errors in the game.
+    // We delete ALL flight-plan:REG entries and rebuild them from the editor
+    // state, ensuring $iref values match the new _flightPlan.$id values.
+    let totalFpRebuilt = 0;
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      const result = _rebuildFlightPlanRuntimeEntities(
+        frameDocs[fi], flights, bdt, validRegs,
+        segActiveJetways[fi] || [], segTypeMaps[fi], log, segIdMappers[fi], icao,
+        segRecvEventsCaches[fi],
+        segWaitingCmdsCaches[fi]
+      );
+      if (result.added > 0 || result.removed > 0) {
+        frameDocs[fi] = result.text;
+        frameModified = true;
+        totalFpRebuilt += result.added;
+      }
+    }
+    if (totalFpRebuilt > 0) {
+      log('Rebuilt ' + totalFpRebuilt + ' flight-plan RuntimeEntities entry(s) (constructive)');
+    }
+
+    // 7c. Remove orphaned RuntimeEntities entries whose $k doesn't exist in StaticItems.
+    // When a flight's registration changes, the rebuilt StaticItems header has the new
+    // key (e.g. "flight-plan:B-99Y2") but runtime segments still carry the old key
+    // (e.g. "flight-plan:B-34JP"). The stale $fstrref → null replacement (7a) handles
+    // the StaticItem field inside the $v, but the $k itself remains stale. The game
+    // uses $k to look up StaticItems[entityKey] and throws:
+    //   "FlightPlan: static item 'flight-plan:B-34JP' does not exist in
+    //    CurrentLevel.StaticField.StaticItems"
+    // We remove/rename these orphaned entries in ALL segments (header + frames).
+    let totalOrphanRemoved = 0;
+    let totalRenamed = 0;
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      const result = _removeOrphanedFlightEntities(frameDocs[fi], validRegs, renameMap, log);
+      if (result.removed > 0 || result.renamed > 0) {
+        frameDocs[fi] = result.text;
+        frameModified = true;
+        totalOrphanRemoved += result.removed;
+        totalRenamed += result.renamed;
+      }
+    }
+    if (totalOrphanRemoved > 0) {
+      log('Removed ' + totalOrphanRemoved + ' orphaned RuntimeEntities entry(s)');
+    }
+    if (totalRenamed > 0) {
+      log('Renamed ' + totalRenamed + ' RuntimeEntities entry key(s) for changed registration(s)');
+    }
+
+    // 7d. Clean up stale "aircraft:REG" entries in EventLog.LatestEvents.
+    // The EventLogEntity stores per-aircraft event lists keyed by
+    // "aircraft:REG" inside its nested LatestEvents dictionary.  When a
+    // flight is deleted, these nested entries are invisible to
+    // _removeOrphanedFlightEntities (which only walks top-level
+    // RuntimeEntities entries) and must be cleaned separately.
+    let totalElRemoved = 0;
+    let totalElRenamed = 0;
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      const result = _cleanupEventLogLatestEvents(frameDocs[fi], validRegs, renameMap, log);
+      if (result.removed > 0 || result.renamed > 0) {
+        frameDocs[fi] = result.text;
+        frameModified = true;
+        totalElRemoved += result.removed;
+        totalElRenamed += result.renamed;
+      }
+    }
+    if (totalElRemoved > 0) {
+      log('Removed ' + totalElRemoved + ' stale EventLog.LatestEvents aircraft entry(s)');
+    }
+    if (totalElRenamed > 0) {
+      log('Renamed ' + totalElRenamed + ' EventLog.LatestEvents aircraft key(s)');
+    }
+
+    // ── Centralized $iref remapping ──────────────────────────────────
+    // Apply all old→new $id mappings collected by the per-segment IdMapper
+    // instances. This corrects $iref references in preserved entries that
+    // pointed to removed/rebuilt objects (e.g. flight-plan:REG entries
+    // whose $id values changed during rebuild). Runs AFTER all rebuild/cleanup
+    // steps (7b-1 through 7d) so every mapping is registered before we scan.
+    let totalIrefRemapped = 0;
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      const mapper = segIdMappers[fi];
+      if (mapper && mapper.size > 0) {
+        const remapResult = mapper.remapIrefs(frameDocs[fi]);
+        if (remapResult.count > 0) {
+          frameDocs[fi] = remapResult.text;
+          frameModified = true;
+          totalIrefRemapped += remapResult.count;
+        }
+      }
+    }
+    if (totalIrefRemapped > 0) {
+      log('Remapped ' + totalIrefRemapped + ' $iref reference(s) to updated $id values');
+    }
+
+    if (frameModified) {
+      newText = frameDocs.join(exactSentinel);
+    }
+
+    // 7a. Replace stale $fstrref → null everywhere, but REMAP for renames.
+    // Runs AFTER 7b so the jetway reset step can detect stale DockingAircraft
+    // via intact $fstrref references before they are nulled here.
+    // Use indexOf scan (not regex) — $fstrref is an Odin value format, not a JSON key,
+    // so findSection doesn't apply, but pattern scanning with positional replacement
+    // applied back-to-front is safe and avoids any regex edge cases.
+    let staleReplaced = 0;
+    let remappedRefs = 0;
+    {
+      const fpRefPrefix = '$fstrref:"flight-plan:';
+      const replacements = []; // { start, end, replacement }
+      let searchFrom = 0;
+      while (searchFrom < newText.length) {
+        const idx = newText.indexOf(fpRefPrefix, searchFrom);
+        if (idx < 0) break;
+        const regStart = idx + fpRefPrefix.length;
+        const regEnd = newText.indexOf('"', regStart);
+        if (regEnd < 0) break;
+        const reg = newText.substring(regStart, regEnd);
+        if (!validRegs.has(reg)) {
+          if (renameMap.has(reg)) {
+            remappedRefs++;
+            const newReg = renameMap.get(reg);
+            replacements.push({
+              start: idx,
+              end: regEnd + 1, // past the closing "
+              replacement: '$fstrref:"flight-plan:' + newReg + '"'
+            });
+          } else {
+            staleReplaced++;
+            replacements.push({
+              start: idx,
+              end: regEnd + 1,
+              replacement: 'null'
+            });
+          }
+        }
+        searchFrom = regEnd + 1;
+      }
+      // Apply back-to-front (no position drift)
+      if (replacements.length > 0) {
+        replacements.sort((a, b) => b.start - a.start);
+        for (const r of replacements) {
+          newText = newText.substring(0, r.start) + r.replacement + newText.substring(r.end);
+        }
+      }
+    }
     if (staleReplaced > 0) {
       log('Cleaned up ' + staleReplaced + ' stale $fstrref reference(s) → null');
     }
-
-    // 7b. Reset jetway docking state in checkpoint frames
-    const frameDocs = newText.split(RE_FRAME_SENTINEL);
-    if (frameDocs.length > 1) {
-      const sentinelMatch = newText.match(RE_FRAME_SENTINEL);
-      const exactSentinel = sentinelMatch ? sentinelMatch[0] : '';
-      let frameModified = false;
-      let totalJwReset = 0;
-
-      for (let fi = 1; fi < frameDocs.length; fi++) {
-        const result = _resetFrameJetwayDockingState(frameDocs[fi], validRegs, log);
-        if (result.resetCount > 0) {
-          frameDocs[fi] = result.text;
-          frameModified = true;
-          totalJwReset += result.resetCount;
-        }
-      }
-
-      if (frameModified) {
-        newText = frameDocs.join(exactSentinel);
-        log('Reset ' + totalJwReset + ' jetway docking state(s) for deleted aircraft');
-      }
+    if (remappedRefs > 0) {
+      log('Remapped ' + remappedRefs + ' $fstrref reference(s) to new registration(s)');
     }
   }
 
@@ -2419,9 +4477,19 @@ module.exports = {
   _rebuildWorldStateSections,
   _rebuildStaticDataSections,
   _rebuildTimelineSections,
+  _rebuildFlightPlanRuntimeEntities,
   _extractSection, _extractConfig,
   _extractAppChannelGuid,
   _extractTowerChannelGuid,
+  _removeOrphanedFlightEntities,
+  _cleanupEventLogLatestEvents,
+  _rebuildJetwayEntries,
+  _buildActiveJetwayEntry,
+  _extractRecvEventsInnerId,
+  _rebuildReceivedEventsInEntry,
+  _extractWaitingCmdsInnerId,
+  _rebuildWaitingCommandsInEntry,
+  _resetFrameJetwayDockingState,
   _generateFramesSection,
   _generateRunwayTimelineSection,
   _parseWeatherFrames,

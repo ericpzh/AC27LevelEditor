@@ -35,3 +35,19 @@ export const STAND_ARR_AFTER_ESTIMATE_MIN = 20;
 export const STAND_LANDING_BEFORE_INBLOCK_MIN = 5;
 export const STAND_OCCUPANCY_START_OFFSET_MIN = 30;
 export const STAND_OCCUPANCY_END_OFFSET_MIN = 60;
+
+// ─── Departure taxi estimate (seconds) ─────────────────────
+// Per-airport override for estimated OffBlockTime→takeoff duration.
+// Used to populate _departureTakeoffTime in checkpoint RuntimeEntities
+// when TakeoffTime is 0 (the v4 default). Keyed by ICAO code.
+export const DEPARTURE_TAXI_SECONDS = {
+  default: 300,
+};
+
+// ─── Arrival taxi-in estimate (seconds) ────────────────────
+// Per-airport override for estimated LandingTime→InBlockTime duration.
+// Used to populate _arrivalInBlockTime in RuntimeEntities flight-plan entries
+// when InBlockTime is 0 (the v4 default). Keyed by ICAO code.
+export const ARRIVAL_TAXI_SECONDS = {
+  default: 400,
+};

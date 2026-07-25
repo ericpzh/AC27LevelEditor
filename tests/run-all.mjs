@@ -8,7 +8,7 @@
  * Layers:
  *   1. Vitest (component tests)     — 501 tests, ~3s
  *   2. Integration: save integrity  — 12 prod+demo files, ~20s
- *   3. Playwright E2E                — 16 tests, ~4 min (requires build, uses E2E_GAME_ROOT)
+ *   3. Playwright E2E                — 15 tests (~3 min; 1 skipped — E12a overlay timing)
  *
  * Covers v2/v3 text-format and v4 GATCArc4 binary-format .acl files.
  * Default game root: D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest
@@ -28,6 +28,7 @@ const GAME_ROOT = process.argv.includes('--game-root')
 
 const PRELOAD = path.join(__dirname, 'integration', 'preload.cjs');
 const SAVE_INTEGRITY = path.join(__dirname, 'integration', 'test_save_integrity_all.js');
+const JETWAY_REBUILD = path.join(__dirname, 'integration', 'test_jetway_rebuild.js');
 
 let totalPassed = 0;
 let totalFailed = 0;
@@ -70,6 +71,10 @@ runStep('Layer 1: Vitest (501 component tests)', 'npx vitest run');
 // Quote paths to handle spaces in game root
 const layer2Cmd = `node --require "${PRELOAD}" "${SAVE_INTEGRITY}" --root "${GAME_ROOT}" --prod-demo`;
 runStep('Layer 2: Save Integrity (8 prod + 4 demo .acl files)', layer2Cmd);
+
+// ── 2b. Jetway Rebuild Test (12 prod+demo files) ────────────────
+const layer2bCmd = `node --require "${PRELOAD}" "${JETWAY_REBUILD}" --root "${GAME_ROOT}" --prod-demo --no-cache`;
+runStep('Layer 2b: Jetway Rebuild (12 v4 files)', layer2bCmd);
 
 // ── 3. Build (E2E needs dist-electron/main.js) ──────────────────
 console.log(`\n${'='.repeat(60)}`);

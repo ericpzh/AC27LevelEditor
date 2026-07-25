@@ -7,9 +7,9 @@ Covers both **v2/v3 text-format** and **v4 GATCArc binary-format** save/load pat
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~6 min)
-npm test              # 501 Vitest component + store + utility + electron + MapWindow + updater tests (~3s)
-npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~4 min)
+npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
+npm test              # 501 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
+npm run test:e2e      # 15 Playwright E2E tests (requires npm run build first, ~3 min; 1 skipped — E12a overlay timing)
 node tests/integration/test_api_server.js      # MCP/API tests: 105 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
 
@@ -93,7 +93,7 @@ All 501 tests pass. The three previously failing/todo items have been fixed:
 
 ---
 
-## Layer 2 — Playwright E2E Tests (16 tests)
+## Layer 2 — Playwright E2E Tests (15 pass, 1 skipped)
 
 Launches the real Electron app against a temp copy of real game data (via `E2E_GAME_ROOT` env var set by `run-all.mjs`). File isolation is guaranteed — the real game installation is never touched.
 
@@ -213,6 +213,7 @@ node tests/integration/test_taxiway.js
 |------|-------|-------------------|----------|
 | `test_udp_listener.js` | 19 | Binary protocol parsing (40B header + N×112B records, little-endian), aircraft state tracking, trail ring buffer (600-tick gap, max 5), empty packets, bad magic rejection, flight direction 0/1, callsign trimming, reset/clear, simTimeUnixMs tracking, airport transition auto-reset, simFlags/heartbeatSeq v2 header, hasLevel transition logic | 19/19 pass (skips when port 20266 in use) |
 | `test_type_number_integrity.js` | 6 | Save→reload type number stability: verifies that after generating `_rebuildWorldStateSections`, all `$type` numbers in the output match the `.bak` snapshot — catches type-number shift regressions. | 6/6 pass |
+| `test_jetway_rebuild.js` | 12 v4 files | Constructive jetway rebuild round-trip: runs `_rebuildJetwayEntries` on all 12 production+demo .acl files, verifies that only jetway entries in RuntimeEntities are modified (other entries preserved byte-identical). Uses `--no-cache` to force fresh rebuild. | 12/12 pass |
 
 ```bash
 node tests/integration/test_udp_listener.js
@@ -223,7 +224,7 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_gatcarc_roundtrip.js` | varies × all .acl files | GATCArc4 binary round-trip: `parseArchive` validates magic/SHA-256/commit markers; `decodeArchive(bin)` → `encodeArchive(text)` → `decodeArchive` is byte-identical. For text files: `encodeTextToPayload`/`decodePayloadToText` round-trip reproduces game-written text. Type reference form (full `"N\|Name"` vs bare `N`) is normalized before comparison. Runs against every .acl in the game airports directory. | 36/36 pass |
+| `test_gatcarc_roundtrip.js` | varies × all .acl files | GATCArc4 binary round-trip: `parseArchive` validates magic/SHA-256/commit markers; `decodeArchive(bin)` → `encodeArchive(text)` → `decodeArchive` is byte-identical. For text files: `encodeTextToPayload`/`decodePayloadToText` round-trip reproduces game-written text. Type reference form (full `"N\|Name"` vs bare `N`) is normalized before comparison. Runs against every .acl in the game airports directory. | 96/96 pass (32 files × 3 checks each) |
 | `test_real_kjfk_jfk5.js` | 8 per-runway STAR resolution | End-to-end JFK5.JFK STAR/SID resolution against real KJFK data: `extractStarRunwayMappings` (SIE.CAMRM5 → 3 runways), `resolveFlyApproachPoints` (6 nodes per runway), `extractSidRunwayMappings` (JFK5.JFK is in SID), `buildSidPaths`, `buildStarPaths`, verifies JFK5.JFK is NOT in APPR data. Uses `detectSchemaVersion` — works with v2/v3 or v4 format. | 8/8 pass |
 
 ```bash
@@ -295,7 +296,7 @@ node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_ti
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_save_integrity_all.js` | 12 (`--prod-demo`) or 24 (`--all`) | Full save→reload→compare on every .acl file. Validates: flights (14 fields × N), config (startTime/endTime/scheduleFile), scenery maps (runway/stand counts), embedded timelines (weather/wind/runway), source format | All files: 0 field diffs, config identical, scenery identical, timelines identical |
+| `test_save_integrity_all.js` | 12 (`--prod-demo`) or 24 (`--all`) | Full save→reload→compare on every .acl file. Validates: flights (14 fields × N), config (startTime/endTime/scheduleFile), scenery maps (runway/stand counts), embedded timelines (weather/wind/runway), source format, text-level `_departureTakeoffTime` / `_arrivalInBlockTime` zero validation | All files: 0 field diffs, config identical, scenery identical, timelines identical, takeoff/inblock times populated |
 
 ```bash
 # 8 production + 4 demo files:
@@ -339,7 +340,7 @@ Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored.
 npm run test:all      # or: node tests/run-all.mjs [--game-root <path>]
 ```
 
-Runs all three layers sequentially (Vitest → save integrity 12 files → Playwright E2E) and reports a pass/fail summary. Default game root: `D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest`.
+Runs all three layers sequentially (Vitest → save integrity 12 files → jetway rebuild 12 v4 files → Playwright E2E) and reports a pass/fail summary. Default game root: `D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest`.
 
 ---
 
@@ -406,10 +407,11 @@ The `test_save_integrity_all.js` script uses a **golden/result pattern**:
 | `setup.js` | Global mocks: `window.electronAPI` (33+ IPC methods + video replacer + UDP listeners), `matchMedia`, `scrollIntoView`, `ResizeObserver`. Guarded with `typeof window !== 'undefined'` so node-environment tests can opt in with `@vitest-environment node`. |
 | `__mocks__/zustand.js` | Auto-reset all zustand stores to initial state between Vitest tests |
 | `integration/preload.cjs` | ESM→CJS transpiler for tests that `require()` ESM source modules |
-| `save-integrity-check.js` | S1-S3 diff analysis: compare .acl vs .bak, categorize diffs, parser round-trip |
+| `save-integrity-check.js` | S1-S3 diff analysis: compare .acl vs .bak, categorize diffs, parser round-trip, text-level takeoff/inblock time validation |
 | `e2e/global-setup.mjs` | Copy fixtures → temp, pre-write `lastRoot.json` |
 | `e2e/global-teardown.mjs` | Clean up temp dirs |
 | `integration/test_save_integrity_all.js` | Save→reload→compare on all .acl files (supports `--prod-demo` for 12 specific files) |
+| `integration/test_jetway_rebuild.js` | Constructive jetway rebuild — verifies `_buildActiveJetwayEntry` only-modifies-jetway invariant across 12 v4 prod+demo files |
 | `run-all.mjs` | Master test runner — executes all 3 layers sequentially |
 
 ### Root config files
