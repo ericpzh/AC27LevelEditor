@@ -2674,8 +2674,87 @@ function buildDesignatorMapping(aclText, isV4) {
   if (isV4 === undefined) {
     isV4 = _detectSchemaVersion(aclText) === 4;
   }
-  if (isV4) return map; // v4: designator mapping not needed (no pre-spawned aircraft)
 
+  // ── v4: cross-reference StaticItems and RuntimeEntities ──────────
+  if (isV4) {
+    // Step 1: Scan StaticItems for flight-plan entries → (Registration, AircraftType)
+    // Each fp entry looks like: { "$k": "flight-plan:B-1234", "$v": { ..., "Registration": "...", "AircraftType": "..." } }
+    const regToType = new Map(); // Registration → AircraftType
+    const siIdx = aclText.indexOf('"StaticItems"');
+    if (siIdx >= 0) {
+      const afterSi = aclText.substring(siIdx);
+      const rcMatch = afterSi.match(/"\$rcontent"\s*:\s*\[/);
+      if (rcMatch) {
+        const absRc = siIdx + rcMatch.index + rcMatch[0].length;
+        const endPos = _findArrayEnd(aclText, absRc);
+        if (endPos) {
+          const arr = aclText.substring(absRc, endPos);
+          let depth = 0, start = -1;
+          for (let i = 0; i < arr.length; i++) {
+            if (arr[i] === '{') { if (depth === 0) start = i; depth++; }
+            else if (arr[i] === '}') {
+              depth--;
+              if (depth === 0 && start >= 0) {
+                const block = arr.substring(start, i + 1);
+                const vBlock = _extractValueBlock(block);
+                if (vBlock) {
+                  const reg = _extractString(vBlock, 'Registration', true);
+                  const at = _extractString(vBlock, 'AircraftType', true);
+                  if (reg && at) regToType.set(reg, at);
+                }
+                start = -1;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Step 2: Scan RuntimeEntities for aircraft entries → (Registration, Designator)
+    // Each aircraft entry: { "$k": "aircraft:B-1234", "$v": { ..., "Specification": { "Designator": "A320" } } }
+    const reIdx = aclText.indexOf('"RuntimeEntities"');
+    if (reIdx >= 0 && regToType.size > 0) {
+      const afterRe = aclText.substring(reIdx);
+      const rcMatch = afterRe.match(/"\$rcontent"\s*:\s*\[/);
+      if (rcMatch) {
+        const absRc = reIdx + rcMatch.index + rcMatch[0].length;
+        const endPos = _findArrayEnd(aclText, absRc);
+        if (endPos) {
+          const arr = aclText.substring(absRc, endPos);
+          let depth = 0, start = -1;
+          for (let i = 0; i < arr.length; i++) {
+            if (arr[i] === '{') { if (depth === 0) start = i; depth++; }
+            else if (arr[i] === '}') {
+              depth--;
+              if (depth === 0 && start >= 0) {
+                const block = arr.substring(start, i + 1);
+                // Extract $k → registration
+                const kMatch = block.match(/"\$k"\s*:\s*"aircraft:([^"]+)"/);
+                if (kMatch) {
+                  const reg = kMatch[1];
+                  // Only process if we have the AircraftType from StaticItems
+                  if (regToType.has(reg) && !map.has(regToType.get(reg))) {
+                    const vBlock = _extractValueBlock(block);
+                    if (vBlock) {
+                      const specObj = _extractNestedObject(vBlock, 'Specification');
+                      const designator = specObj ? _extractString(specObj, 'Designator', true) : null;
+                      if (designator) {
+                        map.set(regToType.get(reg), designator);
+                      }
+                    }
+                  }
+                }
+                start = -1;
+              }
+            }
+          }
+        }
+      }
+    }
+    return map;
+  }
+
+  // ── v2/v3: cross-reference FlightPlans and AircraftStates ──────────
   const fpMap = new Map(); // guid → AircraftType
   const fpIdx = aclText.indexOf('"FlightPlans"');
   if (fpIdx < 0) return map;
@@ -3362,6 +3441,9 @@ module.exports = {
   buildApproachAircraftBlock,
   buildState5AircraftBlock,
   buildAnimatorBlock,
+
+  // Utility
+  _generateGuid,
 
   // Internal exports (for testing)
   _normalizeRunway,

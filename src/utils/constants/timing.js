@@ -14,7 +14,7 @@ export const CACHE_VERSION = 13;
 
 // ─── Game timing / scenario ────────────────────────────────
 export const WARMUP_SEC = 780;             // 13-minute game warmup
-export const GRACE_TTL = -10;              // max seconds-past-landing filter
+export const GRACE_TTL = -60;              // max seconds-past-landing filter
 export const DEMO_WINDOW_SEC = 1800;       // 30-minute demo window
 export const DEMO_WINDOW_MIN = 30;
 export const MIDNIGHT_CROSS_THRESHOLD_MIN = 360;  // 6AM in minutes

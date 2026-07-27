@@ -18,6 +18,7 @@ const {
   _parseWorldStateFlightPlans, _parseFlightPlanEntry,
   _rebuildWorldStateSections,
   _rebuildStaticDataSections,
+  _validateStandConflicts,
 } = require('./flight_plans');
 const {
   sortFlightsChronologically,
@@ -277,9 +278,12 @@ function _parseDateTimeSection(aclText, section, fieldName) {
 // ─── Generate full ACL from scratch ──────────────────────────
 
 function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _worldStateData, _sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime, _saveSec, isV4) {
+  // Pre-validation: detect stand occupancy conflicts before save
+  _validateStandConflicts(flights);
+
   if (isV4) {
     // v4: rebuild StaticData.$blobdoc.StaticItems flight-plan entries (no aircraft generation)
-    _rebuildStaticDataSections(aclPath, flights, undefined, approachCache);
+    _rebuildStaticDataSections(aclPath, flights, undefined, approachCache, aclcfgStartTime, _saveSec);
   } else {
     // v2/v3: rebuild WorldState.FlightPlans + Aircrafts
     _rebuildWorldStateSections(aclPath, flights, undefined, approachCache, aclcfgStartTime, _saveSec);
@@ -325,5 +329,6 @@ module.exports = {
   _parseWorldStateFlightPlans, _parseFlightPlanEntry,
   _rebuildWorldStateSections,
   _rebuildStaticDataSections,
+  _validateStandConflicts,
   FIELDS, FIELD_LABELS, DROPDOWN_FIELDS,
 };

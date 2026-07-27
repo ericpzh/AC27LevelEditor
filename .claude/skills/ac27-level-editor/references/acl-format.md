@@ -614,7 +614,7 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 - `computeFullTerminalPath(aclText, star, runway)` → `{flyLen, procLen, tdDist, total}` — full terminal path length in game units combining FlyApproach + procedure + touchdown segments
 
 **Designator Mapping & Cache:**
-- `buildDesignatorMapping(aclText, isV4?)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates. v4: returns empty (no pre-spawned aircraft)
+- `buildDesignatorMapping(aclText, isV4?)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates (v2/v3) or StaticItems with RuntimeEntities (v4). v4 path scans `StaticItems` for flight-plan entries (Registration → AircraftType) then cross-references `RuntimeEntities` aircraft entries (Registration → Specification.Designator) to build the map. Previously returned empty for v4; now produces a complete map for spec lookup during save
 - `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap, starPaths, runwayThresholds, airportScale, starRunwayMap, runwayStarMap}` — scans all .acl files for an airport. Auto-detects v4 from first file and threads `isV4` through all sub-calls.
 
 **Assembly:**

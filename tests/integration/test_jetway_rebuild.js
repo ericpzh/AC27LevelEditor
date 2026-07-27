@@ -26,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
 const { readAclText, RE_FRAME_SENTINEL } = require('../../src/acl/gatcarc');
-const { _rebuildJetwayEntries, _buildActiveJetwayEntry } = require('../../src/acl/flight_plans');
+const { _rebuildJetwayEntries, _buildActiveJetwayEntry, _validateStandConflicts } = require('../../src/acl/flight_plans');
 const { buildApproachCache } = require('../../src/acl/approach');
 const { createTokenizer } = require('../../src/acl/tokenizer');
 
@@ -62,6 +62,112 @@ if (!fs.existsSync(dataDir)) {
   console.error('Use --root <game-root> to specify the Airport Control 25 game directory.');
   process.exit(1);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// T1: _validateStandConflicts unit tests (standalone, no ACL needed)
+// ═══════════════════════════════════════════════════════════════════
+console.log('\n═══ T1: _validateStandConflicts unit tests ═══');
+
+let T1_PASS = 0, T1_FAIL = 0;
+function t1_assert(cond, msg) {
+  if (cond) { console.log('  \x1b[32m✓\x1b[0m ' + msg); T1_PASS++; }
+  else { console.log('  \x1b[31m✗ FAIL:\x1b[0m ' + msg); T1_FAIL++; }
+}
+
+// Helper: minimal flight object with editorial-state fields
+function _makeFlight(overrides) {
+  return {
+    Stand: '',
+    isDeparture: undefined,
+    OffBlockTime: '',
+    LandingTime: '',
+    _Registration: '',
+    Registration: '',
+    CallSign: '',
+    DepartureAirport: '',
+    ArrivalAirport: '',
+    Runway: '',
+    AirlineName: '',
+    AircraftType: '',
+    Airway: '',
+    Voice: '',
+    Language: '',
+    InBlockTime: '',
+    TakeoffTime: '',
+    ...overrides
+  };
+}
+
+// T1a: Same REG, same stand → valid turnaround (no throw)
+{
+  const flights = [
+    _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '08:00:00', _Registration: 'B-1234', CallSign: 'TST100' }),
+    _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '14:00:00', _Registration: 'B-1234', CallSign: 'TST100' }),
+  ];
+  let threw = false;
+  try { _validateStandConflicts(flights); } catch (e) { threw = true; }
+  t1_assert(!threw, 'T1a: Same REG turnaround at same stand — no throw');
+}
+
+// T1b: Different REG, same stand (ARR→DEP neighbor) → conflict
+{
+  const flights = [
+    _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '08:00:00', _Registration: 'B-1234', CallSign: 'ARR100' }),
+    _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '09:00:00', _Registration: 'B-5678', CallSign: 'DEP200' }),
+  ];
+  let threw = false;
+  try { _validateStandConflicts(flights); } catch (e) { threw = true; }
+  t1_assert(threw, 'T1b: Different REG overlapping at same stand — throws Error');
+}
+
+// T1c: Sequential chain: Arr A(X)→Dep B(X)→Arr C(Y)→Dep D(Y), all same stand
+{
+  const flights = [
+    _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '08:00:00', _Registration: 'B-AAAA', CallSign: 'AAA100' }),
+    _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '10:00:00', _Registration: 'B-AAAA', CallSign: 'AAA100' }),
+    _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '12:00:00', _Registration: 'B-BBBB', CallSign: 'BBB200' }),
+    _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '14:00:00', _Registration: 'B-BBBB', CallSign: 'BBB200' }),
+  ];
+  let threw = false;
+  try { _validateStandConflicts(flights); } catch (e) { threw = true; }
+  t1_assert(!threw, 'T1c: Sequential turnarounds (A→A→B→B) — no throw');
+}
+
+// T1d: DEP only at stand, no ARR → valid
+{
+  const flights = [
+    _makeFlight({ isDeparture: true, Stand: '2', OffBlockTime: '09:00:00', _Registration: 'B-CCCC', CallSign: 'CCC300' }),
+  ];
+  let threw = false;
+  try { _validateStandConflicts(flights); } catch (e) { threw = true; }
+  t1_assert(!threw, 'T1d: Departure-only at stand — no throw');
+}
+
+// T1e: Midnight turnaround — ARR at 00:00, DEP at 01:00, same REG
+// Regression: ticksToTime(0) returns "", LandingTime value may be ""
+{
+  const flights = [
+    _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '00:00:00', _Registration: 'B-DDDD', CallSign: 'DDD400' }),
+    _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '01:00:00', _Registration: 'B-DDDD', CallSign: 'DDD400' }),
+  ];
+  let threw = false;
+  try { _validateStandConflicts(flights); } catch (e) { threw = true; }
+  t1_assert(!threw, 'T1e: Midnight turnaround (00:00→01:00) — no throw');
+}
+
+// T1f: Midnight arrival with empty LandingTime (simulating ticksToTime(0) → "")
+// The pre-validator should still handle this correctly via (fl.LandingTime || '')
+{
+  const flights = [
+    _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '', _Registration: 'B-EEEE', CallSign: 'EEE500' }),
+    _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '01:00:00', _Registration: 'B-EEEE', CallSign: 'EEE500' }),
+  ];
+  let threw = false;
+  try { _validateStandConflicts(flights); } catch (e) { threw = true; }
+  t1_assert(!threw, 'T1f: Midnight arrival with empty LandingTime — no throw');
+}
+
+console.log('  T1 results: ' + T1_PASS + ' passed, ' + T1_FAIL + ' failed');
 
 const PROD_DEMO_FILES = [
   { icao: 'ZSJN', name: 'ZSJN-Morning_120min.acl' },
@@ -559,6 +665,105 @@ for (const file of aclFiles) {
   report.files.push(fileResult);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// T2-T4: Turnaround jetway integration tests
+// Use the first v4 ACL file's first segment as the scaffold for testing
+// turnaround detection in _rebuildJetwayEntries.
+// ═══════════════════════════════════════════════════════════════════
+console.log('\n═══ T2-T4: Turnaround jetway integration tests ═══');
+
+let T24_PASS = 0, T24_FAIL = 0;
+function t24_assert(cond, msg) {
+  if (cond) { console.log('  \x1b[32m✓\x1b[0m ' + msg); T24_PASS++; }
+  else { console.log('  \x1b[31m✗ FAIL:\x1b[0m ' + msg); T24_FAIL++; }
+}
+
+// Find the first v4 file from the collected list
+const firstV4File = aclFiles.find(f => {
+  try {
+    const txt = readAclText(f.sourcePath);
+    return detectSchemaVersion(txt) === 4;
+  } catch (_) { return false; }
+});
+
+if (!firstV4File) {
+  console.log('  SKIP: no v4 ACL files available for integration tests');
+  t24_assert(true, 'T2-T4: (skipped — no v4 files)');
+} else {
+  const scaffoldText = readAclText(firstV4File.sourcePath);
+  const scaffoldSegments = scaffoldText.split(RE_FRAME_SENTINEL);
+
+  // Find the first segment that has a jetway entry in RuntimeEntities
+  let segmentText = null;
+  for (const seg of scaffoldSegments) {
+    const sT = createTokenizer(seg);
+    const sReSec = sT.findSection('RuntimeEntities');
+    if (sReSec && seg.substring(sReSec.valueStart, sReSec.valueEnd).includes('jetway:')) {
+      segmentText = seg;
+      break;
+    }
+  }
+  const hasJetways = segmentText !== null;
+  t24_assert(hasJetways, 'Scaffold segment has RuntimeEntities with jetway entries');
+
+  if (hasJetways && segmentText) {
+    // Build a dummy approach cache if possible
+    let approachCache = null;
+    try { approachCache = buildApproachCache(firstV4File.sourceDir); } catch (_) {}
+
+    const validRegs = new Set(['B-TEST1', 'B-TEST2', 'B-TEST3']);
+    const noopLog = () => {};
+
+    // T2: Turnaround — same REG, ARR LandingTime < DEP OffBlockTime → empty jetway
+    {
+      const t2Flights = [
+        _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '00:00:00', _Registration: 'B-TEST1',
+          CallSign: 'TST101', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'EN', DepartureAirport: 'ZSJN', Airway: '' }),
+        _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '01:00:00', _Registration: 'B-TEST1',
+          CallSign: 'TST101', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'EN', ArrivalAirport: 'ZBAA', Airway: '' }),
+      ];
+      const result = _rebuildJetwayEntries(segmentText, t2Flights, validRegs, approachCache, noopLog);
+      const activeStands = new Set((result.activeJetways || []).map(j => j.stand));
+      t24_assert(!activeStands.has('1'),
+        'T2: Turnaround (ARR 00:00 + DEP 01:00, same REG) → jetway for stand 1 is empty');
+    }
+
+    // T3: Normal departure (no matching ARR) → jetway populated
+    {
+      const t3Flights = [
+        _makeFlight({ isDeparture: true, Stand: '1', OffBlockTime: '01:00:00', _Registration: 'B-TEST2',
+          CallSign: 'TST102', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'EN', ArrivalAirport: 'ZBAA', Airway: '' }),
+      ];
+      const result = _rebuildJetwayEntries(segmentText, t3Flights, validRegs, approachCache, noopLog);
+      const activeStands = new Set((result.activeJetways || []).map(j => j.stand));
+      t24_assert(activeStands.has('1'),
+        'T3: Departure-only (no matching ARR) → jetway for stand 1 is populated');
+    }
+
+    // T4: Midnight turnaround regression — ARR LandingTime="" (ticksToTime(0) output)
+    // This is the exact regression from the bug: ticksToTime(0) returns ""
+    {
+      const t4Flights = [
+        _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '', _Registration: 'B-TEST3',
+          CallSign: 'TST103', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'EN', DepartureAirport: 'ZSJN', Airway: '' }),
+        _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '01:00:00', _Registration: 'B-TEST3',
+          CallSign: 'TST103', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'EN', ArrivalAirport: 'ZBAA', Airway: '' }),
+      ];
+      const result = _rebuildJetwayEntries(segmentText, t4Flights, validRegs, approachCache, noopLog);
+      const activeStands = new Set((result.activeJetways || []).map(j => j.stand));
+      t24_assert(!activeStands.has('1'),
+        'T4: Midnight turnaround (LandingTime="", OffBlockTime=01:00) → jetway for stand 1 is empty');
+    }
+  }
+}
+
+console.log('  T2-T4 results: ' + T24_PASS + ' passed, ' + T24_FAIL + ' failed');
+
 // ── Write JSON report ────────────────────────────────────────────
 const REPORT_DIR = path.join(__dirname, '..', '_reports_');
 if (!fs.existsSync(REPORT_DIR)) fs.mkdirSync(REPORT_DIR, { recursive: true });
@@ -568,14 +773,14 @@ const reportPath = path.join(REPORT_DIR, reportName);
 fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf-8');
 
 // ── Summary ──────────────────────────────────────────────────────
+const allTurnaroundPassed = (T1_FAIL === 0 && T24_FAIL === 0);
 console.log(`\n${'═'.repeat(60)}`);
 console.log('  Jetway Rebuild Test Summary');
 console.log(`${'═'.repeat(60)}`);
-console.log(`  Total:  ${report.summary.total}`);
-console.log(`  Passed: ${report.summary.passed}`);
-console.log(`  Failed: ${report.summary.failed}`);
-console.log(`  Skipped: ${report.summary.skipped}`);
+console.log(`  Roundtrip: ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.skipped} skipped (${report.summary.total} files)`);
+console.log(`  T1 (_validateStandConflicts): ${T1_PASS} passed, ${T1_FAIL} failed`);
+console.log(`  T2-T4 (turnaround integration): ${T24_PASS} passed, ${T24_FAIL} failed`);
 console.log(`  Report: ${reportPath}`);
 console.log(`${'═'.repeat(60)}\n`);
 
-process.exit(report.summary.failed > 0 ? 1 : 0);
+process.exit((report.summary.failed > 0 || T1_FAIL > 0 || T24_FAIL > 0) ? 1 : 0);
