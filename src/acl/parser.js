@@ -46,7 +46,7 @@ const {
 } = require('./flight_plans');
 const { createZip, listZipFiles, extractZip } = require('../utils/zipUtils');
 const { createTokenizer } = require('./tokenizer');
-const { preprocessUnityJson, serializeUnityJson, isUnityJson } = require('./acl_json');
+const { preprocessUnityJson, serializeUnityJson, isUnityJson, parseOdinValue, parseOdinObject, parseOdinArray } = require('./acl_json');
 const { readAclText } = require('./gatcarc');
 const { AclDocument } = require('./acl_document');
 const { parseTaxiwayPaths } = require('./taxiway');
@@ -316,6 +316,7 @@ module.exports = {
   createZip, listZipFiles, extractZip,
   // New object-based parser (v1.0.10+)
   createTokenizer, preprocessUnityJson, serializeUnityJson, isUnityJson,
+  parseOdinValue, parseOdinObject, parseOdinArray,
   AclDocument,
   // Taxiway + SID / Missed Approach parsers
   parseTaxiwayPaths,

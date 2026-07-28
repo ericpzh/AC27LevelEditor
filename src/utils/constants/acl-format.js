@@ -2,6 +2,7 @@
 // Unity JSON special metadata keys
 export const SPECIAL_KEYS = new Set([
   '$id', '$type', '$ref', '$rcontent', '$rlength', '$values', '__v',
+  '__iref', '__fstrref', '__eref', '__guidref',
 ]);
 // Known ACL top-level section names
 export const TOP_LEVEL_SECTIONS = [

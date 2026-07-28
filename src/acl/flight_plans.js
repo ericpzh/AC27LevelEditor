@@ -12,7 +12,7 @@ const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils
 const { _generateGuid } = require('./world_state');
 const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, computeApproachCap, computePosition, computeDirection, _vec3Sub, _vec3Normalize, _vec3Dist, _detectSchemaVersion } = require('./approach');
 const { createTokenizer } = require('./tokenizer');
-const { preprocessUnityJson } = require('./acl_json');
+const { preprocessUnityJson, serializeUnityJson, parseOdinObject } = require('./acl_json');
 const { readAclText, writeAcl } = require('./gatcarc');
 // resolveConfigTime imported lazily inside _rebuildWorldStateSections
 // to avoid circular dependency: config.js requires flight_plans.js for _extractConfig
@@ -2132,7 +2132,10 @@ function _extractWaitingCmdsInnerId(vBlock) {
  * @param {object} recvEventsCache - { canonicalId: number|null }
  * @returns {string} entryText with _receivedEvents inner value rebuilt
  */
-function _rebuildReceivedEventsInEntry(entryText, recvEventsCache) {
+function _rebuildReceivedEventsInEntry(entryText, _recvEventsCache) {
+  // No-op: $iref sharing disabled (caused forward-reference crashes in Unity's
+  // JsonDataReader when aircraft entries used $iref to jetway-defined ids).
+  return entryText;
   const t = createTokenizer(entryText);
 
   // Find the $v block
@@ -2212,7 +2215,10 @@ function _rebuildReceivedEventsInEntry(entryText, recvEventsCache) {
  * @param {object} waitingCmdsCache - { canonicalId: number|null }
  * @returns {string} entryText with _waitingForCommands inner value rebuilt
  */
-function _rebuildWaitingCommandsInEntry(entryText, waitingCmdsCache) {
+function _rebuildWaitingCommandsInEntry(entryText, _waitingCmdsCache) {
+  // No-op: $iref sharing disabled (caused forward-reference crashes in Unity's
+  // JsonDataReader when aircraft entries used $iref to jetway-defined ids).
+  return entryText;
   const t = createTokenizer(entryText);
 
   // Find the $v block
@@ -2633,6 +2639,237 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
  * @param {number} saveSec - save time in seconds since midnight
  * @returns {{ text: string, removed: number, added: number }}
  */
+/**
+ * Parse a RuntimeEntities dictionary entry text into a structured object.
+ * Uses preprocessUnityJson + JSON.parse to handle Odin-specific constructs
+ * ($iref, $fstrref, typed-value objects, etc.).
+ *
+ * @param {string} entryText - e.g. '{"$k": "flight-plan:B-1234", "$v": $iref:19}'
+ * @returns {{ $k: string, $v: any }}
+ */
+function _parseEntry(entryText) {
+  const preprocessed = preprocessUnityJson(entryText);
+  return JSON.parse(preprocessed);
+}
+
+/**
+ * Serialize a RuntimeEntities dictionary entry object back to Odin JSON text.
+ *
+ * @param {{ $k: string, $v: any }} entry
+ * @param {number} indentUnits - indent level (in 4-space units)
+ * @returns {string}
+ */
+function _serializeEntry(entry, indentUnits) {
+  return serializeUnityJson(entry, { indent: indentUnits, indentSize: 4 });
+}
+
+
+/**
+ * Reorder RuntimeEntities entries so that every $iref reference appears AFTER
+ * the entry that declares the corresponding $id.  Operates on structured
+ * objects (parsed via _parseEntry) — NO regex scanning of raw text.
+ *
+ * Walks each entry's object tree to find $id values and __iref targets.
+ * An __iref target is satisfied if it appears in:
+ *   - externalIds (from the parent dictionary structure outside $rcontent)
+ *   - seenIds (from already-emitted entries)
+ *   - the entry's own local $id set (self-contained entries)
+ *
+ * @param {object[]} entries - parsed entry objects { $k, $v }
+ * @param {Function} log - logger
+ * @param {Set<number>} externalIds - $id values declared outside $rcontent
+ * @returns {object[]} reordered entries
+ */
+
+// ── Object-tree walk helpers (reused by _reorderIrefEntries) ─────────
+
+/**
+ * Walk an object tree and collect all $id numeric values.
+ * @param {object} obj
+ * @param {number[]} out
+ */
+function _collectObjIds(obj, out) {
+  if (!obj || typeof obj !== 'object') return;
+  if (typeof obj.$id === 'number' && out.indexOf(obj.$id) < 0) out.push(obj.$id);
+  var keys = Object.keys(obj);
+  for (var i = 0; i < keys.length; i++) {
+    var v = obj[keys[i]];
+    if (Array.isArray(v)) {
+      for (var j = 0; j < v.length; j++) _collectObjIds(v[j], out);
+    } else if (v && typeof v === 'object') {
+      _collectObjIds(v, out);
+    }
+  }
+}
+
+/**
+ * Walk an object tree and collect all __iref numeric target values.
+ * @param {object} obj
+ * @param {number[]} out
+ */
+function _collectObjIrefs(obj, out) {
+  if (!obj || typeof obj !== 'object') return;
+  if (typeof obj.__iref === 'number') out.push(obj.__iref);
+  var keys = Object.keys(obj);
+  for (var i = 0; i < keys.length; i++) {
+    var v = obj[keys[i]];
+    if (Array.isArray(v)) {
+      for (var j = 0; j < v.length; j++) _collectObjIrefs(v[j], out);
+    } else if (v && typeof v === 'object') {
+      _collectObjIrefs(v, out);
+    }
+  }
+}
+
+// ── OdinEntry — lightweight wrapper around a parsed/serialized entry ──
+
+/**
+ * Wraps a RuntimeEntities entry so that metadata ($id, $iref targets)
+ * and text serialization are tied to the same object.  This removes the
+ * need for ad-hoc { text, ids, irefs } plain-object descriptors and
+ * lets the iref reorder algorithm work with clean property accessors.
+ *
+ * Two construction paths:
+ *   1. From an already-structured JS object  — e.g. a newly-built
+ *      aircraft or flight-plan entry.  Text is lazy-serialized.
+ *   2. From raw Odin text — for preserved ("kept") entries that we
+ *      parse once via parseOdinObject to extract metadata but whose
+ *      original text we want to emit as-is.
+ *
+ * @param {object} obj    — Parsed JS object (with $id, __iref, etc.)
+ * @param {string} [text] — Pre-serialized text; if omitted, lazy-built
+ *                           via _serializeEntry(obj, 6) when needed.
+ */
+function OdinEntry(obj, text) {
+  this.obj = obj;
+  this._text = text || null;
+  this._ids = undefined;
+  this._irefs = undefined;
+}
+
+Object.defineProperties(OdinEntry.prototype, {
+  ids: {
+    get: function() {
+      if (this._ids === undefined) {
+        this._ids = [];
+        _collectObjIds(this.obj, this._ids);
+      }
+      return this._ids;
+    },
+    enumerable: true,
+  },
+  irefs: {
+    get: function() {
+      if (this._irefs === undefined) {
+        this._irefs = [];
+        _collectObjIrefs(this.obj, this._irefs);
+      }
+      return this._irefs;
+    },
+    enumerable: true,
+  },
+  text: {
+    get: function() {
+      if (this._text === null) {
+        this._text = _serializeEntry(this.obj, 6);
+      }
+      return this._text;
+    },
+    set: function(v) { this._text = v; },
+    enumerable: true,
+  },
+});
+
+// ── Iref-aware entry reordering ──────────────────────────────────────
+
+/**
+ * Reorder RuntimeEntities entry descriptors so every $iref target appears
+ * AFTER the descriptor that declares the corresponding $id.
+ *
+ * Each descriptor is { text, ids, irefs }:
+ *   - text:  serialized entry string (preserved verbatim for output)
+ *   - ids:   array of $id numbers declared WITHIN this entry
+ *   - irefs: array of $iref target numbers in this entry
+ *
+ * Algorithm: linear pass with insert-at-position.  Descriptors whose
+ * $iref targets are not yet satisfied are deferred.  When a descriptor
+ * declaring a needed $id is emitted, any deferred descriptors waiting
+ * for that $id are flushed at the current position.  Self-contained
+ * entries (all irefs satisfied by their own ids) pass through directly.
+ *
+ * @param {{text:string, ids:number[], irefs:number[]}[]} descriptors
+ * @param {Function} log
+ * @param {Set<number>} externalIds — $id values declared outside $rcontent
+ * @returns {{text:string, ids:number[], irefs:number[]}[]} reordered descriptors
+ */
+function _reorderIrefEntries(descriptors, log, externalIds) {
+  var result = [];
+  var deferred = new Map(); // targetId → [descriptors waiting for that $id]
+  var seenIds = new Set(externalIds || []);
+
+  log('_reorderIrefEntries: ' + descriptors.length + ' descriptors, ' + seenIds.size + ' externalIds');
+
+  function processBatch(batch) {
+    for (var i = 0; i < batch.length; i++) {
+      var desc = batch[i];
+      var ids = desc.ids || [];
+      var irefs = desc.irefs || [];
+
+      // Unresolved = $iref targets NOT in seenIds AND NOT in own ids
+      var unresolved = [];
+      for (var j = 0; j < irefs.length; j++) {
+        var tid = irefs[j];
+        if (!seenIds.has(tid) && ids.indexOf(tid) < 0) {
+          unresolved.push(tid);
+        }
+      }
+
+      if (unresolved.length > 0) {
+        var key = unresolved[0];
+        if (!deferred.has(key)) deferred.set(key, []);
+        deferred.get(key).push(desc);
+        log('  defer: waiting for $id:' + key + ' (unresolved=' + JSON.stringify(unresolved) + ')');
+        continue;
+      }
+
+      // This descriptor can be emitted at current position
+      result.push(desc);
+
+      // Register this descriptor's $id values and flush deferred
+      for (var k = 0; k < ids.length; k++) {
+        var id = ids[k];
+        seenIds.add(id);
+        if (deferred.has(id)) {
+          var waiting = deferred.get(id);
+          deferred.delete(id);
+          log('  resolve $id:' + id + ' — flushing ' + waiting.length + ' deferred at position ' + result.length);
+          processBatch(waiting);
+        }
+      }
+    }
+  }
+
+  processBatch(descriptors);
+
+  // Assert: no unresolved deferred entries
+  if (deferred.size > 0) {
+    var remaining = 0;
+    deferred.forEach(function(w) { remaining += w.length; });
+    log('ERROR: _reorderIrefEntries — ' + deferred.size + ' id(s) still have ' +
+      remaining + ' deferred entries after reorder (circular or missing $id)');
+    deferred.forEach(function(waiting, id) {
+      log('  - ' + waiting.length + ' entry(s) waiting for $id:' + id);
+    });
+    // Fall back to appending them anyway (better than silently dropping)
+    deferred.forEach(function(waiting) {
+      for (var m = 0; m < waiting.length; m++) result.push(waiting[m]);
+    });
+  }
+
+  log('_reorderIrefEntries: result=' + result.length + ' entries');
+  return result;
+}
+
 function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, validRegs, activeJetways, segTypeMap, log, idMapper, icao, recvEventsCache, waitingCmdsCache, approachCache, fullText, saveSec) {
   // â”€â”€ Navigate to RuntimeEntities.$rcontent structurally â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const t = createTokenizer(segmentText);
@@ -2680,7 +2917,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 
   // â”€â”€ PASS 1: Parse entries, remove all flight-plan:REG, aircraft:REG, â”€â”€
   //            and aircraft-animator:aircraft:REG. Keep everything else.
-  const keptEntries = [];    // non-rebuilt entries preserved as-is
+  const keptEntries = [];    // non-rebuilt entries preserved as raw text
   const removedKeys = [];    // flight-plan keys removed (for counting)
   const oldIdMap = new Map(); // reg â†’ old $id (for $iref remapping)
   let pos = 0;
@@ -2694,7 +2931,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
     if (entryEnd === null) break;
     const entryText = content.substring(pos, entryEnd);
 
-    // Check $k value
+    // Check $k value via tokenizer (fast, no full parse)
     const entryT = createTokenizer(entryText);
     const kSec = entryT.findSection('$k');
     let isRebuilt = false; // belongs to one of the three rebuilt types
@@ -2718,9 +2955,10 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 
     if (!isRebuilt) {
       // Keep non-rebuilt entries (jetway, radio-channel, singleton, etc.)
-      // Still rebuild _receivedEvents/_waitingForCommands on aircraft entries
-      // that pass through (but now all aircraft entries are removed, so this
-      // branch only affects kept entry types like jetway)
+      // as raw text to avoid lossy roundtrip through preprocessor→serializer.
+      // The preprocessor handles common Odin tokens but kept entries can
+      // contain deeply-nested ReactiveProperty<Aircraft> structures where
+      // _fixTypedValues doesn't recursively handle all edge cases.
       keptEntries.push(entryText);
     }
     pos = entryEnd;
@@ -2737,7 +2975,10 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
   }
   let nextId = maxId + 1;
 
-  // â”€â”€ Build activeJetways lookup: reg â†’ { aircraftId } â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â”€â”€ Build activeJetways lookup: reg → { stand, reg, flightPlanId, aircraftId } ─
+  // Used in PASS 2 to emit $v: $iref:N for registrations whose _flightPlan
+  // is already inlined inside the jetway entry.
+  // â†’ { aircraftId } â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const jwByReg = new Map();
   if (activeJetways) {
     for (const jw of activeJetways) {
@@ -2775,47 +3016,63 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 
   for (const [reg, fl] of regFlights) {
     if (!validRegs.has(reg)) continue;
-    const isDep = fl.isDeparture === true;
 
-    const arrRunway = isDep ? 'null' : '"' + (fl.Runway || '') + '"';
-    const arrStand = isDep ? 'null' : '"' + (fl.Stand || '') + '"';
-    const arrTicks = isDep ? '0' : _computeArrivalInBlockTicks(fl.LandingTime, fl.InBlockTime, baseDateTicks, icao);
-    const depRunway = isDep ? '"' + (fl.Runway || '') + '"' : 'null';
-    const depStand = isDep ? '"' + (fl.Stand || '') + '"' : 'null';
-    const depTicks = isDep ? _computeTakeoffTicks(fl.TakeoffTime, fl.OffBlockTime, baseDateTicks, icao) : '0';
+    // If this registration has a jetway entry (DEP flight at a stand),
+    // the _flightPlan is already inlined inside the jetway — emit $iref
+    // instead of duplicating the entire object.
+    const jwInfo = jwByReg.get(reg);
+    if (jwInfo) {
+      const fpId = jwInfo.flightPlanId;
+      fpIdByReg.set(reg, fpId);
+      if (idMapper && oldIdMap.has(reg)) {
+        idMapper.map(oldIdMap.get(reg), fpId);
+      }
 
-    const fpId = nextId++;
-    fpIdByReg.set(reg, fpId);
-    if (idMapper && oldIdMap.has(reg)) {
-      idMapper.map(oldIdMap.get(reg), fpId);
+      allFpEntries.push({
+        $k: 'flight-plan:' + reg,
+        $v: { __iref: fpId },
+      });
+    } else {
+      const isDep = fl.isDeparture === true;
+
+      const arrRunway = isDep ? null : (fl.Runway || null);
+      const arrStand = isDep ? null : (fl.Stand || null);
+      const arrTicksStr = isDep ? '0' : String(_computeArrivalInBlockTicks(fl.LandingTime, fl.InBlockTime, baseDateTicks, icao));
+      const depRunway = isDep ? (fl.Runway || null) : null;
+      const depStand = isDep ? (fl.Stand || null) : null;
+      const depTicksStr = isDep ? String(_computeTakeoffTicks(fl.TakeoffTime, fl.OffBlockTime, baseDateTicks, icao)) : '0';
+
+      const fpId = nextId++;
+      fpIdByReg.set(reg, fpId);
+      if (idMapper && oldIdMap.has(reg)) {
+        idMapper.map(oldIdMap.get(reg), fpId);
+      }
+
+      allFpEntries.push({
+        $k: 'flight-plan:' + reg,
+        $v: {
+          $id: fpId,
+          $type: fpTypeFull,
+          StaticItem: { __fstrref: 'flight-plan:' + reg },
+          _arrivalInBlockTime: {
+            $type: dtTypeFull,
+            __v: [arrTicksStr],
+          },
+          _arrivalActualInBlockTime: {
+            $type: dtTypeFull,
+            __v: ['0'],
+          },
+          _arrivalRunway: arrRunway,
+          _arrivalStand: arrStand,
+          _departureTakeoffTime: {
+            $type: dtTypeFull,
+            __v: [depTicksStr],
+          },
+          _departureRunway: depRunway,
+          _departureStand: depStand,
+        },
+      });
     }
-
-    allFpEntries.push([
-      '                        {',
-      '                            "$k": "flight-plan:' + reg + '",',
-      '                            "$v": {',
-      '                                "$id": ' + fpId + ',',
-      '                                "$type": ' + FP_TYPE_STR + ',',
-      '                                "StaticItem": $fstrref:"flight-plan:' + reg + '",',
-      '                                "_arrivalInBlockTime": {',
-      '                                    "$type": ' + DT_TYPE_STR + ',',
-      '                                    ' + arrTicks,
-      '                                },',
-      '                                "_arrivalActualInBlockTime": {',
-      '                                    "$type": ' + DT_TYPE_STR + ',',
-      '                                    0',
-      '                                },',
-      '                                "_arrivalRunway": ' + arrRunway + ',',
-      '                                "_arrivalStand": ' + arrStand + ',',
-      '                                "_departureTakeoffTime": {',
-      '                                    "$type": ' + DT_TYPE_STR + ',',
-      '                                    ' + depTicks,
-      '                                },',
-      '                                "_departureRunway": ' + depRunway + ',',
-      '                                "_departureStand": ' + depStand,
-      '                            }',
-      '                        }',
-    ].join('\n'));
   }
 
   // â”€â”€ Scan kept entries for radio-channel $id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -2869,7 +3126,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
       continue;
     }
     nextId = result.nextId;
-    allAcEntries.push(result.entryText);
+    allAcEntries.push(result.entry);
     acRegToInfo.set(reg, { acGuid, acEntryId });
     // Register aircraft id for $iref mapping if needed
     if (idMapper && oldIdMap.has(reg)) {
@@ -2887,7 +3144,6 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
         animTypeFull = num + '|' + name;
     }
   }
-  const ANIM_TYPE_STR = '"' + animTypeFull + '"';
 
   for (const [reg, fl] of regFlights) {
     if (!validRegs.has(reg)) continue;
@@ -2896,30 +3152,28 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 
     const animId = nextId++;
 
-    allAnimEntries.push([
-      '                        {',
-      '                            "$k": "aircraft-animator:aircraft:' + reg + '",',
-      '                            "$v": {',
-      '                                "$id": ' + animId + ',',
-      '                                "$type": ' + ANIM_TYPE_STR + ',',
-      '                                "Aircraft": $iref:' + info.acEntryId + ',',
-      '                                "Version": 3,',
-      '                                "HasSnapshot": true,',
-      '                                "FlapRatio": 0,',
-      '                                "SlatRatio": 0,',
-      '                                "GearRatio": 1,',
-      '                                "IsGearMoving": false,',
-      '                                "GearTargetRatio": 1,',
-      '                                "GoAroundPhase": 0,',
-      '                                "HasGoAroundCommandTick": false,',
-      '                                "GoAroundCommandTick": 0,',
-      '                                "GearRetractIssued": false,',
-      '                                "TakeoffPitchActive": false,',
-      '                                "TakeoffPitchElapsed": 0,',
-      '                                "TakeoffPitchDeg": 0',
-      '                            }',
-      '                        }',
-    ].join('\n'));
+    allAnimEntries.push({
+      $k: 'aircraft-animator:aircraft:' + reg,
+      $v: {
+        $id: animId,
+        $type: animTypeFull,
+        Aircraft: { __iref: info.acEntryId },
+        Version: 3,
+        HasSnapshot: true,
+        FlapRatio: 0,
+        SlatRatio: 0,
+        GearRatio: 1,
+        IsGearMoving: false,
+        GearTargetRatio: 1,
+        GoAroundPhase: 0,
+        HasGoAroundCommandTick: false,
+        GoAroundCommandTick: 0,
+        GearRetractIssued: false,
+        TakeoffPitchActive: false,
+        TakeoffPitchElapsed: 0,
+        TakeoffPitchDeg: 0,
+      },
+    });
   }
 
   const removedCount = removedKeys.length;
@@ -2929,13 +3183,64 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
     return { text: segmentText, removed: 0, added: 0 };
   }
 
+  // Collect $id values declared in the parent dictionary structure
+  // (outside $rcontent).  The RuntimeEntities dictionary itself has
+  // fields like "comparer" with their own $id (e.g. GenericEqualityComparer).
+  // Unity resolves these BEFORE iterating $rcontent, so $iref references
+  // to them are already satisfied and should not cause deferral.
+  const parentText = segmentText.substring(frameReStart, frameReStart + rcStart);
+  const externalIds = new Set();
+  const parentIdRe = /"\$id"\s*:\s*(\d+)/g;
+  let pm;
+  while ((pm = parentIdRe.exec(parentText)) !== null) {
+    externalIds.add(parseInt(pm[1], 10));
+  }
+
   // â”€â”€ Reconstruct RuntimeEntities.$rcontent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // Ordering: flight-plan entries first (define $id), then aircraft+
-  // animator entries (may $iref to flight-plan or jetway $id values),
-  // then all other kept entries (jetway, radio-channel, singleton, etc.).
-  const allEntries = allFpEntries.concat(allAcEntries, allAnimEntries, keptEntries);
-  const newContent = allEntries.join(',\n');
-  const newRlen = allEntries.length;
+  // Assemble entries, then reorder so every $iref:N appears AFTER the
+  // entry that declares "$id": N.  This is critical because Unity's
+  // OdinSerializer resolves $iref left-to-right — a forward $iref
+  // (referencing an $id not yet seen) deserializes as null.
+  //
+  // _fixIrefOrder collects both local (same-entry) and seen $id values,
+  // so self-contained entries (like jetways with internal $id/$iref pairs)
+  // pass through correctly without being deferred.  externalIds pre-seeds
+  // seenIds with $id values from the parent dictionary (outside $rcontent)
+  // that Unity deserializes before the $rcontent array.
+  //
+  // New entries (flight-plan, aircraft, animator) are structured objects
+  // built directly.  Wrap them in OdinEntry (text is lazy-serialized).
+  // Kept entries are parsed once via the non-regex parseOdinObject parser
+  // to extract $id / $iref metadata; the original text is preserved for
+  // output so we don't risk a lossy roundtrip.
+  var newObjs = allFpEntries.concat(allAcEntries, allAnimEntries);
+  var newDescriptors = newObjs.map(function(obj) {
+    return new OdinEntry(obj); // text lazy-serialized on first access
+  });
+
+  // Build descriptors for kept entries — parse once with the structural
+  // Odin parser (no regex) to extract ids/irefs, keep original text.
+  var keptDescriptors = keptEntries.map(function(text) {
+    try {
+      var result = parseOdinObject(text, 0);
+      if (result.error) throw new Error(result.error);
+      return new OdinEntry(result.value, text); // preserve original text
+    } catch (e) {
+      // Defensive: if parsing still fails, emit as-is with empty metadata.
+      // The parseOdinObject parser handles all known Odin edge cases, so
+      // this should be extremely rare (truncated/corrupt entries).
+      log('WARN: could not parse kept entry for iref reorder: ' + e.message);
+      return new OdinEntry({}, text);
+    }
+  });
+
+  var ordered = _reorderIrefEntries(
+    newDescriptors.concat(keptDescriptors),
+    log,
+    externalIds
+  );
+  var newContent = ordered.map(function(d) { return d.text; }).join(',\n');
+  const newRlen = ordered.length;
 
   // Update $rlength
   const rlSec = reT.findSection('$rlength');
@@ -2981,7 +3286,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 function _buildStandaloneAircraftEntry(opts) {
   const { reg, flight, entryId, fpId, radioChannelId, isDeparture, approachCache, fullText, saveSec,
     icao, baseDateTicks, recvEventsCache, waitingCmdsCache,
-    segTypeMap, FP_TYPE_STR, DT_TYPE_STR, acGuid, log } = opts;
+    segTypeMap, fpTypeFull, dtTypeFull, acGuid, log } = opts;
 
   const id = (offset) => entryId + offset;
 
@@ -2990,43 +3295,42 @@ function _buildStandaloneAircraftEntry(opts) {
   const star = flight.Airway || '';
   const acType = flight.AircraftType || '';
 
-  // Hardcoded type strings matching _buildActiveJetwayEntry (!Important: must match exactly)
-  const T = {
-    ac:      '"7|ContextCross.Aircrafts.Aircraft, GroundATC.Core"',
-    spec:    '"8|ContextCross.Models.AircraftSpecification, GroundATC.Core"',
-    float3:  '"9|Unity.Mathematics.float3, Unity.Mathematics"',
-    vec4Arr: '"10|UnityEngine.Vector4[], UnityEngine.CoreModule"',
-    vec4:    '"11|UnityEngine.Vector4, UnityEngine.CoreModule"',
-    dyn:     '"12|ContextCross.Dynamics.AircraftDynamicsData, GroundATC.Core"',
-    dynSt:   '"13|R3.ReactiveProperty`1[[ContextCross.Dynamics.Enums.State, GroundATC.Core]], R3"',
-    coord:   '"14|ContextCross.Aircrafts.AircraftRunwayCoordinator, GroundATC.Core"',
-    rpStrArr:'"15|R3.ReactiveProperty`1[[System.String[], mscorlib]], R3"',
-    strArr:  '"16|System.String[], mscorlib"',
-    vec3:    '"17|UnityEngine.Vector3, UnityEngine.CoreModule"',
-    fp:      '"18|ContextCross.Models.FlightPlan, GroundATC.Core"',
-    dt:      '"19|System.DateTime, mscorlib"',
-    rpState: '"20|R3.ReactiveProperty`1[[ContextCross.Aircrafts.Enums.EAircraftState, GroundATC.Core]], R3"',
-    rpDir:   '"21|R3.ReactiveProperty`1[[ContextCross.Aircrafts.Enums.EFlightDirection, GroundATC.Core]], R3"',
-    rpChan:  '"22|R3.ReactiveProperty`1[[ContextCross.Models.RadioChannel, GroundATC.Core]], R3"',
-    rpPath:  '"23|R3.ReactiveProperty`1[[ContextCross.Models.Path, GroundATC.Core]], R3"',
-    rpStr:   '"24|R3.ReactiveProperty`1[[System.String, mscorlib]], R3"',
-    rpCmdArr:'"25|R3.ReactiveProperty`1[[ContextCross.Enums.ECommand[], GroundATC.Core]], R3"',
-    cmdArr:  '"26|ContextCross.Enums.ECommand[], GroundATC.Core"',
-    rpEvtArr:'"27|R3.ReactiveProperty`1[[ContextCross.Events.AircraftEvent[], GroundATC.Core]], R3"',
-    evtArr:  '"28|ContextCross.Events.AircraftEvent[], GroundATC.Core"',
-    rpVec3:  '"29|R3.ReactiveProperty`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], R3"',
+  // Bare type strings (no outer quotes — serializeUnityJson adds formatting).
+  // Must match _buildActiveJetwayEntry type numbers exactly.
+  var T = {
+    ac:      '7|ContextCross.Aircrafts.Aircraft, GroundATC.Core',
+    spec:    '8|ContextCross.Models.AircraftSpecification, GroundATC.Core',
+    float3:  '9|Unity.Mathematics.float3, Unity.Mathematics',
+    vec4Arr: '10|UnityEngine.Vector4[], UnityEngine.CoreModule',
+    vec4:    '11|UnityEngine.Vector4, UnityEngine.CoreModule',
+    dyn:     '12|ContextCross.Dynamics.AircraftDynamicsData, GroundATC.Core',
+    dynSt:   '13|R3.ReactiveProperty`1[[ContextCross.Dynamics.Enums.State, GroundATC.Core]], R3',
+    coord:   '14|ContextCross.Aircrafts.AircraftRunwayCoordinator, GroundATC.Core',
+    rpStrArr:'15|R3.ReactiveProperty`1[[System.String[], mscorlib]], R3',
+    strArr:  '16|System.String[], mscorlib',
+    vec3:    '17|UnityEngine.Vector3, UnityEngine.CoreModule',
+    fp:      '18|ContextCross.Models.FlightPlan, GroundATC.Core',
+    dt:      '19|System.DateTime, mscorlib',
+    rpState: '20|R3.ReactiveProperty`1[[ContextCross.Aircrafts.Enums.EAircraftState, GroundATC.Core]], R3',
+    rpDir:   '21|R3.ReactiveProperty`1[[ContextCross.Aircrafts.Enums.EFlightDirection, GroundATC.Core]], R3',
+    rpChan:  '22|R3.ReactiveProperty`1[[ContextCross.Models.RadioChannel, GroundATC.Core]], R3',
+    rpPath:  '23|R3.ReactiveProperty`1[[ContextCross.Models.Path, GroundATC.Core]], R3',
+    rpStr:   '24|R3.ReactiveProperty`1[[System.String, mscorlib]], R3',
+    rpCmdArr:'25|R3.ReactiveProperty`1[[ContextCross.Enums.ECommand[], GroundATC.Core]], R3',
+    cmdArr:  '26|ContextCross.Enums.ECommand[], GroundATC.Core',
+    rpEvtArr:'27|R3.ReactiveProperty`1[[ContextCross.Events.AircraftEvent[], GroundATC.Core]], R3',
+    evtArr:  '28|ContextCross.Events.AircraftEvent[], GroundATC.Core',
+    rpVec3:  '29|R3.ReactiveProperty`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], R3',
   };
 
-  // Type strings for DynamicsParams sub-objects (namespace-qualified to avoid per-file
-  // type-number drift — these types are always present in v4 aircraft entries)
-  const DYN_PARAMS_TYPE = '"54|ContextCross.Dynamics.States.FlyApproachDynamicsParams, GroundATC.Core"';
-  const LIST_VEC3_TYPE = '"53|System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib"';
+  // Type strings for DynamicsParams sub-objects (namespace-qualified to avoid
+  // per-file type-number drift — these types are always present in v4 aircraft)
+  var DYN_PARAMS_TYPE = '54|ContextCross.Dynamics.States.FlyApproachDynamicsParams, GroundATC.Core';
+  var LIST_VEC3_TYPE = '53|System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib';
 
-  // â”€â”€ Resolve aircraft spec from approachCache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // Fall back to direct specDB lookup: in editor/v4 context, acType
-  // values ("A320", "B738") are already ICAO designator codes.
-  let spec = null;
-  const designator = approachCache && approachCache.designatorMap
+  // ─── Resolve aircraft spec from approachCache ──────────────────────
+  var spec = null;
+  var designator = approachCache && approachCache.designatorMap
     ? approachCache.designatorMap.get(acType) : null;
   if (designator && approachCache && approachCache.specDB) {
     spec = approachCache.specDB.get(designator) || null;
@@ -3035,38 +3339,35 @@ function _buildStandaloneAircraftEntry(opts) {
     spec = approachCache.specDB.get(acType) || null;
   }
 
-  const designatorVal = spec?.Designator ?? (acType || 'B738');
-  const wakeCat = spec?.WakeTurbulenceCategory ?? 2;
-  const wheelBase = spec?.WheelBase ?? 0;
-  const wingSpan = spec?.WingSpan ?? 0;
-  const runwayVR = spec?.RunwayVRSpeed ?? 140;
-  const runwayTO = spec?.RunwayTakeOffLength ?? 2000;
-  const mo = spec?.ModelOffset ?? { x: 0, y: 0, z: 0 };
-  const dockPoses = spec?.DockingPositions ?? [{ x: -1.742, y: 2.68, z: 14.75, w: 90 }];
+  var designatorVal = spec?.Designator ?? (acType || 'B738');
+  var wakeCat = spec?.WakeTurbulenceCategory ?? 2;
+  var wheelBase = spec?.WheelBase ?? 0;
+  var wingSpan = spec?.WingSpan ?? 0;
+  var runwayVR = spec?.RunwayVRSpeed ?? 140;
+  var runwayTO = spec?.RunwayTakeOffLength ?? 2000;
+  var mo = spec?.ModelOffset ?? { x: 0, y: 0, z: 0 };
+  var dockPoses = spec?.DockingPositions ?? [{ x: -1.742, y: 2.68, z: 14.75, w: 90 }];
 
-  // â”€â”€ Determine position & direction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  let posX, posY, posZ, dirX, dirZ;
-  let flyPoints = null;
-  let appPoints = null;
-  let progressRatio = null;
-  let timeToLanding = null;
-  let aircraftState = 10; // default: parked at stand
-  let flightDirection = 0; // 0=departure, 1=arrival
-  let dynState = 0; // 0=idle
-  let fstrref = '$fstrref:"flight-plan:' + reg + '"';
+  // ─── Determine position & direction ─────────────────────────────
+  var posX, posY, posZ, dirX, dirZ;
+  var flyPoints = null;
+  var appPoints = null;
+  var progressRatio = null;
+  var timeToLanding = null;
+  var aircraftState = 10; // default: parked at stand
+  var flightDirection = 0; // 0=departure, 1=arrival
+  var dynState = 0; // 0=idle
 
   if (isDeparture) {
-    // DEP at stand (no jetway)
     aircraftState = 10;
     flightDirection = 0;
     dynState = 0;
-    let standPos = null;
+    var standPos = null;
     if (stand && fullText) {
       try {
         const { _parseStandPositions } = require('./scenery');
-        const positions = _parseStandPositions(fullText, true);
-        // Normalize stand ID: pad single-digit to two-digit format, also try raw
-        const standId = String(parseInt(stand, 10));
+        var positions = _parseStandPositions(fullText, true);
+        var standId = String(parseInt(stand, 10));
         standPos = positions[standId] || positions[stand] || positions[stand.padStart(2, '0')];
       } catch (_) {
         log('  stand position lookup failed for ' + stand + ': ' + _.message);
@@ -3075,10 +3376,10 @@ function _buildStandaloneAircraftEntry(opts) {
     if (standPos) {
       posX = standPos.x; posY = 0; posZ = standPos.y;
       if (standPos.heading != null) {
-        const hdgRad = standPos.heading * (Math.PI / 180);
+        var hdgRad = standPos.heading * (Math.PI / 180);
         dirX = Math.sin(hdgRad); dirZ = Math.cos(hdgRad);
       } else {
-        dirX = 0.422497481; dirZ = 0.906364143; // default
+        dirX = 0.422497481; dirZ = 0.906364143;
       }
     } else {
       throw new Error(
@@ -3088,116 +3389,67 @@ function _buildStandaloneAircraftEntry(opts) {
       );
     }
   } else {
-    // ARR in air â€” compute position from approach path
-    aircraftState = 30; // default State=30 (approach)
-    flightDirection = 1; // arrival
-    dynState = 1; // moving
+    aircraftState = 30;
+    flightDirection = 1;
+    dynState = 1;
 
-    // Trace: log entry into ARR position computation
     log('  [ac-pos] ' + reg + ': ARR pos start — star=' + JSON.stringify(star) +
       ' runway=' + JSON.stringify(runway) + ' saveSec=' + saveSec +
       ' LandingTime=' + JSON.stringify(flight.LandingTime) +
       ' hasApproachCache=' + !!approachCache + ' hasFullText=' + !!fullText);
-    if (!star) log('  [ac-pos] ' + reg + ': FAIL — star null/empty, Airway=' + JSON.stringify(flight.Airway));
-    if (!runway) log('  [ac-pos] ' + reg + ': FAIL — runway null/empty, Runway=' + JSON.stringify(flight.Runway));
+    if (!star) log('  [ac-pos] ' + reg + ': FAIL — star null/empty');
+    if (!runway) log('  [ac-pos] ' + reg + ': FAIL — runway null/empty');
     if (!approachCache) log('  [ac-pos] ' + reg + ': FAIL — approachCache null/undefined');
     if (!fullText) log('  [ac-pos] ' + reg + ': FAIL — fullText null/empty');
     if (saveSec == null) log('  [ac-pos] ' + reg + ': FAIL — saveSec null/undefined');
 
     if (star && runway && approachCache && fullText && saveSec != null) {
-      const appKey = star + '|' + runway;
+      var appKey = star + '|' + runway;
       appPoints = approachCache.appPointMap
         ? approachCache.appPointMap.get(appKey) : null;
-      const totalApproachTime = approachCache.totalApproachTimes
+      var totalApproachTime = approachCache.totalApproachTimes
         ? approachCache.totalApproachTimes.get(star) : null;
 
-      log('  [ac-pos] ' + reg + ': appKey=' + appKey +
-        ' appPoints=' + (appPoints ? appPoints.length + 'pts' : 'null') +
-        ' totalApproachTime=' + totalApproachTime +
-        ' appPointMapKeys=' + (approachCache.appPointMap
-          ? JSON.stringify([...approachCache.appPointMap.keys()].slice(0, 20)) : 'null') +
-        ' tatKeys=' + (approachCache.totalApproachTimes
-          ? JSON.stringify([...approachCache.totalApproachTimes.keys()]) : 'null'));
-      if (!appPoints) log('  [ac-pos] ' + reg + ': FAIL — no AppPointList for key "' + appKey + '"');
-      if (!totalApproachTime) log('  [ac-pos] ' + reg + ': FAIL — no totalApproachTime for star "' + star + '"');
-
       if (appPoints && totalApproachTime) {
-        const landingSec = _timeStrToSeconds(flight.LandingTime);
+        var landingSec = _timeStrToSeconds(flight.LandingTime);
         timeToLanding = landingSec - saveSec;
 
-        log('  [ac-pos] ' + reg + ': landingSec=' + landingSec +
-          ' timeToLanding=' + timeToLanding +
-          ' GRACE_TTL=' + GRACE_TTL +
-          ' check=' + (timeToLanding >= GRACE_TTL));
-        if (timeToLanding < GRACE_TTL) {
-          log('  [ac-pos] ' + reg + ': FAIL — landed ' + (-timeToLanding) +
-            's ago, beyond GRACE_TTL=' + GRACE_TTL + 's');
-        }
-
         if (timeToLanding >= GRACE_TTL) {
-          const clampedTTL = Math.max(timeToLanding, APPROACH_MIN_TTL);
+          var clampedTTL = Math.max(timeToLanding, APPROACH_MIN_TTL);
           progressRatio = 1.0 - (clampedTTL / totalApproachTime);
 
-          log('  [ac-pos] ' + reg + ': clampedTTL=' + clampedTTL +
-            ' APPROACH_MIN_TTL=' + APPROACH_MIN_TTL +
-            ' progressRatio=' + progressRatio.toFixed(4) +
-            ' totalApproachTime=' + totalApproachTime);
-          if (progressRatio <= 0.0) {
-            log('  [ac-pos] ' + reg + ': FAIL — progressRatio=' + progressRatio.toFixed(4) +
-              ' <= 0, not started approach');
-          }
-
           if (progressRatio > 0.0) {
-            // Resolve FlyApproach points
-            flyPoints = null;
             try {
               flyPoints = resolveFlyApproachPoints(fullText, star, runway);
-              log('  [ac-pos] ' + reg + ': resolveFlyApproachPoints returned ' +
-                (flyPoints ? flyPoints.length + 'pts' : 'null'));
             } catch (flyErr) {
               log('  [ac-pos] ' + reg + ': resolveFlyApproachPoints threw: ' +
                 (flyErr.message || flyErr));
             }
-            if (!flyPoints || flyPoints.length === 0) {
-              log('  [ac-pos] ' + reg + ': no flyPoints, using AppPointList-only fallback');
-            }
 
-            // Determine State=30 vs State=5 via IAF boundary
-            const tdPos = approachCache.runwayThresholds
+            var tdPos = approachCache.runwayThresholds
               ? approachCache.runwayThresholds[runway] : null;
-            const airportScale = approachCache.airportScale || 100;
-            const approachCap = computeApproachCap(airportScale);
+            var airportScale = approachCache.airportScale || 100;
+            var approachCap = computeApproachCap(airportScale);
 
             if (flyPoints && flyPoints.length > 0) {
-              const flyLen = computePathLength(flyPoints);
-              const appLen = computePathLength(appPoints);
-              const combined = [...flyPoints, ...appPoints];
-              const totalLen = computePathLength(combined);
-              const rawTargetDist = (1.0 - timeToLanding / totalApproachTime) * totalLen;
-              log('  [ac-pos] ' + reg + ': flyLen=' + flyLen.toFixed(1) +
-                ' appLen=' + appLen.toFixed(1) + ' totalLen=' + totalLen.toFixed(1) +
-                ' rawTargetDist=' + rawTargetDist.toFixed(1) +
-                ' pastIAF=' + (rawTargetDist >= flyLen));
+              var flyLen = computePathLength(flyPoints);
+              var appLen = computePathLength(appPoints);
+              var combined = flyPoints.concat(appPoints);
+              var totalLen = computePathLength(combined);
+              var rawTargetDist = (1.0 - timeToLanding / totalApproachTime) * totalLen;
+              if (rawTargetDist >= flyLen) { aircraftState = 5; dynState = 2; }
 
-              if (rawTargetDist >= flyLen) {
-                // State=5: past IAF, on Tower frequency
-                aircraftState = 5;
-                dynState = 2;
-              }
-
-              // Compute position & direction along concatenated path
-              const posResult = computePosition(flyPoints, appPoints, progressRatio, tdPos, approachCap);
-              const dirResult = computeDirection(flyPoints, appPoints, progressRatio, tdPos);
+              var posResult = computePosition(flyPoints, appPoints, progressRatio, tdPos, approachCap);
+              var dirResult = computeDirection(flyPoints, appPoints, progressRatio, tdPos);
               posX = posResult.x; posY = posResult.y; posZ = posResult.z;
               dirX = dirResult.x; dirZ = dirResult.z;
               log('  inline aircraft ' + reg + ': State=' + aircraftState + ' PR=' + progressRatio.toFixed(3) +
                   ' pos=(' + posX.toFixed(1) + ',' + posY.toFixed(1) + ',' + posZ.toFixed(1) + ')');
             } else {
-              // No flyPoints â€” use AppPointList only
-              const posResult = computePosition([], appPoints, progressRatio, null, approachCap);
-              const dirResult = computeDirection([], appPoints, progressRatio, null);
-              posX = posResult.x; posY = posResult.y; posZ = posResult.z;
-              dirX = dirResult.x; dirZ = dirResult.z;
+              var posResult2 = computePosition([], appPoints, progressRatio, null, approachCap);
+              var dirResult2 = computeDirection([], appPoints, progressRatio, null);
+              posX = posResult2.x; posY = posResult2.y; posZ = posResult2.z;
+              dirX = dirResult2.x; dirZ = dirResult2.z;
             }
           }
         }
@@ -3213,226 +3465,130 @@ function _buildStandaloneAircraftEntry(opts) {
     }
   }
 
-  // â”€â”€ Build sub-fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // DockingPositions array
-  const dockLines = [];
-  for (let i = 0; i < dockPoses.length; i++) {
-    const p = dockPoses[i];
-    if (i > 0) dockLines.push(',');
-    dockLines.push('{ "$type": ' + T.vec4 + ', ' + p.x + ', ' + p.y + ', ' + p.z + ', ' + p.w + ' }');
-  }
-  const dockStr = '{"$id": ' + id(5) + ',"$type": ' + T.vec4Arr + ',"$rlength": ' + dockPoses.length + ',"$rcontent": [' + dockLines.join('') + ']}';
+  // ─── Build structured Aircraft object ──────────────────────────────
 
-  // Shared empty string[] for RunwayCoordinator $iref
-  const emptyArrId = id(10);
-  const emptyArrStr = '{"$id": ' + emptyArrId + ',"$type": ' + T.strArr + ',"$rlength": 0,"$rcontent": []}';
+  // DockingPositions: Vector4[]
+  var dockContent = dockPoses.map(function(p) {
+    return { $type: T.vec4, __v: [p.x, p.y, p.z, p.w] };
+  });
 
-  // Flight plan time fields
-  const isDep = isDeparture;
-  const arrRunway = isDep ? 'null' : '"' + (runway || '') + '"';
-  const arrStand = isDep ? 'null' : '"' + (stand || '') + '"';
-  const arrTicksVal = isDep ? '0' : _computeArrivalInBlockTicks(flight.LandingTime, flight.InBlockTime, baseDateTicks, icao);
-  const depRunwayVal = isDep ? '"' + (runway || '') + '"' : 'null';
-  const depStandVal = isDep ? '"' + (stand || '') + '"' : 'null';
-  const depTicksVal = isDep ? _computeTakeoffTicks(flight.TakeoffTime, flight.OffBlockTime, baseDateTicks, icao) : '0';
+  // Shared empty string[] — declared once, $iref'd by RunwayCoordinator fields
+  var emptyArrId = id(10);
+  var emptyArr = { $id: emptyArrId, $type: T.strArr, $rcontent: [] };
 
-  // _receivedEvents / _waitingForCommands
-  let recvEventsBlock, waitingCmdsBlock;
-  if (recvEventsCache && recvEventsCache.canonicalId !== null) {
-    recvEventsBlock = '"_receivedEvents": {"$id": ' + id(26) + ',"$type": ' + T.rpEvtArr + ',$iref:' + recvEventsCache.canonicalId + '},';
-  } else {
-    const evtArrId = id(27);
-    if (recvEventsCache && recvEventsCache.canonicalId === null) recvEventsCache.canonicalId = evtArrId;
-    recvEventsBlock = '"_receivedEvents": {"$id": ' + id(26) + ',"$type": ' + T.rpEvtArr + ',{"$id": ' + evtArrId + ',"$type": ' + T.evtArr + ',"$rlength": 0,"$rcontent": []}},';
-  }
-  if (waitingCmdsCache && waitingCmdsCache.canonicalId !== null) {
-    waitingCmdsBlock = '"_waitingForCommands": {"$id": ' + id(24) + ',"$type": ' + T.rpCmdArr + ',$iref:' + waitingCmdsCache.canonicalId + '},';
-  } else {
-    const cmdArrId = id(25);
-    if (waitingCmdsCache && waitingCmdsCache.canonicalId === null) waitingCmdsCache.canonicalId = cmdArrId;
-    waitingCmdsBlock = '"_waitingForCommands": {"$id": ' + id(24) + ',"$type": ' + T.rpCmdArr + ',{"$id": ' + cmdArrId + ',"$type": ' + T.cmdArr + ',"$rlength": 0,"$rcontent": []}},';
+  // ReactiveProperty<string[]> helper
+  function rpStrArr(idVal, content) {
+    return { $id: idVal, $type: T.rpStrArr, __v: [content] };
   }
 
-  // Build DynamicsParams (FlyApproachDynamicsParams for State=30 arrivals)
-  let dynParamsBlock = 'null';
+  // FlyApproachDynamicsParams (only for State=30 ARR with flyPoints)
+  var dynParams = null;
   if (aircraftState === 30 && flyPoints && flyPoints.length > 0 && progressRatio != null) {
-    const fmtPts = (pts) => pts.map((p, i) =>
-      (i === 0 ? '' : ',') + '{"$type": ' + T.vec3 + ', ' + p.x + ', 0, ' + p.z + '}'
-    ).join('');
-
-    const fpBlock = '{"$id": ' + id(31) + ',"$type": ' + LIST_VEC3_TYPE + ',"$rlength": ' + flyPoints.length + ',"$rcontent": [' + fmtPts(flyPoints) + ']}';
-    const apStr = appPoints && appPoints.length > 0
-      ? '{"$id": ' + id(32) + ',"$type": ' + LIST_VEC3_TYPE + ',"$rlength": ' + appPoints.length + ',"$rcontent": [' + fmtPts(appPoints) + ']}'
-      : '{"$rlength": 0,"$rcontent": []}';
-
-    dynParamsBlock = '{"$id": ' + id(30) + ',"$type": ' + DYN_PARAMS_TYPE +
-      ',"ProgressRatio": ' + progressRatio +
-      ',"FlyApproachPathPointList": ' + fpBlock +
-      ',"AppPointList": ' + apStr + '}';
+    function toVec3Arr(pts) {
+      return pts.map(function(p) { return { $type: T.vec3, __v: [p.x, 0, p.z] }; });
+    }
+    dynParams = {
+      $id: id(30),
+      $type: DYN_PARAMS_TYPE,
+      ProgressRatio: progressRatio,
+      FlyApproachPathPointList: { $id: id(31), $type: LIST_VEC3_TYPE, $rcontent: toVec3Arr(flyPoints) },
+      AppPointList: appPoints && appPoints.length > 0
+        ? { $id: id(32), $type: LIST_VEC3_TYPE, $rcontent: toVec3Arr(appPoints) }
+        : { $rcontent: [] },
+    };
   }
 
-  const entryText = [
-    '                        {',
-    '                            "$k": "aircraft:' + reg + '",',
-    '                            "$v": {',
-    '                                "$id": ' + entryId + ',',
-    '                                "$type": ' + T.ac + ',',
-    '                                "Specification": {',
-    '                                    "$id": ' + id(4) + ',',
-    '                                    "$type": ' + T.spec + ',',
-    '                                    "Designator": "' + designatorVal + '",',
-    '                                    "AerodromeCode": 67,',
-    '                                    "WakeTurbulenceCategory": ' + wakeCat + ',',
-    '                                    "WheelBase": ' + wheelBase + ',',
-    '                                    "ModelOffset": {',
-    '                                        "$type": ' + T.float3 + ',',
-    '                                        ' + mo.x + ',',
-    '                                        ' + mo.y + ',',
-    '                                        ' + mo.z,
-    '                                    },',
-    '                                    "WingSpan": ' + wingSpan + ',',
-    '                                    "DockingPositions": ' + dockStr + ',',
-    '                                    "RunwayVRSpeed": ' + runwayVR + ',',
-    '                                    "RunwayTakeOffLength": ' + runwayTO,
-    '                                },',
-    '                                "DynamicsData": {',
-    '                                    "$id": ' + id(6) + ',',
-    '                                    "$type": ' + T.dyn + ',',
-    '                                    "DynamicsState": {',
-    '                                        "$id": ' + id(7) + ',',
-    '                                        "$type": ' + T.dynSt + ',',
-    '                                        ' + dynState,
-    '                                    },',
-    '                                    "TaxiSpeed": ' + TAXI_SPEED + ',',
-    '                                    "ForwardSpeed": true,',
-    '                                    "TargetTaxiSpeed": ' + TAXI_SPEED + ',',
-    '                                    "PositiveTaxiAcceleration": ' + POSITIVE_TAXI_ACCEL + ',',
-    '                                    "NegativeTaxiAcceleration": ' + NEGATIVE_TAXI_ACCEL + ',',
-    '                                    "DynamicsTargetTaxiSpeed": 0,',
-    '                                    "DynamicsPositiveTaxiAcceleration": ' + POSITIVE_TAXI_ACCEL + ',',
-    '                                    "DynamicsNegativeTaxiAcceleration": ' + NEGATIVE_TAXI_ACCEL + ',',
-    '                                    "PushbackStopRequested": false,',
-    '                                    "TaxiArrivalToSpotPath": null,',
-    '                                    "TaxiArrivalToHoldingPointPath": null,',
-    '                                    "FrontWheelSteeringAngle": 0,',
-    '                                    "DynamicsParams": ' + dynParamsBlock,
-    '                                },',
-    '                                "AircraftRunwayCoordinator": {',
-    '                                    "$id": ' + id(8) + ',',
-    '                                    "$type": ' + T.coord + ',',
-    '                                    "TaxiPathUnPassedIntersectionRunwayNames": {',
-    '                                        "$id": ' + id(9) + ',',
-    '                                        "$type": ' + T.rpStrArr + ',',
-    '                                        ' + emptyArrStr,
-    '                                    },',
-    '                                    "TaxiBlockingRunwayNames": {',
-    '                                        "$id": ' + id(11) + ',',
-    '                                        "$type": ' + T.rpStrArr + ',',
-    '                                        $iref:' + emptyArrId,
-    '                                    },',
-    '                                    "RunwayFenceCurrentEnterRunways": {',
-    '                                        "$id": ' + id(12) + ',',
-    '                                        "$type": ' + T.rpStrArr + ',',
-    '                                        $iref:' + emptyArrId,
-    '                                    },',
-    '                                    "RunwayGuardCurrentEnterRunway": {',
-    '                                        "$id": ' + id(13) + ',',
-    '                                        "$type": ' + T.rpStrArr + ',',
-    '                                        $iref:' + emptyArrId,
-    '                                    },',
-    '                                    "CrossRunwayPermissions": {',
-    '                                        "$id": ' + id(14) + ',',
-    '                                        "$type": ' + T.rpStrArr + ',',
-    '                                        $iref:' + emptyArrId,
-    '                                    },',
-    '                                    "HoldShortAcknowledgedRunwayNames": {',
-    '                                        "$id": ' + id(15) + ',',
-    '                                        "$type": ' + T.rpStrArr + ',',
-    '                                        $iref:' + emptyArrId,
-    '                                    },',
-    '                                    "RunwaySetter": 0',
-    '                                },',
-    '                                "TaxiPathStartingPosition": {',
-    '                                    "$type": ' + T.vec3 + ',',
-    '                                    0,',
-    '                                    0,',
-    '                                    0',
-    '                                },',
-    '                                "RollingPresetTaxiPathStartingPosition": {',
-    '                                    "$type": ' + T.vec3 + ',',
-    '                                    0,',
-    '                                    0,',
-    '                                    0',
-    '                                },',
-    '                                "SelectedRunwayEntryIndex": -1,',
-    '                                "SelectedRunwayExitIndex": -1,',
-    '                                "_flightPlan": $iref:' + fpId + ',',
-    '                                "_state": {',
-    '                                    "$id": ' + id(17) + ',',
-    '                                    "$type": ' + T.rpState + ',',
-    '                                    ' + aircraftState,
-    '                                },',
-    '                                "_flightDirection": {',
-    '                                    "$id": ' + id(18) + ',',
-    '                                    "$type": ' + T.rpDir + ',',
-    '                                    ' + flightDirection,
-    '                                },',
-    '                                "_radioChannel": {',
-    '                                    "$id": ' + id(19) + ',',
-    '                                    "$type": ' + T.rpChan + ',',
-    radioChannelId != null ? '                                    $iref:' + radioChannelId : '                                    null',
-    '                                },',
-    '                                "_jurisdictionRadioChannel": {',
-    '                                    "$id": ' + id(20) + ',',
-    '                                    "$type": ' + T.rpChan + ',',
-    '                                    null',
-    '                                },',
-    '                                "_taxiPath": {',
-    '                                    "$id": ' + id(21) + ',',
-    '                                    "$type": ' + T.rpPath + ',',
-    '                                    null',
-    '                                },',
-    '                                "_rollingPresetTaxiPath": {',
-    '                                    "$id": ' + id(22) + ',',
-    '                                    "$type": ' + T.rpPath + ',',
-    '                                    null',
-    '                                },',
-    '                                "_selectedRunwayEntryRunway": null,',
-    '                                "_route": {',
-    '                                    "$id": ' + id(23) + ',',
-    '                                    "$type": ' + T.rpStr + ',',
-    '                                    "' + star + '",',
-    '                                },',
-    '                                ' + waitingCmdsBlock,
-    '                                ' + recvEventsBlock,
-    '                                "_position": {',
-    '                                    "$id": ' + id(28) + ',',
-    '                                    "$type": ' + T.rpVec3 + ',',
-    '                                    {',
-    '                                        "$type": ' + T.vec3 + ',',
-    '                                        ' + posX + ',',
-    '                                        ' + posY + ',',
-    '                                        ' + posZ,
-    '                                    }',
-    '                                },',
-    '                                "_direction": {',
-    '                                    "$id": ' + id(29) + ',',
-    '                                    "$type": ' + T.rpVec3 + ',',
-    '                                    {',
-    '                                        "$type": ' + T.vec3 + ',',
-    '                                        ' + dirX + ',',
-    '                                        0,',
-    '                                        ' + dirZ,
-    '                                    }',
-    '                                },',
-    '                                "SelectedPushbackLimitPosition": null,',
-    '                                "SelectedTowPosition": null,',
-    '                                "_isFirstTaxi": false',
-    '                            }',
-    '                        }',
-  ].join('\n');
+  var entry = {
+    $k: 'aircraft:' + reg,
+    $v: {
+      $id: entryId,
+      $type: T.ac,
+      Specification: {
+        $id: id(4),
+        $type: T.spec,
+        Designator: designatorVal,
+        AerodromeCode: 67,
+        WakeTurbulenceCategory: wakeCat,
+        WheelBase: wheelBase,
+        ModelOffset: { $type: T.float3, __v: [mo.x, mo.y, mo.z] },
+        WingSpan: wingSpan,
+        DockingPositions: { $id: id(5), $type: T.vec4Arr, $rcontent: dockContent },
+        RunwayVRSpeed: runwayVR,
+        RunwayTakeOffLength: runwayTO,
+      },
+      DynamicsData: {
+        $id: id(6),
+        $type: T.dyn,
+        DynamicsState: { $id: id(7), $type: T.dynSt, __v: [dynState] },
+        TaxiSpeed: TAXI_SPEED,
+        ForwardSpeed: true,
+        TargetTaxiSpeed: TAXI_SPEED,
+        PositiveTaxiAcceleration: POSITIVE_TAXI_ACCEL,
+        NegativeTaxiAcceleration: NEGATIVE_TAXI_ACCEL,
+        DynamicsTargetTaxiSpeed: 0,
+        DynamicsPositiveTaxiAcceleration: POSITIVE_TAXI_ACCEL,
+        DynamicsNegativeTaxiAcceleration: NEGATIVE_TAXI_ACCEL,
+        PushbackStopRequested: false,
+        TaxiArrivalToSpotPath: null,
+        TaxiArrivalToHoldingPointPath: null,
+        FrontWheelSteeringAngle: 0,
+        DynamicsParams: dynParams,
+      },
+      AircraftRunwayCoordinator: {
+        $id: id(8),
+        $type: T.coord,
+        TaxiPathUnPassedIntersectionRunwayNames: rpStrArr(id(9), emptyArr),
+        TaxiBlockingRunwayNames: rpStrArr(id(11), { __iref: emptyArrId }),
+        RunwayFenceCurrentEnterRunways: rpStrArr(id(12), { __iref: emptyArrId }),
+        RunwayGuardCurrentEnterRunway: rpStrArr(id(13), { __iref: emptyArrId }),
+        CrossRunwayPermissions: rpStrArr(id(14), { __iref: emptyArrId }),
+        HoldShortAcknowledgedRunwayNames: rpStrArr(id(15), { __iref: emptyArrId }),
+        RunwaySetter: 0,
+      },
+      TaxiPathStartingPosition: { $type: T.vec3, __v: [0, 0, 0] },
+      RollingPresetTaxiPathStartingPosition: { $type: T.vec3, __v: [0, 0, 0] },
+      SelectedRunwayEntryIndex: -1,
+      SelectedRunwayExitIndex: -1,
+      _flightPlan: { __iref: fpId },
+      _state: { $id: id(17), $type: T.rpState, __v: [aircraftState] },
+      _flightDirection: { $id: id(18), $type: T.rpDir, __v: [flightDirection] },
+      _radioChannel: {
+        $id: id(19),
+        $type: T.rpChan,
+        __v: radioChannelId != null ? [{ __iref: radioChannelId }] : [null],
+      },
+      _jurisdictionRadioChannel: { $id: id(20), $type: T.rpChan, __v: [null] },
+      _taxiPath: { $id: id(21), $type: T.rpPath, __v: [null] },
+      _rollingPresetTaxiPath: { $id: id(22), $type: T.rpPath, __v: [null] },
+      _selectedRunwayEntryRunway: null,
+      _route: { $id: id(23), $type: T.rpStr, __v: [star] },
+      _waitingForCommands: {
+        $id: id(24),
+        $type: T.rpCmdArr,
+        __v: [{ $id: id(25), $type: T.cmdArr, $rcontent: [] }],
+      },
+      _receivedEvents: {
+        $id: id(26),
+        $type: T.rpEvtArr,
+        __v: [{ $id: id(27), $type: T.evtArr, $rcontent: [] }],
+      },
+      _position: {
+        $id: id(28),
+        $type: T.rpVec3,
+        __v: [{ $type: T.vec3, __v: [posX, posY, posZ] }],
+      },
+      _direction: {
+        $id: id(29),
+        $type: T.rpVec3,
+        __v: [{ $type: T.vec3, __v: [dirX, 0, dirZ] }],
+      },
+      SelectedPushbackLimitPosition: null,
+      SelectedTowPosition: null,
+      _isFirstTaxi: false,
+    },
+  };
 
-  return { entryText, nextId: id(dynParamsBlock !== 'null' ? 33 : 30) };
+  return { entry: entry, nextId: id(dynParams ? 33 : 30) };
 }
 
 /**
@@ -3732,42 +3888,28 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                                "$type": ' + T.rpStr + ',',
     '                                                "' + star + '"',
     '                                            },',
-    (waitingCmdsCache && waitingCmdsCache.canonicalId !== null
-                                            ? '                                            "_waitingForCommands": {\n' +
-                                            '                                                "$id": ' + id(24) + ',\n' +
-                                            '                                                "$type": ' + T.rpCmdArr + ',\n' +
-                                            '                                                $iref:' + waitingCmdsCache.canonicalId + '\n' +
-                                            '                                            },'
-                                            : ((waitingCmdsCache ? waitingCmdsCache.canonicalId = id(25) : null),
-                                            '                                            "_waitingForCommands": {\n' +
-                                            '                                                "$id": ' + id(24) + ',\n' +
-                                            '                                                "$type": ' + T.rpCmdArr + ',\n' +
-                                            '                                                {\n' +
-                                            '                                                    "$id": ' + id(25) + ',\n' +
-                                            '                                                    "$type": ' + T.cmdArr + ',\n' +
-                                            '                                                    "$rlength": 0,\n' +
-                                            '                                                    "$rcontent": [\n' +
-                                            '                                                    ]\n' +
-                                            '                                                }\n' +
-                                            '                                            },')),
-    (recvEventsCache && recvEventsCache.canonicalId !== null
-                                            ? '                                            "_receivedEvents": {\n' +
-                                            '                                                "$id": ' + id(26) + ',\n' +
-                                            '                                                "$type": ' + T.rpEvtArr + ',\n' +
-                                            '                                                $iref:' + recvEventsCache.canonicalId + '\n' +
-                                            '                                            },'
-                                            : ((recvEventsCache ? recvEventsCache.canonicalId = id(27) : null),
-                                            '                                            "_receivedEvents": {\n' +
-                                            '                                                "$id": ' + id(26) + ',\n' +
-                                            '                                                "$type": ' + T.rpEvtArr + ',\n' +
-                                            '                                                {\n' +
-                                            '                                                    "$id": ' + id(27) + ',\n' +
-                                            '                                                    "$type": ' + T.evtArr + ',\n' +
-                                            '                                                    "$rlength": 0,\n' +
-                                            '                                                    "$rcontent": [\n' +
-                                            '                                                    ]\n' +
-                                            '                                                }\n' +
-                                            '                                            },')),
+    '                                            "_waitingForCommands": {\n' +
+    '                                                "$id": ' + id(24) + ',\n' +
+    '                                                "$type": ' + T.rpCmdArr + ',\n' +
+    '                                                {\n' +
+    '                                                    "$id": ' + id(25) + ',\n' +
+    '                                                    "$type": ' + T.cmdArr + ',\n' +
+    '                                                    "$rlength": 0,\n' +
+    '                                                    "$rcontent": [\n' +
+    '                                                    ]\n' +
+    '                                                }\n' +
+    '                                            },',
+    '                                            "_receivedEvents": {\n' +
+    '                                                "$id": ' + id(26) + ',\n' +
+    '                                                "$type": ' + T.rpEvtArr + ',\n' +
+    '                                                {\n' +
+    '                                                    "$id": ' + id(27) + ',\n' +
+    '                                                    "$type": ' + T.evtArr + ',\n' +
+    '                                                    "$rlength": 0,\n' +
+    '                                                    "$rcontent": [\n' +
+    '                                                    ]\n' +
+    '                                                }\n' +
+    '                                            },',
     '                                            "_position": {',
     '                                                "$id": ' + id(28) + ',',
     '                                                "$type": ' + T.rpVec3 + ',',
@@ -4714,9 +4856,13 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
 
       if (fpFirstStart < 0) {
         fpFirstStart = pos;
-        // Capture the $type from the first flight-plan entry (varies per file)
-        const typeMatch = entryBlock.match(/"\$type":\s*("[^"]*"|\d+)/);
-        if (typeMatch) fpTypeStr = '"$type": ' + typeMatch[1];
+        // Capture the $type from the first flight-plan entry (varies per file).
+        // ONLY accept the full expanded form "N|TypeName".  A bare "$type": N
+        // would not self-register in the blobdoc scope, causing "unknown type id N"
+        // during binary encoding.  The default fpTypeStr (line 4800) is already
+        // the correct expanded form using the per-file typeMap lookup.
+        const typeMatch = entryBlock.match(/"\$type":\s*"(\d+)\|([^"]+)"/);
+        if (typeMatch) fpTypeStr = '"$type": "' + typeMatch[1] + '|' + typeMatch[2] + '"';
       }
       fpLastEnd = entryEnd;
       // Skip commas after flight-plan entries
