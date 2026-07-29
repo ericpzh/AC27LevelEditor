@@ -2176,27 +2176,36 @@ function buildApproachAircraftBlock(opts) {
   const guid = _generateGuid();
   let id = nextId;
 
-  // Use namespace-qualified $type strings to bypass the game's integer type registry.
-  // This ensures all types resolve correctly regardless of $id continuity.
+  // Use namespace-qualified $type strings. Every typeNum is REQUIRED — no fallback numbers.
+  // The caller (flight_plans.js) resolves all types from the per-file type map.
   const tn = opts.typeNums || {};
-  const ns = (num, name, asm = 'GroundATC.Core') => `"${num}|${name}, ${asm}"`;
+  const resolve = (key, fullName, asm = 'GroundATC.Core') => {
+    const id = tn[key];
+    if (id == null) {
+      throw new Error(
+        `[APPROACH] buildApproachAircraftBlock: missing typeNum "${key}" = "${fullName}, ${asm}".\n` +
+        `  Provided keys: ${Object.keys(tn).join(', ') || '(none)'}`
+      );
+    }
+    return `"${id}|${fullName}, ${asm}"`;
+  };
   const T = {
-    ac:      ns(tn.acType      || opts.acTypeNum || 33, 'ContextCross.States.AircraftState'),
-    spec:    ns(tn.spec        || 34, 'ContextCross.States.AircraftSpecificationState'),
-    dyn:     ns(tn.dynInternal || 38, 'ContextCross.Dynamics.DynamicInternalState'),
-    dynParams: ns(tn.dynParams || 47, 'ContextCross.Dynamics.States.FlyApproachDynamicsParams'),
-    acRwy:   ns(tn.acRwy       || 42, 'ContextCross.States.AircraftRunwayCoordinateState'),
-    float3:  ns(tn.float3      || 35, 'Unity.Mathematics.float3', 'Unity.Mathematics'),
-    vec4:    ns(tn.vec4        || 37, 'UnityEngine.Vector4', 'UnityEngine.CoreModule'),
-    dockArr: ns(tn.vec4Arr     || 36, 'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
-    waitCmd: ns(tn.waitCmd     || 43, 'ContextCross.Enums.ECommand[]'),
-    recvEvt: ns(tn.recvEvt     || 44, 'ContextCross.Events.AircraftEvent[]'),
+    ac:      resolve('acType',           'ContextCross.States.AircraftState'),
+    spec:    resolve('spec',             'ContextCross.States.AircraftSpecificationState'),
+    dyn:     resolve('dynInternal',      'ContextCross.Dynamics.DynamicInternalState'),
+    dynParams: resolve('dynParams',        'ContextCross.Dynamics.States.FlyApproachDynamicsParams'),
+    acRwy:   resolve('acRwy',            'ContextCross.States.AircraftRunwayCoordinateState'),
+    float3:  resolve('float3',           'Unity.Mathematics.float3', 'Unity.Mathematics'),
+    vec4:    resolve('vec4',             'UnityEngine.Vector4', 'UnityEngine.CoreModule'),
+    dockArr: resolve('vec4Arr',          'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
+    waitCmd: resolve('waitCmd',          'ContextCross.Enums.ECommand[]'),
+    recvEvt: resolve('recvEvt',          'ContextCross.Events.AircraftEvent[]'),
   };
 
   // Format helpers — use namespace-qualified types everywhere.
   // BCL types (Vector3=16, String[]=8) are stable across Unity versions and safe as-is.
   const nsVec3 = '"16|UnityEngine.Vector3, UnityEngine.CoreModule"';
-  const nsListVec3 = `"${tn.listVec3 || 46}|System.Collections.Generic.List\`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib"`;
+  const nsListVec3 = `"${resolve('listVec3', 'System.Collections.Generic.List\`1[[UnityEngine.Vector3, UnityEngine.CoreModule]]', 'mscorlib')}"`;
   const nsStrArr = '"8|System.String[], mscorlib"';
 
   const fmtV3 = (v) => `{\n  "$type": ${nsVec3},\n  ${v.x},\n  0,\n  ${v.z}\n}`;
@@ -2233,8 +2242,6 @@ function buildApproachAircraftBlock(opts) {
   // Position and Direction
   const pos = computePosition(flyPoints, appPoints, progressRatio, touchDownPosition, approachCap);
   const dir = computeDirection(flyPoints, appPoints, progressRatio, touchDownPosition);
-
-  const _coordEmptyStrArrId = id++;
 
   const block = `{
     "$id": ${id++},
@@ -2282,11 +2289,11 @@ function buildApproachAircraftBlock(opts) {
       "$type": ${T.acRwy},
       "Guid": null,
       "Enabled": false,
-      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${_coordEmptyStrArrId}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "TaxiBlockingRunwayNames": $iref:${_coordEmptyStrArrId},
-      "RunwayFenceCurrentEnterRunways": $iref:${_coordEmptyStrArrId},
-      "RunwayGuardCurrentEnterRunways": $iref:${_coordEmptyStrArrId},
-      "CrossRunwayPermissions": $iref:${_coordEmptyStrArrId},
+      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "TaxiBlockingRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "RunwayFenceCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "RunwayGuardCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "CrossRunwayPermissions": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
       "RunwaySetterIdx": 0
     },
     "FlightPlanGuid": "${flightPlanGuid}",
@@ -2369,24 +2376,33 @@ function buildState5AircraftBlock(opts) {
   const guid = _generateGuid();
   let id = nextId;
 
-  // Use namespace-qualified $type strings to bypass the game's integer type registry.
+  // Use namespace-qualified $type strings. Every typeNum is REQUIRED — no fallback numbers.
   const tn = opts.typeNums || {};
-  const ns = (num, name, asm = 'GroundATC.Core') => `"${num}|${name}, ${asm}"`;
+  const resolve = (key, fullName, asm = 'GroundATC.Core') => {
+    const id = tn[key];
+    if (id == null) {
+      throw new Error(
+        `[APPROACH] buildState5AircraftBlock: missing typeNum "${key}" = "${fullName}, ${asm}".\n` +
+        `  Provided keys: ${Object.keys(tn).join(', ') || '(none)'}`
+      );
+    }
+    return `"${id}|${fullName}, ${asm}"`;
+  };
   const T = {
-    ac:          ns(tn.acType            || opts.acTypeNum || 33, 'ContextCross.States.AircraftState'),
-    spec:        ns(tn.spec              || 34, 'ContextCross.States.AircraftSpecificationState'),
-    dyn:         ns(tn.dynInternal       || 38, 'ContextCross.Dynamics.DynamicInternalState'),
-    approachDyn: ns(tn.approachDynParams || 47, 'ContextCross.Dynamics.States.ApproachDynamicsParams'),
-    acRwy:       ns(tn.acRwy             || 42, 'ContextCross.States.AircraftRunwayCoordinateState'),
-    float3:      ns(tn.float3            || 35, 'Unity.Mathematics.float3', 'Unity.Mathematics'),
-    vec4:        ns(tn.vec4              || 37, 'UnityEngine.Vector4', 'UnityEngine.CoreModule'),
-    dockArr:     ns(tn.vec4Arr           || 36, 'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
-    waitCmd:     ns(tn.waitCmd           || 43, 'ContextCross.Enums.ECommand[]'),
-    recvEvt:     ns(tn.recvEvt           || 44, 'ContextCross.Events.AircraftEvent[]'),
+    ac:          resolve('acType',            'ContextCross.States.AircraftState'),
+    spec:        resolve('spec',              'ContextCross.States.AircraftSpecificationState'),
+    dyn:         resolve('dynInternal',       'ContextCross.Dynamics.DynamicInternalState'),
+    approachDyn: resolve('approachDynParams', 'ContextCross.Dynamics.States.ApproachDynamicsParams'),
+    acRwy:       resolve('acRwy',             'ContextCross.States.AircraftRunwayCoordinateState'),
+    float3:      resolve('float3',            'Unity.Mathematics.float3', 'Unity.Mathematics'),
+    vec4:        resolve('vec4',              'UnityEngine.Vector4', 'UnityEngine.CoreModule'),
+    dockArr:     resolve('vec4Arr',           'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
+    waitCmd:     resolve('waitCmd',           'ContextCross.Enums.ECommand[]'),
+    recvEvt:     resolve('recvEvt',           'ContextCross.Events.AircraftEvent[]'),
   };
 
   const nsVec3 = '"16|UnityEngine.Vector3, UnityEngine.CoreModule"';
-  const nsListVec3 = `"${tn.listVec3 || 46}|System.Collections.Generic.List\`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib"`;
+  const nsListVec3 = `"${resolve('listVec3', 'System.Collections.Generic.List\`1[[UnityEngine.Vector3, UnityEngine.CoreModule]]', 'mscorlib')}"`;
   const nsStrArr = '"8|System.String[], mscorlib"';
 
   const fmtV3 = (v) => `{\n  "$type": ${nsVec3},\n  ${v.x},\n  0,\n  ${v.z}\n}`;
@@ -2464,8 +2480,6 @@ function buildState5AircraftBlock(opts) {
   // follows the approach path through turns before that (e.g., SIE.CAMRM5→13L).
   const dir = _tangentAlongPath(posFullPath, targetDist);
 
-  const _coordEmptyStrArrId = id++;
-
   const block = `{
     "$id": ${id++},
     "$type": ${T.ac},
@@ -2520,11 +2534,11 @@ function buildState5AircraftBlock(opts) {
       "$type": ${T.acRwy},
       "Guid": null,
       "Enabled": false,
-      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${_coordEmptyStrArrId}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
-      "TaxiBlockingRunwayNames": $iref:${_coordEmptyStrArrId},
-      "RunwayFenceCurrentEnterRunways": $iref:${_coordEmptyStrArrId},
-      "RunwayGuardCurrentEnterRunways": $iref:${_coordEmptyStrArrId},
-      "CrossRunwayPermissions": $iref:${_coordEmptyStrArrId},
+      "TaxiPathUnPassedIntersectionRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "TaxiBlockingRunwayNames": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "RunwayFenceCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "RunwayGuardCurrentEnterRunways": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
+      "CrossRunwayPermissions": { "$id": ${id++}, "$type": ${nsStrArr}, "$rlength": 0, "$rcontent": [] },
       "RunwaySetterIdx": 0
     },
     "FlightPlanGuid": "${flightPlanGuid}",
@@ -2826,6 +2840,21 @@ function extractTypeMap(aclText) {
     }
   }
   return typeMap;
+}
+
+/**
+ * Invert a Map<id, name> to a Map<name, id> (exact type name → type number).
+ * First declaration wins (consistent with extractTypeMap's policy).
+ * Exported so flight_plans.js and dynamics.js can use it for cache lookups.
+ * @param {Map<number, string>} typeMap
+ * @returns {Map<string, number>}
+ */
+function buildTypeNameIndex(typeMap) {
+  const idx = new Map();
+  for (const [id, name] of typeMap) {
+    if (!idx.has(name)) idx.set(name, id);
+  }
+  return idx;
 }
 
 // ─── 9c. STAR Path Visualization Data ──────────────────────────────
@@ -3199,9 +3228,16 @@ function buildApproachCache(airportDir, progressCallback) {
   // Clean up _file property from entries
   for (const e of allEntries) delete e._file;
 
+  // Build name→id indexes (reverse of id→name typeMap/fileTypeMaps)
+  const typeNameIndex = buildTypeNameIndex(typeMap);
+  const fileTypeNameIndexes = new Map();
+  for (const [fn, ftm] of fileTypeMaps) {
+    fileTypeNameIndexes.set(fn, buildTypeNameIndex(ftm));
+  }
+
   return {
     specDB, appPointMap, totalApproachTimes, designatorMap,
-    saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap,
+    saveTimeOffsets, typeMap, typeNameIndex, fileTypeMaps, fileTypeNameIndexes, state5ParamsMap,
     starPaths, runwayThresholds, airportScale,
     starRunwayMap: starMappings.starRunwayMap,
     runwayStarMap: starMappings.runwayStarMap,
@@ -3216,11 +3252,20 @@ function buildApproachCache(airportDir, progressCallback) {
 // ─── 9b. AircraftAnimators Block Builder ──────────────────────────
 
 function buildAnimatorBlock(aircraftGuid, opts) {
-  const { nextId = 80000, acTypeNum = 33, typeNums = null } = opts || {};
+  const { nextId = 80000, typeNums = null } = opts || {};
   const tn = typeNums || {};
-  const ns = (num, name) => `"${num}|${name}, GroundATC.Core"`;
-  const animType = ns(tn.animState || 51, 'ContextCross.States.AircraftAnimatorState');
-  const stateType = ns(tn.animSubState || 52, 'ContextCross.States.AircraftAnimState');
+  const resolve = (key, fullName) => {
+    const id = tn[key];
+    if (id == null) {
+      throw new Error(
+        `[APPROACH] buildAnimatorBlock: missing typeNum "${key}" = "${fullName}, GroundATC.Core".\n` +
+        `  Provided keys: ${Object.keys(tn).join(', ') || '(none)'}`
+      );
+    }
+    return `"${id}|${fullName}, GroundATC.Core"`;
+  };
+  const animType = resolve('animState', 'ContextCross.States.AircraftAnimatorState');
+  const stateType = resolve('animSubState', 'ContextCross.States.AircraftAnimState');
   let id = nextId;
 
   const block = `{
@@ -3430,6 +3475,7 @@ module.exports = {
   // Designator mapping & cache
   buildDesignatorMapping,
   buildApproachCache,
+  buildTypeNameIndex,
   buildStarPaths,
   extractStarRunwayMappings,
   extractSaveTime,

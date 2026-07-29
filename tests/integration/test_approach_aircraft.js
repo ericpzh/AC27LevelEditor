@@ -52,7 +52,7 @@ const PROD_FILES = [
 
 // Import approach module directly (avoid parser.js ESM import issues in test context)
 const {
-  extractSpecificationDB, extractApproachData,
+  extractSpecificationDB, extractApproachData, extractTypeMap,
   buildAppPointMap, computeApproachTimesFromScenery,
   resolveFlyApproachPoints,
   computeProgressRatio, computePosition, computeDirection,
@@ -336,6 +336,26 @@ if (firstFile) {
     const sample = approachEntries[0];
     const spec = specDB.get(sample.designator);
     if (spec) {
+      // Resolve type numbers from the file's own type declarations
+      const typeMap = extractTypeMap(firstFile.text);
+      const _tn = (search) => { for (const [num, name] of typeMap) { if (name.includes(search)) return num; } return null; };
+      const typeNums = {
+        acType:           _tn('ContextCross.States.AircraftState,'),
+        spec:             _tn('ContextCross.States.AircraftSpecificationState,'),
+        dynInternal:      _tn('ContextCross.Dynamics.DynamicInternalState,'),
+        dynParams:        _tn('ContextCross.Dynamics.States.FlyApproachDynamicsParams,'),
+        acRwy:            _tn('ContextCross.States.AircraftRunwayCoordinateState,'),
+        float3:           _tn('Unity.Mathematics.float3,'),
+        vec4:             _tn('UnityEngine.Vector4,'),
+        vec4Arr:          _tn('UnityEngine.Vector4[],'),
+        waitCmd:          _tn('ContextCross.Enums.ECommand[],'),
+        recvEvt:          _tn('ContextCross.Events.AircraftEvent[],'),
+        listVec3:         _tn('List`1[[UnityEngine.Vector3,'),
+      };
+      const missing = Object.entries(typeNums).filter(([,v]) => v == null).map(([k]) => k);
+      if (missing.length > 0) {
+        console.log('  SKIP — missing typeNums: ' + missing.join(', ') + ' (file may not have approach aircraft)');
+      } else {
       const result = buildApproachAircraftBlock({
         flightPlanGuid: sample.flightPlanGuid || 'test-guid-0000-000000000000',
         route: sample.route,
@@ -344,6 +364,7 @@ if (firstFile) {
         progressRatio: sample.progressRatio,
         spec: spec,
         radioChannelGuid: sample.radioChannelGuid || '',
+        typeNums: typeNums,
       });
 
       assert(result && result.guid && result.block, 'buildApproachAircraftBlock returns guid and block');
@@ -356,6 +377,7 @@ if (firstFile) {
 
       console.log(`  Assembly test: ✓ valid block produced (${result.block.length} chars)`);
       console.log(`  ${result.block.substring(0, 200)}...`);
+    } // close typeNums else
     } else {
       console.log('  Assembly test: SKIP — no spec found for designator ' + sample.designator);
     }

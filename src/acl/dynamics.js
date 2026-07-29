@@ -36,8 +36,27 @@ function captureAllDynamicsTemplates(gameRoot) {
             if (ad.star && ad.runway) {
               const key = ad.star + '|' + ad.runway;
               if (!templates[key]) {
-                let dType = 52;
-                if (ac.vBlock.includes('FlyApproachDynamicsParams')) dType = 53;
+                // Resolve type IDs from the file's own type declarations — no hardcoded numbers.
+                const { extractTypeMap, buildTypeNameIndex } = require('./approach');
+                const fileTypeMap = extractTypeMap(text);
+                const nameToId = buildTypeNameIndex(fileTypeMap);
+                const approachId = nameToId.get('ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core');
+                const flyApproachId = nameToId.get('ContextCross.Dynamics.States.FlyApproachDynamicsParams, GroundATC.Core');
+                if (approachId == null && flyApproachId == null) {
+                  throw new Error(
+                    `[DYNAMICS] Neither DynamicsParams type found in file typeMap.\n` +
+                    `  File: ${aclFile.path}\n  Available: ${[...nameToId.entries()].filter(e => e[0].includes('Dynamics')).map(e => `${e[0]}→${e[1]}`).join(', ')}`
+                  );
+                }
+                let dType = approachId;
+                if (ac.vBlock.includes('FlyApproachDynamicsParams')) {
+                  dType = flyApproachId;
+                  if (dType == null) throw new Error(
+                    `[DYNAMICS] vBlock has FlyApproachDynamicsParams but type not in file typeMap.\n` +
+                    `  File: ${aclFile.path}\n  Available: ${[...nameToId.entries()].filter(e => e[0].includes('Dynamics')).map(e => `${e[0]}→${e[1]}`).join(', ')}`
+                  );
+                }
+                if (dType == null) dType = approachId;
                 templates[key] = { type: dType, vBlock: ac.vBlock };
                 log('  NEW [' + airport.icao + '] "' + key + '" type=' + dType);
               }
@@ -55,7 +74,7 @@ function captureAllDynamicsTemplates(gameRoot) {
 
 // ─── Build ───────────────────────────────────────────────────────
 
-function buildAircraftEntry(template, progressRatio, flightPlanGuid) {
+function buildAircraftEntry(template, progressRatio, flightPlanGuid, typeCache) {
   const newGuid = _generateGuid();
 
   // Clone template $v block with new UUIDs
@@ -71,10 +90,19 @@ function buildAircraftEntry(template, progressRatio, flightPlanGuid) {
   // Simple: replace "$id": NNNN, with "$id": NNNN+100000,
   vText = vText.replace(/"\$id"\s*:\s*(\d+)/g, (m, n) => `"$id": ${parseInt(n, 10) + ID_OFFSET_DYNAMICS}`);
 
-  // Force DynamicsParams $type to ApproachDynamicsParams (50)
+  // Force DynamicsParams $type to ApproachDynamicsParams (resolved from typeCache — no hardcoded IDs)
+  var approachDynId = (typeCache && typeCache.get
+    ? typeCache.get('ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core')
+    : null);
+  if (approachDynId == null) {
+    throw new Error(
+      '[DYNAMICS] buildAircraftEntry: ApproachDynamicsParams not in typeCache.\n' +
+      '  Cache size: ' + (typeCache ? typeCache.size : 0)
+    );
+  }
   vText = vText.replace(
     /"\$type"\s*:\s*"[^"]*ContextCross\.Dynamics\.States\.[^"]*"/g,
-    '"$type": "50|ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core"'
+    '"$type": "' + approachDynId + '|ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core"'
   );
 
   // Update ProgressRatio
