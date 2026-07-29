@@ -2353,7 +2353,7 @@ function _validateStandConflicts(flights) {
   }
 }
 
-function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao, fpIdByReg) {
+function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao, fpIdByReg, standPositions) {
   // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
   const t = createTokenizer(segmentText);
   const reSec = t.findSection('RuntimeEntities');
@@ -2525,7 +2525,7 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
       exhaustedFlights.add(flightReg);
 
       // ---- Active jetway: rebuild DockingAircraft with flight data ----
-      const built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg);
+      const built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions);
       if (built.text !== info.entryText) resetCount++;
       segments.push(built.text);
       activeJetways.push({
@@ -3522,13 +3522,24 @@ function _buildStandaloneAircraftEntry(opts) {
       }
     }
     if (standPos) {
-      posX = standPos.x; posY = 0; posZ = standPos.y;
-      if (standPos.heading != null) {
-        var hdgRad = standPos.heading * (Math.PI / 180);
-        dirX = Math.sin(hdgRad); dirZ = Math.cos(hdgRad);
+      // Direction: normalize(NosePosition - TailPosition) = tail→nose unit vector.
+      // Compute directly from nose/tail — the cached heading uses a different
+      // convention (atan2(-dz, dx)) that does not match the game engine.
+      var sdx = standPos.noseX - standPos.tailX;
+      var sdz = standPos.noseZ - standPos.tailZ;
+      var slen = Math.sqrt(sdx * sdx + sdz * sdz);
+      if (slen > 0.0001) {
+        dirX = sdx / slen;
+        dirZ = sdz / slen;
       } else {
-        dirX = 0.422497481; dirZ = 0.906364143;
+        dirX = 0; dirZ = 1;
       }
+      // Position: offset from nose by WheelBase backward along direction.
+      // Game engine formula: position = NosePosition - WheelBase * direction.
+      var wb = spec?.WheelBase ?? 0;
+      posX = standPos.noseX - wb * dirX;
+      posY = 0;
+      posZ = standPos.noseZ - wb * dirZ;
     } else {
       log('  [ac-pos] ' + reg + ': SKIP � stand position not found' +
         ' stand=' + JSON.stringify(stand) +
@@ -3796,7 +3807,7 @@ function _buildStandaloneAircraftEntry(opts) {
  * Mirrors the empty-case pattern (hardcoded template with string substitution)
  * but includes the ~35-field Aircraft structure inside DockingAircraft.
  */
-function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg) {
+function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions) {
   const entryId = info.entryId;
   const id = (offset) => entryId + offset;
 
@@ -3846,6 +3857,27 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
       '[APPROACH] Missing DockingPositions for aircraft type "' + (acType || 'unknown') +
       '" — type not found in approach cache specDB.'
     );
+  }
+
+  // --- Compute position & direction from stand nose/tail -------------
+  // Game engine formula: position = NosePosition - WheelBase * direction
+  //                     direction = normalize(NosePosition - TailPosition)
+  var jwPosX = 0, jwPosY = 0, jwPosZ = 0, jwDirX = 0, jwDirZ = 1;
+  if (stand && standPositions) {
+    var jwStandId = String(parseInt(stand, 10));
+    var jwStandPos = standPositions[jwStandId] || standPositions[stand] || standPositions[stand.padStart(2, '0')];
+    if (jwStandPos) {
+      var jwSdx = jwStandPos.noseX - jwStandPos.tailX;
+      var jwSdz = jwStandPos.noseZ - jwStandPos.tailZ;
+      var jwSlen = Math.sqrt(jwSdx * jwSdx + jwSdz * jwSdz);
+      if (jwSlen > 0.0001) {
+        jwDirX = jwSdx / jwSlen;
+        jwDirZ = jwSdz / jwSlen;
+      }
+      var jwWb = spec?.WheelBase ?? 0;
+      jwPosX = jwStandPos.noseX - jwWb * jwDirX;
+      jwPosZ = jwStandPos.noseZ - jwWb * jwDirZ;
+    }
   }
 
   // Fully-qualified type strings — no dependency on segment type declarations.
@@ -4141,9 +4173,9 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                                "$type": ' + T.rpVec3 + ',',
     '                                                {',
     '                                                    "$type": ' + T.vec3 + ',',
-    '                                                    -5.728619,',
+    '                                                    ' + jwPosX + ',',
     '                                                    0,',
-    '                                                    -12.5395947',
+    '                                                    ' + jwPosZ,
     '                                                }',
     '                                            },',
     '                                            "_direction": {',
@@ -4151,9 +4183,9 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                                "$type": ' + T.rpVec3 + ',',
     '                                                {',
     '                                                    "$type": ' + T.vec3 + ',',
-    '                                                    0.422497481,',
+    '                                                    ' + jwDirX + ',',
     '                                                    0,',
-    '                                                    0.906364143',
+    '                                                    ' + jwDirZ,
     '                                                }',
     '                                            },',
     '                                            "SelectedPushbackLimitPosition": null,',
@@ -5403,8 +5435,20 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     }
     let totalJwReset = 0;
     const segActiveJetways = []; // per-segment [{ stand, reg, aircraftId }]
+
+    // Parse stand positions once for all jetway entry rebuilds.
+    // _rebuildJetwayEntries needs nose/tail positions to compute aircraft
+    // parking positions (NosePosition - WheelBase * direction).
+    var v4StandPositions = null;
+    try {
+      const { _parseStandPositions } = require('./scenery');
+      v4StandPositions = _parseStandPositions(text, true);
+    } catch (_) {
+      log('  stand position parse for jetway rebuild failed: ' + _.message);
+    }
+
     for (let fi = 0; fi < frameDocs.length; fi++) {
-      const result = _rebuildJetwayEntries(frameDocs[fi], flights, validRegs, approachCache, log, segIdMappers[fi], bdt, icao, segFpIdByReg[fi]);
+      const result = _rebuildJetwayEntries(frameDocs[fi], flights, validRegs, approachCache, log, segIdMappers[fi], bdt, icao, segFpIdByReg[fi], v4StandPositions);
       segActiveJetways[fi] = result.activeJetways;
       if (result.resetCount > 0) {
         frameDocs[fi] = result.text;
