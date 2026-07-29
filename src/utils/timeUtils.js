@@ -53,6 +53,20 @@ export function timeToSeconds(timeStr) {
   const parts = String(timeStr).split(':');
   return (parseInt(parts[0], 10) || 0) * 3600 + (parseInt(parts[1], 10) || 0) * 60 + (parseInt(parts[2], 10) || 0);
 }
+/**
+ * Round seconds-since-midnight to an integer minute value,
+ * with control over rounding direction.
+ *
+ * @param {number} secSinceMidnight — seconds since midnight (0–86400)
+ * @param {boolean} [roundUp=false] — ceil to next minute if true, floor if false
+ * @returns {number} minute of day (0–1439), wrapped at midnight
+ */
+export function roundSecondsToMinute(secSinceMidnight, roundUp = false) {
+  const totalMinutes = roundUp
+    ? Math.ceil(secSinceMidnight / 60)
+    : Math.floor(secSinceMidnight / 60);
+  return ((totalMinutes % 1440) + 1440) % 1440;
+}
 export function minutesToTimeStr(minutes) {
   const h = Math.floor(minutes / 60) % 24;
   const m = minutes % 60;

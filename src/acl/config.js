@@ -23,13 +23,18 @@ function resolveConfigTime(rawText) {
   // Lazy requires to avoid circular dependency (config.js ↔ flight_plans.js/parser.js ↔ utils.js)
   const { _extractConfig } = require('./flight_plans');
   const { extractCurrentDateTime } = require('./parser');
+  const { roundSecondsToMinute, minutesToTimeStr } = require('../utils/timeUtils');
   const config = _extractConfig(rawText);
   if (config) {
     try {
       const cdt = extractCurrentDateTime(rawText);
       if (cdt && cdt.timeString) {
-        console.log('[resolveConfigTime] OVERRIDE startTime: ' + config.startTime + ' -> ' + cdt.timeString);
-        config.startTime = cdt.timeString;
+        // Round UP to next minute for start time (ceil), so the scenario window
+        // begins at or after the actual save time, not before.
+        const startMin = roundSecondsToMinute(cdt.secSinceMidnight, true);
+        const roundedStartTime = minutesToTimeStr(startMin);
+        console.log('[resolveConfigTime] OVERRIDE startTime: ' + config.startTime + ' -> ' + roundedStartTime + ' (ceil-rounded from CDT=' + cdt.timeString + ')');
+        config.startTime = roundedStartTime;
       } else {
         console.log('[resolveConfigTime] NO CDT (cdt=' + JSON.stringify(cdt) + '), keeping: ' + config.startTime);
       }

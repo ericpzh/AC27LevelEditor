@@ -2353,7 +2353,7 @@ function _validateStandConflicts(flights) {
   }
 }
 
-function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao) {
+function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao, fpIdByReg) {
   // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
   const t = createTokenizer(segmentText);
   const reSec = t.findSection('RuntimeEntities');
@@ -2525,7 +2525,7 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
       exhaustedFlights.add(flightReg);
 
       // ---- Active jetway: rebuild DockingAircraft with flight data ----
-      const built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache);
+      const built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg);
       if (built.text !== info.entryText) resetCount++;
       segments.push(built.text);
       activeJetways.push({
@@ -2877,7 +2877,7 @@ function _reorderIrefEntries(descriptors, log, externalIds) {
   return result;
 }
 
-function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, validRegs, segTypeMap, log, idMapper, icao, approachCache, fullText, saveSec, activeJetways) {
+function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, validRegs, segTypeMap, log, idMapper, icao, approachCache, fullText, saveSec, activeJetways, precomputedFpIdByReg) {
   // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
   const t = createTokenizer(segmentText);
   const reSec = t.findSection('RuntimeEntities');
@@ -3035,7 +3035,16 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 
   // --- PASS 2: Build new flight-plan:REG entries --------------------------------
   const allFpEntries = [];
-  const fpIdByReg = new Map(); // reg ? fpId (for PASS 3 $iref linking)
+  // Use pre-computed fpIdByReg from caller if available, otherwise build locally
+  const fpIdByReg = precomputedFpIdByReg || new Map(); // reg ? fpId (for PASS 3 $iref linking)
+  const usePrecomputedIds = !!precomputedFpIdByReg;
+  // When using precomputed IDs, advance nextId past the highest flight-plan $id
+  // so PASS 3 aircraft entry IDs don't collide with flight-plan entry IDs.
+  if (usePrecomputedIds) {
+    for (const fid of fpIdByReg.values()) {
+      if (fid >= nextId) nextId = fid + 1;
+    }
+  }
 
   for (const [reg, fl] of regFlights) {
     if (!validRegs.has(reg)) continue;
@@ -3048,46 +3057,118 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
     const depStand = isDep ? (fl.Stand || null) : null;
     const depTicksStr = isDep ? String(_computeTakeoffTicks(fl.TakeoffTime, fl.OffBlockTime, baseDateTicks, icao)) : '0';
 
-    const fpId = nextId++;
-    fpIdByReg.set(reg, fpId);
+    // Use pre-computed fpId if available, otherwise assign sequentially and
+    // register the local assignment so PASS 3 can still find it via fpIdByReg.
+    const fpId = usePrecomputedIds ? fpIdByReg.get(reg) : nextId++;
+    if (!usePrecomputedIds) fpIdByReg.set(reg, fpId);
     if (idMapper && oldIdMap.has(reg)) {
       idMapper.map(oldIdMap.get(reg), fpId);
     }
 
     allFpEntries.push({
       $k: 'flight-plan:' + reg,
-      $v: {
-        $id: fpId,
-        $type: fpTypeFull,
-        StaticItem: { __fstrref: 'flight-plan:' + reg },
-        _arrivalInBlockTime: {
-          $type: dtTypeFull,
-          __v: [arrTicksStr],
-        },
-        _arrivalActualInBlockTime: {
-          $type: dtTypeFull,
-          __v: ['0'],
-        },
-        _arrivalRunway: arrRunway,
-        _arrivalStand: arrStand,
-        _departureTakeoffTime: {
-          $type: dtTypeFull,
-          __v: [depTicksStr],
-        },
-        _departureRunway: depRunway,
-        _departureStand: depStand,
-      },
+      // When a jetway already hosts the Aircraft with an inline _flightPlan
+      // (defined at an earlier position in $rcontent), make this entry thin
+      // so it $iref's back to the canonical flight-plan in the jetway.
+      // Otherwise, keep the full inline object as the canonical source.
+      $v: regToJetwayAcId.has(reg)
+        ? { __iref: fpId }
+        : {
+            $id: fpId,
+            $type: fpTypeFull,
+            StaticItem: { __fstrref: 'flight-plan:' + reg },
+            _arrivalInBlockTime: {
+              $type: dtTypeFull,
+              __v: [arrTicksStr],
+            },
+            _arrivalActualInBlockTime: {
+              $type: dtTypeFull,
+              __v: ['0'],
+            },
+            _arrivalRunway: arrRunway,
+            _arrivalStand: arrStand,
+            _departureTakeoffTime: {
+              $type: dtTypeFull,
+              __v: [depTicksStr],
+            },
+            _departureRunway: depRunway,
+            _departureStand: depStand,
+          },
     });
   }
 
-  // --- Scan kept entries for radio-channel $id --------------------------
+  // --- Resolve radio-channel Type from StaticItems ----------------------
   // The game's aircraft entries $iref to a shared radio-channel entry.
-  // Radio-channel entries are already partitioned into keptRadio.
-  let radioChannelId = null;
+  // keptRadio entries are keyed like "radio-channel:118.55" but the Type
+  // (2=GND, 3=TWR, 5=APP) lives in StaticItems.  Parse StaticItems to
+  // build a key→Type map, then match keptRadio by key to find the correct
+  // $id for tower (Type 3) and approach (Type 5).
+  const radioChannelTypeMap = new Map();
+  if (fullText) {
+    const siT = createTokenizer(fullText);
+    const siSdSec = siT.findSection('StaticData');
+    if (siSdSec) {
+      const siSdText = siT.substring(siSdSec.valueStart, siSdSec.valueEnd);
+      const siSdT = createTokenizer(siSdText);
+      const siBdSec = siSdT.findSection('$blobdoc');
+      if (siBdSec) {
+        const siBdText = siSdT.substring(siBdSec.valueStart, siBdSec.valueEnd);
+        const siBdT = createTokenizer(siBdText);
+        const siSiSec = siBdT.findSection('StaticItems');
+        if (siSiSec) {
+          const siSiText = siBdT.substring(siSiSec.valueStart, siSiSec.valueEnd);
+          const siSiT = createTokenizer(siSiText);
+          const siRcSec = siSiT.findSection('$rcontent');
+          if (siRcSec) {
+            const siRcStart = siRcSec.valueStart;
+            if (siSiText[siRcStart] === '[') {
+              const siRcEnd = siSiT.findArrayEnd(siRcStart);
+              if (siRcEnd !== null) {
+                const siArr = siSiText.substring(siRcStart, siRcEnd);
+                const kRe = /"\$k"\s*:\s*"([^"]+)"/g;
+                let km;
+                while ((km = kRe.exec(siArr)) !== null) {
+                  const rck = km[1];
+                  if (!rck.startsWith('radio-channel:')) continue;
+                  // Find $v block and extract Type
+                  const vIdx = siArr.indexOf('"$v"', km.index);
+                  if (vIdx < 0) continue;
+                  const colonIdx = siArr.indexOf(':', vIdx);
+                  if (colonIdx < 0) continue;
+                  let vStart = colonIdx + 1;
+                  while (vStart < siArr.length && ' \t\n\r'.includes(siArr[vStart])) vStart++;
+                  if (vStart >= siArr.length || siArr[vStart] !== '{') continue;
+                  const siArrT = createTokenizer(siArr);
+                  const vEnd = siArrT.findObjectEnd(vStart);
+                  if (vEnd === null) continue;
+                  const vBlock = siArr.substring(vStart, vEnd);
+                  const vT = createTokenizer(vBlock);
+                  const typeSec = vT.findSection('Type');
+                  if (typeSec) {
+                    const typeVal = parseInt(vBlock.substring(typeSec.valueStart, typeSec.valueEnd), 10);
+                    if (!isNaN(typeVal)) radioChannelTypeMap.set(rck, typeVal);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // --- Match keptRadio entries by key against StaticItems type map ------
+  let towerChannelId = null;   // Type 3
+  let apprChannelId = null;    // Type 5
   for (var _rci = 0; _rci < keptRadio.length; _rci++) {
     var _rct = keptRadio[_rci].text;
+    var _rck = keptRadio[_rci].key;
     const idMatch = _rct.match(/"\$id"\s*:\s*(\d+)/);
-    if (idMatch) { radioChannelId = parseInt(idMatch[1], 10); break; }
+    if (!idMatch) continue;
+    const rcId = parseInt(idMatch[1], 10);
+    const rcType = radioChannelTypeMap.get(_rck);
+    if (rcType === 3) towerChannelId = rcId;
+    if (rcType === 5) apprChannelId = rcId;
   }
 
   // --- PASS 3 & 4 combined: Build aircraft:REG + aircraft-animator:aircraft:REG ---
@@ -3166,11 +3247,13 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
       ' hasApproachCache=' + !!approachCache + ' hasFullText=' + !!fullText);
     const result = _buildStandaloneAircraftEntry({
       reg, flight: fl, entryId: acEntryId,
-      radioChannelId,
+      towerChannelId,
+      apprChannelId,
       isDeparture: isDep,
       approachCache, fullText, saveSec, icao, baseDateTicks,
       segTypeMap,
       log,
+      fpId: fpIdByReg.get(reg),
     });
     if (!result) {
       log('  [ac-call] ' + reg + ': skipped (not on approach or already landed)');
@@ -3320,18 +3403,10 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
  * @returns {{ entry: object, nextId: number }}
  */
 function _buildStandaloneAircraftEntry(opts) {
-  const { reg, flight, entryId, radioChannelId, isDeparture, approachCache, fullText, saveSec,
-    icao, baseDateTicks, segTypeMap, log } = opts;
+  const { reg, flight, entryId, towerChannelId, apprChannelId, isDeparture, approachCache, fullText, saveSec,
+    icao, baseDateTicks, segTypeMap, log, fpId } = opts;
 
   const id = (offset) => entryId + offset;
-
-  // Compute flight data for inline FlightPlan (matching former Pass 2 logic)
-  const arrRunway = isDeparture ? null : (flight.Runway || null);
-  const arrStand = isDeparture ? null : (flight.Stand || null);
-  const arrTicksStr = isDeparture ? '0' : String(_computeArrivalInBlockTicks(flight.LandingTime, flight.InBlockTime, baseDateTicks, icao));
-  const depRunway = isDeparture ? (flight.Runway || null) : null;
-  const depStand = isDeparture ? (flight.Stand || null) : null;
-  const depTicksStr = isDeparture ? String(_computeTakeoffTicks(flight.TakeoffTime, flight.OffBlockTime, baseDateTicks, icao)) : '0';
 
   const runway = flight.Runway || '';
   const stand = flight.Stand || '';
@@ -3413,7 +3488,13 @@ function _buildStandaloneAircraftEntry(opts) {
   var runwayVR = spec?.RunwayVRSpeed ?? 140;
   var runwayTO = spec?.RunwayTakeOffLength ?? 2000;
   var mo = spec?.ModelOffset ?? { x: 0, y: 0, z: 0 };
-  var dockPoses = spec?.DockingPositions ?? [{ x: -1.742, y: 2.68, z: 14.75, w: 90 }];
+  var dockPoses = spec?.DockingPositions;
+  if (!dockPoses || !dockPoses.length) {
+    throw new Error(
+      '[APPROACH] Missing DockingPositions for aircraft type "' + (acType || 'unknown') +
+      '" — type not found in approach cache specDB.'
+    );
+  }
 
   // --- Determine position & direction -----------------------------
   var posX, posY, posZ, dirX, dirZ;
@@ -3530,6 +3611,13 @@ function _buildStandaloneAircraftEntry(opts) {
       return null;
     }
   }
+
+  // --- Resolve radio channel based on aircraft state -------------------
+  // State=5 (past IAF) → Tower (Type 3); State=30 (before IAF) → Approach (Type 5)
+  var channelId = null;
+  if (aircraftState === 5)  channelId = towerChannelId;
+  if (aircraftState === 30) channelId = apprChannelId;
+  // State=10 (DEP parked) stays null
 
   // --- State=5 approach procedure params -----------------------------
   // State=5 aircraft need PathPointList + TouchDownPosition + ApproachDirection +
@@ -3656,35 +3744,19 @@ function _buildStandaloneAircraftEntry(opts) {
       RollingPresetTaxiPathStartingPosition: { $type: T.vec3, __v: [0, 0, 0] },
       SelectedRunwayEntryIndex: -1,
       SelectedRunwayExitIndex: -1,
-      _flightPlan: {
-        $id: id(16),
-        $type: T.fp,
-        StaticItem: { __fstrref: 'flight-plan:' + reg },
-        _arrivalInBlockTime: {
-          $type: T.dt,
-          __v: [arrTicksStr],
-        },
-        _arrivalActualInBlockTime: {
-          $type: T.dt,
-          __v: ['0'],
-        },
-        _arrivalRunway: arrRunway,
-        _arrivalStand: arrStand,
-        _departureTakeoffTime: {
-          $type: T.dt,
-          __v: [depTicksStr],
-        },
-        _departureRunway: depRunway,
-        _departureStand: depStand,
-      },
+      _flightPlan: { __iref: fpId },
       _state: { $id: id(17), $type: T.rpState, __v: [aircraftState] },
       _flightDirection: { $id: id(18), $type: T.rpDir, __v: [flightDirection] },
       _radioChannel: {
         $id: id(19),
         $type: T.rpChan,
-        __v: radioChannelId != null ? [{ __iref: radioChannelId }] : [null],
+        __v: channelId != null ? [{ __iref: channelId }] : [null],
       },
-      _jurisdictionRadioChannel: { $id: id(20), $type: T.rpChan, __v: [null] },
+      _jurisdictionRadioChannel: {
+        $id: id(20),
+        $type: T.rpChan,
+        __v: channelId != null ? [{ __iref: channelId }] : [null],
+      },
       _taxiPath: { $id: id(21), $type: T.rpPath, __v: [null] },
       _rollingPresetTaxiPath: { $id: id(22), $type: T.rpPath, __v: [null] },
       _selectedRunwayEntryRunway: null,
@@ -3692,7 +3764,7 @@ function _buildStandaloneAircraftEntry(opts) {
       _waitingForCommands: {
         $id: id(24),
         $type: T.rpCmdArr,
-        __v: [{ $id: id(25), $type: T.cmdArr, $rcontent: [] }],
+        __v: [{ $id: id(25), $type: T.cmdArr, $rcontent: aircraftState === 5 ? [CMD_CONTACT_TOWER] : [] }],
       },
       _receivedEvents: {
         $id: id(26),
@@ -3724,7 +3796,7 @@ function _buildStandaloneAircraftEntry(opts) {
  * Mirrors the empty-case pattern (hardcoded template with string substitution)
  * but includes the ~35-field Aircraft structure inside DockingAircraft.
  */
-function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache) {
+function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg) {
   const entryId = info.entryId;
   const id = (offset) => entryId + offset;
 
@@ -3738,6 +3810,7 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     baseDateTicks,
     icao
   );
+  const fpId = fpIdByReg ? fpIdByReg.get(reg) : null;
   const fstrref = '$fstrref:"flight-plan:' + reg + '"';
 
   // Resolve aircraft spec from approachCache, falling back to original entry
@@ -3767,7 +3840,13 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   const runwayVR = spec?.RunwayVRSpeed ?? DEFAULT_RUNWAY_VR_SPEED;
   const runwayTO = spec?.RunwayTakeOffLength ?? DEFAULT_RUNWAY_TAKEOFF_LENGTH;
   const mo = spec?.ModelOffset ?? DEFAULT_MODEL_OFFSET;
-  const dockPoses = spec?.DockingPositions ?? [{ x: -1.742, y: 2.68, z: 14.75, w: 90 }];
+  const dockPoses = spec?.DockingPositions;
+  if (!dockPoses || !dockPoses.length) {
+    throw new Error(
+      '[APPROACH] Missing DockingPositions for aircraft type "' + (acType || 'unknown') +
+      '" — type not found in approach cache specDB.'
+    );
+  }
 
   // Fully-qualified type strings — no dependency on segment type declarations.
   // These match the types used in the game's jetway save-state serialization.
@@ -3979,27 +4058,27 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                            "SelectedRunwayEntryIndex": -1,',
     '                                            "SelectedRunwayExitIndex": -1,',
     '                                            "_flightPlan": {',
-    '                                                "$id": ' + id(16) + ',',
-    '                                                "$type": ' + T.fp + ',',
-    '                                                "StaticItem": ' + fstrref + ',',
-    '                                                "_arrivalInBlockTime": {',
-    '                                                    "$type": ' + T.dt + ',',
-    '                                                    0',
-    '                                                },',
-    '                                                "_arrivalActualInBlockTime": {',
-    '                                                    "$type": ' + T.dt + ',',
-    '                                                    0',
-    '                                                },',
-    '                                                "_arrivalRunway": null,',
-    '                                                "_arrivalStand": null,',
-    '                                                "_departureTakeoffTime": {',
-    '                                                    "$type": ' + T.dt + ',',
-    '                                                    ' + takeoffTicks,
-    '                                                },',
-    '                                                "_departureRunway": "' + runway + '",',
-    '                                                "_departureStand": "' + stand + '"',
-    '                                            },',
-    '                                            "_state": {',
+'                                                "$id": ' + fpId + ',',
+'                                                "$type": ' + T.fp + ',',
+'                                                "StaticItem": ' + fstrref + ',',
+'                                                "_arrivalInBlockTime": {',
+'                                                    "$type": ' + T.dt + ',',
+'                                                    0',
+'                                                },',
+'                                                "_arrivalActualInBlockTime": {',
+'                                                    "$type": ' + T.dt + ',',
+'                                                    0',
+'                                                },',
+'                                                "_arrivalRunway": null,',
+'                                                "_arrivalStand": null,',
+'                                                "_departureTakeoffTime": {',
+'                                                    "$type": ' + T.dt + ',',
+'                                                    ' + takeoffTicks,
+'                                                },',
+'                                                "_departureRunway": "' + runway + '",',
+'                                                "_departureStand": "' + stand + '"',
+'                                            },',
+'                                            "_state": {',
     '                                                "$id": ' + id(17) + ',',
     '                                                "$type": ' + T.rpState + ',',
     '                                                10',
@@ -4094,7 +4173,7 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   ].join('\n');
   return {
     text: entryText,
-    flightPlanId: id(16),
+    flightPlanId: fpId,
     aircraftId: id(3),
     reg: reg,
     isDeparture: true,
@@ -5292,6 +5371,29 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
       }
     }
 
+    // Pre-compute fpIdByReg per segment so both 7b-1 (jetway rebuild) and
+    // 7b-3 (flight runtime entities rebuild) use the same flight-plan $id values.
+    // This must happen after type expansion (so all $id values are visible) and
+    // before jetway rebuild.
+    // Jetway aircraft inline _flightPlan with $id:fpId at the TOP of $rcontent;
+    // flight-plan:REG (MIDDLE) becomes thin $iref:fpId pointing BACK to it;
+    // standalone aircraft (BOTTOM) use _flightPlan: $iref:fpId.
+    // All $iref refs are backward → _reorderIrefEntries preserves hardcoded order.
+    const segFpIdByReg = [];
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      const idRe = /"\$id":\s*(\d+)/g;
+      let maxId = 0;
+      let idMatch;
+      while ((idMatch = idRe.exec(frameDocs[fi])) !== null) {
+        const val = parseInt(idMatch[1], 10);
+        if (val > maxId) maxId = val;
+      }
+      const sortedRegs = [...validRegs].sort();
+      const fpIdByReg = new Map();
+      sortedRegs.forEach(function (reg, i) { fpIdByReg.set(reg, maxId + 1 + i); });
+      segFpIdByReg.push(fpIdByReg);
+    }
+
     // 7b-1. Rebuild jetway entries constructively in ALL segments (header + frames).
     // Each segment has its own $blobdoc with independent $id namespace, so we create
     // one _IdMapper per segment to track old→new $id mappings for $iref remapping.
@@ -5302,7 +5404,7 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     let totalJwReset = 0;
     const segActiveJetways = []; // per-segment [{ stand, reg, aircraftId }]
     for (let fi = 0; fi < frameDocs.length; fi++) {
-      const result = _rebuildJetwayEntries(frameDocs[fi], flights, validRegs, approachCache, log, segIdMappers[fi], bdt, icao);
+      const result = _rebuildJetwayEntries(frameDocs[fi], flights, validRegs, approachCache, log, segIdMappers[fi], bdt, icao, segFpIdByReg[fi]);
       segActiveJetways[fi] = result.activeJetways;
       if (result.resetCount > 0) {
         frameDocs[fi] = result.text;
@@ -5342,7 +5444,8 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
         frameDocs[fi], flights, bdt, validRegs,
         segTypeMaps[fi], log, segIdMappers[fi], icao,
         approachCache, text, saveSec,
-        segActiveJetways[fi]
+        segActiveJetways[fi],
+        segFpIdByReg[fi]
       );
       if (result.added > 0 || result.removed > 0) {
         frameDocs[fi] = result.text;
