@@ -1,6 +1,6 @@
 # AC27 Editor
 
-Cross-platform desktop level editor for **Airport Control 27** `.acl` flight schedule files. Built with **Electron 33 + React 19 + Vite 8 + zustand 5**.
+Cross-platform desktop level editor for **Airport Control 27** `.acl` flight schedule files.
 
 [**👇中文**](#chinese)
 
