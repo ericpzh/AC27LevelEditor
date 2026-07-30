@@ -2691,9 +2691,9 @@ function buildDesignatorMapping(aclText, isV4) {
 
   // ── v4: cross-reference StaticItems and RuntimeEntities ──────────
   if (isV4) {
-    // Step 1: Scan StaticItems for flight-plan entries → (Registration, AircraftType)
-    // Each fp entry looks like: { "$k": "flight-plan:B-1234", "$v": { ..., "Registration": "...", "AircraftType": "..." } }
-    const regToType = new Map(); // Registration → AircraftType
+    // Step 1: Scan StaticItems for flight-plan entries → (Registration, AircraftType, Stand)
+    const regToType = new Map();   // Registration → AircraftType
+    const standToType = new Map(); // Stand (e.g. "it4-38") → AircraftType
     const siIdx = aclText.indexOf('"StaticItems"');
     if (siIdx >= 0) {
       const afterSi = aclText.substring(siIdx);
@@ -2711,10 +2711,14 @@ function buildDesignatorMapping(aclText, isV4) {
               if (depth === 0 && start >= 0) {
                 const block = arr.substring(start, i + 1);
                 const vBlock = _extractValueBlock(block);
-                if (vBlock) {
+                if (vBlock && vBlock[0] === '{') {
                   const reg = _extractString(vBlock, 'Registration', true);
                   const at = _extractString(vBlock, 'AircraftType', true);
                   if (reg && at) regToType.set(reg, at);
+                  const stand = _extractString(vBlock, 'Stand', true);
+                  if (stand && at && !standToType.has(stand)) {
+                    standToType.set(stand, at);
+                  }
                 }
                 start = -1;
               }
@@ -2724,10 +2728,11 @@ function buildDesignatorMapping(aclText, isV4) {
       }
     }
 
-    // Step 2: Scan RuntimeEntities for aircraft entries → (Registration, Designator)
-    // Each aircraft entry: { "$k": "aircraft:B-1234", "$v": { ..., "Specification": { "Designator": "A320" } } }
+    if (regToType.size === 0) return map;
+
+    // Step 2: Scan RuntimeEntities for aircraft and jetway entries → Designator
     const reIdx = aclText.indexOf('"RuntimeEntities"');
-    if (reIdx >= 0 && regToType.size > 0) {
+    if (reIdx >= 0) {
       const afterRe = aclText.substring(reIdx);
       const rcMatch = afterRe.match(/"\$rcontent"\s*:\s*\[/);
       if (rcMatch) {
@@ -2736,24 +2741,51 @@ function buildDesignatorMapping(aclText, isV4) {
         if (endPos) {
           const arr = aclText.substring(absRc, endPos);
           let depth = 0, start = -1;
+
+          // Pass A: aircraft entries with inline $v → Designator
           for (let i = 0; i < arr.length; i++) {
             if (arr[i] === '{') { if (depth === 0) start = i; depth++; }
             else if (arr[i] === '}') {
               depth--;
               if (depth === 0 && start >= 0) {
                 const block = arr.substring(start, i + 1);
-                // Extract $k → registration
                 const kMatch = block.match(/"\$k"\s*:\s*"aircraft:([^"]+)"/);
                 if (kMatch) {
                   const reg = kMatch[1];
-                  // Only process if we have the AircraftType from StaticItems
-                  if (regToType.has(reg) && !map.has(regToType.get(reg))) {
+                  const at = regToType.get(reg);
+                  if (at && !map.has(at)) {
                     const vBlock = _extractValueBlock(block);
-                    if (vBlock) {
+                    if (vBlock && vBlock[0] === '{') {
                       const specObj = _extractNestedObject(vBlock, 'Specification');
                       const designator = specObj ? _extractString(specObj, 'Designator', true) : null;
-                      if (designator) {
-                        map.set(regToType.get(reg), designator);
+                      if (designator) map.set(at, designator);
+                    }
+                  }
+                }
+                start = -1;
+              }
+            }
+          }
+
+          // Pass B: jetway entries with DockingAircraft → link via stand
+          for (let i = 0; i < arr.length; i++) {
+            if (arr[i] === '{') { if (depth === 0) start = i; depth++; }
+            else if (arr[i] === '}') {
+              depth--;
+              if (depth === 0 && start >= 0) {
+                const block = arr.substring(start, i + 1);
+                const kMatch = block.match(/"\$k"\s*:\s*"jetway:([^"]+)"/);
+                if (kMatch) {
+                  const stand = kMatch[1];
+                  const at = standToType.get(stand);
+                  if (at && !map.has(at)) {
+                    const vBlock = _extractValueBlock(block);
+                    if (vBlock && vBlock[0] === '{') {
+                      const daObj = _extractNestedObject(vBlock, 'DockingAircraft');
+                      if (daObj) {
+                        const specObj = _extractNestedObject(daObj, 'Specification');
+                        const designator = specObj ? _extractString(specObj, 'Designator', true) : null;
+                        if (designator) map.set(at, designator);
                       }
                     }
                   }
