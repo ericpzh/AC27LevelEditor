@@ -473,7 +473,7 @@ function _cachePath() {
 
 /**
  * Read and validate cache.json.
- * @param {{ validateRoot?: string, signalReScan?: boolean }} options
+ * @param {{ validateRoot?: string }} options
  * @returns {{ data: object|null, valid: boolean, missing: boolean, error?: string, versionMismatch: boolean, rootMismatch: boolean }}
  *   - data: the parsed JSON (always populated if file exists, even when invalid)
  *   - valid: true when cacheVersion matches CACHE_VERSION and root matches (if validateRoot set)
@@ -483,9 +483,6 @@ function _readCache(options = {}) {
   const cachePath = _cachePath();
 
   if (!fs.existsSync(cachePath)) {
-    if (options.signalReScan && mainWindow) {
-      mainWindow.webContents.send('cache-invalidated');
-    }
     return { data: null, valid: false, missing: true, versionMismatch: true, rootMismatch: true };
   }
 
@@ -494,9 +491,6 @@ function _readCache(options = {}) {
     raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
   } catch (e) {
     console.error('[CACHE] _readCache parse error:', e.message);
-    if (options.signalReScan && mainWindow) {
-      mainWindow.webContents.send('cache-invalidated');
-    }
     return { data: null, valid: false, missing: false, error: e.message, versionMismatch: true, rootMismatch: true };
   }
 
@@ -504,10 +498,6 @@ function _readCache(options = {}) {
   const versionMismatch = cachedVersion !== CACHE_VERSION;
   const rootMismatch = options.validateRoot ? raw.gameRoot !== options.validateRoot : false;
   const valid = !versionMismatch && !rootMismatch;
-
-  if (!valid && options.signalReScan && mainWindow) {
-    mainWindow.webContents.send('cache-invalidated');
-  }
 
   // Log validity for debugging
   if (!valid) {

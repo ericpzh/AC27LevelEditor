@@ -67,7 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Cache invalidation — main process signals when cache.json is missing/corrupt
-  onCacheInvalidated: (cb) => ipcRenderer.on('cache-invalidated', () => cb()),
+
 
   // ─── Map windows ─────────────────────────────────────────
   openGroundMap: (airportIcao, gameRoot) => ipcRenderer.invoke('open-ground-map', airportIcao, gameRoot),

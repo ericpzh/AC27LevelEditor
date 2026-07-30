@@ -262,7 +262,6 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 - Every `ipcMain.handle()` must return `{ success: true/false }`
 - New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer
 - **Main→renderer events:**
-  - `cache-invalidated` — signals renderer when `cache.json` is missing/corrupt; preload bridges via `onCacheInvalidated(cb)`
   - `cache-build-progress` — per-file progress during scan: `{ current: number, total: number }`; preload bridges via `onCacheBuildProgress(cb)` / `offCacheBuildProgress(cb)` (uses handler-map pattern, same function reference required for cleanup)
   - `store-api-update` — pushes bulk state updates from MCP/API server to renderer: `{ flights, modified, ... }`; preload bridges via `onStoreApiUpdate(cb)` / `offStoreApiUpdate(cb)` (handler-map pattern). Renderer converts arrays→Sets and calls `setLegacyState()`.
   - `update-check-result` — pushed from main process on startup after HEAD check: `{ hasUpdate, currentVersion, remoteMd5, remoteDate, contentLength }`; preload bridges via `onUpdateCheckResult(cb)` / `offUpdateCheckResult(cb)` (handler-map pattern). Renderer shows update modal when `hasUpdate` is true.

@@ -47,7 +47,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
    - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint) plus `tailX`/`tailZ`/`noseX`/`noseZ` for heading/orientation
        - `areaData` parsed from first .acl via `_parseAreas()` — maps AreaType (0=boundary, 1=stand/apron, 2=building) → `[{guid, enabled, points[{x,z}]}]` — used by GroundMapWindow
    - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
-   - **Centralized cache I/O:** `_readCache(opts)` and `_writeCache(data)` in `electron/main.js` handle all `cache.json` reads/writes. `_readCache` validates `cacheVersion` and `gameRoot`, and signals `cache-invalidated` to the renderer on mismatch. All IPC handlers MUST use these helpers — never read/write `cache.json` directly.
+   - **Centralized cache I/O:** `_readCache(opts)` and `_writeCache(data)` in `electron/main.js` handle all `cache.json` reads/writes. `_readCache` validates `cacheVersion` and `gameRoot`. All IPC handlers MUST use these helpers — never read/write `cache.json` directly.
 
 ## Phase 1: Load Level
 
@@ -108,12 +108,12 @@ The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.j
 
 Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `src/utils/constants.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
-**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants.js:13`. Without this, users with stale caches will not be prompted to re-scan, and old cache data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 13.
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js:13`. The re-scan happens transparently during App.jsx boot — `initAirportCache()` detects the version mismatch and rebuilds the cache silently before BrowserScreen mounts. Without the bump, old cached data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 15.
 
 | `cache.json` | Behavior |
 |---|---|
 | Missing | Show root-select screen (SetupScreen) |
-| Exists, `cacheVersion` ≠ `CACHE_VERSION` | Show re-scan modal on browser screen |
+| Exists, `cacheVersion` ≠ `CACHE_VERSION` | Re-scan silently during App.jsx boot via `initAirportCache()` |
 | Exists, `cacheVersion` matches | Proceed directly to level-select screen |
 
 **Startup flow (`get-cache-state` IPC):**
@@ -123,11 +123,11 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 4. Returns `{ state: 'no-cache' | 'mismatch' | 'ready', gameRoot, lang, airports, cachedVersion, expectedVersion }`
 5. ScreenRouter uses `getCacheState()` instead of `getLastRoot()` — routes to setup/browser based on state
 
-**Re-scan flow:**
-1. Mismatch modal appears on BrowserScreen (non-closeable, with lang toggle button in top-right via `showLangToggle`)
-2. User clicks "Re-Scan" → scanning modal with **progress bar + percentage** (`CacheProgressBody` component) appears → `refresh-root-scan` → rebuilds cache with `cacheVersion: CACHE_VERSION`. Progress counts ALL `.acl` files across ALL airports as a single global 0–100%.
-3. `init-airport-cache` and `refresh-root-scan` also stamp `cacheVersion` when writing
-4. Same progress modal appears during initial cache build in SetupScreen (`initAirportCache`)
+**Re-scan flow (transparent during boot):**
+1. App.jsx boot calls `initAirportCache(gameRoot)` unconditionally
+2. When version mismatches, `initAirportCache` does a full re-scan internally (no user-facing modal)
+3. By the time BrowserScreen mounts, `cache.json` already has the new `CACHE_VERSION`
+4. Progress modal with `CacheProgressBody` still appears during initial cache build in SetupScreen
 
 **Language persistence:**
 - `lang` field in `cache.json` provides durable backup for language preference
@@ -135,9 +135,9 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 - IPC handlers: `get-cached-lang`, `save-cached-lang`
 
 **IPC handlers (new):** `get-cache-state`, `get-cached-lang`, `save-cached-lang`
-**IPC handlers (removed):** `get-last-root`, `save-last-root`, `check-version-mismatch`, `update-cached-version`
+**IPC handlers (removed):** `get-last-root`, `save-last-root`, `check-version-mismatch`, `update-cached-version`, `cache-invalidated` event
 **Preload bridges (new):** `getCacheState()`, `getCachedLang()`, `saveCachedLang(lang)`
-**Modal:** `showModal(title, body, actions, closeable, headerRight, showLangToggle)` — `showLangToggle` renders a live lang toggle button using Modal's own `useTranslation` hooks
+**Preload bridges (removed):** `onCacheInvalidated(cb)`
 
 ## Toolbar Backup Button
 

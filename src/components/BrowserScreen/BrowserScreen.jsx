@@ -4,12 +4,11 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoRefreshOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { safeHtml } from '../../utils/safeHtml';
 import { RE_HIDDEN, DEMO_VISIBLE_BASES } from '../../utils/constants';
-import CacheProgressBody from '../common/CacheProgressBody';
+
 import AirportCardMap from './AirportCardMap';
 import BrowserHelpOverlay, { BUTTONS } from './BrowserHelpOverlay';
 import VideoReplaceOverlay from './VideoReplaceOverlay';
@@ -17,18 +16,6 @@ import VideoBackgroundModal from './VideoBackgroundModal';
 import BepInExInstallOverlay from './BepInExInstallOverlay';
 import LiveryInstallOverlay from './LiveryInstallOverlay';
 import useTooltip from './useTooltip';
-
-function rescanGuideContent(t) {
-  return (
-    <div>
-      <p>{t('browser_rescan_guide_body')}</p>
-      <ol>
-        <li>{t('browser_rescan_guide_step1')} <code className="guide-path">{t('browser_rescan_guide_step1_path')}</code></li>
-        <li>{safeHtml(t('browser_rescan_guide_step2'))}</li>
-      </ol>
-    </div>
-  );
-}
 
 function computeTodLabel(startTime, t) {
   if (!startTime) return { label: '', type: '' };
@@ -97,46 +84,6 @@ export default function BrowserScreen() {
     electronAPI.checkBepInEx().then(result => {
       setDebugMode(result.installed);
     }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    electronAPI.getCacheState().then(result => {
-      if (result && result.state === 'mismatch') {
-        const { showModal } = useAppStore.getState();
-        showModal(
-          t => t('browser_version_mismatch_title'),
-          t => rescanGuideContent(t),
-          t => <div className="modal-actions-row">
-            <button className="btn-confirm" onClick={handleVersionMismatchRescan}>
-              {t('browser_version_mismatch_button')}
-            </button>
-          </div>,
-          false, // closeable=false
-          null,  // headerRight
-          true   // showLangToggle — Modal renders the button with its own live hooks
-        );
-      }
-    }).catch(() => {});
-  }, []);
-
-  // Listen for mid-session cache invalidation (e.g., cache.json deleted while app is open)
-  useEffect(() => {
-    if (!electronAPI.onCacheInvalidated) return;
-    electronAPI.onCacheInvalidated(() => {
-      const { showModal } = useAppStore.getState();
-      showModal(
-        t => t('browser_version_mismatch_title'),
-        t => rescanGuideContent(t),
-        t => <div className="modal-actions-row">
-          <button className="btn-confirm" onClick={handleVersionMismatchRescan}>
-            {t('browser_version_mismatch_button')}
-          </button>
-        </div>,
-        false, // closeable=false
-        null,  // headerRight
-        true   // showLangToggle
-      );
-    });
   }, []);
 
   // Listen for radar windows closed via X button (main process notifies us)
@@ -312,52 +259,6 @@ export default function BrowserScreen() {
     }
   };
 
-  const [refreshing, setRefreshing] = useState(false);
-
-  const doRefreshScan = async () => {
-    setRefreshing(true);
-    const { showModal, hideModal } = useAppStore.getState();
-    showModal(
-      t => t('browser_scanning_title'),
-      () => <CacheProgressBody />,
-      null,
-      false,
-    );
-    try {
-      const result = await electronAPI.refreshRootScan(rootPath);
-      if (result && result.airports) {
-        useAppStore.getState().setRootPath(rootPath, result.airports);
-      }
-      setRefreshKey(k => k + 1);
-      return result;
-    } catch (_) {
-      return null;
-    } finally {
-      setRefreshing(false);
-      hideModal();
-    }
-  };
-
-  const handleVersionMismatchRescan = async () => {
-    const { showToast } = useAppStore.getState();
-    const result = await doRefreshScan();
-    if (!result || !result.success) {
-      showToast(t('toast_scan_failed'), 'error');
-    }
-  };
-
-  const handleRefreshScan = () => {
-    const { showModal, hideModal } = useAppStore.getState();
-    showModal(
-      t => t('browser_rescan_guide_title'),
-      t => rescanGuideContent(t),
-      t => <div className="modal-actions-row">
-        <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
-        <button className="btn-confirm" onClick={() => { hideModal(); doRefreshScan(); }}>{t('browser_btn_continue')}</button>
-      </div>
-    );
-  };
-
   const handleToggleSurfaceRadar = (icao) => {
     const st = useAppStore.getState();
     if (st.openGroundRadarAirports.has(icao)) {
@@ -404,9 +305,6 @@ export default function BrowserScreen() {
         <div className="browser-actions">
           <span className="browser-root-path">{rootPath || ''}</span>
           <button className="btn-sm" {...bind(t(BUTTONS.changeDir.descKey))} onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
-          <button className={`btn-sm ${refreshing ? 'btn-disabled' : ''}`} {...bind(t(BUTTONS.refresh.descKey))} onClick={handleRefreshScan} disabled={refreshing}>
-            <IoRefreshOutline size={14} className="btn-icon" />{refreshing ? t('browser_refreshing') : t('browser_refresh_scan')}
-          </button>
           <button className="btn-sm" {...bind(t('browser_livery_desc'))} onClick={handleInstallLivery} disabled={liveryLoading}>
             <IoColorPaletteOutline size={14} className="btn-icon" />{t('browser_livery')}
           </button>

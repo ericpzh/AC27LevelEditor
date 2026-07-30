@@ -133,8 +133,7 @@ function ScreenRouter() {
     };
   }, []);
 
-  // Show update prompt modal. The modal is a singleton — BrowserScreen's version
-  // mismatch / cache-invalidated modals can collide with it. If another modal is
+  // Show update prompt modal. The modal is a singleton — if another modal is
   // open, defer: the effect re-runs when modal.open/title change and shows the
   // prompt once the other modal closes (or if something overwrote ours).
   const modalOpen = useAppStore(s => s.modal.open);
