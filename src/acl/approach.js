@@ -20,7 +20,7 @@ const {
   DEFAULT_WAKE_CATEGORY,
   DEFAULT_RUNWAY_VR_SPEED,
 } = require('../utils/constants/acl-format');
-const { APPROACH_EFFECTIVE_SPEED, APPROACH_SPEED_MS, DEFAULT_AIRPORT_SCALE, APPROACH_CEILING_M, TAN_3_DEG, DEFAULT_TAT, TD_FALLBACK_EXTEND, EPSILON_NORMALIZE, EPSILON_PR, EPSILON_IAF_JOIN } = require('./constants');
+const { APPROACH_EFFECTIVE_SPEED, APPROACH_SPEED_MS, DEFAULT_AIRPORT_SCALE, APPROACH_CEILING_M, TAN_3_DEG, DEFAULT_TAT, EPSILON_NORMALIZE, EPSILON_PR, EPSILON_IAF_JOIN } = require('./constants');
 
 // ─── GUID generator (inlined to avoid ESM import chain issues in tests) ──
 
@@ -449,6 +449,13 @@ function _extractVector4Array(text, key, isV4) {
     if (arrEnd === null) return null;
 
     const arr = valText.substring(arrStart, arrEnd);
+    if (key === 'DockingPositions') {
+      console.log(
+        '[EXTRACT-VEC4ARR v4] key=' + key +
+        ' arrLen=' + (arrEnd - arrStart) +
+        ' preview=' + arr.substring(0, Math.min(400, arr.length)).replace(/\r\n/g, '\\n').replace(/\n/g, '\\n')
+      );
+    }
     const arrTokenizer = createTokenizer(arr);
     const results = [];
     let pos = 1;
@@ -459,15 +466,39 @@ function _extractVector4Array(text, key, isV4) {
       if (arr[pos] === '{') {
         const objEnd = arrTokenizer.findObjectEnd(pos);
         if (objEnd === null) break;
-        const objInner = arr.substring(pos + 1, objEnd - 1);
-        const nums = _parseBareNumbers(objInner, 0, 4);
-        if (nums && nums.length >= 4) {
-          results.push({ x: nums[0], y: nums[1], z: nums[2], w: nums[3] });
+        // Use preprocessUnityJson → JSON.parse to decode the typed-value
+        // Vector4 object. _fixTypedValues correctly handles both bare-number
+        // ("$type": 11) and full-form ("$type": "11|UnityEngine.Vector4, ...")
+        // type strings, producing a valid-JSON object with __v sentinel.
+        const objText = arr.substring(pos, objEnd);
+        const validJson = preprocessUnityJson(objText);
+        const parsed = JSON.parse(validJson);
+        if (key === 'DockingPositions') {
+          console.log(
+            '[EXTRACT-VEC4ARR v4] key=' + key +
+            ' objText=' + objText.substring(0, Math.min(200, objText.length)).replace(/\r\n/g, '\\n') +
+            ' parsed.__v=' + JSON.stringify(parsed.__v)
+          );
+        }
+        if (parsed.__v && parsed.__v.length >= 4) {
+          const entry = {
+            x: Number(parsed.__v[0]),
+            y: Number(parsed.__v[1]),
+            z: Number(parsed.__v[2]),
+            w: Number(parsed.__v[3]),
+          };
+          if (key === 'DockingPositions') {
+            console.log('[EXTRACT-VEC4ARR v4] key=' + key + ' PUSHED=' + JSON.stringify(entry));
+          }
+          results.push(entry);
         }
         pos = objEnd;
       } else {
         pos++;
       }
+    }
+    if (key === 'DockingPositions') {
+      console.log('[EXTRACT-VEC4ARR v4] key=' + key + ' TOTAL=' + results.length + ' results=' + JSON.stringify(results));
     }
     return results;
   } else {
@@ -486,6 +517,14 @@ function _extractVector4Array(text, key, isV4) {
     let m;
     while ((m = v4Re.exec(arr)) !== null) {
       results.push({ x: parseFloat(m[1]), y: parseFloat(m[2]), z: parseFloat(m[3]), w: parseFloat(m[4]) });
+    }
+    if (key === 'DockingPositions') {
+      console.log(
+        '[EXTRACT-VEC4ARR v2/v3] key=' + key +
+        ' arrLen=' + (endPos - absRc) +
+        ' preview=' + arr.substring(0, Math.min(400, arr.length)).replace(/\r\n/g, '\\n').replace(/\n/g, '\\n') +
+        ' results=' + JSON.stringify(results)
+      );
     }
     return results;
   }
@@ -796,17 +835,23 @@ function computeApproachTimesFromScenery(aclText, starMappings, appPointMap, ref
       }
 
       let estTAT = 0;
+      let tatSource = 'none';
       if (refTAT > 0 && refLen > 0) {
         // Estimate TAT from path-length ratio using aircraft-derived reference
         estTAT = Math.round(refTAT * (totalLen / refLen));
+        tatSource = 'ratio(ref=' + refTAT + '@' + refLen.toFixed(1) + ')';
       } else if (airportScale && airportScale > 0) {
         // Physics-based: scale game path to real meters, divide by 240 kts
         estTAT = Math.round(totalLen * airportScale / APPROACH_SPEED_MS);
+        tatSource = 'physics(len=' + totalLen.toFixed(1) + ' scale=' + airportScale + ')';
       } else {
         // Fallback: old effective-speed method (deprecated)
         estTAT = Math.round(totalLen / APPROACH_EFFECTIVE_SPEED);
+        tatSource = 'fallback(len=' + totalLen.toFixed(1) + ')';
       }
-      if (estTAT > bestTAT) bestTAT = estTAT;
+      if (estTAT > bestTAT) {
+        bestTAT = estTAT;
+      }
     }
 
     if (bestTAT > 0) {
@@ -1514,7 +1559,15 @@ function computeFullTerminalPath(aclText, star, runway) {
     flyLen = computePathLength(flyPoints);
   }
 
-  const procData = resolveApproachProcedureData(aclText, runway);
+  // Use the last FlyApproach point (IAF) as hintPosition so the correct
+  // approach procedure variant is selected when multiple Type=1 variants
+  // exist for the runway. Without this, resolveApproachProcedureData picks
+  // the first variant, whose path length may differ, causing TAT
+  // misestimation and incorrect State=5 aircraft positions (V4 regression).
+  const hintPos = (flyPoints && flyPoints.length > 0)
+    ? flyPoints[flyPoints.length - 1]
+    : null;
+  const procData = resolveApproachProcedureData(aclText, runway, hintPos);
   if (procData && procData.pathPointList && procData.pathPointList.length >= 2) {
     procLen = computePathLength(procData.pathPointList);
 
@@ -1754,7 +1807,7 @@ function resolveApproachProcedureData(aclText, runway, hintPosition, isV4) {
 
   if (isV4) {
     // v4: navigate runway → Routes for RouteType=1 (Approach), resolve AirwayNodes $iref → positions
-    const { buildPkIndex, getPkEntriesByType, resolveIref, extractStringFromV4, extractVector3FromV4, extractIrefArray } = require('./v4_pk_index');
+    const { buildPkIndex, getPkEntriesByType, resolveIref, extractStringFromV4, extractVector3FromV4, extractIrefArray, extractSingleIref } = require('./v4_pk_index');
     const pkIndex = buildPkIndex(aclText);
 
     // Find runway entry
@@ -1786,6 +1839,7 @@ function resolveApproachProcedureData(aclText, runway, hintPosition, isV4) {
         const routeEntry = routesBlock.substring(rp, entryEnd);
         const routeType = _extractInt(routeEntry, 'RouteType');
         if (routeType === 1) {
+          const routeName = _extractString(routeEntry, 'Name', true);
           const irefs = extractIrefArray(routeEntry, 'AirwayNodes');
           if (irefs.length >= 2) {
             const points = [];
@@ -1797,7 +1851,7 @@ function resolveApproachProcedureData(aclText, runway, hintPosition, isV4) {
               }
             }
             if (points.length >= 2) {
-              variants.push({ pathPointList: points, firstPoint: points[0] });
+              variants.push({ pathPointList: points, firstPoint: points[0], routeName });
             }
           }
         }
@@ -1809,6 +1863,7 @@ function resolveApproachProcedureData(aclText, runway, hintPosition, isV4) {
 
     // Pick correct variant
     let pathPointList;
+    let routeName;
     if (hintPosition && variants.length > 1) {
       let bestDist = Infinity;
       for (const v of variants) {
@@ -1818,29 +1873,50 @@ function resolveApproachProcedureData(aclText, runway, hintPosition, isV4) {
         if (dist < bestDist) {
           bestDist = dist;
           pathPointList = v.pathPointList;
+          routeName = v.routeName;
         }
       }
     } else {
       pathPointList = variants[0].pathPointList;
+      routeName = variants[0].routeName;
     }
 
-    // v4: no TouchDownPointGuid — derive touchdown from last segment
+    // v4: resolve touchdown from the runway entry's dedicated TouchDownPoint $iref.
+    // This is the exact v4 equivalent of v2/v3 TouchDownPointGuid → TaxiwayNode.
+    // The $iref points to a taxiway-node entity at the landing threshold.
     const lastPt = pathPointList[pathPointList.length - 1];
     const prevPt = pathPointList[pathPointList.length - 2];
     const approachDirection = _vec3Normalize(_vec3Sub(lastPt, prevPt));
-    // Extend past last point to approximate runway threshold
-    const tdExtend = _vec3Dist(lastPt, prevPt);
-    const tdPos = {
-      x: lastPt.x + approachDirection.x * tdExtend,
-      y: 0,
-      z: lastPt.z + approachDirection.z * tdExtend,
-    };
+
+    const tdIref = extractSingleIref(rwEntry.block, 'TouchDownPoint');
+    if (tdIref == null) {
+      throw new Error(
+        '[resolveApproachProcedureData] v4 runway "' + runway +
+        '" has no TouchDownPoint $iref. Cannot determine TouchDownPosition.'
+      );
+    }
+    const tdEntity = resolveIref(pkIndex, tdIref);
+    if (!tdEntity) {
+      throw new Error(
+        '[resolveApproachProcedureData] v4 runway "' + runway +
+        '" TouchDownPoint $iref:' + tdIref + ' could not be resolved to an entity.'
+      );
+    }
+    const tdPosV4 = extractVector3FromV4(tdEntity.block);
+    if (!tdPosV4) {
+      throw new Error(
+        '[resolveApproachProcedureData] v4 runway "' + runway +
+        '" TouchDownPoint $iref:' + tdIref + ' resolved but has no Position vector.'
+      );
+    }
+    const tdPos = { x: tdPosV4.x, y: 0, z: tdPosV4.z };
 
     return {
       pathPointList,
       touchDownPosition: tdPos,
       approachDirection,
       initialPosition: { ...pathPointList[0] },
+      routeName,
     };
   }
 
@@ -2232,6 +2308,12 @@ function buildApproachAircraftBlock(opts) {
   // Build DockingPositions
   let dockStr = '';
   const dp = spec.DockingPositions || [];
+  console.log(
+    '[APPROACH State=30] DockingPositions spec=' + spec.Designator +
+    ' dpLen=' + dp.length +
+    ' T.vec4=' + T.vec4 +
+    ' dp=' + JSON.stringify(dp)
+  );
   if (dp.length > 0) {
     const dpts = dp.map((d, i) => `${i === 0 ? '' : ',\n'}{"$type": ${T.vec4}, ${d.x}, ${d.y}, ${d.z}, ${d.w}}`).join('');
     dockStr = `{\n"$id": ${id++},\n"$type": ${T.dockArr},\n"$rlength": ${dp.length},\n"$rcontent": [\n${dpts}\n]\n}`;
@@ -2450,6 +2532,12 @@ function buildState5AircraftBlock(opts) {
   // Build DockingPositions
   let dockStr = '';
   const dp = spec.DockingPositions || [];
+  console.log(
+    '[APPROACH State=5] DockingPositions spec=' + spec.Designator +
+    ' dpLen=' + dp.length +
+    ' T.vec4=' + T.vec4 +
+    ' dp=' + JSON.stringify(dp)
+  );
   if (dp.length > 0) {
     const dpts = dp.map((d, i) => `${i === 0 ? '' : ',\n'}{"$type": ${T.vec4}, ${d.x}, ${d.y}, ${d.z}, ${d.w}}`).join('');
     dockStr = `{\n"$id": ${id++},\n"$type": ${T.dockArr},\n"$rlength": ${dp.length},\n"$rcontent": [\n${dpts}\n]\n}`;
@@ -2474,6 +2562,7 @@ function buildState5AircraftBlock(opts) {
   const remainingPathDist = totalPathLen - targetDist;
   const glideY = remainingPathDist * TAN_3_DEG;
   pos.y = Math.min(approachCap, glideY);
+
 
   // Direction: path tangent at current position along the full path.
   // The tangent naturally converges to the runway heading at touchdown but
@@ -3284,7 +3373,7 @@ function buildApproachCache(airportDir, progressCallback) {
 // ─── 9b. AircraftAnimators Block Builder ──────────────────────────
 
 function buildAnimatorBlock(aircraftGuid, opts) {
-  const { nextId = 80000, typeNums = null } = opts || {};
+  const { nextId = 80000, typeNums = null, gearRatio = 1 } = opts || {};
   const tn = typeNums || {};
   const resolve = (key, fullName) => {
     const id = tn[key];
@@ -3313,9 +3402,9 @@ function buildAnimatorBlock(aircraftGuid, opts) {
       "HasSnapshot": true,
       "FlapRatio": 0.5,
       "SlatRatio": 0.75,
-      "GearRatio": 1,
+      "GearRatio": ${gearRatio},
       "IsGearMoving": false,
-      "GearTargetRatio": 1,
+      "GearTargetRatio": ${gearRatio},
       "GoAroundPhase": 0,
       "HasGoAroundCommandTick": false,
       "GoAroundCommandTick": 0,

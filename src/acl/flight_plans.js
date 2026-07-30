@@ -829,17 +829,9 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       if (!star || !runway) continue;
 
       // Resolve approach procedure name (e.g. "RNAV ILS Z Rwy 19") from the cache.
-      // The state5ParamsMap has keys like "procedureName|runway" from original files.
+      // The state5ParamsMap stores routeName alongside the path data, resolved
+      // by resolveApproachProcedureData from the SceneryData approach route's Name.
       let approachRoute = star; // fallback to STAR name
-      if (approachCache && approachCache.state5ParamsMap) {
-        for (const key of approachCache.state5ParamsMap.keys()) {
-          const pipeIdx = key.indexOf('|');
-          if (pipeIdx > 0 && key.substring(pipeIdx + 1) === runway) {
-            approachRoute = key.substring(0, pipeIdx);
-            break;
-          }
-        }
-      }
 
       // Look up AppPointList for this (Route, Runway) combo
       const appKey = star + '|' + runway;
@@ -890,6 +882,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       const clampedTTL = timeToLanding < APPROACH_MIN_TTL ? APPROACH_MIN_TTL : timeToLanding;
       const progressRatio = 1.0 - (clampedTTL / totalApproachTime);
 
+
       // Gate: only generate if aircraft is mid-approach at snapshot time
       if (progressRatio <= 0.0) {
         log('  SKIP (PR=' + progressRatio.toFixed(3) + ' ≤ 0, not started approach): ' + fl.CallSign);
@@ -914,7 +907,27 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
       // connecting segment between the last FlyApproach point and the
       // first AppPointList point. flyLen + appLen would miss this gap.
       const combined = [...(flyPoints || []), ...(appPoints || [])];
-      const totalLen = computePathLength(combined);
+      let totalLen = computePathLength(combined);
+
+      // Include touchdown distance so totalLen matches the path TAT was
+      // calibrated for (scenery-derived TAT includes tdDist). Without this,
+      // rawTargetDist uses a shorter denominator than TAT assumes, biasing
+      // the IAF boundary toward State=30 for aircraft near the runway.
+      const state5ForRwyCheck = approachCache?.state5ParamsMap?.get(runway);
+      let tdPosCheck = state5ForRwyCheck?.touchDownPosition || null;
+      if (!tdPosCheck && appPoints && appPoints.length >= 2) {
+        const lastPt = appPoints[appPoints.length - 1];
+        const prevPt = appPoints[appPoints.length - 2];
+        const dir = _vec3Normalize(_vec3Sub(lastPt, prevPt));
+        tdPosCheck = { x: lastPt.x + dir.x * 50, y: 0, z: lastPt.z + dir.z * 50 };
+      }
+      if (tdPosCheck && appPoints && appPoints.length > 0) {
+        const lastApp = appPoints[appPoints.length - 1];
+        totalLen += Math.sqrt(
+          (lastApp.x - tdPosCheck.x) ** 2 + (lastApp.z - tdPosCheck.z) ** 2
+        );
+      }
+
 
       // IAF boundary: use raw TTL (unclamped) so State classification is accurate.
       // The clamped progressRatio is used for position interpolation downstream.
@@ -922,6 +935,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
 
       // Per-airport coordinate scale for converting real-world ceiling to game units
       const airportScale = approachCache?.airportScale;
+
 
       if (rawTargetDist >= flyLen) {
         // ── State=5: Past IAF, on Tower frequency ──
@@ -937,48 +951,25 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
             : null;
         }
         if (!state5Params) {
-          // Fallback: derive State=5 params from AppPointList when no cached
-          // State=5 entry exists for this runway. The AppPointList covers the
-          // same final-approach segment as PathPointList but stops at the FAF.
-          // The real touchdown is further along the approach direction — for
-          // KJFK 22R, the distToTD from last ppList point is ~108m.
-          if (appPoints && appPoints.length >= 2) {
-            const lastPt = appPoints[appPoints.length - 1];
-            const prevPt = appPoints[appPoints.length - 2];
-            const dir = _vec3Normalize(_vec3Sub(lastPt, prevPt));
-            // Use per-airport approach cap from 5000ft real-world ceiling.
-            // AppPointList points have y=0 in the ACL (Unity XZ plane);
-            // Y is always computed from the 3° glideslope in buildState5AircraftBlock.
-            const approachCap = computeApproachCap(airportScale);
-            // Extend touchdown past the last AppPoint by the AppPath length
-            // (the glideslope continues ~108m beyond the FAF for KJFK 22R).
-            let appPathLen = 0;
-            for (let pi = 0; pi < appPoints.length - 1; pi++) {
-              appPathLen += _vec3Dist(appPoints[pi], appPoints[pi + 1]);
-            }
-            const tdExtendDist = appPathLen; // extension past last AppPoint
-            const tdPos = {
-              x: lastPt.x + dir.x * tdExtendDist,
-              y: 0,
-              z: lastPt.z + dir.z * tdExtendDist,
-            };
-            state5Params = {
-              pathPointList: appPoints,
-              touchDownPosition: tdPos,
-              approachDirection: dir,
-              initialPosition: { x: appPoints[0].x, y: approachCap, z: appPoints[0].z },
-            };
-            log('  derived State=5 params from AppPointList for runway ' + runway +
-                ' (cap=' + approachCap.toFixed(1) + 'm, tdExt=' + tdExtendDist.toFixed(0) + 'm)');
-            if (approachRoute === star) {
-              approachRoute = 'RNAV Rwy ' + runway;
-            }
-          }
+          // No cached State=5 params for this runway. The approach cache
+          // (resolveApproachProcedureData) should always populate this data
+          // when the runway has a valid approach procedure and TouchDownPoint.
+          throw new Error(
+            '[flight_plans] No State=5 params for runway "' + runway +
+            '" (appKey="' + appKey + '"). state5ParamsMap must be ' +
+            'populated at cache-build time. Check that the runway has a ' +
+            'RouteType=1 approach procedure and TouchDownPoint $iref.'
+          );
         }
         if (!state5Params) {
           log('  no State=5 params for "' + appKey + '" or runway "' + runway + '", falling back to State=30 for ' + fl.CallSign);
           // fall through to State=30 below
         } else {
+          // Resolve approach procedure name from cached params
+          if (state5Params.routeName) {
+            approachRoute = state5Params.routeName;
+          }
+
           // State=5 ProgressRatio hardcoded to 0 in buildState5AircraftBlock.
           // The game recalculates the path-based PR when the level loads.
 
@@ -1015,7 +1006,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
             fullPR: progressRatio,
             approachCap: state5Cap,
             waitingForCommand: CMD_CONTACT_TOWER, // TEMP: always Contact Tower (was: isClearedToLand ? CMD_CLEARED_TO_LAND : CMD_CONTACT_TOWER)
-            selectedRunwayExitIndex: -1, // TEMP: always -1 (was: isClearedToLand ? 0 : -1)
+            selectedRunwayExitIndex: 0,
             nextId: ID_OFFSET_AIRCRAFT + i * 1000,
             acTypeNum: _acTypeNum,
             typeNums: typeNums,
@@ -1078,6 +1069,7 @@ function _rebuildWorldStateSections(aclPath, flights, baseDateTicks, approachCac
         nextId: ID_OFFSET_ANIMATOR + i * 100,
         acTypeNum: _acTypeNum,
         typeNums: typeNums,
+        gearRatio: 0,
       });
       const animEntry = '{"$k": "' + animResult.guid + '", "$v": ' + animResult.block + '}';
       animEntries.push(animEntry);
@@ -3267,6 +3259,9 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
     }
 
     // Build paired animator entry referencing this aircraft via $iref
+    // Gear is down (1) for parked (state 10) and final approach (state 5);
+    // gear is up (0) only during STAR approach (state 30, before IAF).
+    const gearRatio = result.aircraftState === 30 ? 0 : 1;
     const animId2 = nextId++;
     const animEntry2 = {
       $k: 'aircraft-animator:aircraft:' + reg,
@@ -3278,9 +3273,9 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
         HasSnapshot: true,
         FlapRatio: 0,
         SlatRatio: 0,
-        GearRatio: 1,
+        GearRatio: gearRatio,
         IsGearMoving: false,
-        GearTargetRatio: 1,
+        GearTargetRatio: gearRatio,
         GoAroundPhase: 0,
         HasGoAroundCommandTick: false,
         GoAroundCommandTick: 0,
@@ -3490,6 +3485,7 @@ function _buildStandaloneAircraftEntry(opts) {
   var mo = spec?.ModelOffset ?? { x: 0, y: 0, z: 0 };
   var dockPoses = spec?.DockingPositions;
   if (!dockPoses || !dockPoses.length) {
+    console.log('[FP Standalone] MISSING DockingPositions for spec=' + (spec?.Designator || '?') + ' spec=' + JSON.stringify(spec));
     throw new Error(
       '[APPROACH] Missing DockingPositions for aircraft type "' + (acType || 'unknown') +
       '" — type not found in approach cache specDB.'
@@ -3584,8 +3580,27 @@ function _buildStandaloneAircraftEntry(opts) {
                 (flyErr.message || flyErr));
             }
 
-            var tdPos = approachCache.runwayThresholds
-              ? approachCache.runwayThresholds[runway] : null;
+            // FIX: use approach procedure TouchDownPosition (from state5ParamsMap) instead of
+            // runwayThresholds.  _parseRunwayThresholds returns {thresholds:[pos1,pos2]} — an
+            // array of runway threshold positions — NOT the approach procedure's touchdown
+            // point.  Passing this to computePosition causes buildFullPath's _vec3Dist to
+            // return NaN (undefined.x - undefined), so the touchdown segment is never appended
+            // to the path, and the glideslope Y is computed from a wrong remaining distance.
+            var tdPos = null;
+            var s5ForTdPos = approachCache.state5ParamsMap
+              ? approachCache.state5ParamsMap.get(appKey) : null;
+            if (!s5ForTdPos) {
+              s5ForTdPos = approachCache.state5ParamsMap
+                ? approachCache.state5ParamsMap.get(runway) : null;
+            }
+            if (s5ForTdPos && s5ForTdPos.touchDownPosition) {
+              tdPos = s5ForTdPos.touchDownPosition;
+            } else {
+              // Fallback to runway thresholds (only correct for runways with no procedure data)
+              tdPos = approachCache.runwayThresholds
+                ? approachCache.runwayThresholds[runway] : null;
+            }
+
             var airportScale = approachCache.airportScale || 100;
             var approachCap = computeApproachCap(airportScale);
 
@@ -3594,6 +3609,16 @@ function _buildStandaloneAircraftEntry(opts) {
               var appLen = computePathLength(appPoints);
               var combined = flyPoints.concat(appPoints);
               var totalLen = computePathLength(combined);
+              // Include touchdown distance so totalLen matches TAT denominator
+              // (scenery-derived TAT includes tdDist from computeFullTerminalPath).
+              var tdDistLen = 0;
+              if (tdPos && tdPos.x != null && appPoints.length > 0) {
+                var lastApp = appPoints[appPoints.length - 1];
+                tdDistLen = Math.sqrt(
+                  (lastApp.x - tdPos.x) ** 2 + (lastApp.z - tdPos.z) ** 2
+                );
+                totalLen += tdDistLen;
+              }
               var rawTargetDist = (1.0 - timeToLanding / totalApproachTime) * totalLen;
               if (rawTargetDist >= flyLen) { aircraftState = 5; dynState = 2; }
 
@@ -3601,8 +3626,6 @@ function _buildStandaloneAircraftEntry(opts) {
               var dirResult = computeDirection(flyPoints, appPoints, progressRatio, tdPos);
               posX = posResult.x; posY = posResult.y; posZ = posResult.z;
               dirX = dirResult.x; dirZ = dirResult.z;
-              log('  inline aircraft ' + reg + ': State=' + aircraftState + ' PR=' + progressRatio.toFixed(3) +
-                  ' pos=(' + posX.toFixed(1) + ',' + posY.toFixed(1) + ',' + posZ.toFixed(1) + ')');
             } else {
               var posResult2 = computePosition([], appPoints, progressRatio, null, approachCap);
               var dirResult2 = computeDirection([], appPoints, progressRatio, null);
@@ -3641,27 +3664,26 @@ function _buildStandaloneAircraftEntry(opts) {
       state5Params = approachCache.state5ParamsMap
         ? approachCache.state5ParamsMap.get(runway) : null;
     }
-    if (!state5Params && appPoints && appPoints.length >= 2) {
-      // Derive from AppPointList when no cached State=5 entry exists
-      var s5lastPt = appPoints[appPoints.length - 1];
-      var s5prevPt = appPoints[appPoints.length - 2];
-      var s5dir = _vec3Normalize(_vec3Sub(s5lastPt, s5prevPt));
-      var s5appLen = 0;
-      for (var s5i = 0; s5i < appPoints.length - 1; s5i++) {
-        s5appLen += _vec3Dist(appPoints[s5i], appPoints[s5i + 1]);
-      }
-      state5Params = {
-        pathPointList: appPoints,
-        touchDownPosition: { x: s5lastPt.x + s5dir.x * s5appLen, y: 0, z: s5lastPt.z + s5dir.z * s5appLen },
-        approachDirection: s5dir,
-        initialPosition: { x: appPoints[0].x, y: approachCap, z: appPoints[0].z },
-      };
+    if (!state5Params) {
+      // No cached State=5 params for this runway. The approach cache must
+      // always be populated when the runway has a valid approach procedure.
+      throw new Error(
+        '[flight_plans get-aircraft-positions] No State=5 params for runway "' +
+        runway + '" (appKey="' + appKey +
+        '"). state5ParamsMap must be populated at cache-build time.'
+      );
     }
   }
 
   // --- Build structured Aircraft object ------------------------------
 
   // DockingPositions: Vector4[]
+  console.log(
+    '[FP Standalone] DockingPositions spec=' + (spec?.Designator || '?') +
+    ' dockPosesLen=' + (dockPoses ? dockPoses.length : 0) +
+    ' T.vec4=' + T.vec4 +
+    ' dockPoses=' + JSON.stringify(dockPoses)
+  );
   var dockContent = dockPoses.map(function(p) {
     return { $type: T.vec4, __v: [p.x, p.y, p.z, p.w] };
   });
@@ -3690,6 +3712,10 @@ function _buildStandaloneAircraftEntry(opts) {
     };
   } else if (aircraftState === 5 && state5Params && progressRatio != null) {
     var ppList = state5Params.pathPointList || [];
+    // InitialPosition Y: hardcoded 15.24 (= 5000ft approach ceiling at 100m/unit scale).
+    // The stored path points have Y=0 (game engine computes altitude internally from
+    // touchDownPosition + path distance), but InitialPosition stores the approach ceiling
+    // altitude directly. Every original game file uses 15.24 regardless of airport.
     dynParams = {
       $id: id(30),
       $type: APPROACH_DYN_PARAMS_TYPE,
@@ -3697,7 +3723,7 @@ function _buildStandaloneAircraftEntry(opts) {
       TouchDownPosition: { $type: T.vec3, __v: [state5Params.touchDownPosition.x, state5Params.touchDownPosition.y || 0, state5Params.touchDownPosition.z] },
       ApproachDirection: { $type: T.vec3, __v: [state5Params.approachDirection.x, state5Params.approachDirection.y || 0, state5Params.approachDirection.z] },
       CommandedGoAround: false,
-      InitialPosition: { $type: T.vec3, __v: [state5Params.initialPosition.x, state5Params.initialPosition.y || 0, state5Params.initialPosition.z] },
+      InitialPosition: { $type: T.vec3, __v: [state5Params.initialPosition.x, 15.24, state5Params.initialPosition.z] },
       PathPointList: ppList.length > 0
         ? { $id: id(31), $type: LIST_VEC3_TYPE, $rcontent: ppList.map(function(p) { return { $type: T.vec3, __v: [p.x, 0, p.z] }; }) }
         : { $rcontent: [] },
@@ -3798,7 +3824,7 @@ function _buildStandaloneAircraftEntry(opts) {
     },
   };
 
-  return { entry: entry, nextId: id(39) };
+  return { entry: entry, nextId: id(39), aircraftState: aircraftState };
 }
 
 /**
@@ -3853,6 +3879,7 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   const mo = spec?.ModelOffset ?? DEFAULT_MODEL_OFFSET;
   const dockPoses = spec?.DockingPositions;
   if (!dockPoses || !dockPoses.length) {
+    console.log('[FP Jetway] MISSING DockingPositions for spec=' + (spec?.Designator || '?') + ' spec=' + JSON.stringify(spec));
     throw new Error(
       '[APPROACH] Missing DockingPositions for aircraft type "' + (acType || 'unknown') +
       '" — type not found in approach cache specDB.'
@@ -3942,6 +3969,12 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   const JT6 = (jwTypeMap && jwTypeMap.has(6)) ? '"6|' + jwTypeMap.get(6) + '"' : '6';
 
   // Build DockingPositions array
+  console.log(
+    '[FP Jetway] DockingPositions spec=' + (spec?.Designator || '?') +
+    ' dockPosesLen=' + (dockPoses ? dockPoses.length : 0) +
+    ' T.vec4=' + T.vec4 +
+    ' dockPoses=' + JSON.stringify(dockPoses)
+  );
   const dockLines = [];
   for (let i = 0; i < dockPoses.length; i++) {
     const p = dockPoses[i];

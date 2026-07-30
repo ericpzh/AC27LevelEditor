@@ -308,6 +308,16 @@ Both State=30 and State=5 share the SAME full path:
 unified path using `fullPR` (relative to the full STAR+Approach duration), ensuring
 spatial continuity across the State=30→5 transition.
 
+**totalLen includes touchdown distance:** Both save paths (`_rebuildWorldStateSections` for
+v2/v3, `_buildStandaloneAircraftEntry` for v4) now include the touchdown distance in `totalLen`
+(the denominator for the IAF boundary `rawTargetDist`). This ensures `totalLen` matches the path
+length that TAT was calibrated for — scenery-derived TAT includes `tdDist` from
+`computeFullTerminalPath`. Without this, `rawTargetDist` used a shorter denominator, biasing the
+IAF boundary toward State=30 for aircraft near the runway. The touchdown position is sourced from
+`state5ParamsMap` (by appKey then runway) as the authoritive single-point touchdown, replacing the
+older `runwayThresholds` value which was an array of two threshold positions (causing NaN in
+`_vec3Dist`).
+
 **Dual PR semantics:** The ACL's `ProgressRatio` field means different things per state:
 - State=30 (FlyApproachDynamicsParams): PR is relative to full approach → stores `fullPR`
 - State=5 (ApproachDynamicsParams): PR is relative to final approach segment only →
@@ -324,7 +334,7 @@ State=5 has three sub-types based on `timeToLanding` (seconds until scheduled to
 
 | Sub-type | timeToLanding | WaitingForCommands | SelectedRunwayExitIndex | TaxiArrivalToHoldingPointPath |
 |----------|--------------|-------------------|------------------------|------------------------------|
-| **A: Contact Tower** | ≥ 60s | `[22]` | -1 | null |
+| **A: Contact Tower** | < 60s | `[22]` | 0 | null |
 | **B: Cleared to Land** | 0–60s | `[23]` | 0 | null |
 | **C: Post-landing** | ≤ 0 | `[]` | ≥ 1 | populated (taxi route) |
 
@@ -451,6 +461,11 @@ ipZ = pathPoints[0].z
 ipPathDist = Σ segmentDistances([...pathPoints, tdPos])         [total path from this point]
 ipY = min(approachCap, ipPathDist × tan(3°))
 ```
+**Note:** The editor's save path (`_buildStandaloneAircraftEntry`) hardcodes `InitialPosition.Y` to
+`15.24` (= 5000 ft at 100 m/unit) instead of computing it from path distance. The stored path
+points have Y=0 (game engine computes altitude internally from `touchDownPosition` + path
+distance), but `InitialPosition` stores the approach ceiling altitude directly. Every original game
+file uses 15.24 regardless of airport.
 
 **TouchDownPosition** — from SceneryData via `state5ParamsMap` (Y≈0, runway level).
 
@@ -587,7 +602,7 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 - `extractState5Data(aclText, isV4?)` → `Array<{route, runway, touchDownPosition, approachDirection, initialPosition, pathPointList}>` — State=5 aircraft still in-air. v4: returns empty.
 - `extractTypeMap(aclText)` → `Map<number, string>` — captures all fully-qualified `$type` declarations from a file; type numbers are per-file in Unity's serialization
 - `buildAppPointMap(approachEntries)` → `Map<"Route|Runway", Vector3[]>` — verified 1:1 mapping
-- `buildState5ParamsMap(state5Entries)` → `Map<"runway", {pathPointList, touchDownPosition, approachDirection, initialPosition}>` — per-runway final approach parameters from State=5 data
+- `buildState5ParamsMap(state5Entries)` → `Map<"runway", {pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?}>` — per-runway final approach parameters from State=5 data; `routeName` populated from the approach procedure's `Name` field
 - `computeApproachTimesFromScenery(aclText, starMappings, appPointMap, refTatMap, defaultTAT, airportScale?)` → `Map<STAR, seconds>` — per-STAR duration from SceneryData path-length estimates using three-tier estimation
 - `extractGameTime(aclText)` → `seconds | null` — parse `GameTime.CurrentDateTime` ticks as seconds since midnight
 - `extractSaveTime(aclText, totalApproachTimes, isV4?)` → `seconds | null` — derive snapshot time from first State=30 entry's PR + LandingTime. v4: returns null (use MetaData.BaseTime)
@@ -597,7 +612,7 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 
 **SceneryData & STAR Mapping:**
 - `extractStarRunwayMappings(aclText, isV4?)` → `{starRunwayMap: {star→[runways]}, runwayStarMap: {runway→[stars]}}` — authoritative from `SceneryData.Runways.Routes[Type=0]` (v2/v3) or PKStaticEntities runway entries with RouteType=0 (v4)
-- `resolveApproachProcedureData(aclText, runway, hintPosition?, isV4?)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition} | null` — resolves final approach parameters for a runway from SceneryData Type=1 routes (v2/v3) or PKStaticEntities RouteType=1 (v4); when `hintPosition` is provided and multiple variants exist, picks the closest one
+- `resolveApproachProcedureData(aclText, runway, hintPosition?, isV4?)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?} | null` — resolves final approach parameters for a runway from SceneryData Type=1 routes (v2/v3) or PKStaticEntities RouteType=1 (v4); when `hintPosition` is provided and multiple variants exist, picks the closest one. Returns `routeName` from the selected procedure's `Name` field (v2/v3: route entry name; v4: extracted via `_extractString` from the route block).
 - `_parseRunwayThresholds(aclText, isV4?)` → `{[PhysicalName]: {thresholds: [{x,z}, {x,z}]}}` — runway endpoint positions from SceneryData (v2/v3) or via ThresholdPoints $iref→taxiway-node (v4)
 - `_parseTaxiwayNodes(aclText, isV4?)` → `Map<guid|id, Vector3>` — TaxiwayNode positions for GUID resolution (v2/v3: guid key; v4: $id key)
 - `_parseAirwayNodes(aclText, isV4?)` → `Map<guid|id, {name, position}>` — AirwayNode positions for FlyApproach path resolution (v2/v3: guid key; v4: $id key)
@@ -611,7 +626,7 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 - `computePathLength(points)` → total distance
 - `computeAirportScale(aclText)` → `number` — always returns `DEFAULT_AIRPORT_SCALE` (100); all axes use uniform 100 m/unit
 - `computeApproachCap(airportScale?)` → `number` — always returns `APPROACH_CEILING_M / DEFAULT_AIRPORT_SCALE` (15.24); ceiling is 5000ft regardless of airport
-- `computeFullTerminalPath(aclText, star, runway)` → `{flyLen, procLen, tdDist, total}` — full terminal path length in game units combining FlyApproach + procedure + touchdown segments
+- `computeFullTerminalPath(aclText, star, runway)` → `{flyLen, procLen, tdDist, total}` — full terminal path length in game units combining FlyApproach + procedure + touchdown segments. Passes the last FlyApproach point as `hintPosition` to `resolveApproachProcedureData` so the correct approach variant is selected when multiple exist for the runway.
 
 **Designator Mapping & Cache:**
 - `buildDesignatorMapping(aclText, isV4?)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates (v2/v3) or StaticItems with RuntimeEntities (v4). v4 path scans `StaticItems` for flight-plan entries (Registration → AircraftType, Stand) then cross-references `RuntimeEntities` in two passes: **(Pass A)** `aircraft:REG` entries (Registration → Specification.Designator), **(Pass B)** `jetway:STAND` entries with `DockingAircraft.Specification.Designator` (linked via Stand → AircraftType from static-item Stand field). Jetway fallback covers aircraft whose only runtime representation is inside a jetway's `DockingAircraft`. Previously returned empty for v4; now produces a complete map for spec lookup during save
@@ -620,7 +635,7 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, touchDownPosition?, approachCap?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=30 `$k/$v` JSON block
 - `buildState5AircraftBlock({flightPlanGuid, route, state5PR, spec, towerChannelGuid?, state5Params, flyPoints?, fullPR?, waitingForCommand?, selectedRunwayExitIndex?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=5 `$k/$v` JSON block
-- `buildAnimatorBlock(aircraftGuid, opts)` — builds the paired `AircraftAnimatorState` entry; `opts.typeNums` controls `animState`/`animSubState` type numbers
+- `buildAnimatorBlock(aircraftGuid, opts)` — builds the paired `AircraftAnimatorState` entry; `opts.typeNums` controls `animState`/`animSubState` type numbers; `opts.gearRatio` (default 1) sets `GearRatio`/`GearTargetRatio` — gear down (1) for parked and final-approach aircraft, gear up (0) for STAR approach
 
 ## Test
 
