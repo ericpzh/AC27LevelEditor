@@ -125,7 +125,7 @@ console.log('Temp: ' + path.basename(ACL_TEMP));
 console.log('\n[1] Loading original ACL...');
 const originalData = parser.loadFlights(aclOriginal);
 console.log('    Flights: ' + originalData.flights.length);
-console.log('    Mode: ' + (originalData._fromFlightPlans ? 'FlightPlans' : originalData._fromWorldState ? 'WorldState' : 'Unknown'));
+console.log('    Mode: v4 (GATCArc4 StaticData path)');
 
 // [2] Snapshot (deep clone)
 console.log('\n[2] Snapshotting flights (deep clone)...');
@@ -145,7 +145,6 @@ fs.copyFileSync(CSV_ORIGINAL, CSV_TEMP);
 console.log('\n[5] Running generateFullAcl on temp copy...');
 try {
   const originalText = readAclText(aclOriginal);
-  const isV4 = parser.detectSchemaVersion(originalText) === 4;
   const aclCfgStartTime = (parser._extractConfig(originalText) || {}).startTime || null;
   // The jetway rebuild needs DockingPositions from the approach cache specDB —
   // the app builds this from the level's .acl files.
@@ -157,14 +156,10 @@ try {
     originalData.before,
     originalData.after,
     originalData.originalBlocks,
-    originalData.worldStateData,
     originalData.sceneryMaps,
-    originalData._fromWorldState,
-    originalData._fromFlightPlans,
     approachCache,
     aclCfgStartTime,
-    null,
-    isV4
+    null
   );
   console.log('    Save complete.');
 } catch (err) {

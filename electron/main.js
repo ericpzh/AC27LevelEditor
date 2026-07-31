@@ -12,7 +12,7 @@ const updater = require('./updater');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, detectSchemaVersion, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { readAclText } = require('../src/acl/gatcarc');
@@ -447,9 +447,6 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   collectFromPaths(aclValues._missedAppPaths, aclValues._missedAppMap);
   aclValues._runwayList = Array.from(runwaysWithData).sort();
 
-  // Pass schema version so AirMapWindow can gate variant-level filtering
-  aclValues._isV4 = cached?.approachData?.isV4 || false;
-
   return aclValues;
 });
 
@@ -521,13 +518,11 @@ function _writeCache(data) {
 /**
  * Collect runway pairs for an airport.
  *
- * v4: derive pairs from the static SceneryData runway objects (each physical
+ * Derive pairs from the static SceneryData runway objects (each physical
  * runway "4L/22R" yields 4L|22R and 22R|4L). Timeline-change scanning is NOT
- * used for v4 — airports that never had runway changes defined (KJFK, KDCA)
+ * used — airports that never had runway changes defined (KJFK, KDCA)
  * have empty RunwayTimeline sections, which previously left _runwayPairs empty
  * and hid the runway change editor entirely.
- *
- * v2/v3: keep the existing timeline-change scan (collectRunwayPairs).
  *
  * @param {string[]} aclPaths — filtered .acl paths (non-hidden levels)
  * @returns {Array<{source: string, dest: string}>} sorted runway pairs
@@ -536,7 +531,7 @@ function _collectAirportRunwayPairs(aclPaths) {
   if (!aclPaths || aclPaths.length === 0) return [];
   try {
     const firstText = readAclText(aclPaths[0]);
-    if (detectSchemaVersion(firstText) === 4) return extractV4RunwayPairs(firstText);
+    return extractV4RunwayPairs(firstText);
   } catch (e) {
     console.log('[CACHE] runway pair scan warning (' + (aclPaths[0] || '') + '):', e.message);
   }
@@ -1013,10 +1008,11 @@ function _roundNearest5(minutes) {
 }
 
 /**
- * For demo files (as determined by _isDemoFile): filter flights to a 30-minute window starting at
- * CurrentDateTime, and override config startTime/endTime to match.
+ * For demo files (as determined by _isDemoFile): filter flights to the
+ * MetaData.Config startTime/endTime window — v4 demo levels already have
+ * their intended window set in Config.
  * Uses integer minutes (Math.floor) so flights at the boundary minute are
- * kept, and strict upper bound (<) so flights exactly at +30min are excluded.
+ * kept, and strict upper bound (<) so flights exactly at endTime are excluded.
  * @param {string} filePath
  * @param {Array} flights
  * @param {object|null} config
@@ -1025,54 +1021,13 @@ function _roundNearest5(minutes) {
 function _filterDemoFlights(filePath, flights, config) {
   try {
     const rawText = readAclText(filePath);
-    const cdt = extractCurrentDateTime(rawText, isV4);
 
     const toMin = t => {
       const p = String(t).split(':');
       return parseInt(p[0]) * 60 + parseInt(p[1]);
     };
 
-    // v2/v3: use GameTime.CurrentDateTime + 30-min window
-    if (cdt && cdt.timeString) {
-      const _currentDateTime = cdt.timeString;
-      // Use integer minutes — secSinceMidnight can include seconds, but flight
-      // times are HH:MM only.  Without floor, a flight at 05:45 (345 min) would
-      // fail 345 >= 345.5 and be incorrectly removed.
-      const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
-      const cdtMaxMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN); // 30-min demo window, rounded to nearest :X0/:X5
-
-      const before = flights.length;
-      flights = flights.filter(fl => {
-        const lt = (fl.LandingTime || '').trim();
-        const ob = (fl.OffBlockTime || '').trim();
-        const flightMin = lt ? toMin(lt) : (ob ? toMin(ob) : Infinity);
-        return flightMin >= cdtMin && flightMin < cdtMaxMin;
-      });
-      const removedCount = before - flights.length;
-      if (removedCount > 0) {
-        console.log('[DEMO] removed ' + removedCount + ' flights outside [' + _currentDateTime + ', +30min] window');
-      }
-
-      // Override config end time to rounded boundary
-      const eh = Math.floor(cdtMaxMin / 60) % 24;
-      const em = cdtMaxMin % 60;
-      const demoEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':00';
-
-      if (config) {
-        config.startTime = _currentDateTime;
-        config.endTime = demoEndTime;
-      } else {
-        config = { startTime: _currentDateTime, endTime: demoEndTime };
-      }
-
-      console.log('[DEMO] window [' + _currentDateTime + ' ~ ' + demoEndTime + '] (30min cap)');
-      return { flights, config, _currentDateTime, removedCount };
-    }
-
-    // v4: no GameTime.CurrentDateTime — use MetaData.Config.startTime/endTime directly.
-    // v4 demo levels already have their intended window set in Config.
-    const isV4 = detectSchemaVersion(rawText) === 4;
-    if (isV4 && config && config.startTime && config.endTime) {
+    if (config && config.startTime && config.endTime) {
       const startMin = toMin(config.startTime);
       const endMin = toMin(config.endTime);
       const before = flights.length;
@@ -1084,9 +1039,9 @@ function _filterDemoFlights(filePath, flights, config) {
       });
       const removedCount = before - flights.length;
       if (removedCount > 0) {
-        console.log('[DEMO] v4: removed ' + removedCount + ' flights outside [' + config.startTime + ' ~ ' + config.endTime + ']');
+        console.log('[DEMO] removed ' + removedCount + ' flights outside [' + config.startTime + ' ~ ' + config.endTime + ']');
       }
-      console.log('[DEMO] v4: window [' + config.startTime + ' ~ ' + config.endTime + '] (from MetaData.Config)');
+      console.log('[DEMO] window [' + config.startTime + ' ~ ' + config.endTime + '] (from MetaData.Config)');
       return { flights, config, _currentDateTime: config.startTime, removedCount };
     }
   } catch (e) {
@@ -1101,7 +1056,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
   console.log('[IPC] load-acl START:', filePath);
   try {
     const data = loadFlights(filePath);
-    console.log('[IPC] load-acl OK: flights=' + data.flights.length + ' fromFlightPlans=' + (data._fromFlightPlans || false) + ' fromWorldState=' + (data._fromWorldState || false));
+    console.log('[IPC] load-acl OK: flights=' + data.flights.length);
 
     // Extract config from ACL (single source: resolveConfigTime applies CDT override)
     let config = data._rawText ? resolveConfigTime(data._rawText) : null;
@@ -1157,7 +1112,7 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
 
 // ─── IPC: Save .acl with optional .bak overwrite backup ────
 
-ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, createBackup, weatherTimeline, windTimeline, runwayTimeline, _saveSec }) => {
+ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, sceneryMaps, createBackup, weatherTimeline, windTimeline, runwayTimeline, _saveSec }) => {
   try {
     const dir = path.dirname(filePath);
     const base = path.basename(filePath, '.acl');
@@ -1179,12 +1134,10 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     let aclcfgStartTime = null;
     let aclcfgEndTime = null;
     let config = null;
-    let aclText = null;
     const isDemoSave = _isDemoFile(filePath);
     const isEmerSave = _isEmerFile(filePath);
     try {
-      aclText = readAclText(filePath);
-      const text = aclText;
+      const text = readAclText(filePath);
       config = resolveConfigTime(text);
       if (config) {
         aclcfgStartTime = config.startTime || null;
@@ -1208,14 +1161,11 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     const icao = icaoMatch ? icaoMatch[1] : '';
     const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
 
-    // Detect schema version for save routing
-    const isV4 = aclText ? detectSchemaVersion(aclText) === 4 : false;
-
     // Generate full ACL from scratch, preserving header structure
-    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, worldStateData, sceneryMaps, _fromWorldState, _fromFlightPlans, approachCache, aclcfgStartTime, _saveSec, isV4);
+    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, sceneryMaps, approachCache, aclcfgStartTime, _saveSec);
 
     // ── Patch timeline sections into ACL ──
-    _rebuildTimelineSections(filePath, weatherTimeline, windTimeline, runwayTimeline, isV4);
+    _rebuildTimelineSections(filePath, weatherTimeline, windTimeline, runwayTimeline);
 
     // ── Also sync the CSV that the game loads ──
     let csvSynced = false;

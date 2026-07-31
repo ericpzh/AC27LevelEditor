@@ -24,7 +24,7 @@ const { readAclText } = require('../../src/acl/gatcarc');
 const { buildApproachCache } = require('../../src/acl/approach');
 
 const {
-  loadFlights, generateFullAcl, detectSchemaVersion,
+  loadFlights, generateFullAcl,
   _extractConfig,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
 } = parser;
@@ -275,10 +275,6 @@ for (const file of aclFiles) {
     const goldenAcl = copyLevelFiles(file.sourcePath, file.sourceDir, goldenSubDir, file.name);
     const goldenText = readAclText(goldenAcl);
 
-    // Detect schema version — v4 routes through _rebuildStaticDataSections,
-    // v2/v3 through _rebuildWorldStateSections
-    const isV4 = detectSchemaVersion(goldenText) === 4;
-
     // ── Step 2: Load golden → snapshot ────────────────────────────
     const goldenResult = loadFlights(goldenAcl);
     if (!goldenResult || !goldenResult.flights.length) {
@@ -305,14 +301,10 @@ for (const file of aclFiles) {
       resultAcl,
       goldenResult.flights,
       '', '', [],
-      goldenResult.worldStateData,
       goldenResult.sceneryMaps,
-      goldenResult._fromWorldState,
-      goldenResult._fromFlightPlans,
       getApproachCache(file.sourceDir),
       goldenCfg.startTime || null,
       null,
-      isV4,
     );
 
     // ── Step 5: Load result → compare against golden snapshot ─────
@@ -339,9 +331,6 @@ for (const file of aclFiles) {
     if (goldenWeather !== savedWeather) allDiffs.push(`Weather frames: ${goldenWeather} → ${savedWeather}`);
     if (goldenWind !== savedWind) allDiffs.push(`Wind frames: ${goldenWind} → ${savedWind}`);
     if (goldenRunway !== savedRunway) allDiffs.push(`Runway timeline: ${goldenRunway} → ${savedRunway}`);
-    if (goldenResult._fromFlightPlans !== savedResult._fromFlightPlans) {
-      allDiffs.push(`Source format: FlightPlans changed`);
-    }
 
     // ── Text-level _departureTakeoffTime / _arrivalInBlockTime validation ──
     {

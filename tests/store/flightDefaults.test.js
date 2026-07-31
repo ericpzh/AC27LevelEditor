@@ -467,28 +467,14 @@ describe('createDefaultFlight', () => {
 // ─── createArrivalFlight ─────────────────────────────────────────
 
 describe('createArrivalFlight', () => {
-  it('sets LandingTime and InBlockTime', () => {
+  it('sets LandingTime and leaves InBlockTime empty', () => {
     const vals = {};
     const audioData = {};
     const apv = {};
     const flight = createArrivalFlight('18:00', vals, audioData, 'ZSJN', apv, []);
 
     expect(flight.LandingTime).toMatch(/^\d{2}:\d{2}:00$/);
-    expect(flight.InBlockTime).toMatch(/^\d{2}:\d{2}:00$/);
-  });
-
-  it('InBlockTime is DEFAULT_TAXI_MINUTES after LandingTime', () => {
-    const vals = {};
-    const audioData = {};
-    const apv = {};
-    const flight = createArrivalFlight('18:00', vals, audioData, 'ZSJN', apv, []);
-
-    const landParts = flight.LandingTime.split(':');
-    const inbParts = flight.InBlockTime.split(':');
-    const landMin = parseInt(landParts[0]) * 60 + parseInt(landParts[1]);
-    const inbMin = parseInt(inbParts[0]) * 60 + parseInt(inbParts[1]);
-    // DEFAULT_TAXI_MINUTES = 5
-    expect(inbMin - landMin).toBe(5);
+    expect(flight.InBlockTime).toBe('');
   });
 
   it('does NOT set OffBlockTime or TakeoffTime', () => {
@@ -523,42 +509,24 @@ describe('createArrivalFlight', () => {
     }
   });
 
-  it('leaves InBlockTime empty when isV4 is true (v4 stores it as 0)', () => {
-    const flight = createArrivalFlight('18:00', {}, {}, 'ZSJN', {}, [], true);
+  it('leaves InBlockTime empty (v4 stores it as 0)', () => {
+    const flight = createArrivalFlight('18:00', {}, {}, 'ZSJN', {}, []);
     expect(flight.InBlockTime).toBe('');
     expect(flight.LandingTime).toMatch(/^\d{2}:\d{2}:00$/);
-  });
-
-  it('sets InBlockTime when isV4 is false', () => {
-    const flight = createArrivalFlight('18:00', {}, {}, 'ZSJN', {}, [], false);
-    expect(flight.InBlockTime).toMatch(/^\d{2}:\d{2}:00$/);
   });
 });
 
 // ─── createDepartureFlight ───────────────────────────────────────
 
 describe('createDepartureFlight', () => {
-  it('sets OffBlockTime and TakeoffTime', () => {
+  it('sets OffBlockTime and leaves TakeoffTime empty', () => {
     const vals = {};
     const audioData = {};
     const apv = {};
     const flight = createDepartureFlight('06:00', vals, audioData, 'ZSJN', apv, []);
 
     expect(flight.OffBlockTime).toMatch(/^\d{2}:\d{2}:00$/);
-    expect(flight.TakeoffTime).toMatch(/^\d{2}:\d{2}:00$/);
-  });
-
-  it('TakeoffTime is DEFAULT_TAXI_MINUTES after OffBlockTime', () => {
-    const vals = {};
-    const audioData = {};
-    const apv = {};
-    const flight = createDepartureFlight('06:00', vals, audioData, 'ZSJN', apv, []);
-
-    const offParts = flight.OffBlockTime.split(':');
-    const takeParts = flight.TakeoffTime.split(':');
-    const offMin = parseInt(offParts[0]) * 60 + parseInt(offParts[1]);
-    const takeMin = parseInt(takeParts[0]) * 60 + parseInt(takeParts[1]);
-    expect(takeMin - offMin).toBe(5);
+    expect(flight.TakeoffTime).toBe('');
   });
 
   it('does NOT set LandingTime or InBlockTime', () => {
@@ -580,14 +548,9 @@ describe('createDepartureFlight', () => {
     expect(flight.DepartureAirport).toBe('KJFK');
   });
 
-  it('leaves TakeoffTime empty when isV4 is true (v4 stores it as 0)', () => {
-    const flight = createDepartureFlight('06:00', {}, {}, 'ZSJN', {}, [], true);
+  it('leaves TakeoffTime empty (v4 stores it as 0)', () => {
+    const flight = createDepartureFlight('06:00', {}, {}, 'ZSJN', {}, []);
     expect(flight.TakeoffTime).toBe('');
     expect(flight.OffBlockTime).toMatch(/^\d{2}:\d{2}:00$/);
-  });
-
-  it('sets TakeoffTime when isV4 is false', () => {
-    const flight = createDepartureFlight('06:00', {}, {}, 'ZSJN', {}, [], false);
-    expect(flight.TakeoffTime).toMatch(/^\d{2}:\d{2}:00$/);
   });
 });

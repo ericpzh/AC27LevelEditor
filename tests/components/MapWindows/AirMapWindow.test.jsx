@@ -334,7 +334,6 @@ describe('AirMapWindow', () => {
         _apprPaths: {},
         _runwayThresholds: {},
         _runwayList: ['19'],
-        _isV4: true,
       },
     });
 

@@ -30,7 +30,7 @@ const { _rebuildJetwayEntries, _buildActiveJetwayEntry, _validateStandConflicts 
 const { buildApproachCache } = require('../../src/acl/approach');
 const { createTokenizer } = require('../../src/acl/tokenizer');
 
-const { loadFlights, detectSchemaVersion } = parser;
+const { loadFlights } = parser;
 
 // ── CLI ──────────────────────────────────────────────────────────
 const args = {};
@@ -393,16 +393,6 @@ for (const file of aclFiles) {
   try {
     // ── Step 1: Decode ACL to text (GOLDEN) ─────────────────────
     const goldenText = readAclText(file.sourcePath);
-    const isV4 = detectSchemaVersion(goldenText) === 4;
-
-    if (!isV4) {
-      fileResult.status = 'skipped';
-      fileResult.skipReason = 'Not a v4 file';
-      report.summary.skipped++;
-      report.files.push(fileResult);
-      console.log(`  ~ ${label} — not v4, skipped`);
-      continue;
-    }
 
     // ── Step 2: Load flights ────────────────────────────────────
     const loaded = loadFlights(file.sourcePath);
@@ -678,11 +668,11 @@ function t24_assert(cond, msg) {
   else { console.log('  \x1b[31m✗ FAIL:\x1b[0m ' + msg); T24_FAIL++; }
 }
 
-// Find the first v4 file from the collected list
+// Find the first readable file from the collected list
 const firstV4File = aclFiles.find(f => {
   try {
-    const txt = readAclText(f.sourcePath);
-    return detectSchemaVersion(txt) === 4;
+    readAclText(f.sourcePath);
+    return true;
   } catch (_) { return false; }
 });
 

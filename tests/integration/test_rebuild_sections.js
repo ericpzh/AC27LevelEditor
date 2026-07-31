@@ -1,13 +1,13 @@
 ﻿/**
- * End-to-end test: _rebuildWorldStateSections
+ * End-to-end test: _rebuildStaticDataSections
  *
- * Verify that _rebuildWorldStateSections correctly rebuilds the FlightPlans and
- * Aircrafts sections from flight data, preserving all other ACL content.
+ * Verify that _rebuildStaticDataSections correctly rebuilds the flight-plan
+ * and static sections from flight data, preserving all other ACL content.
  *
  * Usage: node test/test_rebuild_sections.js --acl <path-to-.acl-file>
  *
  * The test copies the ACL to a temp file in test/, modifies one flight,
- * runs _rebuildWorldStateSections, and validates the output.
+ * runs _rebuildStaticDataSections, and validates the output.
  */
 const fs = require('fs');
 const path = require('path');
@@ -49,7 +49,7 @@ function cleanup() {
 
 // ─── Main ─────────────────────────────────────────────────────
 
-console.log('Test: _rebuildWorldStateSections');
+console.log('Test: _rebuildStaticDataSections');
 console.log('ACL:  ' + aclSrc);
 console.log('Temp: ' + path.basename(ACL_TEMP) + '\n');
 
@@ -58,13 +58,8 @@ console.log('[1] Reading source ACL...');
 const srcText = readAclText(aclSrc);
 console.log('  Source size: ' + (srcText.length / 1024).toFixed(0) + ' KB');
 
-// Schema version — v4 routes through _rebuildStaticDataSections,
-// v2/v3 through _rebuildWorldStateSections
-const isV4 = parser.detectSchemaVersion(srcText) === 4;
-console.log('  Schema: ' + (isV4 ? 'v4' : 'v2/v3'));
-
 // Parse FlightPlans to get existing flights
-const fpData = parser._parseWorldStateFlightPlans(srcText, isV4);
+const fpData = parser._parseWorldStateFlightPlans(srcText);
 if (!fpData || !fpData.flights || fpData.flights.length === 0) {
   console.error('  FAILED: Could not parse FlightPlans from source');
   process.exit(1);
@@ -85,18 +80,14 @@ console.log('\n[3] Copying to temp...');
 fs.copyFileSync(aclSrc, ACL_TEMP);
 
 // [4] Run rebuild
-console.log('\n[4] Running ' + (isV4 ? '_rebuildStaticDataSections' : '_rebuildWorldStateSections') + '...');
+console.log('\n[4] Running _rebuildStaticDataSections...');
 try {
-  if (isV4) {
-    // The v4 rebuild needs the approach cache for jetway DockingPositions,
-    // same as the app's save path (electron/main.js).
-    let approachCache = null;
-    try { approachCache = require('../../src/acl/approach').buildApproachCache(path.dirname(aclSrc)); } catch (_) {}
-    const cfg = parser._extractConfig(srcText) || {};
-    parser._rebuildStaticDataSections(ACL_TEMP, testFlights, undefined, approachCache, cfg.startTime || null, null);
-  } else {
-    parser._rebuildWorldStateSections(ACL_TEMP, testFlights);
-  }
+  // The rebuild needs the approach cache for jetway DockingPositions,
+  // same as the app's save path (electron/main.js).
+  let approachCache = null;
+  try { approachCache = require('../../src/acl/approach').buildApproachCache(path.dirname(aclSrc)); } catch (_) {}
+  const cfg = parser._extractConfig(srcText) || {};
+  parser._rebuildStaticDataSections(ACL_TEMP, testFlights, undefined, approachCache, cfg.startTime || null, null);
   console.log('  Rebuild completed');
 } catch (err) {
   console.error('  FAILED: ' + err.message);
@@ -112,85 +103,29 @@ console.log('  Output size: ' + (outSize / 1024).toFixed(0) + ' KB (source: ' + 
 
 let allPassed = true;
 
-if (isV4) {
-  // ── v4 validation: StaticItems rebuild + binary roundtrip ──
-  allPassed &= check(outText.includes('"StaticData"'), 'StaticData section present');
+// ── v4 validation: StaticItems rebuild + binary roundtrip ──
+allPassed &= check(outText.includes('"StaticData"'), 'StaticData section present');
 
-  // Edited data present
-  allPassed &= check(outText.includes(changedFlight.AirlineName), 'Edited AirlineName present in output');
-  allPassed &= check(outText.includes('ChangedVoice'), 'Changed Voice present in output');
+// Edited data present
+allPassed &= check(outText.includes(changedFlight.AirlineName), 'Edited AirlineName present in output');
+allPassed &= check(outText.includes('ChangedVoice'), 'Changed Voice present in output');
 
-  // Scenery preserved — v4 has no "SceneryData" section; scenery entities live
-  // inside StaticData.$blobdoc (taxiways, osm road entities)
-  allPassed &= check(outText.includes('"TaxiwayName"'), 'Scenery (taxiways) preserved');
-  allPassed &= check(outText.includes('"OsmId"'), 'Scenery (osm entities) preserved');
+// Scenery preserved — v4 has no "SceneryData" section; scenery entities live
+// inside StaticData.$blobdoc (taxiways, osm road entities)
+allPassed &= check(outText.includes('"TaxiwayName"'), 'Scenery (taxiways) preserved');
+allPassed &= check(outText.includes('"OsmId"'), 'Scenery (osm entities) preserved');
 
-  // RunwayTimeline preserved
-  allPassed &= check(outText.includes('"RunwayTimeline"'), 'RunwayTimeline section preserved');
+// RunwayTimeline preserved
+allPassed &= check(outText.includes('"RunwayTimeline"'), 'RunwayTimeline section preserved');
 
-  // Reload through the v4 decode path: flight count + edited data must survive
-  // the binary re-encode (readAclText above already proved the container decodes)
-  const reloaded = parser.loadFlights(ACL_TEMP);
-  const reloadCount = reloaded && reloaded.flights ? reloaded.flights.length : 0;
-  allPassed &= check(reloadCount === testFlights.length,
-    'Reload flight count == ' + testFlights.length + ' (got ' + reloadCount + ')');
-  const editedReloaded = reloaded && reloaded.flights.some(f => f.AirlineName === changedFlight.AirlineName);
-  allPassed &= check(!!editedReloaded, 'Edited AirlineName present after reload');
-} else {
-  // ── v2/v3 validation: WorldState.FlightPlans/Aircrafts rebuild ──
-  // WorldState still exists
-  allPassed &= check(outText.includes('"WorldState"'), 'WorldState section present');
-
-  // Aircrafts is empty
-  const acMatch = outText.match(/"Aircrafts"[\s\S]*?"\$rlength"\s*:\s*(\d+)/);
-  if (acMatch) {
-    allPassed &= check(parseInt(acMatch[1], 10) === 0, 'Aircrafts $rlength == 0 (got ' + acMatch[1] + ')');
-  } else {
-    allPassed &= check(false, 'Aircrafts $rlength found');
-  }
-
-  // FlightPlans has correct count
-  const fpMatch = outText.match(/"FlightPlans"[\s\S]*?"\$rlength"\s*:\s*(\d+)/);
-  if (fpMatch) {
-    allPassed &= check(parseInt(fpMatch[1], 10) === testFlights.length,
-      'FlightPlans $rlength == ' + testFlights.length + ' (got ' + fpMatch[1] + ')');
-  } else {
-    allPassed &= check(false, 'FlightPlans $rlength found');
-  }
-
-  // Edited data present
-  allPassed &= check(outText.includes(changedFlight.AirlineName), 'Edited AirlineName present in output');
-  allPassed &= check(outText.includes('ChangedVoice'), 'Changed Voice present in output');
-
-  // SceneryData preserved
-  allPassed &= check(outText.includes('"SceneryData"'), 'SceneryData section preserved');
-  allPassed &= check(outText.includes('"Runways"'), 'SceneryData.Runways preserved');
-
-  // RunwayTimeline preserved
-  allPassed &= check(outText.includes('"RunwayTimeline"'), 'RunwayTimeline section preserved');
-
-  // Locate FlightPlans section for deeper checks
-  const fpStartIdx = outText.indexOf('"FlightPlans"');
-  const afterFp = outText.substring(fpStartIdx);
-  const fpEndIdx = afterFp.search(/\]\s*\}/);
-  const fpSection = afterFp.substring(0, fpEndIdx);
-
-  // No orphan GUIDs
-  const oldGuidInFp = fpSection.includes('519e85a8-394b-43c7-be53-abd3940d0bcc');
-  allPassed &= check(!oldGuidInFp, 'Old FlightPlan GUID NOT present in new FlightPlans');
-
-  // Zero $k entries in Aircrafts
-  const acStartIdx = outText.indexOf('"Aircrafts"');
-  const afterAc = outText.substring(acStartIdx);
-  const acEndIdx = afterAc.search(/\]\s*\}/);
-  const acKCount = (afterAc.substring(0, acEndIdx).match(/"\$k":/g) || []).length;
-  allPassed &= check(acKCount === 0, 'Aircrafts $rcontent has 0 $k entries (got ' + acKCount + ')');
-
-  // FlightPlans $k matches test flights
-  const fpKCount = (fpSection.match(/"\$k":/g) || []).length;
-  allPassed &= check(fpKCount === testFlights.length,
-    'FlightPlans $k entries == ' + testFlights.length + ' (got ' + fpKCount + ')');
-}
+// Reload through the v4 decode path: flight count + edited data must survive
+// the binary re-encode (readAclText above already proved the container decodes)
+const reloaded = parser.loadFlights(ACL_TEMP);
+const reloadCount = reloaded && reloaded.flights ? reloaded.flights.length : 0;
+allPassed &= check(reloadCount === testFlights.length,
+  'Reload flight count == ' + testFlights.length + ' (got ' + reloadCount + ')');
+const editedReloaded = reloaded && reloaded.flights.some(f => f.AirlineName === changedFlight.AirlineName);
+allPassed &= check(!!editedReloaded, 'Edited AirlineName present after reload');
 
 // [6] Cleanup
 console.log('\n[6] Cleaning up temp file...');

@@ -258,7 +258,7 @@ function testRunwayTimeline() {
   const meta = metaRunway(orig);
   let ok = true;
   ok &= check(meta.irTypeNum === 8, 'InitialRunways $type num == 8 (got ' + meta.irTypeNum + ')');
-  ok &= check(meta.irTypeStr === null, 'InitialRunways $type is bare integer (v2/v3 format preserved)');
+  ok &= check(meta.irTypeStr === null, 'InitialRunways $type is bare integer (decoded-text form)');
   ok &= check(!!meta.tlTypeNum, 'Timeline $type number parsed (' + meta.tlTypeNum + ')');
 
   // Generate from parsed ACL data so the round-trip compares apples-to-apples

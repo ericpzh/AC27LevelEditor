@@ -62,19 +62,12 @@ describe('StarMap', () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  it('renders the panel portal when there is no star data (isV4: false)', () => {
+  it('renders the panel portal when there is no star data', () => {
     renderMap({ starPaths: {} });
     const panel = document.querySelector('.star-map-panel');
     expect(panel).not.toBeNull();
     expect(document.body.contains(panel)).toBe(true);
     expect(document.querySelector('.star-map-svg')).toBeNull();
-    expect(document.querySelector('.star-map-empty')).not.toBeNull();
-  });
-
-  it('renders the panel portal with no star data (isV4: true)', () => {
-    useAppStore.setState({ isV4: true });
-    renderMap({ starPaths: {} });
-    expect(document.querySelector('.star-map-panel')).not.toBeNull();
     expect(document.querySelector('.star-map-empty')).not.toBeNull();
   });
 
@@ -109,19 +102,11 @@ describe('StarMap', () => {
     expect(document.querySelector('.star-map-shrink')).not.toBeNull();
   });
 
-  it('v4: filters STAR variants to the selected runway only', () => {
-    useAppStore.setState({ isV4: true });
+  it('filters STAR variants to the selected runway only', () => {
     renderMap({ selectedRunway: '01' });
     // STAR1A's '19' variant is filtered out; only '01' variants remain (STAR1A + STAR2B)
     const lines = document.querySelectorAll('.star-map-line');
     expect(lines.length).toBe(2);
-  });
-
-  it('v2/v3: keeps all STAR variants when a runway is selected', () => {
-    useAppStore.setState({ isV4: false });
-    renderMap({ selectedRunway: '01' });
-    const lines = document.querySelectorAll('.star-map-line');
-    expect(lines.length).toBe(3);
   });
 
   it('clicking a STAR polyline calls onSelect', () => {

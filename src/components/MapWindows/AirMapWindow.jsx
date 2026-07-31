@@ -63,7 +63,6 @@ export default function AirMapWindow({ airportIcao }) {
   const rootPath = decodeURIComponent(sp.get('root') || '');
 
   const [starPaths, setStarPaths] = useState({});
-  const [isV4, setIsV4] = useState(false);
   const [sidPaths, setSidPaths] = useState({});
   const [missedAppPaths, setMissedAppPaths] = useState({});
   const [runwayThresholds, setRunwayThresholds] = useState({});
@@ -166,9 +165,8 @@ export default function AirMapWindow({ airportIcao }) {
         setSidRunwayMap(vals?._sidRunwayMap || {});
         setApprRunwayMap(vals?._apprRunwayMap || {});
         setMissedAppMap(vals?._missedAppMap || {});
-        setIsV4(vals?._isV4 || false);
-        // Initialize all runways as active by default
-        setActiveRunways(new Set(rwyList));
+        // Initialize all runways as active by default (null = uninitialized, show all)
+        setActiveRunways(rwyList.length > 0 ? new Set(rwyList) : null);
       } catch (e) {
         setError(e.message);
       } finally {
@@ -365,32 +363,18 @@ export default function AirMapWindow({ airportIcao }) {
   }, [starPaths, apprPaths]);
 
   // ── Filter paths by active runways ─────────────────────────
-  // When isV4: variant-level filtering — only show the variant for each active runway.
-  // When !isV4 (legacy): name-level filtering — show all variants if any runway matches,
-  // with empty-map early-out for compatibility.
+  // Variant-level filtering — only show the variant for each active runway.
   const filterByRunway = useCallback((pathsObj, runwayMap) => {
     if (!activeRunways || !pathsObj) return pathsObj;
-    if (isV4) {
-      const filtered = {};
-      for (const [name, variants] of Object.entries(pathsObj)) {
-        const filteredVariants = (variants || []).filter(v => activeRunways.has(v.runway));
-        if (filteredVariants.length > 0) {
-          filtered[name] = filteredVariants;
-        }
+    const filtered = {};
+    for (const [name, variants] of Object.entries(pathsObj)) {
+      const filteredVariants = (variants || []).filter(v => activeRunways.has(v.runway));
+      if (filteredVariants.length > 0) {
+        filtered[name] = filteredVariants;
       }
-      return filtered;
-    } else {
-      if (!runwayMap || !Object.keys(runwayMap).length) return pathsObj;
-      const filtered = {};
-      for (const [name, variants] of Object.entries(pathsObj)) {
-        const rwys = runwayMap[name];
-        if (!rwys || rwys.some(r => activeRunways.has(r))) {
-          filtered[name] = variants;
-        }
-      }
-      return filtered;
     }
-  }, [activeRunways, isV4]);
+    return filtered;
+  }, [activeRunways]);
 
   const filteredStarPaths = useMemo(() => filterByRunway(trimmedStarPaths, starRunwayMap),
     [trimmedStarPaths, starRunwayMap, filterByRunway]);

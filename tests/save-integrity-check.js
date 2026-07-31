@@ -193,11 +193,7 @@ if (isDemo) {
   if (origRw === savedRw && origSt === savedSt) console.log(`  [OK] Scenery maps: ${savedRw} runways, ${savedSt} stands`);
   else { diffs.push(`Scenery: runways ${origRw}→${savedRw}, stands ${origSt}→${savedSt}`); pass = false; }
 
-  // 6. Source format
-  if (origResult._fromFlightPlans === savedResult._fromFlightPlans) console.log('  [OK] Source format preserved (FlightPlans)');
-  else { diffs.push('Source format changed'); pass = false; }
-
-  // 7. Embedded timelines
+  // 6. Embedded timelines
   const savedText = readAclText(aclPath);
   const origText = readAclText(bakPath);
   const sw2 = countTimeline(_parseWeatherFrames(savedText)), ow2 = countTimeline(_parseWeatherFrames(origText));
@@ -214,7 +210,7 @@ if (isDemo) {
 
 // ── Timeline JSONs (common) ──────────────────────────────────────
 
-// ── 8. Text-level _departureTakeoffTime / _arrivalInBlockTime validation ─
+// ── 7. Text-level _departureTakeoffTime / _arrivalInBlockTime validation ─
 {
   const savedText = readAclText(aclPath);
   // Count all _departureTakeoffTime values that are 0 in the saved text.

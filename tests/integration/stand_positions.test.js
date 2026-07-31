@@ -18,17 +18,17 @@ const { readAclText } = require('../../src/acl/gatcarc');
 const FIXTURE_PATH = path.join(
   __dirname,
   '..', 'fixtures', 'game-root', 'GroundATC_Data', 'StreamingAssets',
-  'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.acl'
+  'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl'
 );
 
 const text = readAclText(FIXTURE_PATH);
-const stands = _parseStandPositions(text, false);
+const stands = _parseStandPositions(text);
 
 describe('_parseStandPositions', () => {
-  it('should parse stands from ZSJN fixture (53 stands)', () => {
+  it('should parse stands from ZSJN v4 fixture (57 stands)', () => {
     expect(stands).toBeDefined();
     expect(typeof stands).toBe('object');
-    expect(Object.keys(stands)).toHaveLength(53);
+    expect(Object.keys(stands)).toHaveLength(57);
   });
 
   it('should have stand "300" with valid finite coordinates', () => {

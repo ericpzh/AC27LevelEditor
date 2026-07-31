@@ -17,14 +17,9 @@ const path = require('path');
 const { readAclText, decodeArchive, encodeArchive } = require('../../src/acl/gatcarc');
 const {
   extractSpecificationDB,
-  _detectSchemaVersion,
   buildApproachAircraftBlock,
   buildState5AircraftBlock,
 } = require('../../src/acl/approach');
-const {
-  _rebuildWorldStateSections,
-  _rebuildStaticDataSections,
-} = require('../../src/acl/flight_plans');
 
 let PASS = 0, FAIL = 0;
 
@@ -46,7 +41,7 @@ console.log('═══ T1: RunwayTakeOffLength nullish coalescing ═══');
 
 {
   // Test: RunwayTakeOffLength=0 MUST be preserved (not overridden to 2000)
-  // Build a minimal v2/v3-style ACL text so _parseAircraftEntries finds entries
+  // Build a minimal ACL text containing Specification entries
   // Note: $k must be a GUID (hex digits + hyphens) for the regex in _parseAircraftEntries
   const specText = [
     '{',
@@ -67,7 +62,7 @@ console.log('═══ T1: RunwayTakeOffLength nullish coalescing ═══');
     '  }',
     '}',
   ].join('\n');
-  const db = extractSpecificationDB(specText, false);
+  const db = extractSpecificationDB(specText);
   const spec = db.get('TEST');
   assert(spec !== undefined, 'Spec extracted for RunwayTakeOffLength=0 case');
   if (spec) {
@@ -95,7 +90,7 @@ console.log('═══ T1: RunwayTakeOffLength nullish coalescing ═══');
     '  }',
     '}',
   ].join('\n');
-  const db = extractSpecificationDB(specText, false);
+  const db = extractSpecificationDB(specText);
   const spec = db.get('TEST2');
   assert(spec !== undefined, 'Spec extracted for missing RunwayTakeOffLength case');
   if (spec) {
@@ -245,8 +240,6 @@ if (!aclPath) {
 if (aclPath && fs.existsSync(aclPath)) {
   console.log('  Using: ' + path.basename(aclPath));
   const text = readAclText(aclPath);
-  const isV4 = _detectSchemaVersion(text) === 4;
-  console.log('  Schema version: ' + (isV4 ? 'v4' : 'v2/v3'));
 
   const db = extractSpecificationDB(text);
   assert(db.size > 0, `extractSpecificationDB finds specs (got ${db.size})`);

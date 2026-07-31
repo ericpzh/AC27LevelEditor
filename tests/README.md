@@ -2,13 +2,13 @@
 
 Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.js (integration)**.
 
-Covers both **v2/v3 text-format** and **v4 GATCArc binary-format** save/load paths.
+Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format support has been removed).
 
 ## Quick Start
 
 ```bash
 npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
-npm test              # 537 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
+npm test              # 528 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
 npm run test:e2e      # 15 Playwright E2E tests (requires npm run build first, ~3 min; 1 skipped — E12a overlay timing)
 node tests/integration/test_api_server.js      # MCP/API tests: 105 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -25,21 +25,21 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (537 tests)
+## Layer 1 — Vitest Component Tests (528 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 537 pass (31 test files)
+### `npm test` — 528 pass (31 test files)
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
 | `utils/timeUtils.test.js` | 23 | `ticksToTime` (0/0n/""→""; ticks→HH:MM:SS), `timeToTicks` (empty→0; "HH:MM:SS"→ticks; baseDate offset), `timeToMinutes` ("01:30"→90), `timeToSeconds` ("01:00:00"→3600), `minutesToTimeStr` (90→"01:30:00"; 1500 wraps to "01:00:00"), `sortTimelineByTime` (sorts by time field), `getTimelineActiveRange` (no bounds→all active; bounds→filters), `getDefaultTime` (midpoint "06:00"+"10:00"→"08:00:00"; none→"12:00:00"), `_extractBaseDateFromText` (BaseTime match; WorldState fallback; FALLBACK_BASE_DATE_TICKS), `isValidTimeStr` (valid/invalid/edge) |
-| `utils/validators.test.js` | 33 | `validateCallsigns` — no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[]. `validateTimes`: time-order checks (arrival: Landing < InBlock; departure: OffBlock < Takeoff), start-time bounds (≥config.startTime, ≤config.endTime), end-time bounds, edge cases. `validateField`: airline-code non-empty, flight-number regex, stand exists, aircraft non-empty, reg non-empty, runway exists in config. `validateAll`: runs all validators, aggregates errors. `getValidationState`/`getFieldError` derived selectors. **`runTripleValidation` isV4 (4):** time-order checks (InBlockTime/TakeoffTime) skipped for v4, enforced for v2/v3; dropdown + stand-conflict validations still run for v4. **`getActiveColumns` isV4 (4):** v4 hides InBlockTime/TakeoffTime columns, v2/v3 shows them. **`_isNew` stripping (3):** JSON replacer (mirrors electron main timeline sidecar writers) removes `_isNew` at all nesting levels, preserves other keys. |
-| `store/flightDefaults.test.js` | 60 | `randomPick`: null/undefined/empty→null, single/multi→valid. `pickRandomAirlineCode`: audio first→AirlineCode fallback→AirlineName→'NEW'; key regression: never 'NEW' when AirlineCode dropdown populated. `pickRandomFlightNumber`: from `_flightNums`, '1' fallback. `pickRandomUnusedStand`: unused only, reuse when all taken, empty when no stands. `pickFirstFlightNumber`/`pickDefaultAirlineCode` (existing): first-element behaviour preserved. `makeEmptyFlight`: 15 empty-string fields. `computeDefaultBaseMin`: config end time−offset, clamp≥0. `minutesToTimeString`: HH:MM:00 format. `createDefaultFlight`: random airline+cascaded aircraft/reg+non-conflicting stand; arrival vs departure direction. `createArrivalFlight`: LandingTime<InBlockTime (5 min gap), no departure times. `createDepartureFlight`: OffBlockTime<TakeoffTime (5 min gap), no arrival times. Stand conflict forwarding. **isV4 (4):** `createArrivalFlight`/`createDepartureFlight` with isV4 leave InBlockTime/TakeoffTime empty, primary times still set. |
-| `store/appStore.test.jsx` | 26 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with randomized cascade (airline from dropdown, valid aircraft/reg, non-conflicting stand); `addArrivalFlight` regression: airline never "NEW" when AirlineCode dropdown populated; stand conflict avoidance with existing flights; **`addArrivalFlight` isV4:** new flight leaves InBlockTime empty; `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; **Chat state (10):** panel defaults closed, vendors setup step, empty config, toggle open/closed, add+clear messages, sending state, set+clear errors, chat config, setup step change |
+| `utils/validators.test.js` | 30 | `validateCallsigns` (5): no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[]. `detectStandConflicts` (17): overlap rules (arr/arr allowed, dep/dep flagged, offblock < landing OK / = landing flagged, 20-min default start), conflict messages contain both callsigns + stand with normalized times. `runTripleValidation` (3): v4 semantics — time-order checks (InBlockTime/TakeoffTime) always skipped; dropdown + stand-conflict validations still run. `getActiveColumns` (2): v4 hides InBlockTime/TakeoffTime columns. `_isNew` stripping (3): JSON replacer (mirrors electron main timeline sidecar writers) removes `_isNew` at all nesting levels, preserves other keys. |
+| `store/flightDefaults.test.js` | 56 | `randomPick`: null/undefined/empty→null, single/multi→valid. `pickRandomAirlineCode`: audio first→AirlineCode fallback→AirlineName→'NEW'; key regression: never 'NEW' when AirlineCode dropdown populated. `pickRandomFlightNumber`: from `_flightNums`, '1' fallback. `pickRandomUnusedStand`: unused only, reuse when all taken, empty when no stands. `pickFirstFlightNumber`/`pickDefaultAirlineCode` (existing): first-element behaviour preserved. `makeEmptyFlight`: 15 empty-string fields. `computeDefaultBaseMin`: config end time−offset, clamp≥0. `minutesToTimeString`: HH:MM:00 format. `createDefaultFlight`: random airline+cascaded aircraft/reg+non-conflicting stand; arrival vs departure direction. `createArrivalFlight`: sets LandingTime, leaves InBlockTime empty (v4 stores it as 0), no departure times, forwards existingFlights for stand-conflict avoidance. `createDepartureFlight`: sets OffBlockTime, leaves TakeoffTime empty (v4 stores it as 0), no arrival times. Stand conflict forwarding. |
+| `store/appStore.test.jsx` | 26 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with randomized cascade (airline from dropdown, valid aircraft/reg, non-conflicting stand); `addArrivalFlight` regression: airline never "NEW" when AirlineCode dropdown populated; stand conflict avoidance with existing flights; `addArrivalFlight` leaves InBlockTime empty (v4 stores it as 0); `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; **Chat state (9):** panel defaults closed, vendors setup step, empty config, toggle open/closed, add+clear messages, sending state, set+clear errors, chat config, setup step change |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |
 | `components/common/Toast.test.jsx` | 4 | Renders empty by default; shows message when set; applies CSS class from type; `.show` class toggles with message |
-| `components/BrowserScreen/BrowserScreen.test.jsx` | 28 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast. **Help Button (5):** renders in header, click opens overlay, Escape closes, backdrop click closes, close button works. **Debug Mode (4):** renders toggle button, shows active state when installed, tooltip on hover, disabled while loading. **Livery Install (7):** renders button, tooltip on hover, progress overlay + disabled state, download+install success, fallback to file dialog on download fail, cancel after download fail, install error toast. **Demo File Filtering (3):** hides whitelisted .demo files in non-demo mode, hides non-whitelisted .demo files, shows whitelisted .demo files in demo mode |
+| `components/BrowserScreen/BrowserScreen.test.jsx` | 25 | Version mismatch detection: no mismatch, mismatch shown with Re-Scan button, re-scan triggers refresh, re-scan failure toast. **Help Button (5):** renders in header, click opens overlay, Escape closes, backdrop click closes, close button works. **Debug Mode (4):** renders toggle button, shows active state when installed, tooltip on hover, disabled while loading. **Livery Install (7):** renders button, tooltip on hover, progress overlay + disabled state, download+install success, fallback to file dialog on download fail, cancel after download fail, install error toast. **Demo File Filtering (3):** hides whitelisted .demo files in non-demo mode, hides non-whitelisted .demo files, shows whitelisted .demo files in demo mode |
 | `components/BrowserScreen/VideoBackgroundModal.test.jsx` | 13 | Video background replace/restore confirmation modal: renders when show=true, Cancel calls onCancel, Replace calls onReplace, Restore calls onRestore, hides when show=false, renders Chinese translations. **Full workflow (7):** download progress tracking, conversion progress tracking, success closes overlay, error on conversion failure, error when no folders found, retry on error, error overlay closeable via Escape + close button. |
 | `components/BrowserScreen/BrowserHelpOverlay.test.jsx` | 9 | Help overlay renders title + section headings (Header Buttons/Airport/Levels), all button descriptions, inline button icons, Escape/backdrop/close-button dismissal, Chinese translations |
 | `components/BrowserScreen/VideoReplaceOverlay.test.jsx` | 6 | Renders progress bar + percentage; closes immediately on successful completion; shows error when conversion fails; shows error when no folders found; Escape key closes error overlay; renders progress bar in Chinese |
@@ -48,10 +48,10 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `components/EditorScreen/EditorTooltip.test.jsx` | 8 | Editor BUTTONS registry completeness (all descKeys, all icons, all required buttons); tooltip integration on editor toolbar buttons |
 | `components/EditorScreen/FlightTable/FlightTable.test.jsx` | 6 | Click on data cell → no selection toggle; checkbox click → toggles; drag from data cell → range-selects; dropdown/time cell clicks → no toggle; clock portal click → no toggle |
 | `components/EditorScreen/StandMap/StandMap.test.jsx` | 22 | Stand dots/labels count, selected highlight + ring, occupied plane icons + callsign labels, click-to-select, hover states, empty/null stands, legend, shrink button, portal positioning, animations, rotation on planes, disabled stands, backward-compatible no-heading, cargo-stand labels (SGSE), text clipping |
-| `components/EditorScreen/StarMap/StarMap.test.jsx` | 11 | Panel portal renders with/without star data (both isV4 states), runway threshold lines, STAR polylines + labels, legend, shrink button, **v4 variant filtering:** selected runway filters STAR variants in v4 but keeps them in v2/v3, click-to-select calls onSelect, hover adds hovered class |
-| `hooks/useEditorSaveActions.test.jsx` | 8 | **isV4 propagation (3):** `handleSave`/`handleSaveAs` forward store `isV4` to `runTripleValidation` (true for v4 files, false otherwise); no issues → backup modal (not issues modal). Duplicate callsigns block save before validation. **Restore/import (2):** `setLegacyState` propagates `isV4` from the IPC response. **Back (2):** no modifications → straight to browser; modifications → unsaved-changes modal. |
+| `components/EditorScreen/StarMap/StarMap.test.jsx` | 9 | Panel portal renders with no star data (empty state), runway threshold lines, STAR polylines + labels, legend, shrink button, **variant filtering:** selected runway filters STAR variants to that runway only, click-to-select calls onSelect, hover adds hovered class |
+| `hooks/useEditorSaveActions.test.jsx` | 7 | **Save flow (3):** `handleSave`/`handleSaveAs` call `runTripleValidation` with the store flights; no issues → backup modal (not issues modal); duplicate callsigns block save before validation. **Restore/import (2):** `handleRestore`/`handleImport` load flights via `setLegacyState`. **Back (2):** no modifications → straight to browser; modifications → unsaved-changes modal. |
 | `electron/bepinex.test.js` | 22 | checkStatus (null, partial, full, empty); findDownloadUrl (URL extraction, artifact not found, HTTP error); downloadZip (happy path — file content + progress 0→100%, incremental multi-chunk progress, HTTP 404 rejects + file cleanup, network error rejects + cleanup, timeout rejects + cleanup); extractZip (non-Windows guard); installFiles (subdirectory, missing items, flat structure); removeFiles (all items, partial, non-existent); installLatest (full pipeline, error cleanup, download progress normalization) |
-| `integration/stand_positions.test.js` | 12 | `_parseStandPositions` unit tests: ZSJN fixture parsing (53 stands), structure validation (position arrays, labels, disabled flags, airline assignments), edge cases (null/empty input). **v4 path (5):** v4 fixture PKStaticEntities parsing (auto-detected), per-stand x/y/heading finite, tail/nose positions, coordinate bounds, empty input → `{}` |
+| `integration/stand_positions.test.js` | 12 | `_parseStandPositions` unit tests: ZSJN v4 fixture parsing (57 stands), known stands (300/1/22) with finite coordinates, coordinate bounds, non-ACL text → `{}`. **PKStaticEntities path (5):** v4 fixture parsing (auto-detected schema), per-stand x/y/heading finite, tail/nose positions, coordinate bounds, empty input → `{}` |
 | **Electron backend (existing):** | **74** | |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
 | `electron/updater.test.js` | 25 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **isUpdateSupported (4):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set. **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skipped etag recognized. **resolveTargetExe (5):** PORTABLE_EXECUTABLE_FILE, execPath fallback, AC27_UPDATE_TARGET in dev, auto-discovered artifact, null when no candidate. **checkForUpdate gates (5):** packaged but not portable, dev with AC27_UPDATE_TARGET, dev by default (opt-out), dev with AC27_UPDATE_DEV_CHECK=1, dev with no target exe. **installUpdate dev dry-run (2):** defaults to dry-run in dev, dry-run skips spawn+quit. |
@@ -72,7 +72,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | Category | Expected |
 |----------|----------|
 | Time utils | All conversions round-trip correctly. Edge cases (null, empty, overflow) handled without throw. |
-| Validators | Duplicate callsigns detected; no false positives on empty values. Time-order validation enforces Landing<InBlock and OffBlock<Takeoff. Start/end-time bounds checked against config. Field-level validators cover airline, flight number, stand, aircraft, reg, runway. Aggregate `validateAll` calls all validators. |
+| Validators | Duplicate callsigns detected; no false positives on empty values. `detectStandConflicts` enforces the game's stand-overlap rules (dep/dep flagged, arr/arr allowed, offblock strictly before landing). `runTripleValidation` skips InBlockTime/TakeoffTime time-order checks (v4 stores them as 0) but still runs dropdown + stand-conflict validations. `getActiveColumns` hides InBlockTime/TakeoffTime columns. `_isNew` stripped from sidecar JSON at all nesting levels. |
 | Store | All actions produce correct state transitions. `modified` flag set on mutations. Chat panel open/close, messages, errors, config, and setup steps all correctly managed. |
 | Modal | Opens/closes via store state. Backdrop click calls `hideModal`. Internal clicks stop propagation. |
 | BrowserScreen | Version mismatch detection, help overlay, debug mode toggle, livery install flow, demo file filtering (whitelisted/non-whitelisted .demo files hidden in non-demo mode, shown in demo mode), tooltip positioning. |
@@ -85,7 +85,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 
 ### Known Vitest failures (none)
 
-All 537 tests pass. The three previously failing/todo items have been fixed:
+All 528 tests pass. The three previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 
@@ -194,12 +194,12 @@ Standalone scripts in `tests/integration/`. Run directly with `node`. Some need 
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_demo_filter.js` | 13 | Demo-level flight filtering: `detectSchemaVersion` (v2/v3 vs v4), `extractCurrentDateTime` (GameTime.CurrentDateTime + MetaData.BaseTime paths), config-based flight filtering (v4 fallback respects `startTime`/`endTime`), 30-min window (v2/v3 existing behavior) | 13/13 pass |
+| `test_demo_filter.js` | 8 | Demo-level flight filtering (v4): `extractCurrentDateTime` (MetaData.BaseTime path; null when the section is missing), config-window flight filtering (filter window = `Config.startTime` ~ `endTime`, strict `startTime ≤ t < endTime`, departure-only flights tracked by OffBlockTime; no 30-min override), ZSJN v4 fixture: all flights inside the config window | 8/8 pass |
 | `test_tokenizer.js` | 18 | String-aware tokenizer: `findSection`, `findArrayEnd`, `findObjectEnd`, `skipString`, `getTopLevelKeys` against synthetic and real ACL patterns | 18/18 pass |
 | `test_acl_json.js` | 25 | JSON pre-processor + serializer round-trips: `_fixTrailingCommas`, `_fixSpecialFloats`, `_fixTypedValues`, `preprocessUnityJson`, `serializeUnityJson` | 25/25 pass |
 | `test_acl_document.js` | 13 | `AclDocument` model: section indexing, round-trip serialization, init from JSON | 13/13 pass |
 | `test_sid_goaround.js` | 19 | SID (Type=2), Missed Approach (Type=3), and APPR (Type=1) route parsers: `extractSidRunwayMappings`, `extractMissedApproachMappings`, `buildSidPaths`, `buildMissedApproachPaths`, `extractApprRunwayMappings`, `buildApprPaths` — synthetic edge cases + v4 runway-scoped resolution | 19/19 pass |
-| `test_taxiway.js` | 14 | `parseTaxiwayPaths`: ACL structure parsing, flag values (1/2/4), stand-node marking, ZSJN fixture (582 paths, 189 named), **v4 fixture (4):** PKStaticEntities taxiway-segment parsing via `v4_pk_index` (623 paths, 197 stand-access marked, explicit isV4 arg) | 14/14 pass |
+| `test_taxiway.js` | 10 | `parseTaxiwayPaths` (v4 PKStaticEntities format): synthetic edge cases (no SceneryData / empty text / no TaxiwaySegments → empty paths; valid segments with matching nodes; Flags values 1/2/4; stand-node segments marked `isStandAccess`; non-stand segments kept), ZSJN v4 fixture: paths present with valid structure, stand-access segments marked (+1 optional `--acl` integration test) | 10/10 pass |
 
 | `test_save_roundtrip_diff.js` | 26 | Approach-block round-trip diff: T1 `RunwayTakeOffLength` nullish coalescing (0 preserved, missing→2000), T2 `ModelOffset` float3 tuple format (no named x/y/z), T3 `AircraftRunwayCoordinateState` canonical-`$id` design (5 inline empty string[] arrays, unique per-array `$id`, zero `$iref`), T4 v4 spec extraction from a real v4 file (`--acl` or default `works.acl`) | 26/26 pass |
 | `test_extract_v4_runway_pairs.js` | 6 | `extractV4RunwayPairs` — v4 runway pair extraction from static SceneryData `PhysicalName` ("01/19" → 01|19 + 19|01): ZSJN v4 fixture (2 pairs), KJFK (8 pairs — 4 groups), KDCA (6 pairs — 3 groups), non-v4 text → `[]`, empty/garbage input → `[]`, dedup (both ends of a physical runway → exactly 2 pairs). KJFK/KDCA cases skip when game root unavailable (`--root <game-root>`) | 6/6 pass (fixture) |
@@ -219,8 +219,8 @@ node tests/integration/test_extract_v4_runway_pairs.js [--root <game-root>]
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
 | `test_udp_listener.js` | 19 | Binary protocol parsing (40B header + N×112B records, little-endian), aircraft state tracking, trail ring buffer (600-tick gap, max 5), empty packets, bad magic rejection, flight direction 0/1, callsign trimming, reset/clear, simTimeUnixMs tracking, airport transition auto-reset, simFlags/heartbeatSeq v2 header, hasLevel transition logic | 19/19 pass (skips when port 20266 in use) |
-| `test_type_number_integrity.js` | 12 | Save→reload type number stability: verifies that after generating `_rebuildWorldStateSections`, all `$type` numbers in the output match the `.bak` snapshot — catches type-number shift regressions. **Both schema versions:** v2/v3 fixture (text, `_rebuildWorldStateSections`) + v4 fixture (GATCArc4 binary, `_rebuildStaticDataSections` with approach cache + `isV4`, 0 type mismatches). | 12/12 pass |
-| `test_jetway_rebuild.js` | v4 files | Constructive jetway rebuild round-trip: runs `_rebuildJetwayEntries`, verifies only jetway entries in RuntimeEntities are modified (other entries preserved byte-identical). **v4-only** — v2/v3 files skipped with reason. Runnable offline against the v4 fixture (`--acl tests/fixtures/.../ZSJN-Morning_120min.v4.acl`). **Departed-stand rule**: a departure whose OffBlockTime ≤ the segment's snapshot time (`GameTime.CurrentDateTime`) is treated as already departed → empty jetway, matching the game's own entries (the 7/30/26 playtest update produces checkpoints taken after some off-block times); an unresolvable spec (no cache + empty original entry) falls back to an empty jetway instead of throwing. | 12/12 pass on the v4 game root (`--prod-demo --no-cache`); 1/1 fixture |
+| `test_type_number_integrity.js` | 6 | Save→reload type number stability: runs the full `_rebuildStaticDataSections` save (`generateFullAcl`, approach cache passed — same as the app) on the v4 fixture, then verifies every `$type` declaration in the output matches the `.bak` snapshot — catches type-number shift regressions (6 checks, 0 type mismatches). | 6/6 pass |
+| `test_jetway_rebuild.js` | v4 files | Constructive jetway rebuild round-trip: runs `_rebuildJetwayEntries`, verifies only jetway entries in RuntimeEntities are modified (other entries preserved byte-identical). Runnable offline against the v4 fixture (`--acl tests/fixtures/.../ZSJN-Morning_120min.v4.acl`). **Departed-stand rule**: a departure whose OffBlockTime ≤ the segment's snapshot time (`GameTime.CurrentDateTime`) is treated as already departed → empty jetway, matching the game's own entries (the 7/30/26 playtest update produces checkpoints taken after some off-block times); an unresolvable spec (no cache + empty original entry) falls back to an empty jetway instead of throwing. | 12/12 pass on the v4 game root (`--prod-demo --no-cache`); 1/1 fixture |
 
 ```bash
 node tests/integration/test_udp_listener.js
@@ -232,7 +232,7 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
 | `test_gatcarc_roundtrip.js` | varies × all .acl files | GATCArc4 binary round-trip: `parseArchive` validates magic/SHA-256/commit markers; `decodeArchive(bin)` → `encodeArchive(text)` → `decodeArchive` is byte-identical. For text files: `encodeTextToPayload`/`decodePayloadToText` round-trip reproduces game-written text. Type reference form (full `"N\|Name"` vs bare `N`) is normalized before comparison. Runs against every .acl in the game airports directory. | 96/96 pass (32 files × 3 checks each) |
-| `test_real_kjfk_jfk5.js` | 8 per-runway STAR resolution | End-to-end JFK5.JFK STAR/SID resolution against real KJFK data: `extractStarRunwayMappings` (SIE.CAMRM5 → 3 runways), `resolveFlyApproachPoints` (6 nodes per runway), `extractSidRunwayMappings` (JFK5.JFK is in SID), `buildSidPaths`, `buildStarPaths`, verifies JFK5.JFK is NOT in APPR data. Uses `detectSchemaVersion` — works with v2/v3 or v4 format. | 8/8 pass |
+| `test_real_kjfk_jfk5.js` | 8 per-runway STAR resolution | End-to-end JFK5.JFK STAR/SID resolution against real KJFK data: `extractStarRunwayMappings` (SIE.CAMRM5 → 3 runways), `resolveFlyApproachPoints` (6 nodes per runway), `extractSidRunwayMappings` (JFK5.JFK is in SID), `buildSidPaths`, `buildStarPaths`, verifies JFK5.JFK is NOT in APPR data. | 8/8 pass |
 
 ```bash
 # v4 GATCArc binary round-trip (scans all airports):
@@ -248,7 +248,7 @@ node tests/integration/test_real_kjfk_jfk5.js
 |------|-------|-------------------|----------|
 | `test_parse_airport.js` | varies | Parses all airports + .acl files; reports stats | All airports parse OK. EGLC/ZGSZ have 0 .acl files (dev-mode airports); KJFK/KDCA/ZSJN parse OK |
 | `test_callsign_gen.js` | varies | Callsign consistency across all `flight_schedule_*.csv` files | ⚠ 1 known mismatch: AAL0101 vs AAL101 (flight number zero-padding) in KJFK CrossRunway; 19/20 files all-OK; 10 subsidiary/alternate code rows reported; 4 alpha-only rows skipped |
-| `test_approach_aircraft.js` | 8 sections (T1-T8) | Approach aircraft algorithms: spec extraction, AppPoint mapping, ProgressRatio formula, FlyApproach resolution, Position/Direction reconstruction, block assembly. **Version-aware**: v4 files store no approach aircraft (runtime-generated) so the ≥20 count assertion is informational; v2/v3 files run the original assertions. | PASS on v4 game root (T1 spec cross-file consistency real; T7 skips when no State=30 types present). |
+| `test_approach_aircraft.js` | 7 sections (T1-T7) | Approach aircraft algorithms: spec extraction, AppPoint mapping, ProgressRatio formula, FlyApproach resolution, Position/Direction reconstruction, block assembly. **v4-only**: v4 static files store no approach aircraft (runtime-generated), so the ≥20 count assertion is informational. | PASS on v4 game root (T1 spec cross-file consistency real; T7 skips when no State=30 types present). |
 
 ```bash
 node tests/integration/test_parse_airport.js [--root <game-root>]
@@ -263,7 +263,7 @@ node --require ./tests/integration/preload.cjs tests/integration/test_approach_a
 | `test_compare_tat.js` | Per-STAR TAT comparison (scenery vs aircraft vs model-A): extracts approach data from 8 production .acl files, computes ground-truth TAT from aircraft pairs, calibrates Model A per airport, reports RMSE/MaxErr for scenery and model methods. | Generates 6-phase report |
 | `test_scaled_tat.js` | Runway-scale-factor corrected TAT: maps game-unit path lengths to real-world meters using per-runway scale factors, compares against aircraft-pair TAT. | Generates summary table |
 | `test_full_path.js` | Full path TAT: extends path length to include the entire STAR route (all AppPoints), not just FlyApproach points. | Generates comparison table |
-| `scan_rlengths.js` | Scans `$rlength` values across all .acl files to detect format patterns (v2/v3 vs v4 binary, demo vs production). | Prints per-file $rlength breakdown |
+| `scan_rlengths.js` | Scans `$rlength` values across all .acl files to detect format patterns (demo vs production). | Prints per-file $rlength breakdown |
 
 ```bash
 node --require ./tests/integration/preload.cjs tests/integration/test_compare_tat.js [--root <game-root>]
@@ -275,9 +275,9 @@ node --require ./tests/integration/preload.cjs tests/integration/test_full_path.
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_e2e_save_load.js` | 1 round-trip | Load → snapshot → sort → save → reload → compare. Passes `detectSchemaVersion` (`isV4`) and builds the approach cache (jetway DockingPositions lookup needs it, same as the app) | Flights match after round-trip (v2/v3 + v4) |
-| `test_rebuild_sections.js` | 1 rebuild | Copy → modify one flight → rebuild → validate. **Version-aware**: v4 → `_rebuildStaticDataSections` (StaticItems + binary re-encode, reload-verified); v2/v3 → `_rebuildWorldStateSections` | v4: StaticData preserved, 48 flights reload with edit; v2/v3: FlightPlans count correct, edited data present, SceneryData preserved |
-| `test_acl_linkage.js` | 1 linkage | **Version-aware**: v2/v3 — every Aircraft's `FlightPlanGuid` resolves to a valid FlightPlan; v4 — StaticItems `"$k": "flight-plan:<REG>"` definitions (Registration must match the key) and every `$fstrref:"flight-plan:<REG>"` reference must resolve | 0 broken links (v2/v3: 31/31 on fixture; v4: 48 defs / 48 refs / 0 broken) |
+| `test_e2e_save_load.js` | 1 round-trip | Load → snapshot → sort → save → reload → compare. Builds the approach cache (jetway DockingPositions lookup needs it, same as the app) | Flights match after round-trip (v4) |
+| `test_rebuild_sections.js` | 1 rebuild | Copy → modify one flight → rebuild → validate: `_rebuildStaticDataSections` (StaticItems + binary re-encode, reload-verified) | StaticData preserved, 48 flights reload with edit |
+| `test_acl_linkage.js` | 1 linkage | StaticItems `"$k": "flight-plan:<REG>"` definitions (Registration must match the key) and every `$fstrref:"flight-plan:<REG>"` reference must resolve | 0 broken links (48 defs / 48 refs / 0 broken on fixture) |
 
 ```bash
 node tests/integration/test_e2e_save_load.js --acl <path>
@@ -287,13 +287,13 @@ node tests/integration/test_acl_linkage.js --acl <path>
 
 ### Timeline tests (require ACL path)
 
-All three run on **both schema versions**: the timeline sections are schema-agnostic (v4 patches them inside `MetaData` and re-encodes the GATCArc4 binary via the `isV4` arg to `_rebuildTimelineSections`).
+All three run against v4 ACLs: the timeline sections are patched inside `MetaData` and the GATCArc4 binary is re-encoded (`_rebuildTimelineSections`).
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_timeline_comparison.js` | varies | JSON timeline files vs ACL-embedded timeline data field-by-field | v4 fixture: 3/3 sections match. ⚠ v2/v3 fixture: weather presets differ — fixture JSONs were exported from the v4-era data, the v3 ACL predates them (JSON edited independently of the ACL) |
-| `test_generate_timelines.js` | 4 sub-tests | `_generateFramesSection`, `_generateRunwayTimelineSection` produce identical output | ⚠ Known pre-existing gap (identical on both versions): generated Wind/Weather sections don't match the ACL's embedded sections 1:1 — generator format fidelity vs what the game writes; RunwayTimeline matches |
-| `test_rebuild_timelines.js` | 6 sub-tests | `_rebuildTimelineSections`: WeatherFrames, WindFrames, RunwayTimeline (empty, with changes, all-three, round-trip) | v4: ALL PASSED (MetaData subsections + binary re-encode). v2/v3: pass except round-trip when the JSON source differs from the ACL-embedded data (stale JSON) |
+| `test_timeline_comparison.js` | varies | JSON timeline files vs ACL-embedded timeline data field-by-field | v4 fixture: 3/3 sections match |
+| `test_generate_timelines.js` | 4 sub-tests | `_generateFramesSection`, `_generateRunwayTimelineSection` produce identical output | ⚠ Known pre-existing gap: generated Wind/Weather sections don't match the ACL's embedded sections 1:1 — generator format fidelity vs what the game writes; RunwayTimeline matches |
+| `test_rebuild_timelines.js` | 6 sub-tests | `_rebuildTimelineSections`: WeatherFrames, WindFrames, RunwayTimeline (empty, with changes, all-three, round-trip) | ALL PASSED (MetaData subsections + binary re-encode) |
 
 ```bash
 node --require ./tests/integration/preload.cjs tests/integration/test_timeline_comparison.js <acl-path>
@@ -305,7 +305,7 @@ node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_ti
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_save_integrity_all.js` | 12 (`--prod-demo`) or 24 (`--all`) | Full save→reload→compare on every .acl file. Validates: flights (14 fields × N), config (startTime/endTime/scheduleFile), scenery maps (runway/stand counts), embedded timelines (weather/wind/runway), source format, text-level `_departureTakeoffTime` / `_arrivalInBlockTime` zero validation. Passes `detectSchemaVersion` (`isV4`) and builds the approach cache per level dir (jetway DockingPositions lookup needs it) | 12/12 pass on the v4 game root (9 prod + 3 demo): 0 field diffs, config identical, scenery identical, timelines identical |
+| `test_save_integrity_all.js` | 12 (`--prod-demo`) or 24 (`--all`) | Full save→reload→compare on every .acl file. Validates: flights (14 fields × N), config (startTime/endTime/scheduleFile), scenery maps (runway/stand counts), embedded timelines (weather/wind/runway), source format, text-level `_departureTakeoffTime` / `_arrivalInBlockTime` zero validation. Builds the approach cache per level dir (jetway DockingPositions lookup needs it, same as the app) | 12/12 pass on the v4 game root (9 prod + 3 demo): 0 field diffs, config identical, scenery identical, timelines identical |
 
 ```bash
 # 9 production + 3 demo files:
@@ -353,31 +353,20 @@ Runs all three layers sequentially (Vitest → save integrity 12 files → jetwa
 
 ---
 
-## v3 vs v4 Format Coverage
+## v4 Format Coverage
 
-The editor supports two .acl schema versions:
+All supported .acl files use the **v4 GATCArc4 binary** format (StaticData.$blobdoc; flight plans are StaticItems dictionary entries keyed `"$k": "flight-plan:<REG>"`, referenced by `$fstrref` tokens). v2/v3 text-format support has been removed from the code and tests.
 
-### v4 (GATCArc4 binary — current game format)
-- All game .acl files in this installation are **v4 GATCArc4 binary** (StaticData.$blobdoc; flight plans are StaticItems dictionary entries keyed `"$k": "flight-plan:<REG>"`, referenced by `$fstrref` tokens).
-- **Save integrity**: 12/12 files pass (9 production + 3 demo) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (isV4 → `_rebuildStaticDataSections`).
+- **Save integrity**: 12/12 files pass (9 production + 3 demo) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (`_rebuildStaticDataSections`).
 - **Save/load round-trip**: `test_e2e_save_load.js` — 60/60 flights identical after load→save→load.
-- **Section rebuild**: `test_rebuild_sections.js` v4 path (StaticItems rebuild + binary re-encode, reload-verified) and `test_rebuild_timelines.js` v4 path (MetaData subsection rebuild + re-encode) both pass.
-- **Linkage**: `test_acl_linkage.js` v4 path — 48 flight-plan definitions self-consistent, 48 `$fstrref` references resolve.
+- **Section rebuild**: `test_rebuild_sections.js` (StaticItems rebuild + binary re-encode, reload-verified) and `test_rebuild_timelines.js` (MetaData subsection rebuild + re-encode) both pass.
+- **Linkage**: `test_acl_linkage.js` — 48 flight-plan definitions self-consistent, 48 `$fstrref` references resolve.
 - **Approach aircraft**: v4 static files store none (runtime-generated) — `test_approach_aircraft.js` treats the count as informational.
-- **Schema detection**: `detectSchemaVersion` correctly identifies v4 via `StaticData.$blobdoc`.
-- **Demo filtering**: v4 falls back to config-based (startTime/endTime) window when CurrentDateTime is unavailable — 13/13 tests pass.
+- **Demo filtering**: the filter window is `Config.startTime` ~ `Config.endTime` (no 30-min override) — 8/8 tests pass.
 - **STAR/SID parsing**: v4 runway-scoped resolution tested in synthetic tests (19/19 SID/go-around tests pass) and real KJFK data (8/8 pass).
-- **Taxiway + stand parsing (v4 branch)**: `parseTaxiwayPaths` v4 PKStaticEntities path (623 paths, 197 stand-access) and `_parseStandPositions` v4 path both run against the offline v4 fixture.
-- **Type-number integrity (v4 path)**: `test_type_number_integrity.js` runs the full `_rebuildStaticDataSections` save on the v4 fixture with approach cache — 0 `$type` mismatches vs .bak.
-- **UI v4 variants**: save-gate validation (`runTripleValidation` skips InBlockTime/TakeoffTime order in v4), column hiding (`getActiveColumns`), flight creation (no InBlockTime/TakeoffTime), `addArrivalFlight` store path, StarMap runway-scoped variant filtering, and `useEditorSaveActions` isV4 propagation all unit-tested.
-
-### v2/v3 (text JSON — older game format, fixture-only coverage)
-- **Fixture**: `tests/fixtures/game-root/GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels/ZSJN-Morning_120min.acl` (+ `.demo.acl`) are v2/v3 text; the sibling `ZSJN-Morning_120min.v4.acl` is the v4 fixture.
-- **Save/rebuild**: `test_rebuild_sections.js` v2/v3 path — `_rebuildWorldStateSections` rebuilds FlightPlans/Aircrafts, preserves SceneryData/RunwayTimeline (11/11 checks).
-- **Linkage**: `test_acl_linkage.js` v2/v3 path — 31 Aircraft entries, all `FlightPlanGuid`s resolve.
-- **Approach aircraft**: v2/v3 files carry State=30 entries — `test_approach_aircraft.js` runs the original ≥20 count assertions on them.
-- **Schema detection**: `detectSchemaVersion` correctly identifies v2/v3 (WorldState present, no StaticData.$blobdoc).
-- **Timeline**: section patching is in-place text; ⚠ the fixture's weather JSONs were exported from the v4-era data, so comparison/round-trip against the older v3 ACL shows preset diffs (JSON edited independently of the ACL).
+- **Taxiway + stand parsing**: `parseTaxiwayPaths` PKStaticEntities path and `_parseStandPositions` both run against the offline v4 fixture (57 stands).
+- **Type-number integrity**: `test_type_number_integrity.js` runs the full `_rebuildStaticDataSections` save on the v4 fixture with approach cache — 0 `$type` mismatches vs .bak.
+- **UI v4 semantics**: save-gate validation (`runTripleValidation` skips InBlockTime/TakeoffTime order), column hiding (`getActiveColumns`), flight creation (no InBlockTime/TakeoffTime), `addArrivalFlight` store path, StarMap runway-scoped variant filtering, and save-action validation wiring all unit-tested.
 
 ---
 
@@ -399,7 +388,7 @@ Real game root (read-only)      tests/tmp-e2e/                  tests/tmp-e2e-us
 1. **`global-setup.mjs`**: copies 12 prod+demo files from real game → `tmp-e2e/`, writes `lastRoot.json`
 2. **Fallback**: if `E2E_GAME_ROOT` is not set, falls back to `tests/fixtures/game-root/` (ZSJN-only)
 
-**Fixtures** (`tests/fixtures/game-root/.../ZSJN/Levels/`): `ZSJN-Morning_120min.acl` (v2/v3 text) and `.demo.acl` (v2/v3) provide offline v2/v3 coverage; `ZSJN-Morning_120min.v4.acl` (v4 GATCArc4 binary) is the offline v4 sample used by the v4-only tests (`test_jetway_rebuild`, `test_acl_linkage` v4 path, `test_rebuild_sections`/`test_rebuild_timelines` v4 paths, `test_save_roundtrip_diff` T4 via `--acl`).
+**Fixtures** (`tests/fixtures/game-root/.../ZSJN/Levels/`): `ZSJN-Morning_120min.v4.acl` (v4 GATCArc4 binary, 57 stands) is the offline v4 sample used by the fixture-based tests (`test_jetway_rebuild`, `test_acl_linkage`, `test_rebuild_sections`/`test_rebuild_timelines`, `test_save_roundtrip_diff` T4 via `--acl`, `test_taxiway`, `test_sid_goaround`, `test_demo_filter`, `test_type_number_integrity`, `stand_positions`).
 3. **Electron launch**: `--user-data-dir=tmp-e2e-userdata/` isolates user config from real app
 4. **Setup skip**: app reads `lastRoot.json` → goes straight to BrowserScreen (no native OS dialog)
 5. **All I/O in temp**: saves, backups (`.bak`), timeline JSON writes all land in `tmp-e2e/`

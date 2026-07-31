@@ -4,8 +4,6 @@
 const fs = require('fs');
 const path = require('path');
 const { DROPDOWN_FIELDS } = require('./constants.js');
-const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./world_state');
-const { _parseSceneryData } = require('./scenery');
 const { _parseWorldStateFlightPlans, _parseRunwayTimeline } = require('./flight_plans');
 const { buildPkIndex, extractStringFromV4 } = require('./v4_pk_index');
 const { resolveConfigTime } = require('./config');
@@ -39,10 +37,6 @@ function collectUniqueValues(aclPaths) {
     const fpResult = _parseWorldStateFlightPlans(text);
     if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
       flights = fpResult.flights;
-    } else {
-      const wsData = _parseWorldStateData(text);
-      const sceneryMaps = _parseSceneryData(text);
-      flights = _extractFlightsFromWorldState(wsData, text, sceneryMaps);
     }
     if (!flights || flights.length === 0) continue;
     for (const fl of flights) {
@@ -211,10 +205,6 @@ function getFileInfo(aclPath) {
     const fpResult = _parseWorldStateFlightPlans(text);
     if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
       flights = fpResult.flights;
-    } else {
-      const wsData = _parseWorldStateData(text);
-      const sceneryMaps = _parseSceneryData(text);
-      flights = _extractFlightsFromWorldState(wsData, text, sceneryMaps);
     }
     if (!flights || flights.length === 0) {
       error = 'No WorldState flight data';

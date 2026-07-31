@@ -76,7 +76,7 @@ function testAirport(icao, levelsDir) {
     try {
       const data = loadFlights(filePath);
       const flights = data.flights;
-      const mode = data._fromFlightPlans ? 'FlightPlans' : data._fromWorldState ? 'WorldState' : 'Unknown';
+      const mode = 'FlightPlans';
 
       let flightIssues = 0;
       const badFlights = [];

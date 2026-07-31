@@ -209,7 +209,7 @@ describe('appStore — addArrivalFlight', () => {
 		}
 	});
 
-	it('addArrivalFlight — isV4 leaves InBlockTime empty', () => {
+	it('addArrivalFlight — leaves InBlockTime empty', () => {
 		useAppStore.getState().initializeEditor({
 			currentPath: '/test/file.v4.acl',
 			airportIcao: 'ZSJN',
@@ -217,7 +217,6 @@ describe('appStore — addArrivalFlight', () => {
 			before: '', after: '', arrayContent: '', originalBlocks: [],
 			configStartTime: '06:00', configEndTime: '18:00',
 			_saveSec: 36000,
-			isV4: true,
 		});
 		useAppStore.getState().setAuxData(
 			{
@@ -239,7 +238,6 @@ describe('appStore — addArrivalFlight', () => {
 
 		useAppStore.getState().addArrivalFlight();
 		const state = useAppStore.getState();
-		expect(state.isV4).toBe(true);
 		expect(state.flights).toHaveLength(1);
 		expect(state.flights[0].InBlockTime).toBe('');
 		expect(state.flights[0].LandingTime).not.toBe('');

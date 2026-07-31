@@ -4,7 +4,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react';
 import { useEditorSaveActions } from '../../src/hooks/useEditorSaveActions';
 import { useAppStore } from '../../src/store/appStore';
 
-// Spy on the save-gate validator so we can assert the isV4 flag the hook forwards.
+// Spy on the save-gate validator so we can assert the hook's validation flow.
 vi.mock('../../src/utils/validators', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -25,8 +25,8 @@ function makeOpts(overrides = {}) {
       exportZip: vi.fn().mockResolvedValue({ success: true, path: '/fake/export.zip' }),
       manualBackup: vi.fn().mockResolvedValue({ success: true, path: '/fake/backup.bak' }),
       checkBackupExists: vi.fn().mockResolvedValue({ success: true, exists: false }),
-      restoreBackup: vi.fn().mockResolvedValue({ success: true, flights: [], config: {}, _saveSec: 0, isDemo: false, isV4: false }),
-      importZip: vi.fn().mockResolvedValue({ success: true, flights: [], config: {}, _saveSec: 0, isDemo: false, isV4: false }),
+      restoreBackup: vi.fn().mockResolvedValue({ success: true, flights: [], config: {}, _saveSec: 0, isDemo: false }),
+      importZip: vi.fn().mockResolvedValue({ success: true, flights: [], config: {}, _saveSec: 0, isDemo: false }),
       loadTimelines: vi.fn().mockResolvedValue({ success: true, weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } }),
       scanRunwayPairs: vi.fn().mockResolvedValue({ success: true, pairs: [] }),
     },
@@ -57,13 +57,13 @@ function setupStore(overrides = {}) {
   });
 }
 
-describe('useEditorSaveActions — isV4 propagation', () => {
+describe('useEditorSaveActions — save flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    setupStore({ isV4: true });
+    setupStore();
   });
 
-  it('handleSave passes isV4=true from store state to runTripleValidation', async () => {
+  it('handleSave calls runTripleValidation with the store flights', async () => {
     const opts = makeOpts();
     const actions = useEditorSaveActions(opts);
 
@@ -71,29 +71,17 @@ describe('useEditorSaveActions — isV4 propagation', () => {
 
     expect(runTripleValidation).toHaveBeenCalledTimes(1);
     const call = runTripleValidation.mock.calls[0];
-    expect(call[call.length - 1]).toBe(true);
+    expect(call[0]).toEqual(useAppStore.getState().flights);
     // No issues → proceeds to the backup modal, not the issues modal
     expect(opts.showModal).toHaveBeenCalledWith('modal_backup_title', expect.anything(), expect.anything());
   });
 
-  it('handleSave passes isV4=false when the file is not v4', async () => {
-    setupStore({ isV4: false });
-    const actions = useEditorSaveActions(makeOpts());
-
-    await actions.handleSave();
-
-    const call = runTripleValidation.mock.calls[0];
-    expect(call[call.length - 1]).toBe(false);
-  });
-
-  it('handleSaveAs passes isV4 from store state to runTripleValidation', async () => {
+  it('handleSaveAs calls runTripleValidation', async () => {
     const actions = useEditorSaveActions(makeOpts());
 
     await actions.handleSaveAs();
 
     expect(runTripleValidation).toHaveBeenCalledTimes(1);
-    const call = runTripleValidation.mock.calls[0];
-    expect(call[call.length - 1]).toBe(true);
   });
 
   it('handleSave blocks on duplicate callsigns before runTripleValidation', async () => {
@@ -107,7 +95,7 @@ describe('useEditorSaveActions — isV4 propagation', () => {
     expect(opts.showModal).toHaveBeenCalledWith('modal_duplicate_title', expect.anything(), expect.anything());
   });
 
-  it('handleRestore propagates isV4 via setLegacyState', async () => {
+  it('handleRestore loads flights via setLegacyState', async () => {
     const opts = makeOpts();
     opts.electronAPI.checkBackupExists.mockResolvedValue({ success: true, exists: true });
     opts.electronAPI.restoreBackup.mockResolvedValue({
@@ -116,7 +104,6 @@ describe('useEditorSaveActions — isV4 propagation', () => {
       config: { startTime: '06:00:00', endTime: '18:00:00' },
       _saveSec: 100,
       isDemo: false,
-      isV4: true,
     });
     const actions = useEditorSaveActions(opts);
 
@@ -126,11 +113,10 @@ describe('useEditorSaveActions — isV4 propagation', () => {
     const view = render(modalChildren);
     fireEvent.click(view.getByText('modal_btn_restore'));
 
-    await waitFor(() => expect(useAppStore.getState().isV4).toBe(true));
-    expect(useAppStore.getState().flights).toHaveLength(1);
+    await waitFor(() => expect(useAppStore.getState().flights).toHaveLength(1));
   });
 
-  it('handleImport propagates isV4 via setLegacyState', async () => {
+  it('handleImport loads flights via setLegacyState', async () => {
     const opts = makeOpts();
     opts.electronAPI.importZip.mockResolvedValue({
       success: true,
@@ -138,7 +124,6 @@ describe('useEditorSaveActions — isV4 propagation', () => {
       config: { startTime: '06:00:00', endTime: '18:00:00' },
       _saveSec: 100,
       isDemo: false,
-      isV4: true,
     });
     const actions = useEditorSaveActions(opts);
 
@@ -147,8 +132,7 @@ describe('useEditorSaveActions — isV4 propagation', () => {
     const view = render(modalChildren);
     fireEvent.click(view.getByText('modal_btn_import'));
 
-    await waitFor(() => expect(useAppStore.getState().isV4).toBe(true));
-    expect(useAppStore.getState().flights).toHaveLength(1);
+    await waitFor(() => expect(useAppStore.getState().flights).toHaveLength(1));
   });
 
   it('handleBack with no modifications navigates to browser without modal', async () => {

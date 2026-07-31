@@ -22,7 +22,6 @@
 const fs = require('fs');
 const path = require('path');
 const { readAclText } = require('../../src/acl/gatcarc');
-const { detectSchemaVersion } = require('../../src/acl/parser');
 
 // Parse CLI args
 let gameRoot = path.resolve(__dirname, '..', '..', '..');
@@ -84,9 +83,8 @@ for (const f of PROD_FILES) {
   const p = path.join(dataDir, f.icao, 'Levels', f.name + '.acl');
   try {
     const text = readAclText(p);
-    const isV4 = detectSchemaVersion(text) === 4;
-    files.push({ ...f, path: p, text, size: text.length, isV4 });
-    console.log(`  ${f.icao}/${f.name}.acl — ${(text.length / 1024 / 1024).toFixed(1)} MB (${isV4 ? 'v4' : 'v2/v3'})`);
+    files.push({ ...f, path: p, text, size: text.length });
+    console.log(`  ${f.icao}/${f.name}.acl — ${(text.length / 1024 / 1024).toFixed(1)} MB`);
   } catch (e) {
     console.log(`  ✗ ${f.icao}/${f.name}.acl — NOT FOUND: ${e.message}`);
   }
@@ -97,11 +95,8 @@ if (files.length < 8) {
   console.log(`WARNING: Only ${files.length}/8 files found. Some tests will be limited.\n`);
 }
 
-// Approach aircraft (State=30 entries) are baked into v2/v3 WorldState but are
-// runtime-generated in v4 — v4 static files store no approach aircraft, so the
-// count assertions only apply when v2/v3 files are present.
-const anyV2v3 = files.some(f => !f.isV4);
-const allV4 = files.length > 0 && files.every(f => f.isV4);
+// Approach aircraft (State=30 entries) are runtime-generated in v4 —
+// v4 static files store no approach aircraft, so the count is informational.
 
 // ═══════════════════════════════════════════════════════════════════
 // T1: extractSpecificationDB — Designator→Spec consistency
@@ -157,11 +152,7 @@ for (const f of files) {
   console.log(`  ${f.name}: ${entries.length} approach aircraft`);
 }
 console.log(`  Total: ${totalApproach} approach aircraft`);
-if (anyV2v3) {
-  assert(totalApproach >= 20, `At least 20 approach aircraft found (got ${totalApproach})`);
-} else {
-  console.log('  (v4-only: approach aircraft are runtime-generated in v4, not stored in static data — count is informational)');
-}
+console.log('  (v4-only: approach aircraft are runtime-generated in v4, not stored in static data — count is informational)');
 
 // Verify all have State=30 invariants
 let invariantOk = 0;

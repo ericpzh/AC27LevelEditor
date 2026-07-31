@@ -14,7 +14,6 @@ const fs = require('fs');
 const path = require('path');
 const { _rebuildTimelineSections, _parseRunwayTimeline } = require('../../src/acl/flight_plans');
 const { readAclText } = require('../../src/acl/gatcarc');
-const { detectSchemaVersion } = require('../../src/acl/parser');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let aclSrc = null;
@@ -73,11 +72,6 @@ if (!runwayPath) {
 const ACL_TEMP = path.join(__dirname, '_e2e_temp_rebuild_timelines.acl');
 const ACL_TEMP2 = path.join(__dirname, '_e2e_temp_rebuild_timelines2.acl');
 
-// Schema version — _rebuildTimelineSections takes an isV4 arg:
-//   v2/v3: patches WeatherFrames/WindFrames/RunwayTimeline in place (text file)
-//   v4:    patches the MetaData subsections and re-encodes the GATCArc4 binary
-const SCHEMA_IS_V4 = detectSchemaVersion(readAclText(aclSrc)) === 4;
-
 // ─── Helpers ──────────────────────────────────────────────────
 
 function check(condition, label) {
@@ -135,7 +129,7 @@ function testWeatherFramesRebuild() {
     return t(a.time) - t(b.time);
   });
 
-  _rebuildTimelineSections(ACL_TEMP, modifiedData, null, null, SCHEMA_IS_V4);
+  _rebuildTimelineSections(ACL_TEMP, modifiedData, null, null);
   const outText = readAclText(ACL_TEMP);
   let ok = true;
 
@@ -172,7 +166,7 @@ function testWindFramesRebuild() {
     time: f.time
   }));
 
-  _rebuildTimelineSections(ACL_TEMP, null, modifiedData, null, SCHEMA_IS_V4);
+  _rebuildTimelineSections(ACL_TEMP, null, modifiedData, null);
   const outText = readAclText(ACL_TEMP);
   let ok = true;
 
@@ -199,7 +193,7 @@ function testRunwayTimelineEmpty() {
 
   fs.copyFileSync(aclSrc, ACL_TEMP);
   const modifiedData = { initialRunways: ['22L', '22R'], timeline: [] };
-  _rebuildTimelineSections(ACL_TEMP, null, null, modifiedData, SCHEMA_IS_V4);
+  _rebuildTimelineSections(ACL_TEMP, null, null, modifiedData);
 
   const outText = readAclText(ACL_TEMP);
   let ok = true;
@@ -238,7 +232,7 @@ function testRunwayTimelineWithChanges() {
     ]
   };
 
-  _rebuildTimelineSections(ACL_TEMP2, null, null, modifiedData, SCHEMA_IS_V4);
+  _rebuildTimelineSections(ACL_TEMP2, null, null, modifiedData);
   const outText = readAclText(ACL_TEMP2);
   let ok = true;
 
@@ -276,7 +270,7 @@ function testAllSectionsRebuild() {
     timeline: [{ time: '08:00:00', changes: [{ source: 'TEST', dest: 'NONE' }] }]
   };
 
-  _rebuildTimelineSections(ACL_TEMP, weatherData, windData, runwayData, SCHEMA_IS_V4);
+  _rebuildTimelineSections(ACL_TEMP, weatherData, windData, runwayData);
   const outText = readAclText(ACL_TEMP);
   let ok = true;
 
@@ -291,15 +285,9 @@ function testAllSectionsRebuild() {
 
   // Non-timeline sections preserved (v4: flight plans + scenery live inside
   // StaticData.$blobdoc — no top-level WorldState/SceneryData/FlightPlans keys)
-  if (SCHEMA_IS_V4) {
-    ok &= check(outText.includes('"StaticData"'), 'StaticData section preserved');
-    ok &= check(outText.includes('"$k": "flight-plan:'), 'Flight plan entries preserved');
-    ok &= check(outText.includes('"OsmId"'), 'Scenery (osm entities) preserved');
-  } else {
-    ok &= check(outText.includes('"WorldState"'), 'WorldState section preserved');
-    ok &= check(outText.includes('"SceneryData"'), 'SceneryData section preserved');
-    ok &= check(outText.includes('"FlightPlans"'), 'FlightPlans section preserved');
-  }
+  ok &= check(outText.includes('"StaticData"'), 'StaticData section preserved');
+  ok &= check(outText.includes('"$k": "flight-plan:'), 'Flight plan entries preserved');
+  ok &= check(outText.includes('"OsmId"'), 'Scenery (osm entities) preserved');
 
   return ok;
 }
@@ -320,7 +308,7 @@ function testRoundTripStability() {
   // Parse RunwayTimeline from ACL itself (JSON file may be stale — known mismatch)
   const runwayData = _parseRunwayTimeline(readAclText(aclSrc));
 
-  _rebuildTimelineSections(ACL_TEMP, weatherData, windData, runwayData, SCHEMA_IS_V4);
+  _rebuildTimelineSections(ACL_TEMP, weatherData, windData, runwayData);
 
   const outText = readAclText(ACL_TEMP);
   const srcText = readAclText(aclSrc);
@@ -351,7 +339,7 @@ function main() {
   if (windPath) console.log('Wind:    ' + path.basename(windPath));
   if (runwayPath) console.log('Runway:  ' + path.basename(runwayPath));
 
-  console.log('  Schema: ' + (SCHEMA_IS_V4 ? 'v4 (MetaData subsections, binary re-encode)' : 'v2/v3 (in-place sections)'));
+  console.log('  Schema: v4 (MetaData subsections, binary re-encode)');
 
   let allOk = true;
   allOk &= testWeatherFramesRebuild();

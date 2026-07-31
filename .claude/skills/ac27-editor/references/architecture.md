@@ -103,21 +103,23 @@ AC27Editor/
 │   │   ├── flightDefaults.js    # Pure helpers for new flight creation (random airline, cascaded aircraft/reg, non-conflicting stand)
 │   │   └── flightCascade.js     # Pure helpers for cascading field updates
 │   │
-│   ├── acl/                     # Backend modules (13 files; CommonJS + some ESM)
+│   ├── acl/                     # Backend modules (15 files + odin/; CommonJS + some ESM)
 │   │   ├── parser.js            # FACADE — re-exports all backend modules
 │   │   ├── tokenizer.js         # String-aware section boundary scanner (no more brace-counting)
-│   │   ├── acl_json.js          # Pre-processor (Unity JSON→valid JSON) + serializer
+│   │   ├── acl_json.js          # Pre-processor (Unity JSON→valid JSON) + serializer + Odin recursive-descent parser
 │   │   ├── acl_document.js      # In-memory document model (lazy parsing, mutation tracking)
 │   │   ├── constants.js         # CJS re-export of utils/constants.js (backward compat)
+│   │   ├── config.js            # resolveConfigTime / resolveDisplayTimes (Config block + GameTime.CurrentDateTime override)
 │   │   ├── scanner.js           # Scans game root for airports & .acl files
-│   │   ├── flight_plans.js      # FlightPlans format (types 37/52/57/58)
-│   │   ├── world_state.js       # WorldState format (types 35/56/54)
-│   │   ├── approach.js         # Approach AircraftState constructor (State=30)
-│   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
-│   │   ├── scenery.js           # SceneryData parser (runway/stand GUIDs + stand position extraction)
-│   │   ├── taxiway.js           # Taxiway centerline parser from SceneryData.TaxiwaySegments
-│   │   ├── sid_goaround.js      # SID + Missed Approach route parser from SceneryData.Runways.Routes[Type=2/3]
-│   │   └── utils.js             # Enrichment, sorting, audio, import utils
+│   │   ├── gatcarc.js           # GATCARC4 binary container — readAclText() / writeAcl() (the only .acl I/O)
+│   │   ├── v4_pk_index.js       # PKStaticEntities index builder ($iref → $id resolution, field helpers)
+│   │   ├── odin/                # OdinSerializer binary codec (binary/json readers + writers, .NET primitives, entry types)
+│   │   ├── flight_plans.js      # StaticData/StaticItems flight-plan parse + v4 save pipeline (_rebuildStaticDataSections, timeline rebuild)
+│   │   ├── approach.js          # Approach aircraft construction (State=30/State=5) + approach cache builder
+│   │   ├── scenery.js           # PKStaticEntities scenery parser (runway/stand lookups + stand position extraction)
+│   │   ├── taxiway.js           # Taxiway centerline parser from PKStaticEntities taxiway-segment:* entries
+│   │   ├── sid_goaround.js      # SID + Missed Approach route parser from PKStaticEntities runway Routes (RouteType=2/3)
+│   │   └── utils.js             # Enrichment, sorting, audio, runway pairs (extractV4RunwayPairs), import utils
 │   │
 │   └── utils/                   # Shared utilities (ESM + some CJS for backend)
 │       ├── constants/           # 7 domain sub-modules (was single constants.js)
@@ -164,7 +166,7 @@ module.exports = { publicFn, _privateFn };
 
 **Error handling:** Always return `{ success: true/false, error?: message }` from IPC handlers and I/O functions. Never throw across process boundaries.
 
-**Logging:** Use `console.log` with a `[TAG]` prefix: `[IPC]`, `[ACL-LOAD]`, `[DYNAMICS]`, `[RENDERER]`.
+**Logging:** Use `console.log` with a `[TAG]` prefix: `[IPC]`, `[ACL-LOAD]`, `[ACL-REBUILD-V4]`, `[RENDERER]`.
 
 **No external dependencies for core logic.** Uses only Node.js built-ins (`fs`, `path`, `zlib`, `crypto`). Do not add npm dependencies without strong justification.
 

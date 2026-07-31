@@ -1,16 +1,20 @@
 /**
- * Integration test: demo-level flight filtering (v2/v3 and v4).
+ * Integration test: demo-level flight filtering (v4).
  *
  * Validates:
- *   v2/v3: extractCurrentDateTime reads GameTime.CurrentDateTime → +30min window
- *   v4:    extractCurrentDateTime returns null → _filterDemoFlights falls back
- *          to config.startTime/endTime instead of showing all flights unfiltered
- *   isV4:  flag is returned by load-acl IPC handler
+ *   v4:    the demo/level filter window is Config.startTime ~ Config.endTime —
+ *          flights outside [startTime, endTime) are removed. There is NO
+ *          30-min override and NO CurrentDateTime extraction in the filter.
+ *   extractCurrentDateTime still parses v4 BaseTime/CurrentDateTime (used for
+ *          other purposes), and returns null when those sections are missing.
  *
  * Usage: node tests/integration/test_demo_filter.js
  */
 
-const { extractCurrentDateTime, detectSchemaVersion } = require('../../src/acl/parser');
+const fs = require('fs');
+const path = require('path');
+const { extractCurrentDateTime, _extractConfig, loadFlights } = require('../../src/acl/parser');
+const { readAclText } = require('../../src/acl/gatcarc');
 
 let passed = 0;
 let failed = 0;
@@ -37,7 +41,7 @@ function assertEq(actual, expected, msg) {
   }
 }
 
-// ─── Helper: config fallback filter (same logic as _filterDemoFlights) ───
+// ─── Helper: config window filter (same logic as the v4 demo filter) ───
 
 function toMin(t) {
   const p = String(t).split(':');
@@ -55,62 +59,9 @@ function filterByConfig(flights, config) {
   });
 }
 
-function filterByCdt(flights, cdtSec, windowMin) {
-  const cdtMin = Math.floor(cdtSec / 60);
-  const cdtMax = cdtMin + windowMin;
-  return flights.filter(fl => {
-    const lt = (fl.LandingTime || '').trim();
-    const ob = (fl.OffBlockTime || '').trim();
-    const flightMin = lt ? toMin(lt) : (ob ? toMin(ob) : Infinity);
-    return flightMin >= cdtMin && flightMin < cdtMax;
-  });
-}
+// ─── 1. extractCurrentDateTime — v4 path ───────────────────────
 
-// ─── 1. detectSchemaVersion ────────────────────────────────────
-
-console.log('\n=== 1. detectSchemaVersion ===\n');
-
-test('v2/v3 text with WorldState returns 3', () => {
-  const text = '{"WorldState": {}, "Config": {}}';
-  assertEq(detectSchemaVersion(text), 3);
-});
-
-test('v4 text with StaticData.$blobdoc returns 4', () => {
-  const text = '{"StaticData": {"$blobdoc": {}}, "MetaData": {}}';
-  assertEq(detectSchemaVersion(text), 4);
-});
-
-test('v4 text without WorldState returns 4', () => {
-  const text = '{"MetaData": {"Config": {}}, "StaticData": {"$blobdoc": {}}}';
-  assertEq(detectSchemaVersion(text), 4);
-});
-
-// ─── 2. extractCurrentDateTime — v2/v3 path ────────────────────
-
-console.log('\n=== 2. extractCurrentDateTime (v2/v3) ===\n');
-
-test('v2/v3: extracts time from GameTime.CurrentDateTime', () => {
-  const text = `{
-    "GameTime": {
-      "BaseTime": { "$type": 3, 630822816000000000 },
-      "CurrentDateTime": { "$type": 3, 630822930000000000 }
-    }
-  }`;
-  const cdt = extractCurrentDateTime(text);
-  assert(cdt !== null, 'should not return null');
-  assert(cdt.timeString !== undefined, 'should have timeString');
-  assertEq(cdt.timeString, '03:10:00');
-});
-
-test('v2/v3: returns null when GameTime is missing', () => {
-  const text = '{"Config": {"startTime": "06:00:00"}}';
-  const cdt = extractCurrentDateTime(text);
-  assertEq(cdt, null);
-});
-
-// ─── 3. extractCurrentDateTime — v4 path ───────────────────────
-
-console.log('\n=== 3. extractCurrentDateTime (v4) ===\n');
+console.log('\n=== 1. extractCurrentDateTime (v4) ===\n');
 
 test('v4: extracts time from MetaData.BaseTime (short $type)', () => {
   // Real v4 format: "$type": 2, <bare ticks>
@@ -142,9 +93,9 @@ test('v4: returns null when BaseTime section is missing', () => {
   assertEq(cdt, null);
 });
 
-// ─── 4. Config-based flight filtering (v4 fallback logic) ──────
+// ─── 2. Config-based flight filtering (v4 window semantics) ────
 
-console.log('\n=== 4. Config-based flight filtering (v4 fallback) ===\n');
+console.log('\n=== 2. Config-based flight filtering (v4 window = startTime~endTime) ===\n');
 
 const sampleFlights = [
   { LandingTime: '06:30', OffBlockTime: '' },  // before window
@@ -202,21 +153,37 @@ test('config window: departure-only flight tracked by OffBlockTime', () => {
   assertEq(result[0].OffBlockTime, '07:00');
 });
 
-// ─── 5. v2/v3 30-min window logic ──────────────────────────────
+// ─── 3. v4 fixture: real flights vs config window ──────────────
 
-console.log('\n=== 5. v2/v3 30-min window (existing behavior) ===\n');
+console.log('\n=== 3. v4 fixture (ZSJN-Morning_120min.v4.acl) ===\n');
 
-test('v2/v3 30-min: filters to +30min from CurrentDateTime', () => {
-  // cdt=06:50:00 (24600 sec), window=06:50-07:20 (rounded to nearest :X0/:X5)
-  const flights = [
-    { LandingTime: '06:45', OffBlockTime: '' },  // before
-    { LandingTime: '06:50', OffBlockTime: '' },  // boundary (keep)
-    { LandingTime: '07:10', OffBlockTime: '' },  // inside
-    { LandingTime: '07:20', OffBlockTime: '' },  // +30 (rounded, excluded by strict <)
-    { LandingTime: '07:30', OffBlockTime: '' },  // after
-  ];
-  const result = filterByCdt(flights, 24600, 30);
-  assertEq(result.length, 2, 'should keep 2 flights within [06:50, 07:20)');
+test('v4 fixture: all flights fall inside Config startTime~endTime window', () => {
+  const fixture = path.join(__dirname, '..', 'fixtures', 'game-root',
+    'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl');
+  assert(fs.existsSync(fixture), 'v4 fixture not found: ' + fixture);
+
+  const text = readAclText(fixture);
+  const config = _extractConfig(text);
+  assert(config && config.startTime && config.endTime,
+    'v4 fixture Config must have startTime/endTime (got ' + JSON.stringify(config) + ')');
+
+  const flights = loadFlights(fixture).flights;
+  assert(flights.length > 0, 'v4 fixture must have flights');
+
+  const result = filterByConfig(flights, config);
+  assertEq(result.length, flights.length,
+    'all ' + flights.length + ' fixture flights are within [' + config.startTime + ', ' + config.endTime + ')');
+
+  // Window semantics: every kept flight satisfies startTime <= t < endTime
+  const startMin = toMin(config.startTime);
+  const endMin = toMin(config.endTime);
+  for (const fl of result) {
+    const t = (fl.LandingTime || fl.OffBlockTime || '').trim();
+    assert(t !== '', 'kept flight must have LandingTime or OffBlockTime');
+    const m = toMin(t);
+    assert(m >= startMin && m < endMin,
+      'flight ' + (fl.CallSign || '?') + ' at ' + t + ' outside [' + config.startTime + ', ' + config.endTime + ')');
+  }
 });
 
 // ─── Summary ───────────────────────────────────────────────────

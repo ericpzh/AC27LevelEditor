@@ -19,7 +19,6 @@ const {
   buildApprPaths,
 } = require('../../src/acl/sid_goaround');
 const { readAclText } = require('../../src/acl/gatcarc');
-const { detectSchemaVersion } = require('../../src/acl/parser');
 
 const KJFK_FILE = 'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/KJFK_09-11.demo.acl';
 
@@ -60,18 +59,12 @@ try {
   process.exit(1);
 }
 
-const isV4 = detectSchemaVersion(aclText) === 4;
-console.log('Schema detected:', isV4 ? 'v4' : 'v2/v3');
-if (!isV4) {
-  console.log('NOTE: File is v2/v3 — tests will validate v2/v3 path');
-}
-
 console.log('');
 
 // ── 1. extractStarRunwayMappings ─────────────────────────────────
 
 test('extractStarRunwayMappings: SIE.CAMRM5 maps to 3 runways', () => {
-  const { starRunwayMap } = extractStarRunwayMappings(aclText, isV4);
+  const { starRunwayMap } = extractStarRunwayMappings(aclText);
   const runways = starRunwayMap['SIE.CAMRM5'];
   assert(runways, 'SIE.CAMRM5 not found in starRunwayMap');
   assertEquals(runways.length, 3,
@@ -94,7 +87,7 @@ const expectedNodeCounts = {
 
 for (const [runway, expected] of Object.entries(expectedNodeCounts)) {
   test('resolveFlyApproachPoints: SIE.CAMRM5 @ ' + runway + ' → ' + expected + ' points', () => {
-    const points = resolveFlyApproachPoints(aclText, 'SIE.CAMRM5', runway, isV4);
+    const points = resolveFlyApproachPoints(aclText, 'SIE.CAMRM5', runway);
     assertEquals(points.length, expected,
       'expected ' + expected + ' points for runway ' + runway + ', got ' + points.length);
     // Verify points have valid x,y,z
@@ -111,14 +104,14 @@ for (const [runway, expected] of Object.entries(expectedNodeCounts)) {
 // ── 3. JFK5.JFK IS in SID data (RouteType=2 = SID) ───────────────
 
 test('extractSidRunwayMappings: JFK5.JFK is in SID data', () => {
-  const { sidRunwayMap } = extractSidRunwayMappings(aclText, isV4);
+  const { sidRunwayMap } = extractSidRunwayMappings(aclText);
   assert(sidRunwayMap['JFK5.JFK'],
     'JFK5.JFK should be in SID mappings (it has RouteType=2)');
 });
 
 test('buildSidPaths: JFK5.JFK is in SID paths', () => {
-  const { sidRunwayMap } = extractSidRunwayMappings(aclText, isV4);
-  const sidPaths = buildSidPaths(aclText, sidRunwayMap, isV4);
+  const { sidRunwayMap } = extractSidRunwayMappings(aclText);
+  const sidPaths = buildSidPaths(aclText, sidRunwayMap);
   assert(sidPaths['JFK5.JFK'],
     'JFK5.JFK should be in SID paths');
 });
@@ -126,7 +119,7 @@ test('buildSidPaths: JFK5.JFK is in SID paths', () => {
 // ── 4. JFK5.JFK is NOT in APPR data ───────────────────────────────
 
 test('extractApprRunwayMappings: JFK5.JFK is NOT in APPR data', () => {
-  const { apprRunwayMap } = extractApprRunwayMappings(aclText, isV4);
+  const { apprRunwayMap } = extractApprRunwayMappings(aclText);
   assert(!apprRunwayMap['JFK5.JFK'],
     'JFK5.JFK should NOT be in APPR mappings (RouteType=2 is SID, not Approach)');
 });
@@ -134,8 +127,8 @@ test('extractApprRunwayMappings: JFK5.JFK is NOT in APPR data', () => {
 // ── 5. buildStarPaths ────────────────────────────────────────────
 
 test('buildStarPaths: SIE.CAMRM5 has per-runway variants', () => {
-  const { starRunwayMap } = extractStarRunwayMappings(aclText, isV4);
-  const starPaths = buildStarPaths(aclText, new Map(), starRunwayMap, isV4);
+  const { starRunwayMap } = extractStarRunwayMappings(aclText);
+  const starPaths = buildStarPaths(aclText, new Map(), starRunwayMap);
   const camrn = starPaths['SIE.CAMRM5'];
   assert(camrn, 'SIE.CAMRM5 not found in starPaths');
   assert(Array.isArray(camrn), 'starPaths SIE.CAMRM5 should be an array');

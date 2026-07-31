@@ -20,7 +20,7 @@ const path = require('path');
 const parser = require('../../src/acl/parser');
 const { readAclText } = require('../../src/acl/gatcarc');
 
-const { detectSchemaVersion, extractV4RunwayPairs } = parser;
+const { extractV4RunwayPairs } = parser;
 
 // ── CLI ──────────────────────────────────────────────────────────
 const args = {};
@@ -80,7 +80,7 @@ test('T1: ZSJN v4 fixture extracts 01/19 reciprocal pair', () => {
   const aclPath = findLevelFile(FIXTURE_DIR, 'ZSJN', 'ZSJN-Morning_120min.v4.acl');
   assert(aclPath, 'fixture ZSJN-Morning_120min.v4.acl not found');
   const text = readAclText(aclPath);
-  assertEq(detectSchemaVersion(text), 4, 'fixture must be v4');
+  assert(text.includes('StaticData'), 'fixture must be v4 (StaticData present)');
   const pairs = extractV4RunwayPairs(text);
   assertEq(pairs.map(pairKey), ['01|19', '19|01'], 'ZSJN runway pairs');
 });
@@ -91,7 +91,7 @@ const kjfkPath = findLevelFile(gameAirportsDir, 'KJFK', 'KJFK_09-11.acl');
 if (kjfkPath) {
   test('T2: KJFK extracts 4 physical-runway groups (8 reciprocal pairs)', () => {
     const text = readAclText(kjfkPath);
-    assertEq(detectSchemaVersion(text), 4, 'KJFK_09-11.acl must be v4');
+    assert(text.includes('StaticData'), 'KJFK_09-11.acl must be v4 (StaticData present)');
     const pairs = extractV4RunwayPairs(text);
     assertEq(pairs.length, 8, 'KJFK must produce 8 pairs (4 groups × 2 directions)');
     const keys = new Set(pairs.map(pairKey));
@@ -110,7 +110,7 @@ const kdcaPath = findLevelFile(gameAirportsDir, 'KDCA', 'KDCA_Endless.acl');
 if (kdcaPath) {
   test('T3: KDCA extracts 3 physical-runway groups (6 reciprocal pairs)', () => {
     const text = readAclText(kdcaPath);
-    assertEq(detectSchemaVersion(text), 4, 'KDCA_Endless.acl must be v4');
+    assert(text.includes('StaticData'), 'KDCA_Endless.acl must be v4 (StaticData present)');
     const pairs = extractV4RunwayPairs(text);
     assertEq(pairs.length, 6, 'KDCA must produce 6 pairs (3 groups × 2 directions)');
     const keys = new Set(pairs.map(pairKey));
@@ -123,28 +123,16 @@ if (kdcaPath) {
   console.log('  SKIP: T3 KDCA — game root not found at ' + path.join(gameAirportsDir, 'KDCA'));
 }
 
-// ── T4: graceful on non-v4 text ──────────────────────────────────
+// ── T4: empty/garbage input ──────────────────────────────────────
 
-test('T4: non-v4 text returns empty array without crashing', () => {
-  const aclPath = findLevelFile(FIXTURE_DIR, 'ZSJN', 'ZSJN-Morning_120min.acl');
-  if (!aclPath) {
-    // No fixture — use synthetic text
-    assertEq(extractV4RunwayPairs('{ "Config": { "startTime": "08:00" } }'), [], 'synthetic non-v4 text');
-    return;
-  }
-  const text = readAclText(aclPath);
-  assertEq(detectSchemaVersion(text), 3, 'fixture .acl must be v2/v3');
-  assertEq(extractV4RunwayPairs(text), [], 'v2/v3 text must yield no pairs');
-});
-
-test('T5: empty/garbage input returns empty array', () => {
+test('T4: empty/garbage input returns empty array', () => {
   assertEq(extractV4RunwayPairs(''), [], 'empty string');
   assertEq(extractV4RunwayPairs('{ "StaticData": { "$blobdoc": {} } }'), [], 'blobdoc without PK entities');
 });
 
-// ── T6: dedup — shared PhysicalName yields exactly 2 pairs ───────
+// ── T5: dedup — shared PhysicalName yields exactly 2 pairs ───────
 
-test('T6: both ends of a physical runway are deduplicated into exactly 2 pairs', () => {
+test('T5: both ends of a physical runway are deduplicated into exactly 2 pairs', () => {
   const aclPath = findLevelFile(FIXTURE_DIR, 'ZSJN', 'ZSJN-Morning_120min.v4.acl');
   assert(aclPath, 'fixture ZSJN-Morning_120min.v4.acl not found');
   const text = readAclText(aclPath);

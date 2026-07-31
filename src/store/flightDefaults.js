@@ -2,7 +2,7 @@
  * Pure helpers for creating new flight objects with sensible defaults.
  * Extracted from appStore.js to keep the store focused on state management.
  */
-import { getAirlineCode, FALLBACK_BASE_MINUTES, DEFAULT_TIME_OFFSET_MIN, DEFAULT_TAXI_MINUTES } from '../utils/constants';
+import { getAirlineCode, FALLBACK_BASE_MINUTES, DEFAULT_TIME_OFFSET_MIN } from '../utils/constants';
 
 /**
  * Pick a random element from an array.
@@ -220,21 +220,19 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
 /**
  * Build a complete arrival flight with time defaults.
  */
-export function createArrivalFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights, isV4) {
+export function createArrivalFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
   const baseMin = computeDefaultBaseMin(configEndTime);
   const flight = createDefaultFlight('arrival', values, audioData, currentAirport, airportValuesForNum, existingFlights);
   flight.LandingTime = minutesToTimeString(baseMin);
-  if (!isV4) flight.InBlockTime = minutesToTimeString(baseMin + DEFAULT_TAXI_MINUTES);
   return flight;
 }
 
 /**
  * Build a complete departure flight with time defaults.
  */
-export function createDepartureFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights, isV4) {
+export function createDepartureFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
   const baseMin = computeDefaultBaseMin(configEndTime);
   const flight = createDefaultFlight('departure', values, audioData, currentAirport, airportValuesForNum, existingFlights);
   flight.OffBlockTime = minutesToTimeString(baseMin);
-  if (!isV4) flight.TakeoffTime = minutesToTimeString(baseMin + DEFAULT_TAXI_MINUTES);
   return flight;
 }

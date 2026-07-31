@@ -214,75 +214,54 @@ describe('detectStandConflicts', () => {
   });
 });
 
-describe('runTripleValidation isV4', () => {
+describe('runTripleValidation (v4 semantics)', () => {
   // Minimal audio data: airline 'CES' whitelisted, no flight-number list
   // (empty list → flight-number check skipped), so only the validations
   // under test can fire.
   const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
 
-  function run(flights, isV4, airportValues = {}) {
-    return runTripleValidation(flights, airportValues, 'ZSJN', AUDIO, null, null, null, null, isV4);
+  function run(flights, airportValues = {}) {
+    return runTripleValidation(flights, airportValues, 'ZSJN', AUDIO, null, null, null, null);
   }
 
-  it('skips time-order checks when isV4 is true (InBlockTime/TakeoffTime are always 0 in v4)', () => {
+  it('skips time-order checks (InBlockTime/TakeoffTime are always 0 in v4)', () => {
     const flights = [
       { CallSign: 'CES1234', LandingTime: '10:30', InBlockTime: '10:00' }, // in-block before landing
       { CallSign: 'CES5678', OffBlockTime: '10:30', TakeoffTime: '10:00' }, // off-block after takeoff
     ];
-    expect(run(flights, true)).toEqual([]);
+    expect(run(flights)).toEqual([]);
   });
 
-  it('enforces time-order checks when isV4 is false', () => {
-    const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30', InBlockTime: '10:00' },
-      { CallSign: 'CES5678', OffBlockTime: '10:30', TakeoffTime: '10:00' },
-    ];
-    const issues = run(flights, false);
-    expect(issues).toHaveLength(2);
-    expect(issues[0]).toContain('CES1234');
-    expect(issues[0]).toContain('10:00');
-    expect(issues[1]).toContain('CES5678');
-  });
-
-  it('still enforces non-time-order validations when isV4 is true', () => {
+  it('still enforces non-time-order validations', () => {
     const flights = [
       { CallSign: 'CES1234', LandingTime: '10:30', Stand: 'ZZZ' }, // stand not in options
     ];
-    const issues = run(flights, true, { ZSJN: { Stand: ['A01'] } });
+    const issues = run(flights, { ZSJN: { Stand: ['A01'] } });
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('CES1234');
   });
 
-  it('still enforces stand conflict detection when isV4 is true', () => {
+  it('still enforces stand conflict detection', () => {
     const flights = [
       { CallSign: 'CES1234', Stand: 'A01', OffBlockTime: '10:00', TakeoffTime: '10:30' },
       { CallSign: 'CES5678', Stand: 'A01', OffBlockTime: '10:15', TakeoffTime: '10:45' },
     ];
-    const issues = run(flights, true, { ZSJN: { Stand: ['A01'] } });
+    const issues = run(flights, { ZSJN: { Stand: ['A01'] } });
     expect(issues.length).toBeGreaterThan(0);
   });
 });
 
-describe('getActiveColumns isV4', () => {
-  it('excludes InBlockTime from arrival columns when isV4 is true', () => {
-    const cols = getActiveColumns([], ARRIVAL_FIELDS, true);
+describe('getActiveColumns (v4 semantics)', () => {
+  it('excludes InBlockTime from arrival columns', () => {
+    const cols = getActiveColumns([], ARRIVAL_FIELDS);
     expect(cols).not.toContain('InBlockTime');
     expect(cols).toContain('LandingTime');
   });
 
-  it('excludes TakeoffTime from departure columns when isV4 is true', () => {
-    const cols = getActiveColumns([], DEPARTURE_FIELDS, true);
+  it('excludes TakeoffTime from departure columns', () => {
+    const cols = getActiveColumns([], DEPARTURE_FIELDS);
     expect(cols).not.toContain('TakeoffTime');
     expect(cols).toContain('OffBlockTime');
-  });
-
-  it('includes InBlockTime/TakeoffTime columns when isV4 is false', () => {
-    expect(getActiveColumns([], ARRIVAL_FIELDS, false)).toContain('InBlockTime');
-    expect(getActiveColumns([], DEPARTURE_FIELDS, false)).toContain('TakeoffTime');
-  });
-
-  it('defaults to v2/v3 columns when isV4 is omitted', () => {
-    expect(getActiveColumns([], ARRIVAL_FIELDS)).toContain('InBlockTime');
   });
 });
 

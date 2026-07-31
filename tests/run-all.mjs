@@ -10,7 +10,7 @@
  *   2. Integration: save integrity  — 12 prod+demo files, ~20s
  *   3. Playwright E2E                — 15 tests (~3 min; 1 skipped — E12a overlay timing)
  *
- * Covers v2/v3 text-format and v4 GATCArc4 binary-format .acl files.
+ * Covers v4 GATCArc4 binary-format .acl files.
  * Default game root: D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest
  */
 

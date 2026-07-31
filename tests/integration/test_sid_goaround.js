@@ -83,21 +83,35 @@ function wrap(inner) {
   return '{' + inner + '}';
 }
 
-// Valid GUID (36-char hex with dashes)
-function g(short) {
-  return '00000000-0000-0000-0000-' + String(short).padStart(12, '0');
+// v4 route data lives in runway:* PKStaticEntities entries; each runway's
+// Routes.$rcontent holds route objects with a RouteType field and bare
+// $iref:N AirwayNodes (matching the real fixture format).
+function pkWrap(entries) {
+  return wrap('"StaticData": {"$blobdoc": {"PKStaticEntities": {"$rcontent": [' + entries.join(',') + ']}}}');
+}
+
+function runwayWithRoutes(name, physName, routesArr) {
+  return '{"$k": "runway:' + name + '", "$v": {"$id": 1, "Name": "' + name + '", "PhysicalName": "' + physName +
+    '", "Routes": {"$rcontent": [' + routesArr.join(',') + ']}}}';
+}
+
+function route(name, type, irefIds) {
+  const irefs = (irefIds || []).map(id => '$iref:' + id).join(',');
+  return '{"$id": 10, "$type": 19, "Name": "' + name + '", "RouteType": ' + type +
+    ', "AirwayNodes": {"$id": 11, "$type": 20, "$rlength": ' + (irefIds || []).length +
+    ', "$rcontent": [' + irefs + ']}}';
 }
 
 // Runways present but no Routes with matching Type
 test('Runways without Type=2 routes returns empty SID mappings', () => {
-  const acl = wrap('"SceneryData": {"Runways": {"$rcontent": [{"$k": "19", "$v": {"Name": "19", "PhysicalName": "01/19", "Routes": {"$rcontent": [{"Name": "STAR1", "Type": 0, "AirwayNodeGuids": ["' + g(1) + '"]}]}}}]}}');
+  const acl = pkWrap([runwayWithRoutes('19', '01/19', [route('STAR1', 0, [1])])]);
   const result = extractSidRunwayMappings(acl);
   assertEq(Object.keys(result.sidRunwayMap).length, 0);
 });
 
 // SID (Type=2) extraction
 test('extracts SID route→runway mapping from Type=2 route', () => {
-  const acl = wrap('"SceneryData": {"Runways": {"$rcontent": [{"$k": "01", "$v": {"Name": "01", "PhysicalName": "01/19", "Routes": {"$rcontent": [{"Name": "SID01D", "Type": 2, "AirwayNodeGuids": ["' + g(10) + '"]}]}}}]}}');
+  const acl = pkWrap([runwayWithRoutes('01', '01/19', [route('SID01D', 2, [10])])]);
   const result = extractSidRunwayMappings(acl);
   assertEq(Object.keys(result.sidRunwayMap).length, 1);
   assert(result.sidRunwayMap['SID01D'] !== undefined, 'should have SID01D');
@@ -108,10 +122,10 @@ test('extracts SID route→runway mapping from Type=2 route', () => {
 
 // SID with multiple runways
 test('extracts SID mapping for route shared across multiple runways', () => {
-  const acl = wrap('"SceneryData": {"Runways": {"$rcontent": [' +
-    '{"$k": "01", "$v": {"Name": "01", "PhysicalName": "01/19", "Routes": {"$rcontent": [{"Name": "SHARED", "Type": 2, "AirwayNodeGuids": ["' + g(20) + '"]}]}}},' +
-    '{"$k": "19", "$v": {"Name": "19", "PhysicalName": "01/19", "Routes": {"$rcontent": [{"Name": "SHARED", "Type": 2, "AirwayNodeGuids": ["' + g(20) + '"]}]}}}' +
-    ']}}');
+  const acl = pkWrap([
+    runwayWithRoutes('01', '01/19', [route('SHARED', 2, [20])]),
+    runwayWithRoutes('19', '01/19', [route('SHARED', 2, [20])]),
+  ]);
   const result = extractSidRunwayMappings(acl);
   assert(result.sidRunwayMap['SHARED'] !== undefined, 'should have SHARED');
   assertEq(result.sidRunwayMap['SHARED'].length, 2);
@@ -121,7 +135,7 @@ test('extracts SID mapping for route shared across multiple runways', () => {
 
 // Missed Approach (Type=3) extraction
 test('extracts missed approach mapping from Type=3 route', () => {
-  const acl = wrap('"SceneryData": {"Runways": {"$rcontent": [{"$k": "31L", "$v": {"Name": "31L", "PhysicalName": "13R/31L", "Routes": {"$rcontent": [{"Name": "RNAV Y Rwy 31L (Missed Approach)", "Type": 3, "AirwayNodeGuids": ["' + g(30) + '"]}]}}}]}}');
+  const acl = pkWrap([runwayWithRoutes('31L', '13R/31L', [route('RNAV Y Rwy 31L (Missed Approach)', 3, [30])])]);
   const result = extractMissedApproachMappings(acl);
   assertEq(Object.keys(result.missedAppMap).length, 1);
   assert(result.missedAppMap['RNAV Y Rwy 31L (Missed Approach)'] !== undefined);
@@ -130,11 +144,11 @@ test('extracts missed approach mapping from Type=3 route', () => {
 
 // Multiple route types in same runway
 test('extracts only Type=2 SID routes, not Type=0 STARs', () => {
-  const acl = wrap('"SceneryData": {"Runways": {"$rcontent": [{"$k": "01", "$v": {"Name": "01", "PhysicalName": "01/19", "Routes": {"$rcontent": [' +
-    '{"Name": "STAR01A", "Type": 0, "AirwayNodeGuids": ["' + g(40) + '"]},' +
-    '{"Name": "SID01D", "Type": 2, "AirwayNodeGuids": ["' + g(41) + '"]},' +
-    '{"Name": "RNAV01", "Type": 1, "AirwayNodeGuids": ["' + g(42) + '"]}' +
-    ']}}}]}}');
+  const acl = pkWrap([runwayWithRoutes('01', '01/19', [
+    route('STAR01A', 0, [40]),
+    route('SID01D', 2, [41]),
+    route('RNAV01', 1, [42]),
+  ])]);
   const result = extractSidRunwayMappings(acl);
   // Should only have the Type=2 SID, not the Type=0 STAR or Type=1 RNAV
   assertEq(Object.keys(result.sidRunwayMap).length, 1);
@@ -145,15 +159,15 @@ test('extracts only Type=2 SID routes, not Type=0 STARs', () => {
 
 // Type=1 (APPR) extraction via extractApprRunwayMappings
 test('extractApprRunwayMappings extracts Type=1 routes', () => {
-  const acl = wrap('"SceneryData": {"Runways": {"$rcontent": [{"$k": "31L", "$v": {"Name": "31L", "PhysicalName": "13R/31L", "Routes": {"$rcontent": [{"Name": "RNAV Y Rwy 31L", "Type": 1, "AirwayNodeGuids": ["' + g(50) + '"]}]}}}]}}');
+  const acl = pkWrap([runwayWithRoutes('31L', '13R/31L', [route('RNAV Y Rwy 31L', 1, [50])])]);
   const result = extractApprRunwayMappings(acl);
   assertEq(Object.keys(result.apprRunwayMap).length, 1);
   assert(result.apprRunwayMap['RNAV Y Rwy 31L'] !== undefined);
 });
 
-// SID with stub route ($rlength:0 / no GUIDs) → excluded
+// SID with stub route (no AirwayNodes irefs) → excluded
 test('stub SID route with no GUIDs is excluded', () => {
-  const acl = wrap('"SceneryData": {"Runways": {"$rcontent": [{"$k": "01", "$v": {"Name": "01", "PhysicalName": "01/19", "Routes": {"$rcontent": [{"Name": "SID_STUB", "Type": 2}]}}}]}}');
+  const acl = pkWrap([runwayWithRoutes('01', '01/19', [route('SID_STUB', 2, [])])]);
   const result = extractSidRunwayMappings(acl);
   assertEq(Object.keys(result.sidRunwayMap).length, 0, 'stub without GUIDs should be excluded');
 });
@@ -176,7 +190,7 @@ test('buildApprPaths with no data returns empty', () => {
 
 // Missed approach with Missed Approach keyword
 test('extracts missed approach with full name', () => {
-  const acl = wrap('"SceneryData": {"Runways": {"$rcontent": [{"$k": "13R", "$v": {"Name": "13R", "PhysicalName": "13R/31L", "Routes": {"$rcontent": [{"Name": "RNAV ILS Z Rwy 13R (Missed Approach)", "Type": 3, "AirwayNodeGuids": ["' + g(60) + '"]}]}}}]}}');
+  const acl = pkWrap([runwayWithRoutes('13R', '13R/31L', [route('RNAV ILS Z Rwy 13R (Missed Approach)', 3, [60])])]);
   const result = extractMissedApproachMappings(acl);
   assert(Object.keys(result.missedAppMap).length > 0);
   assert(result.missedAppMap['RNAV ILS Z Rwy 13R (Missed Approach)'] !== undefined);
@@ -186,7 +200,7 @@ test('extracts missed approach with full name', () => {
 
 // Non-runway entries (entries without / in PhysicalName) are excluded
 test('non-runway entries without PhysicalName / are excluded', () => {
-  const acl = '"SceneryData": {"Runways": {"$rcontent": [{"$k": "comparer-guid", "$v": {"Name": "comparer", "PhysicalName": ""}}]}}';
+  const acl = pkWrap(['{"$k": "comparer-guid", "$v": {"$id": 2, "Name": "comparer", "PhysicalName": ""}}']);
   const result = extractSidRunwayMappings(acl);
   assertEq(Object.keys(result.sidRunwayMap).length, 0);
 });
@@ -275,9 +289,9 @@ if (aclArgIdx >= 0) {
 
 // Also test against the fixture ACL if present
 const fixtureAcl = path.join(__dirname, '..', 'fixtures', 'game-root',
-  'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.acl');
+  'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl');
 if (fs.existsSync(fixtureAcl) && !aclArgIdx) {
-  console.log('\n--- Integration (fixture ACL: ZSJN-Morning_120min) ---');
+  console.log('\n--- Integration (fixture ACL: ZSJN-Morning_120min.v4) ---');
   const aclText = readAclText(fixtureAcl);
 
   test('extractSidRunwayMappings on ZSJN fixture', () => {

@@ -7,9 +7,9 @@
   - [Non-Standard JSON Syntax](#non-standard-json-syntax-handled-by-pre-processor)
   - [Two-Pass Parsing](#two-pass-parsing-srcaclacl_jsonjs)
   - [Key Section Types](#key-section-types)
-- [SceneryData Runway Routes](#scenerydata-runway-routes)
+- [Runway Routes (PKStaticEntities)](#runway-routes-pkstaticentities)
 - [SID and Missed Approach Extraction](#sid-and-missed-approach-extraction)
-- [SceneryData TaxiwaySegments](#scenerydata-taxiwaysegments)
+- [Taxiway Segments (PKStaticEntities)](#taxiway-segments-pkstaticentities)
 - [Approach Aircraft Construction (State=30 & State=5)](#approach-aircraft-construction-state30--state5)
   - [Unified Path Architecture](#unified-path-architecture)
   - [State=5 Sub-types](#state5-sub-types)
@@ -54,45 +54,24 @@ The `preprocessUnityJson()` function transforms Unity JSON into valid JSON in 3 
 
 ### Key Section Types
 
-- `SceneryData` (type 59) — runway/gate GUIDs
-- `Aircrafts` (type 35) — aircraft state entries with DynamicParams
-- `FlightPlans` (type 52) — container for FlightPlanState entries
-- `FlightPlanState` (type 37) — individual flight plans with DepartureLeg/ArrivalLeg
-- `DepartureLeg` (type 57) / `ArrivalLeg` (type 58) — flight leg data
-- `TaskFlightState` (type 56/54) — older WorldState format (legacy)
-- `WeatherFrames` / `WindFrames` / `RunwayTimeline` — timeline sections (top-level in v2/v3; nested inside `MetaData` in v4 — rebuilt by `_rebuildV4TimelineSections`)
+- `MetaData` (`ContextCross.Saves.LevelMetaData`) — `BaseTime` (DateTime tick value as inline `{ "$type": 2, ticks }`), nested `Config` (`startTime`/`endTime`, file references), plus the timeline sections `WeatherFrames` / `WindFrames` / `RunwayTimeline` (rebuilt by `_rebuildV4TimelineSections`)
+- `StaticData` — `byte[]` field whose value is a decoded nested Odin document (`"$blobdoc"`) containing `PKStaticEntities`, `NonPKStaticEntities`, `StaticItems`
+- Checkpoint-frame documents — `CheckpointFrame` → `Snapshot` (RuntimeSnapshot) → `RuntimeData` → `$blobdoc` → `RuntimeField` → `RuntimeEntities` (runtime aircraft / jetway / event entries)
+- No `SceneryData` or `WorldState` sections exist; `GameTime` is usually absent (snapshot time comes from `MetaData.BaseTime`)
 
-## Format Versions
+## File Schema (v4 Only)
 
-The 2026-07 game update introduced a **v4 schema** alongside the existing v2/v3 text format. The editor supports both transparently.
-
-### v2/v3 (Legacy Text)
-
-v2/v3 files are plain Odin JSON text with these top-level sections:
+The 2026-07 game update introduced the **v4 schema**; it is now the only schema. Every `.acl` file is a **GATCARC4 binary archive** (see below). When decoded, the header document has these top-level sections:
 
 | Section | Description |
 |---------|-------------|
-| `SceneryData` | Runway GUIDs, stand GUIDs, AirwayNodes, TaxiwaySegments, Area definitions |
-| `WorldState` | Container for `Aircrafts` (state entries) + `FlightPlans` (flight plan entries) |
-| `GameTime` | `CurrentDateTime` as a DateTime tick value (snapshot time) |
-| `Config` | `startTime`, `endTime` in `HH:MM` format, file references for timeline CSVs |
-| `WeatherFrames`, `WindFrames`, `RunwayTimeline` | Timelines for weather, wind, runway-in-use |
+| `MetaData` | `LevelMetaData` — `BaseTime` (DateTime tick value as inline `{ "$type": 2, ticks }`), nested `Config` (`startTime`, `endTime`, file references), plus the timeline sections `WeatherFrames`, `WindFrames`, `RunwayTimeline` |
+| `StaticData` | `byte[]` field whose value is a decoded nested Odin binary document (`"$blobdoc"`), containing `PKStaticEntities`, `NonPKStaticEntities`, `StaticItems` |
+| `GameTime` | (usually absent — snapshot time derived from `MetaData.BaseTime` instead) |
 
-**Discovery:** Look for `"SceneryData"` at the top level — its presence means v2/v3.
+Each appended **checkpoint frame** document contains `Snapshot` (RuntimeSnapshot) → `RuntimeData` → `$blobdoc` → `RuntimeField` → `RuntimeEntities` — the runtime aircraft / jetway / event entries rebuilt by the save pipeline.
 
-### v4 (StaticData.$blobdoc)
-
-v4 files use a completely different top-level structure. The file is stored on disk as a **GATCARC4 binary archive** (see below). When decoded, the Odin JSON text has these top-level sections:
-
-| Section | Description |
-|---------|-------------|
-| `StaticData` | Contains a single `$blobdoc` field whose value is a decoded nested Odin binary document |
-| `GameTime` | (may be absent — snapshot time derived from `MetaData.BaseTime` instead) |
-| `Config` | Same layout as v2/v3: `startTime`, `endTime`, file references |
-| `MetaData` | `BaseTime` (DateTime tick value as inline `{ "$type": 2, ticks }`), `StartTime`, `TimeFactor`, plus the timeline sections `WeatherFrames`, `WindFrames`, `RunwayTimeline` |
-| `RuntimeSnapshot` | (may be present) — decoded runtime data with `$blobdoc`-nested `RuntimeData` |
-
-**Discovery:** Look for `"StaticData"` at the top level (and no `"SceneryData"`). Use `detectSchemaVersion(text)` → returns 4.
+All files are v4 — there is no schema detection and no `isV4` parameter anywhere in the code.
 
 ### GATCARC4 Binary Container
 
@@ -124,28 +103,28 @@ $$$ GATCARC4 CHECKPOINT FRAME $$$
 ```
 
 **I/O rules:**
-- `readAclText(path)` — universal read: passes GATCARC4 binary through `decodeArchive()`, passes legacy text through unchanged.
-- `writeAcl(path, text, { format })` — writes binary (GATCARC4 archive) or text. Default `'auto'` preserves whatever the file was on disk. New files default to binary.
-- Legacy text `.acl` files are never converted — they stay text.
+- `readAclText(path)` — universal read: decodes GATCARC4 binary via `decodeArchive()` to Odin JSON text.
+- `writeAcl(path, text, { format })` — writes binary (GATCARC4 archive) or text. Default `'auto'` preserves whatever the file was on disk. New files default to binary (`'text'` exists for debugging only).
+- All game `.acl` files are GATCARC4 binary archives — the editor never writes plain text.
 
 All ACL I/O in the editor goes through `src/acl/gatcarc.js`. No code calls `fs.readFileSync(path, 'utf-8')` on `.acl` files.
 
 ### Odin JSON Text Dialect
 
-Both v2/v3 text files and decoded GATCARC4 payloads use the same Odin JSON text dialect — the extensions listed in [Standard JSON-Plus Extensions](#standard-json-plus-extensions) above. The decoded text from binary archives is structurally identical to the legacy text format, so all existing parsing code (tokenizer, pre-processor, etc.) works unchanged.
+Decoded GATCARC4 payloads use the Odin JSON text dialect — the extensions listed in [Standard JSON-Plus Extensions](#standard-json-plus-extensions) above. All parsing code (tokenizer, pre-processor, etc.) operates on this decoded text.
 
-### Key Structural Differences
+### v4 Structure at a Glance
 
-| Aspect | v2/v3 | v4 |
-|--------|-------|-----|
-| Top-level sections | `SceneryData`, `WorldState`, `GameTime`, `Config` | `StaticData`, `MetaData`, `Config` |
-| Scenery entities | `SceneryData.Runways`, `.Stands`, `.TaxiwaySegments`, `.AirwayNodes`, `.Areas` | `StaticData.$blobdoc.PKStaticEntities` (flat array, all entity types) + `NonPKStaticEntities` (areas) |
-| Entity references | GUID strings (`$k: "9a8b..."`) | `$iref:N` pointer to `$id:N` |
-| Flight plans | `WorldState.FlightPlans.$rcontent` with GUID-keyed entries | `StaticData.$blobdoc.StaticItems.$rcontent` with `flight-plan:REGISTRATION` keys |
-| Leg field names | `Arrival` / `Departure` | `InitialArrival` / `InitialDeparture` |
-| Pre-spawned aircraft | `WorldState.Aircrafts` (State=30, State=5) | None — game computes state at runtime |
-| Snapshot time | `GameTime.CurrentDateTime` (DateTime object) | `MetaData.BaseTime` (inline `{ "$type": 2, ticks }`) |
-| InBlockTime / TakeoffTime | Stored in flight plan leg | Always 0 (game computes dynamically) |
+| Aspect | v4 |
+|--------|-----|
+| Top-level sections | Header document: `MetaData` (nested `Config` + timeline sections), `StaticData` (`$blobdoc`); checkpoint frames: `Snapshot.RuntimeData` |
+| Scenery entities | `StaticData.$blobdoc.PKStaticEntities` (flat array, all entity types) + `NonPKStaticEntities` (areas) |
+| Entity references | `$iref:N` pointer to `$id:N` |
+| Flight plans | `StaticData.$blobdoc.StaticItems.$rcontent` with `flight-plan:REGISTRATION` keys |
+| Leg field names | `InitialArrival` / `InitialDeparture` |
+| Pre-spawned aircraft | None — game computes state at runtime |
+| Snapshot time | `MetaData.BaseTime` (inline `{ "$type": 2, ticks }`) |
+| InBlockTime / TakeoffTime | Always 0 (game computes dynamically) |
 
 ### $blobdoc Nested Document Pattern
 
@@ -210,11 +189,11 @@ v4 flight plans live in `StaticData.$blobdoc.StaticItems.$rcontent` with keys pr
 }
 ```
 
-Key differences from v2/v3:
-- `InitialArrival`/`InitialDeparture` instead of `Arrival`/`Departure`
+Key facts:
+- `InitialArrival`/`InitialDeparture` field names (no `Arrival`/`Departure` forms exist)
 - `InBlockTime` is always `0` (game computes it)
 - Each leg sub-object has its own `$id` (OdinSerializer requirement for nested objects)
-- The key is `flight-plan:REGISTRATION` instead of a random GUID
+- The key is `flight-plan:REGISTRATION`
 
 ### Independent Type Numbering
 
@@ -235,59 +214,56 @@ The expansion function is scope-aware at every level: `_expandWithBlobdocScopes`
 
 This prevents "unknown type id N" / "Type id N claimed by both" encoding errors when cleanup removes entries containing type declarations that other entries still reference.
 
-## SceneryData Runway Routes
+## Runway Routes (PKStaticEntities)
 
-`SceneryData.Runways` is a dictionary (`$k`/`$v`) where each entry represents one runway direction. Each `$v` block contains:
+Runway entries live in `StaticData.$blobdoc.PKStaticEntities` as `"$k": "runway:<name>"` entries. Each entry contains:
 
 | Field | Description |
 |---|---|
 | `Name` | Runway designator used by flight plans — e.g. `"31L"`, `"19"`, `"01"` |
 | `PhysicalName` | Runway pair — e.g. `"13R/31L"`, `"01/19"` |
-| `Routes` | Contains `$rcontent` array of route entries, each with `Name`, `Type`, `AirwayNodeGuids` |
+| `Routes` | Contains `$rcontent` array of route entries, each with `Name`, `RouteType`, `AirwayNodes` ($iref array) |
 
 **Route Types** (verified against both KJFK and ZSJN production .acl files):
 
-| Type | Meaning | Example Names | Used for |
-|------|---------|---------------|----------|
+| RouteType | Meaning | Example Names | Used for |
+|-----------|---------|---------------|----------|
 | **0** | **STAR** (arrival transition) | `SEY.PARCH4`, `UBSS6W`, `OKAL6W`, `WFG91A` | Airway dropdown filtering, StarMap availability, approach path resolution |
 | 1 | RNAV approach procedure | `RNAV Y Rwy 31L`, `RNAV ILS Z Rwy 19` | State=5 approach data (`resolveApproachProcedureData`) |
 | **2** | **SID** (departure transition) | `JFK5.JFK`, `TUML5T`, `BASV7Y` | Parsed by `sid_goaround.js` → `sidPaths` for AirMapWindow route display |
 | 3 | Missed approach | `RNAV Y Rwy 31L (Missed Approach)` | Parsed by `sid_goaround.js` → `missedAppPaths` for AirMapWindow route display |
 
-**Important:** The authoritative source for valid STAR↔runway combinations is `SceneryData.Runways[runway].Routes[].Name` where `Type === 0`. This is a superset of what `appPointMap` covers (which is limited to State=30 aircraft entries at snapshot time).
+**Important:** The authoritative source for valid STAR↔runway combinations is the runway entry's `Routes` where `RouteType === 0`. This is a superset of what `appPointMap` covers (which is limited to State=30 aircraft entries at snapshot time).
 
 **Extraction algorithm** (`extractStarRunwayMappings` — see approach.js):
-1. Find `SceneryData` → `Runways` section via tokenizer
-2. Find main `$rcontent` array at brace depth 1 (skip nested arrays like `comparer`)
-3. Iterate runway dictionary entries → extract `Name` (runway designator) and `Routes`
-4. Parse `Routes.$rcontent` → for each route with `Type === 0`, collect `Name` (STAR name)
-5. Return `{ starRunwayMap: {star → [runways]}, runwayStarMap: {runway → [stars]} }`
+1. Build the PK index (`buildPkIndex`) and iterate `runway:*` entries in `PKStaticEntities`
+2. For each runway, navigate its `Routes.$rcontent` array (skip nested arrays like `comparer`)
+3. For each route with `RouteType === 0`, collect `Name` (STAR name) and its `AirwayNodes` `$iref`s
+4. Return `{ starRunwayMap: {star → [runways]}, runwayStarMap: {runway → [stars]} }`
 
 ## SID and Missed Approach Extraction
 
-Follows the identical pattern in `sid_goaround.js`, operating on `RouteType === 2` (SID) and `RouteType === 3` (Missed Approach) routes. The six functions exported by `sid_goaround.js` mirror the approach.js STAR helpers (all accept `isV4?` for v4 PKStaticEntities routing):
-- `extractSidRunwayMappings(aclText, isV4?)` → `{ sidRunwayMap, runwaySidMap }`
-- `extractMissedApproachMappings(aclText, isV4?)` → `{ missedAppMap, runwayMissedAppMap }`
-- `buildSidPaths(aclText, sidRunwayMap, isV4?)` → `{ sidName: [{x, z}, ...] }`
-- `buildMissedApproachPaths(aclText, missedAppMap, isV4?)` → `{ maName: [{x, z}, ...] }`
-- `extractApprRunwayMappings(aclText, isV4?)` → `{ apprRunwayMap, runwayApprMap }` — Approach routes (RouteType=1)
-- `buildApprPaths(aclText, apprRunwayMap, isV4?)` → `{ apprName: [{x, z}, ...] }`
+Follows the identical pattern in `sid_goaround.js`, operating on `RouteType === 2` (SID) and `RouteType === 3` (Missed Approach) routes. The six functions exported by `sid_goaround.js` mirror the approach.js STAR helpers (all route via PKStaticEntities runway entries):
+- `extractSidRunwayMappings(aclText)` → `{ sidRunwayMap, runwaySidMap }`
+- `extractMissedApproachMappings(aclText)` → `{ missedAppMap, runwayMissedAppMap }`
+- `buildSidPaths(aclText, sidRunwayMap)` → `{ sidName: [{x, z}, ...] }`
+- `buildMissedApproachPaths(aclText, missedAppMap)` → `{ maName: [{x, z}, ...] }`
+- `extractApprRunwayMappings(aclText)` → `{ apprRunwayMap, runwayApprMap }` — Approach routes (RouteType=1)
+- `buildApprPaths(aclText, apprRunwayMap)` → `{ apprName: [{x, z}, ...] }`
 
-## SceneryData TaxiwaySegments
+## Taxiway Segments (PKStaticEntities)
 
-`SceneryData.TaxiwaySegments` is a `$k`/`$v` dictionary where each entry represents a taxiway centerline segment:
+Taxiway centerline segments are `"$k": "taxiway-segment:*"` entries in `PKStaticEntities`:
 
 | Field | Description |
 |-------|-------------|
 | `Name` | Taxiway designation (e.g. `"A"`, `"B"`, may be empty) |
 | `Flags` | Integer: 1=standard, 2=wider, 4=special |
-| `Nodes` | `{$rcontent: [nodeGuid1, nodeGuid2]}` — endpoint GUIDs resolved via `_parseTaxiwayNodes()` |
+| `Nodes` | `{$rcontent: [$iref, $iref]}` — endpoint `$iref`s resolved to taxiway-node positions via the PK index |
 
-Parsed by `src/acl/taxiway.js`:
-- Resolves node GUIDs via `_parseTaxiwayNodes()` (shared with `approach.js`)
-- **Stand-access segments are now included** (marked with `isStandAccess: true`) instead of being excluded — segments where ANY endpoint GUID touches a stand position (via `TailPositionGuid` / `NosePositionGuid` from `SceneryData.Stands`) get the flag; non-stand segments omit it
+Parsed by `src/acl/taxiway.js` (`parseTaxiwayPaths(aclText)`):
+- **Stand-access segments are included** (marked with `isStandAccess: true`) instead of being excluded — segments where ANY endpoint node touches a stand position (via `TailPosition` / `NosePosition` `$iref`s from `stand:*` entries) get the flag; non-stand segments omit it
 - Returns `{ paths: [{ name, flags, points: [{x, z}], isStandAccess?: boolean }] }`
-- **Accepts optional `existingNodesMap`** parameter to skip re-parsing `TaxiwayNodes` when called repeatedly for the same airport
 - **Merged from all files in `buildApproachCache()`**: each file's taxiway paths are parsed inline during the main approach-data loop (no separate second pass), with coordinate-based dedup at `toFixed(2)` precision. Exposed via `collect-values` as `_taxiwayPaths`
 
 ## Approach Aircraft Construction (State=30 & State=5)
@@ -308,9 +284,8 @@ Both State=30 and State=5 share the SAME full path:
 unified path using `fullPR` (relative to the full STAR+Approach duration), ensuring
 spatial continuity across the State=30→5 transition.
 
-**totalLen includes touchdown distance:** Both save paths (`_rebuildWorldStateSections` for
-v2/v3, `_buildStandaloneAircraftEntry` for v4) now include the touchdown distance in `totalLen`
-(the denominator for the IAF boundary `rawTargetDist`). This ensures `totalLen` matches the path
+**totalLen includes touchdown distance:** `_buildStandaloneAircraftEntry` includes the touchdown
+distance in `totalLen` (the denominator for the IAF boundary `rawTargetDist`). This ensures `totalLen` matches the path
 length that TAT was calibrated for — scenery-derived TAT includes `tdDist` from
 `computeFullTerminalPath`. Without this, `rawTargetDist` used a shorter denominator, biasing the
 IAF boundary toward State=30 for aircraft near the runway. The touchdown position is sourced from
@@ -347,7 +322,7 @@ taxiing to the stand.
 
 **Inputs (per aircraft):**
 - `landingTime` [seconds since midnight] — from FlightPlan ArrivalLeg
-- `saveTime` [seconds since midnight] — from GameTime.CurrentDateTime (authoritative)
+- `saveTime` [seconds since midnight] — from the scenario's configured start time (see [saveTime Resolution Priority](#savetime-resolution-priority))
 - `star` [string] — STAR/route name, e.g. `"UBSS6W"`
 - `runway` [string] — runway name, e.g. `"19"`
 
@@ -357,8 +332,8 @@ taxiing to the stand.
 - `state5 = state5ParamsMap[runway]` — `{ pathPointList, touchDownPosition, approachDirection, initialPosition }`
 - `approachCap = 15.24` — standard ILS approach ceiling in game units (= 5000ft at 100 m/unit), from `computeApproachCap()`
 
-**SceneryData (resolved per-file from AirwayNodes):**
-- `flyPoints = resolveFlyApproachPoints(aclText, star, runway)` — FlyApproachPathPointList
+**Runway route data (resolved per-file from PKStaticEntities):**
+- `flyPoints = resolveFlyApproachPoints(aclText, star, runway)` — FlyApproachPathPointList (from the runway route's `AirwayNodes` `$iref`s)
 
 **Constant:**
 - `tan(3°) ≈ 0.052408` — standard ILS glideslope (3 degrees)
@@ -378,7 +353,7 @@ progressRatio = 1.0 - timeToLanding / TAT                       [0.0..1.0]
 The state is determined by whether the aircraft has passed the IAF (last FlyApproach waypoint):
 
 ```
-flyLen   = Σ segmentDistances(flyPoints)   [path length of FlyApproach from SceneryData]
+flyLen   = Σ segmentDistances(flyPoints)   [path length of FlyApproach from the route's AirwayNodes]
 appLen   = Σ segmentDistances(appPoints)   [path length of AppPointList from cache]
 combined = [...flyPoints, ...appPoints]    [concatenate to include connecting segment]
 totalLen = computePathLength(combined)     [total unified path length]
@@ -389,8 +364,8 @@ else → State=30                    (before IAF, still on STAR, Approach)
 ```
 
 This eliminates the need for a cached `flyFractionMap` — the IAF is determined
-directly from the full FlyApproach path (resolved from SceneryData via
-`resolveFlyApproachPoints`) and the cached AppPointList.
+directly from the full FlyApproach path (resolved from the runway route's
+`AirwayNodes` via `resolveFlyApproachPoints`) and the cached AppPointList.
 
 #### Step 3a: State=30 Position & Direction
 
@@ -467,7 +442,7 @@ points have Y=0 (game engine computes altitude internally from `touchDownPositio
 distance), but `InitialPosition` stores the approach ceiling altitude directly. Every original game
 file uses 15.24 regardless of airport.
 
-**TouchDownPosition** — from SceneryData via `state5ParamsMap` (Y≈0, runway level).
+**TouchDownPosition** — from the runway's approach route data via `state5ParamsMap` (Y≈0, runway level).
 
 **PathPointList** — waypoints with glideslope-computed Y:
 ```
@@ -492,19 +467,18 @@ for each pt in pathPoints:
 
 ### saveTime Resolution Priority
 
-In `_rebuildWorldStateSections` (flight_plans.js), saveTime is resolved in this order:
+In `_rebuildStaticDataSections` (flight_plans.js), saveTime is resolved as:
 
-1. `_saveSec` — explicit, passed from frontend (set by `extractGameTime` during load)
-2. **`extractGameTime(text)`** — GameTime.CurrentDateTime from the file being saved (authoritative)
-3. Cache `saveTimeOffsets` — derived from State=30 entries (less accurate, fallback)
-4. `startSec + 780` — warmup fallback (13 min after config startTime)
+1. `aclcfgStartTime` — passed from the frontend (config `startTime` with the `GameTime.CurrentDateTime` override applied via `resolveConfigTime`)
+2. Fallback: `resolveConfigTime(text).startTime` from the file being saved
+3. `_saveSec` is **ignored** — v4 is not a snapshot save; aircraft positions are computed relative to the scenario's configured start time (`extractSaveTime` is a stub returning `null`)
 
 ### Verified Field Relationships (State=30)
 
 | Field | Source | Pattern |
 |-------|--------|---------|
 | `Specification` | Designator→Spec DB | Fixed per Designator (byte-identical across all files) |
-| `FlyApproachPathPointList` | AirwayNodes via STAR GUIDs | `Runways[runway].Routes[route].AirwayNodeGuids → AirwayNodes[guid].Position` |
+| `FlyApproachPathPointList` | AirwayNodes `$iref` chain | runway route `AirwayNodes` `$iref`s → taxiway-node positions (via `resolveIref`) |
 | `AppPointList` | f(Route, Runway) map | Fixed per (Route, Runway) — 8 combos verified, 0 counterexamples |
 | `ProgressRatio` | Time-based formula | `1 − (LandingTime − saveTime) / totalApproachTime(Route)` |
 | `Direction` | Path tangent | Unit vector in XZ at current path position |
@@ -517,11 +491,12 @@ In `_rebuildWorldStateSections` (flight_plans.js), saveTime is resolved in this 
 ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 ```
 
-- `saveTime` = the snapshot time. Prefer GameTime.CurrentDateTime from the ACL file
-  (the literal wall-clock time the game wrote). The cache's `saveTimeOffsets` is a
-  fallback derived from State=30 entries via the inverse formula.
+- `saveTime` = the scenario's configured start time (config `startTime` with the
+  `GameTime.CurrentDateTime` override applied by `resolveConfigTime`). The cache's
+  `saveTimeOffsets` is still computed at cache-build time but the save path no
+  longer reads it (`extractSaveTime` is a stub returning `null`).
 - `totalApproachTime(STAR)` = route-specific total duration from STAR entry to
-  touchdown (~1380-1775s, computed from SceneryData path-length estimates via
+  touchdown (~1380-1775s, computed from route path-length estimates via
   `computeApproachTimesFromScenery()` using physics-based formula with
   uniform 100 m/unit scale)
 - This is a time-based approximation of the game's path-based PR. Expected position
@@ -544,14 +519,14 @@ at every airport regardless of runway geometry.
 
 #### Full Terminal Path Length
 
-The total approach path in game units combines three segments from SceneryData:
+The total approach path in game units combines three segments from the runway route data:
 
 ```
 totalGamePath = flyPathLen + procPathLen + tdDist
 
 where:
-  flyPathLen  = Σ segment distances of FlyApproach points (Type=0 STAR route, via resolveFlyApproachPoints)
-  procPathLen = Σ segment distances of approach procedure points (Type=1 route, via resolveApproachProcedureData)
+  flyPathLen  = Σ segment distances of FlyApproach points (RouteType=0 STAR route, via resolveFlyApproachPoints)
+  procPathLen = Σ segment distances of approach procedure points (RouteType=1 route, via resolveApproachProcedureData)
   tdDist      = distance from last procedure point to TouchDownPosition (runway threshold)
 ```
 
@@ -597,25 +572,23 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 ## Module API (`src/acl/approach.js`)
 
 **Data Extraction:**
-- `extractSpecificationDB(aclText, isV4?)` → `Map<Designator, Spec>` — 14 designators across ZSJN+KJFK. v4: returns empty (no pre-spawned aircraft spec DB).
-- `extractApproachData(aclText, isV4?)` → `Array<{route, runway, progressRatio, flyPoints, appPoints, ...}>` — all State=30 aircraft. v4: returns empty.
-- `extractState5Data(aclText, isV4?)` → `Array<{route, runway, touchDownPosition, approachDirection, initialPosition, pathPointList}>` — State=5 aircraft still in-air. v4: returns empty.
+- `extractSpecificationDB(aclText)` → `Map<Designator, Spec>` — 14 designators across ZSJN+KJFK. Scans the decoded text for `Specification` objects inside jetway `DockingAircraft` entries and `RuntimeData` aircraft entries.
+- `extractApproachData(aclText)` → `Array<{route, runway, progressRatio, flyPoints, appPoints, ...}>` — all State=30 aircraft. **Returns `[]`** — v4 files have no pre-spawned aircraft (the game computes state at runtime).
+- `extractState5Data(aclText)` → `Array<{route, runway, touchDownPosition, approachDirection, initialPosition, pathPointList}>` — **stub returning `[]`** (v4 has no pre-spawned aircraft; final-approach parameters come from `resolveApproachProcedureData`).
 - `extractTypeMap(aclText)` → `Map<number, string>` — captures all fully-qualified `$type` declarations from a file; type numbers are per-file in Unity's serialization
 - `buildAppPointMap(approachEntries)` → `Map<"Route|Runway", Vector3[]>` — verified 1:1 mapping
-- `buildState5ParamsMap(state5Entries)` → `Map<"runway", {pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?}>` — per-runway final approach parameters from State=5 data; `routeName` populated from the approach procedure's `Name` field
-- `computeApproachTimesFromScenery(aclText, starMappings, appPointMap, refTatMap, defaultTAT, airportScale?)` → `Map<STAR, seconds>` — per-STAR duration from SceneryData path-length estimates using three-tier estimation
-- `extractGameTime(aclText)` → `seconds | null` — parse `GameTime.CurrentDateTime` ticks as seconds since midnight
-- `extractSaveTime(aclText, totalApproachTimes, isV4?)` → `seconds | null` — derive snapshot time from first State=30 entry's PR + LandingTime. v4: returns null (use MetaData.BaseTime)
+- `buildState5ParamsMap(state5Entries)` → `Map<"runway", {pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?}>` — per-runway final approach parameters; `routeName` populated from the approach procedure's `Name` field
+- `computeApproachTimesFromScenery(aclText, starMappings, appPointMap, refTatMap, defaultTAT, airportScale?)` → `Map<STAR, seconds>` — per-STAR duration from PKStaticEntities route path-length estimates using three-tier estimation
+- `extractGameTime(aclText)` → `seconds | null` — parse `GameTime.CurrentDateTime` ticks as seconds since midnight (returns `null` when the file has no `GameTime` section, as v4 scenario files usually don't)
+- `extractSaveTime(aclText, totalApproachTimes)` → **stub returning `null`** — snapshot time is resolved from the config start time instead (see [saveTime Resolution Priority](#savetime-resolution-priority))
 
 **Path Resolution:**
-- `resolveFlyApproachPoints(aclText, route, runway, isV4?)` → `Vector3[]` — via SceneryData AirwayNodes (v2/v3) or PKStaticEntities runway→Routes→AirwayNodes $iref chain (v4)
+- `resolveFlyApproachPoints(aclText, route, runway)` → `Vector3[]` — via the PKStaticEntities runway → `Routes` → `AirwayNodes` `$iref` chain
 
-**SceneryData & STAR Mapping:**
-- `extractStarRunwayMappings(aclText, isV4?)` → `{starRunwayMap: {star→[runways]}, runwayStarMap: {runway→[stars]}}` — authoritative from `SceneryData.Runways.Routes[Type=0]` (v2/v3) or PKStaticEntities runway entries with RouteType=0 (v4)
-- `resolveApproachProcedureData(aclText, runway, hintPosition?, isV4?)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?} | null` — resolves final approach parameters for a runway from SceneryData Type=1 routes (v2/v3) or PKStaticEntities RouteType=1 (v4); when `hintPosition` is provided and multiple variants exist, picks the closest one. Returns `routeName` from the selected procedure's `Name` field (v2/v3: route entry name; v4: extracted via `_extractString` from the route block).
-- `_parseRunwayThresholds(aclText, isV4?)` → `{[PhysicalName]: {thresholds: [{x,z}, {x,z}]}}` — runway endpoint positions from SceneryData (v2/v3) or via ThresholdPoints $iref→taxiway-node (v4)
-- `_parseTaxiwayNodes(aclText, isV4?)` → `Map<guid|id, Vector3>` — TaxiwayNode positions for GUID resolution (v2/v3: guid key; v4: $id key)
-- `_parseAirwayNodes(aclText, isV4?)` → `Map<guid|id, {name, position}>` — AirwayNode positions for FlyApproach path resolution (v2/v3: guid key; v4: $id key)
+**Runway Routes & STAR Mapping:**
+- `extractStarRunwayMappings(aclText)` → `{starRunwayMap: {star→[runways]}, runwayStarMap: {runway→[stars]}}` — authoritative from PKStaticEntities `runway:*` entries' `Routes` (RouteType=0)
+- `resolveApproachProcedureData(aclText, runway, hintPosition?)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?} | null` — resolves final approach parameters for a runway from PKStaticEntities runway `Routes` (RouteType=1); when `hintPosition` is provided and multiple variants exist, picks the closest one. Returns `routeName` from the selected procedure's `Name` field (extracted via `_extractString` from the route block).
+- `_parseRunwayThresholds(aclText)` → `{[PhysicalName]: {thresholds: [{x,z}, {x,z}]}}` — runway endpoint positions via the runway's `ThresholdPoints` `$iref`s → taxiway-node positions
 
 **Computation:**
 - `computeProgressRatio(landingTimeTicks, saveTimeTicks, totalApproachTime)` → `0..1`
@@ -629,8 +602,8 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 - `computeFullTerminalPath(aclText, star, runway)` → `{flyLen, procLen, tdDist, total}` — full terminal path length in game units combining FlyApproach + procedure + touchdown segments. Passes the last FlyApproach point as `hintPosition` to `resolveApproachProcedureData` so the correct approach variant is selected when multiple exist for the runway.
 
 **Designator Mapping & Cache:**
-- `buildDesignatorMapping(aclText, isV4?)` → `Map<AircraftType, Designator>` — cross-references FlightPlans with AircraftStates (v2/v3) or StaticItems with RuntimeEntities (v4). v4 path scans `StaticItems` for flight-plan entries (Registration → AircraftType, Stand) then cross-references `RuntimeEntities` in two passes: **(Pass A)** `aircraft:REG` entries (Registration → Specification.Designator), **(Pass B)** `jetway:STAND` entries with `DockingAircraft.Specification.Designator` (linked via Stand → AircraftType from static-item Stand field). Jetway fallback covers aircraft whose only runtime representation is inside a jetway's `DockingAircraft`. Previously returned empty for v4; now produces a complete map for spec lookup during save
-- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, fileTypeMaps, state5ParamsMap, starPaths, runwayThresholds, airportScale, starRunwayMap, runwayStarMap}` — scans all .acl files for an airport. Auto-detects v4 from first file and threads `isV4` through all sub-calls.
+- `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references `StaticItems` (flight-plan → Registration, AircraftType, Stand) with `RuntimeEntities`. Scans `StaticItems` for flight-plan entries then cross-references `RuntimeEntities` in two passes: **(Pass A)** `aircraft:REG` entries (Registration → Specification.Designator), **(Pass B)** `jetway:STAND` entries with `DockingAircraft.Specification.Designator` (linked via Stand → AircraftType from static-item Stand field). Jetway fallback covers aircraft whose only runtime representation is inside a jetway's `DockingAircraft`. Produces a complete map for spec lookup during save
+- `buildApproachCache(airportDir)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, typeNameIndex, fileTypeMaps, fileTypeNameIndexes, state5ParamsMap, starPaths, runwayThresholds, airportScale, starRunwayMap, runwayStarMap, taxiwayPaths, sidRunwayMap, runwaySidMap, sidPaths, missedAppMap, runwayMissedAppMap, missedAppPaths, apprRunwayMap, runwayApprMap, apprPaths}` — scans all .acl files for an airport; the first file provides the scenery-derived maps (runway routes, taxiway paths, SID/approach/missed paths, type maps).
 
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, touchDownPosition?, approachCap?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=30 `$k/$v` JSON block

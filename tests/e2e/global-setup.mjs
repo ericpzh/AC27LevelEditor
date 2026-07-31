@@ -98,7 +98,7 @@ export default async function () {
     // in prod mode (fixture names like ZSJN-Morning_120min are no longer whitelisted)
     const zsjnLevels = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
     for (const [srcName, dstName] of [
-      ['ZSJN-Morning_120min.acl', 'ZSJN_leisure_1.acl'],
+      ['ZSJN-Morning_120min.v4.acl', 'ZSJN_leisure_1.acl'],
       ['ZSJN-Morning_120min.v4.acl', 'ZSJN_leisure_2.acl'],
     ]) {
       const srcFile = path.join(zsjnLevels, srcName);

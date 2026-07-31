@@ -93,7 +93,6 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
   const { t } = useTranslation();
   const activeMap = useAppStore(s => s.activeMap);
   const setActiveMap = useAppStore(s => s.setActiveMap);
-  const isV4 = useAppStore(s => s.isV4);
   const electronAPI = useElectronAPI();
   const [hoveredStar, setHoveredStar] = useState(null);
   const [opening, setOpening] = useState(true);
@@ -611,7 +610,7 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
                 let starLines = lines.filter(l => l.starName === starName);
                 if (starLines.length === 0) return null;
                 // When a runway is selected, only show variants for that runway
-                if (selectedRunway && isV4) {
+                if (selectedRunway) {
                   starLines = starLines.filter(l => l.runway === selectedRunway);
                   if (starLines.length === 0) return null;
                 }

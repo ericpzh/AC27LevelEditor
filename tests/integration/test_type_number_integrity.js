@@ -5,10 +5,9 @@
  * After save, every $type declaration in the output must match the source .bak's
  * typeMap — no type number drift from hardcoded defaults.
  *
- * Runs on both schema versions:
- *   v2/v3: ZSJN-Morning_120min.acl (text) → _rebuildWorldStateSections
- *   v4:    ZSJN-Morning_120min.v4.acl (GATCArc4 binary) → _rebuildStaticDataSections
- *          (isV4 + approach cache passed, same as the app's save path)
+ * Runs on the v4 schema:
+ *   v4: ZSJN-Morning_120min.v4.acl (GATCArc4 binary) → _rebuildStaticDataSections
+ *          (approach cache passed, same as the app's save path)
  */
 const fs = require('fs');
 const path = require('path');
@@ -21,8 +20,7 @@ const FIXTURE_DIR = path.join(__dirname, '..', 'fixtures', 'game-root', 'GroundA
 
 // Each pass runs the full save→typeMap-compare cycle on one fixture.
 const CASES = [
-  { label: 'v2/v3', fixture: 'ZSJN-Morning_120min.acl', suffix: 'v3', isV4: false },
-  { label: 'v4', fixture: 'ZSJN-Morning_120min.v4.acl', suffix: 'v4', isV4: true },
+  { label: 'v4', fixture: 'ZSJN-Morning_120min.v4.acl', suffix: 'v4' },
 ];
 
 let passed = 0;
@@ -84,11 +82,9 @@ for (const c of CASES) {
   // v4 rebuild needs DockingPositions from the approach cache specDB —
   // same as the app builds it from the level's .acl files.
   let approachCache = null;
-  if (c.isV4) {
-    try { approachCache = buildApproachCache(path.dirname(FIXTURE_ACL)); } catch (_) {}
-    console.log('  approach cache: ' + (approachCache ? 'built' : 'null (fallback)'));
-  }
-  generateFullAcl(TEMP_ACL, sorted, null, null, null, null, null, null, null, approachCache, null, null, c.isV4);
+  try { approachCache = buildApproachCache(path.dirname(FIXTURE_ACL)); } catch (_) {}
+  console.log('  approach cache: ' + (approachCache ? 'built' : 'null (fallback)'));
+  generateFullAcl(TEMP_ACL, sorted, null, null, null, null, approachCache, null, null);
 
   // [5] Read saved output
   console.log('[5] Analyzing saved output...');

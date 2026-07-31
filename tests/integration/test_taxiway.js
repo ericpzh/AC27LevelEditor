@@ -59,28 +59,35 @@ test('no TaxiwaySegments returns empty paths', () => {
   assertEq(result.paths.length, 0);
 });
 
-// Nodes in TaxiwayNodes use $k/$v format (keyed by GUID), matching the real ACL structure
-function tn(g, x, z) {
-  return '{"$k": "' + g + '", "$v": {"Guid": "' + g + '", "Position": {"x": ' + x + ', "y": 0, "z": ' + z + '}}}';
+// v4 entities live in StaticData.$blobdoc.PKStaticEntities.$rcontent as
+// $k/$v entries, referencing each other via $iref → $id.
+function pk(entries) {
+  return wrap('"StaticData": {"$blobdoc": {"PKStaticEntities": {"$rcontent": [' + entries.join(',') + ']}}}');
 }
 
-// Valid UUID: 8-4-4-4-12 = 36 chars
-function gid(n) { return 'aaaaaaaa-bbbb-cccc-dddd-' + String(n).padStart(12, '0'); }
+function tn(id, x, z) {
+  return '{"$k": "taxiway-node:' + id + '", "$v": {"$id": ' + id + ', "Position": {"$type": 5, ' + x + ', 0, ' + z + '}}}';
+}
 
-// Synthetic TaxiwaySegments with valid Node GUIDs requires matching
-// TaxiwayNodes entries. Build a minimal valid structure.
+function seg(pkName, name, flags, nodeIds) {
+  return '{"$k": "taxiway-segment:' + pkName + '", "$v": {"Name": "' + name + '", "Flags": ' + flags +
+    ', "Nodes": {"$rcontent": ["$iref:' + nodeIds[0] + '", "$iref:' + nodeIds[1] + '"]}}}';
+}
+
+function stand(pkName, id, tailIref, noseIref) {
+  // TailPosition/NosePosition are BARE $iref:N in the real v4 format (unquoted)
+  return '{"$k": "stand:' + pkName + '", "$v": {"$id": ' + id + ', "TailPosition": $iref:' + tailIref +
+    ', "NosePosition": $iref:' + noseIref + '}}';
+}
+
+// Synthetic TaxiwaySegments with valid node $irefs requires matching
+// taxiway-node entries. Build a minimal valid structure.
 test('parses taxiway paths from valid segments with matching nodes', () => {
-  const nodeGuid = gid(11);
-  const nodeGuid2 = gid(22);
-  const acl = wrap(
-    '"SceneryData": {' +
-    '"TaxiwayNodes": {"$rcontent": [' +
-    tn(nodeGuid, 100, 300) + ',' +
-    tn(nodeGuid2, 110, 310) +
-    ']},' +
-    '"TaxiwaySegments": {"$rcontent": [' +
-    '{"$k": "seg-1", "$v": {"Name": "A", "Flags": 1, "Nodes": {"$rcontent": ["' + nodeGuid + '", "' + nodeGuid2 + '"]}}}' +
-    ']}}');
+  const acl = pk([
+    tn(11, 100, 300),
+    tn(22, 110, 310),
+    seg('seg-1', 'A', 1, [11, 22]),
+  ]);
 
   const result = parseTaxiwayPaths(acl);
   assertEq(result.paths.length, 1, 'should have 1 path');
@@ -93,21 +100,14 @@ test('parses taxiway paths from valid segments with matching nodes', () => {
 });
 
 test('parses Flags values correctly: standard=1, wider=2, special=4', () => {
-  const g1 = gid(101), g2 = gid(102), g3 = gid(103);
-  const g4 = gid(104), g5 = gid(105), g6 = gid(106);
-
-  const acl = wrap(
-    '"SceneryData": {' +
-    '"TaxiwayNodes": {"$rcontent": [' +
-    tn(g1, 0, 0) + ',' + tn(g2, 10, 0) + ',' +
-    tn(g3, 20, 0) + ',' + tn(g4, 30, 0) + ',' +
-    tn(g5, 40, 0) + ',' + tn(g6, 50, 0) +
-    ']},' +
-    '"TaxiwaySegments": {"$rcontent": [' +
-    '{"$k": "s1", "$v": {"Name": "STD", "Flags": 1, "Nodes": {"$rcontent": ["' + g1 + '", "' + g2 + '"]}}},' +
-    '{"$k": "s2", "$v": {"Name": "WIDE", "Flags": 2, "Nodes": {"$rcontent": ["' + g3 + '", "' + g4 + '"]}}},' +
-    '{"$k": "s3", "$v": {"Name": "SPEC", "Flags": 4, "Nodes": {"$rcontent": ["' + g5 + '", "' + g6 + '"]}}}' +
-    ']}}');
+  const acl = pk([
+    tn(101, 0, 0), tn(102, 10, 0),
+    tn(103, 20, 0), tn(104, 30, 0),
+    tn(105, 40, 0), tn(106, 50, 0),
+    seg('s1', 'STD', 1, [101, 102]),
+    seg('s2', 'WIDE', 2, [103, 104]),
+    seg('s3', 'SPEC', 4, [105, 106]),
+  ]);
 
   const result = parseTaxiwayPaths(acl);
   assertEq(result.paths.length, 3, 'should have 3 paths');
@@ -117,20 +117,12 @@ test('parses Flags values correctly: standard=1, wider=2, special=4', () => {
 });
 
 test('segments touching stand nodes are marked isStandAccess', () => {
-  const standGuid = gid(1001);
-  const taxiGuid = gid(1002);
-
-  const acl = wrap(
-    '"SceneryData": {' +
-    '"TaxiwayNodes": {"$rcontent": [' +
-    tn(standGuid, 0, 0) + ',' + tn(taxiGuid, 10, 0) +
-    ']},' +
-    '"Stands": {"$rcontent": [' +
-    '{"TailPositionGuid": "' + standGuid + '", "NosePositionGuid": "00000000-0000-0000-0000-000000000000"}' +
-    ']},' +
-    '"TaxiwaySegments": {"$rcontent": [' +
-    '{"$k": "seg-stand", "$v": {"Name": "STUB", "Flags": 1, "Nodes": {"$rcontent": ["' + standGuid + '", "' + taxiGuid + '"]}}}' +
-    ']}}');
+  const acl = pk([
+    tn(1001, 0, 0),
+    tn(1002, 10, 0),
+    stand('300', 31, 1001, 1001),
+    seg('seg-stand', 'STUB', 1, [1001, 1002]),
+  ]);
 
   const result = parseTaxiwayPaths(acl);
   // Stand-access segment is included but marked
@@ -141,21 +133,13 @@ test('segments touching stand nodes are marked isStandAccess', () => {
 });
 
 test('segments not touching stand nodes are kept', () => {
-  const node1 = gid(2001);
-  const node2 = gid(2002);
-  const standNode = gid(2003);
-
-  const acl = wrap(
-    '"SceneryData": {' +
-    '"TaxiwayNodes": {"$rcontent": [' +
-    tn(node1, 0, 0) + ',' + tn(node2, 10, 0) + ',' + tn(standNode, 100, 100) +
-    ']},' +
-    '"Stands": {"$rcontent": [' +
-    '{"TailPositionGuid": "' + standNode + '", "NosePositionGuid": "00000000-0000-0000-0000-000000000000"}' +
-    ']},' +
-    '"TaxiwaySegments": {"$rcontent": [' +
-    '{"$k": "taxi-seg", "$v": {"Name": "A_Taxi", "Flags": 1, "Nodes": {"$rcontent": ["' + node1 + '", "' + node2 + '"]}}}' +
-    ']}}');
+  const acl = pk([
+    tn(2001, 0, 0),
+    tn(2002, 10, 0),
+    tn(2003, 100, 100),
+    stand('300', 31, 2003, 2003),
+    seg('taxi-seg', 'A_Taxi', 1, [2001, 2002]),
+  ]);
 
   const result = parseTaxiwayPaths(acl);
   // Neither node1 nor node2 are stand nodes — segment is kept, not marked
@@ -164,45 +148,7 @@ test('segments not touching stand nodes are kept', () => {
   assert(!result.paths[0].isStandAccess, 'non-stand segment should not have isStandAccess');
 });
 
-// ── Integration Tests ───────────────────────────────────────────
-
-const fixtureAcl = path.join(__dirname, '..', 'fixtures', 'game-root',
-  'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.acl');
-
-if (fs.existsSync(fixtureAcl)) {
-  console.log('\n--- Integration (fixture ACL: ZSJN-Morning_120min) ---');
-  const aclText = readAclText(fixtureAcl);
-
-  test('parseTaxiwayPaths on ZSJN fixture returns paths', () => {
-    const result = parseTaxiwayPaths(aclText);
-    const pathCount = result.paths.length;
-    console.log('       Taxiway paths found: ' + pathCount);
-    assert(pathCount > 0, 'ZSJN fixture should have taxiway segments');
-  });
-
-  test('ZSJN taxiway paths have valid structure', () => {
-    const result = parseTaxiwayPaths(aclText);
-    for (const tp of result.paths) {
-      assert(typeof tp.name === 'string', 'taxiway name should be a string');
-      assert(typeof tp.flags === 'number', 'flags should be a number');
-      assert(Array.isArray(tp.points), 'points should be an array');
-      assert(tp.points.length >= 2, 'path should have ≥2 points, got ' + tp.points.length + ' for ' + tp.name);
-      for (const pt of tp.points) {
-        assert(typeof pt.x === 'number' && typeof pt.z === 'number',
-          'point should have numeric x,z for ' + tp.name);
-      }
-    }
-  });
-
-  test('ZSJN taxiway paths are ordered (not all empty)', () => {
-    const result = parseTaxiwayPaths(aclText);
-    const namedCount = result.paths.filter(tp => tp.name.length > 0).length;
-    console.log('       Named taxiway paths: ' + namedCount);
-    // At least some taxiways should have names
-  });
-}
-
-// ── V4 Integration Tests (PKStaticEntities path) ────────────────
+// ── Integration Tests (v4 fixture — PKStaticEntities path) ─────
 
 const fixtureV4Acl = path.join(__dirname, '..', 'fixtures', 'game-root',
   'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl');
@@ -211,7 +157,7 @@ if (fs.existsSync(fixtureV4Acl)) {
   console.log('\n--- Integration (v4 fixture ACL: ZSJN-Morning_120min.v4) ---');
   const v4Text = readAclText(fixtureV4Acl);
 
-  test('parseTaxiwayPaths on ZSJN v4 fixture returns paths (auto-detected)', () => {
+  test('parseTaxiwayPaths on ZSJN v4 fixture returns paths', () => {
     const result = parseTaxiwayPaths(v4Text);
     const pathCount = result.paths.length;
     console.log('       Taxiway paths found (v4): ' + pathCount);
@@ -237,11 +183,6 @@ if (fs.existsSync(fixtureV4Acl)) {
     const standAccessCount = result.paths.filter(tp => tp.isStandAccess === true).length;
     console.log('       Stand-access segments (v4): ' + standAccessCount);
     assert(standAccessCount > 0, 'v4 fixture should have stand-access segments');
-  });
-
-  test('parseTaxiwayPaths with explicit isV4:true returns paths', () => {
-    const result = parseTaxiwayPaths(v4Text, null, true);
-    assert(result.paths.length > 0, 'explicit isV4:true should parse v4 taxiway segments');
   });
 }
 
