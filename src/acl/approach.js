@@ -2805,8 +2805,26 @@ function buildDesignatorMapping(aclText, isV4) {
                   const at = _extractString(vBlock, 'AircraftType', true);
                   if (reg && at) regToType.set(reg, at);
                   const stand = _extractString(vBlock, 'Stand', true);
-                  if (stand && at && !standToType.has(stand)) {
-                    standToType.set(stand, at);
+                  if (stand && at) {
+                    // Register alias forms of the stand so Pass B's exact
+                    // jetway-key lookup resolves regardless of format:
+                    // flight plans say "31" while jetway keys are "31A"/"31B",
+                    // or "07" vs "7". First-registered wins per alias.
+                    const aliases = new Set([stand]);
+                    const baseNum = parseInt(stand, 10);
+                    if (!Number.isNaN(baseNum)) {
+                      const base = String(baseNum);
+                      const padded = base.padStart(2, '0');
+                      aliases.add(base);
+                      aliases.add(padded);
+                      aliases.add(base + 'A');
+                      aliases.add(base + 'B');
+                      aliases.add(padded + 'A');
+                      aliases.add(padded + 'B');
+                    }
+                    for (const alias of aliases) {
+                      if (!standToType.has(alias)) standToType.set(alias, at);
+                    }
                   }
                 }
                 start = -1;

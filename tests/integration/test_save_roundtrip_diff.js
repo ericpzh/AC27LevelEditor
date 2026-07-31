@@ -160,9 +160,23 @@ function buildMinimalApproachAircraft() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// T3: Empty string[] arrays use $iref sharing
+// T3: Empty string[] arrays use canonical-$id (inline per-array $id)
 // ═══════════════════════════════════════════════════════════════════
-console.log('\n═══ T3: Empty string[] $iref sharing ═══');
+console.log('\n═══ T3: Empty string[] canonical-$id design ═══');
+
+// Extract a balanced-brace JSON object by key name
+function extractObjectAt(text, key) {
+  const start = text.indexOf('"' + key + '"');
+  if (start < 0) return null;
+  const open = text.indexOf('{', start);
+  if (open < 0) return null;
+  let d = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '{') d++;
+    else if (text[i] === '}') { d--; if (d === 0) return text.substring(open, i + 1); }
+  }
+  return null;
+}
 
 {
   const result = buildMinimalApproachAircraft();
@@ -172,27 +186,39 @@ console.log('\n═══ T3: Empty string[] $iref sharing ═══');
   const inlineMatches = result.block.match(inlinePattern);
   const inlineCount = inlineMatches ? inlineMatches.length : 0;
   // The block may have multiple empty arrays (DockingPositions, WaitingForCommands, etc.)
-  // The key check: AircraftRunwayCoordinateState fields use $iref
   assert(inlineCount >= 1, 'At least one inline empty array definition exists');
 
-  // Count $iref references in the block
-  const irefPattern = /\$iref:(\d+)/g;
-  const irefMatches = [...result.block.matchAll(irefPattern)];
-  assert(irefMatches.length >= 4, `At least 4 $iref references found (got ${irefMatches.length})`);
+  // Canonical-$id design: the 5 AircraftRunwayCoordinateState string[] fields are
+  // emitted inline with per-array $id — NO $iref sharing (as of the per-file typeMap refactor)
+  const coord = extractObjectAt(result.block, 'AircraftRunwayCoordinateState');
+  assert(coord !== null, 'AircraftRunwayCoordinateState object found');
 
-  // All $iref references in the coordinator should point to the same ID
-  const irefIds = irefMatches.map(m => parseInt(m[1]));
-  const uniqueIrefIds = new Set(irefIds);
-  // At least 4 refs to the same shared ID
-  const maxCount = Math.max(...[...uniqueIrefIds].map(id => irefIds.filter(x => x === id).length));
-  assert(maxCount >= 4, `At least 4 $iref references to same ID (max to one ID: ${maxCount})`);
+  if (coord) {
+    // No $iref references inside the coordinator
+    const coordIrefCount = (coord.match(/\$iref:(\d+)/g) || []).length;
+    assert(coordIrefCount === 0, `No $iref references in coordinator (got ${coordIrefCount})`);
 
-  // The five runway coordinator fields should NOT each have their own $id
-  // (they should share via $iref instead)
-  const coordSection = result.block.match(/AircraftRunwayCoordinateState[^}]*"RunwaySetterIdx"/s);
-  if (coordSection) {
-    const idCount = (coordSection[0].match(/"\$id":/g) || []).length;
-    assert(idCount <= 2, `Coordinator section has ≤2 $id (coordinator + shared empty array), got ${idCount}`);
+    // Exactly 6 $id entries: coordinator itself + 5 per-array inline definitions
+    const coordIds = [...coord.matchAll(/"\$id":\s*(\d+)/g)].map(m => parseInt(m[1]));
+    assert(coordIds.length === 6, `Coordinator has 6 $id entries (coordinator + 5 per-array), got ${coordIds.length}`);
+
+    // All $id values unique — each array has its own canonical id
+    assert(new Set(coordIds).size === coordIds.length,
+      `All ${coordIds.length} $id values in coordinator are unique (canonical-$id design)`);
+
+    // All 5 runway-coordinator string[] fields present and inline empty
+    const coordFields = [
+      'TaxiPathUnPassedIntersectionRunwayNames',
+      'TaxiBlockingRunwayNames',
+      'RunwayFenceCurrentEnterRunways',
+      'RunwayGuardCurrentEnterRunways',
+      'CrossRunwayPermissions',
+    ];
+    for (const field of coordFields) {
+      assert(coord.includes(`"${field}":`), `Coordinator field ${field} present`);
+    }
+    const inlineArrCount = (coord.match(/"\$rlength":\s*0,\s*"\$rcontent":\s*\[\s*\]/g) || []).length;
+    assert(inlineArrCount === 5, `5 inline empty string[] arrays in coordinator (got ${inlineArrCount})`);
   }
 }
 

@@ -3750,6 +3750,14 @@ function _buildStandaloneAircraftEntry(opts) {
     }
   }
 
+  // State=5 aircraft use the approach procedure name (e.g., "RNAV ILS Z Rwy 19")
+  // instead of the STAR name (e.g., "UBSS6W") for the _route field.
+  // This matches the v2/v3 _rebuildWorldStateSections behavior (see line 969-970).
+  var routeValue = star;
+  if (aircraftState === 5 && state5Params && state5Params.routeName) {
+    routeValue = state5Params.routeName;
+  }
+
   // --- Build structured Aircraft object ------------------------------
 
   // DockingPositions: Vector4[]
@@ -3916,7 +3924,7 @@ function _buildStandaloneAircraftEntry(opts) {
       _taxiPath: { $id: id(21), $type: T.rpPath, __v: [null] },
       _rollingPresetTaxiPath: { $id: id(22), $type: T.rpPath, __v: [null] },
       _selectedRunwayEntryRunway: null,
-      _route: { $id: id(23), $type: T.rpStr, __v: [star] },
+      _route: { $id: id(23), $type: T.rpStr, __v: [routeValue] },
       _waitingForCommands: rpSharedArr(id(24), T.rpCmdArr, id(25), T.cmdArr, waitingCmdsCache, aircraftState === 5 ? [CMD_CONTACT_TOWER] : []),
       _receivedEvents: rpSharedArr(id(26), T.rpEvtArr, id(27), T.evtArr, recvEventsCache, []),
       _position: {

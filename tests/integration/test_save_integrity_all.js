@@ -21,9 +21,10 @@ const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
 const { readAclText } = require('../../src/acl/gatcarc');
+const { buildApproachCache } = require('../../src/acl/approach');
 
 const {
-  loadFlights, generateFullAcl,
+  loadFlights, generateFullAcl, detectSchemaVersion,
   _extractConfig,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
 } = parser;
@@ -116,6 +117,18 @@ if (prodDemoOnly) {
 
 console.log(`\nFound ${aclFiles.length} .acl files across ${new Set(aclFiles.map(f => f.icao)).size} airports`);
 console.log(`Game root: ${gameRoot}\n`);
+
+// ── Approach cache (per level dir) ────────────────────────────────
+// The jetway rebuild needs DockingPositions from the approach cache
+// specDB — the app builds this from the level's .acl files.
+const approachCacheByDir = new Map();
+function getApproachCache(levelDir) {
+  if (approachCacheByDir.has(levelDir)) return approachCacheByDir.get(levelDir);
+  let cache = null;
+  try { cache = buildApproachCache(levelDir); } catch (_) {}
+  approachCacheByDir.set(levelDir, cache);
+  return cache;
+}
 
 // ── Temp directories ─────────────────────────────────────────────
 //   tests/integration/_tmp/
@@ -260,6 +273,10 @@ for (const file of aclFiles) {
     const goldenAcl = copyLevelFiles(file.sourcePath, file.sourceDir, goldenSubDir, file.name);
     const goldenText = readAclText(goldenAcl);
 
+    // Detect schema version — v4 routes through _rebuildStaticDataSections,
+    // v2/v3 through _rebuildWorldStateSections
+    const isV4 = detectSchemaVersion(goldenText) === 4;
+
     // ── Step 2: Load golden → snapshot ────────────────────────────
     const goldenResult = loadFlights(goldenAcl);
     if (!goldenResult || !goldenResult.flights.length) {
@@ -290,9 +307,10 @@ for (const file of aclFiles) {
       goldenResult.sceneryMaps,
       goldenResult._fromWorldState,
       goldenResult._fromFlightPlans,
-      null,
+      getApproachCache(file.sourceDir),
       goldenCfg.startTime || null,
       null,
+      isV4,
     );
 
     // ── Step 5: Load result → compare against golden snapshot ─────

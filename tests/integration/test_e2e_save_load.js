@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
 const { readAclText } = require('../../src/acl/gatcarc');
+const { buildApproachCache } = require('../../src/acl/approach');
 
 // ─── CLI ──────────────────────────────────────────────────────
 let aclOriginal = null;
@@ -143,6 +144,13 @@ fs.copyFileSync(CSV_ORIGINAL, CSV_TEMP);
 // [5] Run generateFullAcl on temp
 console.log('\n[5] Running generateFullAcl on temp copy...');
 try {
+  const originalText = readAclText(aclOriginal);
+  const isV4 = parser.detectSchemaVersion(originalText) === 4;
+  const aclCfgStartTime = (parser._extractConfig(originalText) || {}).startTime || null;
+  // The jetway rebuild needs DockingPositions from the approach cache specDB —
+  // the app builds this from the level's .acl files.
+  let approachCache = null;
+  try { approachCache = buildApproachCache(path.dirname(aclOriginal)); } catch (_) {}
   parser.generateFullAcl(
     ACL_TEMP,
     sortedFlights,
@@ -152,7 +160,11 @@ try {
     originalData.worldStateData,
     originalData.sceneryMaps,
     originalData._fromWorldState,
-    originalData._fromFlightPlans
+    originalData._fromFlightPlans,
+    approachCache,
+    aclCfgStartTime,
+    null,
+    isV4
   );
   console.log('    Save complete.');
 } catch (err) {

@@ -6,7 +6,7 @@
  *   node tests/run-all.mjs [--game-root <path>]
  *
  * Layers:
- *   1. Vitest (component tests)     — 501 tests, ~3s
+ *   1. Vitest (component tests)     — 497 tests, ~3s
  *   2. Integration: save integrity  — 12 prod+demo files, ~20s
  *   3. Playwright E2E                — 15 tests (~3 min; 1 skipped — E12a overlay timing)
  *
