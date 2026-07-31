@@ -4745,6 +4745,13 @@ function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runway
   if (weatherTimeline && weatherTimeline.length > 1) weatherTimeline.sort((a, b) => _toSec(a.time) - _toSec(b.time));
   if (windTimeline && windTimeline.length > 1) windTimeline.sort((a, b) => _toSec(a.time) - _toSec(b.time));
 
+  if (isV4) {
+    _rebuildV4TimelineSections(aclPath, text, weatherTimeline, windTimeline, runwayTimeline, log);
+    return;
+  }
+
+  // ── v2/v3: text-slicing approach ──
+
   // Helper: replace a section in text
   function replaceSection(text, sectionName, newContent) {
     const sec = _extractSection(text, sectionName);
@@ -4792,19 +4799,145 @@ function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runway
     const rsSec = _extractSection(text, 'RunwayTimeline');
     if (rsSec) {
       const meta = _metaRunway(rsSec.content);
+
+      // Fix type number conflicts with the full document.
+      // When the timeline was empty, _metaRunway's fallback computes
+      // element type numbers as tlTypeNum + {1,2,3}, but these may
+      // already be claimed by other types in the outer document
+      // (e.g., type 12 = System.Byte[], mscorlib in ZSJN files, which
+      //  collides with tlTypeNum=11 -> tlElemTypeNum=12 fallback).
+      const usedSet = new Set();
+      const tdRe = /"\$type":\s*"(\d+)\|/g;
+      let tdM;
+      while ((tdM = tdRe.exec(text)) !== null) usedSet.add(parseInt(tdM[1], 10));
+      const _resolve = (num) => {
+        if (num == null) return num;
+        let c = num;
+        while (usedSet.has(c)) c++;
+        usedSet.add(c);
+        return c;
+      };
+      const otle = meta.tlElemTypeNum;
+      const oca  = meta.changesArrTypeNum;
+      const oce  = meta.changeElemTypeNum;
+      meta.tlElemTypeNum      = _resolve(meta.tlElemTypeNum);
+      meta.changesArrTypeNum  = _resolve(meta.changesArrTypeNum);
+      meta.changeElemTypeNum  = _resolve(meta.changeElemTypeNum);
+      if (meta.tlElemTypeNum !== otle || meta.changesArrTypeNum !== oca || meta.changeElemTypeNum !== oce) {
+        log('typeNums fixed: tlElem=' + otle + '->' + meta.tlElemTypeNum + ' changesArr=' + oca + '->' + meta.changesArrTypeNum + ' changeElem=' + oce + '->' + meta.changeElemTypeNum);
+      }
+
       const newSection = _generateRunwayTimelineSection(runwayTimeline, meta);
       text = replaceSection(text, 'RunwayTimeline', newSection);
       log('RunwayTimeline rebuilt (initRWs=' + (runwayTimeline.initialRunways || []).length + ', tl=' + (runwayTimeline.timeline || []).length + ')');
     }
   }
 
-  if (isV4) {
-    writeAcl(aclPath, text);
-    log('Timeline sections written to ACL (' + (isV4 ? 'v4' : 'v2/v3') + ')');
-  } else {
-    fs.writeFileSync(aclPath, text, 'utf-8');
-    log('Timeline sections written to ACL (v2/v3)');
+  fs.writeFileSync(aclPath, text, 'utf-8');
+  log('Timeline sections written to ACL (v2/v3)');
+}
+
+// ─── V4: MetaData object-based timeline rebuild ──────────────
+
+/**
+ * Rebuild WeatherFrames, WindFrames, and RunwayTimeline in a v4 ACL file
+ * by parsing MetaData as an Odin JSON object, modifying its sub-sections,
+ * and serializing the whole MetaData back.
+ *
+ * This matches the DynamicEntities pattern: load -> modify -> serialize.
+ */
+function _rebuildV4TimelineSections(aclPath, text, weatherTimeline, windTimeline, runwayTimeline, log) {
+  // 1. Find MetaData section and extract its value text
+  const t = createTokenizer(text);
+  const mdSec = t.findSection('MetaData');
+  if (!mdSec) { log('ERROR: MetaData section not found'); return; }
+
+  let mdVal = t.substring(mdSec.valueStart, mdSec.valueEnd);
+
+  // Helper: find a sub-section key within the current mdVal text.
+  // Must be called fresh each time (creates a new tokenizer against current mdVal).
+  function findSubSection(sectionName) {
+    const mt = createTokenizer(mdVal);
+    const sec = mt.findSection(sectionName);
+    if (!sec) return null;
+    return {
+      start: sec.keyStart,
+      end: sec.valueEnd,
+      content: mdVal.substring(sec.valueStart, sec.valueEnd),
+    };
   }
+
+  // ── WeatherFrames ──
+  if (weatherTimeline && weatherTimeline.length) {
+    const sec = findSubSection('WeatherFrames');
+    if (sec) {
+      const pMeta = _sectionMeta(sec.content);
+      const eTypeNum = _elemTypeFromRcontent(sec.content);
+      const newSection = _generateFramesSection(weatherTimeline, pMeta.id, eTypeNum, pMeta.typeNum, 'WeatherFrames', 'WeatherFrame[]', 'WeatherFrame', {
+        preset: { acl: 'Preset', type: 'string' },
+        time:   { acl: 'Time',   type: 'string' },
+      });
+      mdVal = mdVal.substring(0, sec.start) + newSection + mdVal.substring(sec.end);
+      log('WeatherFrames rebuilt (' + weatherTimeline.length + ' entries)');
+    }
+  }
+
+  // ── WindFrames ──
+  if (windTimeline && windTimeline.length) {
+    const sec = findSubSection('WindFrames');
+    if (sec) {
+      const pMeta = _sectionMeta(sec.content);
+      const eTypeNum = _elemTypeFromRcontent(sec.content);
+      const newSection = _generateFramesSection(windTimeline, pMeta.id, eTypeNum, pMeta.typeNum, 'WindFrames', 'WindFrame[]', 'WindFrame', {
+        direction: { acl: 'Direction', type: 'number' },
+        speed:     { acl: 'Speed',     type: 'number' },
+        time:      { acl: 'Time',      type: 'string' },
+      });
+      mdVal = mdVal.substring(0, sec.start) + newSection + mdVal.substring(sec.end);
+      log('WindFrames rebuilt (' + windTimeline.length + ' entries)');
+    }
+  }
+
+  // ── RunwayTimeline ──
+  if (runwayTimeline) {
+    const sec = findSubSection('RunwayTimeline');
+    if (sec) {
+      const meta = _metaRunway(sec.content);
+
+      // Fix type number conflicts (same as v2/v3 path)
+      const usedSet = new Set();
+      const tdRe = /"\$type":\s*"(\d+)\|/g;
+      let tdM;
+      while ((tdM = tdRe.exec(text)) !== null) usedSet.add(parseInt(tdM[1], 10));
+      const _resolve = (num) => {
+        if (num == null) return num;
+        let c = num;
+        while (usedSet.has(c)) c++;
+        usedSet.add(c);
+        return c;
+      };
+      const otle = meta.tlElemTypeNum;
+      const oca  = meta.changesArrTypeNum;
+      const oce  = meta.changeElemTypeNum;
+      meta.tlElemTypeNum      = _resolve(meta.tlElemTypeNum);
+      meta.changesArrTypeNum  = _resolve(meta.changesArrTypeNum);
+      meta.changeElemTypeNum  = _resolve(meta.changeElemTypeNum);
+      if (meta.tlElemTypeNum !== otle || meta.changesArrTypeNum !== oca || meta.changeElemTypeNum !== oce) {
+        log('typeNums fixed: tlElem=' + otle + '->' + meta.tlElemTypeNum + ' changesArr=' + oca + '->' + meta.changesArrTypeNum + ' changeElem=' + oce + '->' + meta.changeElemTypeNum);
+      }
+
+      const newSection = _generateRunwayTimelineSection(runwayTimeline, meta);
+      mdVal = mdVal.substring(0, sec.start) + newSection + mdVal.substring(sec.end);
+      log('RunwayTimeline rebuilt (initRWs=' + (runwayTimeline.initialRunways || []).length + ', tl=' + (runwayTimeline.timeline || []).length + ')');
+    }
+  }
+
+  // 2. Replace MetaData value in full text (keeps the "MetaData": key intact)
+  text = text.substring(0, mdSec.valueStart) + mdVal + text.substring(mdSec.valueEnd);
+
+  // 3. Write back
+  writeAcl(aclPath, text);
+  log('Timeline sections rebuilt in MetaData (v4)');
 }
 
 // ─── Parse timeline sections from ACL text ────────────────────

@@ -60,7 +60,7 @@ The `preprocessUnityJson()` function transforms Unity JSON into valid JSON in 3 
 - `FlightPlanState` (type 37) — individual flight plans with DepartureLeg/ArrivalLeg
 - `DepartureLeg` (type 57) / `ArrivalLeg` (type 58) — flight leg data
 - `TaskFlightState` (type 56/54) — older WorldState format (legacy)
-- `WeatherFrames` / `WindFrames` / `RunwayTimeline` — timeline sections
+- `WeatherFrames` / `WindFrames` / `RunwayTimeline` — timeline sections (top-level in v2/v3; nested inside `MetaData` in v4 — rebuilt by `_rebuildV4TimelineSections`)
 
 ## Format Versions
 
@@ -89,7 +89,7 @@ v4 files use a completely different top-level structure. The file is stored on d
 | `StaticData` | Contains a single `$blobdoc` field whose value is a decoded nested Odin binary document |
 | `GameTime` | (may be absent — snapshot time derived from `MetaData.BaseTime` instead) |
 | `Config` | Same layout as v2/v3: `startTime`, `endTime`, file references |
-| `MetaData` | `BaseTime` (DateTime tick value as inline `{ "$type": 2, ticks }`), `StartTime`, `TimeFactor` |
+| `MetaData` | `BaseTime` (DateTime tick value as inline `{ "$type": 2, ticks }`), `StartTime`, `TimeFactor`, plus the timeline sections `WeatherFrames`, `WindFrames`, `RunwayTimeline` |
 | `RuntimeSnapshot` | (may be present) — decoded runtime data with `$blobdoc`-nested `RuntimeData` |
 
 **Discovery:** Look for `"StaticData"` at the top level (and no `"SceneryData"`). Use `detectSchemaVersion(text)` → returns 4.
