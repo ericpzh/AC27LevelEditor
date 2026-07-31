@@ -57,8 +57,14 @@ export function useEditorSaveActions({
         await electronAPI.saveWindTimeline({ filePath: st.windPath, data: nativeWind });
         store.setTimelineModified('wind', false);
       }
-      if (st.runwayTimelinePath && st.timelineModified.runway) {
-        await electronAPI.saveRunwayTimeline({ filePath: st.runwayTimelinePath, data: st.runwayTimeline });
+      if (st.timelineModified.runway) {
+        // The RunwayTimeline section is always patched into the ACL by saveAcl —
+        // the sidecar JSON is only an optional mirror for levels whose Config
+        // declares a runwayTimelineFile (many don't). Clear the dirty flag either
+        // way, otherwise back-navigation would falsely report unsaved changes.
+        if (st.runwayTimelinePath) {
+          await electronAPI.saveRunwayTimeline({ filePath: st.runwayTimelinePath, data: st.runwayTimeline });
+        }
         store.setTimelineModified('runway', false);
       }
       useAppStore.setState({ modified: false });
