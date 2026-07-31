@@ -9,15 +9,15 @@
   - [Phase 1: Load Level](#phase-1-load-level)
   - [Phase 2: Edit (all in zustand store)](#phase-2-edit-all-in-zustand-store)
   - [Phase 3: Save](#phase-3-save)
-  - [Cache State \& Version Detection (v1.1.0)](#cache-state--version-detection-v110)
+  - [Cache State \& Version Detection](#cache-state--version-detection)
   - [Toolbar Backup Button](#toolbar-backup-button)
   - [Save As ZIP](#save-as-zip)
   - [Import ZIP](#import-zip)
-  - [Stand Conflict Detection (v1.1.0)](#stand-conflict-detection-v110)
-  - [Duplicate Registration Detection (v1.1.2)](#duplicate-registration-detection-v112)
+  - [Stand Conflict Detection](#stand-conflict-detection)
+  - [Duplicate Registration Detection](#duplicate-registration-detection)
   - [Stand Map Overlay](#stand-map-overlay)
   - [Star Map Overlay](#star-map-overlay)
-  - [Demo .acl File Handling (v1.0.9+)](#demo-acl-file-handling-v109)
+  - [Demo .acl File Handling](#demo-acl-file-handling)
 
 ## Data Flow Overview
 
@@ -66,7 +66,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
 - `store.modified = true` on any change
 - `store.timelineModified[type] = true` on timeline changes
 
-**Clock time validation (v1.1.2):** When committing a time value via the clock popover, `EditableCell` (FlightTable) and `TimeCell` (timeline editors) validate against field-specific bounds before accepting the value. Out-of-bounds values show a toast and are rejected.
+**Clock time validation:** When committing a time value via the clock popover, `EditableCell` (FlightTable) and `TimeCell` (timeline editors) validate against field-specific bounds before accepting the value. Out-of-bounds values show a toast and are rejected.
 
 - `getTimeValidationBounds(col, _saveSec, _configStartTime, _configEndTime)` in `src/utils/timeUtils.js` returns `{minTime, maxTime}` or `null`:
   - **OffBlockTime / LandingTime**: bounded by `[_saveSec, _configEndTime]` — must be after the scenario snapshot and before the config end
@@ -103,13 +103,13 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
 5. Timeline saves (separate IPC per type) → writes JSON files
 6. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog). For `.demo.acl` files, creates `.demo.acl.bak`
 
-## Cache State & Version Detection (v1.1.0)
+## Cache State & Version Detection
 
 The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.json` + `lastRoot.json` + `localStorage.ac27_lang`). It contains `gameRoot`, `lang`, `cacheVersion`, `builtAt`, and `airports`.
 
 Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `src/utils/constants.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
-**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js:13`. The re-scan happens transparently during App.jsx boot — `initAirportCache()` detects the version mismatch and rebuilds the cache silently before BrowserScreen mounts. Without the bump, old cached data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 14.
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js:13`. The re-scan happens transparently during App.jsx boot — `initAirportCache()` detects the version mismatch and rebuilds the cache silently before BrowserScreen mounts. Without the bump, old cached data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 15.
 
 | `cache.json` | Behavior |
 |---|---|
@@ -157,7 +157,7 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 - Native open dialog → validates ZIP structure → backs up current files → extracts → reloads
 - Works identically for `.demo.acl` files
 
-## Stand Conflict Detection (v1.1.0)
+## Stand Conflict Detection
 
 Stand conflicts are validated on save via `detectStandConflicts()` in `src/utils/validators.js`. Three rules, based on in-game testing:
 
@@ -174,7 +174,7 @@ Stand conflicts are validated on save via `detectStandConflicts()` in `src/utils
 - dep/arr: `"CDG5166 和 CCA2761: 停机位 \"26\" 时段冲突。CDG5166推出 (07:58:00) >= CCA2761落地 (07:50:00)"` (pinpoints violation)
 - i18n keys: `val_stand_conflict`, `val_stand_conflict_dep_arr`
 
-## Duplicate Registration Detection (v1.1.2)
+## Duplicate Registration Detection
 
 `detectDuplicateRegistrations()` in `src/utils/validators.js` catches the same Aircraft Registration appearing in multiple flights of the same type:
 
@@ -218,7 +218,7 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 **Map overlay orchestration:** `MapOverlays` sub-component in `EditorScreen.jsx` manages visibility and prop-passing for both StandMap and StarMap. Visibility state lives in zustand (`showStandMap`, `showStarMap`, `activeMap`, `mapFlightIdx`). Only one map is "on top" at a time (controlled by `activeMap`). Both maps close when leaving the editor screen (`setScreen` clears map state).
 
-## Demo .acl File Handling (v1.0.9+)
+## Demo .acl File Handling
 
 The game ships six files that receive the 30-minute demo window treatment (all controlled by `DEMO_VISIBLE_BASES` in `src/utils/constants.js`):
 - `ZSJN-Morning_120min.demo.acl` (05:45–06:15)

@@ -72,7 +72,7 @@ AC27Editor/
 │   │   │   ├── useSvgZoom.js               # Scroll-zoom + drag-pan SVG hook (clamped, imperative API)
 │   │   │   ├── useUdpAircraftState.js      # Hook subscribing to live UDP state pushes (incl. simTimeUnixMs)
 │   │   │   ├── witchMode.js                # Witch mode: direction, parked detection, sprite-sheet lookup (accepts centralized spriteIdx from main process, djb2 hash fallback)
-│   │   │   ├── FlightStripCommandBar.jsx   # Strip command bar UI (v1.1.7 planned, import commented out)
+│   │   │   ├── FlightStripCommandBar.jsx   # Strip command bar UI (planned, import commented out)
 │   │   │   ├── commandTree.js              # Command tree data model + filtering by seat/state/direction
 │   │   │   ├── voiceNumberParser.js        # Spoken numbers → digits (EN + ZH aviation phraseology)
 │   │   │   ├── voiceCallsignParser.js      # Airline name→ICAO + callsign matching against UDP aircraft
@@ -115,7 +115,7 @@ AC27Editor/
 │   │   ├── approach.js         # Approach AircraftState constructor (State=30)
 │   │   ├── dynamics.js          # Deprecated — calcProgressRatio/buildAircraftEntry stubs
 │   │   ├── scenery.js           # SceneryData parser (runway/stand GUIDs + stand position extraction)
-│   │   ├── taxiway.js           # Taxiway centerline parser from SceneryData.TaxiwaySegments (added v1.1.3)
+│   │   ├── taxiway.js           # Taxiway centerline parser from SceneryData.TaxiwaySegments
 │   │   ├── sid_goaround.js      # SID + Missed Approach route parser from SceneryData.Runways.Routes[Type=2/3]
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │

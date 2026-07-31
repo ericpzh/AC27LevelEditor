@@ -116,9 +116,9 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
    - **Icon:** `MAP_ICON_PATH` (IonIons IoAirplane SVG path) rotated by `noseDirection.x/z`
    - **Label:** Green callsign text with a short connector line from aircraft to label
    - **Selection highlight:** Yellow icon + label when aircraft is selected (click-to-select)
-   - **Witch mode (v1.1.5):** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). **Sprite assignment is centralized in the main process:** `witchSpriteMap` (Map<callSign, spriteIndex>) assigns each callsign a stable 0–14 index round-robin. The `spriteIdx` is injected into each aircraft object during the 200ms UDP push (`electron/main.js`), guaranteeing all windows show the same character. `witchMode.js` accepts `spriteIdx` as a parameter to `getSpriteSheet()`; without it (standalone/testing), falls back to a deterministic djb2 hash of the callsign. Moving: walk sprites (direction-aware via `witchDirection()`); parked/stopped: stand sprites (`isParked()` uses `controlSeat` — None (0) or Unknown (255) = parked; any active seat (1-7) = not parked). Airport boundary (AreaType 0) is hidden. Any click exits witch mode. Labels and connector lines hidden. Background replaced with `witch/groundradar.png`, sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
+   - **Witch mode:** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). **Sprite assignment is centralized in the main process:** `witchSpriteMap` (Map<callSign, spriteIndex>) assigns each callsign a stable 0–14 index round-robin. The `spriteIdx` is injected into each aircraft object during the 200ms UDP push (`electron/main.js`), guaranteeing all windows show the same character. `witchMode.js` accepts `spriteIdx` as a parameter to `getSpriteSheet()`; without it (standalone/testing), falls back to a deterministic djb2 hash of the callsign. Moving: walk sprites (direction-aware via `witchDirection()`); parked/stopped: stand sprites (`isParked()` uses `controlSeat` — None (0) or Unknown (255) = parked; any active seat (1-7) = not parked). Airport boundary (AreaType 0) is hidden. Any click exits witch mode. Labels and connector lines hidden. Background replaced with `witch/groundradar.png`, sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
 
-**Airport transition auto-reset (v1.1.6):** When `udpAirportChanged` is true and the new airport matches this window's ICAO, calls `electronAPI.resetUdpAircraft()` to clear stale aircraft from the previous airport.
+**Airport transition auto-reset:** When `udpAirportChanged` is true and the new airport matches this window's ICAO, calls `electronAPI.resetUdpAircraft()` to clear stale aircraft from the previous airport.
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `GROUND_MAP_DEFAULT_ZOOM` + `GROUND_MAP_CENTER_OFFSET`, pan clamped to initial bounds.
 
@@ -154,15 +154,15 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
    - **Circle:** Small colored circle at aircraft position (unselected) or yellow (selected)
    - **Trail dots:** Ring buffer of historical positions (max 5 snapshots, minimum 600-tick gap), rendered as shrinking circles with decreasing opacity
    - **Heading line:** For selected aircraft only, projects nose direction forward 12× planeScale
-   - **Label:** By default, Tower aircraft and selected aircraft show full label (callsign + altitude + speed/type); other aircraft show altitude only. The ARR/DEP toggles on the left RunwaySidebar override this — when active, all aircraft of that direction show the full label. Speed/type toggles every 5 seconds between airspeed/10 and aircraft type. Dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show a red "EM" label — above the callsign in full-label mode, above the altitude in altitude-only mode (v1.1.6).
+   - **Label:** By default, Tower aircraft and selected aircraft show full label (callsign + altitude + speed/type); other aircraft show altitude only. The ARR/DEP toggles on the left RunwaySidebar override this — when active, all aircraft of that direction show the full label. Speed/type toggles every 5 seconds between airspeed/10 and aircraft type. Dynamically positioned via anti-overlap layout (4 candidate positions: right/top/left/bottom). Emergency aircraft show a red "EM" label — above the callsign in full-label mode, above the altitude in altitude-only mode.
    - **A/D indicator:** "A" or "D" text next to the current position dot
-   - **Witch mode (v1.1.5):** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame fly sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (centralized in main process via `spriteIdx`, see GroundMapWindow witch mode docs), stable per callsign. Direction-aware via `witchDirection()` (dominant axis of nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden. Map background switches to `witch/{ICAO}.png` at full opacity with `WITCH_MAP_BG_OFFSETS`, background color `#160900`. Sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
+   - **Witch mode:** Double-click the help `?` button to toggle. Aircraft rendered as animated 2-frame fly sprites from 15 character sheets (`public/witch/*.png`, each a 1536×768 sprite sheet with 18 cells in a 3-row×6-column grid of 256×256 PNGs with transparent backgrounds). A nested `<svg>` with `clipPath` isolates the target cell, then an `<image>` loads the full sheet clipped to that cell. `feDropShadow` traces the character's alpha channel for a white silhouette glow — only on the **active** (click-selected) aircraft (`callSign === selectedCallSign`). Characters assigned round-robin (centralized in main process via `spriteIdx`, see GroundMapWindow witch mode docs), stable per callsign. Direction-aware via `witchDirection()` (dominant axis of nose vector). Any click exits witch mode. Labels, connectors, and heading lines hidden. Map background switches to `witch/{ICAO}.png` at full opacity with `WITCH_MAP_BG_OFFSETS`, background color `#160900`. Sidebar gets witch-themed UI (bar.png background, button.png/button_on.png toggles, knob.png spin knobs, help.png icon).
 
 **Airspace knob:** `SpinKnob` passed via `airspaceKnob` prop to `ControlSidebar` — controls range ring density (0=10NM gap … 11=120NM gap, default 40NM). Double-click knob to reset to default.
 
-**Emergency call sign (v1.1.6):** Refresh button (double-click) randomly picks an active aircraft and marks it with a red "EM" label. Single click resets UDP aircraft state. EM state is synced across all map windows via `emergencyCallSigns` Map in the main process (`set-emergency-aircraft` / `get-emergency-aircraft` IPC handlers, `emergency-aircraft-changed` push event). Flight strips override the squawk to **7700** for the EM aircraft. Airport transitions clear the EM state.
+**Emergency call sign:** Refresh button (double-click) randomly picks an active aircraft and marks it with a red "EM" label. Single click resets UDP aircraft state. EM state is synced across all map windows via `emergencyCallSigns` Map in the main process (`set-emergency-aircraft` / `get-emergency-aircraft` IPC handlers, `emergency-aircraft-changed` push event). Flight strips override the squawk to **7700** for the EM aircraft. Airport transitions clear the EM state.
 
-**Airport transition auto-reset (v1.1.6):** When `udpAirportChanged` is true and the new airport matches this window's ICAO, calls `electronAPI.resetUdpAircraft()` to clear stale aircraft from the previous airport.
+**Airport transition auto-reset:** When `udpAirportChanged` is true and the new airport matches this window's ICAO, calls `electronAPI.resetUdpAircraft()` to clear stale aircraft from the previous airport.
 
 **Zoom/pan:** `useSvgZoom` hook, per-airport initial viewBox via `AIR_MAP_DEFAULT_ZOOM`, pan clamped to initial bounds. Spin knobs show gauge positions derived from current zoom/pan relative to initial viewBox.
 
@@ -192,7 +192,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 
 **Arrival vs Departure:** Orange left border + warm background for arrivals; blue for departures.
 
-**Telemetry status styling (v1.1.6):**
+**Telemetry status styling:**
 - `telemetryStatus` from UDP v2 records (offset 23) drives CSS modifier classes:
   - `2` (ActionRequired) → `strip-telemetry-action-required` — muted border via `color-mix(in srgb, var(--orange/blue) 50%, #000)`
   - `3` (HandoffPending) → `strip-telemetry-handoff-pending` — channel box gets `var(--accent)` border + `var(--accent-dim)` background
@@ -200,7 +200,7 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 - Combined with `.strip-selected` for selected aircraft with active telemetry status
 - Applied to both the real strip and the drag ghost via `TELEMETRY_STRIP_CLASS` constant
 
-**Route history (v1.1.6):**
+**Route history:**
 - `routeHistory` state: `{ callsign: [{ text, struck }] }` — tracks taxiway/airway changes
 - `prevRouteRef` stores last-seen route per callsign for change detection
 - On route change: all previous lines marked `struck: true` (struck-through CSS), new line appended unstruck
@@ -210,15 +210,15 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 **Selection sync:**
 - Click toggles; broadcasts via `select-aircraft-in-map` → `broadcastSelectedAircraft()` sends to ground + air + strips
 - Selected strips scale up (1.20×) with solid backdrop (`#2a1a05` arr / `#0a1a2a` dep)
-- **Dynamic transform-origin (v1.1.6):** `useLayoutEffect` in `FlightStripContent` computes per-strip `transformOrigin` based on viewport edge detection, preventing the 1.20× scaled strip from overflowing the window. Grows away from overflowing edges (e.g., if right edge overflows → `originX = 'right'`).
+- **Dynamic transform-origin:** `useLayoutEffect` in `FlightStripContent` computes per-strip `transformOrigin` based on viewport edge detection, preventing the 1.20× scaled strip from overflowing the window. Grows away from overflowing edges (e.g., if right edge overflows → `originX = 'right'`).
 - `selectedCallSignRef` keeps stable `handleDragEnd` in sync for correct toggle/deselect IPC
 
-**Drag reorder (v1.1.6 — runway-group constrained):**
+**Drag reorder (runway-group constrained):**
 - Long-press (400ms) enters drag mode
 - **Runway-group constraint:** Drag targets are validated against the source strip's runway group. `runwayRanges` (memoized per seat) maps each runway → `{ start, end }` flat indices. A drop is only valid if `hoverIdx` falls within the source runway's range, at `end+1` (end of group), or at the very end when source is the last group.
 - Invalid targets (cross-runway drops) snap back immediately (no animation, selection cleared)
 - Valid drops trigger `isDropping` state → drop animation plays → selection cleared on animation end
-- **Drop animation (v1.1.6):** Double-rAF waits for React re-render with new strip order, then animates ghost from mouse position to the strip's new DOM position. Ghost gets `.strip-dropping` class: `transition: top 0.22s, left 0.22s, transform 0.22s, opacity 0.18s` — scales to 1.0, fades to opacity 0. Falls back to 400ms timeout if `transitionend` doesn't fire. Cleanup: cancels rAF frames, removes class.
+- **Drop animation:** Double-rAF waits for React re-render with new strip order, then animates ghost from mouse position to the strip's new DOM position. Ghost gets `.strip-dropping` class: `transition: top 0.22s, left 0.22s, transform 0.22s, opacity 0.18s` — scales to 1.0, fades to opacity 0. Falls back to 400ms timeout if `transitionend` doesn't fire. Cleanup: cancels rAF frames, removes class.
 - Pixel-level ghost tracking via direct DOM (`ghostRef`) — no React re-render; only `hoverIdx` changes trigger `setDragState`. Drag metadata in `dragMetaRef` (now includes `srcRunway`).
 - Ghost only appears after `hasMoved` is true (not during initial long-press). During drop animation (`isDropping`), ghost is hidden.
 - Source position: placeholder shown only when `hoverIdx === srcIdx` (still at source). Once dragged away, placeholder collapses to `null` so other strips push up.
@@ -226,15 +226,15 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 - `applyReorder` flattens runway groups, moves item, rebuilds; keys sorted for stable ordering across UDP updates
 - Ghost: fully opaque solid background, `will-change: transform, top, left` GPU hint
 
-**Airport transition auto-reset (v1.1.6):**
+**Airport transition auto-reset:**
 - Listens for `udpAirportChanged` flag from `useUdpAircraftState`
 - When transitioning to this window's airport: calls `loadFlightData()` + `resetUdpAircraft()`
 
-**Witch mode (v1.1.6):**
+**Witch mode:**
 - **Activation:** Double-click the help `?` button (300ms timeout between clicks). Single click still opens the help overlay. When exiting witch mode (single click while in witch mode), the help overlay opens.
 - **Animation:** 2-frame sprite animation at 500ms per frame via `setInterval` (`witchFrame` toggles 0↔1). Timer is cleaned up on unmount or when witch mode is disabled.
 - **Sprite rendering:** Each strip and drag ghost renders an inline `<svg>` (48×48) inside a `.strip-witch-sprite` container (flex, left-aligned, 30px left padding). Same `clipPath` + `<image>` pattern as ground/air maps — loads the assigned sprite sheet, clips to the correct cell, and applies `feDropShadow` glow on selected aircraft only.
-- **RPG stats (v1.1.6):** In witch mode, each strip and drag ghost displays HP/MP/ATK/DEF stats computed by `computeWitchStats()` — HP from first 2 digits of callsign (if "00" → 100), MP from last 2 digits (if "01" → 1), ATK from `airSpeedKnot / 10`, DEF from `position.y / 0.3048` (altitude in feet). Stats render in a 2×2 CSS Grid (`.strip-witch-stats`) with gold labels (`.witch-stat-label`) and white values (`.witch-stat`). Drag ghosts also show stats.
+- **RPG stats:** In witch mode, each strip and drag ghost displays HP/MP/ATK/DEF stats computed by `computeWitchStats()` — HP from first 2 digits of callsign (if "00" → 100), MP from last 2 digits (if "01" → 1), ATK from `airSpeedKnot / 10`, DEF from `position.y / 0.3048` (altitude in feet). Stats render in a 2×2 CSS Grid (`.strip-witch-stats`) with gold labels (`.witch-stat-label`) and white values (`.witch-stat`). Drag ghosts also show stats.
 - **Action selection:** Airborne (`position.y > 1.0`) → `'fly'` sprites; parked on ground (`isParked()` via `controlSeat`) → `'stand'` sprites; otherwise → `'walk'` sprites with direction from `witchDirection(noseDirection)`.
 - **Strip theming:** `.flight-strips.witch-mode` class on root enables themed CSS:
   - Window background: `witch/groundradar.png` cover
@@ -254,14 +254,14 @@ offCacheBuildProgress(cb)               // unsubscribe (must be SAME function re
 - Generated server-side in `get-flight-strip-data` IPC handler
 - Deterministic: same callsign always gets the same squawk (djb2 hash + linear probe)
 - Unique across all callsigns (collision-free), range 2000–6000
-- **EM override (v1.1.6):** When an aircraft is marked as emergency (via air radar double-click refresh), its squawk overrides to **7700** in both `FlightStripContent` and `DragGhost`. Reverts to the static hash-based squawk when EM is cleared or reassigned to a different aircraft.
+- **EM override:** When an aircraft is marked as emergency (via air radar double-click refresh), its squawk overrides to **7700** in both `FlightStripContent` and `DragGhost`. Reverts to the static hash-based squawk when EM is cleared or reassigned to a different aircraft.
 
 **Help overlay:** `MapHelpOverlay type="strips" title="Map Help"` — 3 sections: Buttons (Refresh, Help), Display (seat columns, runway separators, arrival/departure colors), Interaction (click to select, deselect, drag reorder). Full i18n (zh + en) for overlay content; `title` prop forces English header.
 
 **IPC handlers:** `open-flight-strips`, `close-flight-strips`, `get-flight-strip-data`.
 **Preload additions:** `openFlightStrips`, `closeFlightStrips`, `getFlightStripData`.
 
-### Strip Command Interface (v1.1.7 — planned, UI hidden)
+### Strip Command Interface (planned, UI hidden)
 
 When a strip is selected (clicked), a command bar slides up above the bottom status bar showing context-sensitive ATC commands. Commands are filtered by `controlSeat`, airborne/ground status (`position.y > 1.0`), and flight direction (0=departure, 1=arrival).
 
@@ -313,7 +313,7 @@ Branch commands (marked with `→`) navigate to a sub-menu showing dynamic optio
 
 > **Note:** Command IDs 22–23 are confirmed correct (used in `src/acl/flight_plans.js:805`). IDs 24–47 are placeholders pending game protocol verification.
 
-### Voice Command Input (v1.1.7 — planned, UI hidden)
+### Voice Command Input (planned, UI hidden)
 
 Push-to-talk voice command system for the Flight Strips window using the **Web Speech API** (built into Chromium/Electron 33, zero dependencies). `electron-voice` was evaluated and rejected (no license, requires Rust + Neon + Vosk native modules).
 
@@ -368,7 +368,7 @@ PTT pressed → clear selection → capture speech → detectLanguage (EN/ZH)
 - Returns `{ aircraft: Array, currentAirport: string|null, simTimeUnixMs: number, simFlags: number, timeScale: number, udpAirportChanged: boolean }` updated at ~200ms (5 Hz push interval)
 - Each aircraft object includes `spriteIdx` (0–14) injected by the main process during the push interval — used by witch mode for cross-window consistent character assignment
 - `simFlags` bit field: bit 0=isPaused, bit 1=isStarted, bit 2=hasLevel; `timeScale` = game speed multiplier (0=unknown)
-- `udpAirportChanged` (v1.1.6): true for exactly one render when the UDP airport code transitions from one valid code to a different one. Uses `useRef` to track `prevAirportRef` across renders. Map windows use this to auto-reset aircraft state + reload data when the user switches airports in-game.
+- `udpAirportChanged`: true for exactly one render when the UDP airport code transitions from one valid code to a different one. Uses `useRef` to track `prevAirportRef` across renders. Map windows use this to auto-reset aircraft state + reload data when the user switches airports in-game.
 - Used by GroundMapWindow, AirMapWindow, and FlightStripsWindow (simTimeUnixMs drives the SimClock component)
 
 ### `hooks/map/useCrossWindowSelection.js`
@@ -470,7 +470,7 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 | `seat_1`–`seat_7` | RMP/GND/TWR/DEP/APPR/DEL/APN | RMP/GND/TWR/DEP/APPR/DEL/APN |
 | `seat_1_full`–`seat_7_full` | RAMP/GROUND/TOWER/DEPARTURE/APPROACH/DELIVERY/APRON | RAMP/GROUND/TOWER/DEPARTURE/APPROACH/DELIVERY/APRON |
 
-## Map-Window Portal Tooltips (v1.1.10)
+## Map-Window Portal Tooltips
 
 All three map windows (AirMapWindow, GroundMapWindow, FlightStripsWindow) use the shared `useTooltip` hook (`src/components/BrowserScreen/useTooltip.jsx`) for on-hover button tooltips. Tooltip text is extracted from existing map help page i18n strings and is fully bilingual (EN/ZH). The entire system is gated behind `MAP_TOOLTIPS_ENABLED` in `src/utils/constants.js` (default `false`).
 
