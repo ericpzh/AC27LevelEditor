@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { validateCallsigns, detectStandConflicts } from '../../src/utils/validators';
+import { validateCallsigns, detectStandConflicts, runTripleValidation } from '../../src/utils/validators';
+import { getActiveColumns, ARRIVAL_FIELDS, DEPARTURE_FIELDS } from '../../src/utils/constants/fields';
 
 describe('validateCallsigns', () => {
   it('returns empty array when no duplicates', () => {
@@ -210,5 +211,109 @@ describe('detectStandConflicts', () => {
     // Should NOT have extra :00 appended
     expect(issues[0]).not.toMatch(/07:58:00:00/);
     expect(issues[0]).not.toMatch(/07:50:00:00/);
+  });
+});
+
+describe('runTripleValidation isV4', () => {
+  // Minimal audio data: airline 'CES' whitelisted, no flight-number list
+  // (empty list → flight-number check skipped), so only the validations
+  // under test can fire.
+  const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
+
+  function run(flights, isV4, airportValues = {}) {
+    return runTripleValidation(flights, airportValues, 'ZSJN', AUDIO, null, null, null, null, isV4);
+  }
+
+  it('skips time-order checks when isV4 is true (InBlockTime/TakeoffTime are always 0 in v4)', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30', InBlockTime: '10:00' }, // in-block before landing
+      { CallSign: 'CES5678', OffBlockTime: '10:30', TakeoffTime: '10:00' }, // off-block after takeoff
+    ];
+    expect(run(flights, true)).toEqual([]);
+  });
+
+  it('enforces time-order checks when isV4 is false', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30', InBlockTime: '10:00' },
+      { CallSign: 'CES5678', OffBlockTime: '10:30', TakeoffTime: '10:00' },
+    ];
+    const issues = run(flights, false);
+    expect(issues).toHaveLength(2);
+    expect(issues[0]).toContain('CES1234');
+    expect(issues[0]).toContain('10:00');
+    expect(issues[1]).toContain('CES5678');
+  });
+
+  it('still enforces non-time-order validations when isV4 is true', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30', Stand: 'ZZZ' }, // stand not in options
+    ];
+    const issues = run(flights, true, { ZSJN: { Stand: ['A01'] } });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CES1234');
+  });
+
+  it('still enforces stand conflict detection when isV4 is true', () => {
+    const flights = [
+      { CallSign: 'CES1234', Stand: 'A01', OffBlockTime: '10:00', TakeoffTime: '10:30' },
+      { CallSign: 'CES5678', Stand: 'A01', OffBlockTime: '10:15', TakeoffTime: '10:45' },
+    ];
+    const issues = run(flights, true, { ZSJN: { Stand: ['A01'] } });
+    expect(issues.length).toBeGreaterThan(0);
+  });
+});
+
+describe('getActiveColumns isV4', () => {
+  it('excludes InBlockTime from arrival columns when isV4 is true', () => {
+    const cols = getActiveColumns([], ARRIVAL_FIELDS, true);
+    expect(cols).not.toContain('InBlockTime');
+    expect(cols).toContain('LandingTime');
+  });
+
+  it('excludes TakeoffTime from departure columns when isV4 is true', () => {
+    const cols = getActiveColumns([], DEPARTURE_FIELDS, true);
+    expect(cols).not.toContain('TakeoffTime');
+    expect(cols).toContain('OffBlockTime');
+  });
+
+  it('includes InBlockTime/TakeoffTime columns when isV4 is false', () => {
+    expect(getActiveColumns([], ARRIVAL_FIELDS, false)).toContain('InBlockTime');
+    expect(getActiveColumns([], DEPARTURE_FIELDS, false)).toContain('TakeoffTime');
+  });
+
+  it('defaults to v2/v3 columns when isV4 is omitted', () => {
+    expect(getActiveColumns([], ARRIVAL_FIELDS)).toContain('InBlockTime');
+  });
+});
+
+describe('sidecar _isNew stripping', () => {
+  // Mirrors the JSON replacer used by the electron main timeline sidecar
+  // writers (save-weather/wind/runway-timeline IPC handlers).
+  const stripIsNew = (data) => JSON.stringify(data, (k, v) => k === '_isNew' ? undefined : v, 4);
+
+  it('removes _isNew keys at all nesting levels', () => {
+    const data = { name: 'test', _isNew: true, items: [{ _isNew: true, value: 42 }, { value: 99 }] };
+    const parsed = JSON.parse(stripIsNew(data));
+    expect(parsed._isNew).toBeUndefined();
+    expect(parsed.items[0]._isNew).toBeUndefined();
+    expect(parsed.items[0].value).toBe(42);
+    expect(parsed.items[1].value).toBe(99);
+  });
+
+  it('preserves non-_isNew keys', () => {
+    const data = { a: 1, b: { c: 2, _isNew: true, d: { e: 3 } } };
+    const parsed = JSON.parse(stripIsNew(data));
+    expect(parsed.a).toBe(1);
+    expect(parsed.b.c).toBe(2);
+    expect(parsed.b._isNew).toBeUndefined();
+    expect(parsed.b.d.e).toBe(3);
+  });
+
+  it('handles arrays with _isNew in elements', () => {
+    const parsed = JSON.parse(stripIsNew([{ _isNew: true, name: 'A' }, { _isNew: false, name: 'B' }]));
+    expect(parsed[0].name).toBe('A');
+    expect(parsed[0]._isNew).toBeUndefined();
+    expect(parsed[1].name).toBe('B');
+    expect(parsed[1]._isNew).toBeUndefined();
   });
 });

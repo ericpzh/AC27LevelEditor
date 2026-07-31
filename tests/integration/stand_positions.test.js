@@ -69,3 +69,56 @@ describe('_parseStandPositions', () => {
     expect(_parseStandPositions('{"SceneryData": {}}', false)).toEqual({});
   });
 });
+
+// ─── v4 PKStaticEntities path ────────────────────────────────────
+
+const V4_FIXTURE_PATH = path.join(
+  __dirname,
+  '..', 'fixtures', 'game-root', 'GroundATC_Data', 'StreamingAssets',
+  'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl'
+);
+
+// Skipped gracefully when the v4 fixture is absent (offline snapshot).
+const v4Text = fs.existsSync(V4_FIXTURE_PATH) ? readAclText(V4_FIXTURE_PATH) : null;
+const v4Stands = v4Text ? _parseStandPositions(v4Text) : null; // auto-detect → v4 path
+
+describe('_parseStandPositions v4', () => {
+  it('should parse stands from the ZSJN v4 fixture (auto-detected schema)', () => {
+    if (!v4Text) return; // fixture absent — skip
+    expect(v4Stands).toBeDefined();
+    expect(typeof v4Stands).toBe('object');
+    expect(Object.keys(v4Stands).length).toBeGreaterThan(0);
+  });
+
+  it('each v4 stand should have finite x/y and a numeric heading', () => {
+    if (!v4Stands) return; // fixture absent — skip
+    for (const [id, pos] of Object.entries(v4Stands)) {
+      expect(Number.isFinite(pos.x), `stand "${id}" x=${pos.x} should be finite`).toBe(true);
+      expect(Number.isFinite(pos.y), `stand "${id}" y=${pos.y} should be finite`).toBe(true);
+      expect(typeof pos.heading, `stand "${id}" heading should be numeric`).toBe('number');
+    }
+  });
+
+  it('v4 stands should expose tail/nose positions for midpoint-derived entries', () => {
+    if (!v4Stands) return; // fixture absent — skip
+    for (const [id, pos] of Object.entries(v4Stands)) {
+      expect(Number.isFinite(pos.tailX), `stand "${id}" tailX should be finite`).toBe(true);
+      expect(Number.isFinite(pos.tailZ), `stand "${id}" tailZ should be finite`).toBe(true);
+      expect(Number.isFinite(pos.noseX), `stand "${id}" noseX should be finite`).toBe(true);
+      expect(Number.isFinite(pos.noseZ), `stand "${id}" noseZ should be finite`).toBe(true);
+    }
+  });
+
+  it('v4 stand coordinates should be within reasonable bounds', () => {
+    if (!v4Stands) return; // fixture absent — skip
+    for (const [id, pos] of Object.entries(v4Stands)) {
+      expect(Math.abs(pos.x), `stand "${id}" x=${pos.x} too large`).toBeLessThan(20);
+      expect(Math.abs(pos.y), `stand "${id}" y=${pos.y} too large`).toBeLessThan(20);
+    }
+  });
+
+  it('should return empty object for empty/invalid v4 input', () => {
+    expect(_parseStandPositions('', true)).toEqual({});
+    expect(_parseStandPositions('not a valid acl', true)).toEqual({});
+  });
+});

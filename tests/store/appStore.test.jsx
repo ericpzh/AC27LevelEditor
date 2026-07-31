@@ -208,6 +208,42 @@ describe('appStore — addArrivalFlight', () => {
 			expect(state.flights[2].Stand).toBe('G3');
 		}
 	});
+
+	it('addArrivalFlight — isV4 leaves InBlockTime empty', () => {
+		useAppStore.getState().initializeEditor({
+			currentPath: '/test/file.v4.acl',
+			airportIcao: 'ZSJN',
+			flights: [],
+			before: '', after: '', arrayContent: '', originalBlocks: [],
+			configStartTime: '06:00', configEndTime: '18:00',
+			_saveSec: 36000,
+			isV4: true,
+		});
+		useAppStore.getState().setAuxData(
+			{
+				ZSJN: {
+					AirlineCode: ['CCA'],
+					AircraftType: ['B738'],
+					Stand: ['G1'],
+					Runway: ['01'],
+					Airway: ['STAR1'],
+					Registration: ['B-1234'],
+					Voice: ['M'],
+					_flightNums: { CCA: ['1234'] },
+				},
+			},
+			{ byAirline: {}, allCallsigns: [], allAirlines: ['CCA'] },
+			{ weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+			[],
+		);
+
+		useAppStore.getState().addArrivalFlight();
+		const state = useAppStore.getState();
+		expect(state.isV4).toBe(true);
+		expect(state.flights).toHaveLength(1);
+		expect(state.flights[0].InBlockTime).toBe('');
+		expect(state.flights[0].LandingTime).not.toBe('');
+	});
 });
 
 describe('appStore — selection', () => {

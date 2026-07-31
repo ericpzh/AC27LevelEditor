@@ -202,6 +202,49 @@ if (fs.existsSync(fixtureAcl)) {
   });
 }
 
+// ── V4 Integration Tests (PKStaticEntities path) ────────────────
+
+const fixtureV4Acl = path.join(__dirname, '..', 'fixtures', 'game-root',
+  'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl');
+
+if (fs.existsSync(fixtureV4Acl)) {
+  console.log('\n--- Integration (v4 fixture ACL: ZSJN-Morning_120min.v4) ---');
+  const v4Text = readAclText(fixtureV4Acl);
+
+  test('parseTaxiwayPaths on ZSJN v4 fixture returns paths (auto-detected)', () => {
+    const result = parseTaxiwayPaths(v4Text);
+    const pathCount = result.paths.length;
+    console.log('       Taxiway paths found (v4): ' + pathCount);
+    assert(pathCount > 0, 'v4 fixture should have taxiway segments');
+  });
+
+  test('ZSJN v4 taxiway paths have valid structure', () => {
+    const result = parseTaxiwayPaths(v4Text);
+    for (const tp of result.paths) {
+      assert(typeof tp.name === 'string', 'taxiway name should be a string');
+      assert(typeof tp.flags === 'number', 'flags should be a number');
+      assert(Array.isArray(tp.points), 'points should be an array');
+      assert(tp.points.length >= 2, 'path should have ≥2 points, got ' + tp.points.length + ' for ' + tp.name);
+      for (const pt of tp.points) {
+        assert(typeof pt.x === 'number' && typeof pt.z === 'number',
+          'point should have numeric x,z for ' + tp.name);
+      }
+    }
+  });
+
+  test('ZSJN v4 taxiway paths mark stand-access segments', () => {
+    const result = parseTaxiwayPaths(v4Text);
+    const standAccessCount = result.paths.filter(tp => tp.isStandAccess === true).length;
+    console.log('       Stand-access segments (v4): ' + standAccessCount);
+    assert(standAccessCount > 0, 'v4 fixture should have stand-access segments');
+  });
+
+  test('parseTaxiwayPaths with explicit isV4:true returns paths', () => {
+    const result = parseTaxiwayPaths(v4Text, null, true);
+    assert(result.paths.length > 0, 'explicit isV4:true should parse v4 taxiway segments');
+  });
+}
+
 const aclArgIdx = process.argv.indexOf('--acl');
 if (aclArgIdx >= 0) {
   const aclPath = process.argv[aclArgIdx + 1];

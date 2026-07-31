@@ -522,6 +522,17 @@ describe('createArrivalFlight', () => {
       expect(flight.Stand).toBe('G2');
     }
   });
+
+  it('leaves InBlockTime empty when isV4 is true (v4 stores it as 0)', () => {
+    const flight = createArrivalFlight('18:00', {}, {}, 'ZSJN', {}, [], true);
+    expect(flight.InBlockTime).toBe('');
+    expect(flight.LandingTime).toMatch(/^\d{2}:\d{2}:00$/);
+  });
+
+  it('sets InBlockTime when isV4 is false', () => {
+    const flight = createArrivalFlight('18:00', {}, {}, 'ZSJN', {}, [], false);
+    expect(flight.InBlockTime).toMatch(/^\d{2}:\d{2}:00$/);
+  });
 });
 
 // ─── createDepartureFlight ───────────────────────────────────────
@@ -567,5 +578,16 @@ describe('createDepartureFlight', () => {
     const flight = createDepartureFlight('06:00', vals, audioData, 'KJFK', apv, []);
 
     expect(flight.DepartureAirport).toBe('KJFK');
+  });
+
+  it('leaves TakeoffTime empty when isV4 is true (v4 stores it as 0)', () => {
+    const flight = createDepartureFlight('06:00', {}, {}, 'ZSJN', {}, [], true);
+    expect(flight.TakeoffTime).toBe('');
+    expect(flight.OffBlockTime).toMatch(/^\d{2}:\d{2}:00$/);
+  });
+
+  it('sets TakeoffTime when isV4 is false', () => {
+    const flight = createDepartureFlight('06:00', {}, {}, 'ZSJN', {}, [], false);
+    expect(flight.TakeoffTime).toMatch(/^\d{2}:\d{2}:00$/);
   });
 });
