@@ -71,7 +71,7 @@ runStep('Layer 1: Vitest (501 component tests)', 'npx vitest run');
 // ── 2. Save Integrity (12 prod+demo files) ───────────────────────
 // Quote paths to handle spaces in game root
 const layer2Cmd = `node --require "${PRELOAD}" "${SAVE_INTEGRITY}" --root "${GAME_ROOT}" --prod-demo`;
-runStep('Layer 2: Save Integrity (8 prod + 4 demo .acl files)', layer2Cmd);
+runStep('Layer 2: Save Integrity (9 prod + 3 demo .acl files)', layer2Cmd);
 
 // ── 2b. Jetway Rebuild Test (12 prod+demo files) ────────────────
 const layer2bCmd = `node --require "${PRELOAD}" "${JETWAY_REBUILD}" --root "${GAME_ROOT}" --prod-demo --no-cache`;

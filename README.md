@@ -390,7 +390,7 @@ Test every .acl file across all airports for save→reload→compare round-trip:
 # All non-Endless .acl files across all airports:
 node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root>
 
-# 8 production + 4 demo files only:
+# 9 production + 3 demo files only:
 node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root> --prod-demo
 ```
 Validates flights (all 14 fields), config (startTime/endTime), scenery maps, embedded timelines, and source format for each file.

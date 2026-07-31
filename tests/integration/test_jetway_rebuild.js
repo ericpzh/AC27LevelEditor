@@ -44,7 +44,7 @@ for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--help' || process.argv[i] === '-h') {
     console.log('Usage: node --require ./tests/integration/preload.cjs tests/integration/test_jetway_rebuild.js [options]');
     console.log('  --root <path>     Game root directory (default: parent of parent of cwd)');
-    console.log('  --prod-demo       Test 8 production + 4 demo .acl files');
+    console.log('  --prod-demo       Test 9 production + 3 demo .acl files');
     console.log('  --airport <ICAO>  Test only the specified airport');
     console.log('  --acl <path>      Test a specific .acl file');
     console.log('  --no-cache        Skip approach cache, test with null cache only');
@@ -170,18 +170,18 @@ function _makeFlight(overrides) {
 console.log('  T1 results: ' + T1_PASS + ' passed, ' + T1_FAIL + ' failed');
 
 const PROD_DEMO_FILES = [
-  { icao: 'ZSJN', name: 'ZSJN-Morning_120min.acl' },
-  { icao: 'ZSJN', name: 'ZSJN_07-10.acl' },
-  { icao: 'ZSJN', name: 'ZSJN-Evening_120min.acl' },
-  { icao: 'ZSJN', name: 'ZSJN_19-21.acl' },
-  { icao: 'KJFK', name: 'KJFK_07-09.acl' },
-  { icao: 'KJFK', name: 'KJFK_09-11.acl' },
-  { icao: 'KJFK', name: 'KJFK_17-20.acl' },
-  { icao: 'KJFK', name: 'KJFK_20-22.acl' },
-  { icao: 'ZSJN', name: 'ZSJN-Morning_120min.demo.acl' },
-  { icao: 'ZSJN', name: 'ZSJN_07-10.demo.acl' },
-  { icao: 'KJFK', name: 'KJFK_09-11.demo.acl' },
-  { icao: 'KJFK', name: 'KJFK_20-22.demo.acl' },
+  { icao: 'ZSJN', name: 'ZSJN_leisure_1.acl' },
+  { icao: 'ZSJN', name: 'ZSJN_leisure_2.acl' },
+  { icao: 'ZSJN', name: 'ZSJN_peakdeparture.acl' },
+  { icao: 'ZSJN', name: 'ZSJN_runwaychange.acl' },
+  { icao: 'ZSJN', name: 'ZSJN_taixwayclosed.acl' },
+  { icao: 'KJFK', name: 'KJFK_leisure_1.acl' },
+  { icao: 'KJFK', name: 'KJFK_leisure_2.acl' },
+  { icao: 'KJFK', name: 'KJFK_peakarrival.acl' },
+  { icao: 'KDCA', name: 'KDCA_smoke.acl' },
+  { icao: 'KJFK', name: 'KJFK_peakarrival.demo.acl' },
+  { icao: 'KJFK', name: 'KJFK_leisure_1.demo.acl' },
+  { icao: 'ZSJN', name: 'ZSJN_peakdeparture.demo.acl' },
 ];
 
 // ── Collect .acl files ──────────────────────────────────────────

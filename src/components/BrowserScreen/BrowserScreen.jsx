@@ -7,7 +7,7 @@ import { airportDisplayName, airportSortOrder } from '../../utils/constants';
 import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { RE_HIDDEN, DEMO_VISIBLE_BASES } from '../../utils/constants';
+import { DEMO_VISIBLE_BASES, DEMO_VISIBLE_ORDER, PROD_VISIBLE_BASES } from '../../utils/constants';
 
 import AirportCardMap from './AirportCardMap';
 import BrowserHelpOverlay, { BUTTONS } from './BrowserHelpOverlay';
@@ -17,29 +17,14 @@ import BepInExInstallOverlay from './BepInExInstallOverlay';
 import LiveryInstallOverlay from './LiveryInstallOverlay';
 import useTooltip from './useTooltip';
 
-function computeTodLabel(startTime, t) {
-  if (!startTime) return { label: '', type: '' };
-  const s = String(startTime).substring(0, 5); // "HH:MM"
-  const parts = s.split(':');
-  const mins = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
-  // dawn:     04:00 – 06:00
-  if (mins >= 4 * 60 && mins < 6 * 60) return { label: t('browser_tod_dawn'), type: 'dawn' };
-  // morning:  06:00 – 12:00
-  if (mins >= 6 * 60 && mins < 12 * 60) return { label: t('browser_tod_morning'), type: 'morning' };
-  // afternoon: 12:00 – 16:50
-  if (mins >= 12 * 60 && mins < 16 * 60 + 50) return { label: t('browser_tod_afternoon'), type: 'afternoon' };
-  // dusk:     16:50 – 18:50
-  if (mins >= 16 * 60 + 50 && mins < 18 * 60 + 50) return { label: t('browser_tod_dusk'), type: 'dusk' };
-  // night:    18:50 – 21:00
-  if (mins >= 18 * 60 + 50 && mins < 21 * 60) return { label: t('browser_tod_night'), type: 'night' };
-  // fallback (00:00 – 04:00)
-  return { label: t('browser_tod_night'), type: 'night' };
-}
-
-function sortLevelRows(a, b) {
-  // _emerg files always last; within each group sort by startTime
+function sortLevelRows(a, b, isDemo) {
+  // _emerg files always last; within each group use whitelist order
   if (a.isEmer !== b.isEmer) return a.isEmer ? 1 : -1;
-  return (a.startTime || '99:99').localeCompare(b.startTime || '99:99');
+  const order = isDemo ? DEMO_VISIBLE_ORDER : PROD_VISIBLE_BASES;
+  const rankA = order.indexOf(a.filename) === -1 ? 9999 : order.indexOf(a.filename);
+  const rankB = order.indexOf(b.filename) === -1 ? 9999 : order.indexOf(b.filename);
+  if (rankA !== rankB) return rankA - rankB;
+  return a.filename.localeCompare(b.filename);
 }
 function toHHMM(s) { return String(s).substring(0, 5); }
 
@@ -111,24 +96,24 @@ export default function BrowserScreen() {
       for (const airport of sorted) {
         const infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
         if (isDemo) {
-          // Demo mode: show .demo.acl files + _emerg.acl files (whitelist)
-          // Non-demo .acl files are hidden unless they are _emerg files
+          // Demo mode: show only files in the demo whitelist
           allInfos[airport.icao] = infos.filter(info => {
             // Hide levels that failed to parse (e.g. Git LFS stubs)
             if (info.error) return false;
             return DEMO_VISIBLE_BASES.has(info.filename);
-          }).sort(sortLevelRows);
+          }).sort((a, b) => sortLevelRows(a, b, isDemo));
         } else {
-          // Normal mode: show production levels; hide .demo (v4 only), tutorial/test/endless/dev/bench/crossrunway/.Prod
+          // Normal mode: show only whitelisted production levels.
+          // No .demo files are in PROD_VISIBLE_BASES, so the whitelist alone
+          // suffices. info.isDemo is deliberately not checked — it flags files
+          // in DEMO_VISIBLE_BASES (30-min demo window), and some of those are
+          // regular .acl files that also appear in PROD_VISIBLE_BASES.
           const visible = infos.filter(info => {
             // Hide levels that failed to parse (e.g. Git LFS stubs)
             if (info.error) return false;
-            // Hide all .demo files in non-demo mode
-            if (info.isDemo || /\.demo/i.test(info.filename)) return false;
-            // Show production levels; hide tutorial/test/endless/dev/bench/crossrunway/.Prod variants
-            return !RE_HIDDEN.test(info.filename);
+            return PROD_VISIBLE_BASES.includes(info.filename);
           });
-          allInfos[airport.icao] = visible.sort(sortLevelRows);
+          allInfos[airport.icao] = visible.sort((a, b) => sortLevelRows(a, b, isDemo));
         }
 
         // Fetch ground radar geometry for this airport's card background
@@ -299,7 +284,7 @@ export default function BrowserScreen() {
   const totalFileCount = Object.values(fileInfos).flat().length;
 
   return (
-    <div id="screen-browser" className="screen" style={{ '--tod-width': lang === 'zh' ? '70px' : '120px' }}>
+    <div id="screen-browser" className="screen" style={{ '--tod-width': lang === 'zh' ? '80px' : '130px' }}>
       <header className="browser-header">
         <div className="browser-title"><span>{t('browser_title')}</span></div>
         <div className="browser-actions">
@@ -391,17 +376,20 @@ export default function BrowserScreen() {
                     <span className="level-arrow"><IoChevronForward size={14} /></span>
                   </div>
                 );
-                const displayName = stripSuffixes(info.filename);
-                const todInfo = computeTodLabel(info.startTime, t);
-                if (info.isEmer) todInfo.label = t('browser_emerg_level');
+                // Display name replaces the old time-of-day label as the
+                // large leading element of the row. Comes from i18n
+                // (level_name_<base>); t() falls back to the key itself
+                // if a file has no translation entry.
+                const displayName = t('level_name_' + info.filename.replace(/\.acl$/i, ''));
+                const fileName = stripSuffixes(info.filename);
                 const timeRange = info.startTime && info.endTime ? toHHMM(info.startTime) + '-' + toHHMM(info.endTime) : '';
                 console.log('[BrowserScreen] card:', info.filename,
                   'startTime=' + info.startTime, 'endTime=' + info.endTime, 'isDemo=' + info.isDemo);
                 return (
                   <div key={i} className="level-row" onClick={() => handleOpenFile(info.path, airport.icao)}>
-                    <span className="level-tod">{todInfo.label}</span>
+                    <span className="level-tod">{displayName}</span>
                     <span className="level-timerange">{timeRange}</span>
-                    <span className="level-name">{displayName}</span>
+                    <span className="level-name">{fileName}</span>
                     <span className="level-stats">
                       <span className="level-stat"><span className="level-stat-dot arrival" />{t('table_arrivals')} {info.arrivals || 0}</span>
                       <span className="level-stat"><span className="level-stat-dot departure" />{t('table_departures')} {info.departures || 0}</span>

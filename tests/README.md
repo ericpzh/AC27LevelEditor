@@ -152,7 +152,7 @@ Launches the real Electron app against a temp copy of real game data (via `E2E_G
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **S1b** | `save-integrity-all-e2e.spec.mjs` | 8 production + 4 demo across ZSJN + KJFK | 12 passed, 0 skipped |
+| **S1b** | `save-integrity-all-e2e.spec.mjs` | 9 production + 3 demo across ZSJN + KJFK + KDCA | 12 passed, 0 skipped |
 
 ```bash
 # Run standalone (requires E2E_GAME_ROOT env var):
@@ -160,22 +160,22 @@ $env:E2E_GAME_ROOT = "<game-root>"
 npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
 ```
 
-Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~2.5 minutes for 12 files.
+Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~2.5 minutes for 12 files. The 12 files mirror `PROD_VISIBLE_BASES` + the `.demo` entries of `DEMO_VISIBLE_BASES` in `src/utils/constants/ui.js`:
 
 | File | Status | Note |
 |------|--------|------|
-| ZSJN-Morning_120min | ✓ | 48 flights, all state identical |
-| ZSJN-Morning_120min.demo | ✓ | Save completes, flight data intact. Demo saves round endTime to nearest :X0/:X5 and strip CurrentDateTime content — flight data preserved. |
-| ZSJN_07-10 | ✓ | 60 flights, all state identical |
-| ZSJN_07-10.demo | ✓ | Same demo behavior as above (endTime rounded to nearest :X0/:X5) |
-| ZSJN-Evening_120min | ✓ | 48 flights |
-| ZSJN_19-21 | ✓ | 72 flights |
-| KJFK_07-09 | ✓ | 52 flights |
-| KJFK_09-11 | ✓ | 56 flights |
-| KJFK_09-11.demo | ✓ | 56 flights, endTime rounded to nearest :X0/:X5 |
-| KJFK_17-20 | ✓ | 63 flights |
-| KJFK_20-22 | ✓ | 57 flights |
-| KJFK_20-22.demo | ✓ | Same demo behavior as above (endTime rounded to nearest :X0/:X5) |
+| ZSJN_leisure_1 | ✓ | all state identical |
+| ZSJN_leisure_2 | ✓ | all state identical |
+| ZSJN_peakdeparture | ✓ | all state identical |
+| ZSJN_runwaychange | ✓ | all state identical |
+| ZSJN_taixwayclosed | ✓ | all state identical |
+| KJFK_leisure_1 | ✓ | all state identical |
+| KJFK_leisure_2 | ✓ | all state identical |
+| KJFK_peakarrival | ✓ | all state identical |
+| KDCA_smoke | ✓ | all state identical |
+| KJFK_peakarrival.demo | ✓ | Demo saves round endTime to nearest :X0/:X5 and strip CurrentDateTime content — flight data preserved. |
+| KJFK_leisure_1.demo | ✓ | Same demo behavior as above (endTime rounded to nearest :X0/:X5) |
+| ZSJN_peakdeparture.demo | ✓ | Same demo behavior as above (endTime rounded to nearest :X0/:X5) |
 
 ---
 
@@ -305,10 +305,10 @@ node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_ti
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_save_integrity_all.js` | 12 (`--prod-demo`) or 24 (`--all`) | Full save→reload→compare on every .acl file. Validates: flights (14 fields × N), config (startTime/endTime/scheduleFile), scenery maps (runway/stand counts), embedded timelines (weather/wind/runway), source format, text-level `_departureTakeoffTime` / `_arrivalInBlockTime` zero validation. Passes `detectSchemaVersion` (`isV4`) and builds the approach cache per level dir (jetway DockingPositions lookup needs it) | 12/12 pass on the v4 game root (8 prod + 4 demo): 0 field diffs, config identical, scenery identical, timelines identical |
+| `test_save_integrity_all.js` | 12 (`--prod-demo`) or 24 (`--all`) | Full save→reload→compare on every .acl file. Validates: flights (14 fields × N), config (startTime/endTime/scheduleFile), scenery maps (runway/stand counts), embedded timelines (weather/wind/runway), source format, text-level `_departureTakeoffTime` / `_arrivalInBlockTime` zero validation. Passes `detectSchemaVersion` (`isV4`) and builds the approach cache per level dir (jetway DockingPositions lookup needs it) | 12/12 pass on the v4 game root (9 prod + 3 demo): 0 field diffs, config identical, scenery identical, timelines identical |
 
 ```bash
-# 8 production + 4 demo files:
+# 9 production + 3 demo files:
 node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root> --prod-demo
 
 # All .acl files across all airports (excludes Endless):
@@ -337,9 +337,9 @@ Airports/<ICAO>/Levels/     copy →  _tmp/golden/<ICAO>/    copy →  _tmp/resu
 
 Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored.
 
-**Production (8):** ZSJN-Morning_120min, ZSJN_07-10, ZSJN-Evening_120min, ZSJN_19-21, KJFK_07-09, KJFK_09-11, KJFK_17-20, KJFK_20-22
+**Production (9):** ZSJN_leisure_1, ZSJN_leisure_2, ZSJN_peakdeparture, ZSJN_runwaychange, ZSJN_taixwayclosed, KJFK_leisure_1, KJFK_leisure_2, KJFK_peakarrival, KDCA_smoke
 
-**Demo (4):** ZSJN-Morning_120min.demo, ZSJN_07-10.demo, KJFK_09-11.demo, KJFK_20-22.demo
+**Demo (3 .demo files + 1 shared):** KJFK_leisure_1.demo, KJFK_peakarrival.demo, ZSJN_leisure_1 (shared with prod), ZSJN_peakdeparture.demo
 
 ---
 
@@ -359,7 +359,7 @@ The editor supports two .acl schema versions:
 
 ### v4 (GATCArc4 binary — current game format)
 - All game .acl files in this installation are **v4 GATCArc4 binary** (StaticData.$blobdoc; flight plans are StaticItems dictionary entries keyed `"$k": "flight-plan:<REG>"`, referenced by `$fstrref` tokens).
-- **Save integrity**: 12/12 files pass (8 production + 4 demo) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (isV4 → `_rebuildStaticDataSections`).
+- **Save integrity**: 12/12 files pass (9 production + 3 demo) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (isV4 → `_rebuildStaticDataSections`).
 - **Save/load round-trip**: `test_e2e_save_load.js` — 60/60 flights identical after load→save→load.
 - **Section rebuild**: `test_rebuild_sections.js` v4 path (StaticItems rebuild + binary re-encode, reload-verified) and `test_rebuild_timelines.js` v4 path (MetaData subsection rebuild + re-encode) both pass.
 - **Linkage**: `test_acl_linkage.js` v4 path — 48 flight-plan definitions self-consistent, 48 `$fstrref` references resolve.

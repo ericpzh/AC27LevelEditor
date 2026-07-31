@@ -154,7 +154,10 @@
 /* Level rows */
 .level-row {
   display: grid;
-  grid-template-columns: var(--tod-width, 70px) 90px 1fr auto auto auto;
+  /* display name (large, first) | time range | filename | stats | arrow.
+     --tod-width is set per language (zh 70px / en 130px) so the three
+     leading sections align vertically across all airport cards. */
+  grid-template-columns: var(--tod-width, 130px) 90px 1fr auto auto;
   align-items: center;
   gap: 0;
   padding: 10px 20px;
@@ -166,6 +169,8 @@
 .level-row:last-child { border-bottom: none; }
 .level-row:hover { background: var(--accent-dim); }
 
+/* The level display name — replaces the old time-of-day label
+   (Morning/Afternoon/etc.) as the large leading element. */
 .level-tod {
   font-size: 14px;
   font-weight: 700;
@@ -187,6 +192,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-left: 10px;
 }
 
 .level-stats {

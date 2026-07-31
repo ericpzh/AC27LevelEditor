@@ -456,20 +456,24 @@ beforeEach(() => {
 
   describe('Demo File Filtering', () => {
     const nonWhitelistedDemo = {
-      filename: 'ASJN_07-10.demo.acl',
-      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ASJN_07-10.demo.acl',
+      filename: 'KJFK_20-22.demo.acl',
+      path: 'D:\\Games\\Airport Control 27\\KJFK\\KJFK_20-22.demo.acl',
       isDemo: false,
       isEmer: false,
-      startTime: '07:00',
-      endTime: '10:00',
+      startTime: '20:00',
+      endTime: '22:00',
       arrivals: 8,
       departures: 2,
     };
 
+    // In both PROD_VISIBLE_BASES and DEMO_VISIBLE_BASES.
+    // isDemo: true mirrors _isDemoFile() in electron/main.js (the file is in
+    // DEMO_VISIBLE_BASES, so it gets the demo-window flag) — but it must still
+    // appear in the prod browser list.
     const prodFile = {
-      filename: 'ZSJN-Morning_120min.acl',
-      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN-Morning_120min.acl',
-      isDemo: false,
+      filename: 'ZSJN_leisure_1.acl',
+      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN_leisure_1.acl',
+      isDemo: true,
       isEmer: false,
       startTime: '06:00',
       endTime: '08:00',
@@ -478,8 +482,8 @@ beforeEach(() => {
     };
 
     const demoFile = {
-      filename: 'ZSJN-Morning_120min.demo.acl',
-      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN-Morning_120min.demo.acl',
+      filename: 'ZSJN_peakdeparture.demo.acl',
+      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN_peakdeparture.demo.acl',
       isDemo: true,
       isEmer: false,
       startTime: '06:50',
@@ -495,9 +499,9 @@ beforeEach(() => {
       renderBrowser();
 
       await waitFor(() => {
-        expect(screen.getByText('ZSJN-Morning 120min')).toBeInTheDocument();
+        expect(screen.getByText('Relax Time')).toBeInTheDocument();
       });
-      expect(screen.queryByText('ZSJN-Morning 120min.demo')).toBeNull();
+      expect(screen.queryByText('Peak Departure')).toBeNull();
     });
 
     it('hides non-whitelisted .demo files in non-demo mode', async () => {
@@ -507,9 +511,9 @@ beforeEach(() => {
       renderBrowser();
 
       await waitFor(() => {
-        expect(screen.getByText('ZSJN-Morning 120min')).toBeInTheDocument();
+        expect(screen.getByText('Relax Time')).toBeInTheDocument();
       });
-      expect(screen.queryByText('ASJN 07-10.demo')).toBeNull();
+      expect(screen.queryByText('KJFK 20-22.demo')).toBeNull();
     });
 
     it('shows whitelisted .demo files in demo mode', async () => {
@@ -522,7 +526,48 @@ beforeEach(() => {
       renderBrowser();
 
       await waitFor(() => {
-        expect(screen.getByText('ZSJN-Morning 120min.demo')).toBeInTheDocument();
+        expect(screen.getByText('Peak Departure')).toBeInTheDocument();
       });
+      // Regular .acl files in the demo whitelist are also visible
+      expect(screen.getByText('Relax Time')).toBeInTheDocument();
+    });
+
+    it('sorts levels by whitelist order, not start time', async () => {
+      // Given in reverse whitelist order with arbitrary start times — the
+      // display order must follow PROD_VISIBLE_BASES, not time.
+      const files = [
+        { ...prodFile, filename: 'ZSJN_taixwayclosed.acl', path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN_taixwayclosed.acl', startTime: '06:00' },
+        { ...prodFile, filename: 'ZSJN_peakdeparture.acl', path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN_peakdeparture.acl', startTime: '05:00' },
+        { ...prodFile, filename: 'ZSJN_runwaychange.acl', path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN_runwaychange.acl', startTime: '10:00' },
+        { ...prodFile, filename: 'ZSJN_leisure_2.acl', path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN_leisure_2.acl', startTime: '20:00' },
+        prodFile,
+      ];
+      setupDefaultMocks({
+        'get-airport-files-info': Promise.resolve(files),
+      });
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Relax Time')).toBeInTheDocument();
+      });
+      const names = document.querySelectorAll('.level-tod');
+      expect([...names].map(n => n.textContent)).toEqual([
+        'Relax Time',      // ZSJN_leisure_1
+        'Busy Time',       // ZSJN_leisure_2
+        'Runway Change',   // ZSJN_runwaychange
+        'Peak Departure',  // ZSJN_peakdeparture
+        'Taxiway Closed',  // ZSJN_taixwayclosed
+      ]);
+      // Time range and small filename columns are still shown per row
+      // (startTimes from the fixtures; endTime inherited from prodFile)
+      const ranges = document.querySelectorAll('.level-timerange');
+      expect([...ranges].map(n => n.textContent)).toEqual([
+        '06:00-08:00', '20:00-08:00', '10:00-08:00', '05:00-08:00', '06:00-08:00',
+      ]);
+      const filenames = document.querySelectorAll('.level-name');
+      expect([...filenames].map(n => n.textContent)).toEqual([
+        'ZSJN leisure 1', 'ZSJN leisure 2', 'ZSJN runwaychange',
+        'ZSJN peakdeparture', 'ZSJN taixwayclosed',
+      ]);
     });
   });

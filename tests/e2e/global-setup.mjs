@@ -9,13 +9,16 @@ const TMP_DIR = path.join(TESTS_DIR, 'tmp-e2e');
 const USERDATA_DIR = path.join(TESTS_DIR, 'tmp-e2e-userdata');
 
 // ── 12 prod+demo files to include when sourcing from real game ──
+// Mirrors PROD_VISIBLE_BASES (9) + the .demo entries of DEMO_VISIBLE_BASES (3)
+// in src/utils/constants/ui.js — only these are visible in the browser.
 const PROD_DEMO_FILES = [
-  'ZSJN/ZSJN-Morning_120min.acl', 'ZSJN/ZSJN_07-10.acl',
-  'ZSJN/ZSJN-Evening_120min.acl', 'ZSJN/ZSJN_19-21.acl',
-  'ZSJN/ZSJN-Morning_120min.demo.acl', 'ZSJN/ZSJN_07-10.demo.acl',
-  'KJFK/KJFK_07-09.acl', 'KJFK/KJFK_09-11.acl',
-  'KJFK/KJFK_17-20.acl', 'KJFK/KJFK_20-22.acl',
-  'KJFK/KJFK_09-11.demo.acl', 'KJFK/KJFK_20-22.demo.acl',
+  'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
+  'ZSJN/ZSJN_peakdeparture.acl', 'ZSJN/ZSJN_runwaychange.acl',
+  'ZSJN/ZSJN_taixwayclosed.acl', 'ZSJN/ZSJN_peakdeparture.demo.acl',
+  'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl',
+  'KJFK/KJFK_peakarrival.acl',
+  'KJFK/KJFK_leisure_1.demo.acl', 'KJFK/KJFK_peakarrival.demo.acl',
+  'KDCA/KDCA_smoke.acl',
 ];
 
 export default async function () {
@@ -91,6 +94,16 @@ export default async function () {
   } else {
     // Fall back to committed fixture (1-2 ZSJN files)
     cpSync(FIXTURES_DIR, TMP_DIR, { recursive: true });
+    // Stage fixture copies under whitelisted names so the browser shows rows
+    // in prod mode (fixture names like ZSJN-Morning_120min are no longer whitelisted)
+    const zsjnLevels = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
+    for (const [srcName, dstName] of [
+      ['ZSJN-Morning_120min.acl', 'ZSJN_leisure_1.acl'],
+      ['ZSJN-Morning_120min.v4.acl', 'ZSJN_leisure_2.acl'],
+    ]) {
+      const srcFile = path.join(zsjnLevels, srcName);
+      if (existsSync(srcFile)) cpSync(srcFile, path.join(zsjnLevels, dstName));
+    }
     console.log('[E2E setup] Fixtures copied to', TMP_DIR);
   }
 

@@ -17,7 +17,7 @@
   - [Duplicate Registration Detection](#duplicate-registration-detection)
   - [Stand Map Overlay](#stand-map-overlay)
   - [Star Map Overlay](#star-map-overlay)
-  - [Demo .acl File Handling](#demo-acl-file-handling)
+  - [Level Whitelists \& Demo .acl File Handling](#level-whitelists--demo-acl-file-handling)
 
 ## Data Flow Overview
 
@@ -30,7 +30,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
 1. User selects game root directory
 2. `scan-acls` IPC → `scanGameRoot()` → returns airport list with `.acl` file paths
 3. `init-airport-cache` IPC → loads audio clips + pre-scans approach data + dropdown values per airport:
-   - Scans `.acl` files matching the browser's visibility filter — **excludes** `.acl.bak` backups and all variants hidden by `RE_HIDDEN` in `constants.js` (`tutorial`, `bench`, `test`, `crossrunway`, `dev`, `endless`, `.prod`). Demo slices (`.demo.acl`) and `_emerg` files are still included.
+   - Scans `.acl` files matching the browser's visibility filter — **excludes** `.acl.bak` backups and all variants hidden by its local `RE_SKIP` regex (`tutorial`, `bench`, `test`, `crossrunway`, `dev`, `endless`, `.prod`). Demo slices (`.demo.acl`) and `_emerg` files are still included. (Note: the browser visibility filter itself now uses explicit whitelists — `PROD_VISIBLE_BASES` / `DEMO_VISIBLE_BASES` in `src/utils/constants/ui.js` — not a blacklist regex.)
    - **Global progress reporting:** Pre-counts total `.acl` files across ALL airports, then sends `cache-build-progress` IPC events (`{ current, total }`) per file during `buildApproachCache`. Renderer shows a progress bar + percentage via `CacheProgressBody` component.
    - Extracts `specDB` (Designator → AircraftSpec, from ALL aircraft entries regardless of State), `appPointMap` ((STAR,Runway) → AppPointList, from SceneryData Type=1 routes), `totalApproachTimes` (STAR → seconds, from SceneryData path lengths with aircraft-derived calibration), and `designatorMap` (AircraftType → Designator)
    - Extracts State=5 data: `state5ParamsMap` (runway → `{pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?}`), `starPaths` (STAR → waypoint array), and STAR↔runway maps from `SceneryData.Runways.Routes[Type=0]`
@@ -109,7 +109,7 @@ The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.j
 
 Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `src/utils/constants.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
-**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js:13`. The re-scan happens transparently during App.jsx boot — `initAirportCache()` detects the version mismatch and rebuilds the cache silently before BrowserScreen mounts. Without the bump, old cached data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 15.
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `saveTimeOffsets`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js:13`. The re-scan happens transparently during App.jsx boot — `initAirportCache()` detects the version mismatch and rebuilds the cache silently before BrowserScreen mounts. Without the bump, old cached data will silently corrupt saves. Examples of changes requiring a bump: adding `saveTimeOffsets` to `approachData`, adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths` to `approachData`. Current `CACHE_VERSION` is 16.
 
 | `cache.json` | Behavior |
 |---|---|
@@ -218,20 +218,29 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 **Map overlay orchestration:** `MapOverlays` sub-component in `EditorScreen.jsx` manages visibility and prop-passing for both StandMap and StarMap. Visibility state lives in zustand (`showStandMap`, `showStarMap`, `activeMap`, `mapFlightIdx`). Only one map is "on top" at a time (controlled by `activeMap`). Both maps close when leaving the editor screen (`setScreen` clears map state).
 
-## Demo .acl File Handling
+## Level Whitelists & Demo .acl File Handling
 
-The game ships six files that receive the 30-minute demo window treatment (all controlled by `DEMO_VISIBLE_BASES` in `src/utils/constants.js`):
-- `ZSJN-Morning_120min.demo.acl` (05:45–06:15)
-- `ZSJN_17-19_emerg.acl` — emergency scenario (also gets 30-min window)
-- `KJFK_07-09_emerg.acl` — emergency scenario (also gets 30-min window)
-- `KJFK_20-22.demo.acl` (20:30–21:00)
+**Visibility is whitelist-based** in `src/utils/constants/ui.js`:
+
+- `PROD_VISIBLE_BASES` (ordered array, 9 entries) — the only levels shown in production (non-demo) mode; **array position = browser display order**:
+  `ZSJN_leisure_1.acl`, `ZSJN_leisure_2.acl`, `ZSJN_runwaychange.acl`, `ZSJN_peakdeparture.acl`, `ZSJN_taixwayclosed.acl`, `KJFK_leisure_1.acl`, `KJFK_leisure_2.acl`, `KJFK_peakarrival.acl`, `KDCA_smoke.acl`
+- `DEMO_VISIBLE_ORDER` (ordered array, 4 entries) — the only levels shown in demo mode (root path contains "Airport Control 27 Demo"); array position = browser display order:
+  `KJFK_leisure_1.demo.acl`, `KJFK_peakarrival.demo.acl`, `ZSJN_leisure_1.acl`, `ZSJN_peakdeparture.demo.acl`
+- `DEMO_VISIBLE_BASES` (Set) — derived from `DEMO_VISIBLE_ORDER` for lookups
+- `ZSJN_leisure_1.acl` appears in **both** lists — it ships as a regular level but is also playable in demo mode. (`ZSJN_leisure_2.acl` is prod-only.)
+
+**Display names:** Levels show localized names from `src/utils/i18n.js` under `level_name_<base-filename-without-.acl>` keys (e.g. `level_name_ZSJN_leisure_1` → "悠闲时刻" / "Relax Time"; `.demo` variants included, e.g. `'level_name_KJFK_peakarrival.demo'` — quoted because the key contains dots). BrowserScreen looks up `t('level_name_' + filename.replace(/\.acl$/i, ''))`; `t()` falls back to the raw key if missing.
+
+**Row layout:** `[display name — large, replaces the old time-of-day label (Morning/Afternoon)] [time range HH:MM-HH:MM] [small filename via stripSuffixes] [arrivals/departures stats] [arrow]`. Time-of-day label (dawn/morning/afternoon/dusk/night) is gone; the name took its slot. The first column is fixed-width per language (`--tod-width`: zh 80px / en 130px, set inline on `#screen-browser`) so the name/time/filename sections align vertically across airport cards. `sortLevelRows` no longer sorts by time.
+
+**Sorting:** `sortLevelRows` in `BrowserScreen.jsx` ranks files by index in the mode's whitelist array (`PROD_VISIBLE_BASES` in prod, `DEMO_VISIBLE_ORDER` in demo), unknown files last (then by filename), `_emerg` files always last. No time-based sorting.
+
+**Demo mode visibility & window:** The `DEMO_VISIBLE_BASES` Set is the single source of truth — it controls both which files are visible in demo mode AND which files get the 30-minute demo window (every entry, including the regular `.acl` ones). `_isDemoFile()` in `electron/main.js` checks exact filename via `path.basename()` against this set (NOT the `.demo.acl` extension). Update the order arrays when levels are added or removed. (BrowserScreen filters prod mode via `PROD_VISIBLE_BASES.includes(filename)` and demo mode via `DEMO_VISIBLE_BASES.has(filename)`.)
 
 **Key properties:**
 - Each `.demo.acl` is a save-state snapshot with the **same BaseTime** as its parent but a **later CurrentDateTime** (~40–55 min offset), creating the 30-min playable window
 - FlightPlans, scenery, and file references are identical to the parent `.acl`
 - No matching `.aclcfg` exists — Config is read from the `.acl` file itself
-
-**Demo mode visibility & window:** The `DEMO_VISIBLE_BASES` Set in `src/utils/constants.js` is the single source of truth — it controls both which files are visible in demo mode AND which files get the 30-minute demo window. Entries are full filenames (e.g. `ZSJN_07-10.demo.acl`). `_isDemoFile()` in `electron/main.js` checks exact filename via `path.basename()` against this set (NOT the `.demo.acl` extension). Update `DEMO_VISIBLE_BASES` when demo levels are added or removed.
 
 **Editor behavior:**
 - Demo files are treated as **normal levels** — always visible, no tags, no hiding
@@ -240,4 +249,4 @@ The game ships six files that receive the 30-minute demo window treatment (all c
 - **On save:** demo files write to `.demo.acl` + shared `.csv` + shared timeline `.json` files; creates `.demo.acl.bak`. End time is rounded to nearest :X0/:X5 (same as load).
 - **Export/Import:** packs/unpacks `.demo.acl` identically to normal `.acl` files
 - **Approach cache:** includes demo files (unfiltered)
-- **Challenge Level display:** Files with `_emerg` in their name show "Challenge Level" / "挑战关卡" (localized) as their time-of-day label (replacing dawn/morning/dusk/etc.), in both demo and non-demo mode. The `isEmer` flag is exposed via `get-airport-files-info` IPC and checked in `BrowserScreen`.
+- **Challenge Level display:** Files with `_emerg` in their name sort to the bottom of the browser list (`isEmer` flag exposed via `get-airport-files-info` IPC, checked in `BrowserScreen`). The old time-of-day label ("Challenge Level" / "挑战关卡" via `browser_emerg_level`) was removed along with the time display — display names now come from `level_name_*` i18n keys.
