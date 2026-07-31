@@ -39,6 +39,11 @@ export const TD_FALLBACK_EXTEND = 50;      // game-units to extend past last pat
 export const TAXI_SPEED = 240;
 export const POSITIVE_TAXI_ACCEL = 1;
 export const NEGATIVE_TAXI_ACCEL = -2;
+// Boosted accel used by the dynamics override for aircraft on final approach
+// (state=5, DynamicsState=2) — the aircraft decelerates hard on the approach
+// path. Verified against healthy game saves: (1, -2, 3, -4).
+export const DYNAMICS_POSITIVE_TAXI_ACCEL = 3;
+export const DYNAMICS_NEGATIVE_TAXI_ACCEL = -4;
 export const DYNAMICS_STATE_FLYING = 1;      // State=30
 export const DYNAMICS_STATE_APPROACH = 2;    // State=5
 

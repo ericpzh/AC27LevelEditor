@@ -128,6 +128,13 @@ function buildMinimalApproachAircraft() {
     },
     radioChannelGuid: '00000000-0000-0000-0000-000000000002',
     nextId: 5001,
+    // typeNums are required since the per-file typeMap refactor (v4 pipeline).
+    // ZSJN values from tests/fixtures/game-root/.../ZSJN-Morning_120min.acl.
+    typeNums: {
+      acType: 33, spec: 34, float3: 35, vec4Arr: 36, vec4: 37,
+      dynInternal: 38, acRwy: 42, waitCmd: 43, recvEvt: 44,
+      listVec3: 46, dynParams: 47,
+    },
   });
 }
 

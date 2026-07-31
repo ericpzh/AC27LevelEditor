@@ -7,7 +7,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL } = require('./constants');
+const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL } = require('./constants');
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
 const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, computeApproachCap, computePosition, computeDirection, _vec3Sub, _vec3Normalize, _vec3Dist, _detectSchemaVersion } = require('./approach');
@@ -2345,7 +2345,7 @@ function _validateStandConflicts(flights) {
   }
 }
 
-function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao, fpIdByReg, standPositions) {
+function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao, fpIdByReg, standPositions, strArrCache, recvEventsCache, waitingCmdsCache) {
   // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
   const t = createTokenizer(segmentText);
   const reSec = t.findSection('RuntimeEntities');
@@ -2458,9 +2458,45 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
       if (oldWcId !== null) oldWaitingCmdIds.push(oldWcId);
     }
   }
-  // Caches for the canonical AircraftEvent[] and ECommand[] $ids shared across all entries
-  const recvEventsCache = { canonicalId: null };
-  const waitingCmdsCache = { canonicalId: null };
+  // recvEventsCache / waitingCmdsCache hold the canonical AircraftEvent[] and
+  // ECommand[] $ids shared across all entries; they are created by the caller
+  // (per segment) so 7b-1 and 7b-3 claim from the same dynamic allocator.
+
+  // ── Claim the canonical empty string[] $id from the shared dynamic allocator ──
+  // (see segStrArrCanonicalIds in _rebuildStaticDataSections).  The first entry
+  // that emits an AircraftRunwayCoordinator (usually the first active jetway)
+  // defines the array inline at this id; every later entry $iref's it.  The id is
+  // claimed from the dynamic allocator — NOT from the entry's static
+  // entryId+offset range — because overlapping jetway ranges (entryIds 8 apart,
+  // template offsets up to 38) can collide: jetway:01 id(33)=36 equals
+  // jetway:02 id(25)=36, and a duplicate $id that is an $iref target crashes the
+  // game's JsonDataReader with a NullReferenceException.  Advance the allocator
+  // past the worst-case rebuilt jetway ids and past every flight-plan id first.
+  if (strArrCache && strArrCache.alloc) {
+    let jwMaxId = 0;
+    for (const jwInfo of entryInfos) {
+      if (jwInfo.isJetway && jwInfo.entryId + 38 > jwMaxId) jwMaxId = jwInfo.entryId + 38;
+    }
+    let fpMaxId = 0;
+    if (fpIdByReg) {
+      for (const fid of fpIdByReg.values()) { if (fid > fpMaxId) fpMaxId = fid; }
+    }
+    const strArrSeed = Math.max(jwMaxId, fpMaxId);
+    if (strArrCache.alloc.v < strArrSeed + 1) strArrCache.alloc.v = strArrSeed + 1;
+    if (strArrCache.canonicalId === null) strArrCache.canonicalId = strArrCache.alloc.v++;
+  }
+
+  // Claim the canonical empty AircraftEvent[] (recvEvents) and ECommand[]
+  // (waitingCmds) $ids from the same shared dynamic allocator (see
+  // segRecvEventsCache / segWaitingCmdsCache).  The strArr claim above already
+  // seeded the allocator past every rebuilt-jetway and flight-plan id, so the
+  // ids claimed here can never collide with a static entryId+offset $id.
+  if (recvEventsCache && recvEventsCache.alloc && recvEventsCache.canonicalId === null) {
+    recvEventsCache.canonicalId = recvEventsCache.alloc.v++;
+  }
+  if (waitingCmdsCache && waitingCmdsCache.alloc && waitingCmdsCache.canonicalId === null) {
+    waitingCmdsCache.canonicalId = waitingCmdsCache.alloc.v++;
+  }
 
   // ---- PASS 2: Rebuild each entry constructively ---------------------
   const segments = [];
@@ -2517,7 +2553,7 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
       exhaustedFlights.add(flightReg);
 
       // ---- Active jetway: rebuild DockingAircraft with flight data ----
-      const built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions);
+      const built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions, strArrCache);
       if (built.text !== info.entryText) resetCount++;
       segments.push(built.text);
       activeJetways.push({
@@ -2580,12 +2616,12 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
 
   // Register old→new _receivedEvents AircraftEvent[] $id mappings
   // so the centralized $iref remap step can fix preserved entries
-  if (recvEventsCache.canonicalId !== null && idMapper) {
+  if (recvEventsCache && recvEventsCache.canonicalId !== null && idMapper) {
     for (const oldId of oldRecvEventIds) {
       idMapper.map(oldId, recvEventsCache.canonicalId);
     }
   }
-  if (waitingCmdsCache.canonicalId !== null && idMapper) {
+  if (waitingCmdsCache && waitingCmdsCache.canonicalId !== null && idMapper) {
     for (const oldId of oldWaitingCmdIds) {
       idMapper.map(oldId, waitingCmdsCache.canonicalId);
     }
@@ -2869,7 +2905,7 @@ function _reorderIrefEntries(descriptors, log, externalIds) {
   return result;
 }
 
-function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, validRegs, segTypeMap, log, idMapper, icao, approachCache, fullText, saveSec, activeJetways, precomputedFpIdByReg) {
+function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, validRegs, segTypeMap, log, idMapper, icao, approachCache, fullText, saveSec, activeJetways, precomputedFpIdByReg, strArrCache, recvEventsCache, waitingCmdsCache) {
   // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
   const t = createTokenizer(segmentText);
   const reSec = t.findSection('RuntimeEntities');
@@ -3089,6 +3125,42 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
     });
   }
 
+  // ── Claim the canonical empty string[] $id from the shared dynamic
+  //    allocator (see segStrArrCanonicalIds).  The jetway rebuild (7b-1)
+  //    claims it first when jetway entries exist; otherwise we claim it here
+  //    before any aircraft entry is built, so the first emitted coordinator
+  //    can define it inline and all later entries $iref it.  The id comes
+  //    from the dynamic allocator — seeded past every static $id (kept
+  //    entries incl. rebuilt jetways) and every flight-plan id — so it can
+  //    never collide with another $id in this blobdoc.  A duplicate $id that
+  //    is an $iref target crashes the game's JsonDataReader
+  //    (NullReferenceException on the old entryId+33 layout: jetway:01
+  //    id(33)=36 collided with jetway:02 id(25)=36).  Also advance nextId
+  //    past the claimed id so aircraft/animator ranges never reach it.
+  if (strArrCache && strArrCache.alloc) {
+    let strArrSeedMax = maxId; // kept entries (incl. rebuilt jetway text)
+    if (fpIdByReg) {
+      for (const fid of fpIdByReg.values()) { if (fid > strArrSeedMax) strArrSeedMax = fid; }
+    }
+    if (strArrCache.alloc.v < strArrSeedMax + 1) strArrCache.alloc.v = strArrSeedMax + 1;
+    if (strArrCache.canonicalId === null) strArrCache.canonicalId = strArrCache.alloc.v++;
+    if (nextId < strArrCache.alloc.v) nextId = strArrCache.alloc.v;
+  }
+  // Claim the canonical empty AircraftEvent[] (recvEvents) and ECommand[]
+  // (waitingCmds) $ids from the same shared dynamic allocator (see
+  // segRecvEventsCache / segWaitingCmdsCache).  The strArr claim above already
+  // seeded the allocator past every static $id and flight-plan id, so these
+  // ids can never collide.  Advance nextId past each claim so aircraft/animator
+  // ranges never reach them.
+  if (recvEventsCache && recvEventsCache.alloc) {
+    if (recvEventsCache.canonicalId === null) recvEventsCache.canonicalId = recvEventsCache.alloc.v++;
+    if (nextId < recvEventsCache.alloc.v) nextId = recvEventsCache.alloc.v;
+  }
+  if (waitingCmdsCache && waitingCmdsCache.alloc) {
+    if (waitingCmdsCache.canonicalId === null) waitingCmdsCache.canonicalId = waitingCmdsCache.alloc.v++;
+    if (nextId < waitingCmdsCache.alloc.v) nextId = waitingCmdsCache.alloc.v;
+  }
+
   // --- Resolve radio-channel Type from StaticItems ----------------------
   // The game's aircraft entries $iref to a shared radio-channel entry.
   // keptRadio entries are keyed like "radio-channel:118.55" but the Type
@@ -3246,6 +3318,9 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
       segTypeMap,
       log,
       fpId: fpIdByReg.get(reg),
+      strArrCache,
+      recvEventsCache,
+      waitingCmdsCache,
     });
     if (!result) {
       log('  [ac-call] ' + reg + ': skipped (not on approach or already landed)');
@@ -3399,7 +3474,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
  */
 function _buildStandaloneAircraftEntry(opts) {
   const { reg, flight, entryId, towerChannelId, apprChannelId, isDeparture, approachCache, fullText, saveSec,
-    icao, baseDateTicks, segTypeMap, log, fpId } = opts;
+    icao, baseDateTicks, segTypeMap, log, fpId, strArrCache, recvEventsCache, waitingCmdsCache } = opts;
 
   const id = (offset) => entryId + offset;
 
@@ -3688,9 +3763,51 @@ function _buildStandaloneAircraftEntry(opts) {
     return { $type: T.vec4, __v: [p.x, p.y, p.z, p.w] };
   });
 
-  // ReactiveProperty<string[]> helper
-  function rpStrArr(idVal, content) {
+  // ReactiveProperty<string[]> helper.  The inner string[] (always empty in
+  // generated entries) is shared across ALL aircraft via a single canonical
+  // definition: the first entry that emits one defines it inline and records
+  // its $id; every later entry $iref's back to it instead of duplicating
+  // { $id, $type, $rlength: 0, $rcontent: [] } (see segStrArrCanonicalIds).
+  // The canonical $id was claimed from the segment's dynamic allocator before
+  // the aircraft loop (so it never collides with static entryId+offset ids or
+  // with other entries' ranges); the first emitter writes the full definition
+  // at that id.
+  function rpStrArr(idVal, innerId) {
+    var content;
+    if (strArrCache && strArrCache.canonicalEmitted) {
+      content = { __iref: strArrCache.canonicalId };
+    } else {
+      var canonicalInnerId = innerId;
+      if (strArrCache) {
+        canonicalInnerId = strArrCache.canonicalId !== null ? strArrCache.canonicalId : innerId;
+        strArrCache.canonicalEmitted = true;
+      }
+      content = { $id: canonicalInnerId, $type: T.strArr, $rcontent: [] };
+    }
     return { $id: idVal, $type: T.rpStrArr, __v: [content] };
+  }
+
+  // ReactiveProperty<ECommand[]>/ReactiveProperty<AircraftEvent[]> helper for
+  // _waitingForCommands and _receivedEvents.  The empty-array definition is
+  // shared across ALL entries via one canonical $id per segment (same pattern
+  // as rpStrArr — see segRecvEventsCache / segWaitingCmdsCache).  NON-empty
+  // content (State=5 _waitingForCommands = [CMD_CONTACT_TOWER]) is never
+  // shared: it stays inline at its own id and does not claim/emit the
+  // canonical definition, so a later empty entry still defines the shared
+  // array.
+  function rpSharedArr(idVal, rpTypeName, innerId, innerTypeName, cache, content) {
+    var hasContent = content && content.length > 0;
+    var inner;
+    if (!hasContent && cache && cache.canonicalEmitted) {
+      inner = { __iref: cache.canonicalId };
+    } else if (!hasContent && cache) {
+      var canonicalInnerId = cache.canonicalId !== null ? cache.canonicalId : innerId;
+      cache.canonicalEmitted = true;
+      inner = { $id: canonicalInnerId, $type: innerTypeName, $rcontent: content };
+    } else {
+      inner = { $id: innerId, $type: innerTypeName, $rcontent: content };
+    }
+    return { $id: idVal, $type: rpTypeName, __v: [inner] };
   }
 
   // DynamicsParams: structure depends on aircraft state.
@@ -3758,8 +3875,10 @@ function _buildStandaloneAircraftEntry(opts) {
         PositiveTaxiAcceleration: isDeparture ? 0 : POSITIVE_TAXI_ACCEL,
         NegativeTaxiAcceleration: isDeparture ? 0 : NEGATIVE_TAXI_ACCEL,
         DynamicsTargetTaxiSpeed: 0,
-        DynamicsPositiveTaxiAcceleration: isDeparture ? 0 : POSITIVE_TAXI_ACCEL,
-        DynamicsNegativeTaxiAcceleration: isDeparture ? 0 : NEGATIVE_TAXI_ACCEL,
+        // Final approach (dynState=2, aircraftState=5) uses the boosted dynamics
+        // accel override; everything else matches the static values (1/-2).
+        DynamicsPositiveTaxiAcceleration: dynState === 2 ? DYNAMICS_POSITIVE_TAXI_ACCEL : (isDeparture ? 0 : POSITIVE_TAXI_ACCEL),
+        DynamicsNegativeTaxiAcceleration: dynState === 2 ? DYNAMICS_NEGATIVE_TAXI_ACCEL : (isDeparture ? 0 : NEGATIVE_TAXI_ACCEL),
         PushbackStopRequested: false,
         TaxiArrivalToSpotPath: null,
         TaxiArrivalToHoldingPointPath: null,
@@ -3769,12 +3888,12 @@ function _buildStandaloneAircraftEntry(opts) {
       AircraftRunwayCoordinator: {
         $id: id(8),
         $type: T.coord,
-        TaxiPathUnPassedIntersectionRunwayNames: rpStrArr(id(9), { $id: id(33), $type: T.strArr, $rcontent: [] }),
-        TaxiBlockingRunwayNames: rpStrArr(id(11), { $id: id(34), $type: T.strArr, $rcontent: [] }),
-        RunwayFenceCurrentEnterRunways: rpStrArr(id(12), { $id: id(35), $type: T.strArr, $rcontent: [] }),
-        RunwayGuardCurrentEnterRunway: rpStrArr(id(13), { $id: id(36), $type: T.strArr, $rcontent: [] }),
-        CrossRunwayPermissions: rpStrArr(id(14), { $id: id(37), $type: T.strArr, $rcontent: [] }),
-        HoldShortAcknowledgedRunwayNames: rpStrArr(id(15), { $id: id(38), $type: T.strArr, $rcontent: [] }),
+        TaxiPathUnPassedIntersectionRunwayNames: rpStrArr(id(9), id(33)),
+        TaxiBlockingRunwayNames: rpStrArr(id(11), id(34)),
+        RunwayFenceCurrentEnterRunways: rpStrArr(id(12), id(35)),
+        RunwayGuardCurrentEnterRunway: rpStrArr(id(13), id(36)),
+        CrossRunwayPermissions: rpStrArr(id(14), id(37)),
+        HoldShortAcknowledgedRunwayNames: rpStrArr(id(15), id(38)),
         RunwaySetter: 0,
       },
       TaxiPathStartingPosition: { $type: T.vec3, __v: [0, 0, 0] },
@@ -3798,16 +3917,8 @@ function _buildStandaloneAircraftEntry(opts) {
       _rollingPresetTaxiPath: { $id: id(22), $type: T.rpPath, __v: [null] },
       _selectedRunwayEntryRunway: null,
       _route: { $id: id(23), $type: T.rpStr, __v: [star] },
-      _waitingForCommands: {
-        $id: id(24),
-        $type: T.rpCmdArr,
-        __v: [{ $id: id(25), $type: T.cmdArr, $rcontent: aircraftState === 5 ? [CMD_CONTACT_TOWER] : [] }],
-      },
-      _receivedEvents: {
-        $id: id(26),
-        $type: T.rpEvtArr,
-        __v: [{ $id: id(27), $type: T.evtArr, $rcontent: [] }],
-      },
+      _waitingForCommands: rpSharedArr(id(24), T.rpCmdArr, id(25), T.cmdArr, waitingCmdsCache, aircraftState === 5 ? [CMD_CONTACT_TOWER] : []),
+      _receivedEvents: rpSharedArr(id(26), T.rpEvtArr, id(27), T.evtArr, recvEventsCache, []),
       _position: {
         $id: id(28),
         $type: T.rpVec3,
@@ -3833,7 +3944,7 @@ function _buildStandaloneAircraftEntry(opts) {
  * Mirrors the empty-case pattern (hardcoded template with string substitution)
  * but includes the ~35-field Aircraft structure inside DockingAircraft.
  */
-function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions) {
+function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions, strArrCache) {
   const entryId = info.entryId;
   const id = (offset) => entryId + offset;
 
@@ -4015,6 +4126,49 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                                }');
   }
 
+  // Empty string[] inner values are shared across all aircraft via one canonical
+  // definition per segment (see segStrArrCanonicalIds): the first entry emits the
+  // full inline array and records its $id; every later entry emits a bare $iref.
+  // The canonical $id was claimed from the segment's dynamic allocator before
+  // PASS 2 (so it never collides with static entryId+offset ids); the first
+  // emitter here writes the full definition at that id.
+  function sharedStrArrInner(innerId) {
+    if (strArrCache && strArrCache.canonicalEmitted) {
+      return '$iref:' + strArrCache.canonicalId;
+    }
+    let canonicalInnerId = innerId;
+    if (strArrCache) {
+      canonicalInnerId = strArrCache.canonicalId !== null ? strArrCache.canonicalId : innerId;
+      strArrCache.canonicalEmitted = true;
+    }
+    return inlineEmptyStrArr(canonicalInnerId);
+  }
+
+  // Shared empty-array inner value for _waitingForCommands (ECommand[]) and
+  // _receivedEvents (AircraftEvent[]).  Same pattern as sharedStrArrInner:
+  // the first emitter writes the full inline definition at the canonical $id
+  // (claimed from the segment's dynamic allocator — see segRecvEventsCache /
+  // segWaitingCmdsCache); every later entry emits a bare $iref instead of
+  // duplicating { $id, $type, $rlength: 0, $rcontent: [] }.
+  function sharedEmptyArrayInner(cache, innerId, typeStr) {
+    if (cache && cache.canonicalEmitted) {
+      return '$iref:' + cache.canonicalId;
+    }
+    let canonicalInnerId = innerId;
+    if (cache) {
+      canonicalInnerId = cache.canonicalId !== null ? cache.canonicalId : innerId;
+      cache.canonicalEmitted = true;
+    }
+    return (
+    '{\n' +
+    '                                                    "$id": ' + canonicalInnerId + ',\n' +
+    '                                                    "$type": ' + typeStr + ',\n' +
+    '                                                    "$rlength": 0,\n' +
+    '                                                    "$rcontent": [\n' +
+    '                                                    ]\n' +
+    '                                                }');
+  }
+
   const entryText = [
     '                            {',
     '                                "$k": "' + info.key + '",',
@@ -4079,32 +4233,32 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                                "TaxiPathUnPassedIntersectionRunwayNames": {',
     '                                                    "$id": ' + id(9) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + inlineEmptyStrArr(id(33)),
+    '                                                    ' + sharedStrArrInner(id(33)),
     '                                                },',
     '                                                "TaxiBlockingRunwayNames": {',
     '                                                    "$id": ' + id(11) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + inlineEmptyStrArr(id(34)),
+    '                                                    ' + sharedStrArrInner(id(34)),
     '                                                },',
     '                                                "RunwayFenceCurrentEnterRunways": {',
     '                                                    "$id": ' + id(12) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + inlineEmptyStrArr(id(35)),
+    '                                                    ' + sharedStrArrInner(id(35)),
     '                                                },',
     '                                                "RunwayGuardCurrentEnterRunway": {',
     '                                                    "$id": ' + id(13) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + inlineEmptyStrArr(id(36)),
+    '                                                    ' + sharedStrArrInner(id(36)),
     '                                                },',
     '                                                "CrossRunwayPermissions": {',
     '                                                    "$id": ' + id(14) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + inlineEmptyStrArr(id(37)),
+    '                                                    ' + sharedStrArrInner(id(37)),
     '                                                },',
     '                                                "HoldShortAcknowledgedRunwayNames": {',
     '                                                    "$id": ' + id(15) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + inlineEmptyStrArr(id(38)),
+    '                                                    ' + sharedStrArrInner(id(38)),
     '                                                },',
     '                                                "RunwaySetter": 0',
     '                                            },',
@@ -4182,24 +4336,12 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                            "_waitingForCommands": {\n' +
     '                                                "$id": ' + id(24) + ',\n' +
     '                                                "$type": ' + T.rpCmdArr + ',\n' +
-    '                                                {\n' +
-    '                                                    "$id": ' + id(25) + ',\n' +
-    '                                                    "$type": ' + T.cmdArr + ',\n' +
-    '                                                    "$rlength": 0,\n' +
-    '                                                    "$rcontent": [\n' +
-    '                                                    ]\n' +
-    '                                                }\n' +
+    '                                                ' + sharedEmptyArrayInner(waitingCmdsCache, id(25), T.cmdArr) + '\n' +
     '                                            },',
     '                                            "_receivedEvents": {\n' +
     '                                                "$id": ' + id(26) + ',\n' +
     '                                                "$type": ' + T.rpEvtArr + ',\n' +
-    '                                                {\n' +
-    '                                                    "$id": ' + id(27) + ',\n' +
-    '                                                    "$type": ' + T.evtArr + ',\n' +
-    '                                                    "$rlength": 0,\n' +
-    '                                                    "$rcontent": [\n' +
-    '                                                    ]\n' +
-    '                                                }\n' +
+    '                                                ' + sharedEmptyArrayInner(recvEventsCache, id(27), T.evtArr) + '\n' +
     '                                            },',
     '                                            "_position": {',
     '                                                "$id": ' + id(28) + ',',
@@ -5577,6 +5719,7 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     // flight-plan:REG (MIDDLE) becomes thin $iref:fpId pointing BACK to it;
     // standalone aircraft (BOTTOM) use _flightPlan: $iref:fpId.
     // All $iref refs are backward → _reorderIrefEntries preserves hardcoded order.
+    const segMaxId = [];
     const segFpIdByReg = [];
     for (let fi = 0; fi < frameDocs.length; fi++) {
       const idRe = /"\$id":\s*(\d+)/g;
@@ -5586,6 +5729,18 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
         const val = parseInt(idMatch[1], 10);
         if (val > maxId) maxId = val;
       }
+      // Jetway entries are rebuilt (7b-1) with static $ids up to entryId+38
+      // even when they were previously empty/thin (ids only up to entryId+3),
+      // so the segment's effective max $id must account for that expansion —
+      // otherwise precomputed flight-plan ids (and the strArr canonical seed
+      // below) could collide with ids emitted by rebuilt jetways.
+      const jwRe = /\{"\$k":\s*"jetway:[^"]*",\s*"\$v":\s*\{\s*"\$id":\s*(\d+)/g;
+      let jwM;
+      while ((jwM = jwRe.exec(frameDocs[fi])) !== null) {
+        const jwId = parseInt(jwM[1], 10);
+        if (jwId + 38 > maxId) maxId = jwId + 38;
+      }
+      segMaxId[fi] = maxId;
       const sortedRegs = [...validRegs].sort();
       const fpIdByReg = new Map();
       sortedRegs.forEach(function (reg, i) { fpIdByReg.set(reg, maxId + 1 + i); });
@@ -5598,6 +5753,48 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     const segIdMappers = [];
     for (let fi = 0; fi < frameDocs.length; fi++) {
       segIdMappers[fi] = new _IdMapper();
+    }
+    // Per-segment canonical $id cache for the empty string[] arrays shared across
+    // aircraft entries (TaxiPathUnPassedIntersectionRunwayNames etc.).  The first
+    // entry in a segment that emits one of these arrays defines it inline; every
+    // later entry $iref's back to that canonical definition.  Per-segment because
+    // each $blobdoc has its own independent $id namespace.
+    //
+    // canonicalId:   the shared empty string[] $id, CLAIMED from the dynamic
+    //                allocator below — NOT from an entry's static entryId+offset
+    //                range.  Jetway static ranges overlap (entryIds 8 apart,
+    //                template offsets up to 38), so an entryId+33 canonical
+    //                collided with another jetway's id(25), and a duplicate $id
+    //                that is an $iref target crashes the game's JsonDataReader
+    //                (NullReferenceException on load).
+    // canonicalEmitted: whether the full inline definition has been written yet
+    //                (the claimed id may have been reserved by 7b-1 while the
+    //                first emitter is in 7b-3, or vice versa).
+    // alloc:         shared dynamic id allocator for the segment; seeded past the
+    //                segment's max static $id (incl. jetway rebuild expansion).
+    const segStrArrCanonicalIds = [];
+    const segRecvEventsCache = [];
+    const segWaitingCmdsCache = [];
+    for (let fi = 0; fi < frameDocs.length; fi++) {
+      // All three caches share ONE allocator: they claim canonical $ids from
+      // the same dynamic namespace, so recvEvents/waitingCmds ids can never
+      // collide with the strArr id (or with each other).
+      const segAlloc = { v: segMaxId[fi] + 1 };
+      segStrArrCanonicalIds[fi] = {
+        canonicalId: null,
+        canonicalEmitted: false,
+        alloc: segAlloc,
+      };
+      segRecvEventsCache[fi] = {
+        canonicalId: null,
+        canonicalEmitted: false,
+        alloc: segAlloc,
+      };
+      segWaitingCmdsCache[fi] = {
+        canonicalId: null,
+        canonicalEmitted: false,
+        alloc: segAlloc,
+      };
     }
     let totalJwReset = 0;
     const segActiveJetways = []; // per-segment [{ stand, reg, aircraftId }]
@@ -5614,7 +5811,7 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     }
 
     for (let fi = 0; fi < frameDocs.length; fi++) {
-      const result = _rebuildJetwayEntries(frameDocs[fi], flights, validRegs, approachCache, log, segIdMappers[fi], bdt, icao, segFpIdByReg[fi], v4StandPositions);
+      const result = _rebuildJetwayEntries(frameDocs[fi], flights, validRegs, approachCache, log, segIdMappers[fi], bdt, icao, segFpIdByReg[fi], v4StandPositions, segStrArrCanonicalIds[fi], segRecvEventsCache[fi], segWaitingCmdsCache[fi]);
       segActiveJetways[fi] = result.activeJetways;
       if (result.resetCount > 0) {
         frameDocs[fi] = result.text;
@@ -5655,7 +5852,10 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
         segTypeMaps[fi], log, segIdMappers[fi], icao,
         approachCache, text, saveSec,
         segActiveJetways[fi],
-        segFpIdByReg[fi]
+        segFpIdByReg[fi],
+        segStrArrCanonicalIds[fi],
+        segRecvEventsCache[fi],
+        segWaitingCmdsCache[fi]
       );
       if (result.added > 0 || result.removed > 0) {
         frameDocs[fi] = result.text;

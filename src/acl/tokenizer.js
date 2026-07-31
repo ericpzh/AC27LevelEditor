@@ -240,6 +240,43 @@ function createTokenizer(text) {
     for (let i = start; i < end; i++) {
       const c = text[i];
       if (c === '"' && (i === 0 || text[i - 1] !== '\\')) {
+        // A string start. Only an OUT-OF-STRING quote can open a key string —
+        // check for the target key before toggling state. (Inside a string,
+        // escaped quotes \" were skipped by the backslash rule above.)
+        if (!inString && depth === targetDepth &&
+            text.substring(i, i + searchStr.length) === searchStr) {
+          // Found the key at the correct depth — find its value
+          const colonPos = text.indexOf(':', i + searchStr.length);
+          if (colonPos < 0 || colonPos >= end) return null;
+
+          let valStart = colonPos + 1;
+          while (valStart < end && ' \t\n\r'.includes(text[valStart])) valStart++;
+          if (valStart >= end) return null;
+
+          // Determine value type and find its end
+          let valEnd;
+          if (text[valStart] === '"') {
+            const strEnd = _skipString(valStart);
+            if (strEnd === null) return null;
+            valEnd = strEnd + 1;
+          } else if (text[valStart] === '{') {
+            const objEnd = _findObjectEndRaw(valStart);
+            if (objEnd === null) return null;
+            valEnd = objEnd;
+          } else if (text[valStart] === '[') {
+            const arrEnd = findArrayEnd(valStart);
+            if (arrEnd === null) return null;
+            valEnd = arrEnd;
+          } else if (text.substring(valStart, valStart + 4) === 'null') {
+            valEnd = valStart + 4;
+          } else {
+            // Number or boolean — scan to next structural break
+            valEnd = valStart;
+            while (valEnd < end && !',\r\n\t }]'.includes(text[valEnd])) valEnd++;
+          }
+
+          return { valueStart: valStart, valueEnd: valEnd };
+        }
         inString = !inString;
         continue;
       }
@@ -249,38 +286,6 @@ function createTokenizer(text) {
         depth++;
       } else if (c === '}') {
         depth--;
-      } else if (depth === targetDepth && text.substring(i, i + searchStr.length) === searchStr) {
-        // Found the key at the correct depth — find its value
-        const colonPos = text.indexOf(':', i + searchStr.length);
-        if (colonPos < 0 || colonPos >= end) return null;
-
-        let valStart = colonPos + 1;
-        while (valStart < end && ' \t\n\r'.includes(text[valStart])) valStart++;
-        if (valStart >= end) return null;
-
-        // Determine value type and find its end
-        let valEnd;
-        if (text[valStart] === '"') {
-          const strEnd = _skipString(valStart);
-          if (strEnd === null) return null;
-          valEnd = strEnd + 1;
-        } else if (text[valStart] === '{') {
-          const objEnd = _findObjectEndRaw(valStart);
-          if (objEnd === null) return null;
-          valEnd = objEnd;
-        } else if (text[valStart] === '[') {
-          const arrEnd = findArrayEnd(valStart);
-          if (arrEnd === null) return null;
-          valEnd = arrEnd;
-        } else if (text.substring(valStart, valStart + 4) === 'null') {
-          valEnd = valStart + 4;
-        } else {
-          // Number or boolean — scan to next structural break
-          valEnd = valStart;
-          while (valEnd < end && !',\r\n\t }]'.includes(text[valEnd])) valEnd++;
-        }
-
-        return { valueStart: valStart, valueEnd: valEnd };
       }
     }
     return null;
