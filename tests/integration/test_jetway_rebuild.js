@@ -714,26 +714,41 @@ if (!firstV4File) {
     const validRegs = new Set(['B-TEST1', 'B-TEST2', 'B-TEST3']);
     const noopLog = () => {};
 
+    // Off-block times for the synthetic flights must be AFTER the scaffold
+    // segment's snapshot time: departures whose off-block has already passed
+    // at the snapshot are treated as already departed (empty jetway), which
+    // would break the "populated" expectation in T3 below.
+    const depOffBlock = (() => {
+      const snapMatch = segmentText.match(/"CurrentDateTime":\s*\{\s*"\$id":\s*\d+,\s*"\$type":\s*"[^"]*",\s*\{\s*"\$type":\s*\d+,\s*(-?\d+)\s*\}\s*\}/);
+      if (!snapMatch) return '01:00:00';
+      const TICKS_PER_DAY = 864000000000n;
+      const snapSec = Number((((BigInt(snapMatch[1]) % TICKS_PER_DAY) + TICKS_PER_DAY) % TICKS_PER_DAY) / 10000000n);
+      const t = snapSec + 3600;
+      return String(Math.floor(t / 3600)).padStart(2, '0') + ':' +
+        String(Math.floor((t % 3600) / 60)).padStart(2, '0') + ':' +
+        String(t % 60).padStart(2, '0');
+    })();
+
     // T2: Turnaround — same REG, ARR LandingTime < DEP OffBlockTime → empty jetway
     {
       const t2Flights = [
         _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '00:00:00', _Registration: 'B-TEST1',
           CallSign: 'TST101', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
           Voice: 'EN', Language: 'EN', DepartureAirport: 'ZSJN', Airway: '' }),
-        _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '01:00:00', _Registration: 'B-TEST1',
+        _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: depOffBlock, _Registration: 'B-TEST1',
           CallSign: 'TST101', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
           Voice: 'EN', Language: 'EN', ArrivalAirport: 'ZBAA', Airway: '' }),
       ];
       const result = _rebuildJetwayEntries(segmentText, t2Flights, validRegs, approachCache, noopLog);
       const activeStands = new Set((result.activeJetways || []).map(j => j.stand));
       t24_assert(!activeStands.has('1'),
-        'T2: Turnaround (ARR 00:00 + DEP 01:00, same REG) → jetway for stand 1 is empty');
+        'T2: Turnaround (ARR 00:00 + DEP ' + depOffBlock + ', same REG) → jetway for stand 1 is empty');
     }
 
     // T3: Normal departure (no matching ARR) → jetway populated
     {
       const t3Flights = [
-        _makeFlight({ isDeparture: true, Stand: '1', OffBlockTime: '01:00:00', _Registration: 'B-TEST2',
+        _makeFlight({ isDeparture: true, Stand: '1', OffBlockTime: depOffBlock, _Registration: 'B-TEST2',
           CallSign: 'TST102', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
           Voice: 'EN', Language: 'EN', ArrivalAirport: 'ZBAA', Airway: '' }),
       ];
@@ -750,14 +765,14 @@ if (!firstV4File) {
         _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '', _Registration: 'B-TEST3',
           CallSign: 'TST103', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
           Voice: 'EN', Language: 'EN', DepartureAirport: 'ZSJN', Airway: '' }),
-        _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: '01:00:00', _Registration: 'B-TEST3',
+        _makeFlight({ isDeparture: true,  Stand: '1', OffBlockTime: depOffBlock, _Registration: 'B-TEST3',
           CallSign: 'TST103', Runway: '01', AircraftType: 'A320', AirlineName: 'Test Air',
           Voice: 'EN', Language: 'EN', ArrivalAirport: 'ZBAA', Airway: '' }),
       ];
       const result = _rebuildJetwayEntries(segmentText, t4Flights, validRegs, approachCache, noopLog);
       const activeStands = new Set((result.activeJetways || []).map(j => j.stand));
       t24_assert(!activeStands.has('1'),
-        'T4: Midnight turnaround (LandingTime="", OffBlockTime=01:00) → jetway for stand 1 is empty');
+        'T4: Midnight turnaround (LandingTime="", OffBlockTime=' + depOffBlock + ') → jetway for stand 1 is empty');
     }
   }
 }

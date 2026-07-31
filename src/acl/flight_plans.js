@@ -7,7 +7,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL } = require('./constants');
+const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, WARMUP_SEC, GRACE_TTL, TYPE_NUM_FALLBACK_START, ID_OFFSET_FLIGHTPLAN, ID_OFFSET_AIRCRAFT, ID_OFFSET_ANIMATOR, CMD_CONTACT_TOWER, CMD_CLEARED_TO_LAND, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_DAY, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL } = require('./constants');
 const { ticksToTime, timeToTicks, _extractBaseDateFromText } = require('../utils/timeUtils');
 const { _generateGuid } = require('./world_state');
 const { computeProgressRatio, computePathLength, resolveFlyApproachPoints, buildApproachAircraftBlock, buildState5AircraftBlock, buildAnimatorBlock, extractGameTime, computeApproachCap, computePosition, computeDirection, _vec3Sub, _vec3Normalize, _vec3Dist, _detectSchemaVersion } = require('./approach');
@@ -2345,6 +2345,31 @@ function _validateStandConflicts(flights) {
   }
 }
 
+/**
+ * Extract the world-state snapshot time (seconds since midnight) from a
+ * GATCARC4 segment's GameTime.CurrentDateTime, or null when the segment has
+ * none (e.g. the header segment, whose jetways are session-start state).
+ *
+ * The game writes an EMPTY jetway entry when a stand's departure aircraft has
+ * already off-blocked at the snapshot time (aircraft departed) and a populated
+ * entry when the departure is still at the gate. The jetway rebuild must apply
+ * the same rule, or a save would resurrect departed aircraft at the gate (and,
+ * without an approach cache, crash trying to build an active jetway from an
+ * empty original entry).
+ */
+function _extractSegmentSnapshotSec(segmentText) {
+  // v4 serialization: "CurrentDateTime": { "$id": N, "$type": "...", { "$type": N, <ticks> } }
+  const m = segmentText.match(/"CurrentDateTime":\s*\{\s*"\$id":\s*\d+,\s*"\$type":\s*"[^"]*",\s*\{\s*"\$type":\s*\d+,\s*(-?\d+)\s*\}\s*\}/);
+  if (!m) return null;
+  try {
+    const ticks = BigInt(m[1]);
+    // TICKS_PER_DAY is BigInt — divide by BigInt TICKS_PER_SECOND, not the Number variant
+    return Number((((ticks % TICKS_PER_DAY) + TICKS_PER_DAY) % TICKS_PER_DAY) / 10000000n);
+  } catch (_) {
+    return null;
+  }
+}
+
 function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao, fpIdByReg, standPositions, strArrCache, recvEventsCache, waitingCmdsCache) {
   // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
   const t = createTokenizer(segmentText);
@@ -2505,6 +2530,12 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
   const exhaustedStands = new Set();
   const exhaustedFlights = new Set();
 
+  // Snapshot time of this segment (seconds since midnight), or null when the
+  // segment has no CurrentDateTime (header segment).  Departures whose
+  // OffBlockTime has already passed at the snapshot are treated as departed —
+  // empty jetway — matching the game's own entries.
+  const segmentSnapshotSec = _extractSegmentSnapshotSec(segmentText);
+
   for (const info of entryInfos) {
     if (!info.isJetway) {
       segments.push(info.entryText);
@@ -2546,14 +2577,42 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
       }
     }
 
+    // Departure already off-blocked at this segment's snapshot time?
+    // The game writes an empty jetway entry when the aircraft has already
+    // departed (off-block <= snapshot); the rebuild must not dock it again.
+    if (depFlight && segmentSnapshotSec != null && depFlight.OffBlockTime) {
+      const ob = String(depFlight.OffBlockTime).split(':');
+      if (ob.length >= 2) {
+        const offSec = parseInt(ob[0], 10) * 3600 + (parseInt(ob[1], 10) || 0) * 60 + (parseInt(ob[2], 10) || 0);
+        if (offSec <= segmentSnapshotSec) {
+          log('Stand ' + standId + ': departure ' + (depFlight._Registration || depFlight.Registration || '') +
+            ' — off-block ' + depFlight.OffBlockTime + ' <= snapshot, already departed, ' +
+            'skipping jetway population');
+          depFlight = null;
+        }
+      }
+    }
+
     // Bilateral exhaustion: both stand AND flight must be fresh.
     // If either was already assigned to a previous jetway, skip → empty jetway.
+    let built = null;
     if (depFlight && !exhaustedStands.has(standId) && !exhaustedFlights.has(flightReg)) {
       exhaustedStands.add(standId);
       exhaustedFlights.add(flightReg);
 
       // ---- Active jetway: rebuild DockingAircraft with flight data ----
-      const built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions, strArrCache);
+      try {
+        built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions, strArrCache);
+      } catch (e) {
+        // No spec data (no approach cache + empty original entry, or an
+        // aircraft type missing from the specDB): write an empty jetway
+        // rather than failing the whole save.
+        log('Stand ' + standId + ': jetway rebuild failed (' + e.message + ') — writing empty jetway');
+        built = null;
+      }
+    }
+
+    if (built && built.text) {
       if (built.text !== info.entryText) resetCount++;
       segments.push(built.text);
       activeJetways.push({
