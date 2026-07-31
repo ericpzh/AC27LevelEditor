@@ -177,7 +177,7 @@ Iterates every level row in the browser: open → disable time validation → Ct
 
 ---
 
-## Layer 3 — Node.js Integration Tests (27 scripts)
+## Layer 3 — Node.js Integration Tests (28 scripts)
 
 Standalone scripts in `tests/integration/`. Run directly with `node`. Some need `--require ./tests/integration/preload.cjs` for ESM interop.
 
@@ -200,6 +200,7 @@ Standalone scripts in `tests/integration/`. Run directly with `node`. Some need 
 | `test_taxiway.js` | 10 | `parseTaxiwayPaths`: ACL structure parsing, flag values (1/2/4), stand-node marking, ZSJN fixture (582 paths, 189 named) | 10/10 pass |
 
 | `test_save_roundtrip_diff.js` | 26 | Approach-block round-trip diff: T1 `RunwayTakeOffLength` nullish coalescing (0 preserved, missing→2000), T2 `ModelOffset` float3 tuple format (no named x/y/z), T3 `AircraftRunwayCoordinateState` canonical-`$id` design (5 inline empty string[] arrays, unique per-array `$id`, zero `$iref`), T4 v4 spec extraction from a real v4 file (`--acl` or default `works.acl`) | 26/26 pass |
+| `test_extract_v4_runway_pairs.js` | 6 | `extractV4RunwayPairs` — v4 runway pair extraction from static SceneryData `PhysicalName` ("01/19" → 01|19 + 19|01): ZSJN v4 fixture (2 pairs), KJFK (8 pairs — 4 groups), KDCA (6 pairs — 3 groups), non-v4 text → `[]`, empty/garbage input → `[]`, dedup (both ends of a physical runway → exactly 2 pairs). KJFK/KDCA cases skip when game root unavailable (`--root <game-root>`) | 6/6 pass (fixture) |
 
 ```bash
 node tests/integration/test_tokenizer.js
@@ -208,6 +209,7 @@ node tests/integration/test_acl_document.js
 node tests/integration/test_sid_goaround.js
 node tests/integration/test_taxiway.js
 node tests/integration/test_save_roundtrip_diff.js
+node tests/integration/test_extract_v4_runway_pairs.js [--root <game-root>]
 ```
 
 ### UDP telemetry test (mock loopback server, port 20266 must be free)

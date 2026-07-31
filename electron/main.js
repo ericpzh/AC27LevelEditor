@@ -12,7 +12,7 @@ const updater = require('./updater');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, detectSchemaVersion, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, detectSchemaVersion, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { readAclText } = require('../src/acl/gatcarc');
@@ -518,6 +518,31 @@ function _writeCache(data) {
   fs.writeFileSync(_cachePath(), JSON.stringify(data), 'utf-8');
 }
 
+/**
+ * Collect runway pairs for an airport.
+ *
+ * v4: derive pairs from the static SceneryData runway objects (each physical
+ * runway "4L/22R" yields 4L|22R and 22R|4L). Timeline-change scanning is NOT
+ * used for v4 — airports that never had runway changes defined (KJFK, KDCA)
+ * have empty RunwayTimeline sections, which previously left _runwayPairs empty
+ * and hid the runway change editor entirely.
+ *
+ * v2/v3: keep the existing timeline-change scan (collectRunwayPairs).
+ *
+ * @param {string[]} aclPaths — filtered .acl paths (non-hidden levels)
+ * @returns {Array<{source: string, dest: string}>} sorted runway pairs
+ */
+function _collectAirportRunwayPairs(aclPaths) {
+  if (!aclPaths || aclPaths.length === 0) return [];
+  try {
+    const firstText = readAclText(aclPaths[0]);
+    if (detectSchemaVersion(firstText) === 4) return extractV4RunwayPairs(firstText);
+  } catch (e) {
+    console.log('[CACHE] runway pair scan warning (' + (aclPaths[0] || '') + '):', e.message);
+  }
+  return collectRunwayPairs(aclPaths);
+}
+
 // ─── IPC: Phase 0 — initialize airport cache (scan all CSV + audio) ──
 
 ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
@@ -590,8 +615,8 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         }
       } catch (_) {}
       dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
-      runwayPairs = aclPaths.length > 0 ? collectRunwayPairs(aclPaths) : [];
-      console.log('[INIT-CACHE]   ' + icao + ': dropdowns scanned from ' + aclPaths.length + ' .acl files');
+      runwayPairs = _collectAirportRunwayPairs(aclPaths);
+      console.log('[INIT-CACHE]   ' + icao + ': dropdowns scanned from ' + aclPaths.length + ' .acl files, runway pairs: ' + runwayPairs.length);
     }
 
     // Parse stand positions from first .acl file (airport-level, shared across all levels)
@@ -866,7 +891,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         }
       } catch (_) {}
       const dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
-      const runwayPairs = aclPaths.length > 0 ? collectRunwayPairs(aclPaths) : [];
+      const runwayPairs = _collectAirportRunwayPairs(aclPaths);
 
       // Merge audio flight numbers into dropdown _flightNums
       if (audioCallsigns?.byAirline) {

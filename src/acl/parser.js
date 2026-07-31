@@ -22,7 +22,7 @@ const {
 } = require('./flight_plans');
 const {
   sortFlightsChronologically,
-  collectUniqueValues, collectRunwayPairs, getFileInfo,
+  collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, getFileInfo,
   loadAudioCallsigns, mergeAudioCallsigns,
 } = require('./utils');
 const { scanGameRoot } = require('./scanner');
@@ -296,7 +296,7 @@ module.exports = {
   // Public API
   loadFlights, generateFullAcl, extractCurrentDateTime, detectSchemaVersion,
   exportCSV, exportGameCSV,
-  collectUniqueValues, collectRunwayPairs, mergeAudioCallsigns,
+  collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns,
   getFileInfo, loadAudioCallsigns,
   sortFlightsChronologically,
   scanGameRoot,

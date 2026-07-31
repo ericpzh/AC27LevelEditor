@@ -7,6 +7,7 @@ const { DROPDOWN_FIELDS } = require('./constants.js');
 const { _parseWorldStateData, _extractFlightsFromWorldState } = require('./world_state');
 const { _parseSceneryData } = require('./scenery');
 const { _parseWorldStateFlightPlans, _parseRunwayTimeline } = require('./flight_plans');
+const { buildPkIndex, extractStringFromV4 } = require('./v4_pk_index');
 const { resolveConfigTime } = require('./config');
 const { readAclText } = require('./gatcarc');
 
@@ -149,6 +150,56 @@ function collectRunwayPairs(aclPaths) {
   });
 }
 
+/**
+ * Extract runway pairs from a v4 ACL's static SceneryData.
+ *
+ * Each runway object in PKStaticEntities (e.g. "$k": "runway:01") carries a
+ * PhysicalName like "01/19" — the two runway objects sharing the same
+ * PhysicalName are the two ends of one physical runway and form a reciprocal
+ * pair (01|19 and 19|01).
+ *
+ * This is the v4 replacement for timeline-change scanning: airports that have
+ * never had runway changes defined (KJFK, KDCA) have empty RunwayTimeline
+ * sections, so the old collectRunwayPairs() found nothing and the runway
+ * editor hid its change list entirely.
+ *
+ * @param {string} aclText — decoded v4 ACL text (must be schema v4)
+ * @returns {Array<{source: string, dest: string}>} sorted runway pairs
+ */
+function extractV4RunwayPairs(aclText) {
+  const pkIndex = buildPkIndex(aclText);
+  const rwMap = pkIndex.byType.get('runway');
+  if (!rwMap) return [];
+
+  // Group runway names by PhysicalName ("01/19" → ["01", "19"])
+  const groups = new Map();
+  for (const [, entry] of rwMap) {
+    const name = extractStringFromV4(entry.block, 'Name');
+    const phys = extractStringFromV4(entry.block, 'PhysicalName');
+    if (!name || !phys || !phys.includes('/')) continue;
+    if (!groups.has(phys)) groups.set(phys, []);
+    const names = groups.get(phys);
+    if (!names.includes(name)) names.push(name);
+  }
+
+  // Build reciprocal pairs from each group
+  const pairSet = new Set();
+  for (const names of groups.values()) {
+    for (let i = 0; i < names.length; i++) {
+      for (let j = i + 1; j < names.length; j++) {
+        pairSet.add(names[i] + '|' + names[j]);
+        pairSet.add(names[j] + '|' + names[i]);
+      }
+    }
+  }
+
+  if (pairSet.size === 0) return [];
+  return Array.from(pairSet).sort().map(s => {
+    const [source, dest] = s.split('|');
+    return { source, dest };
+  });
+}
+
 // ─── Get basic file info without deep parsing ─────────────────
 
 function getFileInfo(aclPath) {
@@ -255,6 +306,7 @@ module.exports = {
   sortFlightsChronologically,
   collectUniqueValues,
   collectRunwayPairs,
+  extractV4RunwayPairs,
   getFileInfo,
   loadAudioCallsigns,
   mergeAudioCallsigns,

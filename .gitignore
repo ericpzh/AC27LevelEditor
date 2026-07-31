@@ -21,8 +21,9 @@ coverage/
 test-results/
 tests/tmp-e2e/
 tests/tmp-e2e-userdata/
-tests/**/_tmp_v4_roundtrip/
-tests/integration/_e2e_temp_rebuild_timelines.acl
+# Temp dirs: integration/_tmp/ (save-integrity golden/result), _tmp_v4_roundtrip/
+tests/**/_tmp*/
+tests/integration/_e2e_temp_rebuild_timelines*.acl
 tests/_reports_/
 tests/_debug/
 

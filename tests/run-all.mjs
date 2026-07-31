@@ -29,6 +29,7 @@ const GAME_ROOT = process.argv.includes('--game-root')
 const PRELOAD = path.join(__dirname, 'integration', 'preload.cjs');
 const SAVE_INTEGRITY = path.join(__dirname, 'integration', 'test_save_integrity_all.js');
 const JETWAY_REBUILD = path.join(__dirname, 'integration', 'test_jetway_rebuild.js');
+const RUNWAY_PAIRS = path.join(__dirname, 'integration', 'test_extract_v4_runway_pairs.js');
 
 let totalPassed = 0;
 let totalFailed = 0;
@@ -75,6 +76,10 @@ runStep('Layer 2: Save Integrity (8 prod + 4 demo .acl files)', layer2Cmd);
 // ── 2b. Jetway Rebuild Test (12 prod+demo files) ────────────────
 const layer2bCmd = `node --require "${PRELOAD}" "${JETWAY_REBUILD}" --root "${GAME_ROOT}" --prod-demo --no-cache`;
 runStep('Layer 2b: Jetway Rebuild (12 v4 files)', layer2bCmd);
+
+// ── 2c. v4 Runway Pair Extraction ────────────────────────────────
+const layer2cCmd = `node "${RUNWAY_PAIRS}" --root "${GAME_ROOT}"`;
+runStep('Layer 2c: v4 Runway Pair Extraction', layer2cCmd);
 
 // ── 3. Build (E2E needs dist-electron/main.js) ──────────────────
 console.log(`\n${'='.repeat(60)}`);
