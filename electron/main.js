@@ -12,7 +12,7 @@ const updater = require('./updater');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractSaveTime, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { readAclText } = require('../src/acl/gatcarc');
@@ -816,6 +816,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       const payload = {
         cacheVersion: CACHE_VERSION,
         gameRoot: rootPath,
+        lang: cr.data?.lang ?? null,
         builtAt: Date.now(),
         airports: serialized,
       };
@@ -1077,23 +1078,14 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
       removedCount = result.removedCount;
     }
 
-    // Extract saveTime: prefer GameTime.CurrentDateTime, fall back to approach entries,
-    // then to config.startTime + warmup so _saveSec is never null when config exists
+    // Extract saveTime: prefer GameTime.CurrentDateTime, fall back to
+    // config.startTime + warmup so _saveSec is never null when config exists
     let _saveSec = null;
     try {
       const rawText = readAclText(filePath);
       _saveSec = extractGameTime(rawText);
       if (_saveSec !== null) {
         console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from GameTime.CurrentDateTime');
-      } else {
-        const icaoMatch = filePath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
-        const icao = icaoMatch ? icaoMatch[1] : '';
-        const cacheEntry = airportCache && airportCache[icao];
-        const totalApproachTimes = cacheEntry?.approachData?.totalApproachTimes;
-        _saveSec = extractSaveTime(rawText, totalApproachTimes);
-        if (_saveSec !== null) {
-          console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from approach entries (fallback)');
-        }
       }
     } catch (_) {}
     // Final fallback: compute from config.startTime + 13min warmup
@@ -1367,15 +1359,6 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
       _saveSec = extractGameTime(rawText);
       if (_saveSec !== null) {
         console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from GameTime.CurrentDateTime');
-      } else {
-        const icaoMatch2 = newAclPath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
-        const icao2 = icaoMatch2 ? icaoMatch2[1] : '';
-        const cacheEntry2 = airportCache && airportCache[icao2];
-        const totalApproachTimes2 = cacheEntry2?.approachData?.totalApproachTimes;
-        _saveSec = extractSaveTime(rawText, totalApproachTimes2);
-        if (_saveSec !== null) {
-          console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from approach entries (fallback)');
-        }
       }
     } catch (_) {}
     if (_saveSec == null && config && config.startTime) {
@@ -1469,12 +1452,6 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     try {
       const rawText = readAclText(filePath);
       _saveSec = extractGameTime(rawText);
-      if (_saveSec == null) {
-        const icaoMatch = filePath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
-        const icao = icaoMatch ? icaoMatch[1] : '';
-        const cacheEntry = airportCache && airportCache[icao];
-        _saveSec = extractSaveTime(rawText, cacheEntry?.approachData?.totalApproachTimes);
-      }
     } catch (_) {}
     if (_saveSec == null && config && config.startTime) {
       const p = String(config.startTime).split(':');
@@ -2114,10 +2091,6 @@ ipcMain.handle('install-bepinex', async (_event) => {
 
   try {
     const result = await bepinex.installLatest(gameRoot, notify);
-    if (result.success && cr.data) {
-      cr.data.debugMode = true;
-      _writeCache(cr.data);
-    }
     return result;
   } catch (err) {
     console.error('[BepInEx] install failed:', err.message);
@@ -2132,10 +2105,6 @@ ipcMain.handle('uninstall-bepinex', async () => {
 
   try {
     const result = bepinex.removeFiles(gameRoot);
-    if (cr.data) {
-      cr.data.debugMode = false;
-      _writeCache(cr.data);
-    }
     return { success: true, removed: result.removed, errors: result.errors };
   } catch (err) {
     console.error('[BepInEx] uninstall failed:', err.message);

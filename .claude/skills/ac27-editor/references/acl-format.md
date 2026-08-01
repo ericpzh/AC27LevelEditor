@@ -471,7 +471,7 @@ In `_rebuildStaticDataSections` (flight_plans.js), saveTime is resolved as:
 
 1. `aclcfgStartTime` — passed from the frontend (config `startTime` with the `GameTime.CurrentDateTime` override applied via `resolveConfigTime`)
 2. Fallback: `resolveConfigTime(text).startTime` from the file being saved
-3. `_saveSec` is **ignored** — v4 is not a snapshot save; aircraft positions are computed relative to the scenario's configured start time (`extractSaveTime` is a stub returning `null`)
+3. `_saveSec` is **ignored** — v4 is not a snapshot save; aircraft positions are computed relative to the scenario's configured start time
 
 ### Verified Field Relationships (State=30)
 
@@ -492,9 +492,7 @@ ProgressRatio = 1 − (LandingTime − saveTime) / totalApproachTime(Route)
 ```
 
 - `saveTime` = the scenario's configured start time (config `startTime` with the
-  `GameTime.CurrentDateTime` override applied by `resolveConfigTime`). The cache's
-  `saveTimeOffsets` is still computed at cache-build time but the save path no
-  longer reads it (`extractSaveTime` is a stub returning `null`).
+  `GameTime.CurrentDateTime` override applied by `resolveConfigTime`).
 - `totalApproachTime(STAR)` = route-specific total duration from STAR entry to
   touchdown (~1380-1775s, computed from route path-length estimates via
   `computeApproachTimesFromScenery()` using physics-based formula with
@@ -580,7 +578,6 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 - `buildState5ParamsMap(state5Entries)` → `Map<"runway", {pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?}>` — per-runway final approach parameters; `routeName` populated from the approach procedure's `Name` field
 - `computeApproachTimesFromScenery(aclText, starMappings, appPointMap, refTatMap, defaultTAT, airportScale?)` → `Map<STAR, seconds>` — per-STAR duration from PKStaticEntities route path-length estimates using three-tier estimation
 - `extractGameTime(aclText)` → `seconds | null` — parse `GameTime.CurrentDateTime` ticks as seconds since midnight (returns `null` when the file has no `GameTime` section, as v4 scenario files usually don't)
-- `extractSaveTime(aclText, totalApproachTimes)` → **stub returning `null`** — snapshot time is resolved from the config start time instead (see [saveTime Resolution Priority](#savetime-resolution-priority))
 
 **Path Resolution:**
 - `resolveFlyApproachPoints(aclText, route, runway)` → `Vector3[]` — via the PKStaticEntities runway → `Routes` → `AirwayNodes` `$iref` chain

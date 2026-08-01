@@ -32,7 +32,7 @@ const {
   buildDesignatorMapping, buildApproachCache, buildStarPaths,
   extractStarRunwayMappings,
   serializeApproachCache, deserializeApproachCache,
-  extractSaveTime, extractGameTime,
+  extractGameTime,
   _parseRunwayThresholds,
 } = require('./approach');
 const {
@@ -203,7 +203,7 @@ module.exports = {
   buildDesignatorMapping, buildApproachCache, buildStarPaths,
   extractStarRunwayMappings,
   serializeApproachCache, deserializeApproachCache,
-  extractSaveTime, extractGameTime,
+  extractGameTime,
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
   _extractConfig,

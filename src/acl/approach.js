@@ -2372,13 +2372,6 @@ function extractGameTime(aclText) {
   return Math.round((ticks - baseTicks) / 10000000); // seconds since midnight
 }
 
-// ─── 10c. Extract saveTime from ACL approach entries ──────────────
-
-function extractSaveTime(aclText, totalApproachTimes) {
-  // v4: use MetaData.BaseTime instead (handled by extractCurrentDateTime)
-  return null;
-}
-
 // ─── 11. Cache Serialization ──────────────────────────────────────
 
 /**
@@ -2390,8 +2383,6 @@ function serializeApproachCache(cache) {
   const out = {};
   if (cache.specDB) { out.specDB = {}; for (const [k, v] of cache.specDB) out.specDB[k] = v; }
   if (cache.designatorMap) { out.designatorMap = {}; for (const [k, v] of cache.designatorMap) out.designatorMap[k] = v; }
-  if (cache.saveTimeOffsets) { out.saveTimeOffsets = {}; for (const [k, v] of cache.saveTimeOffsets) out.saveTimeOffsets[k] = v; }
-  if (cache.typeMap) { out.typeMap = {}; for (const [k, v] of cache.typeMap) out.typeMap[String(k)] = v; }
   if (cache.fileTypeMaps) { out.fileTypeMaps = {}; for (const [fileName, tm] of cache.fileTypeMaps) { const obj = {}; for (const [k, v] of tm) obj[String(k)] = v; out.fileTypeMaps[fileName] = obj; } }
   if (cache.totalApproachTimes) { out.totalApproachTimes = {}; for (const [k, v] of cache.totalApproachTimes) out.totalApproachTimes[k] = v; }
   if (cache.appPointMap) { out.appPointMap = {}; for (const [k, v] of cache.appPointMap) out.appPointMap[k] = v; }
@@ -2423,8 +2414,6 @@ function deserializeApproachCache(json) {
   const cache = {};
   if (json.specDB && typeof json.specDB === 'object') { cache.specDB = new Map(Object.entries(json.specDB)); }
   if (json.designatorMap && typeof json.designatorMap === 'object') { cache.designatorMap = new Map(Object.entries(json.designatorMap)); }
-  if (json.saveTimeOffsets && typeof json.saveTimeOffsets === 'object') { cache.saveTimeOffsets = new Map(Object.entries(json.saveTimeOffsets)); }
-  if (json.typeMap && typeof json.typeMap === 'object') { cache.typeMap = new Map(Object.entries(json.typeMap).map(([k, v]) => [parseInt(k, 10), v])); }
   if (json.fileTypeMaps && typeof json.fileTypeMaps === 'object') { cache.fileTypeMaps = new Map(Object.entries(json.fileTypeMaps).map(([name, obj]) => [name, new Map(Object.entries(obj).map(([k, v]) => [parseInt(k, 10), v]))])); }
   if (json.totalApproachTimes && typeof json.totalApproachTimes === 'object') { cache.totalApproachTimes = new Map(Object.entries(json.totalApproachTimes)); }
   if (json.appPointMap && typeof json.appPointMap === 'object') { cache.appPointMap = new Map(Object.entries(json.appPointMap)); }
@@ -2481,7 +2470,6 @@ module.exports = {
   buildTypeNameIndex,
   buildStarPaths,
   extractStarRunwayMappings,
-  extractSaveTime,
   extractGameTime,
   serializeApproachCache,
   deserializeApproachCache,
