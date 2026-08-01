@@ -15,6 +15,16 @@ export function randomPick(arr) {
 }
 
 /**
+ * Default Language for a new flight, tied to the airport's region.
+ * China (ZXXX ICAO prefix) → 'zh', otherwise → 'en'.
+ * @param {string} icao - airport ICAO code
+ * @returns {string}
+ */
+export function defaultLanguageForAirport(icao) {
+  return String(icao || '').startsWith('Z') ? 'zh' : 'en';
+}
+
+/**
  * Compute a default base time (in minutes from midnight) for new flights.
  * Uses configEndTime minus DEFAULT_TIME_OFFSET_MIN, clamped to >= 0,
  * falling back to FALLBACK_BASE_MINUTES (06:00).
@@ -197,14 +207,14 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
   const flight = {
     ...makeEmptyFlight(),
     CallSign: airlineCode + flightNum,
-    Language: 'en',
+    Language: defaultLanguageForAirport(currentAirport),
     AircraftType: aircraftType,
     AirlineName: firstOrEmpty(values.AirlineName),
     Stand: stand,
     Runway: runway,
     Airway: airway,
     Registration: registration,
-    Voice: firstOrEmpty(values.Voice),
+    Voice: randomPick(values.Voice) || '',
   };
 
   if (type === 'arrival') {

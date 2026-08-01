@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   randomPick,
+  defaultLanguageForAirport,
   pickRandomAirlineCode,
   pickRandomFlightNumber,
   pickRandomUnusedStand,
@@ -48,6 +49,28 @@ describe('randomPick', () => {
     }
     expect(seen.has('A')).toBe(true);
     expect(seen.has('B')).toBe(true);
+  });
+});
+
+// ─── defaultLanguageForAirport ───────────────────────────────────
+
+describe('defaultLanguageForAirport', () => {
+  it('returns "zh" for Z* (China) airports', () => {
+    expect(defaultLanguageForAirport('ZSJN')).toBe('zh');
+    expect(defaultLanguageForAirport('ZBAD')).toBe('zh');
+    expect(defaultLanguageForAirport('ZSPD')).toBe('zh');
+  });
+
+  it('returns "en" for non-Z airports', () => {
+    expect(defaultLanguageForAirport('KJFK')).toBe('en');
+    expect(defaultLanguageForAirport('KDCA')).toBe('en');
+    expect(defaultLanguageForAirport('EGLC')).toBe('en');
+  });
+
+  it('returns "en" when ICAO is empty or undefined', () => {
+    expect(defaultLanguageForAirport('')).toBe('en');
+    expect(defaultLanguageForAirport(undefined)).toBe('en');
+    expect(defaultLanguageForAirport(null)).toBe('en');
   });
 });
 
@@ -428,19 +451,50 @@ describe('createDefaultFlight', () => {
     const apv = {};
     const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
 
-    expect(flight.Language).toBe('en');
+    expect(flight.Language).toBe('zh');
     expect(flight.ArrivalAirport).toBe('ZSJN');
     // With no data, airline will be 'NEW'
     expect(flight.CallSign.substring(0, 3)).toBe('NEW');
     expect(flight.CallSign.substring(3)).toBe('1');
   });
 
-  it('sets Language to "en"', () => {
+  it('sets Language to "zh" at a Z* (China) airport', () => {
     const audioData = { allAirlines: ['CCA'] };
     const vals = makeVals({ AirlineCode: ['CCA'] });
     const apv = makeAirportValues('CCA');
     const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
+    expect(flight.Language).toBe('zh');
+  });
+
+  it('sets Language to "en" at a non-Z airport', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const vals = makeVals({ AirlineCode: ['CCA'] });
+    const apv = makeAirportValues('CCA');
+    const flight = createDefaultFlight('arrival', vals, audioData, 'KJFK', apv, []);
     expect(flight.Language).toBe('en');
+  });
+
+  it('randomizes Voice from the airport dropdown pool', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const voices = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN'];
+    const vals = makeVals({ AirlineCode: ['CCA'], Voice: voices });
+    const apv = makeAirportValues('CCA');
+    const seen = new Set();
+    for (let i = 0; i < 20; i++) {
+      const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
+      expect(voices).toContain(flight.Voice);
+      seen.add(flight.Voice);
+      if (seen.size === 3) break;
+    }
+    expect(seen.size).toBe(3);
+  });
+
+  it('leaves Voice empty when the airport has no voice pool', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const vals = makeVals({ AirlineCode: ['CCA'], Voice: [] });
+    const apv = makeAirportValues('CCA');
+    const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
+    expect(flight.Voice).toBe('');
   });
 
   it('uses values.AircraftType fallback when _compat has no airline', () => {
