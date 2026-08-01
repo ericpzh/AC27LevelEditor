@@ -377,6 +377,8 @@ function applyCascades(flight, updates, constraints) {
 
   if ('AirlineCode' in updates && updates.AirlineCode) {
     newCode = updates.AirlineCode.toUpperCase();
+    // AirlineName stores the 3-letter code (game format)
+    result.AirlineName = newCode;
     // Cascade AircraftType to first valid for new airline
     const compat = constraints.airlineAircraftCompat[newCode];
     if (compat && compat.length > 0 && !compat.includes(result.AircraftType)) {
@@ -546,7 +548,14 @@ async function handleMcpMessage(msg) {
           if (issues) {
             return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: { code: 'VALIDATION_FAILED', message: issues.length + ' validation issue(s).', details: issues } }) }], isError: true });
           }
-          const newFlights = [...(state.flights || []), ...args.flights];
+          // Enrich rows: derive isDeparture from OffBlockTime (same convention as
+          // the get_flights departure filter) and default AirlineName to the
+          // callsign's 3-letter airline code (the game stores codes, not names).
+          const newFlights = [...(state.flights || []), ...args.flights.map(f => ({
+            ...f,
+            isDeparture: !!(f.OffBlockTime && f.OffBlockTime.trim()),
+            AirlineName: (f.AirlineName || '').trim() || (f.CallSign || '').substring(0, 3),
+          }))];
           pushStoreUpdate({ flights: newFlights, modified: true });
           result = { success: true, created: args.flights.length };
           break;

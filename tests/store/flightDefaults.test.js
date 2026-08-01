@@ -456,6 +456,34 @@ describe('createDefaultFlight', () => {
     // With no data, airline will be 'NEW'
     expect(flight.CallSign.substring(0, 3)).toBe('NEW');
     expect(flight.CallSign.substring(3)).toBe('1');
+    // AirlineName stores the same 3-letter code as the callsign
+    expect(flight.AirlineName).toBe('NEW');
+  });
+
+  it('sets isDeparture from the type (departure → true)', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const vals = makeVals({ AirlineCode: ['CCA'] });
+    const apv = makeAirportValues('CCA');
+    const flight = createDefaultFlight('departure', vals, audioData, 'ZSJN', apv, []);
+    expect(flight.isDeparture).toBe(true);
+  });
+
+  it('sets isDeparture from the type (arrival → false)', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const vals = makeVals({ AirlineCode: ['CCA'] });
+    const apv = makeAirportValues('CCA');
+    const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
+    expect(flight.isDeparture).toBe(false);
+  });
+
+  it('sets AirlineName to the picked airline code (game stores codes)', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const vals = makeVals({ AirlineCode: ['CCA'], AirlineName: ['China Eastern'] });
+    const apv = makeAirportValues('CCA');
+    const flight = createDefaultFlight('departure', vals, audioData, 'ZSJN', apv, []);
+    // Code from audio data (CCA), NOT the (empty) AirlineName dropdown
+    expect(flight.AirlineName).toBe('CCA');
+    expect(flight.CallSign.substring(0, 3)).toBe('CCA');
   });
 
   it('sets Language to "zh" at a Z* (China) airport', () => {
@@ -568,6 +596,12 @@ describe('createArrivalFlight', () => {
     expect(flight.InBlockTime).toBe('');
     expect(flight.LandingTime).toMatch(/^\d{2}:\d{2}:00$/);
   });
+
+  it('marks the flight as an arrival', () => {
+    const flight = createArrivalFlight('18:00', { AirlineCode: ['CCA'] }, { allAirlines: ['CCA'] }, 'ZSJN', {}, []);
+    expect(flight.isDeparture).toBe(false);
+    expect(flight.AirlineName).toBe('CCA');
+  });
 });
 
 // ─── createDepartureFlight ───────────────────────────────────────
@@ -606,5 +640,11 @@ describe('createDepartureFlight', () => {
     const flight = createDepartureFlight('06:00', {}, {}, 'ZSJN', {}, []);
     expect(flight.TakeoffTime).toBe('');
     expect(flight.OffBlockTime).toMatch(/^\d{2}:\d{2}:00$/);
+  });
+
+  it('marks the flight as a departure', () => {
+    const flight = createDepartureFlight('06:00', { AirlineCode: ['CCA'] }, { allAirlines: ['CCA'] }, 'ZSJN', {}, []);
+    expect(flight.isDeparture).toBe(true);
+    expect(flight.AirlineName).toBe('CCA');
   });
 });

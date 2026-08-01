@@ -1248,6 +1248,21 @@ function _rebuildWaitingCommandsInEntry(entryText, _waitingCmdsCache) {
 }
 
 /**
+ * Whether a flight is a departure.
+ *
+ * isDeparture is set by the ACL parser on load; creation paths (UI factory,
+ * MCP create_flights) set it too. The time-based fallback keeps a missing
+ * flag from silently serializing a departure as an arrival — mirror of
+ * csvIo.js (flag only ORs toward departure).
+ *
+ * @param {object} fl - editor state flight object
+ * @returns {boolean}
+ */
+function _isDepartureFlight(fl) {
+  return fl.isDeparture === true || !!(fl.OffBlockTime || '').trim();
+}
+
+/**
  * Pre-validation: check for stand occupancy conflicts across all flights.
  *
  * For each stand, collects all flights (ARR + DEP), sorts by their event time
@@ -1271,7 +1286,7 @@ function _validateStandConflicts(flights) {
     const standKey = String(fl.Stand).replace(/^0+/, '');
     if (!byStand.has(standKey)) byStand.set(standKey, []);
 
-    const isDep = fl.isDeparture === true;
+    const isDep = _isDepartureFlight(fl);
     const time = isDep ? (fl.OffBlockTime || '') : (fl.LandingTime || '');
     const reg = fl._Registration || fl.Registration || '';
     const cs = fl.CallSign || '';
@@ -1397,7 +1412,7 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
   // When multiple DEPs share a stand, keep the one with the earliest OffBlockTime.
   const standFlights = new Map();
   for (const fl of flights) {
-    const isDep = fl.isDeparture === true;
+    const isDep = _isDepartureFlight(fl);
     if (isDep && fl.Stand) {
       const standKey = String(fl.Stand).replace(/^0+/, ''); // normalize "02" → "2"
       const existing = standFlights.get(standKey);
@@ -1417,7 +1432,7 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
   // the turnaround check handles empty strings correctly.
   const standArrFlights = new Map(); // standKey → [arrFlight, ...]
   for (const fl of flights) {
-    const isDep = fl.isDeparture === true;
+    const isDep = _isDepartureFlight(fl);
     if (!isDep && fl.Stand != null && fl.Stand !== '') {
       const standKey = String(fl.Stand).replace(/^0+/, '');
       if (!standArrFlights.has(standKey)) standArrFlights.set(standKey, []);
@@ -2137,7 +2152,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
     for (const f of flights) {
       const fr = f._Registration || f.Registration || '';
       if (fr !== reg) continue;
-      if (f.isDeparture === true) depFlight = f;
+      if (_isDepartureFlight(f)) depFlight = f;
       else arrFlight = f;
     }
     if (arrFlight && depFlight) {
@@ -2164,7 +2179,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 
   for (const [reg, fl] of regFlights) {
     if (!validRegs.has(reg)) continue;
-    const isDep = fl.isDeparture === true;
+    const isDep = _isDepartureFlight(fl);
 
     const arrRunway = isDep ? null : (fl.Runway || null);
     const arrStand = isDep ? null : (fl.Stand || null);
@@ -2336,7 +2351,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 
   for (const [reg, fl] of regFlights) {
     if (!validRegs.has(reg)) continue;
-    const isDep = fl.isDeparture === true;
+    const isDep = _isDepartureFlight(fl);
 
     // Turnaround check: skip if this flight type lost the turnaround race
     const winner = turnaroundWinner.get(reg);
@@ -4524,7 +4539,7 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
       return String(bdt + BigInt(Math.round(sec * 10000000)));
     };
 
-    const isDeparture = fl.isDeparture === true;
+    const isDeparture = _isDepartureFlight(fl);
     const registration = fl._Registration || fl.Registration || '';
 
     // Build InitialArrival or InitialDeparture leg
@@ -4584,7 +4599,7 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
       '                            ' + fpTypeStr + ',',
       '                            "Registration": "' + registration + '",',
       '                            "AircraftType": "' + (fl.AircraftType || '') + '",',
-      '                            "AirlineName": "' + (fl.AirlineName || '') + '",',
+      '                            "AirlineName": "' + ((fl.AirlineName || '').trim() || (fl.CallSign || '').substring(0, 3)) + '",',
       '                            "Voice": "' + (fl.Voice || '') + '",',
       '                            "Language": "' + (fl.Language || '') + '",',
       '                            "InitialArrival": ' + (isDeparture ? 'null' : '{\n' + legBlock + '\n                                }') + ',',

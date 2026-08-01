@@ -37,16 +37,18 @@ export function rebuildCallSign(oldFlight, updates, airportValues) {
 }
 
 /**
- * When AirlineCode changes, cascade to AircraftType and Registration.
+ * When AirlineCode changes, cascade to AircraftType, Registration, and
+ * AirlineName (the game stores the 3-letter code there).
  * Returns the fields that should be updated on the flight.
  *
  * @param {string} newCode - the new airline code
  * @param {object} flight - the flight AFTER preliminary updates (CallSign rebuilt)
  * @param {object} airportValues - airportValues[currentAirport]
- * @returns {{ AircraftType?: string, Registration?: string, _Registration?: undefined }}
+ * @returns {{ AircraftType?: string, Registration?: string, AirlineName?: string, _Registration?: undefined }}
  */
 export function cascadeAirlineChange(newCode, flight, airportValues) {
   const result = {};
+  result.AirlineName = newCode;
   const compat = (airportValues || {})._compat || {};
 
   // AircraftType: reset to first valid type for the new airline
