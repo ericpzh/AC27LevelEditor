@@ -13,6 +13,9 @@ export const TICKS_PER_DAY_NUM = 864000000000;
 export const CACHE_VERSION = 18;
 
 // ─── Game timing / scenario ────────────────────────────────
+// Flights are allowed up to SCENARIO_END_GRACE_MIN past scenario end.
+export const SCENARIO_END_GRACE_MIN = 30;
+export const SCENARIO_END_GRACE_SEC = SCENARIO_END_GRACE_MIN * 60;
 export const WARMUP_SEC = 780;             // 13-minute game warmup
 export const GRACE_TTL = -60;              // max seconds-past-landing filter
 export const DEMO_WINDOW_SEC = 1800;       // 30-minute demo window

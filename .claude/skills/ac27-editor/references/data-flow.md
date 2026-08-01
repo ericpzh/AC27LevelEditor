@@ -69,9 +69,9 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
 **Clock time validation:** When committing a time value via the clock popover, `EditableCell` (FlightTable) and `TimeCell` (timeline editors) validate against field-specific bounds before accepting the value. Out-of-bounds values show a toast and are rejected.
 
 - `getTimeValidationBounds(col, _saveSec, _configStartTime, _configEndTime)` in `src/utils/timeUtils.js` returns `{minTime, maxTime}` or `null`:
-  - **OffBlockTime / LandingTime**: bounded by `[_saveSec, _configEndTime]` — must be after the scenario snapshot and before the config end
+  - **OffBlockTime / LandingTime**: bounded by `[_configStartTime, _configEndTime + 30 min]` — max is `configEndTime + SCENARIO_END_GRACE_MIN` (the game allows events up to 30 min past scenario end); the min stays `_configStartTime`
   - **InBlockTime / TakeoffTime**: no bounds validation (save only checks ordering/sequence against sibling fields)
-  - **Timeline / generic Time**: bounded by `[_configStartTime, _configEndTime]` — must be strictly within the level range
+  - **Timeline / generic Time**: bounded by `[_configStartTime, _configEndTime]` — must be strictly within the level range (no grace; matches runway-timeline validation)
 - Toast i18n key: `clock_time_out_of_bounds` — `"Time must be between {{min}} and {{max}}"`
 - Timeline editors (`WeatherEditor`, `WindEditor`, `RunwayEditor`) pass `minTime`/`maxTime` from `_configStartTime`/`_configEndTime` via `getTimelineActiveRange`
 
@@ -79,7 +79,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
 
 1. `handleSave()` → `validateCallsigns()` → `runTripleValidation()`:
    - (a) Dropdown value validation — every field against valid options
-   - (b) Time range validation — flights within config startTime/endTime bounds
+   - (b) Time range validation — flights within config startTime / endTime+30min bounds (`SCENARIO_END_GRACE_MIN`)
    - (c) Runway timeline bounds — change entry times within level range
    - (d) STAR/runway combination validation — flags flights where the assigned STAR is not valid for the assigned runway (per PKStaticEntities runway `Routes` RouteType=0 via `starRunwayMap`)
    - (e) Duplicate registration validation — flags flights where the same Registration appears in multiple departure or arrival flights (see below)

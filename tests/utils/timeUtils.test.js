@@ -7,6 +7,7 @@ import {
   minutesToTimeStr,
   sortTimelineByTime,
   getTimelineActiveRange,
+  getTimeValidationBounds,
   getDefaultTime,
   _extractBaseDateFromText,
 } from '../../src/utils/timeUtils';
@@ -191,5 +192,33 @@ describe('_extractBaseDateFromText', () => {
     const result = _extractBaseDateFromText(text);
     expect(typeof result).toBe('number');
     expect(result).toBeGreaterThan(0);
+  });
+});
+
+// ─── getTimeValidationBounds ─────────────────────────────────────
+describe('getTimeValidationBounds', () => {
+  it('bounds OffBlockTime/LandingTime by start and end+30min grace', () => {
+    const result = getTimeValidationBounds('OffBlockTime', null, '06:00:00', '22:00:00');
+    expect(result).toEqual({ minTime: '06:00:00', maxTime: '22:30:00' });
+  });
+
+  it('applies the same grace to LandingTime', () => {
+    const result = getTimeValidationBounds('LandingTime', null, '06:00', '22:45:00');
+    expect(result).toEqual({ minTime: '06:00', maxTime: '23:15:00' });
+  });
+
+  it('returns null for InBlockTime/TakeoffTime (no bounds)', () => {
+    expect(getTimeValidationBounds('InBlockTime', null, '06:00:00', '22:00:00')).toBeNull();
+    expect(getTimeValidationBounds('TakeoffTime', null, '06:00:00', '22:00:00')).toBeNull();
+  });
+
+  it('bounds generic Time fields strictly by config range (no grace)', () => {
+    const result = getTimeValidationBounds('Time', null, '06:00:00', '22:00:00');
+    expect(result).toEqual({ minTime: '06:00:00', maxTime: '22:00:00' });
+  });
+
+  it('returns null when config bounds missing', () => {
+    expect(getTimeValidationBounds('OffBlockTime', null, null, null)).toBeNull();
+    expect(getTimeValidationBounds('Time', null, null, null)).toBeNull();
   });
 });

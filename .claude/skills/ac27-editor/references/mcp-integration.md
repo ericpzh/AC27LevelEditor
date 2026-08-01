@@ -89,7 +89,7 @@ Claude Code (LLM)                    AC27 Editor (Electron)
 6. Aircraft compatible with airline (`_compat.airlineToAircraft`)
 7. Airway/STAR compatible with runway (`_runwayStarMap`, arrivals only)
 8. Registration valid for (airline, aircraft) pair (`_registrationMap`)
-9. Time bounds within `[_configStartTime, _configEndTime]`
+9. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` — the strict upper bound is `end + 30 min`, not `end` (game allows events up to 30 min past scenario end; `time_after_range` only fires past the grace)
 10. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
 11. Duplicate callsigns
 12. Stand conflicts + duplicate registrations
@@ -97,7 +97,7 @@ Claude Code (LLM)                    AC27 Editor (Electron)
 ## Testing
 
 ```bash
-# API server unit + HTTP integration + MCP protocol (85 tests)
+# API server unit + HTTP integration + MCP protocol (107 tests)
 node tests/integration/test_api_server.js
 
 # E2E composition examples from skill (44 tests)

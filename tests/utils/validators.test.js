@@ -251,6 +251,45 @@ describe('runTripleValidation (v4 semantics)', () => {
   });
 });
 
+describe('runTripleValidation time range (end + 30min grace)', () => {
+  const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
+  function run(flights) {
+    return runTripleValidation(flights, {}, 'ZSJN', AUDIO, null, '06:00', '22:00', null);
+  }
+
+  it('accepts times up to exactly end+30min', () => {
+    const flights = [
+      { CallSign: 'CES1234', OffBlockTime: '22:15' },
+      { CallSign: 'CES5678', LandingTime: '22:29' },
+      { CallSign: 'CES9012', OffBlockTime: '22:30' }, // boundary: exactly end+30
+    ];
+    expect(run(flights)).toEqual([]);
+  });
+
+  it('flags times beyond end+30min with the relaxed hint', () => {
+    const flights = [{ CallSign: 'CES1234', OffBlockTime: '22:31' }];
+    const issues = run(flights);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('22:31');
+    expect(issues[0]).toContain('22:30');
+  });
+
+  it('handles minute carry when adding grace (end 22:45 -> bound 23:15)', () => {
+    const carryRun = (flights) => runTripleValidation(flights, {}, 'ZSJN', AUDIO, null, '06:00', '22:45', null);
+    expect(carryRun([{ CallSign: 'CES1234', OffBlockTime: '23:10' }])).toEqual([]);
+    const issues = carryRun([{ CallSign: 'CES1234', OffBlockTime: '23:16' }]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('23:15');
+  });
+
+  it('still enforces the strict start bound', () => {
+    const flights = [{ CallSign: 'CES1234', OffBlockTime: '05:59' }];
+    const issues = run(flights);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('06:00');
+  });
+});
+
 describe('getActiveColumns (v4 semantics)', () => {
   it('excludes InBlockTime from arrival columns', () => {
     const cols = getActiveColumns([], ARRIVAL_FIELDS);

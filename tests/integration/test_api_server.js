@@ -200,6 +200,16 @@ const badTime = { ...validFlight, CallSign: 'DAL2001', OffBlockTime: '25:00:00' 
 const issues8 = validateFlightObjects([badTime], MOCK_FLIGHTS, c);
 assert(issues8 !== null && issues8.some(i => i.issue === 'time_after_range'), 'time after range rejected');
 
+// validateFlightObjects — time within end+30min grace accepted (end 22:00, flight 22:15)
+const graceTime = { ...validFlight, CallSign: 'AAL1003', OffBlockTime: '22:15:00', TakeoffTime: '22:20:00' };
+const issues8b = validateFlightObjects([graceTime], MOCK_FLIGHTS, c);
+assert(issues8b === null, 'time within 30-min grace accepted');
+
+// validateFlightObjects — time beyond end+30min grace rejected (end 22:00, flight 22:31)
+const pastGraceTime = { ...validFlight, CallSign: 'AAL1003', OffBlockTime: '22:31:00', TakeoffTime: '22:36:00' };
+const issues8c = validateFlightObjects([pastGraceTime], MOCK_FLIGHTS, c);
+assert(issues8c !== null && issues8c.some(i => i.issue === 'time_after_range'), 'time past 30-min grace rejected');
+
 // validateFlightObjects — time order (OffBlock >= Takeoff)
 const badOrder = { ...validFlight, CallSign: 'DAL2001', OffBlockTime: '11:05:00', TakeoffTime: '11:00:00' };
 const issues9 = validateFlightObjects([badOrder], MOCK_FLIGHTS, c);

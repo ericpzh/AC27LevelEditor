@@ -7,10 +7,10 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (545) + save integrity (12) + jetway rebuild (12) + runway pairs (5) + E2E (16, ~3 min)
-npm test              # 545 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
+npm run test:all      # Full suite: Vitest (554) + save integrity (12) + jetway rebuild (12) + runway pairs (5) + E2E (16, ~3 min)
+npm test              # 554 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min; 15 pass, 1 skipped — E12a overlay timing)
-node tests/integration/test_api_server.js      # MCP/API tests: 105 tests (~1s)
+node tests/integration/test_api_server.js      # MCP/API tests: 107 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
 
 # Save integrity — all .acl files across both airports:
@@ -25,16 +25,16 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (545 tests)
+## Layer 1 — Vitest Component Tests (554 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 545 pass (34 test files)
+### `npm test` — 554 pass (34 test files)
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
-| `utils/timeUtils.test.js` | 23 | `ticksToTime` (0/0n/""→""; ticks→HH:MM:SS), `timeToTicks` (empty→0; "HH:MM:SS"→ticks; baseDate offset), `timeToMinutes` ("01:30"→90), `timeToSeconds` ("01:00:00"→3600), `minutesToTimeStr` (90→"01:30:00"; 1500 wraps to "01:00:00"), `sortTimelineByTime` (sorts by time field), `getTimelineActiveRange` (no bounds→all active; bounds→filters), `getDefaultTime` (midpoint "06:00"+"10:00"→"08:00:00"; none→"12:00:00"), `_extractBaseDateFromText` (BaseTime match; WorldState fallback; FALLBACK_BASE_DATE_TICKS), `isValidTimeStr` (valid/invalid/edge) |
-| `utils/validators.test.js` | 30 | `validateCallsigns` (5): no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[]. `detectStandConflicts` (17): overlap rules (arr/arr allowed, dep/dep flagged, offblock < landing OK / = landing flagged, 20-min default start), conflict messages contain both callsigns + stand with normalized times. `runTripleValidation` (3): v4 semantics — time-order checks (InBlockTime/TakeoffTime) always skipped; dropdown + stand-conflict validations still run. `getActiveColumns` (2): v4 hides InBlockTime/TakeoffTime columns. `_isNew` stripping (3): JSON replacer (mirrors electron main timeline sidecar writers) removes `_isNew` at all nesting levels, preserves other keys. |
+| `utils/timeUtils.test.js` | 29 | `ticksToTime` (0/0n/""→""; ticks→HH:MM:SS), `timeToTicks` (empty→0; "HH:MM:SS"→ticks; baseDate offset), `timeToMinutes` ("01:30"→90), `timeToSeconds` ("01:00:00"→3600), `minutesToTimeStr` (90→"01:30:00"; 1500 wraps to "01:00:00"), `sortTimelineByTime` (sorts by time field), `getTimelineActiveRange` (no bounds→all active; bounds→filters), `getTimeValidationBounds` (5): OffBlockTime/LandingTime max = end+30min grace, generic Time strict, InBlockTime/TakeoffTime null, null when config missing, `getDefaultTime` (midpoint "06:00"+"10:00"→"08:00:00"; none→"12:00:00"), `_extractBaseDateFromText` (BaseTime match; WorldState fallback; FALLBACK_BASE_DATE_TICKS), `isValidTimeStr` (valid/invalid/edge) |
+| `utils/validators.test.js` | 34 | `validateCallsigns` (5): no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[]. `detectStandConflicts` (17): overlap rules (arr/arr allowed, dep/dep flagged, offblock < landing OK / = landing flagged, 20-min default start), conflict messages contain both callsigns + stand with normalized times. `runTripleValidation` (7): v4 semantics — time-order checks (InBlockTime/TakeoffTime) always skipped; dropdown + stand-conflict validations still run; time range — end+30min grace (exact boundary 22:30 accepted, 22:31 flagged, minute-carry 22:45→23:15, start bound still strict). `getActiveColumns` (2): v4 hides InBlockTime/TakeoffTime columns. `_isNew` stripping (3): JSON replacer (mirrors electron main timeline sidecar writers) removes `_isNew` at all nesting levels, preserves other keys. |
 | `store/flightDefaults.test.js` | 56 | `randomPick`: null/undefined/empty→null, single/multi→valid. `pickRandomAirlineCode`: audio first→AirlineCode fallback→AirlineName→'NEW'; key regression: never 'NEW' when AirlineCode dropdown populated. `pickRandomFlightNumber`: from `_flightNums`, '1' fallback. `pickRandomUnusedStand`: unused only, reuse when all taken, empty when no stands. `pickFirstFlightNumber`/`pickDefaultAirlineCode` (existing): first-element behaviour preserved. `makeEmptyFlight`: 15 empty-string fields. `computeDefaultBaseMin`: config end time−offset, clamp≥0. `minutesToTimeString`: HH:MM:00 format. `createDefaultFlight`: random airline+cascaded aircraft/reg+non-conflicting stand; arrival vs departure direction. `createArrivalFlight`: sets LandingTime, leaves InBlockTime empty (v4 stores it as 0), no departure times, forwards existingFlights for stand-conflict avoidance. `createDepartureFlight`: sets OffBlockTime, leaves TakeoffTime empty (v4 stores it as 0), no arrival times. Stand conflict forwarding. |
 | `store/appStore.test.jsx` | 26 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with randomized cascade (airline from dropdown, valid aircraft/reg, non-conflicting stand); `addArrivalFlight` regression: airline never "NEW" when AirlineCode dropdown populated; stand conflict avoidance with existing flights; `addArrivalFlight` leaves InBlockTime empty (v4 stores it as 0); `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; **Chat state (9):** panel defaults closed, vendors setup step, empty config, toggle open/closed, add+clear messages, sending state, set+clear errors, chat config, setup step change |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |

@@ -16,6 +16,7 @@ const http = require('http');
 const {
   FIELDS, getAirlineCode, AIRLINE_CODE_MAP,
   FALLBACK_BASE_MINUTES, DEFAULT_TAXI_MINUTES, DEFAULT_TIME_OFFSET_MIN,
+  SCENARIO_END_GRACE_MIN, SCENARIO_END_GRACE_SEC,
 } = require('../src/acl/constants');
 
 // ── Module state ────────────────────────────────────────────────
@@ -55,6 +56,14 @@ function parseTimeSeconds(t) {
   if (parts.length === 2) parts.push('00');
   if (parts.length !== 3) return NaN;
   return parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseInt(parts[2]);
+}
+
+/** Format total seconds back into HH:MM:SS */
+function formatTimeSeconds(sec) {
+  const s = Math.floor(sec % 60);
+  const m = Math.floor((sec / 60) % 60);
+  const h = Math.floor(sec / 3600);
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
 
 /** Resolve a full airline name from a 3-letter code (reverse AIRLINE_CODE_MAP) */
@@ -230,11 +239,12 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
       }
       if (constraints.configEndTime) {
         const endSec = parseTimeSeconds(constraints.configEndTime);
-        if (!isNaN(sec) && !isNaN(endSec) && sec > endSec) {
+        // Flights may run up to SCENARIO_END_GRACE_MIN past scenario end.
+        if (!isNaN(sec) && !isNaN(endSec) && sec > endSec + SCENARIO_END_GRACE_SEC) {
           details.push({
             index: idx, field: isArrival(f) ? 'LandingTime' : 'OffBlockTime', value: pt,
             issue: 'time_after_range',
-            message: `${isArrival(f) ? 'LandingTime' : 'OffBlockTime'} ${pt} is after config end ${constraints.configEndTime}.`,
+            message: `${isArrival(f) ? 'LandingTime' : 'OffBlockTime'} ${pt} is after config end ${constraints.configEndTime} (max +${SCENARIO_END_GRACE_MIN} min).`,
           });
         }
       }
@@ -671,7 +681,8 @@ async function handleMcpMessage(msg) {
               airlineAircraftCompat: constraints.airlineAircraftCompat,
               runwayStarCompat: constraints.runwayStarCompat,
               registrationsByPair: constraints.registrationsByPair,
-              timeRules: { minTime: state._configStartTime || null, maxTime: state._configEndTime || null, timeOrderArrival: 'LandingTime < InBlockTime', timeOrderDeparture: 'OffBlockTime < TakeoffTime', format: 'HH:MM:SS' },
+              // maxTime = scenario end + SCENARIO_END_GRACE_MIN, the effective validation bound
+              timeRules: { minTime: state._configStartTime || null, maxTime: (state._configEndTime && !isNaN(parseTimeSeconds(state._configEndTime))) ? formatTimeSeconds(parseTimeSeconds(state._configEndTime) + SCENARIO_END_GRACE_SEC) : null, timeOrderArrival: 'LandingTime < InBlockTime', timeOrderDeparture: 'OffBlockTime < TakeoffTime', format: 'HH:MM:SS' },
               standRules: { departureDepartureConflict: 'Two departures on same stand conflict', departureArrivalConflict: 'Dep+Arr on same stand conflict when OffBlockTime >= LandingTime' },
               registrationRules: { duplicateThreshold: 2, format: 'Country prefix + hyphen + alphanumeric' },
             },

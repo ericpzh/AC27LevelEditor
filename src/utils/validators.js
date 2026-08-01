@@ -1,5 +1,5 @@
 import { T } from './i18n.js';
-import { FIELD_LABELS, STAND_DEP_BEFORE_ESTIMATE_MIN, STAND_ARR_AFTER_ESTIMATE_MIN, STAND_LANDING_BEFORE_INBLOCK_MIN, STAND_OCCUPANCY_START_OFFSET_MIN, STAND_OCCUPANCY_END_OFFSET_MIN, MINUTES_PER_DAY, VALID_LANGUAGES } from './constants.js';
+import { FIELD_LABELS, SCENARIO_END_GRACE_MIN, STAND_DEP_BEFORE_ESTIMATE_MIN, STAND_ARR_AFTER_ESTIMATE_MIN, STAND_LANDING_BEFORE_INBLOCK_MIN, STAND_OCCUPANCY_START_OFFSET_MIN, STAND_OCCUPANCY_END_OFFSET_MIN, MINUTES_PER_DAY, VALID_LANGUAGES } from './constants.js';
 
 // ── Stand conflict detection helpers ──
 
@@ -252,8 +252,10 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     const csH = parseInt(csParts[0], 10), csM = parseInt(csParts[1], 10);
     const startTime = csH * 100 + csM;
     const startLabel = String(csH).padStart(2, '0') + ':' + String(csM).padStart(2, '0');
-    const endTime = ceH * 100 + ceM;
-    const endLabel = String(ceH).padStart(2, '0') + ':' + String(ceM).padStart(2, '0');
+    // Upper bound relaxed: flights may run up to SCENARIO_END_GRACE_MIN past scenario end.
+    const endGraceMin = ceH * 60 + ceM + SCENARIO_END_GRACE_MIN;
+    const endTime = Math.floor(endGraceMin / 60) * 100 + (endGraceMin % 60);
+    const endLabel = String(Math.floor(endGraceMin / 60)).padStart(2, '0') + ':' + String(endGraceMin % 60).padStart(2, '0');
 
     flights.forEach((fl) => {
       for (const col of ['OffBlockTime', 'LandingTime']) {

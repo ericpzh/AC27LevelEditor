@@ -1,7 +1,7 @@
 /**
  * Time conversion utilities — Newtonsoft.Json DateTime ticks ↔ HH:MM:SS strings.
  */
-import { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS } from './constants.js';
+import { NET_EPOCH_OFFSET, TICKS_PER_SECOND, TICKS_PER_DAY, FALLBACK_BASE_DATE_TICKS, SCENARIO_END_GRACE_MIN } from './constants.js';
 
 // ─── Tick ↔ Time conversion ─────────────────────────────
 export function ticksToTime(ticks) {
@@ -100,12 +100,12 @@ export function getTimelineActiveRange(timeline, configStartTime, configEndTime)
  *   null means "no bounds validation for this field" (matches save behaviour).
  */
 export function getTimeValidationBounds(col, _saveSec, _configStartTime, _configEndTime) {
-  // Flight fields OffBlockTime & LandingTime → bound by [_configStartTime, _configEndTime]
+  // Flight fields OffBlockTime & LandingTime → bound by [_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN]
   if (col === 'OffBlockTime' || col === 'LandingTime') {
     if (_configStartTime && _configEndTime) {
       return {
         minTime: String(_configStartTime).substring(0, 8),
-        maxTime: _configEndTime,
+        maxTime: minutesToTimeStr(timeToMinutes(_configEndTime) + SCENARIO_END_GRACE_MIN),
       };
     }
     return null;
