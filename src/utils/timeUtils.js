@@ -25,7 +25,7 @@ export function timeToTicks(timeStr, baseDateTicks) {
 
 // ─── Base date extraction from ACL text ─────────────────
 export function _extractBaseDateFromText(text) {
-  const btMatch = text.match(/"BaseTime"\s*:\s*\{\s*"\$type"\s*:\s*3\s*,\s*(-?\d+)\s*\}/);
+  const btMatch = text.match(/"BaseTime"\s*:\s*\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
   if (btMatch) {
     const ticks = BigInt(btMatch[1]);
     return Number((ticks / TICKS_PER_DAY) * TICKS_PER_DAY);
@@ -33,7 +33,7 @@ export function _extractBaseDateFromText(text) {
   const wsIdx = text.indexOf('"WorldState"');
   if (wsIdx >= 0) {
     const wsText = text.substring(wsIdx);
-    const timeMatch = wsText.match(/"(?:OffBlockTime|LandingTime|TakeoffTime|InBlockTime)"\s*:\s*\{\s*"\$type"\s*:\s*3\s*,\s*(-?\d+)\s*\}/);
+    const timeMatch = wsText.match(/"(?:OffBlockTime|LandingTime|TakeoffTime|InBlockTime)"\s*:\s*\{\s*"\$type"\s*:\s*\d+\s*,\s*(-?\d+)\s*\}/);
     if (timeMatch) {
       const ticks = BigInt(timeMatch[1]);
       if (ticks > TICKS_PER_DAY) {

@@ -176,6 +176,16 @@ describe('_extractBaseDateFromText', () => {
     expect(typeof result).toBe('number');
   });
 
+  it('extracts ticks regardless of the DateTime $type id (ids are per-scope)', () => {
+    // Type ids vary between files — extraction must be number-agnostic.
+    const text = '"BaseTime": { "$type": 7, 637000000000000000 }';
+    const result = _extractBaseDateFromText(text);
+    expect(typeof result).toBe('number');
+    expect(result).toBeGreaterThan(0);
+    const text2 = '"WorldState": { "OffBlockTime": { "$type": 22, 638000000000000000 } }';
+    expect(typeof _extractBaseDateFromText(text2)).toBe('number');
+  });
+
   it('returns FALLBACK_BASE_DATE_TICKS when nothing found', () => {
     const text = '"SomeOtherField": 123';
     const result = _extractBaseDateFromText(text);

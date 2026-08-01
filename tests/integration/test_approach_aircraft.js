@@ -354,6 +354,8 @@ if (firstFile) {
         waitCmd:          _tn('ContextCross.Enums.ECommand[],'),
         recvEvt:          _tn('ContextCross.Events.AircraftEvent[],'),
         listVec3:         _tn('List`1[[UnityEngine.Vector3,'),
+        vec3:             _tn('UnityEngine.Vector3,'),
+        strArr:           _tn('System.String[],'),
       };
       const missing = Object.entries(typeNums).filter(([,v]) => v == null).map(([k]) => k);
       if (missing.length > 0) {

@@ -1323,13 +1323,16 @@ function buildApproachAircraftBlock(opts) {
     dockArr: resolve('vec4Arr',          'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
     waitCmd: resolve('waitCmd',          'ContextCross.Enums.ECommand[]'),
     recvEvt: resolve('recvEvt',          'ContextCross.Events.AircraftEvent[]'),
+    vec3:    resolve('vec3',             'UnityEngine.Vector3', 'UnityEngine.CoreModule'),
+    strArr:  resolve('strArr',           'System.String[]', 'mscorlib'),
   };
 
-  // Format helpers — use namespace-qualified types everywhere.
-  // BCL types (Vector3=16, String[]=8) are stable across Unity versions and safe as-is.
-  const nsVec3 = '"16|UnityEngine.Vector3, UnityEngine.CoreModule"';
+  // Format helpers — use namespace-qualified types everywhere, all resolved
+  // from the per-file typeNums map (type ids are per-scope and vary between
+  // files — never hardcode them; the sibling nsListVec3 above is the pattern).
+  const nsVec3 = T.vec3;
   const nsListVec3 = `"${resolve('listVec3', 'System.Collections.Generic.List\`1[[UnityEngine.Vector3, UnityEngine.CoreModule]]', 'mscorlib')}"`;
-  const nsStrArr = '"8|System.String[], mscorlib"';
+  const nsStrArr = T.strArr;
 
   const fmtV3 = (v) => `{\n  "$type": ${nsVec3},\n  ${v.x},\n  0,\n  ${v.z}\n}`;
   const fmtFloat3 = (v) => `{\n  "$type": ${T.float3},\n  ${v.x},\n  ${v.y},\n  ${v.z}\n}`;
@@ -1537,11 +1540,13 @@ function buildState5AircraftBlock(opts) {
     dockArr:     resolve('vec4Arr',           'UnityEngine.Vector4[]', 'UnityEngine.CoreModule'),
     waitCmd:     resolve('waitCmd',           'ContextCross.Enums.ECommand[]'),
     recvEvt:     resolve('recvEvt',           'ContextCross.Events.AircraftEvent[]'),
+    vec3:        resolve('vec3',              'UnityEngine.Vector3', 'UnityEngine.CoreModule'),
+    strArr:      resolve('strArr',            'System.String[]', 'mscorlib'),
   };
 
-  const nsVec3 = '"16|UnityEngine.Vector3, UnityEngine.CoreModule"';
+  const nsVec3 = T.vec3;
   const nsListVec3 = `"${resolve('listVec3', 'System.Collections.Generic.List\`1[[UnityEngine.Vector3, UnityEngine.CoreModule]]', 'mscorlib')}"`;
-  const nsStrArr = '"8|System.String[], mscorlib"';
+  const nsStrArr = T.strArr;
 
   const fmtV3 = (v) => `{\n  "$type": ${nsVec3},\n  ${v.x},\n  0,\n  ${v.z}\n}`;
   const fmtFloat3 = (v) => `{\n  "$type": ${T.float3},\n  ${v.x},\n  ${v.y},\n  ${v.z}\n}`;

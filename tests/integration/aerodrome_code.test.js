@@ -18,6 +18,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { _buildActiveJetwayEntry, _buildStandaloneAircraftEntry, _IdMapper } = require('../../src/acl/flight_plans');
 const { extractSpecificationDB } = require('../../src/acl/approach');
+const { CANONICAL_SCOPE } = require('./_canonical_scope.cjs');
 
 function makeSpec(overrides = {}) {
   return {
@@ -84,7 +85,7 @@ function buildJetway(spec, reg) {
     makeDepFlight(reg, spec.Designator),
     makeApproachCache(spec),
     () => {},
-    new Map(),                       // jwTypeMap
+    CANONICAL_SCOPE,                 // jwTypeMap — strict per-scope type table
     0,                               // baseDateTicks
     'ZSJN',
     recv, wait,
@@ -131,7 +132,11 @@ describe('AerodromeCode emission', () => {
       saveSec: 0,
       icao: 'ZSJN',
       baseDateTicks: 0,
-      segTypeMap: new Map(),
+      // Type resolution is STRICT — the T table resolves all 26 canonical
+      // names eagerly (before the spec asserts), so the scope map must declare
+      // them all; otherwise the test would throw [TYPE-ASSERT] instead of
+      // asserting the missing AerodromeCode.
+      segTypeMap: CANONICAL_SCOPE,
       log: () => {},
       fpId: null,
       strArrCache: null,

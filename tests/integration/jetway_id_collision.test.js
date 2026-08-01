@@ -18,11 +18,13 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const { _buildActiveJetwayEntry, _makeJwTypeResolver, _IdMapper } = require('../../src/acl/flight_plans');
+const { CANONICAL_SCOPE } = require('./_canonical_scope.cjs');
 
 // Canonical names matched by the resolver (JW_TYPE_* in flight_plans.js).
 const RP_INT32 = 'R3.ReactiveProperty`1[[System.Int32, mscorlib]], R3';
 const RP_SINGLE = 'R3.ReactiveProperty`1[[System.Single, mscorlib]], R3';
 const RP_AIRCRAFT = 'R3.ReactiveProperty`1[[ContextCross.Aircrafts.Aircraft, GroundATC.Core]], R3';
+const RP_VEC3 = 'R3.ReactiveProperty`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], R3';
 const JETWAY = 'ContextCross.Models.Jetway, GroundATC.Core';
 const AIRCRAFT = 'ContextCross.Aircrafts.Aircraft, GroundATC.Core';
 
@@ -79,7 +81,7 @@ function buildEntry(entryId, reg, stand, alloc, strArrCache, recvCache, waitCach
     makeDepFlight(reg, stand),
     APPROACH_CACHE,
     () => {},
-    new Map(),          // jwTypeMap — fresh type numbers via _jwResolveType
+    CANONICAL_SCOPE,    // jwTypeMap — strict per-scope type table (all 23 resolved names)
     0,                  // baseDateTicks
     'ZSJN',
     recvCache,
@@ -189,14 +191,15 @@ describe('DockingDoorIndex $type resolution (per-scope type ids)', () => {
   // fails.acl's frame scope registers R3.ReactiveProperty<Int32> at id 29 and
   // id 6 is plain Aircraft — the old hardcoded id-6 assumption wrote
   // "$type": "6|ContextCross.Aircrafts.Aircraft, GroundATC.Core" for
-  // DockingDoorIndex, which the game misreads.
-  const FAILS_SCOPE = new Map([
-    [3, JETWAY],
-    [4, RP_SINGLE],
-    [5, RP_AIRCRAFT],
-    [6, AIRCRAFT],
-    [29, RP_INT32],
-  ]);
+  // DockingDoorIndex, which the game misreads.  Derived from the canonical
+  // ZSJN-Morning scope: RP<Int32> moves off id 6 onto id 29 (canonical id 29,
+  // RP<Vector3>, relocates to a free id so every name stays declared), and
+  // id 6 becomes plain Aircraft.  All other names keep the canonical table.
+  const FAILS_SCOPE = new Map(CANONICAL_SCOPE);
+  FAILS_SCOPE.delete(29);           // canonical id 29 = RP<Vector3> — relocate
+  FAILS_SCOPE.set(55, RP_VEC3);     // RP<Vector3> on a free id (name-based lookup)
+  FAILS_SCOPE.set(29, RP_INT32);    // fails.acl shape: id 29 = RP<Int32>
+  FAILS_SCOPE.set(6, AIRCRAFT);     // fails.acl shape: id 6 = Aircraft
 
   function buildWithScope(scope) {
     const alloc = { v: 1000 };
@@ -239,35 +242,40 @@ describe('DockingDoorIndex $type resolution (per-scope type ids)', () => {
     expect(text).toContain('"$type": "5|' + RP_AIRCRAFT + '"');
   });
 
-  it('mints a fresh id above the segment max when RP<Int32> is undeclared in the scope', () => {
+  it('asserts [TYPE-ASSERT] when RP<Int32> is undeclared in the scope (no fallback ids)', () => {
     const scopeNoInt32 = new Map(FAILS_SCOPE);
     scopeNoInt32.delete(29);
-    const type = dockingDoorType(buildWithScope(scopeNoInt32));
-    // Full-form self-declaring emission (never a bare dangling ref), with an
-    // id above the segment's max declared id (6).
-    const m = type && type.match(/^"(\d+)\|R3\.ReactiveProperty`1\[\[System\.Int32, mscorlib\]\], R3"$/);
-    expect(m).not.toBeNull();
-    expect(parseInt(m[1], 10)).toBeGreaterThan(6);
+    expect(() => buildWithScope(scopeNoInt32)).toThrowError(/\[TYPE-ASSERT\]/);
+    // Debug message names the missing canonical type and dumps the scope.
+    expect(() => buildWithScope(scopeNoInt32)).toThrowError(RP_INT32);
+    expect(() => buildWithScope(scopeNoInt32)).toThrowError(/Scope declarations/);
   });
 
   it('keeps the canonical emission (id 6 = RP<Int32>) byte-identical on ZSJN-Morning-style scopes', () => {
-    const text = buildWithScope(new Map([
-      [3, JETWAY],
-      [4, RP_SINGLE],
-      [5, RP_AIRCRAFT],
-      [6, RP_INT32],
-    ]));
+    const text = buildWithScope(CANONICAL_SCOPE);
     expect(dockingDoorType(text)).toBe('"6|' + RP_INT32 + '"');
+    expect(text).toContain('"$type": "3|' + JETWAY + '"');
+    expect(text).toContain('"$type": "4|' + RP_SINGLE + '"');
+    expect(text).toContain('"$type": "5|' + RP_AIRCRAFT + '"');
   });
 
-  it('shares one fresh-id counter across calls on a single resolver', () => {
+  it('resolves known names to their scope id and asserts on unknown names (strict)', () => {
     const resolve = _makeJwTypeResolver(FAILS_SCOPE);
-    const a = resolve('Some.Missing.TypeA, GroundATC.Core');
-    const b = resolve('Some.Missing.TypeB, GroundATC.Core');
-    const idOf = (s) => parseInt(s.match(/^"(\d+)\|/)[1], 10);
-    expect(idOf(a)).toBeGreaterThan(29); // above this scope's max declared id
-    expect(idOf(b)).toBe(idOf(a) + 1);
     // Known names resolve to their scope id, full form.
     expect(resolve(RP_INT32)).toBe('"29|' + RP_INT32 + '"');
+    expect(resolve(JETWAY)).toBe('"3|' + JETWAY + '"');
+    // Unknown names are anomalies — assert with the name and scope dump,
+    // never mint a fallback id.
+    expect(() => resolve('Some.Missing.TypeA, GroundATC.Core')).toThrowError(/\[TYPE-ASSERT\]/);
+    expect(() => resolve('Some.Missing.TypeA, GroundATC.Core')).toThrowError(/Some\.Missing\.TypeA, GroundATC\.Core/);
+    expect(() => resolve('Some.Missing.TypeA, GroundATC.Core')).toThrowError(/Scope declarations/);
+  });
+
+  it('unquoted mode returns bare N|Name for the object-serializer path', () => {
+    const resolve = _makeJwTypeResolver(CANONICAL_SCOPE, false);
+    expect(resolve(RP_INT32)).toBe('6|' + RP_INT32);
+    expect(resolve(JETWAY)).toBe('3|' + JETWAY);
+    // Still strict: unknown names assert regardless of quoting mode.
+    expect(() => resolve('Missing.TypeB, GroundATC.Core')).toThrowError(/\[TYPE-ASSERT\]/);
   });
 });

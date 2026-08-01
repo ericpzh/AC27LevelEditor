@@ -6,7 +6,7 @@
  * uses string concatenation (to be migrated to serializer in follow-up).
  */
 const path = require('path');
-const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, GRACE_TTL, TYPE_NUM_FALLBACK_START, CMD_CONTACT_TOWER, DEFAULT_AERODROME_CODE, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_DAY, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL } = require('./constants');
+const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, GRACE_TTL, CMD_CONTACT_TOWER, DEFAULT_AERODROME_CODE, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_DAY, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL } = require('./constants');
 const { ticksToTime } = require('../utils/timeUtils');
 const { computePathLength, resolveFlyApproachPoints, computeApproachCap, computePosition, computeDirection, requireSpecField } = require('./approach');
 const { createTokenizer } = require('./tokenizer');
@@ -1342,28 +1342,34 @@ const JW_TYPE_RP_AIRCRAFT= 'R3.ReactiveProperty`1[[ContextCross.Aircrafts.Aircra
 const JW_TYPE_RP_INT32   = 'R3.ReactiveProperty`1[[System.Int32, mscorlib]], R3';
 
 /**
- * Build a name->type-id resolver for a segment's type table (jwTypeMap).
- * Exact extraction of the _jwResolveType closure (reverse name->num lookup,
- * fresh id above segment max, quoted full-form '"N|Name"' output) so every
- * emitted $type is self-declaring.  One instance per segment must be shared
- * by ALL rebuilt entries (active + empty paths) so fresh-id allocation can
- * never collide across entries in one scope.
+ * Build a name->type-id resolver for a scope's type table (jwTypeMap).
+ * STRICT: type ids are per-scope and vary between files, so a canonical type
+ * name missing from the scope's declarations is an anomaly, not a signal to
+ * mint a fallback id (silent fallbacks masked the DockingDoorIndex bug class).
+ * Assert with the lookup and a scope dump so the missing declaration can be
+ * fixed.  With `quoted` (default true) output is full-form '"N|Name"' (text
+ * templates); pass `quoted=false` for the object-serializer path, which
+ * expects a bare 'N|Name' value (the serializer quotes it).
  */
-function _makeJwTypeResolver(jwTypeMap) {
+function _makeJwTypeResolver(jwTypeMap, quoted) {
   const nameToNum = new Map();
-  let maxNum = 0;
   if (jwTypeMap) {
     for (const [num, name] of jwTypeMap) {
       nameToNum.set(name, num);
-      if (num > maxNum) maxNum = num;
     }
   }
-  let freshNum = maxNum + 1;
   return function (plainName) {
-    if (nameToNum.has(plainName)) {
-      return '"' + nameToNum.get(plainName) + '|' + plainName + '"';
+    const num = nameToNum.get(plainName);
+    if (num == null) {
+      const dump = [...nameToNum.entries()].slice(0, 30)
+        .map(([n, nm]) => n + '|' + nm).join(', ') || '(empty scope)';
+      throw new Error(
+        '[TYPE-ASSERT] canonical type not declared in this scope: "' + plainName + '"\n' +
+        '  Scope declarations (' + nameToNum.size + '): ' + dump
+      );
     }
-    return '"' + (freshNum++) + '|' + plainName + '"';
+    const r = num + '|' + plainName;
+    return quoted === false ? r : '"' + r + '"';
   };
 }
 
@@ -2016,21 +2022,14 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
   const afterRc = segmentText.substring(frameReStart + rcEnd - 1);
   const contentT = createTokenizer(content);
 
-  // ── Resolve type numbers from segment's type map ────────────────
-  let fpTypeFull = '18|ContextCross.Models.FlightPlan, GroundATC.Core';
-  let dtTypeFull = '19|System.DateTime, mscorlib';
-  if (segTypeMap) {
-    for (const [num, name] of segTypeMap) {
-      if (name.startsWith('ContextCross.Models.FlightPlan,')) {
-        fpTypeFull = num + '|' + name;
-      }
-      if (name.startsWith('System.DateTime,')) {
-        dtTypeFull = num + '|' + name;
-      }
-    }
-  }
-  const FP_TYPE_STR = '"' + fpTypeFull + '"';
-  const DT_TYPE_STR = '"' + dtTypeFull + '"';
+  // ── Resolve type numbers from the segment's type map ────────────────
+  // Type ids are per-segment-scope and vary between files — fallback numbers
+  // must never be hardcoded (previously 18/19/51; same bug class as
+  // DockingDoorIndex "$type": 6). Resolution is strict: a name missing from
+  // the segment's declarations asserts with a debug message.
+  const segTypeResolve = _makeJwTypeResolver(segTypeMap, false);
+  const fpTypeFull = segTypeResolve('ContextCross.Models.FlightPlan, GroundATC.Core');
+  const dtTypeFull = segTypeResolve('System.DateTime, mscorlib');
 
   // Build reg → flight lookup
   const regFlights = new Map();
@@ -2331,14 +2330,9 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
   const acPairs = [];  // [[aircraftObj, animatorObj], ...]
   const acRegToInfo = new Map(); // reg ? { aircraftRefId } (for animator linking)
 
-  // Resolve animator type number from segTypeMap (needed per-pair)
-  let animTypeFull = '51|ContextCross.Models.AircraftAnimator, GroundATC.Core';
-  if (segTypeMap) {
-    for (const [num, name] of segTypeMap) {
-      if (name.startsWith('ContextCross.Models.AircraftAnimator,'))
-        animTypeFull = num + '|' + name;
-    }
-  }
+  // Resolve animator type number from segTypeMap (needed per-pair).
+  // Strict name resolution — shares segTypeResolve's instance with fp/dt above.
+  const animTypeFull = segTypeResolve('ContextCross.Models.AircraftAnimator, GroundATC.Core');
 
   for (const [reg, fl] of regFlights) {
     if (!validRegs.has(reg)) continue;
@@ -2577,24 +2571,10 @@ function _buildStandaloneAircraftEntry(opts) {
   // $blobdoc) is an independent Odin binary document with its own numbering.
   // Using the segment's numbers guarantees consistency with full-form type refs
   // already expanded in kept entries by _expandShortFormTypes (step 7a-2).
-  //
-  // Types not present in segTypeMap get a fresh number above maxSegNum � this
-  // prevents auto-assignment from reclaiming IDs still referenced by kept entries.
-  var typeNumByName = new Map();
-  var maxSegNum = 0;
-  if (segTypeMap) {
-    for (const [_sn, _sname] of segTypeMap) {
-      typeNumByName.set(_sname, _sn);
-      if (_sn > maxSegNum) maxSegNum = _sn;
-    }
-  }
-  var _freshNum = maxSegNum + 1;
-  var _resolveType = function (plainName) {
-    if (typeNumByName.has(plainName)) {
-      return typeNumByName.get(plainName) + '|' + plainName;
-    }
-    return (_freshNum++) + '|' + plainName;
-  };
+  // STRICT: a canonical name missing from the segment's declarations asserts
+  // with a debug message — no fallback ids are minted (unquoted form for the
+  // object serializer, which quotes the value itself).
+  var _resolveType = _makeJwTypeResolver(segTypeMap, false);
 
   // Fully-qualified type strings with explicit segment-consistent numbers.
   // FlyApproachDynamicsParams is used for State=30 (DynamicsState=1).
@@ -3183,9 +3163,10 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   // collected from RuntimeEntities entries (jwTypeMap).  This ensures the
   // jetway entry's type IDs are consistent with full-form type refs already
   // expanded by _expandShortFormTypes, preventing id-reclamation collisions.
-  // Shared name->id resolver built by the caller (_rebuildJetwayEntries) so
-  // fresh-id allocation spans every rebuilt entry in the segment; falls back
-  // to a private instance for direct callers (tests).
+  // Shared name->id resolver built by the caller (_rebuildJetwayEntries).
+  // STRICT: names missing from the segment's declarations assert with a debug
+  // message — no fallback ids are minted.  Falls back to a private instance
+  // for direct callers (tests).
   var _jwResolveType = jwTypeResolve || _makeJwTypeResolver(jwTypeMap);
 
   // Dynamic type strings with explicit segment-consistent numbers.
@@ -4333,21 +4314,6 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
       }
     }
   }
-  let nextFallbackNum = TYPE_NUM_FALLBACK_START;
-  for (const num of typeMap.keys()) {
-    if (num >= nextFallbackNum) nextFallbackNum = num + 1;
-  }
-  const _tn = (search) => {
-    for (const [num, fullName] of typeMap) {
-      if (fullName.startsWith('System.Collections.Generic') && !search.includes('`')) continue;
-      // Boundary-aware match: prevent "Vector4[]," from matching search "Vector4,"
-      const idx = fullName.indexOf(search);
-      if (idx === -1) continue;
-      const nextChar = fullName[idx + search.length];
-      if (nextChar === undefined || nextChar === ' ' || nextChar === ',') return num;
-    }
-    return null;
-  };
 
   log('flights: ' + (flights ? flights.length : 0) + ' baseDateTicks: ' + bdt + ' typeMap: ' + typeMap.size + ' (' + typeMapFromFile + ' from file)');
 
@@ -4472,14 +4438,11 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   // Also capture the $type from the first flight-plan entry (varies per file)
   // And extract CallSign from each old entry for rename detection
   let fpFirstStart = -1, fpLastEnd = -1;
-  const fpItemNum = (() => {
-    const val = _tn('ContextCross.Models.FlightPlanStaticItem,');
-    if (val == null) throw new Error(
-      `[FLIGHT-PLANS] _rebuild: type "FlightPlanStaticItem" not in typeMap.\n` +
-      `  Search: "ContextCross.Models.FlightPlanStaticItem,"\n  typeMap (${typeMap.size}): ${[...typeMap.entries()].slice(0, 30).map(([k, v]) => `${k}?${v}`).join(', ')}`
-    );
-    return val;
-  })();
+  // Blobdoc-scoped lookup: the emitted entries live inside StaticData.$blobdoc,
+  // whose type numbering is independent of the file-global map (the checkpoint
+  // frame claims the same number for a different type).  _assertBdTn throws
+  // with a scope dump when the type is not declared there.
+  const fpItemNum = _assertBdTn('ContextCross.Models.FlightPlanStaticItem,', 'FlightPlanStaticItem');
   let fpTypeStr = `"$type": "${fpItemNum}|ContextCross.Models.FlightPlanStaticItem, GroundATC.Core"`;
   const oldFpData = []; // [{ oldReg, callsign }]
   let pos = rcStart + 1;
@@ -4893,12 +4856,13 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     }
 
     // 7b-2. Re-expand bare $type refs in segments modified by 7b-1.
-    // _rebuildJetwayEntries injects new jetway entries with bare "$type": N
-    // (integers 3-6 for the top-level RuntimeEntity fields). The full-form
-    // type declarations for these ids existed in the ORIGINAL entries that
-    // were replaced, so they are no longer in the segment text. We re-expand
-    // using the typeMap saved from step 7a-2 (pre-modification) to make every
-    // reference self-contained before binary encoding.
+    // Since the DockingDoorIndex fix, _rebuildJetwayEntries injects entries
+    // with full-form self-declaring "$type": "N|Name" (resolved by canonical
+    // name against the segment scope) — no bare integers 3-6 are emitted.
+    // This re-expansion pass remains as belt-and-braces: any bare refs that
+    // survive in KEPT entries are expanded against the typeMap saved from step
+    // 7a-2 (pre-modification) so every reference is self-contained before
+    // binary encoding.
     for (let fi = 0; fi < frameDocs.length; fi++) {
       const sm = segTypeMaps[fi];
       if (sm && sm.size > 0) {
