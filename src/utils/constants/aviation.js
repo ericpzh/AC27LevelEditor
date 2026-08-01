@@ -46,6 +46,10 @@ export const DYNAMICS_POSITIVE_TAXI_ACCEL = 3;
 export const DYNAMICS_NEGATIVE_TAXI_ACCEL = -4;
 export const DYNAMICS_STATE_FLYING = 1;      // State=30
 export const DYNAMICS_STATE_APPROACH = 2;    // State=5
+// PR written for state=5 (final approach) aircraft at save time. The game
+// recalculates path-based PR from PathPointList, so the stored value is a
+// constant 0; internal position/direction math still uses the real PR.
+export const STATE5_OUTPUT_PROGRESS_RATIO = 0;
 
 // ─── Command / channel type numbers ────────────────────────
 export const CMD_CONTACT_TOWER = 22;

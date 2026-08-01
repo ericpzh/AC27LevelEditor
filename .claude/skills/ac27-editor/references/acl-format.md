@@ -303,15 +303,13 @@ IAF boundary toward State=30 for aircraft near the runway. The touchdown positio
 older `runwayThresholds` value which was an array of two threshold positions (causing NaN in
 `_vec3Dist`).
 
-**Dual PR semantics:** The ACL's `ProgressRatio` field means different things per state:
-- State=30 (FlyApproachDynamicsParams): PR is relative to full approach → stores `fullPR`
-- State=5 (ApproachDynamicsParams): PR is relative to final approach segment only →
-  stores **rescaled** value `(targetDist - flyLen) / appLen` where `targetDist` is the
-  aircraft's distance along the unified path, `flyLen` is the FlyApproach path length,
-  and `appLen` is the AppPointList path length
-
-The rescaling is purely for the stored DynamicsParams field — position always uses the
-unified path with `fullPR`.
+**Stored PR for State=5:** The editor's save path (`_buildStandaloneAircraftEntry`)
+writes a **constant `ProgressRatio: 0`** for State=5 aircraft. The game recalculates
+path-based PR from `PathPointList` for final-approach aircraft, so the stored value is
+pinned to `STATE5_OUTPUT_PROGRESS_RATIO` (0) — the same value the legacy
+`buildState5AircraftBlock` builder has always emitted. Position/direction are still
+computed with the real time-based `fullPR` (see Step 3b). State=30
+(FlyApproachDynamicsParams) stores the full-approach PR.
 
 ### State=5 Sub-types
 
@@ -410,7 +408,8 @@ For portions of the approach beyond that distance, the aircraft stays at `approa
 
 Aircraft is on final approach, on Tower frequency. Position uses the **same unified
 path** as State=30 (FlyApproach + PathPointList + TouchDown) with `fullPR` for spatial
-continuity. The stored DynamicsParams.ProgressRatio uses the **rescaled** `state5PR`.
+continuity. The stored DynamicsParams.ProgressRatio is a **constant `0`** — the game
+recalculates path-based PR for final-approach aircraft.
 
 ```
 // Unified path for position (same as State=30, with IAF dedup)
@@ -429,9 +428,9 @@ pos.y = min(approachCap, glideY)
 // Direction: matches runway heading (from cached approachDirection)
 dir = state5.approachDirection
 
-// Stored PR: RESCALED for game's ApproachDynamicsParams
-// Based on position past IAF, not time-based fraction
-state5PR = (targetDist - flyLen) / appLen
+// Stored PR: CONSTANT 0 — the game recalculates path-based PR from
+// PathPointList; the editor never writes a computed PR for State=5.
+storedPR = STATE5_OUTPUT_PROGRESS_RATIO = 0
 ```
 
 #### State=5 DynamicsParams fields
@@ -467,7 +466,7 @@ for each pt in pathPoints:
 |-----------|----------|---------|
 | Path (position) | flyPoints + appPoints + [tdPos] | flyPoints + pathPoints + [tdPos] (same unified path) |
 | Position PR | fullPR (relative to full approach) | fullPR (same, for spatial continuity) |
-| Stored PR | fullPR | state5PR = (targetDist − flyLen) / appLen |
+| Stored PR | fullPR | 0 (constant — game recalculates path-based PR) |
 | pos.y | min(approachCap, remainingPathDist × tan(3°)) | min(approachCap, remainingPathDist × tan(3°)) |
 | dir | path tangent (level) | path tangent (follows approach path, converges to runway heading at touchdown) |
 | Radio | Approach (APP) | Tower (TWR) |
@@ -614,7 +613,7 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, touchDownPosition?, approachCap?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=30 `$k/$v` JSON block
-- `buildState5AircraftBlock({flightPlanGuid, route, state5PR, spec, towerChannelGuid?, state5Params, flyPoints?, fullPR?, waitingForCommand?, selectedRunwayExitIndex?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=5 `$k/$v` JSON block
+- `buildState5AircraftBlock({flightPlanGuid, route, state5PR, spec, towerChannelGuid?, state5Params, flyPoints?, fullPR?, waitingForCommand?, selectedRunwayExitIndex?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=5 `$k/$v` JSON block. `state5PR` is deprecated — the builder hardcodes `ProgressRatio: 0` (game recalculates path-based PR); not used by the save path
 - `buildAnimatorBlock(aircraftGuid, opts)` — builds the paired `AircraftAnimatorState` entry; `opts.typeNums` controls `animState`/`animSubState` type numbers; `opts.gearRatio` (default 1) sets `GearRatio`/`GearTargetRatio` — gear down (1) for parked and final-approach aircraft, gear up (0) for STAR approach
 
 ## Test

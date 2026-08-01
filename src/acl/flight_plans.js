@@ -6,7 +6,7 @@
  * uses string concatenation (to be migrated to serializer in follow-up).
  */
 const path = require('path');
-const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, GRACE_TTL, CMD_CONTACT_TOWER, DEFAULT_AERODROME_CODE, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_DAY, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL } = require('./constants');
+const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, GRACE_TTL, CMD_CONTACT_TOWER, DEFAULT_AERODROME_CODE, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_DAY, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL, STATE5_OUTPUT_PROGRESS_RATIO } = require('./constants');
 const { ticksToTime } = require('../utils/timeUtils');
 const { computePathLength, resolveFlyApproachPoints, computeApproachCap, computePosition, computeDirection, requireSpecField } = require('./approach');
 const { createTokenizer } = require('./tokenizer');
@@ -2932,7 +2932,7 @@ function _buildStandaloneAircraftEntry(opts) {
     dynParams = {
       $id: id(30),
       $type: APPROACH_DYN_PARAMS_TYPE,
-      ProgressRatio: progressRatio,
+      ProgressRatio: STATE5_OUTPUT_PROGRESS_RATIO,
       TouchDownPosition: { $type: T.vec3, __v: [state5Params.touchDownPosition.x, state5Params.touchDownPosition.y || 0, state5Params.touchDownPosition.z] },
       ApproachDirection: { $type: T.vec3, __v: [state5Params.approachDirection.x, state5Params.approachDirection.y || 0, state5Params.approachDirection.z] },
       CommandedGoAround: false,
