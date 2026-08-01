@@ -204,6 +204,8 @@ Key facts:
 - `InBlockTime` is always `0` (game computes it)
 - Each leg sub-object has its own `$id` (OdinSerializer requirement for nested objects)
 - The key is `flight-plan:REGISTRATION`
+- `AirlineName` stores the 3-letter airline code (e.g. `"UAL"`), NOT a display name — the editor writes the callsign's code for new flights and falls back to `CallSign.substring(0, 3)` at save when empty
+- The editor decides which leg to write from the internal `isDeparture` flag (set at creation; save falls back to non-empty `OffBlockTime` via `_isDepartureFlight()` in `flight_plans.js`) — exactly one leg is non-null
 
 ### Independent Type Numbering
 

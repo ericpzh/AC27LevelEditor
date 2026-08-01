@@ -90,7 +90,7 @@ When a user says "国航" or "Air China", resolve to the 3-letter ICAO code.
 | 荷兰皇家航空 | KLM | KLM | 荷航 |
 | 瑞士航空 | Swiss | SWR | 瑞航 |
 
-**How to resolve:** Call `get_airport_info` → check `constraints.airlineCode` (codes known for this airport) and `constraints.flatLists.AirlineName` (full names in Chinese + English). Match user intent to a code: "国航" → "Air China" → "CCA". If the user uses a short name not listed above, try matching against `AirlineName` from `get_airport_info`.
+**How to resolve:** Call `get_airport_info` → check `constraints.airlineCode` (the codes known for this airport). Match user intent to a code using the name↔code table above: "国航" → "Air China" → "CCA". If the user uses a short name not listed above, ask for or infer the 3-letter code (the same name→code map lives in `src/utils/constants/airlines.js` as `AIRLINE_CODE_MAP`).
 
 ### Chinese Field Name Mapping (中文字段名映射)
 
@@ -123,8 +123,10 @@ When a user uses Chinese field names, translate to the API field key:
 - **Arrival vs Departure**: Arrivals have LandingTime + InBlockTime + DepartureAirport. Departures have OffBlockTime + TakeoffTime + ArrivalAirport.
 - **Callsign format**: 3-letter ICAO airline code + flight number (e.g., `CCA1234`).
 - **The 15 fields**: CallSign, DepartureAirport, ArrivalAirport, Stand, Runway, OffBlockTime, TakeoffTime, LandingTime, InBlockTime, AirlineName, AircraftType, Airway, Registration, Voice, Language.
+- **AirlineName stores the 3-letter airline code, NOT a display name** — the game format uses codes (e.g. `"CCA"`, `"UAL"`). `create_flights` fills it from the callsign prefix when left empty, so it can be omitted safely.
+- **Departure/arrival is derived server-side**: `create_flights` sets an internal `isDeparture` flag from `OffBlockTime` presence; the saved ACL leg (`InitialArrival` vs `InitialDeparture`) follows it. `get_flights` rows include this `isDeparture` boolean.
 - **Time format**: HH:MM:SS (or HH:MM shorthand). Times are wall-clock times within the scenario config range.
-- **Cascade rules** (applied server-side on modify): Changing AirlineCode rebuilds CallSign and resets AircraftType/Registration to first valid. Changing FlightNum rebuilds CallSign. Changing Runway resets Airway to first valid STAR.
+- **Cascade rules** (applied server-side on modify): Changing AirlineCode rebuilds CallSign, resets AircraftType/Registration to first valid, and syncs AirlineName to the new code. Changing FlightNum rebuilds CallSign. Changing Runway resets Airway to first valid STAR.
 - **Registration format**: Country prefix + hyphen + alphanumeric (e.g., `B-1234`, `N123AB`).
 
 ## 5. Validation Rules — How to Create Valid Flights
@@ -154,7 +156,7 @@ The server WILL reject invalid requests with a 422 error containing `error.detai
 6. Choose a stand from `constraints.flatLists.Stand`.
 7. For arrivals: choose an airway from `constraints.runwayStarCompat[runway]`. For departures: leave Airway empty.
 8. Choose a registration from `constraints.registrationsByPair['airlineCode|aircraftType']`.
-9. Look up AirlineName (reverse lookup: "CCA" → "Air China" / "中国国航").
+9. Set AirlineName to the 3-letter code itself (e.g. `"CCA"`) — the game stores codes, not display names. May be left empty; the server fills it from the callsign prefix.
 10. Set times within `configTimeRange`. Arrivals: LandingTime < InBlockTime. Departures: OffBlockTime < TakeoffTime.
 11. Set DepartureAirport (arrivals) or ArrivalAirport (departures) to the current airport ICAO.
 12. Set Voice and Language from `constraints.flatLists`. Follow the editor's region convention: `zh` if the airport ICAO starts with `Z` (China), else `en`; Voice — pick randomly from the airport's pool (already region-appropriate: `CN-*` voices at Z airports, e.g. `Yeager` at US airports).
@@ -172,10 +174,10 @@ No parameters. Returns: `editorReady`, `currentPath`, `currentAirport`, `flightC
 No parameters. Returns: `cacheReady`, `currentAirport`, `configTimeRange`, and `constraints` with all validation maps (flatLists, airlineCode, flightNumbers, aircraftTypes, airlineAircraftCompat, runwayStarCompat, registrationsByPair, timeRules, standRules, registrationRules). **Call this before any create/modify.**
 
 ### `create_flights`
-`{flights: [{CallSign, DepartureAirport, ArrivalAirport, Stand, Runway, OffBlockTime, TakeoffTime, LandingTime, InBlockTime, AirlineName, AircraftType, Airway, Registration, Voice, Language}]}`. All 15 fields required per flight. Returns `{success, created}` or 422 with `error.details`.
+`{flights: [{CallSign, DepartureAirport, ArrivalAirport, Stand, Runway, OffBlockTime, TakeoffTime, LandingTime, InBlockTime, AirlineName, AircraftType, Airway, Registration, Voice, Language}]}`. All 15 fields required per flight. Returns `{success, created}` or 422 with `error.details`. Server-side enrichment: `isDeparture` is derived from `OffBlockTime` presence (drives which leg the save writes); `AirlineName` defaults to `CallSign.substring(0, 3)` when empty.
 
 ### `get_flights`
-`{type?, airline?, callsign?, stand?, runway?, aircraftType?, timeAfter?, timeBefore?, limit?, offset?}`. Returns `{success, flights, total}`.
+`{type?, airline?, callsign?, stand?, runway?, aircraftType?, timeAfter?, timeBefore?, limit?, offset?}`. Returns `{success, flights, total}`. Rows carry the 15 fields plus an `isDeparture` boolean (internal flag the save uses to choose the leg).
 
 ### `modify_flights`
 `{match: {callsigns?, callsign?, airline?, type?, stand?, runway?, aircraftType?}, updates: {Stand?, Runway?, OffBlockTime?, ...}}`. Server applies cascade logic. Returns `{success, matched, modified}` or 422.
@@ -207,7 +209,7 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 3. Construct 10 flight objects (LLM internally):
    Flight 1: { CallSign:"AAL1001", DepartureAirport:"", ArrivalAirport:"KJFK",
      Stand:"G1", Runway:"04L", OffBlockTime:"10:00:00", TakeoffTime:"10:05:00",
-     LandingTime:"", InBlockTime:"", AirlineName:"American Airlines",
+     LandingTime:"", InBlockTime:"", AirlineName:"AAL",
      AircraftType:"A320", Airway:"", Registration:"N123AB",
      Voice:"en-US-1", Language:"en" }
    ... (10 flights, incrementing times, varying aircraft/reg from compat lists)
@@ -250,7 +252,7 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 3. 构造10个完整 flight 对象：
    Flight 1: { CallSign:"CCA1501", DepartureAirport:"", ArrivalAirport:"ZSJN",
      Stand:"G1", Runway:"01", OffBlockTime:"10:00:00", TakeoffTime:"10:05:00",
-     LandingTime:"", InBlockTime:"", AirlineName:"中国国航",
+     LandingTime:"", InBlockTime:"", AirlineName:"CCA",
      AircraftType:"A320", Airway:"", Registration:"B-1234",
      Voice:"zh-CN-1", Language:"zh" }
    ... (LLM 生成10个)
@@ -285,4 +287,4 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 - Airport constraint maps are empty → validation is best-effort; warn user but proceed
 - `get_airport_info` fails entirely → MCP cannot reach the editor; check `npm start -- --api-port=31415`
 - **User speaks Chinese but error uses English keys** → translate field names for the user (e.g., "Stand 'G99' is not valid" → "停机位 'G99' 无效")
-- **User uses a Chinese airline name not in the mapping** → try calling `get_airport_info` and checking `constraints.flatLists.AirlineName` for a match; if unsure, ask the user for the 3-letter code
+- **User uses a Chinese airline name not in the mapping** → resolve to a 3-letter code via the airline table in this skill (or `AIRLINE_CODE_MAP` in `src/utils/constants/airlines.js`); if unsure, ask the user for the 3-letter code. Note: `constraints.flatLists.AirlineName` is not populated — the name↔code mapping lives in the skill/constants, not in `get_airport_info`
