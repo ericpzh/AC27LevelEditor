@@ -141,10 +141,10 @@ AC27Editor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 482 Vitest + 16 Playwright E2E + 22 Node.js integration tests
+├── tests/               # 540 Vitest + 16 Playwright E2E + 29 Node.js integration scripts
 │   ├── electron/cloud-llm.test.js  # cloud-llm backend tests (49 tests, node env)
-│   ├── electron/updater.test.js    # updater backend tests (14 tests, node env)
-│   ├── components/MapWindows/  # MapWindow component & hook tests (10 files, 151 tests)
+│   ├── electron/updater.test.js    # updater backend tests (25 tests, node env)
+│   ├── components/MapWindows/  # MapWindow component & hook tests (10 files, 154 tests)
 └── dist/                # Build output (gitignored)
 ```
 
@@ -274,7 +274,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 482 tests across 29 files
+- `npm test` or `npm run test:watch` — 540 tests across 33 files
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - Electron backend tests use `@vitest-environment node` + `require.cache` priming to stub ESM SDK packages (see `tests/electron/cloud-llm.test.js`)
 - zustand stores are tested with the real store using `setState()` — never mock stores

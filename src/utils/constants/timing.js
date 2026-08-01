@@ -10,7 +10,7 @@ export const TICKS_PER_SECOND_NUM = 10000000;
 export const TICKS_PER_DAY_NUM = 864000000000;
 
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
-export const CACHE_VERSION = 16;
+export const CACHE_VERSION = 17;
 
 // ─── Game timing / scenario ────────────────────────────────
 export const WARMUP_SEC = 780;             // 13-minute game warmup
@@ -40,14 +40,22 @@ export const STAND_OCCUPANCY_END_OFFSET_MIN = 60;
 // Per-airport override for estimated OffBlockTime→takeoff duration.
 // Used to populate _departureTakeoffTime in checkpoint RuntimeEntities
 // when TakeoffTime is 0 (the v4 default). Keyed by ICAO code.
+// Medians measured from production saves (tests/_debug/compute_taxi_constants.js);
+// airports without data fall through to default.
 export const DEPARTURE_TAXI_SECONDS = {
-  default: 300,
+  default: 400, // KDCA + future airports (no KDCA data — clean-start saves)
+  ZSJN: 464,
+  KJFK: 404,
 };
 
 // ─── Arrival taxi-in estimate (seconds) ────────────────────
 // Per-airport override for estimated LandingTime→InBlockTime duration.
 // Used to populate _arrivalInBlockTime in RuntimeEntities flight-plan entries
 // when InBlockTime is 0 (the v4 default). Keyed by ICAO code.
+// Medians measured from production saves (tests/_debug/compute_taxi_constants.js);
+// airports without data fall through to default.
 export const ARRIVAL_TAXI_SECONDS = {
-  default: 400,
+  default: 400, // KDCA + future airports (no KDCA data — clean-start saves)
+  ZSJN: 372,
+  KJFK: 456,
 };

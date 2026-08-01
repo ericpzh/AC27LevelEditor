@@ -6,9 +6,9 @@
  *   node tests/run-all.mjs [--game-root <path>]
  *
  * Layers:
- *   1. Vitest (component tests)     — 497 tests, ~3s
+ *   1. Vitest (component tests)     — 540 tests, ~4s
  *   2. Integration: save integrity  — 12 prod+demo files, ~20s
- *   3. Playwright E2E                — 15 tests (~3 min; 1 skipped — E12a overlay timing)
+ *   3. Playwright E2E                — 16 tests (~3 min; 15 pass, 1 skipped — E12a overlay timing)
  *
  * Covers v4 GATCArc4 binary-format .acl files.
  * Default game root: D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest
@@ -66,7 +66,7 @@ console.log(`\nGame root: ${GAME_ROOT}`);
 const startTime = Date.now();
 
 // ── 1. Vitest ────────────────────────────────────────────────────
-runStep('Layer 1: Vitest (501 component tests)', 'npx vitest run');
+runStep('Layer 1: Vitest (540 component tests)', 'npx vitest run');
 
 // ── 2. Save Integrity (12 prod+demo files) ───────────────────────
 // Quote paths to handle spaces in game root

@@ -599,6 +599,47 @@ for (const file of aclFiles) {
     // 7e. Frame count preserved
     invChecks.frameCountPreserved = { pass: true, count: frameDocs.length };
 
+    // 7f. DockingDoorIndex $type in every rebuilt jetway entry must resolve
+    // to R3.ReactiveProperty<Int32> in the segment's scope (type ids are
+    // per-blobdoc — the old code hardcoded id 6, which binds to
+    // ContextCross.Aircrafts.Aircraft in some scopes, e.g. ZSJN_taixwayclosed).
+    // BLOCKING: violations are pushed into problems[] (durable regression guard).
+    {
+      const RP_INT32 = 'R3.ReactiveProperty`1[[System.Int32, mscorlib]], R3';
+      let ddiTotal = 0;
+      const ddiBad = [];
+      for (let fi = 0; fi < resultDocs.length; fi++) {
+        const segRE = parseRuntimeEntities(resultDocs[fi]);
+        if (!segRE) continue;
+        // Scope-local type declarations in this segment (full-form only).
+        const typeDecls = new Map();
+        const declRe = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+        let dm;
+        while ((dm = declRe.exec(segRE.rcContent)) !== null) {
+          const num = parseInt(dm[1], 10);
+          if (!typeDecls.has(num)) typeDecls.set(num, dm[2]);
+        }
+        for (const entry of segRE.entries) {
+          if (!entry.isJetway) continue;
+          const ddi = entry.text.match(/"DockingDoorIndex":\s*\{\s*"\$id":\s*\d+,\s*"\$type":\s*("(\d+)\|([^"]+)"|(\d+))/);
+          if (!ddi) continue;
+          ddiTotal++;
+          let name;
+          if (ddi[3] !== undefined) {
+            name = ddi[3]; // full-form "N|Name"
+          } else {
+            name = typeDecls.get(parseInt(ddi[4], 10)); // bare N → resolve via scope declarations
+          }
+          if (name !== RP_INT32) {
+            const label = name === undefined ? 'unresolvable bare $type ' + ddi[4] : '"' + name + '"';
+            ddiBad.push(`Frame ${fi} ${entry.key}: DockingDoorIndex $type → ${label}`);
+          }
+        }
+      }
+      invChecks.ddiTypeResolution = { pass: ddiBad.length === 0, total: ddiTotal, bad: ddiBad };
+      ddiBad.forEach(b => problems.push(b));
+    }
+
     fileResult.invariantChecks = invChecks;
 
     // ── Step 8: Collect issues ──────────────────────────────────

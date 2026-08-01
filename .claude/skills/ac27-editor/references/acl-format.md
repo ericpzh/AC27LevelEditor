@@ -180,9 +180,9 @@ v4 flight plans live in `StaticData.$blobdoc.StaticItems.$rcontent` with keys pr
       "LandingTime": { "$type": "3|System.DateTime, mscorlib", 638468106000000000 },
       "InBlockTime": { "$type": "3|System.DateTime, mscorlib", 0 },  // computed by game
       "ActualInBlockTime": { "$type": "3|System.DateTime, mscorlib", 0 },
+      "STAR": "SEY.PARCH4",
       "Runway": "31L",
-      "Stand": "12",
-      "STAR": "SEY.PARCH4"
+      "Stand": "12"
     },
     "InitialDeparture": null  // or { ... } for departures
   }

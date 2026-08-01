@@ -15,7 +15,7 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 
 ## Running Tests
 
-### Component tests (493 tests across 29 files)
+### Component tests (540 tests across 33 files)
 
 ```bash
 npm test              # Run all Vitest component + store + utility + electron + MapWindow + updater tests
@@ -75,6 +75,21 @@ node --require ./tests/integration/preload.cjs tests/integration/test_timeline_c
 node --require ./tests/integration/preload.cjs tests/integration/test_generate_timelines.js --acl <path>
 node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_timelines.js --acl <path>
 ```
+
+### Debug data-analysis scripts (`tests/_debug/`, gitignored)
+
+```bash
+node tests/_debug/extract_aircraft_times.js             # Decode all prod .acl files, extract per-aircraft
+                                                        # callsign + 4 times (runtime _departureTakeoffTime/
+                                                        # _arrivalInBlockTime from RuntimeEntities, scheduled
+                                                        # OffBlockTime/LandingTime from StaticItems) → aircraft_times_report.tsv
+                                                        # Flags: --airports=ZSJN,KJFK,KDCA --include-demo --include-test --out=<path>
+node tests/_debug/compute_taxi_constants.js             # Per-airport median/avg taxi durations from the TSV;
+                                                        # prints ready-to-paste DEPARTURE_TAXI_SECONDS /
+                                                        # ARRIVAL_TAXI_SECONDS blocks for src/utils/constants/timing.js
+```
+
+Used to re-derive the per-airport taxi-time constants when new production saves become available (e.g. KDCA after playing through a level — its current saves are clean starts with no RuntimeEntities).
 
 ## Local Build
 

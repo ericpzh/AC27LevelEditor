@@ -265,10 +265,54 @@ function _extractVector3FromBare(objInner) {
 // ─── 1. Specification DB ──────────────────────────────────────────
 
 /**
+ * Require a spec field to carry a real value — never silently fall back.
+ *
+ * Both data intake (extractSpecificationDB / _extractFallbackSpec) and the
+ * emission builders resolve AircraftSpecification fields.  When a field is
+ * absent (spec missing entirely, or the spec object lacking the field), the
+ * old code quietly substituted DEFAULT_* constants — writing plausible-but-
+ * wrong data into saves (e.g. AerodromeCode 67 for a widebody).  This turns
+ * that into a hard assert whose message names the exact failure chain:
+ * builder, aircraft, designator, which lookups were tried, and the refused
+ * default.  The DEFAULT_* constants are message content only — they are
+ * never emitted values.
+ *
+ * @param {Function|null} log    optional logger (defaults to console.error)
+ * @param {object} ctx           { builder, reg?, acType?, designator?, lookupTrace?, file?, rawBlock? }
+ * @param {string} field         spec field name
+ * @param {*} value              already-resolved field value (may be null/undefined/NaN)
+ * @param {object|null} spec     spec object, only used for the message context
+ * @param {*} fallback           the default that was refused (message content only)
+ * @returns {*} value            when present
+ */
+function requireSpecField(log, ctx, field, value, spec, fallback) {
+  if (value === undefined || value === null || (typeof value === 'number' && Number.isNaN(value))) {
+    const parts = ['[ACL-ASSERT]', ctx.builder + ':'];
+    if (fallback !== undefined) parts.push('refusing fallback ' + JSON.stringify(fallback));
+    parts.push('spec field "' + field + '" has no value');
+    if (ctx.file) parts.push('source=' + ctx.file);
+    if (ctx.reg) parts.push('registration=' + ctx.reg);
+    if (ctx.acType) parts.push('AircraftType=' + JSON.stringify(ctx.acType));
+    if (ctx.designator) parts.push('designator=' + JSON.stringify(ctx.designator));
+    if (ctx.lookupTrace) parts.push('lookup: ' + ctx.lookupTrace);
+    if (ctx.rawBlock) parts.push('raw=' + ctx.rawBlock);
+    parts.push(spec && spec.Designator
+      ? 'spec found (Designator=' + JSON.stringify(spec.Designator) + ') but the field is missing from it'
+      : 'spec is NULL — field cannot be resolved');
+    const msg = parts.join(' ');
+    (log || console.error)(msg);
+    throw new Error(msg);
+  }
+  return value;
+}
+
+/**
  * Extract a complete Designator → AircraftSpecificationState mapping from ACL text.
  * Returns Map<string, object> where keys are Designator codes (e.g., "B738").
+ * Every extracted field is REQUIRED — a source entry missing a field asserts
+ * via requireSpecField instead of being silently defaulted.
  */
-function extractSpecificationDB(aclText) {
+function extractSpecificationDB(aclText, file) {
   const db = new Map();
 
   // v4: scan the entire decoded text for Specification objects.
@@ -286,20 +330,27 @@ function extractSpecificationDB(aclText) {
     const des = _extractString(specObj, 'Designator');
     if (!des || db.has(des)) continue;
 
+    const ctx = {
+      builder: 'extractSpecificationDB',
+      file: file || '(decoded acl)',
+      designator: des,
+      rawBlock: specObj.length > 300 ? specObj.slice(0, 300) + '…' : specObj,
+    };
+    const msgSpec = { Designator: des };
+
     // Extract ModelOffset sub-object before passing to _extractVector3,
     // since the function expects just the float3 object, not the full spec.
     const moObj = _extractNestedObject(specObj, 'ModelOffset');
-    const modelOffset = moObj ? _extractVector3(moObj) : null;
 
     const spec = {
       Designator: des,
-      AerodromeCode: _extractInt(specObj, 'AerodromeCode') ?? DEFAULT_AERODROME_CODE,
-      WakeTurbulenceCategory: _extractInt(specObj, 'WakeTurbulenceCategory') ?? DEFAULT_WAKE_CATEGORY,
-      WheelBase: _extractFloat(specObj, 'WheelBase') ?? 0,
-      WingSpan: _extractFloat(specObj, 'WingSpan') ?? 0,
-      RunwayVRSpeed: _extractInt(specObj, 'RunwayVRSpeed') ?? DEFAULT_RUNWAY_VR_SPEED,
-      RunwayTakeOffLength: _extractInt(specObj, 'RunwayTakeOffLength') ?? DEFAULT_RUNWAY_TAKEOFF_LENGTH,
-      ModelOffset: modelOffset ?? DEFAULT_MODEL_OFFSET,
+      AerodromeCode: requireSpecField(null, ctx, 'AerodromeCode', _extractInt(specObj, 'AerodromeCode'), msgSpec, DEFAULT_AERODROME_CODE),
+      WakeTurbulenceCategory: requireSpecField(null, ctx, 'WakeTurbulenceCategory', _extractInt(specObj, 'WakeTurbulenceCategory'), msgSpec, DEFAULT_WAKE_CATEGORY),
+      WheelBase: requireSpecField(null, ctx, 'WheelBase', _extractFloat(specObj, 'WheelBase'), msgSpec, 0),
+      WingSpan: requireSpecField(null, ctx, 'WingSpan', _extractFloat(specObj, 'WingSpan'), msgSpec, 0),
+      RunwayVRSpeed: requireSpecField(null, ctx, 'RunwayVRSpeed', _extractInt(specObj, 'RunwayVRSpeed'), msgSpec, DEFAULT_RUNWAY_VR_SPEED),
+      RunwayTakeOffLength: requireSpecField(null, ctx, 'RunwayTakeOffLength', _extractInt(specObj, 'RunwayTakeOffLength'), msgSpec, DEFAULT_RUNWAY_TAKEOFF_LENGTH),
+      ModelOffset: requireSpecField(null, ctx, 'ModelOffset', moObj ? _extractVector3(moObj) : null, msgSpec, DEFAULT_MODEL_OFFSET),
       DockingPositions: _extractVector4Array(specObj, 'DockingPositions') ?? [],
     };
     db.set(des, spec);
@@ -312,26 +363,33 @@ function extractSpecificationDB(aclText) {
  * Used as a fallback when the approachCache specDB/designatorMap don't have
  * the needed designator (e.g., v4 files where buildDesignatorMapping returns empty).
  * Returns null if no Specification is found.
+ * Every extracted field is REQUIRED — same assert policy as extractSpecificationDB.
  */
-function _extractFallbackSpec(text) {
+function _extractFallbackSpec(text, log, ctxBase) {
   const specObj = _extractNestedObject(text, 'Specification');
   if (!specObj) return null;
 
   const des = _extractString(specObj, 'Designator');
   if (!des) return null;
 
+  const ctx = Object.assign({
+    builder: '_extractFallbackSpec',
+    designator: des,
+    rawBlock: specObj.length > 300 ? specObj.slice(0, 300) + '…' : specObj,
+  }, ctxBase || {});
+  const msgSpec = { Designator: des };
+
+  const moObj = _extractNestedObject(specObj, 'ModelOffset');
+
   return {
     Designator: des,
-    AerodromeCode: _extractInt(specObj, 'AerodromeCode') ?? DEFAULT_AERODROME_CODE,
-    WakeTurbulenceCategory: _extractInt(specObj, 'WakeTurbulenceCategory') ?? DEFAULT_WAKE_CATEGORY,
-    WheelBase: _extractFloat(specObj, 'WheelBase') ?? 0,
-    WingSpan: _extractFloat(specObj, 'WingSpan') ?? 0,
-    RunwayVRSpeed: _extractInt(specObj, 'RunwayVRSpeed') ?? DEFAULT_RUNWAY_VR_SPEED,
-    RunwayTakeOffLength: _extractInt(specObj, 'RunwayTakeOffLength') ?? DEFAULT_RUNWAY_TAKEOFF_LENGTH,
-    ModelOffset: (function() {
-      const moObj = _extractNestedObject(specObj, 'ModelOffset');
-      return moObj ? _extractVector3(moObj) : null;
-    })() ?? DEFAULT_MODEL_OFFSET,
+    AerodromeCode: requireSpecField(log, ctx, 'AerodromeCode', _extractInt(specObj, 'AerodromeCode'), msgSpec, DEFAULT_AERODROME_CODE),
+    WakeTurbulenceCategory: requireSpecField(log, ctx, 'WakeTurbulenceCategory', _extractInt(specObj, 'WakeTurbulenceCategory'), msgSpec, DEFAULT_WAKE_CATEGORY),
+    WheelBase: requireSpecField(log, ctx, 'WheelBase', _extractFloat(specObj, 'WheelBase'), msgSpec, 0),
+    WingSpan: requireSpecField(log, ctx, 'WingSpan', _extractFloat(specObj, 'WingSpan'), msgSpec, 0),
+    RunwayVRSpeed: requireSpecField(log, ctx, 'RunwayVRSpeed', _extractInt(specObj, 'RunwayVRSpeed'), msgSpec, DEFAULT_RUNWAY_VR_SPEED),
+    RunwayTakeOffLength: requireSpecField(log, ctx, 'RunwayTakeOffLength', _extractInt(specObj, 'RunwayTakeOffLength'), msgSpec, DEFAULT_RUNWAY_TAKEOFF_LENGTH),
+    ModelOffset: requireSpecField(log, ctx, 'ModelOffset', moObj ? _extractVector3(moObj) : null, msgSpec, DEFAULT_MODEL_OFFSET),
     DockingPositions: _extractVector4Array(specObj, 'DockingPositions') ?? [],
   };
 }
@@ -1232,6 +1290,15 @@ function buildApproachAircraftBlock(opts) {
   const guid = _generateGuid();
   let id = nextId;
 
+  // Every spec field is REQUIRED — no silent defaults. A spec that lacks a
+  // field asserts via requireSpecField instead of emitting undefined/NaN.
+  {
+    const ctx = { builder: 'buildApproachAircraftBlock', designator: spec && spec.Designator };
+    for (const f of ['AerodromeCode', 'WakeTurbulenceCategory', 'WheelBase', 'WingSpan', 'RunwayVRSpeed', 'RunwayTakeOffLength', 'ModelOffset']) {
+      requireSpecField(null, ctx, f, spec ? spec[f] : undefined, spec, undefined);
+    }
+  }
+
   // Use namespace-qualified $type strings. Every typeNum is REQUIRED — no fallback numbers.
   // The caller (flight_plans.js) resolves all types from the per-file type map.
   const tn = opts.typeNums || {};
@@ -1437,6 +1504,15 @@ function buildState5AircraftBlock(opts) {
 
   const guid = _generateGuid();
   let id = nextId;
+
+  // Every spec field is REQUIRED — no silent defaults. A spec that lacks a
+  // field asserts via requireSpecField instead of emitting undefined/NaN.
+  {
+    const ctx = { builder: 'buildState5AircraftBlock', designator: spec && spec.Designator };
+    for (const f of ['AerodromeCode', 'WakeTurbulenceCategory', 'WheelBase', 'WingSpan', 'RunwayVRSpeed', 'RunwayTakeOffLength', 'ModelOffset']) {
+      requireSpecField(null, ctx, f, spec ? spec[f] : undefined, spec, undefined);
+    }
+  }
 
   // Use namespace-qualified $type strings. Every typeNum is REQUIRED — no fallback numbers.
   const tn = opts.typeNums || {};
@@ -1977,7 +2053,7 @@ function buildApproachCache(airportDir, progressCallback) {
       allEntries.push(...entries);
 
       // Merge specDB from each file
-      const fileSpecs = extractSpecificationDB(text);
+      const fileSpecs = extractSpecificationDB(text, path.basename(aclPath));
       for (const [k, v] of fileSpecs) {
         if (!specDB.has(k)) specDB.set(k, v);
       }
@@ -2370,6 +2446,7 @@ function deserializeApproachCache(json) {
 
 module.exports = {
   // Data extraction
+  requireSpecField,
   extractSpecificationDB,
   _extractFallbackSpec,
   extractApproachData,

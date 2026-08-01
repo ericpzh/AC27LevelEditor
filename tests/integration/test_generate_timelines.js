@@ -257,8 +257,11 @@ function testRunwayTimeline() {
 
   const meta = metaRunway(orig);
   let ok = true;
-  ok &= check(meta.irTypeNum === 8, 'InitialRunways $type num == 8 (got ' + meta.irTypeNum + ')');
-  ok &= check(meta.irTypeStr === null, 'InitialRunways $type is bare integer (decoded-text form)');
+  // v4 decoded text emits full-form per-file references ("10|System.String[], mscorlib");
+  // the fixed bare-8 expectation predates the per-file typeMap refactor.
+  ok &= check(!!meta.irTypeNum, 'InitialRunways $type number parsed (' + meta.irTypeNum + ')');
+  ok &= check(meta.irTypeStr === null || /^\d+\|/.test(meta.irTypeStr),
+    'InitialRunways $type is a per-file reference (' + (meta.irTypeStr || 'bare') + ')');
   ok &= check(!!meta.tlTypeNum, 'Timeline $type number parsed (' + meta.tlTypeNum + ')');
 
   // Generate from parsed ACL data so the round-trip compares apples-to-apples

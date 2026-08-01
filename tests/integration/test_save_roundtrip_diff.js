@@ -2,7 +2,8 @@
  * Test: Save Roundtrip Diff Verification
  *
  * Validates the three fixes applied to the ACL save pipeline:
- *   Issue 1: RunwayTakeOffLength no longer defaults to 2000
+ *   Issue 1: RunwayTakeOffLength=0 preserved; missing values assert via
+ *            requireSpecField (refusing fallback 2000) — no silent defaulting
  *   Issue 2: ModelOffset float3 uses tuple format (no named x/y/z keys)
  *   Issue 3: Empty string[] arrays use $iref sharing
  *
@@ -43,6 +44,8 @@ console.log('═══ T1: RunwayTakeOffLength nullish coalescing ═══');
   // Test: RunwayTakeOffLength=0 MUST be preserved (not overridden to 2000)
   // Build a minimal ACL text containing Specification entries
   // Note: $k must be a GUID (hex digits + hyphens) for the regex in _parseAircraftEntries
+  // Every other field is required — extractSpecificationDB asserts via
+  // requireSpecField instead of silently defaulting (AerodromeCode fix).
   const specText = [
     '{',
     '  "WorldState": {',
@@ -53,7 +56,13 @@ console.log('═══ T1: RunwayTakeOffLength nullish coalescing ═══');
     '          "$v": {',
     '            "Specification": {',
     '              "Designator": "TEST",',
-    '              "RunwayTakeOffLength": 0',
+    '              "AerodromeCode": 67,',
+    '              "WakeTurbulenceCategory": 77,',
+    '              "WheelBase": 0.123,',
+    '              "WingSpan": 0.3492,',
+    '              "RunwayVRSpeed": 140,',
+    '              "RunwayTakeOffLength": 0,',
+    '              "ModelOffset": { "x": 0.19, "y": -0.05, "z": -0.2 }',
     '            }',
     '          }',
     '        }',
@@ -71,7 +80,8 @@ console.log('═══ T1: RunwayTakeOffLength nullish coalescing ═══');
 }
 
 {
-  // Test: Missing RunwayTakeOffLength falls back to 2000
+  // Test: Missing RunwayTakeOffLength asserts (refuses fallback 2000)
+  // (all other required fields present; only RunwayTakeOffLength is absent)
   const specText = [
     '{',
     '  "WorldState": {',
@@ -81,7 +91,13 @@ console.log('═══ T1: RunwayTakeOffLength nullish coalescing ═══');
     '          "$k": "b2c3d4e5-f6a7-8901-bcde-f12345678901",',
     '          "$v": {',
     '            "Specification": {',
-    '              "Designator": "TEST2"',
+    '              "Designator": "TEST2",',
+    '              "AerodromeCode": 67,',
+    '              "WakeTurbulenceCategory": 77,',
+    '              "WheelBase": 0.123,',
+    '              "WingSpan": 0.3492,',
+    '              "RunwayVRSpeed": 140,',
+    '              "ModelOffset": { "x": 0.19, "y": -0.05, "z": -0.2 }',
     '            }',
     '          }',
     '        }',
@@ -90,12 +106,15 @@ console.log('═══ T1: RunwayTakeOffLength nullish coalescing ═══');
     '  }',
     '}',
   ].join('\n');
-  const db = extractSpecificationDB(specText);
-  const spec = db.get('TEST2');
-  assert(spec !== undefined, 'Spec extracted for missing RunwayTakeOffLength case');
-  if (spec) {
-    assertEqual(spec.RunwayTakeOffLength, 2000, 'Missing RunwayTakeOffLength defaults to 2000');
+  let threw = false;
+  try {
+    extractSpecificationDB(specText);
+  } catch (e) {
+    threw = true;
+    assert(e.message.includes('refusing fallback 2000'), 'Assert message names refused fallback 2000');
+    assert(e.message.includes('TEST2'), 'Assert message names the designator');
   }
+  assert(threw, 'Missing RunwayTakeOffLength asserts instead of defaulting to 2000');
 }
 
 // ═══════════════════════════════════════════════════════════════════

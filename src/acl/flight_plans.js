@@ -6,9 +6,9 @@
  * uses string concatenation (to be migrated to serializer in follow-up).
  */
 const path = require('path');
-const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, GRACE_TTL, TYPE_NUM_FALLBACK_START, CMD_CONTACT_TOWER, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_DAY, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL } = require('./constants');
+const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, GRACE_TTL, TYPE_NUM_FALLBACK_START, CMD_CONTACT_TOWER, DEFAULT_AERODROME_CODE, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_DAY, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL } = require('./constants');
 const { ticksToTime } = require('../utils/timeUtils');
-const { computePathLength, resolveFlyApproachPoints, computeApproachCap, computePosition, computeDirection } = require('./approach');
+const { computePathLength, resolveFlyApproachPoints, computeApproachCap, computePosition, computeDirection, requireSpecField } = require('./approach');
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson, serializeUnityJson, parseOdinObject } = require('./acl_json');
 const { readAclText, writeAcl } = require('./gatcarc');
@@ -1331,6 +1331,42 @@ function _extractSegmentSnapshotSec(segmentText) {
   }
 }
 
+// Canonical type names for jetway RuntimeEntity fields, matched by NAME
+// against the segment's per-scope type declarations.  Type ids are per-blobdoc
+// and vary between files — e.g. R3.ReactiveProperty<Int32> is id 6 in
+// ZSJN-Morning but id 29 in ZSJN_taixwayclosed — so hardcoding ids 3-6 for the
+// field types picks up whatever name that scope registered at those ids.
+const JW_TYPE_JETWAY     = 'ContextCross.Models.Jetway, GroundATC.Core';
+const JW_TYPE_RP_SINGLE  = 'R3.ReactiveProperty`1[[System.Single, mscorlib]], R3';
+const JW_TYPE_RP_AIRCRAFT= 'R3.ReactiveProperty`1[[ContextCross.Aircrafts.Aircraft, GroundATC.Core]], R3';
+const JW_TYPE_RP_INT32   = 'R3.ReactiveProperty`1[[System.Int32, mscorlib]], R3';
+
+/**
+ * Build a name->type-id resolver for a segment's type table (jwTypeMap).
+ * Exact extraction of the _jwResolveType closure (reverse name->num lookup,
+ * fresh id above segment max, quoted full-form '"N|Name"' output) so every
+ * emitted $type is self-declaring.  One instance per segment must be shared
+ * by ALL rebuilt entries (active + empty paths) so fresh-id allocation can
+ * never collide across entries in one scope.
+ */
+function _makeJwTypeResolver(jwTypeMap) {
+  const nameToNum = new Map();
+  let maxNum = 0;
+  if (jwTypeMap) {
+    for (const [num, name] of jwTypeMap) {
+      nameToNum.set(name, num);
+      if (num > maxNum) maxNum = num;
+    }
+  }
+  let freshNum = maxNum + 1;
+  return function (plainName) {
+    if (nameToNum.has(plainName)) {
+      return '"' + nameToNum.get(plainName) + '|' + plainName + '"';
+    }
+    return '"' + (freshNum++) + '|' + plainName + '"';
+  };
+}
+
 function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, log, idMapper, baseDateTicks, icao, fpIdByReg, standPositions, strArrCache, recvEventsCache, waitingCmdsCache) {
   // ── Navigate to RuntimeEntities.$rcontent structurally ──────────
   const t = createTokenizer(segmentText);
@@ -1432,6 +1468,11 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
     if (!jwTypeMap.has(num)) jwTypeMap.set(num, jm[2]);
   }
 
+  // Shared name->id resolver for ALL rebuilt jetway field types (active and
+  // empty paths use the SAME instance so fresh-id allocation can never
+  // collide across entries in one scope).
+  const jwTypeResolve = _makeJwTypeResolver(jwTypeMap);
+
   // ---- Pre-scan: collect old _receivedEvents AircraftEvent[] $id values ----
   // so we can register old→new mappings in the IdMapper after rebuild.
   const oldRecvEventIds = [];
@@ -1483,6 +1524,23 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
   if (waitingCmdsCache && waitingCmdsCache.alloc && waitingCmdsCache.canonicalId === null) {
     waitingCmdsCache.canonicalId = waitingCmdsCache.alloc.v++;
   }
+
+  // Dynamic $id allocator for ALL rebuilt jetway sub-objects (active and
+  // empty).  Uses the segment's shared allocator — seeded above past every
+  // static $id, flight-plan id, and canonical claim — so rebuilt ids can
+  // never collide with each other or with preserved ids.  In the no-cache
+  // fallback (tests/defensive), derive a segment-wide allocator past the
+  // segment's max $id so rebuilt ids stay unique across all jetways.
+  const jwAlloc = (strArrCache && strArrCache.alloc) ? strArrCache.alloc : (() => {
+    let jwMax = 0;
+    const jwIdRe = /"\$id":\s*(\d+)/g;
+    let jwM;
+    while ((jwM = jwIdRe.exec(segmentText)) !== null) {
+      const v = parseInt(jwM[1], 10);
+      if (v > jwMax) jwMax = v;
+    }
+    return { v: jwMax + 1 };
+  })();
 
   // ---- PASS 2: Rebuild each entry constructively ---------------------
   const segments = [];
@@ -1563,7 +1621,7 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
 
       // ---- Active jetway: rebuild DockingAircraft with flight data ----
       try {
-        built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions, strArrCache);
+        built = _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions, strArrCache, jwAlloc, idMapper, jwTypeResolve);
       } catch (e) {
         // No spec data (no approach cache + empty original entry, or an
         // aircraft type missing from the specDB): write an empty jetway
@@ -1591,17 +1649,28 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
       const origProgressId = _extractSubId(info.entryText, 'Progress');
       const origDaId = _extractSubId(info.entryText, 'DockingAircraft');
       const origDdiId = _extractSubId(info.entryText, 'DockingDoorIndex');
-      const progressId = origProgressId || (entryId + 1);
-      const daId = origDaId || (progressId + 1);
-      const ddiId = origDdiId || (daId + 1);
+      // Fallback $ids (original absent) come from the segment's dynamic
+      // allocator (jwAlloc above) — static entryId+offset ranges overlap
+      // across jetways, and a duplicate $id that is an $iref target crashes
+      // the game's JsonDataReader.
+      const jwId = (offset) => {
+        const oldId = entryId + offset;
+        const newId = jwAlloc.v++;
+        if (idMapper) idMapper.map(oldId, newId);
+        return newId;
+      };
+      const progressId = origProgressId || jwId(1);
+      const daId = origDaId || jwId(2);
+      const ddiId = origDdiId || jwId(3);
 
-      // Use full-form type strings extracted from the original RuntimeEntities
-      // so the new entries declare their types even if the original declarations
-      // were in the entries being replaced.
-      const T3 = jwTypeMap.has(3) ? '"3|' + jwTypeMap.get(3) + '"' : '3';
-      const T4 = jwTypeMap.has(4) ? '"4|' + jwTypeMap.get(4) + '"' : '4';
-      const T5 = jwTypeMap.has(5) ? '"5|' + jwTypeMap.get(5) + '"' : '5';
-      const T6 = jwTypeMap.has(6) ? '"6|' + jwTypeMap.get(6) + '"' : '6';
+      // Use full-form type strings resolved by NAME from the original
+      // RuntimeEntities declarations so the new entries declare their types
+      // even if the original declarations were in the entries being replaced
+      // (and regardless of which scope-local ids the types were registered at).
+      const T3 = jwTypeResolve(JW_TYPE_JETWAY);
+      const T4 = jwTypeResolve(JW_TYPE_RP_SINGLE);
+      const T5 = jwTypeResolve(JW_TYPE_RP_AIRCRAFT);
+      const T6 = jwTypeResolve(JW_TYPE_RP_INT32);
 
       segments.push([
         '                            {',
@@ -2571,13 +2640,33 @@ function _buildStandaloneAircraftEntry(opts) {
     spec = approachCache.specDB.get(acType) || null;
   }
 
-  var designatorVal = spec?.Designator ?? (acType || 'B738');
-  var wakeCat = spec?.WakeTurbulenceCategory ?? 2;
-  var wheelBase = spec?.WheelBase ?? 0;
-  var wingSpan = spec?.WingSpan ?? 0;
-  var runwayVR = spec?.RunwayVRSpeed ?? 140;
-  var runwayTO = spec?.RunwayTakeOffLength ?? 2000;
-  var mo = spec?.ModelOffset ?? { x: 0, y: 0, z: 0 };
+  // Every spec field is REQUIRED — resolve without silent defaults.  A field
+  // that can't be resolved asserts via requireSpecField with the exact lookup
+  // chain, instead of writing DEFAULT_* data into the save.
+  var specCtx = {
+    builder: '_buildStandaloneAircraftEntry',
+    reg: reg,
+    acType: acType || null,
+    designator: designator,
+    lookupTrace: [].concat(
+      designator ? ['designatorMap[' + acType + ']=' + designator] : [],
+      ['direct specDB[' + acType + ']=' + (spec ? 'hit' : 'MISS')]
+    ).join('; '),
+  };
+  var designatorVal = spec?.Designator || acType;
+  if (!designatorVal) {
+    const msg = '[ACL-ASSERT] ' + specCtx.builder + ': no designator — AircraftType is empty and spec is NULL (lookup: ' + specCtx.lookupTrace + '); refusing to fabricate "B738"';
+    (log || console.error)(msg);
+    throw new Error(msg);
+  }
+  specCtx.designator = designatorVal;
+  var aeroCode = requireSpecField(log, specCtx, 'AerodromeCode', spec?.AerodromeCode, spec, DEFAULT_AERODROME_CODE);
+  var wakeCat = requireSpecField(log, specCtx, 'WakeTurbulenceCategory', spec?.WakeTurbulenceCategory, spec, DEFAULT_WAKE_CATEGORY);
+  var wheelBase = requireSpecField(log, specCtx, 'WheelBase', spec?.WheelBase, spec, 0);
+  var wingSpan = requireSpecField(log, specCtx, 'WingSpan', spec?.WingSpan, spec, 0);
+  var runwayVR = requireSpecField(log, specCtx, 'RunwayVRSpeed', spec?.RunwayVRSpeed, spec, DEFAULT_RUNWAY_VR_SPEED);
+  var runwayTO = requireSpecField(log, specCtx, 'RunwayTakeOffLength', spec?.RunwayTakeOffLength, spec, DEFAULT_RUNWAY_TAKEOFF_LENGTH);
+  var mo = requireSpecField(log, specCtx, 'ModelOffset', spec?.ModelOffset, spec, DEFAULT_MODEL_OFFSET);
   var dockPoses = spec?.DockingPositions;
   if (!dockPoses || !dockPoses.length) {
     console.log('[FP Standalone] MISSING DockingPositions for spec=' + (spec?.Designator || '?') + ' spec=' + JSON.stringify(spec));
@@ -2627,7 +2716,7 @@ function _buildStandaloneAircraftEntry(opts) {
       }
       // Position: offset from nose by WheelBase backward along direction.
       // Game engine formula: position = NosePosition - WheelBase * direction.
-      var wb = spec?.WheelBase ?? 0;
+      var wb = wheelBase; // already asserted via requireSpecField above
       posX = standPos.noseX - wb * dirX;
       posY = 0;
       posZ = standPos.noseZ - wb * dirZ;
@@ -2883,7 +2972,7 @@ function _buildStandaloneAircraftEntry(opts) {
         $id: id(4),
         $type: T.spec,
         Designator: designatorVal,
-        AerodromeCode: 67,
+        AerodromeCode: aeroCode,
         WakeTurbulenceCategory: wakeCat,
         WheelBase: wheelBase,
         ModelOffset: { $type: T.float3, __v: [mo.x, mo.y, mo.z] },
@@ -2971,9 +3060,29 @@ function _buildStandaloneAircraftEntry(opts) {
  * Mirrors the empty-case pattern (hardcoded template with string substitution)
  * but includes the ~35-field Aircraft structure inside DockingAircraft.
  */
-function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions, strArrCache) {
+function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap, baseDateTicks, icao, recvEventsCache, waitingCmdsCache, fpIdByReg, standPositions, strArrCache, alloc, idMapper, jwTypeResolve) {
   const entryId = info.entryId;
-  const id = (offset) => entryId + offset;
+
+  // Dynamic $id allocation instead of the static entryId+offset scheme.
+  // Overlapping jetway ranges collide (entryIds 8 apart, template offsets
+  // up to 38): jetway:09 id(15)=205 equals jetway:12 id(3)=205, and a
+  // duplicate $id that is an $iref target makes the game's JsonDataReader
+  // bind the FIRST declaration, so aircraft:REG $iref:205 resolves to a
+  // String[] wrapper → "Data layout mismatch".  Every sub-object $id is
+  // allocated from the segment's dynamic allocator (seeded past all static
+  // $ids, flight-plan ids, and canonical claims), and each old
+  // entryId+offset id is registered in the IdMapper so the centralized
+  // remap step rewrites $iref references in preserved entries.
+  const id = (offset) => {
+    const oldId = entryId + offset;
+    const newId = alloc.v++;
+    if (idMapper) idMapper.map(oldId, newId);
+    return newId;
+  };
+  // Anchor id for aircraft:REG $iref entries (7b-3 builds them from
+  // activeJetways[].aircraftId) — capture once so the template and the
+  // return value agree.
+  const aircraftId = id(3);
 
   const reg = depFlight._Registration || depFlight.Registration || '';
   const runway = depFlight.Runway || '';
@@ -3003,18 +3112,41 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   }
   // Fallback 2: extract spec from the original jetway entry's DockingAircraft
   // (needed for v4 where designatorMap is not populated)
+  let specFromVBlock = false;
   if (!spec && info.vBlock) {
     const { _extractFallbackSpec } = require('./approach');
-    spec = _extractFallbackSpec(info.vBlock);
+    spec = _extractFallbackSpec(info.vBlock, log, { builder: '_buildActiveJetwayEntry', reg: reg, acType: acType || null });
+    specFromVBlock = !!spec;
   }
 
-  const designatorVal = spec?.Designator ?? (acType || 'B738');
-  const wakeCat = spec?.WakeTurbulenceCategory ?? DEFAULT_WAKE_CATEGORY;
-  const wheelBase = spec?.WheelBase ?? 0;
-  const wingSpan = spec?.WingSpan ?? 0;
-  const runwayVR = spec?.RunwayVRSpeed ?? DEFAULT_RUNWAY_VR_SPEED;
-  const runwayTO = spec?.RunwayTakeOffLength ?? DEFAULT_RUNWAY_TAKEOFF_LENGTH;
-  const mo = spec?.ModelOffset ?? DEFAULT_MODEL_OFFSET;
+  // Every spec field is REQUIRED — resolve without silent defaults.  A field
+  // that can't be resolved asserts via requireSpecField with the exact lookup
+  // chain, instead of writing DEFAULT_* data into the save.
+  const specCtx = {
+    builder: '_buildActiveJetwayEntry',
+    reg: reg,
+    acType: acType || null,
+    designator: designator,
+    lookupTrace: [].concat(
+      designator ? ['designatorMap[' + acType + ']=' + designator] : [],
+      ['direct specDB[' + acType + ']=' + (spec && !specFromVBlock ? 'hit' : 'MISS')],
+      info.vBlock ? ['vBlock fallback=' + (specFromVBlock ? 'hit' : 'MISS')] : []
+    ).join('; '),
+  };
+  const designatorVal = spec?.Designator || acType;
+  if (!designatorVal) {
+    const msg = '[ACL-ASSERT] ' + specCtx.builder + ': no designator — AircraftType is empty and spec is NULL (lookup: ' + specCtx.lookupTrace + '); refusing to fabricate "B738"';
+    (log || console.error)(msg);
+    throw new Error(msg);
+  }
+  specCtx.designator = designatorVal;
+  const aeroCode = requireSpecField(log, specCtx, 'AerodromeCode', spec?.AerodromeCode, spec, DEFAULT_AERODROME_CODE);
+  const wakeCat = requireSpecField(log, specCtx, 'WakeTurbulenceCategory', spec?.WakeTurbulenceCategory, spec, DEFAULT_WAKE_CATEGORY);
+  const wheelBase = requireSpecField(log, specCtx, 'WheelBase', spec?.WheelBase, spec, 0);
+  const wingSpan = requireSpecField(log, specCtx, 'WingSpan', spec?.WingSpan, spec, 0);
+  const runwayVR = requireSpecField(log, specCtx, 'RunwayVRSpeed', spec?.RunwayVRSpeed, spec, DEFAULT_RUNWAY_VR_SPEED);
+  const runwayTO = requireSpecField(log, specCtx, 'RunwayTakeOffLength', spec?.RunwayTakeOffLength, spec, DEFAULT_RUNWAY_TAKEOFF_LENGTH);
+  const mo = requireSpecField(log, specCtx, 'ModelOffset', spec?.ModelOffset, spec, DEFAULT_MODEL_OFFSET);
   const dockPoses = spec?.DockingPositions;
   if (!dockPoses || !dockPoses.length) {
     console.log('[FP Jetway] MISSING DockingPositions for spec=' + (spec?.Designator || '?') + ' spec=' + JSON.stringify(spec));
@@ -3039,7 +3171,7 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
         jwDirX = jwSdx / jwSlen;
         jwDirZ = jwSdz / jwSlen;
       }
-      var jwWb = spec?.WheelBase ?? 0;
+      var jwWb = wheelBase; // already asserted via requireSpecField above
       jwPosX = jwStandPos.noseX - jwWb * jwDirX;
       jwPosZ = jwStandPos.noseZ - jwWb * jwDirZ;
     }
@@ -3051,21 +3183,10 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   // collected from RuntimeEntities entries (jwTypeMap).  This ensures the
   // jetway entry's type IDs are consistent with full-form type refs already
   // expanded by _expandShortFormTypes, preventing id-reclamation collisions.
-  var _jwTypeNumByName = new Map();
-  var _jwMaxNum = 0;
-  if (jwTypeMap) {
-    for (const [_sn, _sname] of jwTypeMap) {
-      _jwTypeNumByName.set(_sname, _sn);
-      if (_sn > _jwMaxNum) _jwMaxNum = _sn;
-    }
-  }
-  var _jwFreshNum = _jwMaxNum + 1;
-  var _jwResolveType = function (plainName) {
-    if (_jwTypeNumByName.has(plainName)) {
-      return '"' + _jwTypeNumByName.get(plainName) + '|' + plainName + '"';
-    }
-    return '"' + (_jwFreshNum++) + '|' + plainName + '"';
-  };
+  // Shared name->id resolver built by the caller (_rebuildJetwayEntries) so
+  // fresh-id allocation spans every rebuilt entry in the segment; falls back
+  // to a private instance for direct callers (tests).
+  var _jwResolveType = jwTypeResolve || _makeJwTypeResolver(jwTypeMap);
 
   // Dynamic type strings with explicit segment-consistent numbers.
   var DYN_PARAMS_TYPE = _jwResolveType('ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core');
@@ -3097,14 +3218,17 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     rpVec3:  _jwResolveType('R3.ReactiveProperty`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], R3'),
   };
 
-  // Use full-form type strings for the top-level RuntimeEntity fields (3-6)
-  // extracted from the original segment.  When we replace this entry, its
-  // original "$type": "3|..." declaration is lost.  If no other entry declares
-  // type 3 in this blobdoc scope, bare "$type": 3 references fail to encode.
-  const JT3 = (jwTypeMap && jwTypeMap.has(3)) ? '"3|' + jwTypeMap.get(3) + '"' : '3';
-  const JT4 = (jwTypeMap && jwTypeMap.has(4)) ? '"4|' + jwTypeMap.get(4) + '"' : '4';
-  const JT5 = (jwTypeMap && jwTypeMap.has(5)) ? '"5|' + jwTypeMap.get(5) + '"' : '5';
-  const JT6 = (jwTypeMap && jwTypeMap.has(6)) ? '"6|' + jwTypeMap.get(6) + '"' : '6';
+  // Use full-form type strings for the top-level RuntimeEntity fields,
+  // resolved by NAME against the segment's declarations.  When we replace this
+  // entry, its original "$type": "3|..." declaration is lost.  If no other
+  // entry declares the type in this blobdoc scope, bare refs fail to encode —
+  // and the scope-local id for a given type name varies between files (e.g.
+  // R3.ReactiveProperty<Int32> is id 6 in ZSJN-Morning but id 29 in
+  // ZSJN_taixwayclosed), so ids are looked up by canonical name.
+  const JT3 = _jwResolveType(JW_TYPE_JETWAY);
+  const JT4 = _jwResolveType(JW_TYPE_RP_SINGLE);
+  const JT5 = _jwResolveType(JW_TYPE_RP_AIRCRAFT);
+  const JT6 = _jwResolveType(JW_TYPE_RP_INT32);
 
   // Build DockingPositions array
   console.log(
@@ -3159,14 +3283,20 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   // The canonical $id was claimed from the segment's dynamic allocator before
   // PASS 2 (so it never collides with static entryId+offset ids); the first
   // emitter here writes the full definition at that id.
-  function sharedStrArrInner(innerId) {
+  // When no canonical id is available (no-cache/defensive path), a fresh id is
+  // allocated from the dynamic allocator via `offset` — never a static value —
+  // so it can't collide with another jetway's ids.
+  function sharedStrArrInner(offset) {
     if (strArrCache && strArrCache.canonicalEmitted) {
       return '$iref:' + strArrCache.canonicalId;
     }
-    let canonicalInnerId = innerId;
+    let canonicalInnerId;
     if (strArrCache) {
-      canonicalInnerId = strArrCache.canonicalId !== null ? strArrCache.canonicalId : innerId;
+      canonicalInnerId = strArrCache.canonicalId !== null ? strArrCache.canonicalId : id(offset);
+      if (strArrCache.canonicalId === null) strArrCache.canonicalId = canonicalInnerId;
       strArrCache.canonicalEmitted = true;
+    } else {
+      canonicalInnerId = id(offset);
     }
     return inlineEmptyStrArr(canonicalInnerId);
   }
@@ -3177,14 +3307,20 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   // (claimed from the segment's dynamic allocator — see segRecvEventsCache /
   // segWaitingCmdsCache); every later entry emits a bare $iref instead of
   // duplicating { $id, $type, $rlength: 0, $rcontent: [] }.
-  function sharedEmptyArrayInner(cache, innerId, typeStr) {
+  function sharedEmptyArrayInner(cache, offset, typeStr) {
     if (cache && cache.canonicalEmitted) {
       return '$iref:' + cache.canonicalId;
     }
-    let canonicalInnerId = innerId;
+    // When no canonical id is available (no-cache/defensive path), a fresh id
+    // is allocated from the dynamic allocator via `offset` — never a static
+    // value — so it can't collide with another jetway's ids.
+    let canonicalInnerId;
     if (cache) {
-      canonicalInnerId = cache.canonicalId !== null ? cache.canonicalId : innerId;
+      canonicalInnerId = cache.canonicalId !== null ? cache.canonicalId : id(offset);
+      if (cache.canonicalId === null) cache.canonicalId = canonicalInnerId;
       cache.canonicalEmitted = true;
+    } else {
+      canonicalInnerId = id(offset);
     }
     return (
     '{\n' +
@@ -3212,13 +3348,13 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                        "$id": ' + id(2) + ',',
     '                                        "$type": ' + JT5 + ',',
     '                                        {',
-    '                                            "$id": ' + id(3) + ',',
+    '                                            "$id": ' + aircraftId + ',',
     '                                            "$type": ' + T.ac + ',',
     '                                            "Specification": {',
     '                                                "$id": ' + id(4) + ',',
     '                                                "$type": ' + T.spec + ',',
     '                                                "Designator": "' + designatorVal + '",',
-    '                                                "AerodromeCode": 67,',
+    '                                                "AerodromeCode": ' + aeroCode + ',',
     '                                                "WakeTurbulenceCategory": ' + wakeCat + ',',
     '                                                "WheelBase": ' + wheelBase + ',',
     '                                                "ModelOffset": {',
@@ -3260,32 +3396,32 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                                "TaxiPathUnPassedIntersectionRunwayNames": {',
     '                                                    "$id": ' + id(9) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + sharedStrArrInner(id(33)),
+    '                                                    ' + sharedStrArrInner(33),
     '                                                },',
     '                                                "TaxiBlockingRunwayNames": {',
     '                                                    "$id": ' + id(11) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + sharedStrArrInner(id(34)),
+    '                                                    ' + sharedStrArrInner(34),
     '                                                },',
     '                                                "RunwayFenceCurrentEnterRunways": {',
     '                                                    "$id": ' + id(12) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + sharedStrArrInner(id(35)),
+    '                                                    ' + sharedStrArrInner(35),
     '                                                },',
     '                                                "RunwayGuardCurrentEnterRunway": {',
     '                                                    "$id": ' + id(13) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + sharedStrArrInner(id(36)),
+    '                                                    ' + sharedStrArrInner(36),
     '                                                },',
     '                                                "CrossRunwayPermissions": {',
     '                                                    "$id": ' + id(14) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + sharedStrArrInner(id(37)),
+    '                                                    ' + sharedStrArrInner(37),
     '                                                },',
     '                                                "HoldShortAcknowledgedRunwayNames": {',
     '                                                    "$id": ' + id(15) + ',',
     '                                                    "$type": ' + T.rpStrArr + ',',
-    '                                                    ' + sharedStrArrInner(id(38)),
+    '                                                    ' + sharedStrArrInner(38),
     '                                                },',
     '                                                "RunwaySetter": 0',
     '                                            },',
@@ -3363,12 +3499,12 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                            "_waitingForCommands": {\n' +
     '                                                "$id": ' + id(24) + ',\n' +
     '                                                "$type": ' + T.rpCmdArr + ',\n' +
-    '                                                ' + sharedEmptyArrayInner(waitingCmdsCache, id(25), T.cmdArr) + '\n' +
+    '                                                ' + sharedEmptyArrayInner(waitingCmdsCache, 25, T.cmdArr) + '\n' +
     '                                            },',
     '                                            "_receivedEvents": {\n' +
     '                                                "$id": ' + id(26) + ',\n' +
     '                                                "$type": ' + T.rpEvtArr + ',\n' +
-    '                                                ' + sharedEmptyArrayInner(recvEventsCache, id(27), T.evtArr) + '\n' +
+    '                                                ' + sharedEmptyArrayInner(recvEventsCache, 27, T.evtArr) + '\n' +
     '                                            },',
     '                                            "_position": {',
     '                                                "$id": ' + id(28) + ',',
@@ -3408,7 +3544,7 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   return {
     text: entryText,
     flightPlanId: fpId,
-    aircraftId: id(3),
+    aircraftId,
     reg: reg,
     isDeparture: true,
   };
@@ -4471,9 +4607,9 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
         '                                    "$type": ' + dtTypeFull + ',',
         '                                    0',
         '                                },',
+        '                                "STAR": "' + (fl.Airway || '') + '",',
         '                                "Runway": "' + (fl.Runway || '') + '",',
-        '                                "Stand": "' + (fl.Stand || '') + '",',
-        '                                "STAR": "' + (fl.Airway || '') + '"',
+        '                                "Stand": "' + (fl.Stand || '') + '"',
       ].join('\n');
     }
 
@@ -4960,6 +5096,8 @@ module.exports = {
   _cleanupEventLogLatestEvents,
   _rebuildJetwayEntries,
   _buildActiveJetwayEntry,
+  _makeJwTypeResolver,
+  _IdMapper,
   _extractRecvEventsInnerId,
   _rebuildReceivedEventsInEntry,
   _extractWaitingCmdsInnerId,

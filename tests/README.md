@@ -7,9 +7,9 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest + save integrity (12 files) + E2E (~3 min)
-npm test              # 528 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
-npm run test:e2e      # 15 Playwright E2E tests (requires npm run build first, ~3 min; 1 skipped — E12a overlay timing)
+npm run test:all      # Full suite: Vitest (540) + save integrity (12) + jetway rebuild (12) + runway pairs (5) + E2E (16, ~3 min)
+npm test              # 540 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
+npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min; 15 pass, 1 skipped — E12a overlay timing)
 node tests/integration/test_api_server.js      # MCP/API tests: 105 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
 
@@ -25,11 +25,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (528 tests)
+## Layer 1 — Vitest Component Tests (540 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 528 pass (31 test files)
+### `npm test` — 540 pass (33 test files)
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -52,6 +52,8 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `hooks/useEditorSaveActions.test.jsx` | 7 | **Save flow (3):** `handleSave`/`handleSaveAs` call `runTripleValidation` with the store flights; no issues → backup modal (not issues modal); duplicate callsigns block save before validation. **Restore/import (2):** `handleRestore`/`handleImport` load flights via `setLegacyState`. **Back (2):** no modifications → straight to browser; modifications → unsaved-changes modal. |
 | `electron/bepinex.test.js` | 22 | checkStatus (null, partial, full, empty); findDownloadUrl (URL extraction, artifact not found, HTTP error); downloadZip (happy path — file content + progress 0→100%, incremental multi-chunk progress, HTTP 404 rejects + file cleanup, network error rejects + cleanup, timeout rejects + cleanup); extractZip (non-Windows guard); installFiles (subdirectory, missing items, flat structure); removeFiles (all items, partial, non-existent); installLatest (full pipeline, error cleanup, download progress normalization) |
 | `integration/stand_positions.test.js` | 12 | `_parseStandPositions` unit tests: ZSJN v4 fixture parsing (57 stands), known stands (300/1/22) with finite coordinates, coordinate bounds, non-ACL text → `{}`. **PKStaticEntities path (5):** v4 fixture parsing (auto-detected schema), per-stand x/y/heading finite, tail/nose positions, coordinate bounds, empty input → `{}` |
+| `integration/aerodrome_code.test.js` | 5 | **AerodromeCode regression** — the game uses AerodromeCode (67='C' narrowbody, 69='E' widebody, 70='F') for stand/jetway compatibility; both builders used to hardcode 67. Jetway + standalone builders now emit `spec.AerodromeCode` resolved from the approach cache (widebody 69, narrowbody 67); a spec missing the field **asserts** via `requireSpecField` (message carries registration + designator + "refusing fallback 67") instead of writing default data; `extractSpecificationDB` asserts on source specs lacking AerodromeCode. |
+| `integration/jetway_id_collision.test.js` | 7 | **Duplicate-$id collision regression** (from fails.acl: jetway:09 `id(15) = 190 + 15 = 205` collided with jetway:12 `id(3) = 202 + 3 = 205` — a first-wins `$iref` bind made the game skip past an array boundary). Rebuilt jetway sub-objects now allocate from the segment's **dynamic allocator** (≥1000, past every static/flight-plan/canonical id) with old→new `IdMapper` remap (collided `$iref:205` resolves to the Aircraft id, last registration wins). **DockingDoorIndex `$type` (4):** resolved per-file scope (R3.ReactiveProperty<Int32> at its scope id, never hardcoded 6), fresh id above segment max when undeclared, canonical id-6 emission byte-identical on ZSJN-Morning-style scopes, one shared fresh-id counter per resolver. |
 | **Electron backend (existing):** | **74** | |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
 | `electron/updater.test.js` | 25 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **isUpdateSupported (4):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set. **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skipped etag recognized. **resolveTargetExe (5):** PORTABLE_EXECUTABLE_FILE, execPath fallback, AC27_UPDATE_TARGET in dev, auto-discovered artifact, null when no candidate. **checkForUpdate gates (5):** packaged but not portable, dev with AC27_UPDATE_TARGET, dev by default (opt-out), dev with AC27_UPDATE_DEV_CHECK=1, dev with no target exe. **installUpdate dev dry-run (2):** defaults to dry-run in dev, dry-run skips spawn+quit. |
@@ -85,7 +87,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 
 ### Known Vitest failures (none)
 
-All 528 tests pass. The three previously failing/todo items have been fixed:
+All 540 tests pass. The three previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 
@@ -95,7 +97,7 @@ All 528 tests pass. The three previously failing/todo items have been fixed:
 
 ---
 
-## Layer 2 — Playwright E2E Tests (15 pass, 1 skipped)
+## Layer 2 — Playwright E2E Tests (16 tests, 15 pass, 1 skipped)
 
 Launches the real Electron app against a temp copy of real game data (via `E2E_GAME_ROOT` env var set by `run-all.mjs`). File isolation is guaranteed — the real game installation is never touched.
 
@@ -146,13 +148,13 @@ Launches the real Electron app against a temp copy of real game data (via `E2E_G
 
 | ID | Test | Expected |
 |----|------|----------|
-| **S1** | No-change save round-trip | Open level → Ctrl+S (no edits) → compare `.acl` vs `.acl.bak`: GUIDs regenerated (132 diffs), $ids shifted, flight data identical (48 flights, 24 weather, 4 wind) |
+| **S1** | No-change save round-trip | Open level → Ctrl+S (no edits) → compare `.acl` vs `.acl.bak`: v4 has no GUIDs to regenerate (0 pre-save), `$id`s shift, flight data identical (32 flights, 24 weather, 4 wind) |
 
-### Save Integrity — all 12 prod+demo files (E2E, requires `E2E_GAME_ROOT`)
+### Save Integrity — all 9 production files (E2E, requires `E2E_GAME_ROOT`)
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **S1b** | `save-integrity-all-e2e.spec.mjs` | 9 production + 3 demo across ZSJN + KJFK + KDCA | 12 passed, 0 skipped |
+| **S1b** | `save-integrity-all-e2e.spec.mjs` | 9 production files across ZSJN + KJFK + KDCA | 9 passed, 0 skipped |
 
 ```bash
 # Run standalone (requires E2E_GAME_ROOT env var):
@@ -160,7 +162,7 @@ $env:E2E_GAME_ROOT = "<game-root>"
 npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
 ```
 
-Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~2.5 minutes for 12 files. The 12 files mirror `PROD_VISIBLE_BASES` + the `.demo` entries of `DEMO_VISIBLE_BASES` in `src/utils/constants/ui.js`:
+Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~2 minutes for 9 files. The 9 files mirror `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` (the spec's global-setup copy excludes `.demo.acl` files, so demo files never appear in the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead):
 
 | File | Status | Note |
 |------|--------|------|
@@ -173,13 +175,10 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | KJFK_leisure_2 | ✓ | all state identical |
 | KJFK_peakarrival | ✓ | all state identical |
 | KDCA_smoke | ✓ | all state identical |
-| KJFK_peakarrival.demo | ✓ | Demo saves round endTime to nearest :X0/:X5 and strip CurrentDateTime content — flight data preserved. |
-| KJFK_leisure_1.demo | ✓ | Same demo behavior as above (endTime rounded to nearest :X0/:X5) |
-| ZSJN_peakdeparture.demo | ✓ | Same demo behavior as above (endTime rounded to nearest :X0/:X5) |
 
 ---
 
-## Layer 3 — Node.js Integration Tests (28 scripts)
+## Layer 3 — Node.js Integration Tests (29 scripts)
 
 Standalone scripts in `tests/integration/`. Run directly with `node`. Some need `--require ./tests/integration/preload.cjs` for ESM interop.
 
@@ -201,8 +200,8 @@ Standalone scripts in `tests/integration/`. Run directly with `node`. Some need 
 | `test_sid_goaround.js` | 19 | SID (Type=2), Missed Approach (Type=3), and APPR (Type=1) route parsers: `extractSidRunwayMappings`, `extractMissedApproachMappings`, `buildSidPaths`, `buildMissedApproachPaths`, `extractApprRunwayMappings`, `buildApprPaths` — synthetic edge cases + v4 runway-scoped resolution | 19/19 pass |
 | `test_taxiway.js` | 10 | `parseTaxiwayPaths` (v4 PKStaticEntities format): synthetic edge cases (no SceneryData / empty text / no TaxiwaySegments → empty paths; valid segments with matching nodes; Flags values 1/2/4; stand-node segments marked `isStandAccess`; non-stand segments kept), ZSJN v4 fixture: paths present with valid structure, stand-access segments marked (+1 optional `--acl` integration test) | 10/10 pass |
 
-| `test_save_roundtrip_diff.js` | 26 | Approach-block round-trip diff: T1 `RunwayTakeOffLength` nullish coalescing (0 preserved, missing→2000), T2 `ModelOffset` float3 tuple format (no named x/y/z), T3 `AircraftRunwayCoordinateState` canonical-`$id` design (5 inline empty string[] arrays, unique per-array `$id`, zero `$iref`), T4 v4 spec extraction from a real v4 file (`--acl` or default `works.acl`) | 26/26 pass |
-| `test_extract_v4_runway_pairs.js` | 6 | `extractV4RunwayPairs` — v4 runway pair extraction from static SceneryData `PhysicalName` ("01/19" → 01|19 + 19|01): ZSJN v4 fixture (2 pairs), KJFK (8 pairs — 4 groups), KDCA (6 pairs — 3 groups), non-v4 text → `[]`, empty/garbage input → `[]`, dedup (both ends of a physical runway → exactly 2 pairs). KJFK/KDCA cases skip when game root unavailable (`--root <game-root>`) | 6/6 pass (fixture) |
+| `test_save_roundtrip_diff.js` | 27 | Approach-block round-trip diff: T1 `RunwayTakeOffLength` (0 preserved; a missing value **asserts** via `requireSpecField` — refusing fallback 2000 — instead of defaulting), T2 `ModelOffset` float3 tuple format (no named x/y/z), T3 `AircraftRunwayCoordinateState` canonical-`$id` design (5 inline empty string[] arrays, unique per-array `$id`, zero `$iref`), T4 v4 spec extraction from a real v4 file (`--acl` or default `works.acl`) | 27/27 pass |
+| `test_extract_v4_runway_pairs.js` | 5 | `extractV4RunwayPairs` — v4 runway pair extraction from static SceneryData `PhysicalName` ("01/19" → 01|19 + 19|01): ZSJN v4 fixture (2 pairs), KJFK (8 pairs — 4 groups), KDCA (6 pairs — 3 groups), empty/garbage input → `[]`, dedup (both ends of a physical runway → exactly 2 pairs). KJFK/KDCA cases skip when game root unavailable (`--root <game-root>`) | 5/5 pass (fixture) |
 
 ```bash
 node tests/integration/test_tokenizer.js
@@ -231,7 +230,7 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_gatcarc_roundtrip.js` | varies × all .acl files | GATCArc4 binary round-trip: `parseArchive` validates magic/SHA-256/commit markers; `decodeArchive(bin)` → `encodeArchive(text)` → `decodeArchive` is byte-identical. For text files: `encodeTextToPayload`/`decodePayloadToText` round-trip reproduces game-written text. Type reference form (full `"N\|Name"` vs bare `N`) is normalized before comparison. Runs against every .acl in the game airports directory. | 96/96 pass (32 files × 3 checks each) |
+| `test_gatcarc_roundtrip.js` | varies × all .acl files | GATCArc4 binary round-trip: `parseArchive` validates magic/SHA-256/commit markers; `decodeArchive(bin)` → `encodeArchive(text)` → `decodeArchive` is byte-identical. For text files: `encodeTextToPayload`/`decodePayloadToText` round-trip reproduces game-written text. Type reference form (full `"N\|Name"` vs bare `N`) is normalized before comparison. Runs against every .acl in the game airports directory. | 129/129 pass (43 files × 3 checks each) |
 | `test_real_kjfk_jfk5.js` | 8 per-runway STAR resolution | End-to-end JFK5.JFK STAR/SID resolution against real KJFK data: `extractStarRunwayMappings` (SIE.CAMRM5 → 3 runways), `resolveFlyApproachPoints` (6 nodes per runway), `extractSidRunwayMappings` (JFK5.JFK is in SID), `buildSidPaths`, `buildStarPaths`, verifies JFK5.JFK is NOT in APPR data. | 8/8 pass |
 
 ```bash
@@ -247,8 +246,8 @@ node tests/integration/test_real_kjfk_jfk5.js
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
 | `test_parse_airport.js` | varies | Parses all airports + .acl files; reports stats | All airports parse OK. EGLC/ZGSZ have 0 .acl files (dev-mode airports); KJFK/KDCA/ZSJN parse OK |
-| `test_callsign_gen.js` | varies | Callsign consistency across all `flight_schedule_*.csv` files | ⚠ 1 known mismatch: AAL0101 vs AAL101 (flight number zero-padding) in KJFK CrossRunway; 19/20 files all-OK; 10 subsidiary/alternate code rows reported; 4 alpha-only rows skipped |
-| `test_approach_aircraft.js` | 7 sections (T1-T7) | Approach aircraft algorithms: spec extraction, AppPoint mapping, ProgressRatio formula, FlyApproach resolution, Position/Direction reconstruction, block assembly. **v4-only**: v4 static files store no approach aircraft (runtime-generated), so the ≥20 count assertion is informational. | PASS on v4 game root (T1 spec cross-file consistency real; T7 skips when no State=30 types present). |
+| `test_callsign_gen.js` | varies | Callsign consistency across all `flight_schedule_*.csv` files | ⚠ 5 known mismatches, all flight-number zero-padding: AAL0101 (KJFK CrossRunway); CSN0738, CSZ0855, CSZ0820 (ZSJN runwaychange); CSZ0235 (ZSJN taixwayclosed). 25/28 non-empty files all-OK (3 test/tutorial skipped, 3 empty); 10 subsidiary/alternate code rows reported; 4 alpha-only rows skipped |
+| `test_approach_aircraft.js` | 5 sections pass (T1-T7 labelled) | Approach aircraft algorithms: spec extraction, AppPoint mapping, ProgressRatio formula, FlyApproach resolution, Position/Direction reconstruction, block assembly. **v4-only**: v4 static files store no approach aircraft (runtime-generated), so the ≥20 count assertion is informational. | PASS: 5, FAIL: 0 on v4 game root (T1 spec cross-file consistency real; T7 skips when no State=30 types present). |
 
 ```bash
 node tests/integration/test_parse_airport.js [--root <game-root>]
@@ -292,7 +291,7 @@ All three run against v4 ACLs: the timeline sections are patched inside `MetaDat
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
 | `test_timeline_comparison.js` | varies | JSON timeline files vs ACL-embedded timeline data field-by-field | v4 fixture: 3/3 sections match |
-| `test_generate_timelines.js` | 4 sub-tests | `_generateFramesSection`, `_generateRunwayTimelineSection` produce identical output | ⚠ Known pre-existing gap: generated Wind/Weather sections don't match the ACL's embedded sections 1:1 — generator format fidelity vs what the game writes; RunwayTimeline matches |
+| `test_generate_timelines.js` | 4 sub-tests | `_generateFramesSection`, `_generateRunwayTimelineSection` produce identical output | ALL PASSED — generated Wind/Weather/RunwayTimeline sections round-trip the ACL's embedded sections 1:1 (stale pre-per-file-typeMap assertions on fixed type numbers removed) |
 | `test_rebuild_timelines.js` | 6 sub-tests | `_rebuildTimelineSections`: WeatherFrames, WindFrames, RunwayTimeline (empty, with changes, all-three, round-trip) | ALL PASSED (MetaData subsections + binary re-encode) |
 
 ```bash
@@ -349,7 +348,7 @@ Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored.
 npm run test:all      # or: node tests/run-all.mjs [--game-root <path>]
 ```
 
-Runs all three layers sequentially (Vitest → save integrity 12 files → jetway rebuild 12 v4 files → Playwright E2E) and reports a pass/fail summary. Default game root: `D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest`.
+Runs all three layers sequentially (Vitest → save integrity 12 files → jetway rebuild 12 v4 files → v4 runway pair extraction → build → Playwright E2E) and reports a pass/fail summary. Default game root: `D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest`.
 
 ---
 
@@ -358,7 +357,7 @@ Runs all three layers sequentially (Vitest → save integrity 12 files → jetwa
 All supported .acl files use the **v4 GATCArc4 binary** format (StaticData.$blobdoc; flight plans are StaticItems dictionary entries keyed `"$k": "flight-plan:<REG>"`, referenced by `$fstrref` tokens). v2/v3 text-format support has been removed from the code and tests.
 
 - **Save integrity**: 12/12 files pass (9 production + 3 demo) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (`_rebuildStaticDataSections`).
-- **Save/load round-trip**: `test_e2e_save_load.js` — 60/60 flights identical after load→save→load.
+- **Save/load round-trip**: `test_e2e_save_load.js` — flight data identical after load→save→load (21 flights on ZSJN_leisure_1, 61 on KJFK_peakarrival).
 - **Section rebuild**: `test_rebuild_sections.js` (StaticItems rebuild + binary re-encode, reload-verified) and `test_rebuild_timelines.js` (MetaData subsection rebuild + re-encode) both pass.
 - **Linkage**: `test_acl_linkage.js` — 48 flight-plan definitions self-consistent, 48 `$fstrref` references resolve.
 - **Approach aircraft**: v4 static files store none (runtime-generated) — `test_approach_aircraft.js` treats the count as informational.
