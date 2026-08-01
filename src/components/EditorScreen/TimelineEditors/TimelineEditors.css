@@ -86,9 +86,9 @@
   column-gap: 8px;
   padding: 0 12px;
 }
-/* weather: time | preset | spacer | range | hidden | add/del */
+/* weather: time | preset | spacer | range | add/del */
 #weather-list {
-  grid-template-columns: 76px 120px 1fr auto auto auto;
+  grid-template-columns: 76px 120px 1fr auto auto;
 }
 #weather-list .tl-hdr > button,
 #weather-list .tl-row > button {
@@ -111,9 +111,9 @@
 #weather-list .tl-row[data-new] > span:empty {
   animation: none;
 }
-/* wind: time | direction | speed | spacer | range | hidden | add/del */
+/* wind: time | direction | speed | spacer | range | add/del */
 #wind-list {
-  grid-template-columns: 76px 62px auto 1fr auto auto auto;
+  grid-template-columns: 76px 62px auto 1fr auto auto;
 }
 #wind-list .tl-hdr > button,
 #wind-list .tl-row > button {

@@ -15,9 +15,9 @@ export default function WeatherEditor() {
   const [collapsed, setCollapsed] = useState(true);
 
   const sorted = useMemo(() => { const c=[...weatherTimeline]; sortTimelineByTime(c); return c; }, [weatherTimeline]);
+  // All frames are always shown — a weather frame governs the level from its time onward,
+  // so a single frame outside the config window still controls the whole level.
   const range = useMemo(() => getTimelineActiveRange(sorted, _s, _e), [sorted, _s, _e]);
-  const active = useMemo(() => sorted.filter((_,i) => range.activeIndices.has(i)), [sorted, range]);
-  const hidden = range.totalCount - range.activeIndices.size;
 
   const update = (fn) => { const st = useAppStore.getState(); fn(st); st.setTimelineModified('weather', true); };
   const add = () => update(st => { useAppStore.setState({ weatherTimeline: [...st.weatherTimeline, { preset:'Sunny', time:getDefaultTime({_configStartTime:_s,_configEndTime:_e}), _isNew:true }] }); });
@@ -37,14 +37,13 @@ export default function WeatherEditor() {
             <span>{t('tl_time')}</span><span>{t('tl_preset')}</span>
             <span></span>
             <span className="tl-hdr-info">{range.validMinTime!=null?`${String(Math.floor(range.validMinTime/60)%24).padStart(2,'0')}:${String(range.validMinTime%60).padStart(2,'0')} ~ ${String(Math.floor(range.validMaxTime/60)%24).padStart(2,'0')}:${String(range.validMaxTime%60).padStart(2,'0')}`:''}</span>
-            <span className="tl-hdr-info">{hidden>0?t('tl_hidden_count',{n:hidden}):''}</span>
             <button className="btn-sm" onClick={add}><IoAdd size={14} className="btn-icon" />{t('tl_add')}</button>
           </div>
-          {active.map(e => { const ri = weatherTimeline.indexOf(e);
+          {sorted.map(e => { const ri = weatherTimeline.indexOf(e);
             return <div key={ri} className="tl-row" data-idx={ri} {...(e._isNew ? { 'data-new': '' } : {})}>
-              <TimeCell value={e.time} onChange={v => chg(ri,'time',v)} minTime={_s} maxTime={_e} />
+              <TimeCell value={e.time} onChange={v => chg(ri,'time',v)} />
               <select className="tl-select" value={e.preset||'Sunny'} onChange={ev => chg(ri,'preset',ev.target.value)}>{WEATHER_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}</select>
-              <span></span><span></span><span></span>
+              <span></span><span></span>
               <button className="tl-btn-del" onClick={() => del(ri)} title={t('tl_delete')}><IoClose size={14} /></button>
             </div>;
           })}
