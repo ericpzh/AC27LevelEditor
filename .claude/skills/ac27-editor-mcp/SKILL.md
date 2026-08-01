@@ -157,7 +157,7 @@ The server WILL reject invalid requests with a 422 error containing `error.detai
 9. Look up AirlineName (reverse lookup: "CCA" → "Air China" / "中国国航").
 10. Set times within `configTimeRange`. Arrivals: LandingTime < InBlockTime. Departures: OffBlockTime < TakeoffTime.
 11. Set DepartureAirport (arrivals) or ArrivalAirport (departures) to the current airport ICAO.
-12. Set Voice and Language from `constraints.flatLists`.
+12. Set Voice and Language from `constraints.flatLists`. Follow the editor's region convention: `zh` if the airport ICAO starts with `Z` (China), else `en`; Voice — pick randomly from the airport's pool (already region-appropriate: `CN-*` voices at Z airports, e.g. `Yeager` at US airports).
 13. Build the complete 15-field object and pass to `create_flights({flights: [obj, ...]})`.
 14. If 422: read `error.details`, fix the specific fields, retry.
 
