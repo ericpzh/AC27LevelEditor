@@ -21,30 +21,52 @@ export default function SearchBar() {
   const doSearch = useCallback((val) => {
     setTerm(val);
     if (!val.trim()) { setMatches([]); setIdx(0); setSearchMatches([]); return; }
-    const lower = val.toLowerCase();
-    const matchField = (f) => {
-      for (const key of Object.keys(f)) {
-        const v = f[key];
-        if (v != null && String(v).toLowerCase().includes(lower)) return true;
-      }
-      return false;
+    const lower = val.trim().toLowerCase();
+    // Rank matches by quality: exact field value > starts-with > substring
+    const scoreField = (v) => {
+      if (v == null) return 0;
+      const s = String(v).toLowerCase();
+      if (s === lower) return 3;
+      if (s.startsWith(lower)) return 2;
+      if (s.includes(lower)) return 1;
+      return 0;
     };
-    // Order matches in visual table order: arrivals top-to-bottom, then departures
-    const results = [];
+    const scoreFlight = (f) => {
+      let best = 0;
+      for (const key of Object.keys(f)) {
+        const sc = scoreField(f[key]);
+        if (sc > best) best = sc;
+      }
+      return best;
+    };
+    // Collect in visual table order: arrivals top-to-bottom, then departures.
+    // The stable sort below keeps that order as the tie-break for equal scores.
+    const scored = [];
     for (let i = 0; i < flights.length; i++) {
       const f = flights[i];
-      if ((f.LandingTime || '').trim() && matchField(f)) results.push(i);
+      if ((f.LandingTime || '').trim()) {
+        const sc = scoreFlight(f);
+        if (sc > 0) scored.push({ i, sc });
+      }
     }
     for (let i = 0; i < flights.length; i++) {
       const f = flights[i];
-      if (!(f.LandingTime || '').trim() && matchField(f)) results.push(i);
+      if (!(f.LandingTime || '').trim()) {
+        const sc = scoreFlight(f);
+        if (sc > 0) scored.push({ i, sc });
+      }
     }
+    scored.sort((a, b) => b.sc - a.sc);
+    const results = scored.map(r => r.i);
     setSearchMatches(results);
     setMatches(results);
     if (results.length > 0) {
       setIdx(0);
       setHighlightedIdx(results[0]);
-      scrollToRow(results[0]);
+      // Defer past the commit that toggles #search-bar visibility: the bar is
+      // in-flow below the table and shrinks the scroll container, so scrolling
+      // before the commit would leave the target row clipped underneath it.
+      requestAnimationFrame(() => scrollToRow(results[0]));
     }
   }, [flights, setHighlightedIdx, setSearchMatches]);
 
@@ -97,7 +119,7 @@ export default function SearchBar() {
   return (
     <div id="search-bar" className={`search-bar${open ? '' : ' hidden'}`}>
       <span id="search-count" className="search-count">{term.trim() ? (matches.length > 0 ? `${idx+1}/${matches.length}` : t('search_no_matches')) : ''}</span>
-      <input ref={inputRef} id="search-input" type="text" value={term} onChange={e => doSearch(e.target.value)} onKeyDown={handleKeyDown} placeholder={t('search_placeholder')} />
+      <input ref={inputRef} id="search-input" type="text" value={term} onChange={e => doSearch(e.target.value)} onKeyDown={handleKeyDown} placeholder={t('search_placeholder')} autoComplete="off" />
       <button id="search-prev" className="btn-sm" onClick={() => goTo(idx - 1)} disabled={!matches.length}><IoChevronUp size={14} /></button>
       <button id="search-next" className="btn-sm" onClick={() => goTo(idx + 1)} disabled={!matches.length}><IoChevronDown size={14} /></button>
       <button id="search-close" className="search-close" onClick={() => { setOpen(false); setSearchMatches([]); }}><IoClose size={16} /></button>

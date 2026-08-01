@@ -15,7 +15,7 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 
 ## Running Tests
 
-### Component tests (540 tests across 33 files)
+### Component tests (545 tests across 34 files)
 
 ```bash
 npm test              # Run all Vitest component + store + utility + electron + MapWindow + updater tests

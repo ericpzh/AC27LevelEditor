@@ -7,8 +7,8 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (540) + save integrity (12) + jetway rebuild (12) + runway pairs (5) + E2E (16, ~3 min)
-npm test              # 540 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
+npm run test:all      # Full suite: Vitest (545) + save integrity (12) + jetway rebuild (12) + runway pairs (5) + E2E (16, ~3 min)
+npm test              # 545 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min; 15 pass, 1 skipped — E12a overlay timing)
 node tests/integration/test_api_server.js      # MCP/API tests: 105 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -25,11 +25,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (540 tests)
+## Layer 1 — Vitest Component Tests (545 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 540 pass (33 test files)
+### `npm test` — 545 pass (34 test files)
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -47,6 +47,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `components/BrowserScreen/useTooltip.test.jsx` | 9 | Tooltip renders/clears on hover; text switches between buttons; positions above target; flips below when no room above; centres on button; right-pins at viewport edge; width computed from text (per-char glyph widths) |
 | `components/EditorScreen/EditorTooltip.test.jsx` | 8 | Editor BUTTONS registry completeness (all descKeys, all icons, all required buttons); tooltip integration on editor toolbar buttons |
 | `components/EditorScreen/FlightTable/FlightTable.test.jsx` | 6 | Click on data cell → no selection toggle; checkbox click → toggles; drag from data cell → range-selects; dropdown/time cell clicks → no toggle; clock portal click → no toggle |
+| `components/EditorScreen/SearchBar.test.jsx` | 3 | Search match ranking: exact callsign outranks substring (save-error jump repro — "VIR3" highlights VIR3, not VIR3046), exact > prefix > substring ordering, no-match clears highlight + matches |
 | `components/EditorScreen/StandMap/StandMap.test.jsx` | 22 | Stand dots/labels count, selected highlight + ring, occupied plane icons + callsign labels, click-to-select, hover states, empty/null stands, legend, shrink button, portal positioning, animations, rotation on planes, disabled stands, backward-compatible no-heading, cargo-stand labels (SGSE), text clipping |
 | `components/EditorScreen/StarMap/StarMap.test.jsx` | 9 | Panel portal renders with no star data (empty state), runway threshold lines, STAR polylines + labels, legend, shrink button, **variant filtering:** selected runway filters STAR variants to that runway only, click-to-select calls onSelect, hover adds hovered class |
 | `hooks/useEditorSaveActions.test.jsx` | 7 | **Save flow (3):** `handleSave`/`handleSaveAs` call `runTripleValidation` with the store flights; no issues → backup modal (not issues modal); duplicate callsigns block save before validation. **Restore/import (2):** `handleRestore`/`handleImport` load flights via `setLegacyState`. **Back (2):** no modifications → straight to browser; modifications → unsaved-changes modal. |
@@ -87,7 +88,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 
 ### Known Vitest failures (none)
 
-All 540 tests pass. The three previously failing/todo items have been fixed:
+All 545 tests pass. The three previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 

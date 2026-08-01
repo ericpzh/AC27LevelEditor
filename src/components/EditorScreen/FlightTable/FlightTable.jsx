@@ -96,7 +96,7 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
     return (
       <td className={cls} data-col={col} data-idx={globalIdx}>
         <input className="cell-widget" value={editVal} onChange={e => setEditVal(e.target.value)}
-          onBlur={() => commit()} onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setEditing(false); setEditVal(value); } }} autoFocus />
+          onBlur={() => commit()} onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setEditing(false); setEditVal(value); } }} autoFocus autoComplete="off" />
       </td>
     );
   }
