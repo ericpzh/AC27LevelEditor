@@ -95,7 +95,7 @@ public static class ParamTrace
             // Init-captured at activation). The game's path-following reads
             // THESE, not the data channel — so this is the list the aircraft
             // is actually flying (STAR tail vs full ILS procedure at a glance).
-            sb.Append(" st=").Append(DescribeState(dyn));
+            sb.Append(" st=").Append(DescribeState(dyn, p));
         }
         else sb.Append(" dyn=<null>");
 
@@ -134,8 +134,9 @@ public static class ParamTrace
     /// IDynamicState is interface-typed — the same interop proxy gotcha as
     /// IDynamicsParams: identify the concrete class by native class pointer
     /// and re-wrap. For the two flight states the state's own list summary
-    /// and progress ratio are included.</summary>
-    private static string DescribeState(Dynamics dyn)
+    /// and progress ratio are included; `pos` (the aircraft's position) feeds
+    /// the ApproachState hold diagnostics (2026-08-04).</summary>
+    private static string DescribeState(Dynamics dyn, Vector3 pos)
     {
         var cur = dyn._currentState;
         if (cur is Il2CppObjectBase ob)
@@ -145,7 +146,7 @@ public static class ParamTrace
                 if (ob.ObjectClass == Il2CppClassPointerStore<ApproachState>.NativeClassPtr)
                 {
                     var s = new ApproachState(ob.Pointer);
-                    return $"ApproachState stPath={ListSummary(s._pathPointList)} stPr={s.GetProgressRatio():F3}";
+                    return $"ApproachState stPath={ListSummary(s._pathPointList)} stPr={s.GetProgressRatio():F3}{ApproachStateDiag(s, pos)}";
                 }
                 if (ob.ObjectClass == Il2CppClassPointerStore<FlyApproachState>.NativeClassPtr)
                 {
@@ -214,6 +215,39 @@ public static class ParamTrace
         if (n > 2) sb.Append(" l=").Append(V(list[n - 1]));
         return sb.ToString();
     }
+
+    /// <summary>ApproachState hold diagnostics (2026-08-04): the Init-derived
+    /// copies and the 2-D vs 3-D distance from the aircraft to BOTH path[0]
+    /// surfaces — the gate-target discriminator. stA0 near 0/15 while rtA0 is
+    /// large = the gate reads the runtime-data path (stale 5-pt); both near
+    /// 0/15 = join-leg tracking working. afm fields are diagnostic-only
+    /// (AircraftFlightMetrics is Init-built from the flight plan — not
+    /// rebuildable from the plugin). Public for the state-check verdict line.
+    /// Never throws — returns "" on any interop failure.</summary>
+    public static string ApproachStateDiag(ApproachState st, Vector3 acPos)
+    {
+        try
+        {
+            var sb = new StringBuilder();
+            sb.Append(" stInit=").Append(V(st._initialPosition));
+            sb.Append(" stSP=").Append(st.startingProgress.ToString("F3"));
+            var lp = st._pathPointList;
+            if (lp != null && lp.Count > 0) sb.Append(" stA0=").Append(Dist2(acPos, lp[0])).Append('/').Append(Dist3(acPos, lp[0]));
+            var rd = st._runtimeData;
+            if (rd != null && rd.PathPointList != null && rd.PathPointList.Count > 0)
+                sb.Append(" rtA0=").Append(Dist2(acPos, rd.PathPointList[0])).Append('/').Append(Dist3(acPos, rd.PathPointList[0]));
+            if (st.afm != null)
+            {
+                sb.Append(" afmRem=").Append(st.afm.RemainingDistance.ToString("F1"));
+                try { sb.Append(" afmAppT=").Append(st.afm._appRouteTime); } catch { sb.Append(" afmAppT=?"); }
+            }
+            return sb.ToString();
+        }
+        catch { return ""; }
+    }
+
+    private static string Dist2(Vector3 a, Vector3 b) => Mathf.Sqrt((a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z)).ToString("F1");
+    private static string Dist3(Vector3 a, Vector3 b) => Vector3.Distance(a, b).ToString("F1");
 
     private static string V(Vector3 v) => $"({v.x:F1},{v.y:F1},{v.z:F1})";
     private static string F(float x) => x.ToString("F1");

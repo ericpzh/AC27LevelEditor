@@ -67,6 +67,15 @@ public static class OverrideController
     private const int ApproachWatchBudget = 200;
     private static readonly Dictionary<Aircraft, int> _approachWatch = new();
 
+    // Join-leg tracking (2026-08-04): the canonical join-leg path list for
+    // each aircraft in the post-cfa window. The SAME native list object is
+    // assigned to the channel params PathPointList, FlyApproachPathPointList /
+    // AppPointList and the fly state's copies — one per-tick write to [0]
+    // updates every surface that still references it (the game's Init-created
+    // replacement list is written explicitly). Kept for the aircraft's life
+    // (re-command strip in step 4a needs the pointer identity).
+    private static readonly Dictionary<Aircraft, Il2CppSystem.Collections.Generic.List<Vector3>> _joinPath = new();
+
     // Replant detection: the data channel's DynamicsParams pointer WE planted
     // (per aircraft). The setter is an IL2CPP field accessor — unpatchable by
     // both Harmony backends — and the game's native C++ writes the field
@@ -215,6 +224,16 @@ public static class OverrideController
             if (done % 10 == 0)
                 Plugin.LogMsg($"watch: {ac.CallSign} step {done} {ParamTrace.BuildDump(ac)}");
         }
+
+        // Join-leg tracking (2026-08-04): while the approach is in the
+        // pre-activation hold, path[0] must follow the aircraft — the game's
+        // gate holds PR=0 until the aircraft captures path[0], and a stale
+        // command-time path[0] is what produced the ~10 s stall and the 180°
+        // turn-back. The canonical list write covers every surface still
+        // aliasing it; the state's Init-copied _initialPosition and the game's
+        // clobbered 5-pt channel list are written explicitly. Silent on
+        // failure (never throw into the tick).
+        TrackJoinLeg(ac);
 
         // Replant detection (replaces the unpatchable setter hook): if ANYTHING
         // re-plants the data channel's params after our patch — a deferred game
@@ -388,6 +407,84 @@ public static class OverrideController
         e.StepCount++;
         if (e.StepCount <= 30 && (e.StepCount == 1 || e.StepCount % 10 == 0))
             LogDiagnostic(ac, e);
+    }
+
+    /// <summary>Per-tick join-leg tracking (2026-08-04): while the approach is
+    /// in the pre-activation hold, keep path[0] under the aircraft on every
+    /// surface. The game's gate holds PR=0 until the aircraft captures
+    /// path[0]; a stale command-time path[0] (the aircraft keeps flying its
+    /// STAR heading during the deferred activation, drifting away from it) is
+    /// what produced the ~10 s stall and the 180° turn-back to the join point.
+    /// The canonical `_joinPath` list is the same native object assigned to
+    /// the channel params PathPointList, FlyApproachPathPointList, AppPointList
+    /// and the fly state's copies — one write to [0] updates every surface
+    /// still aliasing it. The state's Init-copied _initialPosition and the
+    /// game's clobbered 5-pt channel list are written explicitly. Tracking
+    /// ends when the aircraft leaves the hold (stPr advancing) or leaves
+    /// Fly/Approach. Never throws into the game tick.</summary>
+    private static void TrackJoinLeg(Aircraft ac)
+    {
+        try
+        {
+            if (!_joinPath.TryGetValue(ac, out var path) || path == null || path.Count < 2) return;
+            var dyn = ac._dynamics;
+            if (dyn == null || !(dyn._currentState is Il2CppObjectBase ob)) return;
+            bool inWatch = _approachWatch.ContainsKey(ac);
+
+            if (ob.ObjectClass == Il2CppClassPointerStore<ApproachState>.NativeClassPtr)
+            {
+                var st = new ApproachState(ob.Pointer);
+                float pr;
+                try { pr = st.GetProgressRatio(); } catch { pr = 1f; }   // unreadable → treat as engaged
+                if (!inWatch && pr >= 0.01f) { _joinPath.Remove(ac); return; }   // steering engaged — tracking finished
+
+                var pos = new Vector3(ac.Position.x, 0f, ac.Position.z);
+                path[0] = pos;                       // shared object: fly lists + p2 (while aliased)
+                // The state's own list may be an Init-COPY rather than the
+                // shared object — write its [0] explicitly either way
+                // (idempotent when aliased).
+                if (st._pathPointList != null && st._pathPointList.Count > 0)
+                    st._pathPointList[0] = pos;
+                st._initialPosition = new Vector3(ac.Position.x, st._initialPosition.y, ac.Position.z);
+                if (st._runtimeData != null && st._runtimeData.PathPointList != null && st._runtimeData.PathPointList.Count > 0)
+                    st._runtimeData.PathPointList[0] = pos;     // the runtime-data path the gate may read
+
+                // The channel's clobbered 5-pt list (game Init's own object) —
+                // write it explicitly too.
+                var dp = ac.DynamicsData;
+                if (dp != null && dp.DynamicsParams is Il2CppObjectBase cOb
+                    && cOb.ObjectClass == Il2CppClassPointerStore<ApproachDynamicsParams>.NativeClassPtr)
+                {
+                    var ch = new ApproachDynamicsParams(cOb.Pointer);
+                    if (ch.PathPointList != null && ch.PathPointList.Count > 0)
+                    {
+                        ch.PathPointList[0] = pos;
+                        ch.InitialPosition = new Vector3(ac.Position.x, ch.InitialPosition.y, ac.Position.z);
+                    }
+                }
+
+                // Guard: a deferred-flow re-Init replaced the state's path
+                // (count/last mismatch) → full re-share, one-off, rare.
+                if (st._pathPointList == null || st._pathPointList.Count != path.Count
+                    || st._pathPointList[st._pathPointList.Count - 1] != path[path.Count - 1])
+                {
+                    st._pathPointList = path;
+                    st._initialPosition = new Vector3(ac.Position.x, st._initialPosition.y, ac.Position.z);
+                    st._approachDirection = (path[path.Count - 1] - path[path.Count - 2]).normalized;
+                    st.startingProgress = 0f;
+                }
+            }
+            else if (ob.ObjectClass == Il2CppClassPointerStore<FlyApproachState>.NativeClassPtr && inWatch)
+            {
+                // Deferred window (still Fly): keep the fly state's lists' [0]
+                // under the aircraft — the shared object covers _appPointList,
+                // _flyApproachPathPointList and the channel AppPointList.
+                path[0] = new Vector3(ac.Position.x, 0f, ac.Position.z);
+            }
+            else
+                _joinPath.Remove(ac);   // state left Fly/Approach — done (touchdown/revert)
+        }
+        catch { /* per-tick diagnostics must never throw into the game tick */ }
     }
 
     /// <summary>Write the smoothed intermediate heading to all three heading
@@ -654,8 +751,16 @@ public static class OverrideController
                     var appPts = flyParams.AppPointList;
                     if (appPts != null && appPts.Count >= 2)
                     {
-                        for (int i = 0; i < appPts.Count; i++) sourceNodes.Add(appPts[i]);
-                        Plugin.LogMsg($"cfa: {callsign} path from aircraft AppPointList (len={sourceNodes.Count}) — the aircraft's own procedure");
+                        // 2026-08-04: AppPointList may hold OUR join leg from an
+                        // earlier command (the same native list object we planted
+                        // — compare pointers, not wrapper refs). Strip the
+                        // leading join point so the new command builds a clean
+                        // join leg instead of double-prepending the aircraft.
+                        bool stripJoin = _joinPath.TryGetValue(ac, out var jp) && jp != null
+                            && appPts.Pointer == jp.Pointer && appPts.Count >= 2;
+                        int start = stripJoin ? 1 : 0;
+                        for (int i = start; i < appPts.Count; i++) sourceNodes.Add(appPts[i]);
+                        Plugin.LogMsg($"cfa: {callsign} path from aircraft AppPointList (len={sourceNodes.Count}) — the aircraft's own procedure{(stripJoin ? " (previous join leg stripped)" : "")}");
                     }
                     else
                         Plugin.LogMsg($"cfa: {callsign} step 4a: AppPointList empty — falling back to the GetRoute procedure");
@@ -702,9 +807,7 @@ public static class OverrideController
         //     follows the STAR, not the ILS). Overwrite it with the full
         //     approach procedure — the same join-leg list going into
         //     PathPointList. (No clear step needed: assigning a fresh list
-        //     replaces the STAR path atomically. AppPointList already holds
-        //     the APP points per state-30 semantics — the join leg does not
-        //     touch it.)
+        //     replaces the STAR path atomically.)
         if (flyParams != null)
         {
             try
@@ -715,6 +818,31 @@ public static class OverrideController
             catch (Exception ex)
             {
                 Plugin.LogMsg($"cfa: {callsign} step 4c FAILED: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        // 4d) 2026-08-04: AppPointList carries the JOIN LEG too. The game's
+        //     own ApproachState.Init (run synchronously during the transition
+        //     fires) re-derives its approach path from AppPointList — live log
+        //     showed Init mutating the planted params' PathPointList in place
+        //     back to the plain 5-pt APP list (path[0] 890 units from the
+        //     aircraft), which re-stalled the gate ("holds pr=0 until the
+        //     aircraft captures path[0]") and produced the ~10 s dead hold
+        //     plus the 180° turn-back to the stale join point. Planting the
+        //     join leg into AppPointList BEFORE the fires makes Init derive
+        //     join-leg geometry natively. Deliberately NOT restored afterwards:
+        //     any later game flow re-deriving from it (deferred flow tail,
+        //     revert-and-retransition) then stays consistent with the join leg.
+        if (flyParams != null)
+        {
+            try
+            {
+                flyParams.AppPointList = pathList;
+                Plugin.LogMsg($"cfa: {callsign} AppPointList overwritten (join leg, {pathList.Count} pts)");
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogMsg($"cfa: {callsign} step 4d FAILED: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -737,6 +865,21 @@ public static class OverrideController
                 Plugin.LogMsg($"cfa: {callsign} fly-state write FAILED: {ex.GetType().Name}: {ex.Message}");
             }
         }
+        // 4d (state copy): the fly state's _appPointList gets the join leg the
+        // same way — the game's transition/Init reads the STATE's copy, and a
+        // revert continues from it (same reasoning as the path-point list).
+        if (flyState != null)
+        {
+            try
+            {
+                flyState._appPointList = pathList;
+                Plugin.LogMsg($"cfa: {callsign} FlyApproachState._appPointList overwritten (join leg, {pathList.Count} pts)");
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogMsg($"cfa: {callsign} fly-state app-pts write FAILED: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
 
         // 5) Plant the params through the game's serialized channel — the same
         //    data flow the level loader uses (AircraftDynamicsData → dynamics).
@@ -748,6 +891,7 @@ public static class OverrideController
         //    reflect the transition, not pre-empt it.)
         dp.DynamicsParams = p;
         _plantedParams[ac] = p.Pointer;                   // for the per-step replant diff
+        _joinPath[ac] = pathList;                         // join-leg tracker — canonical list for the hold window
         // Speed: ALWAYS write the approach speed — raw knots (the game's own
         // ApproachSpeedKts = 240 scale — the m/s write drove state integration
         // at ~half speed, see OnAircraftStep). The ACL state-5 block ALWAYS
@@ -813,19 +957,50 @@ public static class OverrideController
         {
             try
             {
+                // Fresh rebuild of the planted params (2026-08-04): the game's
+                // own ApproachState.Init mutated the planted `p` IN PLACE —
+                // PathPointList → its AppPointList-derived 5-pt list, with the
+                // pointer unchanged (the replant diff stays silent). Reusing
+                // `p` below would re-capture the game's stale geometry; p2
+                // carries the true join leg and becomes the canonical channel
+                // + runtime-data object in both branches.
+                var p2 = new ApproachDynamicsParams {
+                    ProgressRatio = 0f,                           // game re-derives pose from path (ACL constant)
+                    TouchDownPosition = runway.TouchDownPosition, // public getter — runway threshold
+                    ApproachDirection = (pathList[pathList.Count - 1] - pathList[pathList.Count - 2]).normalized,
+                    CommandedGoAround = false,
+                    InitialPosition = new Vector3(pathList[0].x, 15.24f, pathList[0].z),   // join-leg start, Y = approach ceiling (ACL constant)
+                    PathPointList = pathList,
+                };
                 if (curOb.ObjectClass == Il2CppClassPointerStore<ApproachState>.NativeClassPtr)
                 {
                     var st = new ApproachState(curOb.Pointer);
-                    bool mismatch = st._pathPointList == null || st._pathPointList.Count != pathList.Count
-                        || (st._pathPointList.Count > 0
-                            && (st._pathPointList[0] != pathList[0]
-                                || st._pathPointList[st._pathPointList.Count - 1] != pathList[pathList.Count - 1]));
-                    Plugin.LogMsg($"cfa: {callsign} state check: ApproachState stPath={ParamTrace.ListSummary(st._pathPointList)} stPr={st.GetProgressRatio():F3} ch={ParamTrace.DescribeParams(dp.DynamicsParams)} — {(mismatch ? "MISMATCH — rewriting" : "matches our path")}");
-                    if (mismatch)
+                    bool pathMismatch = PathMismatch(st._pathPointList, pathList);
+                    bool rtMismatch = st._runtimeData == null || PathMismatch(st._runtimeData.PathPointList, pathList);
+                    var chParams = dp.DynamicsParams;   // interface proxy — class-check before use
+                    bool chMismatch = chParams is Il2CppObjectBase chOb
+                        && chOb.ObjectClass == Il2CppClassPointerStore<ApproachDynamicsParams>.NativeClassPtr
+                        && PathMismatch(new ApproachDynamicsParams(chOb.Pointer).PathPointList, pathList);
+                    Plugin.LogMsg($"cfa: {callsign} state check: ApproachState stPath={ParamTrace.ListSummary(st._pathPointList)} stPr={st.GetProgressRatio():F3} ch={ParamTrace.DescribeParams(chParams)}{ParamTrace.ApproachStateDiag(st, ac.Position)} — {(pathMismatch ? "PATH MISMATCH" : "path ok")}{(rtMismatch ? " RT MISMATCH" : " rt ok")}{(chMismatch ? " CH MISMATCH" : " ch ok")}");
+                    if (pathMismatch)
                     {
                         st._pathPointList = pathList;
-                        if (st._runtimeData != null) st._runtimeData = p;
-                        Plugin.LogMsg($"cfa: {callsign} ApproachState._pathPointList + _runtimeData rewritten ({pathList.Count} pts)");
+                        st._initialPosition = p2.InitialPosition;
+                        st._approachDirection = p2.ApproachDirection;
+                        st._touchDownPosition = p2.TouchDownPosition;
+                        st.startingProgress = 0f;   // ACL state-5 block constant
+                        Plugin.LogMsg($"cfa: {callsign} ApproachState path + Init fields rewritten ({pathList.Count} pts)");
+                    }
+                    if (rtMismatch)
+                    {
+                        st._runtimeData = p2;
+                        Plugin.LogMsg($"cfa: {callsign} ApproachState._runtimeData → fresh join-leg params");
+                    }
+                    if (chMismatch)
+                    {
+                        dp.DynamicsParams = p2;
+                        _plantedParams[ac] = p2.Pointer;   // keep the replant diff quiet for OUR write
+                        Plugin.LogMsg($"cfa: {callsign} params-replant: DynamicsParams ← fresh ApproachDynamicsParams (join leg, {pathList.Count} pts — game Init had clobbered it)");
                     }
                 }
                 else if (curOb.ObjectClass == Il2CppClassPointerStore<FlyApproachState>.NativeClassPtr)
@@ -870,21 +1045,34 @@ public static class OverrideController
                             // cast to IDynamicState — the interface has its own
                             // interop wrapper class. Wrap the native pointer in
                             // it (the game's native side only sees the pointer).
-                            dyn2.SetCurrentState(new IDynamicState(apprSt.Pointer), p);
+                            dyn2.SetCurrentState(new IDynamicState(apprSt.Pointer), p2);
                             if (dyn2._currentState is Il2CppObjectBase cur2
                                 && cur2.ObjectClass == Il2CppClassPointerStore<ApproachState>.NativeClassPtr)
                             {
                                 var st2 = new ApproachState(cur2.Pointer);
-                                bool mismatch2 = st2._pathPointList == null || st2._pathPointList.Count != pathList.Count
-                                    || (st2._pathPointList.Count > 0
-                                        && (st2._pathPointList[0] != pathList[0]
-                                            || st2._pathPointList[st2._pathPointList.Count - 1] != pathList[pathList.Count - 1]));
-                                Plugin.LogMsg($"cfa: {callsign} bypass: SetCurrentState → ApproachState stPath={ParamTrace.ListSummary(st2._pathPointList)} stPr={st2.GetProgressRatio():F3} — {(mismatch2 ? "MISMATCH — rewriting" : "matches our path")}");
+                                bool mismatch2 = PathMismatch(st2._pathPointList, pathList);
+                                Plugin.LogMsg($"cfa: {callsign} bypass: SetCurrentState → ApproachState stPath={ParamTrace.ListSummary(st2._pathPointList)} stPr={st2.GetProgressRatio():F3}{ParamTrace.ApproachStateDiag(st2, ac.Position)} — {(mismatch2 ? "MISMATCH — rewriting" : "matches our path")}");
                                 if (mismatch2)
                                 {
                                     st2._pathPointList = pathList;
-                                    if (st2._runtimeData != null) st2._runtimeData = p;
-                                    Plugin.LogMsg($"cfa: {callsign} bypass: ApproachState._pathPointList + _runtimeData rewritten ({pathList.Count} pts)");
+                                    st2._initialPosition = p2.InitialPosition;
+                                    st2._approachDirection = p2.ApproachDirection;
+                                    st2._touchDownPosition = p2.TouchDownPosition;
+                                    st2.startingProgress = 0f;
+                                    st2._runtimeData = p2;
+                                    Plugin.LogMsg($"cfa: {callsign} bypass: ApproachState path + Init fields + _runtimeData rewritten ({pathList.Count} pts)");
+                                }
+                                // Channel re-plant: SetCurrentState's Init may
+                                // have re-derived the channel params from the
+                                // fly lists — make sure the channel carries p2.
+                                var chParams2 = dp.DynamicsParams;
+                                if (chParams2 is Il2CppObjectBase chOb2
+                                    && chOb2.ObjectClass == Il2CppClassPointerStore<ApproachDynamicsParams>.NativeClassPtr
+                                    && PathMismatch(new ApproachDynamicsParams(chOb2.Pointer).PathPointList, pathList))
+                                {
+                                    dp.DynamicsParams = p2;
+                                    _plantedParams[ac] = p2.Pointer;
+                                    Plugin.LogMsg($"cfa: {callsign} bypass: params-replant: DynamicsParams ← fresh ApproachDynamicsParams (join leg)");
                                 }
                             }
                             else
@@ -892,8 +1080,14 @@ public static class OverrideController
                                 Plugin.LogMsg($"cfa: {callsign} bypass: SetCurrentState did not stick ({(dyn2._currentState is Il2CppObjectBase curB ? $"state 0x{curB.ObjectClass.ToInt64():X}" : "state ?")}) — forcing _currentState field");
                                 dyn2._currentState = new IDynamicState(apprSt.Pointer);
                                 apprSt._pathPointList = pathList;
-                                if (apprSt._runtimeData != null) apprSt._runtimeData = p;
-                                Plugin.LogMsg($"cfa: {callsign} bypass: _currentState forced → ApproachState + captured copies rewritten");
+                                apprSt._initialPosition = p2.InitialPosition;
+                                apprSt._approachDirection = p2.ApproachDirection;
+                                apprSt._touchDownPosition = p2.TouchDownPosition;
+                                apprSt.startingProgress = 0f;
+                                if (apprSt._runtimeData != null) apprSt._runtimeData = p2;
+                                dp.DynamicsParams = p2;
+                                _plantedParams[ac] = p2.Pointer;
+                                Plugin.LogMsg($"cfa: {callsign} bypass: _currentState forced → ApproachState + captured copies + channel rewritten");
                             }
                         }
                         catch (Exception ex)
@@ -1005,6 +1199,15 @@ public static class OverrideController
     }
 
     // ── helpers ─────────────────────────────────────────────────────────
+
+    /// <summary>Path-list identity for the state check (2026-08-04): count +
+    /// LAST point only. [0] is deliberately NOT compared — the per-tick join-leg
+    /// tracker keeps it under the aircraft, so a first-point-only difference is
+    /// expected and self-healing.</summary>
+    private static bool PathMismatch(Il2CppSystem.Collections.Generic.List<Vector3> l,
+                                     Il2CppSystem.Collections.Generic.List<Vector3> expected)
+        => l == null || expected == null || l.Count != expected.Count
+        || (l.Count > 0 && l[l.Count - 1] != expected[expected.Count - 1]);
 
     private static AirwayRouteService _routeService;   // cache; invalidate on level switch
 
