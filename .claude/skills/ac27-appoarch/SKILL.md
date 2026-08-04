@@ -12,7 +12,7 @@ A BepInEx 6 IL2CPP plugin (`com.ac27.appoarch` v1.0.0) that live-patches aircraf
 | Command | What it does |
 |---|---|
 | `update_heading` | **Heading-only** override (2026-08-03, decoupled): forces the aircraft's nose to a heading each fixed tick. Position/speed/route stay 100% the game's — the aircraft keeps flying its own route. Speed is never read for control, never written. `update_position` is a legacy alias whose kts field is ignored |
-| `clear_for_appr` | Hands a STAR (state 30) aircraft onto final approach (state 5) with fully populated approach geometry — mirroring an ACL pre-spawned state=5 aircraft, including `_waitingForCommands = [PermitLanding]` and the full IAF→threshold path list |
+| `clear_for_appr` | Hands a STAR (state 30) aircraft onto final approach (state 5) with fully populated approach geometry — mirroring an ACL pre-spawned state=5 aircraft, including `_waitingForCommands = [PermitLanding]` and the full IAF→threshold path list. Since 2026-08-03 the handoff turn is SMOOTH: the nose rotates from where it actually points onto the approach course at the frame's `rate=N` (or the plugin's 3°/s default) instead of snapping when the transition lands |
 
 Design document: `mods/docs/bepinex-aircraft-override-report.md` (API design §4, input surfaces §5, verification checklist §8). Class dumps: `mods/docs/aircraft-classes-report.md` + `aircraft-classes-inventory.md` (Cpp2IL dumps of GameAssembly.dll). **Read the plugin's `mods/AC27Appoarch/README.md` before making changes — it records every runtime-verified fact and every failed attempt.**
 
@@ -61,9 +61,10 @@ From the editor devtools (`sendPatchCommand` preload → `send-patch-command` IP
 ```js
 // heading-only override: point the nose at 180° (speed/position untouched)
 await electronAPI.sendPatchCommand({ type: 'update_heading', callSign, dx: 0, dy: -1 });
-// hand a STAR aircraft onto final approach
-await electronAPI.sendPatchCommand({ type: 'clear_for_appr', callSign });
-// same, commanding 200 kt approach speed (kts omitted = speed untouched)
+// hand a STAR aircraft onto final approach — smooth handoff turn at 3°/s of game time
+// (rate omitted = plugin's standard-rate default; the composer always sends rate: 3)
+await electronAPI.sendPatchCommand({ type: 'clear_for_appr', callSign, rate: 3 });
+// same, commanding 200 kt approach speed (kts omitted = the ACL default 240 — always written)
 await electronAPI.sendPatchCommand({ type: 'clear_for_appr', callSign, kts: 200 });
 // diagnostics: dump the aircraft's full params every 1 s (send again to stop)
 await electronAPI.sendPatchCommand({ type: 'track', callSign: 'CSC6918' });
@@ -88,7 +89,7 @@ offset 8   payload   Mechanism A: 12-byte NUL-padded ASCII callsign
 
 The 64-byte NUL-padded payload is a **hard contract**: Mechanism B reads the datagram back from the game's receive buffer after the tick and finds the payload by scanning for the first NUL at offset 8 — variable-length frames get stale buffer bytes appended. The stock game logs one `UnknownCommand` warning per 0x00E7 frame; the plugin suppresses that exact warning via a `LogBadDatagramOnce` prefix (other bad-datagram reasons still surface).
 
-Payload table (pipe-delimited ASCII): `update_heading|CS|dx|dy` · `clear_for_appr|CS[|kts][|appr][|native=0]` (a numeric field 2 is always kts; `native=0` skips `CommandContinueApproach`) · `track|CS`.
+Payload table (pipe-delimited ASCII): `update_heading|CS|dx|dy[|rate]` · `clear_for_appr|CS[|kts][|appr][|native=0][|rate=N]` (a numeric field is always kts; `native=0` skips `CommandContinueApproach`; `rate=N` — keyed, any position after CS — is the smooth-turn °/s of game time for the handoff; a bare numeric rate would be misread as the kts approach speed) · `track|CS`.
 
 ## Editor Integration
 
@@ -104,13 +105,13 @@ These are the runtime-verified hooks (2026-08-03). Two obvious candidates are de
 - **Interop gotcha — interface-wrapped types:** `DynamicsData.DynamicsParams` is typed `IDynamicsParams`, and Il2CppInterop wraps the interface-typed getter's return in the interface's interop class — `GetType().Name` is literally `IDynamicsParams` and `is FlyApproachDynamicsParams` never matches. Identify the concrete class by native class pointer (`Il2CppObjectBase.ObjectClass` vs `Il2CppClassPointerStore<T>.NativeClassPtr`) and re-wrap via `Pointer`. Same proxy gotcha for `IDynamicState` (`_approachState`).
 - **The active state machine state owns its own captured copies:** `ApproachState._runtimeData` / `_pathPointList` (and `FlyApproachState._flyApproachPathPointList` / `_appPointList`) are `Init`-copied at state activation (level load) and the game's path-following reads THOSE, not the aircraft's data channel. The patch rewrites them on mismatch (`cfa: … state check: … MISMATCH — rewriting`) — the tracer exposes them as `st=… stPath=… stPr=…` plus `dataSame=1|0`.
 - **`FlyToApproachCondition` gate:** the canonical `CommandContinueApproach()` respects it; a mid-STAR aircraft (pr ≈ 0.68+) can fail the gate (step 4b's path overwrite removed the STAR tail the gate's position check anchors to) → half-transition (enum flipped, state object not). Fallback (step 6b): bypass via `dyn.SetCurrentState(_approachState, plantedParams)` with the dynamics' pre-created `ApproachState` (nothing minted), re-verify, force-write `_currentState` as last resort. The `DynamicsState` enum write is moved AFTER the transition attempts (step 6c) — a pre-set enum produces misleading half-transition readbacks.
-- **`clear_for_appr` semantics:** only STAR aircraft (`EAircraftState.Fly`) can be handed off; a heading override is dropped first; `_waitingForCommands` set to `[PermitLanding]`; `FlyApproachPathPointList` overwritten with the full approach (IAF→threshold).
+- **`clear_for_appr` semantics:** only STAR aircraft (`EAircraftState.Fly`) can be handed off; a heading override is replaced by the smooth handoff turn (2026-08-03: a phase-gated `FollowGameHeading` entry — pass-through while the aircraft still flies the STAR, lock + rotate onto the game's own approach heading at `rate=N` once it leaves `Fly` state. The drop is SWEEP-GATED since v2: the game's own turn is deferred ~3 s (radio chatter), and converging against the still-STAR tangent dropped the override before it — the game's ~42°/s turn then snapped the nose; a drop now requires the tangent to have swept >2° from the lock snapshot and the nose to have caught the settled course — log lines: `override: <CS> cfa-turn: …`); `_waitingForCommands` set to `[PermitLanding]`; `FlyApproachPathPointList` overwritten with the aircraft's own procedure (its `AppPointList`) + a join leg from the aircraft's position — the approach activates AT the aircraft (the pre-join-leg plant started the path at the IAF and the approach state held pr=0 for minutes of dead cruise; fixed 2026-08-04); the approach speed is ALWAYS written (240 or the frame's `kts`; log `cfa: <CS> speed: ts=… tts=… dtts=… fwd=True accel 1/-2`) — the kts-only behavior left the channel speed unset and the path-following crawled ~1-4 u/s instead of ~123 (live 2026-08-03); **radio handoff (v2, 2026-08-04):** BOTH `_radioChannel` and `_jurisdictionRadioChannel` are written to the airport's tower channel (`RadioChannelManager.GetResolvedChannel(EChannel.Tower)` via VContainer, RadioSystem `_radioChannelBindings` fallback — logs `cfa: <CS> radio: radio … → TWR(…)` and `cfa: <CS> radio: jurisdiction … → TWR(…)`; resolution failure = logged skip, self-heals on touchdown). v1 wrote only the jurisdiction slot and the aircraft stayed on approach — v2 flips both. Tracer fields: `chTs=`/`chTts=`/`chDTts=`/`chFwd=` (channel speed — the crawl diagnostic), `rc=`/`jrc=` (radio slots — the re-assert detector).
 - Runtime lookups use `FindObjectsOfType<Aircraft3D>` (by `Source.CallSign`) and a cached VContainer `LifetimeScope` scan for `AirwayRouteService`.
 
 ## Debugging a Patch That Doesn't Stick
 
-1. **Always check `LogOutput.log` first** — every dispatch logs `[AC27Appoarch] patch: <type> → <CS> … applied (Mechanism B)`; every apply logs `override: <CS> before hdg …° spd … kt → after hdg …°`; every cfa step logs `cfa: …`.
-2. `clear_for_appr` **auto-tracks the callsign for 30 s** and arms a ~1.7 s per-step watch (10 `watch: …` lines) so the post-patch seconds land in the log even if `track` was never sent. `track|CS` toggles the 1 s full param dump manually.
+1. **Always check `LogOutput.log` first** — every dispatch logs `[AC27Appoarch] patch: <type> → <CS> … applied (Mechanism B)`; every apply logs `override: <CS> before hdg …° spd … kt → after hdg …° rate …°/s`; every cfa step logs `cfa: …`.
+2. `clear_for_appr` arms a ~3.3 s per-step watch (20 `watch: …` lines — 200 steps at 60 TPS, one line per 10 steps) so the post-patch seconds land in the log without the auto-trace stream (the 30 s auto-track was removed 2026-08-03 v2 — it flooded the log with 30 `trace:` lines per handoff). `track|CS` toggles the 1 s full param dump manually.
 3. The AFTER dump shows state + `route=` + `wait=[…]`; the per-step watch shows whether the transition stuck at the state-object level (`st=FlyApproachState` with `dyn=Approaching` = half-transition). `params-replant:` lines catch the game re-planting the STAR's params — when you see it, the ACTIVE state owns the channel's params (snapshots each step), not the reverse.
 4. Before/after frames from the game's own UDP service are logged (the game plays `AtcContinueApproach` audio on a successful handoff — a quick audible check).
 

@@ -35,7 +35,10 @@ public static class Patches
     {
         if (__instance.Source == null) return;
         if (!OverrideController.IsOverridden(__instance.Source)) return;
-        var d = OverrideController.CommandedDirection(__instance.Source);
+        // `direction` passes through CommandedDirection so the cfa-turn mode
+        // can stash the game's intended heading if the 3D sync happens to
+        // carry it (the exact-match filter keeps our own write-back out).
+        var d = OverrideController.CommandedDirection(__instance.Source, direction);
         if (d.sqrMagnitude > 1e-6f) direction = d;
     }
 
@@ -50,7 +53,11 @@ public static class Patches
     public static void SetDirectionPrefix(Aircraft __instance, ref Vector3 value)
     {
         if (!OverrideController.IsOverridden(__instance)) return;
-        var d = OverrideController.CommandedDirection(__instance);
+        // cfa-turn mode (2026-08-03): this prefix sees the game's TRUE
+        // path-tangent heading (the only place it is visible — everything
+        // else reads the substituted value) — pass it through so
+        // CommandedDirection can stash it as the rotation target.
+        var d = OverrideController.CommandedDirection(__instance, value);
         if (d.sqrMagnitude > 1e-6f) value = d;
     }
 
@@ -198,51 +205,77 @@ public static class Patches
         {
             case "update_heading":
             case "update_position":   // legacy alias — pre-decouple name, kts ignored
-                // Canonical: update_heading|CS|dx|dy — HEADING-ONLY override
-                // (the game keeps full control of position and speed). Legacy
-                // update_position|CS|dx|dy[|kts] parses the same way; the kts
-                // field is validated but ignored (one-time note), and a
-                // non-numeric legacy field still rejects.
+                // Canonical: update_heading|CS|dx|dy[|rate] — HEADING-ONLY
+                // override (the game keeps full control of position and
+                // speed). 5th field = smooth-turn rate in °/GAME-second
+                // (2026-08-03): the nose rotates toward the heading at that
+                // rate, scaled by the game's speed multiplier and frozen
+                // while paused (see OverrideController.OnAircraftStep);
+                // omitted or <= 0 = INSTANT — the pre-smoothing behavior.
+                // Legacy update_position|CS|dx|dy[|kts] parses the same way;
+                // its kts field stays validated-but-ignored — it is NEVER a
+                // rate. A non-numeric legacy field still rejects. (The 5th
+                // field is parsed inside the if-body — an `out var` in the
+                // `||` guard would be unassigned when parts.Length == 4.)
                 if ((parts.Length == 4 || parts.Length == 5)
                     && float.TryParse(parts[2], out var dx) && float.TryParse(parts[3], out var dy)
                     && (parts.Length == 4 || float.TryParse(parts[4], out _)))
                 {
                     if (parts[0] == "update_position")
                         LogOnce(ref _diagLegacyKts, "patch: legacy update_position frame treated as update_heading (kts ignored — heading-only)");
+                    // Rate only from an update_heading frame. NaN/Infinity
+                    // parse fine: NaN > 0f is false → instant (safe);
+                    // Infinity converges in one tick (≈ instant).
+                    float rate = 0f;
+                    if (parts.Length == 5 && parts[0] == "update_heading"
+                        && float.TryParse(parts[4], out var fifth) && fifth > 0f)
+                        rate = fifth;
                     try
                     {
-                        bool ok = OverrideController.PatchAircraft("update_heading", parts[1], new UnityEngine.Vector3(dx, 0f, dy));
-                        Plugin.LogMsg($"patch: update_heading → {parts[1]} ({dx},{dy}): {(ok ? "applied" : "NOT FOUND")} (Mechanism B)");
+                        bool ok = OverrideController.PatchAircraft("update_heading", parts[1],
+                            new UnityEngine.Vector3(dx, 0f, dy), turnRateDeg: rate);
+                        Plugin.LogMsg($"patch: update_heading → {parts[1]} ({dx},{dy}){(rate > 0f ? $" rate {rate:F0}°/s" : "")}: {(ok ? "applied" : "NOT FOUND")} (Mechanism B)");
                     }
                     catch (Exception ex) { Plugin.LogMsg($"patch: update_heading → {parts[1]} FAILED: {ex.GetType().Name}: {ex.Message}"); }
                 }
                 break;
             case "clear_for_appr":
-                // clear_for_appr|CS[|kts][|appr][|native=0] — kts = approach
-                // speed in raw knots (omitted/0 = leave the aircraft's speed
-                // untouched); appr = named procedure (field 4 when kts present,
-                // else field 3; omitted = nearest APP route); native=0 (field 5)
-                // skips CommandContinueApproach — its deferred flow restores the
-                // aircraft's runtime data ("Dynamics: restore runtime data:
-                // FlyApproaching"), the suspected revert back to the STAR.
-                // A numeric field 2 is always kts.
+                // clear_for_appr|CS[|kts][|appr][|native=0][|rate=N] — kts =
+                // approach speed in raw knots (omitted/0 = leave the aircraft's
+                // speed untouched); appr = named procedure (omitted = nearest
+                // APP route); native=0 skips CommandContinueApproach — its
+                // deferred flow restores the aircraft's runtime data
+                // ("Dynamics: restore runtime data: FlyApproaching"), the
+                // suspected revert back to the STAR; rate=N = smooth-turn
+                // °/GAME-second for the handoff turn (2026-08-03 — the nose
+                // rotates onto the approach course instead of snapping;
+                // omitted = the plugin's ClearForApprTurnRateDeg default).
+                // Keyed scan (not positional): any field after CS that is
+                // `native=0` or `rate=N` is a flag — rate=3 as a bare field
+                // would otherwise be misread as a 3 kt approach speed (a
+                // numeric field is always kts; the first other field is the
+                // procedure name).
                 try
                 {
                     float speedKts = 0f;
                     string appr = null;
                     bool useNative = true;
-                    if (parts.Length > 2)
+                    float cfaRate = 0f;
+                    for (int i = 2; i < parts.Length; i++)
                     {
-                        if (float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedKts))
-                        {
-                            speedKts = parsedKts;
-                            if (parts.Length > 3) appr = parts[3];
-                        }
-                        else appr = parts[2];                // legacy named-procedure field
+                        var p = parts[i];
+                        if (string.IsNullOrEmpty(p)) continue;
+                        if (p == "native=0") { useNative = false; continue; }
+                        if (p.StartsWith("rate=", StringComparison.Ordinal)
+                            && float.TryParse(p.Substring(5), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedRate)
+                            && parsedRate > 0f)
+                        { cfaRate = parsedRate; continue; }
+                        if (float.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedKts))
+                            speedKts = parsedKts;                // a numeric field is always kts
+                        else if (appr == null) appr = p;         // first non-numeric field = procedure name
                     }
-                    if (parts.Length > 4 && parts[4] == "native=0") useNative = false;
-                    bool ok2 = OverrideController.PatchAircraft("clear_for_appr", parts[1], default, speedKts, appr, useNative);
-                    Plugin.LogMsg($"patch: clear_for_appr → {parts[1]}{(speedKts > 0f ? " " + speedKts.ToString("0", CultureInfo.InvariantCulture) + " kt" : "")}{(appr != null ? " [" + appr + "]" : "")}{(useNative ? "" : " [native=0]")}: {(ok2 ? "applied" : "NOT FOUND / not on STAR")} (Mechanism B)");
+                    bool ok2 = OverrideController.PatchAircraft("clear_for_appr", parts[1], default, speedKts, appr, useNative, cfaRate);
+                    Plugin.LogMsg($"patch: clear_for_appr → {parts[1]}{(speedKts > 0f ? " " + speedKts.ToString("0", CultureInfo.InvariantCulture) + " kt" : "")}{(appr != null ? " [" + appr + "]" : "")}{(useNative ? "" : " [native=0]")}{(cfaRate > 0f ? $" rate {cfaRate:F0}°/s" : "")}: {(ok2 ? "applied" : "NOT FOUND / not on STAR")} (Mechanism B)");
                 }
                 catch (Exception ex) { Plugin.LogMsg($"patch: clear_for_appr → {parts[1]} FAILED: {ex.GetType().Name}: {ex.Message}"); }
                 break;

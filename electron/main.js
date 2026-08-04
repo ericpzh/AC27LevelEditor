@@ -1933,13 +1933,20 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 });
 
 // ─── IPC: Send patch command to game (plugin UDP Mechanism B, extended frame 0x00E7) ───
-// patch: { type: 'update_heading'|'update_position'|'clear_for_appr', callSign, dx?, dy?, kts?, appr? }
+// patch: { type: 'update_heading'|'update_position'|'clear_for_appr', callSign, dx?, dy?, rate?, kts?, appr? }
 // update_heading is HEADING-ONLY (2026-08-03, decoupled): it carries no
 // speed — the plugin never touches speed; the game keeps position & speed
-// and only the nose heading is overridden. 'update_position' is a legacy
-// alias (its kts field is ignored by the plugin). kts on a clear_for_appr
-// frame is the approach speed in raw knots (omitted = the aircraft's speed
-// is left untouched); appr = named approach procedure.
+// and only the nose heading is overridden. Optional rate = smooth-turn
+// speed in °/s of GAME time (5th frame field; omitted = instant snap — the
+// pre-smoothing behavior; the plugin scales it with the game's speed
+// multiplier and freezes it while paused). 'update_position' is a legacy
+// alias (its kts field is ignored by the plugin — it deliberately does NOT
+// carry rate). kts on a clear_for_appr frame is the approach speed in raw
+// knots (omitted = the aircraft's speed is left untouched); appr = named
+// approach procedure. rate on a clear_for_appr frame (sent as the keyed
+// field rate=N, 2026-08-03) = smooth-turn °/s of game time for the handoff
+// turn — the nose rotates onto the approach course instead of snapping;
+// omitted = the plugin's standard-rate default (3°/s).
 // Frame contract: 8 B header + payload NUL-padded to exactly 64 bytes (72 B total).
 // The plugin's FixedTick() postfix reads the datagram back from the service's
 // receive buffer, so the payload field must be fixed-length + NUL-terminated.
@@ -1947,10 +1954,17 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 ipcMain.handle('send-patch-command', async (_e, patch) => {
   try {
     const parts = [patch.type, patch.callSign];
-    if (patch.type === 'update_heading' || patch.type === 'update_position') parts.push(patch.dx, patch.dy);
+    if (patch.type === 'update_heading' || patch.type === 'update_position') {
+      parts.push(patch.dx, patch.dy);
+      if (patch.type === 'update_heading' && patch.rate) parts.push(patch.rate);
+    }
     else if (patch.type === 'clear_for_appr') {
       if (patch.kts) parts.push(patch.kts);
       if (patch.appr) parts.push(patch.appr);
+      // Keyed (rate=N): the plugin's cfa parser treats any bare numeric
+      // field as the approach speed in kts — an unkeyed rate would be
+      // misread (rate 3 → 3 kt).
+      if (patch.rate) parts.push('rate=' + patch.rate);
     }
     const field = Buffer.alloc(64);                       // NUL-padded payload field
     Buffer.from(parts.join('|'), 'ascii').copy(field, 0);

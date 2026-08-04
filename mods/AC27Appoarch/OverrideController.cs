@@ -8,7 +8,9 @@ using ContextCross.Dynamics;
 using ContextCross.Dynamics.Enums;
 using ContextCross.Dynamics.States;
 using ContextCross.Enums;
+using ContextCross.Managers;
 using ContextCross.Models;
+using ContextCross.Radio;
 using ContextCross.Services;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
@@ -31,8 +33,18 @@ public static class OverrideController
 {
     private class Entry
     {
-        public Vector3 Direction;      // normalized; zero = no heading command
-        public int StepCount;          // diagnostics: sample the first ~0.5 s of override
+        public Vector3 Direction;      // COMMANDED heading — normalized; zero = no heading command
+        public Vector3 Current;        // smoothed intermediate heading — what is actually written each tick
+        public float TurnRateDeg;      // nose rotation rate, °/GAME-second; <= 0 = INSTANT (pre-smoothing behavior)
+        public bool FollowGameHeading; // cfa-turn mode (2026-08-03): Direction = zero; the rotation target is the
+                                       // game's own path-tangent heading (stashed by the channel-lock prefixes),
+                                       // and the lock is phase-gated (Phase 1 pass-through → Phase 2 rotate)
+        public Vector3 GameIntended;   // cfa-turn: the game's intended heading from the latest prefix stash
+        public bool Locked;            // cfa-turn Phase 2: actively rotating onto the approach course
+        public Vector3 LockTangent;    // cfa-turn: the game's tangent at lock — the deferred-window baseline
+        public bool TangentMoved;      // the tangent swept > CfaTurnMinSweepDeg — the game's real turn ran
+        public int Phase2Ticks;        // cfa-turn Phase-2 elapsed ticks (safety bound, see OnAircraftStep)
+        public int StepCount;          // diagnostics: sample the first ~0.5 s of override; also Phase-1 timeout
         public Aircraft3D View;        // cached visible view (diagnostics)
     }
 
@@ -47,10 +59,12 @@ public static class OverrideController
     private static readonly Dictionary<Dynamics, string> _dynToCs = new();
     private static readonly Dictionary<AircraftDynamicsData, string> _dataToCs = new();
 
-    // Approach watch: per-step diag for the first ~1.7 s after a
-    // clear_for_appr patch — the critical window where the aircraft either
-    // turns onto the ILS or keeps flying the STAR. Value = steps remaining.
-    private const int ApproachWatchBudget = 100;
+    // Approach watch: per-step diag for the first ~3.3 s after a
+    // clear_for_appr patch (200 steps — longer than the ~3 s deferred
+    // CommandContinueApproach radio-chatter window) — the critical window
+    // where the aircraft either turns onto the ILS or keeps flying the STAR.
+    // Value = steps remaining.
+    private const int ApproachWatchBudget = 200;
     private static readonly Dictionary<Aircraft, int> _approachWatch = new();
 
     // Replant detection: the data channel's DynamicsParams pointer WE planted
@@ -61,16 +75,41 @@ public static class OverrideController
     // tracked (the post-patch window) — catches native direct writes too.
     private static readonly Dictionary<Aircraft, IntPtr> _plantedParams = new();
 
+    // ── cfa smooth-turn constants (2026-08-03) ────────────────────────────
+    // The editor's composer sends its TURN_RATE_DEG_S on the clear_for_appr
+    // frame (rate=N); frames WITHOUT a rate (raw scripts, the !5: Mechanism
+    // A path) get this default. IFR standard rate — the same value the
+    // heading composer uses; keep in sync with
+    // FlightPatchCommandBar.TURN_RATE_DEG_S.
+    private const float ClearForApprTurnRateDeg = 3f;
+
+    // Phase-1 timeout: if the approach transition never lands (deferred
+    // handoff failed / reverted), drop the pass-through entry instead of
+    // lingering in the override map.
+    private const int CfaTurnPhase1TimeoutSteps = 600;   // 10 s at 60 TPS
+
+    // Phase-2 sweep gate (2026-08-03 v2): the game's own approach turn is
+    // DEFERRED (the CommandContinueApproach radio-chatter flow) — for ~3 s
+    // after the lock the path-tangent heading is still the STAR tangent,
+    // which sits ON the nose. Converging against THAT dropped the override
+    // within ~2 ticks, and the game's real turn (observed ~42°/s easing)
+    // then snapped the nose onto the final course. So a drop is only
+    // allowed once the tangent has actually SWEPT from the lock-time
+    // snapshot — proof the deferred turn ran — and the nose has caught it.
+    private const float CfaTurnMinSweepDeg = 2f;    // tangent sweep that proves the deferred turn started
+    private const int CfaTurnPhase2MaxSteps = 3600; // 60 s at 60 TPS — safety: never hold the nose forever
+
     /// <summary>Unified patch API: "update_heading" | "update_position" (legacy) | "clear_for_appr".</summary>
     public static bool PatchAircraft(string commandType, string callsign,
                                      Vector3 direction = default, float speedKnots = 0f,
-                                     string apprName = null, bool useNative = true)
+                                     string apprName = null, bool useNative = true,
+                                     float turnRateDeg = 0f)
     {
         switch (commandType)
         {
-            case "update_heading":  return patchHeading(callsign, direction);
-            case "update_position": return patchHeading(callsign, direction);   // legacy alias (kts ignored)
-            case "clear_for_appr":  return clearForApproach(callsign, speedKnots, apprName, useNative);
+            case "update_heading":  return patchHeading(callsign, direction, turnRateDeg);
+            case "update_position": return patchHeading(callsign, direction, turnRateDeg);   // legacy alias (kts ignored)
+            case "clear_for_appr":  return clearForApproach(callsign, speedKnots, apprName, useNative, turnRateDeg);
             default:                return false;
         }
     }
@@ -80,8 +119,12 @@ public static class OverrideController
     /// <summary>Force the aircraft's nose to `direction`. Position and speed
     /// stay 100% the game's — the dynamics keeps flying the aircraft's own
     /// route at its own speed; only the heading (property / reactive /
-    /// rotation channels + visible nose) is overridden.</summary>
-    public static bool patchHeading(string callsign, Vector3 direction)
+    /// rotation channels + visible nose) is overridden.
+    /// `turnRateDeg` > 0 rotates the nose smoothly at that many °/GAME-second
+    /// (respects the game's speed multiplier and pauses with it — see
+    /// OnAircraftStep); <= 0 (omitted) snaps instantly — the pre-smoothing
+    /// behavior.</summary>
+    public static bool patchHeading(string callsign, Vector3 direction, float turnRateDeg = 0f)
     {
         var ac = FindByCallsign(callsign);
         if (ac == null) return false;
@@ -91,8 +134,29 @@ public static class OverrideController
         float bHdg = HeadingDeg(ac.Direction);
         float bSpd = ac.AirSpeedKnot != null ? Convert.ToSingle(ac.AirSpeedKnot.Value) : 0f;
 
+        var cmd = direction.sqrMagnitude > 1e-6f ? direction.normalized : Vector3.zero;
+
+        // Smooth-turn start pose (2026-08-03): seed Current from where the nose
+        // ACTUALLY points so the rotation starts from the real heading — the
+        // aircraft's own motion has been writing ac.Direction up to this tick.
+        // Mid-turn re-commands keep the existing entry's Current: the aircraft
+        // simply re-targets and keeps rotating from its intermediate heading.
+        // Instant mode (rate <= 0 / omitted — the pre-smoothing contract) MUST
+        // seed Current AT the command: with Current left at the old heading and
+        // RotateTowards maxDelta <= 0 the nose would never converge — frozen.
+        Vector3 current = cmd;
+        if (turnRateDeg > 0f)
+        {
+            if (_overrides.TryGetValue(ac, out var existing) && existing.Current.sqrMagnitude > 1e-6f)
+                current = existing.Current;                             // mid-turn re-command — continue from here
+            else if (ac.Direction.sqrMagnitude > 1e-6f)
+                current = ac.Direction.normalized;                      // fresh command — start from the real nose
+        }
+
         var e = new Entry {
-            Direction = direction.sqrMagnitude > 1e-6f ? direction.normalized : Vector3.zero,
+            Direction = cmd,
+            Current = current,
+            TurnRateDeg = turnRateDeg,
         };
         _overrides[ac] = e;
 
@@ -100,7 +164,7 @@ public static class OverrideController
         // touched — the game keeps them; the aircraft flies its own route at
         // its own speed, pointing at the commanded heading.
         float aHdg = HeadingDeg(e.Direction);
-        Plugin.LogMsg($"override: {callsign} before hdg {(bHdg < 0f ? "n/a" : bHdg + "°")} spd {bSpd:F0} kt → after hdg {(aHdg < 0f ? "none (game's own)" : aHdg + "°")} (heading-only — game keeps position & speed)");
+        Plugin.LogMsg($"override: {callsign} before hdg {(bHdg < 0f ? "n/a" : bHdg + "°")} spd {bSpd:F0} kt → after hdg {(aHdg < 0f ? "none (game's own)" : aHdg + "°")} rate {turnRateDeg:F0}°/s (heading-only — game keeps position & speed)");
         return true;
     }
 
@@ -137,8 +201,8 @@ public static class OverrideController
         if (ac._dynamics != null) _dynToCs[ac._dynamics] = ac.CallSign;
         if (ac.DynamicsData != null) _dataToCs[ac.DynamicsData] = ac.CallSign;
 
-        // Approach watch: per-step diag for the first ~1.7 s after a
-        // clear_for_appr patch (steps 0,10,20,...,90). Same dump shape as the
+        // Approach watch: per-step diag for the first ~3.3 s after a
+        // clear_for_appr patch (steps 0,10,20,...,190). Same dump shape as the
         // 1 s tracer — state machines + params + the ACTIVE state's own path
         // copy — so the seconds after the patch show whether the aircraft
         // turns onto the ILS (st=ApproachState stPath= the approach list,
@@ -155,11 +219,12 @@ public static class OverrideController
         // Replant detection (replaces the unpatchable setter hook): if ANYTHING
         // re-plants the data channel's params after our patch — a deferred game
         // flow loading the STAR's FlyApproachDynamicsParams — the pointer
-        // changes. Diff it every step while tracked + planted (post-patch
-        // window); log the moment it changes, with WHICH params took its place.
+        // changes. Diff it every step while tracked OR under the approach watch
+        // (post-patch window; the watch outlives the deferred ~3 s flow);
+        // log the moment it changes, with WHICH params took its place.
         if (ac.DynamicsData != null
             && _plantedParams.TryGetValue(ac, out IntPtr planted)
-            && ParamTrace.IsTracked(ac.CallSign))
+            && (ParamTrace.IsTracked(ac.CallSign) || _approachWatch.ContainsKey(ac)))
         {
             var cur = ac.DynamicsData.DynamicsParams;
             IntPtr curPtr = cur is Il2CppObjectBase curOb ? curOb.Pointer : IntPtr.Zero;
@@ -172,21 +237,146 @@ public static class OverrideController
 
         if (!_overrides.TryGetValue(ac, out var e)) return;
 
-        // HEADING-ONLY override: force the nose to the commanded heading.
-        // Position and speed are 100% the game's — the dynamics keeps
+        // HEADING-ONLY override: force the nose to the (smoothed) commanded
+        // heading. Position and speed are 100% the game's — the dynamics keeps
         // integrating its own route at its own speed, and the game's own
         // heading write each Step is re-pointed by the set_Direction channel
         // lock. Zero direction = no heading command (nothing is touched).
         if (e.Direction != Vector3.zero)
         {
-            ac.Direction = e.Direction;
-            // 1b) heading channels — the game may drive its readouts/visual
-            //     from the serialized reactive `_direction` and the `Rotation`
-            //     heading instead of the `Direction` property; write all of
-            //     them so every consumer sees the commanded heading. (The diag
-            //     samples below show which channel the game actually follows.)
-            if (ac.DirectionReactive != null) ac.DirectionReactive.Value = e.Direction;
-            if (ac.Rotation != null) ac.Rotation.Value = HeadingDeg(e.Direction);
+            // SMOOTH TURN (2026-08-03): rotate the intermediate heading toward
+            // the commanded heading by at most rate × dt per fixed tick —
+            // shortest arc (RotateTowards handles the 0/360 wrap; never
+            // reimplement with euler angles). GAME-TIME-aware dt: the rotation
+            // must track the game's sim clock, not the wall clock —
+            // Time.timeScale = game speed multiplier (pause = 0, "Game pause
+            // sets time scale 0"), Time.fixedDeltaTime = one fixed tick
+            // (1/60). dt = fixedDeltaTime × timeScale is the game time that
+            // passes per tick; 0 while paused → the rotation freezes with the
+            // game, and ×2 speed doubles the per-tick rotation so the turn
+            // completes in the same GAME time. (If live testing at ×2 shows
+            // the turn finishing in HALF the game time — the game ticking
+            // 2×/wall-s at 1/60 each — drop the timeScale factor; per-tick
+            // stepping is then automatically game-time-correct and the pause
+            // gate stays as `timeScale <= 0`.) Rate <= 0 = INSTANT — Current
+            // was seeded at the command, so the else-branch is the
+            // pre-smoothing write verbatim.
+            if (e.TurnRateDeg > 0f)
+            {
+                float scale = Mathf.Max(0f, Time.timeScale);
+                e.Current = Vector3.RotateTowards(e.Current, e.Direction,
+                    e.TurnRateDeg * Mathf.Deg2Rad * Time.fixedDeltaTime * scale, 0f);
+            }
+            else
+                e.Current = e.Direction;
+
+            WriteHeading(ac, e);
+        }
+        else if (e.FollowGameHeading)
+        {
+            // CFA SMOOTH TURN (2026-08-03): smooth the clear_for_appr
+            // handoff — the state transition + path overwrite makes the game
+            // write the approach path-tangent heading verbatim (the
+            // one-frame snap). The rotation TARGET is the game's own intended
+            // heading, stashed by the channel-lock prefixes
+            // (SetDirectionPrefix — the only place the true path-tangent
+            // heading is visible; our own write-back through the same setter
+            // is filtered by the exact-match rule in CommandedDirection).
+            //
+            // PHASE-GATED: Phase 1 (not Locked) = PASS-THROUGH — the lock
+            // prefixes return zero and the nose flies the STAR freely until
+            // the approach transition actually lands (native mode's deferred
+            // CommandContinueApproach flow takes ~3 s; the direct fires land
+            // immediately) — locking early would fight the STAR's own turns.
+            // The aircraft-level state machine is the transition signal:
+            // leaving Fly = the handoff landed → Phase 2. Back to Fly (the
+            // restore-runtime-data revert) or 10 s without a transition →
+            // drop the entry (the game owns the flight again).
+            if (!e.Locked)
+            {
+                if (ac.IsInState(EAircraftState.Fly))
+                {
+                    if (e.StepCount >= CfaTurnPhase1TimeoutSteps)
+                    {
+                        _overrides.Remove(ac);
+                        Plugin.LogMsg($"override: {ac.CallSign} cfa-turn: no approach transition within {CfaTurnPhase1TimeoutSteps / 60} s — override dropped (game's own flight resumes)");
+                    }
+                    // else: Phase 1 pass-through — nothing to write; the nose
+                    //       keeps flying the game's own (STAR) heading.
+                }
+                else
+                {
+                    e.Locked = true;
+                    e.LockTangent = e.GameIntended;   // deferred-window baseline (still the STAR tangent)
+                    Plugin.LogMsg($"override: {ac.CallSign} cfa-turn: approach transition landed — rotating onto the approach course at {e.TurnRateDeg:F0}°/s");
+                }
+            }
+            if (e.Locked)
+            {
+                if (ac.IsInState(EAircraftState.Fly))
+                {
+                    // Handoff reverted (the restore-runtime-data flow) — the
+                    // aircraft is back on the STAR; drop the lock, the game
+                    // owns the flight again.
+                    _overrides.Remove(ac);
+                    Plugin.LogMsg($"override: {ac.CallSign} cfa-turn: aircraft back on the STAR (handoff reverted) — override dropped");
+                }
+                else if (e.GameIntended.sqrMagnitude > 1e-6f)
+                {
+                    // SWEEP GATE (2026-08-03 v2): the game's own approach
+                    // turn is DEFERRED (CommandContinueApproach radio chatter
+                    // ~3 s) — for that window the path-tangent heading is
+                    // still the STAR tangent, sitting ON the nose, and
+                    // converging against it dropped the override ~2 ticks
+                    // after lock while the game's real turn (observed ~42°/s
+                    // easing) then snapped the nose onto the final course
+                    // (live log: CJX2697 hdg 110→137 across watch steps
+                    // 10–60). So a drop is only allowed once the tangent has
+                    // actually SWEPT from the lock-time snapshot — proof the
+                    // deferred turn ran — and the nose has caught it.
+                    // Meanwhile rotate at the entry's rate toward the LIVE
+                    // tangent: the nose chases the game's turn and catches it
+                    // once the tangent settles on the final course — the
+                    // release is seamless. (If the game's easing re-reads
+                    // ac.Direction each tick, the suppressed writes slow the
+                    // path curve to the nose's rate too — the watch position
+                    // deltas show which model is real.)
+                    e.Phase2Ticks++;
+                    if (!e.TangentMoved && e.LockTangent.sqrMagnitude > 1e-6f)
+                    {
+                        float sweep = Vector3.Angle(e.LockTangent, e.GameIntended);
+                        if (sweep > CfaTurnMinSweepDeg)
+                        {
+                            e.TangentMoved = true;
+                            Plugin.LogMsg($"override: {ac.CallSign} cfa-turn: game's approach turn running — tangent swept {sweep:F0}° — nose chasing at {e.TurnRateDeg:F0}°/s");
+                        }
+                    }
+                    float gap = Vector3.Angle(e.Current, e.GameIntended);
+                    if (gap < 0.1f && e.TangentMoved)
+                    {
+                        // Converged: the nose caught the SETTLED tangent (the
+                        // sweep gate proves the game's real turn ran) — snap
+                        // the last hair and release; the game's own writes
+                        // now equal the nose, so nothing snaps.
+                        e.Current = e.GameIntended.normalized;
+                        _overrides.Remove(ac);
+                        Plugin.LogMsg($"override: {ac.CallSign} cfa-turn converged — nose on the approach course (tangent swept {Vector3.Angle(e.LockTangent, e.GameIntended):F0}°) — override dropped (game's own heading writes resume)");
+                        WriteHeading(ac, e);
+                    }
+                    else if (e.Phase2Ticks >= CfaTurnPhase2MaxSteps)
+                    {
+                        // Safety backstop: never hold the nose forever (e.g.
+                        // the tangent never settles — a hold pattern). The
+                        // game's own heading writes resume (residual gap =
+                        // one snap, but bounded and late).
+                        _overrides.Remove(ac);
+                        Plugin.LogMsg($"override: {ac.CallSign} cfa-turn: {CfaTurnPhase2MaxSteps / 60} s phase-2 bound — override dropped (residual {gap:F1}° off the game's heading)");
+                    }
+                    else
+                        RotateAndWrite(ac, e);
+                }
+                // else: no intended heading stashed yet — hold (nothing written).
+            }
         }
 
         // 2) diagnostics — sample the first ~0.5 s of the override so a single
@@ -198,6 +388,34 @@ public static class OverrideController
         e.StepCount++;
         if (e.StepCount <= 30 && (e.StepCount == 1 || e.StepCount % 10 == 0))
             LogDiagnostic(ac, e);
+    }
+
+    /// <summary>Write the smoothed intermediate heading to all three heading
+    /// channels — the game may drive its readouts/visual from the serialized
+    /// reactive `_direction` and the `Rotation` heading instead of the
+    /// `Direction` property; write all of them so every consumer sees the
+    /// same value. (The diag samples below show which channel the game
+    /// actually follows.)</summary>
+    private static void WriteHeading(Aircraft ac, Entry e)
+    {
+        ac.Direction = e.Current;
+        if (ac.DirectionReactive != null) ac.DirectionReactive.Value = e.Current;
+        if (ac.Rotation != null) ac.Rotation.Value = HeadingDeg(e.Current);
+    }
+
+    /// <summary>One-tick rotation step toward the entry's current target
+    /// (cfa-turn mode: e.GameIntended) at the entry's rate — GAME-TIME-aware
+    /// dt, the same rule as the update_heading turn: Time.timeScale = game
+    /// speed multiplier (pause = 0), Time.fixedDeltaTime = one fixed tick
+    /// (1/60); ×2 speed doubles the per-tick rotation so the turn completes
+    /// in the same GAME time, and 0 while paused freezes the rotation with
+    /// the game.</summary>
+    private static void RotateAndWrite(Aircraft ac, Entry e)
+    {
+        float scale = Mathf.Max(0f, Time.timeScale);
+        e.Current = Vector3.RotateTowards(e.Current, e.GameIntended,
+            e.TurnRateDeg * Mathf.Deg2Rad * Time.fixedDeltaTime * scale, 0f);
+        WriteHeading(ac, e);
     }
 
     /// <summary>One-sample read-back of every heading channel plus the game's
@@ -242,9 +460,33 @@ public static class OverrideController
         return null;
     }
 
-    /// <summary>Read accessor for the view-level hijack (Patches).</summary>
-    public static Vector3 CommandedDirection(Aircraft ac)
-        => _overrides.TryGetValue(ac, out var e) ? e.Direction : Vector3.zero;
+    /// <summary>Read accessor for the view-level hijack (Patches). Returns the
+    /// SMOOTHED intermediate heading (2026-08-03) — the channel locks must
+    /// feed Current, not Command, or the game's own path-tangent write inside
+    /// Step would snap the nose back to the full command every tick.
+    ///
+    /// cfa-turn mode (FollowGameHeading, 2026-08-03): the game's intended
+    /// heading IS the rotation target — stash it for OnAircraftStep. BUT NOT
+    /// OUR OWN WRITE-BACK: the Step postfix writes Current through the same
+    /// set_Direction this prefix locks, and stashing that would make the
+    /// target equal the nose (rotation stall). The write-back is bit-identical
+    /// to Current; the game's true path-tangent heading differs from the nose
+    /// as soon as it lags the path (the exact-match filter). Phase 1 (not
+    /// locked) returns zero = pass-through: the nose flies the game's own
+    /// heading until the approach transition lands.</summary>
+    public static Vector3 CommandedDirection(Aircraft ac, Vector3 gameIntended = default)
+    {
+        if (_overrides.TryGetValue(ac, out var e))
+        {
+            if (e.FollowGameHeading
+                && gameIntended.sqrMagnitude > 1e-6f
+                && (gameIntended - e.Current).sqrMagnitude > 1e-12f)
+                e.GameIntended = gameIntended.normalized;
+            if (e.FollowGameHeading && !e.Locked) return Vector3.zero;   // Phase 1 pass-through
+            return e.Current;
+        }
+        return Vector3.zero;
+    }
 
     /// <summary>Heading in the game UI's convention — public for the view hijack.</summary>
     public static float GameHeading(Vector3 dir) => HeadingDeg(dir);
@@ -331,9 +573,15 @@ public static class OverrideController
     /// speedKnots &gt; 0 commands the approach speed (raw knots — the game's own
     /// ApproachSpeedKts scale); speedKnots &lt;= 0 (default) leaves the
     /// aircraft's speed fields untouched.
+    /// turnRateDeg &gt; 0 arms the SMOOTH handoff turn (2026-08-03): the nose
+    /// rotates from where it actually points onto the approach course at
+    /// that many °/GAME-second (game-time-aware, pause-aware — same mechanics
+    /// as update_heading's smoothing) instead of snapping in the tick the
+    /// transition lands; &lt;= 0 / omitted uses ClearForApprTurnRateDeg (the
+    /// default — the handoff turn is ALWAYS smooth now).
     /// </summary>
     public static bool clearForApproach(string callsign, float speedKnots = 0f, string apprName = null,
-                                        bool useNative = true)
+                                        bool useNative = true, float turnRateDeg = 0f)
     {
         var ac = FindByCallsign(callsign);
         if (ac == null) return false;
@@ -374,55 +622,99 @@ public static class OverrideController
         }
         if (appr == null) return false;
 
-        // 4) Build the ACL-equivalent ApproachDynamicsParams.
-        var pathList = new Il2CppSystem.Collections.Generic.List<Vector3>();
-        foreach (var node in appr.AirwayNodes)
-            if (node != null) pathList.Add(node.Position);   // IAF → threshold
-        if (pathList.Count < 2) return false;
-
         var dp = ac.DynamicsData;                    // the serialized data channel
         if (dp == null) return false;
+
+        // 4) Build the ACL-equivalent ApproachDynamicsParams. The path is the
+        //    AIRCRAFT'S OWN procedure (AppPointList — the same list the game's
+        //    own transition builds its ApproachState from; the state check
+        //    below proves it) with the aircraft's position prepended as the
+        //    JOIN LEG. Without the join leg the approach state holds pr at 0
+        //    until the aircraft captures path[0] — and GetRoute's nearest-
+        //    first-fix variant pick (report §6.2) put path[0] 300-700 units
+        //    from mid-STAR aircraft, producing minutes of dead cruise (live
+        //    log 2026-08-03: CES5578/CSN2197 stPr=0.000 frozen through the
+        //    watch; CSN2197's 60 s phase-2 bound with the tangent never
+        //    swept). Starting the path AT the aircraft makes the approach
+        //    activate immediately.
+        var flyParams = default(FlyApproachDynamicsParams);
+        var sourceNodes = new List<Vector3>();
+        // 4a) Path source — the aircraft's own procedure. Same interop gotcha
+        //     as everywhere in this project: the interface-typed getter wraps
+        //     the object in the interface's interop class ("IDynamicsParams"),
+        //     so `is FlyApproachDynamicsParams` NEVER matches; identify by
+        //     native class pointer and re-wrap.
+        if (dp.DynamicsParams is Il2CppObjectBase srcOb)
+        {
+            try
+            {
+                if (srcOb.ObjectClass == Il2CppClassPointerStore<FlyApproachDynamicsParams>.NativeClassPtr)
+                {
+                    flyParams = new FlyApproachDynamicsParams(srcOb.Pointer);
+                    var appPts = flyParams.AppPointList;
+                    if (appPts != null && appPts.Count >= 2)
+                    {
+                        for (int i = 0; i < appPts.Count; i++) sourceNodes.Add(appPts[i]);
+                        Plugin.LogMsg($"cfa: {callsign} path from aircraft AppPointList (len={sourceNodes.Count}) — the aircraft's own procedure");
+                    }
+                    else
+                        Plugin.LogMsg($"cfa: {callsign} step 4a: AppPointList empty — falling back to the GetRoute procedure");
+                }
+                else
+                    Plugin.LogMsg($"cfa: {callsign} step 4a: params NOT FlyApproachDynamicsParams (class 0x{srcOb.ObjectClass.ToInt64():X}) — falling back to the GetRoute procedure");
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogMsg($"cfa: {callsign} step 4a FAILED: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+        if (sourceNodes.Count == 0)
+        {
+            foreach (var node in appr.AirwayNodes)
+                if (node != null) sourceNodes.Add(node.Position);   // IAF → threshold
+            Plugin.LogMsg($"cfa: {callsign} path from GetRoute AirwayNodes (len={sourceNodes.Count}) — AppPointList unavailable");
+        }
+        if (sourceNodes.Count < 2) return false;
+
+        // 4b) The join leg: aircraft position as path[0] (y=0 — the path-list
+        //     convention; the game derives the aircraft's altitude from
+        //     InitialPosition/TouchDownPosition, not path y — aircraft fly at
+        //     ~15.2 on all-y=0 paths). The approach activates with the
+        //     aircraft ON the path: pr advances and the steering turns the
+        //     aircraft onto the intercept immediately.
+        var pathList = new Il2CppSystem.Collections.Generic.List<Vector3>();
+        pathList.Add(new Vector3(ac.Position.x, 0f, ac.Position.z));
+        for (int i = 0; i < sourceNodes.Count; i++) pathList.Add(sourceNodes[i]);
+        if (pathList.Count < 3) return false;
 
         var p = new ApproachDynamicsParams {
             ProgressRatio = 0f,                           // game re-derives pose from path (ACL constant)
             TouchDownPosition = runway.TouchDownPosition, // public getter — runway threshold
             ApproachDirection = (pathList[pathList.Count - 1] - pathList[pathList.Count - 2]).normalized,
             CommandedGoAround = false,
-            InitialPosition = new Vector3(pathList[0].x, 15.24f, pathList[0].z),   // IAF, Y = approach ceiling (ACL constant)
+            InitialPosition = new Vector3(pathList[0].x, 15.24f, pathList[0].z),   // join-leg start, Y = approach ceiling (ACL constant)
             PathPointList = pathList,
         };
 
-        // 4b) The aircraft's runtime state-30 params still carry the STAR path
+        // 4c) The aircraft's runtime state-30 params still carry the STAR path
         //     in FlyApproachPathPointList; the game's path-following continues
         //     from THAT list through the handoff (observed live: approach
         //     follows the STAR, not the ILS). Overwrite it with the full
-        //     approach procedure — the same IAF→threshold list going into
+        //     approach procedure — the same join-leg list going into
         //     PathPointList. (No clear step needed: assigning a fresh list
         //     replaces the STAR path atomically. AppPointList already holds
-        //     the APP points per state-30 semantics — untouched.)
-        //
-        //     Interop gotcha (live-verified 2026-08-03): the interface-typed
-        //     getter returns the object wrapped in the interface's interop
-        //     class ("IDynamicsParams"), so `is FlyApproachDynamicsParams`
-        //     NEVER matches — the write above silently no-oped. Identify the
-        //     concrete class by its native class pointer and re-wrap the
-        //     native pointer in it instead.
-        if (dp.DynamicsParams is Il2CppObjectBase dpOb)
+        //     the APP points per state-30 semantics — the join leg does not
+        //     touch it.)
+        if (flyParams != null)
         {
             try
             {
-                if (dpOb.ObjectClass == Il2CppClassPointerStore<FlyApproachDynamicsParams>.NativeClassPtr)
-                {
-                    var flyParams = new FlyApproachDynamicsParams(dpOb.Pointer);
-                    flyParams.FlyApproachPathPointList = pathList;
-                    Plugin.LogMsg($"cfa: {callsign} FlyApproachPathPointList overwritten ({pathList.Count} pts)");
-                }
-                else
-                    Plugin.LogMsg($"cfa: {callsign} step 4b: params NOT FlyApproachDynamicsParams (class 0x{dpOb.ObjectClass.ToInt64():X}) — fly-path overwrite skipped");
+                flyParams.FlyApproachPathPointList = pathList;
+                Plugin.LogMsg($"cfa: {callsign} FlyApproachPathPointList overwritten ({pathList.Count} pts)");
             }
             catch (Exception ex)
             {
-                Plugin.LogMsg($"cfa: {callsign} step 4b FAILED: {ex.GetType().Name}: {ex.Message}");
+                Plugin.LogMsg($"cfa: {callsign} step 4c FAILED: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -456,18 +748,24 @@ public static class OverrideController
         //    reflect the transition, not pre-empt it.)
         dp.DynamicsParams = p;
         _plantedParams[ac] = p.Pointer;                   // for the per-step replant diff
-        // Speed: raw knots (the game's own ApproachSpeedKts scale — the m/s
-        // write drove state integration at ~half speed, see OnAircraftStep).
-        // speedKnots <= 0 = "not given" → leave the aircraft's speed untouched.
-        if (speedKnots > 0f)
-        {
-            dp.TaxiSpeed = speedKnots;
-            dp.TargetTaxiSpeed = speedKnots;
-            if (ac.TaxiSpeed != null) ac.TaxiSpeed.Value = speedKnots;
-            if (ac.AirSpeedKnot != null) ac.AirSpeedKnot.Value = speedKnots;
-        }
+        // Speed: ALWAYS write the approach speed — raw knots (the game's own
+        // ApproachSpeedKts = 240 scale — the m/s write drove state integration
+        // at ~half speed, see OnAircraftStep). The ACL state-5 block ALWAYS
+        // carries TaxiSpeed=240 (editor constants 240/1/-2); the pre-v3
+        // kts-only behavior (fields untouched without a kts field) is the
+        // prime suspect for the approach path-following crawl — ~1-4 u/s
+        // instead of ~123 u/s at 240 kt (live log 2026-08-03: stPr advanced
+        // 0.005/s; the aircraft crept along the STAR tail for minutes).
+        // speedKnots > 0 overrides the default 240.
+        float apprSpeedKts = speedKnots > 0f ? speedKnots : 240f;
+        dp.TaxiSpeed = apprSpeedKts;
+        dp.TargetTaxiSpeed = apprSpeedKts;
+        dp.DynamicsTargetTaxiSpeed = apprSpeedKts;
+        if (ac.TaxiSpeed != null) ac.TaxiSpeed.Value = apprSpeedKts;
+        if (ac.AirSpeedKnot != null) ac.AirSpeedKnot.Value = apprSpeedKts;
         dp.ForwardSpeed = true;
         dp.PositiveTaxiAcceleration = 1f; dp.NegativeTaxiAcceleration = -2f;   // ACL constants
+        Plugin.LogMsg($"cfa: {callsign} speed: ts={apprSpeedKts:F0} tts={apprSpeedKts:F0} dtts={apprSpeedKts:F0} fwd=True accel 1/-2{(speedKnots > 0f ? "" : " (default 240)")}");
 
         // 6) Fire the game's own transitions. The aircraft-level machine's
         //    Fly→Approach transition is gated by FlyToApproachCondition; the
@@ -522,7 +820,7 @@ public static class OverrideController
                         || (st._pathPointList.Count > 0
                             && (st._pathPointList[0] != pathList[0]
                                 || st._pathPointList[st._pathPointList.Count - 1] != pathList[pathList.Count - 1]));
-                    Plugin.LogMsg($"cfa: {callsign} state check: ApproachState stPath={ParamTrace.ListSummary(st._pathPointList)} stPr={st.GetProgressRatio():F3} — {(mismatch ? "MISMATCH — rewriting" : "matches our path")}");
+                    Plugin.LogMsg($"cfa: {callsign} state check: ApproachState stPath={ParamTrace.ListSummary(st._pathPointList)} stPr={st.GetProgressRatio():F3} ch={ParamTrace.DescribeParams(dp.DynamicsParams)} — {(mismatch ? "MISMATCH — rewriting" : "matches our path")}");
                     if (mismatch)
                     {
                         st._pathPointList = pathList;
@@ -624,6 +922,37 @@ public static class OverrideController
         //     keeps the AFTER dump's readback (IsInState / dynState=) honest.
         dp.DynamicsState.Value = State.Approaching;       // 2 — ACL's DynamicsState
 
+        // 6d) RADIO HANDOFF (v2, 2026-08-04): ACL parity — the state-5 block
+        //     stores the tower channel in BOTH radio slots (RadioChannelGuid
+        //     AND JurisdictionRadioChannelGuid = tower). v1 wrote only the
+        //     jurisdiction slot and the aircraft stayed on the approach
+        //     frequency — the tower seat still could not own it (verified
+        //     live); v2 writes BOTH, so the strip/telemetry flip to the tower
+        //     seat at command time. No radio audio by design (the silent
+        //     handoff). Resolution failure is a logged skip: the aircraft
+        //     stays on approach and self-heals on touchdown, exactly as before.
+        try
+        {
+            var tower = ResolveTowerRadioChannel();
+            var rc = ac._radioChannel;
+            var jc = ac._jurisdictionRadioChannel;
+            if (tower == null || rc == null || jc == null)
+                Plugin.LogMsg($"cfa: {callsign} radio: tower channel NOT resolved ({(tower == null ? "no tower channel" : "missing radio slot")}) — stays on approach (self-heals on touchdown)");
+            else
+            {
+                var rcBefore = rc.Value != null ? rc.Value.PK : "<null>";
+                var jcBefore = jc.Value != null ? jc.Value.PK : "<null>";
+                rc.Value = tower;
+                jc.Value = tower;
+                Plugin.LogMsg($"cfa: {callsign} radio: radio {rcBefore} → TWR({tower.PK})");
+                Plugin.LogMsg($"cfa: {callsign} radio: jurisdiction {jcBefore} → TWR({tower.PK})");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogMsg($"cfa: {callsign} radio handoff FAILED: {ex.GetType().Name}: {ex.Message}");
+        }
+
         // 7) Route label = approach procedure name (ACL parity).
         var name = !string.IsNullOrEmpty(apprName) ? apprName : appr.Name;
         if (!string.IsNullOrEmpty(name))
@@ -634,16 +963,42 @@ public static class OverrideController
         ac._waitingForCommands.Value =
             new Il2CppStructArray<ECommand>(new[] { ECommand.PermitLanding });   // 22 — game enum, NOT the editor's CMD_* numbers
 
+        // 9) SMOOTH TURN (2026-08-03): the state transition + path overwrite
+        //     means the game's next Step writes the approach path-tangent
+        //     heading verbatim — the one-frame snap at the handoff. Plant a
+        //     FollowGameHeading entry instead: Phase 1 = pass-through (the
+        //     nose keeps flying the STAR freely until the handoff ACTUALLY
+        //     lands — the deferred CommandContinueApproach flow takes ~3 s;
+        //     locking early would fight the STAR's own turns), then Phase 2
+        //     = lock: rotate the nose from where it actually points onto the
+        //     game's own approach heading at the standard rate (game-time-
+        //     aware, pauses with the game), dropping once converged. The
+        //     transition signal is the aircraft-level state machine (not-Fly
+        //     = the handoff landed); see OnAircraftStep.
+        var turnRate = turnRateDeg > 0f ? turnRateDeg : ClearForApprTurnRateDeg;
+        if (turnRate > 0f && ac.Direction.sqrMagnitude > 1e-6f)
+        {
+            // Re-applied mid-turn (a second cfa frame): continue from the
+            // existing entry's Current; otherwise start from the real nose.
+            var nose = _overrides.TryGetValue(ac, out var existing) && existing.Current.sqrMagnitude > 1e-6f
+                ? existing.Current : ac.Direction.normalized;
+            _overrides[ac] = new Entry {
+                Direction = Vector3.zero,
+                Current = nose,
+                TurnRateDeg = turnRate,
+                FollowGameHeading = true,
+            };
+            Plugin.LogMsg($"override: {callsign} cfa-turn: nose {HeadingDeg(nose):F1}° → smooth turn armed ({turnRate:F0}°/s game-time; locks when the approach transition lands)");
+        }
+
         // Diagnostics: the post-patch state (both machines + params channel).
         // The BEFORE/AFTER dumps alone end at the patch — the seconds after
         // are the ones that show whether the RNAV holds or the aircraft
-        // reverts. Arm the per-step watch (~1.7 s at step resolution) AND the
-        // 1 s auto-trace (30 s) so the aftermath ALWAYS lands in the log even
-        // if `track|CS` was never sent (previous live test ended at the patch
-        // line with zero post-patch visibility).
+        // reverts. Arm the per-step watch (~3.3 s at step resolution) so the
+        // aftermath lands in the log without the 1 s auto-trace spam (the
+        // 30-line-per-handoff trace stream is gone since 2026-08-03 v2 —
+        // `track|CS` remains for deliberate 1 s dumps).
         _approachWatch[ac] = ApproachWatchBudget;
-        ParamTrace.AutoTrack(callsign, 30f);
-        Plugin.LogMsg($"patch: auto-track {callsign} (30 s) + step watch armed");
         ParamTrace.DumpNow(callsign, "AFTER");
 
         return true;
@@ -659,6 +1014,47 @@ public static class OverrideController
         foreach (var scope in UnityEngine.Object.FindObjectsOfType<LifetimeScope>())
             if (scope.Container != null && scope.Container.TryResolve(out AirwayRouteService svc))
                 return _routeService = svc;
+        return null;
+    }
+
+    /// <summary>Resolve the airport's tower RadioChannel instance — the game's
+    /// OWN resolver first (RadioChannelManager.GetResolvedChannel(EChannel.Tower),
+    /// the same path Aircraft / AircraftFactory / RuntimeAircraftSpawnService
+    /// use for their channel work; VContainer [Inject]-registered), then the
+    /// RadioSystem audio bindings as fallback (PK → RadioChannelBinding — the
+    /// private-field-as-public-property gotcha again). Returns null when
+    /// unresolvable — the caller keeps the current behavior (the aircraft
+    /// stays on approach and self-heals on touchdown).</summary>
+    private static RadioChannel ResolveTowerRadioChannel()
+    {
+        foreach (var scope in UnityEngine.Object.FindObjectsOfType<LifetimeScope>())
+        {
+            if (scope.Container == null) continue;
+            try
+            {
+                if (scope.Container.TryResolve(out RadioChannelManager mgr))
+                {
+                    var ch = mgr.GetResolvedChannel(EChannel.Tower);
+                    if (ch != null) return ch;
+                }
+            }
+            catch { }   // a partially-initialized scope — try the next
+        }
+        foreach (var scope in UnityEngine.Object.FindObjectsOfType<LifetimeScope>())
+        {
+            if (scope.Container == null) continue;
+            try
+            {
+                if (scope.Container.TryResolve(out RadioSystem radio) && radio._radioChannelBindings != null)
+                    foreach (var pair in radio._radioChannelBindings)
+                    {
+                        var b = pair.Value;
+                        if (b != null && b.Channel != null && b.Channel.Type == EChannel.Tower)
+                            return b.Channel;
+                    }
+            }
+            catch { }
+        }
         return null;
     }
 

@@ -306,6 +306,29 @@ public static class OverrideController
 }
 ```
 
+> Smoothed 2026-08-03: with an optional rate the nose no longer snaps to the
+> command. Each `Entry` gains `Current` (the smoothed intermediate heading —
+> what is actually written each tick) and `TurnRateDeg` (°/GAME-second).
+> `patchHeading` seeds `Current` from the aircraft's REAL heading at patch
+> time (the turn starts where the nose actually points; a mid-turn
+> re-command keeps the existing `Current` and re-targets `Direction`);
+> instant mode (rate ≤ 0 / omitted) seeds `Current` AT the command so the
+> pre-smoothing write path is preserved verbatim. Every fixed tick
+> `OnAircraftStep` steps `Current` toward `Direction` with
+> `Vector3.RotateTowards(Current, Direction, rate · Deg2Rad · fixedDeltaTime · timeScale, 0)`
+> — shortest arc, wrap-safe — then writes `Current` to all three heading
+> channels. **Game-time scaling:** `Time.timeScale` is the game's speed
+> multiplier (pause = 0 — "Game pause sets time scale 0"; the UDP telemetry
+> header's `timeScale` byte is the same value), so at ×2 the per-tick
+> rotation doubles (turn completes in the same GAME time) and while paused
+> `dt = 0` freezes the rotation with the game. `CommandedDirection` returns
+> `Current` — the two direction-lock prefixes must feed the smoothed value,
+> or the game's path-tangent write inside Step would snap the nose back to
+> the full command every tick. If live testing at ×2 ever shows the turn
+> finishing in HALF the game time (the game ticking 2×/wall-s at 1/60 each),
+> drop the `timeScale` factor — per-tick stepping is then automatically
+> game-time-correct; keep the `timeScale ≤ 0` pause gate either way.
+
 ### 4.4 `Patches.cs`
 
 ```csharp
@@ -472,10 +495,12 @@ static class Patch_Udp_Parser
     private const ushort PatchCommandId = 0x00E7;   // our id — the game never emits it
 
     // Extended frame: 8 B header (same magic/version) + pipe-delimited ASCII payload:
-    //   update_heading|CQH8672|12.5|-3.2        (heading-only — no speed field)
-    //   update_position|CQH8672|12.5|-3.2|180   (legacy alias — kts validated but ignored)
+    //   update_heading|CQH8672|12.5|-3.2          (heading-only — no speed field)
+    //   update_heading|CQH8672|12.5|-3.2|3        (5th field = smooth-turn rate, °/s of GAME time)
+    //   update_position|CQH8672|12.5|-3.2|180     (legacy alias — kts validated but ignored)
     //   clear_for_appr|CQH8672
     //   clear_for_appr|CQH8672|RNAV ILS Z RWY 01
+    //   clear_for_appr|CQH8672|rate=3             (keyed rate = smooth handoff turn, °/s of game time)
     static bool Prefix(ReadOnlySpan<byte> datagram, out UdpCommand command)
     {
         command = default;
@@ -494,7 +519,16 @@ static class Patch_Udp_Parser
                     if ((parts.Length == 4 || parts.Length == 5)
                         && float.TryParse(parts[2], out var dx) && float.TryParse(parts[3], out var dy)
                         && (parts.Length == 4 || float.TryParse(parts[4], out _)))
-                        PatchAircraft("update_heading", parts[1], new Vector3(dx, 0f, dy));
+                    {
+                        // Smoothed 2026-08-03: only update_heading reads the
+                        // 5th field as a turn rate (°/s of GAME time); the
+                        // legacy update_position 5th field stays kts-ignored.
+                        float rate = 0f;
+                        if (parts.Length == 5 && parts[0] == "update_heading"
+                            && float.TryParse(parts[4], out var fifth) && fifth > 0f)
+                            rate = fifth;
+                        PatchAircraft("update_heading", parts[1], new Vector3(dx, 0f, dy), turnRateDeg: rate);
+                    }
                     break;
                 case "clear_for_appr":
                     PatchAircraft("clear_for_appr", parts[1], default, 0f, parts.Length > 2 ? parts[2] : null);
@@ -515,10 +549,21 @@ Both hooks funnel into the **same `PatchAircraft` dispatcher** as the overlay an
 ```js
 // electron/main.js
 ipcMain.handle('send-patch-command', async (_e, patch) => {
-  // patch: { type: 'update_heading'|'update_position'|'clear_for_appr', callSign, dx?, dy?, kts?, appr? }
+  // patch: { type: 'update_heading'|'update_position'|'clear_for_appr', callSign, dx?, dy?, rate?, kts?, appr? }
+  // rate (update_heading) = smooth-turn speed in °/s of GAME time (5th frame
+  // field; omitted = instant snap). rate (clear_for_appr, 2026-08-03) = the
+  // same, sent as the KEYED field rate=N — a bare numeric would be misread
+  // as the approach speed in kts (the plugin's cfa parser scans keyed flags).
   const parts = [patch.type, patch.callSign];
-  if (patch.type === 'update_heading' || patch.type === 'update_position') parts.push(patch.dx, patch.dy);
-  else if (patch.appr) parts.push(patch.appr);
+  if (patch.type === 'update_heading' || patch.type === 'update_position') {
+    parts.push(patch.dx, patch.dy);
+    if (patch.type === 'update_heading' && patch.rate) parts.push(patch.rate);
+  }
+  else if (patch.type === 'clear_for_appr') {
+    if (patch.kts) parts.push(patch.kts);
+    if (patch.appr) parts.push(patch.appr);
+    if (patch.rate) parts.push('rate=' + patch.rate);
+  }
   return await sendUdpCommand(0x00E7, Buffer.from(parts.join('|'), 'ascii'));
 });
 ```
@@ -561,7 +606,7 @@ The editor's `buildState5AircraftBlock` (`src/acl/approach.js`) is the canonical
 | `DynamicsParams.PathPointList` | `List<Vector3>` | the **approach procedure route** (`RouteType = 1` / APP) `AirwayNodes` `$iref`s, in order, IAF → threshold |
 | `Route` | `"RNAV ILS Z Rwy 19"` | the approach procedure route's `Name` |
 | `WaitingForCommands` | `[22]` | `ECommand.PermitLanding` — the aircraft waits for the landing clearance |
-| `RadioChannelGuid` / `JurisdictionRadioChannelGuid` | tower channel GUID | `Channels` dictionary (Type=5/`"APP"` → `"TWR"`) |
+| `RadioChannelGuid` / `JurisdictionRadioChannelGuid` | tower channel GUID | `Channels` dictionary (Type=5/`"APP"` → `"TWR"`) — the plugin mirrors this in-game: `RadioChannelManager.GetResolvedChannel(EChannel.Tower)` → written to **both** `_radioChannel` and `_jurisdictionRadioChannel` at handoff time (v2 — see §6.6) |
 | `DynamicInternalState.TaxiSpeed` / `±Acceleration` | `240 / 1 / -2` | constants — the game's own `AirwayRouteService.ApproachSpeedKts = 240` |
 
 Key selection rule from the editor: a runway may have **several** APP-route variants (ZSJN RWY 01 has three `RNAV ILS Z Rwy 01` variants starting at different fixes); `resolveApproachProcedureData` picks the variant whose first point is closest to the aircraft's current position (`hintPosition`). The in-game equivalent must do the same.
@@ -576,7 +621,7 @@ Key selection rule from the editor: a runway may have **several** APP-route vari
 | Route label | `Route.Names: string[]` — `Names[0]` is the approach procedure name |
 | Aircraft's route string | `Aircraft.Route` (public `ReadOnlyReactiveProperty<string>`, backing field `_route`) |
 | STAR fallback | `Aircraft._flightPlan` (private) → `FlightPlan.GetRunway(EFlightDirection.Arrival)` / `GetStar()` (public) |
-| Radio channels | `RadioChannelManager` (only needed for the optional silent handoff) |
+| Radio channels | `RadioChannelManager.GetResolvedChannel(EChannel.Tower)` (VContainer `[Inject]` service — the resolver `Aircraft`/`AircraftFactory`/`RuntimeAircraftSpawnService` use); fallback: `RadioSystem._radioChannelBindings` (PK → `RadioChannelBinding`) |
 
 **Answering "do we need to pass the approach name in?":** only as a fallback. The name is derivable in-game: `AirwayRouteService.GetRoute(ac.Position, runway, RouteType.APP)` returns the approach route whose `Names[0]` is the procedure name — no caller input needed. The API keeps an optional `apprName` parameter for two cases: (1) the nearest-route heuristic picks the wrong variant (the editor has the same variant problem and solves it with `hintPosition`), and (2) you want exact ACL parity with a specific name.
 
@@ -790,11 +835,13 @@ The flight-strip bar and voice parser already resolve callsigns — route their 
 
 After a successful `clear_for_appr`:
 
-- The aircraft is placed at the **IAF** (`PathPointList[0]`, PR=0) and flies the populated path — glideslope Y computed by the game from remaining path distance, exactly as it does for ACL state-5 aircraft.
+- The planted path starts **at the aircraft** (its position prepended as the join leg, PR=0) and runs through its OWN assigned procedure — `FlyApproachDynamicsParams.AppPointList` (the same list the game's transition builds its `ApproachState` from; `GetRoute` `AirwayNodes` is the logged fallback), not the nearest-first-fix GetRoute variant (gotcha #12). The join leg is what makes the approach RUN: the approach state holds PR=0 and does not steer until the aircraft captures `PathPointList[0]` — the pre-join-leg plant (live log 2026-08-03: CES5578/CSN2197) put that point 300–700 units from mid-STAR aircraft, so the approach sat inert for minutes of dead cruise (CSN2197 hit the 60 s phase-2 bound with the tangent never having swept >2°). Glideslope Y computed by the game from remaining path distance, exactly as it does for ACL state-5 aircraft.
+- **The approach speed is ALWAYS written (2026-08-04).** `TaxiSpeed`/`TargetTaxiSpeed`/`DynamicsTargetTaxiSpeed` = the frame's `kts` or the ACL default 240 (`ApproachSpeedKts`) — log `cfa: <CS> speed: ts=… tts=… dtts=… fwd=True accel 1/-2`. The pre-v3 kts-only behavior left the fields untouched and the approach path-following crawled at ~1–4 u/s instead of ~123 u/s at 240 kt (live log 2026-08-03: `stPr` advanced 0.005/s — the aircraft crept along the STAR tail for minutes, the "did not override the path" report). The tracer now shows the channel values (`chTs=`/`chTts=`/`chDTts=`/`chFwd=`) in every dump — the crawl diagnostic; the aircraft-level `spd` read does NOT reflect them.
 - It **descends, touches down at `TouchDownPosition`, and the normal rollout/taxi/stand flow resumes** — `TouchDownCondition` → `RollOut` → taxi — because the aircraft-level state is genuinely `Approach` and the dynamics state is genuinely `Approaching`.
 - It **waits for the landing clearance** (`WaitingForCommands = [PermitLanding]`, ACL parity) — issue it through the normal radio UI and the flight completes like any arrival. (Remove step 8 of the code if you want it to auto-continue.)
-- The **radio frequency is untouched** — the aircraft stays on Approach frequency (the real-world handoff is `ECommand.ContactTower`). The game's own auto-handoff conditions (`ArrivalAircraftAutoContactTowerCondition`) fire on touchdown, so it self-heals; set the tower channel yourself if you want the silent handoff at command time.
-- A pending `update_heading` override on the same aircraft is **dropped automatically** (step 1 of the code).
+- **Radio handoff (v2, 2026-08-04):** the patch resolves the airport's tower channel — `RadioChannelManager.GetResolvedChannel(EChannel.Tower)` via the VContainer `LifetimeScope` scan, `RadioSystem._radioChannelBindings` (PK → binding) as fallback — and writes **BOTH** `_radioChannel` and `_jurisdictionRadioChannel` to it (step 6d; logs `cfa: <CS> radio: radio <pk> → TWR(<pk>)` and `cfa: <CS> radio: jurisdiction <pk> → TWR(<pk>)`; trace fields `rc=`/`jrc=` = channel Type/PK, the re-assert detector across the tracer/watch dumps). v1 wrote only the jurisdiction slot and the aircraft stayed on the approach frequency — the tower seat still could not own it (verified live) — v2 flips both, so the strip/telemetry move to the tower seat at command time (ACL parity stores the tower channel in both slots; the real-world handoff is `ECommand.ContactTower`). No radio audio by design (the silent handoff). Resolution failure is a logged skip — the aircraft stays on approach and the game's own auto-handoff conditions (`ArrivalAircraftAutoContactTowerCondition`) self-heal on touchdown, exactly as before.
+- A pending `update_heading` override on the same aircraft is **replaced by the smooth handoff turn** (step 1 removes it; step 9 plants the cfa-turn entry — the nose rotates from where it actually points onto the approach course instead of snapping).
+- **The handoff turn is smooth (2026-08-03).** The state transition + path overwrite makes the game write the approach path-tangent heading verbatim the tick it lands — the one-frame snap. `clearForApproach` now plants a `FollowGameHeading` entry: the rotation TARGET is the game's OWN intended heading, stashed by the channel-lock prefixes (`SetDirectionPrefix` sees the true path-tangent heading — the only place it is visible; our own write-back through the same setter is filtered by an exact-match rule or it would stall the rotation). The lock is **phase-gated**: Phase 1 = pass-through (the nose flies the STAR freely until the handoff actually lands — native mode's deferred `CommandContinueApproach` flow takes ~3 s; locking early would fight the STAR's own turns), Phase 2 = rotate onto the approach course at the rate once the aircraft leaves `Fly` state. **The drop is SWEEP-GATED (v2, 2026-08-03):** the game's own approach turn is ALSO deferred — for ~3 s after the lock the path-tangent heading is still the STAR heading sitting on the nose, and the original "converged" drop fired against it within ~2 ticks; the game's real turn (observed live on CJX2697: `hdg 110→117→124→131→135→137` across watch steps 10–60, ~42°/s easing) then snapped the nose onto the final course. A drop now requires the tangent to have swept >2° from the lock-time snapshot (proof the deferred turn ran) and the nose to have caught it — the nose chases the game's live tangent at the rate and releases seamlessly once the tangent settles (the settled final course is the game's own intercept computation — not derivable from the planted path). Release also on the restore-revert back to `Fly`, after 10 s with no transition, or the 60 s phase-2 bound (backstop, residual gap logged). Rate comes from the frame's keyed `rate=N` field (the editor's composer sends its `TURN_RATE_DEG_S` = 3) or the plugin's `ClearForApprTurnRateDeg` default (same 3°/s). Log lines: `override: <CS> cfa-turn: nose …° → smooth turn armed …` / `… approach transition landed — rotating …` / `… game's approach turn running — tangent swept …° — nose chasing …` / `… cfa-turn converged … (tangent swept …°) … — override dropped` / `… back on the STAR (handoff reverted) — override dropped` / `… no approach transition within 10 s — override dropped` / `… 60 s phase-2 bound — override dropped`.
 
 ---
 
@@ -812,8 +859,8 @@ After a successful `clear_for_appr`:
 | 8 | **IL2CPP interop.** All game types (`Aircraft`, `Aircraft3D`, `Vector3` as `UnityEngine.Vector3`) come from the `interop\` stubs. Harmony patches the managed wrapper of `Aircraft.Step`; this works on IL2CPP (BepInEx 6 ships HarmonyX + Il2CppInterop precisely for this). | If a patch ever fails to apply, confirm you referenced `GroundATC.Core.dll` (interop) — not the Cpp2IL diffable sources — and that the plugin's assembly is loaded before any aircraft exists (it is: plugins load at startup). |
 | 9 | **Levels without aircraft.** `Aircraft.Step` isn't reached, dict is empty — no-op. Overrides don't survive level switches (dictionary keyed by instance). | Re-apply after load; the overlay re-lists callsigns automatically. |
 | 10 | **`clear_for_appr` requires state 30 (Fly).** It no-ops on aircraft already on final approach, taxiing, or parked. | The command checks `IsInState(EAircraftState.Fly)` and returns false. |
-| 11 | **Snap to IAF.** The transition places the aircraft at `PathPointList[0]` (PR=0). An aircraft deep into the STAR visually jumps back to the IAF. | Acceptable for a teleport-style tool. To preserve along-path position, set `ProgressRatio = alongPathDist(aircraft → IAF) / pathLength` instead of 0. |
-| 12 | **Approach route variants.** A runway can have several APP procedures (same name, different first fixes); nearest-aircraft selection may pick a different variant than the flight plan's STAR intends. | Pass `apprName` to force a specific procedure; cross-check against `FlightPlan.GetStar()`. |
+| 11 | **No teleport, no dead cruise.** The planted path starts AT the aircraft (join leg, PR=0) — the aircraft never jumps, the approach activates in place, and the steering flies it onto the procedure. (Pre-2026-08-04: the path started at the IAF 300–700 units away and the approach state held PR=0 until capture — minutes of silent cruise.) | Resolved by the join leg (step 4b). |
+| 12 | **Approach route variants.** A runway can have several APP procedures (same name, different first fixes); nearest-aircraft selection may pick a different variant than the flight plan's STAR intends. | Since 2026-08-04 the planted path comes from the aircraft's OWN `AppPointList` (the variant its flight plan intends — provably the same list the game's own transition builds its `ApproachState` from); the nearest-fix `GetRoute` pick only names the route label and backs the fallback when AppPointList is unavailable. `apprName` still forces a specific procedure. |
 | 13 | **`ECommand` numbering.** The editor's `CMD_*` constants (22–47) are not the game enum (1–30). | Use `ContextCross.Enums.ECommand` in the patch (`PermitLanding = 22`). |
 | 14 | **12-byte callsign budget (Mechanism A).** The standard SelectAircraft frame caps at 12 B — even the heading-only `update_heading` frame (command + callsign + two floats) does not fit. | Use Mechanism B (command id `0x00E7`, extended frames) for heading commands; keep A for `clear_for_appr` and future single-arg commands. |
 | 15 | **`!` prefix is reserved for patch frames.** Real callsigns never start with `!` today, but `select-aircraft-in-map` must never be used to send them — it would also set the editor's selection state and broadcast it. | Route patch frames only through `send-udp-command` / `send-patch-command`; the `Execute` prefix skips the game's selection path entirely. |
@@ -827,13 +874,17 @@ After a successful `clear_for_appr`:
 4. Strip/UI speed readout (`AircraftProjection.AirSpeedKnots`) shows the game's own speed — unchanged by the override.
 5. There is no clear command anymore (heading-only): the override ends on a level switch or `clear_for_appr`; the game resumes writing the heading itself on the next tick — nothing to restore.
 6. Optional: pause the game → override keeps flying (realtime dt); resume → still correct.
-7. `clear_for_appr` on a state-30 arrival → aircraft appears at the IAF on radar + 3D; `ac.IsInState(EAircraftState.Approach)` is true; `DynamicsData.DynamicsState.Value == State.Approaching`; `DynamicsData.DynamicsParams is ApproachDynamicsParams` with a non-empty `PathPointList` (readback after one tick).
+7. `clear_for_appr` on a state-30 arrival → the approach activates **in place** (join leg — no teleport, no dead cruise); `ac.IsInState(EAircraftState.Approach)` is true; `DynamicsData.DynamicsState.Value == State.Approaching`; `DynamicsData.DynamicsParams is ApproachDynamicsParams` with a non-empty `PathPointList` starting at the aircraft's position (readback after one tick).
 8. The aircraft descends along the path, touches down at `TouchDownPosition`, rollout + taxi resume; after the landing clearance (radio UI) it reaches its stand and docks.
 9. Failure modes: a taxiing/parked aircraft or a missing APP route → command returns false and nothing changes.
 10. `apprName` parity: forcing the ACL name (`RNAV ILS Z Rwy 19`) yields the identical `Route` label on the aircraft.
 11. UDP Mechanism A: send a plain SelectAircraft frame with callsign `!5:CQH8672` (12 B) → the aircraft transitions to approach exactly as the overlay button would; the game's selection state is unchanged (no aircraft was selected).
 12. UDP Mechanism B: send `update_heading|CQH8672|12.5|-3.2` on command id `0x00E7` → the heading override applies; a legacy `update_position|CQH8672|12.5|-3.2|180` frame applies the same way (kts ignored, one-time deprecation note); normal select frames still work; BepInEx log shows no `UnknownCommand`/bad-datagram spam (the postfix consumed the frame).
-13. Rollback: with the plugin disabled, both frame types are inert (select miss / one `UnknownCommand` log line) — nothing crashes.
+13. **Smooth turn (2026-08-03):** send `update_heading|CS|dx|dy|3` → the diag lines' `propHdg` drifts toward the commanded heading at ~0.05°/tick (3°/s ÷ 60 TPS) while `spd`/`view3D-pos`/`dynVel` keep advancing (the aircraft flies its own route during the turn); the map's nose triangle rotates through intermediate headings — no one-frame jump. At ×2 game speed the turn completes in the same GAME time (half the wall-clock time); while paused the rotation freezes with the game and resumes from where it stopped. A mid-turn re-command continues rotating from the intermediate heading (no snap back). Omitted rate → instant, exactly as before.
+14. **Smooth clear_for_appr (2026-08-03):** `clear_for_appr|CS|rate=3` (or the composer's Clear for Approach, which always sends it) → the log shows `override: <CS> cfa-turn: nose …° → smooth turn armed (3°/s …)`; the aircraft keeps flying the STAR (Phase 1 pass-through — the diag/watch lines show the nose following the STAR's own turns); when the handoff lands, `… approach transition landed — rotating onto the approach course at 3°/s` and the tracer's `propHdg` drifts from the STAR heading onto the approach course at ~0.05°/tick — no one-frame jump. **Sweep gate (v2):** the drop does NOT fire against the still-STAR tangent in the ~3 s radio-chatter window (the v1 bug — converged within ~2 ticks, then the game's own ~42°/s turn snapped the nose onto the final course); expect `… game's approach turn running — tangent swept …° — nose chasing at 3°/s` once the deferred turn begins, then `cfa-turn converged … (tangent swept …°) … — override dropped` ~10 game-seconds later when the nose catches the settled course — the game's own writes resume seamlessly. Watch for `… 60 s phase-2 bound — override dropped` only if the tangent never settles (hold pattern). The same game-time/pause rules apply (×2 halves the wall-clock turn, pause freezes it). A cfa without a rate field still smooths at the plugin default (3°/s). Backward-compat guard: a bare numeric field on a cfa frame is still the kts approach speed — `rate=3` bare would be misread as 3 kt, hence the keyed form.
+15. Rollback: with the plugin disabled, both frame types are inert (select miss / one `UnknownCommand` log line) — nothing crashes.
+16. **Radio handoff (2026-08-04, v2):** `clear_for_appr` on a state-30 arrival → the log shows `cfa: <CS> radio: radio <apprPk> → TWR(<twrPk>)` AND `cfa: <CS> radio: jurisdiction <apprPk> → TWR(<twrPk>)`; the AFTER dump and ALL watch lines keep `rc=Tower/<twrPk> jrc=Tower/<twrPk>` (the re-assert detector — a flip back names the culprit flow via the line before it). The editor map's strip shows BOTH seats flip to TWR within a telemetry tick. Resolution failure path: log `cfa: … radio: tower channel NOT resolved …`, aircraft behaves exactly as before (self-heals on touchdown).
+17. **Approach speed (2026-08-04):** `clear_for_appr|CS` WITHOUT a kts field → the log shows `cfa: <CS> speed: ts=240 tts=240 dtts=240 fwd=True accel 1/-2`, and the watch lines show the position advancing ~2 u/step (123 u/s ÷ 60 TPS) with `stPr` ~0.01/step and `chTs=240.0 … chFwd=True` in every dump — no crawl. With `kts=200` the speed log and `chTs`/`chTts`/`chDTts` show 200. If the crawl persists WITH `chTs=240.0` visible, the flight-plan metrics (`afm` / `_appRouteTime` in `ApproachState`) are the next suspect.
 
 ---
 
@@ -861,8 +912,9 @@ State-30/5 machinery (section 6):
 - `ContextCross\Services\AirwayRouteService.cs` — `RouteDict`, `GetRoute(Vector3, Runway, RouteType)`, `RouteType { STAR=0, APP=1, SID=2, MissedApch=3 }`, `ApproachSpeedKts = 240`
 - `ContextCross\Route.cs` — `Names`, `Locations`; `AnyPath\AnyPath\Location.cs` — `Position` (float3)
 - `ContextCross\Models\Runway.cs` — `TouchDownPosition`, `Direction`, `Routes`; `FlightPlan.cs` — `GetRunway(EFlightDirection)`, `GetStar()`
-- `ContextCross\Aircrafts\Aircraft.cs` — `RunwayReactive`, `CommandContinueApproach()`, `ConfigureRuntimeData(...)`, private `_stateMachine` / `_state` / `_route` / `_waitingForCommands` / `_flightPlan`
+- `ContextCross\Aircrafts\Aircraft.cs` — `RunwayReactive`, `CommandContinueApproach()`, `ConfigureRuntimeData(...)`, private `_stateMachine` / `_state` / `_route` / `_waitingForCommands` / `_flightPlan` / `_radioChannel` / `_jurisdictionRadioChannel` (ReactiveProperty<RadioChannel>, [Serialize]) / `SetRadioChannel` / `SetJurisdictionRadioChannel` (private — the game's only channel-write entries besides load)
 - `ContextCross\Enums\ECommand.cs` — `ContinueApproach = 21`, `PermitLanding = 22`, `ContactTower = 13`
+- `ContextCross\Managers\RadioChannelManager.cs` — `GetResolvedChannel(EChannel)`; `ContextCross\Models\RadioChannel.cs` — `PK`, `Type : EChannel`, `ShortCode`, `RadioName`, `Frequency`; `ContextCross\Enums\EChannel.cs` — `Tower = 3`, `Approach = 5`; `ContextCross\Radio\RadioSystem.cs` — `_radioChannelBindings : Dictionary<string, RadioChannelBinding>` (jurisdiction-handoff resolution, step 6d)
 
 UDP command channel (section 5.4):
 

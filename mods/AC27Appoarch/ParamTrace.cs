@@ -29,23 +29,12 @@ namespace AC27Appoarch;
 public static class ParamTrace
 {
     private static readonly HashSet<string> _tracked = new(StringComparer.Ordinal);
-    private static readonly Dictionary<string, float> _expiry = new(StringComparer.Ordinal);   // auto-track window (unscaled time)
 
     /// <summary>Toggle the 1 s trace for one callsign. Returns the new state (true = ON).</summary>
     public static bool ToggleTrack(string callsign)
     {
-        if (!_tracked.Remove(callsign)) { _tracked.Add(callsign); _expiry.Remove(callsign); }
-        else _expiry.Remove(callsign);
+        if (!_tracked.Remove(callsign)) _tracked.Add(callsign);
         return _tracked.Contains(callsign);
-    }
-
-    /// <summary>Auto-track a callsign for `seconds` — clear_for_appr arms this
-    /// so the post-patch seconds ALWAYS land in the log even if the operator
-    /// forgets `track|CS` (the previous live test ended at the patch line).</summary>
-    public static void AutoTrack(string callsign, float seconds)
-    {
-        _tracked.Add(callsign);
-        _expiry[callsign] = Time.unscaledTime + seconds;
     }
 
     public static bool IsTracked(string callsign) => _tracked.Contains(callsign);
@@ -53,18 +42,8 @@ public static class ParamTrace
     /// <summary>The 1 s tick — dump every tracked aircraft (label = elapsed seconds).</summary>
     public static void DumpTracked()
     {
-        float now = Time.unscaledTime;
         foreach (var cs in new List<string>(_tracked))
-        {
-            if (_expiry.TryGetValue(cs, out float exp) && now >= exp)
-            {
-                _tracked.Remove(cs);
-                _expiry.Remove(cs);
-                Plugin.LogMsg($"patch: auto-track {cs} ended");
-                continue;
-            }
             DumpNow(cs, null);
-        }
     }
 
     /// <summary>Dump one aircraft now, with an explicit label ("BEFORE"/"AFTER")
@@ -123,6 +102,14 @@ public static class ParamTrace
         var dp = ac.DynamicsData;
         if (dp == null) { sb.Append(" params=<null DynamicsData>"); return sb.ToString(); }
         sb.Append(" dynState=").Append(dp.DynamicsState != null ? dp.DynamicsState.Value.ToString() : "<null>");
+        // Data-channel speed fields (2026-08-04): the crawl diagnostic — the
+        // aircraft-level `spd` read above does NOT reflect these; the approach
+        // path-following speed comes from the channel (prime suspect: kts-less
+        // frames left them unset → the ~1-4 u/s crawl instead of 240 kt).
+        sb.Append(" chTs=").Append(F(dp.TaxiSpeed));
+        sb.Append(" chTts=").Append(F(dp.TargetTaxiSpeed));
+        sb.Append(" chDTts=").Append(F(dp.DynamicsTargetTaxiSpeed));
+        sb.Append(" chFwd=").Append(dp.ForwardSpeed);
         sb.Append(" params=").Append(DescribeParams(dp.DynamicsParams));
         if (ac._route != null) sb.Append(" route=").Append(ac._route.Value);
         var w = ac._waitingForCommands != null ? ac._waitingForCommands.Value : null;
@@ -132,6 +119,14 @@ public static class ParamTrace
             for (int i = 0; i < w.Length; i++) { if (i > 0) sb.Append(','); sb.Append((int)w[i]); }
             sb.Append(']');
         }
+        // Radio channels (2026-08-03): Type/PK of the aircraft's two channel
+        // slots — the jurisdiction handoff's proof and re-assert detector
+        // (AFTER shows rc=Approach/… jrc=Tower/…; a jrc flip back names the
+        // culprit flow via the log line before it).
+        var rc = ac._radioChannel != null ? ac._radioChannel.Value : null;
+        var jrc = ac._jurisdictionRadioChannel != null ? ac._jurisdictionRadioChannel.Value : null;
+        sb.Append(" rc=").Append(rc != null ? rc.Type + "/" + rc.PK : "<null>");
+        sb.Append(" jrc=").Append(jrc != null ? jrc.Type + "/" + jrc.PK : "<null>");
         return sb.ToString();
     }
 
@@ -166,8 +161,9 @@ public static class ParamTrace
 
     /// <summary>The DynamicsParams object's contents — whichever class it is.
     /// Path lists are summarized (count + first/last) so the before/after of
-    /// the patch — STAR path vs full ILS procedure — is visible at a glance.</summary>
-    private static string DescribeParams(object p)
+    /// the patch — STAR path vs full ILS procedure — is visible at a glance.
+    /// Public for the state-check verdict line (state vs channel in one log).</summary>
+    public static string DescribeParams(object p)
     {
         // Interop gotcha (live-verified 2026-08-03): DynamicsData.DynamicsParams
         // is typed IDynamicsParams, and Il2CppInterop wraps the getter's return

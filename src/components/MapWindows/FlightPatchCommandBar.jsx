@@ -34,11 +34,24 @@ import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
  * overridden (it points at the commanded heading while the game's
  * dynamics keeps moving it).
  *
+ * SMOOTH TURN (2026-08-03): the update_heading frame carries a rate (°/s
+ * of GAME time, TURN_RATE_DEG_S below) — the plugin rotates the nose to
+ * the commanded heading at that rate instead of snapping in one frame,
+ * scaled with the game's speed multiplier (×2 turns twice as fast per
+ * wall-second, same game time) and frozen while the game is paused.
+ * Omitted/<=0 rate = instant (backward compatible for scripts).
+ *
+ * CLEAR FOR APPROACH IS SMOOTH TOO (2026-08-03): the clear_for_appr frame
+ * carries the same rate (keyed field rate=N). The plugin arms the turn at
+ * the handoff — the nose rotates from where it actually points onto the
+ * approach course at that rate (same game-time scaling + pause behavior)
+ * instead of snapping when the approach transition lands. The frame's
+ * optional approach speed (kts) is still supported for scripted use; the
+ * UI no longer exposes it.
+ *
  * Clear for Approach SUPERSEDES a composed heading: picking it drops any
  * heading from the line (it is never sent) and removes the Fly Heading
- * option — only the clear_for_appr frame goes out. The plugin retains
- * its optional approach-speed support for scripted use; the UI no longer
- * exposes it.
+ * option — only the clear_for_appr frame goes out.
  *
  * Heading math (plugin's game-verified convention): heading H → (dx, dy) =
  * (sin H, cos H), +Z = north, +X = east (030 → 0.5, 0.8660; 180 → 0, -1).
@@ -46,6 +59,7 @@ import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
  * with the speed option).
  */
 const HEADINGS = [30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360];
+const TURN_RATE_DEG_S = 3;   // IFR standard-rate turn — the plugin rotates the nose at this °/s of GAME time
 const pad3 = (n) => String(n).padStart(3, '0');
 
 export default function FlightPatchCommandBar({ aircraft, witchMode }) {
@@ -114,7 +128,11 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   const sendPatch = useCallback(() => {
     if (!aircraft || !electronAPI.sendPatchCommand) return;
     if (sel.clearAppr) {
-      electronAPI.sendPatchCommand({ type: 'clear_for_appr', callSign: aircraft.callSign });
+      electronAPI.sendPatchCommand({
+        type: 'clear_for_appr',
+        callSign: aircraft.callSign,
+        rate: TURN_RATE_DEG_S,   // smooth handoff turn — the plugin rotates the nose onto the approach course at this °/s of game time
+      });
       resetCommand();
       return;
     }
@@ -127,6 +145,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
       callSign: aircraft.callSign,
       dx: +Math.sin(rad).toFixed(4),                       // +X = east
       dy: +Math.cos(rad).toFixed(4),                       // +Z = north
+      rate: TURN_RATE_DEG_S,                               // smooth turn, °/s of game time
     });
     resetCommand();
   }, [aircraft, electronAPI, sel, resetCommand]);
