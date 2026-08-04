@@ -708,15 +708,10 @@ export default function FlightStripsWindow({ airportIcao }) {
     setCommandPath(prev => prev.slice(0, -1));
   }, []);
 
-  // Dismiss the patch composer after its command is sent (or Escape) — same
-  // cleanup as the command-bar leaf action: clear selection + cross-window sync.
-  const dismissCommandBar = useCallback(() => {
-    setSelectedCallSign(null);
-    setCommandPath([]);
-    if (electronAPI.selectAircraftInMap) {
-      electronAPI.selectAircraftInMap(airportIcao, null);
-    }
-  }, [airportIcao, electronAPI]);
+  // Note: the patch composer's Send/Cancel keep the strip selected (no
+  // selection cleanup here) — it resets its own line, so the next command
+  // can be composed for the same aircraft. Selection is released by
+  // clicking the window background (handleBodyClick).
 
   // ─── Derived values for render ───────────────────────────────
 
@@ -865,13 +860,13 @@ export default function FlightStripsWindow({ airportIcao }) {
         )}
       </div>
       {/* Patch command composer (send-patch-command → AC27Appoarch plugin).
-          key: remount per selected aircraft so chips/menus reset. */}
+          key: remount per selected aircraft so chips/menus reset. Send/Cancel
+          keep the strip selected — the composer resets its own line. */}
       {selectedAircraft && (
         <FlightPatchCommandBar
           key={selectedAircraft.callSign}
           aircraft={selectedAircraft}
           witchMode={witchMode}
-          onDone={dismissCommandBar}
         />
       )}
       {/* TODO: re-enable command bar when game command IDs are confirmed

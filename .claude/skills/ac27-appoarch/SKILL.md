@@ -92,7 +92,7 @@ Payload table (pipe-delimited ASCII): `update_heading|CS|dx|dy` · `clear_for_ap
 
 ## Editor Integration
 
-- **`FlightPatchCommandBar.jsx`** (Flight Strips window): click-driven composer for approach-channel aircraft (`controlSeat=5`) — `Fly Heading` (heading-only `update_heading`) or `Clear for Approach` (`clear_for_appr`, supersedes any composed heading). Sends exactly ONE frame then dismisses. See the `ac27-editor` skill's map-windows reference.
+- **`FlightPatchCommandBar.jsx`** (Flight Strips window): click-driven composer for approach-channel aircraft (`controlSeat=5`) — `Fly Heading` (heading-only `update_heading`) or `Clear for Approach` (`clear_for_appr`, supersedes any composed heading). Sends exactly ONE frame, then resets its line — Send/Cancel keep the strip selected so the next command can be composed for the same aircraft. See the `ac27-editor` skill's map-windows reference.
 - **`electron/main.js` `send-patch-command`** builds the 0x00E7 frame (parts joined with `|`, NUL-padded to 64 B) → `sendUdpCommand(0x00E7, field)`.
 
 ## Verified Hook Points & Interop Gotchas

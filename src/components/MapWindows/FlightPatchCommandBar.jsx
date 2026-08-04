@@ -21,7 +21,12 @@ import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
  * plugin via the editor's send-patch-command bridge: an `update_heading`
  * frame (heading-only) or a `clear_for_appr` frame (approach handoff).
  * Escape mirrors Cancel (pending value pick → previous menu; otherwise
- * dismiss).
+ * abandon the line).
+ *
+ * Send/Cancel/Escape keep the strip selected: the composer stays mounted
+ * (keyed by callsign) and resets its own line, so the next command can be
+ * composed for the same aircraft without re-clicking the strip. Selection
+ * is released by clicking the window background.
  *
  * HEADING-ONLY override (2026-08-03, decoupled): speed was removed from
  * the composer — the plugin never touches speed. The aircraft keeps
@@ -43,7 +48,7 @@ import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
 const HEADINGS = [30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360];
 const pad3 = (n) => String(n).padStart(3, '0');
 
-export default function FlightPatchCommandBar({ aircraft, witchMode, onDone }) {
+export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   const electronAPI = useElectronAPI();
 
   // Composed options: null = not chosen yet; clearAppr = Clear for Approach.
@@ -55,6 +60,14 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, onDone }) {
   const [popupLeft, setPopupLeft] = useState(null);
   const cmdRef = useRef(null);
   const popupRef = useRef(null);
+
+  // Clear the composed line. Send/Cancel/Escape keep the strip selected, so
+  // this component stays mounted (keyed by callsign) — it must reset its own
+  // state instead of relying on an unmount.
+  const resetCommand = useCallback(() => {
+    setSel({ heading: null, clearAppr: false });
+    setValType(null);
+  }, []);
 
   // BepInEx Debug Mode gate: patch frames are relayed to the AC27Appoarch
   // plugin over UDP, which only exists while BepInEx is installed — the
@@ -95,14 +108,14 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, onDone }) {
     return list;
   }, [valType, sel]);
 
-  /** Compose + send ONE frame, then dismiss (clear selection). Clear for
-      Approach supersedes any heading; heading-only update_heading frame
-      (no speed — the plugin never touches it). */
+  /** Compose + send ONE frame, then reset the line (the strip stays
+      selected). Clear for Approach supersedes any heading; heading-only
+      update_heading frame (no speed — the plugin never touches it). */
   const sendPatch = useCallback(() => {
     if (!aircraft || !electronAPI.sendPatchCommand) return;
     if (sel.clearAppr) {
       electronAPI.sendPatchCommand({ type: 'clear_for_appr', callSign: aircraft.callSign });
-      onDone();
+      resetCommand();
       return;
     }
     // Send only appears once a heading is committed (clearAppr returned
@@ -115,15 +128,15 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, onDone }) {
       dx: +Math.sin(rad).toFixed(4),                       // +X = east
       dy: +Math.cos(rad).toFixed(4),                       // +Z = north
     });
-    onDone();
-  }, [aircraft, electronAPI, sel, onDone]);
+    resetCommand();
+  }, [aircraft, electronAPI, sel, resetCommand]);
 
   /** Accept a choice: Cancel steps back / abandons; type word → value list;
       value → commit to the line; Send → dispatch the composed command. */
   const select = useCallback((key) => {
     if (key === 'cancel') {
       if (valType) setValType(null);   // back to the previous menu
-      else onDone();                   // abandon the whole command
+      else resetCommand();             // abandon the whole command — keep the strip selected
       return;
     }
     if (key === 'send') { sendPatch(); return; }
@@ -133,19 +146,20 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, onDone }) {
     // Numeric value for the pending type.
     setSel((s) => ({ ...s, [valType]: key }));
     setValType(null);
-  }, [valType, sendPatch, onDone]);
+  }, [valType, sendPatch, resetCommand]);
 
-  // Escape mirrors Cancel: pending value pick → previous menu; else dismiss.
+  // Escape mirrors Cancel: pending value pick → previous menu; else reset
+  // the line (the strip stays selected).
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
         if (valType) setValType(null);
-        else onDone();
+        else resetCommand();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [valType, onDone]);
+  }, [valType, resetCommand]);
 
   // Anchor the option row at the end of the line; flip to the right edge
   // when it would overflow the window. The row renders from the first pass
