@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>10</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>AC27Appoarch</AssemblyName>
+    <RootNamespace>AC27Appoarch</RootNamespace>
+    <GameDir>D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest</GameDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- BepInEx 6 IL2CPP runtime -->
+    <Reference Include="BepInEx.Core"><HintPath>$(GameDir)\BepInEx\core\BepInEx.Core.dll</HintPath></Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>$(GameDir)\BepInEx\core\BepInEx.Unity.IL2CPP.dll</HintPath></Reference>
+    <Reference Include="0Harmony"><HintPath>$(GameDir)\BepInEx\core\0Harmony.dll</HintPath></Reference>
+    <Reference Include="Il2CppInterop.Common"><HintPath>$(GameDir)\BepInEx\core\Il2CppInterop.Common.dll</HintPath></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(GameDir)\BepInEx\core\Il2CppInterop.Runtime.dll</HintPath></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- game interop assemblies -->
+    <Reference Include="GroundATC.Core"><HintPath>$(GameDir)\BepInEx\interop\GroundATC.Core.dll</HintPath></Reference>
+    <Reference Include="R3"><HintPath>$(GameDir)\BepInEx\interop\R3.dll</HintPath></Reference>
+    <Reference Include="VContainer"><HintPath>$(GameDir)\BepInEx\interop\VContainer.dll</HintPath></Reference>
+    <Reference Include="Unity.Mathematics"><HintPath>$(GameDir)\BepInEx\interop\Unity.Mathematics.dll</HintPath></Reference>
+    <Reference Include="AnyPath"><HintPath>$(GameDir)\BepInEx\interop\AnyPath.dll</HintPath></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.PhysicsModule.dll</HintPath></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(GameDir)\BepInEx\interop\Il2Cppmscorlib.dll</HintPath></Reference>
+    <Reference Include="Il2CppSystem"><HintPath>$(GameDir)\BepInEx\interop\Il2CppSystem.dll</HintPath></Reference>
+    <Reference Include="Il2CppSystem.Core"><HintPath>$(GameDir)\BepInEx\interop\Il2CppSystem.Core.dll</HintPath></Reference>
+    <Reference Include="Stateless"><HintPath>$(GameDir)\BepInEx\interop\Stateless.dll</HintPath></Reference>
+  </ItemGroup>
+  <Target Name="Deploy" AfterTargets="Build">
+    <MakeDir Directories="$(GameDir)\BepInEx\plugins\AC27Appoarch" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins\AC27Appoarch" />
+  </Target>
+</Project>

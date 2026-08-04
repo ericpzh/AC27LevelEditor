@@ -777,6 +777,91 @@
   color: var(--text);
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   Patch command composer — command-line style. The command is built up
+   step-by-step in ONE line, like a shell prompt:
+   CSN9355: Fly Heading 090, Fly Speed 200kt
+   At every step the next choices pop up as a horizontal option row flush
+   against the line above it: Fly Heading | Fly Speed | Cancel → value
+   list + Cancel → Fly Speed | Send | Cancel → Send | Cancel. Mouse-only:
+   every choice is a click; Cancel steps back from a value list, otherwise
+   abandons the command; Send dispatches one combined frame.
+   ══════════════════════════════════════════════════════════════════ */
+
+.flight-strips-command-wrap {
+  position: relative;
+  z-index: 30;
+  flex-shrink: 0;
+}
+
+/* Option row — flush above the command line, at the cursor position
+   (left is set inline by the component) */
+.fcc-suggest {
+  position: absolute;
+  bottom: 100%;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fcc-suggest-sep {
+  color: var(--text-muted);
+  opacity: 0.6;
+  user-select: none;
+}
+
+.fcc-suggest-item {
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.fcc-suggest-item:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.fcc-suggest-item:active {
+  transform: scale(0.97);
+}
+
+/* Cancel — muted, red on hover */
+.fcc-suggest-cancel {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.fcc-suggest-cancel:hover {
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+/* The command text being built up */
+.fcc-cmd {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 1;
+  overflow: hidden;
+}
+
 /* ─── Witch mode: hide command bar ─── */
 .flight-strips.witch-mode .flight-strips-command-bar {
   display: none;

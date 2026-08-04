@@ -611,7 +611,8 @@ export default function AirMapWindow({ airportIcao }) {
       const labelOffset = 1.2 * s;
       const lx = bx - sx * (tickLen + labelOffset);
       const ly = by - sy * (tickLen + labelOffset);
-      els.push(<text key={'l'+d} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize={1.2 * s} opacity="0.6">{String(d).padStart(3, '0')}</text>);
+      // Heading labels in the 010–360 convention: north reads 360, never 000.
+      els.push(<text key={'l'+d} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize={1.2 * s} opacity="0.6">{d === 0 ? '360' : String(d).padStart(3, '0')}</text>);
     }
     return (
       <div className="air-map-border-overlay">

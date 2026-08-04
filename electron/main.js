@@ -1932,6 +1932,34 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
   }
 });
 
+// ─── IPC: Send patch command to game (plugin UDP Mechanism B, extended frame 0x00E7) ───
+// patch: { type: 'update_heading'|'update_position'|'clear_for_appr', callSign, dx?, dy?, kts?, appr? }
+// update_heading is HEADING-ONLY (2026-08-03, decoupled): it carries no
+// speed — the plugin never touches speed; the game keeps position & speed
+// and only the nose heading is overridden. 'update_position' is a legacy
+// alias (its kts field is ignored by the plugin). kts on a clear_for_appr
+// frame is the approach speed in raw knots (omitted = the aircraft's speed
+// is left untouched); appr = named approach procedure.
+// Frame contract: 8 B header + payload NUL-padded to exactly 64 bytes (72 B total).
+// The plugin's FixedTick() postfix reads the datagram back from the service's
+// receive buffer, so the payload field must be fixed-length + NUL-terminated.
+
+ipcMain.handle('send-patch-command', async (_e, patch) => {
+  try {
+    const parts = [patch.type, patch.callSign];
+    if (patch.type === 'update_heading' || patch.type === 'update_position') parts.push(patch.dx, patch.dy);
+    else if (patch.type === 'clear_for_appr') {
+      if (patch.kts) parts.push(patch.kts);
+      if (patch.appr) parts.push(patch.appr);
+    }
+    const field = Buffer.alloc(64);                       // NUL-padded payload field
+    Buffer.from(parts.join('|'), 'ascii').copy(field, 0);
+    return await sendUdpCommand(0x00E7, field);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ─── IPC: Debug log from renderer → main terminal ───
 
 ipcMain.handle('debug-log', async (_e, args) => {

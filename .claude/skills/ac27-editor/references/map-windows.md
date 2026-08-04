@@ -8,6 +8,7 @@
 - [GroundMapWindow](#groundmapwindow-srccomponentsmapwindowsgroundmapwindowjsx)
 - [AirMapWindow](#airmapwindow-srccomponentsmapwindowsairmapwindowjsx)
 - [FlightStripsWindow](#flightstripswindow-srccomponentsmapwindowsflightstripswindowjsx)
+- [Patch Command Composer](#patch-command-composer-flightpatchcommandbarjsx--live)
 - [Shared Hooks](#shared-hooks)
 - [BrowserScreen Integration](#browserscreen-integration)
 - [Zustand Store Additions](#zustand-store-additions-appstorejs)
@@ -312,6 +313,20 @@ Branch commands (marked with `→`) navigate to a sub-menu showing dynamic optio
 | `CMD_CROSS_RWY` | 47 | CROSS RWY (TOWER) |
 
 > **Note:** Command IDs 22–23 are confirmed correct (used in `src/acl/flight_plans.js:805`). IDs 24–47 are placeholders pending game protocol verification.
+
+### Patch Command Composer (`FlightPatchCommandBar.jsx`) — LIVE
+
+Shown at the bottom of the strips window when a strip is selected **and** the aircraft is on the **approach channel** (`aircraft.controlSeat === CHANNEL_TYPE_APPROACH`, seat 5). Hidden for every other seat — including final approach under tower (seat 3) — and for any aircraft while `witchMode` is on. Also gated on `checkBepInEx` resolving to installed (the patch frames only reach the game through the AC27Appoarch plugin, which only exists under BepInEx); the gate re-checks on mount, aircraft change, and window focus — while unknown the composer stays hidden so the gate never flashes.
+
+Command-line-style, mouse-only: the command builds up on ONE line (`CSN9355: Fly Heading 090`); at every step the next choices appear as a horizontal option row flush above the line (`Fly Heading | Clear for Approach | Cancel` → heading values `030…360 | Cancel` → `Send | Cancel`). Send appears once ≥1 option is committed. Escape mirrors Cancel (pending value pick → previous menu; else dismiss). `onDone` (from `FlightStripsWindow.dismissCommandBar`) clears the strip selection + cross-window sync.
+
+- `Fly Heading` — heading-only override: picks one of the 12 × 30° values (30…360), sends `update_heading` with `(dx, dy) = (sin H, cos H)` — **+Z = north, +X = east** (030 → `0.5, 0.8660`; 180 → `0, -1`). No speed: the plugin never touches speed; the aircraft keeps flying its own route at the game's own speed.
+- `Clear for Approach` — hand a STAR (state 30) aircraft onto final approach (state 5). **Supersedes a composed heading**: choosing it drops any heading from the line (never sent) and removes the Fly Heading option; only the `clear_for_appr` frame goes out (no kts/appr fields — the UI no longer exposes the plugin's optional approach-speed support).
+- `Send` — dispatches ONE frame via `electronAPI.sendPatchCommand`, then dismisses. The component remounts per selected aircraft (`key={aircraft.callSign}`) so chips/menus reset.
+
+**CSS:** `FlightStripsWindow.css` — `.flight-strips-command-wrap` (position: relative, z-index 30), `.fcc-suggest` (absolute, `bottom: 100%`, monospace option row), `.fcc-suggest-item` / `.fcc-suggest-cancel` (hover states), `.fcc-cmd` (the line being built). Hidden with the command bar in witch mode via the existing `.flight-strips.witch-mode .flight-strips-command-bar` rule.
+
+**Protocol:** frames go to the AC27Appoarch plugin via `send-patch-command` (IPC) → 0x00E7 extended UDP frame — see `udp-telemetry.md` "Command Channel" and the `ac27-appoarch` skill for the full contract.
 
 ### Voice Command Input (planned, UI hidden)
 

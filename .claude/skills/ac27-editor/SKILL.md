@@ -19,11 +19,11 @@ description: AC27 Editor — Electron desktop app for editing Airport Control 27
 
 | Layer | Key Files | Details |
 |-------|-----------|---------|
-| **Electron Main Process** | `electron/main.js` | Creates BrowserWindow (1400×880, min 1024×640), contextIsolation: true, nodeIntegration: false, 64 ipcMain.handle() endpoints, all file I/O/dialog/caching |
+| **Electron Main Process** | `electron/main.js` | Creates BrowserWindow (1400×880, min 1024×640), contextIsolation: true, nodeIntegration: false, 65 ipcMain.handle() endpoints, all file I/O/dialog/caching |
 | | `electron/updater.js` | Auto-update: HEAD check (R2 ETag), MD5 comparison, file-based logging to `<userData>/updater.log`, `resolveTargetExe()` (dev-mode support), exe download, batch script generation |
 | | `electron/api-server.js` | HTTP API + MCP (port 31415) |
 | | `electron/cloud-llm.js` | Multi-vendor cloud LLM chat |
-| **Preload Bridge** | `electron/preload.js` | contextBridge exposing `window.electronAPI` with ~90 methods (checkForUpdate, downloadUpdate, installUpdate — no longer exposes skipUpdate), onStoreApiUpdate/offStoreApiUpdate for MCP bridge, each method = ipcRenderer.invoke(channel, ...args) |
+| **Preload Bridge** | `electron/preload.js` | contextBridge exposing `window.electronAPI` with ~91 methods (checkForUpdate, downloadUpdate, installUpdate — no longer exposes skipUpdate), onStoreApiUpdate/offStoreApiUpdate for MCP bridge, each method = ipcRenderer.invoke(channel, ...args) |
 | **Vite + React Entry** | `index.html`, `src/main.jsx` | `<div id="root">` rendered by ReactDOM.createRoot, Vite bundles `src/` → `dist/`, three screens: setup → browser → editor |
 | **React Components** | `src/components/` | |
 | | `App.jsx` | Root: I18nProvider + ScreenRouter + Modal + Toast |
@@ -52,6 +52,7 @@ description: AC27 Editor — Electron desktop app for editing Airport Control 27
 - `electron/udp_listener.js` listens on `127.0.0.1:20266` for binary aircraft telemetry (10 Hz) and sends commands on `127.0.0.1:20267`
 - Live aircraft state pushed to all open map windows (ground + air + flight strips) at 200ms interval via `udp-aircraft-state` IPC event
 - Map window click-to-select goes through centralized `select-aircraft-in-map` IPC
+- **Patch command composer (`FlightPatchCommandBar.jsx`):** when a strip on the approach channel (`controlSeat=5`) is selected, a command-line-style composer pops up above the strips bar. Click-driven: `Fly Heading` (heading-only override, 12×30° values) or `Clear for Approach` → `Send` dispatches ONE `send-patch-command` frame to the AC27Appoarch plugin (see the `ac27-appoarch` skill). Gated on `checkBepInEx` (plugin only exists with BepInEx installed) + `witchMode` off; Escape/Cancel dismisses. Approach-only: aircraft handed to tower (seat 3) lose the popup automatically
 - **Voice command input (planned, UI hidden):** `voiceNumberParser.js`, `voiceCallsignParser.js`, `voiceCommandMatcher.js`, `useVoiceCommands.js`, and `VoicePTTButton.jsx` provide push-to-talk voice commands for the Flight Strips window using the Web Speech API (zero dependencies). Callsign-first flow: spoken airline name → ICAO code (via `AIRLINE_CODE_MAP`) + spoken numbers → digits → match against UDP aircraft → fuzzy-match remaining text against available ATC commands. Supports both English and Chinese. Currently commented out behind `TODO: re-enable when game command IDs are confirmed`.
 
 ## Reference Files

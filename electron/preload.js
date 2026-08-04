@@ -125,6 +125,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke('send-udp-command', commandId, buf.toString('base64'));
   },
 
+  // Send patch command to game (plugin UDP Mechanism B, extended frame 0x00E7)
+  sendPatchCommand: (patch) => ipcRenderer.invoke('send-patch-command', patch),
+
   // Store API bridge (MCP integration — main process pushes store updates)
   _storeApiHandlers: new Map(),
   onStoreApiUpdate: function (cb) {

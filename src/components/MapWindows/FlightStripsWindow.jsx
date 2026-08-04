@@ -11,6 +11,7 @@ import MapHelpOverlay from './MapHelpOverlay';
 import { IoHelpCircleOutline, IoRefreshOutline } from 'react-icons/io5';
 import { witchDirection, isParked, getSpriteSheet, getSpriteCell, getSpriteViewBox, SPRITE_CELL, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import FlightStripCommandBar from './FlightStripCommandBar';
+import FlightPatchCommandBar from './FlightPatchCommandBar';
 import { getCommandChildren, setTaxiways } from './commandTree';
 import useVoiceCommands from './useVoiceCommands';
 import VoicePTTButton from './VoicePTTButton';
@@ -707,6 +708,16 @@ export default function FlightStripsWindow({ airportIcao }) {
     setCommandPath(prev => prev.slice(0, -1));
   }, []);
 
+  // Dismiss the patch composer after its command is sent (or Escape) — same
+  // cleanup as the command-bar leaf action: clear selection + cross-window sync.
+  const dismissCommandBar = useCallback(() => {
+    setSelectedCallSign(null);
+    setCommandPath([]);
+    if (electronAPI.selectAircraftInMap) {
+      electronAPI.selectAircraftInMap(airportIcao, null);
+    }
+  }, [airportIcao, electronAPI]);
+
   // ─── Derived values for render ───────────────────────────────
 
   const stripCountBySeat = useMemo(() => {
@@ -853,6 +864,16 @@ export default function FlightStripsWindow({ airportIcao }) {
           })
         )}
       </div>
+      {/* Patch command composer (send-patch-command → AC27Appoarch plugin).
+          key: remount per selected aircraft so chips/menus reset. */}
+      {selectedAircraft && (
+        <FlightPatchCommandBar
+          key={selectedAircraft.callSign}
+          aircraft={selectedAircraft}
+          witchMode={witchMode}
+          onDone={dismissCommandBar}
+        />
+      )}
       {/* TODO: re-enable command bar when game command IDs are confirmed
       <FlightStripCommandBar
         aircraft={selectedAircraft}

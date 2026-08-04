@@ -16,6 +16,10 @@ __pycache__/
 .vscode/
 .idea/
 
+# C# mod build artifacts (mods/AC27Appoarch)
+mods/**/bin/
+mods/**/obj/
+
 # Test artifacts
 coverage/
 test-results/
