@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
+import { MAP_ICON_PATH } from '../../utils/constants';
 
 /**
  * Patch-command composer — command-line style display, mouse-only input.
@@ -49,25 +50,60 @@ import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
  * optional approach speed (kts) is still supported for scripted use; the
  * UI no longer exposes it.
  *
- * Clear for Approach SUPERSEDES a composed heading: picking it drops any
- * heading from the line (it is never sent) and removes the Fly Heading
- * option — only the clear_for_appr frame goes out.
+ * FLY ALTITUDE (2026-08-04): a single climb/descend-and-maintain command —
+ * picking it opens a slider panel exactly like Fly Heading's: a 1000-ft
+ * range from ALT_MIN_FT (1000) up to max(ALT_MAX_FT (9000), the aircraft's
+ * CURRENT altitude rounded to the nearest 1000), the thumb defaulting to
+ * the rounded current (3300 ft → thumb at 3000) so Send always has a
+ * value. The pick sends an `altitude|CS|targetFt|rate` frame (targetFt in
+ * feet — the plugin's conversion is ft = position.y × 100/0.3048, 1 GU =
+ * 100 m, 15.24 GU = 5000 ft). The plugin moves the aircraft's Y smoothly
+ * at rate ft/min of GAME time (ALT_RATE_FPM, the plugin's default too —
+ * same game-time scaling + pause behavior as the turn); direction is
+ * implicit in the picked target (above the current = climb, below =
+ * descend). Only Y is overridden — X/Z, heading, speed and route stay the
+ * game's.
+ *
+ * Clear for Approach SUPERSEDES a composed heading/altitude: picking it
+ * drops any heading or altitude from the line (never sent) and removes the
+ * Fly Heading / Fly Altitude options — only the clear_for_appr frame goes
+ * out. Fly Heading and Fly Altitude supersede EACH OTHER the same way:
+ * committing one drops the other (exactly one frame per Send).
  *
  * Heading math (plugin's game-verified convention): heading H → (dx, dy) =
  * (sin H, cos H), +Z = north, +X = east (030 → 0.5, 0.8660; 180 → 0, -1).
  * The slider (001–360) defaults to the aircraft's live noseDirection
  * heading, so Send always has a value even if the user never drags it.
+ * Its thumb is an airplane icon (the MAP_ICON_PATH artwork, nose pointing
+ * east at rotate 0) rotated by heading − 90°: 360 → nose straight up,
+ * 090 → right, 180 → down, 270 → left — same convention as the maps.
  */
 const TURN_RATE_DEG_S = 3;   // IFR standard-rate turn — the plugin rotates the nose at this °/s of GAME time
+const ALT_RATE_FPM = 1000;   // climb/descend speed — ft/min of GAME time (the plugin's default too)
+const ALT_MIN_FT = 1000;     // altitude slider floor
+const ALT_MAX_FT = 9000;     // altitude slider ceiling (extends to the rounded current above 9000)
+const FT_PER_GU = 100 / 0.3048;   // ≈ 328.084 — 1 GU = 100 m (user-confirmed; 15.24 GU = 5000 ft)
 const pad3 = (n) => String(n).padStart(3, '0');
+
+// Plane-icon thumb for the heading slider — a data-URI SVG reusing the
+// MAP_ICON_PATH the maps render. Applied as a -webkit-mask-image on the
+// thumb (alpha only), tinted accent via the thumb's background — a data-URI
+// SVG is a separate image document, so currentColor would resolve to black
+// and can't be used to tint it. The component rotates it via --hdg.
+const PLANE_THUMB_URI =
+  'data:image/svg+xml;charset=utf-8,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><path d="${MAP_ICON_PATH}" fill="currentColor"/></svg>`
+  );
 
 export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   const electronAPI = useElectronAPI();
 
   // Composed options: null = not chosen yet; clearAppr = Clear for Approach.
-  const [sel, setSel] = useState({ heading: null, clearAppr: false });
-  // Pending value pick ('heading') — the type word is already on the line,
-  // the value list is showing.
+  // heading and altitude supersede each other (one frame per Send).
+  const [sel, setSel] = useState({ heading: null, clearAppr: false, alt: null });
+  // Pending value pick ('heading' | 'altitude') — the type word is already
+  // on the line, the slider panel is showing.
   const [valType, setValType] = useState(null);
   // Option-row x-position (measured at the end of the line).
   const [popupLeft, setPopupLeft] = useState(null);
@@ -78,7 +114,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   // this component stays mounted (keyed by callsign) — it must reset its own
   // state instead of relying on an unmount.
   const resetCommand = useCallback(() => {
-    setSel({ heading: null, clearAppr: false });
+    setSel({ heading: null, clearAppr: false, alt: null });
     setValType(null);
   }, []);
 
@@ -90,6 +126,18 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
     if (!aircraft?.noseDirection) return 360;
     const h = Math.round((Math.atan2(aircraft.noseDirection.x, aircraft.noseDirection.z) * 180) / Math.PI);
     return ((h % 360) + 360) % 360 || 360;
+  }, [aircraft]);
+
+  // Current altitude of the selected aircraft in ft + the rounded 1000-ft
+  // position for the altitude slider (3300 → 3000) — derived from UDP
+  // telemetry position.y (GU → ft). Null when no telemetry.
+  const altitudeBase = useMemo(() => {
+    if (!aircraft?.position || typeof aircraft.position.y !== 'number') return null;
+    const altFt = aircraft.position.y * FT_PER_GU;
+    return {
+      altFt: Math.round(altFt),
+      current: Math.round(Math.round(altFt) / 1000) * 1000,   // rounded to the nearest 1000 — the slider default
+    };
   }, [aircraft]);
 
   // BepInEx Debug Mode gate: patch frames are relayed to the AC27Appoarch
@@ -115,15 +163,20 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   /** All choices for the current step — depends on what is composed. */
   const options = useMemo(() => {
     const list = [];
-    // Clear for Approach supersedes heading: once chosen, the heading
-    // option is gone (it would be ignored anyway).
-    if (!sel.clearAppr && sel.heading == null) list.push({ key: 'heading', label: 'Fly Heading' });
+    // Clear for Approach supersedes heading/altitude: once chosen, both
+    // options are gone (it would be ignored anyway). Fly Heading and Fly
+    // Altitude supersede each other the same way — one frame per Send.
+    if (!sel.clearAppr && sel.heading == null && sel.alt == null) {
+      list.push({ key: 'heading', label: 'Fly Heading' });
+      // Altitude needs live telemetry — hidden while it is unavailable.
+      if (altitudeBase) list.push({ key: 'altitude', label: 'Fly Altitude' });
+    }
     if (!sel.clearAppr) list.push({ key: 'clearAppr', label: 'Clear for Approach' });
     // Once at least one option is committed, Send joins the choices.
-    if (sel.heading != null || sel.clearAppr) list.push({ key: 'send', label: 'Send' });
+    if (sel.heading != null || sel.alt != null || sel.clearAppr) list.push({ key: 'send', label: 'Send' });
     list.push({ key: 'cancel', label: 'Cancel' });
     return list;
-  }, [sel]);
+  }, [sel, altitudeBase]);
 
   /** Compose + send ONE frame, then reset the line (the strip stays
       selected). Clear for Approach supersedes any heading; heading-only
@@ -135,6 +188,16 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
         type: 'clear_for_appr',
         callSign: aircraft.callSign,
         rate: TURN_RATE_DEG_S,   // smooth handoff turn — the plugin rotates the nose onto the approach course at this °/s of game time
+      });
+      resetCommand();
+      return;
+    }
+    if (sel.alt != null) {
+      electronAPI.sendPatchCommand({
+        type: 'altitude',
+        callSign: aircraft.callSign,
+        targetFt: sel.alt,
+        rate: ALT_RATE_FPM,   // smooth vertical, ft/min of game time
       });
       resetCommand();
       return;
@@ -153,19 +216,20 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
     resetCommand();
   }, [aircraft, currentHeading, electronAPI, sel, resetCommand]);
 
-  /** Accept a choice: Cancel abandons; type word → heading slider panel;
-      Send → dispatch the composed command. */
+  /** Accept a choice: Cancel abandons; type word → heading/altitude slider
+      panel; Send → dispatch the composed command. */
   const select = useCallback((key) => {
     if (key === 'cancel') { resetCommand(); return; }   // abandon the whole command — keep the strip selected
     if (key === 'send') { sendPatch(); return; }
-    if (key === 'heading') { setValType(key); return; }
-    // Clear for Approach supersedes a composed heading (dropped — never sent).
-    if (key === 'clearAppr') { setSel((s) => ({ ...s, clearAppr: true, heading: null })); return; }
+    if (key === 'heading' || key === 'altitude') { setValType(key); return; }
+    // Clear for Approach supersedes a composed heading/altitude (dropped —
+    // never sent).
+    if (key === 'clearAppr') { setSel((s) => ({ ...s, clearAppr: true, heading: null, alt: null })); return; }
   }, [sendPatch, resetCommand]);
 
   // Escape mirrors Cancel: abandons the composed line (the strip stays
-  // selected). The heading step is the only pending-value state now, and
-  // it carries its own Send/Cancel — Escape from it abandons like Cancel.
+  // selected). The heading/altitude steps are pending-value states with
+  // their own Send/Cancel — Escape from them abandons like Cancel.
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') resetCommand();
@@ -196,34 +260,58 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   // frames are relayed to only exists then).
   if (!aircraft || witchMode || aircraft.controlSeat !== CHANNEL_TYPE_APPROACH || bepInExActive !== true) return null;
 
-  // The command text being built: 'Fly Heading 090' or
-  // 'Clear for Approach'. While the slider is open the live value (slider
-  // position, defaulting to the aircraft's current heading) sits on the
-  // line.
+  // The command text being built: 'Fly Heading 090', 'Fly Altitude 5000' or
+  // 'Clear for Approach'. While a slider is open the live value (slider
+  // position, defaulting to the aircraft's current heading/altitude) sits
+  // on the line.
   const hdg = sel.heading ?? currentHeading;
+  const alt = sel.alt ?? (altitudeBase ? altitudeBase.current : null);
   const parts = [];
   if (valType === 'heading') parts.push('Fly Heading ' + pad3(hdg));
   else if (sel.heading != null && !sel.clearAppr) parts.push('Fly Heading ' + pad3(sel.heading));
+  if (valType === 'altitude') parts.push('Fly Altitude ' + alt);
+  else if (sel.alt != null && !sel.clearAppr) parts.push('Fly Altitude ' + sel.alt);
   if (sel.clearAppr) parts.push('Clear for Approach');
   const text = parts.join(', ');
 
   return (
     <div className="flight-strips-command-wrap">
       {/* All choices for the current step — horizontal option row flush
-          above the line; every choice is a click. Fly Heading swaps the
-          row for a 001–360 slider (thumb at the aircraft's current
-          heading) with Send / Cancel. */}
+          above the line; every choice is a click. Fly Heading / Fly
+          Altitude swap the row for a slider panel (thumb at the aircraft's
+          current heading/altitude) with Send / Cancel. */}
       {valType === 'heading' ? (
         <div className="fcc-suggest fcc-heading-row" style={{ left: popupLeft ?? 0 }} ref={popupRef}>
           <input
-            className="fcc-heading-slider"
+            className="fcc-heading-slider fcc-plane-thumb"
             type="range"
             min={1}
             max={360}
             value={hdg}
+            style={{ '--hdg': `${hdg - 90}deg`, '--thumb-plane': `url("${PLANE_THUMB_URI}")` }}
             onChange={(ev) => setSel((s) => ({ ...s, heading: +ev.target.value }))}
           />
           <span className="fcc-heading-readout">{pad3(hdg)}</span>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
+        </div>
+      ) : valType === 'altitude' && altitudeBase ? (
+        // 1000-ft slider from ALT_MIN_FT up to max(ALT_MAX_FT, the rounded
+        // current) — the rounded current always sits on it (the default
+        // thumb); only cruising aircraft above 9000 ft extend the range.
+        <div className="fcc-suggest fcc-heading-row" style={{ left: popupLeft ?? 0 }} ref={popupRef}>
+          <input
+            className="fcc-heading-slider"
+            type="range"
+            min={ALT_MIN_FT}
+            max={Math.max(ALT_MAX_FT, altitudeBase.current)}
+            step={1000}
+            value={alt}
+            onChange={(ev) => setSel((s) => ({ ...s, alt: +ev.target.value }))}
+          />
+          <span className="fcc-heading-readout">{alt}</span>
           <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
           <span className="fcc-suggest-sep">{'|'}</span>

@@ -45,6 +45,9 @@ public static class OverrideController
         public int CfaTicks;           // v6: de-snap step counter (10 s hard cap)
         public int RescheduleLogs;     // v7: per-tick reschedule re-assert log spam guard (first 3, then every 30th)
         public Vector3 GameIntended;   // v8-d: the game's own steering output (path tangent), stashed per tick by CommandedDirection
+        public float AltTargetFt;      // COMMANDED altitude, ft; <= 0 = no altitude command (nothing written)
+        public float AltCurrentFt;     // smoothed intermediate altitude, ft — what is actually written each tick
+        public float AltRateFpm;       // vertical rate, ft/GAME-minute; <= 0 = INSTANT (seeded at the command)
     }
 
     private static readonly Dictionary<Aircraft, Entry> _overrides = new();
@@ -177,17 +180,27 @@ public static class OverrideController
         return Time.fixedDeltaTime * Mathf.Max(0f, Time.timeScale);
     }
 
-    /// <summary>Unified patch API: "update_heading" | "update_position" (legacy) | "clear_for_appr".</summary>
+    // ── altitude constants (2026-08-04) ──────────────────────────────────
+    // Conversion (user-confirmed): 1 GU = 100 m → ft = y × 100/0.3048 ≈
+    // y × 328.084; GU = ft × 0.003048. Sanity: Y = 15.24 GU = 5000 ft (the
+    // game's approach ceiling — the same 15.24 clearForApproach's
+    // InitialPosition uses).
+    internal const float FeetPerGameUnit = 100f / 0.3048f;   // ≈ 328.08399
+    private const float GameUnitPerFoot = 0.3048f / 100f;    // = 0.003048
+    private const float DefaultAltRateFpm = 1000f;           // plugin default when the frame omits rate
+
+    /// <summary>Unified patch API: "update_heading" | "update_position" (legacy) | "clear_for_appr" | "altitude".</summary>
     public static bool PatchAircraft(string commandType, string callsign,
                                      Vector3 direction = default, float speedKnots = 0f,
                                      string apprName = null, bool useNative = true,
-                                     float turnRateDeg = 0f)
+                                     float turnRateDeg = 0f, float altTargetFt = 0f, float altRateFpm = 0f)
     {
         switch (commandType)
         {
             case "update_heading":  return patchHeading(callsign, direction, turnRateDeg);
             case "update_position": return patchHeading(callsign, direction, turnRateDeg);   // legacy alias (kts ignored)
             case "clear_for_appr":  return clearForApproach(callsign, speedKnots, apprName, useNative, turnRateDeg);
+            case "altitude":        return patchAltitude(callsign, altTargetFt, altRateFpm);
             default:                return false;
         }
     }
@@ -223,19 +236,22 @@ public static class OverrideController
         // seed Current AT the command: with Current left at the old heading and
         // RotateTowards maxDelta <= 0 the nose would never converge — frozen.
         Vector3 current = cmd;
+        _overrides.TryGetValue(ac, out var existing);
         if (turnRateDeg > 0f)
         {
-            if (_overrides.TryGetValue(ac, out var existing) && existing.Current.sqrMagnitude > 1e-6f)
+            if (existing != null && existing.Current.sqrMagnitude > 1e-6f)
                 current = existing.Current;                             // mid-turn re-command — continue from here
             else if (ac.Direction.sqrMagnitude > 1e-6f)
                 current = ac.Direction.normalized;                      // fresh command — start from the real nose
         }
 
-        var e = new Entry {
-            Direction = cmd,
-            Current = current,
-            TurnRateDeg = turnRateDeg,
-        };
+        // Mutate-in-place (2026-08-04): a heading command must not disturb an
+        // active climb/descend-and-maintain — the altitude channels
+        // (AltTargetFt/AltCurrentFt/AltRateFpm) survive on the existing entry.
+        var e = existing != null ? existing : new Entry();
+        e.Direction = cmd;
+        e.Current = current;
+        e.TurnRateDeg = turnRateDeg;
         _overrides[ac] = e;
 
         // After-state: what the override commands. Speed and position are not
@@ -243,6 +259,57 @@ public static class OverrideController
         // its own speed, pointing at the commanded heading.
         float aHdg = HeadingDeg(e.Direction);
         Plugin.LogMsg($"override: {callsign} before hdg {(bHdg < 0f ? "n/a" : bHdg + "°")} spd {bSpd:F0} kt → after hdg {(aHdg < 0f ? "none (game's own)" : aHdg + "°")} rate {turnRateDeg:F0}°/s (heading-only — game keeps position & speed)");
+        return true;
+    }
+
+    // ── altitude: climb/descend-and-maintain override (2026-08-04) ───────
+
+    /// <summary>Force the aircraft's Y toward `targetFt` (feet). X/Z, heading,
+    /// speed, and route stay 100% the game's — the aircraft keeps flying its
+    /// own lateral path at its own speed; only the vertical position (model Y
+    /// + HeightFeet readout + visible view Y) is overridden. `rateFpm` > 0
+    /// moves the altitude smoothly at that many ft/GAME-minute (GameDt-scaled
+    /// — the same game-time rule as the heading turn, frozen while paused);
+    /// <= 0 (omitted) uses DefaultAltRateFpm (1000). targetFt <= 0 / NaN is
+    /// invalid and rejected.</summary>
+    public static bool patchAltitude(string callsign, float targetFt, float rateFpm = 0f)
+    {
+        var ac = FindByCallsign(callsign);
+        if (ac == null) return false;
+
+        // NaN parses fine and compares false to everything — `<= 0` alone
+        // would let it through; reject explicitly. +Infinity converges in one
+        // tick (≈ instant).
+        if (targetFt <= 0f || float.IsNaN(targetFt))
+        {
+            Plugin.LogMsg($"override: {callsign} altitude REJECTED — target {targetFt} ft is not a valid altitude (> 0)");
+            return false;
+        }
+
+        // Before-state: the game's own altitude at patch receipt (same channel
+        // the editor telemetry derives ft from — position.y).
+        float bAltFt = ac.Position.y * FeetPerGameUnit;
+
+        float rate = rateFpm > 0f ? rateFpm : DefaultAltRateFpm;
+
+        // Smooth-vertical start pose: seed AltCurrentFt from where the aircraft
+        // ACTUALLY is — the game's own motion has been writing position.y up to
+        // this tick. Mid-transition re-commands keep the existing entry's
+        // AltCurrentFt: the aircraft re-targets and keeps moving from its
+        // intermediate altitude (mirror patchHeading).
+        float currentFt = bAltFt;
+        if (_overrides.TryGetValue(ac, out var existing) && existing.AltTargetFt > 0f)
+            currentFt = existing.AltCurrentFt;
+
+        // Mutate-in-place: a heading override (Direction) or a cfa de-snap
+        // (CfaFollow) keeps running — only the altitude channels change.
+        var e = existing != null ? existing : new Entry();
+        e.AltTargetFt = targetFt;
+        e.AltCurrentFt = currentFt;
+        e.AltRateFpm = rate;
+        _overrides[ac] = e;
+
+        Plugin.LogMsg($"override: {callsign} before alt {bAltFt:F0} ft → after alt {targetFt:F0} ft rate {rate:F0} ft/min (X/Z + heading stay the game's)");
         return true;
     }
 
@@ -264,8 +331,8 @@ public static class OverrideController
         var ac = FindByCallsign(callsign);
         if (ac == null) return false;
 
-        // The override only touched the heading channels — the game resumes
-        // writing them on the next tick, nothing else needs restoring.
+        // The override only touched the heading/altitude channels — the game
+        // resumes writing them on the next tick, nothing else needs restoring.
         return _overrides.Remove(ac);
     }
 
@@ -438,6 +505,29 @@ public static class OverrideController
             WriteHeading(ac, e);
         }
 
+        // ALTITUDE override (2026-08-04): force the aircraft's vertical
+        // position toward the commanded altitude. X/Z stay 100% the game's —
+        // the dynamics keeps integrating its own lateral path; only Y (model
+        // + HeightFeet readout) is overridden, and the SetWorldPosition
+        // channel lock holds the visible view. Zero target = no altitude
+        // command (nothing is touched).
+        if (e.AltTargetFt > 0f)
+        {
+            // SMOOTH VERTICAL — the same GAME-TIME-aware dt rule as the turn
+            // (GameDt, 2026-08-04): rate ft/GAME-minute → per-tick step =
+            // rate × dt/60. 0 while paused → frozen with the game; ×2 speed
+            // doubles the per-tick step so the move completes in the same
+            // GAME time. Rate <= 0 = INSTANT — AltCurrentFt was seeded at the
+            // command, so the else-branch is the pre-smoothing write verbatim.
+            if (e.AltRateFpm > 0f)
+                e.AltCurrentFt = Mathf.MoveTowards(e.AltCurrentFt, e.AltTargetFt,
+                    e.AltRateFpm * GameDt() / 60f);
+            else
+                e.AltCurrentFt = e.AltTargetFt;
+
+            WriteAltitude(ac, e);
+        }
+
         // 2) diagnostics — sample the first ~0.5 s of the override so a single
         //    live test shows whether the heading holds across the channels and
         //    that the game's own motion (view3D-pos / dynVel / rbVel) is
@@ -460,6 +550,21 @@ public static class OverrideController
         ac.Direction = e.Current;
         if (ac.DirectionReactive != null) ac.DirectionReactive.Value = e.Current;
         if (ac.Rotation != null) ac.Rotation.Value = HeadingDeg(e.Current);
+    }
+
+    /// <summary>Write the smoothed intermediate altitude to the model's
+    /// vertical channels — the serialized reactive `_position` (Y only — X/Z
+    /// are the game's own, fresh from this Step's dynamics write) and the
+    /// `HeightFeet` readout the game may drive its UI from. The visible view
+    /// is locked by the SetWorldPosition channel hijack (Patches).</summary>
+    private static void WriteAltitude(Aircraft ac, Entry e)
+    {
+        float y = e.AltCurrentFt * GameUnitPerFoot;
+        var p = ac.Position;
+        p.y = y;
+        ac.Position = p;
+        if (ac.PositionReactive != null) ac.PositionReactive.Value = p;
+        if (ac.HeightFeet != null) ac.HeightFeet.Value = e.AltCurrentFt;   // game readout in ft
     }
 
     /// <summary>One-sample read-back of every heading channel plus the game's
@@ -491,7 +596,13 @@ public static class OverrideController
         var dyn = ac._dynamics;
         string dynPos = dyn != null ? $"({dyn.Position.x:F1},{dyn.Position.y:F1},{dyn.Position.z:F1})" : "none";
         string dynVel = dyn != null ? dyn.Velocity.magnitude.ToString("F2") : "none";
-        Plugin.LogMsg($"diag: {ac.CallSign} step {e.StepCount} spd {kts:F0} pos ({p.x:F1},{p.y:F1},{p.z:F1}) propHdg {propHdg:F2}° rxHdg {rxHdg:F2}° rot {rot:F2}° view3D-euler {view} view3D-pos {viewPos} rbVel {rbVel} dynPos {dynPos} dynVel {dynVel}");
+        // Altitude after-state: the commanded/smoothed readout vs the target
+        // (2026-08-04). Note the game's own dynPos above shows the game's Y —
+        // the "untouched lateral motion" proof.
+        string altStr = "altCur n/a altTgt n/a";
+        if (e.AltTargetFt > 0f)
+            altStr = $"altCur {p.y * FeetPerGameUnit:F0}ft altTgt {e.AltTargetFt:F0}ft";
+        Plugin.LogMsg($"diag: {ac.CallSign} step {e.StepCount} spd {kts:F0} pos ({p.x:F1},{p.y:F1},{p.z:F1}) propHdg {propHdg:F2}° rxHdg {rxHdg:F2}° rot {rot:F2}° view3D-euler {view} view3D-pos {viewPos} rbVel {rbVel} dynPos {dynPos} dynVel {dynVel} {altStr}");
     }
 
     /// <summary>The first visible Aircraft3D bound to this aircraft (its own Step
@@ -524,6 +635,15 @@ public static class OverrideController
         }
         return Vector3.zero;
     }
+
+    /// <summary>Read accessor for the view-level hijack (Patches). Returns the
+    /// SMOOTHED intermediate altitude in GU (Y) — the channel lock must feed
+    /// AltCurrent, not the target, or the game's own glideslope write inside
+    /// Step would snap the aircraft to the full command every tick (mirror
+    /// CommandedDirection). 0 = no altitude command.</summary>
+    public static float CommandedAltitudeY(Aircraft ac)
+        => _overrides.TryGetValue(ac, out var e) && e.AltTargetFt > 0f
+            ? e.AltCurrentFt * GameUnitPerFoot : 0f;
 
     /// <summary>Heading in the game UI's convention — public for the view hijack.</summary>
     public static float GameHeading(Vector3 dir) => HeadingDeg(dir);
@@ -637,8 +757,10 @@ public static class OverrideController
         // streams the same shape; this line marks the command-time snapshot).
         ParamTrace.DumpNow(callsign, "BEFORE");
 
-        // 1) A heading override would fight the approach — drop it (the
-        //    override only touched heading channels, nothing to restore).
+        // 1) A heading/altitude override would fight the approach — drop it
+        //    (the override only touched heading/altitude channels, nothing to
+        //    restore; an altitude hold ends with the handoff — the aircraft
+        //    descends the glideslope).
         _overrides.Remove(ac);
 
         // 2) Only aircraft on the STAR can be handed to the approach.

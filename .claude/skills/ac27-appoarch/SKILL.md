@@ -1,18 +1,19 @@
 ---
 name: ac27-appoarch
-description: AC27Appoarch — the BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches in-game aircraft (heading override, STAR→final-approach handoff) through the game's native UDP command channel. Use this skill whenever working in mods/AC27Appoarch (building, editing the Harmony patches, debugging a patch that isn't sticking in-game), when the editor's FlightPatchCommandBar or send-patch-command bridge is involved, when handling clear_for_appr / update_heading / track frames, or when diagnosing BepInEx/IL2CPP interop issues against the game's Aircraft/Dynamics classes. The plugin's deep documentation lives in its own README — read it before making changes.
+description: AC27Appoarch — the BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches in-game aircraft (heading + altitude override, STAR→final-approach handoff) through the game's native UDP command channel. Use this skill whenever working in mods/AC27Appoarch (building, editing the Harmony patches, debugging a patch that isn't sticking in-game), when the editor's FlightPatchCommandBar or send-patch-command bridge is involved, when handling clear_for_appr / update_heading / altitude / track frames, or when diagnosing BepInEx/IL2CPP interop issues against the game's Aircraft/Dynamics classes. The plugin's deep documentation lives in its own README — read it before making changes.
 ---
 
 # AC27Appoarch — Plugin Skill
 
 ## What This Is
 
-A BepInEx 6 IL2CPP plugin (`com.ac27.appoarch` v1.0.0) that live-patches aircraft in Airport Control 25 (Playtest) **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Two commands:
+A BepInEx 6 IL2CPP plugin (`com.ac27.appoarch` v1.0.0) that live-patches aircraft in Airport Control 25 (Playtest) **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Three commands:
 
 | Command | What it does |
 |---|---|
 | `update_heading` | **Heading-only** override (2026-08-03, decoupled): forces the aircraft's nose to a heading each fixed tick. Position/speed/route stay 100% the game's — the aircraft keeps flying its own route. Speed is never read for control, never written. `update_position` is a legacy alias whose kts field is ignored |
 | `clear_for_appr` | Hands a STAR (state 30) aircraft onto final approach (state 5). **v5+ (2026-08-04) natural flow: NO path is planted** — the game's own `ApproachState.Init` derives the approach path from the aircraft's own `AppPointList` (its procedure IAF→threshold) and the game's pre-capture steering heads the aircraft to the IAF. **v6+ bounded de-snap:** the nose rotates at the frame's `rate=N` (default 3°/s of GAME time — `GameDt()`) toward the IAF (the game's own pre-capture aim — zero fight) and releases ONLY on capture (dist < 120 u) or the 36k-tick cap (v9; the on-aim release caused the 21° line-capture overshoot); the flight model's ETA is re-anchored and the AVC target speed lifted to the commanded knots while pre-capture (the crawl fixes). `_waitingForCommands = [PermitLanding]` |
+| `altitude` | **Climb/descend-and-maintain** override (2026-08-04): forces the aircraft's **Y only** toward a target altitude in feet — X/Z, heading, speed, route stay 100% the game's. Smooth by default (`Mathf.MoveTowards` at rate ft/min of GAME time — same `GameDt()` rule as the turn, frozen while paused; default `DefaultAltRateFpm` = 1000 ft/min). Conversion: 1 GU = 100 m → ft = y × 100/0.3048 (≈ ×328.084; Y = 15.24 GU = 5000 ft). Channels: `Aircraft.Position` (Y), `PositionReactive`, `HeightFeet` (ft readout) + the `Aircraft3D.SetWorldPosition` view lock (Y only). Orthogonal to a heading override (entries mutate in place); ends via `clear_for_appr` or a level switch |
 
 Design document: `mods/docs/bepinex-aircraft-override-report.md` (API design §4, input surfaces §5, verification checklist §8). Class dumps: `mods/docs/aircraft-classes-report.md` + `aircraft-classes-inventory.md` (Cpp2IL dumps of GameAssembly.dll). **Read the plugin's `mods/AC27Appoarch/README.md` before making changes — it records every runtime-verified fact and every failed attempt.**
 
@@ -41,6 +42,7 @@ Verify load in `<GameDir>\BepInEx\LogOutput.log`:
 ```
 AC27Appoarch loaded
 [AC27Appoarch] Aircraft.Step (postfix): applied
+[AC27Appoarch] View hijack (Aircraft3D.SetWorldPosition): applied
 [AC27Appoarch] UDP Mechanism A (AircraftUdpCommandService.ExecuteSelectAircraft): applied
 [AC27Appoarch] UDP Mechanism B (AircraftUdpCommandService.FixedTick postfix): applied
 [AC27Appoarch] UDP Mechanism B (Socket.Receive capture, 4-arg): applied
@@ -70,9 +72,13 @@ await electronAPI.sendPatchCommand({ type: 'clear_for_appr', callSign, rate: 3 }
 await electronAPI.sendPatchCommand({ type: 'clear_for_appr', callSign, kts: 200 });
 // diagnostics: dump the aircraft's full params every 1 s (send again to stop)
 await electronAPI.sendPatchCommand({ type: 'track', callSign: 'CSC6918' });
+// climb/descend-and-maintain: force the aircraft's Y toward 5000 ft at
+// 1000 ft/min of GAME time (rate omitted = the same plugin default; only
+// Y is overridden — X/Z, heading, speed and route stay the game's)
+await electronAPI.sendPatchCommand({ type: 'altitude', callSign, targetFt: 5000, rate: 1000 });
 ```
 
-Heading → (dx, dy) = `(sin H, cos H)`, **+Z = north, +X = east** (030 → `0.5, 0.8660`; 180 → `0, -1`; 360 → `0, 1`). Zero direction = no heading command (the game's own heading passes through) — it does NOT clear an override (there is no clear path; the override ends via `clear_for_appr` or a level switch).
+Heading → (dx, dy) = `(sin H, cos H)`, **+Z = north, +X = east** (030 → `0.5, 0.8660`; 180 → `0, -1`; 360 → `0, 1`). Zero direction = no heading command (the game's own heading passes through) — it does NOT clear an override (there is no clear path; the override ends via `clear_for_appr` or a level switch). Altitude conversion: 1 GU = 100 m → ft = `position.y × 100/0.3048` (≈ ×328.084; Y = 15.24 GU = 5000 ft — the editor's `FT_PER_GU` and the plugin's `FeetPerGameUnit` are the same constant).
 
 ### Mechanism A — hijacked SelectAircraft frame (always available)
 
@@ -91,11 +97,11 @@ offset 8   payload   Mechanism A: 12-byte NUL-padded ASCII callsign
 
 The 64-byte NUL-padded payload is a **hard contract**: Mechanism B reads the datagram back from the game's receive buffer after the tick and finds the payload by scanning for the first NUL at offset 8 — variable-length frames get stale buffer bytes appended. The stock game logs one `UnknownCommand` warning per 0x00E7 frame; the plugin suppresses that exact warning via a `LogBadDatagramOnce` prefix (other bad-datagram reasons still surface).
 
-Payload table (pipe-delimited ASCII): `update_heading|CS|dx|dy[|rate]` · `clear_for_appr|CS[|kts][|appr][|native=0][|rate=N]` (a numeric field is always kts; `native=0` skips `CommandContinueApproach`; `rate=N` — keyed, any position after CS — is the bounded de-snap's °/s of game time for the handoff (v6+; drives the pre-capture nose rotation toward the IAF); a bare numeric rate would be misread as the kts approach speed) · `track|CS`.
+Payload table (pipe-delimited ASCII): `update_heading|CS|dx|dy[|rate]` · `clear_for_appr|CS[|kts][|appr][|native=0][|rate=N]` (a numeric field is always kts; `native=0` skips `CommandContinueApproach`; `rate=N` — keyed, any position after CS — is the bounded de-snap's °/s of game time for the handoff (v6+; drives the pre-capture nose rotation toward the IAF); a bare numeric rate would be misread as the kts approach speed) · `altitude|CS|targetFt[|rateFpm]` (climb/descend-and-maintain — targetFt in feet, ≤0/NaN rejected; rateFpm UNKEYED ft/min of GAME time, omitted/≤0 = the plugin's 1000 default; only Y overridden) · `track|CS`.
 
 ## Editor Integration
 
-- **`FlightPatchCommandBar.jsx`** (Flight Strips window): click/drag-driven composer for approach-channel aircraft (`controlSeat=5`) — `Fly Heading` (heading-only `update_heading`; opens a 001–360 slider defaulted to the aircraft's live telemetry heading) or `Clear for Approach` (`clear_for_appr`, supersedes any composed heading). Sends exactly ONE frame, then resets its line — Send/Cancel keep the strip selected so the next command can be composed for the same aircraft. See the `ac27-editor` skill's map-windows reference.
+- **`FlightPatchCommandBar.jsx`** (Flight Strips window): click/drag-driven composer for approach-channel aircraft (`controlSeat=5`) — `Fly Heading` (heading-only `update_heading`; opens a 001–360 slider defaulted to the aircraft's live telemetry heading; 2026-08-05 its thumb is a plane knob — `MAP_ICON_PATH` as a `data:` SVG `-webkit-mask-image`, rotated by `--hdg`), `Fly Altitude` (`altitude|CS|targetFt|rate`; opens a 1000-ft slider from 1000 up to max(9000, the rounded current altitude), thumb defaulted to the current altitude rounded to the nearest 1000 — hidden without live telemetry), or `Clear for Approach` (`clear_for_appr`, supersedes any composed heading/altitude; heading and altitude also supersede each other). Sends exactly ONE frame, then resets its line — Send/Cancel keep the strip selected so the next command can be composed for the same aircraft. **The knob depends on `img-src 'self' data:` in `index.html`'s CSP** — without it the data: URI is blocked by `default-src 'self'` and the knob fails silently (2026-08-05 fix; the inline `<svg><path>` map icons are unaffected — not image fetches). See the `ac27-editor` skill's map-windows reference.
 - **`electron/main.js` `send-patch-command`** builds the 0x00E7 frame (parts joined with `|`, NUL-padded to 64 B) → `sendUdpCommand(0x00E7, field)`.
 
 ## Verified Hook Points & Interop Gotchas

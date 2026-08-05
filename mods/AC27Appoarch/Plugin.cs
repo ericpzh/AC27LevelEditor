@@ -51,6 +51,14 @@ public class Plugin : BasePlugin
             AccessTools.PropertySetter(typeof(Aircraft), "Direction"),
             prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.SetDirectionPrefix))));
 
+        // Design A v4 (2026-08-04): hijack the view's position sync — the
+        // last writer of the visible transform (same rationale as the
+        // SetDirection hijack). Only Y is hijacked: the altitude override
+        // commands the aircraft's vertical position; X/Z stay the game's.
+        TryPatch(harmony, "View hijack (Aircraft3D.SetWorldPosition)",
+            AccessTools.Method(typeof(Aircraft3D), "SetWorldPosition"),
+            prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.Aircraft3DSetWorldPositionPrefix))));
+
         // UDP Mechanism A (report §5.4): `!`-prefixed callsigns are patch frames.
         // Runtime-verified hook (2026-08-03): `ExecuteSelectAircraft(string)` —
         // plain string param, always binds. (`Execute(in UdpCommand)` NREs at

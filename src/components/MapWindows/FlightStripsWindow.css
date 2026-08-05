@@ -846,6 +846,36 @@
 
 .fcc-heading-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
 
+/* Heading-only plane knob: the heading slider's thumb is an airplane icon
+   rotated to the commanded heading (the altitude slider reuses
+   .fcc-heading-slider and keeps the plain circle above). --hdg/--thumb-plane
+   are set inline by the component: --hdg = (heading − 90)° since the
+   MAP_ICON_PATH artwork points east at rotate 0 — 360 → nose up, 090 →
+   right, 180 → down, 270 → left, matching the maps.
+   The plane is applied as a MASK over an accent-colored thumb rather than
+   as a background image: a data-URI SVG is a standalone image document, so
+   fill=currentColor would resolve to black, not the element's color —
+   invisible on the dark UI. The mask uses only the icon's alpha, so the
+   tint is a real CSS var and the icon shows accent-blue. */
+.fcc-heading-slider.fcc-plane-thumb::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 0;
+  background: var(--accent);       /* the plane's tint (mask shows it through) */
+  -webkit-mask-image: var(--thumb-plane, none);
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  box-shadow: none;
+  filter: drop-shadow(0 0 4px rgba(91, 141, 239, 0.4));
+  transform: rotate(var(--hdg, 0deg));
+}
+
+.fcc-heading-slider.fcc-plane-thumb::-webkit-slider-thumb:hover {
+  transform: rotate(var(--hdg, 0deg)) scale(1.15);
+}
+
 .fcc-heading-readout {
   color: var(--accent);
   font-weight: 600;

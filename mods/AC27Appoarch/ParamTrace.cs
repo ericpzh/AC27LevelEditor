@@ -72,6 +72,7 @@ public static class ParamTrace
         var sb = new StringBuilder();
         var p = ac.Position;
         sb.Append("pos (").Append(F(p.x)).Append(',').Append(F(p.y)).Append(',').Append(F(p.z)).Append(')');
+        sb.Append(" alt ").Append((p.y * OverrideController.FeetPerGameUnit).ToString("F0")).Append("ft");
         sb.Append(" hdg ").Append(OverrideController.GameHeading(ac.Direction).ToString("F0")).Append('°');
         float spd = ac.TaxiSpeed != null ? Convert.ToSingle(ac.TaxiSpeed.Value)
                   : ac.AirSpeedKnot != null ? Convert.ToSingle(ac.AirSpeedKnot.Value)

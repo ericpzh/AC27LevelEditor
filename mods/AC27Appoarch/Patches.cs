@@ -42,6 +42,20 @@ public static class Patches
         if (d.sqrMagnitude > 1e-6f) direction = d;
     }
 
+    // ── Design A v4: view-level ALTITUDE hijack (2026-08-04) ─────────────
+    // The 3D view syncs the visible transform from the model's reactive
+    // properties via SetWorldPosition — the LAST writer of the visible
+    // position (same class + pattern as the SetDirection hijack). Only Y is
+    // hijacked: the altitude override commands the aircraft's vertical
+    // position; X/Z stay 100% the game's.
+    public static void Aircraft3DSetWorldPositionPrefix(Aircraft3D __instance, ref Vector3 position)
+    {
+        if (__instance.Source == null) return;
+        if (!OverrideController.IsOverridden(__instance.Source)) return;
+        var y = OverrideController.CommandedAltitudeY(__instance.Source);
+        if (y > 0f) position.y = y;
+    }
+
     // ── Design A v3: channel lock — the model's direction write entry ────
     // `_direction` is private to Aircraft, so `set_Direction` (plus Step's
     // internal write, which the Step postfix already overwrites) is the ONLY
@@ -237,6 +251,33 @@ public static class Patches
                         Plugin.LogMsg($"patch: update_heading → {parts[1]} ({dx},{dy}){(rate > 0f ? $" rate {rate:F0}°/s" : "")}: {(ok ? "applied" : "NOT FOUND")} (Mechanism B)");
                     }
                     catch (Exception ex) { Plugin.LogMsg($"patch: update_heading → {parts[1]} FAILED: {ex.GetType().Name}: {ex.Message}"); }
+                }
+                break;
+            case "altitude":
+                // altitude|CS|targetFt[|rateFpm] — climb/descend-and-maintain
+                // override (2026-08-04): forces the aircraft's Y toward
+                // targetFt (feet) at rateFpm ft/GAME-minute (smooth — the same
+                // GameDt-scaled fixed-tick interpolation as the heading turn,
+                // frozen while paused); rateFpm omitted or <= 0 = the plugin
+                // default (DefaultAltRateFpm, 1000 ft/min). targetFt <= 0
+                // (incl. NaN) is invalid → patchAltitude rejects with a logged
+                // REJECTED line. (The optional field is parsed inside the
+                // if-body — an `out var` in the `||` guard would be unassigned
+                // when parts.Length == 3.)
+                if ((parts.Length == 3 || parts.Length == 4)
+                    && float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var targetFt)
+                    && (parts.Length == 3 || float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out _)))
+                {
+                    float rateFpm = 0f;
+                    if (parts.Length == 4 && float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var r4) && r4 > 0f)
+                        rateFpm = r4;
+                    try
+                    {
+                        bool ok = OverrideController.PatchAircraft("altitude", parts[1],
+                            altTargetFt: targetFt, altRateFpm: rateFpm);
+                        Plugin.LogMsg($"patch: altitude → {parts[1]} {targetFt:F0} ft{(rateFpm > 0f ? $" rate {rateFpm:F0} ft/min" : "")}: {(ok ? "applied" : "NOT FOUND / invalid target")} (Mechanism B)");
+                    }
+                    catch (Exception ex) { Plugin.LogMsg($"patch: altitude → {parts[1]} FAILED: {ex.GetType().Name}: {ex.Message}"); }
                 }
                 break;
             case "clear_for_appr":

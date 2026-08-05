@@ -1933,7 +1933,7 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 });
 
 // ─── IPC: Send patch command to game (plugin UDP Mechanism B, extended frame 0x00E7) ───
-// patch: { type: 'update_heading'|'update_position'|'clear_for_appr', callSign, dx?, dy?, rate?, kts?, appr? }
+// patch: { type: 'update_heading'|'update_position'|'clear_for_appr'|'altitude', callSign, dx?, dy?, rate?, kts?, appr?, targetFt? }
 // update_heading is HEADING-ONLY (2026-08-03, decoupled): it carries no
 // speed — the plugin never touches speed; the game keeps position & speed
 // and only the nose heading is overridden. Optional rate = smooth-turn
@@ -1946,7 +1946,13 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 // approach procedure. rate on a clear_for_appr frame (sent as the keyed
 // field rate=N, 2026-08-03) = smooth-turn °/s of game time for the handoff
 // turn — the nose rotates onto the approach course instead of snapping;
-// omitted = the plugin's standard-rate default (3°/s).
+// omitted = the plugin's standard-rate default (3°/s). 'altitude'
+// (2026-08-04) = climb/descend-and-maintain: targetFt in FEET — the
+// plugin's conversion is ft = position.y × 100/0.3048 (1 GU = 100 m,
+// user-confirmed; 15.24 GU = 5000 ft). Optional rate = ft/min of GAME time
+// (UNKEYED field — the altitude parser reads it as ft/min, unlike cfa's
+// keyed rate=; omitted = the plugin's 1000 ft/min default). Only Y is
+// overridden — X/Z, heading and speed stay the game's.
 // Frame contract: 8 B header + payload NUL-padded to exactly 64 bytes (72 B total).
 // The plugin's FixedTick() postfix reads the datagram back from the service's
 // receive buffer, so the payload field must be fixed-length + NUL-terminated.
@@ -1965,6 +1971,12 @@ ipcMain.handle('send-patch-command', async (_e, patch) => {
       // field as the approach speed in kts — an unkeyed rate would be
       // misread (rate 3 → 3 kt).
       if (patch.rate) parts.push('rate=' + patch.rate);
+    }
+    else if (patch.type === 'altitude') {
+      // UNKEYED rate: the altitude parser reads a bare numeric 4th field as
+      // ft/min (its own case — never keyed like cfa's rate=).
+      parts.push(patch.targetFt);
+      if (patch.rate) parts.push(patch.rate);
     }
     const field = Buffer.alloc(64);                       // NUL-padded payload field
     Buffer.from(parts.join('|'), 'ascii').copy(field, 0);
