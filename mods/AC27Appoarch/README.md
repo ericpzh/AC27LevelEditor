@@ -30,6 +30,8 @@ copies `AC27Appoarch.dll` to:
 <GameDir>\BepInEx\plugins\AC27Appoarch\AC27Appoarch.dll
 ```
 
+The GitHub release workflow builds the plugin in CI (`dotnet build ... -c Release -p:GameDir=... -p:SkipDeploy=true`) against the vendored build-time refs in `lib/BepInEx/{core,interop}` — compile-time dependencies only, never shipped; the release attaches just `AC27Appoarch.dll`. After the game updates, refresh the vendored refs with `sync-refs.ps1` and commit the changes.
+
 Manual install = same thing: drop the DLL (with the rest of `BepInEx\plugins` untouched) and start the game. BepInEx 6 IL2CPP loads plugins from `BepInEx\plugins\<folder>\` at startup — **fully restart the game** (not just a level reload) after dropping or replacing the plugin.
 
 Verify load in `BepInEx\LogOutput.log`:

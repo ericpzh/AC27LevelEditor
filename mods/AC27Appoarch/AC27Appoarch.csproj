@@ -31,7 +31,7 @@
     <Reference Include="Il2CppSystem.Core"><HintPath>$(GameDir)\BepInEx\interop\Il2CppSystem.Core.dll</HintPath></Reference>
     <Reference Include="Stateless"><HintPath>$(GameDir)\BepInEx\interop\Stateless.dll</HintPath></Reference>
   </ItemGroup>
-  <Target Name="Deploy" AfterTargets="Build">
+  <Target Name="Deploy" AfterTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
     <MakeDir Directories="$(GameDir)\BepInEx\plugins\AC27Appoarch" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins\AC27Appoarch" />
   </Target>
