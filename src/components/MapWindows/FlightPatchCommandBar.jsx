@@ -13,15 +13,15 @@ import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
  * At every step ALL the next choices pop up as a horizontal option row
  * flush against the line above it — never a typed answer:
  *   Fly Heading | Clear for Approach | Cancel  (nothing yet)
- *   030 | 060 | … | 360 | Cancel        (picking the pending value)
+ *   [slider 001–360] | Send | Cancel    (Fly Heading: drag to set, thumb = current heading)
  *   Send | Cancel                       (one option committed)
- * Send appears as soon as at least one option is committed. Cancel steps
- * back from a value list, otherwise abandons the whole command. Every
- * choice is a click; clicking Send sends ONE frame to the AC27Appoarch
+ * Send appears as soon as at least one option is committed — or right away
+ * inside the heading slider panel (it has its own Send). Cancel abandons
+ * the whole command. Every choice is a click; the heading value is
+ * dragged. Clicking Send sends ONE frame to the AC27Appoarch
  * plugin via the editor's send-patch-command bridge: an `update_heading`
  * frame (heading-only) or a `clear_for_appr` frame (approach handoff).
- * Escape mirrors Cancel (pending value pick → previous menu; otherwise
- * abandon the line).
+ * Escape mirrors Cancel (abandons the line).
  *
  * Send/Cancel/Escape keep the strip selected: the composer stays mounted
  * (keyed by callsign) and resets its own line, so the next command can be
@@ -55,10 +55,9 @@ import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
  *
  * Heading math (plugin's game-verified convention): heading H → (dx, dy) =
  * (sin H, cos H), +Z = north, +X = east (030 → 0.5, 0.8660; 180 → 0, -1).
- * A heading is always chosen before Send (the noseDirection fallback died
- * with the speed option).
+ * The slider (001–360) defaults to the aircraft's live noseDirection
+ * heading, so Send always has a value even if the user never drags it.
  */
-const HEADINGS = [30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360];
 const TURN_RATE_DEG_S = 3;   // IFR standard-rate turn — the plugin rotates the nose at this °/s of GAME time
 const pad3 = (n) => String(n).padStart(3, '0');
 
@@ -83,6 +82,16 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
     setValType(null);
   }, []);
 
+  // Current heading of the selected aircraft, inverted from telemetry
+  // noseDirection (Unity +Z north, +X east) — the plugin's dx = sin H,
+  // dy = cos H convention, so atan2(x, z) recovers H. Rounded to the
+  // nearest degree so the slider thumb lands on a whole 001–360 value.
+  const currentHeading = useMemo(() => {
+    if (!aircraft?.noseDirection) return 360;
+    const h = Math.round((Math.atan2(aircraft.noseDirection.x, aircraft.noseDirection.z) * 180) / Math.PI);
+    return ((h % 360) + 360) % 360 || 360;
+  }, [aircraft]);
+
   // BepInEx Debug Mode gate: patch frames are relayed to the AC27Appoarch
   // plugin over UDP, which only exists while BepInEx is installed — the
   // composer stays closed otherwise. Re-checked on mount, on aircraft
@@ -105,12 +114,6 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
 
   /** All choices for the current step — depends on what is composed. */
   const options = useMemo(() => {
-    if (valType) {
-      return [
-        ...HEADINGS.map((v) => ({ key: v, label: pad3(v) })),
-        { key: 'cancel', label: 'Cancel' },
-      ];
-    }
     const list = [];
     // Clear for Approach supersedes heading: once chosen, the heading
     // option is gone (it would be ignored anyway).
@@ -120,7 +123,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
     if (sel.heading != null || sel.clearAppr) list.push({ key: 'send', label: 'Send' });
     list.push({ key: 'cancel', label: 'Cancel' });
     return list;
-  }, [valType, sel]);
+  }, [sel]);
 
   /** Compose + send ONE frame, then reset the line (the strip stays
       selected). Clear for Approach supersedes any heading; heading-only
@@ -136,10 +139,10 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
       resetCommand();
       return;
     }
-    // Send only appears once a heading is committed (clearAppr returned
-    // above), so a heading is always present here.
-    if (sel.heading == null) return;
-    const rad = (sel.heading * Math.PI) / 180;
+    // Send is available in the slider panel even with no drag — the slider
+    // defaults to the aircraft's live heading (currentHeading).
+    const h = sel.heading ?? currentHeading;
+    const rad = (h * Math.PI) / 180;
     electronAPI.sendPatchCommand({
       type: 'update_heading',
       callSign: aircraft.callSign,
@@ -148,37 +151,28 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
       rate: TURN_RATE_DEG_S,                               // smooth turn, °/s of game time
     });
     resetCommand();
-  }, [aircraft, electronAPI, sel, resetCommand]);
+  }, [aircraft, currentHeading, electronAPI, sel, resetCommand]);
 
-  /** Accept a choice: Cancel steps back / abandons; type word → value list;
-      value → commit to the line; Send → dispatch the composed command. */
+  /** Accept a choice: Cancel abandons; type word → heading slider panel;
+      Send → dispatch the composed command. */
   const select = useCallback((key) => {
-    if (key === 'cancel') {
-      if (valType) setValType(null);   // back to the previous menu
-      else resetCommand();             // abandon the whole command — keep the strip selected
-      return;
-    }
+    if (key === 'cancel') { resetCommand(); return; }   // abandon the whole command — keep the strip selected
     if (key === 'send') { sendPatch(); return; }
     if (key === 'heading') { setValType(key); return; }
     // Clear for Approach supersedes a composed heading (dropped — never sent).
     if (key === 'clearAppr') { setSel((s) => ({ ...s, clearAppr: true, heading: null })); return; }
-    // Numeric value for the pending type.
-    setSel((s) => ({ ...s, [valType]: key }));
-    setValType(null);
-  }, [valType, sendPatch, resetCommand]);
+  }, [sendPatch, resetCommand]);
 
-  // Escape mirrors Cancel: pending value pick → previous menu; else reset
-  // the line (the strip stays selected).
+  // Escape mirrors Cancel: abandons the composed line (the strip stays
+  // selected). The heading step is the only pending-value state now, and
+  // it carries its own Send/Cancel — Escape from it abandons like Cancel.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'Escape') {
-        if (valType) setValType(null);
-        else resetCommand();
-      }
+      if (e.key === 'Escape') resetCommand();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [valType, resetCommand]);
+  }, [resetCommand]);
 
   // Anchor the option row at the end of the line; flip to the right edge
   // when it would overflow the window. The row renders from the first pass
@@ -203,19 +197,39 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   if (!aircraft || witchMode || aircraft.controlSeat !== CHANNEL_TYPE_APPROACH || bepInExActive !== true) return null;
 
   // The command text being built: 'Fly Heading 090' or
-  // 'Clear for Approach'. The pending type word sits on the line while
-  // its value list shows.
+  // 'Clear for Approach'. While the slider is open the live value (slider
+  // position, defaulting to the aircraft's current heading) sits on the
+  // line.
+  const hdg = sel.heading ?? currentHeading;
   const parts = [];
-  if (sel.heading != null && !sel.clearAppr) parts.push('Fly Heading ' + pad3(sel.heading));
-  else if (valType === 'heading') parts.push('Fly Heading');
+  if (valType === 'heading') parts.push('Fly Heading ' + pad3(hdg));
+  else if (sel.heading != null && !sel.clearAppr) parts.push('Fly Heading ' + pad3(sel.heading));
   if (sel.clearAppr) parts.push('Clear for Approach');
   const text = parts.join(', ');
 
   return (
     <div className="flight-strips-command-wrap">
       {/* All choices for the current step — horizontal option row flush
-          above the line; every choice is a click */}
-      {options.length > 0 && (
+          above the line; every choice is a click. Fly Heading swaps the
+          row for a 001–360 slider (thumb at the aircraft's current
+          heading) with Send / Cancel. */}
+      {valType === 'heading' ? (
+        <div className="fcc-suggest fcc-heading-row" style={{ left: popupLeft ?? 0 }} ref={popupRef}>
+          <input
+            className="fcc-heading-slider"
+            type="range"
+            min={1}
+            max={360}
+            value={hdg}
+            onChange={(ev) => setSel((s) => ({ ...s, heading: +ev.target.value }))}
+          />
+          <span className="fcc-heading-readout">{pad3(hdg)}</span>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
+        </div>
+      ) : options.length > 0 && (
         <div className="fcc-suggest" style={{ left: popupLeft ?? 0 }} ref={popupRef}>
           {options.map((o, i) => (
             <React.Fragment key={o.key}>

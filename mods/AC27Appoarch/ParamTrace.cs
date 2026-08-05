@@ -110,6 +110,27 @@ public static class ParamTrace
         sb.Append(" chTts=").Append(F(dp.TargetTaxiSpeed));
         sb.Append(" chDTts=").Append(F(dp.DynamicsTargetTaxiSpeed));
         sb.Append(" chFwd=").Append(dp.ForwardSpeed);
+        // Actual motion + dynamics-level speed (2026-08-04 v4): chTs=240 alone
+        // does NOT prove the aircraft moves at 240 kt — the live-log crawl
+        // showed every channel speed field at 240 while the rigidbody crept at
+        // 1.24 u/s. rbVel/dynVel = the Aircraft3D rigidbody velocity magnitude
+        // and Dynamics.Velocity magnitude (the crawl's rbVel 1.24 vs dynVel
+        // 0.00 signature); dynTs=/dynDTts=/dynAir= = the dynamics-level speed
+        // fields the game itself sets (report §1) — the channel writes may be
+        // the wrong surface.
+        if (dyn != null)
+        {
+            sb.Append(" dynVel=").Append(dyn.Velocity.magnitude.ToString("F2"));
+            try { sb.Append(" dynTs=").Append(F(dyn.TaxiSpeed)); } catch { sb.Append(" dynTs=?"); }
+            try { sb.Append(" dynDTts=").Append(F(dyn.DynamicsTargetTaxiSpeed)); } catch { sb.Append(" dynDTts=?"); }
+            try { sb.Append(" dynAir=").Append(F(dyn.AirSpeedKnot)); } catch { sb.Append(" dynAir=?"); }
+        }
+        var v3d = OverrideController.FindView3D(ac);
+        if (v3d != null && v3d.transform != null)
+        {
+            var rb = v3d.GetComponent<Rigidbody>();
+            sb.Append(" rbVel=").Append(rb != null ? rb.velocity.magnitude.ToString("F2") : "none");
+        }
         sb.Append(" params=").Append(DescribeParams(dp.DynamicsParams));
         if (ac._route != null) sb.Append(" route=").Append(ac._route.Value);
         var w = ac._waitingForCommands != null ? ac._waitingForCommands.Value : null;
@@ -240,6 +261,10 @@ public static class ParamTrace
             {
                 sb.Append(" afmRem=").Append(st.afm.RemainingDistance.ToString("F1"));
                 try { sb.Append(" afmAppT=").Append(st.afm._appRouteTime); } catch { sb.Append(" afmAppT=?"); }
+                // 2026-08-04 v4: the docs' §8.17 "next suspect" once chTs=240
+                // is visible — the flight model's speed adjustment + plan ETA.
+                try { sb.Append(" afmAdj=").Append(st.afm.SpeedAdjustment); } catch { sb.Append(" afmAdj=?"); }
+                try { sb.Append(" afmETA=").Append(st.afm.ETA); } catch { sb.Append(" afmETA=?"); }
             }
             return sb.ToString();
         }

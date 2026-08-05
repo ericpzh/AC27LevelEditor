@@ -241,15 +241,16 @@ public static class Patches
                 break;
             case "clear_for_appr":
                 // clear_for_appr|CS[|kts][|appr][|native=0][|rate=N] — kts =
-                // approach speed in raw knots (omitted/0 = leave the aircraft's
-                // speed untouched); appr = named procedure (omitted = nearest
+                // approach speed in raw knots (omitted/0 = the ACL default 240
+                // — always written); appr = named procedure (omitted = nearest
                 // APP route); native=0 skips CommandContinueApproach — its
                 // deferred flow restores the aircraft's runtime data
                 // ("Dynamics: restore runtime data: FlyApproaching"), the
-                // suspected revert back to the STAR; rate=N = smooth-turn
-                // °/GAME-second for the handoff turn (2026-08-03 — the nose
-                // rotates onto the approach course instead of snapping;
-                // omitted = the plugin's ClearForApprTurnRateDeg default).
+                // suspected revert back to the STAR; rate=N is the bounded
+                // de-snap's rotation rate — the pre-capture nose rotation
+                // toward the IAF at that many °/GAME-second (v6, 2026-08-04;
+                // the frame's rate, or the plugin's 3°/s default; the v5 note
+                // "inert — no tangent snap" was superseded by the de-snap).
                 // Keyed scan (not positional): any field after CS that is
                 // `native=0` or `rate=N` is a flag — rate=3 as a bare field
                 // would otherwise be misread as a 3 kt approach speed (a

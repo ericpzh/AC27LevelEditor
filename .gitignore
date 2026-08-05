@@ -20,6 +20,10 @@ __pycache__/
 mods/**/bin/
 mods/**/obj/
 
+# Runtime trace log (regenerated every playtest session; evidence is cited
+# in README by callsign/date, not by file)
+mods/AC27Appoarch/logs
+
 # Test artifacts
 coverage/
 test-results/

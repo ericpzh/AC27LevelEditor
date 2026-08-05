@@ -780,12 +780,12 @@
 /* ══════════════════════════════════════════════════════════════════
    Patch command composer — command-line style. The command is built up
    step-by-step in ONE line, like a shell prompt:
-   CSN9355: Fly Heading 090, Fly Speed 200kt
+   CSN9355: Fly Heading 090
    At every step the next choices pop up as a horizontal option row flush
-   against the line above it: Fly Heading | Fly Speed | Cancel → value
-   list + Cancel → Fly Speed | Send | Cancel → Send | Cancel. Mouse-only:
-   every choice is a click; Cancel steps back from a value list, otherwise
-   abandons the command; Send dispatches one combined frame.
+   against the line above it: Fly Heading | Clear for Approach | Cancel →
+   heading slider (001–360, thumb at the aircraft's current heading) |
+   Send | Cancel. Mouse-only: every choice is a click (the slider drags);
+   Cancel abandons the command; Send dispatches one frame.
    ══════════════════════════════════════════════════════════════════ */
 
 .flight-strips-command-wrap {
@@ -810,6 +810,49 @@
   font-family: 'Consolas', 'Courier New', monospace;
   font-size: 11px;
   white-space: nowrap;
+}
+
+/* Heading slider panel — replaces the fixed value-button list: a 001–360
+   range with the thumb defaulted to the aircraft's current heading (live
+   from telemetry until the user drags). Track/thumb mirror the speed
+   slider in TimelineEditors.css. */
+.fcc-heading-row {
+  gap: 6px;
+}
+
+.fcc-heading-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 160px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+}
+
+.fcc-heading-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(91, 141, 239, 0.3);
+  transition: transform 0.1s;
+}
+
+.fcc-heading-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
+
+.fcc-heading-readout {
+  color: var(--accent);
+  font-weight: 600;
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
 }
 
 .fcc-suggest-sep {
