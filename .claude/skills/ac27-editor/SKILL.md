@@ -82,7 +82,7 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 
 ## Schema
 
-All `.acl` files use the **v4 schema** — a GATCARC4 binary container (introduced by the 2026-07 game update). v4 is the only format: there is no schema detection and no `isV4` flag anywhere in the code. Every parse/extract/build path goes through `buildPkIndex()` → `PKStaticEntities` + `$blobdoc` navigation.
+All `.acl` files use the **v4 schema** — a GATCARC4 binary container (introduced by a game update). v4 is the only format: there is no schema detection and no `isV4` flag anywhere in the code. Every parse/extract/build path goes through `buildPkIndex()` → `PKStaticEntities` + `$blobdoc` navigation.
 
 - **Binary container:** Files are stored on disk as GATCARC4 binary (magic "GATCARC4", SHA-256 payload integrity, append checkpoint frames). `readAclText()` decodes to Odin JSON text; `writeAcl()` re-encodes preserving the on-disk format.
 - **Flight plans:** Flight-plan entries live in `StaticData.$blobdoc.StaticItems.$rcontent` with `flight-plan:` key prefix. Uses `InitialArrival`/`InitialDeparture` field names. InBlockTime/TakeoffTime always 0 (game computes dynamically). `AirlineName` stores the 3-letter airline code (e.g. `"CDG"`), defaulted to the callsign prefix for new flights. The leg is chosen by the internal `isDeparture` flag (set at creation; the serializer falls back to `OffBlockTime` presence — `_isDepartureFlight()`).

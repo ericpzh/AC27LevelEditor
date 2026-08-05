@@ -83,14 +83,25 @@ public static class Patches
     // plain string param — always binds, so it is the Mechanism A hook.
     public static bool UdpExecuteSelectAircraftPrefix(string callSign)
     {
-        if (string.IsNullOrEmpty(callSign) || callSign[0] != '!') return true;   // normal select → game as usual
-        if (callSign.StartsWith("!5:", StringComparison.Ordinal))
+        try
         {
-            var cs = callSign.Substring(3);
-            Plugin.LogMsg($"patch: clear_for_appr → {cs} (Mechanism A)");
-            OverrideController.PatchAircraft("clear_for_appr", cs);
+            if (string.IsNullOrEmpty(callSign) || callSign[0] != '!') return true;   // normal select → game as usual
+            if (callSign.StartsWith("!5:", StringComparison.Ordinal))
+            {
+                var cs = callSign.Substring(3);
+                Plugin.LogMsg($"patch: clear_for_appr → {cs} (Mechanism A)");
+                OverrideController.PatchAircraft("clear_for_appr", cs);
+            }
+            return false;                                                // consumed — the game's selection path never runs
         }
-        return false;                                                // consumed — the game's selection path never runs
+        catch (Exception ex)
+        {
+            // Never let a plugin failure propagate into the game's UDP tick —
+            // an uncaught throw here (e.g. a stale route-service cache across a
+            // level restart) would kill the command service's FixedTick.
+            Plugin.LogMsg($"patch: clear_for_appr → {(string.IsNullOrEmpty(callSign) ? "<null>" : callSign)} FAILED: {ex.GetType().Name}: {ex.Message} (Mechanism A)");
+            return false;                                                // still consumed — the game's selection path never runs
+        }
     }
 
     // ── UDP Mechanism B: extended frames on command id 0x00E7 (§5.4) ────
@@ -119,11 +130,16 @@ public static class Patches
     private const ushort PatchCommandId = 0x00E7;
     private const int PayloadFieldSize = 64;
 
-    private static byte[] _lastHandledFrame;   // dedup: the postfix fires every tick and the
-                                               // buffer still holds our frame when no new
-                                               // datagram arrived — skip re-dispatch. Shared by
-                                               // the FixedTick and Socket.Receive paths so only
-                                               // the first one to see a frame dispatches it.
+    private static byte[] _lastHandledFrame;   // dedup: the FixedTick postfix fires every tick
+                                               // and the buffer still holds our frame when no
+                                               // new datagram arrived — skip re-dispatch. Only
+                                               // the FixedTick path consults it (the Socket.
+                                               // Receive path dispatches every real datagram,
+                                               // byte identity notwithstanding); updated at
+                                               // dispatch so only the first path to see a frame
+                                               // dispatches it. Cleared at level load
+                                               // (ResetDispatchState) so a re-sent identical
+                                               // frame after an in-game level restart dispatches.
     private static bool _diagBuffer, _diagHeader, _diagSuppressed, _diagLegacyKts;
 
     private static void LogOnce(ref bool flag, string msg)
@@ -162,9 +178,12 @@ public static class Patches
     // If the game's own parse clears/reuses `_receiveBuffer` before the FixedTick
     // postfix runs, this path catches the frame at the socket instead. Only the
     // game's UDP command socket produces frames with our magic — every other
-    // Socket.Receive in the game is filtered out by TryDispatchFrame's header
-    // checks (cheap first-4-bytes compare). Dedup is shared with the FixedTick
-    // path, so whichever sees the frame first dispatches it once.
+    // Socket.Receive in the game is filtered out by the header checks in
+    // DispatchDatagram (cheap first-4-bytes compare). A Receive return is a NEW
+    // datagram by definition, so this path dispatches WITHOUT the content dedup
+    // (a byte-identical re-send is still a real command — e.g. re-applying an
+    // override after a level restart); _lastHandledFrame is updated at dispatch
+    // so the FixedTick path skips the same frame afterwards.
     public static void UdpSocketReceivePostfix(Il2CppStructArray<byte> buffer, int offset, int size,
                                                SocketFlags socketFlags, int __result)
         => HandleReceivedDatagram(buffer, offset, __result);
@@ -179,11 +198,15 @@ public static class Patches
             if (buffer == null || count <= 0 || offset < 0 || offset + count > buffer.Length) return;
             var managed = new byte[count];
             for (int i = 0; i < count; i++) managed[i] = buffer[offset + i];
-            TryDispatchFrame(managed);
+            DispatchDatagram(managed);   // a Receive return is a NEW datagram — no content dedup
         }
         catch { }
     }
 
+    // FixedTick-only entry: the game drains the socket inside FixedTick, so
+    // the buffer may still hold the previous frame when no new datagram
+    // arrived — the content dedup skips that stale re-read. The Socket.Receive
+    // path (HandleReceivedDatagram) bypasses this entirely.
     private static void TryDispatchFrame(byte[] buf)
     {
         if (buf == null || buf.Length < UdpCommandParser.HeaderSize + PayloadFieldSize) return;
@@ -200,6 +223,17 @@ public static class Patches
                 LogOnce(ref _diagHeader, $"udp: receive buffer all-zero after game parse (len {buf.Length}) — Socket.Receive capture is the working path");
             return;                                              // foreign datagram — silent
         }
+        DispatchDatagram(buf);
+    }
+
+    // Shared dispatch tail: header validation + payload parse + command
+    // switch. Called by the Socket.Receive path (unconditionally — a new
+    // datagram) and the FixedTick path (after its content dedup). Updates
+    // _lastHandledFrame at dispatch, so whichever path claims a frame first
+    // is the only one to dispatch it.
+    private static void DispatchDatagram(byte[] buf)
+    {
+        int fieldLen = UdpCommandParser.HeaderSize + PayloadFieldSize;
         if (BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(UdpCommandParser.VersionOffset, 2)) != UdpCommandParser.Version)
         {
             LogOnce(ref _diagHeader, $"udp: version mismatch — head {BitConverter.ToString(buf, 0, 8)}");
@@ -280,29 +314,68 @@ public static class Patches
                     catch (Exception ex) { Plugin.LogMsg($"patch: altitude → {parts[1]} FAILED: {ex.GetType().Name}: {ex.Message}"); }
                 }
                 break;
+            case "update_speed":
+                // update_speed|CS|kts[|accel=N] — fly-speed override
+                // (2026-08-04; v12 2026-08-05 accel=N): kts = raw knots (int;
+                // the editor slider range 180-240). POSITIONAL parse — the
+                // 3rd field is ALWAYS kts (unlike cfa's keyed scan, where any
+                // bare numeric field is kts); the optional 4th field MUST be
+                // the keyed `accel=N` (the ramp rate in kt of GAME time per
+                // second; omitted = the plugin default 5 kt/s). A bare
+                // numeric 4th field is REJECTED — the kts contract is the 3rd
+                // field only. kts <= 0 disarms the override defensively (the
+                // UI never sends it — patchSpeed logs the drop). The vars are
+                // declared before the `if`: an `out var` in the `||` guard
+                // would be unassigned when the length check short-circuits
+                // (the altitude case's comment at 298-300 documents the trap).
+                {
+                    float kts = 0f, accel = 0f;
+                    if ((parts.Length == 3 || parts.Length == 4)
+                        && float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out kts)
+                        && (parts.Length == 3
+                            || (parts[3].StartsWith("accel=", StringComparison.Ordinal)
+                                && float.TryParse(parts[3].Substring(6), NumberStyles.Float, CultureInfo.InvariantCulture, out accel)
+                                && accel > 0f)))
+                    {
+                        try
+                        {
+                            bool ok = OverrideController.PatchAircraft("update_speed", parts[1],
+                                speedKnots: kts, speedAccelKtsPerSec: accel);
+                            Plugin.LogMsg($"patch: update_speed → {parts[1]} {kts:F0} kt{(accel > 0f ? $" accel {accel:F0} kt/s" : "")}: {(ok ? "applied" : "NOT FOUND")} (Mechanism B)");
+                        }
+                        catch (Exception ex) { Plugin.LogMsg($"patch: update_speed → {parts[1]} FAILED: {ex.GetType().Name}: {ex.Message}"); }
+                    }
+                }
+                break;
             case "clear_for_appr":
-                // clear_for_appr|CS[|kts][|appr][|native=0][|rate=N] — kts =
-                // approach speed in raw knots (omitted/0 = the ACL default 240
-                // — always written); appr = named procedure (omitted = nearest
-                // APP route); native=0 skips CommandContinueApproach — its
-                // deferred flow restores the aircraft's runtime data
-                // ("Dynamics: restore runtime data: FlyApproaching"), the
-                // suspected revert back to the STAR; rate=N is the bounded
-                // de-snap's rotation rate — the pre-capture nose rotation
-                // toward the IAF at that many °/GAME-second (v6, 2026-08-04;
-                // the frame's rate, or the plugin's 3°/s default; the v5 note
-                // "inert — no tangent snap" was superseded by the de-snap).
+                // clear_for_appr|CS[|kts][|appr][|native=0][|rate=N][|accel=N] —
+                // kts = approach speed in raw knots (omitted/0 = the ACL
+                // default 240 — always written); appr = named procedure
+                // (omitted = nearest APP route); native=0 skips
+                // CommandContinueApproach — its deferred flow restores the
+                // aircraft's runtime data ("Dynamics: restore runtime data:
+                // FlyApproaching"), the suspected revert back to the STAR;
+                // rate=N is the bounded de-snap's rotation rate — the
+                // pre-capture nose rotation toward the IAF at that many
+                // °/GAME-second (v6, 2026-08-04; the frame's rate, or the
+                // plugin's 3°/s default; the v5 note "inert — no tangent snap"
+                // was superseded by the de-snap); accel=N (v12, 2026-08-05)
+                // is the pre-capture speed-lift ramp rate in kt of GAME time
+                // per second (omitted = the plugin default 5 kt/s).
                 // Keyed scan (not positional): any field after CS that is
-                // `native=0` or `rate=N` is a flag — rate=3 as a bare field
-                // would otherwise be misread as a 3 kt approach speed (a
-                // numeric field is always kts; the first other field is the
-                // procedure name).
+                // `native=0`, `rate=N` or `accel=N` is a flag — rate=3 as a
+                // bare field would otherwise be misread as a 3 kt approach
+                // speed (a numeric field is always kts; the first other field
+                // is the procedure name; accel= must be checked BEFORE the
+                // appr-name capture — accel=10 is non-numeric and would
+                // otherwise be taken as a procedure name).
                 try
                 {
                     float speedKts = 0f;
                     string appr = null;
                     bool useNative = true;
                     float cfaRate = 0f;
+                    float speedAccel = 0f;
                     for (int i = 2; i < parts.Length; i++)
                     {
                         var p = parts[i];
@@ -312,12 +385,16 @@ public static class Patches
                             && float.TryParse(p.Substring(5), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedRate)
                             && parsedRate > 0f)
                         { cfaRate = parsedRate; continue; }
+                        if (p.StartsWith("accel=", StringComparison.Ordinal)
+                            && float.TryParse(p.Substring(6), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedAccel)
+                            && parsedAccel > 0f)
+                        { speedAccel = parsedAccel; continue; }
                         if (float.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedKts))
                             speedKts = parsedKts;                // a numeric field is always kts
                         else if (appr == null) appr = p;         // first non-numeric field = procedure name
                     }
-                    bool ok2 = OverrideController.PatchAircraft("clear_for_appr", parts[1], default, speedKts, appr, useNative, cfaRate);
-                    Plugin.LogMsg($"patch: clear_for_appr → {parts[1]}{(speedKts > 0f ? " " + speedKts.ToString("0", CultureInfo.InvariantCulture) + " kt" : "")}{(appr != null ? " [" + appr + "]" : "")}{(useNative ? "" : " [native=0]")}{(cfaRate > 0f ? $" rate {cfaRate:F0}°/s" : "")}: {(ok2 ? "applied" : "NOT FOUND / not on STAR")} (Mechanism B)");
+                    bool ok2 = OverrideController.PatchAircraft("clear_for_appr", parts[1], default, speedKts, appr, useNative, cfaRate, speedAccelKtsPerSec: speedAccel);
+                    Plugin.LogMsg($"patch: clear_for_appr → {parts[1]}{(speedKts > 0f ? " " + speedKts.ToString("0", CultureInfo.InvariantCulture) + " kt" : "")}{(appr != null ? " [" + appr + "]" : "")}{(useNative ? "" : " [native=0]")}{(cfaRate > 0f ? $" rate {cfaRate:F0}°/s" : "")}{(speedAccel > 0f ? $" accel {speedAccel:F0} kt/s" : "")}: {(ok2 ? "applied" : "NOT FOUND / not on STAR")} (Mechanism B)");
                 }
                 catch (Exception ex) { Plugin.LogMsg($"patch: clear_for_appr → {parts[1]} FAILED: {ex.GetType().Name}: {ex.Message}"); }
                 break;
@@ -337,6 +414,41 @@ public static class Patches
                 }
                 break;
         }
+    }
+
+    // ── Level-restart state reset (2026-08-05) ───────────────────────────
+    // The plugin is process-lifetime: an in-game level restart (game stays
+    // up) leaves static state stale. ResetDispatchState clears the frame
+    // dedup (a re-sent identical frame would otherwise be swallowed forever
+    // — the "overrides stopped after a level restart" bug) and the
+    // restore-log (so the level-load burst detector below re-arms on load
+    // N+1). Called from OverrideController.ResetForLevelLoad.
+    public static void ResetDispatchState()
+    {
+        _lastHandledFrame = null;
+        _restoreLogged.Clear();
+    }
+
+    // ── Level restart detection (2026-08-05) ────────────────────────────
+    // The game's AircraftUdpCommandService is a per-level VContainer service
+    // (IStartable/IFixedTickable/IDisposable — same DI family as GameTime
+    // and AirwayRouteService): Start() fires when the command channel
+    // (re)binds, Dispose() when it tears down — the exact moments per-level
+    // plugin state becomes invalid. If the service turns out to be
+    // session-scoped, these fire only at game start (harmless no-op resets);
+    // the restore-burst detector in DynamicsRestoreRuntimeDataPostfix is the
+    // every-load backstop. Both are wrapped so a reset can never throw into
+    // the game.
+    public static void UdpCommandServiceStartPostfix(AircraftUdpCommandService __instance)
+    {
+        try { OverrideController.ResetForLevelLoad("AircraftUdpCommandService.Start — command channel (re)bound"); }
+        catch (Exception ex) { Plugin.LogMsg($"level reset: Start FAILED: {ex.GetType().Name}: {ex.Message}"); }
+    }
+
+    public static void UdpCommandServiceDisposePrefix(AircraftUdpCommandService __instance)
+    {
+        try { OverrideController.ResetForLevelLoad("AircraftUdpCommandService.Dispose — command channel torn down"); }
+        catch (Exception ex) { Plugin.LogMsg($"level reset: Dispose FAILED: {ex.GetType().Name}: {ex.Message}"); }
     }
 
     // ── UDP log suppression: the game's own parse rejects id 0x00E7 and warns
@@ -364,6 +476,16 @@ public static class Patches
     // spam on every load); tracked aircraft log every call.
     private static readonly HashSet<string> _restoreLogged = new(StringComparer.Ordinal);
 
+    // v12 (2026-08-05): level-load burst detection — a level load restores
+    // EVERY aircraft, so a burst of FIRST-TIME callsigns within a 1 s window
+    // is the load signature (a cfa-deferred restore is a REPEAT call for an
+    // already-logged callsign — never counts). Fires one reset per burst;
+    // ResetDispatchState clears _restoreLogged so the burst re-detects on
+    // load N+1. The backstop to the command-service Start/Dispose triggers.
+    private static float _restoreWindowStart = float.MinValue;
+    private static int _restoreFirstCalls;
+    private static bool _restoreResetPending;
+
     public static void DynamicsRestoreRuntimeDataPostfix(Dynamics __instance)
     {
         try
@@ -371,6 +493,21 @@ public static class Patches
             var cs = OverrideController.FindCallsignByDynamics(__instance) ?? "<unknown>";
             bool first = _restoreLogged.Add(cs);
             bool tracked = ParamTrace.IsTracked(cs);
+
+            float now = Time.unscaledTime;
+            if (now - _restoreWindowStart > 1.0f)
+            {
+                _restoreWindowStart = now;
+                _restoreFirstCalls = 0;
+                _restoreResetPending = false;
+            }
+            if (first) _restoreFirstCalls++;
+            if (!_restoreResetPending && _restoreFirstCalls >= 2)
+            {
+                _restoreResetPending = true;   // one reset per burst, not one per aircraft
+                OverrideController.ResetForLevelLoad("Dynamics.RestoreRuntimeData burst (level load)");
+            }
+
             if (!tracked && !first) return;
             Plugin.LogMsg($"restore: Dynamics.RestoreRuntimeData() called for {cs} (dynState={__instance.CurrentState}){(tracked ? " [tracked]" : first ? " [first call]" : "")}");
         }
@@ -397,6 +534,38 @@ public static class Patches
             Plugin.LogMsg($"dyn-state: {cs} SetCurrentState({StateName(currentState)}, {ParamsName(dynamicsParams)})");
         }
         catch { }   // never throw into the game's state machine
+    }
+
+    // ── v10 probe (2026-08-05): AVCController.SetTargetSpeed — the game's
+    // own speed-target writes (the ~144-kt writer hunt for the update_speed
+    // override). Postfix on a plain method (the plugin itself calls it — not
+    // an IL2CPP field accessor, so the patch applies cleanly). The owner map
+    // + the armed-value filter live in OverrideController: our own re-asserts
+    // write exactly the armed TargetKts and are filtered; a hit is BY
+    // DEFINITION a game-side write of a different target.
+    public static void AvcSetTargetSpeedPostfix(Il2CppObjectBase __instance, float speed)
+    {
+        // NOTE: the parameter MUST be named `speed` — Harmony binds postfix
+        // params by NAME, and the game's method is SetTargetSpeed(float speed)
+        // (the real type is ContextCross.AutonomousVehicleControl.Controller —
+        // what Dynamics.AVCController is typed as). A `value`-named param
+        // fails with "Parameter 'value' not found" (the documented field-
+        // accessor signature — this one is a genuine method, so the rename
+        // fixes it; the field-accessor case is NOT patchable either way).
+        try { OverrideController.OnAvcTargetWrite(__instance, speed); }
+        catch { }   // never throw into the game's speed controller
+    }
+
+    // ── v11 probe (2026-08-05): SpeedController.SetTargetSpeed — the ramp's
+    // own target setter; the suspected REAL speed-target writer (the v10 AVC
+    // probe caught NO game-side AVCController.SetTargetSpeed calls live, so
+    // the game either writes the targetSpeed field directly or targets the
+    // ramp instead). Same postfix shape as the AVC probe — the parameter MUST
+    // be named `speed` (Harmony name-binding; see the note above).
+    public static void ScSetTargetSpeedPostfix(Il2CppObjectBase __instance, float speed)
+    {
+        try { OverrideController.OnScTargetWrite(__instance, speed); }
+        catch { }   // never throw into the game's speed controller
     }
 
     // NOTE: the DynamicsParams SETTER is deliberately NOT patched — it is an

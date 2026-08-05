@@ -71,7 +71,7 @@ The three timeline sections inside `MetaData` hold frame entries with string `Ti
 
 ## File Schema (v4 Only)
 
-The 2026-07 game update introduced the **v4 schema**; it is now the only schema. Every `.acl` file is a **GATCARC4 binary archive** (see below). When decoded, the header document has these top-level sections:
+A game update introduced the **v4 schema**; it is now the only schema. Every `.acl` file is a **GATCARC4 binary archive** (see below). When decoded, the header document has these top-level sections:
 
 | Section | Description |
 |---------|-------------|

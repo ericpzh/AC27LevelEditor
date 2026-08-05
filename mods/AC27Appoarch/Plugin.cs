@@ -15,7 +15,7 @@ namespace AC27Appoarch;
 /// AC27Appoarch — direct aircraft control via the game's native UDP command
 /// channel (report §5.4). Input: UDP only.
 /// </summary>
-[BepInPlugin("com.ac27.appoarch", "AC27Appoarch", "1.0.0")]
+[BepInPlugin("com.ac27.appoarch", "AC27Appoarch", "1.0.1")]
 public class Plugin : BasePlugin
 {
     public static Plugin Instance;
@@ -90,6 +90,25 @@ public class Plugin : BasePlugin
             AccessTools.Method(typeof(Socket), "Receive", new[] { typeof(Il2CppStructArray<byte>) }),
             postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpSocketReceiveSimplePostfix))));
 
+        // Level restart (2026-08-05): the game's AircraftUdpCommandService is
+        // a per-level VContainer service (same DI family as GameTime and
+        // AirwayRouteService) — Start() fires when the command channel
+        // (re)binds, Dispose() when it tears down: the exact moments per-level
+        // plugin state becomes invalid. The patches reset ALL per-level state
+        // (overrides, object-keyed caches, the route-service cache, the frame
+        // dedup) so an in-game level restart no longer leaves stale state
+        // behind — the "overrides stopped working after a restart" bug. If the
+        // service is session-scoped they fire only at game start (harmless
+        // no-op); the Dynamics.RestoreRuntimeData burst is the every-load
+        // backstop. Explicit Type.EmptyTypes guards overload ambiguity.
+        TryPatch(harmony, "Level reset (AircraftUdpCommandService.Start postfix)",
+            AccessTools.Method(typeof(AircraftUdpCommandService), "Start", Type.EmptyTypes),
+            postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpCommandServiceStartPostfix))));
+
+        TryPatch(harmony, "Level reset (AircraftUdpCommandService.Dispose prefix)",
+            AccessTools.Method(typeof(AircraftUdpCommandService), "Dispose", Type.EmptyTypes),
+            prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpCommandServiceDisposePrefix))));
+
         // The game's own parse rejects id 0x00E7 with a one-line UnknownCommand
         // warning (the postfix cannot stop the parse, only read the buffer after
         // it) — suppress that specific reason; other bad-datagram reasons keep
@@ -114,6 +133,34 @@ public class Plugin : BasePlugin
         TryPatch(harmony, "Dynamics.SetCurrentState (trace)",
             AccessTools.Method(typeof(Dynamics), "SetCurrentState"),
             postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.DynamicsSetCurrentStatePostfix))));
+
+        // v10 probe (2026-08-05): AVCController.SetTargetSpeed postfix — the
+        // game's own speed-target writes (the ~144-kt writer hunt for the
+        // update_speed override). The AVCController type is resolved via the
+        // Dynamics.AVCController property accessor (never name the interop
+        // type — the same discipline as the other interop-typed lookups).
+        // Diagnostic-only; our own re-asserts are filtered by the armed-value
+        // check in OverrideController.OnAvcTargetWrite.
+        var avcType = AccessTools.Property(typeof(Dynamics), "AVCController")?.PropertyType;
+        if (avcType != null)
+            TryPatch(harmony, "AVC speed-target probe (AVCController.SetTargetSpeed postfix)",
+                AccessTools.Method(avcType, "SetTargetSpeed", new[] { typeof(float) }),
+                postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.AvcSetTargetSpeedPostfix))));
+        else
+            Log.LogWarning("[AC27Appoarch] AVC speed-target probe: AVCController type not resolved — NOT applied");
+
+        // v11 probe (2026-08-05): SpeedController.SetTargetSpeed postfix — the
+        // ramp's own target setter; the suspected real speed-target writer the
+        // AVC probe cannot see (no game-side AVCController.SetTargetSpeed
+        // calls appeared live). Type resolved from the AVCController's
+        // speedController property accessor (never name the interop type).
+        var scType = avcType != null ? AccessTools.Property(avcType, "speedController")?.PropertyType : null;
+        if (scType != null)
+            TryPatch(harmony, "SpeedController target probe (SpeedController.SetTargetSpeed postfix)",
+                AccessTools.Method(scType, "SetTargetSpeed", new[] { typeof(float) }),
+                postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.ScSetTargetSpeedPostfix))));
+        else
+            Log.LogWarning("[AC27Appoarch] SpeedController target probe: type not resolved — NOT applied");
 
         // NOTE: AircraftDynamicsData.DynamicsParams is NOT patched — its
         // setter is an IL2CPP field accessor (the interop stub's private-field-

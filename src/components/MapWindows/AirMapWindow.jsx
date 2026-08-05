@@ -822,7 +822,7 @@ export default function AirMapWindow({ airportIcao }) {
                             <tspan x={refX} dy="1.2em">
                               {altStr}{' '}
                               {speedToggle
-                                ? String(Math.round(ac.airSpeedKnot / 10)).padStart(2, '0')
+                                ? String(Math.round(ac.airSpeedKnot)).padStart(2, '0')
                                 : ac.aircraftType}
                             </tspan>
                           </>

@@ -17,23 +17,32 @@ import { MAP_ICON_PATH } from '../../utils/constants';
  *   [slider 001–360] | Send | Cancel    (Fly Heading: drag to set, thumb = current heading)
  *   Send | Cancel                       (one option committed)
  * Send appears as soon as at least one option is committed — or right away
- * inside the heading slider panel (it has its own Send). Cancel abandons
- * the whole command. Every choice is a click; the heading value is
- * dragged. Clicking Send sends ONE frame to the AC27Appoarch
- * plugin via the editor's send-patch-command bridge: an `update_heading`
- * frame (heading-only) or a `clear_for_appr` frame (approach handoff).
- * Escape mirrors Cancel (abandons the line).
+ * inside the heading slider panel (it has its own Send). The panels also
+ * carry Add: it chains the current command onto the line (the × beside a
+ * chained item removes it again) and returns to the options row, so the
+ * next command can be composed — Fly Speed then Fly Altitude go out
+ * together. A command type already on the chain BLACKS OUT in the options
+ * row (not selectable — one command of each type per line). Cancel
+ * abandons the whole line (chain + pending). Every choice is a click; the
+ * heading value is dragged. Clicking Send dispatches the whole line IN
+ * ORDER, one frame per command, to the AC27Appoarch plugin via the
+ * editor's send-patch-command bridge: an `update_heading` frame
+ * (heading-only), an `altitude` frame, an `update_speed` frame (fly-speed
+ * override), or a `clear_for_appr` frame (approach handoff). Escape
+ * mirrors Cancel (abandons the line).
  *
  * Send/Cancel/Escape keep the strip selected: the composer stays mounted
  * (keyed by callsign) and resets its own line, so the next command can be
  * composed for the same aircraft without re-clicking the strip. Selection
  * is released by clicking the window background.
  *
- * HEADING-ONLY override (2026-08-03, decoupled): speed was removed from
- * the composer — the plugin never touches speed. The aircraft keeps
- * flying its own route at the game's own speed; only the nose heading is
- * overridden (it points at the commanded heading while the game's
- * dynamics keeps moving it).
+ * HEADING-ONLY override (2026-08-03, decoupled): the heading frame itself
+ * carries no speed — the plugin never touches speed ON THIS FRAME. The
+ * aircraft keeps flying its own route at the game's own speed; only the
+ * nose heading is overridden (it points at the commanded heading while
+ * the game's dynamics keeps moving it). Speed is commandable separately
+ * via Fly Speed (2026-08-04) — the `update_speed` frame is the one place
+ * the plugin touches speed.
  *
  * SMOOTH TURN (2026-08-03): the update_heading frame carries a rate (°/s
  * of GAME time, TURN_RATE_DEG_S below) — the plugin rotates the nose to
@@ -48,7 +57,8 @@ import { MAP_ICON_PATH } from '../../utils/constants';
  * approach course at that rate (same game-time scaling + pause behavior)
  * instead of snapping when the approach transition lands. The frame's
  * optional approach speed (kts) is still supported for scripted use; the
- * UI no longer exposes it.
+ * UI's speed control is the separate Fly Speed command (2026-08-04) —
+ * cfa's scripted kts stays for the approach speed.
  *
  * FLY ALTITUDE (2026-08-04): a single climb/descend-and-maintain command —
  * picking it opens a slider panel exactly like Fly Heading's: a 1000-ft
@@ -62,13 +72,31 @@ import { MAP_ICON_PATH } from '../../utils/constants';
  * same game-time scaling + pause behavior as the turn); direction is
  * implicit in the picked target (above the current = climb, below =
  * descend). Only Y is overridden — X/Z, heading, speed and route stay the
- * game's.
+ * game's (speed is commandable separately — Fly Speed below).
  *
- * Clear for Approach SUPERSEDES a composed heading/altitude: picking it
- * drops any heading or altitude from the line (never sent) and removes the
- * Fly Heading / Fly Altitude options — only the clear_for_appr frame goes
- * out. Fly Heading and Fly Altitude supersede EACH OTHER the same way:
- * committing one drops the other (exactly one frame per Send).
+ * FLY SPEED (2026-08-04): a single fly-speed command — picking it opens a
+ * slider panel exactly like Fly Heading's: a 180-240 kt range (step 1),
+ * the thumb defaulting to the aircraft's live speed (telemetry
+ * airSpeedKnot is raw knots — clamped into range) so Send always has a
+ * value. The pick sends an `update_speed|CS|kts` frame (raw knots,
+ * int). The plugin re-asserts the commanded speed every tick (the ramp
+ * rides the game's own acceleration fields); the override persists —
+ * there is no end command — and ends only when clear_for_appr supersedes
+ * it or the aircraft is handed to the tower frequency. Speed is
+ * ORTHOGONAL to heading/altitude in the mod: an update_heading/altitude
+ * command does not clear an active speed override and vice versa — which
+ * is exactly why the composer lets you CHAIN them: Add appends the current
+ * command to the line (the × beside it removes it again) and returns to
+ * the options row for the next one; Send then dispatches the whole chain
+ * IN ORDER, one frame per command (the plugin applies each to the same
+ * per-aircraft override entry, so heading + speed + altitude all stay
+ * active at once).
+ *
+ * Clear for Approach SUPERSEDES a composed chain of heading/altitude/speed:
+ * picking it drops everything from the line (never sent) and removes the
+ * Fly Heading / Fly Altitude / Fly Speed options — only the clear_for_appr
+ * frame goes out (the plugin's cfa dispatch removes the whole override
+ * entry, so a chain around it would be dropped anyway).
  *
  * Heading math (plugin's game-verified convention): heading H → (dx, dy) =
  * (sin H, cos H), +Z = north, +X = east (030 → 0.5, 0.8660; 180 → 0, -1).
@@ -82,6 +110,8 @@ const TURN_RATE_DEG_S = 3;   // IFR standard-rate turn — the plugin rotates th
 const ALT_RATE_FPM = 1000;   // climb/descend speed — ft/min of GAME time (the plugin's default too)
 const ALT_MIN_FT = 1000;     // altitude slider floor
 const ALT_MAX_FT = 9000;     // altitude slider ceiling (extends to the rounded current above 9000)
+const SPEED_MIN_KTS = 180;   // fly-speed slider floor
+const SPEED_MAX_KTS = 240;   // fly-speed slider ceiling (the ACL approach-speed default)
 const FT_PER_GU = 100 / 0.3048;   // ≈ 328.084 — 1 GU = 100 m (user-confirmed; 15.24 GU = 5000 ft)
 const pad3 = (n) => String(n).padStart(3, '0');
 
@@ -99,24 +129,42 @@ const PLANE_THUMB_URI =
 export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   const electronAPI = useElectronAPI();
 
-  // Composed options: null = not chosen yet; clearAppr = Clear for Approach.
-  // heading and altitude supersede each other (one frame per Send).
-  const [sel, setSel] = useState({ heading: null, clearAppr: false, alt: null });
-  // Pending value pick ('heading' | 'altitude') — the type word is already
-  // on the line, the slider panel is showing.
+  // Pending composed option: null = not chosen yet; clearAppr = Clear for
+  // Approach. The pending heading/altitude/speed becomes a CHAIN entry via
+  // Add — the chain below is what Send dispatches, one frame per entry.
+  const [sel, setSel] = useState({ heading: null, clearAppr: false, alt: null, speed: null });
+  // Chained commands, in send order: { key, label, payload } — key/type for
+  // uniqueness, label for the line, payload is the patch object passed to
+  // sendPatchCommand. Add appends the pending command; the × beside a
+  // chained item removes it; Send dispatches chain + pending;
+  // Cancel/Escape abandon everything.
+  const [chain, setChain] = useState([]);
+  // Command types already on the chain — their options black out (a type
+  // can appear once per line; a duplicate would just be the plugin's
+  // last-frame-wins anyway).
+  const chainedTypes = useMemo(() => new Set(chain.map((c) => c.key)), [chain]);
+  // Pending value pick ('heading' | 'altitude' | 'speed') — the type word
+  // is already on the line, the slider panel is showing.
   const [valType, setValType] = useState(null);
   // Option-row x-position (measured at the end of the line).
   const [popupLeft, setPopupLeft] = useState(null);
   const cmdRef = useRef(null);
   const popupRef = useRef(null);
 
-  // Clear the composed line. Send/Cancel/Escape keep the strip selected, so
-  // this component stays mounted (keyed by callsign) — it must reset its own
-  // state instead of relying on an unmount.
-  const resetCommand = useCallback(() => {
-    setSel({ heading: null, clearAppr: false, alt: null });
+  // Drop the pending (not-yet-chained) command — used after Add and by
+  // resetCommand. The chain stays.
+  const resetPending = useCallback(() => {
+    setSel({ heading: null, clearAppr: false, alt: null, speed: null });
     setValType(null);
   }, []);
+
+  // Clear the composed line (chain + pending). Send/Cancel/Escape keep the
+  // strip selected, so this component stays mounted (keyed by callsign) —
+  // it must reset its own state instead of relying on an unmount.
+  const resetCommand = useCallback(() => {
+    resetPending();
+    setChain([]);
+  }, [resetPending]);
 
   // Current heading of the selected aircraft, inverted from telemetry
   // noseDirection (Unity +Z north, +X east) — the plugin's dx = sin H,
@@ -137,6 +185,22 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
     return {
       altFt: Math.round(altFt),
       current: Math.round(Math.round(altFt) / 1000) * 1000,   // rounded to the nearest 1000 — the slider default
+    };
+  }, [aircraft]);
+
+  // Current speed of the selected aircraft in knots + the clamped position
+  // for the speed slider (180-240) — derived from UDP telemetry
+  // airSpeedKnot, which is RAW KNOTS (udp-telemetry.md: "Airspeed in
+  // knots" — the /10 in witch-mode stats is RPG stat scaling, not a unit
+  // conversion). Rounded to the nearest kt so the thumb lands on a whole
+  // value; clamped into the slider range so it always sits on it. Null
+  // when no telemetry (option hidden, mirroring altitudeBase).
+  const speedBase = useMemo(() => {
+    if (!aircraft?.airSpeedKnot) return null;
+    const kts = Math.round(aircraft.airSpeedKnot);
+    return {
+      kts,
+      current: Math.min(SPEED_MAX_KTS, Math.max(SPEED_MIN_KTS, kts)),   // clamped — the slider default
     };
   }, [aircraft]);
 
@@ -163,69 +227,132 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   /** All choices for the current step — depends on what is composed. */
   const options = useMemo(() => {
     const list = [];
-    // Clear for Approach supersedes heading/altitude: once chosen, both
-    // options are gone (it would be ignored anyway). Fly Heading and Fly
-    // Altitude supersede each other the same way — one frame per Send.
-    if (!sel.clearAppr && sel.heading == null && sel.alt == null) {
-      list.push({ key: 'heading', label: 'Fly Heading' });
-      // Altitude needs live telemetry — hidden while it is unavailable.
-      if (altitudeBase) list.push({ key: 'altitude', label: 'Fly Altitude' });
+    // Clear for Approach supersedes a chain: once chosen, all the
+    // composition options are gone. Fly Heading / Fly Altitude / Fly Speed
+    // can be composed one after another — Add chains them, Send dispatches
+    // the whole chain (the gate below only tests the PENDING command, so
+    // the options return after every Add). A type already on the chain
+    // blacks out — it can appear only once per line.
+    if (!sel.clearAppr && sel.heading == null && sel.alt == null && sel.speed == null) {
+      list.push({ key: 'heading', label: 'Fly Heading', disabled: chainedTypes.has('heading') });
+      // Altitude/speed need live telemetry — hidden while unavailable.
+      if (altitudeBase) list.push({ key: 'altitude', label: 'Fly Altitude', disabled: chainedTypes.has('altitude') });
+      if (speedBase) list.push({ key: 'speed', label: 'Fly Speed', disabled: chainedTypes.has('speed') });
     }
     if (!sel.clearAppr) list.push({ key: 'clearAppr', label: 'Clear for Approach' });
-    // Once at least one option is committed, Send joins the choices.
-    if (sel.heading != null || sel.alt != null || sel.clearAppr) list.push({ key: 'send', label: 'Send' });
+    // Once at least one option is committed — or a chain exists — Send
+    // joins the choices (it dispatches the whole line).
+    if (chain.length > 0 || sel.heading != null || sel.alt != null || sel.speed != null || sel.clearAppr) list.push({ key: 'send', label: 'Send' });
     list.push({ key: 'cancel', label: 'Cancel' });
     return list;
-  }, [sel, altitudeBase]);
+  }, [sel, chain, chainedTypes, altitudeBase, speedBase]);
 
-  /** Compose + send ONE frame, then reset the line (the strip stays
-      selected). Clear for Approach supersedes any heading; heading-only
-      update_heading frame (no speed — the plugin never touches it). */
-  const sendPatch = useCallback(() => {
-    if (!aircraft || !electronAPI.sendPatchCommand) return;
+  /** The pending command as a chain entry — { label, payload }, payload
+      being the sendPatchCommand patch object. Handles the open-slider case
+      (valType): the panel's live value defaults to the aircraft's current
+      heading/altitude/speed, so Add/Send always have a value even with no
+      drag. Null while nothing is pending (the options row is showing). */
+  const buildPending = useCallback(() => {
+    if (!aircraft) return null;
+    const callSign = aircraft.callSign;
+    if (valType === 'heading' || sel.heading != null) {
+      const h = sel.heading ?? currentHeading;
+      const rad = (h * Math.PI) / 180;
+      return {
+        key: 'heading',
+        label: 'Fly Heading ' + pad3(h),
+        payload: {
+          type: 'update_heading', callSign,
+          dx: +Math.sin(rad).toFixed(4),                   // +X = east
+          dy: +Math.cos(rad).toFixed(4),                   // +Z = north
+          rate: TURN_RATE_DEG_S,                           // smooth turn, °/s of game time
+        },
+      };
+    }
+    if (valType === 'altitude' || sel.alt != null) {
+      const v = sel.alt ?? (altitudeBase ? altitudeBase.current : null);
+      if (v == null) return null;
+      return {
+        key: 'altitude',
+        label: 'Fly Altitude ' + v,
+        payload: {
+          type: 'altitude', callSign,
+          targetFt: v,
+          rate: ALT_RATE_FPM,   // smooth vertical, ft/min of game time
+        },
+      };
+    }
+    if (valType === 'speed' || sel.speed != null) {
+      const v = sel.speed ?? (speedBase ? speedBase.current : null);
+      if (v == null) return null;
+      return {
+        key: 'speed',
+        label: 'Fly Speed ' + v,
+        payload: {
+          type: 'update_speed', callSign,
+          kts: v,   // raw knots, int — the plugin re-asserts it every tick (no end command)
+        },
+      };
+    }
     if (sel.clearAppr) {
-      electronAPI.sendPatchCommand({
-        type: 'clear_for_appr',
-        callSign: aircraft.callSign,
-        rate: TURN_RATE_DEG_S,   // smooth handoff turn — the plugin rotates the nose onto the approach course at this °/s of game time
-      });
-      resetCommand();
-      return;
+      return {
+        key: 'clearAppr',
+        label: 'Clear for Approach',
+        payload: {
+          type: 'clear_for_appr', callSign,
+          rate: TURN_RATE_DEG_S,   // smooth handoff turn — the plugin rotates the nose onto the approach course at this °/s of game time
+        },
+      };
     }
-    if (sel.alt != null) {
-      electronAPI.sendPatchCommand({
-        type: 'altitude',
-        callSign: aircraft.callSign,
-        targetFt: sel.alt,
-        rate: ALT_RATE_FPM,   // smooth vertical, ft/min of game time
-      });
-      resetCommand();
-      return;
-    }
-    // Send is available in the slider panel even with no drag — the slider
-    // defaults to the aircraft's live heading (currentHeading).
-    const h = sel.heading ?? currentHeading;
-    const rad = (h * Math.PI) / 180;
-    electronAPI.sendPatchCommand({
-      type: 'update_heading',
-      callSign: aircraft.callSign,
-      dx: +Math.sin(rad).toFixed(4),                       // +X = east
-      dy: +Math.cos(rad).toFixed(4),                       // +Z = north
-      rate: TURN_RATE_DEG_S,                               // smooth turn, °/s of game time
-    });
-    resetCommand();
-  }, [aircraft, currentHeading, electronAPI, sel, resetCommand]);
+    return null;
+  }, [aircraft, valType, sel, currentHeading, altitudeBase, speedBase]);
 
-  /** Accept a choice: Cancel abandons; type word → heading/altitude slider
-      panel; Send → dispatch the composed command. */
+  /** Chain the pending command onto the line and return to the options
+      row, so the next command can be composed. Send dispatches the whole
+      chain in order. No-op while nothing is pending. */
+  const chainAdd = useCallback(() => {
+    const pending = buildPending();
+    if (!pending) return;
+    setChain((c) => [...c, pending]);
+    resetPending();
+  }, [buildPending, resetPending]);
+
+  /** Dispatch the whole line IN ORDER — chain first, then the pending —
+      one frame per command, awaiting each, then reset (the strip stays
+      selected). The plugin applies each frame to the same per-aircraft
+      override entry, so chained speed/altitude/heading all stay active at
+      once. Clear for Approach is exclusive: picking it wiped the chain, so
+      only the cfa frame goes out. */
+  const sendPatch = useCallback(async () => {
+    if (!aircraft || !electronAPI.sendPatchCommand) return;
+    const pending = buildPending();
+    const frames = [...chain, ...(pending ? [pending] : [])];
+    for (const f of frames) {
+      await electronAPI.sendPatchCommand(f.payload);
+    }
+    resetCommand();
+  }, [aircraft, electronAPI, chain, buildPending, resetCommand]);
+
+  /** Accept a choice: Cancel abandons; type word → heading/altitude/speed
+      slider panel; Send → dispatch the composed command. */
   const select = useCallback((key) => {
     if (key === 'cancel') { resetCommand(); return; }   // abandon the whole command — keep the strip selected
     if (key === 'send') { sendPatch(); return; }
-    if (key === 'heading' || key === 'altitude') { setValType(key); return; }
-    // Clear for Approach supersedes a composed heading/altitude (dropped —
-    // never sent).
-    if (key === 'clearAppr') { setSel((s) => ({ ...s, clearAppr: true, heading: null, alt: null })); return; }
-  }, [sendPatch, resetCommand]);
+    if (key === 'heading' || key === 'altitude' || key === 'speed') {
+      // Blacked-out options are disabled buttons (no clicks), but guard
+      // anyway — a type already on the chain can't be composed again.
+      if (chainedTypes.has(key)) return;
+      setValType(key);
+      return;
+    }
+    // Clear for Approach supersedes a composed chain (dropped — never
+    // sent).
+    if (key === 'clearAppr') {
+      setChain([]);
+      setSel((s) => ({ ...s, clearAppr: true, heading: null, alt: null, speed: null }));
+      return;
+    }
+  }, [sendPatch, resetCommand, chainedTypes]);
 
   // Escape mirrors Cancel: abandons the composed line (the strip stays
   // selected). The heading/altitude steps are pending-value states with
@@ -248,7 +375,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
     const w = popupRef.current.offsetWidth;
     const maxX = window.innerWidth - 8;
     setPopupLeft(x + w > maxX ? maxX - w : x);
-  }, [options, sel, valType]);
+  }, [options, sel, valType, chain]);
 
   // Approach-only composer: the Fly Heading / Clear for Approach patches
   // target aircraft on the approach radio channel (controlSeat=5, the strip
@@ -260,26 +387,27 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   // frames are relayed to only exists then).
   if (!aircraft || witchMode || aircraft.controlSeat !== CHANNEL_TYPE_APPROACH || bepInExActive !== true) return null;
 
-  // The command text being built: 'Fly Heading 090', 'Fly Altitude 5000' or
-  // 'Clear for Approach'. While a slider is open the live value (slider
-  // position, defaulting to the aircraft's current heading/altitude) sits
-  // on the line.
+  // Live slider values: the pending pick's current value, defaulting to
+  // the aircraft's live heading/altitude/speed while its slider is open.
   const hdg = sel.heading ?? currentHeading;
   const alt = sel.alt ?? (altitudeBase ? altitudeBase.current : null);
-  const parts = [];
-  if (valType === 'heading') parts.push('Fly Heading ' + pad3(hdg));
-  else if (sel.heading != null && !sel.clearAppr) parts.push('Fly Heading ' + pad3(sel.heading));
-  if (valType === 'altitude') parts.push('Fly Altitude ' + alt);
-  else if (sel.alt != null && !sel.clearAppr) parts.push('Fly Altitude ' + sel.alt);
-  if (sel.clearAppr) parts.push('Clear for Approach');
-  const text = parts.join(', ');
+  const spd = sel.speed ?? (speedBase ? speedBase.current : null);
+
+  // The command text being built: 'Fly Heading 090', 'Fly Altitude 5000',
+  // 'Fly Speed 180' or 'Clear for Approach' — the pending command's label.
+  // While a slider is open the live value (slider position, defaulting to
+  // the aircraft's current heading/altitude/speed) sits on the line. The
+  // chained commands (from Add) render BEFORE it, each with a × to remove.
+  const pending = buildPending();
+  const text = pending ? pending.label : '';
 
   return (
     <div className="flight-strips-command-wrap">
       {/* All choices for the current step — horizontal option row flush
           above the line; every choice is a click. Fly Heading / Fly
-          Altitude swap the row for a slider panel (thumb at the aircraft's
-          current heading/altitude) with Send / Cancel. */}
+          Altitude / Fly Speed swap the row for a slider panel (thumb at
+          the aircraft's current heading/altitude/speed) with Send / Add
+          (chains the command onto the line for the next one) / Cancel. */}
       {valType === 'heading' ? (
         <div className="fcc-suggest fcc-heading-row" style={{ left: popupLeft ?? 0 }} ref={popupRef}>
           <input
@@ -294,6 +422,8 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
           <span className="fcc-heading-readout">{pad3(hdg)}</span>
           <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item" onClick={chainAdd}>Add</button>
           <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
         </div>
@@ -315,6 +445,31 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
           <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
           <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item" onClick={chainAdd}>Add</button>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
+        </div>
+      ) : valType === 'speed' && speedBase ? (
+        // 180-240 kt slider (step 1) — the live speed always sits on it
+        // (the default thumb); reuses .fcc-heading-slider like the altitude
+        // panel. The clamp means an aircraft faster than 240 or slower than
+        // 180 still lands on the slider.
+        <div className="fcc-suggest fcc-heading-row" style={{ left: popupLeft ?? 0 }} ref={popupRef}>
+          <input
+            className="fcc-heading-slider"
+            type="range"
+            min={SPEED_MIN_KTS}
+            max={SPEED_MAX_KTS}
+            step={1}
+            value={spd}
+            onChange={(ev) => setSel((s) => ({ ...s, speed: +ev.target.value }))}
+          />
+          <span className="fcc-heading-readout">{spd}</span>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item" onClick={chainAdd}>Add</button>
+          <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
         </div>
       ) : options.length > 0 && (
@@ -325,6 +480,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
               <button
                 className={'fcc-suggest-item' + (o.key === 'cancel' ? ' fcc-suggest-cancel' : '')}
                 onClick={() => select(o.key)}
+                disabled={o.disabled}
               >
                 {o.label}
               </button>
@@ -332,11 +488,31 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
           ))}
         </div>
       )}
-      {/* The command line: CSN9355: Fly Heading 090 */}
+      {/* The command line: CSN9355: Fly Heading 090, Fly Speed 200 … —
+          chained commands show with a × to remove, then the pending
+          (being dragged) command. */}
       <div className="flight-strips-command-bar cmd-bar-visible">
         <span className="cmd-bar-callsign">{aircraft.callSign}</span>
         <span className="cmd-bar-sep">:</span>
-        <span className="fcc-cmd" ref={cmdRef}>{text}</span>
+        <span className="fcc-cmd" ref={cmdRef}>
+          {chain.map((c, i) => (
+            <React.Fragment key={i}>
+              {i > 0 && ', '}
+              <span className="fcc-chain-item">
+                {c.label}
+                <button
+                  className="fcc-chain-remove"
+                  title="Remove from chain"
+                  onClick={() => setChain((cs) => cs.filter((_, j) => j !== i))}
+                >
+                  ×
+                </button>
+              </span>
+            </React.Fragment>
+          ))}
+          {chain.length > 0 && text && ', '}
+          {text}
+        </span>
       </div>
     </div>
   );

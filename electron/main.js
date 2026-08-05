@@ -1933,12 +1933,13 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 });
 
 // ─── IPC: Send patch command to game (plugin UDP Mechanism B, extended frame 0x00E7) ───
-// patch: { type: 'update_heading'|'update_position'|'clear_for_appr'|'altitude', callSign, dx?, dy?, rate?, kts?, appr?, targetFt? }
+// patch: { type: 'update_heading'|'update_position'|'clear_for_appr'|'altitude'|'update_speed', callSign, dx?, dy?, rate?, kts?, appr?, targetFt? }
 // update_heading is HEADING-ONLY (2026-08-03, decoupled): it carries no
-// speed — the plugin never touches speed; the game keeps position & speed
-// and only the nose heading is overridden. Optional rate = smooth-turn
-// speed in °/s of GAME time (5th frame field; omitted = instant snap — the
-// pre-smoothing behavior; the plugin scales it with the game's speed
+// speed — the plugin never touches speed on this frame; the game keeps
+// position & speed and only the nose heading is overridden (update_speed is
+// the ONE frame that commands speed — see below). Optional rate = smooth-
+// turn speed in °/s of GAME time (5th frame field; omitted = instant snap —
+// the pre-smoothing behavior; the plugin scales it with the game's speed
 // multiplier and freezes it while paused). 'update_position' is a legacy
 // alias (its kts field is ignored by the plugin — it deliberately does NOT
 // carry rate). kts on a clear_for_appr frame is the approach speed in raw
@@ -1952,7 +1953,13 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 // user-confirmed; 15.24 GU = 5000 ft). Optional rate = ft/min of GAME time
 // (UNKEYED field — the altitude parser reads it as ft/min, unlike cfa's
 // keyed rate=; omitted = the plugin's 1000 ft/min default). Only Y is
-// overridden — X/Z, heading and speed stay the game's.
+// overridden — X/Z, heading and speed stay the game's. 'update_speed'
+// (2026-08-04) = fly-speed override: kts in raw knots (int — the editor
+// slider range 180-240; telemetry airSpeedKnot is raw knots too). The plugin
+// re-asserts the commanded speed every tick; the aircraft ramps via the
+// game's own acceleration fields. No end command — the override persists
+// and drops on the tower-frequency handoff or when clear_for_appr
+// supersedes it.
 // Frame contract: 8 B header + payload NUL-padded to exactly 64 bytes (72 B total).
 // The plugin's FixedTick() postfix reads the datagram back from the service's
 // receive buffer, so the payload field must be fixed-length + NUL-terminated.
@@ -1977,6 +1984,12 @@ ipcMain.handle('send-patch-command', async (_e, patch) => {
       // ft/min (its own case — never keyed like cfa's rate=).
       parts.push(patch.targetFt);
       if (patch.rate) parts.push(patch.rate);
+    }
+    else if (patch.type === 'update_speed') {
+      // Raw knots (int) — positional 3rd field; the plugin re-asserts the
+      // commanded speed every tick (no end command — it drops on the tower
+      // handoff or when clear_for_appr supersedes it).
+      parts.push(patch.kts);
     }
     const field = Buffer.alloc(64);                       // NUL-padded payload field
     Buffer.from(parts.join('|'), 'ascii').copy(field, 0);

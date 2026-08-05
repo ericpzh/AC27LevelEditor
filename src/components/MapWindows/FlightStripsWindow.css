@@ -925,6 +925,17 @@
   background: var(--red-bg);
 }
 
+/* Command type already on the chain — blacked out, not selectable (the
+   disabled attribute also swallows clicks). */
+.fcc-suggest-item:disabled,
+.fcc-suggest-item:disabled:hover {
+  color: var(--text-muted);
+  background: transparent;
+  border-color: transparent;
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* The command text being built up */
 .fcc-cmd {
   font-family: 'Consolas', 'Courier New', monospace;
@@ -933,6 +944,32 @@
   white-space: nowrap;
   flex-shrink: 1;
   overflow: hidden;
+}
+
+/* Chained command on the line — its × remove button sits right after the
+   label, inline (no layout shift when the line wraps). */
+.fcc-chain-item {
+  white-space: nowrap;
+}
+
+.fcc-chain-remove {
+  margin-left: 3px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.fcc-chain-remove:hover {
+  color: var(--red);
+  background: var(--red-bg);
+  border-color: var(--border);
 }
 
 /* ─── Witch mode: hide command bar ─── */
