@@ -108,6 +108,7 @@ vi.stubGlobal('electronAPI', {
   getUdpAircraftState: () => mockIpcInvoke('get-udp-aircraft-state'),
   resetUdpAircraft: () => mockIpcInvoke('reset-udp-aircraft'),
   sendUdpCommand: (commandId, callSign) => mockIpcInvoke('send-udp-command', commandId, callSign),
+  sendPatchCommand: (patch) => mockIpcInvoke('send-patch-command', patch),
   debugLog: (...args) => mockIpcInvoke('debug-log', args),
   onUdpAircraftState: (cb) => mockIpcOn('udp-aircraft-state', cb),
   offUdpAircraftState: (cb) => { /* unsubscribe */ },

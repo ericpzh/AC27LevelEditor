@@ -3,6 +3,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import useTooltip from '../BrowserScreen/useTooltip';
 import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
+import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
 import useUdpAircraftState from './useUdpAircraftState';
 import { useCrossWindowSelection, useCrossWindowEmergency } from '../../hooks/map/useCrossWindowSelection';
 import { useWitchAnimation } from '../../hooks/map/useWitchAnimation';
@@ -279,6 +280,15 @@ export default function FlightStripsWindow({ airportIcao }) {
   const [witchMode, setWitchMode] = useState(false);
   const helpDblClickRef = useRef(null);
   const [commandPath, setCommandPath] = useState([]);
+  // Transient voice-command feedback line ("CSC6918: Fly Altitude 9000, Fly Speed 180 ✓")
+  const [voiceFeedback, setVoiceFeedback] = useState(null);
+  const voiceFeedbackTimerRef = useRef(null);
+  // BepInEx Debug Mode gate for the voice PTT button — the patch frames the
+  // voice pipeline sends only reach the game while the plugin is installed.
+  // Re-checked on mount and window focus (Debug Mode can be toggled in the
+  // browser window while this window stays open). Hidden while unknown so
+  // the check result never flashes.
+  const [bepInExActive, setBepInExActive] = useState(null);
 
   // ─── Voice command hook ──────────────────────────────────────────────
   const voice = useVoiceCommands(udpAircraft);
@@ -308,21 +318,58 @@ export default function FlightStripsWindow({ airportIcao }) {
     }
   }, [voice.matchedCallsign]);
 
-  // When command matched via voice: execute it
+  // When a voice command matched: dispatch the chain to the plugin — same
+  // payloads + order as the composer's Send — keeping the strip selected
+  // (the selection effect above already made it active/yellow). Patch
+  // commands are approach-channel-only, mirroring the composer's gate.
   useEffect(() => {
-    if (voice.matchedCommand && voice.confidence >= 0.55) {
-      if (voice.matchedCommand.commandId != null) {
-        if (electronAPI.sendUdpCommand) {
-          electronAPI.sendUdpCommand(voice.matchedCommand.commandId, selectedCallSign);
-        }
-        setSelectedCallSign(null);
-        setCommandPath([]);
-        if (electronAPI.selectAircraftInMap) {
-          electronAPI.selectAircraftInMap(airportIcao, null);
-        }
+    if (!voice.matchedCommand?.length) return;
+    const ac = voice.matchedAircraft;
+    if (!ac) return;
+    if (ac.controlSeat !== CHANNEL_TYPE_APPROACH) {
+      setVoiceFeedback(`${ac.callSign}: not on approach channel — command not sent`);
+      if (electronAPI.debugLog) {
+        electronAPI.debugLog('[VOICE-DISPATCH] BLOCKED', ac.callSign,
+          'controlSeat=' + ac.controlSeat, '(approach=5) — no frames sent;',
+          'commands=' + JSON.stringify(voice.matchedCommand.map(c => c.label)));
       }
+      return;
     }
-  }, [voice.matchedCommand, voice.confidence]);
+    (async () => {
+      for (const c of voice.matchedCommand) {
+        if (electronAPI.sendPatchCommand) await electronAPI.sendPatchCommand(c.payload);
+      }
+    })();
+    const v = voice.voiceResult;
+    if (v) {
+      const unsupported = v.notices.join(' ');
+      setVoiceFeedback(unsupported ? `${v.renderedLine} — ${unsupported}` : `${v.renderedLine} ✓`);
+    }
+  }, [voice.matchedCommand, voice.matchedAircraft, voice.voiceResult, electronAPI]);
+
+  // Transient voice feedback — auto-clears after 4 s
+  useEffect(() => {
+    if (!voiceFeedback) return;
+    if (voiceFeedbackTimerRef.current) clearTimeout(voiceFeedbackTimerRef.current);
+    voiceFeedbackTimerRef.current = setTimeout(() => setVoiceFeedback(null), 4000);
+    return () => {
+      if (voiceFeedbackTimerRef.current) clearTimeout(voiceFeedbackTimerRef.current);
+    };
+  }, [voiceFeedback]);
+
+  // BepInEx Debug Mode gate (same pattern as FlightPatchCommandBar)
+  useEffect(() => {
+    let alive = true;
+    const check = () => {
+      if (!electronAPI.checkBepInEx) { setBepInExActive(false); return; }
+      electronAPI.checkBepInEx()
+        .then((r) => { if (alive) setBepInExActive(!!(r && r.installed)); })
+        .catch(() => { if (alive) setBepInExActive(false); });
+    };
+    check();
+    window.addEventListener('focus', check);
+    return () => { alive = false; window.removeEventListener('focus', check); };
+  }, [electronAPI]);
 
   // Keep ref in sync so handleDragEnd (stable callback) can read current selection
   useEffect(() => { selectedCallSignRef.current = selectedCallSign; }, [selectedCallSign]);
@@ -878,25 +925,35 @@ export default function FlightStripsWindow({ airportIcao }) {
         witchMode={witchMode}
       />
       */}
+      {/* Transient voice-command result line ("CSC6918: Fly Altitude 9000, Fly Speed 180 ✓") */}
+      {voiceFeedback && <div className="voice-feedback">{voiceFeedback}</div>}
       <div className="flight-strips-bar">
         <div className="flight-strips-bar-left">
           <SimClock simTimeUnixMs={simTimeUnixMs} className="flight-strips-clock" />
           <span className="flight-strips-timescale">{timeScale > 0 ? '×' + timeScale : ''}</span>
         </div>
         <div className="flight-strips-bar-actions">
-          {/* TODO: re-enable voice command button when game command IDs are confirmed
-          <VoicePTTButton
-            listening={voice.listening}
-            transcript={voice.transcript}
-            matchedCommand={voice.matchedCommand}
-            confidence={voice.confidence}
-            isSupported={voice.isSupported}
-            error={voice.error}
-            witchMode={witchMode}
-            onPress={handleVoiceStart}
-            onRelease={voice.stopListening}
-          />
-          */}
+          {/* Push-to-talk voice input (2026-08-05): retargeted to the patch-
+              command vocabulary — the chain dispatches via sendPatchCommand
+              like the composer's Send. Selection works for ANY aircraft;
+              patch commands only execute on the approach channel (the
+              dispatch effect gates it). Visible whenever BepInEx Debug Mode
+              is active — the plugin the patch frames are relayed to only
+              exists then. */}
+          {bepInExActive === true && (
+            <VoicePTTButton
+              listening={voice.listening}
+              transcript={voice.transcript}
+              matchedCommand={voice.matchedCommand}
+              confidence={voice.confidence}
+              isSupported={voice.isSupported}
+              error={voice.error}
+              witchMode={witchMode}
+              feedback={voiceFeedback}
+              onPress={handleVoiceStart}
+              onRelease={voice.stopListening}
+            />
+          )}
           <div className="strips-bar-btn" onClick={handleRefresh} {...tipBind(helpTip('map_help_strips_refresh'))}>
             {witchMode ? <img src="witch/refresh.png" alt="Refresh" className="witch-refresh-img" /> : <IoRefreshOutline size={16} />}
           </div>

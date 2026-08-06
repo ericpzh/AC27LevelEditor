@@ -15,10 +15,13 @@ import { IoMicOutline, IoMic } from 'react-icons/io5';
  * Props:
  *   listening       — boolean, is mic currently active
  *   transcript      — string, the recognized text (shown as title tooltip)
- *   matchedCommand  — object or null, the matched command
+ *   matchedCommand  — array of {type, label, payload} or null (the voice
+ *                     command chain; empty = selection only)
  *   confidence      — number 0–1
  *   isSupported     — boolean, SpeechRecognition available
  *   error           — string or null
+ *   feedback        — string or null, the transient result line (shown as
+ *                     tooltip when not listening)
  *   witchMode       — boolean, use witch-themed sprite
  *   onPress()       — called on mousedown/touchstart
  *   onRelease()     — called on mouseup/touchend/mouseleave
@@ -30,6 +33,7 @@ export default function VoicePTTButton({
   confidence,
   isSupported,
   error,
+  feedback,
   witchMode,
   onPress,
   onRelease,
@@ -69,12 +73,13 @@ export default function VoicePTTButton({
   else if (flash) className += ' voice-ptt-matched';
   else if (listening) className += ' voice-ptt-listening';
 
-  // Tooltip: show transcript or error
+  // Tooltip: show transcript, the last result line, or the matched chain
   let title = 'Push to Talk';
   if (error) title = `Voice error: ${error}`;
   else if (listening && transcript) title = `Heard: "${transcript}"`;
   else if (listening) title = 'Listening...';
-  else if (matchedCommand && confidence > 0) title = `Matched: ${matchedCommand.id} (${Math.round(confidence * 100)}%)`;
+  else if (feedback) title = feedback;
+  else if (matchedCommand && confidence > 0) title = `Matched: ${matchedCommand.map(c => c.label).join(', ')} (${Math.round(confidence * 100)}%)`;
 
   return (
     <div

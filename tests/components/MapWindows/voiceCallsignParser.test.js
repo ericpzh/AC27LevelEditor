@@ -49,6 +49,8 @@ describe('parseCallsign', () => {
     makeAircraft('CES5888'),
     makeAircraft('CCA1234'),
     makeAircraft('DAL456'),
+    makeAircraft('DAL3401'),
+    makeAircraft('DLH3401'),
     makeAircraft('KLM631'),
     makeAircraft('BAW5224'),
     makeAircraft('AFR3661'),
@@ -153,5 +155,146 @@ describe('parseCallsign', () => {
     expect(r).not.toBeNull();
     expect(r.callsign).toBe('UAL1111');
     expect(r.remainingText).toBe('');
+  });
+
+  // ─── Airline-name form matrix (DAL3401) ────────────────────────────
+
+  it('parses full airline name ("delta air lines 3401")', () => {
+    const r = parseCallsign('delta air lines 3401', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('parses the spoken 3-letter code ("DAL 3401")', () => {
+    const r = parseCallsign('DAL 3401', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('parses a typed literal callsign with colon ("DAL3401: turn left")', () => {
+    const r = parseCallsign('DAL3401: turn left', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+    expect(r.remainingText).toBe('turn left');
+  });
+
+  it('parses all-caps airline name ("DELTA 3401")', () => {
+    const r = parseCallsign('DELTA 3401', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('parses "lufthansa three four zero one" → DLH3401 (Delta ≠ Lufthansa)', () => {
+    const r = parseCallsign('lufthansa three four zero one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DLH3401');
+  });
+
+  // ─── Flight-number word-form matrix (DAL3401) ──────────────────────
+
+  it('parses digit-by-digit ("delta three four zero one")', () => {
+    const r = parseCallsign('delta three four zero one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('parses "oh" for zero ("delta three four oh one")', () => {
+    const r = parseCallsign('delta three four oh one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('parses bare "o" for zero ("delta three four o one")', () => {
+    const r = parseCallsign('delta three four o one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('parses tens + "o" + ones ("delta thirty four o one")', () => {
+    const r = parseCallsign('delta thirty four o one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('parses literal digits mixed with words ("delta 34 oh one")', () => {
+    const r = parseCallsign('delta 34 oh one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('parses literal Arabic digits ("delta 3401")', () => {
+    const r = parseCallsign('delta 3401', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  // ─── Leading filler words (speech disfluency) ──────────────────────
+
+  it('strips leading "okay" ("okay delta 3401")', () => {
+    const r = parseCallsign('okay delta 3401', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('strips leading "um" ("um united eleven eleven")', () => {
+    const r = parseCallsign('um united eleven eleven', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('UAL1111');
+  });
+
+  it('strips leading "sir" ("sir delta three four zero one")', () => {
+    const r = parseCallsign('sir delta three four zero one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('strips filler between airline and number ("delta uh three four zero one")', () => {
+    const r = parseCallsign('delta uh three four zero one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('DAL3401');
+  });
+
+  it('does not strip "okay" when it is the airline itself ("okay airways" → CJX)', () => {
+    const acList = [makeAircraft('CJX123')];
+    const r = parseCallsign('okay airways one two three', 'en', acList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('CJX123');
+  });
+
+  // ─── Failure diagnostics (diag collector) ──────────────────────────
+
+  it('diag reports candidate callsigns not in the aircraft list', () => {
+    const diag = [];
+    const r = parseCallsign('united nine nine nine nine', 'en', aircraftList, diag);
+    expect(r).toBeNull();
+    expect(diag.join('; ')).toContain('UAL9999');
+  });
+
+  it('diag reports the first unparseable number token', () => {
+    const diag = [];
+    const r = parseCallsign('delta three uh four', 'en', aircraftList, diag);
+    expect(r).toBeNull();
+    expect(diag.join('; ')).toContain('uh');
+  });
+
+  it('diag reports "hundred" as the break token (flight numbers are digit/tens/teen words only)', () => {
+    const diag = [];
+    const r = parseCallsign('delta three hundred', 'en', aircraftList, diag);
+    expect(r).toBeNull();
+    expect(diag.join('; ')).toContain('hundred');
+  });
+
+  it('diag reports no airline name matched at the start', () => {
+    const diag = [];
+    const r = parseCallsign('turn left heading 360', 'en', aircraftList, diag);
+    expect(r).toBeNull();
+    expect(diag.join('; ')).toContain('airline');
+  });
+
+  it('diag reports no flight number when none is parseable', () => {
+    const diag = [];
+    const r = parseCallsign('delta turn left heading 360', 'en', aircraftList, diag);
+    expect(r).toBeNull();
+    expect(diag.join('; ')).toContain('flight number');
   });
 });

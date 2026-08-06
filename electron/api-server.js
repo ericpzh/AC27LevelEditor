@@ -18,6 +18,7 @@ const {
   FALLBACK_BASE_MINUTES, DEFAULT_TAXI_MINUTES, DEFAULT_TIME_OFFSET_MIN,
   SCENARIO_END_GRACE_MIN, SCENARIO_END_GRACE_SEC,
 } = require('../src/acl/constants');
+const { CHANNEL_TYPE_APPROACH } = require('../src/utils/constants/aviation');
 
 // ── Module state ────────────────────────────────────────────────
 let mainWindow = null;
@@ -505,6 +506,17 @@ const MCP_TOOLS = [
   { name: 'get_editor_status', description: 'Get the current editor state: which level is open, flight counts, dirty flag, timeline status.', inputSchema: { type: 'object', properties: {} } },
   { name: 'get_airport_info', description: 'Get the full constraint map for the current airport. MUST call this before creating or modifying flights.', inputSchema: { type: 'object', properties: {} } },
   { name: 'get_validation_issues', description: 'Run the full validation suite on the current flight list.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'send_voice_command',
+    description: 'Parse a spoken-style command sentence against the LIVE aircraft list (same pipeline as the PTT mic) and dispatch the patch frames to the game. e.g. "CSC6918: climb and maintain 9000, reduce speed to 180 knots". Selection-only transcripts (bare callsign) parse but send nothing. Fails if no aircraft matches, or the aircraft is not on the approach channel (controlSeat 5).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        transcript: { type: 'string', description: 'Full human sentence, as the mic would hear it. Language auto-detected (en/zh).' },
+      },
+      required: ['transcript'],
+    },
+  },
 ];
 
 // ── MCP Message Handler ─────────────────────────────────────────
@@ -711,6 +723,55 @@ async function handleMcpMessage(msg) {
             duplicateCallsigns: [...new Set(issues.filter(i => i.issue === 'duplicate_callsign').map(i => i.value))],
             standConflicts: issues.filter(i => i.issue === 'stand_conflict').map(i => ({ stand: i.value, message: i.message })),
             duplicateRegistrations: issues.filter(i => i.issue === 'duplicate_registration').map(i => ({ registration: i.value, message: i.message })),
+          };
+          break;
+        }
+
+        case 'send_voice_command': {
+          const { transcript } = args;
+          if (!transcript || !String(transcript).trim()) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'transcript is required' }, null, 2) }], isError: true });
+          }
+          // Same pipeline as the PTT mic path (FlightStripsWindow dispatch effect):
+          // parse against the LIVE UDP aircraft list, gate on the approach channel,
+          // send each command as a 0x00E7 patch frame. Runs in the main process, so
+          // console.log here IS the npm terminal log.
+          const { getUdpAircraftState, sendCommand } = require('./udp_listener');
+          const { buildPatchPayload } = require('./patchFrame');
+          const { parseVoiceTranscript } = await import('../src/components/MapWindows/voiceTranscriptParser.js');
+
+          const { aircraft } = getUdpAircraftState();
+          if (!aircraft || !aircraft.length) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no live aircraft telemetry — is the game running with the BepInEx plugin?' }, null, 2) }], isError: true });
+          }
+
+          const text = String(transcript).trim();
+          const r = parseVoiceTranscript(text, aircraft);
+          console.log('[VOICE-PARSE]', JSON.stringify(text), 'ok=' + r.ok,
+            'callsign=' + r.callsign,
+            'a/c=' + (r.aircraft?.callSign ?? '-') + ' seat=' + (r.aircraft?.controlSeat ?? '-'),
+            'commands=' + JSON.stringify(r.commands),
+            'notices=' + JSON.stringify(r.notices),
+            'rendered=' + JSON.stringify(r.renderedLine),
+            'reason=' + (r.reason ?? '-'));
+
+          if (!r.ok) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no aircraft matched', transcript: text }, null, 2) }], isError: true });
+          }
+          if (r.aircraft.controlSeat !== CHANNEL_TYPE_APPROACH) {
+            console.log('[VOICE-DISPATCH] BLOCKED', r.aircraft.callSign, 'controlSeat=' + r.aircraft.controlSeat, '(approach=5) — no frames sent');
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: `not on approach channel (controlSeat ${r.aircraft.controlSeat}, approach=5) — no frames sent`, callsign: r.aircraft.callSign }, null, 2) }], isError: true });
+          }
+          for (const c of r.commands) {
+            sendCommand(0x00E7, buildPatchPayload(c.payload));
+          }
+          result = {
+            success: true,
+            callsign: r.callsign,
+            renderedLine: r.renderedLine,
+            sent: r.commands.map(c => ({ type: c.type, label: c.label })),
+            notices: r.notices,
+            aircraft: { callSign: r.aircraft.callSign, controlSeat: r.aircraft.controlSeat },
           };
           break;
         }

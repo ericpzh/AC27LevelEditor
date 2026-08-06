@@ -98,6 +98,21 @@
   }
 }
 
+/* Transient voice-command result line — rendered above the strips bar */
+.voice-feedback {
+  margin: 0 6px 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--accent);
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .flight-strips-bar-left {
   display: flex;
   align-items: baseline;

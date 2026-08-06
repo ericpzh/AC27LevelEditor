@@ -19,6 +19,7 @@ const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
+const { buildPatchPayload } = require('./patchFrame');
 
 let mainWindow;
 const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
@@ -1963,36 +1964,12 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 // Frame contract: 8 B header + payload NUL-padded to exactly 64 bytes (72 B total).
 // The plugin's FixedTick() postfix reads the datagram back from the service's
 // receive buffer, so the payload field must be fixed-length + NUL-terminated.
+// The parts-building + padding logic lives in electron/patchFrame.js (shared
+// with scripts/voice_sim.mjs) — this handler only pads-free serializes.
 
 ipcMain.handle('send-patch-command', async (_e, patch) => {
   try {
-    const parts = [patch.type, patch.callSign];
-    if (patch.type === 'update_heading' || patch.type === 'update_position') {
-      parts.push(patch.dx, patch.dy);
-      if (patch.type === 'update_heading' && patch.rate) parts.push(patch.rate);
-    }
-    else if (patch.type === 'clear_for_appr') {
-      if (patch.kts) parts.push(patch.kts);
-      if (patch.appr) parts.push(patch.appr);
-      // Keyed (rate=N): the plugin's cfa parser treats any bare numeric
-      // field as the approach speed in kts — an unkeyed rate would be
-      // misread (rate 3 → 3 kt).
-      if (patch.rate) parts.push('rate=' + patch.rate);
-    }
-    else if (patch.type === 'altitude') {
-      // UNKEYED rate: the altitude parser reads a bare numeric 4th field as
-      // ft/min (its own case — never keyed like cfa's rate=).
-      parts.push(patch.targetFt);
-      if (patch.rate) parts.push(patch.rate);
-    }
-    else if (patch.type === 'update_speed') {
-      // Raw knots (int) — positional 3rd field; the plugin re-asserts the
-      // commanded speed every tick (no end command — it drops on the tower
-      // handoff or when clear_for_appr supersedes it).
-      parts.push(patch.kts);
-    }
-    const field = Buffer.alloc(64);                       // NUL-padded payload field
-    Buffer.from(parts.join('|'), 'ascii').copy(field, 0);
+    const field = buildPatchPayload(patch);   // pipe-delimited ASCII, NUL-padded to 64 B
     return await sendUdpCommand(0x00E7, field);
   } catch (err) {
     return { success: false, error: err.message };

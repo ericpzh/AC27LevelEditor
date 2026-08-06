@@ -8,7 +8,20 @@ export default defineConfig({
     electron([
       {
         entry: 'electron/main.js',
-        vite: { build: { outDir: 'dist-electron', rollupOptions: { external: ['electron', 'ffmpeg-static'] } } },
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['electron', 'ffmpeg-static'],
+              // Main process is a single CJS entry: inline dynamic imports so
+              // Rollup never code-splits (a shared module hoisted into a chunk
+              // leaves unbound __esmMin init calls like init_timing() behind —
+              // see ReferenceError on app load). Dynamic import()s stay intact
+              // in the source, so direct-node loads (integration tests) still work.
+              output: { codeSplitting: false },
+            },
+          },
+        },
       },
       {
         entry: 'electron/preload.js',

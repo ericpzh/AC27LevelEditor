@@ -529,7 +529,8 @@ public static class OverrideController
             IntPtr curPtr = cur is Il2CppObjectBase curOb ? curOb.Pointer : IntPtr.Zero;
             if (curPtr != planted)
             {
-                Plugin.LogMsg($"params-replant: {ac.CallSign} DynamicsParams ← {ReplantName(cur)} (was 0x{planted.ToInt64():X}, now 0x{curPtr.ToInt64():X})");
+                // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+                // Plugin.LogMsg($"params-replant: {ac.CallSign} DynamicsParams ← {ReplantName(cur)} (was 0x{planted.ToInt64():X}, now 0x{curPtr.ToInt64():X})");
                 _plantedParams[ac] = curPtr;               // log each distinct re-plant once
             }
         }
@@ -608,14 +609,15 @@ public static class OverrideController
             // sweep evidence: Δ ≈ 0 through the hold = the zero-fight claim
             // holds; Δ growing = the game's own turn starts, and toward WHAT
             // heading. The release-time behavior must be observed, not assumed.
-            if (e.CfaTicks % 10 == 0)
-            {
-                bool aimOk = dist > 1e-4f;
-                float gameHdg = e.GameIntended.sqrMagnitude > 1e-6f ? HeadingDeg(e.GameIntended) : -1f;
-                float delta = aimOk && e.GameIntended.sqrMagnitude > 1e-6f
-                    ? Vector3.Angle(aim.normalized, e.GameIntended) : -1f;
-                Plugin.LogMsg($"cfa: {ac.CallSign} de-snap diag: hdg {HeadingDeg(e.Current):F1}° aim(IAF) {(aimOk ? HeadingDeg(aim.normalized) : -1f):F1}° game {gameHdg:F1}° Δ {delta:F1}° dist {dist:F0}");
-            }
+            // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+            // if (e.CfaTicks % 10 == 0)
+            // {
+            //     bool aimOk = dist > 1e-4f;
+            //     float gameHdg = e.GameIntended.sqrMagnitude > 1e-6f ? HeadingDeg(e.GameIntended) : -1f;
+            //     float delta = aimOk && e.GameIntended.sqrMagnitude > 1e-6f
+            //         ? Vector3.Angle(aim.normalized, e.GameIntended) : -1f;
+            //     Plugin.LogMsg($"cfa: {ac.CallSign} de-snap diag: hdg {HeadingDeg(e.Current):F1}° aim(IAF) {(aimOk ? HeadingDeg(aim.normalized) : -1f):F1}° game {gameHdg:F1}° Δ {delta:F1}° dist {dist:F0}");
+            // }
             if (dist < CfaJoinDist || e.CfaTicks >= CfaDeSnapCap)
             {
                 _postRelease[ac] = PostReleaseBudget;   // v8-d: observe the game-owned nose for 5 s
@@ -686,10 +688,16 @@ public static class OverrideController
                 // displacement pace over the window (Δpos ÷ game time → kt —
                 // the ground truth every candidate must match).
                 if (++e.SpeedDiagTicks % 10 == 0 && e.SpeedDiagTicks <= 300)
-                    LogSpeedCorrelation(ac, e, after: false);
+                {
+                    // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+                    // LogSpeedCorrelation(ac, e, after: false);
+                }
                 DriveAvcSpeed(ac, e);
                 if (e.SpeedDiagTicks % 10 == 0 && e.SpeedDiagTicks <= 300)
-                    LogSpeedCorrelation(ac, e, after: true);
+                {
+                    // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+                    // LogSpeedCorrelation(ac, e, after: true);
+                }
             }
         }
 
@@ -755,7 +763,10 @@ public static class OverrideController
         if (e.View == null) e.View = FindView3D(ac);
         e.StepCount++;
         if (e.StepCount <= 30 && (e.StepCount == 1 || e.StepCount % 10 == 0))
-            LogDiagnostic(ac, e);
+        {
+            // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+            // LogDiagnostic(ac, e);
+        }
     }
 
     /// <summary>Write the smoothed intermediate heading to all three heading
@@ -867,7 +878,8 @@ public static class OverrideController
         if (!_avcOwners.TryGetValue(ctrl.Pointer, out var ac)) return;
         if (!_overrides.TryGetValue(ac, out var e) || (!e.SpeedFollow && !e.CfaFollow)) return;
         if (value == e.TargetKts) return;   // our own write
-        Plugin.LogMsg($"avc-probe: {ac.CallSign} game wrote SetTargetSpeed {value:F0} kt (armed {e.TargetKts:F0} kt)");
+        // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+        // Plugin.LogMsg($"avc-probe: {ac.CallSign} game wrote SetTargetSpeed {value:F0} kt (armed {e.TargetKts:F0} kt)");
     }
 
     /// <summary>v11 probe (2026-08-05, debug): every SpeedController.SetTargetSpeed
@@ -885,7 +897,8 @@ public static class OverrideController
         if (!_scOwners.TryGetValue(ctrl.Pointer, out var ac)) return;
         if (!_overrides.TryGetValue(ac, out var e) || (!e.SpeedFollow && !e.CfaFollow)) return;
         if (value == e.TargetKts) return;   // our own write
-        Plugin.LogMsg($"sc-probe: {ac.CallSign} game wrote SpeedController.SetTargetSpeed {value:F0} kt (armed {e.TargetKts:F0} kt)");
+        // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+        // Plugin.LogMsg($"sc-probe: {ac.CallSign} game wrote SpeedController.SetTargetSpeed {value:F0} kt (armed {e.TargetKts:F0} kt)");
     }
 
     /// <summary>v10 correlation sample (2026-08-05, debug): every candidate

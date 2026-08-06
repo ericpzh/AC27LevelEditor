@@ -19,17 +19,49 @@ describe('parseEnglishFlightNumber', () => {
     expect(r.candidates).toContain('04');
   });
 
+  it('parses bare "o" as zero (speech engines render "oh" as "o")', () => {
+    const r = parseEnglishFlightNumber(['o', 'four']);
+    expect(r.candidates).toContain('04');
+  });
+
   it('parses teen numbers', () => {
     const r = parseEnglishFlightNumber(['eleven', 'eleven']);
     expect(r.candidates).toContain('1111');
   });
 
-  it('parses grouped pairs (twelve thirty four)', () => {
+  it('parses grouped pairs (twelve thirty four) → both readings', () => {
     const r = parseEnglishFlightNumber(['twelve', 'thirty', 'four']);
-    // twelve=12, thirty=30, four=4 → "12304"
-    // Actually "thirty four" as spoken → "30"+"4" = "304" or "thirty-four" = "34"
-    // Our tokenizer sees "twelve"=12, "thirty"=30, "four"=4 → "12304"
+    // "thirty four" is ambiguous: "34" (thirty-four) and "304" (30 + 4).
+    // Both readings stay as candidates; the aircraft list disambiguates.
+    expect(r.candidates).toContain('1234');
     expect(r.candidates).toContain('12304');
+  });
+
+  it('composes tens + ones ("thirty four" → 34, keeping the 304 reading)', () => {
+    const r = parseEnglishFlightNumber(['thirty', 'four']);
+    expect(r.candidates).toContain('34');
+    expect(r.candidates).toContain('304');
+  });
+
+  it('parses tens + "o" + ones ("thirty four o one" → 3401)', () => {
+    const r = parseEnglishFlightNumber(['thirty', 'four', 'o', 'one']);
+    expect(r.candidates).toContain('3401');
+    expect(r.consumed).toBe(4);
+  });
+
+  it('keeps "thirty oh" as 300 only (no two-digit composition with zero)', () => {
+    const r = parseEnglishFlightNumber(['thirty', 'oh']);
+    expect(r.candidates).toEqual(['300']);
+  });
+
+  it('mixes literal digits with words ("34 oh one" → 3401)', () => {
+    const r = parseEnglishFlightNumber(['34', 'oh', 'one']);
+    expect(r.candidates).toContain('3401');
+  });
+
+  it('normalizes comma-suffixed word tokens ("three, four, o, one" → 3401)', () => {
+    const r = parseEnglishFlightNumber(['three,', 'four,', 'o,', 'one']);
+    expect(r.candidates).toContain('3401');
   });
 
   it('parses "triple X" aviation shorthand', () => {

@@ -7,8 +7,8 @@
  *   2. parseCallsign(transcript, lang, aircraftList) → ParseResult | null
  */
 
-import { AIRLINE_CODE_MAP, getAirlineCode } from '../../utils/constants';
-import { parseEnglishFlightNumber, parseChineseFlightNumber } from './voiceNumberParser';
+import { AIRLINE_CODE_MAP, getAirlineCode } from '../../utils/constants/index.js';
+import { parseEnglishFlightNumber, parseChineseFlightNumber } from './voiceNumberParser.js';
 
 // ─── Language detection ────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ export function detectLanguage(transcript) {
  */
 let _spokenToCode = null;
 
-function getSpokenToCode() {
+export function getSpokenToCode() {
   if (_spokenToCode) return _spokenToCode;
 
   const entries = [];
@@ -104,6 +104,25 @@ function getSpokenToCode() {
   return _spokenToCode;
 }
 
+// ─── Spoken filler words ───────────────────────────────────────────────
+
+/**
+ * Filler words speakers drop before a callsign ("um Delta 3401…",
+ * "okay United 1111…"). Stripped from the front of the transcript and
+ * between the airline name and the flight number ("delta uh 3401") before
+ * the airline-prefix match. The original text is tried first per prefix,
+ * so an airline whose NAME contains a filler ("Okay Airways" → CJX) still
+ * matches. Shared with the command matcher's connector strip.
+ */
+export const EN_FILLER_WORDS = new Set(['um', 'uh', 'er', 'ah', 'okay', 'ok', 'sir', 'please']);
+
+/** Drop leading filler tokens (non-mutating). */
+export function stripLeadingFillers(tokens) {
+  let i = 0;
+  while (i < tokens.length && EN_FILLER_WORDS.has(tokens[i])) i++;
+  return tokens.slice(i);
+}
+
 // ─── Public API ────────────────────────────────────────────────────────
 
 /**
@@ -124,35 +143,56 @@ function getSpokenToCode() {
  * @param {string} transcript — raw speech recognition result
  * @param {'en'|'zh'} lang — detected language
  * @param {Object[]} aircraftList — array of UDP aircraft objects (each has .callSign)
+ * @param {string[]} [diag] — optional collector for failure diagnostics
+ *   (notes about which airline prefixes matched, candidate callsigns not
+ *   found, and where the number parse stopped). Only used on failure.
  * @returns {ParseResult | null}
  */
-export function parseCallsign(transcript, lang, aircraftList) {
+export function parseCallsign(transcript, lang, aircraftList, diag) {
   if (!transcript || !aircraftList.length) return null;
 
   const lower = transcript.toLowerCase().trim();
   const spokenToCode = getSpokenToCode();
 
   if (lang === 'zh') {
-    return parseCallsignChinese(transcript, spokenToCode, aircraftList);
+    return parseCallsignChinese(transcript, spokenToCode, aircraftList, diag);
   }
 
   // ── English path ──────────────────────────────────────────────────
+  // Leading filler words ("um", "okay", …) are stripped, but the original
+  // text is still tried first per prefix so an airline whose NAME contains
+  // a filler ("okay airways" → CJX) keeps matching.
+  const stripped = stripLeadingFillers(lower.split(/\s+/)).join(' ');
+  let sawPrefix = false;
+
   // Try each spoken-name prefix (longest first)
   for (const [spoken, code] of spokenToCode) {
     // Skip Chinese-only entries when in English mode
     if (isCJK(spoken[0])) continue;
 
-    const matchResult = matchPrefix(lower, spoken);
+    const matchResult = matchPrefix(lower, spoken) || (stripped !== lower ? matchPrefix(stripped, spoken) : null);
     if (!matchResult) continue;
+    sawPrefix = true;
+    diag?.push(`airline "${spoken}" → ${code}`);
 
     const { remaining } = matchResult;
     const remainingTrimmed = remaining.trim();
-    const remainingTokens = remainingTrimmed ? remainingTrimmed.split(/\s+/) : [];
+    // Pure-punctuation tokens ("CSC6918 : climb") are dropped so the
+    // flight-number scan and the remainingText both ignore them; filler
+    // words before the number ("delta uh 3401") are stripped too.
+    const remainingTokens = stripLeadingFillers(
+      remainingTrimmed
+        ? remainingTrimmed.split(/\s+/).filter(t => /[a-z0-9一-鿿]/i.test(t))
+        : []
+    );
 
     // Parse flight number from remaining tokens
     const numResult = parseEnglishFlightNumber(remainingTokens);
 
-    if (!numResult.candidates.length) continue;
+    if (!numResult.candidates.length) {
+      diag?.push(`no flight number parsed after "${spoken}"`);
+      continue;
+    }
 
     // Build callsign candidates and test against aircraft list
     for (const numStr of numResult.candidates) {
@@ -169,8 +209,17 @@ export function parseCallsign(transcript, lang, aircraftList) {
         };
       }
     }
+
+    // None of the candidate callsigns exists in the live aircraft list —
+    // name the candidates and where the number scan stopped.
+    const brk = remainingTokens[numResult.consumed];
+    diag?.push(
+      `candidates ${numResult.candidates.map(n => code + n).join(',')} not in list` +
+      (brk ? ` (first unparsed token: "${brk}")` : '')
+    );
   }
 
+  if (!sawPrefix) diag?.push('no airline name matched at start');
   return null;
 }
 
@@ -178,11 +227,14 @@ export function parseCallsign(transcript, lang, aircraftList) {
  * Chinese-specific callsign parsing.
  * Chinese has no spaces, so we work character-by-character instead of token-by-token.
  */
-function parseCallsignChinese(transcript, spokenToCode, aircraftList) {
+function parseCallsignChinese(transcript, spokenToCode, aircraftList, diag) {
+  let sawPrefix = false;
   // Try each spoken-name prefix (longest first), Chinese entries only
   for (const [spoken, code] of spokenToCode) {
     const matchResult = matchPrefix(transcript, spoken);
     if (!matchResult) continue;
+    sawPrefix = true;
+    diag?.push(`airline "${spoken}" → ${code}`);
 
     const { remaining } = matchResult;
     if (!remaining) {
@@ -202,12 +254,18 @@ function parseCallsignChinese(transcript, spokenToCode, aircraftList) {
       if (d) {
         digitChars.push(d);
         consumed++;
+      } else if (/^\d$/.test(ch)) {
+        digitChars.push([ch]);   // literal ASCII digit (typed input / speech engines)
+        consumed++;
       } else {
         break;
       }
     }
 
-    if (!digitChars.length) continue;
+    if (!digitChars.length) {
+      diag?.push(`no flight number parsed after "${spoken}"`);
+      continue;
+    }
 
     // digitChars is an array of string arrays, e.g. [["5"],["8"],["8"],["8"]]
     // Build candidates via Cartesian product
@@ -227,8 +285,11 @@ function parseCallsignChinese(transcript, spokenToCode, aircraftList) {
         };
       }
     }
+
+    diag?.push(`candidates ${candidates.map(n => code + n).join(',')} not in list`);
   }
 
+  if (!sawPrefix) diag?.push('no airline name matched at start');
   return null;
 }
 
@@ -269,7 +330,7 @@ function productZh(arrays) {
  *   matchPrefix("delta 123", "delta airlines") → null (full name doesn't match)
  *   matchPrefix("delta 123", "delta") → { remaining: "123" } (short form matches)
  */
-function matchPrefix(transcript, spoken) {
+export function matchPrefix(transcript, spoken) {
   // Transcript must start with the spoken prefix
   if (!transcript.startsWith(spoken)) return null;
 
@@ -286,4 +347,60 @@ function matchPrefix(transcript, spoken) {
 
   // Otherwise, not a valid match (e.g., "unitedX" where X is a letter)
   return null;
+}
+
+/**
+ * All plausible callsign strings (ICAO code + flight number) derivable from
+ * a transcript — the same prefix → flight-number extraction parseCallsign
+ * performs, WITHOUT the aircraft-list filter. Used by the CLI's
+ * buildSyntheticAircraftList so a typed transcript ("CSC6918: climb …")
+ * resolves its own callsign with no live aircraft data.
+ *
+ * @param {string} transcript — raw speech/typed transcript
+ * @param {'en'|'zh'} lang — detected language
+ * @returns {string[]} callsign strings (e.g., ["CSC6918"])
+ */
+export function callsignCandidates(transcript, lang) {
+  const out = new Set();
+  if (!transcript) return [];
+  const lower = transcript.toLowerCase().trim();
+  const spokenToCode = getSpokenToCode();
+
+  if (lang === 'zh') {
+    for (const [spoken, code] of spokenToCode) {
+      if (!isCJK(spoken[0])) continue;   // English entries don't prefix-match Chinese text
+      const m = matchPrefix(transcript, spoken);
+      if (!m) continue;
+      const chars = [...m.remaining];
+      const digitChars = [];
+      let consumed = 0;
+      for (const ch of chars) {
+        const d = ZH_DIGIT_FOR_PARSER[ch];
+        if (d) { digitChars.push(d); consumed++; }
+        else if (/^\d$/.test(ch)) { digitChars.push([ch]); consumed++; }
+        else break;
+      }
+      if (!digitChars.length) continue;
+      for (const numStr of productZh(digitChars).filter(c => c.length <= 6)) out.add(code + numStr);
+    }
+  } else {
+    // Same filler handling as parseCallsign (the CLI sim's synthetic list
+    // must resolve exactly what the app's parse would).
+    const stripped = stripLeadingFillers(lower.split(/\s+/)).join(' ');
+    for (const [spoken, code] of spokenToCode) {
+      if (isCJK(spoken[0])) continue;   // Chinese short forms are spoken-word only
+      const m = matchPrefix(lower, spoken) || (stripped !== lower ? matchPrefix(stripped, spoken) : null);
+      if (!m) continue;
+      const remainingTrimmed = m.remaining.trim();
+      const tokens = stripLeadingFillers(
+        remainingTrimmed
+          ? remainingTrimmed.split(/\s+/).filter(t => /[a-z0-9一-鿿]/i.test(t))
+          : []
+      );
+      const numResult = parseEnglishFlightNumber(tokens);
+      for (const numStr of numResult.candidates) out.add(code + numStr);
+    }
+  }
+
+  return [...out];
 }

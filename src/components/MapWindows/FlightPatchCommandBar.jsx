@@ -2,6 +2,10 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
 import { MAP_ICON_PATH } from '../../utils/constants';
+import {
+  ALT_MIN_FT, ALT_MAX_FT, SPEED_MIN_KTS, SPEED_MAX_KTS, FT_PER_GU, pad3,
+  buildHeadingPayload, buildAltitudePayload, buildSpeedPayload, buildClearApprPayload,
+} from '../../utils/patchCommands';
 
 /**
  * Patch-command composer — command-line style display, mouse-only input.
@@ -106,14 +110,10 @@ import { MAP_ICON_PATH } from '../../utils/constants';
  * east at rotate 0) rotated by heading − 90°: 360 → nose straight up,
  * 090 → right, 180 → down, 270 → left — same convention as the maps.
  */
-const TURN_RATE_DEG_S = 3;   // IFR standard-rate turn — the plugin rotates the nose at this °/s of GAME time
-const ALT_RATE_FPM = 1000;   // climb/descend speed — ft/min of GAME time (the plugin's default too)
-const ALT_MIN_FT = 1000;     // altitude slider floor
-const ALT_MAX_FT = 9000;     // altitude slider ceiling (extends to the rounded current above 9000)
-const SPEED_MIN_KTS = 180;   // fly-speed slider floor
-const SPEED_MAX_KTS = 240;   // fly-speed slider ceiling (the ACL approach-speed default)
-const FT_PER_GU = 100 / 0.3048;   // ≈ 328.084 — 1 GU = 100 m (user-confirmed; 15.24 GU = 5000 ft)
-const pad3 = (n) => String(n).padStart(3, '0');
+// Constants (TURN_RATE_DEG_S, ALT_RATE_FPM, ALT_MIN_FT, ALT_MAX_FT,
+// SPEED_MIN_KTS, SPEED_MAX_KTS, FT_PER_GU) and payload builders live in
+// src/utils/patchCommands.js — shared with the voice pipeline so composer
+// and voice parser never drift.
 
 // Plane-icon thumb for the heading slider — a data-URI SVG reusing the
 // MAP_ICON_PATH the maps render. Applied as a -webkit-mask-image on the
@@ -257,16 +257,10 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
     const callSign = aircraft.callSign;
     if (valType === 'heading' || sel.heading != null) {
       const h = sel.heading ?? currentHeading;
-      const rad = (h * Math.PI) / 180;
       return {
         key: 'heading',
         label: 'Fly Heading ' + pad3(h),
-        payload: {
-          type: 'update_heading', callSign,
-          dx: +Math.sin(rad).toFixed(4),                   // +X = east
-          dy: +Math.cos(rad).toFixed(4),                   // +Z = north
-          rate: TURN_RATE_DEG_S,                           // smooth turn, °/s of game time
-        },
+        payload: buildHeadingPayload(callSign, h),   // dx/dy from the plugin's (sin H, cos H) convention
       };
     }
     if (valType === 'altitude' || sel.alt != null) {
@@ -275,11 +269,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
       return {
         key: 'altitude',
         label: 'Fly Altitude ' + v,
-        payload: {
-          type: 'altitude', callSign,
-          targetFt: v,
-          rate: ALT_RATE_FPM,   // smooth vertical, ft/min of game time
-        },
+        payload: buildAltitudePayload(callSign, v),   // smooth vertical, ft/min of game time
       };
     }
     if (valType === 'speed' || sel.speed != null) {
@@ -288,20 +278,14 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
       return {
         key: 'speed',
         label: 'Fly Speed ' + v,
-        payload: {
-          type: 'update_speed', callSign,
-          kts: v,   // raw knots, int — the plugin re-asserts it every tick (no end command)
-        },
+        payload: buildSpeedPayload(callSign, v),   // raw knots — re-asserted every tick (no end command)
       };
     }
     if (sel.clearAppr) {
       return {
         key: 'clearAppr',
         label: 'Clear for Approach',
-        payload: {
-          type: 'clear_for_appr', callSign,
-          rate: TURN_RATE_DEG_S,   // smooth handoff turn — the plugin rotates the nose onto the approach course at this °/s of game time
-        },
+        payload: buildClearApprPayload(callSign),   // smooth handoff turn, °/s of game time
       };
     }
     return null;

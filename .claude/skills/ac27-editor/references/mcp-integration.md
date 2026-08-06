@@ -78,6 +78,7 @@ Claude Code (LLM)                    AC27 Editor (Electron)
 | `get_editor_status` | Current file, airport, flight counts, dirty flag, timeline status. |
 | `get_airport_info` | Full constraint map: flatLists, airline codes, flight numbers, compat maps (airline→aircraft, runway→STAR, airline+aircraft→registration), time bounds. |
 | `get_validation_issues` | Run 12-point validation on current flights. Returns structured issues. |
+| `send_voice_command` | Parse a spoken sentence against the LIVE aircraft list (same pipeline as the PTT mic) and dispatch patch frames to the game. Needs game + BepInEx plugin running. Prints `[VOICE-PARSE]` to the main-process log. |
 
 ## Validation (12 checks)
 

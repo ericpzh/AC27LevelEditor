@@ -1,8 +1,13 @@
 /**
  * React hook that orchestrates the full voice-command pipeline:
  *
- *   transcript → detectLanguage → parseCallsign → match aircraft
- *              → findBestCommandMatch → return result
+ *   transcript → parseVoiceTranscript (callsign → aircraft, then the
+ *                patch-command chain — heading/altitude/speed/clear_for_appr)
+ *
+ * The returned matchedCommand is an ARRAY of {type, label, payload} command
+ * entries (payloads are sendPatchCommand patch objects) — empty/null means
+ * selection only (bare callsign → active/yellow). The caller dispatches the
+ * chain; selection of the matched callsign is the caller's selection effect.
  *
  * Manages SpeechRecognition lifecycle, silence timeout, and error handling.
  *
@@ -10,13 +15,13 @@
  *   const voice = useVoiceCommands(udpAircraft);
  *   // voice.startListening(), voice.stopListening()
  *   // voice.listening, voice.transcript, voice.matchedCallsign,
- *   // voice.matchedCommand, voice.confidence, voice.error
+ *   // voice.matchedCommand, voice.confidence, voice.error,
+ *   // voice.voiceResult, voice.matchedAircraft
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { detectLanguage, parseCallsign } from './voiceCallsignParser';
-import { findBestCommandMatch, MATCH_THRESHOLD } from './voiceCommandMatcher';
-import { getCommandsForAircraft } from './commandTree';
+import { useElectronAPI } from '../../hooks/useElectronAPI';
+import { parseVoiceTranscript } from './voiceTranscriptParser.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -33,12 +38,15 @@ const COOLDOWN_MS = 500;
  * @returns {Object} voice state + controls
  */
 export default function useVoiceCommands(udpAircraft) {
+  const electronAPI = useElectronAPI();
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [matchedCallsign, setMatchedCallsign] = useState(null);
   const [matchedCommand, setMatchedCommand] = useState(null);
   const [confidence, setConfidence] = useState(0);
   const [error, setError] = useState(null);
+  const [voiceResult, setVoiceResult] = useState(null);   // full parseVoiceTranscript result (feedback)
+  const [matchedAircraft, setMatchedAircraft] = useState(null);
 
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
@@ -105,6 +113,8 @@ export default function useVoiceCommands(udpAircraft) {
     setMatchedCommand(null);
     setConfidence(0);
     setError(null);
+    setVoiceResult(null);
+    setMatchedAircraft(null);
 
     // Stop any existing session
     stopRecognition();
@@ -188,28 +198,36 @@ export default function useVoiceCommands(udpAircraft) {
   const processTranscript = useCallback((text) => {
     if (!mountedRef.current) return;
 
-    const lang = detectLanguage(text);
-    const acList = udpAircraft || [];
+    const result = parseVoiceTranscript(text, udpAircraft || []);
 
-    // Step 1: Parse callsign
-    const parsed = parseCallsign(text, lang, acList);
+    // Print the parse to the main-process npm log (mirrors the MCP
+    // send_voice_command tool's [VOICE-PARSE] line — same pipeline).
+    if (electronAPI?.debugLog) {
+      electronAPI.debugLog(
+        '[VOICE-PARSE]', JSON.stringify(text),
+        'ok=' + result.ok,
+        'callsign=' + result.callsign,
+        'a/c=' + (result.aircraft?.callSign ?? '-') + ' seat=' + (result.aircraft?.controlSeat ?? '-'),
+        'commands=' + JSON.stringify(result.commands),
+        'notices=' + JSON.stringify(result.notices),
+        'rendered=' + JSON.stringify(result.renderedLine),
+        'reason=' + (result.reason ?? '-')
+      );
+    }
 
-    if (parsed) {
-      setMatchedCallsign(parsed.callsign);
+    setVoiceResult(result);
 
-      // Step 2: Match command from remaining text
-      if (parsed.remainingText) {
-        const commands = getCommandsForAircraft(parsed.aircraft);
-        const match = findBestCommandMatch(parsed.remainingText, commands, lang);
-
-        if (match && match.score >= MATCH_THRESHOLD) {
-          setMatchedCommand(match.cmd);
-          setConfidence(match.score);
-        } else if (match) {
-          // Below threshold — still set for UI feedback
-          setConfidence(match.score);
-        }
-      }
+    if (result.ok) {
+      setMatchedCallsign(result.callsign);
+      setMatchedAircraft(result.aircraft);
+      setMatchedCommand(result.commands.length ? result.commands : null);
+      setConfidence(result.commands.length ? 1 : 0);
+    } else {
+      // No aircraft matched — clear any previous match
+      setMatchedCallsign(null);
+      setMatchedAircraft(null);
+      setMatchedCommand(null);
+      setConfidence(0);
     }
   }, [udpAircraft]);
 
@@ -225,5 +243,7 @@ export default function useVoiceCommands(udpAircraft) {
     isSupported,
     startListening,
     stopListening,
+    voiceResult,
+    matchedAircraft,
   };
 }

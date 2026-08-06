@@ -4,10 +4,13 @@
  * English patterns handled:
  *   - Individual digits: "one two three four" → 1234
  *   - Teens:            "eleven", "thirteen" → 11, 13
- *   - Grouped pairs:    "twelve thirty four" → 1234
+ *   - Grouped pairs:    "twelve thirty four" → 1234 (and the 12304 reading)
+ *   - Tens + ones:      "thirty four" → 34 (the literal "30"+"4" = 304
+ *                       reading is kept as a candidate too — the aircraft
+ *                       list disambiguates)
  *   - "hundred":        "one hundred" → 100 (rare in aviation)
  *   - "triple X":       "triple one" → 111
- *   - "oh" for zero:    "oh four" → 04
+ *   - "o"/"oh" for zero: "o four" → 04 (speech engines render "oh" as "o")
  *
  * Chinese patterns handled:
  *   - Digit-by-digit (yao-series):  "幺幺幺幺" → 1111
@@ -18,9 +21,10 @@
 
 // ─── English word → digit(s) ──────────────────────────────────────────
 
-/** Single-digit words (including "oh" for zero in aviation). */
+/** Single-digit words (including "o"/"oh" for zero in aviation — speech
+ *  engines commonly render "oh" as the bare letter "o"). */
 const EN_DIGIT = {
-  zero: ['0'], oh: ['0'],
+  zero: ['0'], oh: ['0'], o: ['0'],
   one: ['1'], two: ['2'], three: ['3'], four: ['4'], five: ['5'],
   six: ['6'], seven: ['7'], eight: ['8'], nine: ['9'],
 };
@@ -82,10 +86,17 @@ function product(arrays) {
 /**
  * Map each token to its possible digit strings, or null if not a number word.
  * Returns array of string arrays, one per token.
+ *
+ * Tokens are punctuation-normalized first ("6918:" → "6918") so typed
+ * input with trailing punctuation (CSC6918:) parses like spoken words.
+ * Literal Arabic digits are accepted (speech engines and typed text both
+ * emit them).
  */
 function tokenizeEnglish(tokens) {
   return tokens.map((t) => {
-    const lower = t.toLowerCase();
+    const lower = t.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
+    if (!lower) return null;
+    if (/^\d{1,5}$/.test(lower)) return [lower];   // literal digits ("6918", "9000")
     if (EN_DIGIT[lower]) return EN_DIGIT[lower];
     if (EN_TEEN[lower]) return EN_TEEN[lower];
     if (EN_TENS[lower]) return EN_TENS[lower];
@@ -172,6 +183,22 @@ export function parseEnglishFlightNumber(tokens) {
       break;
     }
 
+    // Tens word followed by a single digit 1–9 composes both readings:
+    // "thirty four" → "34" (thirty-four) and "304" (30 + 4) — the caller
+    // tests both against the aircraft list. NOT composed with zero, so
+    // "thirty oh" keeps its natural "300" reading.
+    const isTens = m.length === 1 && /^[2-9]0$/.test(m[0]);
+    if (isTens) {
+      const next = mapped[i + 1];
+      if (next && Array.isArray(next) && next.length === 1 && /^[1-9]$/.test(next[0])) {
+        const tensInt = parseInt(m[0], 10);
+        const onesInt = parseInt(next[0], 10);
+        resolved.push([String(tensInt + onesInt), m[0] + next[0]]);
+        i += 2;
+        continue;
+      }
+    }
+
     resolved.push(m);
     i++;
   }
@@ -211,6 +238,8 @@ export function parseChineseFlightNumber(tokens) {
   for (const ch of chars) {
     if (ZH_DIGIT[ch]) {
       mapped.push(ZH_DIGIT[ch]);
+    } else if (/^\d$/.test(ch)) {
+      mapped.push([ch]);   // literal ASCII digit (typed input / speech engines)
     } else {
       break; // not a digit char — stop consuming
     }
@@ -246,4 +275,161 @@ export function parseChineseFlightNumber(tokens) {
  */
 export function generateCallsignCandidates(airlineCode, numberCandidates) {
   return numberCandidates.map(n => airlineCode + n);
+}
+
+// ─── Spoken VALUE parsing (command values — heading/altitude/speed) ─────
+
+/**
+ * EN unit words → command kind. 'unitless' = tolerated but ignored
+ * ("fly heading 120 degrees").
+ */
+export const EN_UNIT_WORDS = {
+  knots: 'speed', knot: 'speed', kts: 'speed',
+  feet: 'altitude', foot: 'altitude', ft: 'altitude',
+  degrees: 'unitless', degree: 'unitless',
+};
+
+/** ZH unit words (string keys, 1-2 chars, no spaces in speech). */
+export const ZH_UNIT_WORDS = { '节': 'speed', '英尺': 'altitude' };
+
+/** Strip leading/trailing punctuation from a token ("180." → "180"). */
+function normalizeToken(t) {
+  return t.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
+}
+
+/**
+ * Scan the leading numeric tokens of a value phrase into units:
+ * [{k:'d'|'tens', v}, {k:'hundred'|'thousand'}]. 'and' and punctuation-only
+ * tokens are skipped (they're part of magnitude phrases). consumed = number
+ * of original tokens scanned (incl. skips).
+ */
+function scanEnNumeric(tokens) {
+  const scanned = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const t = normalizeToken(tokens[i]);
+    if (!t) { i++; continue; }
+    if (EN_DIGIT[t]) { scanned.push({ k: 'd', v: parseInt(EN_DIGIT[t][0], 10) }); i++; }
+    else if (EN_TEEN[t]) { scanned.push({ k: 'd', v: parseInt(EN_TEEN[t][0], 10) }); i++; }
+    else if (EN_TENS[t]) { scanned.push({ k: 'tens', v: parseInt(EN_TENS[t][0], 10) }); i++; }
+    else if (t === 'hundred' || t === 'thousand') { scanned.push({ k: t }); i++; }
+    else if (t === 'and') { i++; continue; }   // connector inside magnitudes ("one hundred and twenty")
+    else break;
+  }
+  return { scanned, consumed: i };
+}
+
+/**
+ * Parse a spoken VALUE (heading degrees / altitude ft / speed knots) from
+ * leading tokens. EN input: token array; ZH input: string (no spaces).
+ *
+ * @returns {{ value: number, consumed: number, kind: string } | null}
+ *   consumed = tokens (EN) / chars (ZH) consumed — the caller peeks the
+ *   unit word right after.
+ */
+export function parseSpokenNumberValue(tokens, lang) {
+  if (lang === 'zh') return parseZhSpokenValue(tokens);
+  return parseEnSpokenValue(tokens);
+}
+
+function parseEnSpokenValue(tokens) {
+  // 1. Arabic-digit fallback (speech engines and typed input emit digits)
+  const first = normalizeToken(tokens[0] || '');
+  if (/^\d{1,5}$/.test(first)) return { value: parseInt(first, 10), consumed: 1, kind: 'digits' };
+
+  const { scanned, consumed } = scanEnNumeric(tokens);
+  if (!scanned.length) return null;
+
+  // 2. Magnitude path — hundred/thousand present: left-to-right groups,
+  //    "two thousand"→2000, "nine thousand five hundred"→9500,
+  //    "one hundred eighty"→180, "twelve hundred"→1200, "one hundred twenty five"→125
+  if (scanned.some(s => s.k === 'hundred' || s.k === 'thousand')) {
+    let total = 0, group = 0;
+    for (let i = 0; i < scanned.length; i++) {
+      const s = scanned[i];
+      if (s.k === 'd') group = s.v;
+      else if (s.k === 'tens') {
+        let v = s.v;
+        if (scanned[i + 1] && scanned[i + 1].k === 'd' && scanned[i + 1].v <= 9) { v += scanned[i + 1].v; i++; }
+        group = v;
+      }
+      else if (s.k === 'hundred' || s.k === 'thousand') {
+        group = (group || 1) * (s.k === 'hundred' ? 100 : 1000);
+        total += group;
+        group = 0;
+      }
+    }
+    total += group;
+    return { value: total, consumed, kind: 'magnitude' };
+  }
+
+  // 3. Digit-by-digit — every token a single digit word ("one two zero"→120,
+  //    "nine zero zero zero"→9000)
+  if (scanned.every(s => s.k === 'd' && s.v <= 9)) {
+    return { value: parseInt(scanned.map(s => s.v).join(''), 10), consumed, kind: 'digits' };
+  }
+
+  // 4. Slot path — digit before tens = hundreds ("one twenty"→120,
+  //    "one twenty five"→125, "five twenty"→520), tens + digit
+  //    ("twenty five"→25), lone teen ("twelve"→12)
+  let value = 0;
+  let sawTens = false;
+  for (const s of scanned) {
+    if (s.k === 'tens') { value = value ? value * 100 + s.v : s.v; sawTens = true; }
+    else value = sawTens ? value + s.v : value * 10 + s.v;
+  }
+  return { value, consumed, kind: 'slots' };
+}
+
+function parseZhSpokenValue(str) {
+  const chars = [...str];
+  if (!chars.length) return null;
+
+  // 1. Arabic-digit fallback (typed input / speech engines)
+  let d = 0;
+  while (d < chars.length && /^\d$/.test(chars[d])) d++;
+  if (d > 0) return { value: parseInt(chars.slice(0, d).join(''), 10), consumed: d, kind: 'digits' };
+
+  // 2. Positional magnitude — 十/百/千 present: digit×unit accumulation
+  //    ("九千"→9000, "两千"→2000, "一百八十"→180, "五千两百"→5200,
+  //    "十一"→11, "一百零五"→105). Prefers this over digit-concat so
+  //    九千 is 9000, never 9-0-0.
+  const hasUnit = chars.some(ch => ch === '十' || ch === '百' || ch === '千');
+  if (hasUnit) {
+    const rankOf = (ch) => (ch === '千' ? 3 : ch === '百' ? 2 : ch === '十' ? 1 : 0);
+    let value = 0, i = 0, prevRank = 99, lastUnitRank = 0;
+    while (i < chars.length) {
+      const ch = chars[i];
+      if (ch === '零') { i++; lastUnitRank = 1; continue; }   // 零 resets to strict ×1 ("一百零五"→105)
+      const dig = ZH_DIGIT[ch];
+      if (dig) {
+        const n = parseInt(dig[0], 10);
+        const nx = chars[i + 1] || '';
+        const rank = rankOf(nx);
+        if (rank && rank < prevRank) {
+          value += n * (rank === 3 ? 1000 : rank === 2 ? 100 : 10);
+          prevRank = rank; lastUnitRank = rank; i += 2;
+        } else {
+          // Trailing digit: ×1 after 十 ("十一"→11), colloquial ×10 after 百
+          // ("一百八"→180, not 108), ×100 after 千 ("一千五"→1500)
+          value += n * (lastUnitRank ? 10 ** (lastUnitRank - 1) : 1);
+          i++;
+        }
+      } else if (ch === '十' && prevRank > 1) { value += 10; prevRank = 1; lastUnitRank = 1; i++; }   // bare "十" opener
+      else break;
+    }
+    if (i > 0) return { value, consumed: i, kind: 'magnitude' };
+    return null;
+  }
+
+  // 3. Pure digit-by-digit ("幺二洞"→120, "两洞洞"→200)
+  const digitChars = [];
+  let k = 0;
+  for (; k < chars.length; k++) {
+    const dig = ZH_DIGIT[chars[k]];
+    if (!dig) break;
+    digitChars.push(dig[0]);
+  }
+  if (digitChars.length) return { value: parseInt(digitChars.join(''), 10), consumed: k, kind: 'digits' };
+  return null;
 }

@@ -329,41 +329,47 @@ Command-line-style, mouse-only: the command builds up on ONE line (`CSN9355: Fly
 
 **Protocol:** frames go to the AC27Appoarch plugin via `send-patch-command` (IPC) → 0x00E7 extended UDP frame — see `udp-telemetry.md` "Command Channel" and the `ac27-appoarch` skill for the full contract.
 
-### Voice Command Input (planned, UI hidden)
+### Voice Command Input (LIVE — patch-command vocabulary, 2026-08-05)
 
-Push-to-talk voice command system for the Flight Strips window using the **Web Speech API** (built into Chromium/Electron 33, zero dependencies). `electron-voice` was evaluated and rejected (no license, requires Rust + Neon + Vosk native modules).
+Push-to-talk voice command system for the Flight Strips window using the **Web Speech API** (built into Chromium/Electron 33, zero dependencies). `electron-voice` was evaluated and rejected (no license, requires Rust + Neon + Vosk native modules). Retargeted from the old native `CMD_*` command IDs to the **patch-command vocabulary** (2026-08-05): the voice chain dispatches `sendPatchCommand` payloads byte-identical to what `FlightPatchCommandBar` composes.
 
 **Flow:**
 ```
-PTT pressed → clear selection → capture speech → detectLanguage (EN/ZH)
-  → parseCallsign: airline name → ICAO code (via AIRLINE_CODE_MAP) + spoken numbers → digits
-  → match against live UDP aircraft list → select aircraft
-  → findBestCommandMatch: fuzzy match remaining text against getCommandsForAircraft()
-  → execute command via handleCommandAction()
+PTT pressed → clear selection → capture speech → parseVoiceTranscript():
+  → detectLanguage (EN/ZH) → parseCallsign (airline→ICAO + numbers, aircraft lookup)
+  → greedy pattern match over the remaining text → command chain
+  → bare callsign = selection only (active/yellow via the selection effect)
+  → matchedCommand effect: seat-gate (controlSeat === 5) then dispatch the chain
+    via sendPatchCommand, one frame per command, in order — the strip stays selected
 ```
+
+**Translation table** (EN + ZH, in `voiceTranscriptParser.js`): `fly/turn (left|right) (to) heading N` → update_heading (absolute; direction word tolerated); `climb|descend and maintain N` / `climb|descend to N` / `fly altitude N` / `level (off) (at) N` / `flight level N` → altitude; `reduce (speed) to N` / `increase speed to N` / `slow (down) to N` / `fly speed N` / `N knots` → update_speed; `clear(ed) (for) (the) [ils|rnav|visual|loc|vor|ndb] approach|appr` → clear_for_appr (supersedes a chain; a trailing `runway N (left|right|center)` designator is consumed and ignored — the aircraft's assigned runway stays authoritative); bare `maintain/保持 N` disambiguated: unit word wins, then N ≥ 1000 → altitude else speed. Numbers: digit-by-digit, magnitudes (`two thousand`→2000, `九千`→9000), slots (`one eighty`→180), tens+ones (`thirty four`→34/304 — aircraft list disambiguates), `o`/`oh` for zero (speech engines render "oh" as "o"), FL ×100, Arabic fallback. Leading fillers (`um`/`uh`/`okay`/`sir`…) are stripped before the airline and number ("okay delta uh 3401" parses; "Okay Airways" still matches via the original-text-first rule). Unmatched text → `unsupported:` notices, never silently dropped. Parse failures return `reason` naming the failing stage (no airline / candidates not in list + first unparsed token / no aircraft data).
 
 **Source files:**
 
 | File | Purpose |
 |------|---------|
-| `voiceNumberParser.js` | `parseEnglishFlightNumber()` / `parseChineseFlightNumber()` — spoken numbers → digit candidates. Handles "eleven eleven"→1111, "triple one"→111, "å¹ºå¹ºå¹ºå¹º"→1111, "æ´žå››"→04. Cartesian product for ambiguous cases. |
-| `voiceCallsignParser.js` | `detectLanguage()` — CJK character check. `parseCallsign()` — longest-match airline name prefix (via `getSpokenToCode()` built from `AIRLINE_CODE_MAP`), then number parsing, then aircraft lookup. Separate EN and ZH paths (ZH uses character-level matching since no spaces). |
-| `voiceCommandMatcher.js` | `findBestCommandMatch()` — two-stage: (1) exact alias lookup against hand-curated `EN_ALIASES`/`ZH_ALIASES` maps, (2) token Jaccard similarity with partial word overlap for English, bigram Dice coefficient for Chinese. `MATCH_THRESHOLD = 0.55`. `buildSpeechGrammar()` — JSGF grammar for SpeechGrammarList. |
-| `useVoiceCommands.js` | React hook — manages `SpeechRecognition` lifecycle, silence timeout (2s auto-stop), cooldown (500ms). Orchestrates: transcript → language detection → callsign parsing → command matching. Returns `{ listening, transcript, matchedCallsign, matchedCommand, confidence, isSupported, error, startListening, stopListening }`. |
-| `VoicePTTButton.jsx` | Hold-to-talk mic button with 4 visual states: idle (gray `IoMicOutline`), listening (red `IoMic` + pulse animation), matched (green flash 300ms), error (dimmed red). Supports `witchMode` prop — renders `witch/voice.png`. |
+| `voiceTranscriptParser.js` | **The core** — `parseVoiceTranscript(transcript, aircraftList)` → `{ ok, callsign, aircraft, lang, commands: [{type, label, payload}], notices, renderedLine, reason? /* non-empty on ok:false */ }` (payloads ready for `sendPatchCommand`) + `buildSyntheticAircraftList()` (CLI callsign resolution). Pure, DOM-free, Node-loadable (explicit `.js` specifiers). Shared by the hook AND `scripts/voice_sim.mjs`. |
+| `voiceNumberParser.js` | Spoken numbers: `parseEnglishFlightNumber()` / `parseChineseFlightNumber()` (digit candidates) + `parseSpokenNumberValue(tokens|string, lang)` (command values — digits/magnitude/slots/ZH positional, e.g. 幺二洞→120, 一百八→180). Accepts literal Arabic digits + punctuation ("6918:"). Exports `EN_UNIT_WORDS`/`ZH_UNIT_WORDS`. |
+| `voiceCallsignParser.js` | `detectLanguage()` (CJK check), `parseCallsign()` — longest-match airline prefix (`getSpokenToCode()` from `AIRLINE_CODE_MAP`) + number parsing + aircraft lookup; separate EN/ZH paths. Exports `getSpokenToCode()`, `matchPrefix()`, `callsignCandidates()` (all plausible callsigns for the CLI). |
+| `voiceCommandMatcher.js` | **Retained but unused by the pipeline** (legacy fuzzy matcher for the old native `CMD_*` vocabulary; its tests still pass). The active matcher is the greedy pattern engine inside `voiceTranscriptParser.js`. |
+| `useVoiceCommands.js` | React hook — `SpeechRecognition` lifecycle (2s silence auto-stop, 500ms cooldown). `processTranscript` → `parseVoiceTranscript`; returns `{ listening, transcript, matchedCallsign, matchedCommand /* array */, confidence, error, voiceResult, matchedAircraft, isSupported, startListening, stopListening }`. |
+| `VoicePTTButton.jsx` | Hold-to-talk mic button: idle (gray `IoMicOutline`), listening (red `IoMic` + pulse), matched (green flash 300ms), error (dimmed red). `feedback` prop shows the transient result line as tooltip. `witchMode` renders `witch/voice.png`. |
 
 **Integration points in `FlightStripsWindow.jsx`:**
-- `handleVoicePress` clears selection before PTT
-- `handleVoiceStart` = `handleVoicePress` + `voice.startListening`
-- `useEffect` on `voice.matchedCallsign` → calls `setSelectedCallSign()` + `selectAircraftInMap()`
-- `useEffect` on `voice.matchedCommand` → calls `electronAPI.sendUdpCommand()` + clears selection
-- Both the `VoicePTTButton` and `FlightStripCommandBar` are hidden behind `{/* TODO: re-enable when game command IDs are confirmed */}`
+- `handleVoicePress` clears selection before PTT; `handleVoiceStart` = press + `voice.startListening`
+- `useEffect` on `voice.matchedCallsign` → `setSelectedCallSign()` + `selectAircraftInMap()` (the active/yellow selection)
+- `useEffect` on `voice.matchedCommand` → seat-gate (`controlSeat === 5`, else feedback "not on approach channel"), then dispatches the chain via `electronAPI.sendPatchCommand` one frame at a time — selection kept, transient `.voice-feedback` line ("CSC6918: Fly Altitude 9000, Fly Speed 180 ✓", 4s auto-clear)
+- Button visible whenever **BepInEx Debug Mode is active** (`bepInExActive` gate, same check as `FlightPatchCommandBar`) — selection works for any aircraft; commands only on the approach channel
+- Command constants + payload builders shared with the composer via `src/utils/patchCommands.js` (`buildHeadingPayload` etc. — single source of truth)
+
+**Audio-free testing:** `node scripts/voice_sim.mjs "CSC6918: climb and maintain 9000, reduce speed to 180 knots" [--live]` — runs the exact `parseVoiceTranscript` pipeline, prints the command-window line + payload JSON, and with `--live` sends the 0x00E7 frames to the game at 127.0.0.1:20267 (send-only socket; never binds 20266). `--aircraft file.json` exercises the seat gate; dry-run is the default. Frame builder shared via `electron/patchFrame.js`.
 
 **Mic permission:** `session.defaultSession.setPermissionRequestHandler` in `electron/main.js` auto-grants `media` permission for windows with `window=flightStrips` in URL.
 
 **CSP update:** `index.html` adds `media-src 'self' mediastream:`.
 
-**Tests:** 61 Vitest tests across 3 files: `voiceNumberParser.test.js` (21), `voiceCallsignParser.test.js` (19), `voiceCommandMatcher.test.js` (21).
+**Tests:** 131 Vitest tests across 5 files: `voiceNumberParser.test.js` (21), `voiceCallsignParser.test.js` (19), `voiceCommandMatcher.test.js` (21, legacy), `voiceSpokenNumberValue.test.js` (28), `voiceTranscriptParser.test.js` (42).
 
 ## Shared Hooks
 
