@@ -238,7 +238,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
 
-  // ─── Voice STT (Windows System.Speech worker) ────────────────
+  // ─── Voice STT (offline vosk worker) ─────────────────────────
   getVoiceSttStatus: () => ipcRenderer.invoke('voice-stt-status'),
   voiceSttStart: () => ipcRenderer.invoke('voice-stt-start'),
   voiceSttStop: () => ipcRenderer.invoke('voice-stt-stop'),

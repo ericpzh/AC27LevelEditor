@@ -73,7 +73,7 @@ export const EN_PATTERNS = [
   { type: 'fl', words: ['fl'] },
 ];
 
-const ZH_PATTERNS = [
+export const ZH_PATTERNS = [
   { type: 'altitude', chars: '爬升保持' },
   { type: 'altitude', chars: '下降保持' },
   { type: 'heading', chars: '左转航向' },
@@ -108,19 +108,19 @@ export const EN_PATTERN_KEYS = [...new Set(EN_PATTERNS.flatMap((p) => p.words))]
 
 // Filler words ("uh", "um", …) chain like connectors so "…and uh reduce
 // speed to 180" parses; they carry no meaning.
-const EN_CONNECTORS = new Set(['and', 'then', 'also', 'please', ...EN_FILLER_WORDS]);
+export const EN_CONNECTORS = new Set(['and', 'then', 'also', 'please', ...EN_FILLER_WORDS]);
 const ZH_CONNECTORS = ['然后', '还有', '请'];
 
 // Flexible EN clear-for-approach grammar (replaces the fixed table entries):
 //   clear|cleared [for] [the] [ils|rnav|visual|loc|vor|ndb] approach|appr
-const EN_CFA_HEADS = new Set(['clear', 'cleared']);
+export const EN_CFA_HEADS = new Set(['clear', 'cleared']);
 export const EN_APPROACH_TYPES = new Set(['ils', 'rnav', 'visual', 'loc', 'vor', 'ndb']);
 
 /** Fuzzy-eligible approach types (all ≥ 3 chars). Exported for the generator. */
 export const EN_APPROACH_TYPE_KEYS = [...EN_APPROACH_TYPES];
 
 // Runway suffix after a cfa phrase — full words (speech) or letters (typed "13L").
-const EN_RUNWAY_SUFFIX = new Set(['left', 'right', 'center', 'l', 'r', 'c']);
+export const EN_RUNWAY_SUFFIX = new Set(['left', 'right', 'center', 'l', 'r', 'c']);
 
 // ─── Prefix matching ──────────────────────────────────────────────────
 
@@ -494,8 +494,8 @@ export function parseVoiceTranscript(transcript, aircraftList) {
 
 /**
  * Try candidate transcripts in order against the full voice pipeline —
- * the primary System.Speech result first, then the engine's alternate
- * hypotheses ($r.Alternates, already confidence-ordered). First candidate
+ * the primary result first, then the worker's alternate hypotheses (if any,
+ * already confidence-ordered). First candidate
  * whose parse yields commands wins; a selection-only candidate (ok, 0
  * commands) never wins over a failing primary — a misheard bare callsign
  * in an alternate must not trigger a selection. No winner → the primary's

@@ -9,12 +9,13 @@
  * selection only (bare callsign → active/yellow). The caller dispatches the
  * chain; selection of the matched callsign is the caller's selection effect.
  *
- * Speech backend (2026-08-05): in Electron, Windows System.Speech via a
- * PowerShell worker (electron/voice-stt.ps1, driven by voiceSttWorker.js in
- * the main process) — the Chromium Web Speech API uploads mic audio to
- * Google's speech API, which is shut down for Electron (network error, was
- * silently swallowed here). In a plain browser (vite dev) the original
- * Web Speech API path is kept as a fallback — it works in Chrome.
+ * Speech backend (2026-08-06): in Electron, offline vosk — electron/voice-stt-vosk.js
+ * (spawned by voiceSttWorker.js via process.execPath + ELECTRON_RUN_AS_NODE;
+ * sox mic capture, EN+ZH grammar-constrained decoding) — the Chromium Web
+ * Speech API uploads mic audio to Google's speech API, which is shut down for
+ * Electron (network error, was silently swallowed here). In a plain browser
+ * (vite dev) the original Web Speech API path is kept as a fallback — it
+ * works in Chrome.
  *
  * Manages the recognition session lifecycle, silence timeout, and error
  * handling. State shape is unchanged: listening/transcript/matchedCallsign/
@@ -93,7 +94,7 @@ export default function useVoiceCommands(udpAircraft) {
   }, []);
 
   const resetSilenceTimer = useCallback(() => {
-    if (isElectron) return; // the worker's engine owns silence timing (EndSilenceTimeout)
+    if (isElectron) return; // the worker's engine owns silence timing (child finalize grace)
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(() => {
       if (!mountedRef.current) return;
@@ -103,7 +104,7 @@ export default function useVoiceCommands(udpAircraft) {
   }, [isElectron, stopRecognition]);
 
   // ── Check support ─────────────────────────────────────────────────
-  // Electron: probe the System.Speech worker (null = unknown → button stays
+  // Electron: probe the vosk worker (null = unknown → button stays
   // hidden until the probe resolves, same pattern as bepInExActive).
   // Browser: the Web Speech API's presence.
   useEffect(() => {
@@ -156,7 +157,7 @@ export default function useVoiceCommands(udpAircraft) {
     stopRecognition();
 
     if (isElectron) {
-      // ── Electron: System.Speech worker (main process spawns it) ──
+      // ── Electron: vosk worker (main process spawns it) ──
       (async () => {
         try {
           const r = await electronAPI?.voiceSttStart?.();
@@ -257,7 +258,7 @@ export default function useVoiceCommands(udpAircraft) {
   }, [isElectron, electronAPI, stopRecognition]);
 
   // ── Transcript processing ────────────────────────────────────────
-  // Candidates: the primary System.Speech result first, then the engine's
+  // Candidates: the primary result first, then the worker's alternate
   // alternate hypotheses (parseVoiceCandidates tries them in order and
   // keeps the first that yields commands — see voiceTranscriptParser.js).
 

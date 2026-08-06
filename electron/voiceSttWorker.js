@@ -1,18 +1,21 @@
 /**
- * Voice STT worker bridge — spawns and drives electron/voice-stt.ps1
- * (Windows System.Speech recognition) as a long-lived child process.
+ * Voice STT worker bridge — spawns and drives electron/voice-stt-vosk.js
+ * (offline vosk recognition) as a long-lived child process. The child runs as
+ * PLAIN NODE via ELECTRON_RUN_AS_NODE=1 (electron.exe behaves like node.exe),
+ * so the spawned target is process.execPath, not powershell.exe.
  *
  * Protocol: JSON lines over stdin/stdout, UTF-8.
  *   in : {"cmd":"start"} | {"cmd":"stop"} | {"cmd":"exit"}
- *   out: ready / started / stopped / result / rejected / error (see voice-stt.ps1)
+ *   out: ready / started / stopped / result / rejected / error
+ *        (see electron/voice-stt-vosk.js)
  *
  * State machine: idle → starting → ready → recognizing → ready.
  *
- * Stop is DELAYED by STOP_DRAIN_MS (release-drain): the ps1's tick loop
- * finalizes the phrase in flight at its own phrase boundary, so a PTT release
- * can never discard a phrase. A re-press inside the drain window cancels the
- * pending stop (the engine never stopped — seamless continuation); a re-press
- * after the drain expired but before the boundary is forwarded and the ps1
+ * Stop is DELAYED by STOP_DRAIN_MS (release-drain): the child finalizes the
+ * phrase in flight at its own phrase boundary, so a PTT release can never
+ * discard a phrase. A re-press inside the drain window cancels the pending
+ * stop (the engine never stopped — seamless continuation); a re-press after
+ * the drain expired but before the boundary is forwarded and the child
  * continues the finalizing session (re-emits 'started').
  * Event routing: start(sender) captures the initiating webContents; events are
  * pushed by the main.js subscription via getActiveSender().
@@ -22,8 +25,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const SCRIPT_NAME = 'voice-stt.ps1';
-const SPAWN_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File'];
+const SCRIPT_NAME = 'voice-stt-vosk.js';
 
 /**
  * Release-drain window (ms). Longer than the ps1's EndSilenceTimeout (1s) so
@@ -49,7 +51,8 @@ class VoiceSttWorker extends EventEmitter {
     return this.activeSender;
   }
 
-  // ── Script path (dev vs packaged — a .ps1 cannot live inside asar) ──
+  // ── Script path (dev vs packaged — child files cannot live inside asar,
+  //  they are shipped via extraResources) ──
   _scriptPath() {
     let app;
     try { app = require('electron').app; } catch (_) { /* plain node — dev path */ }
@@ -58,6 +61,13 @@ class VoiceSttWorker extends EventEmitter {
     }
     const devPath = path.join(__dirname, '..', 'electron', SCRIPT_NAME);
     return fs.existsSync(devPath) ? devPath : path.join(__dirname, SCRIPT_NAME);
+  }
+
+  // Packaged → process.resourcesPath (where extraResources land); dev → repo root.
+  _resourcesRoot() {
+    let app;
+    try { app = require('electron').app; } catch (_) { /* plain node */ }
+    return app && app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
   }
 
   _send(obj) {
@@ -90,9 +100,14 @@ class VoiceSttWorker extends EventEmitter {
     }
     console.log('[VoiceSTT] spawning worker:', script);
     try {
-      this.child = spawn('powershell.exe', [...SPAWN_ARGS, script], {
+      this.child = spawn(process.execPath, [script], {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: '1',       // electron.exe runs as plain node
+          VOICE_RESOURCES: this._resourcesRoot(),  // packaged resources/ vs repo root
+        },
       });
     } catch (err) {
       console.warn('[VoiceSTT] spawn failed:', err.message);
@@ -156,7 +171,15 @@ class VoiceSttWorker extends EventEmitter {
     switch (obj.type) {
       case 'ready':
         this.state = 'ready';
-        this.statusCache = { available: true, culture: obj.culture, recognizers: obj.recognizers };
+        this.statusCache = {
+          available: true,
+          culture: obj.culture,
+          engine: obj.engine,
+          model: obj.model,
+          sampleRate: obj.sampleRate,
+          languages: obj.languages,
+          models: obj.models,
+        };
         if (this.statusProbes.length) {
           const probes = this.statusProbes.splice(0);
           probes.forEach((resolve) => resolve(this.statusCache));

@@ -71,7 +71,7 @@ export const EN_NUMBER_FUZZY_KEYS = EN_NUMBER_KEYS.filter((w) => w.length >= 3);
  * Both "幺" (yao) and "一" (yi) mean 1 — 幺 is preferred in radio comms.
  * "洞" (dong) means 0, "两" (liang) means 2, "拐" (guai) means 7.
  */
-const ZH_DIGIT = {
+export const ZH_DIGIT = {
   '零': ['0'], '洞': ['0'],
   '幺': ['1'], '一': ['1'],
   '二': ['2'], '两': ['2'],

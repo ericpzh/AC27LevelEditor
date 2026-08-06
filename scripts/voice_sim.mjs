@@ -19,8 +19,8 @@
  *                     transcript — use a controlSeat != 5 entry to exercise
  *                     the approach-channel gate
  *   --alternates "a|b" alternate phrase hypotheses to try after the primary
- *                     (mirrors the System.Speech worker's alternates — the
- *                     first candidate that yields commands wins)
+ *                     (mirrors the vosk worker's alternates — the first
+ *                     candidate that yields commands wins)
  *   --lang en|zh|auto language override (default: auto-detect)
  *
  * Dry-run prints: detected language, resolved callsign, the command-window

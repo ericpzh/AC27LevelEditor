@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Downloaded vosk speech models (fetched by scripts/fetch-vosk-model.mjs)
+models/
+
 # Build outputs
 dist/
 dist-electron/

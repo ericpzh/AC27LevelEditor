@@ -27,19 +27,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Windows (portable)
+      - name: Build Windows (portable — no voice, R2 auto-update variant)
         run: npm run build:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload Windows artifact
+      - name: Fetch vosk speech models (voice build)
+        run: node scripts/fetch-vosk-model.mjs
+
+      - name: Build Windows (portable — voice, vosk models + sox bundled)
+        run: npm run build:win:voice -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload Windows artifacts (both variants → GitHub release)
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Editor-Windows
-          path: release/AC27Editor.exe
+          path: release/*.exe
           if-no-files-found: error
 
-      - name: Upload to R2 (auto-update)
+      - name: Upload to R2 (auto-update — NORMAL variant only, never the voice exe)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

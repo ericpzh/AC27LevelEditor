@@ -1977,7 +1977,7 @@ ipcMain.handle('send-patch-command', async (_e, patch) => {
   }
 });
 
-// ─── IPC: Voice STT (Windows System.Speech worker) ──────────────────
+// ─── IPC: Voice STT (offline vosk worker) ────────────────────────────
 
 // Forward worker events to the window that started the session (request-scoped:
 // each strips window has its own voice hook instance, so only the initiating
@@ -2577,8 +2577,8 @@ app.whenReady().then(() => {
   createWindow();
 
   // ── Permission handler: deny everything ──────────────────────────────
-  // Voice input no longer captures audio in the renderer (the PowerShell
-  // System.Speech worker owns the mic), so the former 'media' auto-grant for
+  // Voice input no longer captures audio in the renderer (the vosk STT
+  // worker's sox child owns the mic), so the former 'media' auto-grant for
   // flightStrips windows is gone. Deny-all protects against any future request.
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     try {

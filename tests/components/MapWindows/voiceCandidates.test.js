@@ -3,7 +3,7 @@ import { parseVoiceCandidates, parseVoiceTranscript } from '../../../src/compone
 
 /**
  * Stage A: candidate ordering for parseVoiceCandidates — the primary
- * System.Speech result first, then the engine's alternate hypotheses.
+ * result first, then the worker's alternate hypotheses.
  * Win rule: first candidate whose parse has ok && commands.length > 0;
  * selection-only candidates never win; no winner → primary's result.
  */
