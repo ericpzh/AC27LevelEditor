@@ -446,4 +446,118 @@ describe('AirMapWindow', () => {
     const knobs = container.querySelectorAll('.spin-knob');
     expect(knobs.length).toBe(4); // zoom + panH + panV + airspace
   });
+
+  // ── Fixes/waypoints layer ──────────────────────────────────
+
+  const FIX_AIRWAY_NODES = [
+    { pk: 'airway-node:-244674', name: 'PANKI', osmId: -244674, x: -191.74353, z: 487.024719 },
+    { pk: 'airway-node:-244673', name: null, osmId: -244673, x: 50, z: -300 },
+  ];
+
+  it('hides fix markers by default; Waypoints toggle shows them as X symbols', async () => {
+    setupDefaultMocks({
+      'collect-values': {
+        _starPaths: {}, _sidPaths: {}, _missedAppPaths: {}, _apprPaths: {}, _runwayThresholds: {},
+        _runwayList: ['19'], // left sidebar (Waypoints above ARR) only renders with runways
+        _airwayNodes: FIX_AIRWAY_NODES,
+      },
+    });
+    const { container } = renderAirMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.air-map-svg')).toBeTruthy();
+    });
+
+    // Default OFF — no markers
+    expect(container.querySelectorAll('.air-map-fix').length).toBe(0);
+
+    // Waypoints toggle lives in the left sidebar, above ARR
+    const waypointsToggle = [...container.querySelectorAll('.air-map-toggle')]
+      .find(el => el.querySelector('.air-map-toggle-label')?.textContent === 'Waypoints');
+    expect(waypointsToggle).toBeTruthy();
+    const arrToggle = [...container.querySelectorAll('.air-map-toggle')]
+      .find(el => el.querySelector('.air-map-toggle-label')?.textContent === 'ARR');
+    // DOM order: Waypoints toggle renders above ARR
+    expect(waypointsToggle.compareDocumentPosition(arrToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(waypointsToggle);
+
+    await waitFor(() => {
+      const markers = container.querySelectorAll('.air-map-fix');
+      expect(markers.length).toBe(2);
+      // Markers are X symbols (two-crossing-stroke paths), not dots
+      markers.forEach(m => {
+        expect(m.tagName).toBe('path');
+        expect(m.getAttribute('d')).toContain(' L ');
+      });
+    });
+
+    // Toggle off again — markers gone
+    fireEvent.click(waypointsToggle);
+    expect(container.querySelectorAll('.air-map-fix').length).toBe(0);
+  });
+
+  it('shows fix name labels only when Labels toggle is on (with Waypoints on)', async () => {
+    setupDefaultMocks({
+      'collect-values': {
+        _starPaths: {}, _sidPaths: {}, _missedAppPaths: {}, _apprPaths: {}, _runwayThresholds: {},
+        _runwayList: ['19'], // left sidebar (Waypoints above ARR) only renders with runways
+        _airwayNodes: FIX_AIRWAY_NODES,
+      },
+    });
+    const { container } = renderAirMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.air-map-svg')).toBeTruthy();
+    });
+
+    const findToggle = (label) => [...container.querySelectorAll('.air-map-toggle')]
+      .find(el => el.querySelector('.air-map-toggle-label')?.textContent === label);
+    const waypointsToggle = findToggle('Waypoints');
+    const labelsToggle = findToggle('Label'); // Labels — controls route + fix name labels
+
+    // Labels off by default → no fix labels even with Waypoints on
+    fireEvent.click(waypointsToggle);
+    expect(container.querySelectorAll('.air-map-fix-label').length).toBe(0);
+
+    // Labels on → PANKI shown, unnamed node has no label
+    fireEvent.click(labelsToggle);
+    await waitFor(() => {
+      const labels = container.querySelectorAll('.air-map-fix-label');
+      expect(labels.length).toBe(1);
+      expect(labels[0].textContent).toBe('PANKI');
+    });
+
+    // Labels off again → labels gone
+    fireEvent.click(labelsToggle);
+    expect(container.querySelectorAll('.air-map-fix-label').length).toBe(0);
+  });
+
+  it('does not filter fixes by the runway selector', async () => {
+    setupDefaultMocks({
+      'collect-values': {
+        _starPaths: {
+          'UBSS6W': [{ runway: '19', points: [{ x: 0, z: 0 }, { x: 50, z: -100 }, { x: 100, z: -200 }] }],
+        },
+        _sidPaths: {}, _missedAppPaths: {}, _apprPaths: {}, _runwayThresholds: {},
+        _runwayList: ['19'], // only runway 19 active
+        _airwayNodes: FIX_AIRWAY_NODES,
+      },
+    });
+    const { container } = renderAirMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.air-map-svg')).toBeTruthy();
+    });
+
+    // RWY19 sidebar toggle shifts toggle indices — select Waypoints by label
+    const waypointsToggle = [...container.querySelectorAll('.air-map-toggle')]
+      .find(el => el.querySelector('.air-map-toggle-label')?.textContent === 'Waypoints');
+    expect(waypointsToggle).toBeTruthy();
+    fireEvent.click(waypointsToggle);
+
+    await waitFor(() => {
+      // Fixes render regardless of the active-runway filter
+      expect(container.querySelectorAll('.air-map-fix').length).toBe(2);
+    });
+  });
 });

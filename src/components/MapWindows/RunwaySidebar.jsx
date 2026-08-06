@@ -18,11 +18,14 @@ import './RunwaySidebar.css';
  *   showDepLabels    - boolean — departure labels visible
  *   onToggleArrLabels - () => void
  *   onToggleDepLabels - () => void
+ *   showWaypoints    - boolean — fix/waypoint markers visible (optional; button hidden when onToggleWaypoints absent)
+ *   onToggleWaypoints - () => void
  *   arrTooltip       - optional tooltip text for ARR button
  *   depTooltip       - optional tooltip text for DEP button
+ *   waypointsTooltip - optional tooltip text for Waypoints button
  *   getRunwayTooltip - optional (rwy: string) => string for per-runway buttons
  */
-export default function RunwaySidebar({ runways, activeRunways, onToggle, showArrLabels, showDepLabels, onToggleArrLabels, onToggleDepLabels, arrTooltip, depTooltip, getRunwayTooltip }) {
+export default function RunwaySidebar({ runways, activeRunways, onToggle, showArrLabels, showDepLabels, onToggleArrLabels, onToggleDepLabels, showWaypoints, onToggleWaypoints, arrTooltip, depTooltip, waypointsTooltip, getRunwayTooltip }) {
   const { bind, TooltipPortal } = useTooltip();
 
   if (!runways || runways.length === 0) return null;
@@ -31,6 +34,16 @@ export default function RunwaySidebar({ runways, activeRunways, onToggle, showAr
     <div className="runway-sidebar">
       {/* Arrival / Departure label toggles — top of sidebar */}
       <div className="runway-sidebar-labels">
+        {typeof onToggleWaypoints === 'function' && (
+          <div
+            className={'air-map-toggle' + (showWaypoints ? ' active' : '')}
+            onClick={onToggleWaypoints}
+            {...(MAP_TOOLTIPS_ENABLED && waypointsTooltip ? bind(waypointsTooltip) : {})}
+          >
+            <div className="air-map-toggle-knob" />
+            <span className="air-map-toggle-label">Waypoints</span>
+          </div>
+        )}
         <div
           className={'air-map-toggle' + (showArrLabels ? ' active' : '')}
           onClick={onToggleArrLabels}

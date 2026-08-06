@@ -180,6 +180,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 ```bash
 npm install
 npm start          # Launch in dev mode (no build step needed)
+npm start -- --large  # Dev-only: LARGE vosk models for accuracy testing (note the `--` — bare `npm start --large` never reaches the app; fetch first: node scripts/fetch-vosk-model.mjs --large)
 ```
 
 ### Architecture (High-Level)
@@ -288,7 +289,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │   │   └── TimelineEditors/ # Weather, Wind, Runway editors
 │   │   ├── MapWindows/          # Full-window map visualizations (separate windows)
 │   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, areas, ground aircraft, help overlay
-│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/APPR routes, runway extensions, range rings, border overlay, help overlay
+│   │   │   ├── AirMapWindow.jsx + .css     # Approach radar: STAR/SID/APPR routes, fixes/waypoints layer, runway extensions, range rings, border overlay, help overlay
 │   │   │   ├── FlightStripsWindow.jsx + .css  # Flight strips: seat-sorted strips with drag reorder, selection sync, help overlay
 │   │   │   ├── ControlSidebar.jsx + .css   # Vertical sidebar: spin knobs + push-button toggles + help button
 │   │   │   ├── SpinKnob.jsx + .css         # Rotary encoder knob (click-drag + scroll-wheel)
@@ -458,6 +459,11 @@ npm run build:win
 
 # Voice build (needs models first: node scripts/fetch-vosk-model.mjs)
 npm run build:win:voice
+
+# Dev-only accuracy testing with the LARGE vosk models (vosk-model-en-us-0.22 /
+# vosk-model-cn-0.22, ~3.3 GB) — internal only, never bundled into builds:
+node scripts/fetch-vosk-model.mjs --large
+npm start -- --large   # or: npm run start:large
 ```
 
 `node build.js --win [--voice] [--publish never]` also works directly

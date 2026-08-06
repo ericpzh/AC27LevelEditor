@@ -2219,6 +2219,32 @@ function buildApproachCache(airportDir, progressCallback) {
     } catch (e) { log('  APPR path parse warning: ' + e.message); }
   }
 
+  // ── Extract fixes/waypoints (AirwayNode PK entities) ──
+  // Position + Name form a fix; consumed by the AirMap "Waypoints" layer.
+  let airwayNodes = [];
+  if (firstAclText) {
+    try {
+      const { buildPkIndex, getPkEntriesByType, extractVector3FromV4, extractStringFromV4, extractIntFromV4 } = require('./v4_pk_index');
+      const pkIndex = buildPkIndex(firstAclText);
+      for (const entry of getPkEntriesByType(pkIndex, 'airway-node')) {
+        const pos = extractVector3FromV4(entry.block);
+        if (!pos) continue;
+        // Only true fixes count: ICAO-style all-uppercase 3-5 letter names.
+        // Skips turn points ("TurnPoint19", "TP19W1"), numbered nodes ("JN210")
+        // and unnamed nodes.
+        const name = extractStringFromV4(entry.block, 'Name');
+        if (!name || !/^[A-Z]{3,5}$/.test(name)) continue;
+        airwayNodes.push({
+          pk: entry.pk,                                        // "airway-node:-244674"
+          name,                                                // "PANKI"
+          osmId: extractIntFromV4(entry.block, 'OsmId'),       // -244674 or null
+          x: pos.x,
+          z: pos.z,
+        });
+      }
+    } catch (e) { log('  airway-node parse warning: ' + e.message); }
+  }
+
   // Compute per-airport coordinate scale from runway threshold geometry
   const airportScale = firstAclText
     ? computeAirportScale(firstAclText)
@@ -2268,6 +2294,7 @@ function buildApproachCache(airportDir, progressCallback) {
       Object.keys(sidPaths).length + ' SID paths, ' +
       Object.keys(missedAppPaths).length + ' missed approach paths, ' +
       Object.keys(apprPaths).length + ' APPR paths, ' +
+      airwayNodes.length + ' airway nodes, ' +
       'airportScale=' + (airportScale ? airportScale.toFixed(1) : 'N/A') + ', ' +
       Object.keys(runwayThresholds).length + ' runways');
 
@@ -2291,6 +2318,7 @@ function buildApproachCache(airportDir, progressCallback) {
     sidRunwayMap, runwaySidMap, sidPaths,
     missedAppMap, runwayMissedAppMap, missedAppPaths,
     apprRunwayMap, runwayApprMap, apprPaths,
+    airwayNodes,
   };
 }
 
@@ -2402,6 +2430,7 @@ function serializeApproachCache(cache) {
   if (cache.apprPaths) { out.apprPaths = cache.apprPaths; }
   if (cache.apprRunwayMap) { out.apprRunwayMap = cache.apprRunwayMap; }
   if (cache.runwayApprMap) { out.runwayApprMap = cache.runwayApprMap; }
+  if (cache.airwayNodes) { out.airwayNodes = cache.airwayNodes; }
   return out;
 }
 
@@ -2433,6 +2462,7 @@ function deserializeApproachCache(json) {
   if (json.apprPaths && typeof json.apprPaths === 'object') { cache.apprPaths = json.apprPaths; }
   if (json.apprRunwayMap && typeof json.apprRunwayMap === 'object') { cache.apprRunwayMap = json.apprRunwayMap; }
   if (json.runwayApprMap && typeof json.runwayApprMap === 'object') { cache.runwayApprMap = json.runwayApprMap; }
+  if (json.airwayNodes && Array.isArray(json.airwayNodes)) { cache.airwayNodes = json.airwayNodes; }
   return cache;
 }
 

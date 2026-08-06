@@ -81,6 +81,8 @@ export default function AirMapWindow({ airportIcao }) {
   const [showSidPaths, setShowSidPaths] = useState(false);
   const [showApprPaths, setShowApprPaths] = useState(false);
   const [apprPaths, setApprPaths] = useState({});
+  const [airwayNodes, setAirwayNodes] = useState([]); // fixes/waypoints (AirwayNode PK entities)
+  const [showWaypoints, setShowWaypoints] = useState(false);
   const [activeRunways, setActiveRunways] = useState(null); // null = uninitialized (show all), Set = active designators
   const [starRunwayMap, setStarRunwayMap] = useState({});
   const [sidRunwayMap, setSidRunwayMap] = useState({});
@@ -157,6 +159,7 @@ export default function AirMapWindow({ airportIcao }) {
         setSidPaths(vals?._sidPaths || {});
         setMissedAppPaths(vals?._missedAppPaths || {});
         setApprPaths(vals?._apprPaths || {});
+        setAirwayNodes(vals?._airwayNodes || []);
         setRunwayThresholds(vals?._runwayThresholds || {});
         // Runway filter data
         const rwyList = vals?._runwayList || [];
@@ -249,6 +252,7 @@ export default function AirMapWindow({ airportIcao }) {
   const routeLineW = vbDiag * 0.0015;
   const fontSize = vbDiag * 0.0138;
   const planeScale = vbDiag * 0.0064;
+  const fixRadius = planeScale * 0.45; // fix/waypoint markers — between route line and plane dot
 
   // ── Select aircraft ───────────────────────────────────────
   const handleAircraftClick = useCallback((e, callSign) => {
@@ -640,8 +644,11 @@ export default function AirMapWindow({ airportIcao }) {
             showDepLabels={showDepLabels}
             onToggleArrLabels={() => setShowArrLabels(v => !v)}
             onToggleDepLabels={() => setShowDepLabels(v => !v)}
+            showWaypoints={showWaypoints}
+            onToggleWaypoints={() => setShowWaypoints(v => !v)}
             arrTooltip={helpTip('map_help_air_arr')}
             depTooltip={helpTip('map_help_air_dep')}
+            waypointsTooltip={helpTip('map_help_air_waypoints')}
             getRunwayTooltip={(rwy) => t('map_help_air_rwy_desc').replace('{rwy}', rwy)}
           />
           {/* Sim time clock in top-left corner */}
@@ -702,6 +709,26 @@ export default function AirMapWindow({ airportIcao }) {
                   x2={entry.b.x} y2={svgY(entry.b.z)}
                   stroke="#666" strokeWidth={routeLineW * 1.5} />
               ))}
+
+              {/* Fixes/waypoints — unfiltered data, never passes filterByRunway.
+                  Markers are X symbols; names show when the Labels toggle is also on. */}
+              {showWaypoints && (
+                <g className="air-map-fix-layer">
+                  {airwayNodes.map(f => (
+                    <path key={'fix-' + f.pk} className="air-map-fix"
+                      d={`M ${f.x - fixRadius} ${svgY(f.z) - fixRadius} L ${f.x + fixRadius} ${svgY(f.z) + fixRadius} M ${f.x - fixRadius} ${svgY(f.z) + fixRadius} L ${f.x + fixRadius} ${svgY(f.z) - fixRadius}`}
+                      stroke="#ffffff" strokeWidth={Math.max(1, fixRadius * 0.4)} opacity="0.7"
+                      fill="none" />
+                  ))}
+                  {showRouteLabels && airwayNodes.filter(f => f.name).map(f => (
+                    <text key={'fixlbl-' + f.pk} className="air-map-fix-label"
+                      x={f.x + fixRadius * 2 + fontSize * 0.4}
+                      y={svgY(f.z)}
+                      fill="#dddddd" fontSize={fontSize * 0.9}
+                      dominantBaseline="middle" textAnchor="start">{f.name}</text>
+                  ))}
+                </g>
+              )}
 
               {/* Live air aircraft — trail circles */}
               {airAircraft.map((ac) => {

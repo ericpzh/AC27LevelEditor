@@ -449,6 +449,9 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   collectFromPaths(aclValues._missedAppPaths, aclValues._missedAppMap);
   aclValues._runwayList = Array.from(runwaysWithData).sort();
 
+  // Fixes/waypoints for the AirMap Waypoints layer — intentionally NOT runway-filtered
+  aclValues._airwayNodes = cached?.approachData?.airwayNodes || [];
+
   return aclValues;
 });
 
