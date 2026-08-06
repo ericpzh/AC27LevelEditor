@@ -9,6 +9,7 @@
 
 import { AIRLINE_CODE_MAP, getAirlineCode } from '../../utils/constants/index.js';
 import { parseEnglishFlightNumber, parseChineseFlightNumber } from './voiceNumberParser.js';
+import { fuzzyMatch, NON_FUZZY_WORDS } from './voiceFuzzy.js';
 
 // ─── Language detection ────────────────────────────────────────────────
 
@@ -104,6 +105,23 @@ export function getSpokenToCode() {
   return _spokenToCode;
 }
 
+/** English airline NAME words eligible for fuzzy matching (full names +
+ *  first words, CJK excluded). 3-letter codes are deliberately absent —
+ *  any random 3-letter word is within distance 1 of a code, pure
+ *  false-positive noise. Exported for scripts/gen_voice_fuzzy_acceptance.mjs
+ *  and used by matchPrefixFuzzy. */
+export function getSpokenNameWords() {
+  const out = new Set();
+  for (const [name] of Object.entries(AIRLINE_CODE_MAP)) {
+    const lower = name.toLowerCase();
+    if (!/^[a-z]/.test(lower)) continue;   // CJK names are spoken-word only
+    out.add(lower);                        // full name
+    const first = lower.split(/\s+/)[0];
+    if (first !== lower) out.add(first);   // first word
+  }
+  return [...out];
+}
+
 // ─── Spoken filler words ───────────────────────────────────────────────
 
 /**
@@ -113,8 +131,12 @@ export function getSpokenToCode() {
  * the airline-prefix match. The original text is tried first per prefix,
  * so an airline whose NAME contains a filler ("Okay Airways" → CJX) still
  * matches. Shared with the command matcher's connector strip.
+ *
+ * Single source of truth: re-exported from voiceFuzzy — fillers must never
+ * fuzzy-map in ANY slot ("sir" must not become "air"), while their exact
+ * forms keep matching.
  */
-export const EN_FILLER_WORDS = new Set(['um', 'uh', 'er', 'ah', 'okay', 'ok', 'sir', 'please']);
+export const EN_FILLER_WORDS = new Set(NON_FUZZY_WORDS);
 
 /** Drop leading filler tokens (non-mutating). */
 export function stripLeadingFillers(tokens) {
@@ -170,7 +192,7 @@ export function parseCallsign(transcript, lang, aircraftList, diag) {
     // Skip Chinese-only entries when in English mode
     if (isCJK(spoken[0])) continue;
 
-    const matchResult = matchPrefix(lower, spoken) || (stripped !== lower ? matchPrefix(stripped, spoken) : null);
+    const matchResult = matchSpokenPrefix(lower, stripped, spoken);
     if (!matchResult) continue;
     sawPrefix = true;
     diag?.push(`airline "${spoken}" → ${code}`);
@@ -219,7 +241,11 @@ export function parseCallsign(transcript, lang, aircraftList, diag) {
     );
   }
 
-  if (!sawPrefix) diag?.push('no airline name matched at start');
+  if (!sawPrefix) {
+    diag?.push('no airline name matched at start');
+    // The "fuzzy did not save it" marker — exact AND fuzzy both failed.
+    diag?.push('fuzzy: no spoken-name match');
+  }
   return null;
 }
 
@@ -350,6 +376,55 @@ export function matchPrefix(transcript, spoken) {
 }
 
 /**
+ * Fuzzy variant of matchPrefix (EN name words only): word-by-word exact
+ * first, then D-L ≤ 1 per word, at most ONE fuzzy word per name ("hainann
+ * one two three four" → hainan, "untied 1111" → united, "fair france" →
+ * air france). Mirrors matchPrefix's boundary guard on the consumed span.
+ * 3-letter codes are never fuzzy targets (the caller's spoken forms include
+ * them, but fuzzyMatch is only reached for name words ≥ 3 chars — and the
+ * caller gates name words via getSpokenNameWords where needed).
+ *
+ * @param {string} transcript — LOWERCASE transcript
+ * @param {string} spoken — lowercase spoken name (one or more words)
+ * @returns {{remaining: string} | null}
+ */
+/** 3-letter ICAO codes — exact-only fuzzy targets (any random 3-letter
+ *  word is within distance 1 of a code: 'deal' → dal). Name words like
+ *  'eva'/'klm' stay fuzzy-eligible — they are not in this set. */
+const CODE_WORDS = new Set(Object.values(AIRLINE_CODE_MAP).map((c) => c.toLowerCase()));
+
+export function matchPrefixFuzzy(transcript, spoken) {
+  const spokenWords = spoken.split(/\s+/);
+  const tokens = transcript.split(/\s+/);
+  if (tokens.length < spokenWords.length) return null;
+  let k = 0;
+  let deviated = false;
+  for (const sw of spokenWords) {
+    const tok = tokens[k] ? tokens[k].toLowerCase() : null;
+    if (tok === sw) { k++; continue; }
+    if (deviated) return null;                 // ≤ 1 fuzzy word per name
+    if (tok && !CODE_WORDS.has(sw) && fuzzyMatch(tok, [sw], 1)) { deviated = true; k++; continue; }
+    return null;
+  }
+  const consumed = tokens.slice(0, k).join(' ');
+  const after = transcript.slice(consumed.length);
+  if (after === '') return { remaining: '' };
+  if (after[0] === ' ') return { remaining: after };
+  if (/^\d/.test(after) || isCJK(after[0])) return { remaining: after };
+  return null;
+}
+
+/** Exact prefix (original + filler-stripped), then the fuzzy fallback. */
+function matchSpokenPrefix(lower, stripped, spoken) {
+  return (
+    matchPrefix(lower, spoken) ||
+    (stripped !== lower ? matchPrefix(stripped, spoken) : null) ||
+    matchPrefixFuzzy(lower, spoken) ||
+    (stripped !== lower ? matchPrefixFuzzy(stripped, spoken) : null)
+  );
+}
+
+/**
  * All plausible callsign strings (ICAO code + flight number) derivable from
  * a transcript — the same prefix → flight-number extraction parseCallsign
  * performs, WITHOUT the aircraft-list filter. Used by the CLI's
@@ -389,7 +464,9 @@ export function callsignCandidates(transcript, lang) {
     const stripped = stripLeadingFillers(lower.split(/\s+/)).join(' ');
     for (const [spoken, code] of spokenToCode) {
       if (isCJK(spoken[0])) continue;   // Chinese short forms are spoken-word only
-      const m = matchPrefix(lower, spoken) || (stripped !== lower ? matchPrefix(stripped, spoken) : null);
+      // Same prefix path as parseCallsign (the CLI sim's synthetic list must
+      // resolve exactly what the app's parse would — incl. fuzzy).
+      const m = matchSpokenPrefix(lower, stripped, spoken);
       if (!m) continue;
       const remainingTrimmed = m.remaining.trim();
       const tokens = stripLeadingFillers(

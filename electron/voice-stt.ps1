@@ -7,7 +7,11 @@
 #   in : {"cmd":"start"} | {"cmd":"stop"} | {"cmd":"exit"}
 #   out: {"type":"ready","culture":...,"recognizers":...}
 #        {"type":"started"} | {"type":"stopped"}
-#        {"type":"result","text":...,"confidence":...}
+#        {"type":"result","text":...,"confidence":...,"alternates":[...]}
+#          alternates = top ≤5 non-empty deduped alternate phrase texts, EXCLUDING
+#          the primary (Alternates[0] IS the primary); always present, may be [].
+#          Confidence-ordered by the engine (no per-alternate confidence emitted —
+#          array order carries the ranking; the JS win rule doesn't use it).
 #        {"type":"detected"}                       — mic audio crossed the level threshold
 #        {"type":"rejected","reason":"busy"}       — start while already recognizing
 #        {"type":"rejected","reason":"low-confidence"} — heard audio, no parseable phrase
@@ -61,6 +65,31 @@ function Emit($obj) {
 
 function EmitError($code, $message) {
     Emit @{ type = 'error'; code = $code; message = $message }
+}
+
+# Top-N alternate phrase hypotheses from a recognition result. Alternates[0]
+# IS the primary text (already emitted as `text`) — skip it; take the next
+# non-empty trimmed texts, deduped case-insensitively (SAPI alternates often
+# differ only in case/punctuation), in the engine's confidence order.
+function Get-Alternates($result, [int]$maxCount = 5) {
+    $alts = @()
+    $seen = @{}
+    if ($result.Alternates) {
+        for ($i = 1; $i -lt $result.Alternates.Count; $i++) {
+            $t = [string]$result.Alternates[$i].Text
+            $t = $t.Trim()
+            if (-not $t) { continue }
+            if ($seen.ContainsKey($t)) { continue }   # PS hashtable keys are case-insensitive
+            $seen[$t] = $true
+            $alts += $t
+            if ($alts.Count -ge $maxCount) { break }
+        }
+    }
+    return $alts
+}
+
+function Emit-Result($r) {
+    Emit @{ type = 'result'; text = $r.Text.Trim(); confidence = [double]$r.Confidence; alternates = @(Get-Alternates $r) }
 }
 
 # Fresh engine for one listening session. The caller drives it with
@@ -126,7 +155,7 @@ try {
             try { $r = $engine.Recognize() } catch { break }  # EOF → InvalidOperationException
             if (-not $r) { break }
             if (-not [string]::IsNullOrWhiteSpace($r.Text)) {
-                Emit @{ type = 'result'; text = $r.Text.Trim(); confidence = [double]$r.Confidence }
+                Emit-Result $r
             }
         }
         Emit @{ type = 'stopped' }
@@ -148,7 +177,7 @@ try {
             try { $r = $engine.Recognize() } catch { break }
             if (-not $r) { continue }
             if (-not [string]::IsNullOrWhiteSpace($r.Text)) {
-                Emit @{ type = 'result'; text = $r.Text.Trim(); confidence = [double]$r.Confidence }
+                Emit-Result $r
             }
         }
         Emit @{ type = 'stopped' }
@@ -189,7 +218,7 @@ try {
                     $script:stopRequested = $true
                 }
                 if ($r -and -not [string]::IsNullOrWhiteSpace($r.Text)) {
-                    Emit @{ type = 'result'; text = $r.Text.Trim(); confidence = [double]$r.Confidence }
+                    Emit-Result $r
                 }
             }
         }

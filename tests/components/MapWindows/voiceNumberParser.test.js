@@ -3,6 +3,9 @@ import {
   parseEnglishFlightNumber,
   parseChineseFlightNumber,
   generateCallsignCandidates,
+  parseSpokenNumberValue,
+  lookupEnNumberToken,
+  lookupUnitWord,
 } from '../../../src/components/MapWindows/voiceNumberParser';
 
 // ─── English ───────────────────────────────────────────────────────────
@@ -163,5 +166,88 @@ describe('generateCallsignCandidates', () => {
     const r = generateCallsignCandidates('CES', ['123', '1234']);
     expect(r).toContain('CES123');
     expect(r).toContain('CES1234');
+  });
+});
+
+// ─── Fuzzy number/unit resolution (F5/F6 — D-L ≤ 1, fillers excluded) ──
+
+describe('parseSpokenNumberValue (fuzzy EN)', () => {
+  it('fuzzy digit word: "tree" → 3', () => {
+    const r = parseSpokenNumberValue(['tree'], 'en');
+    expect(r.value).toBe(3);
+  });
+
+  it('aviation addition: "niner" → 9', () => {
+    const r = parseSpokenNumberValue(['niner'], 'en');
+    expect(r.value).toBe(9);
+  });
+
+  it('fuzzy multiplier: "eight thousan" → 8000', () => {
+    const r = parseSpokenNumberValue(['eight', 'thousan'], 'en');
+    expect(r.value).toBe(8000);
+  });
+
+  it('fuzzy "and": "one hundred an fifty" → 150', () => {
+    const r = parseSpokenNumberValue(['one', 'hundred', 'an', 'fifty'], 'en');
+    expect(r.value).toBe(150);
+    expect(r.consumed).toBe(4);
+  });
+
+  it('"to" carve-out: "to zero" → 20', () => {
+    const r = parseSpokenNumberValue(['to', 'zero'], 'en');
+    expect(r.value).toBe(20);
+  });
+
+  it('filler blocks the scan at position 0 ("uh four" → null)', () => {
+    expect(parseSpokenNumberValue(['uh', 'four'], 'en')).toBeNull();
+  });
+
+  it('filler mid-scan still breaks the scan, value = scanned prefix', () => {
+    const r = parseSpokenNumberValue(['three', 'uh', 'four'], 'en');
+    expect(r.value).toBe(3); // 'uh' stays unknown — same as pre-fuzzy behavior
+    expect(r.consumed).toBe(1);
+  });
+});
+
+describe('lookupEnNumberToken', () => {
+  it('exact-first over all keys incl. "oh"/"o"', () => {
+    expect(lookupEnNumberToken('oh')).toBe('oh');
+    expect(lookupEnNumberToken('o')).toBe('o');
+    expect(lookupEnNumberToken('eighty')).toBe('eighty');
+  });
+
+  it('fuzzy D-L ≤ 1', () => {
+    expect(lookupEnNumberToken('tree')).toBe('three');
+    expect(lookupEnNumberToken('to')).toBe('two');
+    expect(lookupEnNumberToken('thousan')).toBe('thousand');
+    expect(lookupEnNumberToken('niner')).toBe('nine');
+  });
+
+  it('fillers and unknown words → null', () => {
+    expect(lookupEnNumberToken('uh')).toBeNull();
+    expect(lookupEnNumberToken('xyzzy')).toBeNull();
+  });
+
+  it('exact "hundred" resolves (flight-number path rejects it separately)', () => {
+    expect(lookupEnNumberToken('hundred')).toBe('hundred');
+  });
+});
+
+describe('lookupUnitWord', () => {
+  it('exact-first over all keys incl. "m"/"ft"', () => {
+    expect(lookupUnitWord('m')).toBe('m');
+    expect(lookupUnitWord('ft')).toBe('ft');
+    expect(lookupUnitWord('knots')).toBe('knots');
+  });
+
+  it('fuzzy D-L ≤ 1', () => {
+    expect(lookupUnitWord('feat')).toBe('feet');
+    expect(lookupUnitWord('knotts')).toBe('knots');
+    expect(lookupUnitWord('nots')).toBe('knots');   // SAPI drops the k
+    expect(lookupUnitWord('metre')).toBe('meter');  // UK spelling
+  });
+
+  it('fillers never resolve ("um" must not become "m")', () => {
+    expect(lookupUnitWord('um')).toBeUndefined();
   });
 });

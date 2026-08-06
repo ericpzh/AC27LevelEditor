@@ -74,10 +74,11 @@ AC27Editor/
 │   │   │   ├── witchMode.js                # Witch mode: direction, parked detection, sprite-sheet lookup (accepts centralized spriteIdx from main process, djb2 hash fallback)
 │   │   │   ├── FlightStripCommandBar.jsx   # Strip command bar UI (planned, import commented out)
 │   │   │   ├── commandTree.js              # Command tree data model + filtering by seat/state/direction
-│   │   │   ├── voiceNumberParser.js        # Spoken numbers → digits (EN + ZH aviation phraseology)
-│   │   │   ├── voiceCallsignParser.js      # Airline name→ICAO + callsign matching against UDP aircraft
-│   │   │   ├── voiceCommandMatcher.js      # Fuzzy command matching (aliases, Jaccard, Dice coefficient)
-│   │   │   ├── useVoiceCommands.js         # React hook orchestrating full voice pipeline
+│   │   │   ├── voiceNumberParser.js        # Spoken numbers → digits (EN + ZH aviation phraseology; fuzzy D-L ≤1 lookups)
+│   │   │   ├── voiceCallsignParser.js      # Airline name→ICAO + callsign matching against UDP aircraft (fuzzy name words)
+│   │   │   ├── voiceFuzzy.js               # Fuzzy policy leaf: D-L (OSA), thresholds, filler/exclusion/confusable tables
+│   │   │   ├── voiceCommandMatcher.js      # Legacy command matcher (unused by the pipeline — tests only)
+│   │   │   ├── useVoiceCommands.js         # React hook orchestrating full voice pipeline (candidates + alternates)
 │   │   │   └── VoicePTTButton.jsx          # Push-to-talk mic button (hold-to-talk, anion/pulse/flash, witch sprite)
 │   │   ├── ChatPanel/
 │   │   │   ├── ChatPanel.jsx + .css     # Floating cloud-LLM chat panel (4 vendors)

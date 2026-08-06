@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { detectLanguage, parseCallsign } from '../../../src/components/MapWindows/voiceCallsignParser';
+import {
+  detectLanguage,
+  parseCallsign,
+  callsignCandidates,
+  matchPrefix,
+  matchPrefixFuzzy,
+} from '../../../src/components/MapWindows/voiceCallsignParser';
 
 // ─── detectLanguage ────────────────────────────────────────────────────
 
@@ -296,5 +302,60 @@ describe('parseCallsign', () => {
     const r = parseCallsign('delta turn left heading 360', 'en', aircraftList, diag);
     expect(r).toBeNull();
     expect(diag.join('; ')).toContain('flight number');
+  });
+});
+
+// ─── Fuzzy airline-name matching (F7 — D-L ≤ 1, ≤1 fuzzy word per name) ──
+
+describe('matchPrefixFuzzy', () => {
+  it('fuzzy single word: "hainann" → hainan', () => {
+    const r = matchPrefixFuzzy('hainann one two three four', 'hainan');
+    expect(r.remaining).toBe(' one two three four');
+  });
+
+  it('exact words still match through the fuzzy path', () => {
+    const r = matchPrefixFuzzy('united airlines 123', 'united airlines');
+    expect(r.remaining).toBe(' 123');
+  });
+
+  it('two fuzzy words in one name → null', () => {
+    expect(matchPrefixFuzzy('fair francee 123', 'air france')).toBeNull();
+  });
+
+  it('boundary guard mirrors matchPrefix (no letter glue)', () => {
+    expect(matchPrefixFuzzy('hainanair 123', 'hainan')).toBeNull();
+    expect(matchPrefix('hainanair 123', 'hainan')).toBeNull();
+  });
+
+  it('3-letter codes are never fuzzy targets ("ver" does not become "vir")', () => {
+    expect(matchPrefixFuzzy('ver one two three', 'vir')).toBeNull();
+  });
+});
+
+describe('parseCallsign with fuzzy airline words', () => {
+  it('"hainann" resolves CHH1234', () => {
+    const r = parseCallsign('hainann one two three four', 'en', [makeAircraft('CHH1234')]);
+    expect(r.callsign).toBe('CHH1234');
+  });
+
+  it('"untied" resolves UAL123 (united ← untied)', () => {
+    const r = parseCallsign('untied one two three', 'en', [makeAircraft('UAL123')]);
+    expect(r.callsign).toBe('UAL123');
+  });
+
+  it('"della" resolves DAL123 (delta ← della)', () => {
+    const r = parseCallsign('della one two three', 'en', [makeAircraft('DAL123')]);
+    expect(r.callsign).toBe('DAL123');
+  });
+
+  it('3-letter codes stay exact-only ("deal" never becomes dal)', () => {
+    const r = parseCallsign('deal one two three', 'en', [makeAircraft('DAL123')]);
+    expect(r).toBeNull();
+  });
+});
+
+describe('callsignCandidates with fuzzy (CLI sim mirror)', () => {
+  it('includes the fuzzy-resolved callsign so the synthetic list matches the app', () => {
+    expect(callsignCandidates('hainann one two three four', 'en')).toContain('CHH1234');
   });
 });

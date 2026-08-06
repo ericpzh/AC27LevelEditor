@@ -19,6 +19,8 @@
  *   - 两 for 2:                     "一两三" → 123
  */
 
+import { fuzzyLookupKey, FLIGHT_NUMBER_FUZZY_GUARD } from './voiceFuzzy.js';
+
 // ─── English word → digit(s) ──────────────────────────────────────────
 
 /** Single-digit words (including "o"/"oh" for zero in aviation — speech
@@ -46,6 +48,21 @@ const EN_TENS = {
 const EN_MULTIPLIER = {
   hundred: 100, thousand: 1000,
 };
+
+/** All EN number-word keys, exact-first order (incl. exact-only 'oh'/'o').
+ *  Exported for scripts/gen_voice_fuzzy_acceptance.mjs. */
+export const EN_NUMBER_KEYS = [
+  ...Object.keys(EN_DIGIT),
+  ...Object.keys(EN_TEEN),
+  ...Object.keys(EN_TENS),
+  ...Object.keys(EN_MULTIPLIER),
+  'and',
+];
+
+/** Number keys eligible for FUZZY matching (len ≥ 3 — 'oh'/'o' are
+ *  exact-only synonyms of zero; 'triple'/'double' are handled separately
+ *  and stay exact-only). */
+export const EN_NUMBER_FUZZY_KEYS = EN_NUMBER_KEYS.filter((w) => w.length >= 3);
 
 // ─── Chinese word → digit(s) ───────────────────────────────────────────
 
@@ -97,13 +114,22 @@ function tokenizeEnglish(tokens) {
     const lower = t.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
     if (!lower) return null;
     if (/^\d{1,5}$/.test(lower)) return [lower];   // literal digits ("6918", "9000")
-    if (EN_DIGIT[lower]) return EN_DIGIT[lower];
-    if (EN_TEEN[lower]) return EN_TEEN[lower];
-    if (EN_TENS[lower]) return EN_TENS[lower];
-    // "triple X" shorthand
-    if (lower === 'triple' || lower === 'triple') return ['triple'];
-    // "double X" shorthand (less common but possible)
-    if (lower === 'double') return ['double'];
+    // Exact number words first (incl. 'oh'/'o'); a multiplier inside a
+    // flight number stays unsupported ("delta three hundred" — limitation).
+    if (EN_NUMBER_KEYS.includes(lower)) {
+      if (lower === 'and' || lower === 'hundred' || lower === 'thousand') return null;
+      return EN_DIGIT[lower] || EN_TEEN[lower] || EN_TENS[lower];
+    }
+    // Command words must not be swallowed as misheard digits ("CSC6918:
+    // right heading 120" — 'right' is d1 of 'eight'); guard = pattern words.
+    if (FLIGHT_NUMBER_FUZZY_GUARD.has(lower)) return null;
+    // Fuzzy fallback (D-L ≤ 1, e.g. "tree" → three, "too" → two).
+    const key = fuzzyLookupKey(lower, EN_NUMBER_FUZZY_KEYS, 1);
+    if (key && key !== 'and' && key !== 'hundred' && key !== 'thousand') {
+      return EN_DIGIT[key] || EN_TEEN[key] || EN_TENS[key];
+    }
+    if (lower === 'triple') return ['triple'];   // "triple X" shorthand — exact-only
+    if (lower === 'double') return ['double'];   // "double X" shorthand — exact-only
     return null; // not a number word
   });
 }
@@ -290,6 +316,9 @@ export const EN_UNIT_WORDS = {
   degrees: 'unitless', degree: 'unitless',
 };
 
+/** Unit keys eligible for FUZZY matching (len ≥ 3 — 'm'/'ft' exact-only). */
+export const EN_UNIT_FUZZY_KEYS = Object.keys(EN_UNIT_WORDS).filter((w) => w.length >= 3);
+
 /** ZH unit words (string keys, 1-2 chars, no spaces in speech). ZH
  *  detection itself is inline in voiceTranscriptParser.parseCommandValueZh;
  *  this table documents the vocabulary. 'altitude-m' = meters → the caller
@@ -299,6 +328,34 @@ export const ZH_UNIT_WORDS = { '节': 'speed', '英尺': 'altitude', '米': 'alt
 /** Strip leading/trailing punctuation from a token ("180." → "180"). */
 function normalizeToken(t) {
   return t.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
+}
+
+/**
+ * Resolve an EN number-word token to its table key, or null.
+ * Exact-first over ALL keys (incl. 'oh'/'o'), then D-L ≤ 1 over the
+ * fuzzy-eligible keys. Fillers (uh/um/…) never resolve — the caller treats
+ * null as "not a number word" (breaking the scan exactly as before), so
+ * "three uh four" still fails (limitation row in the deviation matrix).
+ *
+ * @param {string} token — normalized lowercase token
+ * @returns {string|null} e.g. 'tree' → 'three', 'to' → 'two', 'oh' → 'oh'
+ */
+export function lookupEnNumberToken(token) {
+  if (EN_NUMBER_KEYS.includes(token)) return token;
+  return fuzzyLookupKey(token, EN_NUMBER_FUZZY_KEYS, 1);
+}
+
+/**
+ * Resolve a unit word to its table key, or undefined.
+ * Exact-first over ALL keys (incl. 'm'/'ft'), then D-L ≤ 1 over the
+ * fuzzy-eligible keys with fillers excluded ('um' never becomes 'm').
+ *
+ * @param {string} token — normalized lowercase token
+ * @returns {string|undefined} e.g. 'feat' → 'feet', 'nots' → 'knots'
+ */
+export function lookupUnitWord(token) {
+  if (Object.prototype.hasOwnProperty.call(EN_UNIT_WORDS, token)) return token;
+  return fuzzyLookupKey(token, EN_UNIT_FUZZY_KEYS, 1) ?? undefined;
 }
 
 /**
@@ -313,12 +370,15 @@ function scanEnNumeric(tokens) {
   while (i < tokens.length) {
     const t = normalizeToken(tokens[i]);
     if (!t) { i++; continue; }
-    if (EN_DIGIT[t]) { scanned.push({ k: 'd', v: parseInt(EN_DIGIT[t][0], 10) }); i++; }
-    else if (EN_TEEN[t]) { scanned.push({ k: 'd', v: parseInt(EN_TEEN[t][0], 10) }); i++; }
-    else if (EN_TENS[t]) { scanned.push({ k: 'tens', v: parseInt(EN_TENS[t][0], 10) }); i++; }
-    else if (t === 'hundred' || t === 'thousand') { scanned.push({ k: t }); i++; }
-    else if (t === 'and') { i++; continue; }   // connector inside magnitudes ("one hundred and twenty")
-    else break;
+    // Exact first, then fuzzy (D-L ≤ 1 — "thousan" → thousand, "to" → two).
+    // Unknown words (incl. fillers) break the scan exactly as before.
+    const key = lookupEnNumberToken(t);
+    if (!key) break;
+    if (key === 'and') { i++; continue; }   // connector inside magnitudes ("one hundred and twenty")
+    if (key === 'hundred' || key === 'thousand') { scanned.push({ k: key }); i++; continue; }
+    if (EN_TENS[key]) { scanned.push({ k: 'tens', v: parseInt(EN_TENS[key][0], 10) }); i++; continue; }
+    scanned.push({ k: 'd', v: parseInt((EN_DIGIT[key] || EN_TEEN[key])[0], 10) });
+    i++;
   }
   return { scanned, consumed: i };
 }

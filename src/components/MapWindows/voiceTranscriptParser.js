@@ -33,15 +33,18 @@
  */
 
 import { detectLanguage, parseCallsign, callsignCandidates, EN_FILLER_WORDS } from './voiceCallsignParser.js';
-import { parseSpokenNumberValue, EN_UNIT_WORDS } from './voiceNumberParser.js';
+import { parseSpokenNumberValue, lookupUnitWord, EN_UNIT_WORDS } from './voiceNumberParser.js';
+import { isFuzzyEligible, maxDistForWord, fuzzyMatch, resolveCuratedPhrase } from './voiceFuzzy.js';
 import {
   buildHeadingPayload, buildAltitudePayload, buildSpeedPayload,
   buildClearApprPayload, pad3, FT_PER_METER,
 } from '../../utils/patchCommands.js';
 
 // ─── Pattern tables (longest prefix first) ─────────────────────────────
+// (exported for scripts/gen_voice_fuzzy_acceptance.mjs — the fuzzy
+// acceptance table is generated from the REAL tables, never duplicated)
 
-const EN_PATTERNS = [
+export const EN_PATTERNS = [
   { type: 'heading', words: ['turn', 'left', 'heading'] },
   { type: 'heading', words: ['turn', 'right', 'heading'] },
   { type: 'heading', words: ['turn', 'to', 'heading'] },
@@ -98,6 +101,11 @@ const ZH_PATTERNS = [
 EN_PATTERNS.sort((a, b) => b.words.length - a.words.length);
 ZH_PATTERNS.sort((a, b) => b.chars.length - a.chars.length);
 
+/** Fuzzy-eligible EN pattern words (exact-only: 'fl', 'at' — too short).
+ *  Exported for scripts/gen_voice_fuzzy_acceptance.mjs. */
+export const EN_PATTERN_KEYS = [...new Set(EN_PATTERNS.flatMap((p) => p.words))]
+  .filter((w) => isFuzzyEligible(w));
+
 // Filler words ("uh", "um", …) chain like connectors so "…and uh reduce
 // speed to 180" parses; they carry no meaning.
 const EN_CONNECTORS = new Set(['and', 'then', 'also', 'please', ...EN_FILLER_WORDS]);
@@ -106,7 +114,10 @@ const ZH_CONNECTORS = ['然后', '还有', '请'];
 // Flexible EN clear-for-approach grammar (replaces the fixed table entries):
 //   clear|cleared [for] [the] [ils|rnav|visual|loc|vor|ndb] approach|appr
 const EN_CFA_HEADS = new Set(['clear', 'cleared']);
-const EN_APPROACH_TYPES = new Set(['ils', 'rnav', 'visual', 'loc', 'vor', 'ndb']);
+export const EN_APPROACH_TYPES = new Set(['ils', 'rnav', 'visual', 'loc', 'vor', 'ndb']);
+
+/** Fuzzy-eligible approach types (all ≥ 3 chars). Exported for the generator. */
+export const EN_APPROACH_TYPE_KEYS = [...EN_APPROACH_TYPES];
 
 // Runway suffix after a cfa phrase — full words (speech) or letters (typed "13L").
 const EN_RUNWAY_SUFFIX = new Set(['left', 'right', 'center', 'l', 'r', 'c']);
@@ -116,10 +127,33 @@ const EN_RUNWAY_SUFFIX = new Set(['left', 'right', 'center', 'l', 'r', 'c']);
 function matchEnPrefix(rest, pattern) {
   const tokens = rest.split(/\s+/);
   if (tokens.length < pattern.words.length) return null;
+  // Deviation budget: at most ONE deviation per pattern match — either one
+  // connector-skip or one fuzzy/curated word, never both, never twice.
+  let k = 0;
+  let deviated = false;
   for (let j = 0; j < pattern.words.length; j++) {
-    if (tokens[j].toLowerCase() !== pattern.words[j]) return null;
+    const pw = pattern.words[j];
+    const tok = tokens[k] ? tokens[k].toLowerCase() : null;
+    if (tok === pw) { k++; continue; }
+    if (deviated) return null;   // second deviation anywhere → no match
+
+    // Curated 2-token window ("eff el" → fl)
+    const joined2 = tok && tokens[k + 1] ? tok + ' ' + tokens[k + 1].toLowerCase() : null;
+    if (joined2 && resolveCuratedPhrase(joined2) === pw) { deviated = true; k += 2; continue; }
+
+    // Connector-skip: one stray connector token swallowed when the NEXT
+    // token is the exact pattern word ("climb and THEN maintain 9000",
+    // "turn left UH heading 360" — fillers chain via EN_CONNECTORS).
+    if (j > 0 && tok && EN_CONNECTORS.has(tok) && tokens[k + 1] && tokens[k + 1].toLowerCase() === pw) {
+      deviated = true; k += 2; continue;
+    }
+
+    // Single-token fuzzy (per-candidate D-L caps; 'reading' → heading)
+    const m = tok ? fuzzyMatch(tok, EN_PATTERN_KEYS) : null;
+    if (m && m.candidate === pw) { deviated = true; k++; continue; }
+    return null;
   }
-  return { type: pattern.type, text: pattern.words.join(' '), rest: tokens.slice(pattern.words.length).join(' ') };
+  return { type: pattern.type, text: pattern.words.join(' '), rest: tokens.slice(k).join(' ') };
 }
 
 function matchZhPrefix(rest, pattern) {
@@ -159,7 +193,20 @@ function matchCfaEn(rest) {
   let i = 1;
   if (tokens[i] && tokens[i].toLowerCase() === 'for') i += 1;
   if (tokens[i] && tokens[i].toLowerCase() === 'the') i += 1;
-  if (tokens[i] && EN_APPROACH_TYPES.has(tokens[i].toLowerCase())) i += 1;
+  // Approach type: exact → curated 2-3 token spelled window ("r nav",
+  // "eye el ess") → single-token D-L ≤ 1 ("rnavv" → rnav, "nav" → rnav).
+  if (tokens[i]) {
+    const w1 = tokens[i].toLowerCase();
+    if (EN_APPROACH_TYPES.has(w1)) {
+      i += 1;
+    } else {
+      const w3 = tokens[i + 1] && tokens[i + 2] ? w1 + ' ' + tokens[i + 1].toLowerCase() + ' ' + tokens[i + 2].toLowerCase() : null;
+      const w2 = tokens[i + 1] ? w1 + ' ' + tokens[i + 1].toLowerCase() : null;
+      if (w3 && resolveCuratedPhrase(w3)) i += 3;
+      else if (w2 && resolveCuratedPhrase(w2)) i += 2;
+      else if (fuzzyMatch(w1, EN_APPROACH_TYPE_KEYS, 1)) i += 1;
+    }
+  }
   const tail = tokens[i] && tokens[i].toLowerCase();
   if (tail !== 'approach' && tail !== 'appr') return null;
   i += 1;
@@ -204,12 +251,17 @@ function parseCommandValueEn(remainder, forceFl) {
   let fl = !!forceFl;   // pattern type 'fl' already consumed the FL words
   if (!fl && tokens[0].toLowerCase() === 'flight' && (tokens[1] || '').toLowerCase() === 'level') { fl = true; i = 2; }
   else if (!fl && tokens[0].toLowerCase() === 'fl') { fl = true; i = 1; }
+  else if (!fl) {
+    // Curated spelled FL ("eff el 90") — the D-L distance can't catch letters
+    const joined = tokens[1] ? tokens[0].toLowerCase() + ' ' + tokens[1].toLowerCase() : null;
+    if (joined && resolveCuratedPhrase(joined) === 'fl') { fl = true; i = 2; }
+  }
   const num = parseSpokenNumberValue(tokens.slice(i), 'en');
   if (!num) return null;
   let unit = null;
   const after = tokens.slice(i + num.consumed);
-  const unitWord = after[0] ? EN_UNIT_WORDS[after[0].toLowerCase()] : undefined;
-  if (unitWord !== undefined) { unit = unitWord; i += num.consumed + 1; }
+  const unitKey = after[0] ? lookupUnitWord(after[0].toLowerCase()) : undefined;
+  if (unitKey !== undefined) { unit = EN_UNIT_WORDS[unitKey]; i += num.consumed + 1; }
   else i += num.consumed;
   return { value: num.value, fl, unit, text: tokens.slice(0, i).join(' '), rest: tokens.slice(i).join(' ') };
 }
@@ -438,6 +490,46 @@ export function parseVoiceTranscript(transcript, aircraftList) {
     notices,
     renderedLine: renderLine(parsed.callsign, final),
   };
+}
+
+/**
+ * Try candidate transcripts in order against the full voice pipeline —
+ * the primary System.Speech result first, then the engine's alternate
+ * hypotheses ($r.Alternates, already confidence-ordered). First candidate
+ * whose parse yields commands wins; a selection-only candidate (ok, 0
+ * commands) never wins over a failing primary — a misheard bare callsign
+ * in an alternate must not trigger a selection. No winner → the primary's
+ * parse result is returned unchanged (notices/reason preserved).
+ * Purely additive: with a single text it returns exactly
+ * parseVoiceTranscript's result plus matchedText/candidateIndex.
+ *
+ * @param {string[]} texts — primary transcript first, then alternates
+ * @param {Object[]} aircraftList
+ * @returns {{ result: object, matchedText: string, candidateIndex: number }}
+ */
+export function parseVoiceCandidates(texts, aircraftList) {
+  const candidates = [];
+  const seen = new Set();
+  for (const t of texts) {
+    const s = String(t || '').trim();
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;   // case-insensitive dedupe, primary stays first
+    seen.add(key);
+    candidates.push(s);
+  }
+  if (!candidates.length) {
+    return { result: parseVoiceTranscript('', aircraftList), matchedText: '', candidateIndex: 0 };
+  }
+  let primary = null;
+  for (let i = 0; i < candidates.length; i++) {
+    const result = parseVoiceTranscript(candidates[i], aircraftList);
+    if (i === 0) primary = result;
+    if (result.ok && result.commands.length > 0) {
+      return { result, matchedText: candidates[i], candidateIndex: i };
+    }
+  }
+  return { result: primary, matchedText: candidates[0], candidateIndex: 0 };
 }
 
 function renderLine(callsign, commands) {

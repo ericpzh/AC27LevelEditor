@@ -30,7 +30,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
-import { parseVoiceTranscript } from './voiceTranscriptParser.js';
+import { parseVoiceCandidates } from './voiceTranscriptParser.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -257,17 +257,21 @@ export default function useVoiceCommands(udpAircraft) {
   }, [isElectron, electronAPI, stopRecognition]);
 
   // ── Transcript processing ────────────────────────────────────────
+  // Candidates: the primary System.Speech result first, then the engine's
+  // alternate hypotheses (parseVoiceCandidates tries them in order and
+  // keeps the first that yields commands — see voiceTranscriptParser.js).
 
-  const processTranscript = useCallback((text) => {
+  const processCandidates = useCallback((texts) => {
     if (!mountedRef.current) return;
 
-    const result = parseVoiceTranscript(text, udpAircraft || []);
+    const { result, candidateIndex } = parseVoiceCandidates(texts, udpAircraft || []);
 
     // Print the parse to the main-process npm log (mirrors the MCP
     // send_voice_command tool's [VOICE-PARSE] line — same pipeline).
     if (electronAPI?.debugLog) {
       electronAPI.debugLog(
-        '[VOICE-PARSE]', JSON.stringify(text),
+        '[VOICE-PARSE]', JSON.stringify(texts[0]),
+        'matchedFrom=' + (candidateIndex === 0 ? 'primary' : 'alternate#' + candidateIndex),
         'ok=' + result.ok,
         'callsign=' + result.callsign,
         'a/c=' + (result.aircraft?.callSign ?? '-') + ' seat=' + (result.aircraft?.controlSeat ?? '-'),
@@ -294,6 +298,9 @@ export default function useVoiceCommands(udpAircraft) {
     }
   }, [udpAircraft]);
 
+  /** Single-transcript entry (browser Web Speech path — no alternates). */
+  const processTranscript = useCallback((text) => processCandidates([text]), [processCandidates]);
+
   // ── Worker event subscription (Electron) ──────────────────────────
   // (Declared after processTranscript — the deps array evaluates at call time.)
   useEffect(() => {
@@ -302,8 +309,8 @@ export default function useVoiceCommands(udpAircraft) {
       if (!mountedRef.current) return;
       if (evt.type === 'result') {
         if (!evt.text) return;
-        setTranscript(evt.text);
-        processTranscript(evt.text);
+        setTranscript(evt.text);   // displayed text stays the PRIMARY
+        processCandidates([evt.text, ...(Array.isArray(evt.alternates) ? evt.alternates : [])]);
         resetSilenceTimer();
       } else if (evt.type === 'error') {
         console.warn('[Voice] Speech worker error:', evt.code, evt.message);
@@ -324,7 +331,7 @@ export default function useVoiceCommands(udpAircraft) {
     };
     electronAPI.onVoiceSttEvent(onEvent);
     return () => electronAPI.offVoiceSttEvent?.(onEvent);
-  }, [electronAPI, processTranscript, resetSilenceTimer]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [electronAPI, processCandidates, resetSilenceTimer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Return ───────────────────────────────────────────────────────
 

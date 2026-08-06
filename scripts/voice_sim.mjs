@@ -18,6 +18,9 @@
  *                     instead of the synthetic list derived from the
  *                     transcript — use a controlSeat != 5 entry to exercise
  *                     the approach-channel gate
+ *   --alternates "a|b" alternate phrase hypotheses to try after the primary
+ *                     (mirrors the System.Speech worker's alternates — the
+ *                     first candidate that yields commands wins)
  *   --lang en|zh|auto language override (default: auto-detect)
  *
  * Dry-run prints: detected language, resolved callsign, the command-window
@@ -34,7 +37,7 @@
  * fallback: node --experimental-detect-module scripts/voice_sim.mjs
  */
 
-import { parseVoiceTranscript, buildSyntheticAircraftList } from '../src/components/MapWindows/voiceTranscriptParser.js';
+import { parseVoiceCandidates, buildSyntheticAircraftList } from '../src/components/MapWindows/voiceTranscriptParser.js';
 import { detectLanguage } from '../src/components/MapWindows/voiceCallsignParser.js';
 import { createRequire } from 'module';
 import { readFileSync } from 'fs';
@@ -50,12 +53,13 @@ const PORT = 20267;
 // ─── Args ─────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { transcript: null, live: false, aircraft: null, lang: 'auto' };
+  const args = { transcript: null, live: false, aircraft: null, alternates: [], lang: 'auto' };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--live') args.live = true;
     else if (a === '--aircraft') args.aircraft = argv[++i];
+    else if (a === '--alternates') args.alternates = (argv[++i] || '').split('|').filter(Boolean);
     else if (a === '--lang') args.lang = argv[++i];
     else rest.push(a);
   }
@@ -64,11 +68,12 @@ function parseArgs(argv) {
 }
 
 function usage() {
-  console.log(`usage: node scripts/voice_sim.mjs "<transcript>" [--live] [--aircraft file.json] [--lang en|zh|auto]
+  console.log(`usage: node scripts/voice_sim.mjs "<transcript>" [--live] [--aircraft file.json] [--alternates "a|b"] [--lang en|zh|auto]
   transcript — full command string, e.g. "CSC6918: climb and maintain 9000, reduce speed to 180 knots"
-  --live      — send the parsed frames to the game at ${HOST}:${PORT} (dry-run is the default)
-  --aircraft  — JSON array of aircraft to resolve against instead of the synthetic list
-  --lang      — en | zh | auto (default: auto-detect from the transcript)`);
+  --live       — send the parsed frames to the game at ${HOST}:${PORT} (dry-run is the default)
+  --aircraft   — JSON array of aircraft to resolve against instead of the synthetic list
+  --alternates — alternate phrase hypotheses (pipe-separated) tried after the primary
+  --lang       — en | zh | auto (default: auto-detect from the transcript)`);
 }
 
 function loadAircraftList(filePath) {
@@ -114,10 +119,16 @@ async function main() {
   if (args.aircraft) console.log(`aircraft: ${args.aircraft} (${aircraftList.length} entries)`);
   else console.log(`aircraft: synthetic from transcript (${aircraftList.length} candidates)`);
 
-  const result = parseVoiceTranscript(args.transcript, aircraftList);
+  const { result, candidateIndex } = parseVoiceCandidates(
+    [args.transcript, ...args.alternates],
+    aircraftList
+  );
 
   console.log(`callsign: ${result.callsign ?? '(none)'}`);
   if (result.callsign) console.log(`line: ${result.renderedLine}`);
+  if (args.alternates.length) {
+    console.log(`matched from: ${candidateIndex === 0 ? 'primary' : `alternate #${candidateIndex}`}`);
+  }
   for (const n of result.notices) console.log(`notice: ${n}`);
 
   if (!result.ok) {
