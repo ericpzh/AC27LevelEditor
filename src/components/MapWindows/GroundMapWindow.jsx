@@ -87,16 +87,17 @@ export default function GroundMapWindow({ airportIcao }) {
   useCrossWindowSelection(airportIcao, electronAPI, setSelectedCallSign);
 
   // ── Debug: log selected aircraft full UDP data every 5s ────
-  useEffect(() => {
-    if (!selectedCallSign) return;
-    const tick = () => {
-      const ac = udpAircraft.find(a => a.callSign === selectedCallSign);
-      if (ac && electronAPI.debugLog) electronAPI.debugLog('[UDP-DEBUG]', ac.callSign, JSON.parse(JSON.stringify(ac)));
-    };
-    tick();
-    const id = setInterval(tick, 5000);
-    return () => clearInterval(id);
-  }, [selectedCallSign, udpAircraft, electronAPI]);
+  // log audit 2026-08-06: full-state dump — commented out; uncomment to re-enable
+  // useEffect(() => {
+  //   if (!selectedCallSign) return;
+  //   const tick = () => {
+  //     const ac = udpAircraft.find(a => a.callSign === selectedCallSign);
+  //     if (ac && electronAPI.debugLog) electronAPI.debugLog('[UDP-DEBUG]', ac.callSign, JSON.parse(JSON.stringify(ac)));
+  //   };
+  //   tick();
+  //   const id = setInterval(tick, 5000);
+  //   return () => clearInterval(id);
+  // }, [selectedCallSign, udpAircraft, electronAPI]);
 
   // ── Witch mode animation timer (500ms per frame) ──────────────
   const witchFrame = useWitchAnimation(witchMode);

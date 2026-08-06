@@ -36,6 +36,18 @@ const AIRCRAFT = [
   ac('CHH7336'), ac('CCA1892'), ac('CCA1314'),
 ];
 
+// Waypoint target set for 'direct' phrases — positions are bearings from
+// the fixture aircraft's origin (see section 12 / payload-exactness block).
+const FIX_WAYPOINTS = [
+  { name: 'BELTT', x: 100, z: 100 },   // 45°  → dx 0.7071 dy 0.7071
+  { name: 'PANKI', x: 0, z: 100 },     // 360° → dx 0 dy 1
+  { name: 'BAL', x: 0, z: -100 },      // 180° → dx 0 dy -1
+  { name: 'AML', x: -100, z: -100 },   // 225° → dx -0.7071 dy -0.7071
+  { name: 'ESL', x: 100, z: -100 },    // 135° → dx 0.7071 dy -0.7071
+  { name: 'BELT', x: -100, z: 100 },   // 315° (exact-first proof vs BELTT)
+  { name: 'DUFFY', x: 100, z: 0 },     // real-STT round-3 rows ("flight direct duffy")
+];
+
 const types = (r) => r.commands.map(c => c.type);
 const labels = (r) => r.commands.map(c => c.label);
 
@@ -56,7 +68,7 @@ const labels = (r) => r.commands.map(c => c.label);
  *   reasonIncl    — substring that must appear in reason (failure rows)
  */
 function runRow(r) {
-  const result = parseVoiceTranscript(r.input, r.aircraft || AIRCRAFT);
+  const result = parseVoiceTranscript(r.input, r.aircraft || AIRCRAFT, r.waypoints || []);
   if (r.ok === false) {
     expect(result.ok, `expected ok=false for "${r.input}"`).toBe(false);
     expect(result.callsign).toBeNull();
@@ -238,6 +250,18 @@ itRow([
   { name: '"clear the runway" → unsupported (no approach tail)', input: 'CSC6918: clear the runway', callsign: 'CSC6918', noticeIncl: 'unsupported' },
   { name: '"clear for approach, climb to 3000" (chain after cfa superseded)', input: 'CSC6918: clear for approach, climb to 3000', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'] },
   { name: 'ZH: 可以进近，跑道幺三左 → runway consumed', input: '川航六九幺八可以进近，跑道幺三左', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  // 2026-08-06 real STT deviations — cfa head budget (free number/connector
+  // skip + one curated/fuzzy deviation) + phonetic runway fallback.
+  { name: 'real STT: "virgin twenty five heavy clear forty approach" (forty → "for the")', input: 'virgin twenty five heavy clear forty approach', aircraft: [ac('VIR25')], callsign: 'VIR25', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: 'real STT: "virgin twenty five heavy clear foot the oh approach runway three one right" (foot→for curated, oh number-skip)', input: 'virgin twenty five heavy clear foot the oh approach runway three one right', aircraft: [ac('VIR25')], callsign: 'VIR25', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: 'real STT: "cathay seven five twenty two clear for the ah approach runway ethiopian right" (ah filler, ethiopian→three one→31R)', input: 'cathay seven five twenty two clear for the ah approach runway ethiopian right', aircraft: [ac('CPA7522')], callsign: 'CPA7522', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: 'runway golden path — "clear for the approach runway three one right" (right NOT swallowed as eight; Fix 2 regression)', input: 'CSC6918: clear for the approach runway three one right', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: '"clear forty approach" (bare forty → "for the" mishearing)', input: 'CSC6918: clear forty approach', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  // ── round 3 (2026-08-06): letter-spelled ILS, 'i' connector, suffix plurals,
+  //    Korean Air code fix, runway confusables ──
+  { name: 'real STT: "jetblue twenty thirty nine clear for the eye oh ess approach runway four right" (eye oh ess → i-o-s ≈ ils, letter-run)', input: 'jetblue twenty thirty nine clear for the eye oh ess approach runway four right', aircraft: [ac('JBU2039')], callsign: 'JBU2039', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: 'real STT: "jetblue twenty three and i clear for the ios approach runway for rights" (i connector, ios→ils, for→four, rights plural suffix)', input: 'jetblue twenty three and i clear for the ios approach runway for rights', aircraft: [ac('JBU2039')], callsign: 'JBU2039', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: 'real STT: "korean air twenty twenty one heavy clear for the ios approach runway through urine right" (KAL code fix; through urine → three one → 31R)', input: 'korean air twenty twenty one heavy clear for the ios approach runway through urine right', aircraft: [ac('KAL2021')], callsign: 'KAL2021', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
 ], 'deviation matrix — cfa flexible grammar & runway');
 
 // ─── 7. Chaining & connectors ──────────────────────────────────────────
@@ -335,6 +359,28 @@ itRow([
   // two deviations → the pattern fails; stray words noticed (limitation)
   { name: 'two deviations not allowed ("climb then an maintain 9000") → pattern fails (limitation)', input: 'CSC6918: climb then an maintain 9000', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noticeIncl: 'unsupported' },
 ], 'deviation matrix — fuzzy acceptance');
+
+// ─── 8c. Callsign proximity + phonetic skeleton (2026-08-06) ────────────
+// Real STT sound-alikes: the letter-D-L layer caps at ≤1/≤2, so
+// phonetically-close but letter-distant words ("cafe"→cathay,
+// "ethiopian"→"three one") resolve through the consonant-skeleton stage —
+// and a callsign one digit off the live list ("五拐八"→CES5578) resolves
+// through the D-L ≤ 1 proximity fallback (approach-seat only, ties fail).
+
+itRow([
+  { name: 'proximity fallback (ZH): 东方五拐八 → CES5578 (D-L 1: insert 5)', input: '东方五拐八', aircraft: [ac('CES5578')], callsign: 'CES5578' },
+  { name: 'proximity fallback (EN): "united one one one one" → UAL11111 (D-L 1: insert 1)', input: 'united one one one one', aircraft: [ac('UAL11111')], callsign: 'UAL11111' },
+  { name: 'phonetic airline (real STT): "cafe seventy five twenty two heavy fly heading three zero zero" → CPA7522 Fly Heading 300', input: 'cafe seventy five twenty two heavy fly heading three zero zero', aircraft: [ac('CPA7522')], callsign: 'CPA7522', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 300'], noNotices: true },
+  { name: 'phonetic OOV: "cafeteria one two three" must NOT resolve (limitation)', input: 'cafeteria one two three', ok: false, reasonIncl: 'airline' },
+  { name: 'proximity tie → fail (limitation)', input: 'united one one one one', aircraft: [ac('UAL1110'), ac('UAL11111')], ok: false, reasonIncl: 'UAL1111' },
+  { name: 'proximity restricted to approach seat (limitation)', input: 'united one one one one', aircraft: [Object.assign(ac('UAL11111'), { controlSeat: 3 })], ok: false, reasonIncl: 'UAL1111' },
+  // ── round 3 (2026-08-06): Korean Air code fix, pre-number 'at', digit confusables ──
+  { name: 'Korean Air → KAL code ("korean air one two three four" → KAL1234; was AAR)', input: 'korean air one two three four', aircraft: [ac('KAL1234')], callsign: 'KAL1234' },
+  { name: 'real STT: "korean air at twenty twenty one" → KAL2021 (pre-number at strip)', input: 'korean air at twenty twenty one', aircraft: [ac('KAL2021')], callsign: 'KAL2021', noNotices: true },
+  { name: 'real STT: "korean air new one heavy turn right heading one eight zero" → KAL21 (new→two confusable)', input: 'korean air new one heavy turn right heading one eight zero', aircraft: [ac('KAL21')], callsign: 'KAL21', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 180'], noNotices: true },
+  { name: 'real STT: same input, KAL91 reading (new→nine confusable)', input: 'korean air new one heavy turn right heading one eight zero', aircraft: [ac('KAL91')], callsign: 'KAL91', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 180'], noNotices: true },
+  { name: 'limitation: "korean air new one" cannot reach a 4-digit flight (D-L 2 → proximity no)', input: 'korean air new one', aircraft: [ac('KAL2021')], ok: false, reasonIncl: 'KAL' },
+], 'deviation matrix — callsign proximity & phonetic skeleton');
 
 // ─── 9. Chinese ────────────────────────────────────────────────────────
 
@@ -441,4 +487,47 @@ describe('deviation matrix — payload exactness', () => {
     expect(r.callsign).toBe('DAL3401');
     expect(r.commands[0].payload).toEqual({ type: 'update_heading', callSign: 'DAL3401', dx: 0, dy: 1, rate: 3 });
   });
+
+  it('direct to BELTT (100,100) → bearing 45 → dx 0.7071 dy 0.7071', () => {
+    const r = parseVoiceTranscript('CSC6918: fly direct to BELTT', AIRCRAFT, FIX_WAYPOINTS);
+    expect(r.commands[0].payload).toEqual({ type: 'update_heading', callSign: 'CSC6918', dx: 0.7071, dy: 0.7071, rate: 3 });
+  });
+
+  it('direct to PANKI (0,100) → bearing 360 → dx 0 dy 1', () => {
+    const r = parseVoiceTranscript('CSC6918: fly direct to panki', AIRCRAFT, FIX_WAYPOINTS);
+    expect(r.commands[0].payload).toEqual({ type: 'update_heading', callSign: 'CSC6918', dx: 0, dy: 1, rate: 3 });
+  });
+
+  it('direct to BAL (0,-100) → bearing 180 → dx 0 dy -1', () => {
+    const r = parseVoiceTranscript('CSC6918: direct to bal', AIRCRAFT, FIX_WAYPOINTS);
+    expect(r.commands[0].payload).toEqual({ type: 'update_heading', callSign: 'CSC6918', dx: 0, dy: -1, rate: 3 });
+  });
 });
+
+// ─── 12. Fly direct to waypoint ─────────────────────────────────────────
+
+itRow([
+  { name: 'word-like name', input: 'CSC6918: fly direct to BELTT', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELTT'], noNotices: true },
+  { name: 'lowercase name', input: 'CSC6918: fly direct to beltt', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELTT'], noNotices: true },
+  { name: '"direct to" without fly', input: 'CSC6918: direct to beltt', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELTT'], noNotices: true },
+  { name: 'bare "direct"', input: 'CSC6918: direct beltt', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELTT'], noNotices: true },
+  { name: 'spelled letter names ("bee ee el tee tee")', input: 'CSC6918: fly direct to bee ee el tee tee', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELTT'], noNotices: true },
+  { name: 'spelled NATO words', input: 'CSC6918: fly direct to papa alpha november kilo india', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To PANKI'], noNotices: true },
+  { name: 'fuzzy D-L 1 ("panky")', input: 'CSC6918: fly direct to panky', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To PANKI'], noNotices: true },
+  { name: 'fuzzy D-L 2 ("pankee")', input: 'CSC6918: fly direct to pankee', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To PANKI'], noNotices: true },
+  { name: 'exact-first ("belt" → BELT, not BELTT)', input: 'CSC6918: fly direct to belt', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELT'], noNotices: true },
+  { name: 'spelled fuzzy ("papa alpha november kilo why" → PANKY → PANKI)', input: 'CSC6918: fly direct to papa alpha november kilo why', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To PANKI'], noNotices: true },
+  { name: 'zh 直飞', input: '川航六九幺八直飞BELTT', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELTT'], noNotices: true },
+  { name: 'zh 直飞向', input: '川航六九幺八直飞向BELTT', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELTT'], noNotices: true },
+  { name: 'zh 直飞至', input: '川航六九幺八直飞至BELTT', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['direct'], commandLabels: ['Fly Direct To BELTT'], noNotices: true },
+  { name: 'unknown waypoint → notice', input: 'CSC6918: fly direct to banana', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: [], noticeIncl: 'unknown waypoint' },
+  { name: 'no waypoint data → notice', input: 'CSC6918: fly direct to beltt', callsign: 'CSC6918', commandTypes: [], noticeIncl: 'no waypoint data' },
+  { name: 'no aircraft position → notice', input: 'CSC6918: fly direct to beltt', waypoints: FIX_WAYPOINTS, aircraft: [{ callSign: 'CSC6918', controlSeat: 5 }], callsign: 'CSC6918', commandTypes: [], noticeIncl: 'aircraft position' },
+  { name: 'empty waypoint ("fly direct to") → notice', input: 'CSC6918: fly direct to', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: [], noticeIncl: 'unknown waypoint' },
+  { name: 'cfa supersedes a direct', input: 'CSC6918: fly direct to beltt, clear for approach', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: 'chains with a heading command', input: 'CSC6918: turn left heading 120, fly direct to beltt', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['update_heading', 'direct'], commandLabels: ['Fly Heading 120', 'Fly Direct To BELTT'], noNotices: true },
+  // ── round 3 (2026-08-06): 'the' mid-number skip, flight-prefix direct patterns,
+  //    curated "the wreck" → direct ──
+  { name: 'real STT: "emirates for the eight thirty eight heavy flight direct duffy" → UAE4838 + direct DUFFY (the skip; flight-prefix pattern)', input: 'emirates for the eight thirty eight heavy flight direct duffy', aircraft: [ac('UAE4838')], waypoints: FIX_WAYPOINTS, callsign: 'UAE4838', commandTypes: ['direct'], commandLabels: ['Fly Direct To DUFFY'], noNotices: true },
+  { name: 'real STT: "america six ninety six flight the wreck duffy" → AAL696 + direct DUFFY (the wreck → direct curated)', input: 'america six ninety six flight the wreck duffy', aircraft: [ac('AAL696')], waypoints: FIX_WAYPOINTS, callsign: 'AAL696', commandTypes: ['direct'], commandLabels: ['Fly Direct To DUFFY'], noNotices: true },
+], 'deviation matrix — fly direct to waypoint');

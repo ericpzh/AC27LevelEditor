@@ -2019,8 +2019,10 @@ ipcMain.handle('voice-stt-status', async () => {
   }
 });
 
-ipcMain.handle('voice-stt-start', async (e) => {
-  return voiceStt.start(e.sender);
+ipcMain.handle('voice-stt-start', async (e, extraWords) => {
+  // extraWords = the current airport's waypoint names — the vosk session
+  // grammar is extended with them per PTT press (see voice-stt-vosk.js).
+  return voiceStt.start(e.sender, Array.isArray(extraWords) ? extraWords : []);
 });
 
 ipcMain.handle('voice-stt-stop', async () => {

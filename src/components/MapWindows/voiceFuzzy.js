@@ -22,6 +22,12 @@
  *     catch ("eye el ess" → ils, "eff el" → fl).
  *   - Everything deterministic: array order, strictly-lower distance wins,
  *     ties first-wins, no randomness.
+ *   - 2026-08-06 amendment: enSkeleton() consonant-skeleton stage for the
+ *     closed-set fallback slots (airline name words, runway-number spoken
+ *     forms) — deterministic, digraph-mapped (th→θ, ch→x, silent gh
+ *     dropped), guards: first symbol equal, min skeleton 2, raw-length
+ *     diff ≤ 2, skeleton D-L exactly 1, unique best wins / ties fail; the
+ *     flight-number fuzzy guard is unchanged.
  *
  * Pure + DOM-free, imports nothing (leaf module — it is imported by
  * voiceNumberParser, voiceCallsignParser and voiceTranscriptParser).
@@ -89,7 +95,7 @@ export function isFuzzyEligible(token) {
 export const FLIGHT_NUMBER_FUZZY_GUARD = new Set([
   'turn', 'left', 'right', 'to', 'heading', 'climb', 'and', 'maintain',
   'descend', 'level', 'off', 'at', 'reduce', 'speed', 'increase', 'slow',
-  'down', 'fly', 'altitude', 'flight', 'fl',
+  'down', 'fly', 'altitude', 'flight', 'fl', 'direct',
 ]);
 
 // ─── Never-fuzzy words (fillers) ───────────────────────────────────────
@@ -114,13 +120,16 @@ export const CURATED_EXCLUDE = {
 
 /** Multi-token spelled-out forms D-L can't catch. Keys are grammar tokens,
  *  values are the joined-phrase forms a dictation engine emits for them.
- *  All keys have a spoken-letter form a pilot might say. */
+ *  All keys have a spoken-letter form a pilot might say; 'direct' is the one
+ *  pure-mishearing entry ("the wreck" for /dəˈrekt/, two tokens — D-L ≥ 3
+ *  from every single pattern word, so the fuzzy path can never catch it). */
 export const CURATED_CONFUSABLES = {
   ils: ['eye el ess', 'i l s', 'ai el ess', 'eye ell ess'],
   rnav: ['r nav', 'ar nav', 'r navv', 'ar navv'],
   loc: ['el o cee', 'l o c'],
   vor: ['vee or', 'v or', 'vee oh ar'],
   ndb: ['en dee bee', 'en dee b', 'n d b'],
+  direct: ['the wreck'],
   fl: ['eff el', 'eff ell', 'eff e l'],
 };
 
@@ -134,6 +143,106 @@ export function resolveCuratedPhrase(joined, target) {
     if (variants.includes(joined)) return canonical;
   }
   return null;
+}
+
+// ─── Spelled-letter table (waypoint slot) ───────────────────────────────
+
+/** Spoken forms per letter. First form = the CANONICAL grammar word (ICAO
+ *  spelling alphabet — the vosk decoder must hear it); second form = the
+ *  common letter name (also grammar words — scripts/gen-vosk-grammar.mjs
+ *  takes forms.slice(0, 2), exactly 26 + 26 = 52 words). Any further forms
+ *  below ('el', 'see', 'zed', bare letters, …) are PARSER-ONLY tolerance
+ *  (typed/CLI) — never grammar words (1-char tokens would pollute the
+ *  decoder, and 'el'/'see' are risky additions to a constrained vocab).
+ *  Small-model OOV (scripts/check-vosk-vocab.mjs): aitch/juliett/xray are
+ *  skipped by the decoder — every letter still has an in-vocab form
+ *  (H→hotel, J→jay, X→ex), so spoken spelling works; the OOV forms remain
+ *  typed/CLI tolerance. */
+export const EN_LETTER_WORDS = {
+  a: ['alpha', 'ay'],            b: ['bravo', 'bee'],
+  c: ['charlie', 'cee', 'see'],  d: ['delta', 'dee'],
+  e: ['echo', 'ee'],             f: ['foxtrot', 'eff'],
+  g: ['golf', 'gee'],            h: ['hotel', 'aitch', 'haitch'],
+  i: ['india', 'eye'],           j: ['juliett', 'jay', 'juliet'],
+  k: ['kilo', 'kay'],            l: ['lima', 'ell', 'el'],
+  m: ['mike', 'em'],             n: ['november', 'en'],
+  o: ['oscar', 'oh'],            p: ['papa', 'pee'],
+  q: ['quebec', 'cue'],          r: ['romeo', 'ar', 'are'],
+  s: ['sierra', 'ess'],          t: ['tango', 'tee'],
+  u: ['uniform', 'you'],         v: ['victor', 'vee'],
+  w: ['whiskey', 'dubya'],       x: ['xray', 'ex'],
+  y: ['yankee', 'why'],          z: ['zulu', 'zee', 'zed'],
+};
+
+/** Reverse map: spoken form (lowercase) → letter, incl. parser-only
+ *  variants and bare single letters ("b" → B — typed input only). */
+export const LETTER_WORD_TO_LETTER = (() => {
+  const m = new Map();
+  for (const [letter, forms] of Object.entries(EN_LETTER_WORDS)) {
+    for (const f of forms) m.set(f, letter);
+    m.set(letter, letter);
+  }
+  return m;
+})();
+
+/** Multi-token letter forms ("double you" = W) — consumed as ONE letter. */
+export const TWO_TOKEN_LETTERS = new Map([
+  ['double u', 'w'], ['double you', 'w'], ['x ray', 'x'],
+]);
+
+// ─── Phonetic consonant-skeleton fallback (2026-08-06) ─────────────────
+
+/**
+ * Deterministic consonant skeleton (metaphone-style) for the closed-set
+ * fallback slots (airline name words, runway-number spoken forms).
+ * Pipeline: lowercase → drop non-letters → collapse silent 'gh'
+ * ('eight'→t) → map 'th'→θ ('cathay'→cθ) → map 'ch'→x ('china'→xn —
+ * keeps c-initial words from collapsing onto it) → drop vowels aeiou and
+ * glides y/h/w. One symbol per consonant sound, so skeleton D-L 1 means
+ * one misheard consonant — the exact envelope of a dictation engine's
+ * sound confusions ('cafe'↔'cathay' cf/cθ, 'ethiopian'↔'three one'
+ * θpn/θrn).
+ */
+export function enSkeleton(word) {
+  return word.toLowerCase()
+    .replace(/[^a-z]/g, '')
+    .replace(/gh/g, '')
+    .replace(/th/g, 'θ')
+    .replace(/ch/g, 'x')
+    .replace(/[aeiouyh]/g, '');
+}
+
+/**
+ * Closed-set phonetic fallback match: match a token against candidate
+ * words by consonant skeleton (enSkeleton). Rules:
+ *   - both skeletons non-empty with min length ≥ 2 (1-symbol forms like
+ *     'one'/'two'/'air' stay exact/D-L-only, never phonetic),
+ *   - first skeleton symbol equal ('banana' b never reaches a runway form),
+ *   - raw-length diff ≤ 2 ('cafe' 4 vs 'cathay' 6 — blocks 3-char OOV
+ *     tokens from reaching 5-char words),
+ *   - skeleton D-L EXACTLY 1 — a D-L-0 pair ('ghost'/'asset' → 'st') must
+ *     not resolve; the raw D-L layer already covers near-identical words.
+ * Unique best wins, ties fail (deterministic — mirrors the waypoint tie
+ * rule). Candidates must be a CLOSED SET (airline name words, runway
+ * spoken forms) — random vocabulary stays rejected.
+ *
+ * @param {string} token — recognized word (lowercase)
+ * @param {string[]} candidates — closed-set words to match against
+ * @returns {string|null} the unique best candidate, or null
+ */
+export function skeletonMatch(token, candidates) {
+  const skel = enSkeleton(token);
+  if (!skel || skel.length < 2) return null;
+  let best = null;
+  let count = 0;
+  for (const c of candidates) {
+    const cskel = enSkeleton(c);
+    if (!cskel || cskel.length < 2) continue;
+    if (cskel[0] !== skel[0]) continue;
+    if (Math.abs(c.length - token.length) > 2) continue;
+    if (damerauLevenshtein(skel, cskel) === 1) { best = c; count++; }
+  }
+  return count === 1 ? best : null;
 }
 
 // ─── Match helpers ─────────────────────────────────────────────────────

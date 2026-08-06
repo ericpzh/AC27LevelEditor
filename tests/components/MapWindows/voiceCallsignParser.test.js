@@ -62,6 +62,9 @@ describe('parseCallsign', () => {
     makeAircraft('AFR3661'),
     makeAircraft('AAL683'),
     makeAircraft('CHH7336'),
+    makeAircraft('KAL2021'),
+    makeAircraft('KAL21'),
+    makeAircraft('KAL91'),
   ];
 
   it('parses "united eleven eleven" → UAL1111', () => {
@@ -266,6 +269,41 @@ describe('parseCallsign', () => {
     const r = parseCallsign('delta uh three four zero one', 'en', aircraftList);
     expect(r).not.toBeNull();
     expect(r.callsign).toBe('DAL3401');
+  });
+
+  // ─── Pre-number noise + digit confusables (2026-08-06 round 3) ───────
+
+  it('strips pre-number "at" ("korean air at twenty twenty one" → KAL2021)', () => {
+    const r = parseCallsign('korean air at twenty twenty one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('KAL2021');
+  });
+
+  it('Korean Air maps to KAL, not AAR ("korean air one two three four" → KAL1234)', () => {
+    const acList = [makeAircraft('KAL1234')];
+    const r = parseCallsign('korean air one two three four', 'en', acList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('KAL1234');
+  });
+
+  it('digit confusables: "korean air new one" → KAL21 (new→two reading)', () => {
+    const r = parseCallsign('korean air new one', 'en', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('KAL21');
+  });
+
+  it('digit confusables: "korean air new one" → KAL91 (new→nine reading)', () => {
+    const acList = [makeAircraft('KAL91')];
+    const r = parseCallsign('korean air new one', 'en', acList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('KAL91');
+  });
+
+  it('skips mid-number "the" ("emirates for the eight thirty eight" → UAE4838)', () => {
+    const acList = [makeAircraft('UAE4838')];
+    const r = parseCallsign('emirates for the eight thirty eight', 'en', acList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('UAE4838');
   });
 
   it('does not strip "okay" when it is the airline itself ("okay airways" → CJX)', () => {

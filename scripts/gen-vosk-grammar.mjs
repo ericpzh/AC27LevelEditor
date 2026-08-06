@@ -29,6 +29,9 @@ import {
 import {
   getSpokenNameWords, EN_FILLER_WORDS,
 } from '../src/components/MapWindows/voiceCallsignParser.js';
+import {
+  EN_LETTER_WORDS,
+} from '../src/components/MapWindows/voiceFuzzy.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'electron', 'voice-grammar.json');
@@ -67,6 +70,12 @@ export function collectGrammarWords() {
   for (const w of ['for', 'the', 'approach', 'appr', 'runway']) words.add(w);
   for (const w of EN_RUNWAY_SUFFIX) words.add(w);
   for (const w of EN_PHRASEOLOGY) words.add(w);
+  // Spelled-letter words (waypoint slot): exactly the NATO word + the
+  // canonical letter name per letter (forms.slice(0, 2)) — parser-only
+  // variants ('el', 'see', bare letters) must NOT enter the decoder.
+  for (const forms of Object.values(EN_LETTER_WORDS)) {
+    for (const f of forms.slice(0, 2)) words.add(f);
+  }
 
   // ── ZH ────────────────────────────────────────────────────────────────
   for (const p of ZH_PATTERNS) wordsZh.add(p.chars);

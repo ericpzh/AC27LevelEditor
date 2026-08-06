@@ -225,8 +225,10 @@ class VoiceSttWorker extends EventEmitter {
   /**
    * Begin recognition. Events are routed to `sender` via getActiveSender().
    * @param {Electron.WebContents} sender — initiating window
+   * @param {string[]} [extraWords] — the current airport's waypoint names,
+   *   merged into the session grammar (see voice-stt-vosk.js startSession)
    */
-  async start(sender) {
+  async start(sender, extraWords) {
     this.activeSender = sender;
     // Re-press inside the release-drain: cancel the pending stop — the engine
     // never stopped, so no command is needed.
@@ -243,7 +245,7 @@ class VoiceSttWorker extends EventEmitter {
       // Forward 'start' — the ps1 decides the outcome: continues a finalizing
       // session (re-press after the drain expired), rejects a busy one, or
       // begins a new one.
-      this._send({ cmd: 'start' });
+      this._send({ cmd: 'start', extraWords: Array.isArray(extraWords) ? extraWords : [] });
     }
     return { success: true };
   }

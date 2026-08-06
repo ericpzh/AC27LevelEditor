@@ -119,8 +119,8 @@ describe('CURATED_EXCLUDE', () => {
 // ─── Curated multi-token confusables ───────────────────────────────────
 
 describe('CURATED_CONFUSABLES', () => {
-  it('covers the spelled-out approach types + FL', () => {
-    expect(Object.keys(CURATED_CONFUSABLES).sort()).toEqual(['fl', 'ils', 'loc', 'ndb', 'rnav', 'vor']);
+  it('covers the spelled-out approach types + FL + the direct mishearing', () => {
+    expect(Object.keys(CURATED_CONFUSABLES).sort()).toEqual(['direct', 'fl', 'ils', 'loc', 'ndb', 'rnav', 'vor']);
   });
 });
 

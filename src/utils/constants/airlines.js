@@ -26,7 +26,7 @@ export const AIRLINE_CODE_MAP = {
   'Alaska Airlines': 'ASA',     'Etihad Airways': 'ETD',
   'Gulf Air': 'GFA',            'Air Arabia': 'AAR',
   'Virgin Atlantic': 'VIR',     'Avianca': 'AVA',
-  'Asiana Airlines': 'AAR',     'Korean Air': 'AAR',
+  'Asiana Airlines': 'AAR',     'Korean Air': 'KAL',
   'Emirates': 'UAE',            'Turkish Airlines': 'THY',
   'Air Canada': 'ACA',          'Japan Airlines': 'JAL',
   'All Nippon Airways': 'ANA',  'Ethiopian Airlines': 'ETH',

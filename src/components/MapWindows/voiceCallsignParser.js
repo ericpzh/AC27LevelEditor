@@ -9,7 +9,7 @@
 
 import { AIRLINE_CODE_MAP, getAirlineCode } from '../../utils/constants/index.js';
 import { parseEnglishFlightNumber, parseChineseFlightNumber } from './voiceNumberParser.js';
-import { fuzzyMatch, NON_FUZZY_WORDS } from './voiceFuzzy.js';
+import { fuzzyMatch, NON_FUZZY_WORDS, isFuzzyEligible, skeletonMatch, damerauLevenshtein } from './voiceFuzzy.js';
 
 // ─── Language detection ────────────────────────────────────────────────
 
@@ -164,6 +164,11 @@ function stripLeadingCallsignNoise(tokens) {
     // "heavy:" / "heavy," → heavy (mirrors tokenizeEnglish's normalization)
     const t = tokens[i].replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
     if (t && fuzzyMatch(t, ['heavy'], 1)) { i++; continue; }
+    // 'at' is a pure STT insertion before the flight number ("korean air at
+    // twenty twenty one"). Never a digit (exact-only), so skipping it can't
+    // change number semantics; the same strip on leftover text turns "csc
+    // 123 at climb" into "climb" (same unsupported outcome either way).
+    if (t === 'at') { i++; continue; }
     break;
   }
   return tokens.slice(i);
@@ -221,51 +226,20 @@ export function parseCallsign(transcript, lang, aircraftList, diag) {
     sawPrefix = true;
     diag?.push(`airline "${spoken}" → ${code}`);
 
-    const { remaining } = matchResult;
-    const remainingTrimmed = remaining.trim();
-    // Pure-punctuation tokens ("CSC6918 : climb") are dropped so the
-    // flight-number scan and the remainingText both ignore them; filler
-    // words before the number ("delta uh 3401") and the optional "heavy"
-    // keyword ("american heavy 1111") are stripped too.
-    const remainingTokens = stripLeadingCallsignNoise(
-      remainingTrimmed
-        ? remainingTrimmed.split(/\s+/).filter(t => /[a-z0-9一-鿿]/i.test(t))
-        : []
-    );
+    const result = tryResolveFlightFromRemaining(matchResult.remaining, code, spoken, aircraftList, diag);
+    if (result) return result;
+  }
 
-    // Parse flight number from remaining tokens
-    const numResult = parseEnglishFlightNumber(remainingTokens);
-
-    if (!numResult.candidates.length) {
-      diag?.push(`no flight number parsed after "${spoken}"`);
-      continue;
-    }
-
-    // Build callsign candidates and test against aircraft list
-    for (const numStr of numResult.candidates) {
-      const callsign = code + numStr;
-      const ac = aircraftList.find(a => a.callSign === callsign);
-      if (ac) {
-        // trailing "heavy" ("american 1111 heavy climb…") never reaches
-        // the command matcher
-        const unconsumedTokens = stripLeadingCallsignNoise(remainingTokens.slice(numResult.consumed));
-        return {
-          callsign,
-          aircraft: ac,
-          remainingText: unconsumedTokens.join(' '),
-          airlineName: spoken,
-          flightNumber: numStr,
-        };
-      }
-    }
-
-    // None of the candidate callsigns exists in the live aircraft list —
-    // name the candidates and where the number scan stopped.
-    const brk = remainingTokens[numResult.consumed];
-    diag?.push(
-      `candidates ${numResult.candidates.map(n => code + n).join(',')} not in list` +
-      (brk ? ` (first unparsed token: "${brk}")` : '')
-    );
+  // Phonetic skeleton stage: exact + letter-D-L all failed — try the
+  // consonant-skeleton fallback against single-word airline keys
+  // ("cafe" → cathay → CPA). The number-parse + aircraft-list tail is
+  // identical to the per-entry loop's (same diag strings).
+  const skel = matchSpokenSkeleton(lower, stripped);
+  if (skel) {
+    sawPrefix = true;
+    diag?.push(`airline "${skel.spoken}" → ${skel.code}`);
+    const result = tryResolveFlightFromRemaining(skel.remaining, skel.code, skel.spoken, aircraftList, diag);
+    if (result) return result;
   }
 
   if (!sawPrefix) {
@@ -357,6 +331,20 @@ function parseCallsignChinese(transcript, spokenToCode, aircraftList, diag) {
           flightNumber: numStr,
         };
       }
+    }
+
+    // Proximity fallback — "东方五拐八" → CES578 vs live CES5578 (D-L 1).
+    // Approach-seat only, ties fail (mirrors the EN path).
+    const prox = proximityMatch(code, candidates, aircraftList);
+    if (prox) {
+      const remainingText = stripZhHeavy(chars.slice(consumed).join(''));
+      return {
+        callsign: prox.callsign,
+        aircraft: prox.aircraft,
+        remainingText,
+        airlineName: spoken,
+        flightNumber: prox.numStr,
+      };
     }
 
     diag?.push(`candidates ${candidates.map(n => code + n).join(',')} not in list`);
@@ -471,6 +459,163 @@ function matchSpokenPrefix(lower, stripped, spoken) {
   );
 }
 
+// ─── Phonetic skeleton stage (2026-08-06) ──────────────────────────────
+
+/** Single-word spoken airline keys (full-name/first-word entries without
+ *  spaces) for the phonetic skeleton stage — memoized. 3-letter codes are
+ *  excluded (codes are exact-only fuzzy targets everywhere; 'cpa'→'cp' is
+ *  one skeleton edit from 'cf' and would tie with 'cathay'). Entry order
+ *  mirrors getSpokenToCode for code resolution. */
+let _spokenSingleWordKeys = null;
+function getSpokenSingleWordKeys() {
+  if (!_spokenSingleWordKeys) {
+    _spokenSingleWordKeys = getSpokenToCode()
+      .filter(([spoken]) => !/\s/.test(spoken) && !CODE_WORDS.has(spoken))
+      .map(([spoken]) => spoken);
+  }
+  return _spokenSingleWordKeys;
+}
+
+/**
+ * Phonetic skeleton stage for the airline slot: final fallback after
+ * exact + letter-D-L all failed — "cafe" → cathay (cf/cθ are one skeleton
+ * edit apart). Takes the first token of the filler-stripped text; blocked
+ * when it fuzzy-matches 'heavy' (a bare "heavy …" must stay a failure) or
+ * is fuzzy-ineligible; matches against the single-word spoken keys via
+ * skeletonMatch (closed set, unique best wins, ties fail).
+ *
+ * @param {string} lower — LOWERCASE transcript (original text)
+ * @param {string} stripped — leading-fillers-removed transcript
+ * @returns {{code: string, spoken: string, remaining: string} | null}
+ */
+function matchSpokenSkeleton(lower, stripped) {
+  const first = stripped ? stripped.split(/\s+/)[0].toLowerCase() : null;
+  if (!first) return null;
+  if (fuzzyMatch(first, ['heavy'], 1)) return null;   // "heavy …" must stay a failure
+  if (!isFuzzyEligible(first)) return null;
+  // Codes are exact-only everywhere — a token within D-L 1 of a code
+  // ("deal" → dal) must not reach the phonetic stage either, or the code
+  // guard is bypassed through the name word ('deal' → delta → DAL).
+  for (const code of CODE_WORDS) {
+    if (Math.abs(code.length - first.length) <= 1 && damerauLevenshtein(first, code) === 1) return null;
+  }
+  const best = skeletonMatch(first, getSpokenSingleWordKeys());
+  if (!best) return null;
+  const entry = getSpokenToCode().find(([spoken]) => spoken === best);
+  if (!entry) return null;
+  const [spoken, code] = entry;
+  // Consumed span: leading fillers + the first token, measured on the
+  // ORIGINAL text — mirrors the fuzzy prefix boundary guard.
+  const tokens = lower.split(/\s+/);
+  let k = 0;
+  while (k < tokens.length && EN_FILLER_WORDS.has(tokens[k])) k++;
+  const consumed = tokens.slice(0, k + 1).join(' ');
+  const after = lower.slice(consumed.length);
+  if (after === '') return { code, spoken, remaining: '' };
+  if (after[0] === ' ') return { code, spoken, remaining: after };
+  if (/^\d/.test(after) || isCJK(after[0])) return { code, spoken, remaining: after };
+  return null;
+}
+
+// ─── Proximity fallback (2026-08-06) ───────────────────────────────────
+
+/** D-L ≤ 1 proximity fallback against the LIVE aircraft list, fired only
+ *  when candidates exist but none matched exactly. Approach-seat only
+ *  (controlSeat 5 = approach channel; a numeric non-5 seat is skipped —
+ *  unknown/absent seat fields stay eligible — user: "all live APPR
+ *  aircraft"). Unique best wins, ties fail (two aircraft one edit away
+ *  must never resolve to one). Cap 1 plus the airline-code prefix make
+ *  the digit suffix the only editable region ("CES578" → "CES5578").
+ *
+ * @param {string} code — ICAO code ("CES")
+ * @param {string[]} numStrs — digit candidates ("578")
+ * @param {Object[]} aircraftList — live aircraft (each has .callSign)
+ * @returns {{callsign: string, aircraft: Object, numStr: string} | null}
+ */
+function proximityMatch(code, numStrs, aircraftList) {
+  let best = null;             // { callsign, aircraft, numStr }
+  const matched = new Set();   // callsigns with a d1 hit
+  for (const ac of aircraftList) {
+    if (typeof ac.controlSeat === 'number' && ac.controlSeat !== 5) continue;
+    const target = String(ac.callSign).toLowerCase();
+    for (const numStr of numStrs) {
+      const cs = (code + numStr).toLowerCase();
+      if (cs === target) continue;                    // exact already failed
+      if (damerauLevenshtein(cs, target) === 1) {
+        if (!matched.has(ac.callSign)) best = { callsign: ac.callSign, aircraft: ac, numStr };
+        matched.add(ac.callSign);
+      }
+    }
+  }
+  return matched.size === 1 ? best : null;
+}
+
+/** Shared tail of a successful airline-prefix match: parse the flight
+ *  number, match the candidates against the live aircraft list (exact),
+ *  then the D-L ≤ 1 proximity fallback, and return the ParseResult — or
+ *  null with the standard diagnostics. Used by the per-entry loop and the
+ *  phonetic skeleton stage so both produce identical diag strings. */
+function tryResolveFlightFromRemaining(remaining, code, spoken, aircraftList, diag) {
+  const remainingTrimmed = remaining.trim();
+  // Pure-punctuation tokens ("CSC6918 : climb") are dropped so the
+  // flight-number scan and the remainingText both ignore them; filler
+  // words before the number ("delta uh 3401") and the optional "heavy"
+  // keyword ("american heavy 1111") are stripped too.
+  const remainingTokens = stripLeadingCallsignNoise(
+    remainingTrimmed
+      ? remainingTrimmed.split(/\s+/).filter(t => /[a-z0-9一-鿿]/i.test(t))
+      : []
+  );
+
+  // Parse flight number from remaining tokens
+  const numResult = parseEnglishFlightNumber(remainingTokens);
+  if (!numResult.candidates.length) {
+    diag?.push(`no flight number parsed after "${spoken}"`);
+    return null;
+  }
+
+  // Build callsign candidates and test against aircraft list
+  for (const numStr of numResult.candidates) {
+    const callsign = code + numStr;
+    const ac = aircraftList.find(a => a.callSign === callsign);
+    if (ac) {
+      // trailing "heavy" ("american 1111 heavy climb…") never reaches
+      // the command matcher
+      const unconsumedTokens = stripLeadingCallsignNoise(remainingTokens.slice(numResult.consumed));
+      return {
+        callsign,
+        aircraft: ac,
+        remainingText: unconsumedTokens.join(' '),
+        airlineName: spoken,
+        flightNumber: numStr,
+      };
+    }
+  }
+
+  // None of the candidate callsigns exists in the live aircraft list —
+  // name the candidates and where the number scan stopped.
+  const brk = remainingTokens[numResult.consumed];
+  diag?.push(
+    `candidates ${numResult.candidates.map(n => code + n).join(',')} not in list` +
+    (brk ? ` (first unparsed token: "${brk}")` : '')
+  );
+
+  // Proximity fallback: no exact aircraft — a misheard digit is one edit
+  // away ("五拐八" → CES5578). Approach-seat only, ties fail.
+  const prox = proximityMatch(code, numResult.candidates, aircraftList);
+  if (prox) {
+    const unconsumedTokens = stripLeadingCallsignNoise(remainingTokens.slice(numResult.consumed));
+    return {
+      callsign: prox.callsign,
+      aircraft: prox.aircraft,
+      remainingText: unconsumedTokens.join(' '),
+      airlineName: spoken,
+      flightNumber: prox.numStr,
+    };
+  }
+  return null;
+}
+
 /**
  * All plausible callsign strings (ICAO code + flight number) derivable from
  * a transcript — the same prefix → flight-number extraction parseCallsign
@@ -523,6 +668,19 @@ export function callsignCandidates(transcript, lang) {
       );
       const numResult = parseEnglishFlightNumber(tokens);
       for (const numStr of numResult.candidates) out.add(code + numStr);
+    }
+    // Phonetic skeleton mirror — buildSyntheticAircraftList must resolve
+    // exactly what the live parse would ("cafe …" → cathay → CPA7522).
+    const skel = matchSpokenSkeleton(lower, stripped);
+    if (skel) {
+      const remainingTrimmed = skel.remaining.trim();
+      const tokens = stripLeadingCallsignNoise(
+        remainingTrimmed
+          ? remainingTrimmed.split(/\s+/).filter(t => /[a-z0-9一-鿿]/i.test(t))
+          : []
+      );
+      const numResult = parseEnglishFlightNumber(tokens);
+      for (const numStr of numResult.candidates) out.add(skel.code + numStr);
     }
   }
 

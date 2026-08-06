@@ -118,4 +118,48 @@ describe('parseVoiceCandidates', () => {
     expect(matchedText).toBe('CSC6918: turn left heading 360');
     expect(candidateIndex).toBe(0);
   });
+
+  // ─── Waypoint threading (fly direct to) ───────────────────────────
+
+  const FIX_WAYPOINTS = [
+    { name: 'BELTT', x: 100, z: 100 },
+    { name: 'PANKI', x: 0, z: 100 },
+  ];
+
+  it('waypoints are threaded through to the parse', () => {
+    const { result, candidateIndex } = parseVoiceCandidates(
+      ['CSC6918: fly direct to beltt'],
+      AIRCRAFT,
+      FIX_WAYPOINTS
+    );
+    expect(candidateIndex).toBe(0);
+    expect(result.commands.map((c) => c.label)).toEqual(['Fly Direct To BELTT']);
+  });
+
+  it('direct alternate wins when the primary waypoint is unknown', () => {
+    const { result, candidateIndex, matchedText } = parseVoiceCandidates(
+      ['CSC6918: fly direct to banana', 'CSC6918: fly direct to bee ee el tee tee'],
+      AIRCRAFT,
+      FIX_WAYPOINTS
+    );
+    expect(candidateIndex).toBe(1);
+    expect(matchedText).toBe('CSC6918: fly direct to bee ee el tee tee');
+    expect(result.commands.map((c) => c.label)).toEqual(['Fly Direct To BELTT']);
+  });
+
+  it('single text is identical to parseVoiceTranscript plus metadata (waypoints)', () => {
+    const direct = parseVoiceTranscript('CSC6918: fly direct to beltt', AIRCRAFT, FIX_WAYPOINTS);
+    const { result, candidateIndex } = parseVoiceCandidates(
+      ['CSC6918: fly direct to beltt'],
+      AIRCRAFT,
+      FIX_WAYPOINTS
+    );
+    expect(result).toEqual(direct);
+    expect(candidateIndex).toBe(0);
+  });
+
+  it('two-arg call stays backward-compatible (no waypoints)', () => {
+    const { result } = parseVoiceCandidates(['CSC6918: fly direct to beltt'], AIRCRAFT);
+    expect(result.notices.some((n) => n.includes('no waypoint data'))).toBe(true);
+  });
 });

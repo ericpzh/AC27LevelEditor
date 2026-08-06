@@ -108,6 +108,30 @@ describe('parseEnglishFlightNumber', () => {
     // 7 digits should be filtered
     expect(r.candidates.every(c => c.length <= 6)).toBe(true);
   });
+
+  it('skips mid-number "the" ("for the eight thirty eight" → 4838, position-aware)', () => {
+    const r = parseEnglishFlightNumber(['for', 'the', 'eight', 'thirty', 'eight']);
+    expect(r.candidates).toContain('4838');
+    expect(r.consumed).toBe(5);   // 'the' counts — remainingText slicing stays correct
+  });
+
+  it('skips leading "the" ("the one two" → 12)', () => {
+    const r = parseEnglishFlightNumber(['the', 'one', 'two']);
+    expect(r.candidates).toContain('12');
+    expect(r.consumed).toBe(3);
+  });
+
+  it('digit confusables: "new one" → 21 and 91 readings (aircraft list disambiguates)', () => {
+    const r = parseEnglishFlightNumber(['new', 'one']);
+    expect(r.candidates).toContain('21');
+    expect(r.candidates).toContain('91');
+    expect(r.consumed).toBe(2);
+  });
+
+  it('digit confusables: "new york" → single-digit readings — list-match-gated, like "delta one" → DAL1', () => {
+    const r = parseEnglishFlightNumber(['new', 'york']);
+    expect(r.candidates).toEqual(['2', '9']);
+  });
 });
 
 // ─── Chinese ───────────────────────────────────────────────────────────
@@ -226,6 +250,12 @@ describe('lookupEnNumberToken', () => {
   it('fillers and unknown words → null', () => {
     expect(lookupEnNumberToken('uh')).toBeNull();
     expect(lookupEnNumberToken('xyzzy')).toBeNull();
+  });
+
+  it('fuzzy guard blocks the fallback only ("right" must not become "eight")', () => {
+    expect(lookupEnNumberToken('right')).toBe('eight');
+    expect(lookupEnNumberToken('right', new Set(['right', 'left', 'center']))).toBeNull();
+    expect(lookupEnNumberToken('eight', new Set(['right', 'left', 'center']))).toBe('eight');   // exact unaffected
   });
 
   it('exact "hundred" resolves (flight-number path rejects it separately)', () => {

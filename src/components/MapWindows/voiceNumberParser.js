@@ -64,6 +64,22 @@ export const EN_NUMBER_KEYS = [
  *  and stay exact-only). */
 export const EN_NUMBER_FUZZY_KEYS = EN_NUMBER_KEYS.filter((w) => w.length >= 3);
 
+/** Digit/teen/tens keys only (no 'and'/'hundred'/'thousand') — the cfa
+ *  head's free number-word skip set ('forty' mishears "for the", a stray
+ *  'oh' is a digit word). Exported for voiceTranscriptParser; NOT imported
+ *  by the grammar generator (EN_NUMBER_KEYS stays the grammar source). */
+export const EN_NUMBER_WORD_KEYS = new Set([
+  ...Object.keys(EN_DIGIT), ...Object.keys(EN_TEEN), ...Object.keys(EN_TENS),
+]);
+
+/** Curated misheard digit words in the FLIGHT-NUMBER slot — tokens that are
+ *  D-L 2 from their targets (over the cap) but phonetically indistinguishable
+ *  in dictation ("new one" = "two one" / "nine one"). Substituted only when
+ *  the primary scan yields ZERO candidates; both readings stay as candidates
+ *  so the aircraft list disambiguates. Closed set — nothing else is ever
+ *  substituted (general skeleton-on-number-words is unsafe: 'turn'→'ten'). */
+const EN_DIGIT_CONFUSABLES = new Map([['new', ['two', 'nine']]]);
+
 // ─── Chinese word → digit(s) ───────────────────────────────────────────
 
 /**
@@ -123,6 +139,11 @@ function tokenizeEnglish(tokens) {
     // Command words must not be swallowed as misheard digits ("CSC6918:
     // right heading 120" — 'right' is d1 of 'eight'); guard = pattern words.
     if (FLIGHT_NUMBER_FUZZY_GUARD.has(lower)) return null;
+    // 'the' is a pure STT insertion — never a digit, never a command word —
+    // so it is SKIPPED (not break) at any position ("emirates for the eight
+    // thirty eight" → 4,8,38/308 → 4838). 'at' deliberately NOT skipped: it
+    // is a guarded pattern word, so "csc 123 at climb" must still break.
+    if (lower === 'the') return ['__skip'];
     // Fuzzy fallback (D-L ≤ 1, e.g. "tree" → three, "too" → two).
     const key = fuzzyLookupKey(lower, EN_NUMBER_FUZZY_KEYS, 1);
     if (key && key !== 'and' && key !== 'hundred' && key !== 'thousand') {
@@ -196,6 +217,7 @@ export function parseEnglishFlightNumber(tokens) {
   while (i < mapped.length) {
     const m = mapped[i];
     if (m === null) break; // no longer a number word — stop consuming
+    if (m[0] === '__skip') { i++; continue; }   // 'the' — counted (position-aware), never a digit
 
     if (m[0] === 'triple' || m[0] === 'double') {
       const repeat = m[0] === 'triple' ? 3 : 2;
@@ -229,7 +251,28 @@ export function parseEnglishFlightNumber(tokens) {
     i++;
   }
 
-  if (!resolved.length) return { candidates: [], consumed: 0 };
+  if (!resolved.length) {
+    // Zero-candidate second chance: a misheard digit word at position 0
+    // ("new" is D-L 2 from 'two'/'nine' — over the cap, but "new one" =
+    // "two one"/"nine one"). Each reading is re-scanned and kept as a
+    // candidate; the aircraft list disambiguates (KAL21 vs KAL91).
+    // Recursion terminates — 'two'/'nine' are not confusable keys.
+    const first = tokens[0] ? tokens[0].toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '') : '';
+    const subs = first ? EN_DIGIT_CONFUSABLES.get(first) : null;
+    if (subs) {
+      const candidates = [];
+      let consumed = 0;
+      for (const sub of subs) {
+        const r = parseEnglishFlightNumber([sub, ...tokens.slice(1)]);
+        if (r.candidates.length) {
+          candidates.push(...r.candidates);
+          consumed = Math.max(consumed, r.consumed);
+        }
+      }
+      if (candidates.length) return { candidates: [...new Set(candidates)], consumed };
+    }
+    return { candidates: [], consumed: 0 };
+  }
 
   // Generate all combinations
   const candidates = product(resolved);
@@ -338,10 +381,17 @@ function normalizeToken(t) {
  * "three uh four" still fails (limitation row in the deviation matrix).
  *
  * @param {string} token — normalized lowercase token
+ * @param {Set<string>} [fuzzyGuard] — words that must never take the fuzzy
+ *   fallback. The runway scan guards 'right'/'left'/'center' so "runway
+ *   three one right" scans 3,1 + the suffix instead of 3,1,8 → 318 (out of
+ *   the 1–36 range). Exact lookups are unaffected; only the fuzzy fallback
+ *   is blocked. Flight numbers use FLIGHT_NUMBER_FUZZY_GUARD at the
+ *   tokenizeEnglish site instead.
  * @returns {string|null} e.g. 'tree' → 'three', 'to' → 'two', 'oh' → 'oh'
  */
-export function lookupEnNumberToken(token) {
+export function lookupEnNumberToken(token, fuzzyGuard = null) {
   if (EN_NUMBER_KEYS.includes(token)) return token;
+  if (fuzzyGuard && fuzzyGuard.has(token)) return null;
   return fuzzyLookupKey(token, EN_NUMBER_FUZZY_KEYS, 1);
 }
 
@@ -364,15 +414,16 @@ export function lookupUnitWord(token) {
  * tokens are skipped (they're part of magnitude phrases). consumed = number
  * of original tokens scanned (incl. skips).
  */
-function scanEnNumeric(tokens) {
+function scanEnNumeric(tokens, fuzzyGuard = null) {
   const scanned = [];
   let i = 0;
   while (i < tokens.length) {
     const t = normalizeToken(tokens[i]);
     if (!t) { i++; continue; }
     // Exact first, then fuzzy (D-L ≤ 1 — "thousan" → thousand, "to" → two).
-    // Unknown words (incl. fillers) break the scan exactly as before.
-    const key = lookupEnNumberToken(t);
+    // Unknown words (incl. fillers) break the scan exactly as before; the
+    // runway path's fuzzyGuard blocks suffix words from the fallback.
+    const key = lookupEnNumberToken(t, fuzzyGuard);
     if (!key) break;
     if (key === 'and') { i++; continue; }   // connector inside magnitudes ("one hundred and twenty")
     if (key === 'hundred' || key === 'thousand') { scanned.push({ k: key }); i++; continue; }
@@ -387,21 +438,26 @@ function scanEnNumeric(tokens) {
  * Parse a spoken VALUE (heading degrees / altitude ft / speed knots) from
  * leading tokens. EN input: token array; ZH input: string (no spaces).
  *
+ * @param {string[]|string} tokens — EN token array / ZH char string
+ * @param {'en'|'zh'} lang
+ * @param {Set<string>} [fuzzyGuard] — EN only; words the fuzzy number
+ *   fallback must never resolve (the runway scan's suffix guard). ZH
+ *   parsing is exact-only and ignores it.
  * @returns {{ value: number, consumed: number, kind: string } | null}
  *   consumed = tokens (EN) / chars (ZH) consumed — the caller peeks the
  *   unit word right after.
  */
-export function parseSpokenNumberValue(tokens, lang) {
+export function parseSpokenNumberValue(tokens, lang, fuzzyGuard = null) {
   if (lang === 'zh') return parseZhSpokenValue(tokens);
-  return parseEnSpokenValue(tokens);
+  return parseEnSpokenValue(tokens, fuzzyGuard);
 }
 
-function parseEnSpokenValue(tokens) {
+function parseEnSpokenValue(tokens, fuzzyGuard = null) {
   // 1. Arabic-digit fallback (speech engines and typed input emit digits)
   const first = normalizeToken(tokens[0] || '');
   if (/^\d{1,5}$/.test(first)) return { value: parseInt(first, 10), consumed: 1, kind: 'digits' };
 
-  const { scanned, consumed } = scanEnNumeric(tokens);
+  const { scanned, consumed } = scanEnNumeric(tokens, fuzzyGuard);
   if (!scanned.length) return null;
 
   // 2. Magnitude path — hundred/thousand present: left-to-right groups,

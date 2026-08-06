@@ -745,11 +745,20 @@ async function handleMcpMessage(msg) {
             return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no live aircraft telemetry — is the game running with the BepInEx plugin?' }, null, 2) }], isError: true });
           }
 
+          // Waypoint target set for 'fly direct to X' — from the airport
+          // cache (same source as collect-values._airwayNodes).
+          const state = await readStoreState();
+          const cache = getAirportCache ? getAirportCache() : null;
+          const ad = cache && state.currentAirport ? cache[state.currentAirport]?.approachData : null;
+          const waypoints = (ad && Array.isArray(ad.airwayNodes) ? ad.airwayNodes : [])
+            .map((n) => ({ name: n.name, x: n.x, z: n.z }));
+
           const text = String(transcript).trim();
-          const r = parseVoiceTranscript(text, aircraft);
+          const r = parseVoiceTranscript(text, aircraft, waypoints);
           console.log('[VOICE-PARSE]', JSON.stringify(text), 'ok=' + r.ok,
             'callsign=' + r.callsign,
             'a/c=' + (r.aircraft?.callSign ?? '-') + ' seat=' + (r.aircraft?.controlSeat ?? '-'),
+            'wps=' + waypoints.length,
             'commands=' + JSON.stringify(r.commands),
             'notices=' + JSON.stringify(r.notices),
             'rendered=' + JSON.stringify(r.renderedLine),

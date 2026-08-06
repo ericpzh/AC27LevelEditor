@@ -447,7 +447,7 @@ variants are produced:
 | Command | Artifact | Contents |
 | --- | --- | --- |
 | `npm run build:win` | `release/AC27Editor.exe` | Normal build — **no voice assets**. This is the auto-update variant served from R2 (small). Voice UI shows "unavailable" (worker JS not shipped). |
-| `npm run build:win:voice` | `release/AC27Editor-Voice.exe` | Voice build — bundles the offline vosk STT (en+zh models ~92 MB, sox, vosk DLLs, koffi). GitHub-only; **never** uploaded to R2. |
+| `npm run build:win:voice` | `release/AC27EditorVoice.exe` | Voice build — bundles the offline vosk STT (en+zh models ~92 MB, sox, vosk DLLs, koffi). GitHub-only; **never** uploaded to R2. |
 | `npm run build:mac` | `release/*.dmg` | macOS (voice is Windows-only). |
 
 Both Windows variants go to the GitHub release; only `AC27Editor.exe` reaches

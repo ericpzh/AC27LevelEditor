@@ -45,9 +45,12 @@ const COOLDOWN_MS = 500;
 
 /**
  * @param {Object[]} udpAircraft — live aircraft array from useUdpAircraftState
+ * @param {Object[]} [waypoints] — per-airport fixes [{name, x, z}] from
+ *   collectValues._airwayNodes; powers 'fly direct to X' (parser input +
+ *   the session grammar's extra words)
  * @returns {Object} voice state + controls
  */
-export default function useVoiceCommands(udpAircraft) {
+export default function useVoiceCommands(udpAircraft, waypoints = []) {
   const electronAPI = useElectronAPI();
   const isElectron = !!electronAPI;
   const [listening, setListening] = useState(false);
@@ -157,10 +160,12 @@ export default function useVoiceCommands(udpAircraft) {
     stopRecognition();
 
     if (isElectron) {
-      // ── Electron: vosk worker (main process spawns it) ──
+      // ── Electron: vosk worker (main process spawns it) — the session
+      // grammar is extended with the current airport's waypoint names so
+      // 'fly direct to BELTT' can decode. ──
       (async () => {
         try {
-          const r = await electronAPI?.voiceSttStart?.();
+          const r = await electronAPI?.voiceSttStart?.(waypoints);
           if (r?.success) {
             setListening(true);
             resetSilenceTimer();
@@ -245,7 +250,7 @@ export default function useVoiceCommands(udpAircraft) {
       setError('Failed to start microphone');
       setListening(false);
     }
-  }, [isSupported, isElectron, electronAPI, stopRecognition, resetSilenceTimer]);
+  }, [isSupported, isElectron, electronAPI, stopRecognition, resetSilenceTimer, waypoints]);
 
   const stopListening = useCallback(() => {
     if (isElectron) {
@@ -265,7 +270,7 @@ export default function useVoiceCommands(udpAircraft) {
   const processCandidates = useCallback((texts) => {
     if (!mountedRef.current) return;
 
-    const { result, candidateIndex } = parseVoiceCandidates(texts, udpAircraft || []);
+    const { result, candidateIndex } = parseVoiceCandidates(texts, udpAircraft || [], waypoints);
 
     // Print the parse to the main-process npm log (mirrors the MCP
     // send_voice_command tool's [VOICE-PARSE] line — same pipeline).
@@ -297,13 +302,25 @@ export default function useVoiceCommands(udpAircraft) {
       setMatchedCommand(null);
       setConfidence(0);
     }
-  }, [udpAircraft]);
+  }, [udpAircraft, waypoints]);
 
   /** Single-transcript entry (browser Web Speech path — no alternates). */
   const processTranscript = useCallback((text) => processCandidates([text]), [processCandidates]);
 
+  // Latest-value refs — the worker subscription effect below mounts ONCE
+  // (stable deps). Previously processCandidates changed with every 200 ms
+  // udpAircraft push, so the effect re-subscribed at 5 Hz; each re-subscribe
+  // leaked one ipcRenderer listener because contextBridge does not preserve
+  // function identity across on()/off() crossings (see preload.js) — one
+  // sentence produced one [VOICE-PARSE] log line PER LEAKED LISTENER. Refs
+  // keep the single listener on the current closures without re-subscribing.
+  const processCandidatesRef = useRef(processCandidates);
+  processCandidatesRef.current = processCandidates;
+  const resetSilenceTimerRef = useRef(resetSilenceTimer);
+  resetSilenceTimerRef.current = resetSilenceTimer;
+
   // ── Worker event subscription (Electron) ──────────────────────────
-  // (Declared after processTranscript — the deps array evaluates at call time.)
+  // (Declared after processTranscript — the refs above evaluate at call time.)
   useEffect(() => {
     if (!electronAPI?.onVoiceSttEvent) return undefined;
     const onEvent = (evt) => {
@@ -311,8 +328,8 @@ export default function useVoiceCommands(udpAircraft) {
       if (evt.type === 'result') {
         if (!evt.text) return;
         setTranscript(evt.text);   // displayed text stays the PRIMARY
-        processCandidates([evt.text, ...(Array.isArray(evt.alternates) ? evt.alternates : [])]);
-        resetSilenceTimer();
+        processCandidatesRef.current([evt.text, ...(Array.isArray(evt.alternates) ? evt.alternates : [])]);
+        resetSilenceTimerRef.current();
       } else if (evt.type === 'error') {
         console.warn('[Voice] Speech worker error:', evt.code, evt.message);
         if (evt.code === 'WORKER_EXIT') {
@@ -330,9 +347,9 @@ export default function useVoiceCommands(udpAircraft) {
       }
       // 'rejected' (busy / no-speech) — informational, ignore
     };
-    electronAPI.onVoiceSttEvent(onEvent);
-    return () => electronAPI.offVoiceSttEvent?.(onEvent);
-  }, [electronAPI, processCandidates, resetSilenceTimer]); // eslint-disable-line react-hooks/exhaustive-deps
+    const off = electronAPI.onVoiceSttEvent(onEvent);
+    return () => (typeof off === 'function' ? off() : electronAPI.offVoiceSttEvent?.(onEvent));
+  }, [electronAPI]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Return ───────────────────────────────────────────────────────
 

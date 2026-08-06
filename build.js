@@ -4,7 +4,7 @@
  * Two Windows variants:
  *   node build.js --win        → AC27Editor.exe      (no voice assets — the
  *                                R2 auto-update build, smaller)
- *   node build.js --win --voice → AC27Editor-Voice.exe (bundles the vosk
+ *   node build.js --win --voice → AC27EditorVoice.exe (bundles the vosk
  *                                offline STT: models + sox + koffi/vosk DLLs)
  *   node build.js --mac        → macOS dmg (voice is Windows-only)
  *
@@ -81,7 +81,7 @@ if (isVoice) {
     fail('voice build needs bin/vosk/libvosk.dll (committed binary — see bin/vosk/README.md)');
   }
   win.extraResources = [...win.extraResources, ...VOICE_RESOURCES];
-  win.artifactName = 'AC27Editor-Voice.${ext}';
+  win.artifactName = 'AC27EditorVoice.${ext}';
   console.log('[build] voice variant — bundling STT models/sox/vosk');
 }
 

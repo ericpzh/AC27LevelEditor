@@ -5,7 +5,10 @@
  * so it must be self-contained CJS with no require('electron').
  *
  * Protocol: JSON lines over stdin/stdout, UTF-8, one object per line.
- *   in : {"cmd":"start"} | {"cmd":"stop"} | {"cmd":"exit"}
+ *   in : {"cmd":"start","extraWords":[...]} — extraWords = the current
+ *        airport's waypoint names, merged into BOTH recognizers' grammar
+ *        (mixed "直飞 BELTT" utterances decode on the zh side too)
+ *      | {"cmd":"stop"} | {"cmd":"exit"}
  *   out: {"type":"ready","engine":"vosk","model":"en+zh","sampleRate":16000,
  *         "culture":"en-US,zh-CN","languages":["en-US","zh-CN"],"models":[...]}
  *        {"type":"started"} | {"type":"stopped"}
@@ -149,16 +152,23 @@ function boot() {
 
 // ── Session (per 'start') ──────────────────────────────────────────────
 
-function startSession() {
+function startSession(extraWords) {
   if (!soxPath) {
     emitError('SOX_NOT_FOUND', `sox.exe not found (VOSK_SOX_PATH → resources/sox → bin/sox)`);
     state = 'ready';
     return;
   }
+  // Per-session dynamic vocabulary: the current airport's waypoint names
+  // (validated lowercase [a-z]{3,5} — the ACL cache already guarantees
+  // /^[A-Z]{3,5}$/). Merged into BOTH recognizers so mixed "直飞 BELTT"
+  // utterances decode on the zh side too.
+  const extra = [...new Set((extraWords || [])
+    .map((w) => String(w).toLowerCase())
+    .filter((w) => /^[a-z]{3,5}$/.test(w)))];
   let recEn, recZh, sox;
   try {
-    recEn = new VoskRecognizer(enModel, SAMPLE_RATE, grammar.words);
-    recZh = new VoskRecognizer(zhModel, SAMPLE_RATE, grammar.wordsZh);
+    recEn = new VoskRecognizer(enModel, SAMPLE_RATE, [...grammar.words, ...extra]);
+    recZh = new VoskRecognizer(zhModel, SAMPLE_RATE, [...grammar.wordsZh, ...extra]);
   } catch (err) {
     emitError('ENGINE', `recognizer create failed: ${err.message}`);
     state = 'ready';
@@ -305,7 +315,7 @@ function onCommand(cmd) {
         }
         return;
       }
-      startSession();
+      startSession(cmd.extraWords);
       return;
     case 'stop':
       if (state === 'recognizing' && session && !session.isFinalizing()) {
@@ -345,7 +355,7 @@ function parseWav(file) {
   return data;
 }
 
-function runWavMode(file) {
+function runWavMode(file, extraWords) {
   if (!fs.existsSync(file)) {
     emitError('WAV_NOT_FOUND', `wave file not found: ${file}`);
     process.exit(1);
@@ -357,8 +367,11 @@ function runWavMode(file) {
     emitError(err.code || 'WAV_FORMAT', err.message);
     process.exit(1);
   }
-  const recEn = new VoskRecognizer(enModel, SAMPLE_RATE, grammar.words);
-  const recZh = new VoskRecognizer(zhModel, SAMPLE_RATE, grammar.wordsZh);
+  const extra = [...new Set((extraWords || [])
+    .map((w) => String(w).toLowerCase())
+    .filter((w) => /^[a-z]{3,5}$/.test(w)))];
+  const recEn = new VoskRecognizer(enModel, SAMPLE_RATE, [...grammar.words, ...extra]);
+  const recZh = new VoskRecognizer(zhModel, SAMPLE_RATE, [...grammar.wordsZh, ...extra]);
   // Feed per chunk; collect each recognizer's phrases at ITS OWN boundaries
   // (acceptWaveform true → finalResult() — the recognizer resets internally,
   // so uncollected mid-file phrases would be lost). Never force the other
@@ -394,7 +407,9 @@ const wavIdx = argv.indexOf('--wav');
 if (wavIdx >= 0) {
   // --wav still boots models + grammar first (ready before results).
   boot();
-  runWavMode(argv[wavIdx + 1]);
+  const extraIdx = argv.indexOf('--extra');
+  const extra = extraIdx >= 0 ? argv[extraIdx + 1].split(',').filter(Boolean) : [];
+  runWavMode(argv[wavIdx + 1], extra);
   return; // unreachable (runWavMode exits)
 }
 

@@ -378,3 +378,30 @@ describe('parseVoiceTranscript — no callsign', () => {
     expect(r.reason).toContain('aircraft');
   });
 });
+
+describe('parseVoiceTranscript — fly direct to waypoint', () => {
+  const FIX_WAYPOINTS = [
+    { name: 'BELTT', x: 100, z: 100 },
+    { name: 'PANKI', x: 0, z: 100 },
+  ];
+
+  it('word-like name → update_heading payload toward the fix', () => {
+    const r = parseVoiceTranscript('CSC6918: fly direct to beltt', AIRCRAFT, FIX_WAYPOINTS);
+    expect(types(r)).toEqual(['direct']);
+    expect(r.commands[0].label).toBe('Fly Direct To BELTT');
+    expect(r.commands[0].payload).toEqual({ type: 'update_heading', callSign: 'CSC6918', dx: 0.7071, dy: 0.7071, rate: 3 });
+    expect(r.notices).toEqual([]);
+  });
+
+  it('spelled letter names resolve to the fix name', () => {
+    const r = parseVoiceTranscript('CSC6918: fly direct to bee ee el tee tee', AIRCRAFT, FIX_WAYPOINTS);
+    expect(types(r)).toEqual(['direct']);
+    expect(r.commands[0].label).toBe('Fly Direct To BELTT');
+  });
+
+  it('without waypoints → "no waypoint data" notice, no command', () => {
+    const r = parseVoiceTranscript('CSC6918: fly direct to beltt', AIRCRAFT);
+    expect(r.commands).toEqual([]);
+    expect(r.notices.some((n) => n.includes('no waypoint data'))).toBe(true);
+  });
+});

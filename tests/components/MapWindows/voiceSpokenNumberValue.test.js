@@ -91,6 +91,18 @@ describe('parseSpokenNumberValue (en)', () => {
   it('returns null when the first token is not a number', () => {
     expect(parseSpokenNumberValue(['cleared', 'to', 'land'], 'en')).toBeNull();
   });
+
+  it('"right" fuzzy-maps to eight WITHOUT the runway guard (three one right → 318)', () => {
+    const r = parseSpokenNumberValue(['three', 'one', 'right'], 'en');
+    expect(r.value).toBe(318);
+    expect(r.consumed).toBe(3);
+  });
+
+  it('runway guard stops the suffix swallow (three one right → 31, consumed 2)', () => {
+    const r = parseSpokenNumberValue(['three', 'one', 'right'], 'en', new Set(['right', 'left', 'center']));
+    expect(r.value).toBe(31);
+    expect(r.consumed).toBe(2);
+  });
 });
 
 // ─── Chinese ───────────────────────────────────────────────────────────

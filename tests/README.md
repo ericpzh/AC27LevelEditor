@@ -7,8 +7,8 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (573) + save integrity (12) + jetway rebuild (12) + runway pairs (5) + E2E (16, ~3 min)
-npm test              # 573 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
+npm run test:all      # Full suite: Vitest (1134) + save integrity (12) + jetway rebuild (12) + runway pairs (5) + E2E (16, ~3 min)
+npm test              # 1134 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min; 15 pass, 1 skipped — E12a overlay timing)
 node tests/integration/test_api_server.js      # MCP/API tests: 107 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -25,11 +25,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (573 tests)
+## Layer 1 — Vitest Component Tests (1134 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 573 pass (37 test files)
+### `npm test` — 1134 pass (47 test files)
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -61,10 +61,19 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | **Electron backend (existing):** | **74** | |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
 | `electron/updater.test.js` | 25 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **isUpdateSupported (4):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set. **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skipped etag recognized. **resolveTargetExe (5):** PORTABLE_EXECUTABLE_FILE, execPath fallback, AC27_UPDATE_TARGET in dev, auto-discovered artifact, null when no candidate. **checkForUpdate gates (5):** packaged but not portable, dev with AC27_UPDATE_TARGET, dev by default (opt-out), dev with AC27_UPDATE_DEV_CHECK=1, dev with no target exe. **installUpdate dev dry-run (2):** defaults to dry-run in dev, dry-run skips spawn+quit. |
-| **MapWindows (10 files):** | **157** | |
-| `components/MapWindows/voiceNumberParser.test.js` | 21 | `parseEnglishFlightNumber`: individual digits, "oh"→0, teens, grouped pairs, "triple X"/"double X" aviation shorthand, stop at non-numbers, >6-digit filter, empty input. `parseChineseFlightNumber`: 幺-series, 一-series, 洞/两/零 variants, multi-token, stop at non-digits. `generateCallsignCandidates` |
-| `components/MapWindows/voiceCallsignParser.test.js` | 19 | `detectLanguage`: EN/ZH/empty/mixed. `parseCallsign` (EN): "united eleven eleven"→UAL1111, full airline name, 3-letter code, "delta"→DAL, KLM, longest-match priority, teen numbers, callsign-only (no command), null on no-match/empty. `parseCallsign` (ZH): 东方/中国东方航空/国航 with digits |
+| **MapWindows (19 files):** | **712** | |
+| `components/MapWindows/voiceNumberParser.test.js` | 46 | `parseEnglishFlightNumber`: individual digits, "oh"→0, teens, grouped pairs, "triple X"/"double X" aviation shorthand, stop at non-numbers, >6-digit filter, empty input, "the" mid-number skip, digit confusables ("new"→two/nine). `parseChineseFlightNumber`: 幺-series, 一-series, 洞/两/零 variants, multi-token, stop at non-digits. `generateCallsignCandidates`, `lookupEnNumberToken` fuzzy guard ("right" blocked), `lookupUnitWord` |
+| `components/MapWindows/voiceCallsignParser.test.js` | 71 | `detectLanguage`: EN/ZH/empty/mixed. `parseCallsign` (EN): "united eleven eleven"→UAL1111, full airline name, 3-letter code, "delta"→DAL, KLM, longest-match priority, teen numbers, callsign-only (no command), null on no-match/empty. `parseCallsign` (ZH): 东方/中国东方航空/国航 with digits. Proximity + phonetic-skeleton fallbacks, pre-number "at" strip, "new" confusables, "the" skip, Korean Air→KAL, `callsignCandidates` |
 | `components/MapWindows/voiceCommandMatcher.test.js` | 21 | Exact alias matching (EN): cleared to land, clear for takeoff, go around, line up and wait, contact ground/tower, push back, taxi via with sub-item, stand by, hold position. Fuzzy fallback with partial word overlap. Chinese aliases: 可以落地/可以起飞/复飞/联系地面/等待/穿越跑道. `buildSpeechGrammar` JSGF output |
+| `components/MapWindows/voiceTranscriptParser.test.js` | 60 | Transcript → command-chain parsing, cfa + runway, chaining, notices/reason contract, `parseVoiceCandidates` alternates, synthetic aircraft list |
+| `components/MapWindows/voiceDeviationMatrix.test.js` | 293 | Human-language deviation matrix — every row pins the FULL parse outcome (incl. groups 6b/8c: cfa deviation budget, runway golden path, callsign proximity + phonetic skeleton + round-3 rows (letter-spelled ILS, callsign noise at/the/new, KAL code, runway through/urine); 12 = direct-to payload exactness + flight-prefix direct rows) |
+| `components/MapWindows/voiceSpokenNumberValue.test.js` | 34 | `parseSpokenNumberValue` EN/ZH values incl. the runway fuzzyGuard (three one right → 31, never 318) |
+| `components/MapWindows/voiceFuzzy.test.js` | 32 | D-L/curated-confusable policy leaf behavior |
+| `components/MapWindows/voiceFuzzyAcceptance.test.js` | 17 | Round-trip of the exhaustive acceptance fixture + flight-number guard pins |
+| `components/MapWindows/voiceSkeleton.test.js` | 6 | `enSkeleton`/`skeletonMatch` (2026-08-06 phonetic stage: digraphs, guards, ties) + runway fallback integration |
+| `components/MapWindows/voiceWaypointMatcher.test.js` | 19 | Direct-to waypoint slot: single-token exact → D-L ≤ 2 → spelled-letter sequences |
+| `components/MapWindows/voiceCandidates.test.js` | 14 | `parseVoiceCandidates` primary/alternate ordering + waypoint threading |
+| `components/MapWindows/voiceGrammarConsistency.test.js` | 3 | Pins `electron/voice-grammar.json` ⇄ live parser tables (en + zh) |
 | `components/MapWindows/SimClock.test.jsx` | 5 | Null/0/undefined → null output; valid timestamp → HH:MM:SS UTC; midnight → "00:00:00" |
 | `components/MapWindows/useSvgZoom.test.js` | 22 | Init state, auto-init on data load, zoomIn/zoomOut bounds + center, panLeft/panRight/panUp/panDown with clamping, wheel zoom cursor-centered, drag pan start, reset functions preserve zoom + axis |
 | `components/MapWindows/useUdpAircraftState.test.js` | 6 | Default state, subscribe on mount, unsubscribe on unmount, handler updates state, null/undefined safety, missing API methods |
@@ -91,7 +100,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 
 ### Known Vitest failures (none)
 
-All 573 tests pass. The three previously failing/todo items have been fixed:
+All 1115 tests pass. The three previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 

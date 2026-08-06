@@ -21,6 +21,9 @@
  *   --alternates "a|b" alternate phrase hypotheses to try after the primary
  *                     (mirrors the vosk worker's alternates — the first
  *                     candidate that yields commands wins)
+ *   --waypoints FILE  JSON array of {name, x, z} — the 'fly direct to X'
+ *                     target set (same shape as collect-values._airwayNodes);
+ *                     without it, direct phrases notice "no waypoint data"
  *   --lang en|zh|auto language override (default: auto-detect)
  *
  * Dry-run prints: detected language, resolved callsign, the command-window
@@ -53,13 +56,14 @@ const PORT = 20267;
 // ─── Args ─────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { transcript: null, live: false, aircraft: null, alternates: [], lang: 'auto' };
+  const args = { transcript: null, live: false, aircraft: null, alternates: [], waypoints: null, lang: 'auto' };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--live') args.live = true;
     else if (a === '--aircraft') args.aircraft = argv[++i];
     else if (a === '--alternates') args.alternates = (argv[++i] || '').split('|').filter(Boolean);
+    else if (a === '--waypoints') args.waypoints = argv[++i];
     else if (a === '--lang') args.lang = argv[++i];
     else rest.push(a);
   }
@@ -68,18 +72,19 @@ function parseArgs(argv) {
 }
 
 function usage() {
-  console.log(`usage: node scripts/voice_sim.mjs "<transcript>" [--live] [--aircraft file.json] [--alternates "a|b"] [--lang en|zh|auto]
+  console.log(`usage: node scripts/voice_sim.mjs "<transcript>" [--live] [--aircraft file.json] [--alternates "a|b"] [--waypoints file.json] [--lang en|zh|auto]
   transcript — full command string, e.g. "CSC6918: climb and maintain 9000, reduce speed to 180 knots"
   --live       — send the parsed frames to the game at ${HOST}:${PORT} (dry-run is the default)
   --aircraft   — JSON array of aircraft to resolve against instead of the synthetic list
   --alternates — alternate phrase hypotheses (pipe-separated) tried after the primary
+  --waypoints  — JSON array of {name, x, z} — the 'fly direct to X' target set
   --lang       — en | zh | auto (default: auto-detect from the transcript)`);
 }
 
-function loadAircraftList(filePath) {
+function loadJsonList(filePath, what) {
   const text = readFileSync(path.resolve(filePath), 'utf8').replace(/^﻿/, '');   // tolerate a UTF-8 BOM
   const list = JSON.parse(text);
-  if (!Array.isArray(list)) throw new Error('--aircraft file must be a JSON array of aircraft objects');
+  if (!Array.isArray(list)) throw new Error(`--${what} file must be a JSON array`);
   return list;
 }
 
@@ -112,16 +117,19 @@ async function main() {
 
   const lang = args.lang === 'auto' ? detectLanguage(args.transcript) : args.lang;
   const aircraftList = args.aircraft
-    ? loadAircraftList(args.aircraft)
+    ? loadJsonList(args.aircraft, 'aircraft')
     : buildSyntheticAircraftList(args.transcript, lang);
+  const waypoints = args.waypoints ? loadJsonList(args.waypoints, 'waypoints') : [];
 
   console.log(`lang: ${lang}`);
   if (args.aircraft) console.log(`aircraft: ${args.aircraft} (${aircraftList.length} entries)`);
   else console.log(`aircraft: synthetic from transcript (${aircraftList.length} candidates)`);
+  if (args.waypoints) console.log(`waypoints: ${args.waypoints} (${waypoints.length} entries)`);
 
   const { result, candidateIndex } = parseVoiceCandidates(
     [args.transcript, ...args.alternates],
-    aircraftList
+    aircraftList,
+    waypoints
   );
 
   console.log(`callsign: ${result.callsign ?? '(none)'}`);

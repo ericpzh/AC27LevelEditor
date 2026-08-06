@@ -33,6 +33,19 @@ export function buildHeadingPayload(callSign, headingDeg) {
   };
 }
 
+/**
+ * Game-heading (1..360) from two positions — the plugin's HeadingDeg
+ * convention (+Z north, +X east, atan2(dir.x, dir.z)), the same inversion
+ * the composer uses on telemetry noseDirection. Integer degrees, 0
+ * normalized to 360 (the update_heading rangeCheck contract).
+ */
+export function bearingDegrees(fromX, fromZ, toX, toZ) {
+  const rad = Math.atan2(toX - fromX, toZ - fromZ);
+  let deg = (rad * 180) / Math.PI;
+  deg = ((deg % 360) + 360) % 360;   // normalize to [0, 360) — also fixes -0
+  return deg === 0 ? 360 : Math.round(deg);   // round AFTER normalize: 359.6 → 360, 0.4 → 0 → 360
+}
+
 /** Altitude payload — climb/descend-and-maintain, targetFt in feet. */
 export function buildAltitudePayload(callSign, targetFt) {
   return {

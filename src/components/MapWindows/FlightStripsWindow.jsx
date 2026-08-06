@@ -289,9 +289,13 @@ export default function FlightStripsWindow({ airportIcao }) {
   // browser window while this window stays open). Hidden while unknown so
   // the check result never flashes.
   const [bepInExActive, setBepInExActive] = useState(null);
+  // Per-airport waypoints (fixes) — the voice parser's 'fly direct to X'
+  // target set + the STT session's extra grammar words. Fetched with the
+  // taxiways below (collectValues._airwayNodes).
+  const [waypoints, setWaypoints] = useState([]);
 
   // ─── Voice command hook ──────────────────────────────────────────────
-  const voice = useVoiceCommands(udpAircraft);
+  const voice = useVoiceCommands(udpAircraft, waypoints);
 
   // On PTT press: clear current selection
   const handleVoicePress = useCallback(() => {
@@ -492,12 +496,16 @@ export default function FlightStripsWindow({ airportIcao }) {
   useEffect(() => { loadFlightData(); }, [loadFlightData]);
   useEffect(() => { document.title = airportIcao ? airportIcao + ' Flight Strips' : 'Flight Strips'; }, [airportIcao]);
 
-  // Fetch taxiway names for command bar sub-menus
+  // Fetch taxiway names for command bar sub-menus + waypoints for the
+  // voice pipeline's 'fly direct to X' target set (same collectValues call)
   useEffect(() => {
     if (!electronAPI.collectValues || !rootPath || !airportIcao) return;
     electronAPI.collectValues(rootPath, airportIcao).then((result) => {
       if (result && result._taxiwayPaths) {
         setTaxiways(result._taxiwayPaths.paths || []);
+      }
+      if (result && Array.isArray(result._airwayNodes)) {
+        setWaypoints(result._airwayNodes);
       }
     }).catch(() => {});
   }, [airportIcao, rootPath, electronAPI]);

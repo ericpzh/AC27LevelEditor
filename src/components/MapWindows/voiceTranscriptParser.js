@@ -22,6 +22,11 @@
  *             → clear_for_appr (supersedes chain); a trailing
  *             "runway N (left|right|center)" designator is consumed and
  *             ignored — the aircraft's assigned runway stays authoritative
+ *   direct:   fly direct to X / direct to X / direct X / 直飞(向|至) X
+ *             → update_heading toward the waypoint (bearing from the
+ *             aircraft's live position to the fix); X = the current
+ *             airport's waypoint name, matched exact-first then D-L ≤ 2,
+ *             or a spelled letter sequence ("bee ee el tee tee" → BELTT)
  *   bare callsign: selection only (no command)
  *
  * Disambiguation for bare "maintain N": unit word wins (knots→speed,
@@ -33,11 +38,14 @@
  */
 
 import { detectLanguage, parseCallsign, callsignCandidates, EN_FILLER_WORDS } from './voiceCallsignParser.js';
-import { parseSpokenNumberValue, lookupUnitWord, EN_UNIT_WORDS } from './voiceNumberParser.js';
-import { isFuzzyEligible, maxDistForWord, fuzzyMatch, resolveCuratedPhrase } from './voiceFuzzy.js';
+import { parseSpokenNumberValue, lookupUnitWord, EN_UNIT_WORDS, EN_NUMBER_WORD_KEYS } from './voiceNumberParser.js';
+import {
+  isFuzzyEligible, maxDistForWord, fuzzyMatch, resolveCuratedPhrase,
+  damerauLevenshtein, skeletonMatch, LETTER_WORD_TO_LETTER, TWO_TOKEN_LETTERS,
+} from './voiceFuzzy.js';
 import {
   buildHeadingPayload, buildAltitudePayload, buildSpeedPayload,
-  buildClearApprPayload, pad3, FT_PER_METER,
+  buildClearApprPayload, pad3, FT_PER_METER, bearingDegrees,
 } from '../../utils/patchCommands.js';
 
 // ─── Pattern tables (longest prefix first) ─────────────────────────────
@@ -71,6 +79,14 @@ export const EN_PATTERNS = [
   { type: 'maintain', words: ['maintain'] },
   { type: 'speed', words: ['speed'] },
   { type: 'fl', words: ['fl'] },
+  // Direct-to-waypoint (the waypoint name is the value — see matchWaypointValue).
+  // 'flight' is the STT's render of 'fly' ("flight direct duffy") — same
+  // grammar keys (EN_PATTERN_KEYS unchanged), just more lenient prefixes.
+  { type: 'direct', words: ['fly', 'direct', 'to'] },
+  { type: 'direct', words: ['flight', 'direct', 'to'] },
+  { type: 'direct', words: ['direct', 'to'] },
+  { type: 'direct', words: ['flight', 'direct'] },
+  { type: 'direct', words: ['direct'] },
 ];
 
 export const ZH_PATTERNS = [
@@ -104,6 +120,11 @@ export const ZH_PATTERNS = [
   { type: 'cfa', chars: '建立下滑道' },
   { type: 'cfa', chars: '建立下滑到' },   // homophone of 下滑道 as spoken
   { type: 'cfa', chars: '建立' },          // 建立三六右航道 — needs the runway guard in matchSegment
+  // Direct-to-waypoint — the waypoint name stays ENGLISH ("直飞 BELTT");
+  // the sort below puts 直飞向/直飞至 before 直飞.
+  { type: 'direct', chars: '直飞向' },
+  { type: 'direct', chars: '直飞至' },
+  { type: 'direct', chars: '直飞' },
 ];
 
 // Sort longest-first so the most specific prefix wins
@@ -116,8 +137,11 @@ export const EN_PATTERN_KEYS = [...new Set(EN_PATTERNS.flatMap((p) => p.words))]
   .filter((w) => isFuzzyEligible(w));
 
 // Filler words ("uh", "um", …) chain like connectors so "…and uh reduce
-// speed to 180" parses; they carry no meaning.
-export const EN_CONNECTORS = new Set(['and', 'then', 'also', 'please', ...EN_FILLER_WORDS]);
+// speed to 180" parses; they carry no meaning. 'i' is the STT's stray
+// pronoun/digit fragment ("and i clear for the ios approach…") — 1-char,
+// exact-only everywhere, and deliberately NOT a filler (the callsign path
+// and the non-fuzzy set must not strip it).
+export const EN_CONNECTORS = new Set(['and', 'then', 'also', 'please', 'i', ...EN_FILLER_WORDS]);
 const ZH_CONNECTORS = ['然后', '还有', '请'];
 
 // Flexible EN clear-for-approach grammar (replaces the fixed table entries):
@@ -128,8 +152,23 @@ export const EN_APPROACH_TYPES = new Set(['ils', 'rnav', 'visual', 'loc', 'vor',
 /** Fuzzy-eligible approach types (all ≥ 3 chars). Exported for the generator. */
 export const EN_APPROACH_TYPE_KEYS = [...EN_APPROACH_TYPES];
 
-// Runway suffix after a cfa phrase — full words (speech) or letters (typed "13L").
-export const EN_RUNWAY_SUFFIX = new Set(['left', 'right', 'center', 'l', 'r', 'c']);
+// Runway suffix after a cfa phrase — full words (speech) or letters (typed
+// "13L"). Plural forms are dictation artifacts ("runway four rights").
+export const EN_RUNWAY_SUFFIX = new Set(['left', 'right', 'center', 'lefts', 'rights', 'centers', 'l', 'r', 'c']);
+
+/** Words that must never fuzzy-map to digits in a runway number scan —
+ *  'right' is D-L 1 from 'eight' and without this guard "runway three one
+ *  right" scans 3,1,8 → 318 → out of range → notice. The flight-number path
+ *  has the same protection via FLIGHT_NUMBER_FUZZY_GUARD; only 'right'
+ *  actually collides ('left'/'center' are D-L ≥ 3 from every number key,
+ *  l/r/c are 1-char exact-only) — all three stay for robustness. */
+const EN_RUNWAY_NUMBER_GUARD = new Set(['right', 'left', 'center']);
+
+/** Curated 1-token confusables for the cfa 'for' slot — 'foot' is D-L 2
+ *  from 'for' (over the 3-char cap) but already a grammar word (unit slot),
+ *  so the recognizer can emit it. Slot-local, never fuzzy (the 2/3-token
+ *  CURATED_CONFUSABLES table is spelled-out forms only). */
+const EN_CFA_FOR_VARIANTS = new Map([['foot', 'for']]);
 
 // ─── Prefix matching ──────────────────────────────────────────────────
 
@@ -195,31 +234,113 @@ function stripConnector(rest, zh) {
 
 /** EN "clear(ed) (for) (the) [type] approach|appr" — the approach tail is
  *  REQUIRED, so "clear the runway" / "cleared to land" / "cleared for the
- *  ILS" (no tail) deliberately fail → the normal unsupported path notices. */
+ *  ILS" (no tail) deliberately fail → the normal unsupported path notices.
+ *
+ *  Deviation budget (mirrors matchEnPrefix): between the head and the tail,
+ *  free skips of the canonical 'for'/'the' slots, connectors/fillers ('ah')
+ *  and number words ('forty' mishears "for the", a stray 'oh' is a digit
+ *  word — the slots are optional anyway), plus AT MOST ONE deviant token —
+ *  a curated 'foot'→'for' variant or a fuzzy approach type ("rnavv"→rnav).
+ *  A second deviation anywhere → null. Exact approach types and curated
+ *  spelled windows stay free. */
 function matchCfaEn(rest) {
   const tokens = rest.split(/\s+/);
   if (!tokens.length || !EN_CFA_HEADS.has(tokens[0].toLowerCase())) return null;
   let i = 1;
-  if (tokens[i] && tokens[i].toLowerCase() === 'for') i += 1;
-  if (tokens[i] && tokens[i].toLowerCase() === 'the') i += 1;
-  // Approach type: exact → curated 2-3 token spelled window ("r nav",
-  // "eye el ess") → single-token D-L ≤ 1 ("rnavv" → rnav, "nav" → rnav).
-  if (tokens[i]) {
-    const w1 = tokens[i].toLowerCase();
-    if (EN_APPROACH_TYPES.has(w1)) {
-      i += 1;
-    } else {
-      const w3 = tokens[i + 1] && tokens[i + 2] ? w1 + ' ' + tokens[i + 1].toLowerCase() + ' ' + tokens[i + 2].toLowerCase() : null;
-      const w2 = tokens[i + 1] ? w1 + ' ' + tokens[i + 1].toLowerCase() : null;
-      if (w3 && resolveCuratedPhrase(w3)) i += 3;
-      else if (w2 && resolveCuratedPhrase(w2)) i += 2;
-      else if (fuzzyMatch(w1, EN_APPROACH_TYPE_KEYS, 1)) i += 1;
+  let deviated = false;
+  for (;;) {
+    const tok = tokens[i] ? tokens[i].toLowerCase() : null;
+    if (!tok) return null;                          // ran out before the tail
+    if (tok === 'for' || tok === 'the') { i += 1; continue; }
+    if (EN_CONNECTORS.has(tok) || EN_NUMBER_WORD_KEYS.has(tok)) { i += 1; continue; }
+    if (!deviated && EN_CFA_FOR_VARIANTS.has(tok)) { deviated = true; i += 1; continue; }
+    // Approach type: exact → curated 2-3 token spelled window ("r nav",
+    // "eye el ess") → single-token D-L ≤ 1 ("rnavv" → rnav, "nav" → rnav).
+    if (EN_APPROACH_TYPES.has(tok)) { i += 1; continue; }
+    const w3 = tokens[i + 1] && tokens[i + 2] ? tok + ' ' + tokens[i + 1].toLowerCase() + ' ' + tokens[i + 2].toLowerCase() : null;
+    const w2 = tokens[i + 1] ? tok + ' ' + tokens[i + 1].toLowerCase() : null;
+    if (w3 && resolveCuratedPhrase(w3)) { i += 3; continue; }
+    if (w2 && resolveCuratedPhrase(w2)) { i += 2; continue; }
+    // Spelled-letter approach types the curated table doesn't know — "eye
+    // oh ess" → i-o-s ≈ ils (D-L 1). Greedy letter run (reuses the waypoint
+    // slot's letter tables), joined ≥ 3 letters, closed set; one budget
+    // deviation like the single-token fuzzy. Runs before the fuzzy branch
+    // so 'oh' (a number word) can't be free-skipped out of "eye oh ess".
+    if (!deviated) {
+      let letters = '';
+      let k2 = i;
+      while (k2 < tokens.length && letters.length < 6) {
+        const t2 = tokens[k2 + 1] ? tokens[k2].toLowerCase() + ' ' + tokens[k2 + 1].toLowerCase() : null;
+        if (t2 && TWO_TOKEN_LETTERS.has(t2)) { letters += TWO_TOKEN_LETTERS.get(t2); k2 += 2; continue; }
+        const ch = LETTER_WORD_TO_LETTER.get(tokens[k2].toLowerCase());
+        if (!ch) break;
+        letters += ch;
+        k2 += 1;
+      }
+      if (letters.length >= 3) {
+        const m = fuzzyMatch(letters, EN_APPROACH_TYPE_KEYS, 1);
+        if (m) { deviated = true; i = k2; continue; }
+      }
     }
+    if (!deviated && fuzzyMatch(tok, EN_APPROACH_TYPE_KEYS, 1)) { deviated = true; i += 1; continue; }
+    break;                                          // not part of the head — the tail must be next
   }
   const tail = tokens[i] && tokens[i].toLowerCase();
   if (tail !== 'approach' && tail !== 'appr') return null;
   i += 1;
   return { type: 'cfa', text: tokens.slice(0, i).join(' '), rest: tokens.slice(i).join(' ') };
+}
+
+/** Spoken forms of runway numbers 1–36 for the phonetic fallback —
+ *  digit-by-digit ("three one"), teens ("thirteen"), tens+ones
+ *  ("thirty one"). Memoized. */
+let _runwayForms = null;
+function runwaySpokenForms() {
+  if (_runwayForms) return _runwayForms;
+  const digits = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+  const teens = ['ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+  const tens = ['twenty', 'thirty'];
+  const forms = new Map();   // joined form → number
+  for (let n = 1; n <= 36; n++) {
+    const d1 = Math.floor(n / 10);
+    const d0 = n % 10;
+    forms.set(n < 10 ? digits[d0] : `${digits[d1]} ${digits[d0]}`, n);   // digit-by-digit
+    if (n >= 10 && n <= 19) forms.set(teens[n - 10], n);                 // teens
+    if (n >= 20) forms.set(d0 ? `${tens[d1 - 2]} ${digits[d0]}` : tens[d1 - 2], n);   // tens + ones
+  }
+  _runwayForms = forms;
+  return forms;
+}
+
+/** Curated 1-token confusables for the runway slot — 'through'/'three' are
+ *  a θr skeleton D-L-0 pair that the raw D-L (2) and the skeleton stage
+ *  (needs exactly 1) both miss; 'urine' is pure dictation noise. Slot-local,
+ *  like EN_CFA_FOR_VARIANTS — the substituted window must still be a real
+ *  spoken form, so closed-set safety holds ("runway through urine right" →
+ *  "three one" → 31). */
+const EN_RUNWAY_CONFUSABLES = new Map([['through', 'three'], ['urine', 'one']]);
+
+/** Phonetic skeleton fallback for the runway slot — tried only when the
+ *  number scan fails ("runway ethiopian right" → 'ethiopian' ≈ 'three one'
+ *  → 31). 2-token window first, then 1 (a fully-substituted form like
+ *  "through urine" → "three one" must win over the 1-token misfire).
+ *  Suffix words and 'runway'/'rwy' never enter a window. Substituted
+ *  windows are checked as EXACT spoken forms first (sidesteps the skeleton
+ *  D-L-exactly-1 rule), then skeletonMatch. Unique best wins, ties fail. */
+function runwaySkeletonMatch(tokens, i) {
+  const candidates = [...runwaySpokenForms().keys()];
+  for (let len = 2; len >= 1; len--) {
+    const win = tokens.slice(i, i + len).map(t => t.toLowerCase()).join(' ');
+    if (!win) break;
+    if (len === 1 && (EN_RUNWAY_SUFFIX.has(win) || win === 'runway' || win === 'rwy')) return null;
+    const sub = tokens.slice(i, i + len)
+      .map(t => EN_RUNWAY_CONFUSABLES.get(t.toLowerCase()) ?? t.toLowerCase())
+      .join(' ');
+    if (runwaySpokenForms().has(sub)) return { value: runwaySpokenForms().get(sub), consumed: len };
+    const m = skeletonMatch(sub, candidates);
+    if (m) return { value: runwaySpokenForms().get(m), consumed: len };
+  }
+  return null;
 }
 
 /** Consume-and-ignore a runway designator after a clear-for-approach phrase
@@ -255,14 +376,114 @@ function matchRunwayValue(rest, zh) {
     value = parseInt(attached[1], 10);
     i += 1;
   } else {
-    const num = parseSpokenNumberValue(tokens.slice(i), 'en');
-    if (!num) return null;
-    value = num.value;
-    i += num.consumed;
+    // The suffix guard stops 'right' from fuzzy-mapping to 'eight'
+    // ("runway three one right" scans 3,1 + suffix — not 318).
+    const num = parseSpokenNumberValue(tokens.slice(i), 'en', EN_RUNWAY_NUMBER_GUARD);
+    if (!num) {
+      // Phonetic fallback — the number scan failed entirely ("runway
+      // ethiopian right" → 'ethiopian' ≈ 'three one' → 31).
+      const skel = runwaySkeletonMatch(tokens, i);
+      if (!skel) return null;
+      value = skel.value;
+      i += skel.consumed;
+    } else {
+      value = num.value;
+      i += num.consumed;
+    }
   }
   if (value < 1 || value > 36) return null;
   if (EN_RUNWAY_SUFFIX.has((tokens[i] || '').toLowerCase())) i += 1;
   return { rest: tokens.slice(i).join(' ') };
+}
+
+// ─── Waypoint slot (direct-to phrases) ──────────────────────────────────
+
+const WAYPOINT_FUZZY_CAP = 2;   // flat cap for every name length (locked decision)
+
+/**
+ * Waypoint-slot value parser for 'direct' phrases. Deterministic per the
+ * locked rules: exact always wins; D-L cap is a FLAT 2 for every name
+ * (never maxDistForWord); strictly-lower distance wins, ties first-wins;
+ * single token tried first, spelled-letter sequence second.
+ *
+ * Path 2 (spelled) greedily consumes consecutive letter tokens — letter
+ * names / NATO words / bare letters, incl. multi-token forms ("double
+ * you") — maps each to a letter, joins, and matches names longest-first
+ * (names are 3–5 letters; the sequence is capped at 5).
+ *
+ * @param {string} rest — remainder after the pattern words ("BELTT" /
+ *        "bee ee el tee tee")
+ * @param {Array<{name:string, x:number, z:number}>} waypoints — per-airport fixes
+ * @returns {{name:string, x:number, z:number, consumed:number} | null}
+ */
+export function matchWaypointValue(rest, waypoints) {
+  const tokens = String(rest || '').split(/\s+/).filter(Boolean);
+  if (!tokens.length || !Array.isArray(waypoints) || !waypoints.length) return null;
+  const names = waypoints
+    .filter((w) => w && typeof w.name === 'string')
+    .map((w) => ({ name: w.name, x: w.x, z: w.z, lower: w.name.toLowerCase() }));
+
+  // Path 1 — single token: exact first, then flat D-L ≤ 2. A token that IS
+  // a spoken letter form ('bee', 'tee', …) never takes the D-L fuzzy path —
+  // it's clearly a spelling ("bee" must not degrade to a 3-letter fix at
+  // distance 2); the spelled path below handles it.
+  const t0 = tokens[0].toLowerCase();
+  const isLetterForm = LETTER_WORD_TO_LETTER.has(t0);
+  for (const n of names) if (n.lower === t0) return { name: n.name, x: n.x, z: n.z, consumed: 1 };
+  let best = null;
+  if (!isLetterForm) {
+    for (const n of names) {
+      if (Math.abs(n.lower.length - t0.length) > WAYPOINT_FUZZY_CAP) continue;
+      const d = damerauLevenshtein(t0, n.lower);
+      if (d > 0 && d <= WAYPOINT_FUZZY_CAP && (!best || d < best.d)) {
+        best = { name: n.name, x: n.x, z: n.z, consumed: 1, d };
+      }
+    }
+  }
+  if (best) return best;
+
+  // Path 2 — spelled sequence of letters. Track tokens-per-letter so
+  // consumed (used for rest.slice) counts TOKENS, not letters.
+  const letters = [];
+  const perLetter = [];
+  let k = 0;
+  while (k < tokens.length) {
+    const two = tokens[k + 1] ? tokens[k].toLowerCase() + ' ' + tokens[k + 1].toLowerCase() : null;
+    if (two && TWO_TOKEN_LETTERS.has(two)) { letters.push(TWO_TOKEN_LETTERS.get(two)); perLetter.push(2); k += 2; continue; }
+    const ch = LETTER_WORD_TO_LETTER.get(tokens[k].toLowerCase());
+    if (!ch) break;
+    letters.push(ch);
+    perLetter.push(1);
+    k += 1;
+  }
+  if (letters.length >= 3) {
+    const maxLen = Math.min(letters.length, 5);   // names are 3–5 letters
+    const consumedTokens = (len) => perLetter.slice(0, len).reduce((a, b) => a + b, 0);
+    const spellMatch = (exactOnly) => {
+      for (let len = maxLen; len >= 3; len--) {
+        const joined = letters.slice(0, len).join('');
+        for (const n of names) {
+          if (n.lower === joined) return { name: n.name, x: n.x, z: n.z, consumed: consumedTokens(len) };
+        }
+        if (exactOnly) continue;
+        let sBest = null;
+        for (const n of names) {
+          if (Math.abs(n.lower.length - joined.length) > WAYPOINT_FUZZY_CAP) continue;
+          const d = damerauLevenshtein(joined, n.lower);
+          if (d > 0 && d <= WAYPOINT_FUZZY_CAP && (!sBest || d < sBest.d)) {
+            sBest = { name: n.name, x: n.x, z: n.z, consumed: consumedTokens(len), d };
+          }
+        }
+        if (sBest) return sBest;
+      }
+      return null;
+    };
+    const exact = spellMatch(true);
+    if (exact) return exact;
+    const fuzzy = spellMatch(false);
+    if (fuzzy) return fuzzy;
+  }
+  return null;
 }
 
 // ─── Value parsing (number + optional FL/unit after a prefix) ──────────
@@ -336,7 +557,7 @@ function rangeCheck(type, value, fl) {
   return true;
 }
 
-function buildCommand(type, callSign, value, fl) {
+function buildCommand(type, callSign, value, fl, ctx) {
   if (type === 'update_heading') {
     return { type, label: 'Fly Heading ' + pad3(value), payload: buildHeadingPayload(callSign, value) };
   }
@@ -350,12 +571,21 @@ function buildCommand(type, callSign, value, fl) {
   if (type === 'clear_for_appr') {
     return { type, label: 'Clear for Approach', payload: buildClearApprPayload(callSign) };
   }
+  if (type === 'direct') {
+    // Fly-heading toward the fix: bearing from the aircraft's live position
+    // to the waypoint. payload.type stays 'update_heading' — the wire
+    // contract in electron/patchFrame.js serializes by payload type.
+    const { aircraft, waypoint } = ctx || {};
+    if (!aircraft?.position || !waypoint) return null;
+    const hdg = bearingDegrees(aircraft.position.x, aircraft.position.z, waypoint.x, waypoint.z);
+    return { type, label: 'Fly Direct To ' + waypoint.name, payload: buildHeadingPayload(callSign, hdg) };
+  }
   return null;
 }
 
 // ─── Segment matching (greedy longest-prefix, leftover → notices) ──────
 
-function matchSegment(segs, lang, callSign, commands, notices) {
+function matchSegment(segs, lang, callSign, aircraft, waypoints, commands, notices) {
   const zh = lang === 'zh';
   let i = 0;
   let rest = segs[0] || '';
@@ -437,6 +667,34 @@ function matchSegment(segs, lang, callSign, commands, notices) {
       continue;
     }
 
+    // Direct-to-waypoint — the value is a fix NAME, not a number; consume
+    // the whole rest on failure so a bad waypoint can't re-loop forever.
+    if (hit.type === 'direct') {
+      flush();
+      const spoken = (hit.text + ' ' + (hit.rest || '')).trim();
+      if (!waypoints || !waypoints.length) {
+        notices.push('unsupported: "' + spoken + '" (no waypoint data)');
+        rest = '';
+        continue;
+      }
+      const pos = aircraft && aircraft.position;
+      if (!pos || typeof pos.x !== 'number' || typeof pos.z !== 'number') {
+        notices.push('unsupported: "' + spoken + '" (aircraft position unavailable)');
+        rest = '';
+        continue;
+      }
+      const m = matchWaypointValue(hit.rest, waypoints);
+      if (!m) {
+        notices.push('unsupported: "' + spoken + '" (unknown waypoint)');
+        rest = '';
+        continue;
+      }
+      const cmd = buildCommand('direct', callSign, null, false, { aircraft, waypoint: m });
+      if (cmd) commands.push(cmd);
+      rest = (hit.rest || '').split(/\s+/).slice(m.consumed).join(' ');
+      continue;
+    }
+
     const pv = zh ? parseCommandValueZh(hit.rest, hit.type === 'fl') : parseCommandValueEn(hit.rest, hit.type === 'fl');
     if (!pv) {
       // Prefix matched but no value ("heading" alone) — report unsupported
@@ -484,6 +742,8 @@ function matchSegment(segs, lang, callSign, commands, notices) {
  *
  * @param {string} transcript — raw transcript ("CSC6918: climb and maintain 9000, reduce speed to 180 knots")
  * @param {Object[]} aircraftList — live UDP aircraft (each has .callSign) for callsign resolution
+ * @param {Object[]} [waypoints] — per-airport fixes [{name, x, z}] (from
+ *   collectValues._airwayNodes); only needed for 'direct' phrases
  * @returns {{
  *   ok: boolean, callsign: string|null, aircraft: object|null, lang: 'en'|'zh',
  *   remainingText: string, commands: Array<{type, label, payload}>, notices: string[],
@@ -492,7 +752,7 @@ function matchSegment(segs, lang, callSign, commands, notices) {
  *   window's line format ("CSC6918: Fly Altitude 9000, Fly Speed 180");
  *   reason (non-empty on ok:false) names the stage that stopped the parse.
  */
-export function parseVoiceTranscript(transcript, aircraftList) {
+export function parseVoiceTranscript(transcript, aircraftList, waypoints = []) {
   const text = String(transcript || '').trim();
   if (!text) {
     return { ok: false, callsign: null, aircraft: null, lang: 'en', remainingText: '', commands: [], notices: [], renderedLine: '', reason: 'empty transcript' };
@@ -516,7 +776,7 @@ export function parseVoiceTranscript(transcript, aircraftList) {
   const notices = [];
   if (parsed.remainingText && parsed.remainingText.trim()) {
     const segments = parsed.remainingText.split(/[,，;；.。]+/).map(s => s.trim()).filter(Boolean);
-    if (segments.length) matchSegment(segments, lang, parsed.callsign, commands, notices);
+    if (segments.length) matchSegment(segments, lang, parsed.callsign, parsed.aircraft, waypoints, commands, notices);
   }
 
   // Clear for Approach supersedes a composed chain (mirrors the composer);
@@ -552,9 +812,10 @@ export function parseVoiceTranscript(transcript, aircraftList) {
  *
  * @param {string[]} texts — primary transcript first, then alternates
  * @param {Object[]} aircraftList
+ * @param {Object[]} [waypoints] — per-airport fixes (see parseVoiceTranscript)
  * @returns {{ result: object, matchedText: string, candidateIndex: number }}
  */
-export function parseVoiceCandidates(texts, aircraftList) {
+export function parseVoiceCandidates(texts, aircraftList, waypoints = []) {
   const candidates = [];
   const seen = new Set();
   for (const t of texts) {
@@ -566,11 +827,11 @@ export function parseVoiceCandidates(texts, aircraftList) {
     candidates.push(s);
   }
   if (!candidates.length) {
-    return { result: parseVoiceTranscript('', aircraftList), matchedText: '', candidateIndex: 0 };
+    return { result: parseVoiceTranscript('', aircraftList, waypoints), matchedText: '', candidateIndex: 0 };
   }
   let primary = null;
   for (let i = 0; i < candidates.length; i++) {
-    const result = parseVoiceTranscript(candidates[i], aircraftList);
+    const result = parseVoiceTranscript(candidates[i], aircraftList, waypoints);
     if (i === 0) primary = result;
     if (result.ok && result.commands.length > 0) {
       return { result, matchedText: candidates[i], candidateIndex: i };

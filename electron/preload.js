@@ -240,14 +240,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Voice STT (offline vosk worker) ─────────────────────────
   getVoiceSttStatus: () => ipcRenderer.invoke('voice-stt-status'),
-  voiceSttStart: () => ipcRenderer.invoke('voice-stt-start'),
+  voiceSttStart: (extraWords = []) => ipcRenderer.invoke('voice-stt-start', extraWords),
   voiceSttStop: () => ipcRenderer.invoke('voice-stt-stop'),
+  // contextBridge does NOT preserve function identity across separate
+  // crossings — the same main-world cb passed to on() then off() arrives as
+  // two DIFFERENT proxy objects, so a Map keyed by cb can never remove the
+  // handler. on() therefore returns an unsubscribe that closes over the exact
+  // handler it registered (see useVoiceCommands.js subscription effect).
   _voiceSttEventHandlers: new Map(),
   onVoiceSttEvent: function (cb) {
     const handler = (_e, data) => cb(data);
     this._voiceSttEventHandlers.set(cb, handler);
     ipcRenderer.on('voice-stt-event', handler);
+    return () => ipcRenderer.removeListener('voice-stt-event', handler);
   },
+  // Legacy fallback — retained for callers built against the old API. Under
+  // contextBridge the Map lookup always misses (cb arrives re-proxied), so
+  // new callers must use the unsubscribe returned by onVoiceSttEvent.
   offVoiceSttEvent: function (cb) {
     const handler = this._voiceSttEventHandlers.get(cb);
     if (handler) {
