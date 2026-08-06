@@ -61,6 +61,7 @@ describe('parseCallsign', () => {
     makeAircraft('BAW5224'),
     makeAircraft('AFR3661'),
     makeAircraft('AAL683'),
+    makeAircraft('CHH7336'),
   ];
 
   it('parses "united eleven eleven" → UAL1111', () => {
@@ -154,6 +155,13 @@ describe('parseCallsign', () => {
     const r = parseCallsign('国航一二三四', 'zh', aircraftList);
     expect(r).not.toBeNull();
     expect(r.callsign).toBe('CCA1234');
+  });
+
+  it('parses 海南 short form with 拐-series (海南拐三三六)', () => {
+    const r = parseCallsign('海南拐三三六，下到幺八', 'zh', aircraftList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('CHH7336');
+    expect(r.remainingText).toBe('，下到幺八');
   });
 
   it('handles callsign without following command', () => {
@@ -305,6 +313,99 @@ describe('parseCallsign', () => {
   });
 });
 
+// ─── Optional Heavy keyword ("American 1111 Heavy, climb…") ───────────
+
+describe('parseCallsign with the optional Heavy keyword', () => {
+  // aircraftList in the main describe is scoped there; zh tests get a local one
+  const zhList = [makeAircraft('CES5888')];
+
+  it('strips heavy after the number ("american 1111 heavy climb to 9000")', () => {
+    const r = parseCallsign('american 1111 heavy climb to 9000', 'en', [makeAircraft('AAL1111')]);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('AAL1111');
+    expect(r.remainingText).toBe('climb to 9000');
+  });
+
+  it('strips heavy before the number ("american heavy one one one one climb to 9000")', () => {
+    const r = parseCallsign('american heavy one one one one climb to 9000', 'en', [makeAircraft('AAL1111')]);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('AAL1111');
+    expect(r.remainingText).toBe('climb to 9000');
+  });
+
+  it('strips a fuzzy-misheard heavy ("american 1111 hevy climb to 9000", hevy→heavy)', () => {
+    const r = parseCallsign('american 1111 hevy climb to 9000', 'en', [makeAircraft('AAL1111')]);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('AAL1111');
+    expect(r.remainingText).toBe('climb to 9000');
+  });
+
+  it('strips multiple heavies ("american heavy heavy 1111")', () => {
+    const r = parseCallsign('american heavy heavy 1111', 'en', [makeAircraft('AAL1111')]);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('AAL1111');
+    expect(r.remainingText).toBe('');
+  });
+
+  it('strips heavy mixed with fillers ("american heavy uh 1111 climb to 9000")', () => {
+    const r = parseCallsign('american heavy uh 1111 climb to 9000', 'en', [makeAircraft('AAL1111')]);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('AAL1111');
+    expect(r.remainingText).toBe('climb to 9000');
+  });
+
+  it('selection only ("american 1111 heavy") leaves no remaining text', () => {
+    const r = parseCallsign('american 1111 heavy', 'en', [makeAircraft('AAL1111')]);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('AAL1111');
+    expect(r.remainingText).toBe('');
+  });
+
+  it('does not strip heavy inside the number ("american one heavy one one one one") → null', () => {
+    const r = parseCallsign('american one heavy one one one one', 'en', [makeAircraft('AAL1111')]);
+    expect(r).toBeNull();
+  });
+
+  it('diag names "heavy" when it breaks the number scan', () => {
+    const diag = [];
+    const r = parseCallsign('american one heavy one one one one', 'en', [makeAircraft('AAL1111')], diag);
+    expect(r).toBeNull();
+    expect(diag.join('; ')).toContain('heavy');
+  });
+
+  it('strips 重 after the number (东航五八八八重爬升至九千)', () => {
+    const r = parseCallsign('东航五八八八重爬升至九千', 'zh', zhList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('CES5888');
+    expect(r.remainingText).toBe('爬升至九千');
+  });
+
+  it('strips 重 before the number (东航重五八八八爬升至九千)', () => {
+    const r = parseCallsign('东航重五八八八爬升至九千', 'zh', zhList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('CES5888');
+    expect(r.remainingText).toBe('爬升至九千');
+  });
+
+  it('strips 重型 after the number (东航五八八八重型爬升至九千)', () => {
+    const r = parseCallsign('东航五八八八重型爬升至九千', 'zh', zhList);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('CES5888');
+    expect(r.remainingText).toBe('爬升至九千');
+  });
+
+  it('strips 重型 after a literal-digit callsign (国航1388重型爬升至九千)', () => {
+    const r = parseCallsign('国航1388重型爬升至九千', 'zh', [makeAircraft('CCA1388')]);
+    expect(r).not.toBeNull();
+    expect(r.callsign).toBe('CCA1388');
+    expect(r.remainingText).toBe('爬升至九千');
+  });
+
+  it('heavy-only Chinese transcript stays a failure (东航重)', () => {
+    expect(parseCallsign('东航重', 'zh', zhList)).toBeNull();
+  });
+});
+
 // ─── Fuzzy airline-name matching (F7 — D-L ≤ 1, ≤1 fuzzy word per name) ──
 
 describe('matchPrefixFuzzy', () => {
@@ -357,5 +458,17 @@ describe('parseCallsign with fuzzy airline words', () => {
 describe('callsignCandidates with fuzzy (CLI sim mirror)', () => {
   it('includes the fuzzy-resolved callsign so the synthetic list matches the app', () => {
     expect(callsignCandidates('hainann one two three four', 'en')).toContain('CHH1234');
+  });
+
+  it('strips en heavy so the CLI sim synthetic list resolves (both positions)', () => {
+    expect(callsignCandidates('american 1111 heavy climb to 9000', 'en')).toContain('AAL1111');
+    expect(callsignCandidates('american heavy one one one one', 'en')).toContain('AAL1111');
+    expect(callsignCandidates('american hevy one one one one', 'en')).toContain('AAL1111');
+  });
+
+  it('strips zh 重/重型 so the CLI sim synthetic list resolves', () => {
+    expect(callsignCandidates('东航五八八八重', 'zh')).toContain('CES5888');
+    expect(callsignCandidates('东航重五八八八', 'zh')).toContain('CES5888');
+    expect(callsignCandidates('东航五八八八重型', 'zh')).toContain('CES5888');
   });
 });

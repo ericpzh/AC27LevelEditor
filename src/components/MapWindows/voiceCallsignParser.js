@@ -86,6 +86,7 @@ export function getSpokenToCode() {
     '国航': 'CCA',
     '南航': 'CSN',
     '海航': 'CHH',
+    '海南': 'CHH',
     '深航': 'CSZ',
     '川航': 'CSC',
     '厦航': 'CXA',
@@ -145,6 +146,29 @@ export function stripLeadingFillers(tokens) {
   return tokens.slice(i);
 }
 
+/**
+ * "Heavy" is an OPTIONAL callsign word ("American 1111 Heavy, climb…").
+ * Strips consecutive leading filler/heavy tokens before the flight-number
+ * scan and again off the leftover text, so heavy never reaches the command
+ * matcher (no `unsupported: "heavy"` notice). Heavy is matched fuzzily
+ * (D-L ≤ 1 — misheard "hevy"/"havy" resolve; "heavy" is 5 chars, and no
+ * number/command word is within distance 1, so nothing real is ever eaten).
+ * Mid-number heavy stays a limitation (like filler-in-number).
+ * Subsumes stripLeadingFillers so "heavy uh 1111" and "uh heavy 1111" both
+ * reach the number scan.
+ */
+function stripLeadingCallsignNoise(tokens) {
+  let i = 0;
+  while (i < tokens.length) {
+    if (EN_FILLER_WORDS.has(tokens[i])) { i++; continue; }
+    // "heavy:" / "heavy," → heavy (mirrors tokenizeEnglish's normalization)
+    const t = tokens[i].replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
+    if (t && fuzzyMatch(t, ['heavy'], 1)) { i++; continue; }
+    break;
+  }
+  return tokens.slice(i);
+}
+
 // ─── Public API ────────────────────────────────────────────────────────
 
 /**
@@ -201,8 +225,9 @@ export function parseCallsign(transcript, lang, aircraftList, diag) {
     const remainingTrimmed = remaining.trim();
     // Pure-punctuation tokens ("CSC6918 : climb") are dropped so the
     // flight-number scan and the remainingText both ignore them; filler
-    // words before the number ("delta uh 3401") are stripped too.
-    const remainingTokens = stripLeadingFillers(
+    // words before the number ("delta uh 3401") and the optional "heavy"
+    // keyword ("american heavy 1111") are stripped too.
+    const remainingTokens = stripLeadingCallsignNoise(
       remainingTrimmed
         ? remainingTrimmed.split(/\s+/).filter(t => /[a-z0-9一-鿿]/i.test(t))
         : []
@@ -221,7 +246,9 @@ export function parseCallsign(transcript, lang, aircraftList, diag) {
       const callsign = code + numStr;
       const ac = aircraftList.find(a => a.callSign === callsign);
       if (ac) {
-        const unconsumedTokens = remainingTokens.slice(numResult.consumed);
+        // trailing "heavy" ("american 1111 heavy climb…") never reaches
+        // the command matcher
+        const unconsumedTokens = stripLeadingCallsignNoise(remainingTokens.slice(numResult.consumed));
         return {
           callsign,
           aircraft: ac,
@@ -250,6 +277,21 @@ export function parseCallsign(transcript, lang, aircraftList, diag) {
 }
 
 /**
+ * Chinese "Heavy" is "重型" (bare '重' also emitted by the recognizer).
+ * Strips the maximal leading run of {重型, 重} — 重型 checked first since it
+ * starts with 重. Applied before the digit scan AND on the leftover text
+ * (mirrors the en strip). Chinese stays exact-only (no zh fuzzy layer). No
+ * false positives: no airline, pattern, or connector starts with 重.
+ */
+function stripZhHeavy(str) {
+  let s = str;
+  while (s.startsWith('重型') || s.startsWith('重')) {
+    s = s.slice(s.startsWith('重型') ? 2 : 1);
+  }
+  return s;
+}
+
+/**
  * Chinese-specific callsign parsing.
  * Chinese has no spaces, so we work character-by-character instead of token-by-token.
  */
@@ -263,15 +305,18 @@ function parseCallsignChinese(transcript, spokenToCode, aircraftList, diag) {
     diag?.push(`airline "${spoken}" → ${code}`);
 
     const { remaining } = matchResult;
-    if (!remaining) {
-      // Just the airline name, no flight number
+    // optional "重型"/"重" ("东航重型五八八八…") is stripped before the
+    // digit scan, like the en heavy strip
+    const remainingNoHeavy = stripZhHeavy(remaining);
+    if (!remainingNoHeavy) {
+      // Just the airline name (possibly + heavy), no flight number
       // Try matching remaining as empty flight number — unlikely but handle
       continue;
     }
 
     // remaining is a continuous string like "五八八八可以起飞"
     // Extract digit characters from the beginning
-    const chars = [...remaining];
+    const chars = [...remainingNoHeavy];
     const digitChars = [];
     let consumed = 0;
 
@@ -301,7 +346,9 @@ function parseCallsignChinese(transcript, spokenToCode, aircraftList, diag) {
       const callsign = code + numStr;
       const ac = aircraftList.find(a => a.callSign === callsign);
       if (ac) {
-        const remainingText = chars.slice(consumed).join('');
+        // trailing "重型"/"重" ("东航五八八八重型…") never reaches the
+        // command matcher
+        const remainingText = stripZhHeavy(chars.slice(consumed).join(''));
         return {
           callsign,
           aircraft: ac,
@@ -446,7 +493,7 @@ export function callsignCandidates(transcript, lang) {
       if (!isCJK(spoken[0])) continue;   // English entries don't prefix-match Chinese text
       const m = matchPrefix(transcript, spoken);
       if (!m) continue;
-      const chars = [...m.remaining];
+      const chars = [...stripZhHeavy(m.remaining)];   // mirror parseCallsignChinese
       const digitChars = [];
       let consumed = 0;
       for (const ch of chars) {
@@ -469,7 +516,7 @@ export function callsignCandidates(transcript, lang) {
       const m = matchSpokenPrefix(lower, stripped, spoken);
       if (!m) continue;
       const remainingTrimmed = m.remaining.trim();
-      const tokens = stripLeadingFillers(
+      const tokens = stripLeadingCallsignNoise(   // mirror parseCallsign
         remainingTrimmed
           ? remainingTrimmed.split(/\s+/).filter(t => /[a-z0-9一-鿿]/i.test(t))
           : []

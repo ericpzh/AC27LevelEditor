@@ -44,6 +44,10 @@ const { VoskModel, VoskRecognizer } = require('./voskFfi.js');
 const SAMPLE_RATE = 16000;
 const EN_MODEL = 'vosk-model-small-en-us-0.15';
 const ZH_MODEL = 'vosk-model-small-cn-0.22';
+// Dev-only large models (internal testing — never bundled into builds):
+// selected when VOSK_USE_LARGE=1 (set by `npm start -- --large`).
+const EN_MODEL_LARGE = 'vosk-model-en-us-0.22';
+const ZH_MODEL_LARGE = 'vosk-model-cn-0.22';
 
 /** Silence grace after 'stop' (ms). Longer than the audio burst that follows
  *  a PTT release; the Node side's STOP_DRAIN_MS (1500) fires first, so total
@@ -115,10 +119,17 @@ function boot() {
     grammar = loadGrammar();
     soxPath = resolveSoxPath();
 
-    const enDir = resolveModelDir('VOSK_MODEL_DIR', EN_MODEL);
-    if (!enDir) throw Object.assign(new Error('en model missing — run `node scripts/fetch-vosk-model.mjs`'), { code: 'NO_MODEL' });
-    const zhDir = resolveModelDir('VOSK_ZH_MODEL_DIR', ZH_MODEL);
-    if (!zhDir) throw Object.assign(new Error('zh model missing — run `node scripts/fetch-vosk-model.mjs`'), { code: 'NO_MODEL' });
+    const useLarge = process.env.VOSK_USE_LARGE === '1';
+    const enModelName = useLarge ? EN_MODEL_LARGE : EN_MODEL;
+    const zhModelName = useLarge ? ZH_MODEL_LARGE : ZH_MODEL;
+    const fetchHint = useLarge
+      ? 'run `node scripts/fetch-vosk-model.mjs --large`'
+      : 'run `node scripts/fetch-vosk-model.mjs`';
+
+    const enDir = resolveModelDir('VOSK_MODEL_DIR', enModelName);
+    if (!enDir) throw Object.assign(new Error(`en model missing — ${fetchHint}`), { code: 'NO_MODEL' });
+    const zhDir = resolveModelDir('VOSK_ZH_MODEL_DIR', zhModelName);
+    if (!zhDir) throw Object.assign(new Error(`zh model missing — ${fetchHint}`), { code: 'NO_MODEL' });
 
     enModel = new VoskModel(enDir);
     zhModel = new VoskModel(zhDir);

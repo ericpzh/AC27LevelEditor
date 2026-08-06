@@ -38,7 +38,9 @@ const BASE = {
 
 /** Voice-only extraResources — everything the vosk worker child needs at
  *  runtime (it runs as plain node via ELECTRON_RUN_AS_NODE, which has no
- *  asar support, so these land beside the app in resources/). */
+ *  asar support, so these land beside the app in resources/).
+ *  NEVER add the large models here (vosk-model-en-us-0.22 / vosk-model-cn-0.22)
+ *  — they are dev-only via `npm start -- --large` and must never ship. */
 const VOICE_RESOURCES = [
   { from: 'electron/voice-stt-vosk.js', to: 'voice-stt-vosk.js' },
   { from: 'electron/voskFfi.js', to: 'voskFfi.js' },

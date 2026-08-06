@@ -35,12 +35,14 @@ const OUT = path.join(ROOT, 'electron', 'voice-grammar.json');
 
 /** Spoken airline short forms for ZH callsigns (from voiceCallsignParser's
  *  zhShortForms — kept in sync by the consistency test via getSpokenToCode). */
-const ZH_SHORT_FORMS = ['东方', '东航', '国航', '南航', '海航', '深航', '川航', '厦航', '春秋', '奥凯', '西藏'];
+const ZH_SHORT_FORMS = ['东方', '东航', '国航', '南航', '海航', '海南', '深航', '川航', '厦航', '春秋', '奥凯', '西藏'];
 
-/** Literal phraseology words the parsers tolerate but that are load-bearing
- *  for the recognizer to stay on-phraseology ("…heavy contact tower…"). */
+/** Literal phraseology words that are load-bearing for the recognizer to
+ *  stay on-phraseology ("…heavy contact tower…"). en 'heavy' and zh '重'/
+ *  '重型' are CONSUMED by the callsign parser (optional Heavy keyword);
+ *  tower/contact/ground and 联系/塔台/地面/跑道 remain tolerated-only. */
 const EN_PHRASEOLOGY = ['heavy', 'tower', 'contact', 'ground'];
-const ZH_PHRASEOLOGY = ['联系', '塔台', '重', '地面', '跑道'];
+const ZH_PHRASEOLOGY = ['联系', '塔台', '重', '重型', '地面', '跑道', '航道', '左', '右', '中'];
 
 /** Aviation number extras not in EN_NUMBER_KEYS: 'triple'/'double' group
  *  digits, 'niner' is the radio pronunciation of nine (the fuzzy layer maps

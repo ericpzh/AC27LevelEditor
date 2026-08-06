@@ -32,6 +32,8 @@ const AIRCRAFT = [
   ac('CES5888'), ac('CSC6918'),
   ac('CSN2888'), ac('CHH1234'),
   ac('KLM631'), ac('BAW5224'), ac('AFR3661'), ac('AAL683'),
+  ac('AAL1111'), ac('CCA1388'),
+  ac('CHH7336'), ac('CCA1892'), ac('CCA1314'),
 ];
 
 const types = (r) => r.commands.map(c => c.type);
@@ -49,6 +51,8 @@ const labels = (r) => r.commands.map(c => c.label);
  *   commandTypes  — expected command types (default [])
  *   commandLabels — expected labels for those commands
  *   noticeIncl    — substring that must appear in some notice
+ *   noNotices     — assert zero notices (e.g. the "heavy" keyword must not
+ *                   produce an `unsupported: "heavy"` notice)
  *   reasonIncl    — substring that must appear in reason (failure rows)
  */
 function runRow(r) {
@@ -116,6 +120,29 @@ itRow([
   { name: '"hundred" in a flight number → fail (limitation)', input: 'delta three hundred', ok: false, reasonIncl: 'hundred' },
   { name: 'filler inside the number → fail, reason names the token (limitation)', input: 'delta three uh four oh one', ok: false, reasonIncl: 'uh' },
 ], 'deviation matrix — flight-number word forms');
+
+// ─── 2b. Optional Heavy keyword (en) ───────────────────────────────────
+
+itRow([
+  // support — heavy after the callsign (canonical form)
+  { name: 'heavy after the number ("american 1111 heavy, climb and maintain 5000")', input: 'american 1111 heavy, climb and maintain 5000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 5000'], noNotices: true },
+  { name: 'heavy after the number, no comma ("american 1111 heavy climb to 9000")', input: 'american 1111 heavy climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  { name: 'heavy before the number, literal ("american heavy 1111 climb to 9000")', input: 'american heavy 1111 climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  { name: 'heavy before the number, spoken digits ("american heavy one one one one climb to 9000")', input: 'american heavy one one one one climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  { name: 'fuzzy heavy after the number ("american 1111 hevy climb to 9000", hevy→heavy)', input: 'american 1111 hevy climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  { name: 'fuzzy heavy before the number ("american havy one one one one climb to 9000")', input: 'american havy one one one one climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  { name: 'double heavy ("american 1111 heavy heavy climb to 9000")', input: 'american 1111 heavy heavy climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  { name: 'heavy mixed with filler ("american heavy uh one one one one climb to 9000")', input: 'american heavy uh one one one one climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  { name: 'filler then heavy ("american uh heavy one one one one climb to 9000")', input: 'american uh heavy one one one one climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  { name: 'selection only ("american 1111 heavy")', input: 'american 1111 heavy', callsign: 'AAL1111', noNotices: true },
+  { name: 'typed literal + heavy ("AAL1111 heavy: climb to 9000")', input: 'AAL1111 heavy: climb to 9000', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noNotices: true },
+  // failures / limitations — heavy must never swallow anything real
+  { name: 'mid-number heavy → fail, reason names the token (limitation)', input: 'american one heavy one one one one', ok: false, reasonIncl: 'heavy' },
+  { name: 'trailing heavy after the command → unsupported notice (limitation)', input: 'american 1111 climb to 9000 heavy', callsign: 'AAL1111', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noticeIncl: 'heavy' },
+  { name: 'heavy before the airline → fail, no airline match (limitation)', input: 'heavy american 1111 climb to 9000', ok: false, reasonIncl: 'airline' },
+  { name: 'heavy with no flight number → fail (limitation)', input: 'american heavy', ok: false, reasonIncl: 'flight number' },
+  { name: 'heavy + number not in the list → fail naming the candidate', input: 'american heavy nine nine nine nine', ok: false, reasonIncl: 'AAL9999' },
+], 'deviation matrix — optional Heavy keyword (en)');
 
 // ─── 3. Command aliases: heading ───────────────────────────────────────
 
@@ -210,7 +237,7 @@ itRow([
   { name: '"clear for approach, runway 45" (out of range → unsupported)', input: 'CSC6918: clear for approach, runway 45', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noticeIncl: 'runway 45' },
   { name: '"clear the runway" → unsupported (no approach tail)', input: 'CSC6918: clear the runway', callsign: 'CSC6918', noticeIncl: 'unsupported' },
   { name: '"clear for approach, climb to 3000" (chain after cfa superseded)', input: 'CSC6918: clear for approach, climb to 3000', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'] },
-  { name: 'ZH: 可以进近，跑道幺三左 → runway unsupported (limitation)', input: '川航六九幺八可以进近，跑道幺三左', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noticeIncl: 'unsupported' },
+  { name: 'ZH: 可以进近，跑道幺三左 → runway consumed', input: '川航六九幺八可以进近，跑道幺三左', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
 ], 'deviation matrix — cfa flexible grammar & runway');
 
 // ─── 7. Chaining & connectors ──────────────────────────────────────────
@@ -312,11 +339,11 @@ itRow([
 // ─── 9. Chinese ────────────────────────────────────────────────────────
 
 itRow([
-  { name: 'airline short form (东航五八八八爬升至九千)', input: '东航五八八八爬升至九千', callsign: 'CES5888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
+  { name: 'airline short form (东航五八八八爬升至九千)', input: '东航五八八八爬升至九千', callsign: 'CES5888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'] },
   { name: 'airline full Chinese name (中国东方航空五八八八)', input: '中国东方航空五八八八', callsign: 'CES5888' },
-  { name: '川航六九幺八爬升至九千', input: '川航六九幺八爬升至九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
+  { name: '川航六九幺八爬升至九千', input: '川航六九幺八爬升至九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'] },
   { name: '国航一二三四 (一-series digit)', input: '国航一二三四', callsign: 'CCA1234' },
-  { name: '两-series digit (南航两八八八爬升至三千)', input: '南航两八八八爬升至三千', callsign: 'CSN2888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 3000'] },
+  { name: '两-series digit (南航两八八八爬升至三千)', input: '南航两八八八爬升至三千', callsign: 'CSN2888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9843'] },
   { name: '幺-series digit (海航幺二三四飞航向幺二洞)', input: '海航幺二三四飞航向幺二洞', callsign: 'CHH1234', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 120'] },
   { name: '洞 for zero (国航幺幺洞洞)', input: '国航幺幺洞洞', callsign: 'CCA1100' },
   { name: '拐 for 7 (国航八拐二六)', input: '国航八拐二六', callsign: 'CCA8726' },
@@ -326,18 +353,18 @@ itRow([
   { name: '转向航向二七洞', input: '川航六九幺八转向航向二七洞', callsign: 'CSC6918', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 270'] },
   { name: '飞航向幺二洞', input: '川航六九幺八飞航向幺二洞', callsign: 'CSC6918', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 120'] },
   { name: 'bare 航向幺二洞', input: '川航六九幺八航向幺二洞', callsign: 'CSC6918', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 120'] },
-  { name: '爬升保持九千', input: '川航六九幺八爬升保持九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
-  { name: '下降保持两千', input: '川航六九幺八下降保持两千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 2000'] },
-  { name: '下降至两千', input: '川航六九幺八下降至两千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 2000'] },
-  { name: '飞高度九千', input: '川航六九幺八飞高度九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
-  { name: 'bare 高度九千', input: '川航六九幺八高度九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
-  { name: '平飞九千', input: '川航六九幺八平飞九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
+  { name: '爬升保持九千', input: '川航六九幺八爬升保持九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'] },
+  { name: '下降保持两千', input: '川航六九幺八下降保持两千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 6562'] },
+  { name: '下降至两千', input: '川航六九幺八下降至两千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 6562'] },
+  { name: '飞高度九千', input: '川航六九幺八飞高度九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'] },
+  { name: 'bare 高度九千', input: '川航六九幺八高度九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'] },
+  { name: '平飞九千', input: '川航六九幺八平飞九千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'] },
   { name: '高度层九零 (FL ×100)', input: '川航六九幺八高度层九零', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
   { name: '减速至一百八十节', input: '川航六九幺八减速至一百八十节', callsign: 'CSC6918', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 180'] },
   { name: '加速至两百节', input: '川航六九幺八加速至两百节', callsign: 'CSC6918', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 200'] },
   { name: '飞速度一百八', input: '川航六九幺八飞速度一百八', callsign: 'CSC6918', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 180'] },
   { name: 'bare 速度一百八', input: '川航六九幺八速度一百八', callsign: 'CSC6918', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 180'] },
-  { name: '保持两千 (≥1000 → altitude)', input: '川航六九幺八保持两千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 2000'] },
+  { name: '保持两千 (≥1000 → altitude)', input: '川航六九幺八保持两千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 6562'] },
   { name: '下降至三千米 (meters → feet)', input: '川航六九幺八下降至三千米', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9843'] },
   { name: '保持五百米 (unit wins → altitude, meters → feet)', input: '川航六九幺八保持五百米', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 1640'] },
   { name: '爬升至九千米 (meters → feet)', input: '川航六九幺八爬升至九千米', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'] },
@@ -345,11 +372,36 @@ itRow([
   { name: '可以进近 → cfa', input: '川航六九幺八可以进近', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'] },
   { name: '允许进近 → cfa', input: '川航六九幺八允许进近', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'] },
   { name: 'bare 进近 → cfa', input: '川航六九幺八进近', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'] },
-  { name: 'chained with Chinese comma (，)', input: '川航六九幺八，爬升至九千，减速至一百八十节', callsign: 'CSC6918', commandTypes: ['altitude', 'update_speed'], commandLabels: ['Fly Altitude 9000', 'Fly Speed 180'] },
-  { name: 'chained with 然后 connector', input: '川航六九幺八爬升至九千然后减速至一百八十节', callsign: 'CSC6918', commandTypes: ['altitude', 'update_speed'], commandLabels: ['Fly Altitude 9000', 'Fly Speed 180'] },
+  { name: 'chained with Chinese comma (，)', input: '川航六九幺八，爬升至九千，减速至一百八十节', callsign: 'CSC6918', commandTypes: ['altitude', 'update_speed'], commandLabels: ['Fly Altitude 29528', 'Fly Speed 180'] },
+  { name: 'chained with 然后 connector', input: '川航六九幺八爬升至九千然后减速至一百八十节', callsign: 'CSC6918', commandTypes: ['altitude', 'update_speed'], commandLabels: ['Fly Altitude 29528', 'Fly Speed 180'] },
   { name: 'English commands after a Chinese callsign → unsupported (limitation)', input: '川航六九幺八 climb to 9000', callsign: 'CSC6918', noticeIncl: 'unsupported' },
   { name: 'ZH homophone command char → unsupported (limitation — Chinese stays exact-only)', input: '川航六九幺八航象幺二洞', callsign: 'CSC6918', noticeIncl: 'unsupported' },
   { name: 'ZH homophone digit char → unsupported (limitation — Chinese stays exact-only)', input: '川航六九幺八爬升至就千', callsign: 'CSC6918', noticeIncl: 'unsupported' },
+  // optional Heavy keyword — spoken "重型" (bare '重' tolerated)
+  { name: '重 after the number (东航五八八八重爬升至九千)', input: '东航五八八八重爬升至九千', callsign: 'CES5888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'], noNotices: true },
+  { name: '重型 after the number (国航1388重型爬升至九千)', input: '国航1388重型爬升至九千', callsign: 'CCA1388', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'], noNotices: true },
+  { name: '重型 before the number (东航重型五八八八爬升至九千)', input: '东航重型五八八八爬升至九千', callsign: 'CES5888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'], noNotices: true },
+  { name: 'selection only (国航1388重型)', input: '国航1388重型', callsign: 'CCA1388', noNotices: true },
+  { name: 'mixed run of 重/重型 (东航重型重五八八八爬升至九千)', input: '东航重型重五八八八爬升至九千', callsign: 'CES5888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'], noNotices: true },
+  { name: 'mid-number 重 → fail (limitation — Chinese stays exact-only)', input: '国航一重型二三四', ok: false, reasonIncl: 'CCA1' },
+  // ── implicit meters + new phraseology (2026-08-06) ──
+  { name: '下降到两千四 (implicit meters → 2400 m → 7874 ft)', input: '国航1388下降到两千四', callsign: 'CCA1388', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 7874'], noNotices: true },
+  { name: '下到幺八 (<100 → ×100 m → 5906 ft)', input: '海南拐三三六，下到幺八', callsign: 'CHH7336', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 5906'], noNotices: true },
+  { name: '下降到幺八 (下降到 + shorthand → 5906 ft)', input: '国航1388下降到幺八', callsign: 'CCA1388', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 5906'], noNotices: true },
+  { name: '减速到230', input: '国航1892，减速到230', callsign: 'CCA1892', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 230'], noNotices: true },
+  { name: '右转航向洞三洞 → 030', input: '国航1388右转航向洞三洞', callsign: 'CCA1388', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 030'], noNotices: true },
+  { name: '航向飞洞两洞 → 020', input: '国航1314，航向飞洞两洞', callsign: 'CCA1314', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 020'], noNotices: true },
+  { name: '保持15 → altitude 1500 m (zh maintain <100 shorthand)', input: '川航六九幺八保持15', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 4921'], noNotices: true },
+  { name: '保持十五 (word digits) → altitude 1500 m', input: '川航六九幺八保持十五', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 4921'], noNotices: true },
+  { name: '可以盲降进近 → cfa', input: '国航1388可以盲降进近', callsign: 'CCA1388', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: '建立下滑道 (standard spelling) + 可以盲降进近跑道幺八', input: '国航1388建立下滑道，可以盲降进近跑道幺八', callsign: 'CCA1388', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: '建立三六右航道 → cfa (runway consumed)', input: '国航1388建立三六右航道', callsign: 'CCA1388', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  // full user cases — cfa supersedes the chain (same as EN)
+  { name: 'case 2: 右转航向洞三洞，建立三六右航道 → cfa supersedes heading', input: '国航1388，右转航向洞三洞，建立三六右航道', callsign: 'CCA1388', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: 'case 5: 航向飞洞两洞，建立幺八左航道 → cfa supersedes heading', input: '国航1314，航向飞洞两洞，建立幺八左航道', callsign: 'CCA1314', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: 'case 6: 保持15建立下滑到，可以盲降进近跑道幺八 → cfa supersedes altitude', input: '海南7336，保持15建立下滑到，可以盲降进近跑道幺八', callsign: 'CHH7336', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
+  { name: '建立航线 → NOT cfa, unsupported (limitation — bare 建立 needs a runway)', input: '国航1388建立航线', callsign: 'CCA1388', noticeIncl: 'unsupported' },
+  { name: '下降到一万 → out of range (limitation — 万 not in the magnitude parser)', input: '国航1388下降到一万', callsign: 'CCA1388', noticeIncl: 'out of range' },
 ], 'deviation matrix — Chinese');
 
 // ─── 10. Failure diagnostics ───────────────────────────────────────────

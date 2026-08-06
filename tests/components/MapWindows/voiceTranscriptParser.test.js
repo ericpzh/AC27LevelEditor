@@ -222,10 +222,10 @@ describe('parseVoiceTranscript — clear for approach', () => {
     expect(r.notices.some(n => n.includes('unsupported'))).toBe(true);
   });
 
-  it('ZH: 跑道 designator after cfa stays unsupported', () => {
+  it('ZH: 跑道 designator after cfa is consumed, no notice', () => {
     const r = parseVoiceTranscript('川航六九幺八可以进近，跑道幺三左', AIRCRAFT);
     expect(types(r)).toEqual(['clear_for_appr']);
-    expect(r.notices.some(n => n.includes('unsupported'))).toBe(true);
+    expect(r.notices).toEqual([]);
   });
 });
 
@@ -260,15 +260,15 @@ describe('parseVoiceTranscript — unsupported', () => {
 // ─── Chinese ───────────────────────────────────────────────────────────
 
 describe('parseVoiceTranscript — Chinese', () => {
-  it('川航六九幺八爬升至九千 → altitude 9000', () => {
+  it('川航六九幺八爬升至九千 → altitude 29528 (zh implicit meters)', () => {
     const r = parseVoiceTranscript('川航六九幺八爬升至九千', AIRCRAFT);
     expect(r.callsign).toBe('CSC6918');
-    expect(r.commands[0].payload).toEqual({ type: 'altitude', callSign: 'CSC6918', targetFt: 9000, rate: 1000 });
+    expect(r.commands[0].payload).toEqual({ type: 'altitude', callSign: 'CSC6918', targetFt: 29528, rate: 1000 });
   });
 
-  it('下降保持两千 → altitude 2000', () => {
+  it('下降保持两千 → altitude 6562 (zh implicit meters)', () => {
     const r = parseVoiceTranscript('川航六九幺八下降保持两千', AIRCRAFT);
-    expect(r.commands[0].payload.targetFt).toBe(2000);
+    expect(r.commands[0].payload.targetFt).toBe(6562);
   });
 
   it('减速至一百八十节 → speed 180', () => {
@@ -296,6 +296,27 @@ describe('parseVoiceTranscript — Chinese', () => {
 
   it('可以进近 → cfa', () => {
     expect(types(parseVoiceTranscript('川航六九幺八可以进近', AIRCRAFT))).toEqual(['clear_for_appr']);
+  });
+
+  it('下降到两千四 → altitude 7874 (implicit meters)', () => {
+    const r = parseVoiceTranscript('川航六九幺八下降到两千四', AIRCRAFT);
+    expect(r.commands[0].payload).toEqual({ type: 'altitude', callSign: 'CSC6918', targetFt: 7874, rate: 1000 });
+  });
+
+  it('保持15 → altitude 4921 (zh maintain <100 shorthand)', () => {
+    const r = parseVoiceTranscript('川航六九幺八保持15', AIRCRAFT);
+    expect(r.commands[0].payload.targetFt).toBe(4921);
+  });
+
+  it('减速到230 → update_speed 230', () => {
+    expect(parseVoiceTranscript('川航六九幺八减速到230', AIRCRAFT).commands[0].payload)
+      .toEqual({ type: 'update_speed', callSign: 'CSC6918', kts: 230 });
+  });
+
+  it('建立三六右航道 → cfa, runway consumed, zero notices', () => {
+    const r = parseVoiceTranscript('川航六九幺八建立三六右航道', AIRCRAFT);
+    expect(types(r)).toEqual(['clear_for_appr']);
+    expect(r.notices).toEqual([]);
   });
 
   it('bare callsign in Chinese → selection only', () => {

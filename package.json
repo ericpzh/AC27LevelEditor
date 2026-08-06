@@ -5,7 +5,8 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "start": "vite",
+    "start": "node scripts/dev-start.mjs",
+    "start:large": "node scripts/dev-start.mjs --large",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

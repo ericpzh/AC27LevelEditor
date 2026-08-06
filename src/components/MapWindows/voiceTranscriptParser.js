@@ -95,6 +95,15 @@ export const ZH_PATTERNS = [
   { type: 'maintain', chars: '保持' },
   { type: 'speed', chars: '速度' },
   { type: 'cfa', chars: '进近' },
+  // 2026-08-06: implicit-meters + approach phraseology
+  { type: 'altitude', chars: '下降到' },
+  { type: 'altitude', chars: '下到' },
+  { type: 'speed', chars: '减速到' },
+  { type: 'heading', chars: '航向飞' },
+  { type: 'cfa', chars: '可以盲降进近' },
+  { type: 'cfa', chars: '建立下滑道' },
+  { type: 'cfa', chars: '建立下滑到' },   // homophone of 下滑道 as spoken
+  { type: 'cfa', chars: '建立' },          // 建立三六右航道 — needs the runway guard in matchSegment
 ];
 
 // Sort longest-first so the most specific prefix wins
@@ -220,7 +229,21 @@ function matchCfaEn(rest) {
  *  2026-08-05). Returns { rest } on a full match, or null (nothing consumed;
  *  the caller falls through → "runway banana" becomes an unsupported notice). */
 function matchRunwayValue(rest, zh) {
-  if (zh) return null;
+  if (zh) {
+    // ZH: [跑道|航道] number [左|右|中] [跑道|航道] — consumed and ignored
+    // (三六右航道, 跑道幺八, 幺八左航道; same consume-only contract as EN).
+    const str = stripConnector(rest, true);
+    let i = 0;
+    const lead = /^(跑道|航道)/.exec(str);
+    if (lead) i += lead[0].length;
+    const num = parseSpokenNumberValue(str.slice(i), 'zh');
+    if (!num || num.value < 1 || num.value > 36) return null;
+    i += num.consumed;
+    if (str[i] === '左' || str[i] === '右' || str[i] === '中') i += 1;
+    const tail = /^(跑道|航道)/.exec(str.slice(i));
+    if (tail) i += tail[0].length;
+    return { rest: str.slice(i) };
+  }
   const tokens = stripConnector(rest, false).split(/\s+/).filter(Boolean);
   if (!tokens.length || !tokens[0]) return null;
   const head = tokens[0].toLowerCase();
@@ -285,7 +308,7 @@ function parseCommandValueZh(remainder, forceFl) {
 // ─── Type resolution, range checks, command building ───────────────────
 
 /** The pattern's type → final payload type (resolves the maintain ambiguity). */
-function resolveType(patternType, pv) {
+function resolveType(patternType, pv, zh) {
   switch (patternType) {
     case 'heading': return 'update_heading';
     case 'altitude':
@@ -294,6 +317,7 @@ function resolveType(patternType, pv) {
     case 'maintain':
       if (pv.unit === 'speed') return 'update_speed';
       if (pv.unit === 'altitude' || pv.unit === 'altitude-m' || pv.fl) return 'altitude';
+      if (zh && !pv.fl && pv.value < 100) return 'altitude';   // zh <100 = ×100 m shorthand (保持15 → 1500 m)
       return pv.value >= 1000 ? 'altitude' : 'update_speed';
     case 'cfa': return 'clear_for_appr';
     default: return null;
@@ -389,6 +413,18 @@ function matchSegment(segs, lang, callSign, commands, notices) {
     // and ignored, never noticed.
     if (hit.type === 'cfa') {
       flush();
+      // Bare 建立 must be followed by a runway designator to be an approach
+      // clearance ("建立航线" — establish route — is NOT; 建立下滑道/到 and the
+      // longer patterns are unaffected). Probe before committing the CFA.
+      if (zh && hit.text === '建立') {
+        const probe = hit.rest || (i + 1 < segs.length ? segs[i + 1] : '');
+        const rw = probe ? matchRunwayValue(probe, zh) : null;
+        if (!rw) {
+          unsupportedBuf += hit.text + ' ';
+          rest = hit.rest;
+          continue;
+        }
+      }
       commands.push(buildCommand('clear_for_appr', callSign));
       rest = hit.rest;
       if (rest) {
@@ -409,11 +445,22 @@ function matchSegment(segs, lang, callSign, commands, notices) {
       continue;
     }
 
-    const type = resolveType(hit.type, pv);
+    const type = resolveType(hit.type, pv, zh);
     // Spoken meters ("米" / "meters" / "m") → feet before the range gate and
-    // payload build (wire contract is feet). FL phrases are always feet, so an
-    // explicit meter unit under FL is ignored (nonsense phrase — FL+米 isn't real).
-    const value = pv.unit === 'altitude-m' && !pv.fl ? Math.round(pv.value * FT_PER_METER) : pv.value;
+    // payload build (wire contract is feet). ZH altitude numbers are ALWAYS
+    // meters (implicit, no 米 word): a value < 100 is the two-digit shorthand
+    // meaning ×100 m (幺八 → 1800 m, 保持15 → 1500 m), anything else is meters
+    // as-is (两千四 → 2400 m). FL phrases are always feet, so both meter
+    // paths are skipped under FL (nonsense phrase — FL+米 isn't real).
+    let value;
+    if (pv.unit === 'altitude-m' && !pv.fl) {
+      value = Math.round(pv.value * FT_PER_METER);
+    } else if (zh && type === 'altitude' && !pv.fl && pv.unit === null) {
+      const m = pv.value < 100 ? pv.value * 100 : pv.value;
+      value = Math.round(m * FT_PER_METER);
+    } else {
+      value = pv.value;   // 英尺 / FL / speed / heading unchanged
+    }
     if (!rangeCheck(type, value, pv.fl)) {
       notices.push('unsupported: "' + (hit.text + ' ' + pv.text).trim() + '" (out of range)');
       rest = pv.rest;
