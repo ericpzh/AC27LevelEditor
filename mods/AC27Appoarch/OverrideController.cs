@@ -511,8 +511,9 @@ public static class OverrideController
             int done = ApproachWatchBudget - remain;
             _approachWatch[ac] = remain - 1;
             if (remain - 1 <= 0) _approachWatch.Remove(ac);
-            if (done % 10 == 0)
-                Plugin.LogMsg($"watch: {ac.CallSign} step {done} {ParamTrace.BuildDump(ac)}");
+            // log audit 2026-08-05: per-step watch dump — commented out; uncomment to re-enable
+            // if (done % 10 == 0)
+            //     Plugin.LogMsg($"watch: {ac.CallSign} step {done} {ParamTrace.BuildDump(ac)}");
         }
 
         // Replant detection (replaces the unpatchable setter hook): if ANYTHING
@@ -546,15 +547,16 @@ public static class OverrideController
             int prDone = PostReleaseBudget - prLeft;
             _postRelease[ac] = prLeft - 1;
             if (prLeft - 1 <= 0) _postRelease.Remove(ac);
-            if (prDone % 10 == 0)
-            {
-                float spd = -1f;
-                var view = FindView3D(ac);
-                var rb = view != null ? view.GetComponent<Rigidbody>() : null;
-                if (rb != null) spd = rb.velocity.magnitude;
-                var p = ac.Position;
-                Plugin.LogMsg($"cfa: {ac.CallSign} post-release: hdg {HeadingDeg(ac.Direction):F1}° pos ({p.x:F1},{p.z:F1}) rbVel {spd:F2}");
-            }
+            // log audit 2026-08-05: post-release observer sample — commented out; uncomment to re-enable
+            // if (prDone % 10 == 0)
+            // {
+            //     float spd = -1f;
+            //     var view = FindView3D(ac);
+            //     var rb = view != null ? view.GetComponent<Rigidbody>() : null;
+            //     if (rb != null) spd = rb.velocity.magnitude;
+            //     var p = ac.Position;
+            //     Plugin.LogMsg($"cfa: {ac.CallSign} post-release: hdg {HeadingDeg(ac.Direction):F1}° pos ({p.x:F1},{p.z:F1}) rbVel {spd:F2}");
+            // }
         }
 
         if (!_overrides.TryGetValue(ac, out var e)) return;
@@ -622,7 +624,8 @@ public static class OverrideController
             {
                 _postRelease[ac] = PostReleaseBudget;   // v8-d: observe the game-owned nose for 5 s
                 _overrides.Remove(ac);
-                Plugin.LogMsg($"cfa: {ac.CallSign} de-snap released ({(dist < CfaJoinDist ? "captured" : "cap")}) — the game's steering owns the heading");
+                // log audit 2026-08-05: per-aircraft event log — commented out; uncomment to re-enable
+                // Plugin.LogMsg($"cfa: {ac.CallSign} de-snap released ({(dist < CfaJoinDist ? "captured" : "cap")}) — the game's steering owns the heading");
                 return;
             }
             e.Direction = aim.normalized;
@@ -1278,7 +1281,8 @@ public static class OverrideController
                     if (appPts != null && appPts.Count >= 2)
                     {
                         for (int i = 0; i < appPts.Count; i++) sourceNodes.Add(appPts[i]);
-                        Plugin.LogMsg($"cfa: {callsign} approach path = the aircraft's own procedure (AppPointList, len={sourceNodes.Count}) — natural IAF join");
+                        // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                        // Plugin.LogMsg($"cfa: {callsign} approach path = the aircraft's own procedure (AppPointList, len={sourceNodes.Count}) — natural IAF join");
                     }
                     else
                         Plugin.LogMsg($"cfa: {callsign} step 4a: AppPointList empty — falling back to the GetRoute procedure");
@@ -1342,7 +1346,8 @@ public static class OverrideController
         if (ac.AirSpeedKnot != null) ac.AirSpeedKnot.Value = cfaSeedKts;
         dp.ForwardSpeed = true;
         dp.PositiveTaxiAcceleration = 1f; dp.NegativeTaxiAcceleration = -2f;   // ACL constants
-        Plugin.LogMsg($"cfa: {callsign} speed: ts={cfaSeedKts:F0} tts={cfaSeedKts:F0} dtts={cfaSeedKts:F0} fwd=True accel 1/-2 → ramp {cfaSeedKts:F0}→{apprSpeedKts:F0} kt at {cfaRampKts:F0} kt/s{(speedKnots > 0f ? "" : " (default 240)")}");
+        // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+        // Plugin.LogMsg($"cfa: {callsign} speed: ts={cfaSeedKts:F0} tts={cfaSeedKts:F0} dtts={cfaSeedKts:F0} fwd=True accel 1/-2 → ramp {cfaSeedKts:F0}→{apprSpeedKts:F0} kt at {cfaRampKts:F0} kt/s{(speedKnots > 0f ? "" : " (default 240)")}");
 
         // 6) Fire the game's own transitions. The aircraft-level machine's
         //    Fly→Approach transition is gated by FlyToApproachCondition; the
@@ -1362,18 +1367,34 @@ public static class OverrideController
         //    1 s tracer to see which one sticks.
         if (useNative)
         {
-            try { ac.CommandContinueApproach(); Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach → ok"); }
+            try
+            {
+                ac.CommandContinueApproach();
+                // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                // Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach → ok");
+            }
             catch (Exception ex) { Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach FAILED: {ex.GetType().Name}: {ex.Message}"); }
         }
-        else Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach SKIPPED (native=0)");
+        // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+        // else Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach SKIPPED (native=0)");
         if (ac.IsInState(EAircraftState.Fly))
         {
-            try { ac._stateMachine.Fire(EAircraftTrigger.Approach); Plugin.LogMsg($"cfa: {callsign} Fire(Approach) → ok"); }
+            try
+            {
+                ac._stateMachine.Fire(EAircraftTrigger.Approach);
+                // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                // Plugin.LogMsg($"cfa: {callsign} Fire(Approach) → ok");
+            }
             catch (Exception ex) { Plugin.LogMsg($"cfa: {callsign} Fire(Approach) FAILED: {ex.GetType().Name}: {ex.Message}"); }
         }
         if (ac._dynamics.CurrentState != State.Approaching)
         {
-            try { ac._dynamics.FlyApproach2Approach(); Plugin.LogMsg($"cfa: {callsign} FlyApproach2Approach → ok"); }
+            try
+            {
+                ac._dynamics.FlyApproach2Approach();
+                // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                // Plugin.LogMsg($"cfa: {callsign} FlyApproach2Approach → ok");
+            }
             catch (Exception ex) { Plugin.LogMsg($"cfa: {callsign} FlyApproach2Approach FAILED: {ex.GetType().Name}: {ex.Message}"); }
         }
 
@@ -1412,15 +1433,17 @@ public static class OverrideController
                         AccelKtsPerSec = speedAccelKtsPerSec, // v12: 0 = the plugin default 5 kt/s
                     };
                     _overrides[ac] = deSnap;
-                    Plugin.LogMsg($"cfa: {callsign} de-snap armed: rate {deSnap.TurnRateDeg:F0}°/s toward IAF {expectedPath[0]}, pre-capture speed {apprSpeedKts:F0} kt (ramp {cfaSeedKts:F0}→{apprSpeedKts:F0} at {cfaRampKts:F0} kt/s)");
+                    // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                    // Plugin.LogMsg($"cfa: {callsign} de-snap armed: rate {deSnap.TurnRateDeg:F0}°/s toward IAF {expectedPath[0]}, pre-capture speed {apprSpeedKts:F0} kt (ramp {cfaSeedKts:F0}→{apprSpeedKts:F0} at {cfaRampKts:F0} kt/s)");
                 }
 
                 if (curOb.ObjectClass == Il2CppClassPointerStore<ApproachState>.NativeClassPtr)
                 {
-                    var st = new ApproachState(curOb.Pointer);
-                    bool pathMismatch = PathMismatch(st._pathPointList, expectedPath);
-                    bool rtMismatch = st._runtimeData == null || PathMismatch(st._runtimeData.PathPointList, expectedPath);
-                    Plugin.LogMsg($"cfa: {callsign} state check: ApproachState stPath={ParamTrace.ListSummary(st._pathPointList)} stPr={st.GetProgressRatio():F3}{ParamTrace.ApproachStateDiag(st, ac.Position)} — {(pathMismatch ? "PATH MISMATCH (Init derived something else than the aircraft's own procedure?)" : "path ok (aircraft's own procedure)")}{(rtMismatch ? " RT MISMATCH" : " rt ok")}");
+                    // log audit 2026-08-05: per-handoff state-check dump — commented out; uncomment to re-enable
+                    // var st = new ApproachState(curOb.Pointer);
+                    // bool pathMismatch = PathMismatch(st._pathPointList, expectedPath);
+                    // bool rtMismatch = st._runtimeData == null || PathMismatch(st._runtimeData.PathPointList, expectedPath);
+                    // Plugin.LogMsg($"cfa: {callsign} state check: ApproachState stPath={ParamTrace.ListSummary(st._pathPointList)} stPr={st.GetProgressRatio():F3}{ParamTrace.ApproachStateDiag(st, ac.Position)} — {(pathMismatch ? "PATH MISMATCH (Init derived something else than the aircraft's own procedure?)" : "path ok (aircraft's own procedure)")}{(rtMismatch ? " RT MISMATCH" : " rt ok")}");
                     // No rewrite: the aircraft's own procedure is correct by
                     // definition; a mismatch here means a game flow re-derived
                     // the path from other data — logged for the watch read.
@@ -1571,12 +1594,13 @@ public static class OverrideController
                 Plugin.LogMsg($"cfa: {callsign} radio: tower channel NOT resolved ({(tower == null ? "no tower channel" : "missing radio slot")}) — stays on approach (self-heals on touchdown)");
             else
             {
-                var rcBefore = rc.Value != null ? rc.Value.PK : "<null>";
-                var jcBefore = jc.Value != null ? jc.Value.PK : "<null>";
+                // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                // var rcBefore = rc.Value != null ? rc.Value.PK : "<null>";
+                // var jcBefore = jc.Value != null ? jc.Value.PK : "<null>";
                 rc.Value = tower;
                 jc.Value = tower;
-                Plugin.LogMsg($"cfa: {callsign} radio: radio {rcBefore} → TWR({tower.PK})");
-                Plugin.LogMsg($"cfa: {callsign} radio: jurisdiction {jcBefore} → TWR({tower.PK})");
+                // Plugin.LogMsg($"cfa: {callsign} radio: radio {rcBefore} → TWR({tower.PK})");
+                // Plugin.LogMsg($"cfa: {callsign} radio: jurisdiction {jcBefore} → TWR({tower.PK})");
             }
         }
         catch (Exception ex)
