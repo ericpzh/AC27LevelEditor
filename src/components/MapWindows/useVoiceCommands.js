@@ -9,7 +9,16 @@
  * selection only (bare callsign → active/yellow). The caller dispatches the
  * chain; selection of the matched callsign is the caller's selection effect.
  *
- * Manages SpeechRecognition lifecycle, silence timeout, and error handling.
+ * Speech backend (2026-08-05): in Electron, Windows System.Speech via a
+ * PowerShell worker (electron/voice-stt.ps1, driven by voiceSttWorker.js in
+ * the main process) — the Chromium Web Speech API uploads mic audio to
+ * Google's speech API, which is shut down for Electron (network error, was
+ * silently swallowed here). In a plain browser (vite dev) the original
+ * Web Speech API path is kept as a fallback — it works in Chrome.
+ *
+ * Manages the recognition session lifecycle, silence timeout, and error
+ * handling. State shape is unchanged: listening/transcript/matchedCallsign/
+ * matchedCommand/confidence/error/voiceResult/matchedAircraft.
  *
  * Usage:
  *   const voice = useVoiceCommands(udpAircraft);
@@ -39,6 +48,7 @@ const COOLDOWN_MS = 500;
  */
 export default function useVoiceCommands(udpAircraft) {
   const electronAPI = useElectronAPI();
+  const isElectron = !!electronAPI;
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [matchedCallsign, setMatchedCallsign] = useState(null);
@@ -47,6 +57,7 @@ export default function useVoiceCommands(udpAircraft) {
   const [error, setError] = useState(null);
   const [voiceResult, setVoiceResult] = useState(null);   // full parseVoiceTranscript result (feedback)
   const [matchedAircraft, setMatchedAircraft] = useState(null);
+  const [voiceStatus, setVoiceStatus] = useState(null);   // Electron: {available, culture, error} | null = unknown
 
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
@@ -59,9 +70,10 @@ export default function useVoiceCommands(udpAircraft) {
     return () => {
       mountedRef.current = false;
       stopRecognition();
+      if (isElectron) electronAPI?.voiceSttStop?.();
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Recognition helpers ───────────────────────────────────────────
 
@@ -81,24 +93,48 @@ export default function useVoiceCommands(udpAircraft) {
   }, []);
 
   const resetSilenceTimer = useCallback(() => {
+    if (isElectron) return; // the worker's engine owns silence timing (EndSilenceTimeout)
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(() => {
       if (!mountedRef.current) return;
       stopRecognition();
       setListening(false);
     }, SILENCE_TIMEOUT_MS);
-  }, [stopRecognition]);
+  }, [isElectron, stopRecognition]);
 
   // ── Check support ─────────────────────────────────────────────────
+  // Electron: probe the System.Speech worker (null = unknown → button stays
+  // hidden until the probe resolves, same pattern as bepInExActive).
+  // Browser: the Web Speech API's presence.
+  useEffect(() => {
+    if (!isElectron) return undefined;
+    let cancelled = false;
+    electronAPI.getVoiceSttStatus()
+      .then((s) => {
+        if (cancelled) return;
+        setVoiceStatus(s || { available: false });
+        if (!s?.available) {
+          setError(`Speech unavailable: ${s?.error || 'unknown'}`);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setVoiceStatus({ available: false });
+        setError('Speech unavailable');
+      });
+    return () => { cancelled = true; };
+  }, [isElectron, electronAPI]);
 
   const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const isSupported = !!SpeechRecognitionAPI;
+  const isSupported = isElectron
+    ? voiceStatus?.available === true
+    : !!SpeechRecognitionAPI;
 
   // ── Start / Stop ──────────────────────────────────────────────────
 
   const startListening = useCallback(() => {
     if (!isSupported) {
-      setError('Speech recognition not supported in this browser');
+      setError(isElectron ? 'Speech engine not available' : 'Speech recognition not supported in this browser');
       return;
     }
 
@@ -119,6 +155,28 @@ export default function useVoiceCommands(udpAircraft) {
     // Stop any existing session
     stopRecognition();
 
+    if (isElectron) {
+      // ── Electron: System.Speech worker (main process spawns it) ──
+      (async () => {
+        try {
+          const r = await electronAPI?.voiceSttStart?.();
+          if (r?.success) {
+            setListening(true);
+            resetSilenceTimer();
+          } else {
+            setError(r?.error ? `Speech failed: ${r.error}` : 'Failed to start speech');
+            setListening(false);
+          }
+        } catch (err) {
+          console.error('[Voice] Failed to start speech:', err);
+          setError('Failed to start speech');
+          setListening(false);
+        }
+      })();
+      return;
+    }
+
+    // ── Browser fallback (plain vite in Chrome): Web Speech API ──
     try {
       const recognition = new SpeechRecognitionAPI();
       recognitionRef.current = recognition;
@@ -186,12 +244,17 @@ export default function useVoiceCommands(udpAircraft) {
       setError('Failed to start microphone');
       setListening(false);
     }
-  }, [isSupported, stopRecognition, resetSilenceTimer]);
+  }, [isSupported, isElectron, electronAPI, stopRecognition, resetSilenceTimer]);
 
   const stopListening = useCallback(() => {
+    if (isElectron) {
+      // Fire-and-forget — the UI flips immediately; the worker's 'stopped'
+      // event later re-confirms the state (no-op on the hook).
+      electronAPI?.voiceSttStop?.();
+    }
     stopRecognition();
     setListening(false);
-  }, [stopRecognition]);
+  }, [isElectron, electronAPI, stopRecognition]);
 
   // ── Transcript processing ────────────────────────────────────────
 
@@ -230,6 +293,38 @@ export default function useVoiceCommands(udpAircraft) {
       setConfidence(0);
     }
   }, [udpAircraft]);
+
+  // ── Worker event subscription (Electron) ──────────────────────────
+  // (Declared after processTranscript — the deps array evaluates at call time.)
+  useEffect(() => {
+    if (!electronAPI?.onVoiceSttEvent) return undefined;
+    const onEvent = (evt) => {
+      if (!mountedRef.current) return;
+      if (evt.type === 'result') {
+        if (!evt.text) return;
+        setTranscript(evt.text);
+        processTranscript(evt.text);
+        resetSilenceTimer();
+      } else if (evt.type === 'error') {
+        console.warn('[Voice] Speech worker error:', evt.code, evt.message);
+        if (evt.code === 'WORKER_EXIT') {
+          setError('Speech engine stopped unexpectedly — press again to retry');
+        } else if (evt.code === 'NO_AUDIO_DEVICE') {
+          setError('No audio device available');
+        } else {
+          setError(evt.message || `Speech error: ${evt.code}`);
+        }
+        setListening(false);
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      } else if (evt.type === 'stopped') {
+        setListening(false);
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      }
+      // 'rejected' (busy / no-speech) — informational, ignore
+    };
+    electronAPI.onVoiceSttEvent(onEvent);
+    return () => electronAPI.offVoiceSttEvent?.(onEvent);
+  }, [electronAPI, processTranscript, resetSilenceTimer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Return ───────────────────────────────────────────────────────
 

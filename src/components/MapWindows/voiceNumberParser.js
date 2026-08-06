@@ -52,7 +52,7 @@ const EN_MULTIPLIER = {
 /**
  * Chinese aviation digit mapping.
  * Both "幺" (yao) and "一" (yi) mean 1 — 幺 is preferred in radio comms.
- * "洞" (dong) means 0, "两" (liang) means 2.
+ * "洞" (dong) means 0, "两" (liang) means 2, "拐" (guai) means 7.
  */
 const ZH_DIGIT = {
   '零': ['0'], '洞': ['0'],
@@ -60,7 +60,7 @@ const ZH_DIGIT = {
   '二': ['2'], '两': ['2'],
   '三': ['3'], '四': ['4'],
   '五': ['5'], '六': ['6'],
-  '七': ['7'], '八': ['8'],
+  '七': ['7'], '拐': ['7'], '八': ['8'],
   '九': ['9'],
 };
 
@@ -286,11 +286,15 @@ export function generateCallsignCandidates(airlineCode, numberCandidates) {
 export const EN_UNIT_WORDS = {
   knots: 'speed', knot: 'speed', kts: 'speed',
   feet: 'altitude', foot: 'altitude', ft: 'altitude',
+  meters: 'altitude-m', meter: 'altitude-m', m: 'altitude-m',
   degrees: 'unitless', degree: 'unitless',
 };
 
-/** ZH unit words (string keys, 1-2 chars, no spaces in speech). */
-export const ZH_UNIT_WORDS = { '节': 'speed', '英尺': 'altitude' };
+/** ZH unit words (string keys, 1-2 chars, no spaces in speech). ZH
+ *  detection itself is inline in voiceTranscriptParser.parseCommandValueZh;
+ *  this table documents the vocabulary. 'altitude-m' = meters → the caller
+ *  converts to feet before building the payload. */
+export const ZH_UNIT_WORDS = { '节': 'speed', '英尺': 'altitude', '米': 'altitude-m' };
 
 /** Strip leading/trailing punctuation from a token ("180." → "180"). */
 function normalizeToken(t) {

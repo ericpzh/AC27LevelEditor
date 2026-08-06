@@ -28,7 +28,7 @@ const ac = (callSign) => ({
 const AIRCRAFT = [
   ac('DAL3401'), ac('DAL304'), ac('DLH3401'),
   ac('UAL1111'), ac('UAL111'),
-  ac('CCA1234'), ac('CCA1100'),
+  ac('CCA1234'), ac('CCA1100'), ac('CCA8726'),
   ac('CES5888'), ac('CSC6918'),
   ac('CSN2888'), ac('CHH1234'),
   ac('KLM631'), ac('BAW5224'), ac('AFR3661'), ac('AAL683'),
@@ -152,6 +152,10 @@ itRow([
   { name: '"FL 90" (bare FL)', input: 'CSC6918: FL 90', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
   { name: 'words ("climb and maintain nine thousand")', input: 'CSC6918: climb and maintain nine thousand', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'] },
   { name: 'unit word ("descend to two thousand feet")', input: 'CSC6918: descend to two thousand feet', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 2000'] },
+  { name: 'meters unit ("descend to 3000 meters")', input: 'CSC6918: descend to 3000 meters', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9843'] },
+  { name: 'meters shorthand ("climb to 1500 m")', input: 'CSC6918: climb to 1500 m', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 4921'] },
+  { name: '"maintain 500 meters" (unit wins over bare <1000 → speed)', input: 'CSC6918: maintain 500 meters', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 1640'] },
+  { name: 'spoken meters ("descend to three thousand meters")', input: 'CSC6918: descend to three thousand meters', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9843'] },
   { name: '"maintain 180" (bare <1000 → speed)', input: 'CSC6918: maintain 180', callsign: 'CSC6918', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 180'] },
 ], 'deviation matrix — altitude aliases');
 
@@ -232,6 +236,7 @@ itRow([
   { name: 'altitude 400 → out of range', input: 'CSC6918: altitude 400', callsign: 'CSC6918', noticeIncl: 'out of range' },
   { name: 'altitude 61000 → out of range', input: 'CSC6918: altitude 61000', callsign: 'CSC6918', noticeIncl: 'out of range' },
   { name: 'flight level 251 → out of range', input: 'CSC6918: flight level 251', callsign: 'CSC6918', noticeIncl: 'out of range' },
+  { name: 'meters altitude beyond 60000 ft ("descend to 20000 meters" → 65617 ft) → out of range', input: 'CSC6918: descend to 20000 meters', callsign: 'CSC6918', noticeIncl: 'out of range' },
   { name: 'speed 89 → out of range', input: 'CSC6918: speed 89', callsign: 'CSC6918', noticeIncl: 'out of range' },
   { name: 'speed 301 → out of range', input: 'CSC6918: speed 301', callsign: 'CSC6918', noticeIncl: 'out of range' },
   { name: '"heading" with no value → unsupported notice', input: 'CSC6918: heading', callsign: 'CSC6918', noticeIncl: 'unsupported' },
@@ -251,6 +256,8 @@ itRow([
   { name: '两-series digit (南航两八八八爬升至三千)', input: '南航两八八八爬升至三千', callsign: 'CSN2888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 3000'] },
   { name: '幺-series digit (海航幺二三四飞航向幺二洞)', input: '海航幺二三四飞航向幺二洞', callsign: 'CHH1234', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 120'] },
   { name: '洞 for zero (国航幺幺洞洞)', input: '国航幺幺洞洞', callsign: 'CCA1100' },
+  { name: '拐 for 7 (国航八拐二六)', input: '国航八拐二六', callsign: 'CCA8726' },
+  { name: '拐-series full command (国航八拐二六，左转航向幺八洞)', input: '国航八拐二六，左转航向幺八洞', callsign: 'CCA8726', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 180'] },
   { name: '左转航向二七洞', input: '川航六九幺八左转航向二七洞', callsign: 'CSC6918', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 270'] },
   { name: '右转航向二七洞', input: '川航六九幺八右转航向二七洞', callsign: 'CSC6918', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 270'] },
   { name: '转向航向二七洞', input: '川航六九幺八转向航向二七洞', callsign: 'CSC6918', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 270'] },
@@ -268,6 +275,9 @@ itRow([
   { name: '飞速度一百八', input: '川航六九幺八飞速度一百八', callsign: 'CSC6918', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 180'] },
   { name: 'bare 速度一百八', input: '川航六九幺八速度一百八', callsign: 'CSC6918', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 180'] },
   { name: '保持两千 (≥1000 → altitude)', input: '川航六九幺八保持两千', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 2000'] },
+  { name: '下降至三千米 (meters → feet)', input: '川航六九幺八下降至三千米', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9843'] },
+  { name: '保持五百米 (unit wins → altitude, meters → feet)', input: '川航六九幺八保持五百米', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 1640'] },
+  { name: '爬升至九千米 (meters → feet)', input: '川航六九幺八爬升至九千米', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'] },
   { name: '保持一百八 (<1000 → speed)', input: '川航六九幺八保持一百八', callsign: 'CSC6918', commandTypes: ['update_speed'], commandLabels: ['Fly Speed 180'] },
   { name: '可以进近 → cfa', input: '川航六九幺八可以进近', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'] },
   { name: '允许进近 → cfa', input: '川航六九幺八允许进近', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'] },
@@ -297,6 +307,11 @@ describe('deviation matrix — payload exactness', () => {
   it('flight level one zero zero → targetFt 10000', () => {
     const r = parseVoiceTranscript('CSC6918: flight level one zero zero', AIRCRAFT);
     expect(r.commands[0].payload).toEqual({ type: 'altitude', callSign: 'CSC6918', targetFt: 10000, rate: 1000 });
+  });
+
+  it('meters altitude → targetFt in feet (三千米 → 9843)', () => {
+    const r = parseVoiceTranscript('川航六九幺八下降至三千米', AIRCRAFT);
+    expect(r.commands[0].payload).toEqual({ type: 'altitude', callSign: 'CSC6918', targetFt: 9843, rate: 1000 });
   });
 
   it('speed payload is raw knots', () => {

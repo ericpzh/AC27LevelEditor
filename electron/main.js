@@ -20,6 +20,7 @@ const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAirc
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
 const { buildPatchPayload } = require('./patchFrame');
+const voiceStt = require('./voiceSttWorker');
 
 let mainWindow;
 const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
@@ -1976,6 +1977,54 @@ ipcMain.handle('send-patch-command', async (_e, patch) => {
   }
 });
 
+// ─── IPC: Voice STT (Windows System.Speech worker) ──────────────────
+
+// Forward worker events to the window that started the session (request-scoped:
+// each strips window has its own voice hook instance, so only the initiating
+// webContents receives result/error pushes).
+voiceStt.onEvent((evt) => {
+  switch (evt.type) {
+    case 'started':
+      console.log('[VOICE-PTT] active');
+      break;
+    case 'stopped':
+      console.log('[VOICE-PTT] done');
+      break;
+    case 'result':
+      console.log(`[VOICE-PTT] heard: "${evt.text}" (conf ${evt.confidence}) → forwarded`);
+      break;
+    case 'detected':
+      // Mic audio crossed the level threshold — distinguishes "mic heard
+      // nothing" (no lines at all) from "heard but couldn't parse".
+      console.log('[VOICE-PTT] sound detected');
+      break;
+    case 'rejected':
+      console.log(`[VOICE-PTT] rejected: ${evt.reason || 'low-confidence'} (audio heard, no phrase)`);
+      break;
+  }
+  const sender = voiceStt.getActiveSender();
+  if (sender && !sender.isDestroyed()) {
+    sender.send('voice-stt-event', evt);
+  }
+});
+
+ipcMain.handle('voice-stt-status', async () => {
+  try {
+    return await voiceStt.getStatus();
+  } catch (err) {
+    return { available: false, error: 'SPAWN_FAILED' };
+  }
+});
+
+ipcMain.handle('voice-stt-start', async (e) => {
+  return voiceStt.start(e.sender);
+});
+
+ipcMain.handle('voice-stt-stop', async () => {
+  voiceStt.stop();
+  return { success: true };
+});
+
 // ─── IPC: Debug log from renderer → main terminal ───
 
 ipcMain.handle('debug-log', async (_e, args) => {
@@ -2527,15 +2576,13 @@ app.whenReady().then(() => {
   console.log('[APP] userData:', app.getPath('userData'));
   createWindow();
 
-  // ── Microphone permission: auto-grant for Flight Strips windows ──────
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+  // ── Permission handler: deny everything ──────────────────────────────
+  // Voice input no longer captures audio in the renderer (the PowerShell
+  // System.Speech worker owns the mic), so the former 'media' auto-grant for
+  // flightStrips windows is gone. Deny-all protects against any future request.
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     try {
-      const url = webContents.getURL();
-      if (permission === 'media' && url.includes('window=flightStrips')) {
-        callback(true);
-      } else {
-        callback(false);
-      }
+      callback(false);
     } catch (_) {
       callback(false);
     }
@@ -2596,6 +2643,7 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
   stopUdpListener();
   stopApiServer();
+  voiceStt.dispose();
 });
 
 app.on('window-all-closed', () => {

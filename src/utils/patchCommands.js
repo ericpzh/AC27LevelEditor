@@ -16,6 +16,7 @@ export const ALT_MAX_FT = 9000;     // altitude slider ceiling (extends to the r
 export const SPEED_MIN_KTS = 180;   // fly-speed slider floor
 export const SPEED_MAX_KTS = 240;   // fly-speed slider ceiling (the ACL approach-speed default)
 export const FT_PER_GU = 100 / 0.3048;   // ≈ 328.084 — 1 GU = 100 m (user-confirmed; 15.24 GU = 5000 ft)
+export const FT_PER_METER = 1 / 0.3048;  // ≈ 3.28084 — meters → feet (voice "米"/"meters"/"m" altitudes)
 
 /**
  * Heading payload — the plugin's game-verified convention: heading H →

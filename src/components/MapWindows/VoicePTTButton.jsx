@@ -65,7 +65,19 @@ export default function VoicePTTButton({
 
   // ── Render ────────────────────────────────────────────────────────
 
-  if (!isSupported) return null;
+  if (!isSupported) {
+    // Unavailable — show a disabled error mic when a reason is known so the
+    // failure is visible instead of a silently missing button.
+    return error ? (
+      <div
+        className="voice-ptt-btn voice-ptt-error"
+        title={`Voice error: ${error}`}
+        aria-label={`Voice error: ${error}`}
+      >
+        <IoMicOutline size={16} />
+      </div>
+    ) : null;
+  }
 
   // Determine CSS class based on state
   let className = 'voice-ptt-btn';

@@ -40,6 +40,10 @@
         {
           "from": "node_modules/ffmpeg-static/ffmpeg.exe",
           "to": "ffmpeg.exe"
+        },
+        {
+          "from": "electron/voice-stt.ps1",
+          "to": "voice-stt.ps1"
         }
       ]
     },

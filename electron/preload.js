@@ -238,6 +238,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
 
+  // ─── Voice STT (Windows System.Speech worker) ────────────────
+  getVoiceSttStatus: () => ipcRenderer.invoke('voice-stt-status'),
+  voiceSttStart: () => ipcRenderer.invoke('voice-stt-start'),
+  voiceSttStop: () => ipcRenderer.invoke('voice-stt-stop'),
+  _voiceSttEventHandlers: new Map(),
+  onVoiceSttEvent: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._voiceSttEventHandlers.set(cb, handler);
+    ipcRenderer.on('voice-stt-event', handler);
+  },
+  offVoiceSttEvent: function (cb) {
+    const handler = this._voiceSttEventHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('voice-stt-event', handler);
+      this._voiceSttEventHandlers.delete(cb);
+    }
+  },
+
   // ─── Livery Install ───────────────────────────────────
   selectLiveryZip: () => ipcRenderer.invoke('select-livery-zip'),
   installLivery: (zipPath) => ipcRenderer.invoke('install-livery', zipPath),

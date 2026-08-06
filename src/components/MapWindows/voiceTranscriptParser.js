@@ -26,7 +26,8 @@
  *
  * Disambiguation for bare "maintain N": unit word wins (knots→speed,
  * feet→altitude); flight level→altitude ×100; else N ≥ 1000 → altitude,
- * N < 1000 → speed.
+ * N < 1000 → speed. Altitudes spoken in meters (米 / meters / m) are
+ * converted to feet before the payload is built (the wire contract is feet).
  *
  * Anything unmatched becomes a notice ("unsupported: …") — never dropped.
  */
@@ -35,7 +36,7 @@ import { detectLanguage, parseCallsign, callsignCandidates, EN_FILLER_WORDS } fr
 import { parseSpokenNumberValue, EN_UNIT_WORDS } from './voiceNumberParser.js';
 import {
   buildHeadingPayload, buildAltitudePayload, buildSpeedPayload,
-  buildClearApprPayload, pad3,
+  buildClearApprPayload, pad3, FT_PER_METER,
 } from '../../utils/patchCommands.js';
 
 // ─── Pattern tables (longest prefix first) ─────────────────────────────
@@ -223,6 +224,7 @@ function parseCommandValueZh(remainder, forceFl) {
   if (!num) return null;
   let unit = null;
   if (str.startsWith('英尺', i + num.consumed)) { unit = 'altitude'; i += num.consumed + 2; }
+  else if (str.startsWith('米', i + num.consumed)) { unit = 'altitude-m'; i += num.consumed + 1; }
   else if (str[i + num.consumed] === '节') { unit = 'speed'; i += num.consumed + 1; }
   else i += num.consumed;
   return { value: num.value, fl, unit, text: str.slice(0, i), rest: str.slice(i) };
@@ -239,7 +241,7 @@ function resolveType(patternType, pv) {
     case 'speed': return 'update_speed';
     case 'maintain':
       if (pv.unit === 'speed') return 'update_speed';
-      if (pv.unit === 'altitude' || pv.fl) return 'altitude';
+      if (pv.unit === 'altitude' || pv.unit === 'altitude-m' || pv.fl) return 'altitude';
       return pv.value >= 1000 ? 'altitude' : 'update_speed';
     case 'cfa': return 'clear_for_appr';
     default: return null;
@@ -356,14 +358,18 @@ function matchSegment(segs, lang, callSign, commands, notices) {
     }
 
     const type = resolveType(hit.type, pv);
-    if (!rangeCheck(type, pv.value, pv.fl)) {
+    // Spoken meters ("米" / "meters" / "m") → feet before the range gate and
+    // payload build (wire contract is feet). FL phrases are always feet, so an
+    // explicit meter unit under FL is ignored (nonsense phrase — FL+米 isn't real).
+    const value = pv.unit === 'altitude-m' && !pv.fl ? Math.round(pv.value * FT_PER_METER) : pv.value;
+    if (!rangeCheck(type, value, pv.fl)) {
       notices.push('unsupported: "' + (hit.text + ' ' + pv.text).trim() + '" (out of range)');
       rest = pv.rest;
       continue;
     }
 
     flush();
-    const cmd = buildCommand(type, callSign, pv.value, pv.fl);
+    const cmd = buildCommand(type, callSign, value, pv.fl);
     if (cmd) commands.push(cmd);
     rest = pv.rest;
   }

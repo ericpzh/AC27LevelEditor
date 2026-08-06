@@ -191,6 +191,8 @@ electron/updater.js  →  Auto-update: HEAD check (R2 ETag), MD5 comparison, fil
 electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 7 tools)
 electron/bepinex.js     →  BepInEx debug mode — download, install, uninstall (IL2CPP bleeding edge)
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state v2: simFlags, timeScale, heartbeatSeq, auto-reset)
+electron/voice-stt.ps1  →  Windows System.Speech recognition worker (PowerShell 5.1, JSON-lines protocol, -Wav CLI test mode)
+electron/voiceSttWorker.js →  Main-process bridge: spawns/drives voice-stt.ps1 (state machine, request-scoped event routing)
 mcp/bridge.js        →  MCP stdio↔HTTP bridge (launched by Claude Code for AI agent control)
 index.html           →  Vite HTML entry, loads src/main.jsx
 src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
@@ -206,7 +208,7 @@ src/acl/odin/        →  OdinSerializer binary codec (reader, writer, JSON read
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. All time display uses `resolveConfigTime()` — a centralized resolver that extracts Config.startTime from the ACL and overrides it with `GameTime.CurrentDateTime` (the player's actual in-game time including warmup). Demo files show a 30-min window at CurrentDateTime. The browser screen caches file infos and geometry data in the zustand store across editor→browser navigation, avoiding a full re-scan on return. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), cross-window selection sync, and push-to-talk voice command input (patch-command vocabulary: heading/altitude/speed/clear-for-approach sent to the AC27Appoarch plugin; CLI sim via `scripts/voice_sim.mjs`). Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
+The app has three screens managed by React component rendering: **Setup → Browser → Editor**. All time display uses `resolveConfigTime()` — a centralized resolver that extracts Config.startTime from the ACL and overrides it with `GameTime.CurrentDateTime` (the player's actual in-game time including warmup). Demo files show a 30-min window at CurrentDateTime. The browser screen caches file infos and geometry data in the zustand store across editor→browser navigation, avoiding a full re-scan on return. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), cross-window selection sync, and push-to-talk voice command input (patch-command vocabulary: heading/altitude/speed/clear-for-approach sent to the AC27Appoarch plugin; speech via a Windows System.Speech PowerShell worker — the Chromium Web Speech API doesn't work in Electron; CLI sim via `scripts/voice_sim.mjs`). Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
@@ -299,7 +301,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │   │   ├── voiceNumberParser.js        # Spoken numbers → digits (EN + ZH aviation phraseology)
 │   │   │   ├── voiceCallsignParser.js      # Airline name→ICAO + callsign matching against UDP aircraft
 │   │   │   ├── voiceCommandMatcher.js      # Fuzzy command matching (aliases, Jaccard, Dice coefficient)
-│   │   │   ├── useVoiceCommands.js         # React hook orchestrating full voice pipeline
+│   │   │   ├── useVoiceCommands.js         # React hook: System.Speech worker (Electron) / webkit fallback (browser)
 │   │   │   └── VoicePTTButton.jsx          # Push-to-talk mic button (hold-to-talk, pulse/flash animations)
 │   │   └── common/              # Modal, Toast
 │   │
