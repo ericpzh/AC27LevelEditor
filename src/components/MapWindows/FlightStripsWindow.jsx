@@ -285,7 +285,7 @@ export default function FlightStripsWindow({ airportIcao }) {
   const voiceFeedbackTimerRef = useRef(null);
   // Command capability gate for the PTT button + command bar — patch frames
   // only reach the game while BepInEx Debug Mode is installed AND the
-  // AC27Appoarch plugin DLL is deployed under BepInEx/plugins. Checked once
+  // AC27Approach plugin DLL is deployed under BepInEx/plugins. Checked once
   // when the window opens (the DLL can't change while the game runs — the
   // plugin loads at game start). Hidden while unknown so nothing flashes.
   const [commandCapability, setCommandCapability] = useState(null);
@@ -397,7 +397,7 @@ export default function FlightStripsWindow({ airportIcao }) {
     return () => { alive = false; };
   }, [electronAPI]);
 
-  // Load DLL: pick AC27Appoarch.dll and copy it into BepInEx/plugins.
+  // Load DLL: pick AC27Approach.dll and copy it into BepInEx/plugins.
   // Visible while the DLL is missing; with Debug Mode off it explains what
   // to do instead of opening the dialog. On success the capability check
   // re-runs (deliberate exception to once-on-open — user-initiated), so the
@@ -407,9 +407,9 @@ export default function FlightStripsWindow({ airportIcao }) {
       setDllNoticeOpen(true);
       return;
     }
-    if (!electronAPI.loadAppoarchDll) return;
+    if (!electronAPI.loadApproachDll) return;
     try {
-      const r = await electronAPI.loadAppoarchDll();
+      const r = await electronAPI.loadApproachDll();
       if (!r || r.canceled) return;
       if (r.success) {
         const cap = await electronAPI.checkCommandCapability().catch(() => null);
@@ -966,7 +966,7 @@ export default function FlightStripsWindow({ airportIcao }) {
           })
         )}
       </div>
-      {/* Patch command composer (send-patch-command → AC27Appoarch plugin).
+      {/* Patch command composer (send-patch-command → AC27Approach plugin).
           key: remount per selected aircraft so chips/menus reset. Send/Cancel
           keep the strip selected — the composer resets its own line. */}
       {selectedAircraft && (
@@ -1001,7 +1001,7 @@ export default function FlightStripsWindow({ airportIcao }) {
               like the composer's Send. Selection works for ANY aircraft;
               patch commands only execute on the approach channel (the
               dispatch effect gates it). Visible when command capability is
-              on — BepInEx Debug Mode AND the AC27Appoarch plugin DLL under
+              on — BepInEx Debug Mode AND the AC27Approach plugin DLL under
               BepInEx/plugins (the plugin the frames are relayed to). */}
           {commandCapable === true && (
             <VoicePTTButton
@@ -1017,7 +1017,7 @@ export default function FlightStripsWindow({ airportIcao }) {
               onRelease={voice.stopListening}
             />
           )}
-          {/* Load DLL (2026-08-06): pick AC27Appoarch.dll to copy into
+          {/* Load DLL (2026-08-06): pick AC27Approach.dll to copy into
               BepInEx/plugins. Shown while the DLL is missing — once present,
               the PTT button + command bar take over. With Debug Mode off the
               press shows an explanation popup instead of the file dialog. */}

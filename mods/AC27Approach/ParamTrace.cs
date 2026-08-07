@@ -12,7 +12,7 @@ using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
 using UnityEngine;
 
-namespace AC27Appoarch;
+namespace AC27Approach;
 
 /// <summary>
 /// Per-second parameter tracer for the clear_for_appr handoff (2026-08-03).

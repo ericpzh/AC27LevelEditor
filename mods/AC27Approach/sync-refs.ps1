@@ -2,7 +2,7 @@
 #
 # These 17 DLLs are compile-time references only (the csproj's <HintPath>s point
 # into $(GameDir)\BepInEx\{core,interop}). They are never shipped — the release
-# contains only AC27Appoarch.dll — but a GitHub Actions runner needs them on disk
+# contains only AC27Approach.dll — but a GitHub Actions runner needs them on disk
 # to compile, so they are vendored here and committed. The game's interop DLLs
 # change with each playtest patch; run this after the game updates and commit the
 # refreshed files.

@@ -29,7 +29,7 @@ import {
  * row (not selectable — one command of each type per line). Cancel
  * abandons the whole line (chain + pending). Every choice is a click; the
  * heading value is dragged. Clicking Send dispatches the whole line IN
- * ORDER, one frame per command, to the AC27Appoarch plugin via the
+ * ORDER, one frame per command, to the AC27Approach plugin via the
  * editor's send-patch-command bridge: an `update_heading` frame
  * (heading-only), an `altitude` frame, an `update_speed` frame (fly-speed
  * override), or a `clear_for_appr` frame (approach handoff). Escape
@@ -204,7 +204,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
     };
   }, [aircraft]);
 
-  // The command-capability gate (BepInEx Debug Mode + AC27Appoarch plugin
+  // The command-capability gate (BepInEx Debug Mode + AC27Approach plugin
   // DLL) is computed once by the strips window on open and passed down —
   // no per-mount/per-aircraft re-checking here.
   /** All choices for the current step — depends on what is composed. */
@@ -351,7 +351,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
   // the popup. Live seat changes (handoff to tower) hide it automatically
   // since the aircraft prop refreshes every 200ms from telemetry. It also
   // stays closed unless command capability is on — BepInEx Debug Mode AND
-  // the AC27Appoarch plugin DLL under BepInEx/plugins (the plugin the patch
+  // the AC27Approach plugin DLL under BepInEx/plugins (the plugin the patch
   // frames are relayed to only exists then).
   if (!aircraft || witchMode || aircraft.controlSeat !== CHANNEL_TYPE_APPROACH || commandCapable !== true) return null;
 

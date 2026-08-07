@@ -22,7 +22,7 @@ using UnityEngine;
 using VContainer;
 using VContainer.Unity;
 
-namespace AC27Appoarch;
+namespace AC27Approach;
 
 /// <summary>
 /// Unified patch API (report §4.3 + §6.4): `update_heading` (heading-only

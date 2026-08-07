@@ -1,13 +1,13 @@
 ---
-name: ac27-appoarch
-description: AC27Appoarch — the BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches in-game aircraft (heading + altitude override, STAR→final-approach handoff) through the game's native UDP command channel. Use this skill whenever working in mods/AC27Appoarch (building, editing the Harmony patches, debugging a patch that isn't sticking in-game), when the editor's FlightPatchCommandBar or send-patch-command bridge is involved, when handling clear_for_appr / update_heading / update_speed / altitude / track frames, or when diagnosing BepInEx/IL2CPP interop issues against the game's Aircraft/Dynamics classes. The plugin's deep documentation lives in its own README — read it before making changes.
+name: ac27-approach
+description: AC27Approach — the BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches in-game aircraft (heading + altitude override, STAR→final-approach handoff) through the game's native UDP command channel. Use this skill whenever working in mods/AC27Approach (building, editing the Harmony patches, debugging a patch that isn't sticking in-game), when the editor's FlightPatchCommandBar or send-patch-command bridge is involved, when handling clear_for_appr / update_heading / update_speed / altitude / track frames, or when diagnosing BepInEx/IL2CPP interop issues against the game's Aircraft/Dynamics classes. The plugin's deep documentation lives in its own README — read it before making changes.
 ---
 
-# AC27Appoarch — Plugin Skill
+# AC27Approach — Plugin Skill
 
 ## What This Is
 
-A BepInEx 6 IL2CPP plugin (`com.ac27.appoarch` v1.0.1) that live-patches aircraft in Airport Control 25 (Playtest) **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Four patch commands (plus `track` diagnostics):
+A BepInEx 6 IL2CPP plugin (`com.ac27.approach` v1.0.1) that live-patches aircraft in Airport Control 25 (Playtest) **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Four patch commands (plus `track` diagnostics):
 
 | Command | What it does |
 |---|---|
@@ -17,41 +17,41 @@ A BepInEx 6 IL2CPP plugin (`com.ac27.appoarch` v1.0.1) that live-patches aircraf
 | `update_speed` | **Fly-speed** override (the speed sibling of the heading override): re-points the game's own per-step speed write, never fights from a distance. The game's own acceleration constants ramp the aircraft between speeds; per tick the AVC drive re-asserts the commanded knots (`DriveAvcSpeed`). The lift to the commanded speed is a constant-ACCELERATION ramp (`accel=N`, default 1.5 kt/s of GAME time) seeded from the aircraft's actual speed. Orthogonal to heading/altitude; ends via `clear_for_appr`, a radio-slot flip to tower, a level switch, or a state guard. See the payload-table row and README's `update_speed` note for the full semantics |
 | `track` | **Diagnostics:** dumps the aircraft's full params every 1 s (`track|CS`; send again to stop). Not a patch — no behavior change, just the tracer |
 
-Design document: `mods/docs/bepinex-aircraft-override-report.md` (API design §4, input surfaces §5, verification checklist §8). Class dumps: `mods/docs/aircraft-classes-report.md` + `aircraft-classes-inventory.md` (Cpp2IL dumps of GameAssembly.dll). **Read the plugin's `mods/AC27Appoarch/README.md` before making changes — it records every runtime-verified fact and every failed attempt.**
+Design document: `mods/docs/bepinex-aircraft-override-report.md` (API design §4, input surfaces §5, verification checklist §8). Class dumps: `mods/docs/aircraft-classes-report.md` + `aircraft-classes-inventory.md` (Cpp2IL dumps of GameAssembly.dll). **Read the plugin's `mods/AC27Approach/README.md` before making changes — it records every runtime-verified fact and every failed attempt.**
 
 ## Layout
 
 ```
-mods/AC27Appoarch/
+mods/AC27Approach/
 ├── Plugin.cs               # BepInEx plugin entry, patch application, UDP dispatch
 ├── Patches.cs              # Harmony postfixes/prefixes (Aircraft.Step, UDP service, dynamics)
 ├── OverrideController.cs   # Per-tick heading override + params-replant detection
 ├── ParamTrace.cs           # 1 s parameter trace (track command) + cfa watch lines
-├── AC27Appoarch.csproj     # net6.0, LangVersion 10, refs pinned to <GameDir>\BepInEx\{core,interop}
+├── AC27Approach.csproj     # net6.0, LangVersion 10, refs pinned to <GameDir>\BepInEx\{core,interop}
 └── README.md               # THE deep reference — read before changing anything
 ```
 
 ## Build & Install
 
 ```bash
-dotnet build mods/AC27Appoarch
+dotnet build mods/AC27Approach
 ```
 
-The csproj auto-copies `AC27Appoarch.dll` to `<GameDir>\BepInEx\plugins\` (root, no subfolder). BepInEx 6 IL2CPP loads plugins from `BepInEx\plugins\` at startup — **fully restart the game** (not just a level reload) after dropping/replacing the plugin DLL. `bin/` and `obj/` are gitignored — never commit build artifacts.
+The csproj auto-copies `AC27Approach.dll` to `<GameDir>\BepInEx\plugins\` (root, no subfolder). BepInEx 6 IL2CPP loads plugins from `BepInEx\plugins\` at startup — **fully restart the game** (not just a level reload) after dropping/replacing the plugin DLL. `bin/` and `obj/` are gitignored — never commit build artifacts.
 
 Verify load in `<GameDir>\BepInEx\LogOutput.log`:
 
 ```
-AC27Appoarch loaded
-[AC27Appoarch] Aircraft.Step (postfix): applied
-[AC27Appoarch] View hijack (Aircraft3D.SetWorldPosition): applied
-[AC27Appoarch] UDP Mechanism A (AircraftUdpCommandService.ExecuteSelectAircraft): applied
-[AC27Appoarch] UDP Mechanism B (AircraftUdpCommandService.FixedTick postfix): applied
-[AC27Appoarch] UDP Mechanism B (Socket.Receive capture, 4-arg): applied
-[AC27Appoarch] UDP Mechanism B (Socket.Receive capture, 1-arg): applied
-[AC27Appoarch] UDP log suppression (AircraftUdpCommandService.LogBadDatagramOnce): applied
-[AC27Appoarch] Dynamics.RestoreRuntimeData (trace): applied
-[AC27Appoarch] Dynamics.SetCurrentState (trace): applied
+AC27Approach loaded
+[AC27Approach] Aircraft.Step (postfix): applied
+[AC27Approach] View hijack (Aircraft3D.SetWorldPosition): applied
+[AC27Approach] UDP Mechanism A (AircraftUdpCommandService.ExecuteSelectAircraft): applied
+[AC27Approach] UDP Mechanism B (AircraftUdpCommandService.FixedTick postfix): applied
+[AC27Approach] UDP Mechanism B (Socket.Receive capture, 4-arg): applied
+[AC27Approach] UDP Mechanism B (Socket.Receive capture, 1-arg): applied
+[AC27Approach] UDP log suppression (AircraftUdpCommandService.LogBadDatagramOnce): applied
+[AC27Approach] Dynamics.RestoreRuntimeData (trace): applied
+[AC27Approach] Dynamics.SetCurrentState (trace): applied
 ```
 
 `AircraftDynamicsData.DynamicsParams` setter is deliberately NOT patched — IL2CPP field accessor, both Harmony backends refuse it, and native C++ writes bypass the managed stub. Re-plant detection is a per-step pointer diff instead (`params-replant: <CS> DynamicsParams ← <class>`).
@@ -104,7 +104,7 @@ Payload table (pipe-delimited ASCII): `update_heading|CS|dx|dy[|rate]` · `clear
 ## Editor Integration
 
 - **`FlightPatchCommandBar.jsx`** (Flight Strips window): click/drag-driven composer for approach-channel aircraft (`controlSeat=5`) — `Fly Heading` (heading-only `update_heading`; opens a 001–360 slider defaulted to the aircraft's live telemetry heading; its thumb is a plane knob — `MAP_ICON_PATH` as a `data:` SVG `-webkit-mask-image`, rotated by `--hdg`), `Fly Altitude` (`altitude|CS|targetFt|rate`; opens a 1000-ft slider from 1000 up to max(9000, the rounded current altitude), thumb defaulted to the current altitude rounded to the nearest 1000 — hidden without live telemetry), `Fly Speed` (`update_speed|CS|kts`; 180–240 kt slider, thumb defaulted to the live speed — hidden without live telemetry; the editor sends kts only — the plugin's default ramp of 1.5 kt/s of GAME time applies; per-command `accel=N` tuning goes through the devtools frame), or `Clear for Approach` (`clear_for_appr`, supersedes the whole composed chain — only its frame goes out; the plugin's cfa dispatch removes the override entry anyway). The panels' **Add** chains the current command onto the line (each chained item has a × to remove) so follow-ups can be composed — heading + speed + altitude coexist in the plugin's per-aircraft Entry; a command type already chained **blacks out** in the options row (one of each type per line); **Send dispatches the whole line IN ORDER, N sequential 0x00E7 frames** (awaited one by one), then resets — Send/Cancel keep the strip selected so the next command can be composed for the same aircraft. **The knob depends on `img-src 'self' data:` in `index.html`'s CSP** — without it the data: URI is blocked by `default-src 'self'` and the knob fails silently (fixed; the inline `<svg><path>` map icons are unaffected — not image fetches). See the `ac27-editor` skill's map-windows reference.
-- **Command-capability gate** (the composer + PTT are armed by this, not raw BepInEx alone): the strips window checks **both** BepInEx Debug Mode installed AND the `AC27Appoarch.dll` actually deployed under `<gameRoot>\BepInEx\plugins` (`electron/bepinex.js` `hasAppoarchPlugin` — a recursive, case-insensitive search of the plugins dir, skips symlinked dirs; `check-command-capability` IPC returns `{ bepInExInstalled, pluginInstalled }`). Checked **once on window open** — deliberately no focus re-poll (the DLL can't change without a game restart, and toggling Debug Mode takes effect on reopening the window). `commandCapable = bepInExInstalled && pluginInstalled` drives the PTT button, the command bar, and which help-overlay entries show. When the plugin DLL is missing (but Debug Mode is on) a **Load DLL** button (file-tray icon) opens `load-appoarch-dll` IPC: a file dialog picks a DLL, copied to `BepInEx/plugins/AC27Appoarch.dll` (canonical name — `PLUGIN_DLL_NAME` — regardless of source filename; EPERM/EBUSY while the game runs = `GAME_RUNNING`, shown as a "close the game" notice; Debug Mode off = an explainer popup instead of the dialog). On success the capability check re-runs so the PTT + composer appear without reopening the window. Note: BepInEx alone (Debug Mode on, no DLL) is NOT enough — the composer/PTT stay closed; that's exactly when the Load DLL button exists.
+- **Command-capability gate** (the composer + PTT are armed by this, not raw BepInEx alone): the strips window checks **both** BepInEx Debug Mode installed AND the `AC27Approach.dll` actually deployed under `<gameRoot>\BepInEx\plugins` (`electron/bepinex.js` `hasApproachPlugin` — a recursive, case-insensitive search of the plugins dir, skips symlinked dirs; `check-command-capability` IPC returns `{ bepInExInstalled, pluginInstalled }`). Checked **once on window open** — deliberately no focus re-poll (the DLL can't change without a game restart, and toggling Debug Mode takes effect on reopening the window). `commandCapable = bepInExInstalled && pluginInstalled` drives the PTT button, the command bar, and which help-overlay entries show. When the plugin DLL is missing (but Debug Mode is on) a **Load DLL** button (file-tray icon) opens `load-approach-dll` IPC: a file dialog picks a DLL, copied to `BepInEx/plugins/AC27Approach.dll` (canonical name — `PLUGIN_DLL_NAME` — regardless of source filename; EPERM/EBUSY while the game runs = `GAME_RUNNING`, shown as a "close the game" notice; Debug Mode off = an explainer popup instead of the dialog). On success the capability check re-runs so the PTT + composer appear without reopening the window. Note: BepInEx alone (Debug Mode on, no DLL) is NOT enough — the composer/PTT stay closed; that's exactly when the Load DLL button exists.
 - **`electron/main.js` `send-patch-command`** builds the 0x00E7 frame (parts joined with `|`, NUL-padded to 64 B) → `sendUdpCommand(0x00E7, field)`.
 
 ## Verified Hook Points & Interop Gotchas
@@ -121,14 +121,14 @@ These are the runtime-verified hooks. Two obvious candidates are deliberately NO
 
 ## Debugging a Patch That Doesn't Stick
 
-1. **Always check `LogOutput.log` first** — every dispatch logs `[AC27Appoarch] patch: <type> → <CS> … applied (Mechanism B)`; every apply logs `override: <CS> before hdg …° spd … kt → after hdg …° rate …°/s`; cfa events log `cfa: …` (the per-tick diag lines — de-snap diag, speedcorr, avc/sc-probes, params-replant, diag — are commented out since the log audit 2026-08-05; re-enable via the README's log-audit note).
+1. **Always check `LogOutput.log` first** — every dispatch logs `[AC27Approach] patch: <type> → <CS> … applied (Mechanism B)`; every apply logs `override: <CS> before hdg …° spd … kt → after hdg …° rate …°/s`; cfa events log `cfa: …` (the per-tick diag lines — de-snap diag, speedcorr, avc/sc-probes, params-replant, diag — are commented out since the log audit 2026-08-05; re-enable via the README's log-audit note).
 2. `clear_for_appr` arms a ~3.3 s per-step watch (20 `watch: …` lines — 200 steps at 60 TPS, one line per 10 steps) so the post-patch seconds land in the log without the auto-trace stream (the 30 s auto-track is gone — it flooded the log with 30 `trace:` lines per handoff). `track|CS` toggles the 1 s full param dump manually.
 3. The AFTER dump shows state + `route=` + `wait=[…]`; the per-step watch shows whether the transition stuck at the state-object level (`st=FlyApproachState` with `dyn=Approaching` = half-transition). `params-replant:` lines catch the game re-planting the STAR's params — when you see it, the ACTIVE state owns the channel's params (snapshots each step), not the reverse (commented out since the log audit 2026-08-05 — re-enable via the README's log-audit note). The state-check verdict line is `… — path ok (aircraft's own procedure) / rt ok` (verify-only — no rewriting; a `PATH MISMATCH (Init derived something else than the aircraft's own procedure?)` line is a finding to log, not to force-fix), and the de-snap branch emits `cfa: <CS> de-snap armed: rate N°/s toward IAF …, pre-capture speed … kt`. **Expected healthy sequence (from the README's watch signature):** NO `flight-model reschedule v2` lines at all (the reschedule is REMOVED — the AVC drive re-paces the model) → `stPr` = 0.000 during the pre-capture cruise to the IAF (EXPECTED, not a stall) → `afmETA` ≈ 12 s at the commanded pace → `rbVel` climbing at the LIFT RAMP (2.4→~7 kt within the watch's first 3.3 s at ×1 — 1.5 kt/s — EXPECTED, NOT a stall; ≈ 123 u/s only after the ~2.6 min lift) → nose rotating ≈ 0.05°/step at ×1 (3°/s de-snap) → `de-snap released (captured)` around dist ≈ 120 u (**~55 s in for the crawl case** — the ramp-speed closure, well inside the 36k-tick cap) → the natural final turn at 240 kt, with `post-release: hdg ≈ <IAF bearing>°` lines (no 21° swing = the capture-only release holds; the `game-time: clock resolved` line must be present — no clock line = the fallback ran). For the `update_speed` override the healthy `speedcorr` shape is: `after` surfaces ≈ the `ramp` column (climbing at the ramp rate), measured `pace` tracks the ramp, `ramp` N→armed, `afmRem`/`afmEta` CONSISTENT (no collapse to ~0 — a collapse + `adj IncreaseDecelerate` + 144 ease is the old failure signature), `avcTgt` = the ramp value in before+after. (`speedcorr`/`avc-probe`/`sc-probe` lines are commented out since the log audit 2026-08-05 — re-enable via the README's log-audit note; the tracer's `watch:`/`track|CS` dumps still carry the channel/dynamics speed fields `chTs=`/`dynTs=`/`dynAir=`/`rbVel=`, but the AVC-drive readbacks `avcTgt=`/`scSpd=`/`scTgt=` and the measured `pace` are speedcorr-only.)
 4. Before/after frames from the game's own UDP service are logged (the game plays `AtcContinueApproach` audio on a successful handoff — a quick audible check).
 
 ## Key Rules
 
-- **Read `mods/AC27Appoarch/README.md` before changing the plugin** — it is the authoritative record of verified behavior and dead ends. Keep it in sync with any behavioral change (the editor skill's rule 21 applies here too).
+- **Read `mods/AC27Approach/README.md` before changing the plugin** — it is the authoritative record of verified behavior and dead ends. Keep it in sync with any behavioral change (the editor skill's rule 21 applies here too).
 - **Never hardcode or mint type ids** in the plugin's dynamics work (same policy as the editor): everything is resolved from the game's runtime objects or the Cpp2IL dump — see `mods/docs/aircraft-classes-inventory.md`.
 - **Never commit `bin/` / `obj/`** (gitignored). Commit source + `docs/` only.
 - **The game must be running** for the UDP server to exist (binds `127.0.0.1:20267` only while the game is up).

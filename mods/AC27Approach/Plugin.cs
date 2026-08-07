@@ -9,13 +9,13 @@ using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Il2CppSystem.Net.Sockets;
 
-namespace AC27Appoarch;
+namespace AC27Approach;
 
 /// <summary>
-/// AC27Appoarch — direct aircraft control via the game's native UDP command
+/// AC27Approach — direct aircraft control via the game's native UDP command
 /// channel (report §5.4). Input: UDP only.
 /// </summary>
-[BepInPlugin("com.ac27.appoarch", "AC27Appoarch", "1.0.1")]
+[BepInPlugin("com.ac27.approach", "AC27Approach", "1.0.1")]
 public class Plugin : BasePlugin
 {
     public static Plugin Instance;
@@ -24,7 +24,7 @@ public class Plugin : BasePlugin
     {
         Instance = this;
 
-        var harmony = new Harmony("com.ac27.appoarch");
+        var harmony = new Harmony("com.ac27.approach");
 
         // Design A: overwrite pose after the game's tick (report §4.4)
         TryPatch(harmony, "Aircraft.Step (postfix)",
@@ -147,7 +147,7 @@ public class Plugin : BasePlugin
                 AccessTools.Method(avcType, "SetTargetSpeed", new[] { typeof(float) }),
                 postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.AvcSetTargetSpeedPostfix))));
         else
-            Log.LogWarning("[AC27Appoarch] AVC speed-target probe: AVCController type not resolved — NOT applied");
+            Log.LogWarning("[AC27Approach] AVC speed-target probe: AVCController type not resolved — NOT applied");
 
         // v11 probe (2026-08-05): SpeedController.SetTargetSpeed postfix — the
         // ramp's own target setter; the suspected real speed-target writer the
@@ -160,7 +160,7 @@ public class Plugin : BasePlugin
                 AccessTools.Method(scType, "SetTargetSpeed", new[] { typeof(float) }),
                 postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.ScSetTargetSpeedPostfix))));
         else
-            Log.LogWarning("[AC27Appoarch] SpeedController target probe: type not resolved — NOT applied");
+            Log.LogWarning("[AC27Approach] SpeedController target probe: type not resolved — NOT applied");
 
         // NOTE: AircraftDynamicsData.DynamicsParams is NOT patched — its
         // setter is an IL2CPP field accessor (the interop stub's private-field-
@@ -180,36 +180,36 @@ public class Plugin : BasePlugin
         try
         {
             AddComponent<TracerBehaviour>();
-            Log.LogInfo("[AC27Appoarch] Param tracer (1 s): applied");
+            Log.LogInfo("[AC27Approach] Param tracer (1 s): applied");
         }
         catch (Exception ex)
         {
-            Log.LogWarning($"[AC27Appoarch] Param tracer (1 s): FAILED ({ex.GetType().Name}: {ex.Message})");
+            Log.LogWarning($"[AC27Approach] Param tracer (1 s): FAILED ({ex.GetType().Name}: {ex.Message})");
         }
 
-        Log.LogInfo("AC27Appoarch loaded");
+        Log.LogInfo("AC27Approach loaded");
     }
 
     /// <summary>Log to the BepInEx console/log from anywhere in the plugin.</summary>
-    public static void LogMsg(string msg) => Instance?.Log.LogInfo($"[AC27Appoarch] {msg}");
+    public static void LogMsg(string msg) => Instance?.Log.LogInfo($"[AC27Approach] {msg}");
 
     private bool TryPatch(Harmony harmony, string label, MethodBase target,
                           HarmonyMethod prefix = null, HarmonyMethod postfix = null)
     {
         if (target == null)
         {
-            Log.LogWarning($"[AC27Appoarch] {label}: target method not found — NOT applied");
+            Log.LogWarning($"[AC27Approach] {label}: target method not found — NOT applied");
             return false;
         }
         try
         {
             harmony.Patch(target, prefix: prefix, postfix: postfix);
-            Log.LogInfo($"[AC27Appoarch] {label}: applied");
+            Log.LogInfo($"[AC27Approach] {label}: applied");
             return true;
         }
         catch (Exception ex)
         {
-            Log.LogWarning($"[AC27Appoarch] {label}: FAILED ({ex.GetType().Name}: {ex.Message})");
+            Log.LogWarning($"[AC27Approach] {label}: FAILED ({ex.GetType().Name}: {ex.Message})");
             return false;
         }
     }

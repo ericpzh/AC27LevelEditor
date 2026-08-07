@@ -123,43 +123,43 @@ describe('checkStatus', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
-//  hasAppoarchPlugin
+//  hasApproachPlugin
 // ══════════════════════════════════════════════════════════════
 
-describe('hasAppoarchPlugin', () => {
+describe('hasApproachPlugin', () => {
   it('finds the DLL at the plugins root', () => {
     const gameRoot = tmpDir();
     mkdir(path.join(gameRoot, 'BepInEx', 'plugins'));
-    touch(path.join(gameRoot, 'BepInEx', 'plugins', 'AC27Appoarch.dll'));
+    touch(path.join(gameRoot, 'BepInEx', 'plugins', 'AC27Approach.dll'));
 
-    const { hasAppoarchPlugin } = getBepInEx();
-    expect(hasAppoarchPlugin(gameRoot)).toBe(true);
+    const { hasApproachPlugin } = getBepInEx();
+    expect(hasApproachPlugin(gameRoot)).toBe(true);
   });
 
   it('finds the DLL nested under a subfolder', () => {
     const gameRoot = tmpDir();
-    mkdir(path.join(gameRoot, 'BepInEx', 'plugins', 'AC27Appoarch'));
-    touch(path.join(gameRoot, 'BepInEx', 'plugins', 'AC27Appoarch', 'AC27Appoarch.dll'));
+    mkdir(path.join(gameRoot, 'BepInEx', 'plugins', 'AC27Approach'));
+    touch(path.join(gameRoot, 'BepInEx', 'plugins', 'AC27Approach', 'AC27Approach.dll'));
 
-    const { hasAppoarchPlugin } = getBepInEx();
-    expect(hasAppoarchPlugin(gameRoot)).toBe(true);
+    const { hasApproachPlugin } = getBepInEx();
+    expect(hasApproachPlugin(gameRoot)).toBe(true);
   });
 
   it('matches the DLL name case-insensitively', () => {
     const gameRoot = tmpDir();
     mkdir(path.join(gameRoot, 'BepInEx', 'plugins'));
-    touch(path.join(gameRoot, 'BepInEx', 'plugins', 'ac27appoarch.DLL'));
+    touch(path.join(gameRoot, 'BepInEx', 'plugins', 'ac27approach.DLL'));
 
-    const { hasAppoarchPlugin } = getBepInEx();
-    expect(hasAppoarchPlugin(gameRoot)).toBe(true);
+    const { hasApproachPlugin } = getBepInEx();
+    expect(hasApproachPlugin(gameRoot)).toBe(true);
   });
 
   it('returns false when the plugins dir does not exist', () => {
     const gameRoot = tmpDir();
     mkdir(path.join(gameRoot, 'BepInEx')); // no plugins subfolder
 
-    const { hasAppoarchPlugin } = getBepInEx();
-    expect(hasAppoarchPlugin(gameRoot)).toBe(false);
+    const { hasApproachPlugin } = getBepInEx();
+    expect(hasApproachPlugin(gameRoot)).toBe(false);
   });
 
   it('returns false when other DLLs are present but ours is not', () => {
@@ -168,13 +168,13 @@ describe('hasAppoarchPlugin', () => {
     touch(path.join(gameRoot, 'BepInEx', 'plugins', 'OtherMod.dll'));
     touch(path.join(gameRoot, 'BepInEx', 'plugins', 'Nested', 'YetAnother.dll'));
 
-    const { hasAppoarchPlugin } = getBepInEx();
-    expect(hasAppoarchPlugin(gameRoot)).toBe(false);
+    const { hasApproachPlugin } = getBepInEx();
+    expect(hasApproachPlugin(gameRoot)).toBe(false);
   });
 
   it('returns false for null/undefined gameRoot', () => {
-    const { hasAppoarchPlugin } = getBepInEx();
-    expect(hasAppoarchPlugin(null)).toBe(false);
+    const { hasApproachPlugin } = getBepInEx();
+    expect(hasApproachPlugin(null)).toBe(false);
   });
 });
 

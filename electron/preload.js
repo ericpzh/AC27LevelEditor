@@ -224,9 +224,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installBepInEx: () => ipcRenderer.invoke('install-bepinex'),
   uninstallBepInEx: () => ipcRenderer.invoke('uninstall-bepinex'),
 
-  // Command window / PTT gate + Load DLL (AC27Appoarch plugin under plugins/)
+  // Command window / PTT gate + Load DLL (AC27Approach plugin under plugins/)
   checkCommandCapability: () => ipcRenderer.invoke('check-command-capability'),
-  loadAppoarchDll: () => ipcRenderer.invoke('load-appoarch-dll'),
+  loadApproachDll: () => ipcRenderer.invoke('load-approach-dll'),
 
   _bepInExProgressHandlers: new Map(),
   onBepInExInstallProgress: function (cb) {

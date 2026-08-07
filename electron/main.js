@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -2210,7 +2210,7 @@ ipcMain.handle('uninstall-bepinex', async () => {
   }
 });
 
-// Command window / PTT gate: Debug Mode AND the AC27Appoarch plugin DLL
+// Command window / PTT gate: Debug Mode AND the AC27Approach plugin DLL
 // deployed under BepInEx/plugins. Checked once per fly-strip window open.
 ipcMain.handle('check-command-capability', async () => {
   const cr = _readCache();
@@ -2218,15 +2218,15 @@ ipcMain.handle('check-command-capability', async () => {
   if (!gameRoot) return { bepInExInstalled: false, pluginInstalled: false, error: 'NO_GAME_ROOT' };
   return {
     bepInExInstalled: bepinex.checkStatus(gameRoot).installed,
-    pluginInstalled: bepinex.hasAppoarchPlugin(gameRoot),
+    pluginInstalled: bepinex.hasApproachPlugin(gameRoot),
   };
 });
 
-// Pick a DLL and copy it into <gameRoot>/BepInEx/plugins as AC27Appoarch.dll.
+// Pick a DLL and copy it into <gameRoot>/BepInEx/plugins as AC27Approach.dll.
 // The canonical destination name keeps the capability check deterministic
 // regardless of the source filename. Copying can fail with EPERM while the
 // game is running — the plugin DLL is locked by the loaded process.
-ipcMain.handle('load-appoarch-dll', async (_event) => {
+ipcMain.handle('load-approach-dll', async (_event) => {
   const cr = _readCache();
   const gameRoot = cr?.data?.gameRoot;
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
@@ -2235,7 +2235,7 @@ ipcMain.handle('load-appoarch-dll', async (_event) => {
     ? BrowserWindow.fromWebContents(_event.sender)
     : mainWindow;
   const result = await dialog.showOpenDialog(parent, {
-    title: 'Select AC27Appoarch.dll',
+    title: 'Select AC27Approach.dll',
     filters: [{ name: 'DLL', extensions: ['dll'] }],
     properties: ['openFile'],
   });

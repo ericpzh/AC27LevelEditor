@@ -14,7 +14,7 @@ using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Il2CppSystem.Net.Sockets;
 using UnityEngine;
 
-namespace AC27Appoarch;
+namespace AC27Approach;
 
 public static class Patches
 {

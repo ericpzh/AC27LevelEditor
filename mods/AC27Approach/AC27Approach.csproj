@@ -4,8 +4,8 @@
     <Nullable>disable</Nullable>
     <LangVersion>10</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>AC27Appoarch</AssemblyName>
-    <RootNamespace>AC27Appoarch</RootNamespace>
+    <AssemblyName>AC27Approach</AssemblyName>
+    <RootNamespace>AC27Approach</RootNamespace>
     <GameDir>D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest</GameDir>
   </PropertyGroup>
   <ItemGroup>

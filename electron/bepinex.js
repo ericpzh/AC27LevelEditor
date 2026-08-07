@@ -20,9 +20,9 @@ const { app } = require('electron');
 const BEPINEX_BUILDS_URL = 'https://builds.bepinex.dev/projects/bepinex_be';
 const ARTIFACT_PATTERN = /BepInEx-Unity\.IL2CPP-win-x64/i;
 const REQUIRED_ITEMS = ['BepInEx', 'dotnet', 'doorstop_config.ini', 'winhttp.dll'];
-// Deployed as <gameRoot>/BepInEx/plugins/AC27Appoarch.dll — keep in sync
-// with mods/AC27Appoarch/AC27Appoarch.csproj <AssemblyName>.
-const PLUGIN_DLL_NAME = 'AC27Appoarch.dll';
+// Deployed as <gameRoot>/BepInEx/plugins/AC27Approach.dll — keep in sync
+// with mods/AC27Approach/AC27Approach.csproj <AssemblyName>.
+const PLUGIN_DLL_NAME = 'AC27Approach.dll';
 
 // ─── Helpers ───────────────────────────────────────────────
 
@@ -83,12 +83,12 @@ function checkStatus(gameRoot) {
 
 /**
  * Recursively search <gameRoot>/BepInEx/plugins for our plugin DLL
- * (AC27Appoarch.dll, case-insensitive). The command window / PTT UI only
+ * (AC27Approach.dll, case-insensitive). The command window / PTT UI only
  * works while the plugin is actually deployed — BepInEx alone is not enough.
  * @param {string} gameRoot
  * @returns {boolean} true when the DLL is found anywhere under plugins/
  */
-function hasAppoarchPlugin(gameRoot) {
+function hasApproachPlugin(gameRoot) {
   if (!gameRoot) return false;
   const pluginsDir = path.join(gameRoot, 'BepInEx', 'plugins');
   if (!fs.existsSync(pluginsDir)) return false;
@@ -361,7 +361,7 @@ async function installLatest(gameRoot, onProgress) {
 Object.assign(api, {
   PLUGIN_DLL_NAME,
   checkStatus,
-  hasAppoarchPlugin,
+  hasApproachPlugin,
   findDownloadUrl,
   downloadZip,
   extractZip,

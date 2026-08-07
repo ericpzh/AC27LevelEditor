@@ -6,7 +6,7 @@
  *
  * Payload contract (wire): preload.sendPatchCommand(patch) → main.js
  * 'send-patch-command' → electron/patchFrame.js (type|CS|field… ASCII,
- * NUL-padded to 64 B, commandId 0x00E7) → AC27Appoarch plugin.
+ * NUL-padded to 64 B, commandId 0x00E7) → AC27Approach plugin.
  */
 
 export const TURN_RATE_DEG_S = 3;   // IFR standard-rate turn — the plugin rotates the nose at this °/s of GAME time

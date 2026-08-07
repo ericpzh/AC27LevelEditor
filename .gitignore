@@ -19,13 +19,13 @@ __pycache__/
 .vscode/
 .idea/
 
-# C# mod build artifacts (mods/AC27Appoarch)
+# C# mod build artifacts (mods/AC27Approach)
 mods/**/bin/
 mods/**/obj/
 
 # Runtime trace log (regenerated every playtest session; evidence is cited
 # in README by callsign/date, not by file)
-mods/AC27Appoarch/logs
+mods/AC27Approach/logs
 
 # Test artifacts
 coverage/

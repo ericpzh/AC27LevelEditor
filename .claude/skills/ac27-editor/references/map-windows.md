@@ -1,4 +1,4 @@
-﻿# AC27 Map Windows
+# AC27 Map Windows
 
 ## Table of Contents
 
@@ -318,7 +318,7 @@ Branch commands (marked with `→`) navigate to a sub-menu showing dynamic optio
 
 ### Patch Command Composer (`FlightPatchCommandBar.jsx`) — LIVE
 
-Shown at the bottom of the strips window when a strip is selected **and** the aircraft is on the **approach channel** (`aircraft.controlSeat === CHANNEL_TYPE_APPROACH`, seat 5). Hidden for every other seat — including final approach under tower (seat 3) — and for any aircraft while `witchMode` is on. Also gated on `checkBepInEx` resolving to installed (the patch frames only reach the game through the AC27Appoarch plugin, which only exists under BepInEx); the gate re-checks on mount, aircraft change, and window focus — while unknown the composer stays hidden so the gate never flashes.
+Shown at the bottom of the strips window when a strip is selected **and** the aircraft is on the **approach channel** (`aircraft.controlSeat === CHANNEL_TYPE_APPROACH`, seat 5). Hidden for every other seat — including final approach under tower (seat 3) — and for any aircraft while `witchMode` is on. Also gated on `checkBepInEx` resolving to installed (the patch frames only reach the game through the AC27Approach plugin, which only exists under BepInEx); the gate re-checks on mount, aircraft change, and window focus — while unknown the composer stays hidden so the gate never flashes.
 
 Command-line-style, mouse-only: the command builds up on ONE line (`CSN9355: Fly Heading 090`); at every step the next choices appear as a horizontal option row flush above the line (`Fly Heading | Clear for Approach | Cancel` → heading values `030…360 | Cancel` → `Send | Cancel`). Send appears once ≥1 option is committed. Escape mirrors Cancel (pending value pick → previous menu; else reset the line). **Send/Cancel/Escape keep the strip selected** — the composer resets its own line (`resetCommand`), so the next command can be composed for the same aircraft without re-clicking the strip; selection is released by clicking the window background (`handleBodyClick`).
 
@@ -329,7 +329,7 @@ Command-line-style, mouse-only: the command builds up on ONE line (`CSN9355: Fly
 
 **CSS:** `FlightStripsWindow.css` — `.flight-strips-command-wrap` (position: relative, z-index 30), `.fcc-suggest` (absolute, `bottom: 100%`, monospace option row), `.fcc-suggest-item` / `.fcc-suggest-cancel` (hover states), `.fcc-cmd` (the line being built). Slider panels: `.fcc-heading-slider` (plain `::-webkit-slider-thumb` circle — reused by Fly Altitude) + `.fcc-heading-slider.fcc-plane-thumb` (plane-knob variant: 18×18, no border/radius, accent background, `-webkit-mask-image: var(--thumb-plane, none)` with `contain` sizing, `filter: drop-shadow`, `transform: rotate(var(--hdg, 0deg))` — `--hdg`/`--thumb-plane` set inline per element). Hidden with the command bar in witch mode via the existing `.flight-strips.witch-mode .flight-strips-command-bar` rule.
 
-**Protocol:** frames go to the AC27Appoarch plugin via `send-patch-command` (IPC) → 0x00E7 extended UDP frame — see `udp-telemetry.md` "Command Channel" and the `ac27-appoarch` skill for the full contract.
+**Protocol:** frames go to the AC27Approach plugin via `send-patch-command` (IPC) → 0x00E7 extended UDP frame — see `udp-telemetry.md` "Command Channel" and the `ac27-approach` skill for the full contract.
 
 ### Voice Command Input (LIVE — vosk offline backend, 2026-08-06)
 
