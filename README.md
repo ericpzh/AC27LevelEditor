@@ -180,7 +180,6 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 ```bash
 npm install
 npm start          # Launch in dev mode (no build step needed)
-npm start -- --large  # Dev-only: LARGE vosk models for accuracy testing (note the `--` — bare `npm start --large` never reaches the app; fetch first: node scripts/fetch-vosk-model.mjs --large)
 ```
 
 ### Architecture (High-Level)
@@ -447,7 +446,7 @@ variants are produced:
 | Command | Artifact | Contents |
 | --- | --- | --- |
 | `npm run build:win` | `release/AC27Editor.exe` | Normal build — **no voice assets**. This is the auto-update variant served from R2 (small). Voice UI shows "unavailable" (worker JS not shipped). |
-| `npm run build:win:voice` | `release/AC27EditorVoice.exe` | Voice build — bundles the offline vosk STT (en+zh models ~92 MB, sox, vosk DLLs, koffi). GitHub-only; **never** uploaded to R2. |
+| `npm run build:win:voice` | `release/AC27EditorVoice.exe` | Voice build — bundles the offline vosk STT (large EN model `vosk-model-en-us-0.22` ~1.9 GB + small ZH `vosk-model-small-cn-0.22` ~42 MB, sox, vosk DLLs, koffi). GitHub-only; **never** uploaded to R2; auto-update disabled. |
 | `npm run build:mac` | `release/*.dmg` | macOS (voice is Windows-only). |
 
 Both Windows variants go to the GitHub release; only `AC27Editor.exe` reaches
@@ -457,13 +456,9 @@ R2 for auto-update (the CI pins the exact filename).
 # Normal build
 npm run build:win
 
-# Voice build (needs models first: node scripts/fetch-vosk-model.mjs)
+# Voice build (needs models first: node scripts/fetch-vosk-model.mjs — fetches
+# the large en model ~1.9 GB + small zh model)
 npm run build:win:voice
-
-# Dev-only accuracy testing with the LARGE vosk models (vosk-model-en-us-0.22 /
-# vosk-model-cn-0.22, ~3.3 GB) — internal only, never bundled into builds:
-node scripts/fetch-vosk-model.mjs --large
-npm start -- --large   # or: npm run start:large
 ```
 
 `node build.js --win [--voice] [--publish never]` also works directly

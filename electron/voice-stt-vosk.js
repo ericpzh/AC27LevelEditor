@@ -28,7 +28,7 @@
  * is rejected as busy. 'exit' tears down and exits 0 (also on stdin EOF).
  *
  * Dual-language decode: each session runs one Recognizer per model (en-US
- * small + zh-CN small) on the same PCM; the emitted result is the one with the
+ * large + zh-CN small) on the same PCM; the emitted result is the one with the
  * higher average word confidence — no user language toggle needed.
  *
  * CLI modes (no stdin loop):
@@ -45,12 +45,11 @@ const readline = require('readline');
 const { VoskModel, VoskRecognizer } = require('./voskFfi.js');
 
 const SAMPLE_RATE = 16000;
-const EN_MODEL = 'vosk-model-small-en-us-0.15';
+// The voice build ships these exact models (see build.js VOICE_RESOURCES):
+// en uses the LARGE vosk-model-en-us-0.22 for accuracy (the small en-us-0.15
+// was ditched 2026-08-06 — too inaccurate); zh stays on the small cn-0.22.
+const EN_MODEL = 'vosk-model-en-us-0.22';
 const ZH_MODEL = 'vosk-model-small-cn-0.22';
-// Dev-only large models (internal testing — never bundled into builds):
-// selected when VOSK_USE_LARGE=1 (set by `npm start -- --large`).
-const EN_MODEL_LARGE = 'vosk-model-en-us-0.22';
-const ZH_MODEL_LARGE = 'vosk-model-cn-0.22';
 
 /** Silence grace after 'stop' (ms). Longer than the audio burst that follows
  *  a PTT release; the Node side's STOP_DRAIN_MS (1500) fires first, so total
@@ -122,12 +121,9 @@ function boot() {
     grammar = loadGrammar();
     soxPath = resolveSoxPath();
 
-    const useLarge = process.env.VOSK_USE_LARGE === '1';
-    const enModelName = useLarge ? EN_MODEL_LARGE : EN_MODEL;
-    const zhModelName = useLarge ? ZH_MODEL_LARGE : ZH_MODEL;
-    const fetchHint = useLarge
-      ? 'run `node scripts/fetch-vosk-model.mjs --large`'
-      : 'run `node scripts/fetch-vosk-model.mjs`';
+    const enModelName = EN_MODEL;
+    const zhModelName = ZH_MODEL;
+    const fetchHint = 'run `node scripts/fetch-vosk-model.mjs`';
 
     const enDir = resolveModelDir('VOSK_MODEL_DIR', enModelName);
     if (!enDir) throw Object.assign(new Error(`en model missing — ${fetchHint}`), { code: 'NO_MODEL' });

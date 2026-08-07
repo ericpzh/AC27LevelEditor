@@ -1,19 +1,15 @@
 // fetch-vosk-model.mjs — download the vosk recognition models into models/.
 //
-// Downloads vosk-model-small-en-us-0.15 (~50 MB) and vosk-model-small-cn-0.22
-// (~42 MB) from alphacephei.com, extracts, and verifies each model's
-// conf/model.conf sentinel. Idempotent: skips models already present.
+// Downloads vosk-model-en-us-0.22 (~1.9 GB — the LARGE en model, shipped in
+// the voice build for accuracy; the small en-us-0.15 was ditched 2026-08-06
+// as too inaccurate) and vosk-model-small-cn-0.22 (~42 MB — zh stays small)
+// from alphacephei.com, extracts, and verifies each model's conf/model.conf
+// sentinel. Idempotent: skips models already present. Zips are deleted after
+// extraction — conf/model.conf is the sentinel.
 //
 // Usage:
-//   node scripts/fetch-vosk-model.mjs          # fetch the small pair (default)
-//   node scripts/fetch-vosk-model.mjs --large  # fetch the LARGE pair instead (dev-only)
+//   node scripts/fetch-vosk-model.mjs          # fetch the pair
 //   node scripts/fetch-vosk-model.mjs --check  # verify presence only (exit 1 if missing)
-//
-// --large is for internal testing only: downloads vosk-model-en-us-0.22
-// (~1.9 GB) and vosk-model-cn-0.22 (~1.4 GB) instead of the small pair. The
-// large models are NEVER bundled into builds or published — build.js copies
-// an explicit list (small models only). Large zips are deleted after
-// extraction to keep the dev cache from bloating.
 import { createRequire } from 'module';
 import { execFileSync } from 'child_process';
 import { createWriteStream, existsSync, mkdirSync, unlinkSync } from 'fs';
@@ -26,24 +22,14 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MODELS_DIR = path.join(ROOT, 'models');
 
 // name → download URL (pinned versions — models are frozen at release)
-const SMALL_MODELS = {
-  'vosk-model-small-en-us-0.15':
-    'https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip',
+const MODELS = {
+  'vosk-model-en-us-0.22':
+    'https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip',
   'vosk-model-small-cn-0.22':
     'https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip',
 };
-const LARGE_MODELS = {
-  'vosk-model-en-us-0.22':
-    'https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip',
-  'vosk-model-cn-0.22':
-    'https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip',
-};
 
-const LARGE = process.argv.includes('--large');
-const MODELS = LARGE ? LARGE_MODELS : SMALL_MODELS;
-const FETCH_CMD = LARGE
-  ? 'node scripts/fetch-vosk-model.mjs --large'
-  : 'node scripts/fetch-vosk-model.mjs';
+const FETCH_CMD = 'node scripts/fetch-vosk-model.mjs';
 
 const checkOnly = process.argv.includes('--check');
 
@@ -94,9 +80,7 @@ async function fetchModel(name, url) {
   if (!modelPresent(name)) {
     throw new Error(`${name}: extracted but conf/model.conf not found (bad archive?)`);
   }
-  if (LARGE) {
-    unlinkSync(zip); // multi-GB dev cache — drop the zip, conf/model.conf is the sentinel
-  }
+  unlinkSync(zip); // the ~1.9 GB en zip must not linger — conf/model.conf is the sentinel
   console.log(`[vosk-model] ${name}: OK`);
 }
 
@@ -114,9 +98,7 @@ async function fetchModel(name, url) {
   for (const [name, url] of Object.entries(MODELS)) {
     await fetchModel(name, url);
   }
-  console.log(LARGE
-    ? '[vosk-model] done — large models are dev-only (never bundled into builds)'
-    : '[vosk-model] done — models are gitignored; the voice build bundles them via build.js');
+  console.log('[vosk-model] done — models are gitignored; the voice build bundles them via build.js');
 })().catch((err) => {
   console.error('[vosk-model] FAILED:', err.message);
   process.exit(1);

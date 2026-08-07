@@ -63,6 +63,9 @@ afterEach(() => {
   delete process.env.AC27_UPDATE_TARGET;
   delete process.env.AC27_UPDATE_DEV_CHECK;
   delete process.env.PORTABLE_EXECUTABLE_FILE;
+  if (Object.prototype.hasOwnProperty.call(process, 'resourcesPath')) {
+    delete process.resourcesPath;
+  }
 });
 
 function getUpdater() {
@@ -140,6 +143,50 @@ describe('isUpdateSupported', () => {
     const updater = getUpdater();
     expect(updater.isUpdateSupported()).toBe(false);
     process.env.PORTABLE_EXECUTABLE_FILE = path.join(os.tmpdir(), 'AC27Editor.exe');
+  });
+
+  it('returns false on the voice build (voice-stt-vosk.js in resourcesPath)', () => {
+    const fakeResources = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-voice-'));
+    fs.writeFileSync(path.join(fakeResources, 'voice-stt-vosk.js'), '// dummy');
+    Object.defineProperty(process, 'resourcesPath', { value: fakeResources, configurable: true });
+    const updater = getUpdater();
+    expect(updater.isUpdateSupported()).toBe(false);
+    delete process.resourcesPath;
+    fs.rmSync(fakeResources, { recursive: true, force: true });
+  });
+});
+
+// ── isVoiceBuild ───────────────────────────────────────────────
+
+describe('isVoiceBuild', () => {
+  it('returns true when packaged and voice-stt-vosk.js exists in resourcesPath', () => {
+    const fakeResources = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-voice-'));
+    fs.writeFileSync(path.join(fakeResources, 'voice-stt-vosk.js'), '// dummy');
+    Object.defineProperty(process, 'resourcesPath', { value: fakeResources, configurable: true });
+    const updater = getUpdater();
+    expect(updater.isVoiceBuild()).toBe(true);
+    delete process.resourcesPath;
+    fs.rmSync(fakeResources, { recursive: true, force: true });
+  });
+
+  it('returns false when the marker file is absent', () => {
+    const fakeResources = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-novoice-'));
+    Object.defineProperty(process, 'resourcesPath', { value: fakeResources, configurable: true });
+    const updater = getUpdater();
+    expect(updater.isVoiceBuild()).toBe(false);
+    delete process.resourcesPath;
+    fs.rmSync(fakeResources, { recursive: true, force: true });
+  });
+
+  it('returns false when not packaged', () => {
+    mockApp.isPackaged = false;
+    const updater = getUpdater();
+    expect(updater.isVoiceBuild()).toBe(false);
+  });
+
+  it('returns false when resourcesPath is undefined (plain-node test env)', () => {
+    const updater = getUpdater();
+    expect(updater.isVoiceBuild()).toBe(false);
   });
 });
 
@@ -313,6 +360,19 @@ describe('checkForUpdate gates', () => {
     const result = await updater.checkForUpdate();
     expect(result.hasUpdate).toBe(false);
     expect(result.error).toBeUndefined(); // gated before HEAD — no network error
+  });
+
+  it('skips without a network attempt on the voice build (voice-stt-vosk.js in resourcesPath)', async () => {
+    const fakeResources = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-voice-'));
+    fs.writeFileSync(path.join(fakeResources, 'voice-stt-vosk.js'), '// dummy');
+    Object.defineProperty(process, 'resourcesPath', { value: fakeResources, configurable: true });
+    process.env.AC27_UPDATE_SERVER = 'https://127.0.0.1:1'; // would fail fast if reached
+    const updater = getUpdater();
+    const result = await updater.checkForUpdate();
+    expect(result.hasUpdate).toBe(false);
+    expect(result.error).toBeUndefined(); // gated before HEAD — no network error
+    delete process.resourcesPath;
+    fs.rmSync(fakeResources, { recursive: true, force: true });
   });
 
   it('proceeds past the gate in dev mode with AC27_UPDATE_TARGET', async () => {

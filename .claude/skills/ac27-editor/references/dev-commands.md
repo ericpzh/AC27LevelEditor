@@ -122,6 +122,7 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 - **`resolveTargetExe()`** — resolves the exe to compare: `PORTABLE_EXECUTABLE_FILE` (packaged portable), `process.execPath` (packaged non-portable), `AC27_UPDATE_TARGET` (dev mode explicit path), or auto-discovered build artifact (`release/AC27Editor.exe`, `dist/AC27 Editor.exe`, etc.) in dev mode
 - **Dev mode gating** — `npm start` skips the check by default. Opt in with `AC27_UPDATE_DEV_CHECK=1` (auto-discover) or `AC27_UPDATE_TARGET=<path>` (explicit)
 - **`skip-update` IPC removed** — no more `skipped-update.json`. The "Later" button is ephemeral (next restart re-prompts)
+- **Voice build skips the check** (2026-08-06) — `AC27EditorVoice.exe` never checks: `isVoiceBuild()` (resources/`voice-stt-vosk.js` present) → `[Updater] voice build — auto-update disabled — skipping`, `hasUpdate: false`, no network. The voice exe is never on R2, so its MD5 could never match (phantom popup). Gated inside `checkForUpdate()` — covers both the main-process push and the renderer fallback
 - **DRY_RUN defaults** differ by context: `false` for packaged (real install), `true` for dev (safe). Override with `AC27_UPDATE_DRY_RUN=0` / `=1`
 - **Renderer fallback** — `App.jsx` actively invokes `checkForUpdate()` as fallback if the main-process push arrives before the renderer is ready (race condition guarded by `useRef(false)`)
 

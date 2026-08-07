@@ -15,6 +15,13 @@
  * against a local build artifact (see resolveTargetExe); install is forced to
  * dry-run in dev.
  *
+ * Voice variant: the AC27EditorVoice.exe build (detected by the presence of
+ * resources/voice-stt-vosk.js — see isVoiceBuild) never checks for updates. It
+ * is distributed via GitHub releases only and is never uploaded to the R2
+ * update server, so its MD5 could never match the remote ETag — a phantom
+ * "update available" on every launch (and a download would replace the voice
+ * exe with the normal build).
+ *
  * Every decision step is logged via log() — console + <userData>/updater.log.
  *
  * ## Env var overrides (for testing)
@@ -63,12 +70,30 @@ const api = module.exports;
  * Only Windows portable builds support auto-update.
  * macOS uses DMG distribution (no auto-update).
  * Dev mode (!app.isPackaged) also skips.
+ * The Voice variant (AC27EditorVoice.exe) is excluded — see isVoiceBuild.
  * @returns {boolean}
  */
 function isUpdateSupported() {
   return app.isPackaged
     && process.platform === 'win32'
-    && !!process.env.PORTABLE_EXECUTABLE_FILE;
+    && !!process.env.PORTABLE_EXECUTABLE_FILE
+    && !isVoiceBuild();
+}
+
+/**
+ * Detect the Voice variant (AC27EditorVoice.exe).
+ *
+ * The voice build bundles the vosk STT worker as an extraResource
+ * (resources/voice-stt-vosk.js — see build.js VOICE_RESOURCES), which the
+ * normal build never ships. The voice exe is distributed via GitHub releases
+ * only and never uploaded to the R2 update server, so auto-update is disabled
+ * for it entirely (the MD5 could never match the remote ETag).
+ * @returns {boolean}
+ */
+function isVoiceBuild() {
+  if (!app.isPackaged) return false;
+  if (typeof process.resourcesPath !== 'string') return false; // plain-node tests
+  return fs.existsSync(path.join(process.resourcesPath, 'voice-stt-vosk.js'));
 }
 
 // ─── MD5 computation ──────────────────────────────────────
@@ -204,6 +229,14 @@ async function checkForUpdate() {
   }
   if (app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE) {
     log('[Updater] packaged but not portable (no PORTABLE_EXECUTABLE_FILE) — skipping');
+    return { hasUpdate: false };
+  }
+  // Voice variant: GitHub-release distribution only, never on the R2 update
+  // server — its MD5 could never match the remote ETag. Skip entirely so the
+  // phantom "update available" prompt (and the risk of a download replacing
+  // the voice exe with the normal build) can never fire.
+  if (isVoiceBuild()) {
+    log('[Updater] voice build — auto-update disabled — skipping');
     return { hasUpdate: false };
   }
   // Dev mode is opt-in: skip by default so `npm start` never prompts. Setting
@@ -441,6 +474,7 @@ function installUpdate(updateDir, currentExePath, newExePath) {
 Object.assign(api, {
   // Public API
   isUpdateSupported,
+  isVoiceBuild,
   checkForUpdate,
   downloadUpdate,
   installUpdate,

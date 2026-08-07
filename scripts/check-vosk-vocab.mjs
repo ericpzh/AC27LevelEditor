@@ -7,7 +7,6 @@
 //
 // Usage:
 //   node scripts/check-vosk-vocab.mjs            # report both models
-//   node scripts/check-vosk-vocab.mjs --large    # same, against the LARGE models (dev-only)
 //   node scripts/check-vosk-vocab.mjs --fail     # exit 1 when ANY word is OOV
 import { spawn } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
@@ -17,16 +16,12 @@ import { fileURLToPath } from 'url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const grammar = JSON.parse(readFileSync(path.join(ROOT, 'electron', 'voice-grammar.json'), 'utf8'));
 
-const LARGE = process.argv.includes('--large');
-const MODELS = LARGE
-  ? [
-      { lang: 'en', dir: 'models/vosk-model-en-us-0.22', words: grammar.words },
-      { lang: 'zh', dir: 'models/vosk-model-cn-0.22', words: grammar.wordsZh },
-    ]
-  : [
-      { lang: 'en', dir: 'models/vosk-model-small-en-us-0.15', words: grammar.words },
-      { lang: 'zh', dir: 'models/vosk-model-small-cn-0.22', words: grammar.wordsZh },
-    ];
+// The exact models the voice build ships (see build.js VOICE_RESOURCES):
+// en = LARGE vosk-model-en-us-0.22, zh = small vosk-model-small-cn-0.22.
+const MODELS = [
+  { lang: 'en', dir: 'models/vosk-model-en-us-0.22', words: grammar.words },
+  { lang: 'zh', dir: 'models/vosk-model-small-cn-0.22', words: grammar.wordsZh },
+];
 
 // Child inline script: load ONE model + a grammar recognizer; the DLL logs
 // OOV warnings to the child's own stderr, which the parent parses. One child
@@ -62,7 +57,7 @@ const missing = { en: [], zh: [] };
 for (const m of MODELS) {
   const dir = path.join(ROOT, m.dir);
   if (!existsSync(path.join(dir, 'conf', 'model.conf'))) {
-    console.log(`SKIP ${m.lang} — model missing (run node scripts/fetch-vosk-model.mjs${LARGE ? ' --large' : ''})`);
+    console.log(`SKIP ${m.lang} — model missing (run node scripts/fetch-vosk-model.mjs)`);
     continue;
   }
   const { stderr, stdout, code } = await runChild([path.join(ROOT, m.dir), m.lang === 'en' ? 'words' : 'wordsZh']);

@@ -39,14 +39,15 @@ const BASE = {
 /** Voice-only extraResources — everything the vosk worker child needs at
  *  runtime (it runs as plain node via ELECTRON_RUN_AS_NODE, which has no
  *  asar support, so these land beside the app in resources/).
- *  NEVER add the large models here (vosk-model-en-us-0.22 / vosk-model-cn-0.22)
- *  — they are dev-only via `npm start -- --large` and must never ship. */
+ *  Models: en = LARGE vosk-model-en-us-0.22 (~1.9 GB, accuracy — the small
+ *  en-us-0.15 was ditched 2026-08-06), zh = small vosk-model-small-cn-0.22.
+ *  Keep this list in sync with the constants in electron/voice-stt-vosk.js. */
 const VOICE_RESOURCES = [
   { from: 'electron/voice-stt-vosk.js', to: 'voice-stt-vosk.js' },
   { from: 'electron/voskFfi.js', to: 'voskFfi.js' },
   { from: 'electron/voice-grammar.json', to: 'voice-grammar.json' },
   { from: 'bin/sox', to: 'sox' },
-  { from: 'models/vosk-model-small-en-us-0.15', to: 'models/vosk-model-small-en-us-0.15' },
+  { from: 'models/vosk-model-en-us-0.22', to: 'models/vosk-model-en-us-0.22' },
   { from: 'models/vosk-model-small-cn-0.22', to: 'models/vosk-model-small-cn-0.22' },
   { from: 'bin/vosk', to: 'vosk' },
   { from: 'node_modules/koffi', to: 'node_modules/koffi' },
@@ -70,7 +71,7 @@ const win = {
 };
 
 if (isVoice) {
-  if (!fs.existsSync(path.join(__dirname, 'models', 'vosk-model-small-en-us-0.15', 'conf', 'model.conf')) ||
+  if (!fs.existsSync(path.join(__dirname, 'models', 'vosk-model-en-us-0.22', 'conf', 'model.conf')) ||
       !fs.existsSync(path.join(__dirname, 'models', 'vosk-model-small-cn-0.22', 'conf', 'model.conf'))) {
     fail('voice build needs the vosk models — run `node scripts/fetch-vosk-model.mjs` first');
   }
