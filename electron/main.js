@@ -2210,6 +2210,53 @@ ipcMain.handle('uninstall-bepinex', async () => {
   }
 });
 
+// Command window / PTT gate: Debug Mode AND the AC27Appoarch plugin DLL
+// deployed under BepInEx/plugins. Checked once per fly-strip window open.
+ipcMain.handle('check-command-capability', async () => {
+  const cr = _readCache();
+  const gameRoot = cr?.data?.gameRoot;
+  if (!gameRoot) return { bepInExInstalled: false, pluginInstalled: false, error: 'NO_GAME_ROOT' };
+  return {
+    bepInExInstalled: bepinex.checkStatus(gameRoot).installed,
+    pluginInstalled: bepinex.hasAppoarchPlugin(gameRoot),
+  };
+});
+
+// Pick a DLL and copy it into <gameRoot>/BepInEx/plugins as AC27Appoarch.dll.
+// The canonical destination name keeps the capability check deterministic
+// regardless of the source filename. Copying can fail with EPERM while the
+// game is running — the plugin DLL is locked by the loaded process.
+ipcMain.handle('load-appoarch-dll', async (_event) => {
+  const cr = _readCache();
+  const gameRoot = cr?.data?.gameRoot;
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+
+  const parent = _event.sender && !_event.sender.isDestroyed()
+    ? BrowserWindow.fromWebContents(_event.sender)
+    : mainWindow;
+  const result = await dialog.showOpenDialog(parent, {
+    title: 'Select AC27Appoarch.dll',
+    filters: [{ name: 'DLL', extensions: ['dll'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths.length) return { canceled: true };
+
+  // Belt-and-suspenders: the renderer pre-checks, but the plugins dir only
+  // exists meaningfully while BepInEx Debug Mode is installed.
+  if (!bepinex.checkStatus(gameRoot).installed) return { success: false, error: 'DEBUG_MODE_OFF' };
+
+  try {
+    const pluginsDir = path.join(gameRoot, 'BepInEx', 'plugins');
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.copyFileSync(result.filePaths[0], path.join(pluginsDir, bepinex.PLUGIN_DLL_NAME));
+    return { success: true };
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EBUSY') return { success: false, error: 'GAME_RUNNING' };
+    console.error('[LoadDll] copy failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
 // ─── IPC: Livery Install ─────────────────────────────────
 
 ipcMain.handle('select-livery-zip', async () => {

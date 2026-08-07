@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import './MapHelpOverlay.css';
 import { useTranslation } from '../../hooks/useTranslation';
-import { IoClose } from 'react-icons/io5';
+import { IoClose, IoRefreshOutline, IoMicOutline, IoFileTrayOutline } from 'react-icons/io5';
 
 // ─── Button registry (label key → visual type) ──────────────
 const MAP_BUTTONS = {
@@ -13,7 +13,12 @@ const MAP_BUTTONS = {
   ils:     { labelKey: 'air_map_runway_ext', type: 'toggle' },
   mapbg:   { labelKey: 'air_map_bg',         type: 'toggle' },
   waypoints:{ labelKey: 'air_map_waypoints', type: 'toggle' },
-  refresh: { labelKey: 'map_refresh',        type: 'action', icon: '↻' },
+  refresh: { labelKey: 'map_refresh',        type: 'action', icon: IoRefreshOutline },
+  // Flight-strips bar: PTT mic + Load DLL. Icons are the real react-icons
+  // components used by the window's buttons (labels unused — strips renders
+  // these as flat icon symbols, matching glyphs + color exactly).
+  ptt:     { label: 'PTT',                   type: 'action', icon: IoMicOutline },
+  loaddll: { label: 'DLL',                   type: 'action', icon: IoFileTrayOutline },
   arr:     { label: 'ARR',                   type: 'toggle' },
   dep:     { label: 'DEP',                   type: 'toggle' },
   runways:{ labelKey: 'air_map_runways',     type: 'toggle' },
@@ -42,11 +47,16 @@ function renderContent(text, t, activeButtons, onToggle, mapType) {
       const icon = btn.icon || label;
       const isActive = activeButtons.has(key);
       // Strips window uses static icon buttons matching its bottom bar; radar uses knob visuals
-      const isIcon = btn.type === 'icon' || (mapType === 'strips' && (key === 'refresh'));
+      const isIcon = btn.type === 'icon' || (mapType === 'strips' && (key === 'refresh' || key === 'ptt' || key === 'loaddll'));
       const isToggle = !isIcon && (btn.type === 'toggle' || btn.type === 'action');
-      // Icon buttons: flat span, no wrappers
+      // Icon buttons: flat span showing the actual bar glyph — react-icons
+      // components render at the bar's 16px size; string icons as text
       if (isIcon) {
-        return <span key={i} className="map-help-btn-icon-symbol">{icon}</span>;
+        return (
+          <span key={i} className="map-help-btn-icon-symbol">
+            {typeof icon === 'function' ? React.createElement(icon, { size: 16 }) : icon}
+          </span>
+        );
       }
       return (
         <span
@@ -118,6 +128,8 @@ const STRIPS_SECTIONS = [
   {
     id: 'interact', headingKey: null,
     bodyKeys: [
+      'map_help_strips_ptt',
+      'map_help_strips_loaddll',
       'map_help_strips_refresh',
       'map_help_strips_click',
       'map_help_strips_drag',
@@ -125,8 +137,16 @@ const STRIPS_SECTIONS = [
   },
 ];
 
+// Strips help entries follow the same visibility rules as the bar buttons:
+// PTT only while command capability is on; Load DLL only while the plugin
+// DLL is missing (that's exactly when the button exists to fix it).
+const STRIPS_GATED_KEYS = {
+  map_help_strips_ptt: (commandCapable) => commandCapable === true,
+  map_help_strips_loaddll: (commandCapable) => commandCapable !== true,
+};
+
 // ─── Component ──────────────────────────────────────────────
-export default function MapHelpOverlay({ type, onClose, title, titleKey, runwayList }) {
+export default function MapHelpOverlay({ type, onClose, title, titleKey, runwayList, commandCapable }) {
   const { t } = useTranslation();
   const [activeButtons, setActiveButtons] = useState(() => new Set());
 
@@ -150,7 +170,16 @@ export default function MapHelpOverlay({ type, onClose, title, titleKey, runwayL
     if (e.target.id === 'map-help-overlay') onClose();
   };
 
-  const sections = type === 'air' ? AIR_SECTIONS : type === 'ground' ? GROUND_SECTIONS : STRIPS_SECTIONS;
+  let sections = type === 'air' ? AIR_SECTIONS : type === 'ground' ? GROUND_SECTIONS : STRIPS_SECTIONS;
+  if (type === 'strips' && commandCapable !== undefined) {
+    sections = sections.map((s) => ({
+      ...s,
+      bodyKeys: (s.bodyKeys || []).filter((bk) => {
+        const gate = STRIPS_GATED_KEYS[bk];
+        return gate ? gate(commandCapable) : true;
+      }),
+    }));
+  }
 
   return (
     <div id="map-help-overlay" onClick={handleOverlayClick}>

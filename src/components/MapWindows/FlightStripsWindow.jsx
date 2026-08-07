@@ -9,7 +9,7 @@ import { useCrossWindowSelection, useCrossWindowEmergency } from '../../hooks/ma
 import { useWitchAnimation } from '../../hooks/map/useWitchAnimation';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
-import { IoHelpCircleOutline, IoRefreshOutline } from 'react-icons/io5';
+import { IoHelpCircleOutline, IoRefreshOutline, IoFileTrayOutline, IoClose } from 'react-icons/io5';
 import { witchDirection, isParked, getSpriteSheet, getSpriteCell, getSpriteViewBox, SPRITE_CELL, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import FlightStripCommandBar from './FlightStripCommandBar';
 import FlightPatchCommandBar from './FlightPatchCommandBar';
@@ -283,12 +283,18 @@ export default function FlightStripsWindow({ airportIcao }) {
   // Transient voice-command feedback line ("CSC6918: Fly Altitude 9000, Fly Speed 180 ✓")
   const [voiceFeedback, setVoiceFeedback] = useState(null);
   const voiceFeedbackTimerRef = useRef(null);
-  // BepInEx Debug Mode gate for the voice PTT button — the patch frames the
-  // voice pipeline sends only reach the game while the plugin is installed.
-  // Re-checked on mount and window focus (Debug Mode can be toggled in the
-  // browser window while this window stays open). Hidden while unknown so
-  // the check result never flashes.
-  const [bepInExActive, setBepInExActive] = useState(null);
+  // Command capability gate for the PTT button + command bar — patch frames
+  // only reach the game while BepInEx Debug Mode is installed AND the
+  // AC27Appoarch plugin DLL is deployed under BepInEx/plugins. Checked once
+  // when the window opens (the DLL can't change while the game runs — the
+  // plugin loads at game start). Hidden while unknown so nothing flashes.
+  const [commandCapability, setCommandCapability] = useState(null);
+  const commandCapable = !!(commandCapability && commandCapability.bepInExInstalled && commandCapability.pluginInstalled);
+  const debugOn = !!(commandCapability && commandCapability.bepInExInstalled);
+  // Load DLL notice popup (Debug Mode off) + transient copy feedback
+  const [dllNoticeOpen, setDllNoticeOpen] = useState(false);
+  const [dllFeedback, setDllFeedback] = useState(null);
+  const dllFeedbackTimerRef = useRef(null);
   // Per-airport waypoints (fixes) — the voice parser's 'fly direct to X'
   // target set + the STT session's extra grammar words. Fetched with the
   // taxiways below (collectValues._airwayNodes).
@@ -361,19 +367,65 @@ export default function FlightStripsWindow({ airportIcao }) {
     };
   }, [voiceFeedback]);
 
-  // BepInEx Debug Mode gate (same pattern as FlightPatchCommandBar)
+  // Transient Load-DLL feedback — same 4 s auto-clear as voice feedback
+  useEffect(() => {
+    if (!dllFeedback) return;
+    if (dllFeedbackTimerRef.current) clearTimeout(dllFeedbackTimerRef.current);
+    dllFeedbackTimerRef.current = setTimeout(() => setDllFeedback(null), 4000);
+    return () => {
+      if (dllFeedbackTimerRef.current) clearTimeout(dllFeedbackTimerRef.current);
+    };
+  }, [dllFeedback]);
+
+  // Load-DLL notice closes on Escape (mirrors MapHelpOverlay)
+  useEffect(() => {
+    if (!dllNoticeOpen) return;
+    const handler = (e) => { if (e.key === 'Escape') setDllNoticeOpen(false); };
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
+  }, [dllNoticeOpen]);
+
+  // Command capability check — once on window open. No focus re-poll: the
+  // DLL can't change without a game restart, and toggling Debug Mode takes
+  // effect on reopening the window.
   useEffect(() => {
     let alive = true;
-    const check = () => {
-      if (!electronAPI.checkBepInEx) { setBepInExActive(false); return; }
-      electronAPI.checkBepInEx()
-        .then((r) => { if (alive) setBepInExActive(!!(r && r.installed)); })
-        .catch(() => { if (alive) setBepInExActive(false); });
-    };
-    check();
-    window.addEventListener('focus', check);
-    return () => { alive = false; window.removeEventListener('focus', check); };
+    if (!electronAPI.checkCommandCapability) { setCommandCapability(null); return; }
+    electronAPI.checkCommandCapability()
+      .then((r) => { if (alive && r) setCommandCapability(r); })
+      .catch(() => { if (alive) setCommandCapability(null); });
+    return () => { alive = false; };
   }, [electronAPI]);
+
+  // Load DLL: pick AC27Appoarch.dll and copy it into BepInEx/plugins.
+  // Visible while the DLL is missing; with Debug Mode off it explains what
+  // to do instead of opening the dialog. On success the capability check
+  // re-runs (deliberate exception to once-on-open — user-initiated), so the
+  // PTT button + command bar appear without reopening the window.
+  const handleLoadDll = useCallback(async () => {
+    if (!debugOn) {
+      setDllNoticeOpen(true);
+      return;
+    }
+    if (!electronAPI.loadAppoarchDll) return;
+    try {
+      const r = await electronAPI.loadAppoarchDll();
+      if (!r || r.canceled) return;
+      if (r.success) {
+        const cap = await electronAPI.checkCommandCapability().catch(() => null);
+        if (cap) setCommandCapability(cap);
+        setDllFeedback(t('load_dll_success'));
+      } else if (r.error === 'GAME_RUNNING') {
+        setDllFeedback(t('load_dll_error_game_running'));
+      } else if (r.error === 'DEBUG_MODE_OFF') {
+        setDllNoticeOpen(true);
+      } else {
+        setDllFeedback(t('load_dll_error', { err: r.error }));
+      }
+    } catch (_) {
+      setDllFeedback(t('load_dll_error', { err: 'IPC' }));
+    }
+  }, [debugOn, electronAPI, t]);
 
   // Keep ref in sync so handleDragEnd (stable callback) can read current selection
   useEffect(() => { selectedCallSignRef.current = selectedCallSign; }, [selectedCallSign]);
@@ -922,6 +974,7 @@ export default function FlightStripsWindow({ airportIcao }) {
           key={selectedAircraft.callSign}
           aircraft={selectedAircraft}
           witchMode={witchMode}
+          commandCapable={commandCapable}
         />
       )}
       {/* TODO: re-enable command bar when game command IDs are confirmed
@@ -935,6 +988,8 @@ export default function FlightStripsWindow({ airportIcao }) {
       */}
       {/* Transient voice-command result line ("CSC6918: Fly Altitude 9000, Fly Speed 180 ✓") */}
       {voiceFeedback && <div className="voice-feedback">{voiceFeedback}</div>}
+      {/* Transient Load-DLL copy feedback (success / locked-DLL error) */}
+      {dllFeedback && <div className="voice-feedback">{dllFeedback}</div>}
       <div className="flight-strips-bar">
         <div className="flight-strips-bar-left">
           <SimClock simTimeUnixMs={simTimeUnixMs} className="flight-strips-clock" />
@@ -945,10 +1000,10 @@ export default function FlightStripsWindow({ airportIcao }) {
               command vocabulary — the chain dispatches via sendPatchCommand
               like the composer's Send. Selection works for ANY aircraft;
               patch commands only execute on the approach channel (the
-              dispatch effect gates it). Visible whenever BepInEx Debug Mode
-              is active — the plugin the patch frames are relayed to only
-              exists then. */}
-          {bepInExActive === true && (
+              dispatch effect gates it). Visible when command capability is
+              on — BepInEx Debug Mode AND the AC27Appoarch plugin DLL under
+              BepInEx/plugins (the plugin the frames are relayed to). */}
+          {commandCapable === true && (
             <VoicePTTButton
               listening={voice.listening}
               transcript={voice.transcript}
@@ -962,6 +1017,15 @@ export default function FlightStripsWindow({ airportIcao }) {
               onRelease={voice.stopListening}
             />
           )}
+          {/* Load DLL (2026-08-06): pick AC27Appoarch.dll to copy into
+              BepInEx/plugins. Shown while the DLL is missing — once present,
+              the PTT button + command bar take over. With Debug Mode off the
+              press shows an explanation popup instead of the file dialog. */}
+          {commandCapable !== true && (
+            <div className="strips-bar-btn" onClick={handleLoadDll} title={t('load_dll_tooltip')}>
+              <IoFileTrayOutline size={16} />
+            </div>
+          )}
           <div className="strips-bar-btn" onClick={handleRefresh} {...tipBind(helpTip('map_help_strips_refresh'))}>
             {witchMode ? <img src="witch/refresh.png" alt="Refresh" className="witch-refresh-img" /> : <IoRefreshOutline size={16} />}
           </div>
@@ -970,7 +1034,25 @@ export default function FlightStripsWindow({ airportIcao }) {
           </div>
         </div>
       </div>
-      {helpOpen && <MapHelpOverlay type="strips" titleKey="map_help_strips_title" onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <MapHelpOverlay type="strips" titleKey="map_help_strips_title" onClose={() => setHelpOpen(false)} commandCapable={commandCapable} />}
+
+      {/* Load-DLL notice — Debug Mode must be on (and the game closed) before
+          the plugin DLL can be copied in. Reuses the help overlay styling. */}
+      {dllNoticeOpen && (
+        <div id="map-help-overlay" onClick={(e) => { if (e.target.id === 'map-help-overlay') setDllNoticeOpen(false); }}>
+          <div id="map-help-box" onClick={(e) => e.stopPropagation()}>
+            <div id="map-help-header">
+              <h2>{t('load_dll_debug_off_title')}</h2>
+              <button onClick={() => setDllNoticeOpen(false)} title={t('tutorial_close')}>
+                <IoClose size={18} />
+              </button>
+            </div>
+            <div id="map-help-body">
+              <p>{t('load_dll_debug_off_desc')}</p>
+            </div>
+          </div>
+        </div>
+      )}
       {MAP_TOOLTIPS_ENABLED && TooltipPortal}
     </div>
   );

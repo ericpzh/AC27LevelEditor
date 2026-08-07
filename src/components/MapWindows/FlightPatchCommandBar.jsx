@@ -126,7 +126,7 @@ const PLANE_THUMB_URI =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><path d="${MAP_ICON_PATH}" fill="currentColor"/></svg>`
   );
 
-export default function FlightPatchCommandBar({ aircraft, witchMode }) {
+export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapable }) {
   const electronAPI = useElectronAPI();
 
   // Pending composed option: null = not chosen yet; clearAppr = Clear for
@@ -204,26 +204,9 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
     };
   }, [aircraft]);
 
-  // BepInEx Debug Mode gate: patch frames are relayed to the AC27Appoarch
-  // plugin over UDP, which only exists while BepInEx is installed — the
-  // composer stays closed otherwise. Re-checked on mount, on aircraft
-  // change, and on window focus (Debug Mode can be toggled in the browser
-  // window while this window stays open). While unknown the composer is
-  // hidden, so the check result never flashes.
-  const [bepInExActive, setBepInExActive] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    const check = () => {
-      if (!electronAPI.checkBepInEx) { setBepInExActive(false); return; }
-      electronAPI.checkBepInEx()
-        .then((r) => { if (alive) setBepInExActive(!!(r && r.installed)); })
-        .catch(() => { if (alive) setBepInExActive(false); });
-    };
-    check();
-    window.addEventListener('focus', check);
-    return () => { alive = false; window.removeEventListener('focus', check); };
-  }, [electronAPI, aircraft && aircraft.callSign]);
-
+  // The command-capability gate (BepInEx Debug Mode + AC27Appoarch plugin
+  // DLL) is computed once by the strips window on open and passed down —
+  // no per-mount/per-aircraft re-checking here.
   /** All choices for the current step — depends on what is composed. */
   const options = useMemo(() => {
     const list = [];
@@ -367,9 +350,10 @@ export default function FlightPatchCommandBar({ aircraft, witchMode }) {
   // channel — including final approach under tower (seat 3) — don't get
   // the popup. Live seat changes (handoff to tower) hide it automatically
   // since the aircraft prop refreshes every 200ms from telemetry. It also
-  // stays closed unless BepInEx Debug Mode is active (the plugin the patch
+  // stays closed unless command capability is on — BepInEx Debug Mode AND
+  // the AC27Appoarch plugin DLL under BepInEx/plugins (the plugin the patch
   // frames are relayed to only exists then).
-  if (!aircraft || witchMode || aircraft.controlSeat !== CHANNEL_TYPE_APPROACH || bepInExActive !== true) return null;
+  if (!aircraft || witchMode || aircraft.controlSeat !== CHANNEL_TYPE_APPROACH || commandCapable !== true) return null;
 
   // Live slider values: the pending pick's current value, defaulting to
   // the aircraft's live heading/altitude/speed while its slider is open.

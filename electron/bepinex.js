@@ -20,6 +20,9 @@ const { app } = require('electron');
 const BEPINEX_BUILDS_URL = 'https://builds.bepinex.dev/projects/bepinex_be';
 const ARTIFACT_PATTERN = /BepInEx-Unity\.IL2CPP-win-x64/i;
 const REQUIRED_ITEMS = ['BepInEx', 'dotnet', 'doorstop_config.ini', 'winhttp.dll'];
+// Deployed as <gameRoot>/BepInEx/plugins/AC27Appoarch.dll — keep in sync
+// with mods/AC27Appoarch/AC27Appoarch.csproj <AssemblyName>.
+const PLUGIN_DLL_NAME = 'AC27Appoarch.dll';
 
 // ─── Helpers ───────────────────────────────────────────────
 
@@ -76,6 +79,36 @@ function checkStatus(gameRoot) {
   if (!gameRoot) return { installed: false, missing: REQUIRED_ITEMS };
   const missing = REQUIRED_ITEMS.filter((item) => !fs.existsSync(path.join(gameRoot, item)));
   return { installed: missing.length === 0, missing };
+}
+
+/**
+ * Recursively search <gameRoot>/BepInEx/plugins for our plugin DLL
+ * (AC27Appoarch.dll, case-insensitive). The command window / PTT UI only
+ * works while the plugin is actually deployed — BepInEx alone is not enough.
+ * @param {string} gameRoot
+ * @returns {boolean} true when the DLL is found anywhere under plugins/
+ */
+function hasAppoarchPlugin(gameRoot) {
+  if (!gameRoot) return false;
+  const pluginsDir = path.join(gameRoot, 'BepInEx', 'plugins');
+  if (!fs.existsSync(pluginsDir)) return false;
+
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_) {
+      return false; // unreadable subtree — treat as not found
+    }
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.toLowerCase() === PLUGIN_DLL_NAME.toLowerCase()) return true;
+      // Skip symlinked dirs — a plugin install can't loop back on itself.
+      if (entry.isDirectory() && !entry.isSymbolicLink() && walk(path.join(dir, entry.name))) return true;
+    }
+    return false;
+  };
+
+  return walk(pluginsDir);
 }
 
 /**
@@ -326,7 +359,9 @@ async function installLatest(gameRoot, onProgress) {
 // ─── Exports ───────────────────────────────────────────────
 
 Object.assign(api, {
+  PLUGIN_DLL_NAME,
   checkStatus,
+  hasAppoarchPlugin,
   findDownloadUrl,
   downloadZip,
   extractZip,
