@@ -14,13 +14,26 @@ if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { resolveConfigTime } = require('../src/acl/config');
-const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
+const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, PROD_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
 const { buildPatchPayload } = require('./patchFrame');
 const voiceStt = require('./voiceSttWorker');
+
+// Which .acl files feed the airport cache (dropdowns, stand/runway/area geometry,
+// approach data) that map windows read via collectValues. Browser-whitelisted
+// levels are ALWAYS scanned regardless of the "hidden level" blacklist regex —
+// e.g. an endless/scenery level like ZGSZ_Endless.acl (matches `endless`) still
+// contributes its geometry so its radar windows aren't blank.
+const HIDDEN_LEVEL_RE = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
+function isCacheAclFile(filename) {
+  if (!filename || !filename.endsWith('.acl')) return false;
+  if (DEMO_VISIBLE_BASES.has(filename)) return true;
+  if (PROD_VISIBLE_BASES.includes(filename)) return true;
+  return !HIDDEN_LEVEL_RE.test(filename);
+}
 
 let mainWindow;
 const groundMapWindows = new Map(); // key: airportIcao → BrowserWindow
@@ -576,7 +589,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       if (fs.existsSync(ld)) {
         airportList.push(icao);
         try {
-          totalAclFiles += fs.readdirSync(ld).filter(f => f.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(f)).length;
+          totalAclFiles += fs.readdirSync(ld).filter(f => isCacheAclFile(f)).length;
         } catch (_) {}
       }
     }
@@ -609,7 +622,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       const aclPaths = [];
       try {
         for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) {
+          if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) {
             aclPaths.push(path.join(levelsDir, le.name));
           }
         }
@@ -625,7 +638,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       try {
         const aclFiles = [];
         for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) aclFiles.push(path.join(levelsDir, le.name));
+          if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) aclFiles.push(path.join(levelsDir, le.name));
         }
         if (aclFiles.length > 0) {
           const firstAclText = readAclText(aclFiles[0]);
@@ -645,7 +658,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     if (!areaData) {
       const aclAreaFiles = [];
       for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-        if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) aclAreaFiles.push(path.join(levelsDir, le.name));
+        if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) aclAreaFiles.push(path.join(levelsDir, le.name));
       }
       areaData = _parseAreaFromAcl(aclAreaFiles, '[INIT-CACHE]   ' + icao);
     } else {
@@ -691,7 +704,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       if (!approachData.state5ParamsMap || !approachData.appPointMap || !approachData.totalApproachTimes) {
         const approach = require('../src/acl/approach');
         try {
-          const aclFiles = fs.readdirSync(levelsDir).filter(f => f.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(f));
+          const aclFiles = fs.readdirSync(levelsDir).filter(f => isCacheAclFile(f));
           if (aclFiles.length > 0) {
             const firstText = readAclText(path.join(levelsDir, aclFiles[0]));
             const mappings = approach.extractStarRunwayMappings(firstText);
@@ -785,7 +798,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
             total: totalAclFiles,
           });
         }
-      });
+      }, isCacheAclFile);
       console.log('[INIT-CACHE]   ' + icao + ': approach scanned from files');
     }
 
@@ -865,7 +878,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         const ld = path.join(ap, 'Levels');
         if (fs.existsSync(ld)) {
           airportListR.push(icao);
-          try { totalAclFilesR += fs.readdirSync(ld).filter(f => f.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(f)).length; } catch (_) {}
+          try { totalAclFilesR += fs.readdirSync(ld).filter(f => isCacheAclFile(f)).length; } catch (_) {}
         }
       }
     }
@@ -886,7 +899,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       const aclPaths = [];
       try {
         for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl') && !/tutorial|bench|test|crossrunway|dev|endless|\.prod/i.test(le.name)) {
+          if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) {
             aclPaths.push(path.join(levelsDir, le.name));
           }
         }
@@ -919,7 +932,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
             total: totalAclFilesR,
           });
         }
-      });
+      }, isCacheAclFile);
       // Parse stand positions from first .acl file
       let standPositions = {};
       try {

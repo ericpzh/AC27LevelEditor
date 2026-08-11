@@ -29,8 +29,8 @@ const {
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
 } = parser;
 
-// ── The 9 production + 3 demo .acl files ────────────────────────
-// Mirrors PROD_VISIBLE_BASES (9) + the .demo entries of
+// ── The 13 production + 3 demo .acl files ───────────────────────
+// Mirrors PROD_VISIBLE_BASES (13) + the .demo entries of
 // DEMO_VISIBLE_BASES (3) in src/utils/constants/ui.js
 const PROD_DEMO_FILES = [
   { icao: 'ZSJN', name: 'ZSJN_leisure_1.acl' },
@@ -41,7 +41,11 @@ const PROD_DEMO_FILES = [
   { icao: 'KJFK', name: 'KJFK_leisure_1.acl' },
   { icao: 'KJFK', name: 'KJFK_leisure_2.acl' },
   { icao: 'KJFK', name: 'KJFK_peakarrival.acl' },
-  { icao: 'KDCA', name: 'KDCA_smoke.acl' },
+  { icao: 'KDCA', name: 'KDCA_leisure_1.acl' },
+  { icao: 'KDCA', name: 'KDCA_leisure_2.acl' },
+  { icao: 'KDCA', name: 'KDCA_runwaychange.acl' },
+  { icao: 'KDCA', name: 'KDCA_peakdeparture.acl' },
+  { icao: 'KDCA', name: 'KDCA_peakarrival.acl' },
   { icao: 'KJFK', name: 'KJFK_peakarrival.demo.acl' },
   { icao: 'KJFK', name: 'KJFK_leisure_1.demo.acl' },
   { icao: 'ZSJN', name: 'ZSJN_peakdeparture.demo.acl' },
@@ -60,7 +64,7 @@ for (let i = 2; i < process.argv.length; i++) {
     console.log('');
     console.log('Flow: copy from game root → golden/ → snapshot → copy golden→result/ → save on result/ → compare golden vs result');
     console.log('  --root <path>   Game root directory (required)');
-    console.log('  --prod-demo     Test 9 production + 3 demo .acl files');
+    console.log('  --prod-demo     Test 13 production + 3 demo .acl files');
     console.log('  --all           Test every .acl file found (default, excludes Endless)');
     process.exit(0);
   }
@@ -80,7 +84,7 @@ if (!fs.existsSync(dataDir)) {
 const aclFiles = [];
 
 if (prodDemoOnly) {
-  console.log('Target: 9 production + 3 demo .acl files');
+  console.log('Target: 13 production + 3 demo .acl files');
   for (const f of PROD_DEMO_FILES) {
     const fullPath = path.join(dataDir, f.icao, 'Levels', f.name);
     if (fs.existsSync(fullPath)) {

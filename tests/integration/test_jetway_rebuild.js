@@ -44,7 +44,7 @@ for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--help' || process.argv[i] === '-h') {
     console.log('Usage: node --require ./tests/integration/preload.cjs tests/integration/test_jetway_rebuild.js [options]');
     console.log('  --root <path>     Game root directory (default: parent of parent of cwd)');
-    console.log('  --prod-demo       Test 9 production + 3 demo .acl files');
+    console.log('  --prod-demo       Test 13 production + 3 demo .acl files');
     console.log('  --airport <ICAO>  Test only the specified airport');
     console.log('  --acl <path>      Test a specific .acl file');
     console.log('  --no-cache        Skip approach cache, test with null cache only');
@@ -178,7 +178,11 @@ const PROD_DEMO_FILES = [
   { icao: 'KJFK', name: 'KJFK_leisure_1.acl' },
   { icao: 'KJFK', name: 'KJFK_leisure_2.acl' },
   { icao: 'KJFK', name: 'KJFK_peakarrival.acl' },
-  { icao: 'KDCA', name: 'KDCA_smoke.acl' },
+  { icao: 'KDCA', name: 'KDCA_leisure_1.acl' },
+  { icao: 'KDCA', name: 'KDCA_leisure_2.acl' },
+  { icao: 'KDCA', name: 'KDCA_runwaychange.acl' },
+  { icao: 'KDCA', name: 'KDCA_peakdeparture.acl' },
+  { icao: 'KDCA', name: 'KDCA_peakarrival.acl' },
   { icao: 'KJFK', name: 'KJFK_peakarrival.demo.acl' },
   { icao: 'KJFK', name: 'KJFK_leisure_1.demo.acl' },
   { icao: 'ZSJN', name: 'ZSJN_peakdeparture.demo.acl' },

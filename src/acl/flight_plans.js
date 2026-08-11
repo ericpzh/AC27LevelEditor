@@ -2594,8 +2594,12 @@ function _buildStandaloneAircraftEntry(opts) {
   // Fully-qualified type strings with explicit segment-consistent numbers.
   // FlyApproachDynamicsParams is used for State=30 (DynamicsState=1).
   // ApproachDynamicsParams is used for State=5 (DynamicsState=2).
-  var FLY_DYN_PARAMS_TYPE = _resolveType('ContextCross.Dynamics.States.FlyApproachDynamicsParams, GroundATC.Core');
-  var APPROACH_DYN_PARAMS_TYPE = _resolveType('ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core');
+  // Resolved LAZILY: a departure-heavy segment (e.g. KDCA_peakdeparture) may
+  // declare only FlyApproachDynamicsParams — ApproachDynamicsParams is never
+  // referenced when no State=5 aircraft is emitted, so a strict eager resolve
+  // would [TYPE-ASSERT] on a type the file legitimately never uses.
+  var FLY_DYN_PARAMS_TYPE = null;
+  var APPROACH_DYN_PARAMS_TYPE = null;
   var LIST_VEC3_TYPE = _resolveType('System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib');
 
   var T = {
@@ -2929,6 +2933,9 @@ function _buildStandaloneAircraftEntry(opts) {
     function toVec3Arr(pts) {
       return pts.map(function(p) { return { $type: T.vec3, __v: [p.x, 0, p.z] }; });
     }
+    if (FLY_DYN_PARAMS_TYPE === null) {
+      FLY_DYN_PARAMS_TYPE = _resolveType('ContextCross.Dynamics.States.FlyApproachDynamicsParams, GroundATC.Core');
+    }
     dynParams = {
       $id: id(30),
       $type: FLY_DYN_PARAMS_TYPE,
@@ -2939,6 +2946,9 @@ function _buildStandaloneAircraftEntry(opts) {
         : { $rcontent: [] },
     };
   } else if (aircraftState === 5 && state5Params && progressRatio != null) {
+    if (APPROACH_DYN_PARAMS_TYPE === null) {
+      APPROACH_DYN_PARAMS_TYPE = _resolveType('ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core');
+    }
     var ppList = state5Params.pathPointList || [];
     // InitialPosition Y: hardcoded 15.24 (= 5000ft approach ceiling at 100m/unit scale).
     // The stored path points have Y=0 (game engine computes altitude internally from

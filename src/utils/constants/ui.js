@@ -32,8 +32,14 @@ export const PROD_VISIBLE_BASES = [
   'KJFK_leisure_1.acl',
   'KJFK_leisure_2.acl',
   'KJFK_peakarrival.acl',
-  // KDCA — Test Level 1
-  'KDCA_smoke.acl',
+  // KDCA — Relax Time, Busy Time, Runway Change, Peak Departure, Peak Arrival
+  'KDCA_leisure_1.acl',
+  'KDCA_leisure_2.acl',
+  'KDCA_runwaychange.acl',
+  'KDCA_peakdeparture.acl',
+  'KDCA_peakarrival.acl',
+  // ZGSZ — Endless
+  'ZGSZ_Endless.acl',
 ];
 
 /**

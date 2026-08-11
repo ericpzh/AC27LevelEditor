@@ -39,6 +39,7 @@ export const GROUND_MAP_DEFAULT_ZOOM = {
 export const GROUND_MAP_CENTER_OFFSET = {
   ZSJN: { x: 0, z: -3 },
   KJFK: { x: -3, z: 0 },
+  ZGSZ: { x: -10, z: 3 },
 };
 export const AIR_MAP_DEFAULT_ZOOM = {
   ZSJN: 1.0,

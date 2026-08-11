@@ -1,5 +1,5 @@
 /**
- * E2E Save Integrity — all 12 prod+demo .acl files.
+ * E2E Save Integrity — all 16 prod+demo .acl files.
  *
  * For each level row visible in the browser:
  *   1. Click to open in editor
@@ -140,7 +140,7 @@ async function goBackToBrowser() {
 
 // ── Test: iterate all levels ─────────────────────────────────────
 
-test.setTimeout(600000); // 10 min for 12 files
+test.setTimeout(600000); // 10 min for 16 files
 
 test('E2E save integrity — all prod+demo levels', async () => {
   // Count level rows

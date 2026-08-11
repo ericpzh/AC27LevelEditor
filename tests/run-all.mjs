@@ -6,8 +6,8 @@
  *   node tests/run-all.mjs [--game-root <path>]
  *
  * Layers:
- *   1. Vitest (component tests)     — 540 tests, ~4s
- *   2. Integration: save integrity  — 12 prod+demo files, ~20s
+ *   1. Vitest (component tests)     — 1159 tests, ~4s
+ *   2. Integration: save integrity  — 16 prod+demo files, ~20s
  *   3. Playwright E2E                — 16 tests (~3 min; 15 pass, 1 skipped — E12a overlay timing)
  *
  * Covers v4 GATCArc4 binary-format .acl files.
@@ -66,16 +66,16 @@ console.log(`\nGame root: ${GAME_ROOT}`);
 const startTime = Date.now();
 
 // ── 1. Vitest ────────────────────────────────────────────────────
-runStep('Layer 1: Vitest (540 component tests)', 'npx vitest run');
+runStep('Layer 1: Vitest (1159 component tests)', 'npx vitest run');
 
-// ── 2. Save Integrity (12 prod+demo files) ───────────────────────
+// ── 2. Save Integrity (16 prod+demo files) ───────────────────────
 // Quote paths to handle spaces in game root
 const layer2Cmd = `node --require "${PRELOAD}" "${SAVE_INTEGRITY}" --root "${GAME_ROOT}" --prod-demo`;
-runStep('Layer 2: Save Integrity (9 prod + 3 demo .acl files)', layer2Cmd);
+runStep('Layer 2: Save Integrity (13 prod + 3 demo .acl files)', layer2Cmd);
 
-// ── 2b. Jetway Rebuild Test (12 prod+demo files) ────────────────
+// ── 2b. Jetway Rebuild Test (16 prod+demo files) ────────────────
 const layer2bCmd = `node --require "${PRELOAD}" "${JETWAY_REBUILD}" --root "${GAME_ROOT}" --prod-demo --no-cache`;
-runStep('Layer 2b: Jetway Rebuild (12 v4 files)', layer2bCmd);
+runStep('Layer 2b: Jetway Rebuild (16 v4 files)', layer2bCmd);
 
 // ── 2c. v4 Runway Pair Extraction ────────────────────────────────
 const layer2cCmd = `node "${RUNWAY_PAIRS}" --root "${GAME_ROOT}"`;
@@ -95,7 +95,7 @@ try {
 }
 
 // ── 4. Playwright E2E ────────────────────────────────────────────
-// Set E2E_GAME_ROOT so global-setup sources all 12 prod+demo files
+// Set E2E_GAME_ROOT so global-setup sources all 16 prod+demo files
 // (including KJFK) from the real game installation instead of the
 // limited ZSJN-only fixture directory.
 const e2eEnv = { ...process.env, E2E_GAME_ROOT: GAME_ROOT };

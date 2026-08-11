@@ -1993,19 +1993,23 @@ function buildStarPaths(aclText, appPointMap, starRunwayMap) {
  * @param {string} airportDir - path to .../Airports/<ICAO>/Levels/
  * @returns {{specDB: Map, appPointMap: Map, totalApproachTimes: Map, designatorMap: Map, typeMap: Map}}
  */
-function buildApproachCache(airportDir, progressCallback) {
+function buildApproachCache(airportDir, progressCallback, fileFilter) {
   const fs = require('fs');
   const path = require('path');
   const log = (msg) => console.log('[APPROACH-CACHE]', msg);
 
-  // Find all .acl files (exclude .acl.bak + RE_HIDDEN patterns: tutorial, bench, test, crossrunway, dev, endless, .prod)
+  // Find all .acl files. A caller-supplied fileFilter (e.g. main.js's isCacheAclFile,
+  // which whitelists demo/production visible bases like ZGSZ_Endless.acl) wins over the
+  // built-in skip regex — without it, whitelisted endless/scenery levels would be dropped
+  // and the airport's geometry cache (taxiways/stands/areas) would come back empty.
   const RE_SKIP = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
+  const useFilter = typeof fileFilter === 'function'
+    ? fileFilter
+    : (f) => f.endsWith('.acl') && !RE_SKIP.test(f);
   let aclFiles = [];
   try {
     const files = fs.readdirSync(airportDir);
-    aclFiles = files
-      .filter(f => f.endsWith('.acl') && !RE_SKIP.test(f))
-      .map(f => path.join(airportDir, f));
+    aclFiles = files.filter(useFilter).map(f => path.join(airportDir, f));
   } catch (_) { return null; }
 
   if (aclFiles.length === 0) {

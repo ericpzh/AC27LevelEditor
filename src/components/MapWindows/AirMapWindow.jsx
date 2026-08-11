@@ -18,6 +18,7 @@ import {
   RAD_TO_DEG, AIR_MAP_BG_OFFSETS, WITCH_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
 } from '../../utils/constants';
 import { witchDirection, getSpriteViewBox, getSpriteCell, getSpriteSheet, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
+import { dedupeStarPathsForDisplay, filterDedupedStarPathsByRunway } from '../../utils/starDisplay';
 import './AirMapWindow.css';
 import './MapShared.css';
 
@@ -382,8 +383,34 @@ export default function AirMapWindow({ airportIcao }) {
 
   const filteredStarPaths = useMemo(() => filterByRunway(trimmedStarPaths, starRunwayMap),
     [trimmedStarPaths, starRunwayMap, filterByRunway]);
+
+  // ── Display-level STAR dedup ────────────────────────────
+  // ZGSZ-style airports name each runway variant separately (e.g.
+  // "SAREX4.34L/34R/33/16L/16R/15" all the same STAR base). Group them
+  // under the base STAR name for rendering + labels only; underlying
+  // per-runway cache keys stay intact for aircraft lookup / game save.
+  const displayStarPaths = useMemo(() => {
+    if (!Object.keys(filteredStarPaths).length) return {};
+    return filterDedupedStarPathsByRunway(
+      dedupeStarPathsForDisplay(filteredStarPaths),
+      activeRunways
+    );
+  }, [filteredStarPaths, activeRunways]);
   const filteredSidPaths = useMemo(() => filterByRunway(sidPaths, sidRunwayMap),
     [sidPaths, sidRunwayMap, filterByRunway]);
+
+  // ── Display-level SID dedup (same as STAR) ───────────────
+  // ZGSZ-style airports name each runway variant separately (e.g.
+  // "OVGOT3.34L/34R/33" all the same SID base). Group them under the
+  // base SID name for rendering + labels only; underlying per-runway
+  // cache keys stay intact for aircraft lookup / game save.
+  const displaySidPaths = useMemo(() => {
+    if (!Object.keys(filteredSidPaths).length) return {};
+    return filterDedupedStarPathsByRunway(
+      dedupeStarPathsForDisplay(filteredSidPaths),
+      activeRunways
+    );
+  }, [filteredSidPaths, activeRunways]);
   const filteredMissedAppPaths = useMemo(() => filterByRunway(missedAppPaths, missedAppMap),
     [missedAppPaths, missedAppMap, filterByRunway]);
   const filteredApprPaths = useMemo(() => filterByRunway(apprPaths, apprRunwayMap),
@@ -451,6 +478,32 @@ export default function AirMapWindow({ airportIcao }) {
       if (dz < minGap) {
         labelMeta[i].z = prev.z + minGap;
       }
+    }
+    // Clamp labels inside the default window bounds so far-out STAR entry
+    // points never push a label outside the viewBox range. The border overlay
+    // (independent SVG, hugs the container edges) draws a ring of degree
+    // labels (010–360) in the outer ~30px at the 800px baseline — convert that
+    // pixel depth into game units via the main SVG display scale and reserve
+    // it as extra margin so clamped labels stay clear of the ring.
+    const xMin = dataBounds.x;
+    const xMax = dataBounds.x + dataBounds.w;
+    const zMin = dataBounds.z - dataBounds.h;
+    const zMax = dataBounds.z;
+    const svgScale = Math.min(
+      containerSize.w / Math.max(dataBounds.w, 1),
+      containerSize.h / Math.max(dataBounds.h, 1)
+    ) || 1;
+    const ringDepthGu = (3.8 * 800 / 100) / svgScale; // ~30px ring, incl. half the label height
+    const margin = Math.max(fontSize * 1.2, ringDepthGu * 1.2);
+    for (const m of labelMeta) {
+      if (m.x < xMin + margin) m.x = xMin + margin;
+      else if (m.x > xMax - margin) m.x = xMax - margin;
+      if (m.z < zMin + margin) m.z = zMin + margin;
+      else if (m.z > zMax - margin) m.z = zMax - margin;
+      // Flip the anchor so the text doesn't overrun the clamped edge
+      const lw = m.name.length * fontSize * 0.6;
+      if (m.anchor === 'start' && m.x + lw > xMax - margin) m.anchor = 'end';
+      else if (m.anchor === 'end' && m.x - lw < xMin + margin) m.anchor = 'start';
     }
     return labelMeta.map(m => (
       <text key={'lbl-' + m.key}
@@ -689,14 +742,14 @@ export default function AirMapWindow({ airportIcao }) {
               {rangeRingElements}
 
               {/* SID / STAR / APPR routes — toggleable + filtered by active runways */}
-              {showSidPaths && renderRoutePaths(filteredSidPaths, '#888888', 'none', 0.5)}
+              {showSidPaths && renderRoutePaths(displaySidPaths, '#888888', 'none', 0.5)}
               {showSidPaths && renderRoutePaths(filteredMissedAppPaths, '#888888', 'none', 0.5)}
-              {showStarPaths && renderRoutePaths(filteredStarPaths, '#888888', 'none', 0.5)}
+              {showStarPaths && renderRoutePaths(displayStarPaths, '#888888', 'none', 0.5)}
               {showApprPaths && renderRoutePaths(filteredApprPaths, '#888888', 'none', 0.5)}
 
               {/* Route name labels — only for categories whose toggle is on */}
-              {showRouteLabels && showStarPaths && renderRouteLabels(filteredStarPaths, '#888888', false)}
-              {showRouteLabels && showSidPaths && renderRouteLabels(filteredSidPaths, '#888888', true)}
+              {showRouteLabels && showStarPaths && renderRouteLabels(displayStarPaths, '#888888', false)}
+              {showRouteLabels && showSidPaths && renderRouteLabels(displaySidPaths, '#888888', true)}
               {showRouteLabels && showApprPaths && renderRouteLabels(filteredApprPaths, '#888888', false)}
 
               {/* Runway extension lines + ticks */}

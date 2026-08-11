@@ -168,12 +168,12 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.2.9
+- **Version:** v1.3.0
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (501 tests + 0 todo, 29 files) + Playwright (E2E) + Node.js (integration, 28 scripts, 149 MCP/API tests)
+- **Tests:** Vitest (1159 tests in 48 files) + Playwright (E2E) + Node.js (integration, 35 scripts, 151 MCP/API tests)
 
 ### Quick Start
 
@@ -341,6 +341,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   └── utils/               # Shared utilities (ESM for frontend)
 │       ├── constants.js         # Central constants — single source of truth for all app constants
 │       ├── timeUtils.js         # Tick↔time conversion + timeline helpers
+│       ├── starDisplay.js       # STAR/SID display dedup (ZGSZ-style runway-suffixed names grouped under the base route)
 │       ├── i18n.js              # Chinese/English translation system
 │       ├── validators.js        # Save validation logic
 │       ├── htmlUtils.js         # escapeHtml, stripSuffixes
@@ -348,7 +349,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 501 Vitest + 16 Playwright E2E + 27 Node.js integration tests
+├── tests/               # 1159 Vitest + 16 Playwright E2E + 35 Node.js integration tests
 └── dist/                # Build output (gitignored)
 ```
 
@@ -369,10 +370,10 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 
 **Master test runner (all layers):**
 ```bash
-npm run test:all      # Vitest + save integrity (12 files) + jetway rebuild (12 v4) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
+npm run test:all      # Vitest + save integrity (16 files) + jetway rebuild (16 v4) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 501 tests in 29 files):**
+**Component tests (Vitest — 1159 tests in 48 files):**
 ```bash
 npm test              # Run all component + store + utility + MapWindow tests (~4s)
 npm run test:watch    # Watch mode — re-runs on file changes
@@ -393,7 +394,7 @@ Test every .acl file across all airports for save→reload→compare round-trip:
 # All non-Endless .acl files across all airports:
 node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root>
 
-# 9 production + 3 demo files only:
+# 13 production + 3 demo files only:
 node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root> --prod-demo
 ```
 Validates flights (all 14 fields), config (startTime/endTime), scenery maps, embedded timelines, and source format for each file.
@@ -408,7 +409,7 @@ node tests/integration/test_taxiway.js              # Taxiway centerline parser 
 node tests/integration/test_demo_filter.js          # Demo-level flight filtering v2/v3 + v4 (13 tests)
 node tests/integration/test_gatcarc_roundtrip.js    # GATCARC4 binary round-trip (96 tests, 32 files)
 node tests/integration/test_real_kjfk_jfk5.js       # Real KJFK/JFK5 data parsing (8 tests)
-node tests/integration/test_jetway_rebuild.js       # v4 jetway rebuild round-trip (12 prod+demo files)
+node tests/integration/test_jetway_rebuild.js       # v4 jetway rebuild round-trip (16 prod+demo files)
 ```
 
 **UDP telemetry test (mock loopback server, port 20266 must be free):**

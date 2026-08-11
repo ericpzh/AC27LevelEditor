@@ -157,8 +157,47 @@ export default function GroundMapWindow({ airportIcao }) {
     return { x: -halfW, z: halfW, w: halfW * 2, h: halfW * 2 };
   }, [airportIcao]);
 
+  // ── Auto-fit viewBox over the fetched airport geometry ────
+  // Some airports (e.g. ZGSZ) are authored far from the world origin; a fixed
+  // origin-centered box would show nothing. Compute a box that covers all
+  // taxiway/stand/runway/area geometry once the data arrives.
+  const contentViewBox = useMemo(() => {
+    const pts = [];
+    for (const tp of taxiwayPaths) {
+      if (tp.points) for (const p of tp.points) pts.push(p);
+    }
+    for (const s of Object.values(standPositions || {})) {
+      if (s && s.x != null && s.y != null) pts.push({ x: s.x, z: s.y }); // standPositions.y is game Z
+    }
+    for (const rw of Object.values(runwayData || {})) {
+      if (rw.thresholds) for (const p of rw.thresholds) pts.push(p);
+    }
+    for (const typeAreas of Object.values(areaData || {})) {
+      for (const a of typeAreas || []) {
+        if (a.points) for (const p of a.points) pts.push(p);
+      }
+    }
+    if (pts.length === 0) return null;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.z < minZ) minZ = p.z;
+      if (p.z > maxZ) maxZ = p.z;
+    }
+    if (!isFinite(minX) || !isFinite(minZ)) return null;
+    const padX = (maxX - minX) * 0.10 || 1;
+    const padZ = (maxZ - minZ) * 0.10 || 1;
+    const w = (maxX - minX) + padX * 2;
+    const h = (maxZ - minZ) + padZ * 2;
+    const cx = (minX + maxX) / 2;
+    const cz = (minZ + maxZ) / 2;
+    return { x: cx - w / 2, y: -cz - h / 2, w, h };
+  }, [taxiwayPaths, standPositions, runwayData, areaData]);
+
   // ── SVG viewBox ───────────────────────────────────────────
   const initialViewBox = useMemo(() => {
+    if (contentViewBox) return contentViewBox;
     if (!dataBounds) return null;
     const offset = GROUND_MAP_CENTER_OFFSET[airportIcao] || { x: 0, z: 0 };
     return {
@@ -167,10 +206,22 @@ export default function GroundMapWindow({ airportIcao }) {
       w: dataBounds.w,
       h: dataBounds.h,
     };
-  }, [dataBounds, airportIcao]);
+  }, [dataBounds, contentViewBox, airportIcao]);
 
   const { viewBox, svgRef, resetZoom, resetPanH, resetPanV, handleWheel, handleMouseDown, handleMouseMove, handleMouseUp,
           zoomIn, zoomOut, panLeft, panRight, panUp, panDown } = useSvgZoom(initialViewBox);
+
+  // ── Snap the radar view to the airport once geometry arrives ──
+  // useSvgZoom applies initialViewBox only once at mount (origin box); after the
+  // fetch resolves, contentViewBox becomes available and initialViewBox changes.
+  // Reset the view so the radar centers on the actual airport content.
+  const snapDoneRef = useRef(false);
+  useEffect(() => {
+    if (contentViewBox && !snapDoneRef.current) {
+      snapDoneRef.current = true;
+      resetZoom();
+    }
+  }, [contentViewBox, resetZoom]);
 
   // ── Stable sidebar callbacks ───────────────────────────────
   const handleZoomStep = useCallback((dir) => {

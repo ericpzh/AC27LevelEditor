@@ -97,22 +97,17 @@ export default function BrowserScreen() {
         const infos = await electronAPI.getAirportFilesInfo(airport.icao, rootPath);
         if (isDemo) {
           // Demo mode: show only files in the demo whitelist
-          allInfos[airport.icao] = infos.filter(info => {
-            // Hide levels that failed to parse (e.g. Git LFS stubs)
-            if (info.error) return false;
-            return DEMO_VISIBLE_BASES.has(info.filename);
-          }).sort((a, b) => sortLevelRows(a, b, isDemo));
+          allInfos[airport.icao] = infos.filter(info => DEMO_VISIBLE_BASES.has(info.filename)).sort((a, b) => sortLevelRows(a, b, isDemo));
         } else {
           // Normal mode: show only whitelisted production levels.
           // No .demo files are in PROD_VISIBLE_BASES, so the whitelist alone
           // suffices. info.isDemo is deliberately not checked — it flags files
           // in DEMO_VISIBLE_BASES (30-min demo window), and some of those are
           // regular .acl files that also appear in PROD_VISIBLE_BASES.
-          const visible = infos.filter(info => {
-            // Hide levels that failed to parse (e.g. Git LFS stubs)
-            if (info.error) return false;
-            return PROD_VISIBLE_BASES.includes(info.filename);
-          });
+          // Levels that failed to parse (e.g. "No WorldState flight data", or
+          // Git LFS stubs) are intentionally KEPT so the airport header and its
+          // radar-window toggles remain available for that airport.
+          const visible = infos.filter(filter => PROD_VISIBLE_BASES.includes(filter.filename));
           allInfos[airport.icao] = visible.sort((a, b) => sortLevelRows(a, b, isDemo));
         }
 
@@ -367,15 +362,9 @@ export default function BrowserScreen() {
                 </div>
               </div>
               {fileInfos[airport.icao].map((info, i) => {
-                if (info.error) return (
-                  <div key={i} className="level-row level-row-error">
-                    <span className="level-tod"></span>
-                    <span className="level-timerange"></span>
-                    <span className="level-name">{info.filename}</span>
-                    <span className="level-stats level-error-text">{info.error}</span>
-                    <span className="level-arrow"><IoChevronForward size={14} /></span>
-                  </div>
-                );
+                // Levels that can't be opened (e.g. "No WorldState flight data") render
+                // no row at all — the airport header + radar toggles stay visible.
+                if (info.error) return null;
                 // Display name replaces the old time-of-day label as the
                 // large leading element of the row. Comes from i18n
                 // (level_name_<base>); t() falls back to the key itself
