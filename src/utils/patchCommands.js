@@ -13,10 +13,22 @@ export const TURN_RATE_DEG_S = 3;   // IFR standard-rate turn — the plugin rot
 export const ALT_RATE_FPM = 1000;   // climb/descend speed — ft/min of GAME time (the plugin's default too)
 export const ALT_MIN_FT = 1000;     // altitude slider floor
 export const ALT_MAX_FT = 9000;     // altitude slider ceiling (extends to the rounded current above 9000)
+export const ALT_MIN_M = 300;       // China (Z*) airports — altitude slider floor in meters
+export const ALT_MAX_M = 2700;      // China (Z*) airports — altitude slider ceiling in meters
+export const ALT_STEP_M = 300;      // China (Z*) airports — altitude slider step
 export const SPEED_MIN_KTS = 180;   // fly-speed slider floor
 export const SPEED_MAX_KTS = 240;   // fly-speed slider ceiling (the ACL approach-speed default)
 export const FT_PER_GU = 100 / 0.3048;   // ≈ 328.084 — 1 GU = 100 m (user-confirmed; 15.24 GU = 5000 ft)
 export const FT_PER_METER = 1 / 0.3048;  // ≈ 3.28084 — meters → feet (voice "米"/"meters"/"m" altitudes)
+
+/**
+ * China-airport test — the ICAO Z region is exclusively Chinese (ZB/ZG/ZH/
+ * ZJ/ZL/ZP/ZS/ZU/ZW/ZY), the same convention flightDefaults uses to pick
+ * the 'zh' language. Meter-mode fly altitudes.
+ */
+export function isChinaIcao(icao) {
+  return String(icao || '').startsWith('Z');
+}
 
 /**
  * Heading payload — the plugin's game-verified convention: heading H →

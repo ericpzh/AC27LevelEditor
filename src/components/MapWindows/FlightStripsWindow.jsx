@@ -1032,6 +1032,7 @@ export default function FlightStripsWindow({ airportIcao }) {
         <FlightPatchCommandBar
           key={selectedAircraft.callSign}
           aircraft={selectedAircraft}
+          airportIcao={airportIcao}
           witchMode={witchMode}
           commandCapable={commandCapable}
           starWaypoints={starWaypoints}

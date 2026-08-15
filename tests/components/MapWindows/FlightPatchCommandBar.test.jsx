@@ -204,3 +204,68 @@ describe('FlightPatchCommandBar — button colors', () => {
     expect(cancel.classList.contains('fcc-suggest-cancel')).toBe(true);
   });
 });
+
+describe('FlightPatchCommandBar — Fly Altitude (China meter mode)', () => {
+  const AIRCRAFT_ALT = {
+    ...AIRCRAFT,
+    position: { x: 0, y: 5, z: 0 },   // 5 GU = 1640 ft ≈ 500 m
+  };
+
+  it('international airports keep the 1000-ft slider', () => {
+    const { container } = renderComposer({ aircraft: AIRCRAFT_ALT });
+    fireEvent.click(screen.getByRole('button', { name: 'Fly Altitude' }));
+    const slider = screen.getByRole('slider');
+    expect(slider.min).toBe('1000');
+    expect(slider.step).toBe('1000');
+    // 1640 ft → thumb at the rounded current 2000; readout in ft
+    expect(slider.value).toBe('2000');
+    expect(container.querySelector('.fcc-heading-readout').textContent).toBe('2000');
+  });
+
+  it('Z* airports step 300-2700 m, thumb at the rounded current, readout in m', () => {
+    const { container } = renderComposer({ aircraft: AIRCRAFT_ALT, airportIcao: 'ZSSS' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fly Altitude' }));
+    const slider = screen.getByRole('slider');
+    expect(slider.min).toBe('300');
+    expect(slider.max).toBe('2700');
+    expect(slider.step).toBe('300');
+    // 1640 ft ≈ 500 m → nearest 300 = 600; zero-padded constant-width readout
+    expect(slider.value).toBe('600');
+    expect(container.querySelector('.fcc-heading-readout').textContent).toBe('0600m');
+  });
+
+  it('sends targetFt = meters converted to feet over UDP', async () => {
+    renderComposer({ aircraft: AIRCRAFT_ALT, airportIcao: 'ZSJN' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fly Altitude' }));
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '900' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await new Promise((r) => setTimeout(r, 0));   // flush the sequential awaits
+
+    const frames = sentFrames();
+    expect(frames).toHaveLength(1);
+    expect(frames[0].type).toBe('altitude');
+    expect(frames[0].callSign).toBe('CSC9355');
+    expect(frames[0].targetFt).toBe(Math.round(900 / 0.3048));   // 900 m → 2953 ft
+    expect(frames[0].targetFt).toBe(2953);
+    expect(frames[0].rate).toBe(1000);
+  });
+
+  it('labels the command line "Fly Altitude 0900m" (zero-padded for constant width)', () => {
+    const { container } = renderComposer({ aircraft: AIRCRAFT_ALT, airportIcao: 'ZGSZ' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fly Altitude' }));
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '900' } });
+    expect(container.querySelector('.fcc-cmd').textContent).toContain('Fly Altitude 0900m');
+  });
+
+  it('readout width is constant across the digit-length transition (900 m → 1200 m)', () => {
+    const { container } = renderComposer({ aircraft: AIRCRAFT_ALT, airportIcao: 'ZSSS' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fly Altitude' }));
+    const readout = () => container.querySelector('.fcc-heading-readout');
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '900' } });
+    const t900 = readout().textContent;
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '1200' } });
+    const t1200 = readout().textContent;
+    expect(t1200).toBe('1200m');
+    expect(t1200.length).toBe(t900.length);   // both 5 chars — no reflow/jitter between 900 and 1200
+  });
+});

@@ -3,7 +3,8 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { CHANNEL_TYPE_APPROACH, FIX_NAME_RE } from '../../utils/constants/aviation';
 import { MAP_ICON_PATH } from '../../utils/constants';
 import {
-  ALT_MIN_FT, ALT_MAX_FT, SPEED_MIN_KTS, SPEED_MAX_KTS, FT_PER_GU, pad3,
+  ALT_MIN_FT, ALT_MAX_FT, ALT_MIN_M, ALT_MAX_M, ALT_STEP_M,
+  SPEED_MIN_KTS, SPEED_MAX_KTS, FT_PER_GU, FT_PER_METER, pad3, isChinaIcao,
   buildHeadingPayload, buildAltitudePayload, buildSpeedPayload, buildClearApprPayload,
   bearingDegrees,
 } from '../../utils/patchCommands';
@@ -71,7 +72,11 @@ import {
  * range from ALT_MIN_FT (1000) up to max(ALT_MAX_FT (9000), the aircraft's
  * CURRENT altitude rounded to the nearest 1000), the thumb defaulting to
  * the rounded current (3300 ft → thumb at 3000) so Send always has a
- * value. The pick sends an `altitude|CS|targetFt|rate` frame (targetFt in
+ * value. CHINA (Z* ICAO) AIRPORTS FLY METERS (2026-08-15): ZXXX airports
+ * show a fixed 300-2700 m range in 300-m steps (300, 600, 900, … 2700),
+ * the thumb at the rounded current clamped in range; the payload converts
+ * meters → feet (FT_PER_METER) before dispatch. The pick sends an
+ * `altitude|CS|targetFt|rate` frame (targetFt in
  * feet — the plugin's conversion is ft = position.y × 100/0.3048, 1 GU =
  * 100 m, 15.24 GU = 5000 ft). The plugin moves the aircraft's Y smoothly
  * at rate ft/min of GAME time (ALT_RATE_FPM, the plugin's default too —
@@ -142,10 +147,23 @@ const PLANE_THUMB_URI =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><path d="${MAP_ICON_PATH}" fill="currentColor"/></svg>`
   );
 
+// Meter-mode readout/label formatter — zero-padded to 4 digits so the text
+// width is CONSTANT across the whole 300-2700 m range ('0600m' = '1200m' =
+// '2700m'). Without the pad the readout grows a digit between 900 m and
+// 1200 m ('900m' → '1200m'): the popup re-anchors on every drag tick, so
+// that 7 px growth made the panel visibly jitter/shrink exactly there. Same
+// convention as pad3 for the heading slider.
+const padAltM = (n) => String(n).padStart(4, '0') + 'm';
+
 export default function FlightPatchCommandBar({
   aircraft, witchMode, commandCapable, starWaypoints = {}, waypoints = [],
+  airportIcao,
 }) {
   const electronAPI = useElectronAPI();
+
+  // China (ZXXX ICAO) airports fly meters: the altitude slider shows
+  // 300-2700 m in 300-m steps; feet are computed at payload build time.
+  const meterMode = isChinaIcao(airportIcao);
 
   // Pending composed option: null = not chosen yet; clearAppr = Clear for
   // Approach. The pending heading/altitude/speed becomes a CHAIN entry via
@@ -196,13 +214,18 @@ export default function FlightPatchCommandBar({
 
   // Current altitude of the selected aircraft in ft + the rounded 1000-ft
   // position for the altitude slider (3300 → 3000) — derived from UDP
-  // telemetry position.y (GU → ft). Null when no telemetry.
+  // telemetry position.y (GU → ft). Null when no telemetry. China (Z*)
+  // airports additionally get the rounded 300-m position for the meter
+  // slider (3300 ft → 1006 m → 900 m), clamped into [ALT_MIN_M, ALT_MAX_M].
   const altitudeBase = useMemo(() => {
     if (!aircraft?.position || typeof aircraft.position.y !== 'number') return null;
     const altFt = aircraft.position.y * FT_PER_GU;
+    const altM = Math.round(altFt * 0.3048);
     return {
       altFt: Math.round(altFt),
       current: Math.round(Math.round(altFt) / 1000) * 1000,   // rounded to the nearest 1000 — the slider default
+      altM,
+      currentM: Math.min(ALT_MAX_M, Math.max(ALT_MIN_M, Math.round(altM / ALT_STEP_M) * ALT_STEP_M)),   // nearest 300, clamped — the meter slider default
     };
   }, [aircraft]);
 
@@ -304,12 +327,16 @@ export default function FlightPatchCommandBar({
       };
     }
     if (valType === 'altitude' || sel.alt != null) {
-      const v = sel.alt ?? (altitudeBase ? altitudeBase.current : null);
+      const v = sel.alt ?? (altitudeBase ? (meterMode ? altitudeBase.currentM : altitudeBase.current) : null);
       if (v == null) return null;
       return {
         key: 'altitude',
-        label: 'Fly Altitude ' + v,
-        payload: buildAltitudePayload(callSign, v),   // smooth vertical, ft/min of game time
+        // Constant-width label: padAltM keeps '0900m'..'2700m' 5 chars — the
+        // line (and the popup anchored to its end) never re-measures mid-drag.
+        label: meterMode ? 'Fly Altitude ' + padAltM(v) : 'Fly Altitude ' + v,
+        // China (Z*) airports pick meters — the wire contract is feet, so
+        // convert here: 900 m → 2953 ft. Smooth vertical, ft/min of game time.
+        payload: buildAltitudePayload(callSign, meterMode ? Math.round(v * FT_PER_METER) : v),
       };
     }
     if (valType === 'speed' || sel.speed != null) {
@@ -440,7 +467,7 @@ export default function FlightPatchCommandBar({
   // Live slider values: the pending pick's current value, defaulting to
   // the aircraft's live heading/altitude/speed while its slider is open.
   const hdg = sel.heading ?? currentHeading;
-  const alt = sel.alt ?? (altitudeBase ? altitudeBase.current : null);
+  const alt = sel.alt ?? (altitudeBase ? (meterMode ? altitudeBase.currentM : altitudeBase.current) : null);
   const spd = sel.speed ?? (speedBase ? speedBase.current : null);
 
   // The command text being built: 'Fly Heading 090', 'Fly Altitude 5000',
@@ -478,20 +505,23 @@ export default function FlightPatchCommandBar({
           <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
         </div>
       ) : valType === 'altitude' && altitudeBase ? (
-        // 1000-ft slider from ALT_MIN_FT up to max(ALT_MAX_FT, the rounded
-        // current) — the rounded current always sits on it (the default
-        // thumb); only cruising aircraft above 9000 ft extend the range.
+        // Altitude slider. International: 1000-ft range from ALT_MIN_FT up
+        // to max(ALT_MAX_FT, the rounded current) — the rounded current
+        // always sits on it (the default thumb); only cruising aircraft
+        // above 9000 ft extend the range. China (Z* airports): fixed
+        // 300-2700 m range in 300-m steps (wire value converted to feet at
+        // payload build time).
         <div className="fcc-suggest fcc-heading-row" style={{ left: popupLeft ?? 0 }} ref={popupRef}>
           <input
             className="fcc-heading-slider"
             type="range"
-            min={ALT_MIN_FT}
-            max={Math.max(ALT_MAX_FT, altitudeBase.current)}
-            step={1000}
+            min={meterMode ? ALT_MIN_M : ALT_MIN_FT}
+            max={meterMode ? ALT_MAX_M : Math.max(ALT_MAX_FT, altitudeBase.current)}
+            step={meterMode ? ALT_STEP_M : 1000}
             value={alt}
             onChange={(ev) => setSel((s) => ({ ...s, alt: +ev.target.value }))}
           />
-          <span className="fcc-heading-readout">{alt}</span>
+          <span className="fcc-heading-readout">{meterMode ? padAltM(alt) : alt}</span>
           <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item fcc-suggest-send" onClick={sendPatch}>Send</button>
           <span className="fcc-suggest-sep">{'|'}</span>
