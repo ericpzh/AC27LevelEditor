@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
-import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
+import { CHANNEL_TYPE_APPROACH, FIX_NAME_RE } from '../../utils/constants/aviation';
 import { MAP_ICON_PATH } from '../../utils/constants';
 import {
   ALT_MIN_FT, ALT_MAX_FT, SPEED_MIN_KTS, SPEED_MAX_KTS, FT_PER_GU, pad3,
   buildHeadingPayload, buildAltitudePayload, buildSpeedPayload, buildClearApprPayload,
+  bearingDegrees,
 } from '../../utils/patchCommands';
 
 /**
@@ -17,8 +18,9 @@ import {
  *
  * At every step ALL the next choices pop up as a horizontal option row
  * flush against the line above it — never a typed answer:
- *   Fly Heading | Clear for Approach | Cancel  (nothing yet)
+ *   Fly Heading | Fly Altitude | Fly Speed | Fly Waypoint | Clear for Approach | Cancel  (nothing yet)
  *   [slider 001–360] | Send | Cancel    (Fly Heading: drag to set, thumb = current heading)
+ *   [STAR waypoints…] | Send | Cancel    (Fly Waypoint: click a fix, left→right = route order)
  *   Send | Cancel                       (one option committed)
  * Send appears as soon as at least one option is committed — or right away
  * inside the heading slider panel (it has its own Send). The panels also
@@ -96,6 +98,20 @@ import {
  * per-aircraft override entry, so heading + speed + altitude all stay
  * active at once).
  *
+ * FLY WAYPOINT (2026-08-15): the UI sibling of the voice pipeline's
+ * 'fly direct to X' — picking it swaps the option row for the aircraft's
+ * current-approach waypoint list (the STAR telemetry reports on its
+ * assigned runway, from the airport cache's per-STAR lists; falls back to
+ * the airport's fix list when the STAR has no cached list), left to right
+ * in route order (entry → IAF). Clicking a fix commits the pick; Send
+ * dispatches an `update_heading` frame at the bearing from the aircraft's
+ * LIVE position to the fix (recomputed at Send time) — byte-identical to
+ * the voice parser's direct-to command. Fly Waypoint OVERRIDES Fly
+ * Heading: picking it drops a composed heading from the line (never sent)
+ * and the heading option blacks out while a waypoint is pending/chained.
+ * Chainable with altitude/speed like the other commands; Clear for
+ * Approach supersedes it like everything else.
+ *
  * Clear for Approach SUPERSEDES a composed chain of heading/altitude/speed:
  * picking it drops everything from the line (never sent) and removes the
  * Fly Heading / Fly Altitude / Fly Speed options — only the clear_for_appr
@@ -126,13 +142,15 @@ const PLANE_THUMB_URI =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><path d="${MAP_ICON_PATH}" fill="currentColor"/></svg>`
   );
 
-export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapable }) {
+export default function FlightPatchCommandBar({
+  aircraft, witchMode, commandCapable, starWaypoints = {}, waypoints = [],
+}) {
   const electronAPI = useElectronAPI();
 
   // Pending composed option: null = not chosen yet; clearAppr = Clear for
   // Approach. The pending heading/altitude/speed becomes a CHAIN entry via
   // Add — the chain below is what Send dispatches, one frame per entry.
-  const [sel, setSel] = useState({ heading: null, clearAppr: false, alt: null, speed: null });
+  const [sel, setSel] = useState({ heading: null, clearAppr: false, alt: null, speed: null, waypoint: null });
   // Chained commands, in send order: { key, label, payload } — key/type for
   // uniqueness, label for the line, payload is the patch object passed to
   // sendPatchCommand. Add appends the pending command; the × beside a
@@ -154,7 +172,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
   // Drop the pending (not-yet-chained) command — used after Add and by
   // resetCommand. The chain stays.
   const resetPending = useCallback(() => {
-    setSel({ heading: null, clearAppr: false, alt: null, speed: null });
+    setSel({ heading: null, clearAppr: false, alt: null, speed: null, waypoint: null });
     setValType(null);
   }, []);
 
@@ -204,6 +222,38 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
     };
   }, [aircraft]);
 
+  // Ordered "Fly Waypoint" target list for the selected aircraft — the
+  // waypoints of its current approach: the STAR telemetry reports (ac.star)
+  // on the runway it's assigned (ac.runway), looked up in the cache's
+  // per-STAR lists (left to right = route order, entry → IAF). Falls back
+  // to the runway-shape variant ("01" vs "1") then to the STAR's first
+  // runway, then to the airport's full fix list — so the option always has
+  // a target set when the aircraft has a position and the airport was
+  // scanned. Only names the approach radar actually displays survive the
+  // FIX_NAME_RE filter (same one its waypoint layer applies). Null when
+  // nothing is resolvable (option hidden).
+  const waypointList = useMemo(() => {
+    if (!aircraft?.position || typeof aircraft.position.x !== 'number') return null;
+    const star = aircraft.star;
+    const rwy = aircraft.runway;
+    const pick = (s, r) => (s && r && starWaypoints[s + '|' + r]) || null;
+    const found = pick(star, rwy)
+      || pick(star, rwy ? rwy.replace(/^0*(\d+)/, '$1') : '')   // "01" vs "1"
+      || (star ? Object.entries(starWaypoints).find(([k]) => k.startsWith(star + '|')) : null)?.[1] || null;
+    // No STAR data for this aircraft — fall back to every airport fix (the
+    // voice pipeline's own 'fly direct to X' target set).
+    const raw = found && found.length > 0
+      ? found
+      : (Array.isArray(waypoints) && waypoints.length > 0 ? waypoints : null);
+    if (!raw) return null;
+    // Only names the approach radar displays — the same name filter its
+    // waypoint layer applies (FIX_NAME_RE: ICAO-style 3-5 letter fixes).
+    // Skips numbered nodes ("JN210"), turn points and unnamed nodes.
+    const shown = raw.filter((w) => w && typeof w.x === 'number' && typeof w.z === 'number'
+      && w.name && FIX_NAME_RE.test(w.name));
+    return shown.length > 0 ? shown : null;
+  }, [aircraft, starWaypoints, waypoints]);
+
   // The command-capability gate (BepInEx Debug Mode + AC27Approach plugin
   // DLL) is computed once by the strips window on open and passed down —
   // no per-mount/per-aircraft re-checking here.
@@ -211,24 +261,31 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
   const options = useMemo(() => {
     const list = [];
     // Clear for Approach supersedes a chain: once chosen, all the
-    // composition options are gone. Fly Heading / Fly Altitude / Fly Speed
-    // can be composed one after another — Add chains them, Send dispatches
-    // the whole chain (the gate below only tests the PENDING command, so
-    // the options return after every Add). A type already on the chain
-    // blacks out — it can appear only once per line.
-    if (!sel.clearAppr && sel.heading == null && sel.alt == null && sel.speed == null) {
-      list.push({ key: 'heading', label: 'Fly Heading', disabled: chainedTypes.has('heading') });
+    // composition options are gone. Fly Heading / Fly Altitude / Fly Speed /
+    // Fly Waypoint can be composed one after another — Add chains them,
+    // Send dispatches the whole chain (the gate below only tests the
+    // PENDING command, so the options return after every Add). A type
+    // already on the chain blacks out — it can appear only once per line.
+    // Fly Waypoint OVERRIDES Fly Heading: while a waypoint is pending or
+    // chained the heading option blacks out (a picked waypoint also drops
+    // any composed heading — never sent).
+    if (!sel.clearAppr && sel.heading == null && sel.alt == null && sel.speed == null && sel.waypoint == null) {
+      const waypointActive = !!sel.waypoint || chainedTypes.has('waypoint');
+      list.push({ key: 'heading', label: 'Fly Heading', disabled: chainedTypes.has('heading') || waypointActive });
       // Altitude/speed need live telemetry — hidden while unavailable.
       if (altitudeBase) list.push({ key: 'altitude', label: 'Fly Altitude', disabled: chainedTypes.has('altitude') });
       if (speedBase) list.push({ key: 'speed', label: 'Fly Speed', disabled: chainedTypes.has('speed') });
+      // The waypoint picker needs the aircraft's STAR/fix list — hidden
+      // while unresolvable (no telemetry position / no cache data).
+      if (waypointList) list.push({ key: 'waypoint', label: 'Fly Waypoint', disabled: chainedTypes.has('waypoint') });
     }
     if (!sel.clearAppr) list.push({ key: 'clearAppr', label: 'Clear for Approach' });
     // Once at least one option is committed — or a chain exists — Send
     // joins the choices (it dispatches the whole line).
-    if (chain.length > 0 || sel.heading != null || sel.alt != null || sel.speed != null || sel.clearAppr) list.push({ key: 'send', label: 'Send' });
+    if (chain.length > 0 || sel.heading != null || sel.alt != null || sel.speed != null || sel.waypoint != null || sel.clearAppr) list.push({ key: 'send', label: 'Send' });
     list.push({ key: 'cancel', label: 'Cancel' });
     return list;
-  }, [sel, chain, chainedTypes, altitudeBase, speedBase]);
+  }, [sel, chain, chainedTypes, altitudeBase, speedBase, waypointList]);
 
   /** The pending command as a chain entry — { label, payload }, payload
       being the sendPatchCommand patch object. Handles the open-slider case
@@ -264,6 +321,20 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
         payload: buildSpeedPayload(callSign, v),   // raw knots — re-asserted every tick (no end command)
       };
     }
+    if (valType === 'waypoint' || sel.waypoint != null) {
+      // Direct-to the fix — same wire command as the voice pipeline's
+      // 'fly direct to X': an update_heading frame at the bearing from the
+      // aircraft's LIVE position to the waypoint (recomputed at Send time —
+      // the aircraft prop refreshes every 200 ms from telemetry).
+      const wp = sel.waypoint ?? (waypointList ? waypointList[0] : null);
+      if (!wp || !aircraft.position || typeof aircraft.position.x !== 'number' || typeof aircraft.position.z !== 'number') return null;
+      const hdg = bearingDegrees(aircraft.position.x, aircraft.position.z, wp.x, wp.z);
+      return {
+        key: 'waypoint',
+        label: 'Fly Direct To ' + wp.name,
+        payload: buildHeadingPayload(callSign, hdg),   // override heading — the plugin steers toward the fix
+      };
+    }
     if (sel.clearAppr) {
       return {
         key: 'clearAppr',
@@ -272,7 +343,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
       };
     }
     return null;
-  }, [aircraft, valType, sel, currentHeading, altitudeBase, speedBase]);
+  }, [aircraft, valType, sel, currentHeading, altitudeBase, speedBase, waypointList]);
 
   /** Chain the pending command onto the line and return to the options
       row, so the next command can be composed. Send dispatches the whole
@@ -312,11 +383,22 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
       setValType(key);
       return;
     }
+    if (key === 'waypoint') {
+      // Blacked-out options are disabled buttons, but guard anyway — one
+      // waypoint per line.
+      if (chainedTypes.has('waypoint')) return;
+      // Fly Waypoint OVERRIDES a composed Fly Heading: drop it (never
+      // sent) — the waypoint's bearing frame supersedes the heading.
+      setChain((c) => c.filter((x) => x.key !== 'heading'));
+      setSel((s) => ({ ...s, heading: null, waypoint: null }));
+      setValType('waypoint');
+      return;
+    }
     // Clear for Approach supersedes a composed chain (dropped — never
     // sent).
     if (key === 'clearAppr') {
       setChain([]);
-      setSel((s) => ({ ...s, clearAppr: true, heading: null, alt: null, speed: null }));
+      setSel((s) => ({ ...s, clearAppr: true, heading: null, alt: null, speed: null, waypoint: null }));
       return;
     }
   }, [sendPatch, resetCommand, chainedTypes]);
@@ -389,9 +471,9 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
           />
           <span className="fcc-heading-readout">{pad3(hdg)}</span>
           <span className="fcc-suggest-sep">{'|'}</span>
-          <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
+          <button className="fcc-suggest-item fcc-suggest-send" onClick={sendPatch}>Send</button>
           <span className="fcc-suggest-sep">{'|'}</span>
-          <button className="fcc-suggest-item" onClick={chainAdd}>Add</button>
+          <button className="fcc-suggest-item fcc-suggest-add" onClick={chainAdd}>Add</button>
           <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
         </div>
@@ -411,9 +493,9 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
           />
           <span className="fcc-heading-readout">{alt}</span>
           <span className="fcc-suggest-sep">{'|'}</span>
-          <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
+          <button className="fcc-suggest-item fcc-suggest-send" onClick={sendPatch}>Send</button>
           <span className="fcc-suggest-sep">{'|'}</span>
-          <button className="fcc-suggest-item" onClick={chainAdd}>Add</button>
+          <button className="fcc-suggest-item fcc-suggest-add" onClick={chainAdd}>Add</button>
           <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
         </div>
@@ -434,9 +516,34 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
           />
           <span className="fcc-heading-readout">{spd}</span>
           <span className="fcc-suggest-sep">{'|'}</span>
-          <button className="fcc-suggest-item" onClick={sendPatch}>Send</button>
+          <button className="fcc-suggest-item fcc-suggest-send" onClick={sendPatch}>Send</button>
           <span className="fcc-suggest-sep">{'|'}</span>
-          <button className="fcc-suggest-item" onClick={chainAdd}>Add</button>
+          <button className="fcc-suggest-item fcc-suggest-add" onClick={chainAdd}>Add</button>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
+        </div>
+      ) : valType === 'waypoint' && waypointList ? (
+        // The aircraft's current approach waypoints, left to right in route
+        // order (entry → IAF) — the STAR telemetry reports, or the airport
+        // fix list when the STAR has no cached list. Clicking one picks it
+        // (highlighted); Send/Add work like the slider panels.
+        <div className="fcc-suggest fcc-heading-row fcc-waypoint-row" style={{ left: popupLeft ?? 0 }} ref={popupRef}>
+          {aircraft.star && <span className="fcc-waypoint-star" title="Current STAR / approach">{aircraft.star}</span>}
+          {waypointList.map((wp, i) => (
+            <React.Fragment key={wp.name + i}>
+              {i > 0 && <span className="fcc-suggest-sep">{'·'}</span>}
+              <button
+                className={'fcc-suggest-item fcc-waypoint-btn' + (sel.waypoint && sel.waypoint.name === wp.name ? ' fcc-waypoint-active' : '')}
+                onClick={() => setSel((s) => ({ ...s, waypoint: wp, heading: null }))}
+              >
+                {wp.name}
+              </button>
+            </React.Fragment>
+          ))}
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item fcc-suggest-send" onClick={sendPatch}>Send</button>
+          <span className="fcc-suggest-sep">{'|'}</span>
+          <button className="fcc-suggest-item fcc-suggest-add" onClick={chainAdd}>Add</button>
           <span className="fcc-suggest-sep">{'|'}</span>
           <button className="fcc-suggest-item fcc-suggest-cancel" onClick={resetCommand}>Cancel</button>
         </div>
@@ -446,7 +553,7 @@ export default function FlightPatchCommandBar({ aircraft, witchMode, commandCapa
             <React.Fragment key={o.key}>
               {i > 0 && <span className="fcc-suggest-sep">{'|'}</span>}
               <button
-                className={'fcc-suggest-item' + (o.key === 'cancel' ? ' fcc-suggest-cancel' : '')}
+                className={'fcc-suggest-item' + (o.key === 'cancel' ? ' fcc-suggest-cancel' : '') + (o.key === 'send' ? ' fcc-suggest-send' : '')}
                 onClick={() => select(o.key)}
                 disabled={o.disabled}
               >

@@ -312,6 +312,10 @@ export default function FlightStripsWindow({ airportIcao }) {
   // target set + the STT session's extra grammar words. Fetched with the
   // taxiways below (collectValues._airwayNodes).
   const [waypoints, setWaypoints] = useState([]);
+  // Per-STAR ordered waypoint lists { "STAR|runway": [{name, x, z}, ...] } —
+  // the patch composer's "Fly Waypoint" picker target set
+  // (collectValues._starWaypoints).
+  const [starWaypoints, setStarWaypoints] = useState({});
 
   // ─── Voice command hook ──────────────────────────────────────────────
   const voice = useVoiceCommands(udpAircraft, waypoints);
@@ -610,6 +614,9 @@ export default function FlightStripsWindow({ airportIcao }) {
       }
       if (result && Array.isArray(result._airwayNodes)) {
         setWaypoints(result._airwayNodes);
+      }
+      if (result && result._starWaypoints && typeof result._starWaypoints === 'object') {
+        setStarWaypoints(result._starWaypoints);
       }
     }).catch(() => {});
   }, [airportIcao, rootPath, electronAPI]);
@@ -1027,6 +1034,8 @@ export default function FlightStripsWindow({ airportIcao }) {
           aircraft={selectedAircraft}
           witchMode={witchMode}
           commandCapable={commandCapable}
+          starWaypoints={starWaypoints}
+          waypoints={waypoints}
         />
       )}
       {/* TODO: re-enable command bar when game command IDs are confirmed

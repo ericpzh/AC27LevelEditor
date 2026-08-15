@@ -21,6 +21,9 @@ const {
   DEFAULT_RUNWAY_VR_SPEED,
 } = require('../utils/constants/acl-format');
 const { APPROACH_EFFECTIVE_SPEED, APPROACH_SPEED_MS, DEFAULT_AIRPORT_SCALE, APPROACH_CEILING_M, TAN_3_DEG, DEFAULT_TAT, EPSILON_NORMALIZE, EPSILON_PR, EPSILON_IAF_JOIN } = require('./constants');
+// The radar's waypoint-name filter — shared with the composer's "Fly
+// Waypoint" picker so both show exactly the same fix names.
+const { FIX_NAME_RE } = require('../utils/constants/aviation');
 
 // ─── GUID generator (inlined to avoid ESM import chain issues in tests) ──
 
@@ -973,6 +976,77 @@ function extractStarRunwayMappings(aclText) {
     }
   }
   return { starRunwayMap, runwayStarMap };
+}
+
+// ─── 5e. Extract ordered STAR waypoints from SceneryData ─────
+
+/**
+ * Extract each STAR's ordered waypoint list (route order: entry → IAF)
+ * from SceneryData.Runways Routes (Type=0). A STAR route's AirwayNodes
+ * $irefs resolve to airway-node entities carrying a Name + Position — those
+ * names are what the composer's "Fly Waypoint" picker displays left to
+ * right, mirroring the route order.
+ *
+ * @param {string} aclText - raw ACL file content
+ * @returns {Object} — { "STAR|runway": [{name, x, z}, ...] } in route order
+ */
+function extractStarWaypoints(aclText) {
+  const result = {};
+  if (!aclText) return result;
+
+  const { buildPkIndex, getPkEntriesByType, resolveIref, extractStringFromV4, extractVector3FromV4, extractIrefArray } = require('./v4_pk_index');
+  const pkIndex = buildPkIndex(aclText);
+  const runways = getPkEntriesByType(pkIndex, 'runway');
+
+  for (const rw of runways) {
+    const runwayName = extractStringFromV4(rw.block, 'Name');
+    const physName = extractStringFromV4(rw.block, 'PhysicalName');
+    if (!runwayName || !physName || !physName.includes('/')) continue;
+
+    // Navigate Routes.$rcontent within the runway block
+    const routesBlock = _extractNestedObject(rw.block, 'Routes');
+    if (!routesBlock) continue;
+
+    const routesT = createTokenizer(routesBlock);
+    const routesRc = routesT.findSection('$rcontent');
+    if (!routesRc) continue;
+
+    let rp = routesRc.valueStart + 1; // skip opening [
+    while (rp < routesBlock.length) {
+      while (rp < routesBlock.length && ' \t\n\r'.includes(routesBlock[rp])) rp++;
+      if (rp >= routesBlock.length || routesBlock[rp] === ']') break;
+      if (routesBlock[rp] === ',') { rp++; continue; }
+      if (routesBlock[rp] === '{') {
+        const reEnd = routesT.findObjectEnd(rp);
+        if (reEnd === null) break;
+        const routeEntry = routesBlock.substring(rp, reEnd);
+        // RouteType 0 = STAR
+        const routeType = _extractInt(routeEntry, 'RouteType');
+        if (routeType === 0) {
+          const starName = _extractString(routeEntry, 'Name');
+          const irefs = extractIrefArray(routeEntry, 'AirwayNodes');
+          if (starName && irefs.length > 0) {
+            const waypoints = [];
+            for (const iref of irefs) {
+              const resolved = resolveIref(pkIndex, iref);
+              if (!resolved) continue;
+              const name = extractStringFromV4(resolved.block, 'Name');
+              const pos = extractVector3FromV4(resolved.block);
+              if (name && pos) waypoints.push({ name, x: pos.x, z: pos.z });
+            }
+            if (waypoints.length > 0) {
+              const key = starName + '|' + runwayName;
+              if (!result[key]) result[key] = waypoints;
+            }
+          }
+        }
+        rp = reEnd;
+      } else {
+        rp++;
+      }
+    }
+  }
+  return result;
 }
 
 // ─── 5c. Resolve Approach Procedure Data from SceneryData ─────
@@ -2178,6 +2252,12 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
   const starPaths = firstAclText
     ? buildStarPaths(firstAclText, appPointMap, starMappings.starRunwayMap)
     : {};
+
+  // Ordered STAR waypoint names (the composer's "Fly Waypoint" picker) from
+  // SceneryData — each STAR route's AirwayNodes resolve to named fixes.
+  const starWaypoints = firstAclText
+    ? extractStarWaypoints(firstAclText)
+    : {};
   const runwayThresholds = firstAclText
     ? _parseRunwayThresholds(firstAclText)
     : {};
@@ -2237,7 +2317,7 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
         // Skips turn points ("TurnPoint19", "TP19W1"), numbered nodes ("JN210")
         // and unnamed nodes.
         const name = extractStringFromV4(entry.block, 'Name');
-        if (!name || !/^[A-Z]{3,5}$/.test(name)) continue;
+        if (!name || !FIX_NAME_RE.test(name)) continue;
         airwayNodes.push({
           pk: entry.pk,                                        // "airway-node:-244674"
           name,                                                // "PANKI"
@@ -2294,6 +2374,7 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
       fileTypeMaps.size + ' file typeMaps, ' + state5ParamsMap.size + ' state5 route combos, ' +
       Object.keys(starPaths).length + ' star paths (' +
       Object.keys(starMappings.starRunwayMap).length + ' STARs from SceneryData), ' +
+      Object.keys(starWaypoints).length + ' STAR waypoint lists, ' +
       taxiwayPaths.paths.length + ' taxiway paths, ' +
       Object.keys(sidPaths).length + ' SID paths, ' +
       Object.keys(missedAppPaths).length + ' missed approach paths, ' +
@@ -2322,6 +2403,7 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
     sidRunwayMap, runwaySidMap, sidPaths,
     missedAppMap, runwayMissedAppMap, missedAppPaths,
     apprRunwayMap, runwayApprMap, apprPaths,
+    starWaypoints,
     airwayNodes,
   };
 }
@@ -2435,6 +2517,7 @@ function serializeApproachCache(cache) {
   if (cache.apprRunwayMap) { out.apprRunwayMap = cache.apprRunwayMap; }
   if (cache.runwayApprMap) { out.runwayApprMap = cache.runwayApprMap; }
   if (cache.airwayNodes) { out.airwayNodes = cache.airwayNodes; }
+  if (cache.starWaypoints) { out.starWaypoints = cache.starWaypoints; }
   return out;
 }
 
@@ -2467,6 +2550,7 @@ function deserializeApproachCache(json) {
   if (json.apprRunwayMap && typeof json.apprRunwayMap === 'object') { cache.apprRunwayMap = json.apprRunwayMap; }
   if (json.runwayApprMap && typeof json.runwayApprMap === 'object') { cache.runwayApprMap = json.runwayApprMap; }
   if (json.airwayNodes && Array.isArray(json.airwayNodes)) { cache.airwayNodes = json.airwayNodes; }
+  if (json.starWaypoints && typeof json.starWaypoints === 'object') { cache.starWaypoints = json.starWaypoints; }
   return cache;
 }
 
@@ -2504,6 +2588,7 @@ module.exports = {
   buildTypeNameIndex,
   buildStarPaths,
   extractStarRunwayMappings,
+  extractStarWaypoints,
   extractGameTime,
   serializeApproachCache,
   deserializeApproachCache,

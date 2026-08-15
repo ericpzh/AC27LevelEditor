@@ -51,6 +51,14 @@ export const DYNAMICS_STATE_APPROACH = 2;    // State=5
 // constant 0; internal position/direction math still uses the real PR.
 export const STATE5_OUTPUT_PROGRESS_RATIO = 0;
 
+// ─── Waypoint-name filter (shared with the approach radar) ────
+// Only true fixes count — ICAO-style all-uppercase 3-5 letter names.
+// Skips turn points ("TurnPoint19", "TP19W1"), numbered nodes ("JN210")
+// and unnamed nodes. Applied to the radar's waypoint layer (src/acl/
+// approach.js buildApproachCache) AND the patch composer's "Fly Waypoint"
+// picker, so the picker only offers names the radar actually displays.
+export const FIX_NAME_RE = /^[A-Z]{3,5}$/;
+
 // ─── Command / channel type numbers ────────────────────────
 export const CMD_CONTACT_TOWER = 22;
 export const CMD_CLEARED_TO_LAND = 23;

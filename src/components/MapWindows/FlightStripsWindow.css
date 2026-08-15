@@ -929,15 +929,69 @@
   transform: scale(0.97);
 }
 
-/* Cancel — muted, red on hover */
+/* Send — green (dispatch is a go) */
+.fcc-suggest-send {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.fcc-suggest-send:hover {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+/* Cancel — red (abandon the command) */
 .fcc-suggest-cancel {
-  color: var(--text-muted);
+  color: var(--red);
   font-weight: 500;
 }
 
 .fcc-suggest-cancel:hover {
   color: var(--red);
   background: var(--red-bg);
+}
+
+/* Add — blue (chain the pending command onto the line) */
+.fcc-suggest-add {
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.fcc-suggest-add:hover {
+  color: var(--blue);
+  background: var(--blue-bg);
+}
+
+/* Fly Waypoint picker — the current approach's waypoints, left to right
+   in route order (entry → IAF). The STAR name leads the row; the picked
+   fix highlights. */
+.fcc-waypoint-row {
+  gap: 4px;
+  max-width: calc(100vw - 24px);
+  overflow-x: auto;
+}
+
+.fcc-waypoint-star {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding-right: 2px;
+  user-select: none;
+}
+
+.fcc-waypoint-btn {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.fcc-waypoint-active,
+.fcc-waypoint-active:hover {
+  color: var(--green);
+  background: var(--green-bg);
+  border-color: var(--green);
 }
 
 /* Command type already on the chain — blacked out, not selectable (the

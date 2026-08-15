@@ -380,6 +380,10 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   // Include STAR paths for the Airway column graph popup
   aclValues._starPaths = cached?.approachData?.starPaths || {};
 
+  // Ordered STAR waypoint names (the patch composer's "Fly Waypoint" picker):
+  // { "STAR|runway": [{name, x, z}, ...] } in route order, entry → IAF.
+  aclValues._starWaypoints = cached?.approachData?.starWaypoints || {};
+
   // Use authoritative STAR↔runway mappings extracted from SceneryData.Runways[].Routes[].Type=0.
   // This captures ALL valid STAR-runway combinations, not just those present in appPointMap
   // (which is limited to State=30 aircraft entries at snapshot time).

@@ -28,9 +28,11 @@ export const PROD_VISIBLE_BASES = [
   'ZSJN_runwaychange.acl',
   'ZSJN_peakdeparture.acl',
   'ZSJN_taixwayclosed.acl',
-  // KJFK — Relax Time, Busy Time, Peak Arrival
+  // KJFK — Relax Time, Busy Time, Runway Change, Peak Departure, Peak Arrival
   'KJFK_leisure_1.acl',
   'KJFK_leisure_2.acl',
+  'KJFK_runwaychange.acl',
+  'KJFK_peakdeparture.acl',
   'KJFK_peakarrival.acl',
   // KDCA — Relax Time, Busy Time, Runway Change, Peak Departure, Peak Arrival
   'KDCA_leisure_1.acl',

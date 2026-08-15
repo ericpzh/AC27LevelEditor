@@ -43,7 +43,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
    - **Stand dropdown from PKStaticEntities:** Stand identifiers parsed by `_parseStandPositions()` (stand `TailPosition`/`NosePosition` `$iref`s) become the authoritative dropdown options (sorted), replacing any hardcoded or ACL-derived stand lists
    - **STAR dropdown from PKStaticEntities:** STAR names come from `starRunwayMap` keys (runway `Routes` with RouteType=0), same pattern as Stand — static scenery is the single source of truth. `starRunwayMap` is built by `extractStarRunwayMappings()` and already excludes stubs (`$rlength:0`)
    - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData }`
-   - `approachData` now includes: `taxiwayPaths`, `sidPaths`, `missedAppPaths`, `apprPaths`, `sidRunwayMap`, `runwaySidMap`, `missedAppMap`, `runwayMissedAppMap`, `apprRunwayMap`, `runwayApprMap` (all serialized through `serializeApproachCache`/`deserializeApproachCache`)
+   - `approachData` now includes: `taxiwayPaths`, `sidPaths`, `missedAppPaths`, `apprPaths`, `sidRunwayMap`, `runwaySidMap`, `missedAppMap`, `runwayMissedAppMap`, `apprRunwayMap`, `runwayApprMap`, `starWaypoints` (all serialized through `serializeApproachCache`/`deserializeApproachCache`)
    - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint) plus `tailX`/`tailZ`/`noseX`/`noseZ` for heading/orientation
        - `areaData` parsed from first .acl via `_parseAreas()` — maps AreaType (0=boundary, 1=stand/apron, 2=building) → `[{guid, enabled, points[{x,z}]}]` — used by GroundMapWindow
    - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
@@ -55,7 +55,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
 2. EditorScreen's `useEffect` reads `window._pendingEditor` and loads:
    - `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
    - `load-timelines` IPC → reads timelines from ACL + `windSpeedUnit` from `airport_config.json` (defaults to `'knots'`)
-   - `collect-values` IPC → reads dropdown values from airport cache (no file I/O). Also returns `_taxiwayPaths`, `_runwayData`, `_sidPaths`, `_missedAppPaths`, `_sidRunwayMap`, `_runwaySidMap` for map window rendering.
+   - `collect-values` IPC → reads dropdown values from airport cache (no file I/O). Also returns `_taxiwayPaths`, `_runwayData`, `_sidPaths`, `_missedAppPaths`, `_sidRunwayMap`, `_runwaySidMap`, `_starWaypoints` (ordered per-STAR waypoint lists, `{ "STAR|runway": [{name, x, z}, ...] }` in route order entry→IAF — the patch composer's "Fly Waypoint" picker target set) for map window rendering.
    - `load-audio-callsigns` IPC → reads audio callsigns from airport cache (no file I/O)
 3. **Wind speed conversion:** If `windSpeedUnit` is `'mps'`, speeds are converted to knots on load (1 m/s = 1.94384 kt). The zustand store always holds knots. Stored in `_windSpeedUnit`.
 4. Zustand store is populated and React renders the flight table
@@ -109,7 +109,7 @@ The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.j
 
 Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `src/utils/constants.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
-**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js:13`. The re-scan happens transparently during App.jsx boot — `initAirportCache()` detects the version mismatch and rebuilds the cache silently before BrowserScreen mounts. Without the bump, old cached data will silently corrupt saves. Examples of changes requiring a bump: adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths`/`airwayNodes` to `approachData`, removing `saveTimeOffsets`/`typeMap` from the serialized schema. **`airwayNodes` content changes** (e.g. the 2026-08-06 filter to ICAO-style `/^[A-Z]{3,5}$/` fix names only) also count as shape changes and need a bump. **Changing the `.acl` scan set** (the 2026-08-10 `isCacheAclFile` whitelist-override that started caching whitelisted endless/scenery levels like `ZGSZ_Endless.acl`) also needs a bump. Current `CACHE_VERSION` is 23.
+**⚠️ CACHE_VERSION rule:** Any change to the shape of `cache.json` (new fields in the approach cache object, new top-level keys, changed structure of `approachData`, `fileTypeMaps`, etc.) MUST bump `CACHE_VERSION` in `src/utils/constants/timing.js:13`. The re-scan happens transparently during App.jsx boot — `initAirportCache()` detects the version mismatch and rebuilds the cache silently before BrowserScreen mounts. Without the bump, old cached data will silently corrupt saves. Examples of changes requiring a bump: adding `state5ParamsMap`, changing `fileTypeMaps` from per-airport to per-file, adding `.bak` files to the scan set, adding `taxiwayPaths`/`sidPaths`/`missedAppPaths`/`airwayNodes`/`starWaypoints` to `approachData`, removing `saveTimeOffsets`/`typeMap` from the serialized schema. **`airwayNodes` content changes** (e.g. the 2026-08-06 filter to ICAO-style `/^[A-Z]{3,5}$/` fix names only) also count as shape changes and need a bump. **Changing the `.acl` scan set** (the 2026-08-10 `isCacheAclFile` whitelist-override that started caching whitelisted endless/scenery levels like `ZGSZ_Endless.acl`) also needs a bump. **`starWaypoints` was added (2026-08-15, v22)** for the composer's "Fly Waypoint" picker — its maps do NOT change the shape of any pre-existing field, but adding the key required the bump. Current `CACHE_VERSION` is 22.
 
 | `cache.json` | Behavior |
 |---|---|
@@ -222,8 +222,8 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 **Visibility is whitelist-based** in `src/utils/constants/ui.js`:
 
-- `PROD_VISIBLE_BASES` (ordered array, 13 entries) — the only levels shown in production (non-demo) mode; **array position = browser display order**:
-  `ZSJN_leisure_1.acl`, `ZSJN_leisure_2.acl`, `ZSJN_runwaychange.acl`, `ZSJN_peakdeparture.acl`, `ZSJN_taixwayclosed.acl`, `KJFK_leisure_1.acl`, `KJFK_leisure_2.acl`, `KJFK_peakarrival.acl`, `KDCA_leisure_1.acl`, `KDCA_leisure_2.acl`, `KDCA_runwaychange.acl`, `KDCA_peakdeparture.acl`, `KDCA_peakarrival.acl`
+- `PROD_VISIBLE_BASES` (ordered array, 15 entries) — the only levels shown in production (non-demo) mode; **array position = browser display order**:
+  `ZSJN_leisure_1.acl`, `ZSJN_leisure_2.acl`, `ZSJN_runwaychange.acl`, `ZSJN_peakdeparture.acl`, `ZSJN_taixwayclosed.acl`, `KJFK_leisure_1.acl`, `KJFK_leisure_2.acl`, `KJFK_runwaychange.acl`, `KJFK_peakdeparture.acl`, `KJFK_peakarrival.acl`, `KDCA_leisure_1.acl`, `KDCA_leisure_2.acl`, `KDCA_runwaychange.acl`, `KDCA_peakdeparture.acl`, `KDCA_peakarrival.acl`
 - `DEMO_VISIBLE_ORDER` (ordered array, 4 entries) — the only levels shown in demo mode (root path contains "Airport Control 27 Demo"); array position = browser display order:
   `KJFK_leisure_1.demo.acl`, `KJFK_peakarrival.demo.acl`, `ZSJN_leisure_1.acl`, `ZSJN_peakdeparture.demo.acl`
 - `DEMO_VISIBLE_BASES` (Set) — derived from `DEMO_VISIBLE_ORDER` for lookups
