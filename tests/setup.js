@@ -96,6 +96,14 @@ vi.stubGlobal('electronAPI', {
   onBepInExInstallProgress: (cb) => mockIpcOn('bepinex-install-progress', cb),
   offBepInExInstallProgress: (cb) => { /* unsubscribe */ },
 
+  // Command window / PTT gate + Load DLL (AC27Approach plugin under plugins/)
+  checkCommandCapability: () => mockIpcInvoke('check-command-capability'),
+  loadApproachDll: () => mockIpcInvoke('load-approach-dll'),
+  downloadApproachDll: () => mockIpcInvoke('download-approach-dll'),
+  installApproachDll: (dllPath) => mockIpcInvoke('install-approach-dll', dllPath),
+  onApproachDllDownloadProgress: (cb) => mockIpcOn('approach-dll-download-progress', cb),
+  offApproachDllDownloadProgress: (cb) => { /* unsubscribe */ },
+
   // ─── Livery Install ───────────────────────────────────
   selectLiveryZip: () => mockIpcInvoke('select-livery-zip'),
   installLivery: (zipPath) => mockIpcInvoke('install-livery', zipPath),

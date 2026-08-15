@@ -155,7 +155,7 @@ function headRemoteExe() {
  * @param {string} url
  * @returns {Promise<{ etag: string, lastModified: string|null, contentLength: number }>}
  */
-function headRemoteExeWithUrl(url) {
+function headRemoteExeWithUrl(url, timeoutMs = HEAD_TIMEOUT) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const opts = {
@@ -163,7 +163,7 @@ function headRemoteExeWithUrl(url) {
       port: parsed.port || 443,
       path: parsed.pathname + parsed.search,
       method: 'HEAD',
-      timeout: HEAD_TIMEOUT,
+      timeout: timeoutMs,
     };
     const req = https.request(opts, (res) => {
       if (res.statusCode < 200 || res.statusCode >= 300) {

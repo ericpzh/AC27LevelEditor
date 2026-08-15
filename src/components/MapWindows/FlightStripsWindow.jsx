@@ -16,6 +16,7 @@ import FlightPatchCommandBar from './FlightPatchCommandBar';
 import { getCommandChildren, setTaxiways } from './commandTree';
 import useVoiceCommands from './useVoiceCommands';
 import VoicePTTButton from './VoicePTTButton';
+import ApproachPluginInstallOverlay from './ApproachPluginInstallOverlay';
 import './FlightStripsWindow.css';
 
 const SEAT_LABELS = { 1: 'RMP', 2: 'GND', 3: 'TWR', 4: 'DEP', 5: 'APPR', 6: 'DEL', 7: 'APN' };
@@ -285,16 +286,28 @@ export default function FlightStripsWindow({ airportIcao }) {
   const voiceFeedbackTimerRef = useRef(null);
   // Command capability gate for the PTT button + command bar — patch frames
   // only reach the game while BepInEx Debug Mode is installed AND the
-  // AC27Approach plugin DLL is deployed under BepInEx/plugins. Checked once
-  // when the window opens (the DLL can't change while the game runs — the
-  // plugin loads at game start). Hidden while unknown so nothing flashes.
+  // AC27Approach plugin DLL is deployed under BepInEx/plugins AND it matches
+  // the latest release (local MD5 vs the R2 ETag; pluginUpToDate:null =
+  // couldn't verify → treated as OK so a working plugin survives offline).
+  // Checked once when the window opens (the DLL can't change while the game
+  // runs — the plugin loads at game start). Hidden while unknown so nothing
+  // flashes.
   const [commandCapability, setCommandCapability] = useState(null);
-  const commandCapable = !!(commandCapability && commandCapability.bepInExInstalled && commandCapability.pluginInstalled);
+  const commandCapable = !!(commandCapability
+    && commandCapability.bepInExInstalled
+    && commandCapability.pluginInstalled
+    && commandCapability.pluginUpToDate !== false);
+  const pluginOutdated = !!(commandCapability
+    && commandCapability.pluginInstalled
+    && commandCapability.pluginUpToDate === false);
   const debugOn = !!(commandCapability && commandCapability.bepInExInstalled);
   // Load DLL notice popup (Debug Mode off) + transient copy feedback
   const [dllNoticeOpen, setDllNoticeOpen] = useState(false);
   const [dllFeedback, setDllFeedback] = useState(null);
   const dllFeedbackTimerRef = useRef(null);
+  // R2 download overlay while fetching AC27Approach.dll (mirrors the livery
+  // flow in BrowserScreen — download first, file dialog on failure).
+  const [dllInstallOpen, setDllInstallOpen] = useState(false);
   // Per-airport waypoints (fixes) — the voice parser's 'fly direct to X'
   // target set + the STT session's extra grammar words. Fetched with the
   // taxiways below (collectValues._airwayNodes).
@@ -387,26 +400,65 @@ export default function FlightStripsWindow({ airportIcao }) {
 
   // Command capability check — once on window open. No focus re-poll: the
   // DLL can't change without a game restart, and toggling Debug Mode takes
-  // effect on reopening the window.
+  // effect on reopening the window. When the installed plugin doesn't match
+  // the R2 build (outdated) the PTT/composer close and the Load-DLL install
+  // button takes over — surfaced here as a one-shot "update available" note.
   useEffect(() => {
     let alive = true;
     if (!electronAPI.checkCommandCapability) { setCommandCapability(null); return; }
     electronAPI.checkCommandCapability()
-      .then((r) => { if (alive && r) setCommandCapability(r); })
+      .then((r) => {
+        if (!alive || !r) return;
+        setCommandCapability(r);
+        if (r.pluginInstalled && r.pluginUpToDate === false) {
+          setDllFeedback(t('load_dll_outdated'));
+        }
+      })
       .catch(() => { if (alive) setCommandCapability(null); });
     return () => { alive = false; };
-  }, [electronAPI]);
+  }, [electronAPI, t]);
 
-  // Load DLL: pick AC27Approach.dll and copy it into BepInEx/plugins.
+  // Load DLL: install AC27Approach.dll into BepInEx/plugins.
   // Visible while the DLL is missing; with Debug Mode off it explains what
-  // to do instead of opening the dialog. On success the capability check
-  // re-runs (deliberate exception to once-on-open — user-initiated), so the
-  // PTT button + command bar appear without reopening the window.
-  const handleLoadDll = useCallback(async () => {
+  // to do instead of showing the download. Flow (2026-08-14): try the R2
+  // download+install first (progress overlay), falling back on any failure
+  // to the local file dialog — the download-first pattern of the Livery
+  // button. On success the capability check re-runs (deliberate exception to
+  // once-on-open — user-initiated), so the PTT button + command bar appear
+  // without reopening the window.
+  const handleLoadDll = useCallback(() => {
     if (!debugOn) {
       setDllNoticeOpen(true);
       return;
     }
+    setDllInstallOpen(true);
+  }, [debugOn]);
+
+  // Overlay download finished → copy the downloaded DLL into BepInEx/plugins.
+  const handleApproachDllDownloadComplete = useCallback(async (downloadedPath) => {
+    setDllInstallOpen(false);
+    if (!electronAPI.installApproachDll) return;
+    try {
+      const r = await electronAPI.installApproachDll(downloadedPath);
+      if (r.success) {
+        const cap = await electronAPI.checkCommandCapability().catch(() => null);
+        if (cap) setCommandCapability(cap);
+        setDllFeedback(t('load_dll_success'));
+      } else if (r.error === 'GAME_RUNNING') {
+        setDllFeedback(t('load_dll_error_game_running'));
+      } else if (r.error === 'DEBUG_MODE_OFF') {
+        setDllNoticeOpen(true);
+      } else {
+        setDllFeedback(t('load_dll_error', { err: r.error }));
+      }
+    } catch (_) {
+      setDllFeedback(t('load_dll_error', { err: 'IPC' }));
+    }
+  }, [electronAPI, t]);
+
+  // R2 download failed → fall back to selecting the DLL locally.
+  const handleApproachDllDownloadError = useCallback(async () => {
+    setDllInstallOpen(false);
     if (!electronAPI.loadApproachDll) return;
     try {
       const r = await electronAPI.loadApproachDll();
@@ -425,7 +477,7 @@ export default function FlightStripsWindow({ airportIcao }) {
     } catch (_) {
       setDllFeedback(t('load_dll_error', { err: 'IPC' }));
     }
-  }, [debugOn, electronAPI, t]);
+  }, [electronAPI, t]);
 
   // Keep ref in sync so handleDragEnd (stable callback) can read current selection
   useEffect(() => { selectedCallSignRef.current = selectedCallSign; }, [selectedCallSign]);
@@ -1022,7 +1074,7 @@ export default function FlightStripsWindow({ airportIcao }) {
               the PTT button + command bar take over. With Debug Mode off the
               press shows an explanation popup instead of the file dialog. */}
           {commandCapable !== true && (
-            <div className="strips-bar-btn" onClick={handleLoadDll} title={t('load_dll_tooltip')}>
+            <div className="strips-bar-btn" onClick={handleLoadDll} title={pluginOutdated ? t('load_dll_outdated_tooltip') : t('load_dll_tooltip')}>
               <IoFileTrayOutline size={16} />
             </div>
           )}
@@ -1035,6 +1087,15 @@ export default function FlightStripsWindow({ airportIcao }) {
         </div>
       </div>
       {helpOpen && <MapHelpOverlay type="strips" titleKey="map_help_strips_title" onClose={() => setHelpOpen(false)} commandCapable={commandCapable} />}
+
+      {/* R2 download overlay while fetching AC27Approach.dll — on failure the
+          overlay calls handleApproachDllDownloadError (file-dialog fallback). */}
+      {dllInstallOpen && (
+        <ApproachPluginInstallOverlay
+          onComplete={handleApproachDllDownloadComplete}
+          onError={handleApproachDllDownloadError}
+        />
+      )}
 
       {/* Load-DLL notice — Debug Mode must be on (and the game closed) before
           the plugin DLL can be copied in. Reuses the help overlay styling. */}

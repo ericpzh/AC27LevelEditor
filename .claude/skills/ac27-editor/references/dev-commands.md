@@ -155,7 +155,7 @@ The mock returns a random ETag that never matches any local exe, so the update p
 
 ## GitHub Release
 
-The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags pushed to GitHub. It builds **Windows** (portable `.exe`) and **macOS** (`.dmg`) in parallel via `npm run build:win/build:mac -- --publish never`. The Windows build is also uploaded to Cloudflare R2 (`ac27editor/AC27Editor.exe`) for auto-update delivery. Both artifacts are attached to a GitHub Release with auto-generated release notes.
+The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags pushed to GitHub. It builds **Windows** (portable `.exe`), **macOS** (`.dmg`), and the **AC27Approach plugin DLL** (`mods/AC27Approach`, net6.0) in parallel. The Windows build is uploaded to Cloudflare R2 (`ac27editor/AC27Editor.exe`) for auto-update delivery, and the plugin DLL is uploaded to `s3://ac27approach/AC27Approach.dll` (dedicated bucket, endpoint `https://66f99fd03d3228c43e0acb85f7b8298f.r2.cloudflarestorage.com`) — served through the `https://ericpzh.rest/ac27approach*` Worker route, which the Flight Strips window's Load DLL button pulls from (download-first, file-dialog fallback; see `mods/docs/cloudflare-worker-routes.md`). All artifacts are attached to a GitHub Release with auto-generated release notes.
 
 ### How to release a new version
 

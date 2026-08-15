@@ -228,6 +228,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkCommandCapability: () => ipcRenderer.invoke('check-command-capability'),
   loadApproachDll: () => ipcRenderer.invoke('load-approach-dll'),
 
+  // AC27Approach.dll R2 download + install (Load DLL button — download first,
+  // fall back to the file dialog). Mirrors the livery download-progress flow.
+  downloadApproachDll: () => ipcRenderer.invoke('download-approach-dll'),
+  installApproachDll: (dllPath) => ipcRenderer.invoke('install-approach-dll', dllPath),
+
+  _approachDllProgressHandlers: new Map(),
+  onApproachDllDownloadProgress: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._approachDllProgressHandlers.set(cb, handler);
+    ipcRenderer.on('approach-dll-download-progress', handler);
+  },
+  offApproachDllDownloadProgress: function (cb) {
+    const handler = this._approachDllProgressHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('approach-dll-download-progress', handler);
+      this._approachDllProgressHandlers.delete(cb);
+    }
+  },
+
   _bepInExProgressHandlers: new Map(),
   onBepInExInstallProgress: function (cb) {
     const handler = (_e, data) => cb(data);

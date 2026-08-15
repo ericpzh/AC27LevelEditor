@@ -2,7 +2,7 @@
 
 BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches aircraft in-game, driven entirely through the game's **native UDP command channel** (no overlay, no hotkeys). Implements the design in `docs/bepinex-aircraft-override-report.md` (sections 4–5.4, 6, 8).
 
-- **Plugin ID**: `com.ac27.approach` v1.0.1
+- **Plugin ID**: `com.ac27.approach` v1.0.2
 - **Input**: UDP only — the game's own `AircraftUdpCommandService` on `127.0.0.1:20267`
 - **Three commands**:
   - `update_heading` — **heading-only** override (2026-08-03, decoupled): forces the aircraft's nose to a heading each tick; position and speed stay 100% the game's — the aircraft keeps flying its own route at the game's own speed. Speed is never read for control and never written. An optional rate field (`update_heading|CS|dx|dy|rate`) rotates the nose **smoothly** at that many °/s of GAME time (scaled with the game's speed multiplier, frozen while paused); omitted/≤0 = instant snap. (`update_position` is tolerated as a legacy alias with its kts field ignored.)

@@ -2,6 +2,8 @@
 export const AIRPORT_META = {
   ZSJN: { id: 0, name: '济南遥墙机场' },
   KJFK: { id: 1, name: '约翰·肯尼迪国际机场' },
+  ZGSZ: { id: 2, name: '深圳宝安国际机场' },
+  KDCA: { id: 3, name: '罗纳德·里根华盛顿国家机场' },
 };
 
 // ─── Airline Name → Airline Code mapping ──────────────

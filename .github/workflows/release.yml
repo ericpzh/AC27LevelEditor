@@ -107,6 +107,20 @@ jobs:
           path: mods/AC27Approach/bin/Release/net6.0/AC27Approach.dll
           if-no-files-found: error
 
+      - name: Upload plugin DLL to R2 (strips-window auto-install source)
+        # Serves AC27Approach.dll through the ericpzh.rest/ac27approach* Worker
+        # route (public bucket pub-3cf0a07576984a6b82374a2bbc597e59) so the
+        # editor's Load-DLL button can download+install it instead of requiring
+        # a manual file pick. Bucket: ac27approach (own endpoint, NOT the
+        # ac27editor auto-update bucket).
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: https://66f99fd03d3228c43e0acb85f7b8298f.r2.cloudflarestorage.com
+          AWS_REGION: auto
+        run: |
+          aws s3 cp mods/AC27Approach/bin/Release/net6.0/AC27Approach.dll s3://ac27approach/AC27Approach.dll --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto
+
   release:
     needs: [build-windows, build-macos, build-plugin]
     runs-on: ubuntu-latest

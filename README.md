@@ -481,4 +481,4 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ### CI/CD
 
-The release workflow (`.github/workflows/release.yml`) pushes to `v*` tags triggers **Windows** (portable `.exe`) and **macOS** (`.dmg`) builds in parallel. The Windows build is also uploaded to Cloudflare R2 for auto-update delivery. Both artifacts are attached to a GitHub Release with auto-generated release notes.
+The release workflow (`.github/workflows/release.yml`) pushes to `v*` tags triggers **Windows** (portable `.exe`), **macOS** (`.dmg`), and **AC27Approach plugin DLL** builds in parallel. The Windows build is uploaded to Cloudflare R2 for auto-update delivery, and the plugin DLL is uploaded to the dedicated `ac27approach` R2 bucket (`s3://ac27approach/AC27Approach.dll`) — served via the `https://ericpzh.rest/ac27approach*` Worker route that the Flight Strips window's Load DLL button downloads from. All artifacts are attached to a GitHub Release with auto-generated release notes. See `mods/docs/cloudflare-worker-routes.md` for the Worker/R2 infrastructure.

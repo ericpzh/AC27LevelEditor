@@ -89,23 +89,39 @@ function checkStatus(gameRoot) {
  * @returns {boolean} true when the DLL is found anywhere under plugins/
  */
 function hasApproachPlugin(gameRoot) {
-  if (!gameRoot) return false;
+  return !!approachPluginPath(gameRoot);
+}
+
+/**
+ * Locate the installed plugin DLL path under <gameRoot>/BepInEx/plugins
+ * (AC27Approach.dll, case-insensitive recursive search — the same scan as
+ * hasApproachPlugin, but returns the first match's absolute path so callers
+ * can inspect/compare the file). The command window / PTT UI only works while
+ * the plugin is actually deployed — BepInEx alone is not enough.
+ * @param {string} gameRoot
+ * @returns {string|null} absolute path of the DLL, or null when absent
+ */
+function approachPluginPath(gameRoot) {
+  if (!gameRoot) return null;
   const pluginsDir = path.join(gameRoot, 'BepInEx', 'plugins');
-  if (!fs.existsSync(pluginsDir)) return false;
+  if (!fs.existsSync(pluginsDir)) return null;
 
   const walk = (dir) => {
     let entries;
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (_) {
-      return false; // unreadable subtree — treat as not found
+      return null; // unreadable subtree — treat as not found
     }
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.toLowerCase() === PLUGIN_DLL_NAME.toLowerCase()) return true;
+      if (entry.isFile() && entry.name.toLowerCase() === PLUGIN_DLL_NAME.toLowerCase()) return path.join(dir, entry.name);
       // Skip symlinked dirs — a plugin install can't loop back on itself.
-      if (entry.isDirectory() && !entry.isSymbolicLink() && walk(path.join(dir, entry.name))) return true;
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        const found = walk(path.join(dir, entry.name));
+        if (found) return found;
+      }
     }
-    return false;
+    return null;
   };
 
   return walk(pluginsDir);
@@ -362,6 +378,7 @@ Object.assign(api, {
   PLUGIN_DLL_NAME,
   checkStatus,
   hasApproachPlugin,
+  approachPluginPath,
   findDownloadUrl,
   downloadZip,
   extractZip,

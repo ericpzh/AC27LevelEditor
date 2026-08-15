@@ -2224,15 +2224,40 @@ ipcMain.handle('uninstall-bepinex', async () => {
 });
 
 // Command window / PTT gate: Debug Mode AND the AC27Approach plugin DLL
-// deployed under BepInEx/plugins. Checked once per fly-strip window open.
+// deployed under BepInEx/plugins AND (2026-08-15) the deployed DLL matching
+// the latest release. The remote DLL object's ETag is the build's MD5
+// (single-part upload — verified to equal Get-FileHash), so an outdated
+// installed plugin is detected by comparing local MD5 vs the remote ETag.
+// A failed remote fetch (offline etc.) degrades to pluginUpToDate:null
+// ("unknown") — the renderer treats that as OK, so a working plugin is never
+// blocked just because the network is down. Checked once per fly-strip window
+// open.
 ipcMain.handle('check-command-capability', async () => {
   const cr = _readCache();
   const gameRoot = cr?.data?.gameRoot;
-  if (!gameRoot) return { bepInExInstalled: false, pluginInstalled: false, error: 'NO_GAME_ROOT' };
-  return {
-    bepInExInstalled: bepinex.checkStatus(gameRoot).installed,
-    pluginInstalled: bepinex.hasApproachPlugin(gameRoot),
-  };
+  if (!gameRoot) return { bepInExInstalled: false, pluginInstalled: false, pluginUpToDate: null, error: 'NO_GAME_ROOT' };
+
+  const bepInExInstalled = bepinex.checkStatus(gameRoot).installed;
+  const pluginPath = bepinex.approachPluginPath(gameRoot);
+  const pluginInstalled = !!pluginPath;
+
+  let pluginUpToDate = null; // null = can't verify → renderer treats as OK
+  let pluginVersion = null;   // local MD5 hex
+  let pluginRemoteVersion = null; // remote MD5 hex (ETag)
+  if (pluginInstalled) {
+    try { pluginVersion = await updater.computeFileMd5(pluginPath); } catch (_) {}
+  }
+  try {
+    // Short timeout (4s) — this gates UI, a slow/absent network must not
+    // stall the window decision for long.
+    const remote = await updater.headRemoteExeWithUrl(APPROACH_DLL_DOWNLOAD_URL, 4000);
+    pluginRemoteVersion = remote.etag || null;
+  } catch (err) {
+    console.error('[Capability] remote plugin MD5 check failed:', err.message);
+  }
+  if (pluginVersion && pluginRemoteVersion) pluginUpToDate = pluginVersion === pluginRemoteVersion;
+
+  return { bepInExInstalled, pluginInstalled, pluginUpToDate, pluginVersion, pluginRemoteVersion };
 });
 
 // Pick a DLL and copy it into <gameRoot>/BepInEx/plugins as AC27Approach.dll.
@@ -2254,20 +2279,7 @@ ipcMain.handle('load-approach-dll', async (_event) => {
   });
   if (result.canceled || !result.filePaths.length) return { canceled: true };
 
-  // Belt-and-suspenders: the renderer pre-checks, but the plugins dir only
-  // exists meaningfully while BepInEx Debug Mode is installed.
-  if (!bepinex.checkStatus(gameRoot).installed) return { success: false, error: 'DEBUG_MODE_OFF' };
-
-  try {
-    const pluginsDir = path.join(gameRoot, 'BepInEx', 'plugins');
-    fs.mkdirSync(pluginsDir, { recursive: true });
-    fs.copyFileSync(result.filePaths[0], path.join(pluginsDir, bepinex.PLUGIN_DLL_NAME));
-    return { success: true };
-  } catch (err) {
-    if (err.code === 'EPERM' || err.code === 'EBUSY') return { success: false, error: 'GAME_RUNNING' };
-    console.error('[LoadDll] copy failed:', err.message);
-    return { success: false, error: err.message };
-  }
+  return _installApproachDll(result.filePaths[0], gameRoot);
 });
 
 // ─── IPC: Livery Install ─────────────────────────────────
@@ -2300,6 +2312,129 @@ ipcMain.handle('install-livery', async (_event, zipPath) => {
   }
 });
 
+// ─── Shared HTTPS download helper ─────────────────────────
+
+// Follows redirects (up to 5), streams to destPath, reports percent progress.
+// Rejects with `<errId>_DOWNLOAD_HTTP_<status>` on non-2xx, `<errId>_DOWNLOAD_
+// TIMEOUT` on timeout, or the underlying net error. Removes a partial destPath
+// on any failure so the caller never sees a corrupt file.
+function _downloadToFile(url, destPath, notify, errId = 'DOWNLOAD') {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(destPath);
+    let received = 0;
+    let total = 0;
+
+    const fail = (err) => {
+      file.close();
+      try { fs.unlinkSync(destPath); } catch (_) {}
+      reject(err);
+    };
+
+    const doGet = (target, redirectsLeft) => {
+      const req = https.get(target, { timeout: 30000 }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
+          const redirectUrl = new URL(res.headers.location, target).toString();
+          res.resume();
+          doGet(redirectUrl, redirectsLeft - 1);
+          return;
+        }
+
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          fail(new Error(`${errId}_DOWNLOAD_HTTP_${res.statusCode}`));
+          return;
+        }
+
+        const contentLength = res.headers['content-length'];
+        if (contentLength) total = parseInt(contentLength, 10);
+
+        res.on('data', (chunk) => {
+          received += chunk.length;
+          file.write(chunk);
+          if (total > 0) notify(Math.round((received / total) * 100));
+        });
+
+        res.on('end', () => {
+          file.end();
+          resolve();
+        });
+      });
+
+      req.on('error', fail);
+      req.on('timeout', () => {
+        req.destroy();
+        fail(new Error(`${errId}_DOWNLOAD_TIMEOUT`));
+      });
+    };
+
+    doGet(url, 5);
+  });
+}
+
+// Shared copy of a source .dll into <gameRoot>/BepInEx/plugins under the
+// canonical AC27Approach.dll name — used by both the manual file dialog and
+// the R2 download-install path. EPERM/EBUSY while the game is running (the
+// plugin DLL is locked by the loaded process) → GAME_RUNNING.
+function _installApproachDll(sourcePath, gameRoot) {
+  if (!bepinex.checkStatus(gameRoot).installed) return { success: false, error: 'DEBUG_MODE_OFF' };
+  try {
+    const pluginsDir = path.join(gameRoot, 'BepInEx', 'plugins');
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.copyFileSync(sourcePath, path.join(pluginsDir, bepinex.PLUGIN_DLL_NAME));
+    return { success: true };
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EBUSY') return { success: false, error: 'GAME_RUNNING' };
+    console.error('[LoadDll] copy failed:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// ─── IPC: AC27Approach DLL — R2 download + install ────────
+
+const APPROACH_DLL_DOWNLOAD_URL = 'https://ericpzh.rest/ac27approach';
+const APPROACH_DLL_DOWNLOAD_NAME = 'AC27Approach.dll';
+
+// Download the plugin DLL from the ericpzh.rest/ac27approach Worker route
+// (proxies the public R2 object with a Content-Disposition attachment header)
+// into a temp dir — mirror of the livery download. The renderer then calls
+// install-approach-dll, falling back to the file dialog on any failure.
+ipcMain.handle('download-approach-dll', async (_event) => {
+  const tmpDir = path.join(app.getPath('temp'), 'ac27-approach-' + Date.now());
+  const dllPath = path.join(tmpDir, APPROACH_DLL_DOWNLOAD_NAME);
+
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const notify = (percent) => {
+      if (_event.sender && !_event.sender.isDestroyed()) {
+        _event.sender.send('approach-dll-download-progress', { percent });
+      }
+    };
+    await _downloadToFile(APPROACH_DLL_DOWNLOAD_URL, dllPath, notify, 'DL');
+    notify(100);
+    return { success: true, filePath: dllPath };
+  } catch (err) {
+    console.error('[ApproachDll] download failed:', err.message);
+    try { if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+    return { success: false, error: err.message };
+  }
+});
+
+// Install a downloaded-or-picked plugin DLL into <gameRoot>/BepInEx/plugins
+// as AC27Approach.dll. The renderer uses this after a successful R2 download
+// (the file dialog path goes through load-approach-dll instead).
+ipcMain.handle('install-approach-dll', async (_event, sourcePath) => {
+  const cr = _readCache();
+  const gameRoot = cr?.data?.gameRoot;
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+  if (!sourcePath || !fs.existsSync(sourcePath)) return { success: false, error: 'SOURCE_MISSING' };
+  const r = _installApproachDll(sourcePath, gameRoot);
+  // Clean up the transient download dir after install.
+  try {
+    const parent = path.dirname(sourcePath);
+    if (parent.includes('ac27-approach-')) fs.rmSync(parent, { recursive: true, force: true });
+  } catch (_) {}
+  return r;
+});
+
 // ─── IPC: Livery Download ───────────────────────────────
 
 const LIVERY_DOWNLOAD_URL = 'https://ericpzh.rest/livery';
@@ -2310,68 +2445,12 @@ ipcMain.handle('download-livery', async (_event) => {
 
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
-
     const notify = (percent) => {
       if (_event.sender && !_event.sender.isDestroyed()) {
         _event.sender.send('livery-download-progress', { percent });
       }
     };
-
-    // Download with progress
-    await new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(zipPath);
-      let received = 0;
-      let total = 0;
-
-      const doGet = (target, redirectsLeft) => {
-        const req = https.get(target, { timeout: 30000 }, (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
-            const redirectUrl = new URL(res.headers.location, target).toString();
-            res.resume();
-            doGet(redirectUrl, redirectsLeft - 1);
-            return;
-          }
-
-          if (res.statusCode < 200 || res.statusCode >= 300) {
-            file.close();
-            try { fs.unlinkSync(zipPath); } catch (_) {}
-            reject(new Error('LIVERY_DOWNLOAD_HTTP_' + res.statusCode));
-            return;
-          }
-
-          const contentLength = res.headers['content-length'];
-          if (contentLength) total = parseInt(contentLength, 10);
-
-          res.on('data', (chunk) => {
-            received += chunk.length;
-            file.write(chunk);
-            if (total > 0) {
-              notify(Math.round((received / total) * 100));
-            }
-          });
-
-          res.on('end', () => {
-            file.end();
-            resolve();
-          });
-        });
-
-        req.on('error', (err) => {
-          file.close();
-          try { fs.unlinkSync(zipPath); } catch (_) {}
-          reject(err);
-        });
-        req.on('timeout', () => {
-          req.destroy();
-          file.close();
-          try { fs.unlinkSync(zipPath); } catch (_) {}
-          reject(new Error('LIVERY_DOWNLOAD_TIMEOUT'));
-        });
-      };
-
-      doGet(LIVERY_DOWNLOAD_URL, 5);
-    });
-
+    await _downloadToFile(LIVERY_DOWNLOAD_URL, zipPath, notify, 'LIVERY');
     notify(100);
     return { success: true, filePath: zipPath };
   } catch (err) {
