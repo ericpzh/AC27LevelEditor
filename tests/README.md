@@ -7,10 +7,15 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (1159) + save integrity (16) + jetway rebuild (16) + runway pairs (5) + E2E (16, ~3 min)
-npm test              # 1159 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
+npm run test:all      # Full suite: Vitest (1200) + save integrity (16) + jetway rebuild (16) + runway pairs (5) + E2E (16, ~3 min)
+npm test              # 1200 Vitest component + store + utility + electron + MapWindow + updater tests (~4s)
 npm run test:e2e      # 16 Playwright E2E tests (requires npm run build first, ~3 min; 15 pass, 1 skipped — E12a overlay timing)
-node tests/integration/test_api_server.js      # MCP/API tests: 107 tests (~1s)
+
+# Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
+$env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
+npm run test:fuzz     # all 13 production levels (see "Fuzz Save" section for options)
+
+node tests/integration/test_api_server.js      # MCP/API tests: 109 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
 
 # Save integrity — all .acl files across both airports:
@@ -25,17 +30,17 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (1159 tests)
+## Layer 1 — Vitest Component Tests (1200 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 1159 pass (48 test files)
+### `npm test` — 1200 pass (52 test files)
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
 | `utils/timeUtils.test.js` | 29 | `ticksToTime` (0/0n/""→""; ticks→HH:MM:SS), `timeToTicks` (empty→0; "HH:MM:SS"→ticks; baseDate offset), `timeToMinutes` ("01:30"→90), `timeToSeconds` ("01:00:00"→3600), `minutesToTimeStr` (90→"01:30:00"; 1500 wraps to "01:00:00"), `sortTimelineByTime` (sorts by time field), `getTimelineActiveRange` (no bounds→all active; bounds→filters), `getTimeValidationBounds` (5): OffBlockTime/LandingTime max = end+30min grace, generic Time strict, InBlockTime/TakeoffTime null, null when config missing, `getDefaultTime` (midpoint "06:00"+"10:00"→"08:00:00"; none→"12:00:00"), `_extractBaseDateFromText` (BaseTime match; WorldState fallback; FALLBACK_BASE_DATE_TICKS), `isValidTimeStr` (valid/invalid/edge) |
 | `utils/starDisplay.test.js` | 13 | **STAR/SID display dedup** — `stripStarRunwaySuffix` (ZGSZ-style `.34L`/`.33`/`.15` stripped, plain names like `ABTU6W`/`WFG91A` untouched, non-string passthrough), `hasStarRunwaySuffix`, `dedupeStarPathsForDisplay` (runway-suffixed variants merged under the base STAR/SID name with representative longest route + all runways; non-suffixed STARs keep per-runway variants; null/empty→{}), `filterDedupedStarPathsByRunway` (group kept when any runway active; merged `runways` array + preserved singular `runway` handled) |
-| `utils/validators.test.js` | 34 | `validateCallsigns` (5): no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[]. `detectStandConflicts` (17): overlap rules (arr/arr allowed, dep/dep flagged, offblock < landing OK / = landing flagged, 20-min default start), conflict messages contain both callsigns + stand with normalized times. `runTripleValidation` (7): v4 semantics — time-order checks (InBlockTime/TakeoffTime) always skipped; dropdown + stand-conflict validations still run; time range — end+30min grace (exact boundary 22:30 accepted, 22:31 flagged, minute-carry 22:45→23:15, start bound still strict). `getActiveColumns` (2): v4 hides InBlockTime/TakeoffTime columns. `_isNew` stripping (3): JSON replacer (mirrors electron main timeline sidecar writers) removes `_isNew` at all nesting levels, preserves other keys. |
+| `utils/validators.test.js` | 38 | `validateCallsigns` (5): no dupes→[]; dupes detected; empty callsigns ignored; each dupe listed once; empty array→[]. `detectStandConflicts` (17): overlap rules (arr/arr allowed, dep/dep flagged, offblock < landing OK / = landing flagged, 20-min default start), conflict messages contain both callsigns + stand with normalized times. `runTripleValidation` (11): v4 semantics — time-order checks (InBlockTime/TakeoffTime) always skipped; dropdown + stand-conflict validations still run; time range — end+30min grace (exact boundary 22:30 accepted, 22:31 flagged, minute-carry 22:45→23:15, start bound still strict). **STAR-required (4):** blocks arrivals without a STAR (game drops STAR-less arrival legs at load), allows arrivals with a STAR, no STAR requirement on departures, rule skipped when no `_starRunwayMap` data is cached. `getActiveColumns` (2): v4 hides InBlockTime/TakeoffTime columns. `_isNew` stripping (3): JSON replacer (mirrors electron main timeline sidecar writers) removes `_isNew` at all nesting levels, preserves other keys. |
 | `store/flightDefaults.test.js` | 59 | `randomPick`: null/undefined/empty→null, single/multi→valid. `pickRandomAirlineCode`: audio first→AirlineCode fallback→AirlineName→'NEW'; key regression: never 'NEW' when AirlineCode dropdown populated. `pickRandomFlightNumber`: from `_flightNums`, '1' fallback. `pickRandomUnusedStand`: unused only, reuse when all taken, empty when no stands. `pickFirstFlightNumber`/`pickDefaultAirlineCode` (existing): first-element behaviour preserved. `makeEmptyFlight`: 15 empty-string fields. `computeDefaultBaseMin`: config end time−offset, clamp≥0. `minutesToTimeString`: HH:MM:00 format. `createDefaultFlight`: random airline+cascaded aircraft/reg+non-conflicting stand; arrival vs departure direction; `isDeparture` set from type; `AirlineName` = picked airline code (game stores codes, e.g. 'CCA', never the empty AirlineName dropdown). `createArrivalFlight`: sets LandingTime, leaves InBlockTime empty (v4 stores it as 0), no departure times, forwards existingFlights for stand-conflict avoidance. `createDepartureFlight`: sets OffBlockTime, leaves TakeoffTime empty (v4 stores it as 0), no arrival times. Stand conflict forwarding. |
 | `store/appStore.test.jsx` | 26 | Screen starts at "setup"; `setScreen` transitions; modal defaults closed; `showModal`/`hideModal`; toast defaults empty; `showToast` sets message+type; `initializeEditor` sets path/flights/airport; `modified` starts false; `addArrivalFlight` creates row with randomized cascade (airline from dropdown, valid aircraft/reg, non-conflicting stand); `addArrivalFlight` regression: airline never "NEW" when AirlineCode dropdown populated; stand conflict avoidance with existing flights; `addArrivalFlight` leaves InBlockTime empty (v4 stores it as 0); `selectedIndices` starts empty; `toggleSelection` add/remove; `toggleSelectAll` checks all/clears all; **Chat state (9):** panel defaults closed, vendors setup step, empty config, toggle open/closed, add+clear messages, sending state, set+clear errors, chat config, setup step change |
 | `components/common/Modal.test.jsx` | 6 | Returns null when closed; renders title+body when open; `hideModal` called on overlay click; click inside modal box does NOT close; renders actions prop; body as React elements |
@@ -59,9 +64,11 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 | `integration/state5_output_pr.test.js` | 2 | **State=5 ProgressRatio=0 regression** — `_buildStandaloneAircraftEntry` (driven with the ZSJN v4 fixture + real `buildApproachCache` + `CANONICAL_SCOPE`) writes constant `ProgressRatio: 0` for state=5 (final approach) aircraft while `_position`/`_direction` still match `computePosition`/`computeDirection` with the real time-based PR (and differ from a PR=0 placement); state=30 aircraft keep their real stored PR. |
 | `integration/new_departure_save.test.js` | 3 | **New-departure save regression** — clones a fixture departure/arrival with `isDeparture` and `AirlineName` stripped, appends them to a temp copy of the v4 fixture, saves via the real 9-arg `generateFullAcl` (real `buildApproachCache`), asserts the departure writes `InitialDeparture` (arrival leg `null`) with `"AirlineName": "CSC"` and the arrival writes `InitialArrival` with `"AirlineName": "CCA"`, then reloads and checks the `isDeparture` flags + codes roundtrip. |
 | `integration/jetway_id_collision.test.js` | 7 | **Duplicate-$id collision regression** (from fails.acl: jetway:09 `id(15) = 190 + 15 = 205` collided with jetway:12 `id(3) = 202 + 3 = 205` — a first-wins `$iref` bind made the game skip past an array boundary). Rebuilt jetway sub-objects now allocate from the segment's **dynamic allocator** (≥1000, past every static/flight-plan/canonical id) with old→new `IdMapper` remap (collided `$iref:205` resolves to the Aircraft id, last registration wins). **DockingDoorIndex `$type` (4):** resolved per-file scope (R3.ReactiveProperty<Int32> at its scope id, never hardcoded 6), fresh id above segment max when undeclared, canonical id-6 emission byte-identical on ZSJN-Morning-style scopes, one shared fresh-id counter per resolver. |
+| `integration/save_gamecompat.test.js` | 8 | **Game-compat save invariants** — saves via the real pipeline on a copy of the `ZSJN-Morning_120min.v4.acl` fixture and asserts the fuzz-discovered game-load invariants from `gamecompat-utils.cjs`: control (unmodified level stays clean), dup-reg ARR+DEP pair (unique plan keys + runtime entity for the docked aircraft via `_normalizeFlightsForGameCompat` rename), arrival at a stand whose docked dep takes off after scenario end (stand not double-booked — arrival moved), two arrivals on one stand within the 20-min gap (stands separated), **STAR-less arrival: `Airway` filled from the runway map**, **arrival on a runway with no STAR data: moved to an arrival-capable runway with a STAR**, every frame aircraft resolves its plan leg with a callsign. |
+| `integration/id_renumber.test.js` | 6 | **Strictly-ascending `$id` regression** — pins `id_renumber.js`: the ZSJN_peakdeparture `jetway:02` DockedAircraft crash pattern (wrapper $id 1123 declared before inline Aircraft 1120/shared String[] 1117) renumbers to ascending order; `$blobdoc` contents renumber as fresh documents with cross-scope `$iref` remap (external ids handled); non-id tokens byte-preserved; idempotent (second pass changes nothing); propagates through the GATCARC4 binary encode/decode pipeline via `writeAcl`; a truly forward `$iref` (target not yet declared) throws. |
 | **Electron backend (existing):** | **74** | |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
-| `electron/updater.test.js` | 25 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **isUpdateSupported (4):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set. **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skipped etag recognized. **resolveTargetExe (5):** PORTABLE_EXECUTABLE_FILE, execPath fallback, AC27_UPDATE_TARGET in dev, auto-discovered artifact, null when no candidate. **checkForUpdate gates (5):** packaged but not portable, dev with AC27_UPDATE_TARGET, dev by default (opt-out), dev with AC27_UPDATE_DEV_CHECK=1, dev with no target exe. **installUpdate dev dry-run (2):** defaults to dry-run in dev, dry-run skips spawn+quit. |
+| `electron/updater.test.js` | 35 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **isUpdateSupported (5):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set — the voice build is now supported too (auto-updates via the shared `/editor` route, header-scoped). **isVoiceBuild (4)** + **variantName (2)** + **variantHeader (2):** normal/voice names and the `X-AC27-Variant` header they produce (single `/editor` route — the Worker selects objects per header, no path change). **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skipped etag recognized. **resolveTargetExe (5):** PORTABLE_EXECUTABLE_FILE, execPath fallback, AC27_UPDATE_TARGET in dev, auto-discovered artifact, null when no candidate. **checkForUpdate gates (6):** packaged but not portable, voice build proceeds to the network route, dev with AC27_UPDATE_TARGET, dev by default (opt-out), dev with AC27_UPDATE_DEV_CHECK=1, dev with no target exe. **installUpdate (2):** dev dry-run default, dry-run skips spawn+quit. |
 | **MapWindows (19 files):** | **712** | |
 | `components/MapWindows/voiceNumberParser.test.js` | 46 | `parseEnglishFlightNumber`: individual digits, "oh"→0, teens, grouped pairs, "triple X"/"double X" aviation shorthand, stop at non-numbers, >6-digit filter, empty input, "the" mid-number skip, digit confusables ("new"→two/nine). `parseChineseFlightNumber`: 幺-series, 一-series, 洞/两/零 variants, multi-token, stop at non-digits. `generateCallsignCandidates`, `lookupEnNumberToken` fuzzy guard ("right" blocked), `lookupUnitWord` |
 | `components/MapWindows/voiceCallsignParser.test.js` | 71 | `detectLanguage`: EN/ZH/empty/mixed. `parseCallsign` (EN): "united eleven eleven"→UAL1111, full airline name, 3-letter code, "delta"→DAL, KLM, longest-match priority, teen numbers, callsign-only (no command), null on no-match/empty. `parseCallsign` (ZH): 东方/中国东方航空/国航 with digits. Proximity + phonetic-skeleton fallbacks, pre-number "at" strip, "new" confusables, "the" skip, Korean Air→KAL, `callsignCandidates` |
@@ -193,6 +200,74 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | KDCA_runwaychange | ✓ | all state identical |
 | KDCA_peakdeparture | ✓ | all state identical |
 | KDCA_peakarrival | ✓ | all state identical |
+
+### Fuzz Save — randomized edit storm + real SAVE (E2E, requires `E2E_GAME_ROOT` + `FUZZ_RUN=1`)
+
+| ID | Spec | Coverage | Expected |
+|----|------|----------|----------|
+| **F1** | `fuzz-save.spec.mjs` | All 13 production files (or `FUZZ_ACL_FILES` subset) | 13/13 pass, `.acl.bak` created per file, saved file reloads with matching flights |
+
+The fuzz test drives the editor the same way an AI agent would: it opens each level in
+the real Electron app, then applies **50–200 randomized operations per level** through the
+editor's built-in **MCP API** (`127.0.0.1:31415`, the same `tools/call` JSON-RPC protocol
+`mcp/bridge.js` speaks), and finally hits **SAVE through the real UI** (Ctrl+S → backup
+confirmation modal with backup checked → success modal).
+
+**Randomized operations** (seeded, reproducible via `FUZZ_SEED`):
+
+| Operation | MCP / store path | Randomized values |
+|-----------|------------------|-------------------|
+| Add flight | `create_flights` | airline, flight number, aircraft (airline-compat), runway, stand, STAR (runway-compat), registration (pair-compat), voice/language, ARR/DEP with in-range times |
+| Remove one flight | `delete_flights` by callsign | random flight from the live list — **capped at 10% of the run's total ops** (`max(1, ⌊nOps×0.1⌋)`); picks over budget are re-picked from the add/modify/timeline distribution (30/26/26) |
+| Remove all flights | `delete_flights` match `{}` | **gated**: only ever the first operation, decided up front with 50% probability per run; falls back to one `delete_one` on small levels (<6 flights); **a wipe sets the delete budget to 0 — NO further delete ops of any kind after a delete-all**; level is refilled before save (save requires ≥ 1 flight) |
+| Edit any field | `modify_flights` | stand / runway / airway / aircraft type / registration / voice / language / flight number / airline code (cascade) / time shift |
+| Timeline add/remove | editor store (`window.__AC27_STORE`) — the MCP API has no timeline tools, so rows are injected the same way the timeline editors do | weather: preset + time; wind: direction + speed + time; runway: pair change `{source→dest}` + time (times sorted; runway rows strictly inside the config window) |
+
+**Time-range rule (enforced by the generator):** flights are only ever given times in
+`[configStartTime, configEndTime + 30 min]` (the validation grace bound); runway-timeline
+rows only inside `(start, end)` strictly. A rejection from the server that names a time
+bound is treated as a generator bug and fails the run.
+
+**Save-gate guarantees:** before SAVE, the test asserts `get_validation_issues` returns
+zero issues, so the save must never be blocked by the UI validation modal. After SAVE it
+verifies the `.acl.bak` was created and the saved `.acl` reloads through the real parser
+with the same flight count + callsign set the fuzz left in the store.
+
+```bash
+# All 13 production levels (default):
+$env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
+npm run test:fuzz
+
+# Specific levels only (comma-separated names or paths):
+$env:FUZZ_ACL_FILES = "ZSJN/ZSJN_leisure_1.acl,KJFK/KJFK_peakarrival.acl"
+npm run test:fuzz
+
+# Reproduce a failure exactly:
+$env:FUZZ_SEED = "12345"
+npm run test:fuzz
+
+# Propagate results into the REAL game install (same layout E2E_GAME_ROOT):
+# every PASSED level's saved .acl + the .acl.bak the editor produced are copied
+# from the sandbox into GroundATC_Data/.../Airports/<icao>/Levels/ — i.e. the
+# disk state a real editor save session would leave:
+npm run test:fuzz -- --replace        # (or: $env:FUZZ_REPLACE = "1")
+```
+
+Notes:
+
+- Requires `npm run build` first (launches `dist-electron/main.js`), and no other editor
+  instance may be running — the API port 31415 is fixed.
+- `--replace` **overwrites the real level files**: keep the copied `.acl.bak`
+  (it holds the pre-fuzz original). Copying is per-level and only when that
+  level passed; a failed run copies nothing for the failed level. `E2E_GAME_ROOT`
+  must be set, and the game should be closed (never replace while the game is
+  reading those files).
+- Rejected operations (stand conflicts, duplicate callsigns/registrations, claimed
+  numbers) are retried up to 6× with fresh random values and reported as `✖` in the
+  per-level summary; they do not fail the run unless they are time-bound rejections or
+  leave validation issues behind.
+- The spec is skipped unless `FUZZ_RUN=1`, so `npm run test:e2e` / `npm run test:all`
+  are unaffected.
 
 ---
 
@@ -435,6 +510,7 @@ The `test_save_integrity_all.js` script uses a **golden/result pattern**:
 | `save-integrity-check.js` | S1-S3 diff analysis: compare .acl vs .bak, categorize diffs, parser round-trip, text-level takeoff/inblock time validation |
 | `e2e/global-setup.mjs` | Copy fixtures → temp, pre-write `lastRoot.json` |
 | `e2e/global-teardown.mjs` | Clean up temp dirs |
+| `e2e/fuzz-save.spec.mjs` | Fuzz save test — `FuzzTest(aclFilePath, opts)` exported; MCP randomized ops + UI save-with-backup per level (gated on `FUZZ_RUN=1`) |
 | `integration/test_save_integrity_all.js` | Save→reload→compare on all .acl files (supports `--prod-demo` for 16 specific files) |
 | `integration/test_jetway_rebuild.js` | Constructive jetway rebuild — verifies `_buildActiveJetwayEntry` only-modifies-jetway invariant across 16 v4 prod+demo files |
 | `run-all.mjs` | Master test runner — executes all 3 layers sequentially |
@@ -467,3 +543,34 @@ The `test_save_integrity_all.js` script uses a **golden/result pattern**:
 2. Use `require('../../src/acl/...')` for source modules
 3. Use `--require ./tests/integration/preload.cjs` if the module uses ESM imports
 4. Follow existing patterns: `check()`/`assert()` helpers, `process.exit(0/1)`
+
+---
+
+## Game-Compatibility Save Invariants (`save_gamecompat.test.js`)
+
+Regression suite that reproduces the five fuzz-discovered "broken save" conditions
+through the **real save pipeline** (`parser.generateFullAcl` on a copy of the
+`ZSJN-Morning_120min.v4.acl` fixture) and asserts the saved .acl satisfies the
+game-load invariants implemented in `gamecompat-utils.cjs`.
+
+Run: `npx vitest run tests/integration/save_gamecompat.test.js`
+
+| Condition (edit that breaks the game) | Game error on load | Test / invariant code |
+|---|---|---|
+| Same registration on an ARR and a DEP (validator only checks duplicates within each group) | `Aircraft 'aircraft:B-XXXX' has no call sign for active flight direction 'Departure'` (dup `flight-plan:` keys) + `JetwayHD.SetDockingTarget` NullReferenceException (docked DEP loses its `aircraft:` entity via `turnaroundWinner`) | `dup-plan-key`, `docked-missing-entity`, `docked-entity-wrong-target` |
+| Other-reg arrival at a stand whose docked aircraft departs after the scenario end (or lands before the docked aircraft's off-block) | `Stand 'X' is already allocated to owner 'B-YYYY' from 0001-01-01 until 9999-12-31` | `docked-stand-blocked`, `docked-stand-before-offblock` |
+| Two arrivals on one stand within 20 min | stand allocation conflict at init | `arr-arr-close` |
+| ARR→DEP same-stand pair with different registrations (rejected by the editor save gate — regression guard) | stand allocation conflict | `arr-dep-cross-reg` |
+| Arrival leg with an empty STAR | `FlightPlan.Init()` drops the leg: "Flight plan '...' has neither an arrival nor a departure leg" (game-authored arrivals always carry a STAR, e.g. `SIE.CAMRM5`) | `arrival-no-star` |
+
+The editor save pipeline now **auto-repairs** the first four conditions
+(`_normalizeFlightsForGameCompat` in `src/acl/flight_plans.js`, called at the
+top of `_rebuildStaticDataSections`): duplicate registrations are renamed
+(keeping the frame-linked side), violating arrivals are moved to safe
+stands drawn from the renderer's `sceneryMaps.standIdToGuid` pool, and
+STAR-less arrivals get `Airway` filled from `approachCache.runwayStarMap`
+(moved to an arrival-capable runway when their runway has no STAR data).
+The fifth condition (ARR→DEP cross-reg) remains a hard save-gate rejection
+(`_validateStandConflicts`). All eight tests must stay green; thresholds are
+empirical fits to the observed game accepts/rejects (see the header of
+`gamecompat-utils.cjs` for the full derivation).

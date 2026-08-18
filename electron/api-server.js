@@ -197,7 +197,18 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
       });
     }
 
-    // 7. Airway compatible with runway (arrivals only)
+    // 7. Arrival legs must carry a STAR — the game's FlightPlan.Init() drops
+    //    a STAR-less arrival leg at level load ("Flight plan '...' has
+    //    neither an arrival nor a departure leg").
+    if (isArrival(f) && !(f.Airway || '').trim()) {
+      details.push({
+        index: idx, field: 'Airway', value: f.Airway,
+        issue: 'missing_star',
+        message: `Arrival ${f.CallSign || '?'} has no STAR — the game drops STAR-less arrival legs at level load.`,
+      });
+    }
+
+    // 7b. Airway compatible with runway (arrivals only)
     if (isArrival(f) && f.Airway && f.Runway) {
       const validStars = constraints.runwayStarCompat[f.Runway];
       if (validStars && validStars.length > 0 && !validStars.includes(f.Airway)) {

@@ -180,8 +180,14 @@ function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _sc
   // Pre-validation: detect stand occupancy conflicts before save
   _validateStandConflicts(flights);
 
+  // The renderer's stand list (sceneryMaps.standIdToGuid keys) doubles as the
+  // complete stand pool for the game-compat stand normalization.
+  const standPool = (_sceneryMaps && _sceneryMaps.standIdToGuid)
+    ? Object.keys(_sceneryMaps.standIdToGuid)
+    : null;
+
   // v4: rebuild StaticData.$blobdoc.StaticItems flight-plan entries (no aircraft generation)
-  _rebuildStaticDataSections(aclPath, flights, undefined, approachCache, aclcfgStartTime, _saveSec);
+  _rebuildStaticDataSections(aclPath, flights, undefined, approachCache, aclcfgStartTime, _saveSec, standPool);
 }
 
 // ─── Public API ───────────────────────────────────────────────

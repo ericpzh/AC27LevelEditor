@@ -145,12 +145,12 @@ describe('isUpdateSupported', () => {
     process.env.PORTABLE_EXECUTABLE_FILE = path.join(os.tmpdir(), 'AC27Editor.exe');
   });
 
-  it('returns false on the voice build (voice-stt-vosk.js in resourcesPath)', () => {
+  it('returns true on the voice build (voice-stt-vosk.js in resourcesPath)', () => {
     const fakeResources = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-voice-'));
     fs.writeFileSync(path.join(fakeResources, 'voice-stt-vosk.js'), '// dummy');
     Object.defineProperty(process, 'resourcesPath', { value: fakeResources, configurable: true });
     const updater = getUpdater();
-    expect(updater.isUpdateSupported()).toBe(false);
+    expect(updater.isUpdateSupported()).toBe(true);
     delete process.resourcesPath;
     fs.rmSync(fakeResources, { recursive: true, force: true });
   });
@@ -187,6 +187,42 @@ describe('isVoiceBuild', () => {
   it('returns false when resourcesPath is undefined (plain-node test env)', () => {
     const updater = getUpdater();
     expect(updater.isVoiceBuild()).toBe(false);
+  });
+});
+
+// ── variantName / variantHeader ─────────────────────────────
+
+describe('variantName', () => {
+  it('returns normal on the normal build', () => {
+    const updater = getUpdater();
+    expect(updater.variantName()).toBe('normal');
+  });
+
+  it('returns voice on the voice build', () => {
+    const fakeResources = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-voice-'));
+    fs.writeFileSync(path.join(fakeResources, 'voice-stt-vosk.js'), '// dummy');
+    Object.defineProperty(process, 'resourcesPath', { value: fakeResources, configurable: true });
+    const updater = getUpdater();
+    expect(updater.variantName()).toBe('voice');
+    delete process.resourcesPath;
+    fs.rmSync(fakeResources, { recursive: true, force: true });
+  });
+});
+
+describe('variantHeader', () => {
+  it('sends X-AC27-Variant: normal on the normal build', () => {
+    const updater = getUpdater();
+    expect(updater.variantHeader()).toEqual({ 'X-AC27-Variant': 'normal' });
+  });
+
+  it('sends X-AC27-Variant: voice on the voice build', () => {
+    const fakeResources = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-voice-'));
+    fs.writeFileSync(path.join(fakeResources, 'voice-stt-vosk.js'), '// dummy');
+    Object.defineProperty(process, 'resourcesPath', { value: fakeResources, configurable: true });
+    const updater = getUpdater();
+    expect(updater.variantHeader()).toEqual({ 'X-AC27-Variant': 'voice' });
+    delete process.resourcesPath;
+    fs.rmSync(fakeResources, { recursive: true, force: true });
   });
 });
 
@@ -362,17 +398,23 @@ describe('checkForUpdate gates', () => {
     expect(result.error).toBeUndefined(); // gated before HEAD — no network error
   });
 
-  it('skips without a network attempt on the voice build (voice-stt-vosk.js in resourcesPath)', async () => {
+  it('proceeds past the gate on the voice build (voice-stt-vosk.js in resourcesPath)', async () => {
     const fakeResources = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-voice-'));
     fs.writeFileSync(path.join(fakeResources, 'voice-stt-vosk.js'), '// dummy');
     Object.defineProperty(process, 'resourcesPath', { value: fakeResources, configurable: true });
+    // Create the portable-exe target so the check reaches the HEAD request
+    const tmpExe = path.join(os.tmpdir(), 'AC27EditorVoice.exe');
+    fs.writeFileSync(tmpExe, 'voice-exe-content');
+    process.env.PORTABLE_EXECUTABLE_FILE = tmpExe;
     process.env.AC27_UPDATE_SERVER = 'https://127.0.0.1:1'; // would fail fast if reached
     const updater = getUpdater();
     const result = await updater.checkForUpdate();
     expect(result.hasUpdate).toBe(false);
-    expect(result.error).toBeUndefined(); // gated before HEAD — no network error
+    expect(result.error).toBeDefined(); // past the voice gate — reached the HEAD request
     delete process.resourcesPath;
+    fs.unlinkSync(tmpExe);
     fs.rmSync(fakeResources, { recursive: true, force: true });
+    process.env.PORTABLE_EXECUTABLE_FILE = path.join(os.tmpdir(), 'AC27Editor.exe');
   });
 
   it('proceeds past the gate in dev mode with AC27_UPDATE_TARGET', async () => {

@@ -1321,6 +1321,401 @@ function _validateStandConflicts(flights) {
   }
 }
 
+// ─── Game-compat normalization (v4) ─────────────────────────────────────
+
+/** Minimum separation between two arrivals claiming the same stand
+ *  (empirical: the game accepts ≥16 min, rejects tight pairs; 20 min
+ *  provides a safety margin — see tests/integration/gamecompat-utils.cjs). */
+const GAME_STAND_MIN_GAP_SEC = 20 * 60;
+
+/**
+ * Convert .NET DateTime ticks to seconds since midnight (day-wrapped).
+ * Returns null when the ticks value is falsy/not a number.
+ */
+function _ticksToSecOfDay(ticksVal) {
+  if (!ticksVal) return null;
+  try {
+    const ticks = BigInt(ticksVal);
+    return Number((((ticks % TICKS_PER_DAY) + TICKS_PER_DAY) % TICKS_PER_DAY) / 10000000n);
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Scan a checkpoint frame segment's RuntimeEntities for the docked jetway
+ * state the game restores at level init:
+ *   - docked:  reg -> { stand, takeoffSec }   (jetway Status=2)
+ *   - fpDir:   reg -> 'A'|'D'                 (frame flight-plan entity direction)
+ */
+function _scanFrameDockedState(frameText) {
+  const docked = new Map();
+  const fpDir = new Map();
+  if (!frameText) return { docked, fpDir };
+
+  const t = createTokenizer(frameText);
+  const reSec = t.findSection('RuntimeEntities');
+  if (!reSec) return { docked, fpDir };
+  const reText = t.substring(reSec.valueStart, reSec.valueEnd);
+  const reT = createTokenizer(reText);
+  const rcSec = reT.findSection('$rcontent');
+  if (!rcSec) return { docked, fpDir };
+  const rcStart = rcSec.valueStart;
+  if (reText[rcStart] !== '[') return { docked, fpDir };
+  const rcEnd = reT.findArrayEnd(rcStart);
+  if (rcEnd === null) return { docked, fpDir };
+
+  const content = reText.substring(rcStart + 1, rcEnd - 1);
+  const contentT = createTokenizer(content);
+  let pos = 0;
+  while (pos < content.length) {
+    while (pos < content.length && ' \t\n\r'.includes(content[pos])) pos++;
+    if (pos >= content.length) break;
+    if (content[pos] === ',') { pos++; continue; }
+    if (content[pos] !== '{') { pos++; continue; }
+    const entryEnd = contentT.findObjectEnd(pos);
+    if (entryEnd === null) break;
+    const entryText = content.substring(pos, entryEnd);
+    const et = createTokenizer(entryText);
+    const kSec = et.findSection('$k');
+    if (kSec) {
+      const kEnd = et.skipString(kSec.valueStart);
+      if (kEnd) {
+        const key = entryText.substring(kSec.valueStart + 1, kEnd - 1);
+        if (key.startsWith('jetway:')) {
+          const statusM = /"Status"\s*:\s*(\d+)/.exec(entryText);
+          if (statusM && parseInt(statusM[1], 10) === 2) {
+            const fpRef = entryText.match(/\$fstrref:"flight-plan:([^"]+)"/);
+            if (fpRef) {
+              const standM = entryText.match(/"_departureStand"\s*:\s*"([^"]*)"/);
+              const toM = entryText.match(/"_departureTakeoffTime"\s*:\s*\{[^{}]*?(-?\d+)\s*\}/);
+              docked.set(fpRef[1], {
+                stand: standM ? standM[1] : null,
+                takeoffSec: toM ? _ticksToSecOfDay(parseInt(toM[1], 10)) : null,
+              });
+            }
+          }
+        } else if (key.startsWith('flight-plan:')) {
+          const reg = key.substring('flight-plan:'.length);
+          const depRwyM = entryText.match(/"_departureRunway"\s*:\s*"([^"]*)"/);
+          const arrRwyM = entryText.match(/"_arrivalRunway"\s*:\s*"([^"]*)"/);
+          if (depRwyM && depRwyM[1]) fpDir.set(reg, 'D');
+          else if (arrRwyM && arrRwyM[1]) fpDir.set(reg, 'A');
+        }
+      }
+    }
+    pos = entryEnd;
+  }
+  return { docked, fpDir };
+}
+
+/**
+ * GAME-COMPAT NORMALIZATION (v4) — repair the three fuzz-discovered classes
+ * of saves the game rejects on level init (see tests/integration/
+ * save_gamecompat.test.js and gamecompat-utils.cjs for the empirical rules):
+ *
+ *  1. DUPLICATE REGISTRATIONS — one registration on an ARR and a DEP emits
+ *     two "flight-plan:B-XXXX" StaticItems keys (game: "no call sign for
+ *     active flight direction") and the frame rebuild's turnaround logic
+ *     drops the docked DEP's aircraft: entity (game: JetwayHD.
+ *     SetDockingTarget NullReferenceException). Fix: keep the frame-linked
+ *     side's registration (docked side → frame flight-plan direction →
+ *     departure) and rename the other side to a fresh unique registration.
+ *
+ *  2. DOCKED-STAND OCCUPANCY — a docked aircraft occupies its stand from
+ *     scenario start until pushback. If its departure lies beyond the
+ *     scenario end, the stand is blocked for the whole session. Other-reg
+ *     arrivals may use a docked stand only when the docked aircraft departs
+ *     in-scenario AND the arrival lands after its off-block.
+ *
+ *  3. ARRIVAL SEPARATION — two arrivals on one stand within
+ *     GAME_STAND_MIN_GAP_SEC are rejected at init. DEP→ARR handovers at any
+ *     gap are fine (game-authored files contain 2-minute handovers), and
+ *     ARR→DEP pairs are already rejected by _validateStandConflicts.
+ *
+ *  4. ARRIVAL STAR — the game's FlightPlan.Init() throws "Flight plan has
+ *     neither an arrival nor a departure leg" and drops an arrival leg whose
+ *     STAR is empty (empirical: game-authored arrivals ALWAYS carry a STAR
+ *     such as "SIE.CAMRM5" / "PAWLN.PAWLN1"; KJFK_leisure_1 crashed on
+ *     flight-plan:HL0680 with STAR ""). Every arrival gets a STAR from the
+ *     approach cache's runwayStarMap for its runway; arrivals on runways
+ *     with no STAR data (departure-only runways) are moved to the first
+ *     arrival-capable runway.
+ *
+ * Violating arrival(s) are moved to a safe stand drawn from the level's own
+ * stand set (plus the complete stand pool when the caller provides it).
+ * Mutates `flights` in place so the StaticItems header rebuild, the
+ * checkpoint-frame rebuild, and the CSV export all see the repaired state.
+ *
+ * @param {Array} flights  editor state flight objects (mutated)
+ * @param {string} fullText decoded .acl text (all segments)
+ * @param {Function} log
+ * @param {string[]|null} standPool optional complete stand-name list (the
+ *                 renderer's sceneryMaps.standIdToGuid keys) — valid stands
+ *                 even when no plan currently uses them.
+ * @param {object|null} approachCache approach cache (runwayStarMap) for
+ *                 STAR repair — optional; without it STAR-less arrivals are
+ *                 left untouched (callers without the cache still get the
+ *                 registration/stand repairs).
+ * @returns {{ renamed: number, moved: number, starred: number }}
+ */
+function _normalizeFlightsForGameCompat(flights, fullText, log, standPool, approachCache) {
+  const result = { renamed: 0, moved: 0, starred: 0 };
+  if (!flights || !flights.length) return result;
+  if (!fullText) return result;
+
+  const { RE_FRAME_SENTINEL } = require('./gatcarc');
+  const frameText = fullText.split(RE_FRAME_SENTINEL).pop();
+  const { docked, fpDir } = _scanFrameDockedState(frameText);
+
+  const endM = fullText.match(/"endTime"\s*:\s*"([^"]+)"/);
+  const endSec = endM ? _timeStrToSeconds(endM[1]) : null;
+
+  const regOf = (fl) => String(fl._Registration || fl.Registration || '').trim();
+  const tOfArr = (fl) => _timeStrToSeconds(fl.LandingTime);
+  const tOfDep = (fl) => _timeStrToSeconds(fl.OffBlockTime);
+
+  // ── 1. duplicate registrations ───────────────────────────────────
+  {
+    const byReg = new Map();
+    const usedRegs = new Set();
+    for (const fl of flights) {
+      const r = regOf(fl);
+      if (!r) continue;
+      usedRegs.add(r);
+      if (!byReg.has(r)) byReg.set(r, []);
+      byReg.get(r).push(fl);
+    }
+    for (const [reg, list] of byReg) {
+      if (list.length < 2) continue;
+      // winner: docked side → frame flight-plan direction → departure → first
+      let winner = null;
+      if (docked.has(reg)) winner = list.find((f) => _isDepartureFlight(f)) || null;
+      if (!winner && fpDir.has(reg)) {
+        const wantDep = fpDir.get(reg) === 'D';
+        winner = list.find((f) => _isDepartureFlight(f) === wantDep) || null;
+      }
+      if (!winner) winner = list.find((f) => _isDepartureFlight(f)) || list[0];
+      for (const fl of list) {
+        if (fl === winner) continue;
+        let newReg = null;
+        for (const suffix of 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789') {
+          const cand = reg + suffix;
+          if (!usedRegs.has(cand)) { newReg = cand; break; }
+        }
+        if (!newReg) {
+          for (let i = 0; i < 1000 && !newReg; i++) {
+            const cand = reg + 'X' + i;
+            if (!usedRegs.has(cand)) newReg = cand;
+          }
+        }
+        if (!newReg) {
+          log('[GAME-COMPAT] WARN: cannot allocate a unique registration for duplicate ' + reg);
+          continue;
+        }
+        usedRegs.add(newReg);
+        fl._Registration = newReg;
+        if (fl.Registration != null) fl.Registration = newReg;
+        result.renamed++;
+        log('[GAME-COMPAT] renamed duplicate registration ' + reg + ' -> ' + newReg + ' (kept ' + regOf(winner) + ')');
+      }
+    }
+  }
+
+  // ── 2. stand normalization (docked occupancy + arrival separation) ─
+  {
+    // per-stand occupancy bookkeeping
+    const standInfo = new Map(); // stand -> { arrs: [{t, reg}], deps: [{t}] }
+    const dockedByStand = new Map(); // stand -> { reg, offBlockSec, takeoffSec }
+    // The save REBUILDS the frame's jetway entries from the CURRENT flights
+    // (the earliest DEP per stand becomes the docked aircraft — same rule as
+    // _rebuildJetwayEntries' standFlights). The frame text's docked entries
+    // are the PRE-save state and can be stale (renamed / removed / time-
+    // changed flights), so derive occupancy from `flights` rather than the
+    // frame; otherwise an arrival on a stand whose post-save docked departure
+    // departs beyond the scenario end escapes the check (fuzz-discovered).
+    const bestDep = new Map(); // stand -> { fl, t }
+    for (const fl of flights) {
+      if (!_isDepartureFlight(fl)) continue;
+      const stand = String(fl.Stand || '').trim();
+      if (!stand) continue;
+      const t = tOfDep(fl);
+      if (t == null) continue;
+      const ex = bestDep.get(stand);
+      if (!ex || t < ex.t) bestDep.set(stand, { fl, t });
+    }
+    for (const [stand, { fl, t }] of bestDep) {
+      const reg = regOf(fl);
+      const frameD = docked.get(reg);
+      dockedByStand.set(stand, {
+        reg,
+        offBlockSec: t,
+        takeoffSec: fl.TakeoffTime
+          ? _timeStrToSeconds(fl.TakeoffTime)
+          : (frameD && frameD.takeoffSec != null ? frameD.takeoffSec : null),
+      });
+    }
+
+    const standsInUse = new Set(dockedByStand.keys());
+    for (const fl of flights) {
+      const stand = String(fl.Stand || '').trim();
+      if (!stand) continue;
+      standsInUse.add(stand);
+      if (!standInfo.has(stand)) standInfo.set(stand, { arrs: [], deps: [] });
+      if (_isDepartureFlight(fl)) {
+        standInfo.get(stand).deps.push({ t: tOfDep(fl) });
+      }
+    }
+    // Expand the candidate pool with the gate stands named by the frame's
+    // jetway keys — valid stands even when no plan currently uses them.
+    const jwRe = /"jetway:(\d+)[A-Z]?"/g;
+    let jwM;
+    while ((jwM = jwRe.exec(frameText || '')) !== null) {
+      standsInUse.add(String(parseInt(jwM[1], 10)));
+    }
+    // Plus the caller's complete stand pool (renderer sceneryMaps), when
+    // available — covers remote stands no plan currently uses.
+    if (Array.isArray(standPool)) {
+      for (const s of standPool) {
+        const v = String(s).trim();
+        if (v) standsInUse.add(v);
+      }
+    }
+    const candidateStands = [...standsInUse].sort((a, b) => (parseInt(a, 10) || 9999) - (parseInt(b, 10) || 9999));
+
+    const dockedViolation = (stand, reg, t) => {
+      const dk = dockedByStand.get(stand);
+      if (!dk || dk.reg === reg) return false;
+      const departureBeyondScenario =
+        (dk.offBlockSec != null && endSec != null && dk.offBlockSec > endSec) ||
+        (dk.takeoffSec != null && endSec != null && dk.takeoffSec > endSec);
+      if (departureBeyondScenario) return true;
+      if (dk.offBlockSec != null && t < dk.offBlockSec) return true;
+      return false;
+    };
+    const arrDepViolation = (stand, t) => {
+      const info = standInfo.get(stand);
+      if (!info) return 0;
+      let n = 0;
+      for (const o of info.deps) if (o.t > t) n++;
+      return n;
+    };
+    const arrGapViolationSec = (stand, t) => {
+      const info = standInfo.get(stand);
+      if (!info) return 0;
+      let worst = 0;
+      for (const o of info.arrs) {
+        const v = GAME_STAND_MIN_GAP_SEC - Math.abs(o.t - t);
+        if (v > worst) worst = v;
+      }
+      return worst;
+    };
+    const safeForArr = (stand, reg, t) =>
+      !dockedViolation(stand, reg, t) && arrDepViolation(stand, t) === 0 && arrGapViolationSec(stand, t) <= 0;
+
+    const arrs = flights.filter((f) => !_isDepartureFlight(f));
+    arrs.sort((a, b) => tOfArr(a) - tOfArr(b));
+    for (const fl of arrs) {
+      const t = tOfArr(fl);
+      const reg = regOf(fl);
+      const stand = String(fl.Stand || '').trim();
+      if (!stand) continue;
+      if (safeForArr(stand, reg, t)) {
+        if (standInfo.has(stand)) standInfo.get(stand).arrs.push({ t, reg });
+        continue;
+      }
+      let newStand = null;
+      // Pass 1: fully safe stand.
+      for (const cand of candidateStands) {
+        if (safeForArr(cand, reg, t)) { newStand = cand; break; }
+      }
+      // Pass 2: stands that keep the hard game rules (no docked violation,
+      // no ARR→DEP creation) and only trade off the ARR-ARR separation.
+      if (newStand === null) {
+        let best = null, bestViol = Infinity;
+        for (const cand of candidateStands) {
+          if (dockedViolation(cand, reg, t)) continue;
+          if (arrDepViolation(cand, t) > 0) continue;
+          const v = arrGapViolationSec(cand, t);
+          if (v < bestViol) { bestViol = v; best = cand; }
+        }
+        if (best !== null) {
+          newStand = best;
+          log('[GAME-COMPAT] WARN: stand pool tight — ' + reg + ' -> ' + newStand + ' (min ' + Math.round((GAME_STAND_MIN_GAP_SEC - bestViol) / 60) + 'min arrival separation)');
+        }
+      }
+      // Pass 3 (last resort): never violate the docked rule; minimize total
+      // remaining violations.
+      if (newStand === null) {
+        let best = null, bestScore = Infinity;
+        for (const cand of candidateStands) {
+          if (dockedViolation(cand, reg, t)) continue;
+          const score = arrDepViolation(cand, t) * 500 + arrGapViolationSec(cand, t);
+          if (score < bestScore) { bestScore = score; best = cand; }
+        }
+        newStand = best;
+        if (newStand !== null) {
+          log('[GAME-COMPAT] WARN: stand pool exhausted — least-violating stand for ' + reg + ' -> ' + newStand);
+        }
+      }
+      if (newStand === null) {
+        log('[GAME-COMPAT] WARN: no stand available for ' + reg + ' — leaving stand ' + stand);
+        if (standInfo.has(stand)) standInfo.get(stand).arrs.push({ t, reg });
+        continue;
+      }
+      fl.Stand = newStand;
+      result.moved++;
+      log('[GAME-COMPAT] moved ' + reg + ' stand ' + stand + ' -> ' + newStand + ' (game stand-allocation rules)');
+      if (!standInfo.has(newStand)) standInfo.set(newStand, { arrs: [], deps: [] });
+      standInfo.get(newStand).arrs.push({ t, reg });
+    }
+  }
+
+  // ── 4. arrival STAR repair ────────────────────────────────────────
+  // The game drops an arrival leg with an empty STAR at FlightPlan.Init()
+  // ("has neither an arrival nor a departure leg" — see gamecompat-utils).
+  // Game-authored arrivals always carry a STAR, so fill every STAR-less
+  // arrival from the approach cache's runwayStarMap (SceneryData-derived).
+  // Arrivals on runways with no STAR data at all (departure-only runways)
+  // are moved to the first arrival-capable runway so the saved plan never
+  // contains a runway/STAR combination the airport's data doesn't support.
+  {
+    const rsm = (approachCache && approachCache.runwayStarMap) || null;
+    if (rsm && Object.keys(rsm).length > 0) {
+      // deterministic arrival-capable runways (keys sorted)
+      const arrivalRunways = Object.keys(rsm).sort();
+      const starOf = (rwy) => {
+        const list = rsm[rwy];
+        return Array.isArray(list) && list.length > 0 ? String(list[0]) : null;
+      };
+      const arrivals = flights.filter((f) => !_isDepartureFlight(f) && String(f.Airway || '').trim() === '');
+      for (const fl of arrivals) {
+        const reg = regOf(fl);
+        const rwy = String(fl.Runway || '').trim();
+        let star = rwy ? starOf(rwy) : null;
+        if (!star && rwy) {
+          // runway has no STAR data — move to the first arrival-capable runway
+          const altRwy = arrivalRunways.find((r) => r !== rwy && starOf(r));
+          if (altRwy) {
+            log('[GAME-COMPAT] arrival ' + reg + ': runway ' + (rwy || '(none)') + ' has no STAR data — moved to ' + altRwy + ' (game arrival-leg rules)');
+            fl.Runway = altRwy;
+            star = starOf(altRwy);
+          }
+        }
+        if (star) {
+          fl.Airway = star;
+          result.starred++;
+          log('[GAME-COMPAT] arrival ' + reg + ': filled STAR "" -> ' + star + (rwy && rwy !== fl.Runway ? ' (runway ' + rwy + ' -> ' + fl.Runway + ')' : ''));
+        } else {
+          log('[GAME-COMPAT] WARN: arrival ' + reg + ' has no STAR and no arrival-capable runway found — leaving empty');
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 /**
  * Extract the world-state snapshot time (seconds since midnight) from a
  * GATCARC4 segment's GameTime.CurrentDateTime, or null when the segment has
@@ -2591,6 +2986,14 @@ function _buildStandaloneAircraftEntry(opts) {
   // object serializer, which quotes the value itself).
   var _resolveType = _makeJwTypeResolver(segTypeMap, false);
 
+  // State=5 (final approach) emission requires the scope to declare
+  // ApproachDynamicsParams; departure-heavy scopes legitimately omit it (see
+  // lazy FLY/APPROACH comment below).  Computed up front so the state decision
+  // below can degrade State=5 → STAR without ever asserting on a missing type.
+  const APPROACH_DYN_NAME = 'ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core';
+  var scopeDeclaresApproachDynParams = !segTypeMap ||
+    [...segTypeMap].some(([n, name]) => name === APPROACH_DYN_NAME);
+
   // Fully-qualified type strings with explicit segment-consistent numbers.
   // FlyApproachDynamicsParams is used for State=30 (DynamicsState=1).
   // ApproachDynamicsParams is used for State=5 (DynamicsState=2).
@@ -2803,7 +3206,12 @@ function _buildStandaloneAircraftEntry(opts) {
                 totalLen += tdDistLen;
               }
               var rawTargetDist = (1.0 - timeToLanding / totalApproachTime) * totalLen;
-              if (rawTargetDist >= flyLen) { aircraftState = 5; dynState = 2; }
+              // Final approach (State=5) requires the scope to declare
+              // ApproachDynamicsParams (the DynamicsParams structure State=5
+              // emits).  Departure-heavy scopes (e.g. ZSJN_peakdeparture)
+              // legitimately omit it — an aircraft that far along the approach
+              // degrades to STAR state instead of asserting at save time.
+              if (rawTargetDist >= flyLen && scopeDeclaresApproachDynParams) { aircraftState = 5; dynState = 2; }
 
               var posResult = computePosition(flyPoints, appPoints, progressRatio, tdPos, approachCap);
               var dirResult = computeDirection(flyPoints, appPoints, progressRatio, tdPos);
@@ -3195,7 +3603,10 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   var _jwResolveType = jwTypeResolve || _makeJwTypeResolver(jwTypeMap);
 
   // Dynamic type strings with explicit segment-consistent numbers.
-  var DYN_PARAMS_TYPE = _jwResolveType('ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core');
+  // NOTE: no eager resolve of ApproachDynamicsParams here — departure-heavy
+  // scopes (e.g. ZSJN_peakdeparture) legitimately never declare it (same rule
+  // as the standalone builder's lazy FLY/APPROACH params above), and this
+  // jetway path never writes approach dynamics anyway.
   var LIST_VEC3_TYPE = _jwResolveType('System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib');
 
   var T = {
@@ -4311,7 +4722,7 @@ function _parseRunwayTimeline(text) {
 
 // ─── V4 Save: rebuild StaticData.$blobdoc.StaticItems flight-plan entries ──
 
-function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCache, aclcfgStartTime, _saveSec) {
+function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCache, aclcfgStartTime, _saveSec, standPool) {
   const log = (msg) => console.log('[ACL-REBUILD-V4]', msg);
   const text = readAclText(aclPath);
   const bdt = BigInt(baseDateTicks || FALLBACK_BASE_DATE_TICKS);
@@ -4364,6 +4775,15 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   }
   const saveSec = aclcfgST ? _toSec(aclcfgST) : 0;
   log('saveTime=' + saveSec + 's (from resolveConfigTime startTime=' + aclcfgST + ')');
+
+  // ── Game-compat normalization (v4): repair duplicate registrations and
+  // stand assignments the game rejects at level init. Runs BEFORE any
+  // section rebuild so the StaticItems header rebuild, the checkpoint-frame
+  // rebuild, and the CSV export all see the repaired flight state. ──
+  const gameCompat = _normalizeFlightsForGameCompat(flights, text, log, standPool, approachCache);
+  if (gameCompat.renamed > 0 || gameCompat.moved > 0 || gameCompat.starred > 0) {
+    log('game-compat normalization: renamed=' + gameCompat.renamed + ' moved=' + gameCompat.moved + ' starred=' + gameCompat.starred);
+  }
 
   const t = createTokenizer(text);
 
@@ -5074,6 +5494,9 @@ module.exports = {
   _parseFlightPlanEntry,
   _rebuildStaticDataSections,
   _validateStandConflicts,
+  _normalizeFlightsForGameCompat,
+  _scanFrameDockedState,
+  GAME_STAND_MIN_GAP_SEC,
   _rebuildTimelineSections,
   _rebuildFlightRuntimeEntities,
   _buildStandaloneAircraftEntry,

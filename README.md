@@ -73,7 +73,7 @@ The editor checks for new versions on startup and offers a one-click update when
 4. The old `.exe` is renamed to `.old` as a safety fallback
 5. Click **Later** to dismiss the prompt until the next app restart
 
-**How it works:** The editor compares the MD5 hash of the running `.exe` against the ETag of the latest build on Cloudflare R2. If they differ, an update is available. No `version.json` needed — the comparison uses R2's built-in object metadata.
+**How it works:** The editor compares the MD5 hash of the running `.exe` against the ETag of the latest build on Cloudflare R2. If they differ, an update is available. No `version.json` needed — the comparison uses R2's built-in object metadata. The **voice edition** (`AC27EditorVoice.exe`) auto-updates through the **same `/editor` route** — it sends an `X-AC27-Variant: voice` header so the Worker serves its own `.md5` sidecar and exe — so each variant only ever updates onto itself.
 
 **Logging:** Every update decision is logged to both the console and `<userData>/updater.log`, making it possible to diagnose issues in packaged builds with no visible console.
 
@@ -447,11 +447,14 @@ variants are produced:
 | Command | Artifact | Contents |
 | --- | --- | --- |
 | `npm run build:win` | `release/AC27Editor.exe` | Normal build — **no voice assets**. This is the auto-update variant served from R2 (small). Voice UI shows "unavailable" (worker JS not shipped). |
-| `npm run build:win:voice` | `release/AC27EditorVoice.exe` | Voice build — bundles the offline vosk STT (large EN model `vosk-model-en-us-0.22` ~1.9 GB + small ZH `vosk-model-small-cn-0.22` ~42 MB, sox, vosk DLLs, koffi). GitHub-only; **never** uploaded to R2; auto-update disabled. |
+| `npm run build:win:voice` | `release/AC27EditorVoice.exe` | Voice build — bundles the offline vosk STT (large EN model `vosk-model-en-us-0.22` ~1.9 GB + small ZH `vosk-model-small-cn-0.22` ~42 MB, sox, vosk DLLs, koffi). Auto-updates through the R2 `/editor` route too — sends `X-AC27-Variant: voice` so the Worker serves its own objects. |
 | `npm run build:mac` | `release/*.dmg` | macOS (voice is Windows-only). |
 
-Both Windows variants go to the GitHub release; only `AC27Editor.exe` reaches
-R2 for auto-update (the CI pins the exact filename).
+Both Windows variants go to the GitHub release and both reach R2 for
+auto-update — both served via the single `/editor` route, the Worker switching
+objects on the `X-AC27-Variant` header (`normal` → `AC27Editor.exe(.md5)`,
+`voice` → `AC27EditorVoice.exe(.md5)`; the release workflow pins the exact
+filenames).
 
 ```powershell
 # Normal build

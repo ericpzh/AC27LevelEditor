@@ -41,6 +41,7 @@ const { readBinary } = require('./odin/binary_reader');
 const { OdinJsonWriter } = require('./odin/json_writer');
 const { readJson } = require('./odin/json_reader');
 const { OdinBinaryWriter } = require('./odin/binary_writer');
+const { renumberAclIds, countIdDescents } = require('./id_renumber');
 
 const MAGIC = Buffer.from('GATCARC4', 'ascii');
 const FRAME_MARKER = Buffer.from('MARF', 'ascii');
@@ -202,22 +203,29 @@ function detectAclFormat(aclPath) {
  *                      are written binary (the current game format)
  *   'binary'         — GATCARC4 archive
  *   'text'           — plain Odin JSON text
+ *
+ * Every document ($id/$iref) is renumbered to a strictly ascending sequence
+ * in text order before encoding — see id_renumber.js (the game's checkpoint
+ * reader requires it; the editor's rebuild can emit ids out of text order,
+ * which makes the game null-bind inline values and crash with a
+ * NullReferenceException during level init).
  */
 function writeAcl(aclPath, text, options = {}) {
   let format = options.format || 'auto';
   if (format === 'auto') {
     format = detectAclFormat(aclPath) || 'binary';
   }
+  const normalized = renumberAclIds(text);
   if (format === 'binary') {
     let buffer;
     try {
-      buffer = encodeArchive(text);
+      buffer = encodeArchive(normalized);
     } catch (e) {
       throw new Error(`Failed to encode .acl "${aclPath}" to GATCARC4: ${e.message}`);
     }
     fs.writeFileSync(aclPath, buffer);
   } else if (format === 'text') {
-    fs.writeFileSync(aclPath, text, 'utf-8');
+    fs.writeFileSync(aclPath, normalized, 'utf-8');
   } else {
     throw new Error(`writeAcl: unknown format "${format}"`);
   }

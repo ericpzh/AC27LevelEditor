@@ -215,6 +215,16 @@ const badOrder = { ...validFlight, CallSign: 'DAL2001', OffBlockTime: '11:05:00'
 const issues9 = validateFlightObjects([badOrder], MOCK_FLIGHTS, c);
 assert(issues9 !== null && issues9.some(i => i.issue === 'time_order'), 'time order rejected');
 
+// validateFlightObjects — arrival without a STAR (game drops STAR-less legs)
+const noStarArr = { ...validFlight, CallSign: 'CCA1502', LandingTime: '12:00:00', InBlockTime: '12:05:00', OffBlockTime: '', TakeoffTime: '', Runway: '04R', Airway: '', Registration: 'B-5678', AircraftType: 'B738' };
+const issues10 = validateFlightObjects([noStarArr], MOCK_FLIGHTS, c);
+assert(issues10 !== null && issues10.some(i => i.issue === 'missing_star'), 'arrival without STAR rejected');
+
+// validateFlightObjects — arrival with a valid STAR passes
+const starArr = { ...noStarArr, Airway: 'ABCD2B' };
+const issues10b = validateFlightObjects([starArr], MOCK_FLIGHTS, c);
+assert(issues10b === null, 'arrival with valid STAR accepted');
+
 // applyCascades — AirlineCode change
 const cascaded1 = applyCascades(
   { ...MOCK_FLIGHTS[0] },
@@ -257,7 +267,7 @@ async function runMcpTests() {
   // tools/list
   const toolsRes = await handleMcpMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
   assert(Array.isArray(toolsRes.result.tools), 'MCP: tools/list returns array');
-  assertEqual(toolsRes.result.tools.length, 7, 'MCP: 7 tools');
+  assertEqual(toolsRes.result.tools.length, 8, 'MCP: 8 tools');
   const toolNames = toolsRes.result.tools.map(t => t.name);
   assert(toolNames.includes('create_flights'), 'MCP: create_flights');
   assert(toolNames.includes('get_flights'), 'MCP: get_flights');

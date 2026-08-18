@@ -7,6 +7,7 @@
  *   node build.js --win --voice → AC27EditorVoice.exe (bundles the vosk
  *                                offline STT: models + sox + koffi/vosk DLLs)
  *   node build.js --mac        → macOS dmg (voice is Windows-only)
+ *   node build.js --linux      → Linux AppImage + deb (voice is Windows-only)
  *
  * The voice build fails up front when models/ or bin/sox is missing
  * (run `node scripts/fetch-vosk-model.mjs` first).
@@ -23,6 +24,7 @@ const path = require('path');
 const args = process.argv.slice(2);
 const isWin = args.includes('--win') || args.includes('--windows');
 const isMac = args.includes('--mac') || args.includes('--darwin');
+const isLinux = args.includes('--linux');
 const isVoice = args.includes('--voice');
 const publish = args.includes('--publish') ? 'never' : null;   // CI uses --publish never
 
@@ -86,11 +88,19 @@ if (isVoice) {
   console.log('[build] voice variant — bundling STT models/sox/vosk');
 }
 
-if (isWin || (!isWin && !isMac)) config.win = win;
+if (isWin || (!isWin && !isMac && !isLinux)) config.win = win;
 if (isMac) config.mac = {
   target: 'dmg',
   icon: 'icon.png',
   category: 'public.app-category.utilities',
+  artifactName: 'AC27Editor.${ext}',
+  extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg', to: 'ffmpeg' }],
+};
+if (isLinux) config.linux = {
+  target: ['AppImage', 'deb'],
+  icon: 'icon.png',
+  category: 'Utility',
+  maintainer: 'AC27 Editor contributors',
   artifactName: 'AC27Editor.${ext}',
   extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg', to: 'ffmpeg' }],
 };

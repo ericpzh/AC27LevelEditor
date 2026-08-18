@@ -249,6 +249,38 @@ describe('runTripleValidation (v4 semantics)', () => {
     const issues = run(flights, { ZSJN: { Stand: ['A01'] } });
     expect(issues.length).toBeGreaterThan(0);
   });
+
+  it('blocks arrivals without a STAR (game drops STAR-less arrival legs at load)', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30', Runway: '19' }, // STAR is empty
+    ];
+    const issues = run(flights, { ZSJN: { _starRunwayMap: { '19': ['ABTU6W', 'PAWLN1'] } } });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CES1234');
+  });
+
+  it('allows arrivals that carry a STAR', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30', Runway: '19', Airway: 'ABTU6W' },
+    ];
+    const issues = run(flights, { ZSJN: { _starRunwayMap: { '19': ['ABTU6W', 'PAWLN1'] } } });
+    expect(issues).toEqual([]);
+  });
+
+  it('does not require a STAR on departures', () => {
+    const flights = [
+      { CallSign: 'CES1234', OffBlockTime: '10:30', TakeoffTime: '10:45', Runway: '19', Airway: '' },
+    ];
+    const issues = run(flights, { ZSJN: { _starRunwayMap: { '19': ['ABTU6W'] } } });
+    expect(issues).toEqual([]);
+  });
+
+  it('skips the STAR-required rule when no runway/STAR data is cached', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30' }, // no Runway, no Airway
+    ];
+    expect(run(flights)).toEqual([]);
+  });
 });
 
 describe('runTripleValidation time range (end + 30min grace)', () => {

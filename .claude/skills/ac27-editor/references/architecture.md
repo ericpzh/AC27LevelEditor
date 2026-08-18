@@ -104,7 +104,7 @@ AC27Editor/
 │   │   ├── flightDefaults.js    # Pure helpers for new flight creation (random airline, cascaded aircraft/reg, non-conflicting stand, airport-aware Language Z*→zh, random Voice from dropdown)
 │   │   └── flightCascade.js     # Pure helpers for cascading field updates
 │   │
-│   ├── acl/                     # Backend modules (15 files + odin/; CommonJS + some ESM)
+│   ├── acl/                     # Backend modules (16 files + odin/; CommonJS + some ESM)
 │   │   ├── parser.js            # FACADE — re-exports all backend modules
 │   │   ├── tokenizer.js         # String-aware section boundary scanner (no more brace-counting)
 │   │   ├── acl_json.js          # Pre-processor (Unity JSON→valid JSON) + serializer + Odin recursive-descent parser
@@ -112,7 +112,8 @@ AC27Editor/
 │   │   ├── constants.js         # CJS re-export of utils/constants.js (backward compat)
 │   │   ├── config.js            # resolveConfigTime / resolveDisplayTimes (Config block + GameTime.CurrentDateTime override)
 │   │   ├── scanner.js           # Scans game root for airports & .acl files
-│   │   ├── gatcarc.js           # GATCARC4 binary container — readAclText() / writeAcl() (the only .acl I/O)
+│   │   ├── gatcarc.js           # GATCARC4 binary container — readAclText() / writeAcl() (the only .acl I/O; writeAcl renumbers ids via id_renumber.js)
+│   │   ├── id_renumber.js       # $id/$iref renumberer — strictly ascending ids in text order (game's JsonDataReader requirement); renumberDocument/renumberAclIds/countIdDescents
 │   │   ├── v4_pk_index.js       # PKStaticEntities index builder ($iref → $id resolution, field helpers)
 │   │   ├── odin/                # OdinSerializer binary codec (binary/json readers + writers, .NET primitives, entry types)
 │   │   ├── flight_plans.js      # StaticData/StaticItems flight-plan parse + v4 save pipeline (_rebuildStaticDataSections, timeline rebuild)
@@ -289,6 +290,8 @@ Three-layer testing strategy:
 - Custom `--user-data-dir` with pre-written `lastRoot.json` skips the setup screen
 - `AC27_E2E_TMP_DIR` env var skips native OS dialogs (export) in test mode; backup saves `.bak` directly alongside source (no dialog)
 - **Never touches real game files** — all reads/writes go to temp copies
+- **Fuzz save test (`tests/e2e/fuzz-save.spec.mjs`, `npm run test:fuzz`):** randomized 50–200 op storms via MCP per production level (sourced from `E2E_GAME_ROOT`), gated before save through the app's own `runTripleValidation` with an auto-repair loop (reg/type/num/STAR/stand/time fixes; synthetic format-preserving registrations when canonical pools are exhausted), then a real UI save-with-backup + reload verification. `tests/e2e/fuzz-cli.mjs` is the runner wrapper that adds the `--replace` flag (copies PASSED levels' `.acl`+`.acl.bak` into the real install; `FUZZ_REPLACE=1` env equivalent). Gated on `FUZZ_RUN=1` — skips in normal `test:e2e` runs.
+- **Save pipeline regression suites (Vitest, fixture-based, no game root):** `tests/integration/save_gamecompat.test.js` + `gamecompat-utils.cjs` encode the five fuzz-discovered init-rejection invariants (docked entity loss, duplicate plan keys, stand conflicts, STAR-less arrival legs — `arrival-no-star` — and leg resolution; surfaces the auto-repair in `_normalizeFlightsForGameCompat`); `tests/integration/id_renumber.test.js` pins the strictly-ascending `$id` requirement and the `id_renumber.js` rewrite (incl. the ZSJN_peakdeparture `jetway:02` crash pattern). Both run under `npx vitest run tests/integration/<name>.test.js`.
 
 File isolation flow:
 ```

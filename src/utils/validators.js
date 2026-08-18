@@ -222,9 +222,22 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     }
   });
 
+  // Arrival legs must carry a STAR — the game's FlightPlan.Init() drops a
+  // STAR-less arrival leg at level load ("Flight plan '...' has neither an
+  // arrival nor a departure leg"; game-authored arrivals ALWAYS have a STAR
+  // such as "SIE.CAMRM5" — see tests/integration/gamecompat-utils.cjs
+  // arrival-no-star). Block saves that would ship a crash-on-load level.
+  const starRunwayMap = values._starRunwayMap || {};
+  if (Object.keys(starRunwayMap).length > 0) {
+    flights.forEach((fl) => {
+      const isArrival = !!(fl.LandingTime || '').trim();
+      if (isArrival && !(fl.Airway || '').trim()) {
+        issues.push(T('val_star_required', { cs: fl.CallSign || '?', runway: (fl.Runway || '').trim() || '?' }));
+      }
+    });
+  }
   // STAR/runway combination validation — flag flights where the assigned
   // STAR is not valid for the assigned runway according to scenery data.
-  const starRunwayMap = values._starRunwayMap || {};
   if (Object.keys(starRunwayMap).length > 0) {
     flights.forEach((fl) => {
       const runway = (fl.Runway || '').trim();

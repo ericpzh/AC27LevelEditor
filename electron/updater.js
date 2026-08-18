@@ -16,11 +16,12 @@
  * dry-run in dev.
  *
  * Voice variant: the AC27EditorVoice.exe build (detected by the presence of
- * resources/voice-stt-vosk.js — see isVoiceBuild) never checks for updates. It
- * is distributed via GitHub releases only and is never uploaded to the R2
- * update server, so its MD5 could never match the remote ETag — a phantom
- * "update available" on every launch (and a download would replace the voice
- * exe with the normal build).
+ * resources/voice-stt-vosk.js — see isVoiceBuild) auto-updates through the
+ * SAME route (UPDATE_BASE) as the normal build. The Worker distinguishes the
+ * two by a request header — X-AC27-Variant: normal|voice (see variantHeader) —
+ * pulling AC27EditorVoice.exe(.md5) for voice and AC27Editor.exe(.md5) for
+ * normal. That keeps the voice build's MD5 comparison, verification, and
+ * download scoped to its own R2 objects, never the normal build's.
  *
  * Every decision step is logged via log() — console + <userData>/updater.log.
  *
@@ -70,14 +71,14 @@ const api = module.exports;
  * Only Windows portable builds support auto-update.
  * macOS uses DMG distribution (no auto-update).
  * Dev mode (!app.isPackaged) also skips.
- * The Voice variant (AC27EditorVoice.exe) is excluded — see isVoiceBuild.
+ * The Voice variant (AC27EditorVoice.exe) auto-updates too — it identifies
+ * itself to the same route via a variant header (see variantHeader).
  * @returns {boolean}
  */
 function isUpdateSupported() {
   return app.isPackaged
     && process.platform === 'win32'
-    && !!process.env.PORTABLE_EXECUTABLE_FILE
-    && !isVoiceBuild();
+    && !!process.env.PORTABLE_EXECUTABLE_FILE;
 }
 
 /**
@@ -85,15 +86,37 @@ function isUpdateSupported() {
  *
  * The voice build bundles the vosk STT worker as an extraResource
  * (resources/voice-stt-vosk.js — see build.js VOICE_RESOURCES), which the
- * normal build never ships. The voice exe is distributed via GitHub releases
- * only and never uploaded to the R2 update server, so auto-update is disabled
- * for it entirely (the MD5 could never match the remote ETag).
+ * normal build never ships. Auto-update is enabled for it; it announces itself
+ * through the X-AC27-Variant header so the Worker serves the voice R2 objects.
  * @returns {boolean}
  */
 function isVoiceBuild() {
   if (!app.isPackaged) return false;
   if (typeof process.resourcesPath !== 'string') return false; // plain-node tests
   return fs.existsSync(path.join(process.resourcesPath, 'voice-stt-vosk.js'));
+}
+
+/**
+ * Name of the running variant: 'voice' or 'normal'.
+ * Only meaningful when packaged (dev mode can't detect the voice build).
+ * @returns {'voice'|'normal'}
+ */
+function variantName() {
+  return isVoiceBuild() ? 'voice' : 'normal';
+}
+
+/**
+ * Request header that tells the Worker which build this is, so a single
+ * /editor route can serve both variants:
+ *
+ *   X-AC27-Variant: normal → AC27Editor.exe + AC27Editor.exe.md5
+ *   X-AC27-Variant: voice  → AC27EditorVoice.exe + AC27EditorVoice.exe.md5
+ *
+ * Both HEAD (ETag = the sidecar MD5) and GET (exe download) carry it.
+ * @returns {Object} single-key headers object for https.request/https.get
+ */
+function variantHeader() {
+  return { 'X-AC27-Variant': variantName() };
 }
 
 // ─── MD5 computation ──────────────────────────────────────
@@ -119,14 +142,20 @@ function computeFileMd5(filePath) {
  * Send a HEAD request to the update server and return R2 object metadata.
  * The Worker fetches the real MD5 from the companion .md5 file and returns it
  * as the `etag` header, alongside last-modified and content-length from R2.
+ * The X-AC27-Variant header tells the Worker which exe's objects to use.
  * @returns {Promise<{ etag: string, lastModified: string|null, contentLength: number }>}
  */
 function headRemoteExe() {
+  const serverUrl = UPDATE_BASE;
   return new Promise((resolve, reject) => {
-    const req = https.request(UPDATE_BASE, { method: 'HEAD', timeout: HEAD_TIMEOUT }, (res) => {
+    const req = https.request(serverUrl, {
+      method: 'HEAD',
+      timeout: HEAD_TIMEOUT,
+      headers: variantHeader(),
+    }, (res) => {
       // Follow redirects — same pattern as bepinex._httpsGet
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        const redirectUrl = new URL(res.headers.location, UPDATE_BASE).toString();
+        const redirectUrl = new URL(res.headers.location, serverUrl).toString();
         res.resume();
         api.headRemoteExeWithUrl(redirectUrl).then(resolve).catch(reject);
         return;
@@ -164,6 +193,7 @@ function headRemoteExeWithUrl(url, timeoutMs = HEAD_TIMEOUT) {
       path: parsed.pathname + parsed.search,
       method: 'HEAD',
       timeout: timeoutMs,
+      headers: variantHeader(),
     };
     const req = https.request(opts, (res) => {
       if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -200,6 +230,7 @@ function resolveTargetExe() {
   const root = app.getAppPath(); // project root in dev
   const candidates = [
     path.join(root, 'release', 'AC27Editor.exe'),
+    path.join(root, 'release', 'AC27EditorVoice.exe'), // voice artifactName
     path.join(root, 'release', 'AC27LevelEditor.exe'), // older artifactName
     path.join(root, 'dist', 'AC27 Editor.exe'),
     path.join(root, 'dist', 'win-unpacked', 'AC27 Editor.exe'),
@@ -221,6 +252,7 @@ async function checkForUpdate() {
   log('[Updater] check start — platform:', process.platform,
     '| isPackaged:', app.isPackaged,
     '| PORTABLE_EXECUTABLE_FILE:', process.env.PORTABLE_EXECUTABLE_FILE || '(unset)',
+    '| variant:', variantName(),
     '| server:', UPDATE_BASE);
 
   if (process.platform !== 'win32') {
@@ -229,14 +261,6 @@ async function checkForUpdate() {
   }
   if (app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE) {
     log('[Updater] packaged but not portable (no PORTABLE_EXECUTABLE_FILE) — skipping');
-    return { hasUpdate: false };
-  }
-  // Voice variant: GitHub-release distribution only, never on the R2 update
-  // server — its MD5 could never match the remote ETag. Skip entirely so the
-  // phantom "update available" prompt (and the risk of a download replacing
-  // the voice exe with the normal build) can never fire.
-  if (isVoiceBuild()) {
-    log('[Updater] voice build — auto-update disabled — skipping');
     return { hasUpdate: false };
   }
   // Dev mode is opt-in: skip by default so `npm start` never prompts. Setting
@@ -317,7 +341,7 @@ function downloadUpdate(event, destDir) {
     };
 
     const doGet = (target, redirectsLeft) => {
-      const req = https.get(target, { timeout: 60000 }, (res) => {
+      const req = https.get(target, { timeout: 60000, headers: variantHeader() }, (res) => {
         // Follow redirects
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
           const redirectUrl = new URL(res.headers.location, target).toString();
@@ -336,6 +360,19 @@ function downloadUpdate(event, destDir) {
         const contentLength = res.headers['content-length'];
         if (contentLength) total = parseInt(contentLength, 10);
 
+        let settled = false;
+        const haveLength = () => (total > 0 ? `${received}/${total}` : String(received));
+        const cleanupPartial = () => {
+          file.close();
+          try { fs.unlinkSync(exePath); } catch (_) { /* ignore */ }
+        };
+        const fail = (err) => {
+          if (settled) return;
+          settled = true;
+          cleanupPartial();
+          reject(err);
+        };
+
         res.on('data', (chunk) => {
           received += chunk.length;
           file.write(chunk);
@@ -345,8 +382,29 @@ function downloadUpdate(event, destDir) {
         });
 
         res.on('end', () => {
-          file.end();
-          resolve(exePath);
+          // Cloudflare/edge streams can terminate early on very large bodies
+          // (multi-hundred-MB exes). 'end' fires cleanly either way, so verify
+          // we actually received what Content-Length promised — otherwise the
+          // MD5-check in main.js would only catch it AFTER the download.
+          if (total > 0 && received !== total) {
+            fail(new Error(`UPDATE_DOWNLOAD_INCOMPLETE (${haveLength()})`));
+            return;
+          }
+          if (settled) return;
+          settled = true;
+          // Resolve only after the write stream has FLUSHED to disk — otherwise
+          // main.js's post-download MD5 check reads a partially-written file
+          // (fs buffers writes internally; statSync/readFileSync can race it).
+          file.end(() => resolve(exePath));
+        });
+
+        // Mid-stream socket kill: 'end' never fires. 'close' fires after a
+        // normal 'end' too, so only act when we haven't settled.
+        res.on('aborted', () => {
+          fail(new Error(`UPDATE_DOWNLOAD_ABORTED (${haveLength()})`));
+        });
+        res.on('close', () => {
+          fail(new Error(`UPDATE_DOWNLOAD_ABORTED (${haveLength()})`));
         });
       });
 
@@ -475,6 +533,8 @@ Object.assign(api, {
   // Public API
   isUpdateSupported,
   isVoiceBuild,
+  variantName,
+  variantHeader,
   checkForUpdate,
   downloadUpdate,
   installUpdate,

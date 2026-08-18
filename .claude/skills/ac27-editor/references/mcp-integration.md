@@ -36,7 +36,7 @@ Claude Code (LLM)                    AC27 Editor (Electron)
 - 7 REST endpoints: `GET/POST/PATCH /api/*`
 - `GET/POST /mcp` — MCP SSE endpoint + JSON-RPC handler
 - `handleMcpMessage(msg)` — dispatches JSON-RPC to internal API functions (no HTTP round-trip)
-- 12-point validation suite (`validateFlightObjects`) on every mutating call
+- 13-point validation suite (`validateFlightObjects`) on every mutating call
 - Exports for testing: `validateFlightObjects`, `buildConstraints`, `applyCascades`, `handleMcpMessage`, `MCP_TOOLS`
 
 ### `mcp/bridge.js` (~40 lines)
@@ -67,7 +67,7 @@ Claude Code (LLM)                    AC27 Editor (Electron)
 }
 ```
 
-## 7 MCP Tools
+## 8 MCP Tools
 
 | Tool | Purpose |
 |------|---------|
@@ -77,10 +77,10 @@ Claude Code (LLM)                    AC27 Editor (Electron)
 | `delete_flights` | Delete matching flights by callsign, airline, type, stand, runway, or aircraft type. |
 | `get_editor_status` | Current file, airport, flight counts, dirty flag, timeline status. |
 | `get_airport_info` | Full constraint map: flatLists, airline codes, flight numbers, compat maps (airline→aircraft, runway→STAR, airline+aircraft→registration), time bounds. |
-| `get_validation_issues` | Run 12-point validation on current flights. Returns structured issues. |
+| `get_validation_issues` | Run 13-point validation on current flights. Returns structured issues. |
 | `send_voice_command` | Parse a spoken sentence against the LIVE aircraft list (same pipeline as the PTT mic) and dispatch patch frames to the game. Needs game + BepInEx plugin running. Prints `[VOICE-PARSE]` to the main-process log. |
 
-## Validation (12 checks)
+## Validation (13 checks)
 
 1. All 15 fields present
 2. Airline code known (from audio callsigns + dropdown values)
@@ -88,17 +88,18 @@ Claude Code (LLM)                    AC27 Editor (Electron)
 4. Stand in valid set
 5. Runway in valid set
 6. Aircraft compatible with airline (`_compat.airlineToAircraft`)
-7. Airway/STAR compatible with runway (`_runwayStarMap`, arrivals only)
-8. Registration valid for (airline, aircraft) pair (`_registrationMap`)
-9. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` — the strict upper bound is `end + 30 min`, not `end` (game allows events up to 30 min past scenario end; `time_after_range` only fires past the grace)
-10. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
-11. Duplicate callsigns
-12. Stand conflicts + duplicate registrations
+7. Arrival legs must carry a STAR (`missing_star` — the game's `FlightPlan.Init()` drops a STAR-less arrival leg at level load: "Flight plan '...' has neither an arrival nor a departure leg"; game-authored arrivals ALWAYS carry a STAR such as `"SIE.CAMRM5"`). The renderer's `runTripleValidation` mirrors this as `val_star_required` (gated on `_starRunwayMap` being non-empty; see `src/utils/i18n.js` for the EN/ZH strings)
+8. Airway/STAR compatible with runway (`_runwayStarMap`, arrivals only)
+9. Registration valid for (airline, aircraft) pair (`_registrationMap`)
+10. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` — the strict upper bound is `end + 30 min`, not `end` (game allows events up to 30 min past scenario end; `time_after_range` only fires past the grace)
+11. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
+12. Duplicate callsigns
+13. Stand conflicts + duplicate registrations
 
 ## Testing
 
 ```bash
-# API server unit + HTTP integration + MCP protocol (107 tests)
+# API server unit + HTTP integration + MCP protocol (109 tests)
 node tests/integration/test_api_server.js
 
 # E2E composition examples from skill (44 tests)
@@ -168,7 +169,7 @@ ChatPanel (React)                electron/main.js               Cloud APIs
 
 ### Tool Calling
 
-The chat reuses the same 7 MCP tools. When the model calls a tool:
+The chat reuses the same 8 MCP tools. When the model calls a tool:
 1. Cloud LLM sends tool call → `onToolCall` callback
 2. Callback forwards to `handleMcpMessage()` (same as MCP path)
 3. Tool result sent back to model for next turn
