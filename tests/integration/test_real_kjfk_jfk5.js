@@ -4,7 +4,7 @@
  * Usage: node tests/integration/test_real_kjfk_jfk5.js
  *
  * Verifies that per-runway STAR resolution is correct for JFK5.JFK in
- * KJFK_09-11.demo.acl.json (v4 format).
+ * KJFK_leisure_1.demo.acl (v4 format).
  */
 
 const {
@@ -20,7 +20,7 @@ const {
 } = require('../../src/acl/sid_goaround');
 const { readAclText } = require('../../src/acl/gatcarc');
 
-const KJFK_FILE = 'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/KJFK_09-11.demo.acl';
+const KJFK_FILE = 'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/KJFK_leisure_1.demo.acl';
 
 let passed = 0;
 let failed = 0;

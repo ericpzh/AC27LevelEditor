@@ -18,6 +18,17 @@ import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import fs from 'fs';
 
+// Mirror of DEMO_VISIBLE_ORDER in src/utils/constants/ui.js — files that get
+// the app's 30-min demo-window treatment. Cannot import ui.js directly (repo
+// has no "type":"module", .js is CommonJS; ui.js is ESM-only). Keep in sync
+// with the app constant; same mirror convention as global-setup.mjs.
+const DEMO_VISIBLE_FILENAMES = new Set([
+  'KJFK_leisure_1.demo.acl',
+  'KJFK_peakarrival.demo.acl',
+  'ZSJN_leisure_1.acl',
+  'ZSJN_peakdeparture.demo.acl',
+]);
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP_DIR = process.env.E2E_TMP_DIR;
 
@@ -143,8 +154,10 @@ async function goBackToBrowser() {
 test.setTimeout(600000); // 10 min for 16 files
 
 test('E2E save integrity — all prod+demo levels', async () => {
-  // Count level rows
+  // Wait for the browser's level list to finish rendering (the airport scan
+  // runs async after startup — rows.count() does not auto-wait).
   const rows = window.locator('.level-row');
+  await expect(rows.first()).toBeVisible({ timeout: 30000 });
   const totalRows = await rows.count();
   console.log(`\nFound ${totalRows} level rows`);
   expect(totalRows).toBeGreaterThanOrEqual(1);
@@ -181,7 +194,11 @@ test('E2E save integrity — all prod+demo levels', async () => {
         const store = window.__AC27_STORE;
         return store ? store.getState().currentPath : null;
       });
-      const isDemo = currentPath && currentPath.endsWith('.demo.acl');
+      // Demo classification mirrors the app's _isDemoFile() in electron/main.js
+      // (DEMO_VISIBLE_BASES membership), NOT the .demo.acl suffix — the demo
+      // install ships ZSJN_leisure_1.acl under the prod filename too.
+      const currentPathBasename = currentPath ? path.basename(currentPath) : null;
+      const isDemo = currentPathBasename ? DEMO_VISIBLE_FILENAMES.has(currentPathBasename) : false;
       console.log(`    currentPath: ${currentPath || 'N/A'}${isDemo ? ' (demo)' : ''}`);
 
       if (!currentPath) {

@@ -143,10 +143,10 @@ AC27Editor/
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 545 Vitest + 16 Playwright E2E + 29 Node.js integration scripts
+├── tests/               # 1200 Vitest + 17 Playwright E2E + 29 Node.js integration scripts
 │   ├── electron/cloud-llm.test.js  # cloud-llm backend tests (49 tests, node env)
 │   ├── electron/updater.test.js    # updater backend tests (25 tests, node env)
-│   ├── components/MapWindows/  # MapWindow component & hook tests (10 files, 154 tests)
+│   ├── components/MapWindows/  # MapWindow component & hook tests (19 files, 712 tests)
 └── dist/                # Build output (gitignored)
 ```
 
@@ -276,7 +276,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 545 tests across 34 files
+- `npm test` or `npm run test:watch` — 1200 tests (component + store + utility + electron + MapWindow + updater, ~9s)
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - Electron backend tests use `@vitest-environment node` + `require.cache` priming to stub ESM SDK packages (see `tests/electron/cloud-llm.test.js`)
 - zustand stores are tested with the real store using `setState()` — never mock stores
@@ -330,7 +330,7 @@ Real game files are **never modified**. Each .acl file follows this path:
 Game root (read-only)            Temp golden/ (pristine)        Temp result/ (save target)
 ────────────────────────         ─────────────────────          ────────────────────────
 Airports/ZSJN/Levels/       copy →  _tmp/golden/ZSJN/     copy →  _tmp/result/ZSJN/
-  ZSJN-Morning_120min.acl  ─────→    ZSJN-Morning_120min.acl ──→   ZSJN-Morning_120min.acl
+  ZSJN_leisure_1.acl     ─────→    ZSJN_leisure_1.acl  ──→   ZSJN_leisure_1.acl
   weather_timeline.json    ─────→    weather_timeline.json           (overwritten by save)
   wind_timeline.json       ─────→    wind_timeline.json
   runway_timeline_....json ─────→    runway_timeline_....json
@@ -344,7 +344,7 @@ Airports/ZSJN/Levels/       copy →  _tmp/golden/ZSJN/     copy →  _tmp/resul
 6. **Clean up** `_tmp/` after each file (removed entirely after run)
 7. **Write JSON report** → `tests/_reports_/save-integrity-<timestamp>.json` with per-file metrics and diffs
 
-- Supports `--prod-demo` flag to test only the 8 production + 4 demo files
+- Supports `--prod-demo` flag to test only the 16 prod+demo files
 - Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored
 - Full test documentation: `tests/README.md` — test matrix, expected values, execution commands
 

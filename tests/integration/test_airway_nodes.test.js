@@ -21,7 +21,7 @@ const { buildApproachCache, serializeApproachCache, deserializeApproachCache } =
 
 const LEVEL_DIR = path.join(__dirname, '..', 'fixtures', 'game-root', 'GroundATC_Data',
   'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
-const FIXTURE_ACL = path.join(LEVEL_DIR, 'ZSJN-Morning_120min.v4.acl');
+const FIXTURE_ACL = path.join(LEVEL_DIR, 'ZSJN_leisure_1.acl');
 
 if (!fs.existsSync(FIXTURE_ACL)) {
   throw new Error('fixture missing: ' + FIXTURE_ACL);

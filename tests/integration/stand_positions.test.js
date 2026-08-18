@@ -18,7 +18,7 @@ const { readAclText } = require('../../src/acl/gatcarc');
 const FIXTURE_PATH = path.join(
   __dirname,
   '..', 'fixtures', 'game-root', 'GroundATC_Data', 'StreamingAssets',
-  'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl'
+  'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl'
 );
 
 const text = readAclText(FIXTURE_PATH);
@@ -75,7 +75,7 @@ describe('_parseStandPositions', () => {
 const V4_FIXTURE_PATH = path.join(
   __dirname,
   '..', 'fixtures', 'game-root', 'GroundATC_Data', 'StreamingAssets',
-  'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl'
+  'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl'
 );
 
 // Skipped gracefully when the v4 fixture is absent (offline snapshot).

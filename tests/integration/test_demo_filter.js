@@ -155,11 +155,11 @@ test('config window: departure-only flight tracked by OffBlockTime', () => {
 
 // ─── 3. v4 fixture: real flights vs config window ──────────────
 
-console.log('\n=== 3. v4 fixture (ZSJN-Morning_120min.v4.acl) ===\n');
+console.log('\n=== 3. v4 fixture (ZSJN_leisure_1.acl) ===\n');
 
-test('v4 fixture: all flights fall inside Config startTime~endTime window', () => {
+test('v4 fixture: every flight falls inside Config startTime ~ endTime+30min grace window', () => {
   const fixture = path.join(__dirname, '..', 'fixtures', 'game-root',
-    'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl');
+    'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl');
   assert(fs.existsSync(fixture), 'v4 fixture not found: ' + fixture);
 
   const text = readAclText(fixture);
@@ -170,19 +170,20 @@ test('v4 fixture: all flights fall inside Config startTime~endTime window', () =
   const flights = loadFlights(fixture).flights;
   assert(flights.length > 0, 'v4 fixture must have flights');
 
-  const result = filterByConfig(flights, config);
-  assertEq(result.length, flights.length,
-    'all ' + flights.length + ' fixture flights are within [' + config.startTime + ', ' + config.endTime + ')');
+  // The fixture (a copy of current prod ZSJN_leisure_1.acl) schedules 6 of its
+  // 21 flights inside the game's post-scenario grace period (endTime+30 min,
+  // SCENARIO_END_GRACE_MIN in src/utils/constants/timing.js) — the game accepts
+  // events past scenario end, so every flight must fit [startTime, endTime+30m).
+  assertEq(flights.length, 21, 'fixture must have 21 flights');
 
-  // Window semantics: every kept flight satisfies startTime <= t < endTime
   const startMin = toMin(config.startTime);
-  const endMin = toMin(config.endTime);
-  for (const fl of result) {
+  const graceEndMin = toMin(config.endTime) + 30;
+  for (const fl of flights) {
     const t = (fl.LandingTime || fl.OffBlockTime || '').trim();
-    assert(t !== '', 'kept flight must have LandingTime or OffBlockTime');
+    assert(t !== '', 'flight must have LandingTime or OffBlockTime');
     const m = toMin(t);
-    assert(m >= startMin && m < endMin,
-      'flight ' + (fl.CallSign || '?') + ' at ' + t + ' outside [' + config.startTime + ', ' + config.endTime + ')');
+    assert(m >= startMin && m < graceEndMin,
+      'flight ' + (fl.CallSign || '?') + ' at ' + t + ' outside [' + config.startTime + ', ' + config.endTime + '+30m)');
   }
 });
 

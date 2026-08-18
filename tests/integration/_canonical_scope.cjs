@@ -1,7 +1,8 @@
 /**
  * Canonical RuntimeEntities frame-scope type declarations from the fixture
  * tests/fixtures/game-root/GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels/
- * ZSJN-Morning_120min.v4.acl (the file the save pipeline is verified against).
+ * ZSJN_leisure_1.acl (a copy of the current prod ZSJN_leisure_1.acl —
+ * the file the save pipeline is verified against).
  *
  * Type ids are per-GATCARC4-segment scope and vary between files; this is the
  * scope every unit test that drives _buildActiveJetwayEntry or
@@ -57,18 +58,15 @@ const CANONICAL_SCOPE = new Map([
   [40, 'System.Collections.Generic.ObjectEqualityComparer`1[[System.Type, mscorlib]], mscorlib'],
   [41, 'System.RuntimeType, mscorlib'],
   [42, 'ContextCross.Events.ContactTower, GroundATC.Core'],
-  [43, 'ContextCross.Events.ReadyForCommunication, GroundATC.Core'],
-  [44, 'ContextCross.Events.CommunicationCompleted, GroundATC.Core'],
-  [45, 'ClearedToLand, GroundATC.Core'],
-  [46, 'ContextCross.Events.ContactGround, GroundATC.Core'],
-  [47, 'ContextCross.Events.ReadyForUndocking, GroundATC.Core'],
-  [48, 'ContextCross.Models.Path, GroundATC.Core'],
-  [49, 'ContextCross.Models.PathSegment[], GroundATC.Core'],
-  [50, 'ContextCross.Models.PathSegment, GroundATC.Core'],
-  [51, 'ContextCross.Models.AircraftAnimator, GroundATC.Core'],
-  [52, 'ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core'],
-  [53, 'System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib'],
-  [54, 'ContextCross.Dynamics.States.FlyApproachDynamicsParams, GroundATC.Core'],
+  [43, 'ClearedToLand, GroundATC.Core'],
+  [44, 'ContextCross.Events.ReadyForUndocking, GroundATC.Core'],
+  [45, 'ContextCross.Models.AircraftAnimator, GroundATC.Core'],
+  [46, 'ContextCross.Models.Path, GroundATC.Core'],
+  [47, 'ContextCross.Models.PathSegment[], GroundATC.Core'],
+  [48, 'ContextCross.Models.PathSegment, GroundATC.Core'],
+  [49, 'ContextCross.Dynamics.States.ApproachDynamicsParams, GroundATC.Core'],
+  [50, 'System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib'],
+  [51, 'ContextCross.Dynamics.States.FlyApproachDynamicsParams, GroundATC.Core'],
 ]);
 
 module.exports = { CANONICAL_SCOPE };

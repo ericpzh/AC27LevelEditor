@@ -151,10 +151,10 @@ test('segments not touching stand nodes are kept', () => {
 // ── Integration Tests (v4 fixture — PKStaticEntities path) ─────
 
 const fixtureV4Acl = path.join(__dirname, '..', 'fixtures', 'game-root',
-  'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl');
+  'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl');
 
 if (fs.existsSync(fixtureV4Acl)) {
-  console.log('\n--- Integration (v4 fixture ACL: ZSJN-Morning_120min.v4) ---');
+  console.log('\n--- Integration (v4 fixture ACL: ZSJN_leisure_1) ---');
   const v4Text = readAclText(fixtureV4Acl);
 
   test('parseTaxiwayPaths on ZSJN v4 fixture returns paths', () => {

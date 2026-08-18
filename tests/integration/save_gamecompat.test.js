@@ -66,7 +66,7 @@ const { analyze, runChecks, timeStrToSec } =
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.resolve(
   __dirname,
-  '../fixtures/game-root/GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels/ZSJN-Morning_120min.v4.acl'
+  '../fixtures/game-root/GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels/ZSJN_leisure_1.acl'
 );
 const FIXTURE_LEVEL_DIR = path.dirname(FIXTURE);
 
@@ -90,7 +90,7 @@ function tmpLevel() {
   tmpDirs.push(root);
   const levelDir = path.join(root, 'Airports', 'ZSJN', 'Levels');
   fs.mkdirSync(levelDir, { recursive: true });
-  const aclPath = path.join(levelDir, 'ZSJN-Morning_120min.v4.acl');
+  const aclPath = path.join(levelDir, 'ZSJN_leisure_1.acl');
   fs.copyFileSync(FIXTURE, aclPath);
   return aclPath;
 }

@@ -77,8 +77,8 @@ console.log('\n=== extractV4RunwayPairs Tests ===\n');
 // ── T1: ZSJN v4 fixture (offline) ────────────────────────────────
 
 test('T1: ZSJN v4 fixture extracts 01/19 reciprocal pair', () => {
-  const aclPath = findLevelFile(FIXTURE_DIR, 'ZSJN', 'ZSJN-Morning_120min.v4.acl');
-  assert(aclPath, 'fixture ZSJN-Morning_120min.v4.acl not found');
+  const aclPath = findLevelFile(FIXTURE_DIR, 'ZSJN', 'ZSJN_leisure_1.acl');
+  assert(aclPath, 'fixture ZSJN_leisure_1.acl not found');
   const text = readAclText(aclPath);
   assert(text.includes('StaticData'), 'fixture must be v4 (StaticData present)');
   const pairs = extractV4RunwayPairs(text);
@@ -87,7 +87,7 @@ test('T1: ZSJN v4 fixture extracts 01/19 reciprocal pair', () => {
 
 // ── T2: KJFK (game root) ─────────────────────────────────────────
 
-const kjfkPath = findLevelFile(gameAirportsDir, 'KJFK', 'KJFK_09-11.acl');
+const kjfkPath = findLevelFile(gameAirportsDir, 'KJFK', 'KJFK_runwaychange.acl');
 if (kjfkPath) {
   test('T2: KJFK extracts 4 physical-runway groups (8 reciprocal pairs)', () => {
     const text = readAclText(kjfkPath);
@@ -133,8 +133,8 @@ test('T4: empty/garbage input returns empty array', () => {
 // ── T5: dedup — shared PhysicalName yields exactly 2 pairs ───────
 
 test('T5: both ends of a physical runway are deduplicated into exactly 2 pairs', () => {
-  const aclPath = findLevelFile(FIXTURE_DIR, 'ZSJN', 'ZSJN-Morning_120min.v4.acl');
-  assert(aclPath, 'fixture ZSJN-Morning_120min.v4.acl not found');
+  const aclPath = findLevelFile(FIXTURE_DIR, 'ZSJN', 'ZSJN_leisure_1.acl');
+  assert(aclPath, 'fixture ZSJN_leisure_1.acl not found');
   const text = readAclText(aclPath);
   const pairs = extractV4RunwayPairs(text);
   // No duplicate source|dest entries even though "runway:01" AND "runway:19"

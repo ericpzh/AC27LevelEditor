@@ -8,7 +8,7 @@
 const path = require('path');
 const { FALLBACK_BASE_DATE_TICKS, APPROACH_MIN_TTL, GRACE_TTL, CMD_CONTACT_TOWER, DEFAULT_AERODROME_CODE, DEFAULT_RUNWAY_TAKEOFF_LENGTH, DEFAULT_MODEL_OFFSET, DEFAULT_WAKE_CATEGORY, DEFAULT_RUNWAY_VR_SPEED, TICKS_PER_DAY, TICKS_PER_SECOND_NUM, DEPARTURE_TAXI_SECONDS, ARRIVAL_TAXI_SECONDS, TAXI_SPEED, POSITIVE_TAXI_ACCEL, NEGATIVE_TAXI_ACCEL, DYNAMICS_POSITIVE_TAXI_ACCEL, DYNAMICS_NEGATIVE_TAXI_ACCEL, STATE5_OUTPUT_PROGRESS_RATIO } = require('./constants');
 const { ticksToTime } = require('../utils/timeUtils');
-const { computePathLength, resolveFlyApproachPoints, computeApproachCap, computePosition, computeDirection, requireSpecField } = require('./approach');
+const { computePathLength, resolveFlyApproachPoints, computeApproachCap, computePosition, computeDirection, requireSpecField, jetwayKeyStandCandidates } = require('./approach');
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson, serializeUnityJson, parseOdinObject } = require('./acl_json');
 const { readAclText, writeAcl } = require('./gatcarc');
@@ -1978,8 +1978,19 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
     }
 
     const jwNum = info.key.substring('jetway:'.length);
-    const standId = String(parseInt(jwNum, 10));
-    let depFlight = standFlights.get(standId);
+    // Resolve the flight-plan stand for this jetway key.  Numeric keys
+    // resolve via parseInt ("31A" → "31"); non-numeric keys fall back to
+    // the raw key and progressively-stripped parent forms ("it4-A7-1" →
+    // "it4-A7") since flight plans name the parent stand, not the
+    // sub-position.  No match keeps the first candidate (log/exhaustion
+    // anchor — the departure lookup below also returned null).
+    const standCands = jetwayKeyStandCandidates(jwNum, true);
+    let standId = standCands[0];
+    let depFlight = null;
+    for (const cand of standCands) {
+      depFlight = standFlights.get(cand) || null;
+      if (depFlight) { standId = cand; break; }
+    }
     const flightReg = depFlight ? (depFlight._Registration || depFlight.Registration || '') : '';
 
     // ── Turnaround check ──
@@ -3518,18 +3529,25 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   if (designator && approachCache && approachCache.specDB) {
     spec = approachCache.specDB.get(designator) || null;
   }
-  // Fallback 1: try direct specDB lookup — in editor/v4 context, acType
-  // values ("A320", "B738") are already ICAO designator codes.
+  // Alternate lookup: in editor/v4 context, acType values ("A320", "B738")
+  // are already ICAO designator codes.
   if (!spec && acType && approachCache && approachCache.specDB) {
     spec = approachCache.specDB.get(acType) || null;
   }
-  // Fallback 2: extract spec from the original jetway entry's DockingAircraft
-  // (needed for v4 where designatorMap is not populated)
-  let specFromVBlock = false;
-  if (!spec && info.vBlock) {
-    const { _extractFallbackSpec } = require('./approach');
-    spec = _extractFallbackSpec(info.vBlock, log, { builder: '_buildActiveJetwayEntry', reg: reg, acType: acType || null });
-    specFromVBlock = !!spec;
+  // STRICT — NO FALLBACK: the former vBlock _extractFallbackSpec path (which
+  // silently rebuilt a spec from the original jetway entry) is intentionally
+  // removed. If this flight's AircraftType has no designatorMap/specDB entry,
+  // something unexpected happened (e.g. KDCA "BOEING 777-300ER" has no
+  // RuntimeEntities in any level, so no designator can be derived) — assert
+  // loudly instead of quietly emitting a partial spec.
+  if (!spec) {
+    const lookupTrace = [].concat(
+      designator ? ['designatorMap[' + acType + ']=' + designator] : [],
+      ['direct specDB[' + acType + ']=' + (acType ? 'MISS' : '(no type)')]
+    ).join('; ');
+    const msg = '[ACL-ASSERT] _buildActiveJetwayEntry: no spec for AircraftType "' + acType + '" (lookup: ' + lookupTrace + '); refusing to fabricate. Add the missing designator/spec to the airport approach cache.';
+    (log || console.error)(msg);
+    throw new Error(msg);
   }
 
   // Every spec field is REQUIRED — resolve without silent defaults.  A field
@@ -3542,8 +3560,7 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     designator: designator,
     lookupTrace: [].concat(
       designator ? ['designatorMap[' + acType + ']=' + designator] : [],
-      ['direct specDB[' + acType + ']=' + (spec && !specFromVBlock ? 'hit' : 'MISS')],
-      info.vBlock ? ['vBlock fallback=' + (specFromVBlock ? 'hit' : 'MISS')] : []
+      ['direct specDB[' + acType + ']=' + (spec ? 'hit' : 'MISS')]
     ).join('; '),
   };
   const designatorVal = spec?.Designator || acType;
@@ -4841,14 +4858,21 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     return val;
   };
   const dtTypeNum = _assertBdTn('System.DateTime,', 'DateTime');
-  const arrLegTypeNum = _assertBdTn('FlightPlanArrivalLeg,', 'FlightPlanArrivalLeg');
   const depLegTypeNum = _assertBdTn('FlightPlanDepartureLeg,', 'FlightPlanDepartureLeg');
+  // FlightPlanArrivalLeg resolves lazily: all-departure schedules (e.g. the
+  // PerfBench_MaxParked fixtures) never declare it in the blobdoc scope —
+  // the game strips unused types from the type table. The strict assert
+  // must only fire when an arrival leg will actually be emitted below.
+  const hasArrivals = flights.some((flight) => !_isDepartureFlight(flight));
+  const arrLegTypeNum = hasArrivals ? _assertBdTn('FlightPlanArrivalLeg,', 'FlightPlanArrivalLeg') : null;
 
   const dtTypeFull = '"' + dtTypeNum + '|System.DateTime, mscorlib"';
-  const arrLegTypeFull = '"' + arrLegTypeNum + '|ContextCross.Models.FlightPlanArrivalLeg, GroundATC.Core"';
+  const arrLegTypeFull = hasArrivals
+    ? '"' + arrLegTypeNum + '|ContextCross.Models.FlightPlanArrivalLeg, GroundATC.Core"'
+    : null;
   const depLegTypeFull = '"' + depLegTypeNum + '|ContextCross.Models.FlightPlanDepartureLeg, GroundATC.Core"';
 
-  log('blobdoc typeMap: ' + bdTypeMap.size + ' types, typeNums: DateTime=' + dtTypeNum + ' ArrivalLeg=' + arrLegTypeNum + ' DepartureLeg=' + depLegTypeNum);
+  log('blobdoc typeMap: ' + bdTypeMap.size + ' types, typeNums: DateTime=' + dtTypeNum + ' ArrivalLeg=' + (arrLegTypeNum === null ? '(none)' : arrLegTypeNum) + ' DepartureLeg=' + depLegTypeNum);
 
   // Scan $blobdoc for max existing $id to seed our unique counter
   // $id values inside the blobdoc form a flat namespace — we must not collide

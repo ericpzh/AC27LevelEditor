@@ -1810,6 +1810,38 @@ function buildState5AircraftBlock(opts) {
 // ─── 9. Designator Mapping ────────────────────────────────────────
 
 /**
+ * Candidate flight-plan stand forms for a jetway key, in lookup precedence.
+ * Jetway keys carry spatial suffixes the flight plans omit — sub-jetways
+ * "it4-A7-1"/"it4-A7-2" belong to parent stand "it4-A7", and numeric stands
+ * are referenced as "31A"/"31B" by jetways but "31"/"07" by flight plans.
+ * Returns the exact key first, then each trailing "-<digits>" sub-position
+ * suffix stripped one at a time ("t1-3-1" → "t1-3" → "t1"). When
+ * includeNumericParse is set, the parseInt-normalized form leads the list,
+ * covering jetway keys whose numeric prefix carries a non-numeric suffix
+ * ("31A" → "31"; the exact/alias forms follow for the raw key).
+ *
+ * @param {string} jetwayKey - jetway key, e.g. "it4-A7-1", "31A", "t8-42"
+ * @param {boolean} [includeNumericParse=false]
+ * @returns {string[]} candidate stand keys in precedence order
+ */
+function jetwayKeyStandCandidates(jetwayKey, includeNumericParse) {
+  const out = [];
+  if (includeNumericParse) {
+    const num = parseInt(jetwayKey, 10);
+    if (!Number.isNaN(num)) out.push(String(num));
+  }
+  out.push(jetwayKey);
+  let parent = jetwayKey;
+  for (;;) {
+    const next = parent.replace(/-\d+$/, '');
+    if (next === parent) break;
+    parent = next;
+    out.push(parent);
+  }
+  return out;
+}
+
+/**
  * Build AircraftType (full name) → Designator (ICAO code) mapping.
  * Cross-references FlightPlans with AircraftStates in ACL text.
  * Returns Map<string, string> e.g., "BOEING 737-800" → "B738".
@@ -1922,7 +1954,16 @@ function buildDesignatorMapping(aclText) {
               const kMatch = block.match(/"\$k"\s*:\s*"jetway:([^"]+)"/);
               if (kMatch) {
                 const stand = kMatch[1];
-                const at = standToType.get(stand);
+                // Jetway keys use sub-position suffixes the flight plans
+                // omit: "it4-A7-1"/"it4-A7-2" are the jetways of parent stand
+                // "it4-A7" (numeric "31A"/"31B" are covered by Pass 1's
+                // alias registration). Walk the candidate forms so the spec
+                // hosted by a sub-jetway resolves to its flight-plan type.
+                let at = null;
+                for (const cand of jetwayKeyStandCandidates(stand)) {
+                  at = standToType.get(cand);
+                  if (at) break;
+                }
                 if (at && !map.has(at)) {
                   const vBlock = _extractValueBlock(block);
                   if (vBlock && vBlock[0] === '{') {
@@ -2584,6 +2625,7 @@ module.exports = {
 
   // Designator mapping & cache
   buildDesignatorMapping,
+  jetwayKeyStandCandidates,
   buildApproachCache,
   buildTypeNameIndex,
   buildStarPaths,

@@ -9,8 +9,10 @@ const TMP_DIR = path.join(TESTS_DIR, 'tmp-e2e');
 const USERDATA_DIR = path.join(TESTS_DIR, 'tmp-e2e-userdata');
 
 // ── 16 prod+demo files to include when sourcing from real game ──
-// Mirrors PROD_VISIBLE_BASES (13) + the .demo entries of DEMO_VISIBLE_BASES (3)
-// in src/utils/constants/ui.js — only these are visible in the browser.
+// Mirrors PROD_VISIBLE_BASES (13) + the demo entries of DEMO_VISIBLE_BASES
+// (4: three .demo.acl + ZSJN_leisure_1.acl, which the demo install ships
+// under the prod filename) in src/utils/constants/ui.js — only these are
+// visible in the browser.
 const PROD_DEMO_FILES = [
   'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
   'ZSJN/ZSJN_peakdeparture.acl', 'ZSJN/ZSJN_runwaychange.acl',
@@ -93,18 +95,14 @@ export default async function () {
     }
     console.log(`[E2E setup] Copied files to ${TMP_DIR}`);
   } else {
-    // Fall back to committed fixture (1-2 ZSJN files)
+    // Fall back to committed fixture (ZSJN_leisure_1.acl); copy it to
+    // ZSJN_leisure_2.acl so the browser shows two rows in prod mode
+    // (only whitelisted names are listed)
     cpSync(FIXTURES_DIR, TMP_DIR, { recursive: true });
-    // Stage fixture copies under whitelisted names so the browser shows rows
-    // in prod mode (fixture names like ZSJN-Morning_120min are no longer whitelisted)
     const zsjnLevels = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
-    for (const [srcName, dstName] of [
-      ['ZSJN-Morning_120min.v4.acl', 'ZSJN_leisure_1.acl'],
-      ['ZSJN-Morning_120min.v4.acl', 'ZSJN_leisure_2.acl'],
-    ]) {
-      const srcFile = path.join(zsjnLevels, srcName);
-      if (existsSync(srcFile)) cpSync(srcFile, path.join(zsjnLevels, dstName));
-    }
+    const srcFile = path.join(zsjnLevels, 'ZSJN_leisure_1.acl');
+    const dstFile = path.join(zsjnLevels, 'ZSJN_leisure_2.acl');
+    if (existsSync(srcFile) && !existsSync(dstFile)) cpSync(srcFile, dstFile);
     console.log('[E2E setup] Fixtures copied to', TMP_DIR);
   }
 

@@ -31,7 +31,7 @@ const { readAclText } = require('../../src/acl/gatcarc');
 
 const LEVEL_DIR = path.join(__dirname, '..', 'fixtures', 'game-root', 'GroundATC_Data',
   'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
-const FIXTURE_ACL = path.join(LEVEL_DIR, 'ZSJN-Morning_120min.v4.acl');
+const FIXTURE_ACL = path.join(LEVEL_DIR, 'ZSJN_leisure_1.acl');
 const TMP_ACL = path.join(__dirname, '_tmp_newdep.acl');
 
 if (!fs.existsSync(FIXTURE_ACL)) {

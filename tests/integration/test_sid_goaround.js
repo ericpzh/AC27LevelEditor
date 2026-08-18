@@ -289,9 +289,9 @@ if (aclArgIdx >= 0) {
 
 // Also test against the fixture ACL if present
 const fixtureAcl = path.join(__dirname, '..', 'fixtures', 'game-root',
-  'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN-Morning_120min.v4.acl');
+  'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl');
 if (fs.existsSync(fixtureAcl) && !aclArgIdx) {
-  console.log('\n--- Integration (fixture ACL: ZSJN-Morning_120min.v4) ---');
+  console.log('\n--- Integration (fixture ACL: ZSJN_leisure_1) ---');
   const aclText = readAclText(fixtureAcl);
 
   test('extractSidRunwayMappings on ZSJN fixture', () => {

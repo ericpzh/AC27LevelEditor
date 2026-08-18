@@ -15,7 +15,7 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 
 ## Running Tests
 
-### Component tests (545 tests across 34 files)
+### Component tests (1200 tests, ~9s)
 
 ```bash
 npm test              # Run all Vitest component + store + utility + electron + MapWindow + updater tests
@@ -56,7 +56,7 @@ All accept `--help` / `-h` for usage. Temp files are written to `tests/integrati
 
 **Vitest-based fixture regression suites** (no game root needed, covered by `npm test`):
 ```bash
-npx vitest run tests/integration/save_gamecompat.test.js   # game-load invariants + _normalizeFlightsForGameCompat auto-repair (4 fuzz-discovered crash classes, ZSJN-Morning fixture; see gamecompat-utils.cjs)
+npx vitest run tests/integration/save_gamecompat.test.js   # game-load invariants + _normalizeFlightsForGameCompat auto-repair (4 fuzz-discovered crash classes, ZSJN_leisure_1 fixture; see gamecompat-utils.cjs)
 npx vitest run tests/integration/id_renumber.test.js       # strictly ascending $id ordering + $iref remap (id_renumber.js, ZSJN_peakdeparture jetway:02 crash pattern)
 ```
 

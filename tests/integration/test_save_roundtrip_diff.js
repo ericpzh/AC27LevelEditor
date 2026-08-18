@@ -143,7 +143,7 @@ function buildMinimalApproachAircraft() {
     radioChannelGuid: '00000000-0000-0000-0000-000000000002',
     nextId: 5001,
     // typeNums are required since the per-file typeMap refactor (v4 pipeline).
-    // ZSJN values from tests/fixtures/game-root/.../ZSJN-Morning_120min.acl.
+    // ZSJN values from tests/fixtures/game-root/.../ZSJN_leisure_1.acl.
     // vec3/strArr are the checkpoint-frame (RuntimeEntities) scope numbers
     // from the fixture — NOT the old hardcoded 16/8 (Vector3 is 17 there,
     // String[] is 16; 8 is declared nowhere in the file).

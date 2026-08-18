@@ -6,7 +6,7 @@
  * typeMap — no type number drift from hardcoded defaults.
  *
  * Runs on the v4 schema:
- *   v4: ZSJN-Morning_120min.v4.acl (GATCArc4 binary) → _rebuildStaticDataSections
+ *   v4: ZSJN_leisure_1.acl (GATCArc4 binary) → _rebuildStaticDataSections
  *          (approach cache passed, same as the app's save path)
  */
 const fs = require('fs');
@@ -20,7 +20,7 @@ const FIXTURE_DIR = path.join(__dirname, '..', 'fixtures', 'game-root', 'GroundA
 
 // Each pass runs the full save→typeMap-compare cycle on one fixture.
 const CASES = [
-  { label: 'v4', fixture: 'ZSJN-Morning_120min.v4.acl', suffix: 'v4' },
+  { label: 'v4', fixture: 'ZSJN_leisure_1.acl', suffix: 'v4' },
 ];
 
 let passed = 0;

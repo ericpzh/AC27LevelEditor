@@ -67,7 +67,7 @@ The three timeline sections inside `MetaData` hold frame entries with string `Ti
 - **`WindFrames`** — `WindFrame[]`: each frame is `{ "Direction": <int deg>, "Speed": <int kt>, "Time": "HH:MM:SS" }`
 - **`RunwayTimeline`** — `initialRunways` (string list) + `timeline` of change entries with a `Time` and a pair list
 
-**Semantics — weather/wind frames are level-wide step settings.** A frame governs the level from its time onward, so a single frame whose time sits **outside** the scenario window `[Config.startTime, Config.endTime]` still controls the whole level. Shipped levels rely on this: `ZSJN_leisure_1.acl` (window 05:39:14–06:15:00) has wind at 05:00:00 and weather at 09:00:00; `ZSJN-Morning_120min.v4.acl` (window 04:50–07:10) has WeatherFrames spanning 06:00–24:00. Therefore the editors **never hide or bounds-check weather/wind frames** (no active-range filtering, no TimeCell min/max, no save-time validation). Only `RunwayTimeline` is window-bounded by design: out-of-window changes are auto-removed on load (`EditorScreen.jsx`) and flagged at save (`val_runway_change_bounds`). Save always writes every weather/wind frame back (`_rebuildV4TimelineSections`).
+**Semantics — weather/wind frames are level-wide step settings.** A frame governs the level from its time onward, so a single frame whose time sits **outside** the scenario window `[Config.startTime, Config.endTime]` still controls the whole level. Shipped levels rely on this: `ZSJN_leisure_1.acl` (window 05:39:14–06:15:00) has wind at 05:00:00, weather at 09:00:00, and WeatherFrames spanning 06:00–24:00. Therefore the editors **never hide or bounds-check weather/wind frames** (no active-range filtering, no TimeCell min/max, no save-time validation). Only `RunwayTimeline` is window-bounded by design: out-of-window changes are auto-removed on load (`EditorScreen.jsx`) and flagged at save (`val_runway_change_bounds`). Save always writes every weather/wind frame back (`_rebuildV4TimelineSections`).
 
 ## File Schema (v4 Only)
 
@@ -625,4 +625,4 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 node --require ./tests/integration/preload.cjs tests/integration/test_approach_aircraft.js [--root <game-root>]
 ```
 
-Validates all algorithms against the 8 production files: spec consistency, AppPoint mapping, ProgressRatio formula (saveTime spread), FlyApproach resolution, Position/Direction reconstruction, and block assembly.
+Validates all algorithms: spec consistency, AppPoint mapping, ProgressRatio formula (saveTime spread), FlyApproach resolution, Position/Direction reconstruction, and block assembly. ⚠ The 8 hardcoded filenames (ZSJN-Morning_120min.acl etc.) are v3-era and absent from the current playtest install → 0/8 found, so the run executes in limited mode (T1 spec cross-file consistency is still real; T7 skips when no State=30 types are present).

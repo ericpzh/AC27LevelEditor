@@ -6,9 +6,9 @@
  *   node tests/run-all.mjs [--game-root <path>]
  *
  * Layers:
- *   1. Vitest (component tests)     — 1159 tests, ~4s
+ *   1. Vitest (component tests)     — 1200 tests, ~9s
  *   2. Integration: save integrity  — 16 prod+demo files, ~20s
- *   3. Playwright E2E                — 16 tests (~3 min; 15 pass, 1 skipped — E12a overlay timing)
+ *   3. Playwright E2E                — 17 tests (~4 min; 15 pass, 2 skipped — E12a overlay timing + fuzz gated on FUZZ_RUN)
  *
  * Covers v4 GATCArc4 binary-format .acl files.
  * Default game root: D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest
@@ -66,7 +66,7 @@ console.log(`\nGame root: ${GAME_ROOT}`);
 const startTime = Date.now();
 
 // ── 1. Vitest ────────────────────────────────────────────────────
-runStep('Layer 1: Vitest (1159 component tests)', 'npx vitest run');
+runStep('Layer 1: Vitest (1200 component tests)', 'npx vitest run');
 
 // ── 2. Save Integrity (16 prod+demo files) ───────────────────────
 // Quote paths to handle spaces in game root
@@ -101,12 +101,12 @@ try {
 const e2eEnv = { ...process.env, E2E_GAME_ROOT: GAME_ROOT };
 const layer4Cmd = `npx playwright test --config=playwright.config.mjs`;
 console.log(`\n${'='.repeat(60)}`);
-console.log('▶ Layer 3: Playwright E2E (16 browser tests)');
+console.log('▶ Layer 3: Playwright E2E (17 browser tests)');
 console.log(`${'='.repeat(60)}`);
 try {
   execSync(layer4Cmd, { cwd: ROOT, stdio: 'inherit', env: e2eEnv, timeout: 600000 });
   totalPassed++;
-  console.log(`\n✓ Layer 3: Playwright E2E (16 browser tests) — PASSED`);
+  console.log(`\n✓ Layer 3: Playwright E2E (17 browser tests) — PASSED`);
 } catch (e) {
   totalFailed++;
   failures.push('Layer 3: Playwright E2E');
