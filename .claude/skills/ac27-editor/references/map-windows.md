@@ -384,7 +384,22 @@ PTT pressed → clear selection → capture speech → parseVoiceCandidates([pri
 
 **Tests:** the voice Vitest suites (`voiceNumberParser`, `voiceCallsignParser`, `voiceCommandMatcher` legacy, `voiceSpokenNumberValue`, `voiceTranscriptParser`, `voiceDeviationMatrix` — sections 6b/8c = cfa budget + runway golden-path + proximity/skeleton rows (+ round-3 rows: letter-spelled ILS, callsign noise at/the/new, KAL code, runway through/urine, flight-prefix direct), section 12 = direct-to rows incl. payload exactness, `voiceWaypointMatcher` — slot unit tests, `voiceFuzzy`, `voiceSkeleton` — enSkeleton/skeletonMatch guards + runway integration, `voiceCandidates` — waypoint threading, `voiceFuzzyAcceptance`) are unchanged, plus `voiceGrammarConsistency.test.js` (pins `voice-grammar.json` ⇄ live parser tables, en + zh). End-to-end gates are the script harnesses above (drain test, STT round-trip, vocab check).
 
-## Shared Hooks
+### AC27Approach Plugin Install/Update Prompt (2026-08-18)
+
+One-shot overlay in the Flight Strips window that nudges the user to install/update the AC27Approach plugin (the DLL that makes the composer + voice PTT work). No store involvement — all state is local to `FlightStripsWindow.jsx`.
+
+**Trigger:** derived from the window-open `checkCommandCapability` result (one-shot `useEffect` on `[electronAPI, t]`, no focus re-poll — the DLL can't change while the game runs). `modPromptState` is `null` when healthy, else:
+
+- `'missing'` — `pluginInstalled === false` (fires whether or not BepInEx itself is present)
+- `'outdated:<md5>'` — `pluginInstalled && pluginUpToDate === false` (version = local DLL MD5 from the capability payload; `pluginUpToDate: null` = offline check failed → treated as OK, never prompts)
+
+A second `useEffect` (on `modPromptState`) opens the overlay only when the exact state wasn't previously dismissed; it also closes it automatically if the state later clears (e.g. after a successful install re-check). The existing transient `dllFeedback` "plugin has a new version" line still fires alongside.
+
+**Resolution:** `handleModPrompt(install)` — with the checkbox checked, writes `localStorage[STORAGE_KEY_APPROACH_PROMPT]` (`ac27_approach_prompt_dismissed`, constant in `src/utils/constants/ui.js`) = the current `modPromptState`; then closes, and for Install calls `handleLoadDll()` — the same tray-button flow: BepInEx missing (`!debugOn`) → `dllNoticeOpen` "Debug Mode required" overlay; else `dllInstallOpen` → `ApproachPluginInstallOverlay` R2 download with file-dialog fallback. Because the outdated key embeds the MD5, dismissing build A re-prompts when build B ships.
+
+**UI/JSX:** overlay reuses the `#map-help-overlay`/`#map-help-box` shell (Escape/X/backdrop dismiss — Escape handler now also covers `modPromptOpen`), body shows `mod_prompt_missing_*` or `mod_prompt_outdated_*` title+body (`.mod-prompt-body` text style), the "Do not show again" row is `.mod-prompt-dismiss` (checkbox styling added to `FlightStripsWindow.css`), and the footer is the **Modal's own `#modal-actions` container** (not `.modal-actions-row`) with `.btn-cancel` (reuses `modal_btn_cancel` i18n) / `.btn-confirm` (new `mod_prompt_install`) — the `#modal-actions button` base chrome in `Modal.css` is id-scoped, so going through the same id is what makes the buttons render with the app-standard padding/border/radius (a bare `.modal-actions-row` + `.btn-*` combo renders borderless unstyled text).
+
+### Shared Hooks
 
 ### `useSvgZoom.js`
 
@@ -506,6 +521,12 @@ setUdpStatus(connected, currentAirport)  // Update UDP health state
 | `flight_strips_runway` | è·‘é“ | RUNWAY |
 | `seat_1`–`seat_7` | RMP/GND/TWR/DEP/APPR/DEL/APN | RMP/GND/TWR/DEP/APPR/DEL/APN |
 | `seat_1_full`–`seat_7_full` | RAMP/GROUND/TOWER/DEPARTURE/APPROACH/DELIVERY/APRON | RAMP/GROUND/TOWER/DEPARTURE/APPROACH/DELIVERY/APRON |
+| `mod_prompt_missing_title` | 未安装 AC27Approach 插件 | AC27Approach plugin not installed |
+| `mod_prompt_missing_body` | 进近指令需要 AC27Approach 插件，现在安装吗？ | Approach commands need the AC27Approach plugin, install it now? |
+| `mod_prompt_outdated_title` | AC27Approach 插件有更新 | AC27Approach plugin update available |
+| `mod_prompt_outdated_body` | 检测到 AC27Approach 插件的新版本。现在更新吗？ | A newer version of the AC27Approach plugin is available, install the update now? |
+| `mod_prompt_install` | 立即安装 | Install |
+| `mod_prompt_dont_show_again` | 不再显示 | Do not show again |
 
 ## Map-Window Portal Tooltips
 

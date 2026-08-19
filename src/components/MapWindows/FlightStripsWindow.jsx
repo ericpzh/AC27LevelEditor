@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useState, useCallback, useR
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import useTooltip from '../BrowserScreen/useTooltip';
-import { MAP_TOOLTIPS_ENABLED } from '../../utils/constants';
+import { MAP_TOOLTIPS_ENABLED, STORAGE_KEY_APPROACH_PROMPT } from '../../utils/constants';
 import { CHANNEL_TYPE_APPROACH } from '../../utils/constants/aviation';
 import useUdpAircraftState from './useUdpAircraftState';
 import { useCrossWindowSelection, useCrossWindowEmergency } from '../../hooks/map/useCrossWindowSelection';
@@ -301,6 +301,17 @@ export default function FlightStripsWindow({ airportIcao }) {
     && commandCapability.pluginInstalled
     && commandCapability.pluginUpToDate === false);
   const debugOn = !!(commandCapability && commandCapability.bepInExInstalled);
+  // Install/update prompt state — 'missing' (plugin absent) or
+  // 'outdated:<md5>' (installed but behind the R2 build). Null when the
+  // plugin is present and up to date (or capability unknown). The outdated
+  // key is version-scoped so dismissing one build re-prompts on the next.
+  const modPromptState = !commandCapability ? null : (
+    !commandCapability.pluginInstalled ? 'missing'
+      : commandCapability.pluginUpToDate === false
+        ? 'outdated:' + (commandCapability.pluginVersion || '') : null
+  );
+  const [modPromptOpen, setModPromptOpen] = useState(false);
+  const [modPromptDismissChecked, setModPromptDismissChecked] = useState(false);
   // Load DLL notice popup (Debug Mode off) + transient copy feedback
   const [dllNoticeOpen, setDllNoticeOpen] = useState(false);
   const [dllFeedback, setDllFeedback] = useState(null);
@@ -394,13 +405,13 @@ export default function FlightStripsWindow({ airportIcao }) {
     };
   }, [dllFeedback]);
 
-  // Load-DLL notice closes on Escape (mirrors MapHelpOverlay)
+  // Load-DLL notice / mod prompt close on Escape (mirrors MapHelpOverlay)
   useEffect(() => {
-    if (!dllNoticeOpen) return;
-    const handler = (e) => { if (e.key === 'Escape') setDllNoticeOpen(false); };
+    if (!dllNoticeOpen && !modPromptOpen) return;
+    const handler = (e) => { if (e.key === 'Escape') { setDllNoticeOpen(false); setModPromptOpen(false); } };
     document.addEventListener('keydown', handler, true);
     return () => document.removeEventListener('keydown', handler, true);
-  }, [dllNoticeOpen]);
+  }, [dllNoticeOpen, modPromptOpen]);
 
   // Command capability check — once on window open. No focus re-poll: the
   // DLL can't change without a game restart, and toggling Debug Mode takes
@@ -421,6 +432,18 @@ export default function FlightStripsWindow({ airportIcao }) {
       .catch(() => { if (alive) setCommandCapability(null); });
     return () => { alive = false; };
   }, [electronAPI, t]);
+
+  // One-shot install/update prompt: opens once the capability check lands —
+  // only when the plugin is missing or outdated, and not when that exact
+  // state was previously dismissed ("do not show again").
+  useEffect(() => {
+    if (!modPromptState) { setModPromptOpen(false); return; }
+    let dismissed = null;
+    try { dismissed = localStorage.getItem(STORAGE_KEY_APPROACH_PROMPT) || null; } catch (_) {}
+    if (dismissed === modPromptState) return;
+    setModPromptOpen(true);
+    setModPromptDismissChecked(false);
+  }, [modPromptState]);
 
   // Load DLL: install AC27Approach.dll into BepInEx/plugins.
   // Visible while the DLL is missing; with Debug Mode off it explains what
@@ -482,6 +505,18 @@ export default function FlightStripsWindow({ airportIcao }) {
       setDllFeedback(t('load_dll_error', { err: 'IPC' }));
     }
   }, [electronAPI, t]);
+
+  // Prompt resolution: remember the "do not show again" choice, then either
+  // start the existing install flow (tray-button logic — download overlay,
+  // or the Debug Mode notice when BepInEx itself is missing) or just close.
+  // Defined after handleLoadDll so its useCallback deps never hit the TDZ.
+  const handleModPrompt = useCallback((install) => {
+    setModPromptOpen(false);
+    if (modPromptDismissChecked && modPromptState) {
+      try { localStorage.setItem(STORAGE_KEY_APPROACH_PROMPT, modPromptState); } catch (_) {}
+    }
+    if (install) handleLoadDll();
+  }, [modPromptDismissChecked, modPromptState, handleLoadDll]);
 
   // Keep ref in sync so handleDragEnd (stable callback) can read current selection
   useEffect(() => { selectedCallSignRef.current = selectedCallSign; }, [selectedCallSign]);
@@ -1120,6 +1155,36 @@ export default function FlightStripsWindow({ airportIcao }) {
             </div>
             <div id="map-help-body">
               <p>{t('load_dll_debug_off_desc')}</p>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Missing/outdated plugin prompt — Install starts the usual tray
+          flow, Cancel (or the X / Escape) dismisses. "Do not show again"
+          is remembered per state (missing vs the exact outdated build). */}
+      {modPromptOpen && (
+        <div id="map-help-overlay" className="mod-prompt-overlay" onClick={(e) => { if (e.target.id === 'map-help-overlay') handleModPrompt(false); }}>
+          <div id="map-help-box" className="mod-prompt-box" onClick={(e) => e.stopPropagation()}>
+            <div id="map-help-header">
+              <h2>{t(modPromptState && modPromptState.startsWith('outdated') ? 'mod_prompt_outdated_title' : 'mod_prompt_missing_title')}</h2>
+              <button onClick={() => handleModPrompt(false)} title={t('tutorial_close')}>
+                <IoClose size={18} />
+              </button>
+            </div>
+            <div id="map-help-body">
+              <p className="mod-prompt-body">{t(modPromptState && modPromptState.startsWith('outdated') ? 'mod_prompt_outdated_body' : 'mod_prompt_missing_body')}</p>
+              <label className="mod-prompt-dismiss">
+                <input
+                  type="checkbox"
+                  checked={modPromptDismissChecked}
+                  onChange={(e) => setModPromptDismissChecked(e.target.checked)}
+                />
+                {t('mod_prompt_dont_show_again')}
+              </label>
+            </div>
+            <div id="modal-actions" className="mod-prompt-actions">
+              <button className="btn-cancel" onClick={() => handleModPrompt(false)}>{t('modal_btn_cancel')}</button>
+              <button className="btn-confirm" onClick={() => handleModPrompt(true)}>{t('mod_prompt_install')}</button>
             </div>
           </div>
         </div>

@@ -372,8 +372,6 @@ export default function BrowserScreen() {
                 const displayName = t('level_name_' + info.filename.replace(/\.acl$/i, ''));
                 const fileName = stripSuffixes(info.filename);
                 const timeRange = info.startTime && info.endTime ? toHHMM(info.startTime) + '-' + toHHMM(info.endTime) : '';
-                console.log('[BrowserScreen] card:', info.filename,
-                  'startTime=' + info.startTime, 'endTime=' + info.endTime, 'isDemo=' + info.isDemo);
                 return (
                   <div key={i} className="level-row" onClick={() => handleOpenFile(info.path, airport.icao)}>
                     <span className="level-tod">{displayName}</span>

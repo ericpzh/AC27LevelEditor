@@ -168,12 +168,12 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.3.0
+- **Version:** v1.3.3
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (1159 tests in 48 files) + Playwright (E2E) + Node.js (integration, 35 scripts, 151 MCP/API tests)
+- **Tests:** Vitest (1200 tests in 52 files) + Playwright (E2E, 17 tests) + Node.js (integration, 35 scripts, 151 MCP/API tests)
 
 ### Quick Start
 
@@ -349,7 +349,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 1159 Vitest + 16 Playwright E2E + 35 Node.js integration tests
+├── tests/               # 1200 Vitest + 17 Playwright E2E + 35 Node.js integration tests
 └── dist/                # Build output (gitignored)
 ```
 
@@ -370,19 +370,19 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 
 **Master test runner (all layers):**
 ```bash
-npm run test:all      # Vitest + save integrity (16 files) + jetway rebuild (16 v4) + Playwright E2E (~3 min, sets E2E_GAME_ROOT)
+npm run test:all      # Vitest + save integrity (16 files) + jetway rebuild (16 v4) + v4 runway pairs + build + Playwright E2E (~4.5 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 1159 tests in 48 files):**
+**Component tests (Vitest — 1200 tests in 52 files):**
 ```bash
-npm test              # Run all component + store + utility + MapWindow tests (~4s)
+npm test              # Run all component + store + utility + MapWindow + updater tests (~8s)
 npm run test:watch    # Watch mode — re-runs on file changes
 ```
 
-**E2E tests (Playwright + Electron — 16 tests in 8 files):**
+**E2E tests (Playwright + Electron — 17 tests in 8 files; 15 pass, 2 skipped):**
 ```bash
 npm run build         # Build required first (produces dist-electron/main.js)
-npm run test:e2e      # UI flow tests against real game data (~3 min)
+npm run test:e2e      # UI flow tests against real game data (~4 min)
 ```
 
 **Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test. The 30-min demo window end time is rounded to the nearest 5-minute boundary (:X0 or :X5). Emergency (`_emerg`) files show "Challenge Level" / "挑战关卡" as their time-of-day label instead of dawn/morning/etc.

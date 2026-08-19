@@ -1,6 +1,9 @@
 // ─── localStorage keys ─────────────────────────────────────
 export const STORAGE_KEY_LANG = 'ac27_lang';
 export const STORAGE_KEY_THEME = 'ac27_theme';
+// AC27Approach plugin prompt dismissal — 'missing' or 'outdated:<md5>'
+// (version-scoped so a newer build re-prompts after dismissal)
+export const STORAGE_KEY_APPROACH_PROMPT = 'ac27_approach_prompt_dismissed';
 
 // ─── Valid languages ───────────────────────────────────────
 export const VALID_LANGUAGES = new Set(['en', 'zh']);
