@@ -101,7 +101,7 @@ AC27Editor/
 │   │
 │   ├── store/
 │   │   ├── appStore.js          # zustand store — all app state
-│   │   ├── flightDefaults.js    # Pure helpers for new flight creation (random airline, cascaded aircraft/reg, non-conflicting stand, airport-aware Language Z*→zh, random Voice from dropdown)
+│   │   ├── flightDefaults.js    # Pure helpers for new flight creation (random airline, cascaded aircraft/reg, non-conflicting stand, airport-aware Language Z*→zh, random Voice from dropdown, runway-constrained STAR for arrivals, Airway always cleared for departures)
 │   │   └── flightCascade.js     # Pure helpers for cascading field updates
 │   │
 │   ├── acl/                     # Backend modules (16 files + odin/; CommonJS + some ESM)

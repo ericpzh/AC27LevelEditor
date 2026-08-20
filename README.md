@@ -316,7 +316,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │
 │   ├── store/
 │   │   ├── appStore.js          # zustand store — all app state
-│   │   ├── flightDefaults.js    # new flight creation (random airline, cascaded fields, non-conflicting stand)
+│   │   ├── flightDefaults.js    # new flight creation (random airline, cascaded fields, non-conflicting stand, runway-constrained STAR for arrivals, Airway always cleared for departures)
 │   │   └── flightCascade.js     # cascading field updates (CallSign rebuild, airline→type/reg, runway→STAR)
 │   │
 │   ├── acl/                 # Backend modules (CommonJS)

@@ -200,9 +200,12 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
     if (validStars.length > 0) {
       airway = randomPick(validStars);
     }
+  } else {
+    // Departures: SID is derived at runtime from runway via runwaySidMap;
+    // no separate SID field exists on the flight object (DEPARTURE_FIELDS
+    // excludes Airway) — never leak the airport-wide STAR list into a departure.
+    airway = '';
   }
-  // For departures: SID is derived at runtime from runway via runwaySidMap;
-  // no separate SID field exists on the flight object (DEPARTURE_FIELDS excludes Airway).
 
   const flight = {
     ...makeEmptyFlight(),

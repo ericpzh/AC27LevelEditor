@@ -407,6 +407,40 @@ describe('createDefaultFlight', () => {
     expect(flight.ArrivalAirport).toBe('');
   });
 
+  it('populates Airway with a STAR valid for the picked runway (arrival)', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const vals = makeVals({ AirlineCode: ['CCA'], Runway: ['01'] });
+    const apv = makeAirportValues('CCA', {
+      _runwayStarMap: { '01': ['SAREX1', 'SAREX2'] },
+    });
+    for (let i = 0; i < 20; i++) {
+      const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
+      expect(['SAREX1', 'SAREX2']).toContain(flight.Airway);
+    }
+  });
+
+  it('populates Airway with a STAR even when values.Airway is empty (arrival)', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const vals = makeVals({ AirlineCode: ['CCA'], Runway: ['01'], Airway: [] });
+    const apv = makeAirportValues('CCA', {
+      _runwayStarMap: { '01': ['SAREX1'] },
+    });
+    const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
+    expect(flight.Airway).toBe('SAREX1');
+  });
+
+  it('leaves Airway empty for departures even with STAR and Airway data available', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const vals = makeVals({ AirlineCode: ['CCA'], Runway: ['01'] });
+    const apv = makeAirportValues('CCA', {
+      _runwayStarMap: { '01': ['SAREX1', 'SAREX2'] },
+    });
+    for (let i = 0; i < 20; i++) {
+      const flight = createDefaultFlight('departure', vals, audioData, 'ZSJN', apv, []);
+      expect(flight.Airway).toBe('');
+    }
+  });
+
   it('picks AircraftType valid for the chosen airline from _compat', () => {
     const audioData = { allAirlines: ['CCA'] };
     const vals = makeVals({ AirlineCode: ['CCA'] });
