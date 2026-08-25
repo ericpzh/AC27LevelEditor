@@ -584,6 +584,113 @@ class _IdMapper {
 }
 
 /**
+ * Collect every numeric $id value declared in a block of Odin-serialized text.
+ * String-aware and regex-free: scans for the "$id" JSON key and parses the
+ * integer that follows. Returns a Set of numbers.
+ *
+ * @param {string} text
+ * @returns {Set<number>}
+ */
+function _collectAllIdsInText(text) {
+  const ids = new Set();
+  if (!text || typeof text !== 'string') return ids;
+  const keyStr = '"$id"';
+  let inString = false;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"' && (i === 0 || text[i - 1] !== '\\')) {
+      if (!inString && text.substring(i, i + keyStr.length) === keyStr) {
+        const afterKey = i + keyStr.length;
+        let j = afterKey;
+        while (j < text.length && ' \t\n\r'.includes(text[j])) j++;
+        if (j < text.length && text[j] === ':') {
+          let vs = j + 1;
+          while (vs < text.length && ' \t\n\r'.includes(text[vs])) vs++;
+          let ve = vs;
+          while (ve < text.length && text[ve] >= '0' && text[ve] <= '9') ve++;
+          if (ve > vs) {
+            ids.add(parseInt(text.substring(vs, ve), 10));
+            // Skip past the parsed number; the loop's trailing i++ moves us on.
+            i = ve;
+            continue;
+          }
+        }
+      }
+      inString = !inString;
+    }
+    i++;
+  }
+  return ids;
+}
+
+/**
+ * Collect every numeric $id value declared by KEPT (non-rebuilt)
+ * RuntimeEntities entries in a segment. The centralized $iref remap step must
+ * never rewrite references to these ids: they belong to entries that are
+ * preserved as-is, so their ids are NOT being remapped. A rebuilt object's
+ * oldId can numerically collide with a kept id (e.g. a rebuilt jetway
+ * sub-object landing on a radio-channel id); a spurious mapper entry there
+ * would corrupt $iref references to the kept object. Excluding every kept
+ * entry id from the mapper prevents that for ALL kept entry types (jetway,
+ * radio-channel, singleton, other), not just radio-channel.
+ *
+ * Rebuilt entry types (deleted & re-emitted by 7b) are: flight-plan:REG,
+ * aircraft:REG, aircraft-animator:aircraft:REG. Everything else is kept.
+ *
+ * @param {string} segmentText - a GATCARC4 segment (frame doc) text
+ * @returns {Set<number>} ids declared inside kept RuntimeEntities entries
+ */
+function _collectKeptRuntimeEntityIds(segmentText) {
+  const keptIds = new Set();
+  const REBUILT_PREFIXES = ['flight-plan:', 'aircraft-animator:aircraft:', 'aircraft:'];
+  try {
+    const t = createTokenizer(segmentText);
+    const reSec = t.findSection('RuntimeEntities');
+    if (!reSec) return keptIds;
+    const reText = t.substring(reSec.valueStart, reSec.valueEnd);
+    const reT = createTokenizer(reText);
+    const rcSec = reT.findSection('$rcontent');
+    if (!rcSec) return keptIds;
+    const rcStart = rcSec.valueStart;
+    if (reText[rcStart] !== '[') return keptIds;
+    const rcEnd = reT.findArrayEnd(rcStart);
+    if (rcEnd === null) return keptIds;
+    const content = reText.substring(rcStart + 1, rcEnd - 1);
+    const contentT = createTokenizer(content);
+
+    let pos = 0;
+    while (pos < content.length) {
+      while (pos < content.length && ' \t\n\r'.includes(content[pos])) pos++;
+      if (pos >= content.length) break;
+      if (content[pos] === ',') { pos++; continue; }
+      if (content[pos] !== '{') { pos++; continue; }
+
+      const entryEnd = contentT.findObjectEnd(pos);
+      if (entryEnd === null) break;
+      const entryText = content.substring(pos, entryEnd);
+      pos = entryEnd;
+
+      const entryT = createTokenizer(entryText);
+      const kSec = entryT.findSection('$k');
+      let key = '';
+      if (kSec) {
+        const kStrEnd = entryT.skipString(kSec.valueStart);
+        if (kStrEnd) key = entryText.substring(kSec.valueStart + 1, kStrEnd - 1);
+      }
+      const isRebuilt = key.length > 0 && REBUILT_PREFIXES.some(function(p) { return key.startsWith(p); });
+      if (isRebuilt) continue;
+
+      for (const id of _collectAllIdsInText(entryText)) keptIds.add(id);
+    }
+  } catch (_) {
+    // Defensive: if structural navigation fails, no ids are protected and the
+    // remap step proceeds as before (non-fatal, same as the previous scan).
+  }
+  return keptIds;
+}
+
+/**
  * Extract the Approach (APP) radio channel GUID from the Channels section.
  * The Channels dictionary is preserved verbatim in segAfter and always contains
  * the correct channel GUIDs independent of the Aircrafts rebuild state.
@@ -3594,10 +3701,21 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   // $ids, flight-plan ids, and canonical claims), and each old
   // entryId+offset id is registered in the IdMapper so the centralized
   // remap step rewrites $iref references in preserved entries.
+  // FIX: only map oldIds that actually existed in the original entry.
+  // Empty jetways (Status 0) have only 4 $ids (entryId, Progress, DockingAircraft, DockingDoorIndex).
+  // Previously we mapped oldId = entryId+4..38 even when those sub-objects didn't exist,
+  // creating spurious mappings like 615->1682 that collide with radio-channel ids (615) and
+  // cause aircraft $iref to be remapped to wrong targets (e.g. 618->1684).
+  // When the original entry text is unavailable (defensive/test paths), fall
+  // back to mapping every offset (the pre-fix behavior) so callers that don't
+  // carry the original text still register the intended old→new mapping.
+  const originalIds = (typeof info.entryText === 'string' && info.entryText.length > 0)
+    ? _collectAllIdsInText(info.entryText)
+    : null;
   const id = (offset) => {
     const oldId = entryId + offset;
     const newId = alloc.v++;
-    if (idMapper) idMapper.map(oldId, newId);
+    if (idMapper && (originalIds === null || originalIds.has(oldId))) idMapper.map(oldId, newId);
     return newId;
   };
   // Anchor id for aircraft:REG $iref entries (7b-3 builds them from
@@ -5547,10 +5665,20 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     // pointed to removed/rebuilt objects (e.g. flight-plan:REG entries
     // whose $id values changed during rebuild). Runs AFTER all rebuild/cleanup
     // steps (7b-1 through 7d) so every mapping is registered before we scan.
+    // FIX: exclude from the mapper every $id owned by a KEPT (non-rebuilt)
+    // entry before remapping. Rebuilt jetways/flights/aircraft allocate new
+    // dynamic ids; kept entries (jetway, radio-channel, singleton, other)
+    // keep their ids, so a rebuilt object's oldId that numerically collides
+    // with a kept id (e.g. 615, 618, 624 = radio channels) must never be
+    // remapped. Remapping $iref:624 (radio) to a rebuilt jetway id breaks
+    // aircraft channel refs. We scan the RuntimeEntities entries structurally
+    // (string-aware, no regex) and remove every kept entry id from the mapper.
     let totalIrefRemapped = 0;
     for (let fi = 0; fi < frameDocs.length; fi++) {
       const mapper = segIdMappers[fi];
       if (mapper && mapper.size > 0) {
+        const keptIds = _collectKeptRuntimeEntityIds(frameDocs[fi]);
+        for (const keptId of keptIds) mapper._map.delete(keptId);
         const remapResult = mapper.remapIrefs(frameDocs[fi]);
         if (remapResult.count > 0) {
           frameDocs[fi] = remapResult.text;
@@ -5668,6 +5796,8 @@ module.exports = {
   _extractWaitingCmdsInnerId,
   _rebuildWaitingCommandsInEntry,
   _resetFrameJetwayDockingState,
+  _collectAllIdsInText,
+  _collectKeptRuntimeEntityIds,
   _generateFramesSection,
   _generateRunwayTimelineSection,
   _parseWeatherFrames,

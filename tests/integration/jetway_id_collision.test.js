@@ -17,7 +17,7 @@ import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-const { _buildActiveJetwayEntry, _makeJwTypeResolver, _IdMapper } = require('../../src/acl/flight_plans');
+const { _buildActiveJetwayEntry, _makeJwTypeResolver, _IdMapper, _collectKeptRuntimeEntityIds, _collectAllIdsInText } = require('../../src/acl/flight_plans');
 const { CANONICAL_SCOPE } = require('./_canonical_scope.cjs');
 
 // Canonical names matched by the resolver (JW_TYPE_* in flight_plans.js).
@@ -277,5 +277,57 @@ describe('DockingDoorIndex $type resolution (per-scope type ids)', () => {
     expect(resolve(JETWAY)).toBe('3|' + JETWAY);
     // Still strict: unknown names assert regardless of quoting mode.
     expect(() => resolve('Missing.TypeB, GroundATC.Core')).toThrowError(/\[TYPE-ASSERT\]/);
+  });
+});
+
+describe('runtime $iref remap excludes kept (non-rebuilt) entry ids', () => {
+  it('collects kept ids structurally and skips rebuilt flight-plan/aircraft/animator', () => {
+    const frame = `{
+  "RuntimeEntities": {
+    "$rcontent": [
+      { "$k": "radio-channel:121.90", "$v": { "$id": 615, "$type": "30|x", "Frequency": 121.9, "Type": 3 } },
+      { "$k": "singleton:clock", "$v": { "$id": 620, "$type": "31|x" } },
+      { "$k": "aircraft:B-5380A", "$v": { "$id": 700, "$type": "7|x" } },
+      { "$k": "flight-plan:B-5380A", "$v": { "$id": 710, "$type": "3|x" } },
+      { "$k": "aircraft-animator:aircraft:B-5380A", "$v": { "$id": 720, "$type": "45|x" } }
+    ]
+  }
+}`;
+    const kept = _collectKeptRuntimeEntityIds(frame);
+    expect(kept.has(615)).toBe(true);  // radio-channel — kept
+    expect(kept.has(620)).toBe(true);  // singleton — kept
+    expect(kept.has(700)).toBe(false); // aircraft — rebuilt
+    expect(kept.has(710)).toBe(false); // flight-plan — rebuilt
+    expect(kept.has(720)).toBe(false); // animator — rebuilt
+  });
+
+  it('does not rewrite $iref to a kept id, but still remaps rebuilt ids', () => {
+    const mapper = new _IdMapper();
+    mapper.map(615, 1682); // spurious oldId colliding with a kept radio-channel id
+    mapper.map(700, 1800); // legitimate rebuilt aircraft mapping
+
+    const frame = `{
+  "RuntimeEntities": {
+    "$rcontent": [
+      { "$k": "radio-channel:121.90", "$v": { "$id": 615, "$type": "30|x", "Frequency": 121.9, "Type": 3 } },
+      { "$k": "aircraft:B-5380A", "$v": { "$id": 700, "$type": "7|x" } }
+    ]
+  }
+}`;
+    const kept = _collectKeptRuntimeEntityIds(frame);
+    for (const id of kept) mapper._map.delete(id);
+
+    const remapped = mapper.remapIrefs('"$v": $iref:615, "$v": $iref:700');
+    expect(remapped.count).toBe(1);
+    expect(remapped.text).toContain('$iref:615');   // kept id untouched
+    expect(remapped.text).toContain('$iref:1800');  // rebuilt id remapped
+  });
+
+  it('collectAllIds is string-aware and does not treat "$id" in a string value as a key', () => {
+    const ids = _collectAllIdsInText('{"$id": 5, "progress":{"$id": 6, "x":"$id: 7"}, "arr":[{"$id":8}]}');
+    expect(ids.has(5)).toBe(true);
+    expect(ids.has(6)).toBe(true);
+    expect(ids.has(8)).toBe(true);
+    expect(ids.has(7)).toBe(false); // "$id: 7" is inside a string value
   });
 });
