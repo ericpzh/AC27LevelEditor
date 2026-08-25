@@ -72,13 +72,13 @@ const WEATHER_PRESETS = ['Sunny', 'FewCloudy', 'MidCloudy', 'PartlyCloudy', 'Ove
 
 const SCENARIO_END_GRACE_SEC = 30 * 60;
 
-// Default target: the 18 production levels staged by global-setup.mjs
+// Default target: the 20 production levels staged by global-setup.mjs
 // (PROD_VISIBLE_BASES minus demo files minus ZGSZ_Endless).
 const DEFAULT_PROD_FILES = [
   'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
   'ZSJN/ZSJN_peakdeparture.acl', 'ZSJN/ZSJN_runwaychange.acl',
   'ZSJN/ZSJN_taixwayclosed.acl',
-  'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl', 'KJFK/KJFK_peakarrival.acl',
+  'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl', 'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl',
   'KDCA/KDCA_leisure_1.acl', 'KDCA/KDCA_leisure_2.acl',
   'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl',
   'ZGSZ/ZGSZ_leisure_1.acl', 'ZGSZ/ZGSZ_leisure_2.acl',

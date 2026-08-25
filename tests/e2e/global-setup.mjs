@@ -8,8 +8,9 @@ const FIXTURES_DIR = path.join(TESTS_DIR, 'fixtures', 'game-root');
 const TMP_DIR = path.join(TESTS_DIR, 'tmp-e2e');
 const USERDATA_DIR = path.join(TESTS_DIR, 'tmp-e2e-userdata');
 
-// ── 21 prod+demo files to include when sourcing from real game ──
-// Mirrors PROD_VISIBLE_BASES (18) + the demo entries of DEMO_VISIBLE_BASES
+// ── 23 prod+demo files to include when sourcing from real game ──
+// Mirrors PROD_VISIBLE_BASES (20, the full production set minus
+// ZGSZ_Endless) + the demo entries of DEMO_VISIBLE_BASES
 // (4: three .demo.acl + ZSJN_leisure_1.acl, which the demo install ships
 // under the prod filename) in src/utils/constants/ui.js — only these are
 // visible in the browser.
@@ -18,7 +19,7 @@ const PROD_DEMO_FILES = [
   'ZSJN/ZSJN_peakdeparture.acl', 'ZSJN/ZSJN_runwaychange.acl',
   'ZSJN/ZSJN_taixwayclosed.acl', 'ZSJN/ZSJN_peakdeparture.demo.acl',
   'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl',
-  'KJFK/KJFK_peakarrival.acl',
+  'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl',
   'KJFK/KJFK_leisure_1.demo.acl', 'KJFK/KJFK_peakarrival.demo.acl',
   'KDCA/KDCA_leisure_1.acl', 'KDCA/KDCA_leisure_2.acl',
   'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl',

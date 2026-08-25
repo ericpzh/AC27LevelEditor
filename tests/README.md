@@ -13,7 +13,7 @@ npm run test:e2e      # 17 Playwright E2E tests (requires npm run build first, ~
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
-npm run test:fuzz     # all 18 production levels (see "Fuzz Save" section for options)
+npm run test:fuzz     # all 20 production levels (see "Fuzz Save" section for options)
 
 node tests/integration/test_api_server.js      # MCP/API tests: 109 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -120,7 +120,7 @@ All 1203 tests pass (52 files). The previously failing/todo items have been fixe
 
 ## Layer 2 — Playwright E2E Tests (17 tests, 15 pass, 2 skipped)
 
-Launches the real Electron app against a temp copy of real game data (via `E2E_GAME_ROOT` env var set by `run-all.mjs`). File isolation is guaranteed — the real game installation is never touched. The 17 tests = 14 specs below + S1b (13-level integrity) + S1 + the fuzz spec (skipped unless `FUZZ_RUN=1`); the two skips are E12a (overlay timing) and fuzz (gated).
+Launches the real Electron app against a temp copy of real game data (via `E2E_GAME_ROOT` env var set by `run-all.mjs`). File isolation is guaranteed — the real game installation is never touched. The 17 tests = 14 specs below + S1b (20-level integrity) + S1 + the fuzz spec (skipped unless `FUZZ_RUN=1`); the two skips are E12a (overlay timing) and fuzz (gated).
 
 ### `npm run test:e2e` — requires `npm run build` first, Playwright + Electron capable environment
 
@@ -171,11 +171,11 @@ Launches the real Electron app against a temp copy of real game data (via `E2E_G
 |----|------|----------|
 | **S1** | No-change save round-trip | Open level → Ctrl+S (no edits) → compare `.acl` vs `.acl.bak`: v4 has no GUIDs to regenerate (0 pre-save), `$id`s shift, flight data identical (32 flights, 24 weather, 4 wind) |
 
-### Save Integrity — all 18 production files (E2E, requires `E2E_GAME_ROOT`)
+### Save Integrity — all 20 production files (E2E, requires `E2E_GAME_ROOT`)
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **S1b** | `save-integrity-all-e2e.spec.mjs` | 18 production files across ZSJN + KJFK + ZGSZ + KDCA | 18 passed, 0 skipped |
+| **S1b** | `save-integrity-all-e2e.spec.mjs` | 20 production files across ZSJN + KJFK + ZGSZ + KDCA | 20 passed, 0 skipped |
 
 ```bash
 # Run standalone (requires E2E_GAME_ROOT env var):
@@ -183,7 +183,7 @@ $env:E2E_GAME_ROOT = "<game-root>"
 npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
 ```
 
-Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~3 minutes for 18 files. The 18 files mirror `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` (the spec's global-setup copy excludes `.demo.acl` files, so demo files never appear in the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead):
+Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~3 minutes for 20 files. The 20 files mirror `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` minus `ZGSZ_Endless` (the spec's global-setup copy excludes `.demo.acl` files, so demo files never appear in the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead):
 
 | File | Status | Note |
 |------|--------|------|
@@ -194,6 +194,8 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | ZSJN_taixwayclosed | ✓ | all state identical |
 | KJFK_leisure_1 | ✓ | all state identical |
 | KJFK_leisure_2 | ✓ | all state identical |
+| KJFK_runwaychange | ✓ | all state identical |
+| KJFK_peakdeparture | ✓ | all state identical |
 | KJFK_peakarrival | ✓ | all state identical |
 | ZGSZ_leisure_1 | ✓ | all state identical |
 | ZGSZ_leisure_2 | ✓ | all state identical |
@@ -210,7 +212,7 @@ Iterates every level row in the browser: open → disable time validation → Ct
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **F1** | `fuzz-save.spec.mjs` | All 18 production files (or `FUZZ_ACL_FILES` subset) | 18/18 pass, `.acl.bak` created per file, saved file reloads with matching flights |
+| **F1** | `fuzz-save.spec.mjs` | All 20 production files (or `FUZZ_ACL_FILES` subset) | 20/20 pass, `.acl.bak` created per file, saved file reloads with matching flights |
 
 The fuzz test drives the editor the same way an AI agent would: it opens each level in
 the real Electron app, then applies **50–200 randomized operations per level** through the
@@ -239,7 +241,7 @@ verifies the `.acl.bak` was created and the saved `.acl` reloads through the rea
 with the same flight count + callsign set the fuzz left in the store.
 
 ```bash
-# All 18 production levels (default):
+# All 20 production levels (default):
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
 npm run test:fuzz
 
