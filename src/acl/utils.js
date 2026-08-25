@@ -5,9 +5,10 @@ const fs = require('fs');
 const path = require('path');
 const { DROPDOWN_FIELDS } = require('./constants.js');
 const { _parseWorldStateFlightPlans, _parseRunwayTimeline } = require('./flight_plans');
-const { buildPkIndex, extractStringFromV4 } = require('./v4_pk_index');
+const { buildPkIndex, extractStringFromV4, resolveIref } = require('./v4_pk_index');
 const { resolveConfigTime } = require('./config');
 const { readAclText } = require('./gatcarc');
+const { createTokenizer } = require('./tokenizer');
 
 
 
@@ -144,13 +145,53 @@ function collectRunwayPairs(aclPaths) {
   });
 }
 
+function _extractNestedObject(text, key) {
+  const t = createTokenizer(text);
+  const sec = t.findSection(key);
+  if (!sec) return null;
+  return t.substring(sec.valueStart, sec.valueEnd);
+}
+
+function _findPhysicalNameByIref(aclText, pkIndex, iref) {
+  const resolved = pkIndex ? resolveIref(pkIndex, iref) : null;
+  if (resolved) {
+    const n = extractStringFromV4(resolved.block, 'PhysicalName');
+    if (n) return n;
+    const trimmed = resolved.block.trim();
+    if (trimmed.startsWith('$iref:')) {
+      const iref2 = parseInt(trimmed.slice(6).trim(), 10);
+      const resolved2 = resolveIref(pkIndex, iref2);
+      if (resolved2) {
+        const n2 = extractStringFromV4(resolved2.block, 'PhysicalName');
+        if (n2) return n2;
+      }
+    }
+  }
+  if (aclText) {
+    const idStr = '"$id": ' + iref;
+    const idx = aclText.indexOf(idStr);
+    if (idx >= 0) {
+      const snippet = aclText.substring(Math.max(0, idx - 500), idx + 2000);
+      const m = snippet.match(/"PhysicalName":\s*"([^"]+)"/);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
 /**
- * Extract runway pairs from a v4 ACL's static SceneryData.
+ * Extract runway pairs from a v4/v5 ACL's static SceneryData.
  *
  * Each runway object in PKStaticEntities (e.g. "$k": "runway:01") carries a
  * PhysicalName like "01/19" — the two runway objects sharing the same
  * PhysicalName are the two ends of one physical runway and form a reciprocal
  * pair (01|19 and 19|01).
+ *
+ * v5 change: PhysicalName moved into nested PhysicalRunwayStaticItem
+ * (inline object or $iref to shared inline), e.g.:
+ *   "PhysicalRunwayStaticItem": { "$id": 18488, "PhysicalName": "4L/22R" }
+ *   "PhysicalRunwayStaticItem": $iref:18488
+ * Older v4 files keep PhysicalName at depth 1 directly.
  *
  * This is the v4 replacement for timeline-change scanning: airports that have
  * never had runway changes defined (KJFK, KDCA) have empty RunwayTimeline
@@ -169,7 +210,22 @@ function extractV4RunwayPairs(aclText) {
   const groups = new Map();
   for (const [, entry] of rwMap) {
     const name = extractStringFromV4(entry.block, 'Name');
-    const phys = extractStringFromV4(entry.block, 'PhysicalName');
+    let phys = null;
+    const physBlock = _extractNestedObject(entry.block, 'PhysicalRunwayStaticItem');
+    if (physBlock) {
+      const trimmed = physBlock.trim();
+      if (trimmed.startsWith('$iref:')) {
+        const iref = parseInt(trimmed.slice(6).trim(), 10);
+        phys = _findPhysicalNameByIref(aclText, pkIndex, iref);
+        if (!phys) {
+          const resolved = resolveIref(pkIndex, iref);
+          if (resolved) phys = extractStringFromV4(resolved.block, 'PhysicalName');
+        }
+      } else {
+        phys = extractStringFromV4(physBlock, 'PhysicalName');
+      }
+    }
+    if (!phys) phys = extractStringFromV4(entry.block, 'PhysicalName');
     if (!name || !phys || !phys.includes('/')) continue;
     if (!groups.has(phys)) groups.set(phys, []);
     const names = groups.get(phys);

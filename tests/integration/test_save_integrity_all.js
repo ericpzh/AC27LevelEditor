@@ -29,8 +29,8 @@ const {
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
 } = parser;
 
-// ── The 13 production + 3 demo .acl files ───────────────────────
-// Mirrors PROD_VISIBLE_BASES (13) + the .demo entries of
+// ── The 18 production + 3 demo .acl files ───────────────────────
+// Mirrors PROD_VISIBLE_BASES (18) + the .demo entries of
 // DEMO_VISIBLE_BASES (3) in src/utils/constants/ui.js
 const PROD_DEMO_FILES = [
   { icao: 'ZSJN', name: 'ZSJN_leisure_1.acl' },
@@ -46,6 +46,11 @@ const PROD_DEMO_FILES = [
   { icao: 'KDCA', name: 'KDCA_runwaychange.acl' },
   { icao: 'KDCA', name: 'KDCA_peakdeparture.acl' },
   { icao: 'KDCA', name: 'KDCA_peakarrival.acl' },
+  { icao: 'ZGSZ', name: 'ZGSZ_leisure_1.acl' },
+  { icao: 'ZGSZ', name: 'ZGSZ_leisure_2.acl' },
+  { icao: 'ZGSZ', name: 'ZGSZ_runwaychange.acl' },
+  { icao: 'ZGSZ', name: 'ZGSZ_peakdeparture.acl' },
+  { icao: 'ZGSZ', name: 'ZGSZ_peakarrival.acl' },
   { icao: 'KJFK', name: 'KJFK_peakarrival.demo.acl' },
   { icao: 'KJFK', name: 'KJFK_leisure_1.demo.acl' },
   { icao: 'ZSJN', name: 'ZSJN_peakdeparture.demo.acl' },
@@ -301,9 +306,12 @@ for (const file of aclFiles) {
     const resultAcl = copyLevelFiles(goldenAcl, goldenSubDir, resultSubDir, file.name);
 
     // ── Step 4: Save on result copy (no edits) ────────────────────
+    // Clone flights to avoid mutating goldenResult (generateFullAcl's
+    // game-compat normalization mutates the array in place)
+    const flightsForSave = JSON.parse(JSON.stringify(goldenResult.flights));
     generateFullAcl(
       resultAcl,
-      goldenResult.flights,
+      flightsForSave,
       '', '', [],
       goldenResult.sceneryMaps,
       getApproachCache(file.sourceDir),

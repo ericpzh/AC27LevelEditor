@@ -179,23 +179,27 @@ function _parseAreas(text) {
     if (!entryEnd) break;
     const entryBlock = contentText.substring(pos, entryEnd);
 
-    // Filter: only Area entities (type alias 30 = ContextCross.Models.Area)
+    // Filter: only Area entities (v4: 30, v5: 31 = ContextCross.Models.Area)
+    // v5 changed type number from 30 to 31 — check by name instead of hard-coded number
     let isAreaEntity = false;
-    const typeIdx = entryBlock.indexOf('"$type"');
-    if (typeIdx >= 0) {
-      const colonIdx = entryBlock.indexOf(':', typeIdx);
-      if (colonIdx >= 0) {
-        let vs = colonIdx + 1;
-        while (vs < entryBlock.length && ' \t\n\r'.includes(entryBlock[vs])) vs++;
-        if (vs < entryBlock.length && entryBlock[vs] === '"') {
-          // Quoted form: "30" or "30|ContextCross.Models.Area,..."
-          vs++;
-          if (entryBlock.substring(vs, vs + 2) === '30') isAreaEntity = true;
-        } else {
-          // Bare form: 30
-          let numEnd = vs;
-          while (numEnd < entryBlock.length && entryBlock[numEnd] >= '0' && entryBlock[numEnd] <= '9') numEnd++;
-          if (parseInt(entryBlock.substring(vs, numEnd), 10) === 30) isAreaEntity = true;
+    if (entryBlock.includes('ContextCross.Models.Area')) {
+      isAreaEntity = true;
+    } else {
+      const typeIdx = entryBlock.indexOf('"$type"');
+      if (typeIdx >= 0) {
+        const colonIdx = entryBlock.indexOf(':', typeIdx);
+        if (colonIdx >= 0) {
+          let vs = colonIdx + 1;
+          while (vs < entryBlock.length && ' \t\n\r'.includes(entryBlock[vs])) vs++;
+          if (vs < entryBlock.length && entryBlock[vs] === '"') {
+            vs++;
+            if (entryBlock.substring(vs, vs + 2) === '30' || entryBlock.substring(vs, vs + 2) === '31') isAreaEntity = true;
+          } else {
+            let numEnd = vs;
+            while (numEnd < entryBlock.length && entryBlock[numEnd] >= '0' && entryBlock[numEnd] <= '9') numEnd++;
+            const num = parseInt(entryBlock.substring(vs, numEnd), 10);
+            if (num === 30 || num === 31) isAreaEntity = true;
+          }
         }
       }
     }

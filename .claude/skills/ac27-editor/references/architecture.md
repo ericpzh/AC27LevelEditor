@@ -117,10 +117,10 @@ AC27Editor/
 │   │   ├── v4_pk_index.js       # PKStaticEntities index builder ($iref → $id resolution, field helpers)
 │   │   ├── odin/                # OdinSerializer binary codec (binary/json readers + writers, .NET primitives, entry types)
 │   │   ├── flight_plans.js      # StaticData/StaticItems flight-plan parse + v4 save pipeline (_rebuildStaticDataSections, timeline rebuild)
-│   │   ├── approach.js          # Approach aircraft construction (State=30/State=5) + approach cache builder
-│   │   ├── scenery.js           # PKStaticEntities scenery parser (runway/stand lookups + stand position extraction)
+│   │   ├── approach.js          # Approach aircraft construction (State=30/State=5) + approach cache builder (v5: global aircraft_profiles.csv + allAclTexts merge, PhysicalRunwayStaticItem, Area 31)
+│   │   ├── scenery.js           # PKStaticEntities scenery parser (runway/stand lookups + stand position extraction; v5: Area 30→31)
 │   │   ├── taxiway.js           # Taxiway centerline parser from PKStaticEntities taxiway-segment:* entries
-│   │   ├── sid_goaround.js      # SID + Missed Approach route parser from PKStaticEntities runway Routes (RouteType=2/3)
+│   │   ├── sid_goaround.js      # SID + Missed Approach route parser from PKStaticEntities runway Routes (RouteType=2/3; v5: PhysicalRunwayStaticItem indirection)
 │   │   └── utils.js             # Enrichment, sorting, audio, runway pairs (extractV4RunwayPairs), import utils
 │   │
 │   └── utils/                   # Shared utilities (ESM + some CJS for backend)
@@ -344,7 +344,7 @@ Airports/ZSJN/Levels/       copy →  _tmp/golden/ZSJN/     copy →  _tmp/resul
 6. **Clean up** `_tmp/` after each file (removed entirely after run)
 7. **Write JSON report** → `tests/_reports_/save-integrity-<timestamp>.json` with per-file metrics and diffs
 
-- Supports `--prod-demo` flag to test only the 16 prod+demo files
+- Supports `--prod-demo` flag to test only the 21 prod+demo files (18 prod + 3 demo; 13→18 prod with ZGSZ +5, 16→21 total — v1.3.4)
 - Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored
 - Full test documentation: `tests/README.md` — test matrix, expected values, execution commands
 

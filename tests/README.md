@@ -7,13 +7,13 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (1200) + save integrity (16) + jetway rebuild (16) + runway pairs (5) + E2E (17, ~5 min)
-npm test              # 1200 Vitest component + store + utility + electron + MapWindow + updater tests (~9s)
+npm run test:all      # Full suite: Vitest (1203) + save integrity (21) + jetway rebuild (16) + runway pairs (5) + E2E (17, ~5 min)
+npm test              # 1203 Vitest component + store + utility + electron + MapWindow + updater tests (~7s)
 npm run test:e2e      # 17 Playwright E2E tests (requires npm run build first, ~4 min; 15 pass, 2 skipped — E12a overlay timing + fuzz gated on FUZZ_RUN)
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
-npm run test:fuzz     # all 13 production levels (see "Fuzz Save" section for options)
+npm run test:fuzz     # all 18 production levels (see "Fuzz Save" section for options)
 
 node tests/integration/test_api_server.js      # MCP/API tests: 109 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -30,11 +30,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (1200 tests)
+## Layer 1 — Vitest Component Tests (1203 tests)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 1200 pass (52 test files)
+### `npm test` — 1203 pass (52 test files)
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -108,7 +108,7 @@ Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some el
 
 ### Known Vitest failures (none)
 
-All 1200 tests pass. The previously failing/todo items have been fixed:
+All 1203 tests pass (52 files). The previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 
@@ -171,11 +171,11 @@ Launches the real Electron app against a temp copy of real game data (via `E2E_G
 |----|------|----------|
 | **S1** | No-change save round-trip | Open level → Ctrl+S (no edits) → compare `.acl` vs `.acl.bak`: v4 has no GUIDs to regenerate (0 pre-save), `$id`s shift, flight data identical (32 flights, 24 weather, 4 wind) |
 
-### Save Integrity — all 13 production files (E2E, requires `E2E_GAME_ROOT`)
+### Save Integrity — all 18 production files (E2E, requires `E2E_GAME_ROOT`)
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **S1b** | `save-integrity-all-e2e.spec.mjs` | 13 production files across ZSJN + KJFK + KDCA | 13 passed, 0 skipped |
+| **S1b** | `save-integrity-all-e2e.spec.mjs` | 18 production files across ZSJN + KJFK + ZGSZ + KDCA | 18 passed, 0 skipped |
 
 ```bash
 # Run standalone (requires E2E_GAME_ROOT env var):
@@ -183,7 +183,7 @@ $env:E2E_GAME_ROOT = "<game-root>"
 npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
 ```
 
-Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~2 minutes for 13 files. The 13 files mirror `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` (the spec's global-setup copy excludes `.demo.acl` files, so demo files never appear in the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead):
+Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~3 minutes for 18 files. The 18 files mirror `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` (the spec's global-setup copy excludes `.demo.acl` files, so demo files never appear in the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead):
 
 | File | Status | Note |
 |------|--------|------|
@@ -195,6 +195,11 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | KJFK_leisure_1 | ✓ | all state identical |
 | KJFK_leisure_2 | ✓ | all state identical |
 | KJFK_peakarrival | ✓ | all state identical |
+| ZGSZ_leisure_1 | ✓ | all state identical |
+| ZGSZ_leisure_2 | ✓ | all state identical |
+| ZGSZ_runwaychange | ✓ | all state identical |
+| ZGSZ_peakdeparture | ✓ | all state identical |
+| ZGSZ_peakarrival | ✓ | all state identical |
 | KDCA_leisure_1 | ✓ | all state identical |
 | KDCA_leisure_2 | ✓ | all state identical |
 | KDCA_runwaychange | ✓ | all state identical |
@@ -205,7 +210,7 @@ Iterates every level row in the browser: open → disable time validation → Ct
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **F1** | `fuzz-save.spec.mjs` | All 13 production files (or `FUZZ_ACL_FILES` subset) | 13/13 pass, `.acl.bak` created per file, saved file reloads with matching flights |
+| **F1** | `fuzz-save.spec.mjs` | All 18 production files (or `FUZZ_ACL_FILES` subset) | 18/18 pass, `.acl.bak` created per file, saved file reloads with matching flights |
 
 The fuzz test drives the editor the same way an AI agent would: it opens each level in
 the real Electron app, then applies **50–200 randomized operations per level** through the
@@ -234,7 +239,7 @@ verifies the `.acl.bak` was created and the saved `.acl` reloads through the rea
 with the same flight count + callsign set the fuzz left in the store.
 
 ```bash
-# All 13 production levels (default):
+# All 18 production levels (default):
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
 npm run test:fuzz
 
@@ -397,10 +402,10 @@ node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_ti
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_save_integrity_all.js` | 16 (`--prod-demo`) or 24 (`--all`) | Full save→reload→compare on every .acl file. Validates: flights (14 fields × N), config (startTime/endTime/scheduleFile), scenery maps (runway/stand counts), embedded timelines (weather/wind/runway), source format, text-level `_departureTakeoffTime` / `_arrivalInBlockTime` zero validation. Builds the approach cache per level dir (jetway DockingPositions lookup needs it, same as the app) | 16/16 pass on the v4 game root (13 prod + 3 demo): 0 field diffs, config identical, scenery identical, timelines identical |
+| `test_save_integrity_all.js` | 21 (`--prod-demo`) or 24+ (`--all`) | Full save→reload→compare on every .acl file. Validates: flights (14 fields × N), config (startTime/endTime/scheduleFile), scenery maps (runway/stand counts), embedded timelines (weather/wind/runway), source format, text-level `_departureTakeoffTime` / `_arrivalInBlockTime` zero validation. Builds the approach cache per level dir (jetway DockingPositions lookup needs it, same as the app) | 21/21 pass on the v4 game root (18 prod + 3 demo): 0 field diffs, config identical, scenery identical, timelines identical |
 
 ```bash
-# 13 production + 3 demo files:
+# 18 production + 3 demo files (ZSJN/KJFK/ZGSZ/KDCA):
 node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root> --prod-demo
 
 # All .acl files across all airports (excludes Endless):
@@ -429,7 +434,7 @@ Airports/<ICAO>/Levels/     copy →  _tmp/golden/<ICAO>/    copy →  _tmp/resu
 
 Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored.
 
-**Production (13):** ZSJN_leisure_1, ZSJN_leisure_2, ZSJN_peakdeparture, ZSJN_runwaychange, ZSJN_taixwayclosed, KJFK_leisure_1, KJFK_leisure_2, KJFK_peakarrival, KDCA_leisure_1, KDCA_leisure_2, KDCA_runwaychange, KDCA_peakdeparture, KDCA_peakarrival
+**Production (18 prod levels across ZSJN/KJFK/ZGSZ/KDCA)** — with `--prod-demo` the runner tests 21 files (18 prod + 3 demo).
 
 **Demo (3 .demo files + 1 shared):** KJFK_leisure_1.demo, KJFK_peakarrival.demo, ZSJN_leisure_1 (shared with prod), ZSJN_peakdeparture.demo
 
@@ -441,7 +446,7 @@ Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored.
 npm run test:all      # or: node tests/run-all.mjs [--game-root <path>]
 ```
 
-Runs all three layers sequentially (Vitest → save integrity 16 files → jetway rebuild 16 v4 files → v4 runway pair extraction → build → Playwright E2E) and reports a pass/fail summary. Default game root: `D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest`.
+Runs all three layers sequentially (Vitest → save integrity 21 files → jetway rebuild 16 v4 files → v4 runway pair extraction → build → Playwright E2E) and reports a pass/fail summary. Default game root: `D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest`.
 
 ---
 
@@ -449,7 +454,7 @@ Runs all three layers sequentially (Vitest → save integrity 16 files → jetwa
 
 All supported .acl files use the **v4 GATCArc4 binary** format (StaticData.$blobdoc; flight plans are StaticItems dictionary entries keyed `"$k": "flight-plan:<REG>"`, referenced by `$fstrref` tokens). v2/v3 text-format support has been removed from the code and tests.
 
-- **Save integrity**: 16/16 files pass (13 production + 3 demo) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (`_rebuildStaticDataSections`).
+- **Save integrity**: 21/21 files pass (18 production + 3 demo) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (`_rebuildStaticDataSections`).
 - **Save/load round-trip**: `test_e2e_save_load.js` — flight data identical after load→save→load (21 flights on ZSJN_leisure_1, 61 on KJFK_peakarrival).
 - **Section rebuild**: `test_rebuild_sections.js` (StaticItems rebuild + binary re-encode, reload-verified) and `test_rebuild_timelines.js` (MetaData subsection rebuild + re-encode) both pass.
 - **Linkage**: `test_acl_linkage.js` — 48 flight-plan definitions self-consistent, 48 `$fstrref` references resolve.
@@ -477,7 +482,7 @@ Real game root (read-only)      tests/tmp-e2e/                  tests/tmp-e2e-us
                                      *.json               AC27_E2E_TMP_DIR=tmp-e2e
 ```
 
-1. **`global-setup.mjs`**: copies 16 prod+demo files from real game → `tmp-e2e/`, writes `lastRoot.json`
+1. **`global-setup.mjs`**: copies 21 prod+demo files from real game → `tmp-e2e/`, writes `lastRoot.json`
 2. **Fallback**: if `E2E_GAME_ROOT` is not set, falls back to `tests/fixtures/game-root/` (ZSJN-only)
 
 **Fixtures** (`tests/fixtures/game-root/.../ZSJN/Levels/`): `ZSJN_leisure_1.acl` (v4 GATCArc4 binary, 57 stands) is the offline v4 sample used by the fixture-based tests (`test_jetway_rebuild`, `test_acl_linkage`, `test_rebuild_sections`/`test_rebuild_timelines`, `test_save_roundtrip_diff` T4 via `--acl`, `test_taxiway`, `test_sid_goaround`, `test_demo_filter`, `test_type_number_integrity`, `stand_positions`).
@@ -511,7 +516,7 @@ The `test_save_integrity_all.js` script uses a **golden/result pattern**:
 | `e2e/global-setup.mjs` | Copy fixtures → temp, pre-write `lastRoot.json` |
 | `e2e/global-teardown.mjs` | Clean up temp dirs |
 | `e2e/fuzz-save.spec.mjs` | Fuzz save test — `FuzzTest(aclFilePath, opts)` exported; MCP randomized ops + UI save-with-backup per level (gated on `FUZZ_RUN=1`) |
-| `integration/test_save_integrity_all.js` | Save→reload→compare on all .acl files (supports `--prod-demo` for 16 specific files) |
+| `integration/test_save_integrity_all.js` | Save→reload→compare on all .acl files (supports `--prod-demo` for 21 specific files) |
 | `integration/test_jetway_rebuild.js` | Constructive jetway rebuild — verifies `_buildActiveJetwayEntry` only-modifies-jetway invariant across 16 v4 prod+demo files |
 | `run-all.mjs` | Master test runner — executes all 3 layers sequentially |
 

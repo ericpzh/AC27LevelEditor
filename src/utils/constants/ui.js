@@ -43,7 +43,12 @@ export const PROD_VISIBLE_BASES = [
   'KDCA_runwaychange.acl',
   'KDCA_peakdeparture.acl',
   'KDCA_peakarrival.acl',
-  // ZGSZ — Endless
+  // ZGSZ — Relax Time, Busy Time, Runway Change, Peak Departure, Peak Arrival, Endless
+  'ZGSZ_leisure_1.acl',
+  'ZGSZ_leisure_2.acl',
+  'ZGSZ_runwaychange.acl',
+  'ZGSZ_peakdeparture.acl',
+  'ZGSZ_peakarrival.acl',
   'ZGSZ_Endless.acl',
 ];
 

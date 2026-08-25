@@ -40,7 +40,7 @@ other editor instance (port 31415).
 
 ```bash
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
-npm run test:fuzz                                   # all 13 prod levels, 50–200 ops each
+npm run test:fuzz                                   # all 18 prod levels (ZGSZ +5), 50–200 ops each — default target = PROD_VISIBLE_BASES minus ZGSZ_Endless
 $env:FUZZ_ACL_FILES = "ZSJN/ZSJN_leisure_1.acl"; npm run test:fuzz   # subset (comma-separated)
 $env:FUZZ_SEED = "12345"; npm run test:fuzz         # reproduce a failure deterministically
 npm run test:fuzz -- --replace                      # copy PASSED levels' .acl + .acl.bak into the REAL game install (FUZZ_REPLACE=1 env works too)

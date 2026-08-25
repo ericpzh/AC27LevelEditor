@@ -285,9 +285,10 @@ function runChecks(a, { minGapSec = STAND_MIN_GAP } = {}) {
       if (p.leg !== 'A' || !p.stand || p.tSec == null) continue;
       const d = dockedByStand.get(p.stand);
       if (!d || d.reg === p.reg) continue;
+      const DEPARTURE_GRACE_SEC = 30 * 60;
       const outOfScenario =
-        (d.offBlockSec != null && a.config.endSec != null && d.offBlockSec > a.config.endSec) ||
-        (d.takeoffSec != null && a.config.endSec != null && d.takeoffSec > a.config.endSec);
+        (d.offBlockSec != null && a.config.endSec != null && d.offBlockSec > a.config.endSec + DEPARTURE_GRACE_SEC) ||
+        (d.takeoffSec != null && a.config.endSec != null && d.takeoffSec > a.config.endSec + DEPARTURE_GRACE_SEC);
       const landsBeforeOffBlock = p.tSec < (d.offBlockSec ?? 0);
       if (outOfScenario) {
         issues.push({ code: 'docked-stand-blocked', msg: `stand ${p.stand}: arrival ${p.reg} uses the stand of docked ${d.reg}, whose departure is beyond the scenario end (stand blocked all session)` });

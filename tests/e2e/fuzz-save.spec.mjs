@@ -72,7 +72,7 @@ const WEATHER_PRESETS = ['Sunny', 'FewCloudy', 'MidCloudy', 'PartlyCloudy', 'Ove
 
 const SCENARIO_END_GRACE_SEC = 30 * 60;
 
-// Default target: the 13 production levels staged by global-setup.mjs
+// Default target: the 18 production levels staged by global-setup.mjs
 // (PROD_VISIBLE_BASES minus demo files minus ZGSZ_Endless).
 const DEFAULT_PROD_FILES = [
   'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
@@ -81,6 +81,8 @@ const DEFAULT_PROD_FILES = [
   'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl', 'KJFK/KJFK_peakarrival.acl',
   'KDCA/KDCA_leisure_1.acl', 'KDCA/KDCA_leisure_2.acl',
   'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl',
+  'ZGSZ/ZGSZ_leisure_1.acl', 'ZGSZ/ZGSZ_leisure_2.acl',
+  'ZGSZ/ZGSZ_runwaychange.acl', 'ZGSZ/ZGSZ_peakdeparture.acl', 'ZGSZ/ZGSZ_peakarrival.acl',
 ];
 
 // ── Deterministic random ────────────────────────────────────────────

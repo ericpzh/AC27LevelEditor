@@ -71,8 +71,40 @@ function _extractRouteMappingsByType(aclText, routeType) {
 
   for (const rw of runways) {
     const runwayName = extractStringFromV4(rw.block, 'Name');
-    const physName = extractStringFromV4(rw.block, 'PhysicalName');
-    if (!runwayName || !physName || !physName.includes('/')) continue;
+    // v5: PhysicalName is inside nested PhysicalRunwayStaticItem (inline $id or $iref to inline)
+    let physName = null;
+    const physBlock = _extractNestedObject(rw.block, 'PhysicalRunwayStaticItem');
+    if (physBlock) {
+      const trimmed = physBlock.trim();
+      if (trimmed.startsWith('$iref:')) {
+        const iref = parseInt(trimmed.slice(6).trim(), 10);
+        // Try PK index first, then fallback to raw text search for inline $id (e.g. ZSJN runway 01 $iref:8541)
+        let resolved = require('./v4_pk_index').resolveIref(pkIndex, iref);
+        if (resolved) {
+          physName = extractStringFromV4(resolved.block, 'PhysicalName');
+          if (!physName && resolved.block.trim().startsWith('$iref:')) {
+            const iref2 = parseInt(resolved.block.trim().slice(6).trim(), 10);
+            const resolved2 = require('./v4_pk_index').resolveIref(pkIndex, iref2);
+            if (resolved2) physName = extractStringFromV4(resolved2.block, 'PhysicalName');
+          }
+        }
+        if (!physName && aclText) {
+          const idStr = '"$id": ' + iref;
+          const idx = aclText.indexOf(idStr);
+          if (idx >= 0) {
+            const snippet = aclText.substring(Math.max(0, idx - 500), idx + 2000);
+            const m = snippet.match(/"PhysicalName":\s*"([^"]+)"/);
+            if (m) physName = m[1];
+          }
+        }
+      } else {
+        physName = extractStringFromV4(physBlock, 'PhysicalName');
+      }
+    }
+    if (!physName) physName = extractStringFromV4(rw.block, 'PhysicalName');
+    if (!runwayName) continue;
+    if (physName && !physName.includes('/')) continue;
+    if (!physName) physName = runwayName; // fallback for v5 $iref to inline case
 
     // Navigate Routes.$rcontent
     const { createTokenizer: ct } = require('./tokenizer');

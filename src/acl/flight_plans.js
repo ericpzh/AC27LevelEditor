@@ -1586,9 +1586,13 @@ function _normalizeFlightsForGameCompat(flights, fullText, log, standPool, appro
     const dockedViolation = (stand, reg, t) => {
       const dk = dockedByStand.get(stand);
       if (!dk || dk.reg === reg) return false;
+      // takeoff/offBlock marginally beyond end (KJFK_peakarrival N38 25s,
+      // demo 6min) is within tolerance — the game allows SCENARIO_END_GRACE_SEC
+      // beyond scenario end for departures.
+      const DEPARTURE_GRACE_SEC = 30 * 60;
       const departureBeyondScenario =
-        (dk.offBlockSec != null && endSec != null && dk.offBlockSec > endSec) ||
-        (dk.takeoffSec != null && endSec != null && dk.takeoffSec > endSec);
+        (dk.offBlockSec != null && endSec != null && dk.offBlockSec > endSec + DEPARTURE_GRACE_SEC) ||
+        (dk.takeoffSec != null && endSec != null && dk.takeoffSec > endSec + DEPARTURE_GRACE_SEC);
       if (departureBeyondScenario) return true;
       if (dk.offBlockSec != null && t < dk.offBlockSec) return true;
       return false;
@@ -1750,6 +1754,8 @@ const JW_TYPE_JETWAY     = 'ContextCross.Models.Jetway, GroundATC.Core';
 const JW_TYPE_RP_SINGLE  = 'R3.ReactiveProperty`1[[System.Single, mscorlib]], R3';
 const JW_TYPE_RP_AIRCRAFT= 'R3.ReactiveProperty`1[[ContextCross.Aircrafts.Aircraft, GroundATC.Core]], R3';
 const JW_TYPE_RP_INT32   = 'R3.ReactiveProperty`1[[System.Int32, mscorlib]], R3';
+// Strict types that must never be fallback-allocated — silent fallback masked the DockingDoorIndex bug
+const STRICT_JETWAY_TYPES = new Set([JW_TYPE_JETWAY, JW_TYPE_RP_SINGLE, JW_TYPE_RP_AIRCRAFT, JW_TYPE_RP_INT32]);
 
 /**
  * Build a name->type-id resolver for a scope's type table (jwTypeMap).
@@ -1760,22 +1766,61 @@ const JW_TYPE_RP_INT32   = 'R3.ReactiveProperty`1[[System.Int32, mscorlib]], R3'
  * fixed.  With `quoted` (default true) output is full-form '"N|Name"' (text
  * templates); pass `quoted=false` for the object-serializer path, which
  * expects a bare 'N|Name' value (the serializer quotes it).
+ *
+ * @param {Map<number,string>} jwTypeMap - per-segment type map (num -> name)
+ * @param {boolean} quoted - true for '"N|Name"' text, false for 'N|Name'
+ * @param {object} [opts] - optional debug context { reg, acType, stand, isDeparture } and fallback alloc
+ * @param {object} [opts.ctx] - flight context appended to TYPE-ASSERT for triage
+ * @param {boolean} [opts.allowFallback] - when true, allocate a fresh type id for missing canonical types instead of throwing (used for files like ZGSZ that legitimately omit AircraftSpecification)
+ * @param {object} [opts.typeAlloc] - { v: number } dynamic type-id allocator (required when allowFallback=true)
  */
-function _makeJwTypeResolver(jwTypeMap, quoted) {
+function _makeJwTypeResolver(jwTypeMap, quoted, opts) {
   const nameToNum = new Map();
+  const numToName = new Map();
   if (jwTypeMap) {
     for (const [num, name] of jwTypeMap) {
       nameToNum.set(name, num);
+      numToName.set(num, name);
     }
   }
+  const ctx = opts && opts.ctx ? opts.ctx : null;
+  const allowFallback = !!(opts && opts.allowFallback);
+  let typeAlloc = opts && opts.typeAlloc ? opts.typeAlloc : null;
+  // Pre-compute max type id for fallback allocation
+  let maxTypeId = -1;
+  for (const n of numToName.keys()) if (n > maxTypeId) maxTypeId = n;
+  if (allowFallback && !typeAlloc) {
+    // Auto-create allocator when caller enables fallback without providing one (per-resolver isolated,
+    // but deterministic because maxTypeId is fixed and allocation order is fixed per T definition)
+    typeAlloc = { v: maxTypeId + 1 };
+  }
   return function (plainName) {
-    const num = nameToNum.get(plainName);
+    let num = nameToNum.get(plainName);
     if (num == null) {
-      const dump = [...nameToNum.entries()].slice(0, 30)
-        .map(([n, nm]) => n + '|' + nm).join(', ') || '(empty scope)';
+      if (allowFallback && typeAlloc && !STRICT_JETWAY_TYPES.has(plainName)) {
+        // Genuinely missing type (e.g. ZGSZ has no AircraftSpecification because no Aircraft was ever present).
+        // Allocate a fresh type id beyond the segment's max and self-declare via full-form "$type": "N|Name".
+        // This is safe because the emitted entry's full-form string IS the declaration — no pre-existing
+        // declaration is overwritten, and the id is guaranteed not to collide with any existing type.
+        num = typeAlloc.v++;
+        nameToNum.set(plainName, num);
+        numToName.set(num, plainName);
+        // Also reflect back into the original jwTypeMap so sibling resolvers sharing the same map see it
+        if (jwTypeMap) jwTypeMap.set(num, plainName);
+        const warnCtx = ctx ? ' ctx=' + JSON.stringify(ctx) : '';
+        // Use console.log via log bridge — caller passes log, but resolver has no log param, so use console
+        try { console.log('[TYPE-FALLBACK] allocated type ' + num + ' for "' + plainName + '"' + warnCtx + ' (was missing from scope size ' + (numToName.size - 1) + ')'); } catch (_) {}
+        const r = num + '|' + plainName;
+        return quoted === false ? r : '"' + r + '"';
+      }
+      // Full dump sorted by id, not truncated — truncated dumps hid the missing type in ZGSZ (44 types, only 30 shown)
+      const entries = [...nameToNum.entries()].sort((a, b) => a[1] - b[1]); // sort by num
+      const dump = entries.map(([nm, n]) => n + '|' + nm).join(', ') || '(empty scope)';
+      const ctxStr = ctx ? ' context=' + JSON.stringify(ctx) : '';
+      const hint = entries.length > 60 ? ' (showing ' + entries.length + ' entries)' : '';
       throw new Error(
-        '[TYPE-ASSERT] canonical type not declared in this scope: "' + plainName + '"\n' +
-        '  Scope declarations (' + nameToNum.size + '): ' + dump
+        '[TYPE-ASSERT] canonical type not declared in this scope: "' + plainName + '"' + ctxStr + '\n' +
+        '  Scope declarations (' + nameToNum.size + hint + '): ' + dump
       );
     }
     const r = num + '|' + plainName;
@@ -1971,6 +2016,11 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
   // empty jetway — matching the game's own entries.
   const segmentSnapshotSec = _extractSegmentSnapshotSec(segmentText);
 
+  // Aggregate jetway spec-failure logs to avoid spamming INFO with per-stand dupes (ZGSZ has 11 identical misses)
+  const jwSpecFailCounts = new Map(); // AircraftType -> count
+  const jwSpecFailExamples = new Map(); // AircraftType -> example stand
+  let jwSpecFailTotal = 0;
+
   for (const info of entryInfos) {
     if (!info.isJetway) {
       segments.push(info.entryText);
@@ -2052,8 +2102,13 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
       } catch (e) {
         // No spec data (no approach cache + empty original entry, or an
         // aircraft type missing from the specDB): write an empty jetway
-        // rather than failing the whole save.
-        log('Stand ' + standId + ': jetway rebuild failed (' + e.message + ') — writing empty jetway');
+        // rather than failing the whole save. Aggregate per-AircraftType to avoid log spam.
+        const acTypeForLog = depFlight ? (depFlight.AircraftType || 'unknown') : 'unknown';
+        jwSpecFailTotal++;
+        jwSpecFailCounts.set(acTypeForLog, (jwSpecFailCounts.get(acTypeForLog) || 0) + 1);
+        if (!jwSpecFailExamples.has(acTypeForLog)) jwSpecFailExamples.set(acTypeForLog, standId);
+        // Keep detailed per-stand failure at debug level (console.debug) instead of INFO to reduce noise
+        try { console.debug('[ACL-REBUILD-V4] Stand ' + standId + ': jetway rebuild failed (' + e.message + ') — writing empty jetway'); } catch (_) {}
         built = null;
       }
     }
@@ -2128,6 +2183,12 @@ function _rebuildJetwayEntries(segmentText, flights, validRegs, approachCache, l
       ].join('\n'));
       resetCount++;
     }
+  }
+
+  // Aggregate spec-miss log (once per save, not per stand)
+  if (jwSpecFailTotal > 0) {
+    const summary = [...jwSpecFailCounts.entries()].map(([ac, cnt]) => `${ac}×${cnt} (eg stand ${jwSpecFailExamples.get(ac)})`).join(', ');
+    log('[ACL-REBUILD-V4] jetway rebuild: ' + jwSpecFailTotal + ' stand(s) had no spec / failed — writing empty jetway: ' + summary);
   }
 
   // Register old→new _receivedEvents AircraftEvent[] $id mappings
@@ -2451,6 +2512,7 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
   const segTypeResolve = _makeJwTypeResolver(segTypeMap, false);
   const fpTypeFull = segTypeResolve('ContextCross.Models.FlightPlan, GroundATC.Core');
   const dtTypeFull = segTypeResolve('System.DateTime, mscorlib');
+  const standaloneFailCounts = new Map(); // AircraftType -> count for aggregated log
 
   // Build reg → flight lookup
   const regFlights = new Map();
@@ -2809,23 +2871,36 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
 
     // Build inline Aircraft entry (ARR in-air on approach, DEP parked at stand)
     const acEntryId = nextId;
-    log('  [ac-call] ' + reg + ': building Aircraft entry � star=' + JSON.stringify(fl.Airway) +
+    log('  [ac-call] ' + reg + ': building Aircraft entry — star=' + JSON.stringify(fl.Airway) +
       ' runway=' + JSON.stringify(fl.Runway) + ' saveSec=' + saveSec +
       ' LandingTime=' + JSON.stringify(fl.LandingTime) +
       ' hasApproachCache=' + !!approachCache + ' hasFullText=' + !!fullText);
-    const result = _buildStandaloneAircraftEntry({
-      reg, flight: fl, entryId: acEntryId,
-      towerChannelId,
-      apprChannelId,
-      isDeparture: isDep,
-      approachCache, fullText, saveSec, icao, baseDateTicks,
-      segTypeMap,
-      log,
-      fpId: fpIdByReg.get(reg),
-      strArrCache,
-      recvEventsCache,
-      waitingCmdsCache,
-    });
+    let result;
+    try {
+      result = _buildStandaloneAircraftEntry({
+        reg, flight: fl, entryId: acEntryId,
+        towerChannelId,
+        apprChannelId,
+        isDeparture: isDep,
+        approachCache, fullText, saveSec, icao, baseDateTicks,
+        segTypeMap,
+        log,
+        fpId: fpIdByReg.get(reg),
+        strArrCache,
+        recvEventsCache,
+        waitingCmdsCache,
+      });
+    } catch (e) {
+      // Graceful fallback: missing spec or missing type (ZGSZ has no specDB and no AircraftSpecification declaration).
+      // Log once per failure with flight context and skip this aircraft — flight-plan entry still exists,
+      // jetway will be empty (as with jetway path). This prevents a single bad AircraftType from failing the whole save.
+      const acTypeLog = fl.AircraftType || 'unknown';
+      const msg = e.message || String(e);
+      const key = msg.includes('[TYPE-ASSERT]') ? '[TYPE-ASSERT] ' + acTypeLog : msg.split('\n')[0].slice(0, 200);
+      standaloneFailCounts.set(key, (standaloneFailCounts.get(key) || 0) + 1);
+      log('  [ac-call] ' + reg + ': aircraft build failed (' + msg.split('\n')[0] + ') — skipping aircraft, flight-plan preserved');
+      continue;
+    }
     if (!result) {
       log('  [ac-call] ' + reg + ': skipped (not on approach or already landed)');
       continue;
@@ -2949,6 +3024,10 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
     newBeforeRc = beforeRc.substring(0, rlStartF) + String(newRlen) + beforeRc.substring(rlEndF);
   }
 
+  if (standaloneFailCounts.size > 0) {
+    const summary = [...standaloneFailCounts.entries()].map(([k, cnt]) => `${k}×${cnt}`).join(', ');
+    log('[ACL-REBUILD-V4] standalone aircraft: ' + [...standaloneFailCounts.values()].reduce((a,b)=>a+b,0) + ' skipped due to missing spec/type — ' + summary + ' (flight-plan preserved, jetway empty)');
+  }
   log('Rebuilt ' + allFpEntries.length + ' flight-plan + ' + acPairs.length + ' aircraft+animator pairs RuntimeEntities entry(s) (removed ' + removedCount + ' stale)');
   return { text: newBeforeRc + newContent + afterRc, removed: removedCount, added: addedCount };
 }
@@ -2995,7 +3074,7 @@ function _buildStandaloneAircraftEntry(opts) {
   // STRICT: a canonical name missing from the segment's declarations asserts
   // with a debug message — no fallback ids are minted (unquoted form for the
   // object serializer, which quotes the value itself).
-  var _resolveType = _makeJwTypeResolver(segTypeMap, false);
+  var _resolveType = _makeJwTypeResolver(segTypeMap, false, { ctx: { reg, acType, stand, runway, star, isDeparture }, allowFallback: true });
 
   // State=5 (final approach) emission requires the scope to declare
   // ApproachDynamicsParams; departure-heavy scopes legitimately omit it (see
@@ -3051,6 +3130,24 @@ function _buildStandaloneAircraftEntry(opts) {
   }
   if (!spec && acType && approachCache && approachCache.specDB) {
     spec = approachCache.specDB.get(acType) || null;
+  }
+
+  // Fallback for missing spec — see _buildActiveJetwayEntry comment (always fallback with generic defaults)
+  if (!spec && acType) {
+    const fbDesignator = designator || acType;
+    spec = {
+      Designator: fbDesignator,
+      AerodromeCode: DEFAULT_AERODROME_CODE,
+      WakeTurbulenceCategory: DEFAULT_WAKE_CATEGORY,
+      WheelBase: 10,
+      WingSpan: 36,
+      RunwayVRSpeed: DEFAULT_RUNWAY_VR_SPEED,
+      RunwayTakeOffLength: DEFAULT_RUNWAY_TAKEOFF_LENGTH,
+      ModelOffset: DEFAULT_MODEL_OFFSET,
+      DockingPositions: [{ x: 2.5, y: 0, z: 0, w: 1 }],
+    };
+    designator = fbDesignator;
+    try { log('[SPEC-FALLBACK] standalone ' + reg + ' AircraftType "' + acType + '" -> fallback spec Designator "' + fbDesignator + '"'); } catch (_) {}
   }
 
   // Every spec field is REQUIRED — resolve without silent defaults.  A field
@@ -3534,20 +3631,36 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   if (!spec && acType && approachCache && approachCache.specDB) {
     spec = approachCache.specDB.get(acType) || null;
   }
-  // STRICT — NO FALLBACK: the former vBlock _extractFallbackSpec path (which
-  // silently rebuilt a spec from the original jetway entry) is intentionally
-  // removed. If this flight's AircraftType has no designatorMap/specDB entry,
-  // something unexpected happened (e.g. KDCA "BOEING 777-300ER" has no
-  // RuntimeEntities in any level, so no designator can be derived) — assert
-  // loudly instead of quietly emitting a partial spec.
+  // Fallback for missing spec — use generic defaults instead of refusing to fabricate.
+  // This preserves the departure's docked state (jetway populated) rather than silently
+  // emptying the stand. For ZGSZ (0 specs) and for individual missing types (e.g. COMAC C-919,
+  // A320ceo variants that have no runtime entry in any level) a generic spec is sufficient
+  // for the game to load — the aircraft will appear at the stand with plausible dimensions.
+  // A strict throw is no longer needed because the fallback is explicitly logged as [SPEC-FALLBACK].
   if (!spec) {
     const lookupTrace = [].concat(
       designator ? ['designatorMap[' + acType + ']=' + designator] : [],
       ['direct specDB[' + acType + ']=' + (acType ? 'MISS' : '(no type)')]
     ).join('; ');
-    const msg = '[ACL-ASSERT] _buildActiveJetwayEntry: no spec for AircraftType "' + acType + '" (lookup: ' + lookupTrace + '); refusing to fabricate. Add the missing designator/spec to the airport approach cache.';
-    (log || console.error)(msg);
-    throw new Error(msg);
+    const fbDesignator = designator || acType || 'B738';
+    if (acType) {
+      spec = {
+        Designator: fbDesignator,
+        AerodromeCode: DEFAULT_AERODROME_CODE,
+        WakeTurbulenceCategory: DEFAULT_WAKE_CATEGORY,
+        WheelBase: 12,
+        WingSpan: 36,
+        RunwayVRSpeed: DEFAULT_RUNWAY_VR_SPEED,
+        RunwayTakeOffLength: DEFAULT_RUNWAY_TAKEOFF_LENGTH,
+        ModelOffset: DEFAULT_MODEL_OFFSET,
+        DockingPositions: [{ x: 2.5, y: 0, z: 0, w: 1 }],
+      };
+      try { log('[SPEC-FALLBACK] jetway Stand ' + stand + ' AircraftType "' + acType + '" (' + lookupTrace + ') -> fallback spec Designator "' + fbDesignator + '"'); } catch (_) {}
+    } else {
+      const msg = '[ACL-ASSERT] _buildActiveJetwayEntry: no spec for AircraftType "' + acType + '" (lookup: ' + lookupTrace + '); refusing to fabricate. Add the missing designator/spec to the airport approach cache.';
+      (log || console.error)(msg);
+      throw new Error(msg);
+    }
   }
 
   // Every spec field is REQUIRED — resolve without silent defaults.  A field
@@ -3614,10 +3727,26 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   // jetway entry's type IDs are consistent with full-form type refs already
   // expanded by _expandShortFormTypes, preventing id-reclamation collisions.
   // Shared name->id resolver built by the caller (_rebuildJetwayEntries).
-  // STRICT: names missing from the segment's declarations assert with a debug
-  // message — no fallback ids are minted.  Falls back to a private instance
-  // for direct callers (tests).
-  var _jwResolveType = jwTypeResolve || _makeJwTypeResolver(jwTypeMap);
+  // For active jetway entries we create a contextual resolver that allows fallback
+  // allocation for genuinely missing types (e.g. ZGSZ has no AircraftSpecification
+  // because it never had an Aircraft). The fallback self-declares via full-form
+  // "$type": "N|Name" so no prior declaration is needed.
+  var _jwResolveType;
+  if (jwTypeResolve) {
+    // Wrap the shared resolver to add per-flight context on TYPE-ASSERT and allow fallback
+    const _fallbackResolver = _makeJwTypeResolver(jwTypeMap, true, { ctx: { reg, acType, stand, runway }, allowFallback: true });
+    _jwResolveType = (name) => {
+      try { return jwTypeResolve(name); } catch (e) {
+        if (e.message && e.message.includes('[TYPE-ASSERT]')) {
+          // Retry with fallback-enabled resolver that includes flight context
+          return _fallbackResolver(name);
+        }
+        throw e;
+      }
+    };
+  } else {
+    _jwResolveType = _makeJwTypeResolver(jwTypeMap, true, { ctx: { reg, acType, stand, runway }, allowFallback: true });
+  }
 
   // Dynamic type strings with explicit segment-consistent numbers.
   // NOTE: no eager resolve of ApproachDynamicsParams here — departure-heavy

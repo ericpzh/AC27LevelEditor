@@ -2,25 +2,48 @@
 
 ## Table of Contents
 
-- [ACL File Format](#acl-file-format)
-  - [Standard JSON-Plus Extensions](#standard-json-plus-extensions)
-  - [Non-Standard JSON Syntax](#non-standard-json-syntax-handled-by-pre-processor)
-  - [Two-Pass Parsing](#two-pass-parsing-srcaclacl_jsonjs)
-  - [Key Section Types](#key-section-types)
-- [Runway Routes (PKStaticEntities)](#runway-routes-pkstaticentities)
-- [SID and Missed Approach Extraction](#sid-and-missed-approach-extraction)
-- [Taxiway Segments (PKStaticEntities)](#taxiway-segments-pkstaticentities)
-- [Approach Aircraft Construction (State=30 & State=5)](#approach-aircraft-construction-state30--state5)
-  - [Unified Path Architecture](#unified-path-architecture)
-  - [State=5 Sub-types](#state5-sub-types)
-  - [Complete Position & Direction Math](#complete-position--direction-math)
-  - [saveTime Resolution Priority](#savetime-resolution-priority)
-  - [Verified Field Relationships (State=30)](#verified-field-relationships-state30)
-  - [ProgressRatio Formula](#progressratio-formula)
-  - [TAT (Total Approach Time) Computation](#tat-total-approach-time-computation)
-  - [Approach Altitude Ceiling](#approach-altitude-ceiling)
-- [Module API (`src/acl/approach.js`)](#module-api-srcaclapproachjs)
-- [Test](#test)
+- [AC27 ACL File Format \& Approach Math](#ac27-acl-file-format--approach-math)
+  - [Table of Contents](#table-of-contents)
+  - [ACL File Format](#acl-file-format)
+    - [Standard JSON-Plus Extensions](#standard-json-plus-extensions)
+    - [Non-Standard JSON Syntax (handled by pre-processor)](#non-standard-json-syntax-handled-by-pre-processor)
+    - [Two-Pass Parsing (`src/acl/acl_json.js`)](#two-pass-parsing-srcaclacl_jsonjs)
+    - [Key Section Types](#key-section-types)
+    - [Timeline Frames (Weather / Wind / Runway)](#timeline-frames-weather--wind--runway)
+  - [File Schema (v4 Only)](#file-schema-v4-only)
+    - [GATCARC4 Binary Container](#gatcarc4-binary-container)
+    - [Odin JSON Text Dialect](#odin-json-text-dialect)
+    - [v4 Structure at a Glance](#v4-structure-at-a-glance)
+    - [$blobdoc Nested Document Pattern](#blobdoc-nested-document-pattern)
+    - [PKStaticEntities $iref/$id Reference System](#pkstaticentities-irefid-reference-system)
+    - [v4 Flight-Plan Entries](#v4-flight-plan-entries)
+    - [Independent Type Numbering](#independent-type-numbering)
+      - [Scope-Aware Type Expansion During Save](#scope-aware-type-expansion-during-save)
+  - [Runway Routes (PKStaticEntities)](#runway-routes-pkstaticentities)
+  - [SID and Missed Approach Extraction](#sid-and-missed-approach-extraction)
+  - [Taxiway Segments (PKStaticEntities)](#taxiway-segments-pkstaticentities)
+  - [Approach Aircraft Construction (State=30 \& State=5)](#approach-aircraft-construction-state30--state5)
+    - [Unified Path Architecture](#unified-path-architecture)
+    - [State=5 Sub-types](#state5-sub-types)
+    - [Complete Position \& Direction Math](#complete-position--direction-math)
+      - [Step 1: ProgressRatio](#step-1-progressratio)
+      - [Step 2: State determination (IAF passage)](#step-2-state-determination-iaf-passage)
+      - [Step 3a: State=30 Position \& Direction](#step-3a-state30-position--direction)
+      - [Step 3b: State=5 Position \& Direction](#step-3b-state5-position--direction)
+      - [State=5 DynamicsParams fields](#state5-dynamicsparams-fields)
+      - [Summary](#summary)
+    - [saveTime Resolution Priority](#savetime-resolution-priority)
+    - [Verified Field Relationships (State=30)](#verified-field-relationships-state30)
+    - [ProgressRatio Formula](#progressratio-formula)
+    - [TAT (Total Approach Time) Computation](#tat-total-approach-time-computation)
+      - [Coordinate Scale](#coordinate-scale)
+      - [Full Terminal Path Length](#full-terminal-path-length)
+      - [Aircraft Speed](#aircraft-speed)
+      - [TAT Formula](#tat-formula)
+      - [Implementation Status](#implementation-status)
+    - [Approach Altitude Ceiling](#approach-altitude-ceiling)
+  - [Module API (`src/acl/approach.js`)](#module-api-srcaclapproachjs)
+  - [Test](#test)
 
 ## ACL File Format
 
@@ -233,7 +256,7 @@ Runway entries live in `StaticData.$blobdoc.PKStaticEntities` as `"$k": "runway:
 | Field | Description |
 |---|---|
 | `Name` | Runway designator used by flight plans — e.g. `"31L"`, `"19"`, `"01"` |
-| `PhysicalName` | Runway pair — e.g. `"13R/31L"`, `"01/19"` |
+| `PhysicalName` | Runway pair — e.g. `"13R/31L"`, `"01/19"` — **v5:** nested inside `PhysicalRunwayStaticItem` (inline object or `$iref` → inline, sometimes double-indirected via `physical-runway:` PK alias). Resolved via `_extractNestedObject(block,'PhysicalRunwayStaticItem')` → `_findPhysicalNameByIref(aclText,pkIndex,iref)` (PK index + raw-text `"$id": N` scan fallback for inline ids e.g. ZSJN 01 `$iref:8541`). Top-level `PhysicalName` is fallback for pre-v5 files. |
 | `Routes` | Contains `$rcontent` array of route entries, each with `Name`, `RouteType`, `AirwayNodes` ($iref array) |
 
 **Route Types** (verified against both KJFK and ZSJN production .acl files):
@@ -247,21 +270,27 @@ Runway entries live in `StaticData.$blobdoc.PKStaticEntities` as `"$k": "runway:
 
 **Important:** The authoritative source for valid STAR↔runway combinations is the runway entry's `Routes` where `RouteType === 0`. This is a superset of what `appPointMap` covers (which is limited to State=30 aircraft entries at snapshot time).
 
-**Extraction algorithm** (`extractStarRunwayMappings` — see approach.js):
+**Extraction algorithm** (`extractStarRunwayMappings` — see approach.js, v5-aware):
 1. Build the PK index (`buildPkIndex`) and iterate `runway:*` entries in `PKStaticEntities`
-2. For each runway, navigate its `Routes.$rcontent` array (skip nested arrays like `comparer`)
-3. For each route with `RouteType === 0`, collect `Name` (STAR name) and its `AirwayNodes` `$iref`s
-4. Return `{ starRunwayMap: {star → [runways]}, runwayStarMap: {runway → [stars]} }`
+2. For each runway, resolve `PhysicalName` via `PhysicalRunwayStaticItem` (see above); skip if `Name` missing or `PhysicalName` present but lacks `/` (v5 fallback: `physName = runwayName` when still missing)
+3. Navigate its `Routes.$rcontent` array (skip nested arrays like `comparer`)
+4. For each route with `RouteType === 0`, collect `Name` (STAR name) and its `AirwayNodes` `$iref`s
+5. Return `{ starRunwayMap: {star → [runways]}, runwayStarMap: {runway → [stars]} }`
+6. **v5 merge in `buildApproachCache`:** the per-file maps are **merged across `allAclTexts[]`** (every `.acl` in the airport) with deduped runway lists — a single level no longer carries all runways (ZSJN `leisure_1` = only RWY19, others = only RWY01)
+
+**v5 per-level filtering:** the area/STAR/SID/APPR/runway subsets differ per level; `buildApproachCache` merges `state5ParamsMap`/`appPointMap`/`starPaths`/`starWaypoints`/`runwayThresholds`/`sidPaths`/`missedAppPaths`/`apprPaths`/`airwayNodes` across all files (first hit or deduped, see `allAclTexts`).
 
 ## SID and Missed Approach Extraction
 
-Follows the identical pattern in `sid_goaround.js`, operating on `RouteType === 2` (SID) and `RouteType === 3` (Missed Approach) routes. The six functions exported by `sid_goaround.js` mirror the approach.js STAR helpers (all route via PKStaticEntities runway entries):
+Follows the identical pattern in `sid_goaround.js`, operating on `RouteType === 2` (SID) and `RouteType === 3` (Missed Approach) routes. The six functions exported by `sid_goaround.js` mirror the approach.js STAR helpers (all route via PKStaticEntities runway entries — **v5:** `_extractRouteMappingsByType` now resolves `PhysicalName` via `PhysicalRunwayStaticItem` `$iref` indirection, with `resolveIref` PK index + raw-text `"$id": N` scan + double-`$iref` walk for the inline physical-runway object):
 - `extractSidRunwayMappings(aclText)` → `{ sidRunwayMap, runwaySidMap }`
 - `extractMissedApproachMappings(aclText)` → `{ missedAppMap, runwayMissedAppMap }`
 - `buildSidPaths(aclText, sidRunwayMap)` → `{ sidName: [{x, z}, ...] }`
 - `buildMissedApproachPaths(aclText, missedAppMap)` → `{ maName: [{x, z}, ...] }`
 - `extractApprRunwayMappings(aclText)` → `{ apprRunwayMap, runwayApprMap }` — Approach routes (RouteType=1)
 - `buildApprPaths(aclText, apprRunwayMap)` → `{ apprName: [{x, z}, ...] }`
+
+**v5 merge:** `buildApproachCache` loops over `allAclTexts[]` for each extractor and merges the per-file maps/paths with runway-dedup (same as STAR merge) — `sidPaths`/`missedAppPaths`/`apprPaths` are built per-file then merged.
 
 ## Taxiway Segments (PKStaticEntities)
 
@@ -277,6 +306,10 @@ Parsed by `src/acl/taxiway.js` (`parseTaxiwayPaths(aclText)`):
 - **Stand-access segments are included** (marked with `isStandAccess: true`) instead of being excluded — segments where ANY endpoint node touches a stand position (via `TailPosition` / `NosePosition` `$iref`s from `stand:*` entries) get the flag; non-stand segments omit it
 - Returns `{ paths: [{ name, flags, points: [{x, z}], isStandAccess?: boolean }] }`
 - **Merged from all files in `buildApproachCache()`**: each file's taxiway paths are parsed inline during the main approach-data loop (no separate second pass), with coordinate-based dedup at `toFixed(2)` precision. Exposed via `collect-values` as `_taxiwayPaths`
+
+## Areas (NonPKStaticEntities) — v5 type 30→31
+
+Areas live in `StaticData.$blobdoc.NonPKStaticEntities.$rcontent` as type `ContextCross.Models.Area` — **v4 = 30, v5 = 31**. `scenery.js:_parseAreas` checks the name substring first (`entryBlock.includes('ContextCross.Models.Area')`) then falls back to numeric `30|31` for both bare (`30`) and quoted (`"30|ContextCross.Models.Area,..."`) `"$type"` forms. Hard-coded `30` is gone. Fields: `AreaType` (0=boundary,1=apron,2=building), `NodePositions` Vector3 ring. `areaData` in `buildApproachCache` is not yet merged — ground painter uses the first file's areas.
 
 ## Approach Aircraft Construction (State=30 & State=5)
 
@@ -581,7 +614,10 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 ## Module API (`src/acl/approach.js`)
 
 **Data Extraction:**
-- `extractSpecificationDB(aclText)` → `Map<Designator, Spec>` — 14 designators across ZSJN+KJFK. Scans the decoded text for `Specification` objects inside jetway `DockingAircraft` entries and `RuntimeData` aircraft entries.
+- `extractSpecificationDB(aclText)` → `Map<Designator, Spec>` — Scans the decoded text for `Specification` objects inside jetway `DockingAircraft` entries and `RuntimeData` aircraft entries. **v5:** primary spec source is `aircraft_profiles.csv` via `loadGlobalSpecDB`; this function is fallback for pre-v5 fixtures without a CSV (still exports `specDB` indexed by both Designator and AircraftType).
+- `parseAircraftProfilesCsv(csvText)` → `{specDB, designatorMap}` — Parses `StreamingAssets/aircraft_profiles.csv` (`AircraftType,Designator,AerodromeCode,WakeCategory,CwtCategory,WheelBase,ModelOffset,WingSpan,DockingPositions,VR,ISA_MTOW_ToL`; DockingPositions `|` split, ModelOffset `/` split) into the global specDB (indexed by both AircraftType and Designator) and `AircraftType → Designator` map. Columns parsed per spec: `Designator`, `AerodromeCode` (charCode), `WakeTurbulenceCategory`, `WheelBase`, `ModelOffset {x,y,z}`, `WingSpan`, `DockingPositions [{x,y,z,w}]`, `RunwayVRSpeed`, `RunwayTakeOffLength`. Missing DockingPositions falls back to `[{x:2.5,y:0,z:0,w:1}]`.
+- `findAircraftProfilesCsv(airportDir)` → `string|null` — Locates the CSV from `airportDir` (…/Airports/<ICAO>/Levels) via `path.resolve(airportDir,'..','..','..','aircraft_profiles.csv')` then walk-up search for `aircraft_profiles.csv` / `StreamingAssets/aircraft_profiles.csv` / `GroundATC_Data/StreamingAssets/aircraft_profiles.csv`.
+- `loadGlobalSpecDB(airportDir)` → `{specDB, designatorMap}|null` — Cached global loader: returns cloned Maps from the parsed CSV (first call parses + caches in `_globalSpecDB`/`_globalDesignatorMap`; logs `[APPROACH-CACHE] Loaded global specDB …`). Used by `buildApproachCache` to seed the airport cache before the two-pass scan.
 - `extractApproachData(aclText)` → `Array<{route, runway, progressRatio, flyPoints, appPoints, ...}>` — all State=30 aircraft. **Returns `[]`** — v4 files have no pre-spawned aircraft (the game computes state at runtime).
 - `extractState5Data(aclText)` → `Array<{route, runway, touchDownPosition, approachDirection, initialPosition, pathPointList}>` — **stub returning `[]`** (v4 has no pre-spawned aircraft; final-approach parameters come from `resolveApproachProcedureData`).
 - `extractTypeMap(aclText)` → `Map<number, string>` — captures all fully-qualified `$type` declarations from a file; type numbers are per-file in Unity's serialization
@@ -593,11 +629,12 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 **Path Resolution:**
 - `resolveFlyApproachPoints(aclText, route, runway)` → `Vector3[]` — via the PKStaticEntities runway → `Routes` → `AirwayNodes` `$iref` chain
 
-**Runway Routes & STAR Mapping:**
-- `extractStarRunwayMappings(aclText)` → `{starRunwayMap: {star→[runways]}, runwayStarMap: {runway→[stars]}}` — authoritative from PKStaticEntities `runway:*` entries' `Routes` (RouteType=0)
-- `extractStarWaypoints(aclText)` → `{ "STAR|runway": [{name, x, z}, ...] }` — each STAR route's ordered waypoint list (route order: entry → IAF), resolving the route's `AirwayNodes` `$iref`s to named airway-node entities (the composer's "Fly Waypoint" picker target set). Parses each runway's nested `Routes` `$rcontent` for RouteType=0 entries, skipping stubs; shares the v4 PK-index lazy-require pattern (`./v4_pk_index` inside the function). Serialized in the approach cache as `starWaypoints` (CACHE_VERSION bump required — v22)
-- `resolveApproachProcedureData(aclText, runway, hintPosition?)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?} | null` — resolves final approach parameters for a runway from PKStaticEntities runway `Routes` (RouteType=1); when `hintPosition` is provided and multiple variants exist, picks the closest one. Returns `routeName` from the selected procedure's `Name` field (extracted via `_extractString` from the route block).
-- `_parseRunwayThresholds(aclText)` → `{[PhysicalName]: {thresholds: [{x,z}, {x,z}]}}` — runway endpoint positions via the runway's `ThresholdPoints` `$iref`s → taxiway-node positions
+**Runway Routes & STAR Mapping (v5-aware — `PhysicalRunwayStaticItem` indirection, merged cache):**
+- `extractStarRunwayMappings(aclText)` → `{starRunwayMap: {star→[runways]}, runwayStarMap: {runway→[stars]}}` — authoritative from PKStaticEntities `runway:*` entries' `Routes` (RouteType=0). Resolves `PhysicalName` via `PhysicalRunwayStaticItem` (see above); skips entry if `Name` missing or `PhysicalName` present but lacks `/`.
+- `extractStarWaypoints(aclText)` → `{ "STAR|runway": [{name, x, z}, ...] }` — each STAR route's ordered waypoint list (route order: entry → IAF), resolving the route's `AirwayNodes` `$iref`s to named airway-node entities (the composer's "Fly Waypoint" picker target set). Parses each runway's nested `Routes` `$rcontent` for RouteType=0 entries, skipping stubs; shares the v4 PK-index lazy-require pattern (`./v4_pk_index` inside the function). Serialized in the approach cache as `starWaypoints` (CACHE_VERSION bump required — v23). v5: also resolves `PhysicalName` via `PhysicalRunwayStaticItem`.
+- `resolveApproachProcedureData(aclText, runway, hintPosition?)` → `{pathPointList, touchDownPosition, approachDirection, initialPosition, routeName?} | null` — resolves final approach parameters for a runway from PKStaticEntities runway `Routes` (RouteType=1); when `hintPosition` is provided and multiple variants exist, picks the closest one. Returns `routeName` from the selected procedure's `Name` field (extracted via `_extractString` from the route block). `TouchDownPosition` via `TouchDownPoint $iref` → taxiway-node; throws on missing.
+- `_parseRunwayThresholds(aclText)` → `{[PhysicalName]: {thresholds: [{x,z}, {x,z}]}}` — runway endpoint positions via the runway's `ThresholdPoints` `$iref`s → taxiway-node positions. v5: `PhysicalName` via `PhysicalRunwayStaticItem` + `_findPhysicalNameByIref` (double-`$iref` + raw `"$id"` scan).
+- `_findPhysicalNameByIref(aclText, pkIndex, iref)` → `string|null` — Helper for v5: resolves a `PhysicalRunwayStaticItem` `$iref` to its `PhysicalName` (PK index first, double-`$iref` walk, then raw-text `"$id": N` scan for inline objects e.g. ZSJN 01 `$iref:8541`).
 
 **Computation:**
 - `computeProgressRatio(landingTimeTicks, saveTimeTicks, totalApproachTime)` → `0..1`
@@ -611,8 +648,8 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 - `computeFullTerminalPath(aclText, star, runway)` → `{flyLen, procLen, tdDist, total}` — full terminal path length in game units combining FlyApproach + procedure + touchdown segments. Passes the last FlyApproach point as `hintPosition` to `resolveApproachProcedureData` so the correct approach variant is selected when multiple exist for the runway.
 
 **Designator Mapping & Cache:**
-- `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references `StaticItems` (flight-plan → Registration, AircraftType, Stand) with `RuntimeEntities`. Scans `StaticItems` for flight-plan entries then cross-references `RuntimeEntities` in two passes: **(Pass A)** `aircraft:REG` entries (Registration → Specification.Designator), **(Pass B)** `jetway:STAND` entries with `DockingAircraft.Specification.Designator` (linked via Stand → AircraftType from static-item Stand field). Jetway fallback covers aircraft whose only runtime representation is inside a jetway's `DockingAircraft`. Produces a complete map for spec lookup during save
-- `buildApproachCache(airportDir, progressCallback?, fileFilter?)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, typeNameIndex, fileTypeMaps, fileTypeNameIndexes, state5ParamsMap, starPaths, starWaypoints, runwayThresholds, airportScale, starRunwayMap, runwayStarMap, taxiwayPaths, sidRunwayMap, runwaySidMap, sidPaths, missedAppMap, runwayMissedAppMap, missedAppPaths, apprRunwayMap, runwayApprMap, apprPaths}` — scans all .acl files for an airport; the first file provides the scenery-derived maps (runway routes, taxiway paths, SID/approach/missed paths, type maps, `starWaypoints` via `extractStarWaypoints`). `fileFilter(filename)` overrides the built-in skip regex (`/tutorial|bench|test|crossrunway|dev|endless|\.prod/i`); `electron/main.js` passes `isCacheAclFile` so whitelisted demo/prod visible bases (e.g. `ZGSZ_Endless.acl`) are scanned even when they match the regex — without it their geometry cache would come back empty.
+- `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references `StaticItems` (flight-plan → Registration, AircraftType, Stand) with `RuntimeEntities`. Scans `StaticItems` for flight-plan entries then cross-references `RuntimeEntities` in two passes: **(Pass A)** `aircraft:REG` entries (Registration → Specification.Designator), **(Pass B)** `jetway:STAND` entries with `DockingAircraft.Specification.Designator` (linked via Stand → AircraftType from static-item Stand field). Jetway fallback covers aircraft whose only runtime representation is inside a jetway's `DockingAircraft`. Produces a complete map for spec lookup during save. **v5:** the global CSV seeds the map before the scan (see above).
+- `buildApproachCache(airportDir, progressCallback?, fileFilter?)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, typeNameIndex, fileTypeMaps, fileTypeNameIndexes, state5ParamsMap, starPaths, starWaypoints, runwayThresholds, airportScale, starRunwayMap, runwayStarMap, taxiwayPaths, sidRunwayMap, runwaySidMap, sidPaths, missedAppMap, runwayMissedAppMap, missedAppPaths, apprRunwayMap, runwayApprMap, apprPaths, airwayNodes}` — scans all `.acl` files for an airport. **v5 (2026-08-24):** collects `allAclTexts[]` and **merges every scenery-derived map across all files** (STAR/SID/APPR/runway/waypoints/thresholds/airwayNodes/sidPaths/missedAppPaths/apprPaths all multi-file with dedup) because each level now carries only a subset of runways/procedures (ZSJN `leisure_1` = RWY19 only, others = RWY01 only). Also loads the global `specDB`/`designatorMap` from `aircraft_profiles.csv` before the per-file loop (same for all airports). The first file no longer dominates. `fileFilter(filename)` overrides the built-in skip regex (`/tutorial|bench|test|crossrunway|dev|endless|\.prod/i`); `electron/main.js` passes `isCacheAclFile` so whitelisted demo/prod visible bases (e.g. `ZGSZ_Endless.acl`) are scanned even when they match the regex — without it their geometry cache would come back empty.
 
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, touchDownPosition?, approachCap?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=30 `$k/$v` JSON block

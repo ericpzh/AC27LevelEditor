@@ -798,19 +798,66 @@ function _findRunwayGuid(text, runwayName) {
  * @param {string} aclText - raw ACL text
  * @returns {{[name: string]: {thresholds: Array<{x: number, z: number}>}}}
  */
+function _findPhysicalNameByIref(aclText, pkIndex, iref) {
+  // Try PK index first (physical-runway PK entry)
+  const resolved = pkIndex ? require('./v4_pk_index').resolveIref(pkIndex, iref) : null;
+  if (resolved) {
+    const n = require('./v4_pk_index').extractStringFromV4(resolved.block, 'PhysicalName');
+    if (n) return n;
+    // PK entry's block may itself be "$iref:X" (double indirection via physical-runway alias)
+    const trimmed = resolved.block.trim();
+    if (trimmed.startsWith('$iref:')) {
+      const iref2 = parseInt(trimmed.slice(6).trim(), 10);
+      const resolved2 = require('./v4_pk_index').resolveIref(pkIndex, iref2);
+      if (resolved2) {
+        const n2 = require('./v4_pk_index').extractStringFromV4(resolved2.block, 'PhysicalName');
+        if (n2) return n2;
+      }
+    }
+  }
+  // Fallback: $iref points to an inline object inside another PK entry (e.g. runway:19's PhysicalRunwayStaticItem $id 8541)
+  // Search raw text for "$id": iref and extract PhysicalName nearby
+  if (aclText) {
+    const idStr = '"$id": ' + iref;
+    const idx = aclText.indexOf(idStr);
+    if (idx >= 0) {
+      const snippet = aclText.substring(Math.max(0, idx - 500), idx + 2000);
+      const m = snippet.match(/"PhysicalName":\s*"([^"]+)"/);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
 function _parseRunwayThresholds(aclText) {
   const result = {};
 
-  // v4: resolve ThresholdPoints $iref → taxiway-node positions via pkIndex.
+  // v4/v5: resolve ThresholdPoints $iref → taxiway-node positions via pkIndex.
   // Each runway entry has "ThresholdPoints": { "$rcontent": [$iref:A, $iref:B] }
   // where both resolve to taxiway-node entities with ReactivePosition.
+  // v5: PhysicalName is inside nested PhysicalRunwayStaticItem (inline or $iref to inline), not top-level.
   const { buildPkIndex, resolveIref, extractVector3FromV4, extractStringFromV4, extractIrefArray } = require('./v4_pk_index');
   const pkIndex = buildPkIndex(aclText);
   const rwMap = pkIndex.byType.get('runway');
   if (!rwMap) return result;
 
   for (const [, rwEntry] of rwMap) {
-    const physName = extractStringFromV4(rwEntry.block, 'PhysicalName');
+    let physName = null;
+    const physBlock = _extractNestedObject(rwEntry.block, 'PhysicalRunwayStaticItem');
+    if (physBlock) {
+      const trimmed = physBlock.trim();
+      if (trimmed.startsWith('$iref:')) {
+        const iref = parseInt(trimmed.slice(6).trim(), 10);
+        physName = _findPhysicalNameByIref(aclText, pkIndex, iref);
+        if (!physName) {
+          const resolved = resolveIref(pkIndex, iref);
+          if (resolved) physName = extractStringFromV4(resolved.block, 'PhysicalName');
+        }
+      } else {
+        physName = extractStringFromV4(physBlock, 'PhysicalName');
+      }
+    }
+    if (!physName) physName = extractStringFromV4(rwEntry.block, 'PhysicalName'); // fallback for older format
     if (!physName || !physName.includes('/')) continue;
     if (result[physName]) continue; // deduplicate by physical name
 
@@ -929,15 +976,39 @@ function extractStarRunwayMappings(aclText) {
   const runwayStarMap = {};  // { runway → [starName, ...] }
   if (!aclText) return { starRunwayMap, runwayStarMap };
 
-  // v4: iterate runway:* entries from PKStaticEntities
+  // v4/v5: iterate runway:* entries from PKStaticEntities
   const { buildPkIndex, getPkEntriesByType, extractStringFromV4, extractIrefArray } = require('./v4_pk_index');
   const pkIndex = buildPkIndex(aclText);
   const runways = getPkEntriesByType(pkIndex, 'runway');
 
   for (const rw of runways) {
     const runwayName = extractStringFromV4(rw.block, 'Name');
-    const physName = extractStringFromV4(rw.block, 'PhysicalName');
-    if (!runwayName || !physName || !physName.includes('/')) continue;
+    // v5: PhysicalName is inside nested PhysicalRunwayStaticItem (inline or $iref to inline)
+    let physName = null;
+    const physBlock = _extractNestedObject(rw.block, 'PhysicalRunwayStaticItem');
+    if (physBlock) {
+      const trimmed = physBlock.trim();
+      if (trimmed.startsWith('$iref:')) {
+        const iref = parseInt(trimmed.slice(6).trim(), 10);
+        physName = _findPhysicalNameByIref(aclText, pkIndex, iref);
+        if (!physName) {
+          const { resolveIref: _resolve } = require('./v4_pk_index');
+          const resolved = _resolve(pkIndex, iref);
+          if (resolved) physName = extractStringFromV4(resolved.block, 'PhysicalName');
+        }
+      } else {
+        physName = extractStringFromV4(physBlock, 'PhysicalName');
+      }
+    }
+    if (!physName) physName = extractStringFromV4(rw.block, 'PhysicalName');
+    if (!runwayName) continue;
+    if (physName && !physName.includes('/')) continue;
+    if (!physName) {
+      // Fallback for v5 inline $iref case where PhysicalName is in shared object: use runwayName's reciprocal as hint
+      // For ZSJN 01/19, both runways share the same physical runway, so we can infer physName as runwayName + reciprocal
+      // But we don't need strict physName for STAR mapping — just ensure runway is processed
+      physName = runwayName; // placeholder to pass validation, not used as key
+    }
 
     // Navigate Routes.$rcontent within the runway block
     const routesBlock = _extractNestedObject(rw.block, 'Routes');
@@ -1000,8 +1071,26 @@ function extractStarWaypoints(aclText) {
 
   for (const rw of runways) {
     const runwayName = extractStringFromV4(rw.block, 'Name');
-    const physName = extractStringFromV4(rw.block, 'PhysicalName');
-    if (!runwayName || !physName || !physName.includes('/')) continue;
+    // v5: PhysicalName is inside nested PhysicalRunwayStaticItem (inline or $iref to inline)
+    let physName = null;
+    const physBlock = _extractNestedObject(rw.block, 'PhysicalRunwayStaticItem');
+    if (physBlock) {
+      const trimmed = physBlock.trim();
+      if (trimmed.startsWith('$iref:')) {
+        const iref = parseInt(trimmed.slice(6).trim(), 10);
+        physName = _findPhysicalNameByIref(aclText, pkIndex, iref);
+        if (!physName) {
+          const resolved = resolveIref(pkIndex, iref);
+          if (resolved) physName = extractStringFromV4(resolved.block, 'PhysicalName');
+        }
+      } else {
+        physName = extractStringFromV4(physBlock, 'PhysicalName');
+      }
+    }
+    if (!physName) physName = extractStringFromV4(rw.block, 'PhysicalName');
+    if (!runwayName) continue;
+    if (physName && !physName.includes('/')) continue;
+    if (!physName) physName = runwayName; // fallback for v5 $iref to inline case (shared physical runway)
 
     // Navigate Routes.$rcontent within the runway block
     const routesBlock = _extractNestedObject(rw.block, 'Routes');
@@ -2101,6 +2190,121 @@ function buildStarPaths(aclText, appPointMap, starRunwayMap) {
   return starPaths;
 }
 
+// ─── 9d. Global aircraft_profiles.csv specDB (v5) ────────────────────
+// v5: specs are no longer serialized in .acl — they live in
+// GroundATC_Data/StreamingAssets/aircraft_profiles.csv and apply
+// globally to all airports. Build once, reuse for every airport.
+let _globalSpecDB = null;
+let _globalDesignatorMap = null;
+
+function parseAircraftProfilesCsv(csvText) {
+  const specDB = new Map();
+  const designatorMap = new Map();
+  const lines = csvText.split(/\r?\n/);
+  // header: AircraftType,Designator,AerodromeCode,WakeTurbulenceCategory,CwtCategory,WheelBase,ModelOffset,WingSpan,DockingPositions,VR,ISA_MTOW_ToL
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    // CSV has no quoted commas — simple split is safe (DockingPositions uses '|' and '/' only)
+    const cols = line.split(',');
+    if (cols.length < 11) continue;
+    const aircraftType = cols[0].trim();
+    const designator = cols[1].trim();
+    const aeroStr = cols[2].trim();
+    const wakeStr = cols[3].trim();
+    const wheelBase = parseFloat(cols[5]);
+    const moStr = cols[6].trim();
+    const wingSpan = parseFloat(cols[7]);
+    const dockingStr = cols[8].trim();
+    const vr = parseInt(cols[9], 10);
+    const toLen = parseInt(cols[10], 10);
+    if (!aircraftType || !designator) continue;
+
+    let modelOffset = DEFAULT_MODEL_OFFSET;
+    if (moStr) {
+      const p = moStr.split('/').map(parseFloat);
+      if (p.length === 3 && p.every(n => !isNaN(n))) modelOffset = { x: p[0], y: p[1], z: p[2] };
+    }
+    const dockingPositions = [];
+    if (dockingStr) {
+      for (const entry of dockingStr.split('|')) {
+        const v = entry.split('/').map(parseFloat);
+        if (v.length === 4 && v.every(n => !isNaN(n))) dockingPositions.push({ x: v[0], y: v[1], z: v[2], w: v[3] });
+      }
+    }
+    if (dockingPositions.length === 0) dockingPositions.push({ x: 2.5, y: 0, z: 0, w: 1 });
+
+    const aeroCode = aeroStr ? aeroStr.charCodeAt(0) : DEFAULT_AERODROME_CODE;
+    const wakeCat = wakeStr ? wakeStr.charCodeAt(0) : DEFAULT_WAKE_CATEGORY;
+
+    const spec = {
+      Designator: designator,
+      AerodromeCode: aeroCode,
+      WakeTurbulenceCategory: wakeCat,
+      WheelBase: isNaN(wheelBase) ? 0 : wheelBase,
+      ModelOffset: modelOffset,
+      WingSpan: isNaN(wingSpan) ? 0 : wingSpan,
+      DockingPositions: dockingPositions,
+      RunwayVRSpeed: isNaN(vr) ? DEFAULT_RUNWAY_VR_SPEED : vr,
+      RunwayTakeOffLength: isNaN(toLen) ? DEFAULT_RUNWAY_TAKEOFF_LENGTH : toLen,
+    };
+    // key by both Designator (B738) and AircraftType (BOEING 737-800) for lookup flexibility
+    if (!specDB.has(designator)) specDB.set(designator, spec);
+    if (!specDB.has(aircraftType)) specDB.set(aircraftType, spec);
+    if (!designatorMap.has(aircraftType)) designatorMap.set(aircraftType, designator);
+    if (!designatorMap.has(designator)) designatorMap.set(designator, designator);
+  }
+  return { specDB, designatorMap };
+}
+
+function findAircraftProfilesCsv(airportDir) {
+  const fs = require('fs');
+  const path = require('path');
+  // airportDir is .../Airports/<ICAO>/Levels → 3 ups = StreamingAssets
+  try {
+    const candidate = path.resolve(airportDir, '..', '..', '..', 'aircraft_profiles.csv');
+    if (fs.existsSync(candidate)) return candidate;
+  } catch (_) {}
+  // walk up searching
+  try {
+    const fs2 = require('fs');
+    const path2 = require('path');
+    let cur = airportDir;
+    for (let i = 0; i < 8; i++) {
+      cur = path2.dirname(cur);
+      if (!cur || cur === path2.dirname(cur)) break;
+      const a = path2.join(cur, 'aircraft_profiles.csv');
+      if (fs2.existsSync(a)) return a;
+      const b = path2.join(cur, 'StreamingAssets', 'aircraft_profiles.csv');
+      if (fs2.existsSync(b)) return b;
+      const c = path2.join(cur, 'GroundATC_Data', 'StreamingAssets', 'aircraft_profiles.csv');
+      if (fs2.existsSync(c)) return c;
+    }
+  } catch (_) {}
+  return null;
+}
+
+function loadGlobalSpecDB(airportDir) {
+  if (_globalSpecDB && _globalDesignatorMap) {
+    return { specDB: new Map(_globalSpecDB), designatorMap: new Map(_globalDesignatorMap) };
+  }
+  const csvPath = airportDir ? findAircraftProfilesCsv(airportDir) : null;
+  if (!csvPath) return null;
+  try {
+    const fs = require('fs');
+    const text = fs.readFileSync(csvPath, 'utf-8');
+    const parsed = parseAircraftProfilesCsv(text);
+    if (parsed.specDB.size === 0) return null;
+    _globalSpecDB = parsed.specDB;
+    _globalDesignatorMap = parsed.designatorMap;
+    console.log('[APPROACH-CACHE] Loaded global specDB from aircraft_profiles.csv: ' + parsed.specDB.size + ' specs (' + csvPath + ')');
+    return { specDB: new Map(parsed.specDB), designatorMap: new Map(parsed.designatorMap) };
+  } catch (e) {
+    console.log('[APPROACH-CACHE] aircraft_profiles.csv load failed: ' + e.message);
+    return null;
+  }
+}
+
 // ─── 10. Approach Cache Builder ────────────────────────────────────
 
 /**
@@ -2136,11 +2340,19 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
 
   // Collect all approach entries from all files
   const allEntries = [];
+  // v5: global specDB from aircraft_profiles.csv (same for all airports)
   let specDB = new Map();
   let designatorMap = new Map();
+  const _global = loadGlobalSpecDB(airportDir);
+  if (_global) {
+    specDB = _global.specDB;
+    designatorMap = _global.designatorMap;
+    log('Loaded global specDB from aircraft_profiles.csv: ' + specDB.size + ' specs (v5, shared across all airports)');
+  }
   const typeMap = new Map(); // per-airport: type_number → type_name
   const fileTypeMaps = new Map(); // per-file: basename → Map<number, string>
   let firstAclText = null;
+  const allAclTexts = []; // v5: collect all texts to merge STAR/SID/APPR/runway/waypoints across every level
 
   const { parseTaxiwayPaths } = require('./taxiway');
   const seenTaxiwayKeys = new Set();
@@ -2157,6 +2369,7 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
       if (!firstAclText) {
         firstAclText = text;
       }
+      allAclTexts.push(text);
 
       // ── Taxiway paths: parse from every file, merge with dedup ──
       try {
@@ -2214,24 +2427,57 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
   }
 
   // ── Derive path data from SceneryData (NOT from Aircraft section) ──
+  // v5: each .acl may carry a different subset of STAR/SID/APPR per level
+  // (e.g. ZSJN leisure_1 only RWY19, other levels only RWY01). Merge across
+  // every file in the airport so the cache covers ALL runways.
 
-  // Extract authoritative STAR↔runway mappings from SceneryData.
-  // This captures ALL valid combos (not just those with State=30 aircraft).
-  const starMappings = firstAclText
-    ? extractStarRunwayMappings(firstAclText)
-    : { starRunwayMap: {}, runwayStarMap: {} };
+  // Helper: try resolver across every ACL text until it returns a non-empty result
+  const _tryAllTexts = (fn, ...args) => {
+    for (const txt of allAclTexts) {
+      try {
+        const res = fn(txt, ...args);
+        if (res) {
+          if (Array.isArray(res) && res.length === 0) continue;
+          if (res instanceof Map && res.size === 0) continue;
+          if (typeof res === 'object' && !Array.isArray(res) && !(res instanceof Map)) {
+            if (Object.keys(res).length === 0) continue;
+          }
+          // for STAR waypoints etc. check length
+          return res;
+        }
+      } catch (_) {}
+    }
+    return null;
+  };
 
-  // Build state5ParamsMap from SceneryData for all runways.
-  // No dependency on State=5 aircraft — touchDownPosition, approachDirection,
-  // pathPointList, and initialPosition all come from the scenery's approach procedures.
-  // For runways with multiple Type=1 variants (e.g. ZSJN 01 has three
-  // "RNAV ILS Z Rwy 01" variants), the first variant is stored under the
-  // runway-only key as fallback. STAR-specific keys ("STAR|runway") are
-  // added below in the appPointMap loop with variant-correct data.
+  // Extract authoritative STAR↔runway mappings from SceneryData — merge across all files.
+  let starMappings = { starRunwayMap: {}, runwayStarMap: {} };
+  if (allAclTexts.length > 0) {
+    const mergedStarRunway = {};
+    const mergedRunwayStar = {};
+    for (const txt of allAclTexts) {
+      const m = extractStarRunwayMappings(txt);
+      for (const [star, rwys] of Object.entries(m.starRunwayMap)) {
+        if (!mergedStarRunway[star]) mergedStarRunway[star] = [];
+        for (const rwy of rwys) if (!mergedStarRunway[star].includes(rwy)) mergedStarRunway[star].push(rwy);
+      }
+      for (const [rwy, stars] of Object.entries(m.runwayStarMap)) {
+        if (!mergedRunwayStar[rwy]) mergedRunwayStar[rwy] = [];
+        for (const star of stars) if (!mergedRunwayStar[rwy].includes(star)) mergedRunwayStar[rwy].push(star);
+      }
+    }
+    starMappings = { starRunwayMap: mergedStarRunway, runwayStarMap: mergedRunwayStar };
+  }
+
+  // Build state5ParamsMap from SceneryData for all runways — try every file.
   const state5ParamsMap = new Map();
-  if (firstAclText && starMappings.runwayStarMap) {
+  if (starMappings.runwayStarMap) {
     for (const runway of Object.keys(starMappings.runwayStarMap)) {
-      const data = resolveApproachProcedureData(firstAclText, runway, undefined);
+      let data = null;
+      for (const txt of allAclTexts) {
+        data = resolveApproachProcedureData(txt, runway, undefined);
+        if (data) break;
+      }
       if (data) {
         state5ParamsMap.set(runway, data);
         const normalized = _normalizeRunway(runway);
@@ -2242,66 +2488,84 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
     }
   }
 
-  // Build appPointMap from SceneryData (Type=1 approach procedure routes).
-  // Each STAR gets the approach procedure variant whose first AirwayNode is
-  // closest to the STAR's last FlyApproach point — resolving the correct
-  // variant when multiple "RNAV ILS Z Rwy XX" entries exist.
+  // Build appPointMap from SceneryData — merge across all files, trying every text.
   const appPointMap = new Map();
   for (const [runway, stars] of Object.entries(starMappings.runwayStarMap)) {
     for (const star of stars) {
-      // Resolve FlyApproach points to find the STAR's exit (IAF) point
-      const flyPoints = resolveFlyApproachPoints(firstAclText, star, runway);
-      const hintPos = (flyPoints && flyPoints.length > 0)
-        ? flyPoints[flyPoints.length - 1]
-        : null;
-
-      // Get variant-correct approach procedure data for this STAR
-      const s5 = resolveApproachProcedureData(firstAclText, runway, hintPos);
-      if (!s5 || !s5.pathPointList || s5.pathPointList.length < 2) continue;
-
-      appPointMap.set(star + '|' + runway, s5.pathPointList);
-
-      // Also store STAR-specific state5Params entry for State=5 generation
-      const s5Key = star + '|' + runway;
-      if (!state5ParamsMap.has(s5Key)) {
-        state5ParamsMap.set(s5Key, s5);
+      let flyPoints = null;
+      for (const txt of allAclTexts) {
+        const pts = resolveFlyApproachPoints(txt, star, runway);
+        if (pts && pts.length > 0) { flyPoints = pts; break; }
       }
+      const hintPos = (flyPoints && flyPoints.length > 0) ? flyPoints[flyPoints.length - 1] : null;
+      let s5 = null;
+      for (const txt of allAclTexts) {
+        const cand = resolveApproachProcedureData(txt, runway, hintPos);
+        if (cand && cand.pathPointList && cand.pathPointList.length >= 2) { s5 = cand; break; }
+      }
+      if (!s5 || !s5.pathPointList || s5.pathPointList.length < 2) continue;
+      appPointMap.set(star + '|' + runway, s5.pathPointList);
+      const s5Key = star + '|' + runway;
+      if (!state5ParamsMap.has(s5Key)) state5ParamsMap.set(s5Key, s5);
     }
-    // Also register normalized runway variant (e.g. "1" for "01")
     const normRunway = _normalizeRunway(runway);
     if (normRunway !== runway) {
       for (const star of stars) {
-        const flyPoints = resolveFlyApproachPoints(firstAclText, star, normRunway);
-        const hintPos = (flyPoints && flyPoints.length > 0)
-          ? flyPoints[flyPoints.length - 1]
-          : null;
-        const s5n = resolveApproachProcedureData(firstAclText, normRunway, hintPos);
+        let flyPoints = null;
+        for (const txt of allAclTexts) {
+          const pts = resolveFlyApproachPoints(txt, star, normRunway);
+          if (pts && pts.length > 0) { flyPoints = pts; break; }
+        }
+        const hintPos = (flyPoints && flyPoints.length > 0) ? flyPoints[flyPoints.length - 1] : null;
+        let s5n = null;
+        for (const txt of allAclTexts) {
+          const cand = resolveApproachProcedureData(txt, normRunway, hintPos);
+          if (cand && cand.pathPointList) { s5n = cand; break; }
+        }
         if (!s5n || !s5n.pathPointList) continue;
         const key = star + '|' + normRunway;
         if (!appPointMap.has(key)) appPointMap.set(key, s5n.pathPointList);
         const s5Key = star + '|' + normRunway;
-        if (!state5ParamsMap.has(s5Key)) {
-          state5ParamsMap.set(s5Key, s5n);
-        }
+        if (!state5ParamsMap.has(s5Key)) state5ParamsMap.set(s5Key, s5n);
       }
     }
   }
 
-  // Build starPaths from appPointMap and starRunwayMap.
-  // Pass 1 uses appPointMap (now SceneryData-derived, covers all STARs).
-  // Pass 2 uses starRunwayMap to add any STARs still missing (FlyApproach-only).
-  const starPaths = firstAclText
-    ? buildStarPaths(firstAclText, appPointMap, starMappings.starRunwayMap)
-    : {};
+  // Build starPaths from appPointMap and starRunwayMap — merge across all files.
+  let starPaths = {};
+  if (allAclTexts.length > 0) {
+    // Use first non-empty buildStarPaths result, merging across files
+    const mergedPaths = {};
+    for (const txt of allAclTexts) {
+      const part = buildStarPaths(txt, appPointMap, starMappings.starRunwayMap);
+      for (const [k, v] of Object.entries(part)) {
+        if (!mergedPaths[k]) mergedPaths[k] = v;
+        else {
+          // dedup by runway
+          const seen = new Set(mergedPaths[k].map(e => e.runway));
+          for (const e of v) if (!seen.has(e.runway)) mergedPaths[k].push(e);
+        }
+      }
+    }
+    starPaths = mergedPaths;
+  }
 
-  // Ordered STAR waypoint names (the composer's "Fly Waypoint" picker) from
-  // SceneryData — each STAR route's AirwayNodes resolve to named fixes.
-  const starWaypoints = firstAclText
-    ? extractStarWaypoints(firstAclText)
-    : {};
-  const runwayThresholds = firstAclText
-    ? _parseRunwayThresholds(firstAclText)
-    : {};
+  // Ordered STAR waypoint names — merge across all files.
+  let starWaypoints = {};
+  if (allAclTexts.length > 0) {
+    for (const txt of allAclTexts) {
+      const part = extractStarWaypoints(txt);
+      for (const [k, v] of Object.entries(part)) if (!starWaypoints[k]) starWaypoints[k] = v;
+    }
+  }
+  // Runway thresholds — merge across all files.
+  let runwayThresholds = {};
+  if (allAclTexts.length > 0) {
+    for (const txt of allAclTexts) {
+      const part = _parseRunwayThresholds(txt);
+      for (const [k, v] of Object.entries(part)) if (!runwayThresholds[k]) runwayThresholds[k] = v;
+    }
+  }
 
   // ── Taxiway paths (already merged from all files in main loop above) ──
   const taxiwayPaths = { paths: mergedTaxiwayPaths };
@@ -2309,63 +2573,118 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
     log('  taxiway paths: ' + mergedTaxiwayPaths.length + ' segments merged from ' + aclFiles.length + ' files');
   }
 
-  // ── Parse SID + Missed Approach routes from SceneryData ──
+  // ── Parse SID + Missed Approach routes from SceneryData — merge across all files (v5 per-level filtering) ──
   let sidRunwayMap = {};
   let runwaySidMap = {};
   let missedAppMap = {};
   let runwayMissedAppMap = {};
   let sidPaths = {};
   let missedAppPaths = {};
-  if (firstAclText) {
+  if (allAclTexts.length > 0) {
     try {
       const { extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('./sid_goaround');
-      const sidMappings = extractSidRunwayMappings(firstAclText);
-      sidRunwayMap = sidMappings.sidRunwayMap || {};
-      runwaySidMap = sidMappings.runwaySidMap || {};
-      const maMappings = extractMissedApproachMappings(firstAclText);
-      missedAppMap = maMappings.missedAppMap || {};
-      runwayMissedAppMap = maMappings.runwayMissedAppMap || {};
-      sidPaths = buildSidPaths(firstAclText, sidRunwayMap);
-      missedAppPaths = buildMissedApproachPaths(firstAclText, missedAppMap);
+      for (const txt of allAclTexts) {
+        const sidMappings = extractSidRunwayMappings(txt);
+        for (const [k, v] of Object.entries(sidMappings.sidRunwayMap || {})) {
+          if (!sidRunwayMap[k]) sidRunwayMap[k] = [];
+          for (const r of v) if (!sidRunwayMap[k].includes(r)) sidRunwayMap[k].push(r);
+        }
+        for (const [k, v] of Object.entries(sidMappings.runwaySidMap || {})) {
+          if (!runwaySidMap[k]) runwaySidMap[k] = [];
+          for (const r of v) if (!runwaySidMap[k].includes(r)) runwaySidMap[k].push(r);
+        }
+        const maMappings = extractMissedApproachMappings(txt);
+        for (const [k, v] of Object.entries(maMappings.missedAppMap || {})) {
+          if (!missedAppMap[k]) missedAppMap[k] = [];
+          for (const r of v) if (!missedAppMap[k].includes(r)) missedAppMap[k].push(r);
+        }
+        for (const [k, v] of Object.entries(maMappings.runwayMissedAppMap || {})) {
+          if (!runwayMissedAppMap[k]) runwayMissedAppMap[k] = [];
+          for (const r of v) if (!runwayMissedAppMap[k].includes(r)) runwayMissedAppMap[k].push(r);
+        }
+      }
+      // Build paths — try every file, merge deduped
+      const mergedSidPaths = {};
+      const mergedMissedPaths = {};
+      for (const txt of allAclTexts) {
+        const partSid = buildSidPaths(txt, sidRunwayMap);
+        for (const [k, v] of Object.entries(partSid)) {
+          if (!mergedSidPaths[k]) mergedSidPaths[k] = v;
+          else {
+            const seen = new Set(mergedSidPaths[k].map(e => e.runway));
+            for (const e of v) if (!seen.has(e.runway)) mergedSidPaths[k].push(e);
+          }
+        }
+        const partMissed = buildMissedApproachPaths(txt, missedAppMap);
+        for (const [k, v] of Object.entries(partMissed)) {
+          if (!mergedMissedPaths[k]) mergedMissedPaths[k] = v;
+          else {
+            const seen = new Set(mergedMissedPaths[k].map(e => e.runway));
+            for (const e of v) if (!seen.has(e.runway)) mergedMissedPaths[k].push(e);
+          }
+        }
+      }
+      sidPaths = mergedSidPaths;
+      missedAppPaths = mergedMissedPaths;
     } catch (e) { log('  SID/go-around parse warning: ' + e.message); }
   }
 
-  // ── Parse APPR (RNAV approach) routes from SceneryData (Type=1) ──
+  // ── Parse APPR (RNAV approach) routes from SceneryData — merge across all files ──
   let apprRunwayMap = {};
   let runwayApprMap = {};
   let apprPaths = {};
-  if (firstAclText) {
+  if (allAclTexts.length > 0) {
     try {
       const { extractApprRunwayMappings, buildApprPaths } = require('./sid_goaround');
-      const apprMappings = extractApprRunwayMappings(firstAclText);
-      apprRunwayMap = apprMappings.apprRunwayMap || {};
-      runwayApprMap = apprMappings.runwayApprMap || {};
-      apprPaths = buildApprPaths(firstAclText, apprRunwayMap);
+      for (const txt of allAclTexts) {
+        const apprMappings = extractApprRunwayMappings(txt);
+        for (const [k, v] of Object.entries(apprMappings.apprRunwayMap || {})) {
+          if (!apprRunwayMap[k]) apprRunwayMap[k] = [];
+          for (const r of v) if (!apprRunwayMap[k].includes(r)) apprRunwayMap[k].push(r);
+        }
+        for (const [k, v] of Object.entries(apprMappings.runwayApprMap || {})) {
+          if (!runwayApprMap[k]) runwayApprMap[k] = [];
+          for (const r of v) if (!runwayApprMap[k].includes(r)) runwayApprMap[k].push(r);
+        }
+      }
+      const mergedApprPaths = {};
+      for (const txt of allAclTexts) {
+        const part = buildApprPaths(txt, apprRunwayMap);
+        for (const [k, v] of Object.entries(part)) {
+          if (!mergedApprPaths[k]) mergedApprPaths[k] = v;
+          else {
+            const seen = new Set(mergedApprPaths[k].map(e => e.runway));
+            for (const e of v) if (!seen.has(e.runway)) mergedApprPaths[k].push(e);
+          }
+        }
+      }
+      apprPaths = mergedApprPaths;
     } catch (e) { log('  APPR path parse warning: ' + e.message); }
   }
 
-  // ── Extract fixes/waypoints (AirwayNode PK entities) ──
-  // Position + Name form a fix; consumed by the AirMap "Waypoints" layer.
+  // ── Extract fixes/waypoints (AirwayNode PK entities) — merge across all files ──
   let airwayNodes = [];
-  if (firstAclText) {
+  if (allAclTexts.length > 0) {
     try {
       const { buildPkIndex, getPkEntriesByType, extractVector3FromV4, extractStringFromV4, extractIntFromV4 } = require('./v4_pk_index');
-      const pkIndex = buildPkIndex(firstAclText);
-      for (const entry of getPkEntriesByType(pkIndex, 'airway-node')) {
-        const pos = extractVector3FromV4(entry.block);
-        if (!pos) continue;
-        // Only true fixes count: ICAO-style all-uppercase 3-5 letter names.
-        // Skips turn points ("TurnPoint19", "TP19W1"), numbered nodes ("JN210")
-        // and unnamed nodes.
-        const name = extractStringFromV4(entry.block, 'Name');
-        if (!name || !FIX_NAME_RE.test(name)) continue;
-        airwayNodes.push({
-          pk: entry.pk,                                        // "airway-node:-244674"
-          name,                                                // "PANKI"
-          osmId: extractIntFromV4(entry.block, 'OsmId'),       // -244674 or null
-          x: pos.x,
-          z: pos.z,
-        });
+      const seenPks = new Set();
+      for (const txt of allAclTexts) {
+        const pkIndex = buildPkIndex(txt);
+        for (const entry of getPkEntriesByType(pkIndex, 'airway-node')) {
+          if (seenPks.has(entry.pk)) continue;
+          seenPks.add(entry.pk);
+          const pos = extractVector3FromV4(entry.block);
+          if (!pos) continue;
+          const name = extractStringFromV4(entry.block, 'Name');
+          if (!name || !FIX_NAME_RE.test(name)) continue;
+          airwayNodes.push({
+            pk: entry.pk,
+            name,
+            osmId: extractIntFromV4(entry.block, 'OsmId'),
+            x: pos.x,
+            z: pos.z,
+          });
+        }
       }
     } catch (e) { log('  airway-node parse warning: ' + e.message); }
   }
@@ -2634,6 +2953,10 @@ module.exports = {
   extractGameTime,
   serializeApproachCache,
   deserializeApproachCache,
+  // v5 global specDB from aircraft_profiles.csv
+  parseAircraftProfilesCsv,
+  findAircraftProfilesCsv,
+  loadGlobalSpecDB,
 
   // Assembly
   buildApproachAircraftBlock,
