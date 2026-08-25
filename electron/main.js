@@ -2515,6 +2515,16 @@ ipcMain.handle('install-update', async (_event, { updateDir, currentExePath, new
   }
 });
 
+ipcMain.handle('check-post-update-pending', async () => {
+  try { return updater.checkPostUpdatePending(); }
+  catch (err) { return { pending: false, error: err.message }; }
+});
+
+ipcMain.handle('clear-post-update-pending', async () => {
+  try { updater.clearPostUpdatePending(); return { success: true }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
 
 // ─── IPC: Video Background Replacer ────────────────────────
 
@@ -2678,6 +2688,53 @@ ipcMain.handle('check-video-backup-exists', async () => {
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+/** Delete all level files and backups under Airports/XXXX/Levels -- for Steam Verify Integrity restore. */
+ipcMain.handle('reset-all-levels', async () => {
+  try {
+    const cr = _readCache();
+    const gameRoot = cr?.data?.gameRoot;
+    if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+
+    const airportsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
+    if (!fs.existsSync(airportsDir)) return { success: false, error: 'AIRPORTS_DIR_NOT_FOUND' };
+
+    let totalDeleted = 0;
+    let airportsProcessed = 0;
+    const entries = fs.readdirSync(airportsDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const levelsDir = path.join(airportsDir, e.name, 'Levels');
+      if (!fs.existsSync(levelsDir)) continue;
+      airportsProcessed++;
+      const levelEntries = fs.readdirSync(levelsDir, { withFileTypes: true });
+      for (const le of levelEntries) {
+        const fullPath = path.join(levelsDir, le.name);
+        try {
+          if (le.isFile() || le.isSymbolicLink()) {
+            fs.rmSync(fullPath, { force: true });
+            totalDeleted++;
+          } else if (le.isDirectory()) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+            totalDeleted++;
+          }
+        } catch (err) {
+          console.error('[reset-all-levels] failed to delete', fullPath, err.message);
+        }
+      }
+    }
+    console.log(`[reset-all-levels] deleted ${totalDeleted} entries across ${airportsProcessed} airports`);
+    return { success: true, deletedCount: totalDeleted, airports: airportsProcessed };
+  } catch (err) {
+    console.error('[reset-all-levels] error', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Quit the editor (used after the restore-all success prompt) ────────
+ipcMain.on('app-quit', () => {
+  app.quit();
 });
 
 /** Restore all XXXX.webm.bak/ backup folders back to XXXX.webm/. */

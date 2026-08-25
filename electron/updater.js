@@ -511,8 +511,15 @@ function installUpdate(updateDir, currentExePath, newExePath) {
     log('[Updater] DRY RUN — would execute:', scriptPath);
     log('[Updater]   current:', currentExePath);
     log('[Updater]   new:    ', newExePath);
+    // In dry-run (dev) still mark pending if explicitly requested via env for testing
+    if (process.env.AC27_UPDATE_MARK_PENDING === '1') {
+      markPostUpdatePending();
+    }
     return;
   }
+
+  // Mark that the next launch is post-update — App will show the restore-all nudge
+  markPostUpdatePending();
 
   // Spawn the batch script detached so it survives app quit.
   // cmd.exe /c start "" /MIN <script> — opens a minimized cmd window, runs the script.
@@ -525,6 +532,43 @@ function installUpdate(updateDir, currentExePath, newExePath) {
 
   // Quit the app — the updater script handles the rest
   setImmediate(() => app.quit());
+}
+
+// ─── Post-update pending flag ──────────────────────────
+// Written before quit, read on next launch to show the "restore all" nudge.
+// Stored as JSON so we can include version/timestamp for debugging.
+
+function postUpdateFlagPath() {
+  try { return path.join(app.getPath('userData'), 'post_update_pending.json'); }
+  catch (_) { return null; }
+}
+
+function markPostUpdatePending() {
+  try {
+    const p = postUpdateFlagPath();
+    if (!p) return;
+    fs.writeFileSync(p, JSON.stringify({ version: app.getVersion(), at: Date.now() }), 'utf-8');
+    log('[Updater] marked post-update pending:', p);
+  } catch (e) { log('[Updater] mark pending failed:', e.message); }
+}
+
+function checkPostUpdatePending() {
+  try {
+    const p = postUpdateFlagPath();
+    if (!p || !fs.existsSync(p)) return { pending: false };
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    return { pending: true, ...data };
+  } catch (_) { return { pending: false }; }
+}
+
+function clearPostUpdatePending() {
+  try {
+    const p = postUpdateFlagPath();
+    if (p && fs.existsSync(p)) {
+      fs.unlinkSync(p);
+      log('[Updater] cleared post-update pending');
+    }
+  } catch (e) { log('[Updater] clear pending failed:', e.message); }
 }
 
 // ─── Exports ───────────────────────────────────────────────
@@ -543,5 +587,9 @@ Object.assign(api, {
   headRemoteExe,
   headRemoteExeWithUrl,
   resolveTargetExe,
+  postUpdateFlagPath,
+  markPostUpdatePending,
+  checkPostUpdatePending,
+  clearPostUpdatePending,
   log,
 });

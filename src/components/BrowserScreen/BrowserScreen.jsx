@@ -4,7 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline, IoRefreshOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { DEMO_VISIBLE_BASES, DEMO_VISIBLE_ORDER, PROD_VISIBLE_BASES } from '../../utils/constants';
@@ -59,6 +59,7 @@ export default function BrowserScreen() {
   const [bepInExInstallOpen, setBepInExInstallOpen] = useState(false);
   const [liveryLoading, setLiveryLoading] = useState(false);
   const [liveryOverlayOpen, setLiveryOverlayOpen] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
   const { bind, TooltipPortal } = useTooltip();
 
   useEffect(() => {
@@ -163,6 +164,52 @@ export default function BrowserScreen() {
       const { showToast } = useAppStore.getState();
       showToast(err.message, 'error');
     }
+  };
+
+  const handleConfirmRestoreAll = async () => {
+    if (restoreLoading) return;
+    setRestoreLoading(true);
+    try {
+      const result = await electronAPI.resetAllLevels();
+      if (result.success) {
+        // Clear browser cache so the UI immediately shows empty state;
+        // the next scan (triggered by refreshKey) will confirm 0 files.
+        setBrowserCache({}, {});
+        setRefreshKey(k => k + 1);
+        const { showModal, hideModal } = useAppStore.getState();
+        showModal(
+          () => t('restore_all_success_title'),
+          () => <p>{t('restore_all_success_detail', { count: result.deletedCount, airports: result.airports })}</p>,
+          () => <button className="btn-confirm" onClick={() => { hideModal(); electronAPI.quitApp(); }}>{t('modal_btn_ok')}</button>
+        );
+      } else {
+        const msg = result.error === 'NO_GAME_ROOT' ? t('restore_all_no_game_root') : (result.error || t('restore_all_failed'));
+        useAppStore.getState().showToast(msg, 'error');
+      }
+    } catch (err) {
+      useAppStore.getState().showToast(err.message, 'error');
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
+  const handleRestoreAllClick = () => {
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal(
+      () => t('restore_all_title'),
+      () => (
+        <>
+          <p style={{ color: 'var(--red)', fontWeight: 600 }}>{t('restore_all_warning')}</p>
+          <p style={{ marginTop: 8 }}>{t('restore_all_warning_detail')}</p>
+        </>
+      ),
+      () => (
+        <>
+          <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
+          <button className="btn-danger" onClick={async () => { hideModal(); await handleConfirmRestoreAll(); }}>{t('restore_all_confirm')}</button>
+        </>
+      )
+    );
   };
 
   const handleToggleDebugMode = async () => {
@@ -293,6 +340,9 @@ export default function BrowserScreen() {
           </button>
           <button className="btn-sm" {...bind(t('browser_replace_bg_desc'))} onClick={handleReplaceBackground}>
             <IoVideocamOutline size={14} className="btn-icon" />{t('browser_replace_background')}
+          </button>
+          <button className="btn-sm" {...bind(t('browser_restore_all_desc'))} onClick={handleRestoreAllClick} disabled={restoreLoading}>
+            <IoRefreshOutline size={14} className="btn-icon" />{t('browser_restore_all')}
           </button>
           <button className="btn-lang-toggle-top btn-icon-only" {...bind(t(BUTTONS.bugReport.descKey))} onClick={handleBugReport}>
             <IoBugOutline size={14} />

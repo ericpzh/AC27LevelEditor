@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { I18nProvider } from './hooks/useTranslation';
+import { I18nProvider, useTranslation } from './hooks/useTranslation';
 import { useAppStore } from './store/appStore';
 import { useElectronAPI } from './hooks/useElectronAPI';
 import SetupScreen from './components/SetupScreen/SetupScreen';
@@ -20,6 +20,7 @@ let didInit = false; // Survives Strict Mode double-mount (AGENTS rule 8.2)
 function ScreenRouter() {
   const screen = useAppStore(s => s.screen);
   const electronAPI = useElectronAPI();
+  const { t } = useTranslation();
   const [booting, setBooting] = useState(true);
 
   // Detect map window query params (separate Electron BrowserWindow instances)
@@ -184,6 +185,89 @@ setUpdateState('idle');
       newExePath: downloadResult.newExePath,
     });
   }, [updateState, downloadResult]);
+
+  // ── Post-update restore-all nudge ──────────────────────
+  // After the updater script relaunches the new exe, the pending flag written by
+  // updater.markPostUpdatePending() is detected here and a one-time modal is shown:
+  // "AC27Editor已更新，若任意存档曾经被修改，请还原所有关卡文件。"  Cancel | Continue
+  // Continue opens the same restore-all warning modal used by BrowserScreen's button.
+  const postUpdateCheckedRef = useRef(false);
+  const triggerRestoreAll = () => {
+    const { showModal, hideModal, setBrowserCache, showToast } = useAppStore.getState();
+    const api = window.electronAPI;
+    showModal(
+      (tt) => tt('restore_all_title'),
+      (tt) => (
+        <>
+          <p style={{ color: 'var(--red)', fontWeight: 600 }}>{tt('restore_all_warning')}</p>
+          <p style={{ marginTop: 8 }}>{tt('restore_all_warning_detail')}</p>
+        </>
+      ),
+      (tt) => (
+        <>
+          <button className="btn-cancel" onClick={hideModal}>{tt('modal_btn_cancel')}</button>
+          <button className="btn-danger" onClick={async () => {
+            hideModal();
+            try {
+              const result = await api.resetAllLevels();
+              if (result.success) {
+                setBrowserCache({}, {});
+                showModal(
+                  (t2) => t2('restore_all_success_title'),
+                  (t2) => <p>{t2('restore_all_success_detail', { count: result.deletedCount, airports: result.airports })}</p>,
+                  (t2) => <button className="btn-confirm" onClick={() => { hideModal(); api.quitApp(); }}>{t2('modal_btn_ok')}</button>
+                );
+              } else {
+                const msg = result.error === 'NO_GAME_ROOT' ? tt('restore_all_no_game_root') : (result.error || tt('restore_all_failed'));
+                showToast(msg, 'error');
+              }
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
+          }}>{tt('restore_all_confirm')}</button>
+        </>
+      )
+    );
+  };
+
+  useEffect(() => {
+    if (booting) return;
+    if (postUpdateCheckedRef.current) return;
+    if (updateState === 'prompt' || updateState === 'downloading' || updateState === 'installing') return;
+    if (modalOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = window.electronAPI;
+        if (!api?.checkPostUpdatePending) return;
+        const res = await api.checkPostUpdatePending();
+        if (cancelled) return;
+        if (!res?.pending) {
+          postUpdateCheckedRef.current = true;
+          return;
+        }
+        postUpdateCheckedRef.current = true;
+        console.log('[App] post-update pending detected:', res);
+        const { showModal, hideModal } = useAppStore.getState();
+        const clear = () => { if (api.clearPostUpdatePending) api.clearPostUpdatePending().catch(() => {}); };
+        showModal(
+          (tt) => tt('update_post_title'),
+          (tt) => <p>{tt('update_post_body')}</p>,
+          (tt) => (
+            <div className="modal-actions-row">
+              <button className="btn-cancel" onClick={() => { hideModal(); clear(); }}>{tt('modal_btn_cancel')}</button>
+              <button className="btn-confirm" onClick={() => { hideModal(); clear(); triggerRestoreAll(); }}>{tt('update_post_continue')}</button>
+            </div>
+          ),
+          false
+        );
+      } catch (e) {
+        console.log('[App] post-update check failed:', e.message);
+        postUpdateCheckedRef.current = true;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [booting, modalOpen, modalTitle, updateState]);
 
   // ── End auto-update state machine ──────────────────────
 

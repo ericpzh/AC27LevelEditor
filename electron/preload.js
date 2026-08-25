@@ -192,6 +192,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkVideoBackupExists: () => ipcRenderer.invoke('check-video-backup-exists'),
   restoreVideoBackup: () => ipcRenderer.invoke('restore-video-backup'),
 
+  // ─── Reset All Levels (Steam Verify Integrity restore) ────────
+  resetAllLevels: () => ipcRenderer.invoke('reset-all-levels'),
+  // Quit/close the editor (fire-and-forget)
+  quitApp: () => ipcRenderer.send('app-quit'),
+
   _videoConvertHandlers: new Map(),
   onVideoConvertProgress: function (cb) {
     const handler = (_e, data) => cb(data);
@@ -312,6 +317,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: (opts) => ipcRenderer.invoke('install-update', opts),
+  checkPostUpdatePending: () => ipcRenderer.invoke('check-post-update-pending'),
+  clearPostUpdatePending: () => ipcRenderer.invoke('clear-post-update-pending'),
 
   // Event: update check result (pushed from main process on startup)
   _updateCheckHandlers: new Map(),

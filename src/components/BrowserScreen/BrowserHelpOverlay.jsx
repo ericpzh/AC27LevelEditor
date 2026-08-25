@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import './BrowserHelpOverlay.css';
 import { useTranslation } from '../../hooks/useTranslation';
-import { IoClose, IoFolderOpenOutline, IoBugOutline, IoLanguage, IoMapOutline, IoNavigateOutline, IoListOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline } from 'react-icons/io5';
+import { IoClose, IoFolderOpenOutline, IoBugOutline, IoLanguage, IoMapOutline, IoNavigateOutline, IoListOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline, IoRefreshOutline } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 
 // ─── Button registry (icon + label key + help description) ───
@@ -10,6 +10,7 @@ export const BUTTONS = {
   debugMode:      { icon: IoCodeSlash,        labelKey: 'browser_debug_mode',      descKey: 'browser_help_debug_mode' },
   replaceBg:      { icon: IoVideocamOutline,  labelKey: 'browser_replace_background', descKey: 'browser_help_replace_bg' },
   livery:         { icon: IoColorPaletteOutline, labelKey: 'browser_livery',      descKey: 'browser_help_livery' },
+  restoreAll:     { icon: IoRefreshOutline,   labelKey: 'browser_restore_all',     descKey: 'browser_help_restore_all' },
   bugReport:      { icon: IoBugOutline,       labelKey: null,                      descKey: 'browser_help_bug_report' },
   lang:           { icon: IoLanguage,         labelKey: null,                      descKey: 'browser_help_lang' },
   themeDark:      { icon: IoSunnyOutline,     labelKey: null,                      descKey: 'browser_help_theme' },
@@ -42,6 +43,7 @@ const SECTIONS = [
       { text: '{{btn:changeDir}} — {desc}', descKey: 'browser_help_change_dir' },
       { text: '{{btn:debugMode}} — {desc}', descKey: 'browser_help_debug_mode' },
       { text: '{{btn:replaceBg}} — {desc}', descKey: 'browser_help_replace_bg' },
+      { text: '{{btn:restoreAll}} — {desc}', descKey: 'browser_help_restore_all' },
       { text: '{{btn:livery}} — {desc}', descKey: 'browser_help_livery' },
       { text: '{{btn:bugReport}} — {desc}', descKey: 'browser_help_bug_report' },
       { text: '{{btn:lang}} — {desc}', descKey: 'browser_help_lang' },
