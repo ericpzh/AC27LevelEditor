@@ -17,7 +17,7 @@ const STR = {
 		    browser_debug_mode_desc:'启用时安装 BepInEx 以显示游戏内错误信息。',
 			    browser_livery:'涂装', browser_livery_desc:'安装真实涂装。',
 			    browser_help_livery:'安装真实涂装。',
-			    browser_restore_all:'恢复原始', browser_restore_all_desc:'恢复所有游戏原始关卡。',
+			    browser_restore_all:'复原', browser_restore_all_desc:'恢复所有游戏原始关卡。',
 			    livery_installed:'涂装安装成功', livery_failed:'涂装安装失败',
 			    livery_downloading:'下载中…',
 				    update_title:'发现新版本', update_downloading:'正在下载更新…',
