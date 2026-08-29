@@ -151,8 +151,13 @@ describe('id_renumber', () => {
     expect(blobIds).toContain(parseInt(iref[1], 10));
   });
 
-  it('throws on a truly forward $iref (target not declared yet)', () => {
+  it('preserves a forward $iref as dangling instead of throwing (avoids Ground Painter save crash)', () => {
     const bad = '{ "$id": 0, "a": { "$v": $iref:99 }, "later": { "$id": 99 } }';
-    expect(() => renumberDocument(bad)).toThrow(/forward \$iref:99/);
+    // Previously threw "forward $iref:99" — now preserved as dangling so the
+    // Ground Painter can save after deleting a taxiway whose $id is duplicated
+    // in another $blobdoc scope (ZSJN_leisure_1 $id:16/$id:772). The game reads
+    // a dangling $iref as null, which is safe.
+    const out = renumberDocument(bad);
+    expect(out).toContain('$iref:99');
   });
 });

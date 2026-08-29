@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Editor
   loadAcl: (filePath) => ipcRenderer.invoke('load-acl', filePath),
   saveAcl: (data) => ipcRenderer.invoke('save-acl', data),
+  loadGroundPainterData: (filePath) => ipcRenderer.invoke('load-ground-painter-data', filePath),
+  saveGroundPainterData: (data) => ipcRenderer.invoke('save-ground-painter-data', data),
   exportZip: (data) => ipcRenderer.invoke('export-zip', data),
   reloadAcl: (filePath) => ipcRenderer.invoke('reload-acl', filePath),
 

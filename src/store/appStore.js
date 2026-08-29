@@ -26,7 +26,21 @@ export const useAppStore = create((set, get) => ({
   showStandMap: false,
   showStarMap: false,
   mapFlightIdx: -1,   // which flight row the map currently shows
-  activeMap: null,     // 'stand' | 'star' | null — which map overlay is on top
+  activeMap: null,     // 'stand' | 'star' | 'ground' | null — which map overlay is on top
+
+  // ─── Ground Painter (dedicated window; id-free Graph) ───
+  showGroundPainter: false,
+  groundPainterGraph: null,        // id-free Graph (§3)
+  groundPainterMeta: null,         // meta side-table (origPk/origId) from buildSceneryGraph
+  groundPainterSnapshotText: null, // last disk snapshot (baseline for save)
+  groundPainterHasEdited: false,   // sole dirty flag inside the dedicated window
+  groundPainterHistory: null,      // depth-1 undo (Graph|null)
+  groundPainterMetaHistory: null,  // depth-1 undo for meta (paired with graph history)
+  groundPainterSnapEnabled: true,
+  groundPainterTool: 'select',     // select|taxiwayLine|taxiwayCurve|runwayLine|area|stand|delete (taxiwayCurve is now fillet/rounding)
+  groundPainterCreateBak: true,    // toolbar [✓.bak] default true
+  groundPainterOsmPool: null,      // { nodeIds:[], segIds:[] } finite reuse pool from original ACLs
+  groundPainterPoolInfo: null,     // { nodePoolSize, segPoolSize, freeNodeCount, freeSegCount }
 
   // ─── Audio callsigns ───
   audioCallsigns: { byAirline: {}, allCallsigns: [], allAirlines: [] },
@@ -88,7 +102,7 @@ export const useAppStore = create((set, get) => ({
   setLegacyState: (updates) => set(updates),
 
   // ─── Actions: Screen ───
-  setScreen: (screen) => set({ screen, ...(screen !== 'editor' ? { showStandMap: false, showStarMap: false, activeMap: null } : {}) }),
+  setScreen: (screen) => set({ screen, ...(screen !== 'editor' ? { showStandMap: false, showStarMap: false, showGroundPainter: false, activeMap: null } : {}) }),
   setRootPath: (rootPath, airports) => set({ rootPath, airports, fileInfos: {}, geomCache: {}, browserDataLoaded: false }),
 
   // ─── Actions: Browser Cache ───
@@ -227,6 +241,44 @@ export const useAppStore = create((set, get) => ({
     activeMap: state.activeMap === 'star' ? null : state.activeMap,
   })),
   setActiveMap: (map) => set({ activeMap: map }),
+
+  // ─── Actions: Ground Painter ───
+  toggleGroundPainter: () => {
+    const s = get();
+    // Dedicated window is exclusive: opening it clears flight/timeline map view.
+    const next = !s.showGroundPainter;
+    set({
+      showGroundPainter: next,
+      activeMap: next ? 'ground' : (s.activeMap === 'ground' ? null : s.activeMap),
+    });
+  },
+  closeGroundPainter: () => set((state) => ({
+    showGroundPainter: false,
+    activeMap: state.activeMap === 'ground' ? null : state.activeMap,
+  })),
+  setGroundPainterTool: (tool) => {
+    // alias legacy taxiwayCurve semantics -> fillet (same id, new behavior)
+    // keep store value as-is; UI treats taxiwayCurve as rounding/fillet
+    return set({ groundPainterTool: tool });
+  },
+  setGroundPainterSnapEnabled: (v) => set({ groundPainterSnapEnabled: !!v }),
+  // Overwrite the single undo slot with a structuredClone of the current graph.
+  pushPainterHistory: (g) => set({ groundPainterHistory: typeof structuredClone === 'function' ? structuredClone(g) : JSON.parse(JSON.stringify(g)) }),
+  // Set the painter graph (with a one-slot history push for Ctrl+Z depth-1).
+  setGroundPainterGraph: (g) => set((state) => ({
+    groundPainterHistory: typeof structuredClone === 'function' ? structuredClone(state.groundPainterGraph) : state.groundPainterGraph,
+    groundPainterMetaHistory: typeof structuredClone === 'function' ? structuredClone(state.groundPainterMeta) : JSON.parse(JSON.stringify(state.groundPainterMeta)),
+    groundPainterGraph: g,
+    groundPainterHasEdited: true,
+  })),
+  // Paired graph+meta commit for fillet (keeps undo in sync)
+  setGroundPainterGraphWithMeta: (g, m) => set((state) => ({
+    groundPainterHistory: typeof structuredClone === 'function' ? structuredClone(state.groundPainterGraph) : state.groundPainterGraph,
+    groundPainterMetaHistory: typeof structuredClone === 'function' ? structuredClone(state.groundPainterMeta) : JSON.parse(JSON.stringify(state.groundPainterMeta)),
+    groundPainterGraph: g,
+    groundPainterMeta: m,
+    groundPainterHasEdited: true,
+  })),
 
   updateFlight: (idx, updates) => {
     const state = get();

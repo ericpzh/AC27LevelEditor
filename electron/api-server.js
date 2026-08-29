@@ -528,6 +528,13 @@ const MCP_TOOLS = [
       required: ['transcript'],
     },
   },
+  { name: 'get_ground_painter_state', description: 'Read the Ground Painter current state (id-free graph, tool, dirty, isOpen).', inputSchema: { type: 'object', properties: {} } },
+  { name: 'create_taxiway_lines', description: 'Add straight taxiway segments to the Ground Painter graph (in-memory until Save/Exit).', inputSchema: { type: 'object', properties: { lines: { type: 'array', items: { type: 'object', properties: { a: { type: 'object' }, b: { type: 'object' } } } } }, required: ['lines'] } },
+  { name: 'create_area', description: 'Add an Area polygon to the Ground Painter graph (areaType 0|1|2).', inputSchema: { type: 'object', properties: { areaType: { type: 'number' }, points: { type: 'array', items: { type: 'object' } } }, required: ['areaType', 'points'] } },
+  { name: 'create_stands', description: 'Add stand placements to the Ground Painter graph (nose x/z + heading 1..360).', inputSchema: { type: 'object', properties: { stands: { type: 'array', items: { type: 'object', properties: { x: { type: 'number' }, z: { type: 'number' }, heading: { type: 'number' } } } } }, required: ['stands'] } },
+  { name: 'delete_ground_objects', description: 'Delete the nearest ground object to a point.', inputSchema: { type: 'object', properties: { target: { type: 'object', properties: { x: { type: 'number' }, z: { type: 'number' } } } }, required: ['target'] } },
+  { name: 'delete_all_ground_objects', description: 'Clear every painter-owned ground object (destructive; undoable via Ctrl+Z).', inputSchema: { type: 'object', properties: { confirm: { type: 'boolean' } }, required: ['confirm'] } },
+  { name: 'undo_ground_painter', description: 'Restore the last Ground Painter graph snapshot (depth-1 undo).', inputSchema: { type: 'object', properties: {} } },
 ];
 
 // ── MCP Message Handler ─────────────────────────────────────────
@@ -673,6 +680,73 @@ async function handleMcpMessage(msg) {
           break;
         }
 
+        case 'get_ground_painter_state': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph || null;
+          result = {
+            success: true,
+            isOpen: !!s.showGroundPainter,
+            hasEdited: !!s.groundPainterHasEdited,
+            tool: s.groundPainterTool || 'select',
+            historyDepth: s.groundPainterHistory ? 1 : 0,
+            graph: g,
+            summary: g ? { nodes: g.nodes.length, segments: g.segments.length, runways: g.runways.length, areas: g.areas.length, stands: g.stands.length } : null,
+          };
+          break;
+        }
+        case 'create_taxiway_lines': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          const add = (graph, lines) => {
+            const out = { ...graph, nodes: [...graph.nodes], segments: [...graph.segments] };
+            for (const ln of lines || []) {
+              if (!ln.a || !ln.b) continue;
+              const ai = out.nodes.length; out.nodes.push({ x: ln.a.x, z: ln.a.z, type: 2, flags: 0 });
+              const bi = out.nodes.length; out.nodes.push({ x: ln.b.x, z: ln.b.z, type: 2, flags: 0 });
+              out.segments.push({ aIdx: ai, bIdx: bi, flags: ln.flags ?? 2, name: ln.name });
+            }
+            return out;
+          };
+          pushStoreUpdate({ groundPainterGraph: add(g, params.lines), groundPainterHasEdited: true });
+          result = { success: true, added: (params.lines || []).length };
+          break;
+        }
+        case 'create_area': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          const area = { areaType: params.areaType, points: (params.points || []).map((p) => ({ x: p.x, z: p.z })), owner: null };
+          pushStoreUpdate({ groundPainterGraph: { ...g, areas: [...g.areas, area] }, groundPainterHasEdited: true });
+          result = { success: true };
+          break;
+        }
+        case 'create_stands': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          const out = { ...g, nodes: [...g.nodes], stands: [...g.stands] };
+          for (const st of params.stands || []) {
+            const h = st.heading || 360;
+            const rad = (h * Math.PI) / 180;
+            const nose = { x: st.x, z: st.z };
+            const tail = { x: st.x - Math.cos(rad) * 0.63, z: st.z + Math.sin(rad) * 0.63 };
+            const ni = out.nodes.length; out.nodes.push(nose);
+            const ti = out.nodes.length; out.nodes.push(tail);
+            out.stands.push({ noseIdx: ni, tailIdx: ti, heading: Math.round(h), pushbackIdxs: [], parkingType: 1, egressType: 0 });
+          }
+          pushStoreUpdate({ groundPainterGraph: out, groundPainterHasEdited: true });
+          result = { success: true };
+          break;
+        }
+        case 'delete_all_ground_objects': {
+          pushStoreUpdate({ groundPainterGraph: { nodes: [], segments: [], runways: [], areas: [], stands: [] }, groundPainterHasEdited: true });
+          result = { success: true };
+          break;
+        }
+        case 'undo_ground_painter': {
+          const s = await readStoreState();
+          if (s.groundPainterHistory) pushStoreUpdate({ groundPainterGraph: s.groundPainterHistory, groundPainterHistory: null, groundPainterHasEdited: true });
+          result = { success: true, undone: !!s.groundPainterHistory };
+          break;
+        }
         case 'get_editor_status': {
           const state = await readStoreState();
           const arrCount = (state.flights || []).filter(f => f.LandingTime && f.LandingTime.trim()).length;

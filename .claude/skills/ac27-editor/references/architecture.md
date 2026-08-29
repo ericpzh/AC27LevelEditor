@@ -15,10 +15,10 @@
 ```
 AC27Editor/
 ├── electron/
-│   ├── main.js              # Electron main process + 65 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, 68 methods)
+│   ├── main.js              # Electron main process + 77 IPC handlers (incl. load-ground-painter-data / save-ground-painter-data for the Ground Painter)
+│   ├── preload.js           # contextBridge (window.electronAPI, ~95 methods; + loadGroundPainterData / saveGroundPainterData)
 │   ├── updater.js           # Auto-update: HEAD check (R2 ETag), MD5 comparison, exe download, batch script generator
-│   ├── api-server.js        # HTTP API + MCP server (port 31415, auto-starts with app)
+│   ├── api-server.js        # HTTP API + MCP server (port 31415, auto-starts with app) — + get_ground_painter_state / create_taxiway_lines / create_area / create_stands / delete_ground_objects / delete_all_ground_objects / undo_ground_painter
 │   ├── cloud-llm.js         # Multi-vendor cloud LLM chat (DeepSeek/Gemini/Claude/Codex)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz binary aircraft state (127.0.0.1:20266) + commands (20267)
 ├── mcp/
@@ -59,6 +59,11 @@ AC27Editor/
 │   │   │   │   ├── StandMap.jsx + .css   # Interactive stand position map overlay
 │   │   │   ├── StarMap/
 │   │   │   │   └── StarMap.jsx + .css    # Interactive STAR/approach map overlay
+│   │   │   ├── GroundPainter/
+│   │   │   │   ├── GroundPainter.jsx + .css      # Dedicated full-screen static-scenery editor (id-free Graph)
+│   │   │   │   ├── GroundPainterToolbar.jsx      # Bottom bar: tool modes (select/fillet/taxiway/runway/area/stand), AreaType toggle popover, stand heading, zoom, background-image panel (import + L/R, U/D, Scale 10-500%, Opacity 0-100% sliders; default 60%, stored bgImage.opacity 0..1, rendered <image opacity>), Save/Cancel. Runway end names are NOT edited here — they're edited on the canvas via floating threshold text boxes (runwayOverlay in GroundPainter.jsx)
+│   │   │   │   ├── snap.js                       # Pure snap engine: 1.1 endpoint → 1.2 on-segment → angle snap (rotates the cursor around the anchor onto collinear/±90°/±45°/±135° relative to the last edge prev→anchor, keeping radius; vertex angle straight=180°) — no DOM, MCP/tests call directly
+│   │   │   │   └── fillet.js                     # Pure fillet/rounding math (computeFillet countIncidentAll/ByCoord findNodeIndexByCoord) — no DOM, MCP/tests call directly
 │   │   │   └── TimelineEditors/
 │   │   ├── MapWindows/               # Full-window map visualizations (separate BrowserWindow instances)
 │   │   │   ├── GroundMapWindow.jsx + .css  # Surface radar: taxiways, runways, areas, ground aircraft (stand-access segments marked + help overlay)
@@ -119,6 +124,8 @@ AC27Editor/
 │   │   ├── flight_plans.js      # StaticData/StaticItems flight-plan parse + v4 save pipeline (_rebuildStaticDataSections, timeline rebuild)
 │   │   ├── approach.js          # Approach aircraft construction (State=30/State=5) + approach cache builder (v5: global aircraft_profiles.csv + allAclTexts merge, PhysicalRunwayStaticItem, Area 31)
 │   │   ├── scenery.js           # PKStaticEntities scenery parser (runway/stand lookups + stand position extraction; v5: Area 30→31)
+│   │   ├── scenery_graph.js     # Ground Painter read path: id-free Graph (buildSceneryGraph→{graph,meta}) + getBlobTypeMap/coordKey/findNodeIndex/rebuildOwners. NOT re-exported via parser.js — electron/main.js requires it directly
+│   │   ├── scenery_write.js     # Ground Painter write path: patchSceneryBlob (lossless, ids allocated at write; deletes only via meta.deletedPks/deletedAreaIds; _renumberTaxiwaySegmentOrdinals keeps taxiway-segment ordinal suffixes contiguous per osm) + saveGroundPainterAcl (.bak + writeAcl). NOT re-exported via parser.js
 │   │   ├── taxiway.js           # Taxiway centerline parser from PKStaticEntities taxiway-segment:* entries
 │   │   ├── sid_goaround.js      # SID + Missed Approach route parser from PKStaticEntities runway Routes (RouteType=2/3; v5: PhysicalRunwayStaticItem indirection)
 │   │   └── utils.js             # Enrichment, sorting, audio, runway pairs (extractV4RunwayPairs), import utils
@@ -172,7 +179,7 @@ module.exports = { publicFn, _privateFn };
 
 **No external dependencies for core logic.** Uses only Node.js built-ins (`fs`, `path`, `zlib`, `crypto`). Do not add npm dependencies without strong justification.
 
-**Facade pattern:** `src/acl/parser.js` is the single entry point. `electron/main.js` imports only from `parser.js`. New parsing modules must be re-exported through `parser.js`.
+**Facade pattern:** `src/acl/parser.js` is the single entry point. `electron/main.js` imports only from `parser.js`. New parsing modules must be re-exported through `parser.js`. **Deliberate exception — Ground Painter (2026-08-25):** `src/acl/scenery_graph.js` and `src/acl/scenery_write.js` are **not** re-exported through the facade; `electron/main.js` `require()`s them directly (`load-ground-painter-data` builds the Graph in the main process so the renderer never has to dynamic-import the CJS acl module). Do not blindly add them to `parser.js` — they are self-contained and lifecycle-scoped to the painter IPC/Tests.
 
 ### Frontend (React / `src/components/*.jsx` + `src/hooks/*.jsx`)
 
@@ -264,7 +271,7 @@ window.electronAPI          ipcRenderer.invoke()        ipcMain.handle()
 - All file I/O goes through IPC handlers in `electron/main.js`
 - IPC channels use kebab-case strings matching the handler name
 - Every `ipcMain.handle()` must return `{ success: true/false }`
-- New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer
+- New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer. Ground Painter channels: `load-ground-painter-data` (→ readAclText + buildSceneryGraph) and `save-ground-painter-data` (→ patchSceneryBlob + .bak + writeAcl, returns the new baseline text).
 - **Main→renderer events:**
   - `cache-build-progress` — per-file progress during scan: `{ current: number, total: number }`; preload bridges via `onCacheBuildProgress(cb)` / `offCacheBuildProgress(cb)` (uses handler-map pattern, same function reference required for cleanup)
   - `store-api-update` — pushes bulk state updates from MCP/API server to renderer: `{ flights, modified, ... }`; preload bridges via `onStoreApiUpdate(cb)` / `offStoreApiUpdate(cb)` (handler-map pattern). Renderer converts arrays→Sets and calls `setLegacyState()`.
@@ -291,7 +298,7 @@ Three-layer testing strategy:
 - `AC27_E2E_TMP_DIR` env var skips native OS dialogs (export) in test mode; backup saves `.bak` directly alongside source (no dialog)
 - **Never touches real game files** — all reads/writes go to temp copies
 - **Fuzz save test (`tests/e2e/fuzz-save.spec.mjs`, `npm run test:fuzz`):** randomized 50–200 op storms via MCP per production level (sourced from `E2E_GAME_ROOT`), gated before save through the app's own `runTripleValidation` with an auto-repair loop (reg/type/num/STAR/stand/time fixes; synthetic format-preserving registrations when canonical pools are exhausted), then a real UI save-with-backup + reload verification. `tests/e2e/fuzz-cli.mjs` is the runner wrapper that adds the `--replace` flag (copies PASSED levels' `.acl`+`.acl.bak` into the real install; `FUZZ_REPLACE=1` env equivalent). Gated on `FUZZ_RUN=1` — skips in normal `test:e2e` runs.
-- **Save pipeline regression suites (Vitest, fixture-based, no game root):** `tests/integration/save_gamecompat.test.js` + `gamecompat-utils.cjs` encode the five fuzz-discovered init-rejection invariants (docked entity loss, duplicate plan keys, stand conflicts, STAR-less arrival legs — `arrival-no-star` — and leg resolution; surfaces the auto-repair in `_normalizeFlightsForGameCompat`); `tests/integration/id_renumber.test.js` pins the strictly-ascending `$id` requirement and the `id_renumber.js` rewrite (incl. the ZSJN_peakdeparture `jetway:02` crash pattern). Both run under `npx vitest run tests/integration/<name>.test.js`.
+- **Save pipeline regression suites (Vitest, fixture-based, no game root):** `tests/integration/save_gamecompat.test.js` + `gamecompat-utils.cjs` encode the five fuzz-discovered init-rejection invariants (docked entity loss, duplicate plan keys, stand conflicts, STAR-less arrival legs — `arrival-no-star` — and leg resolution; surfaces the auto-repair in `_normalizeFlightsForGameCompat`); `tests/integration/id_renumber.test.js` pins the strictly-ascending `$id` requirement and the `id_renumber.js` rewrite (incl. the ZSJN_peakdeparture `jetway:02` crash pattern); `tests/integration/scenery_delete_cascade.test.js` pins the stand-deletion cascade (a deleted stand drops its `jetway:*` STATIC item AND its checkpoint-frame jetway RUNTIME entity — the Unity `Jetway: static item … does not exist` reference-integrity break — while leaving the taxi-navigation graph intact). All run under `npx vitest run tests/integration/<name>.test.js`.
 
 File isolation flow:
 ```

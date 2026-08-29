@@ -59,3 +59,21 @@ export const MAP_ICON_PATH = "M186.62 464H160a16 16 0 0 1-14.57-22.6l64.46-142.2
 // ─── Drag panel ────────────────────────────────────────────
 export const DRAG_MIN_VISIBLE_X = 40;
 export const DRAG_MIN_VISIBLE_Y = 38;
+
+// ─── Ground Painter frozen geometry constants (§1.4 / §1.2 / §3.2) ──
+// Single source: `scenery_write.js` must import these (never re-read per file).
+// Distances are in game units (GU, 1 GU ≈ 100 m).
+export const TAXIWAY_HALF_WIDTH = 0.15;
+export const TAXIWAY_ENDCAP = 0.10;
+export const RUNWAY_WIDTH = 0.50;            // full strip width (renderers halve it)
+export const RUNWAY_EDGE_OFFSET = 0.58;
+export const RUNWAY_TOUCHDOWN_FRAC = 0.20;
+export const STAND_LENGTH = 0.63;
+export const STAND_RECT_HALF_LEN = 1.2;
+export const STAND_RECT_HALF_WID = 0.9;
+export const PUSHBACK_OFFSET_1 = 0.45;
+export const PUSHBACK_OFFSET_2 = 0.85;
+export const HOLDING_RECT_LEN = 0.40;
+export const HOLDING_RECT_WID = 0.35;
+export const HOLDING_OFFSET = 0.60;
+export const RUNWAY_IS_ACTIVE = true;         // frozen default (from prod ACL); no user input

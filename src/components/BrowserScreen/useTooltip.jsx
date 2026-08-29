@@ -63,6 +63,8 @@ function calcWidth(text) {
     else w += charW(ch);
   }
   if (hasCjk) w += 10; // extra breathing room for CJK (on top of BASE)
+  // Include horizontal padding (14*2) + border (1*2) for border-box sizing
+  w += 28 + 2;
   return Math.ceil(Math.min(MAX_W, w));
 }
 

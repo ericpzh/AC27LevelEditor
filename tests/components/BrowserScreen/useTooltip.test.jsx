@@ -107,11 +107,11 @@ describe('useTooltip', () => {
     fireEvent.mouseEnter(btn);
 
     const tip = getTip();
-    // 66 + BASE(10) = 76. halfW=38
+    // 66 + BASE(10) + padding/border(30) = 106. halfW=53
     expect(parseFloat(tip.style.left)).toBeCloseTo(450, 0);
     expect(tip.style.transform).toBe('translateX(-50%)');
-    expect(parseFloat(tip.style.width)).toBeCloseTo(76, 0);
-    expect(parseFloat(tip.querySelector('.tooltip-arrow').style.left)).toBeCloseTo(38, 0);
+    expect(parseFloat(tip.style.width)).toBeCloseTo(106, 0);
+    expect(parseFloat(tip.querySelector('.tooltip-arrow').style.left)).toBeCloseTo(53, 0);
   });
 
   it('right-pins tooltip when button is near right viewport edge', () => {
@@ -127,12 +127,12 @@ describe('useTooltip', () => {
     fireEvent.mouseEnter(btn);
 
     const tip = getTip();
-    // 62.5 + BASE(10) = 72.5 → 73
-    const w = 73;
+    // 62.5 + BASE(10) + padding/border(30) = 102.5 → 103
+    const w = 103;
     expect(parseFloat(tip.style.left)).toBe(window.innerWidth - w - 10);
     expect(tip.style.transform).toBe('translateX(0)');
-    // arrowPx = w, clamped to w - 8 = 65
-    expect(parseFloat(tip.querySelector('.tooltip-arrow').style.left)).toBe(65);
+    // arrowPx = w, clamped to w - 8 = 95
+    expect(parseFloat(tip.querySelector('.tooltip-arrow').style.left)).toBe(95);
   });
 
   it('computes correct width from text characters', () => {
@@ -147,9 +147,9 @@ describe('useTooltip', () => {
 
     fireEvent.mouseEnter(btn);
 
-    // Per-char sum + BASE(10)
-    expect(parseFloat(getTip().style.width)).toBeGreaterThan(340);
-    expect(parseFloat(getTip().style.width)).toBeLessThan(360);
+    // Per-char sum + BASE(10) + padding/border(30)
+    expect(parseFloat(getTip().style.width)).toBeGreaterThan(370);
+    expect(parseFloat(getTip().style.width)).toBeLessThan(390);
   });
 
   it('has correct CSS classes on the tooltip', () => {

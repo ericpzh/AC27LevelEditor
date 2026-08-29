@@ -83,7 +83,8 @@ export function useEditorSaveActions({
   const handleSave = async () => {
     const st = useAppStore.getState();
     if (!st.currentPath) { showToast(t('toast_no_file'), 'error'); return; }
-    if (!st.flights.length) { showToast(t('toast_no_flight_data'), 'error'); return; }
+    // A 0-flight schedule is a valid save (scenery-only / cleared level). Do not
+    // block here — the backend clears flight runtime entities when flights is empty.
     const dupes = validateCallsigns(st.flights);
     if (dupes.length > 0) {
       showModal(
@@ -109,7 +110,7 @@ export function useEditorSaveActions({
   const handleSaveAs = async () => {
     const st = useAppStore.getState();
     if (!st.currentPath) { showToast(t('toast_no_file'), 'error'); return; }
-    if (!st.flights.length) { showToast(t('toast_no_flight_data'), 'error'); return; }
+    // A 0-flight schedule is a valid save — allow Save As too.
     const dupes = validateCallsigns(st.flights);
     if (dupes.length > 0) {
       showModal(

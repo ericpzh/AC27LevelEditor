@@ -10,9 +10,10 @@
   font-size: 12px;
   line-height: 1.5;
   white-space: nowrap;
-  text-align: left;
+  text-align: center;
   pointer-events: none;
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.38);
+  box-sizing: border-box;
 }
 
 /* Arrow — pointing down (default: tooltip above target) */

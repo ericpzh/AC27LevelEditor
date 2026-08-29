@@ -66,6 +66,51 @@ function _parseAreaFromAcl(aclPaths, logPrefix) {
   return {};
 }
 
+/**
+ * Compute the airport's ground-painter anchor (the center of the airport's
+ * scenery-graph node bounds) from its .acl files. The painter currently derives
+ * anchorX/anchorZ from the live (possibly-edited) graph bounds, which shifts
+ * whenever the geometry changes — that made a re-imported background image jump
+ * around. Instead we compute the DETERMINISTIC airport-level anchor once during
+ * the scan (airport geometry is shared across all .acl levels) and persist it to
+ * cache.json, so `anchorX`/`anchorZ` are always sourced from the same stable value.
+ *
+ * @param {string[]} aclPaths — the airport's cache .acl file paths
+ * @param {string} logPrefix
+ * @returns {{ anchorX: number, anchorZ: number, minX: number, minZ: number, maxX: number, maxZ: number }|null}
+ */
+function _computeAirportGroundAnchor(aclPaths, logPrefix) {
+  try {
+    const { buildSceneryGraph } = require('../src/acl/scenery_graph');
+    let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+    let nodeCount = 0;
+    // Airport ground geometry is shared across all levels, but union the node
+    // bounds across cache .acl files so any single malformed file can't skew it.
+    for (const p of aclPaths) {
+      try {
+        const text = readAclText(p);
+        const { graph } = buildSceneryGraph(text);
+        for (const n of (graph && graph.nodes) || []) {
+          if (!isFinite(n.x) || !isFinite(n.z)) continue;
+          nodeCount++;
+          if (n.x < minX) minX = n.x;
+          if (n.x > maxX) maxX = n.x;
+          if (n.z < minZ) minZ = n.z;
+          if (n.z > maxZ) maxZ = n.z;
+        }
+      } catch (_) {}
+    }
+    if (nodeCount === 0 || !isFinite(minX) || !isFinite(maxX) || !isFinite(minZ) || !isFinite(maxZ)) return null;
+    const anchorX = (minX + maxX) / 2;
+    const anchorZ = (minZ + maxZ) / 2;
+    if (logPrefix) console.log(logPrefix + ': ground anchor = (' + anchorX.toFixed(1) + ', ' + anchorZ.toFixed(1) + ') from ' + nodeCount + ' nodes');
+    return { anchorX, anchorZ, minX, minZ, maxX, maxZ };
+  } catch (e) {
+    if (logPrefix) console.log(logPrefix + ': ground anchor computation failed: ' + (e && e.message));
+    return null;
+  }
+}
+
 async function createWindow() {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
@@ -434,6 +479,11 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   // Include area polygons (for GroundMap)
   aclValues._areaData = cached?.areaData || {};
 
+  // Deterministic ground-painter anchor (center of the airport's ground bounds),
+  // computed once during the ACL scan and persisted to cache.json. Used by the
+  // Ground Painter's background image so anchorX/anchorZ never drift.
+  aclValues._groundAnchor = cached?.groundAnchor || null;
+
   // Include SID + Missed Approach paths (for AirMap)
   aclValues._sidPaths = cached?.approachData?.sidPaths || {};
   aclValues._missedAppPaths = cached?.approachData?.missedAppPaths || {};
@@ -468,6 +518,9 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
 
   // Fixes/waypoints for the AirMap Waypoints layer — intentionally NOT runway-filtered
   aclValues._airwayNodes = cached?.approachData?.airwayNodes || [];
+
+  // Taxiway OSM pool (finite reuse set) — for ground painter limit display
+  aclValues._taxiwayOsmPool = cached?.taxiwayOsmPool || { nodeIds: [], segIds: [] };
 
   return aclValues;
 });
@@ -817,7 +870,51 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       }
     }
 
-    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData };
+    // ── Taxiway OSM pool (finite reuse set) ──────────────────────────
+    // Union across all level ACLs for this airport — the game's fixed set
+    // of taxiway-node/-segment OsmIds. No new taxiway may be created beyond
+    // this pool; new entries reuse a freed OsmId at save time.
+    let taxiwayOsmPool = cachedEntry?.taxiwayOsmPool || null;
+    if (!taxiwayOsmPool) {
+      const poolNodeSet = new Set();
+      const poolSegSet = new Set();
+      try {
+        const aclPoolFiles = [];
+        for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
+          if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) aclPoolFiles.push(path.join(levelsDir, le.name));
+        }
+        const { extractTaxiwayOsmPool } = require('../src/acl/scenery_write');
+        for (const p of aclPoolFiles) {
+          try {
+            const t = readAclText(p);
+            const pool = extractTaxiwayOsmPool(t);
+            for (const id of pool.nodeIds) poolNodeSet.add(id);
+            for (const id of pool.segIds) poolSegSet.add(id);
+          } catch (_) {}
+        }
+      } catch (_) {}
+      taxiwayOsmPool = { nodeIds: [...poolNodeSet].sort((a, b) => a - b), segIds: [...poolSegSet].sort((a, b) => a - b) };
+      console.log('[INIT-CACHE]   ' + icao + ': taxiway pool nodes=' + taxiwayOsmPool.nodeIds.length + ' segs=' + taxiwayOsmPool.segIds.length);
+    } else {
+      console.log('[INIT-CACHE]   ' + icao + ': taxiway pool from disk cache nodes=' + taxiwayOsmPool.nodeIds.length + ' segs=' + taxiwayOsmPool.segIds.length);
+    }
+
+    // ── Ground-painter anchor (deterministic, per airport) ────────────
+    // Background-image anchorX/anchorZ are NOT dynamic — we persist the airport's
+    // ground-bounds center here and always use it, so re-importing an image never
+    // drifts to a recomputed center. Reuse from disk cache if present.
+    let groundAnchor = cachedEntry?.groundAnchor || null;
+    if (!groundAnchor) {
+      const anchorAclFiles = [];
+      for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
+        if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) anchorAclFiles.push(path.join(levelsDir, le.name));
+      }
+      groundAnchor = _computeAirportGroundAnchor(anchorAclFiles, '[INIT-CACHE]   ' + icao);
+    } else if (groundAnchor && groundAnchor.anchorX != null) {
+      console.log('[INIT-CACHE]   ' + icao + ': ground anchor from disk cache (' + groundAnchor.anchorX.toFixed(1) + ', ' + groundAnchor.anchorZ.toFixed(1) + ')');
+    }
+
+    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData, taxiwayOsmPool, groundAnchor };
   }
 
   airportCache = cache;
@@ -833,6 +930,8 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
           runwayPairs: entry.runwayPairs || [],
           standPositions: entry.standPositions || {},
           areaData: entry.areaData || {},
+          taxiwayOsmPool: entry.taxiwayOsmPool || { nodeIds: [], segIds: [] },
+          groundAnchor: entry.groundAnchor || null,
         };
       }
       const payload = {
@@ -963,7 +1062,30 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         }
       }
 
-      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData };
+      // ── Taxiway OSM pool (union across all level files) ─────────────
+      const poolNodeSetR = new Set();
+      const poolSegSetR = new Set();
+      try {
+        const { extractTaxiwayOsmPool } = require('../src/acl/scenery_write');
+        for (const p of aclPaths) {
+          try {
+            const t = readAclText(p);
+            const pool = extractTaxiwayOsmPool(t);
+            for (const id of pool.nodeIds) poolNodeSetR.add(id);
+            for (const id of pool.segIds) poolSegSetR.add(id);
+          } catch (_) {}
+        }
+      } catch (_) {}
+      const taxiwayOsmPool = { nodeIds: [...poolNodeSetR].sort((a, b) => a - b), segIds: [...poolSegSetR].sort((a, b) => a - b) };
+
+      // ── Ground-painter anchor (deterministic, per airport) ──────────
+      const anchorAclFiles = [];
+      for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
+        if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) anchorAclFiles.push(path.join(levelsDir, le.name));
+      }
+      const groundAnchor = _computeAirportGroundAnchor(anchorAclFiles, '[IPC] refresh-root-scan ' + icao);
+
+      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData, taxiwayOsmPool, groundAnchor };
     }
 
     airportCache = cache;
@@ -977,6 +1099,8 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         runwayPairs: entry.runwayPairs || [],
         standPositions: entry.standPositions || {},
         areaData: entry.areaData || {},
+        taxiwayOsmPool: entry.taxiwayOsmPool || { nodeIds: [], segIds: [] },
+        groundAnchor: entry.groundAnchor || null,
       };
     }
     const payload = { cacheVersion: CACHE_VERSION, gameRoot: rootPath, lang: preservedLang, builtAt: Date.now(), airports: serialized };
@@ -1202,6 +1326,10 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
 
     return { success: true, csvSynced, csvBackupDone };
   } catch (err) {
+    // Log the full error (a [TYPE-ASSERT] message carries the offending canonical
+    // type name + the whole scope declaration dump on later lines) to the
+    // main-process log so the missing type/scope is diagnosable from the save log.
+    console.error('[IPC] save-acl FAILED: ' + (err && err.stack ? err.stack : err));
     return { success: false, error: err.message };
   }
 });
@@ -1583,6 +1711,107 @@ ipcMain.handle('get-cached-lang', () => {
   const cr = _readCache();
   if (cr.data) return { lang: cr.data.lang || null };
   return { lang: null };
+});
+
+// ─── Ground Painter IPC ───────────────────────────────────────────
+ipcMain.handle('load-ground-painter-data', async (_event, filePath) => {
+  // Re-read latest disk state (post-save if the entry warning chose Save).
+  const text = readAclText(filePath);
+  // Build the id-free Graph + meta here (main is CJS and can require the acl
+  // module); the renderer cannot reliably dynamic-import the CJS acl module.
+  const { buildSceneryGraph } = require('../src/acl/scenery_graph');
+  const { graph, meta } = buildSceneryGraph(text);
+  // Derive taxiway OSM pool from the original snapshot (finite reuse set).
+  const { extractTaxiwayOsmPool, getTaxiwayOsmPoolInfo } = require('../src/acl/scenery_write');
+  const pool = extractTaxiwayOsmPool(text);
+  // Also compute current free counts from snapshot (no edits yet → all free = pool \ survivors)
+  // At load time survivors == pool, so free == 0; after deletions free >0.
+  const poolInfo = getTaxiwayOsmPoolInfo(
+    (() => {
+      const { _splitArrayEntries, _staticEntitiesRanges } = require('../src/acl/scenery_write');
+      const ranges = _staticEntitiesRanges(text);
+      const pkArrayValue = text.substring(ranges.pkRc.start, ranges.pkRc.end);
+      return _splitArrayEntries(pkArrayValue);
+    })(),
+    graph, meta
+  );
+  return { text, graph, meta, pool, poolInfo: { nodePoolSize: poolInfo.nodePoolSize, segPoolSize: poolInfo.segPoolSize, freeNodeCount: poolInfo.freeNodeCount, freeSegCount: poolInfo.freeSegCount }, bg: readBgSidecar(filePath) };
+});
+
+// Background-image sidecar (<file>.bg.json) — persists the imported reference
+// image + its placement so the same level reopens with identical position/scale.
+function bgSidecarPath(filePath) { return filePath + '.bg.json'; }
+function readBgSidecar(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(bgSidecarPath(filePath))) return null;
+    const raw = fs.readFileSync(bgSidecarPath(filePath), 'utf8');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return (parsed && parsed.src) ? parsed : null;
+  } catch (e) {
+    console.error('[GroundPainter] read bg sidecar failed: ' + (e && e.message));
+    return null;
+  }
+}
+
+ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotText, graph, meta, createBackup, bg }) => {
+  console.log('[GroundPainter] save-ground-painter-data filePath=' + filePath);
+  // Cross-level contamination guard: snapshot ArchiveGuid must match target file.
+  try {
+    const guidMatch = snapshotText.match(/"ArchiveGuid"\s*:\s*"([^"]+)"/);
+    const snapGuid = guidMatch ? guidMatch[1] : null;
+    const baseName = filePath ? path.basename(filePath, '.acl') : null;
+    if (snapGuid && baseName && snapGuid !== baseName) {
+      throw new Error('GroundPainter refusal: snapshot ArchiveGuid "' + snapGuid + '" does not match target file "' + baseName + '.acl" — likely cross-level graph contamination. Please close and reopen the Ground Painter.');
+    }
+  } catch (e) {
+    // Only abort on the specific contamination error; other parse errors fall through
+    if (e.message && e.message.includes('GroundPainter refusal')) throw e;
+  }
+  const { patchSceneryBlob, _validateNoDegenerateEdges } = require('../src/acl/scenery_write');
+  const { writeAcl } = require('../src/acl/gatcarc');
+  let newText = patchSceneryBlob(snapshotText, graph, null, meta);
+  // Integrity guard (see _validateNoDegenerateEdges): refuse to write an .acl the
+  // game's taxiway graph will reject (duplicate taxiway keys / self-loop edges,
+  // e.g. "edge id=-10 has the same vertex index for both endpoints"). Refusing
+  // keeps the editor's saved file loadable instead of silently corrupting it.
+  const integrityIssues = _validateNoDegenerateEdges(newText);
+  if (integrityIssues.length > 0) {
+    throw new Error('保存被拒绝：编辑后的滑行道会生成损坏的图结构（' + integrityIssues.join('；') + '）。请撤销最近的曲线/拖拽操作后重试。');
+  }
+  // Corrupt-type auto-repair: patchSceneryBlob already repairs bare "$type": 0
+  // inside PK/NonPK entries (see _repairPkEntryTypes / _repairNpkEntryTypes).
+  // If any somehow remain (e.g. in an outer envelope), repair in-place so the
+  // save succeeds instead of throwing.
+  if (/"\$type":\s*0(?=[,\}\]])/.test(newText)) {
+    console.warn('[GroundPainter] remaining "$type": 0 detected post-patch — repairing in place');
+    newText = newText.replace(/"\$type":\s*0(?=[,\}\]])/g, '"$type": "99|Repaired.Fallback, GroundATC.Core"');
+  }
+  if (createBackup && fs.existsSync(filePath)) fs.copyFileSync(filePath, filePath + '.bak');
+  writeAcl(filePath, newText, { format: 'auto', originalText: snapshotText });
+  console.log('[GroundPainter] save-ground-painter-data: wrote ' + filePath);
+  // Persist the background-image sidecar so the level reopens with the exact image
+  // placement (or remove it when the user cleared the image).
+  try {
+    if (bg && bg.src) fs.writeFileSync(bgSidecarPath(filePath), JSON.stringify(bg), 'utf8');
+    else if (fs.existsSync(bgSidecarPath(filePath))) fs.unlinkSync(bgSidecarPath(filePath));
+  } catch (e) {
+    console.error('[GroundPainter] write bg sidecar failed: ' + (e && e.message));
+  }
+  // The game renders the airport ground from geo_data.osm (Config.geoDataFile),
+  // not from the ACL's PKStaticEntities. Push the painted taxiway geometry there
+  // too so editor-created taxiways show up in-game. Failure here must NOT undo a
+  // successful ACL save, so it is logged and returned as a non-fatal field.
+  let geoResult = { skipped: true };
+  try {
+    const { syncGeoDataForLevel } = require('../src/acl/geo_osm');
+    geoResult = syncGeoDataForLevel(newText, filePath, { createBackup: false });
+    if (!geoResult.ok && geoResult.error) console.error('[GroundPainter] geo_data sync failed: ' + geoResult.error);
+    else if (geoResult.ok) console.log('[GroundPainter] geo_data sync: +' + geoResult.addedNodes + ' nodes, +' + geoResult.addedWays + ' ways');
+  } catch (e) {
+    console.error('[GroundPainter] geo_data sync error: ' + (e && e.message));
+  }
+  return { newText, geoResult };
 });
 
 ipcMain.handle('save-cached-lang', (_event, lang) => {

@@ -2614,9 +2614,17 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
   // ── Resolve type numbers from the segment's type map ────────────────
   // Type ids are per-segment-scope and vary between files — fallback numbers
   // must never be hardcoded (previously 18/19/51; same bug class as
-  // DockingDoorIndex "$type": 6). Resolution is strict: a name missing from
-  // the segment's declarations asserts with a debug message.
-  const segTypeResolve = _makeJwTypeResolver(segTypeMap, false);
+  // DockingDoorIndex "$type": 6). Resolution allows fallback allocation: a
+  // runtime-adjacent canonical type that a lean segment (e.g. a checkpoint
+  // frame that never declared the aircraft/animator type graph) legitimately
+  // omits is minted as a fresh id and self-declared via the emitted full-form
+  // "$type": "N|Name" — the same policy as _buildStandaloneAircraftEntry and
+  // _buildActiveJetwayEntry. Without it, rebuilding animator entries for any
+  // aircraft would [TYPE-ASSERT] on a scope missing the animator declaration
+  // (e.g. a frame that only carries jetway/flight-plan runtime entities).
+  // The STRICT_JETWAY_TYPES set inside _makeJwTypeResolver still guards the
+  // jetway field types (handled by _rebuildJetwayEntries' own strict resolver).
+  const segTypeResolve = _makeJwTypeResolver(segTypeMap, false, { allowFallback: true });
   const fpTypeFull = segTypeResolve('ContextCross.Models.FlightPlan, GroundATC.Core');
   const dtTypeFull = segTypeResolve('System.DateTime, mscorlib');
   const standaloneFailCounts = new Map(); // AircraftType -> count for aggregated log
@@ -3001,11 +3009,19 @@ function _rebuildFlightRuntimeEntities(segmentText, flights, baseDateTicks, vali
       // Graceful fallback: missing spec or missing type (ZGSZ has no specDB and no AircraftSpecification declaration).
       // Log once per failure with flight context and skip this aircraft — flight-plan entry still exists,
       // jetway will be empty (as with jetway path). This prevents a single bad AircraftType from failing the whole save.
+      // A [TYPE-ASSERT] carries the FULL canonical name + scope dump on later lines — log the whole thing so the
+      // missing declaration (and WHICH scope) is in the save log, not truncated to the first line.
       const acTypeLog = fl.AircraftType || 'unknown';
       const msg = e.message || String(e);
-      const key = msg.includes('[TYPE-ASSERT]') ? '[TYPE-ASSERT] ' + acTypeLog : msg.split('\n')[0].slice(0, 200);
+      const isTypeAssert = msg.includes('[TYPE-ASSERT]');
+      const key = isTypeAssert ? '[TYPE-ASSERT] ' + acTypeLog : msg.split('\n')[0].slice(0, 200);
       standaloneFailCounts.set(key, (standaloneFailCounts.get(key) || 0) + 1);
-      log('  [ac-call] ' + reg + ': aircraft build failed (' + msg.split('\n')[0] + ') — skipping aircraft, flight-plan preserved');
+      if (isTypeAssert) {
+        log('  [ac-call] ' + reg + ': aircraft build failed with [TYPE-ASSERT]:\n' + msg +
+          '\n  — skipping aircraft, flight-plan preserved');
+      } else {
+        log('  [ac-call] ' + reg + ': aircraft build failed (' + msg.split('\n')[0] + ') — skipping aircraft, flight-plan preserved');
+      }
       continue;
     }
     if (!result) {
@@ -5017,9 +5033,16 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
 
   log('flights: ' + (flights ? flights.length : 0) + ' baseDateTicks: ' + bdt + ' typeMap: ' + typeMap.size + ' (' + typeMapFromFile + ' from file)');
 
-  if (!flights || flights.length === 0) {
-    log('WARNING: empty flights array, skipping rebuild');
-    return;
+  // A 0-flight ACL is a valid save (e.g. a scenery-only level after every flight
+  // was deleted). Do NOT skip the rebuild — that made the save a silent no-op.
+  // Run the pipeline with empty flights: every flight-plan:REG / aircraft:REG /
+  // aircraft-animator:aircraft:REG entry is rebuilt-from-scratch against an empty
+  // set, which REMOVES all flight runtime entities while preserving jetways,
+  // radio channels, singletons, and scenery. The function still calls writeAcl at
+  // the end so the cleared file is actually persisted.
+  if (!flights) flights = [];
+  if (flights.length === 0) {
+    log('WARNING: empty flights array — saving cleared flight schedule (all flight-plan/aircraft/animator entries removed)');
   }
 
   // ── Resolve saveTime for approach position computation ──────────
@@ -5104,8 +5127,14 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     );
     return val;
   };
-  const dtTypeNum = _assertBdTn('System.DateTime,', 'DateTime');
-  const depLegTypeNum = _assertBdTn('FlightPlanDepartureLeg,', 'FlightPlanDepartureLeg');
+  // FlightPlanDepartureLeg / DateTime resolve lazily too: a 0-flight save clears
+  // every flight-plan entry, so the game strips those (now-unused) types from the
+  // StaticData.$blobdoc type table — the same reason FlightPlanArrivalLeg resolves
+  // lazily below. The strict assert must only fire when a flight-plan entry will
+  // actually be emitted (i.e. there is at least one flight).
+  const hasFlights = !!(flights && flights.length > 0);
+  const dtTypeNum = hasFlights ? _assertBdTn('System.DateTime,', 'DateTime') : null;
+  const depLegTypeNum = hasFlights ? _assertBdTn('FlightPlanDepartureLeg,', 'FlightPlanDepartureLeg') : null;
   // FlightPlanArrivalLeg resolves lazily: all-departure schedules (e.g. the
   // PerfBench_MaxParked fixtures) never declare it in the blobdoc scope —
   // the game strips unused types from the type table. The strict assert
@@ -5113,11 +5142,11 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   const hasArrivals = flights.some((flight) => !_isDepartureFlight(flight));
   const arrLegTypeNum = hasArrivals ? _assertBdTn('FlightPlanArrivalLeg,', 'FlightPlanArrivalLeg') : null;
 
-  const dtTypeFull = '"' + dtTypeNum + '|System.DateTime, mscorlib"';
+  const dtTypeFull = hasFlights ? '"' + dtTypeNum + '|System.DateTime, mscorlib"' : null;
   const arrLegTypeFull = hasArrivals
     ? '"' + arrLegTypeNum + '|ContextCross.Models.FlightPlanArrivalLeg, GroundATC.Core"'
     : null;
-  const depLegTypeFull = '"' + depLegTypeNum + '|ContextCross.Models.FlightPlanDepartureLeg, GroundATC.Core"';
+  const depLegTypeFull = hasFlights ? '"' + depLegTypeNum + '|ContextCross.Models.FlightPlanDepartureLeg, GroundATC.Core"' : null;
 
   log('blobdoc typeMap: ' + bdTypeMap.size + ' types, typeNums: DateTime=' + dtTypeNum + ' ArrivalLeg=' + (arrLegTypeNum === null ? '(none)' : arrLegTypeNum) + ' DepartureLeg=' + depLegTypeNum);
 
@@ -5157,9 +5186,15 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   // Blobdoc-scoped lookup: the emitted entries live inside StaticData.$blobdoc,
   // whose type numbering is independent of the file-global map (the checkpoint
   // frame claims the same number for a different type).  _assertBdTn throws
-  // with a scope dump when the type is not declared there.
-  const fpItemNum = _assertBdTn('ContextCross.Models.FlightPlanStaticItem,', 'FlightPlanStaticItem');
-  let fpTypeStr = `"$type": "${fpItemNum}|ContextCross.Models.FlightPlanStaticItem, GroundATC.Core"`;
+  // with a scope dump when the type is not declared there.  Lazy behind
+  // hasFlights: a 0-flight save has no FlightPlanStaticItem left in the
+  // (stripped) StaticData scope — there is no entry to emit, so no %type to resolve.
+  let fpItemNum = null;
+  let fpTypeStr = null;
+  if (hasFlights) {
+    fpItemNum = _assertBdTn('ContextCross.Models.FlightPlanStaticItem,', 'FlightPlanStaticItem');
+    fpTypeStr = `"$type": "${fpItemNum}|ContextCross.Models.FlightPlanStaticItem, GroundATC.Core"`;
+  }
   const oldFpData = []; // [{ oldReg, callsign }]
   let pos = rcStart + 1;
   while (pos < rcEnd) {

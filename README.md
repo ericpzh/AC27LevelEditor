@@ -173,7 +173,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (1200 tests in 52 files) + Playwright (E2E, 17 tests) + Node.js (integration, 35 scripts, 151 MCP/API tests)
+- **Tests:** Vitest (58 test files; count stale after the Ground-Painter WIP + new save regressions — recount via `npm test`) + Playwright (E2E, 17 tests) + Node.js (integration, 35 scripts, 151 MCP/API tests)
 
 ### Quick Start
 
@@ -219,7 +219,7 @@ All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The ren
 Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths (merged from all .acl files) + dropdowns + runway pairs → AirportCache. Progress bar shows global 0–100% across all airports/files. Detects v2/v3 vs v4 schema from first file.
 Phase 1 (load):   .acl → readAclText() (GATCARC4 decode if binary) → parse flights + timelines → zustand store. Dual parser paths: v2/v3 uses WorldState.FlightPlans, v4 uses StaticData.$blobdoc.StaticItems (flight-plan: entries). Config startTime resolved via resolveConfigTime (overrides with GameTime.CurrentDateTime if present).
 Phase 2 (edit):   All edits go through zustand store actions. v4 files hide InBlockTime/TakeoffTime columns.
-Phase 3 (save):   Validation → generate flights → writeAcl() to .acl + .csv + timeline .json. v4: rebuilds StaticData.$blobdoc.StaticItems (no AircraftStates), v2/v3: rebuilds WorldState.FlightPlans + Aircrafts. Container format auto-preserved (binary stays binary, text stays text).
+Phase 3 (save):   Validation → generate flights → writeAcl() to .acl + .csv + timeline .json. v4: rebuilds StaticData.$blobdoc.StaticItems (no AircraftStates), v2/v3: rebuilds WorldState.FlightPlans + Aircrafts. Container format auto-preserved (binary stays binary, text stays text). A **0-flight level** (scenery-only / fully-cleared schedule) is now a valid save — the pipeline runs with an empty flight set, removing every flight-plan/aircraft/animator runtime entity while preserving jetways, radio channels, and scenery, and `loadFlights` reloads it as an empty schedule. Rebuilt runtime-adjacent types (e.g. `AircraftAnimator`) and the `StaticData.$blobdoc` types that the game strips from a flight-less level resolve lazily / with fallback so a lean scope never aborts a save.
 UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar / Flight Strips)
 MCP (AI agent):   Claude Code → stdio → mcp/bridge.js → HTTP :31415 → api-server.js → IPC → store → UI
 ```
@@ -373,7 +373,7 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (16 files) + jetway rebuild (16 v4) + v4 runway pairs + build + Playwright E2E (~4.5 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 1200 tests in 52 files):**
+**Component tests (Vitest — 58 test files; count stale — recount via `npm test`):**
 ```bash
 npm test              # Run all component + store + utility + MapWindow + updater tests (~8s)
 npm run test:watch    # Watch mode — re-runs on file changes

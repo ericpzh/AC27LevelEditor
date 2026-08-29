@@ -1,4 +1,4 @@
-﻿# AC27 Dev Commands
+# AC27 Dev Commands
 
 ## Table of Contents
 
@@ -58,6 +58,9 @@ All accept `--help` / `-h` for usage. Temp files are written to `tests/integrati
 ```bash
 npx vitest run tests/integration/save_gamecompat.test.js   # game-load invariants + _normalizeFlightsForGameCompat auto-repair (4 fuzz-discovered crash classes, ZSJN_leisure_1 fixture; see gamecompat-utils.cjs)
 npx vitest run tests/integration/id_renumber.test.js       # strictly ascending $id ordering + $iref remap (id_renumber.js, ZSJN_peakdeparture jetway:02 crash pattern)
+npx vitest run tests/integration/scenery_roundtrip.test.js # Ground Painter §7.1 no-touch invariant: buildSceneryGraph→patchSceneryBlob(no edits) is byte-identical + re-parses equal; shared-node move / add / delete paths
+npx vitest run tests/integration/scenery_physical_runway_cleanup.test.js # Ground Painter runway delete/rename consistency: checkpoint-frame physical-runway RuntimeEntities reconciliation (Unity "PhysicalRunway static item" InvalidOperationException) + _remapRunwayNameFields cascade (Unity "Dynamics.RestoreRuntimeData" NullReferenceException) + _remapTaxiwaySegmentName taxiway-strip coupling + runway↔pavement GEOMETRIC coupling (meta.runwayPavement population, move-reprojects-strip, add-persists-collinear-strip)
+npx vitest run tests/integration/scenery_delete_cascade.test.js # Ground Painter stand-deletion reference cascade: dropping a stand also drops its jetway STATIC item AND its jetway RUNTIME entity from the checkpoint frame (Unity "Jetway: static item 'jetway:NN' does not exist in CurrentLevel.StaticField.StaticItems" reference-integrity break — _reconcileJetwayFrames), keeps the taxi-navigation graph, and renumbers cleanly; also a no-op save self-heals an already-corrupt frame
 ```
 
 New parser module tests (no game root needed):

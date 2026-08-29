@@ -81,7 +81,14 @@ function loadFlights(aclPath) {
     throw e;
   }
 
-  if (flights.length === 0) throw new Error('No flight data found in ACL');
+  if (flights.length === 0) {
+    // A 0-flight ACL is a valid level (e.g. a scenery-only level or a cleared
+    // schedule saved via the "allow 0 flight save" path). Do not throw — return
+    // the empty schedule so the editor opens with an empty flight table and the
+    // level can be saved again. (A genuinely-broken file still throws earlier in
+    // readAclText / _parseWorldStateFlightPlans.)
+    log('No flight data found in ACL — returning empty schedule (0-flight level)');
+  }
 
   // Locate CSV path from ACL's Config block for reference only (not read)
   let csvPath = null;

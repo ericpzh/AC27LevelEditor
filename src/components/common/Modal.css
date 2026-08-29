@@ -3,7 +3,7 @@
   position: fixed; inset: 0;
   background: var(--overlay);
   display: flex; align-items: center; justify-content: center;
-  z-index: 100;
+  z-index: 20000;
   backdrop-filter: blur(4px);
 }
 

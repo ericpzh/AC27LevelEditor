@@ -7,7 +7,7 @@ import { useEditorShell } from '../../hooks/useEditorShell';
 import { useEditorSaveActions } from '../../hooks/useEditorSaveActions';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns, MPS_TO_KNOTS, WIND_UNITS } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoMapOutline, IoNavigateOutline, IoSparkles } from 'react-icons/io5';
+import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoMapOutline, IoNavigateOutline, IoSparkles, IoPencil } from 'react-icons/io5';
 
 function convertWindSpeed(entries, fromUnit, toUnit) {
   if (!entries || !entries.length) return entries;
@@ -30,6 +30,7 @@ import SearchBar, { searchAPI } from './SearchBar';
 import TutorialOverlay, { BUTTONS } from './TutorialOverlay';
 import useTooltip from '../BrowserScreen/useTooltip';
 import StandMap from './StandMap/StandMap';
+import GroundPainter from './GroundPainter/GroundPainter';
 import StarMap from './StarMap/StarMap';
 import ChatPanel from '../ChatPanel/ChatPanel';
 
@@ -75,11 +76,12 @@ function computeOccupiedStands(flights, currentIdx) {
   return occupied;
 }
 
-function MapOverlays({ standBtnRef, starBtnRef }) {
+function MapOverlays({ standBtnRef, starBtnRef, groundPainterBtnRef }) {
   const t = useTranslation();
   const updateFlight = useAppStore(s => s.updateFlight);
   const showStandMap = useAppStore(s => s.showStandMap);
   const showStarMap = useAppStore(s => s.showStarMap);
+  const showGroundPainter = useAppStore(s => s.showGroundPainter);
   const mapFlightIdx = useAppStore(s => s.mapFlightIdx);
   const flights = useAppStore(s => s.flights);
   const currentAirport = useAppStore(s => s.currentAirport);
@@ -157,6 +159,7 @@ function MapOverlays({ standBtnRef, starBtnRef }) {
           saveSec={saveSec}
         />
       )}
+      {showGroundPainter && <GroundPainter buttonRef={groundPainterBtnRef} vals={vals} />}
     </>
   );
 }
@@ -214,6 +217,7 @@ export default function EditorScreen() {
   // ── Map toggle button refs (for expand/shrink animation origin) ──
   const standBtnRef = useRef(null);
   const starBtnRef = useRef(null);
+  const groundPainterBtnRef = useRef(null);
   const chatBtnRef = useRef(null);
 
   // ── Map toggle handlers ──
@@ -221,6 +225,8 @@ export default function EditorScreen() {
   const toggleStarMap = useAppStore(s => s.toggleStarMap);
   const showStandMap = useAppStore(s => s.showStandMap);
   const showStarMap = useAppStore(s => s.showStarMap);
+  const toggleGroundPainter = useAppStore(s => s.toggleGroundPainter);
+  const showGroundPainter = useAppStore(s => s.showGroundPainter);
 
   // ── Chat toggle ──
   const chatPanelOpen = useAppStore(s => s.chatPanelOpen);
@@ -364,6 +370,7 @@ export default function EditorScreen() {
         <div className="toolbar-group secondary-left">
           <button ref={starBtnRef} {...bind(t(BUTTONS.starMap.descKey))} onClick={toggleStarMap} className={showStarMap ? 'btn-map-active' : ''}><IoNavigateOutline size={14} className="btn-icon" /> {t('toolbar_star_map')}</button>
           <button ref={standBtnRef} {...bind(t(BUTTONS.standMap.descKey))} onClick={toggleStandMap} className={showStandMap ? 'btn-map-active' : ''}><IoMapOutline size={14} className="btn-icon" /> {t('toolbar_stand_map')}</button>
+          <button ref={groundPainterBtnRef} onClick={toggleGroundPainter} className={showGroundPainter ? 'btn-map-active' : ''}><IoPencil size={14} className="btn-icon" /> {t('toolbar_ground_painter')}</button>
           <button {...bind(t(BUTTONS.addArrival.descKey))} onClick={addArrival}><span className="btn-icon-wrap btn-icon-arrival"><IoAirplane size={14} /></span> {t('toolbar_add_arrival')}</button>
           <button {...bind(t(BUTTONS.addDeparture.descKey))} onClick={addDeparture}><span className="btn-icon-wrap btn-icon-departure"><IoAirplane size={14} /></span> {t('toolbar_add_departure')}</button>
         </div>
@@ -375,7 +382,7 @@ export default function EditorScreen() {
           <button {...bind(t(BUTTONS.find.descKey))} onClick={handleFind}><IoSearchOutline size={14} className="btn-icon" /> {t('toolbar_find')}</button>
         </div>
       </div>
-      <MapOverlays standBtnRef={standBtnRef} starBtnRef={starBtnRef} />
+      <MapOverlays standBtnRef={standBtnRef} starBtnRef={starBtnRef} groundPainterBtnRef={groundPainterBtnRef} />
       {chatPanelOpen && (
         <ChatPanel
           onShrink={() => toggleChatPanel()}

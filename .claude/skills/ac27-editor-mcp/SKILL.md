@@ -1,4 +1,4 @@
-﻿---
+---
 name: ac27-editor-mcp
 description: Control the AC27 Editor from Claude Code via MCP tools. Create, read, modify, and delete flights in the currently-open .acl schedule file. Supports English and Chinese (中文) interaction.
 ---
@@ -291,3 +291,19 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 - `get_airport_info` fails entirely → MCP cannot reach the editor; check `npm start -- --api-port=31415`
 - **User speaks Chinese but error uses English keys** → translate field names for the user (e.g., "Stand 'G99' is not valid" → "停机位 'G99' 无效")
 - **User uses a Chinese airline name not in the mapping** → resolve to a 3-letter code via the airline table in this skill (or `AIRLINE_CODE_MAP` in `src/utils/constants/airlines.js`); if unsure, ask the user for the 3-letter code. Note: `constraints.flatLists.AirlineName` is not populated — the name↔code mapping lives in the skill/constants, not in `get_airport_info`
+
+## 10. Ground Painter
+
+Edit the level's **static scenery** (taxiways, runways, areas, stands) via the dedicated Ground Painter window. The graph is **id-free** (`{nodes, segments, runways, areas, stands}`); a `meta` side-table carries each object's original `$k`/OsmId/`$id` so survivors keep their ids at save.
+
+First turn on any ground task: `get_editor_status → get_ground_painter_state`.
+
+- `get_ground_painter_state` → `{ graph, summary, tool, isOpen, hasEdited, historyDepth }`. If `graph` is `null` the painter is not seeded — open the Ground Painter UI once (the handler returns no seed hint; `graph`/`summary` are just `null` until then).
+- `create_taxiway_lines({lines:[{a:{x,z}, b:{x,z}, name?, flags?}]})` — straight segments (id-free, in-memory until Save/Cancel).
+- `create_area({areaType:0|1|2, points:[{x,z}×≥3]})` — one Area polygon (straight, auto-closed).
+- `create_stands({stands:[{x,z, heading:1..360}]})` — nose-anchored plane; a `heading` of `0`/unset folds to `360` (north). (The plan wanted 0 rejected; the handler uses `heading || 360`.)
+- `delete_ground_objects({target:{x,z}})` — ⚠️ registered as a tool but **its `handleMcpMessage` case is not yet wired** — calling it returns `-32601 Unknown tool: delete_ground_objects`. Do not rely on it; use the UI Delete tool instead. (Even once wired, it would need to record the removed object in `meta.deletedPks`/`deletedAreaIds` for the delete to persist through the write path.)
+- `delete_all_ground_objects({confirm:true})` — destructive (empties the graph). ⚠️ The MCP case empties the graph **without** first pushing `groundPainterHistory` (so a later `undo_ground_painter` only restores if a history slot already existed, e.g. from a prior UI edit) **and without recording the removed entries in `meta.deletedPks`/`deletedAreaIds`** — so none of the cleared objects persist and `patchSceneryBlob` keeps them. Use the UI Delete tool instead: the UI `deleteSelected` now pushes both `groundPainterHistory` **and** `groundPainterMetaHistory` and records `deletedPks`/`deletedAreaIds`, so it is undoable and persists.
+- `undo_ground_painter({})` — restore the last graph snapshot. ⚠️ Unlike the UI's Ctrl+Z (which restores **both** `groundPainterGraph` and `groundPainterMetaHistory`), the MCP handler restores **only** `groundPainterGraph` and nulls `groundPainterHistory` — `groundPainterMeta` is left at its current (post-edit) value, so a save right after an MCP undo can mis-align `meta` against the graph. The UI's `setGroundPainterGraphWithMeta` keeps the paired history in sync; the MCP path does not.
+
+All edits are **in-memory only** until the painter's **Save** (confirm prompt with a `.bak` checkbox) — or **Cancel**, which discards. The painter renders as a **full-screen fixed overlay** (`z-index:9999`) that visually covers the editor screen, so **on-screen** flight/timeline interaction is blocked; the MCP API is **not** gated — `create_flights`/`modify_flights` still run while the painter is open. Editing the graph does **not yet** reconcile dependent **flights** (the plan's flight reconciliation is not implemented in v1) and a 0-runway graph cannot be saved. **Jetway reference integrity IS handled at save time**: the UI Delete path records the removed objects in `meta.deletedPks`/`meta.deletedAreaIds`, and `patchSceneryBlob` then drops a deleted stand's `jetway:*` static item and its checkpoint-frame `jetway:*` runtime entity (`_reconcileJetwayFrames`), so the game no longer throws `Jetway: static item 'jetway:NN' does not exist in CurrentLevel.StaticField.StaticItems`. The MCP delete paths (`delete_all_ground_objects`, `delete_ground_objects`) still **do not** record `meta.deletedPks`, so those deletes silently revert on save (see above) — use the UI Delete tool for persistent jetway-consistent deletes.

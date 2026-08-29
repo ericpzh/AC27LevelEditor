@@ -30,7 +30,7 @@ function headingDeg(noseDir) {
 /** Color scheme for ACL area polygons by AreaType. */
 const AREA_TYPE_STYLES = {
   0: { fill: '#1a3a6a', stroke: '#2a5a9a', opacity: 0.20 },   // Airport boundary (blue)
-  1: { fill: '#444', stroke: 'none', opacity: 1.0 },           // Stand/apron (match taxiway)
+  1: { fill: '#444', stroke: 'none', opacity: 0.5 },           // Stand/apron (50% opacity)
   2: { fill: '#000', stroke: 'none', opacity: 1.0 },           // Building (solid black)
 };
 
@@ -313,10 +313,16 @@ export default function GroundMapWindow({ airportIcao }) {
   }, [normalTaxiwayPaths, showTaxiwayNames]);
 
   // ── Area polygons from ACL SceneryData.Areas ──────────────
+  // Draw order (bottom → top): BOUNDARY < APRON < BUILDING — all BELOW taxiway.
+  const AREA_Z_ORDER = [0, 1, 2];
   const areaPolygonElements = useMemo(() => {
     const els = [];
-    Object.entries(areaData || {}).forEach(([areaTypeStr, areas]) => {
-      const areaType = parseInt(areaTypeStr, 10);
+    const typeKeys = Object.keys(areaData || {})
+      .map((k) => parseInt(k, 10))
+      .filter((t) => !Number.isNaN(t))
+      .sort((a, b) => AREA_Z_ORDER.indexOf(a) - AREA_Z_ORDER.indexOf(b));
+    typeKeys.forEach((areaType) => {
+      const areas = (areaData || {})[areaType];
       // Skip airport boundary (AreaType 0) in witch mode
       if (witchMode && areaType === 0) return;
       const style = AREA_TYPE_STYLES[areaType] || { fill: '#444', stroke: '#444', opacity: 0.20 };
@@ -374,6 +380,9 @@ export default function GroundMapWindow({ airportIcao }) {
                 <rect x={viewBox.x} y={viewBox.y} width={viewBox.w} height={viewBox.h} fill="#0a1628" />
               )}
 
+              {/* ── Layer 0b: Area polygons — BOUNDARY < APRON < BUILDING, below taxiway ── */}
+              {areaPolygonElements}
+
               {/* ── Layer 1: Taxiway centerlines (grey) ────────── */}
               {normalTaxiwayPaths.map((tp, i) => {
                 const width = tp.isStandAccess ? taxiwayW * GROUND_MAP_STAND_ACCESS_WIDTH_MULT : taxiwayW;
@@ -388,9 +397,6 @@ export default function GroundMapWindow({ airportIcao }) {
                   strokeLinejoin="round"
                 />);
               })}
-
-              {/* ── Layer 1b: Area polygons (semi-transparent, by AreaType) ── */}
-              {areaPolygonElements}
 
               {/* ── Layer 2: Runway rectangles (black, on top of taxiways) ──── */}
               {Object.entries(runwayData).map(([name, rw]) => {

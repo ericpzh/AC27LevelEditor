@@ -215,7 +215,7 @@ function writeAcl(aclPath, text, options = {}) {
   if (format === 'auto') {
     format = detectAclFormat(aclPath) || 'binary';
   }
-  const normalized = renumberAclIds(text);
+  const normalized = renumberAclIds(text, options.originalText);
   if (format === 'binary') {
     let buffer;
     try {
