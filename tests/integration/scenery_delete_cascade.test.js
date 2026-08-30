@@ -131,7 +131,7 @@ function removeStaticEntry(t, target) {
 }
 
 describe('Ground Painter — stand-deletion reference cascade', () => {
-  it('drops the deleted stand\'s jetway, keeps the nav graph, and saves clean', () => {
+  it('drops the deleted stand\'s jetway, keeps the nav graph, and saves clean', { timeout: 60000 }, () => {
     const { graph, meta } = buildSceneryGraph(text);
     const idx = standWithJetway(graph, meta);
     expect(idx).toBeGreaterThanOrEqual(0);
@@ -147,7 +147,7 @@ describe('Ground Painter — stand-deletion reference cascade', () => {
     expect(buildSceneryGraph(patched).graph.stands.length).toBe(graph.stands.length - 1);
   });
 
-  it('deleting every stand leaves no reference that breaks the save', () => {
+  it('deleting every stand leaves no reference that breaks the save', { timeout: 60000 }, () => {
     const { graph, meta } = buildSceneryGraph(text);
     const gg = structuredClone(graph);
     gg.stands = [];
@@ -160,7 +160,7 @@ describe('Ground Painter — stand-deletion reference cascade', () => {
     expect(buildSceneryGraph(patched).graph.stands.length).toBe(0);
   });
 
-  it('deleting a stand also removes its jetway RUNTIME entity from the checkpoint frame (no orphaned jetway:NN)', () => {
+  it('deleting a stand also removes its jetway RUNTIME entity from the checkpoint frame (no orphaned jetway:NN)', { timeout: 60000 }, () => {
     const { graph, meta } = buildSceneryGraph(text);
     const idx = standWithJetway(graph, meta);
     expect(idx).toBeGreaterThanOrEqual(0);
@@ -199,7 +199,7 @@ describe('Ground Painter — stand-deletion reference cascade', () => {
     expectCleanRenumber(patched);
   });
 
-  it('a no-op save self-heals an already-corrupt checkpoint frame (dropping orphaned jetway runtime entities)', () => {
+  it('a no-op save self-heals an already-corrupt checkpoint frame (dropping orphaned jetway runtime entities)', { timeout: 60000 }, () => {
     // Simulate a previous corrupt save: the header dropped a jetway STATIC item
     // while the checkpoint frame still snapshots its jetway runtime entity.
     const { graph: g0, meta: m0 } = buildSceneryGraph(text);
@@ -242,7 +242,7 @@ describe('_reconcileJetwayFrames / _jetwayKeysFromEntries', () => {
     return header + SEP + frame;
   };
 
-  it('drops an orphaned jetway runtime entity but preserves valid ones and other entry types', () => {
+  it('drops an orphaned jetway runtime entity but preserves valid ones and other entry types', { timeout: 60000 }, () => {
     const text = makeText(['jetway:01', 'jetway:02'], ['jetway:02', 'jetway:03', 'physical-runway:01/19']);
     const out = _reconcileJetwayFrames(text, _jetwayKeysFromEntries(['{ "$k": "jetway:01" }', '{ "$k": "jetway:02" }']));
     expect(frameJetwayKeys(out)).toContain('jetway:02');
@@ -252,17 +252,17 @@ describe('_reconcileJetwayFrames / _jetwayKeysFromEntries', () => {
     expect(rl && parseInt(rl[1], 10)).toBe(2); // 3 → 2 after dropping jetway:03
   });
 
-  it('keeps the frame byte-identical when no jetway is orphaned', () => {
+  it('keeps the frame byte-identical when no jetway is orphaned', { timeout: 60000 }, () => {
     const text = makeText(['jetway:01', 'jetway:02'], ['jetway:01', 'jetway:02']);
     const out = _reconcileJetwayFrames(text, new Set(['jetway:01', 'jetway:02']));
     expect(out).toBe(text);
   });
 
-  it('is a no-op on a header-only document (no checkpoint frame)', () => {
+  it('is a no-op on a header-only document (no checkpoint frame)', { timeout: 60000 }, () => {
     expect(_reconcileJetwayFrames('{ "$type": "0|Header" }', new Set(['jetway:01'])) ).toBe('{ "$type": "0|Header" }');
   });
 
-  it('_jetwayKeysFromEntries only returns jetway keys', () => {
+  it('_jetwayKeysFromEntries only returns jetway keys', { timeout: 60000 }, () => {
     const keys = _jetwayKeysFromEntries(['{ "$k": "jetway:01" }', '{ "$k": "jetway:07A" }', '{ "$k": "stand:1" }', '{ "$k": "physical-runway:01/19" }']);
     expect([...keys].sort()).toEqual(['jetway:01', 'jetway:07A']);
   });

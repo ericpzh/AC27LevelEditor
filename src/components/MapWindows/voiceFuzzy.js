@@ -154,7 +154,7 @@ export function resolveCuratedPhrase(joined, target) {
  *  below ('el', 'see', 'zed', bare letters, …) are PARSER-ONLY tolerance
  *  (typed/CLI) — never grammar words (1-char tokens would pollute the
  *  decoder, and 'el'/'see' are risky additions to a constrained vocab).
- *  Small-model OOV (scripts/check-vosk-vocab.mjs): aitch/juliett/xray are
+ *  Small-model OOV: aitch/juliett/xray are
  *  skipped by the decoder — every letter still has an in-vocab form
  *  (H→hotel, J→jay, X→ex), so spoken spelling works; the OOV forms remain
  *  typed/CLI tolerance. */

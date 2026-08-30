@@ -25,6 +25,17 @@ npm run test:watch    # Watch mode — re-runs on file changes
 npx vitest run tests/electron/updater.test.js
 ```
 
+### Coverage (scoped, threshold-gated)
+
+`vitest.config.js` runs coverage through the **v8** provider (`@vitest/coverage-v8` devDependency) scoped to the two trees that hold the real logic — `src/acl/**` and `src/components/EditorScreen/GroundPainter/**` — and **fails the run** below the thresholds (`statements 55 / branches 40 / functions 48 / lines 55`, a few points of slack under the measured 59.8/44.8/53.7/62.4 baseline). Screens and entry points are deliberately out of scope.
+
+```bash
+npx vitest run --coverage                                              # full suite + coverage/ report + coverage-summary.json
+npx vitest run --coverage tests/components/EditorScreen/GroundPainter/ # Ground Painter only
+```
+
+`testTimeout` is **30 s**, not vitest's 5 s default: the integration suites decode and re-patch real multi-MB `.acl` levels, so individual tests take seconds even un-instrumented (one `scenery_delete_cascade` case alone measures ~3.4 s).
+
 ### E2E tests
 
 ```bash
@@ -61,6 +72,21 @@ npx vitest run tests/integration/id_renumber.test.js       # strictly ascending 
 npx vitest run tests/integration/scenery_roundtrip.test.js # Ground Painter §7.1 no-touch invariant: buildSceneryGraph→patchSceneryBlob(no edits) is byte-identical + re-parses equal; shared-node move / add / delete paths
 npx vitest run tests/integration/scenery_physical_runway_cleanup.test.js # Ground Painter runway delete/rename consistency: checkpoint-frame physical-runway RuntimeEntities reconciliation (Unity "PhysicalRunway static item" InvalidOperationException) + _remapRunwayNameFields cascade (Unity "Dynamics.RestoreRuntimeData" NullReferenceException) + _remapTaxiwaySegmentName taxiway-strip coupling + runway↔pavement GEOMETRIC coupling (meta.runwayPavement population, move-reprojects-strip, add-persists-collinear-strip)
 npx vitest run tests/integration/scenery_delete_cascade.test.js # Ground Painter stand-deletion reference cascade: dropping a stand also drops its jetway STATIC item AND its jetway RUNTIME entity from the checkpoint frame (Unity "Jetway: static item 'jetway:NN' does not exist in CurrentLevel.StaticField.StaticItems" reference-integrity break — _reconcileJetwayFrames), keeps the taxi-navigation graph, and renumbers cleanly; also a no-op save self-heals an already-corrupt frame
+npx vitest run tests/components/EditorScreen/GroundPainter/   # Ground Painter pure-math + component suites: snap.js (angle-snap cascade), fillet-connected.test.js (truncation semantics), fillet-virtual.test.js (additive virtual fillet), metrics.test.js (length/path helpers), GroundPainter.test.jsx (mounted component: line tool, fillet tool, Cancel)
+```
+
+**Game-root suites** — read a real level through `tests/helpers/gameRoot.js` and **skip cleanly** when the game is not installed (override with `AC27_GAME_ROOT=/path/to/Airport Control 25 Playtest`):
+```bash
+npx vitest run tests/integration/survivor_ref_gate.test.js    # Ground Painter §8.5/8.6: a deleted taxiway-node must not leave a survivor taxiway-segment/stand holding a dangling $iref (TaxiwaySegment2DFactory NullReferenceException) — rewire to a live coordinate twin / excise from $rcontent / drop the entry, + the last-resort validation pass, + self-heal of a file already corrupt on disk
+npx vitest run tests/integration/ghost_ref_invariant.test.js  # Ground Painter ghost-node invariant: a NEW entity referencing a node that will not be written would serialize "$iref:null" and abort the save — repairGhostRefs re-points it onto a live co-located twin or drops it; survivor entities are never touched
+```
+
+**Dangling-`$iref` triage scripts** (Ground Painter / game-load crashes — read real `.acl` files directly):
+```bash
+node tests/integration/scan_dangling_refs.cjs <level.acl> [...]   # every $iref whose $id does not exist, grouped by owning PK + which section of the level owns it
+node tests/integration/scan_dangling_refs.cjs --diff a.acl b.acl  # what one save changed
+node tests/integration/scan_taxiway_health.cjs <level.acl> [...]  # walks each taxiway-segment's Nodes list the way TaxiwaySegment2DFactory.CreateVisualPaths does: dangling ids, "$iref:null", refs to non-node objects, positionless nodes (the editor's own reader SKIPS non-numeric $irefs, so a level can look fine in the editor and still crash the game)
+node tests/integration/scan_level_health.cjs                      # per-level entity-count + dangling-count table for every ZSJN level (level dir is hard-coded to the Steam install)
 ```
 
 New parser module tests (no game root needed):

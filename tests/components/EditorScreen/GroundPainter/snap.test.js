@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { findSnap, SNAP_TYPES, collectSnapGeometry, dynamicSnapDist, dynamicAngleTolDeg } from '../../../../src/components/EditorScreen/GroundPainter/snap.js';
+import {
+  findSnap, SNAP_TYPES, collectSnapGeometry, dynamicSnapDist, dynamicAngleTolDeg,
+  getSnapGuides, getSnappedWorldPos, distancePointToLine, closestPointOnSegment,
+  projectPointToLine, segmentAngleDeg, normalizeAngle180, angleDiffToLine, worldSnapDist,
+} from '../../../../src/components/EditorScreen/GroundPainter/snap.js';
 
 const opts = (extra = {}) => ({ snapDist: 0.5, angleToleranceDeg: 5, ...extra });
 
@@ -62,6 +66,43 @@ describe('collectSnapGeometry', () => {
     expect(geom.points).toHaveLength(2);
     expect(geom.segments).toHaveLength(1);
   });
+
+  it('enriches a Graph with runway baselines, closed area rings and stand axes', () => {
+    const geom = collectSnapGeometry({
+      nodes: [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 20, z: 0 }, { x: 5, z: 5 }, { x: 5, z: 7 }],
+      segments: [
+        { nodeIdxs: [0, 1, 2] },   // two edges
+        { nodeIdxs: [0, 0] },      // zero-length edge dropped
+        { aIdx: 0, bIdx: 1 },      // legacy aIdx/bIdx form
+      ],
+      runways: [{ thAIdx: 0, thBIdx: 2 }],
+      areas: [{ points: [{ x: 1, z: 1 }, { x: 2, z: 1 }, { x: 2, z: 2 }] }],
+      stands: [{ noseIdx: 0, tailIdx: 3 }],
+    });
+    // 2 (polyline) + 1 (legacy) + 1 (runway) + 3 (closed ring) + 1 (stand) = 8
+    expect(geom.segments).toHaveLength(8);
+    // 5 nodes + 3 area corners, with the stand nose (0,0) deduped against node 0
+    expect(geom.points).toHaveLength(8);
+  });
+
+  it('reads the editor val shapes ({ taxiwayPaths, runwayData, areaData, standPositions })', () => {
+    const geom = collectSnapGeometry({
+      taxiwayPaths: { paths: [{ points: [{ x: 0, z: 0 }, { x: 10, z: 0 }] }, { points: [{ x: 0, z: 5 }, { x: 0, z: 15 }] }] },
+      runwayData: { r1: { points: [{ x: 0, z: 0 }, { x: 30, z: 0 }] }, r2: {} },
+      areaData: { bld: [{ points: [{ x: 1, z: 1 }, { x: 2, z: 1 }, { x: 2, z: 2 }] }] },
+      standPositions: { s1: { x: 3, y: 3 }, s2: {} },
+    });
+    // 2 path edges + 1 runway baseline (first→last; malformed row skipped) + 3 ring edges
+    expect(geom.segments).toHaveLength(6);
+    // path vertices + 3 area corners + the stand point = 8
+    expect(geom.points).toHaveLength(8);
+    // NOTE: standPositions read st.y but pushPoint stores it in the z slot.
+    expect(geom.points).toContainEqual({ x: 3, z: 3 });
+  });
+
+  it('returns empty geometry for null input', () => {
+    expect(collectSnapGeometry(null)).toEqual({ points: [], segments: [] });
+  });
 });
 
 describe('dynamicSnapDist (zoom-aware snap distance)', () => {
@@ -120,5 +161,113 @@ describe('dynamicAngleTolDeg (zoom-aware angle tolerance)', () => {
 
   it('falls back to the base tolerance when no viewBox is available', () => {
     expect(dynamicAngleTolDeg(0, 0)).toBe(2.5);
+  });
+});
+
+// Straight ground edge: A=(0,0) → B=(10,0) — used as a bare segment below.
+const SEG_ONLY = { points: [], segments: [{ a: { x: 0, z: 0 }, b: { x: 10, z: 0 } }] };
+
+describe('findSnap on-segment (projection) tier of the cascade', () => {
+  it('projects a cursor near a segment interior onto the segment', () => {
+    const res = findSnap({ x: 4.2, z: 0.3 }, null, SEG_ONLY, opts());
+    expect(res.type).toBe(SNAP_TYPES.ON_SEGMENT);
+    expect(res.x).toBeCloseTo(4.2, 6);
+    expect(res.z).toBeCloseTo(0, 6);
+    expect(res.distance).toBeCloseTo(0.3, 6);
+  });
+
+  it('endpoint wins over on-segment when both are within snapDist', () => {
+    // nearest vertex (10,0) at 0.28; segment projection is nearer but lower priority.
+    const geom = { points: [{ x: 0, z: 0 }, { x: 10, z: 0 }], segments: SEG_ONLY.segments };
+    const res = findSnap({ x: 10.2, z: 0.2 }, null, geom, opts());
+    expect(res.type).toBe(SNAP_TYPES.ENDPOINT);
+    expect(res.x).toBeCloseTo(10, 6);
+    expect(res.z).toBeCloseTo(0, 6);
+  });
+
+  it('falls through to the angle tier when the segment is out of reach', () => {
+    // 2 GU off the segment; with no anchor/prev the cascade ends in null.
+    expect(findSnap({ x: 5, z: 2 }, null, SEG_ONLY, opts())).toBeNull();
+    // With an anchor + prev the angle tier gets its chance instead.
+    const res = findSnap({ x: 10, z: 5 }, { x: 10, z: 0 }, SEG_ONLY, opts({ prev: { x: 0, z: 0 } }));
+    expect(res.type).toBe(SNAP_TYPES.PERPENDICULAR_90); // turn = +90° from the prev→anchor edge
+  });
+});
+
+describe('getSnapGuides (render data)', () => {
+  it('emits the 180/90/45/135 guide families per segment, anchored at the segment start', () => {
+    const guides = getSnapGuides({ x: 0, z: 0 }, SEG_ONLY, null);
+    expect(guides).toHaveLength(4);
+    expect(guides.map((g) => g.family)).toEqual(['180', '90', '45', '135']);
+    expect(guides[0].origin).toEqual({ x: 0, z: 0 });
+    expect(guides[0].angleDeg).toBeCloseTo(0, 6);
+    expect(guides[1].angleDeg).toBeCloseTo(90, 6);
+  });
+
+  it('is empty without an anchor or geometry', () => {
+    expect(getSnapGuides(null, SEG_ONLY, null)).toEqual([]);
+    expect(getSnapGuides({ x: 0, z: 0 }, null, null)).toEqual([]);
+  });
+});
+
+describe('getSnappedWorldPos (client → SVG → world boundary)', () => {
+  const svgEl = {
+    createSVGPoint() {
+      return { x: 0, y: 0, matrixTransform() { return { x: this.x, y: this.y }; } };
+    },
+    getScreenCTM() { return { inverse() { return {}; } }; },
+  };
+
+  it('negates svg y into world z and runs the snap cascade on the result', () => {
+    // client (4.2, -0.3) → svg (4.2, -0.3) → world (4.2, 0.3) → on-segment snap.
+    const res = getSnappedWorldPos({ clientX: 4.2, clientY: -0.3 }, svgEl, null, null, SEG_ONLY, opts());
+    expect(res.type).toBe(SNAP_TYPES.ON_SEGMENT);
+    expect(res.z).toBeCloseTo(0, 6);
+    // ...and the endpoint tier through the same conversion (geom with vertices).
+    const withPts = { points: [{ x: 0, z: 0 }, { x: 10, z: 0 }], segments: SEG_ONLY.segments };
+    const ep = getSnappedWorldPos({ clientX: 10.2, clientY: 0.2 }, svgEl, null, null, withPts, opts());
+    expect(ep.type).toBe(SNAP_TYPES.ENDPOINT);
+    expect(ep.x).toBeCloseTo(10, 6);
+  });
+
+  it('returns null when the SVG element cannot provide a point or CTM', () => {
+    expect(getSnappedWorldPos({ clientX: 0, clientY: 0 }, {}, null, null, SEG_ONLY, opts())).toBeNull();
+    const noCtm = { createSVGPoint: svgEl.createSVGPoint };
+    expect(getSnappedWorldPos({ clientX: 0, clientY: 0 }, noCtm, null, null, SEG_ONLY, opts())).toBeNull();
+  });
+});
+
+describe('geometry & threshold helpers', () => {
+  it('distancePointToLine measures perpendicular distance and falls back to point distance', () => {
+    expect(distancePointToLine(5, 3, 0, 0, 10, 0)).toBeCloseTo(3, 9);
+    expect(distancePointToLine(5, 3, 0, 0, 0, 0)).toBeCloseTo(Math.hypot(5, 3), 9); // degenerate line
+  });
+
+  it('closestPointOnSegment clamps the projection to the segment span', () => {
+    expect(closestPointOnSegment(5, 2, 0, 0, 10, 0)).toEqual({ x: 5, z: 0, t: 0.5 });
+    expect(closestPointOnSegment(-3, 4, 0, 0, 10, 0).t).toBe(0);    // clamped before A
+    expect(closestPointOnSegment(15, 4, 0, 0, 10, 0).t).toBe(1);    // clamped after B
+    expect(closestPointOnSegment(1, 1, 0, 0, 0, 0)).toEqual({ x: 0, z: 0, t: 0 }); // degenerate
+  });
+
+  it('projectPointToLine projects along a direction vector (not a segment)', () => {
+    expect(projectPointToLine(5, 7, 0, 0, 1, 0)).toEqual({ x: 5, z: 0 });
+    expect(projectPointToLine(5, 7, 0, 0, 0, 0).x).toBeCloseTo(0, 9); // zero direction is tolerated
+  });
+
+  it('angle helpers normalize into their documented ranges', () => {
+    expect(segmentAngleDeg(0, 0, 10, 0)).toBeCloseTo(0, 9);
+    expect(segmentAngleDeg(0, 0, 0, 10)).toBeCloseTo(90, 9);
+    expect(normalizeAngle180(-90)).toBe(90);
+    expect(normalizeAngle180(270)).toBe(90);
+    expect(angleDiffToLine(30, 0)).toBeCloseTo(30, 9);
+    expect(angleDiffToLine(150, 0)).toBeCloseTo(30, 9); // folds into [0,90]
+  });
+
+  it('worldSnapDist clamps to the fixed world band', () => {
+    expect(worldSnapDist(50)).toBeCloseTo(0.6, 9);   // 50*0.012, inside the band
+    expect(worldSnapDist(10)).toBe(0.25);            // floor
+    expect(worldSnapDist(1000)).toBe(0.80);          // 12 clamps to the ceiling
+    expect(worldSnapDist(0)).toBe(0.25);             // zero/NaN diagonal sanitizes to 0 → floor
   });
 });

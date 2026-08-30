@@ -14,7 +14,10 @@ import { createPortal } from 'react-dom';
 import GroundPainterToolbar from './GroundPainterToolbar';
 import './GroundPainter.css';
 import { findSnap, worldSnapDist, dynamicSnapDist, dynamicAngleTolDeg, collectSnapGeometry, SNAP_TYPES } from './snap';
-import { computeFillet, countIncidentAll, countIncidentByCoord, findNodeIndexByCoord, isStraightSegment } from './fillet';
+import { computeFillet, applyVirtualFillet, countIncidentAll, countIncidentByCoord, findNodeIndexByCoord, isStraightSegment, repairGhostRefs, ghostNodeIndices } from './fillet';
+import { segNodeIdxs, polylineLengthMeters, segmentLengthMeters, runwayLengthMeters, formatLengthMeters, buildTaxiPaths } from './metrics';
+// Keep the metrics helpers reachable from the component's import surface.
+export { polylineLengthMeters, segmentLengthMeters, runwayLengthMeters, formatLengthMeters, buildTaxiPaths };
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
 import { IoClose, IoCheckmark } from 'react-icons/io5';
@@ -198,10 +201,6 @@ function reprojectOnRunwayAxis(p, a0, b0, a1, b1) {
   // absolute along offset (which breaks when one threshold is dragged).
   const alongScaled = along * (l1 / l0);
   return { x: a1.x + alongScaled * u1x + perp * n1x, z: a1.z + alongScaled * u1z + perp * n1z };
-}
-// Full ordered node-index polyline of a segment (nodeIdxs, or legacy aIdx/bIdx).
-function segNodeIdxs(sg) {
-  return (sg && sg.nodeIdxs && sg.nodeIdxs.length >= 2) ? sg.nodeIdxs : (sg ? [sg.aIdx, sg.bIdx] : []);
 }
 // ── Multi-selection ROTATION helpers ──────────────────────────
 // Rotate a world point (x,z) around a pivot (cx,cz) by `deg` degrees (rigid).
@@ -469,55 +468,6 @@ function hasForegroundHit(graph, wp, viewBox, baseVB) {
     if (minEdgeDist(wp.x, wp.z, pts) <= TH) return true;
   }
   return false;
-}
-
-// ── Length helpers (meters) ──
-// 1 GU = DEFAULT_AIRPORT_SCALE meters (100 m/unit, see src/utils/constants/aviation.js)
-export function polylineLengthMeters(points) {
-  if (!points || points.length < 2) return 0;
-  let gu = 0;
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1], b = points[i];
-    if (!a || !b) continue;
-    gu += Math.hypot(b.x - a.x, b.z - a.z);
-  }
-  return Math.round(gu * DEFAULT_AIRPORT_SCALE);
-}
-export function segmentLengthMeters(graph, idx) {
-  if (!graph || !graph.segments || !graph.segments[idx]) return null;
-  const sg = graph.segments[idx];
-  const idxs = segNodeIdxs(sg);
-  if (idxs.length < 2) return null;
-  const pts = idxs.map((ni) => graph.nodes[ni]).filter(Boolean);
-  if (pts.length < 2) return null;
-  return polylineLengthMeters(pts);
-}
-export function runwayLengthMeters(graph, idx) {
-  if (!graph || !graph.runways || !graph.runways[idx]) return null;
-  const rw = graph.runways[idx];
-  const a = graph.nodes[rw.thAIdx], b = graph.nodes[rw.thBIdx];
-  if (!a || !b) return null;
-  return Math.round(Math.hypot(b.x - a.x, b.z - a.z) * DEFAULT_AIRPORT_SCALE);
-}
-export function formatLengthMeters(m) {
-  if (m == null || !isFinite(m)) return '';
-  return m.toLocaleString() + ' m';
-}
-
-// Render each taxiway segment as its own full polyline (preserving all curve
-// vertices from the ACL segment Nodes) — the same geometry the Ground Map shows.
-export function buildTaxiPaths(graph) {
-  const segs = graph.segments || [];
-  const paths = [];
-  for (const sg of segs) {
-    const pts = [];
-    for (const ni of (sg.nodeIdxs || [sg.aIdx, sg.bIdx])) {
-      const n = graph.nodes[ni];
-      if (n) pts.push({ x: n.x, z: n.z });
-    }
-    if (pts.length >= 2) paths.push(pts);
-  }
-  return paths;
 }
 
 // ── Snap / angle helpers ─────────────────────────────────────────
@@ -1725,7 +1675,7 @@ export default function GroundPainter({ vals }) {
         const clean = { x: p.x, z: p.z };
         const next = c ? [...c, clean] : [clean];
         if (next.length === 2) {
-          if (Math.hypot(next[0].x - next[1].x, next[0].z - next[1].z) < 1e-6) { setGpError('Segment needs distinct endpoints'); return [clean]; }
+          if (Math.hypot(next[0].x - next[1].x, next[0].z - next[1].z) < 1e-6) { setGpError(t('ground_painter_error_distinct_endpoints') || 'Segment needs distinct endpoints'); return [clean]; }
           const st = useAppStore.getState();
           const gg = st.groundPainterGraph;
           const mm = st.groundPainterMeta;
@@ -1800,7 +1750,7 @@ export default function GroundPainter({ vals }) {
           // Ensure endpoints of the new segment have nodes (reuse junc if interior)
           const na = getOrCreate(next[0]);
           const nb = getOrCreate(next[1]);
-          if (na === nb) { setGpError('Segment needs distinct endpoints'); return [clean]; }
+          if (na === nb) { setGpError(t('ground_painter_error_distinct_endpoints') || 'Segment needs distinct endpoints'); return [clean]; }
           // Replace each split segment with its pieces (in descending index order)
           const segIdxsToSplit = [...splitMap.keys()].sort((a, b) => b - a);
           for (const segIdx of segIdxsToSplit) {
@@ -1856,7 +1806,7 @@ export default function GroundPainter({ vals }) {
     } else if (tool === TOOL_CURVE) {
       // Fillet/rounding: pick two straight segments sharing a degree-2 node
       const segIdx = findNearestSegmentIdx(raw);
-      if (segIdx == null) { setGpError('Click near a straight taxiway segment'); return; }
+      if (segIdx == null) { setGpError(t('ground_painter_fillet_error_click_near') || 'Click near a straight taxiway segment'); return; }
       const sg = graph.segments[segIdx];
       if (!isStraightSegment(sg)) { setGpError(t('ground_painter_fillet_error_straight') || 'Only straight segments can be filleted'); return; }
       // if already picked first, handle second pick
@@ -1928,7 +1878,7 @@ export default function GroundPainter({ vals }) {
       if (closeIdx >= 0) {
         const truncated = pts.slice(closeIdx);
         if (truncated.length >= 3) { commitArea(truncated); }
-        else { setGpError('Area needs at least 3 vertices'); }
+        else { setGpError(t('ground_painter_error_area_min_vertices') || 'Area needs at least 3 vertices'); }
         return;
       }
       setCommitting([...pts, { x: p.x, z: p.z }]);
@@ -2183,7 +2133,7 @@ export default function GroundPainter({ vals }) {
       const mm = st.groundPainterMeta;
       const clean = committing.map((pt) => ({ x: pt.x, z: pt.z }));
       // Only handle the pending last edge (committing length is 2 via the click path; for longer chains commit pairwise)
-      if (clean.length === 2 && Math.hypot(clean[0].x - clean[1].x, clean[0].z - clean[1].z) < 1e-6) { setGpError('Segment needs distinct endpoints'); setCommitting(null); return; }
+      if (clean.length === 2 && Math.hypot(clean[0].x - clean[1].x, clean[0].z - clean[1].z) < 1e-6) { setGpError(t('ground_painter_error_distinct_endpoints') || 'Segment needs distinct endpoints'); setCommitting(null); return; }
       let nodes = [...gg.nodes];
       let segs = [...gg.segments];
       let newMeta = structuredClone(mm);
@@ -2275,11 +2225,11 @@ export default function GroundPainter({ vals }) {
       useAppStore.setState({ groundPainterHistory: structuredClone(gg), groundPainterMetaHistory: structuredClone(mm), groundPainterGraph: newGraph, groundPainterMeta: newMeta, groundPainterHasEdited: true });
       setCommitting(clean.length >= 2 ? [{ x: clean[clean.length-1].x, z: clean[clean.length-1].z }] : null);
     }
-  }, [tool, committing, commitArea, commitRunway, filletPicks, filletRadius]);
+  }, [tool, committing, commitArea, commitRunway, filletPicks, filletRadius, t]);
 
   // ── Save (with .bak prompt) + Cancel ──
   function commitArea(pts) {
-    if (!pts || pts.length < 3) { setGpError('Area needs at least 3 vertices'); setCommitting(null); return; }
+    if (!pts || pts.length < 3) { setGpError(t('ground_painter_error_area_min_vertices') || 'Area needs at least 3 vertices'); setCommitting(null); return; }
     const st = useAppStore.getState();
     const gg = st.groundPainterGraph;
     const clean = pts.map((p) => ({ x: p.x, z: p.z }));
@@ -2305,6 +2255,13 @@ export default function GroundPainter({ vals }) {
       return seg ? JSON.stringify({ idxs: seg.nodeIdxs || [seg.aIdx, seg.bIdx], flags: seg.flags, name: seg.name, pts: (seg.nodeIdxs||[seg.aIdx,seg.bIdx]).map(i=>gg.nodes[i]) }) : 'null';
     };
     let res = computeFillet(g0, segIdxA, segIdxB, radius);
+    // A failed compute (angle/parallel/inside/…) must never fall through: the
+    // tail below dereferences res.o/res.arcPoints. Enter-key commit is not gated
+    // on the preview, so guard here rather than only in the UI.
+    if (!res.ok) {
+      setGpError(res.errorParams ? t(res.error, res.errorParams) : t(res.error));
+      return;
+    }
     // If O lies interior to a picked straight segment (e.g. T top single segment with O interior to its edge),
     // split that segment at O so the other side is kept. This handles the "other part deleted" T case where
     // the straight taxiway is a single long segment with the T's stem meeting its interior.
@@ -2551,17 +2508,22 @@ export default function GroundPainter({ vals }) {
       // After splits, recompute res with new seg indices? The original res was computed with old seg indices and O, but after split, O is now at a node, and the picked subsegment is now endpoint at O, so the fillet geometry remains same (O, n, t). No need to recompute.
     }
 
-    // ── Delete original two segments ──
-    const toDelete = [segIdxA, segIdxB].sort((a, b) => b - a);
-    for (const idx of toDelete) {
-      const seg = g0.segments[idx];
-      const pk = m.segOrigPk[idx];
-      if (pk != null && !m.deletedPks.includes(pk)) m.deletedPks.push(pk);
-      g.segments.splice(idx, 1);
-      m.segOrigPk.splice(idx, 1);
-    }
-    // Define isVirtual/deg for ghost-delete and deg>2 keep logic (res may have been updated after pre-split)
+    // Connected: truncation IS the fillet — the corner region between O and the
+    // tangent points is replaced by the arc, so the picked segments are removed
+    // and re-created truncated at their tangent points.
+    // Virtual (non-connected): NEVER delete taxiway — both picked segments keep
+    // their full geometry and the arc is wired on additively (applyVirtualFillet).
     const isVirtual = !!res.virtualO;
+    if (!isVirtual) {
+      const toDelete = [segIdxA, segIdxB].sort((a, b) => b - a);
+      for (const idx of toDelete) {
+        const seg = g0.segments[idx];
+        const pk = m.segOrigPk[idx];
+        if (pk != null && !m.deletedPks.includes(pk)) m.deletedPks.push(pk);
+        g.segments.splice(idx, 1);
+        m.segOrigPk.splice(idx, 1);
+      }
+    }
     const deg = isVirtual ? 0 : countIncidentByCoord(g0, res.o.x, res.o.z);
     // Ghost-delete the O nodes for the picked segments when they are not shared
     // with any kept branch. For a simple corner (deg==2) this deletes the single
@@ -2590,19 +2552,41 @@ export default function GroundPainter({ vals }) {
         if (!usedByKept) {
           const pk = m.nodeOrigPk[oIdx];
           if (pk != null && !m.deletedPks.includes(pk)) m.deletedPks.push(pk);
-        } else {
         }
       }
     }
+    // The nodes ghost-deleted above are still in g.nodes (kept for index
+    // stability) but will NOT be written to the .acl, so nothing created from
+    // here on may reference them. Resolve each O through a LIVE node at the same
+    // coordinate instead: at a T junction the arms often use duplicate nodes at
+    // one snap point, and a surviving twin carries exactly the same geometry and
+    // connections. This is what used to produce a new leg pointing at a deleted
+    // node → "$iref:null" → `invalid $iref payload "null"` on save.
+    const ghostIdxs = ghostNodeIndices(g, m);
+    const liveEquivalent = (idx) => {
+      if (idx == null) return null;
+      if (!ghostIdxs.has(idx)) return idx;
+      const n = g.nodes[idx];
+      if (!n) return null;
+      for (let i = 0; i < g.nodes.length; i++) {
+        if (ghostIdxs.has(i)) continue;
+        const c = g.nodes[i];
+        if (c && Math.abs(c.x - n.x) < 1e-6 && Math.abs(c.z - n.z) < 1e-6) return i;
+      }
+      return null;
+    };
 
-    // ── Append new nodes for arc (including t1/t2) ──
-    const base = g.nodes.length;
-    for (const pt of res.arcPoints) {
-      g.nodes.push({ x: pt.x, z: pt.z, type: 2, flags: 0 });
-      m.nodeOrigPk.push(null);
+    let idxT1 = null, idxT2 = null;
+    if (!isVirtual) {
+      // ── Append new nodes for arc (including t1/t2) ──
+      const base = g.nodes.length;
+      for (const pt of res.arcPoints) {
+        g.nodes.push({ x: pt.x, z: pt.z, type: 2, flags: 0 });
+        m.nodeOrigPk.push(null);
+      }
+      idxT1 = base;
+      idxT2 = base + res.arcPoints.length - 1;
     }
-    const idxT1 = base;
-    const idxT2 = base + res.arcPoints.length - 1;
     const p1Idx = res.p1Idx;
     const p2Idx = res.p2Idx;
 
@@ -2651,19 +2635,28 @@ export default function GroundPainter({ vals }) {
       m.segOrigPk.push(null);
     };
 
-    // Create truncated legs for both picked segments
-    createTruncatedLeg(segA0, p1Idx, idxT1);
-    // For second leg, note direction: T2 -> P2 (still far->T but order reversed for consistency)
-    // createTruncatedLeg expects far->T, but for B we have T2->P2 (T to far). Our helper creates far->T, which is same line reversed.
-    // To keep direction consistent, call with far P2 and T2
-    createTruncatedLeg(segB0, p2Idx, idxT2);
+    if (isVirtual) {
+      // Virtual (non-connected): wire both picked segments to their tangent
+      // points additively — extension stub beyond the near endpoint, split at
+      // the tangent point, or direct anchor when a node already sits there.
+      // No taxiway is removed; the arc is appended inside, anchored at the
+      // (possibly pre-existing) tangent nodes.
+      applyVirtualFillet(g, m, res, segIdxA, segIdxB);
+    } else {
+      // Create truncated legs for both picked segments
+      createTruncatedLeg(segA0, p1Idx, idxT1);
+      // For second leg, note direction: T2 -> P2 (still far->T but order reversed for consistency)
+      // createTruncatedLeg expects far->T, but for B we have T2->P2 (T to far). Our helper creates far->T, which is same line reversed.
+      // To keep direction consistent, call with far P2 and T2
+      createTruncatedLeg(segB0, p2Idx, idxT2);
+    }
 
     // For T (deg>2) keep the original O-T stubs as well so the 3rd arm stays connected to both filleted arms via O.
     // This gives 3 segs on the straight top (west O, O-T, T-far) + 2 on vertical (O-T, T-far) + arc = 6 as requested.
     // For simple corner deg==2 there is no 3rd arm, so O-T is not needed (O will be deleted).
     if (!isVirtual && deg > 2) {
-      const oA = res.duplicate ? res.oIdxA : res.oIdx;
-      const oB = res.duplicate ? res.oIdxB : res.oIdx;
+      const oA = liveEquivalent(res.duplicate ? res.oIdxA : res.oIdx);
+      const oB = liveEquivalent(res.duplicate ? res.oIdxB : res.oIdx);
       // Only keep O-T if O node still exists (not ghost-deleted) and T is distinct from O
       if (oA != null && idxT1 != null && oA !== idxT1) {
         const segAFlags = segA0?.flags ?? 2;
@@ -2693,11 +2686,14 @@ export default function GroundPainter({ vals }) {
       }
     }
 
-    // Arc: T1 -> ... -> T2 (all new nodes)
-    const arcIdxs = [];
-    for (let i = 0; i < res.arcPoints.length; i++) arcIdxs.push(base + i);
-    g.segments.push({ aIdx: idxT1, bIdx: idxT2, nodeIdxs: arcIdxs, flags: 2, directed: false });
-    m.segOrigPk.push(null);
+    // Arc: T1 -> ... -> T2 (all new nodes). The virtual path appended its own
+    // arc inside applyVirtualFillet, anchored at possibly pre-existing nodes.
+    if (!isVirtual) {
+      const arcIdxs = [];
+      for (let i = 0; i < res.arcPoints.length; i++) arcIdxs.push(idxT1 + i);
+      g.segments.push({ aIdx: idxT1, bIdx: idxT2, nodeIdxs: arcIdxs, flags: 2, directed: false });
+      m.segOrigPk.push(null);
+    }
 
     // If any pavement was filleted, clear its runwayPavement meta entry so the live
     // name-based fallback finds the new truncated pavement correctly (otherwise stale
@@ -2713,25 +2709,16 @@ export default function GroundPainter({ vals }) {
       }
     }
 
-    // ── Virtual (non-connected): GC orphan near nodes that became isolated ──
-    if (isVirtual) {
-      const nearIdxs = [res.nearIdxA, res.nearIdxB].filter((v) => v != null);
-      for (const ni of nearIdxs) {
-        let used = false;
-        for (const sg of g.segments) {
-          const idxs = sg.nodeIdxs && sg.nodeIdxs.length ? sg.nodeIdxs : [sg.aIdx, sg.bIdx];
-          if (idxs.includes(ni)) { used = true; break; }
-        }
-        for (const rw of g.runways || []) if (rw.thAIdx === ni || rw.thBIdx === ni) { used = true; break; }
-        for (const st of g.stands || []) {
-          if (st.noseIdx === ni || st.tailIdx === ni) { used = true; break; }
-          if (Array.isArray(st.pushbackIdxs) && st.pushbackIdxs.includes(ni)) { used = true; break; }
-        }
-        const pk = m.nodeOrigPk[ni];
-        if (pk != null && !m.deletedPks.includes(pk)) m.deletedPks.push(pk);
-        // keep ghost node in array for index stability (do not splice) — will be dropped on save
-      }
-    }
+    // Virtual path: no orphan-node GC here anymore. applyVirtualFillet is
+    // additive — both picked segments keep their full geometry (extension
+    // stubs and tangent-point splits keep every original node referenced), so
+    // no near node can become isolated and no node PK is ghost-deleted.
+
+    // Invariant: no entity that the writer will re-synthesize may reference a
+    // ghost node (a node kept in the graph but dropped from the file) — that is
+    // what serializes as "$iref:null" and aborts the save.
+    const repair = repairGhostRefs(g, m);
+    if (repair.dropped > 0) console.warn('[fillet] repairGhostRefs:', { ...repair, warnings: repair.warnings.map((w) => t(w) || w) });
 
     // Commit with meta history
     const prevG = s.groundPainterGraph;
@@ -2749,7 +2736,7 @@ export default function GroundPainter({ vals }) {
   }
   // Legacy alias kept for dbl-click path (now delegates to fillet)
   function commitCurve(pts) {
-    setGpError('Curve tool is now fillet: select two straight taxiways');
+    setGpError(t('ground_painter_fillet_tool_hint') || 'Curve tool is now fillet: select two straight taxiways');
   }
 
   // Runway — one straight line becomes one physical runway pair. Name/PhysicalName
@@ -2845,6 +2832,19 @@ export default function GroundPainter({ vals }) {
     useAppStore.setState(patch);
   }
 
+  // Writer warnings arrive as { key, params, text }: the writer runs in the
+  // Electron main process where no translation context exists, so it emits an
+  // i18n key + params (translated here) plus its plain-English rendering as a
+  // fallback for anything the dictionary does not cover.
+  function writerWarningText(w) {
+    if (w && typeof w === 'object' && w.key) {
+      const s = t(w.key, w.params);
+      if (s && s !== w.key) return s;
+      return w.text || JSON.stringify(w.params || {});
+    }
+    return String(w);
+  }
+
   const save = useCallback(async (createBackup) => {
     const st = useAppStore.getState();
     setGpError(null);
@@ -2865,6 +2865,16 @@ export default function GroundPainter({ vals }) {
         }
       }
     }
+    // Invariant guard: an entity the writer re-synthesizes must not reference a
+    // node that will not be written (a ghost node — its PK is in deletedPks) or
+    // an index that no longer exists. Either one serializes to "$iref:null" and
+    // aborts the save with `invalid $iref payload "null"`. Repairing here is a
+    // net, not the fix: this firing means some edit left the graph inconsistent.
+    const repair = repairGhostRefs(st.groundPainterGraph, st.groundPainterMeta);
+    if (repair.remapped || repair.dropped) {
+      console.error('[GP] save: graph referenced deleted/missing nodes and was repaired — ' +
+        'the edit that produced this is a bug:', { ...repair, warnings: repair.warnings.map((w) => t(w) || w) });
+    }
     let res;
     try {
       res = await window.electronAPI.saveGroundPainterData({
@@ -2874,12 +2884,23 @@ export default function GroundPainter({ vals }) {
       });
     } catch (e) {
       console.error('[GP] save failed', e);
-      setGpError('Save failed: ' + (e && e.message ? e.message : String(e)));
+      setGpError(t('ground_painter_save_failed', { msg: e && e.message ? e.message : String(e) }) || 'Save failed');
       return; // keep the window open so the user can retry / fix
     }
     if (res && res.newText) useAppStore.setState({ groundPainterSnapshotText: res.newText, groundPainterHasEdited: false });
+    // Non-fatal: the save succeeded but some geometry could not be written (e.g.
+    // a segment whose endpoint node was deleted). Tell the user instead of
+    // silently dropping it.
+    if (res && Array.isArray(res.warnings) && res.warnings.length > 0) {
+      showModal(
+        t('ground_painter_saved_with_warnings') || 'Saved with warnings',
+        <div>{res.warnings.map((w, i) => (<div key={i} style={{ marginBottom: 6 }}>{writerWarningText(w)}</div>))}</div>,
+        <div className="modal-actions-row"><button className="btn-confirm" onClick={() => { hideModal(); close(); }}>{t('modal_btn_ok')}</button></div>
+      );
+      return;
+    }
     close(); // save complete → close the window
-  }, [t, close, bgImage]);
+  }, [t, close, bgImage, showModal, hideModal]);
 
   // Exact copy of the Flight Editor backup-before-save modal (useEditorSaveActions).
   const onSavePrompt = useCallback(() => {
@@ -3055,11 +3076,26 @@ export default function GroundPainter({ vals }) {
           let preview = null;
           if (filletPreview && filletPreview.ok && filletPreview.arcPoints) {
             const ap = filletPreview.arcPoints;
+            // Virtual (disconnected) fillet: nothing is cut — both taxiways keep
+            // their full geometry and the arc is added on top. Show the tangent →
+            // near-endpoint connection side: where an extension stub bridges the
+            // gap to the arc (or an existing piece stays and the arc branches off).
+            const nearA = filletPreview.virtualO && filletPreview.nearIdxA != null ? graph.nodes[filletPreview.nearIdxA] : null;
+            const nearB = filletPreview.virtualO && filletPreview.nearIdxB != null ? graph.nodes[filletPreview.nearIdxB] : null;
             preview = (
               <g key="filletPreview">
-                {/* Truncated / extended legs P_far -> T (always — fillet cuts the straight legs at the tangent points) */}
-                <line x1={filletPreview.p1.x} y1={svgY(filletPreview.p1.z)} x2={filletPreview.t1.x} y2={svgY(filletPreview.t1.z)} stroke="#ffd34d" strokeWidth={HL_SW} strokeDasharray="6,4" opacity={0.95} />
-                <line x1={filletPreview.t2.x} y1={svgY(filletPreview.t2.z)} x2={filletPreview.p2.x} y2={svgY(filletPreview.p2.z)} stroke="#ffd34d" strokeWidth={HL_SW} strokeDasharray="6,4" opacity={0.95} />
+                {nearA && nearB ? (
+                  <>
+                    <line x1={filletPreview.t1.x} y1={svgY(filletPreview.t1.z)} x2={nearA.x} y2={svgY(nearA.z)} stroke="#ffd34d" strokeWidth={HL_SW} strokeDasharray="6,4" opacity={0.95} />
+                    <line x1={filletPreview.t2.x} y1={svgY(filletPreview.t2.z)} x2={nearB.x} y2={svgY(nearB.z)} stroke="#ffd34d" strokeWidth={HL_SW} strokeDasharray="6,4" opacity={0.95} />
+                  </>
+                ) : (
+                  <>
+                    {/* Truncated legs P_far -> T (connected fillet cuts the straight legs at the tangent points) */}
+                    <line x1={filletPreview.p1.x} y1={svgY(filletPreview.p1.z)} x2={filletPreview.t1.x} y2={svgY(filletPreview.t1.z)} stroke="#ffd34d" strokeWidth={HL_SW} strokeDasharray="6,4" opacity={0.95} />
+                    <line x1={filletPreview.t2.x} y1={svgY(filletPreview.t2.z)} x2={filletPreview.p2.x} y2={svgY(filletPreview.p2.z)} stroke="#ffd34d" strokeWidth={HL_SW} strokeDasharray="6,4" opacity={0.95} />
+                  </>
+                )}
                 {/* Arc */}
                 <polyline points={ap.map((pp) => pp.x + ',' + svgY(pp.z)).join(' ')} fill="none" stroke="#3fdc6e" strokeWidth={HL_SW * 1.2} strokeLinecap="round" strokeLinejoin="round" />
                 {/* Tangent points */}
@@ -3507,7 +3543,7 @@ export default function GroundPainter({ vals }) {
   const filletOverlay = (() => {
     if (tool !== TOOL_CURVE) return null;
     if (!graph || !viewBox || !svgRef.current) return null;
-    if (filletPicks.length < 2) return null;
+    if (filletPicks.length < 1) return null;
     const svg = svgRef.current;
     const rect = svg.getBoundingClientRect();
     const ctm = svg.getScreenCTM ? svg.getScreenCTM() : null;
@@ -3523,9 +3559,16 @@ export default function GroundPainter({ vals }) {
       const sy = ((svgY(wz) - vy) / vh) * rect.height;
       return { x: sx, y: sy };
     };
-    // anchor at intersection O (or midpoint of t1/t2 if available)
+    // anchor at intersection O (or midpoint of t1/t2 if available); with one
+    // pick (hint panel only), anchor at the picked segment's midpoint
     let anchor = null;
-    if (filletPreview && filletPreview.o) anchor = filletPreview.o;
+    if (filletPicks.length < 2) {
+      const sgA = graph.segments[filletPicks[0]];
+      if (sgA) {
+        const pts = segNodeIdxs(sgA).map((ni) => graph.nodes[ni]).filter(Boolean);
+        if (pts.length >= 2) anchor = { x: (pts[0].x + pts[pts.length - 1].x) / 2, z: (pts[0].z + pts[pts.length - 1].z) / 2 };
+      }
+    } else if (filletPreview && filletPreview.o) anchor = filletPreview.o;
     else if (filletPreview && filletPreview.center) anchor = filletPreview.center;
     else {
       // fallback: midpoint of the two picked segments' midpoints
@@ -3543,7 +3586,7 @@ export default function GroundPainter({ vals }) {
     }
     if (!anchor) return null;
     const scr = toScreen(anchor.x, anchor.z);
-    const panelW = 300, panelH = 48;
+    const panelW = filletPicks.length < 2 ? 190 : 300, panelH = 48;
     let left = scr.x + 18;
     let top = scr.y - panelH/2;
     if (left + panelW > rect.width - 8) left = scr.x - panelW - 18;
@@ -3557,7 +3600,9 @@ export default function GroundPainter({ vals }) {
         onMouseDown={(e) => e.stopPropagation()}
         style={{ position: 'absolute', left, top, width: panelW, pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 8, background: '#0a1628', border: `1px solid ${hasError ? '#ff6b6b' : '#3fdc6e'}`, borderRadius: 8, padding: '8px 10px', boxShadow: '0 4px 16px rgba(0,0,0,0.45)' }}
       >
-        {hasError ? (
+        {filletPicks.length < 2 ? (
+          <span style={{ color: '#ffd34d', fontSize: 12, flex: 1 }}>{t('ground_painter_fillet_pick_second') || 'pick second'}</span>
+        ) : hasError ? (
           <span style={{ color: '#ff6b6b', fontSize: 12, flex: 1 }}>{filletPreview.errorParams ? t(filletPreview.error, filletPreview.errorParams) : t(filletPreview.error)}</span>
         ) : (
           <input
@@ -3567,6 +3612,8 @@ export default function GroundPainter({ vals }) {
             step={0.05}
             value={filletRadius}
             onChange={(e) => setFilletRadius(parseFloat(e.target.value))}
+            title={t('ground_painter_fillet_radius') || 'Fillet radius'}
+            aria-label={t('ground_painter_fillet_radius') || 'Fillet radius'}
             style={{ flex: 1 }}
           />
         )}
@@ -3577,14 +3624,17 @@ export default function GroundPainter({ vals }) {
         >
           <IoClose size={16} />
         </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); if (filletPicks.length >=2) commitFillet(filletPicks[0], filletPicks[1], filletRadius); }}
-          disabled={!!hasError}
-          title={t('modal_btn_confirm_save') || '确认 (Enter)'}
-          style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', background: hasError ? '#2d3748' : '#3fdc6e', border: `1px solid ${hasError ? '#4a5568' : '#3fdc6e'}`, borderRadius: 4, color: hasError ? '#718096' : '#0a1628', cursor: hasError ? 'not-allowed' : 'pointer', opacity: hasError ? 0.5 : 1 }}
-        >
-          <IoCheckmark size={16} />
-        </button>
+        {filletPicks.length >= 2 && (
+          <button
+            onClick={(e) => { e.stopPropagation(); commitFillet(filletPicks[0], filletPicks[1], filletRadius); }}
+            disabled={!!hasError}
+            title={t('modal_btn_confirm_save') || '确认 (Enter)'}
+            aria-label={t('ground_painter_fillet_ready') || 'press Enter to confirm'}
+            style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', background: hasError ? '#2d3748' : '#3fdc6e', border: `1px solid ${hasError ? '#4a5568' : '#3fdc6e'}`, borderRadius: 4, color: hasError ? '#718096' : '#0a1628', cursor: hasError ? 'not-allowed' : 'pointer', opacity: hasError ? 0.5 : 1 }}
+          >
+            <IoCheckmark size={16} />
+          </button>
+        )}
       </div>
     );
   })();

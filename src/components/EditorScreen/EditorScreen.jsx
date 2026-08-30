@@ -123,8 +123,6 @@ function MapOverlays({ standBtnRef, starBtnRef, groundPainterBtnRef }) {
       }));
   }, [showStarMap, flights]);
 
-  console.log('[MapOverlays] render', { showStandMap, showStarMap, mapFlightIdx, hasStands: !!(standPositions && Object.keys(standPositions).length > 0) });
-
   return (
     <>
       {showStandMap && standPositions && Object.keys(standPositions).length > 0 && (

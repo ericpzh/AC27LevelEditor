@@ -344,6 +344,219 @@ function _cascadeOrphanEntries(pkEntries, siEntries, deadIds) {
   return { pkEntries, siEntries, drop };
 }
 
+// ─── Survivor dangling-$iref gate ─────────────────────────────────
+// When this patch deletes taxiway nodes, every SURVIVOR entry that still
+// $irefs one of them serializes a reference the game resolves to null —
+// TaxiwaySegment2DFactory dereferences it and crashes level init
+// (ZSJN_leisure_1: $iref:2004 / $iref:2040). Survivor entries are copied
+// verbatim, so unlike new entities (whose node refs are null-filtered at
+// synthesis) nothing else repairs them.
+//
+// Repair order per dead reference:
+//   1. rewire to a LIVE taxiway-node at the deleted node's coordinate —
+//      co-located junction twins are geometrically identical;
+//   2. excise the dead reference from the entry's $rcontent list, when enough
+//      refs remain (a polyline needs both ends);
+//   3. drop the whole entry (a dropped stand cascades its jetways, because
+//      its ids join `deletedIds` before the jetway cascade runs).
+//
+// Runs BEFORE _cascadeOrphanEntries. Mutates pkEntries (patched strings),
+// pkDelete (gate-dropped entries) and deletedIds (ids of gate-dropped
+// entries). Returns true when it changed anything — the caller must then skip
+// the lossless no-op path so the repairs actually persist.
+function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings) {
+  const deletedSet = new Set(pkDelete);
+  // Deleted taxiway-node $id -> coordinate (the rewire source of truth).
+  const deadNodeCoord = new Map();
+  for (const e of pkDelete) {
+    if (_entryTypePrefix(e) !== 'taxiway-node') continue;
+    const id = _entryId(e);
+    const pos = extractVector3FromV4(e);
+    if (id != null && pos) deadNodeCoord.set(id, pos);
+  }
+  if (deadNodeCoord.size === 0) return false;
+
+  // Live taxiway-node coordinate -> $id (first wins), skipping deleted entries.
+  const liveIdByCoord = new Map();
+  for (const e of pkEntries) {
+    if (deletedSet.has(e)) continue;
+    if (_entryTypePrefix(e) !== 'taxiway-node') continue;
+    const id = _entryId(e);
+    const pos = extractVector3FromV4(e);
+    if (id == null || !pos) continue;
+    const key = _coordKey(pos.x, pos.z);
+    if (!liveIdByCoord.has(key)) liveIdByCoord.set(key, id);
+  }
+
+  // Warnings are structured { key, params, text }: the writer runs in the
+  // Electron main process where no translation context exists, so `key` +
+  // `params` drive the renderer-side i18n translation and `text` is the
+  // plain-English rendering for console logs (and as a display fallback).
+  const warn = (w) => { console.warn('[scenery_write] ' + w.text); if (warnings) warnings.push(w); };
+  let dirty = false;
+
+  for (let i = 0; i < pkEntries.length; i++) {
+    let entry = pkEntries[i];
+    if (deletedSet.has(entry)) continue;
+    const prefix = _entryTypePrefix(entry);
+    if (prefix !== 'taxiway-segment' && prefix !== 'stand') continue;
+
+    // Dead node ids this entry still references (deduped, first-seen order).
+    const deadRefs = [];
+    for (const m of entry.matchAll(/\$iref:\s*(\d+)/g)) {
+      const id = parseInt(m[1], 10);
+      if (deadNodeCoord.has(id) && !deadRefs.includes(id)) deadRefs.push(id);
+    }
+    if (deadRefs.length === 0) continue;
+    const pk = _entryPk(entry);
+
+    // 1) Rewire every dead ref that has a live coordinate twin.
+    let repaired = 0;
+    const unrepairable = [];
+    for (const d of deadRefs) {
+      const pos = deadNodeCoord.get(d);
+      const twin = liveIdByCoord.get(_coordKey(pos.x, pos.z));
+      if (twin != null && twin !== d) {
+        entry = entry.replace(new RegExp('\\$iref:' + d + '(?!\\d)', 'g'), () => '$iref:' + twin);
+        repaired++;
+      } else {
+        unrepairable.push(d);
+      }
+    }
+
+    // 2) Excise unrepairable refs from the entry's $rcontent list when enough
+    //    refs remain. Refs that are bare properties (a stand's NosePosition /
+    //    TailPosition) cannot be excised — _exciseIrefFromRcontent returns
+    //    null for them and the entry falls through to the drop path.
+    let excised = 0;
+    const totalRefs = (entry.match(/\$iref:\s*\d+/g) || []).length;
+    const remaining = [];
+    if (unrepairable.length > 0 && totalRefs - unrepairable.length >= 2) {
+      for (const d of unrepairable) {
+        const out = _exciseIrefFromRcontent(entry, d);
+        if (out != null) { entry = out; excised++; } else remaining.push(d);
+      }
+    } else {
+      remaining.push(...unrepairable);
+    }
+
+    // A rewire must not collapse a polyline onto a single node (a degenerate
+    // self-loop the game's edge validator refuses): force the drop path when
+    // every reference would point at the same node.
+    let degenerate = false;
+    if ((repaired > 0 || excised > 0) && prefix === 'taxiway-segment') {
+      const nodesKey = entry.indexOf('"Nodes"');
+      const rcKey = nodesKey >= 0 ? entry.indexOf('"$rcontent"', nodesKey) : -1;
+      if (rcKey >= 0) {
+        const open = entry.indexOf('[', rcKey);
+        const close = entry.indexOf(']', open);
+        const refs = [...entry.slice(open + 1, close).matchAll(/\$iref:\s*(\d+)/g)].map((m) => m[1]);
+        if (refs.length > 0 && new Set(refs).size < 2) degenerate = true;
+      }
+    }
+
+    // 3) Whatever could not be repaired drops the whole entry.
+    if (remaining.length > 0 || degenerate) {
+      pkDelete.push(entry);
+      for (const id of _idsInBlock(entry)) deletedIds.add(id);
+      if (degenerate) {
+        warn({ key: 'ground_painter_writer_gate_dropped_collapse', params: { pk },
+          text: 'dropped ' + pk + ' — rewiring its deleted-node reference(s) would collapse it onto a single node' });
+      } else {
+        warn({ key: 'ground_painter_writer_gate_dropped_unrepairable', params: { pk, ids: remaining.join(', ') },
+          text: 'dropped ' + pk + ' — referenced deleted node(s) ' + remaining.join(', ') + ' with no repairable replacement' });
+      }
+      dirty = true;
+      continue;
+    }
+    if (repaired > 0 || excised > 0) {
+      pkEntries[i] = entry;
+      if (repaired) {
+        warn({ key: 'ground_painter_writer_gate_rewired', params: { pk, count: repaired },
+          text: 'repaired ' + pk + ' — rewired ' + repaired + ' deleted-node reference(s) to live node(s) at the same coordinate' });
+      }
+      if (excised) {
+        warn({ key: 'ground_painter_writer_gate_excised', params: { pk, count: excised },
+          text: 'repaired ' + pk + ' — excised ' + excised + ' deleted-node reference(s) from its node list' });
+      }
+      dirty = true;
+    }
+  }
+  return dirty;
+}
+
+/**
+ * Remove one `$iref:<deadId>` from an entry's `$rcontent` ref list and
+ * decrement the `$rlength` that declares the list's length. Returns the
+ * patched entry, or null when no $rcontent list in the entry contains the ref
+ * (e.g. a stand's NosePosition — a bare property, not a list member).
+ */
+function _exciseIrefFromRcontent(entry, deadId) {
+  const trailingRe = new RegExp('[\\s]*\\$iref:' + deadId + '(?!\\d)\\s*,');
+  const leadingRe = new RegExp(',\\s*\\$iref:' + deadId + '(?!\\d)\\s*');
+  let searchFrom = 0;
+  for (;;) {
+    const rcKey = entry.indexOf('"$rcontent"', searchFrom);
+    if (rcKey < 0) return null;
+    const open = entry.indexOf('[', rcKey);
+    const close = entry.indexOf(']', open);
+    if (open < 0 || close < 0) return null;
+    const span = entry.slice(open + 1, close);
+    if (!new RegExp('\\$iref:' + deadId + '(?!\\d)').test(span)) {
+      searchFrom = close + 1;
+      continue;
+    }
+    let spanOut;
+    if (trailingRe.test(span)) spanOut = span.replace(trailingRe, '');
+    else if (leadingRe.test(span)) spanOut = span.replace(leadingRe, '');
+    else return null;
+    if (new RegExp('\\$iref:' + deadId + '(?!\\d)').test(spanOut)) return null; // duplicated ref — bail to drop path
+    // The $rlength declaring THIS list's length is the last one before the
+    // "$rcontent" key (the list object serializes as
+    // {..., "$rlength": N, "$rcontent": [...]}).
+    const head = entry.slice(0, rcKey);
+    let last = null;
+    for (const r of head.matchAll(/("\$rlength":\s*)(\d+)/g)) last = r;
+    if (!last) return null;
+    const n = parseInt(last[2], 10);
+    if (!(n > 0)) return null;
+    return entry.slice(0, last.index) + last[1] + String(n - 1) +
+      entry.slice(last.index + last[0].length, open + 1) +
+      spanOut +
+      entry.slice(close);
+  }
+}
+
+// Collect every `$id` declared in `text` into `out` (flat, all scopes — the
+// same merged semantics the renumberer's pre-scan uses).
+function _collectDeclaredIds(text, out) {
+  for (const m of text.matchAll(/"\$id":\s*(-?\d+)/g)) out.add(parseInt(m[1], 10));
+}
+
+// The document minus the three managed list bodies: everything whose ids this
+// writer never touches (nav graph, runtime data, airways, checkpoint frame).
+// Those sections legally declare ids that PK entries may reference.
+function _textOutsideListSpans(snapshotText, ranges) {
+  const spans = [ranges.pkRc, ranges.npkRc, ranges.siRc].filter(Boolean).sort((a, b) => b.start - a.start);
+  let rest = snapshotText;
+  for (const s of spans) rest = rest.slice(0, s.start) + rest.slice(s.end);
+  return rest;
+}
+
+// Crash-class dangling count: `$iref`s from taxiway-segment / stand entries
+// that no declared id satisfies — the game null-derefs these on level init.
+function _countCrashClassDangling(entries, declared) {
+  let n = 0;
+  for (const e of entries) {
+    const prefix = _entryTypePrefix(e);
+    if (prefix !== 'taxiway-segment' && prefix !== 'stand') continue;
+    for (const m of e.matchAll(/\$iref:\s*(\d+)/g)) {
+      if (!declared.has(parseInt(m[1], 10))) n++;
+    }
+  }
+  return n;
+}
+
 function _hasNull(arr) {
   return Array.isArray(arr) && arr.some((v) => v == null);
 }
@@ -626,7 +839,12 @@ function _synthesizeSegment(seg, id, osm, segNodeIds, s) {
   const innerId = id + 2;
   const name = seg.name != null && String(seg.name).length > 0 ? JSON.stringify(String(seg.name)) : '""';
   const segFlags = seg.flags != null && Number.isFinite(Number(seg.flags)) ? Math.trunc(Number(seg.flags)) : 2;
-  const ids = (segNodeIds && segNodeIds.length >= 2) ? segNodeIds : [null, null];
+  // Every emitted node must resolve to a declared $id. A null/undefined entry
+  // used to fall back to [null, null] and serialize as "$iref:null", which the
+  // Odin JSON reader rejects (`invalid $iref payload "null"`) — aborting the
+  // whole Ground Painter save. Return null so the caller drops the entry.
+  const ids = (segNodeIds || []).filter((v) => v != null);
+  if (ids.length < 2) return null;
   const irefStr = ids.map((nid) => '$iref:' + nid).join(', ');
   // Match the canonical TaxiwaySegment shape: every original segment carries
   // Head (the first/linked node for directed taxilanes, null for undirected),
@@ -671,8 +889,13 @@ function _sampleStandShapes(pkEntries) {
 }
 
 function _synthesizeStand(stand, id, ident, noseId, tailId, pbIds, s) {
+  // Nose/tail are mandatory references (see _synthesizeSegment): emitting them
+  // as "$iref:null" makes the encoded blob unreadable. Return null so the
+  // caller drops the stand instead.
+  if (noseId == null || tailId == null) return null;
   const arrId = id + 1;
-  const pbStr = pbIds.map((i) => '$iref:' + i).join(', ');
+  const pbIdsArr = (pbIds || []).filter((i) => i != null);
+  const pbStr = pbIdsArr.map((i) => '$iref:' + i).join(', ');
   // The user-entered Name (if any) is used as the display name; the Identifier
   // stays the unique numeric id that flight plans / aircraft reference. When no
   // name was entered, fall back to the identifier (as before) so a default stand
@@ -681,7 +904,7 @@ function _synthesizeStand(stand, id, ident, noseId, tailId, pbIds, s) {
   return '{ "$k": "stand:' + ident + '", "$v": { "$id": ' + id + ', "$type": ' + _fmtType(s.standType) +
     ', "TailPosition": $iref:' + tailId + ', "NosePosition": $iref:' + noseId +
     ', "PushbackLimitPositions": { "$id": ' + arrId + ', "$type": ' + _fmtType(s.pbArrayType) +
-    ', "$rlength": ' + pbIds.length + ', "$rcontent": [ ' + pbStr + ' ] },' +
+    ', "$rlength": ' + pbIdsArr.length + ', "$rcontent": [ ' + pbStr + ' ] },' +
     ' "ParkingType": ' + (stand.parkingType ?? 1) + ', "EgressType": ' + (stand.egressType ?? 0) +
     ', "Name": ' + JSON.stringify(standName) + ', "Identifier": "' + ident + '" } }';
 }
@@ -868,7 +1091,7 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph) {
 // no two declarations share the same old $id before renumber. Duplicate old
 // ids cause renumberAclIds (scope.map last-wins) to misbind $iref targets,
 // which previously produced the 09/01 -> Area 8930 corruption.
-function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries) {
+function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings) {
   const s = _sampleShapes(pkEntries);
   // survivor node $id by original pk
   const survivorNodeId = new Map();
@@ -936,9 +1159,22 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries) {
       nodePkIdxs.push(seg.aIdx, seg.bIdx);
     }
     const segNodeIds = nodePkIdxs.map((ni) => nodeIds[ni]).filter((v) => v != null);
+    if (segNodeIds.length < 2) {
+      // Both endpoints must resolve to a persisted node $id (a node marked
+      // deleted in the painter, or a stale node index, resolves to null). Same
+      // policy as the runway guard below: drop the unusable entity rather than
+      // write a blob the game cannot read.
+      const w = { key: 'ground_painter_writer_new_segment_dropped', params: { indices: JSON.stringify(nodePkIdxs) },
+        text: 'dropped a new taxiway segment: its endpoint node(s) no longer exist (indices ' +
+          JSON.stringify(nodePkIdxs) + ')' };
+      console.warn('[scenery_write] ' + w.text);
+      if (warnings) warnings.push(w);
+      continue;
+    }
     const id = nextId;
     nextId += 3; // seg $id, Nodes wrapper $id, inner list $id
-    entries.push(_synthesizeSegment(seg, id, allocSegOsm(), segNodeIds, s));
+    const segEntry = _synthesizeSegment(seg, id, allocSegOsm(), segNodeIds, s);
+    if (segEntry) entries.push(segEntry);
   }
 
   // New stands: allocate a dense unique Identifier above the file's max, and
@@ -959,10 +1195,19 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries) {
     const stand = graph.stands[st];
     const ident = String(nextStand++);
     const noseId = nodeIds[stand.noseIdx], tailId = nodeIds[stand.tailIdx];
-    const pbIds = (stand.pushbackIdxs || []).map((i) => nodeIds[i]);
+    const pbIds = (stand.pushbackIdxs || []).map((i) => nodeIds[i]).filter((v) => v != null);
+    if (noseId == null || tailId == null) {
+      const w = { key: 'ground_painter_writer_new_stand_dropped', params: { ident, index: noseId == null ? stand.noseIdx : stand.tailIdx },
+        text: 'dropped a new stand (' + ident + '): its nose/tail node no longer exists (index ' +
+          (noseId == null ? stand.noseIdx : stand.tailIdx) + ')' };
+      console.warn('[scenery_write] ' + w.text);
+      if (warnings) warnings.push(w);
+      continue;
+    }
     const id = nextId;
     nextId += 2; // stand $id + PushbackLimitPositions wrapper $id
-    entries.push(_synthesizeStand(stand, id, ident, noseId, tailId, pbIds, ss));
+    const standEntry = _synthesizeStand(stand, id, ident, noseId, tailId, pbIds, ss);
+    if (standEntry) entries.push(standEntry);
   }
 
   // New runways: emit a full pair (both directions) sharing one PhysicalRunwayStaticItem.
@@ -1546,7 +1791,11 @@ function _renumberTaxiwaySegmentOrdinals(entries) {
   return out;
 }
 
-function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta) {
+function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
+  // Optional sink for non-fatal problems (e.g. an entity dropped because its
+  // node references no longer resolve). Callers that pass `{ warnings: [] }` get
+  // a human-readable list back so the drop is visible instead of silent.
+  const warnings = (opts && opts.warnings) || null;
   const ranges = _staticEntitiesRanges(snapshotText);
   if (!ranges) throw new Error('[scenery_write] could not locate PK/NonPK static entities');
 
@@ -1695,11 +1944,17 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta) {
   // its `jetway:*` entries, so no jetway outlives the stand it serves. The
   // `taxi-navigation` graph is deliberately left intact (dropping a nav node
   // would also remove the shared sub-objects it declares, nuking the whole
-  // graph); the single remaining reference to a deleted stand is preserved by
-  // `renumberAclIds`'s dangling-reference handling (see id_renumber.js).
+  // graph); remaining nav references to deleted entities are reported by the
+  // final validation pass below.
   const deletedIds = new Set();
   for (const e of pkDelete) for (const id of _idsInBlock(e)) deletedIds.add(id);
   for (const e of npkDelete) for (const id of _idsInBlock(e)) deletedIds.add(id);
+  // Survivor gate: repair (rewire / excise) or drop every SURVIVOR taxiway
+  // segment / stand that still references a deleted node — survivor entries
+  // are copied verbatim, so without this the stale $iref reaches the .acl and
+  // the game's TaxiwaySegment2DFactory null-derefs it on load. Runs before the
+  // jetway cascade so a gate-dropped stand's jetways cascade too.
+  const refGateDirty = _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings);
   // Run the cascade to fix point, dropping every jetway entry referencing a
   // now-dead id, and use the filtered arrays.
   const cascaded = _cascadeOrphanEntries(pkEntries, siEntries, deletedIds);
@@ -1889,17 +2144,29 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta) {
   }
   const namesChanged = standNamePatch.size > 0 || segNamePatch.size > 0;
 
+  // Pre-existing corruption check: if the snapshot ALREADY carries crash-class
+  // dangling references (e.g. a save produced before the survivor gate
+  // existed), skip the lossless no-op so the final validation pass below can
+  // drop the offending entries instead of re-committing them verbatim.
+  const emittedPk = pkEntries.filter((e) => !pkDelete.includes(e));
+  const emittedNpk = npkEntries.filter((e) => !npkDelete.includes(e));
+  const restIds = new Set();
+  _collectDeclaredIds(_textOutsideListSpans(snapshotText, ranges), restIds);
+  for (const arr of [emittedPk, emittedNpk, siEntries]) for (const e of arr) _collectDeclaredIds(e, restIds);
+  const crashDangleCount = _countCrashClassDangling(emittedPk, restIds);
+
   // Corrupt-type check: if any PK/NPK entry already has bare "$type": 0, it
   // must go through the rebuild path so _repairPkEntryTypes can fix it. The
   // early return would otherwise return the corrupt snapshot verbatim.
   const hasCorruptTypes = pkEntries.some((e) => /"\$type":\s*0(?=[,\}\]])/.test(e)) || npkEntries.some((e) => /"\$type":\s*0(?=[,\}\]])/.test(e));
 
   // Lossless no-op: no removals, no new elements, no moved nodes, no moved areas,
-  // no runway dirty, no orphan, no siDirty, no name change, no corrupt types → text unchanged (still
-  // reconcile the checkpoint frame so any PRE-EXISTING stale physical-runway /
-  // jetway RuntimeEntities from an earlier corrupt save are repaired on the next
-  // save).
-  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged) {
+  // no runway dirty, no orphan, no siDirty, no name change, no corrupt types, no
+  // dangling-reference gate repairs, no pre-existing crash-class dangling refs →
+  // text unchanged (still reconcile the checkpoint frame so any PRE-EXISTING
+  // stale physical-runway / jetway RuntimeEntities from an earlier corrupt save
+  // are repaired on the next save).
+  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && crashDangleCount === 0) {
     return _reconcileRuntimeFrames(snapshotText, _runtimeReconcilers(siEntries, physPatchMap));
   }
 
@@ -1992,7 +2259,7 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta) {
   // New-object synthesis: append synthesized entries for NEW nodes + segments.
   // Pass NPK+SI so allocation starts above the true blobdoc max and never collides
   // with Area ids (previously PK-only max caused 09/01 -> Area 8930).
-  const synth = _synthesizeNew(graph, mm, pkEntries, npkEntries, siEntries);
+  const synth = _synthesizeNew(graph, mm, pkEntries, npkEntries, siEntries, warnings);
   // After deleting one segment of a multi-segment taxiway the surviving siblings
   // keep a gap in their ordinal suffix; renumber each per-osm group contiguously
   // from 0 so Unity's contiguity invariant is preserved.
@@ -2084,9 +2351,75 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta) {
   for (let i = 0; i < npkOutFinal.length; i++) if (npkOutFinal[i] !== npkOutRepaired[i]) repairedCount++;
   if (repairedCount > 0) console.log('[GroundPainter] auto-repaired ' + repairedCount + ' entity(ies) with corrupt "$type": 0');
   // Use repaired arrays for serialization
-  const finalPkOut = pkOutRepaired;
-  const finalNpkOut = npkOutRepaired;
-  const finalSiOut = siOutRepaired;
+  let finalPkOut = pkOutRepaired;
+  let finalNpkOut = npkOutRepaired;
+  let finalSiOut = siOutRepaired;
+
+  // ── Final dangling-$iref validation (last line of defence) ────────
+  // The survivor gate repaired references to entities deleted in THIS patch;
+  // this pass verifies the final arrays against the flat declared-id set of
+  // the whole document. Crash-class owners (taxiway-segment / stand) that
+  // still dangle are DROPPED to fixpoint — the alternative is a level the
+  // game cannot load (TaxiwaySegment2DFactory null-deref). Every other owner
+  // (taxi-navigation, airways, runtime, …) is reported so a save is never
+  // silently corrupt.
+  {
+    const restIds = new Set();
+    _collectDeclaredIds(_textOutsideListSpans(snapshotText, ranges), restIds);
+    let droppedAny = false;
+    for (let pass = 0; pass < 16; pass++) {
+      const declared = new Set(restIds);
+      for (const arr of [finalPkOut, finalNpkOut, finalSiOut]) for (const e of arr) _collectDeclaredIds(e, declared);
+      let changed = false;
+      const kept = [];
+      for (const e of finalPkOut) {
+        const dead = new Set();
+        for (const m of e.matchAll(/\$iref:\s*(\d+)/g)) {
+          const id = parseInt(m[1], 10);
+          if (!declared.has(id)) dead.add(id);
+        }
+        const prefix = _entryTypePrefix(e);
+        if (dead.size > 0 && (prefix === 'taxiway-segment' || prefix === 'stand')) {
+          const w = { key: 'ground_painter_writer_last_resort_dropped', params: { pk: _entryPk(e) || '(unknown)', ids: [...dead].join(', ') },
+            text: 'dropped ' + (_entryPk(e) || '(unknown)') + ' — dangling $iref(s) ' + [...dead].join(', ') +
+              ' survived all repairs (last-resort removal: the game null-derefs these on load)' };
+          console.warn('[scenery_write] ' + w.text);
+          if (warnings) warnings.push(w);
+          changed = true;
+          droppedAny = true;
+          continue;
+        }
+        kept.push(e);
+      }
+      finalPkOut = kept;
+      if (!changed) break;
+    }
+    // Report-only pass: every remaining dangling reference, any owner.
+    {
+      const declared = new Set(restIds);
+      for (const arr of [finalPkOut, finalNpkOut, finalSiOut]) for (const e of arr) _collectDeclaredIds(e, declared);
+      for (const [arr, label] of [[finalPkOut, 'PK'], [finalNpkOut, 'NonPK'], [finalSiOut, 'StaticItems']]) {
+        for (const e of arr) {
+          const dead = new Set();
+          for (const m of e.matchAll(/\$iref:\s*(\d+)/g)) {
+            const id = parseInt(m[1], 10);
+            if (!declared.has(id)) dead.add(id);
+          }
+          if (dead.size > 0) {
+            const w = { key: 'ground_painter_writer_dangling_report', params: { label, pk: _entryPk(e) || '(unknown)', ids: [...dead].join(', ') },
+              text: label + ' entity ' + (_entryPk(e) || '(unknown)') +
+                ' references missing entity id(s) ' + [...dead].join(', ') +
+                ' (owner kept: dropping it would cascade-delete shared data)' };
+            console.warn('[scenery_write] ' + w.text);
+            if (warnings) warnings.push(w);
+          }
+        }
+      }
+    }
+    // A dropped entry leaves an ordinal gap inside its per-osm group; renumber
+    // contiguously again so Unity's group invariant holds.
+    if (droppedAny) finalPkOut = _renumberTaxiwaySegmentOrdinals(finalPkOut);
+  }
 
   const newNpkValue = _arrayValue(finalNpkOut);
   const newPkValue = _arrayValue(finalPkOut);

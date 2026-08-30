@@ -72,24 +72,6 @@ export function findCommonNodeInfo(graph, segA, segB) {
   return null;
 }
 
-/**
- * Legacy single-idx helper (index equality only) - kept for compat.
- */
-export function findCommonNodeIdx(segA, segB) {
-  if (!segA || !segB) return null;
-  const aIdxs = segA.nodeIdxs && segA.nodeIdxs.length >= 2 ? segA.nodeIdxs : [segA.aIdx, segA.bIdx];
-  const bIdxs = segB.nodeIdxs && segB.nodeIdxs.length >= 2 ? segB.nodeIdxs : [segB.aIdx, segB.bIdx];
-  const setA = new Set(aIdxs);
-  let common = null;
-  for (const bi of bIdxs) {
-    if (setA.has(bi)) {
-      if (common != null) return null;
-      common = bi;
-    }
-  }
-  return common;
-}
-
 const RUNWAY_PAVEMENT_FLAGS = 4;
 
 /** Check if all points of a polyline are collinear (within eps). */
@@ -126,12 +108,6 @@ export function isStraightSegment(seg) {
     return false;
   }
   return seg.aIdx != null && seg.bIdx != null;
-}
-export function isStraight(seg) {
-  if (!seg) return false;
-  if (seg.flags === RUNWAY_PAVEMENT_FLAGS) return true;
-  if (Array.isArray(seg.nodeIdxs)) return seg.nodeIdxs.length === 2;
-  return seg.aIdx != null && seg.bIdx != null && seg.nodeIdxs == null;
 }
 
 /**
@@ -211,17 +187,8 @@ function getConnectedRay(graph, seg, oCoord, oIdx) {
 }
 
 /**
- * Count incident taxiway segments at node (degree) by index.
+ * Count incident entities (segments + runway endpoints + stand nodes) at a node index.
  */
-export function countIncidentSegments(graph, nodeIdx) {
-  if (!graph || nodeIdx == null) return 0;
-  let c = 0;
-  for (const sg of graph.segments || []) {
-    const idxs = sg.nodeIdxs && sg.nodeIdxs.length ? sg.nodeIdxs : [sg.aIdx, sg.bIdx];
-    if (idxs.includes(nodeIdx)) c++;
-  }
-  return c;
-}
 export function countIncidentAll(graph, nodeIdx) {
   if (!graph || nodeIdx == null) return 0;
   let c = 0;
@@ -352,6 +319,9 @@ export function computeFillet(graph, segIdxA, segIdxB, radius) {
     len2 = Math.hypot(bLast.x - bFirst.x, bLast.z - bFirst.z);
     if (len1 < 1e-9 || len2 < 1e-9) return { ok: false, error: 'ground_painter_fillet_error_zero' };
     const inter = lineIntersection(aFirst, aLast, bFirst, bLast);
+    // Parallel (or collinear-disjoint) picks have no intersection point at all.
+    // Without this guard the ray math below dereferences o.x on null.
+    if (!inter) return { ok: false, error: 'ground_painter_fillet_error_parallel' };
     o = inter;
     oCoord = inter;
     virtualO = true;
@@ -525,12 +495,280 @@ export function computeFillet(graph, segIdxA, segIdxB, radius) {
   return ret;
 }
 
+// ─── Virtual (non-connected) fillet: ADDITIVE wiring ─────────────────────
+// A fillet between two DISCONNECTED straight segments (imaginary intersection
+// O) must never remove existing taxiway. The connected fillet replaces the
+// corner region [O..tangent] with the arc — that IS the rounding. The virtual
+// fillet has no corner to round: both picked segments keep their full geometry
+// and the arc is wired on top:
+//   - a node already sits at the tangent point (endpoint, or interior node of a
+//     multi-vertex polyline): anchor the arc there directly, splitting the
+//     polyline at an interior node so the branch is a real junction;
+//   - tangent point beyond the segment's near endpoint (the common gap case):
+//     keep the segment untouched and append an extension stub [T -> near] that
+//     bridges the gap to the arc;
+//   - tangent point strictly inside the span: split the segment at the tangent
+//     point into [near..T] + [T..far] — both halves stay, the arc branches at T.
+
+/** Distance of a point along the unit ray (n) from O. */
+function _dotAlong(o, nx, nz, p) {
+  return (p.x - o.x) * nx + (p.z - o.z) * nz;
+}
+
+function _polyIdxs(seg) {
+  return seg.nodeIdxs && seg.nodeIdxs.length ? seg.nodeIdxs.slice() : [seg.aIdx, seg.bIdx];
+}
+
 /**
- * Validate that a segment index is a straight taxiway segment.
+ * Wire one picked segment to its tangent point WITHOUT removing any of its
+ * geometry. Appends segments/nodes to graph/meta as needed (extension stub or
+ * split pieces; a split ghost-deletes the original segment PK — its geometry is
+ * fully preserved by the two pieces). Returns the anchor node index the arc
+ * should start/end at.
  */
-export function validateStraight(graph, segIdx) {
-  const sg = graph.segments[segIdx];
-  if (!sg) return 'Segment not found';
-  if (!isStraightSegment(sg)) return 'Only straight segments can be rounded';
-  return null;
+export function attachVirtualFilletLeg(graph, meta, segIdx, tPt, o, nx, nz, t) {
+  const seg = graph.segments[segIdx];
+  if (!seg) return null;
+  const idxs = _polyIdxs(seg);
+  const flags = seg.flags ?? 2;
+  const name = seg.name;
+  const directed = seg.directed ?? false;
+  const mk = (poly) => ({ aIdx: poly[0], bIdx: poly[poly.length - 1], nodeIdxs: poly, flags, directed, ...(name ? { name } : {}) });
+  const ghostOrig = () => {
+    const pk = meta.segOrigPk[segIdx];
+    if (pk != null && !(meta.deletedPks || []).includes(pk)) {
+      if (!meta.deletedPks) meta.deletedPks = [];
+      meta.deletedPks.push(pk);
+    }
+  };
+
+  const dots = idxs.map((i) => {
+    const n = graph.nodes[i];
+    return n ? _dotAlong(o, nx, nz, n) : NaN;
+  });
+  // A node already at the tangent point → anchor there, no new geometry.
+  for (let p = 0; p < idxs.length; p++) {
+    if (!Number.isNaN(dots[p]) && Math.abs(dots[p] - t) < 1e-6) {
+      if (p === 0 || p === idxs.length - 1) return idxs[p];
+      // Interior node of a multi-vertex polyline: split at it so the arc
+      // branches off a real junction (both halves keep every original node).
+      ghostOrig();
+      const left = idxs.slice(0, p + 1);
+      const right = idxs.slice(p);
+      graph.segments.splice(segIdx, 1);
+      meta.segOrigPk.splice(segIdx, 1);
+      graph.segments.splice(segIdx, 0, mk(left), mk(right));
+      meta.segOrigPk.splice(segIdx, 0, null, null);
+      return idxs[p];
+    }
+  }
+  // Near endpoint = node closest to the imaginary intersection O.
+  let nearPos = 0;
+  for (let i = 1; i < dots.length; i++) if (dots[i] < dots[nearPos]) nearPos = i;
+  const dNear = dots[nearPos];
+  // New tangent node (needed for both remaining cases).
+  const tIdx = graph.nodes.length;
+  graph.nodes.push({ x: tPt.x, z: tPt.z, type: 2, flags: 0 });
+  meta.nodeOrigPk.push(null);
+  if (Number.isNaN(dNear) || dNear >= t - 1e-9) {
+    // Tangent point lies beyond the segment's near endpoint: the segment does
+    // not reach the arc. Keep it untouched and bridge the gap with a stub.
+    graph.segments.push(mk([tIdx, idxs[nearPos]]));
+    meta.segOrigPk.push(null);
+    return tIdx;
+  }
+  // Tangent point strictly inside the span: split at the bracketing edge.
+  let edge = -1;
+  for (let i = 0; i < idxs.length - 1; i++) {
+    const d0 = dots[i], d1 = dots[i + 1];
+    if (Number.isNaN(d0) || Number.isNaN(d1)) continue;
+    if ((d0 <= t && t <= d1) || (d1 <= t && t <= d0)) { edge = i; break; }
+  }
+  if (edge < 0) {
+    // Pathological non-monotonic polyline: fall back to a stub touching the
+    // node closest to the tangent point — still removes nothing.
+    let bestPos = 0;
+    for (let i = 1; i < dots.length; i++) if (Math.abs(dots[i] - t) < Math.abs(dots[bestPos] - t)) bestPos = i;
+    graph.segments.push(mk([tIdx, idxs[bestPos]]));
+    meta.segOrigPk.push(null);
+    return tIdx;
+  }
+  ghostOrig();
+  const left = [...idxs.slice(0, edge + 1), tIdx];
+  const right = [tIdx, ...idxs.slice(edge + 1)];
+  graph.segments.splice(segIdx, 1);
+  meta.segOrigPk.splice(segIdx, 1);
+  graph.segments.splice(segIdx, 0, mk(left), mk(right));
+  meta.segOrigPk.splice(segIdx, 0, null, null);
+  return tIdx;
+}
+
+/**
+ * Apply a VIRTUAL (non-connected) fillet additively: wire both picked segments
+ * to their tangent points (never deleting taxiway) and append the arc segment
+ * bridging the two anchors. Arc endpoints may be pre-existing nodes, so only
+ * the interior arc points are added as new nodes.
+ * @returns {{idxT1:number, idxT2:number}} anchor node indices of the arc ends
+ */
+export function applyVirtualFillet(graph, meta, res, segIdxA, segIdxB) {
+  // Higher segment index first: splitting splices the segment array and would
+  // shift the other picked index.
+  const sides = [
+    { segIdx: segIdxA, nx: res.n1x, nz: res.n1z, tPt: res.t1 },
+    { segIdx: segIdxB, nx: res.n2x, nz: res.n2z, tPt: res.t2 },
+  ].sort((a, b) => b.segIdx - a.segIdx);
+  const anchors = {};
+  for (const s of sides) {
+    let a = attachVirtualFilletLeg(graph, meta, s.segIdx, s.tPt, res.o, s.nx, s.nz, res.t);
+    if (a == null) {
+      // Segment vanished (should not happen): still give the arc a live node.
+      a = graph.nodes.length;
+      graph.nodes.push({ x: s.tPt.x, z: s.tPt.z, type: 2, flags: 0 });
+      meta.nodeOrigPk.push(null);
+    }
+    anchors[s.segIdx] = a;
+  }
+  const arcIdxs = [anchors[segIdxA]];
+  const base = graph.nodes.length;
+  for (let i = 1; i < res.arcPoints.length - 1; i++) {
+    graph.nodes.push({ x: res.arcPoints[i].x, z: res.arcPoints[i].z, type: 2, flags: 0 });
+    meta.nodeOrigPk.push(null);
+    arcIdxs.push(base + i - 1);
+  }
+  arcIdxs.push(anchors[segIdxB]);
+  graph.segments.push({ aIdx: arcIdxs[0], bIdx: arcIdxs[arcIdxs.length - 1], nodeIdxs: arcIdxs, flags: 2, directed: false });
+  meta.segOrigPk.push(null);
+  return { idxT1: anchors[segIdxA], idxT2: anchors[segIdxB] };
+}
+// ─── Ghost-node invariant ────────────────────────────────────────────────
+// A node whose original PK was pushed into meta.deletedPks is a GHOST: it is
+// kept in graph.nodes on purpose (so every other entity's index stays stable)
+// but patchSceneryBlob will NOT emit it into the .acl. Any NEW entity (one the
+// writer re-synthesizes, i.e. meta.segOrigPk/standOrigPk/runwayOrigPk is null)
+// that still points at a ghost index therefore serializes to "$iref:null" —
+// the save then aborts with `invalid $iref payload "null"`.
+//
+// Every mutation that ghost-deletes a node MUST stop referencing it. These two
+// helpers make that invariant explicit and enforceable instead of leaving it to
+// each call site.
+
+function _coordKey(n) {
+  return Math.round(n.x * 1e6) + ',' + Math.round(n.z * 1e6);
+}
+
+/** Node indices that are ghosts (kept in the graph, dropped from the file). */
+export function ghostNodeIndices(graph, meta) {
+  const ghosts = new Set();
+  const deleted = new Set((meta && meta.deletedPks) || []);
+  if (!deleted.size || !graph || !graph.nodes) return ghosts;
+  const orig = (meta && meta.nodeOrigPk) || [];
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const pk = orig[i];
+    if (pk != null && deleted.has(pk)) ghosts.add(i);
+  }
+  return ghosts;
+}
+
+/**
+ * Re-point NEW entities away from ghost nodes onto a live node at the same
+ * coordinate (duplicate nodes at a snap point are geometrically identical, so
+ * this preserves the shape), and drop entities that cannot be repaired.
+ *
+ * Called after any mutation that ghost-deletes a node. Old (survivor) entities
+ * are left alone on purpose: the writer copies them verbatim from the snapshot,
+ * so editing their indices would silently not persist.
+ *
+ * @returns {{remapped:number, dropped:number, warnings:string[]}}
+ *   warnings are i18n keys — translate them at the display site.
+ */
+export function repairGhostRefs(graph, meta) {
+  const out = { remapped: 0, dropped: 0, warnings: [] };
+  const ghosts = ghostNodeIndices(graph, meta);
+  if (!ghosts.size || !graph) return out;
+
+  // First live node per coordinate — the replacement for a ghosted twin.
+  const liveByCoord = new Map();
+  for (let i = 0; i < (graph.nodes || []).length; i++) {
+    if (ghosts.has(i)) continue;
+    const n = graph.nodes[i];
+    if (!n) continue;
+    const k = _coordKey(n);
+    if (!liveByCoord.has(k)) liveByCoord.set(k, i);
+  }
+  const fix = (i) => {
+    if (i == null) return null;
+    if (!ghosts.has(i)) {
+      // Also catches a stale index — a node that was spliced out while a
+      // reference to it survived. Same "$iref:null" outcome at save time.
+      return graph.nodes[i] ? i : null;
+    }
+    const n = graph.nodes[i];
+    const twin = n ? liveByCoord.get(_coordKey(n)) : undefined;
+    if (twin != null) { out.remapped++; return twin; }
+    return null;
+  };
+  const repairList = (list) => {
+    const fixed = [];
+    for (const i of list) {
+      const v = fix(i);
+      if (v != null) fixed.push(v);
+    }
+    return fixed;
+  };
+  const isNew = (arr, i) => !arr || arr[i] == null;
+
+  for (let s = (graph.segments || []).length - 1; s >= 0; s--) {
+    const sg = graph.segments[s];
+    if (!sg || !isNew(meta.segOrigPk, s)) continue;
+    const idxs = sg.nodeIdxs && sg.nodeIdxs.length ? sg.nodeIdxs : [sg.aIdx, sg.bIdx];
+    if (!idxs.some((i) => ghosts.has(i) || !graph.nodes[i])) continue;
+    const fixed = repairList(idxs);
+    if (fixed.length < 2) {
+      graph.segments.splice(s, 1);
+      if (meta.segOrigPk && s < meta.segOrigPk.length) meta.segOrigPk.splice(s, 1);
+      out.dropped++;
+      out.warnings.push('ground_painter_fillet_dropped_leg');
+      continue;
+    }
+    sg.nodeIdxs = fixed;
+    sg.aIdx = fixed[0];
+    sg.bIdx = fixed[fixed.length - 1];
+  }
+
+  for (let i = (graph.stands || []).length - 1; i >= 0; i--) {
+    const st = graph.stands[i];
+    if (!st || !isNew(meta.standOrigPk, i)) continue;
+    const nose = fix(st.noseIdx);
+    const tail = fix(st.tailIdx);
+    if (nose == null || tail == null) {
+      graph.stands.splice(i, 1);
+      if (meta.standOrigPk && i < meta.standOrigPk.length) meta.standOrigPk.splice(i, 1);
+      out.dropped++;
+      out.warnings.push('ground_painter_fillet_dropped_stand');
+      continue;
+    }
+    st.noseIdx = nose;
+    st.tailIdx = tail;
+    if (Array.isArray(st.pushbackIdxs)) st.pushbackIdxs = repairList(st.pushbackIdxs);
+  }
+
+  for (let i = (graph.runways || []).length - 1; i >= 0; i--) {
+    const rw = graph.runways[i];
+    if (!rw || !isNew(meta.runwayOrigPk, i)) continue;
+    const a = fix(rw.thAIdx);
+    const b = fix(rw.thBIdx);
+    if (a == null || b == null) {
+      graph.runways.splice(i, 1);
+      for (const arr of [meta.runwayOrigPk, meta.runwayPavement, meta.runwayOrigInfo]) {
+        if (arr && i < arr.length) arr.splice(i, 1);
+      }
+      out.dropped++;
+      out.warnings.push('ground_painter_fillet_dropped_runway');
+      continue;
+    }
+    rw.thAIdx = a;
+    rw.thBIdx = b;
+  }
+
+  return out;
 }

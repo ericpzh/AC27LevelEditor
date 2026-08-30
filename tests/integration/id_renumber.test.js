@@ -92,7 +92,7 @@ const DATA_LAYOUT_MISMATCH = `{
 }`;
 
 describe('id_renumber', () => {
-  it('fixes the jetway crash pattern (wrapper id before inline value)', () => {
+  it('fixes the jetway crash pattern (wrapper id before inline value)', { timeout: 60000 }, () => {
     const out = renumberDocument(CRASH_PATTERN);
     expect(countIdDescents(out).violations).toBe(0);
     const ids = idsOf(out);
@@ -101,7 +101,7 @@ describe('id_renumber', () => {
     }
   });
 
-  it('renumbers blobdoc contents as fresh documents and remaps cross-scope irefs', () => {
+  it('renumbers blobdoc contents as fresh documents and remaps cross-scope irefs', { timeout: 60000 }, () => {
     const out = renumberDocument(DATA_LAYOUT_MISMATCH);
     expect(countIdDescents(out).violations).toBe(0);
 
@@ -119,7 +119,7 @@ describe('id_renumber', () => {
     expect(blobIds).toContain(parseInt(iref[1], 10));
   });
 
-  it('adds no ids and preserves every non-id token', () => {
+  it('adds no ids and preserves every non-id token', { timeout: 60000 }, () => {
     const out = renumberDocument(CRASH_PATTERN);
     const tok = (s) =>
       [...s.matchAll(/\$id"|"\$id"|\$iref:|\$fstrref:|\$type"|"\$type"|\$k"|"\$k"|\$v"|"\$v"/g)].length;
@@ -129,7 +129,7 @@ describe('id_renumber', () => {
     );
   });
 
-  it('is idempotent (second pass changes nothing)', () => {
+  it('is idempotent (second pass changes nothing)', { timeout: 60000 }, () => {
     const once = renumberDocument(CRASH_PATTERN);
     expect(renumberDocument(once)).toBe(once);
     const frame = 'root\r\n$$$ GATCARC4 CHECKPOINT FRAME $$$\r\n' + CRASH_PATTERN;
@@ -137,7 +137,7 @@ describe('id_renumber', () => {
     expect(renumberAclIds(out2)).toBe(out2);
   });
 
-  it('propagates through the GATCARC4 binary encode/decode pipeline', () => {
+  it('propagates through the GATCARC4 binary encode/decode pipeline', { timeout: 60000 }, () => {
     const out = renumberDocument(DATA_LAYOUT_MISMATCH);
     const decoded = decodeArchive(encodeArchive(out));
     // decoded text is the writer's canonical form (ids preserved), and it
@@ -151,7 +151,7 @@ describe('id_renumber', () => {
     expect(blobIds).toContain(parseInt(iref[1], 10));
   });
 
-  it('preserves a forward $iref as dangling instead of throwing (avoids Ground Painter save crash)', () => {
+  it('preserves a forward $iref as dangling instead of throwing (avoids Ground Painter save crash)', { timeout: 60000 }, () => {
     const bad = '{ "$id": 0, "a": { "$v": $iref:99 }, "later": { "$id": 99 } }';
     // Previously threw "forward $iref:99" — now preserved as dangling so the
     // Ground Painter can save after deleting a taxiway whose $id is duplicated

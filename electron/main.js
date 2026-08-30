@@ -1770,7 +1770,11 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   }
   const { patchSceneryBlob, _validateNoDegenerateEdges } = require('../src/acl/scenery_write');
   const { writeAcl } = require('../src/acl/gatcarc');
-  let newText = patchSceneryBlob(snapshotText, graph, null, meta);
+  // Non-fatal problems found while patching (e.g. an entity whose node refs no
+  // longer resolve and was dropped) — reported back so the UI can surface them
+  // instead of silently losing geometry.
+  const warnings = [];
+  let newText = patchSceneryBlob(snapshotText, graph, null, meta, { warnings });
   // Integrity guard (see _validateNoDegenerateEdges): refuse to write an .acl the
   // game's taxiway graph will reject (duplicate taxiway keys / self-loop edges,
   // e.g. "edge id=-10 has the same vertex index for both endpoints"). Refusing
@@ -1811,7 +1815,8 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   } catch (e) {
     console.error('[GroundPainter] geo_data sync error: ' + (e && e.message));
   }
-  return { newText, geoResult };
+  if (warnings.length) console.warn('[GroundPainter] save warnings: ' + warnings.map((w) => (w && w.text) || String(w)).join(' | '));
+  return { newText, geoResult, warnings };
 });
 
 ipcMain.handle('save-cached-lang', (_event, lang) => {
