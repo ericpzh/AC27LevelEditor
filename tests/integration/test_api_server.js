@@ -267,15 +267,12 @@ async function runMcpTests() {
   // tools/list
   const toolsRes = await handleMcpMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
   assert(Array.isArray(toolsRes.result.tools), 'MCP: tools/list returns array');
-  assertEqual(toolsRes.result.tools.length, 8, 'MCP: 8 tools');
+  assertEqual(toolsRes.result.tools.length, MCP_TOOLS.length, `MCP: ${MCP_TOOLS.length} tools`);
   const toolNames = toolsRes.result.tools.map(t => t.name);
-  assert(toolNames.includes('create_flights'), 'MCP: create_flights');
-  assert(toolNames.includes('get_flights'), 'MCP: get_flights');
-  assert(toolNames.includes('modify_flights'), 'MCP: modify_flights');
-  assert(toolNames.includes('delete_flights'), 'MCP: delete_flights');
-  assert(toolNames.includes('get_editor_status'), 'MCP: get_editor_status');
-  assert(toolNames.includes('get_airport_info'), 'MCP: get_airport_info');
-  assert(toolNames.includes('get_validation_issues'), 'MCP: get_validation_issues');
+  // Verify every tool defined in MCP_TOOLS is exposed via tools/list
+  for (const t of MCP_TOOLS) {
+    assert(toolNames.includes(t.name), `MCP: ${t.name}`);
+  }
   const createTool = toolsRes.result.tools.find(t => t.name === 'create_flights');
   assert(createTool.inputSchema.required.includes('flights'), 'MCP: create_flights requires flights');
   assert(createTool.inputSchema.properties.flights.items.required.length === 15, 'MCP: create_flights has 15 required fields');

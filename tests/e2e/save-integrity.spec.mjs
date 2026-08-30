@@ -18,6 +18,8 @@ const TMP_DIR = process.env.E2E_TMP_DIR;
 let electronApp;
 let window;
 
+test.setTimeout(90000);
+
 test.beforeAll(async () => {
   electronApp = await electron.launch({
     args: [
@@ -35,14 +37,13 @@ test.beforeAll(async () => {
     if (msg.type() === 'log') console.log('[RENDERER]', msg.text());
   });
 
-  await window.waitForTimeout(2000);
-
-  // Click the first level row to open editor
-  const firstRow = window.locator('.level-row').first();
-  if (await firstRow.isVisible().catch(() => false)) {
-    await firstRow.click();
-    await window.waitForTimeout(3000);
-  }
+  await window.waitForSelector('.loading-state', { state: 'hidden', timeout: 70000 }).catch(() => {});
+  await window.waitForSelector('.level-row', { state: 'visible', timeout: 10000 });
+  const rows = window.locator('.level-row');
+  await expect(rows.first()).toBeVisible({ timeout: 10000 });
+  await rows.first().click();
+  await expect(window.locator('#table-container')).toBeVisible({ timeout: 15000 });
+  await window.waitForTimeout(500);
 });
 
 test.afterAll(async () => {
@@ -80,13 +81,16 @@ test('S1 — no-change save round-trip (parsed-state comparison)', async () => {
     return;
   }
 
-  // Record the .acl file BEFORE saving
-  const beforeFiles = findAclFiles(TMP_DIR);
-  expect(beforeFiles.acl).toBeTruthy();
-  console.log('[S1] ACL path:', beforeFiles.acl);
+  // Get the exact .acl path from the store (same as save-integrity-all-e2e)
+  const aclPath = await window.evaluate(() => {
+    const store = window.__AC27_STORE;
+    return store ? store.getState().currentPath : null;
+  });
+  expect(aclPath).toBeTruthy();
+  console.log('[S1] ACL path:', aclPath);
 
   // Read the pre-save .acl content for GUID comparison
-  const aclBefore = fs.readFileSync(beforeFiles.acl, 'utf-8');
+  const aclBefore = fs.readFileSync(aclPath, 'utf-8');
   const guidCountBefore = (aclBefore.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || []).length;
   console.log('[S1] Pre-save GUID count:', guidCountBefore);
 
@@ -145,22 +149,29 @@ test('S1 — no-change save round-trip (parsed-state comparison)', async () => {
   // Final wait for async save to complete
   await window.waitForTimeout(2000);
 
-  // Now find the .bak file — the save creates it via the backup checkbox
-  const afterFiles = findAclFiles(TMP_DIR);
-  console.log('[S1] ACL after save:', afterFiles.acl);
-  console.log('[S1] BAK after save:', afterFiles.bak || '(NOT FOUND)');
+  // The .bak should be at aclPath + '.bak' (same file we saved)
+  const bakPath = aclPath + '.bak';
+  console.log('[S1] ACL after save:', aclPath);
+  console.log('[S1] BAK after save:', fs.existsSync(bakPath) ? bakPath : '(NOT FOUND)');
 
-  expect(afterFiles.acl).toBeTruthy();
-  expect(afterFiles.bak).toBeTruthy();
+  expect(fs.existsSync(aclPath)).toBeTruthy();
+  expect(fs.existsSync(bakPath)).toBeTruthy();
 
   // ── Run the parsed-state checker ──────────────────────────────
   const checkerPath = path.resolve(__dirname, '..', 'save-integrity-check.js');
   const preloadPath = path.resolve(__dirname, '..', 'integration', 'preload.cjs');
 
+  // Demo files must be checked with --demo (parsability only) — flight counts differ due to window filtering (like save-integrity-all-e2e)
+  const DEMO_VISIBLE = new Set(['KJFK_leisure_1.demo.acl', 'KJFK_peakarrival.demo.acl', 'ZSJN_leisure_1.acl', 'ZSJN_peakdeparture.demo.acl']);
+  const isDemo = DEMO_VISIBLE.has(path.basename(aclPath));
+
   let checkerOutput;
   try {
+    const checkerArgs = isDemo
+      ? `--demo --acl "${aclPath}"`
+      : `--acl "${aclPath}" --bak "${bakPath}"`;
     checkerOutput = execSync(
-      `node --require "${preloadPath}" "${checkerPath}" --acl "${afterFiles.acl}" --bak "${afterFiles.bak}"`,
+      `node --require "${preloadPath}" "${checkerPath}" ${checkerArgs}`,
       { encoding: 'utf-8', timeout: 30000 }
     );
     console.log('[S1] Checker output:\n', checkerOutput);

@@ -13,6 +13,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let electronApp;
 let window;
 
+test.setTimeout(90000);
+
 test.beforeAll(async () => {
   electronApp = await electron.launch({
     args: [
@@ -24,16 +26,20 @@ test.beforeAll(async () => {
 
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
-  await window.waitForTimeout(2000);
+
+  // Wait for browser level list to render — scan of 21 files can take 30-45s cold (like browser.spec B1)
+  await window.waitForSelector('.loading-state', { state: 'hidden', timeout: 70000 }).catch(() => {});
+  await window.waitForSelector('.level-row', { state: 'visible', timeout: 10000 });
+  const rows = window.locator('.level-row');
+  await expect(rows.first()).toBeVisible({ timeout: 10000 });
 
   // Open first level
-  const firstRow = window.locator('.level-row').first();
-  if (await firstRow.isVisible().catch(() => false)) {
-    await firstRow.click();
-    await window.waitForTimeout(3000);
-  }
+  await rows.first().click();
 
-  // Scroll to top of table-container where timeline blocks are
+  // Wait for editor to load — #table-container is the editor root
+  await expect(window.locator('#table-container')).toBeVisible({ timeout: 15000 });
+
+  // Scroll to top where timeline blocks are
   await window.locator('#table-container').evaluate(el => el.scrollTop = 0);
   await window.waitForTimeout(500);
 });

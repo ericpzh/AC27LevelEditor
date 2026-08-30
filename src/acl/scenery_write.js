@@ -321,14 +321,39 @@ function _referencesDeleted(entry, deletedIds) {
 // single remaining references are preserved by `renumberAclIds` (see the
 // dangling-reference handling there). Returns the filtered arrays plus a
 // drop-count tally.
+// Updated per user request "any deleted item should have fully clear iref":
+// taxi-navigation entries that $iref a deleted entity are now dropped as well
+// (except the single declarer of the shared CrossTaxiwayNames array, which is
+// kept and rewired by the gate instead of being deleted).
 function _cascadeOrphanEntries(pkEntries, siEntries, deadIds) {
   const drop = { jetway: 0, taxiNavigation: 0 };
   let changed = true;
   while (changed) {
     changed = false;
-    const pkOut = [];
-    for (const e of pkEntries) pkOut.push(e);
-    pkEntries = pkOut;
+    // PK: drop orphaned taxi-navigation (stand / pushback) that reference a deleted id
+    const newPkEntries = [];
+    for (const e of pkEntries) {
+      if (_entryTypePrefix(e) === 'taxi-navigation' && _referencesDeleted(e, deadIds)) {
+        const isDeclarer = e.includes('"CrossTaxiwayNames": { "$id":');
+        if (isDeclarer) {
+          // Keep the declarer — its shared array is $iref'd by every other nav point.
+          // The gate will rewire its Reference instead of dropping it.
+          newPkEntries.push(e);
+          continue;
+        }
+        for (const id of _idsInBlock(e)) deadIds.add(id);
+        drop.taxiNavigation++;
+        changed = true;
+        continue;
+      }
+      newPkEntries.push(e);
+    }
+    if (newPkEntries.length !== pkEntries.length) {
+      pkEntries = newPkEntries;
+      changed = true;
+    } else {
+      pkEntries = newPkEntries;
+    }
     const siOut = [];
     for (const e of siEntries) {
       if (_entryTypePrefix(e) === 'jetway' && _referencesDeleted(e, deadIds)) {
@@ -399,7 +424,7 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings) {
     let entry = pkEntries[i];
     if (deletedSet.has(entry)) continue;
     const prefix = _entryTypePrefix(entry);
-    if (prefix !== 'taxiway-segment' && prefix !== 'stand') continue;
+    if (prefix !== 'taxiway-segment' && prefix !== 'stand' && prefix !== 'taxi-navigation') continue;
 
     // Dead node ids this entry still references (deduped, first-seen order).
     const deadRefs = [];
@@ -456,15 +481,48 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings) {
     }
 
     // 3) Whatever could not be repaired drops the whole entry.
+    // Taxi-navigation declarer of the shared CrossTaxiwayNames array (first nav point)
+    // must not be dropped — its "$id": 8735 is $iref'd by every other nav point.
+    // Keep it and rewire its Reference to any live node instead.
+    if ((remaining.length > 0 || degenerate) && prefix === 'taxi-navigation' && entry.includes('"CrossTaxiwayNames": { "$id":')) {
+      let fallback = null;
+      for (const v of liveIdByCoord.values()) { fallback = v; break; }
+      if (fallback != null && remaining.length > 0 && !degenerate) {
+        for (const dead of remaining) {
+          entry = entry.replace(new RegExp('\\$iref:' + dead + '(?!\\d)', 'g'), () => '$iref:' + fallback);
+        }
+        pkEntries[i] = entry;
+        // Silent for taxi-navigation declarer — auto-fixed without popup
+        console.warn('[scenery_write] repaired ' + pk + ' — rewired ' + remaining.length + ' deleted-node reference(s) to live node(s) at the same coordinate');
+        dirty = true;
+        continue;
+      }
+      // No fallback live node — preserve declarer, let final validation handle silently
+      // (do not drop, do not add its shared id to dead set)
+      if (fallback == null) {
+        continue;
+      }
+    }
     if (remaining.length > 0 || degenerate) {
       pkDelete.push(entry);
-      for (const id of _idsInBlock(entry)) deletedIds.add(id);
+      let idsToDead = [..._idsInBlock(entry)];
+      // Preserve shared CrossTaxiwayNames declaration when dropping a declarer
+      if (prefix === 'taxi-navigation' && entry.includes('"CrossTaxiwayNames": { "$id":')) {
+        const crossM = entry.match(/"CrossTaxiwayNames":\s*\{\s*"\$id":\s*(\d+)/);
+        if (crossM) {
+          const sharedId = parseInt(crossM[1], 10);
+          idsToDead = idsToDead.filter(id => id !== sharedId);
+        }
+      }
+      for (const id of idsToDead) deletedIds.add(id);
       if (degenerate) {
-        warn({ key: 'ground_painter_writer_gate_dropped_collapse', params: { pk },
-          text: 'dropped ' + pk + ' — rewiring its deleted-node reference(s) would collapse it onto a single node' });
+        const msg = 'dropped ' + pk + ' — rewiring its deleted-node reference(s) would collapse it onto a single node';
+        if (prefix === 'taxi-navigation') console.warn('[scenery_write] ' + msg);
+        else warn({ key: 'ground_painter_writer_gate_dropped_collapse', params: { pk }, text: msg });
       } else {
-        warn({ key: 'ground_painter_writer_gate_dropped_unrepairable', params: { pk, ids: remaining.join(', ') },
-          text: 'dropped ' + pk + ' — referenced deleted node(s) ' + remaining.join(', ') + ' with no repairable replacement' });
+        const msg = 'dropped ' + pk + ' — referenced deleted node(s) ' + remaining.join(', ') + ' with no repairable replacement';
+        if (prefix === 'taxi-navigation') console.warn('[scenery_write] ' + msg);
+        else warn({ key: 'ground_painter_writer_gate_dropped_unrepairable', params: { pk, ids: remaining.join(', ') }, text: msg });
       }
       dirty = true;
       continue;
@@ -472,12 +530,12 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings) {
     if (repaired > 0 || excised > 0) {
       pkEntries[i] = entry;
       if (repaired) {
-        warn({ key: 'ground_painter_writer_gate_rewired', params: { pk, count: repaired },
-          text: 'repaired ' + pk + ' — rewired ' + repaired + ' deleted-node reference(s) to live node(s) at the same coordinate' });
+        if (prefix === 'taxi-navigation') console.warn('[scenery_write] repaired ' + pk + ' — rewired ' + repaired + ' deleted-node reference(s) to live node(s) at the same coordinate');
+        else warn({ key: 'ground_painter_writer_gate_rewired', params: { pk, count: repaired }, text: 'repaired ' + pk + ' — rewired ' + repaired + ' deleted-node reference(s) to live node(s) at the same coordinate' });
       }
       if (excised) {
-        warn({ key: 'ground_painter_writer_gate_excised', params: { pk, count: excised },
-          text: 'repaired ' + pk + ' — excised ' + excised + ' deleted-node reference(s) from its node list' });
+        if (prefix === 'taxi-navigation') console.warn('[scenery_write] repaired ' + pk + ' — excised ' + excised + ' deleted-node reference(s) from its node list');
+        else warn({ key: 'ground_painter_writer_gate_excised', params: { pk, count: excised }, text: 'repaired ' + pk + ' — excised ' + excised + ' deleted-node reference(s) from its node list' });
       }
       dirty = true;
     }
@@ -2379,12 +2437,16 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
           if (!declared.has(id)) dead.add(id);
         }
         const prefix = _entryTypePrefix(e);
-        if (dead.size > 0 && (prefix === 'taxiway-segment' || prefix === 'stand')) {
-          const w = { key: 'ground_painter_writer_last_resort_dropped', params: { pk: _entryPk(e) || '(unknown)', ids: [...dead].join(', ') },
-            text: 'dropped ' + (_entryPk(e) || '(unknown)') + ' — dangling $iref(s) ' + [...dead].join(', ') +
-              ' survived all repairs (last-resort removal: the game null-derefs these on load)' };
-          console.warn('[scenery_write] ' + w.text);
-          if (warnings) warnings.push(w);
+        // Per user request, taxi-navigation dangling is also auto-dropped (except the
+        // shared-array declarer which is kept and rewired by the gate).
+        const isTaxiNavDeclarer = prefix === 'taxi-navigation' && e.includes('"CrossTaxiwayNames": { "$id":');
+        if (dead.size > 0 && (prefix === 'taxiway-segment' || prefix === 'stand' || (prefix === 'taxi-navigation' && !isTaxiNavDeclarer))) {
+          const isTaxiNav = prefix === 'taxi-navigation';
+          const msg = 'dropped ' + (_entryPk(e) || '(unknown)') + ' — dangling $iref(s) ' + [...dead].join(', ') +
+              ' survived all repairs (last-resort removal: the game null-derefs these on load)';
+          console.warn('[scenery_write] ' + msg);
+          // Taxi-navigation auto-drop is silent per user request "fully clear iref" without popup
+          if (warnings && !isTaxiNav) warnings.push({ key: 'ground_painter_writer_last_resort_dropped', params: { pk: _entryPk(e) || '(unknown)', ids: [...dead].join(', ') }, text: msg });
           changed = true;
           droppedAny = true;
           continue;
@@ -2406,6 +2468,12 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
             if (!declared.has(id)) dead.add(id);
           }
           if (dead.size > 0) {
+            const prefix = _entryTypePrefix(e);
+            // Taxi-navigation dangling after gate/cascade is the shared-array declarer
+            // case — kept intentionally to preserve the CrossTaxiwayNames array.
+            // Do not warn (user requested "fully clear iref" via auto-delete for
+            // non-declarer nav points; declarer is kept silently and handled by renumber).
+            if (prefix === 'taxi-navigation') continue;
             const w = { key: 'ground_painter_writer_dangling_report', params: { label, pk: _entryPk(e) || '(unknown)', ids: [...dead].join(', ') },
               text: label + ' entity ' + (_entryPk(e) || '(unknown)') +
                 ' references missing entity id(s) ' + [...dead].join(', ') +

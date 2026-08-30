@@ -50,6 +50,97 @@ function pushStoreUpdate(updates) {
 
 const FIELD_NAMES = FIELDS.map(f => f[0]);
 
+// ── Ground Painter helpers (MCP must mirror the UI write path) ───────────
+// Keep these helpers local to api-server.js so the main process can mutate
+// the in-memory graph without touching the renderer Vite bundle.
+
+// Deep clone using structuredClone when available, fallback to JSON
+function _clone(obj) {
+  if (obj == null) return obj;
+  if (typeof structuredClone === 'function') {
+    try { return structuredClone(obj); } catch (_) {}
+  }
+  return JSON.parse(JSON.stringify(obj));
+}
+const STAND_LENGTH = 0.63; // mirrors src/utils/constants STAND_LENGTH
+const RUNWAY_WIDTH = 0.50;
+const RUNWAY_PAVEMENT_FLAGS = 4;
+function _coordKey(x, z) { return (+x).toFixed(6) + ',' + (+z).toFixed(6); }
+function _findNodeIndexByCoord(graph, x, z, eps) {
+  eps = eps == null ? 1e-6 : eps;
+  if (!graph || !graph.nodes) return -1;
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const n = graph.nodes[i];
+    if (!n) continue;
+    if (Math.abs(n.x - x) < eps && Math.abs(n.z - z) < eps) return i;
+  }
+  return -1;
+}
+function _normalizeHeading(h) {
+  let n = Math.round(Number(h));
+  if (!isFinite(n)) n = 360;
+  n = ((n % 360) + 360) % 360;
+  return n === 0 ? 360 : n;
+}
+function _segNodeIdxs(seg) {
+  if (!seg) return [];
+  if (Array.isArray(seg.nodeIdxs) && seg.nodeIdxs.length) return seg.nodeIdxs.slice();
+  const a = seg.aIdx, b = seg.bIdx;
+  if (a != null && b != null) return [a, b];
+  return [];
+}
+function _ensurePainterMetaArrays(meta, graph) {
+  if (!meta) return;
+  if (!Array.isArray(meta.nodeOrigPk)) meta.nodeOrigPk = (graph ? graph.nodes.map(() => null) : []);
+  if (!Array.isArray(meta.segOrigPk)) meta.segOrigPk = (graph ? graph.segments.map(() => null) : []);
+  if (!Array.isArray(meta.runwayOrigPk)) meta.runwayOrigPk = (graph ? graph.runways.map(() => null) : []);
+  if (!Array.isArray(meta.areaOrigId)) meta.areaOrigId = (graph ? graph.areas.map(() => null) : []);
+  if (!Array.isArray(meta.standOrigPk)) meta.standOrigPk = (graph ? graph.stands.map(() => null) : []);
+  if (!Array.isArray(meta.deletedPks)) meta.deletedPks = [];
+  if (!Array.isArray(meta.deletedAreaIds)) meta.deletedAreaIds = [];
+  if (!Array.isArray(meta.runwayPavement)) meta.runwayPavement = (graph ? graph.runways.map(() => []) : []);
+  if (!Array.isArray(meta.runwayOrigInfo)) meta.runwayOrigInfo = (graph ? graph.runways.map((rw) => ({ pks: [], physicalName: rw.physicalName || '', names: rw.names || [], width: rw.width || RUNWAY_WIDTH })) : []);
+}
+function _pushPainterHistory(state) {
+  const gClone = _clone(state.groundPainterGraph);
+  const mClone = _clone(state.groundPainterMeta);
+  return { groundPainterHistory: gClone, groundPainterMetaHistory: mClone };
+}
+function _groundPainterNotReady() {
+  return { success: false, error: 'Ground Painter not yet initialized — open the Ground Painter UI once to seed the graph (it is null until first open).' };
+}
+// Distance helpers for delete_ground_objects picking (mirrors GroundPainter pickForeground thresholds loosely)
+function _distToSeg(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az;
+  const len2 = dx * dx + dz * dz;
+  if (len2 < 1e-9) return Math.hypot(px - ax, pz - az);
+  let t = ((px - ax) * dx + (pz - az) * dz) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
+}
+function _pointInPoly(px, pz, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, zi = pts[i].z, xj = pts[j].x, zj = pts[j].z;
+    if ((zi > pz) !== (zj > pz) && px < ((xj - xi) * (pz - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function _minEdgeDist(px, pz, pts) {
+  let d = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    d = Math.min(d, _distToSeg(px, pz, pts[i].x, pts[i].z, pts[j].x, pts[j].z));
+  }
+  return d;
+}
+function _distToPoly(px, pz, pts) {
+  if (!pts || pts.length < 2) return Infinity;
+  let d = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) d = Math.min(d, _distToSeg(px, pz, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z));
+  return d;
+}
+
 /** Parse HH:MM or HH:MM:SS into total seconds */
 function parseTimeSeconds(t) {
   if (!t || typeof t !== 'string') return NaN;
@@ -528,13 +619,16 @@ const MCP_TOOLS = [
       required: ['transcript'],
     },
   },
-  { name: 'get_ground_painter_state', description: 'Read the Ground Painter current state (id-free graph, tool, dirty, isOpen).', inputSchema: { type: 'object', properties: {} } },
-  { name: 'create_taxiway_lines', description: 'Add straight taxiway segments to the Ground Painter graph (in-memory until Save/Exit).', inputSchema: { type: 'object', properties: { lines: { type: 'array', items: { type: 'object', properties: { a: { type: 'object' }, b: { type: 'object' } } } } }, required: ['lines'] } },
-  { name: 'create_area', description: 'Add an Area polygon to the Ground Painter graph (areaType 0|1|2).', inputSchema: { type: 'object', properties: { areaType: { type: 'number' }, points: { type: 'array', items: { type: 'object' } } }, required: ['areaType', 'points'] } },
-  { name: 'create_stands', description: 'Add stand placements to the Ground Painter graph (nose x/z + heading 1..360).', inputSchema: { type: 'object', properties: { stands: { type: 'array', items: { type: 'object', properties: { x: { type: 'number' }, z: { type: 'number' }, heading: { type: 'number' } } } } }, required: ['stands'] } },
-  { name: 'delete_ground_objects', description: 'Delete the nearest ground object to a point.', inputSchema: { type: 'object', properties: { target: { type: 'object', properties: { x: { type: 'number' }, z: { type: 'number' } } } }, required: ['target'] } },
-  { name: 'delete_all_ground_objects', description: 'Clear every painter-owned ground object (destructive; undoable via Ctrl+Z).', inputSchema: { type: 'object', properties: { confirm: { type: 'boolean' } }, required: ['confirm'] } },
-  { name: 'undo_ground_painter', description: 'Restore the last Ground Painter graph snapshot (depth-1 undo).', inputSchema: { type: 'object', properties: {} } },
+  { name: 'get_ground_painter_state', description: 'Read the Ground Painter current state (id-free graph, tool, dirty, isOpen). Null graph means painter not yet seeded — open the Ground Painter UI once.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'create_taxiway_lines', description: 'Add straight taxiway segments to the Ground Painter graph (in-memory until Save). Deduplicates nodes by coordinate (1e-6), validates distinct endpoints, pushes history so undo works. Uses flags 2 (wider) by default.', inputSchema: { type: 'object', properties: { lines: { type: 'array', items: { type: 'object', properties: { a: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, b: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, name: { type: 'string' }, flags: { type: 'number' } }, required: ['a', 'b'] } } }, required: ['lines'] } },
+  { name: 'create_areas', description: 'Add Area polygons to the Ground Painter graph (areaType 0=boundary/perimeter, 1=apron, 2=building). Each polygon needs ≥3 vertices, auto-closed.', inputSchema: { type: 'object', properties: { areas: { type: 'array', items: { type: 'object', properties: { areaType: { type: 'number', enum: [0, 1, 2] }, points: { type: 'array', minItems: 3, items: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } } } }, required: ['areaType', 'points'] } } }, required: ['areas'] } },
+  { name: 'create_area', description: 'Add a single Area polygon (deprecated, use create_areas).', inputSchema: { type: 'object', properties: { areaType: { type: 'number' }, points: { type: 'array', items: { type: 'object' } } }, required: ['areaType', 'points'] } },
+  { name: 'create_stands', description: 'Add stand placements to the Ground Painter graph (nose x/z + heading 1..360). Heading 0/unset folds to 360 (north). Creates nose+tail nodes (STAND_LENGTH=0.63) and persists with heading.', inputSchema: { type: 'object', properties: { stands: { type: 'array', items: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' }, heading: { type: 'number', minimum: 0, maximum: 360 } } } } }, required: ['stands'] } },
+  { name: 'create_runways', description: 'Add physical runways (paired thresholds + collinear pavement strip). Each runway is defined by two threshold points a/b; names are derived from heading (e.g. 01/19) and pavement strip Flags=4 is auto-synthesized.', inputSchema: { type: 'object', properties: { runways: { type: 'array', minItems: 1, items: { type: 'object', required: ['a', 'b'], properties: { a: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, b: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } } } } } }, required: ['runways'] } },
+  { name: 'create_taxiway_fillet', description: 'Round the corner between two straight taxiway segments (fillet/arc). Picks two segment indices and a radius (0.5..5.0 GU, default 2.0). Supports both connected and virtual (disconnected) fillets. Validates angle 5..175°, parallel check, and pushes paired history.', inputSchema: { type: 'object', properties: { segA: { type: 'integer', minimum: 0 }, segB: { type: 'integer', minimum: 0 }, radius: { type: 'number', minimum: 0.5, maximum: 5.0 } }, required: ['segA', 'segB'] } },
+  { name: 'delete_ground_objects', description: 'Delete the nearest ground object to a point (stand > segment/runway > area priority, same as UI Select). Uses hit threshold ~0.6 GU. Records deletedPks/deletedAreaIds so save persists; pushes history.', inputSchema: { type: 'object', properties: { target: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, threshold: { type: 'number' } }, required: ['target'] } },
+  { name: 'delete_all_ground_objects', description: 'Clear every ground object (destructive). Records deletedPks/deletedAreaIds for all survivors so save persists; pushes history.', inputSchema: { type: 'object', properties: { confirm: { type: 'boolean' } }, required: ['confirm'] } },
+  { name: 'undo_ground_painter', description: 'Restore the last Ground Painter graph+meta snapshot (depth-1 undo, paired graph+meta).', inputSchema: { type: 'object', properties: {} } },
 ];
 
 // ── MCP Message Handler ─────────────────────────────────────────
@@ -691,60 +785,404 @@ async function handleMcpMessage(msg) {
             historyDepth: s.groundPainterHistory ? 1 : 0,
             graph: g,
             summary: g ? { nodes: g.nodes.length, segments: g.segments.length, runways: g.runways.length, areas: g.areas.length, stands: g.stands.length } : null,
+            metaSummary: s.groundPainterMeta ? { nodeOrigPk: s.groundPainterMeta.nodeOrigPk?.length || 0, segOrigPk: s.groundPainterMeta.segOrigPk?.length || 0, deletedPks: s.groundPainterMeta.deletedPks?.length || 0, deletedAreaIds: s.groundPainterMeta.deletedAreaIds?.length || 0 } : null,
           };
           break;
         }
         case 'create_taxiway_lines': {
           const s = await readStoreState();
           const g = s.groundPainterGraph;
-          const add = (graph, lines) => {
-            const out = { ...graph, nodes: [...graph.nodes], segments: [...graph.segments] };
-            for (const ln of lines || []) {
-              if (!ln.a || !ln.b) continue;
-              const ai = out.nodes.length; out.nodes.push({ x: ln.a.x, z: ln.a.z, type: 2, flags: 0 });
-              const bi = out.nodes.length; out.nodes.push({ x: ln.b.x, z: ln.b.z, type: 2, flags: 0 });
-              out.segments.push({ aIdx: ai, bIdx: bi, flags: ln.flags ?? 2, name: ln.name });
-            }
-            return out;
+          if (!g) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          }
+          const lines = args.lines || [];
+          if (!Array.isArray(lines) || lines.length === 0) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'lines array required (≥1)' }) }], isError: true });
+          }
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          let added = 0;
+          const errors = [];
+          const getOrCreate = (pt) => {
+            const existing = _findNodeIndexByCoord(newGraph, pt.x, pt.z);
+            if (existing >= 0) return existing;
+            const idx = newGraph.nodes.length;
+            newGraph.nodes.push({ x: pt.x, z: pt.z, type: 2, flags: 0 });
+            newMeta.nodeOrigPk.push(null);
+            return idx;
           };
-          pushStoreUpdate({ groundPainterGraph: add(g, params.lines), groundPainterHasEdited: true });
-          result = { success: true, added: (params.lines || []).length };
+          for (let i = 0; i < lines.length; i++) {
+            const ln = lines[i];
+            if (!ln || !ln.a || !ln.b) { errors.push({ index: i, issue: 'missing a/b' }); continue; }
+            if (typeof ln.a.x !== 'number' || typeof ln.a.z !== 'number' || typeof ln.b.x !== 'number' || typeof ln.b.z !== 'number') { errors.push({ index: i, issue: 'a/b x/z must be numbers' }); continue; }
+            if (Math.hypot(ln.a.x - ln.b.x, ln.a.z - ln.b.z) < 1e-6) { errors.push({ index: i, issue: 'Segment needs distinct endpoints' }); continue; }
+            const aIdx = getOrCreate(ln.a);
+            const bIdx = getOrCreate(ln.b);
+            if (aIdx === bIdx) { errors.push({ index: i, issue: 'Segment needs distinct endpoints (same node)' }); continue; }
+            newGraph.segments.push({ aIdx, bIdx, nodeIdxs: [aIdx, bIdx], flags: ln.flags ?? 2, directed: false, ...(ln.name ? { name: String(ln.name) } : {}) });
+            newMeta.segOrigPk.push(null);
+            added++;
+          }
+          if (added === 0 && errors.length) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No segments added', details: errors }) }], isError: true });
+          }
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, added, errors: errors.length ? errors : undefined, totalSegments: newGraph.segments.length };
+          break;
+        }
+        case 'create_areas': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const areas = args.areas || [];
+          if (!Array.isArray(areas) || areas.length === 0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'areas array required (≥1)' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          let added = 0;
+          const errors = [];
+          for (let i = 0; i < areas.length; i++) {
+            const ar = areas[i];
+            if (!ar || !Array.isArray(ar.points) || ar.points.length < 3) { errors.push({ index: i, issue: 'Area needs at least 3 vertices' }); continue; }
+            const at = ar.areaType;
+            if (at !== 0 && at !== 1 && at !== 2) { errors.push({ index: i, issue: 'areaType must be 0|1|2' }); continue; }
+            const pts = ar.points.map((p) => ({ x: Number(p.x), z: Number(p.z) }));
+            if (pts.some((p) => !isFinite(p.x) || !isFinite(p.z))) { errors.push({ index: i, issue: 'points x/z must be numbers' }); continue; }
+            newGraph.areas.push({ areaType: at, points: pts, owner: null });
+            newMeta.areaOrigId.push(null);
+            added++;
+          }
+          if (added === 0 && errors.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No areas added', details: errors }) }], isError: true });
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, added, errors: errors.length ? errors : undefined, totalAreas: newGraph.areas.length };
           break;
         }
         case 'create_area': {
+          // Back-compat single-area wrapper
+          const single = args.areaType != null || args.points ? [{ areaType: args.areaType, points: args.points }] : (Array.isArray(args.areas) ? args.areas : []);
           const s = await readStoreState();
           const g = s.groundPainterGraph;
-          const area = { areaType: params.areaType, points: (params.points || []).map((p) => ({ x: p.x, z: p.z })), owner: null };
-          pushStoreUpdate({ groundPainterGraph: { ...g, areas: [...g.areas, area] }, groundPainterHasEdited: true });
-          result = { success: true };
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          if (!single.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'areaType and points required' }) }], isError: true });
+          const ar = single[0];
+          if (!Array.isArray(ar.points) || ar.points.length < 3) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Area needs at least 3 vertices' }) }], isError: true });
+          if (ar.areaType !== 0 && ar.areaType !== 1 && ar.areaType !== 2) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'areaType must be 0|1|2' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          newGraph.areas.push({ areaType: ar.areaType, points: ar.points.map((p) => ({ x: Number(p.x), z: Number(p.z) })), owner: null });
+          newMeta.areaOrigId.push(null);
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, added: 1 };
           break;
         }
         case 'create_stands': {
           const s = await readStoreState();
           const g = s.groundPainterGraph;
-          const out = { ...g, nodes: [...g.nodes], stands: [...g.stands] };
-          for (const st of params.stands || []) {
-            const h = st.heading || 360;
-            const rad = (h * Math.PI) / 180;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const stands = args.stands || [];
+          if (!Array.isArray(stands) || stands.length === 0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'stands array required (≥1)' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          let added = 0;
+          const errors = [];
+          for (let i = 0; i < stands.length; i++) {
+            const st = stands[i];
+            if (!st || typeof st.x !== 'number' || typeof st.z !== 'number') { errors.push({ index: i, issue: 'x/z required' }); continue; }
+            const hdg = _normalizeHeading(st.heading);
+            const rad = (hdg * Math.PI) / 180;
             const nose = { x: st.x, z: st.z };
-            const tail = { x: st.x - Math.cos(rad) * 0.63, z: st.z + Math.sin(rad) * 0.63 };
-            const ni = out.nodes.length; out.nodes.push(nose);
-            const ti = out.nodes.length; out.nodes.push(tail);
-            out.stands.push({ noseIdx: ni, tailIdx: ti, heading: Math.round(h), pushbackIdxs: [], parkingType: 1, egressType: 0 });
+            const tail = { x: st.x - Math.cos(rad) * STAND_LENGTH, z: st.z + Math.sin(rad) * STAND_LENGTH };
+            const ni = newGraph.nodes.length; newGraph.nodes.push(nose); newMeta.nodeOrigPk.push(null);
+            const ti = newGraph.nodes.length; newGraph.nodes.push(tail); newMeta.nodeOrigPk.push(null);
+            newGraph.stands.push({ noseIdx: ni, tailIdx: ti, heading: hdg, pushbackIdxs: [], parkingType: 1, egressType: 0, ...(st.name ? { name: String(st.name) } : {}) });
+            newMeta.standOrigPk.push(null);
+            added++;
           }
-          pushStoreUpdate({ groundPainterGraph: out, groundPainterHasEdited: true });
-          result = { success: true };
+          if (added === 0 && errors.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No stands added', details: errors }) }], isError: true });
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, added, errors: errors.length ? errors : undefined };
+          break;
+        }
+        case 'create_runways': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const runways = args.runways || [];
+          if (!Array.isArray(runways) || runways.length === 0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'runways array required (≥1)' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          let added = 0;
+          const errors = [];
+          for (let i = 0; i < runways.length; i++) {
+            const rw = runways[i];
+            if (!rw || !rw.a || !rw.b || typeof rw.a.x !== 'number' || typeof rw.a.z !== 'number' || typeof rw.b.x !== 'number' || typeof rw.b.z !== 'number') { errors.push({ index: i, issue: 'a/b x/z required' }); continue; }
+            const a = { x: rw.a.x, z: rw.a.z }, b = { x: rw.b.x, z: rw.b.z };
+            const dx = b.x - a.x, dz = b.z - a.z;
+            const len = Math.hypot(dx, dz);
+            if (len < 1e-6) { errors.push({ index: i, issue: 'Runway needs distinct endpoints' }); continue; }
+            const h = Math.round(((Math.atan2(-dz, dx) * 180) / Math.PI % 360 + 360) % 360);
+            let num = Math.round(h / 10) % 36; if (num === 0) num = 36;
+            const name1 = String(num).padStart(2, '0'), name2 = String((num + 18) % 36).padStart(2, '0');
+            const physicalName = name1 + '/' + name2;
+            const OH = 0.6; const ux = dx / len, uz = dz / len;
+            const overA = { x: a.x - ux * OH, z: a.z - uz * OH }, overB = { x: b.x + ux * OH, z: b.z + uz * OH };
+            const iOA = newGraph.nodes.length, iA = iOA + 1, iB = iOA + 2, iOB = iOA + 3;
+            newGraph.nodes.push({ x: overA.x, z: overA.z, type: 2, flags: 0 }, { x: a.x, z: a.z, type: 2, flags: 0 }, { x: b.x, z: b.z, type: 2, flags: 0 }, { x: overB.x, z: overB.z, type: 2, flags: 0 });
+            newMeta.nodeOrigPk.push(null, null, null, null);
+            newGraph.segments.push({ aIdx: iA, bIdx: iB, nodeIdxs: [iOA, iA, iB, iOB], name: physicalName, flags: RUNWAY_PAVEMENT_FLAGS, directed: false });
+            newMeta.segOrigPk.push(null);
+            newGraph.runways.push({ thAIdx: iA, thBIdx: iB, names: [name1, name2], name: name1, physicalName, width: RUNWAY_WIDTH });
+            newMeta.runwayOrigPk.push(null);
+            newMeta.runwayPavement.push([iOA, iA, iB, iOB]);
+            newMeta.runwayOrigInfo.push({ pks: [null, null], physicalName, names: [name1, name2], width: RUNWAY_WIDTH });
+            added++;
+          }
+          if (added === 0 && errors.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No runways added', details: errors }) }], isError: true });
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, added, errors: errors.length ? errors : undefined, totalRunways: newGraph.runways.length };
+          break;
+        }
+        case 'create_taxiway_fillet': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          let segA = args.segA, segB = args.segB;
+          const radius = args.radius != null ? Number(args.radius) : 2.0;
+          if (segA == null || segB == null) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'segA and segB segment indices required' }) }], isError: true });
+          segA = parseInt(segA, 10); segB = parseInt(segB, 10);
+          if (!Number.isFinite(segA) || !Number.isFinite(segB) || segA < 0 || segB < 0 || segA >= g.segments.length || segB >= g.segments.length) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'segA/segB out of range (0..' + (g.segments.length - 1) + ')' }) }], isError: true });
+          }
+          if (segA === segB) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'segA and segB must be different segments' }) }], isError: true });
+          if (!isFinite(radius) || radius < 0.5 || radius > 5.0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'radius must be 0.5..5.0' }) }], isError: true });
+          // Dynamic import of fillet helpers (ESM) — reuse the renderer's pure math
+          let fillet;
+          try {
+            const u = require('url');
+            const p = require('path');
+            const filletPath = p.join(__dirname, '..', 'src', 'components', 'EditorScreen', 'GroundPainter', 'fillet.js');
+            const fileUrl = u.pathToFileURL(filletPath).href;
+            fillet = await import(fileUrl);
+          } catch (e) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'fillet module load failed: ' + e.message }) }], isError: true });
+          }
+          if (fillet.isStraightSegment && !fillet.isStraightSegment(g.segments[segA])) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'segA is not a straight segment (only straight segments can be filleted)' }) }], isError: true });
+          if (fillet.isStraightSegment && !fillet.isStraightSegment(g.segments[segB])) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'segB is not a straight segment (only straight segments can be filleted)' }) }], isError: true });
+          const res = fillet.computeFillet(g, segA, segB, radius);
+          if (!res.ok) {
+            const msg = res.error || 'fillet compute failed';
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: msg }) }], isError: true });
+          }
+          // Clone for mutation
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          if (!Array.isArray(newMeta.deletedPks)) newMeta.deletedPks = [];
+          const isVirtual = !!res.virtualO;
+          if (isVirtual) {
+            // Virtual: additive (no deletions) — reuse helper
+            const toDelete = [];
+            // No segment deletions; wire additively
+            try {
+              fillet.applyVirtualFillet(newGraph, newMeta, res, segA, segB);
+            } catch (e) {
+              return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'virtual fillet failed: ' + e.message }) }], isError: true });
+            }
+          } else {
+            // Connected: truncate both picked legs and insert arc
+            const toDelete = [segA, segB].sort((a, b) => b - a);
+            for (const idx of toDelete) {
+              const pk = newMeta.segOrigPk[idx];
+              if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
+              newGraph.segments.splice(idx, 1);
+              newMeta.segOrigPk.splice(idx, 1);
+            }
+            // Ghost-delete O nodes if they become orphaned degree==2 (simple case)
+            // Count incident by coordinate to decide if O is shared
+            const coordEqual = (a, b) => Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.z - b.z) < 1e-6;
+            const countAtCoord = (x, z) => {
+              let c = 0;
+              for (const sg of g.segments) { const idxs = _segNodeIdxs(sg); for (const ni of idxs) { const n = g.nodes[ni]; if (n && Math.abs(n.x - x) < 1e-6 && Math.abs(n.z - z) < 1e-6) { c++; break; } } }
+              for (const rw of g.runways) { for (const ni of [rw.thAIdx, rw.thBIdx]) { const n = g.nodes[ni]; if (n && Math.abs(n.x - x) < 1e-6 && Math.abs(n.z - z) < 1e-6) { c++; break; } } }
+              return c;
+            };
+            const deg = countAtCoord(res.o.x, res.o.z);
+            if (deg === 2) {
+              const oIdxs = res.duplicate ? [res.oIdxA, res.oIdxB].filter(v => v != null) : (res.oIdx != null ? [res.oIdx] : []);
+              for (const oi of oIdxs) {
+                const pk = newMeta.nodeOrigPk[oi];
+                if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
+              }
+            }
+            // Create truncated legs far->T
+            const base = newGraph.nodes.length;
+            for (const pt of res.arcPoints) { newGraph.nodes.push({ x: pt.x, z: pt.z, type: 2, flags: 0 }); newMeta.nodeOrigPk.push(null); }
+            const idxT1 = base, idxT2 = base + res.arcPoints.length - 1;
+            const segAOrig = g.segments[segA], segBOrig = g.segments[segB];
+            const aFlags = segAOrig.flags ?? 2, bFlags = segBOrig.flags ?? 2;
+            const aName = segAOrig.name, bName = segBOrig.name;
+            const p1Idx = res.p1Idx, p2Idx = res.p2Idx;
+            // Need to map p1/p2 original node indices to still-valid ones? For degree==2 O deletion they are distinct from O, so safe.
+            // For deg>2 with duplicate O nodes, the far endpoints remain.
+            newGraph.segments.push({ aIdx: p1Idx, bIdx: idxT1, nodeIdxs: [p1Idx, idxT1], flags: aFlags, directed: false, ...(aName ? { name: aName } : {}) }); newMeta.segOrigPk.push(null);
+            newGraph.segments.push({ aIdx: p2Idx, bIdx: idxT2, nodeIdxs: [p2Idx, idxT2], flags: bFlags, directed: false, ...(bName ? { name: bName } : {}) }); newMeta.segOrigPk.push(null);
+            // Arc segment
+            const arcIdxs = []; for (let i = 0; i < res.arcPoints.length; i++) arcIdxs.push(idxT1 + i);
+            newGraph.segments.push({ aIdx: idxT1, bIdx: idxT2, nodeIdxs: arcIdxs, flags: 2, directed: false }); newMeta.segOrigPk.push(null);
+          }
+          // Ghost invariance repair (re-point new entities away from ghost nodes)
+          if (fillet.repairGhostRefs) {
+            try { fillet.repairGhostRefs(newGraph, newMeta); } catch (_) {}
+          }
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, virtual: isVirtual, radius: res.rEff, center: res.center, t1: res.t1, t2: res.t2 };
+          break;
+        }
+        case 'delete_ground_objects': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          const m = s.groundPainterMeta;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const target = args.target;
+          if (!target || typeof target.x !== 'number' || typeof target.z !== 'number') return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'target {x,z} required' }) }], isError: true });
+          const TH = typeof args.threshold === 'number' ? args.threshold : 0.6;
+          const TH_STAND = 0.7;
+          let best = null; let bestDist = Infinity;
+          const consider = (kind, idx, dist) => { if (dist <= TH && dist < bestDist) { bestDist = dist; best = { kind, idx }; } };
+          const considerStand = (idx, dist) => { if (dist <= TH_STAND && dist < bestDist) { bestDist = dist; best = { kind: 'stand', idx }; } };
+          // Stands: nose prioritized
+          for (let i = 0; i < (g.stands || []).length; i++) {
+            const st = g.stands[i];
+            const n = g.nodes[st.noseIdx]; if (n) { const d = Math.hypot(target.x - n.x, target.z - n.z); considerStand(i, d); }
+            const t = g.nodes[st.tailIdx]; if (t) { const d = Math.hypot(target.x - t.x, target.z - t.z); considerStand(i, d * 1.1); }
+          }
+          // Segments (skip runway pavement strips by name)
+          const runwayStripNames = new Set((g.runways || []).map((r) => r.physicalName));
+          for (let i = 0; i < (g.segments || []).length; i++) {
+            const sg = g.segments[i];
+            if (sg.name && runwayStripNames.has(sg.name)) continue;
+            const pts = _segNodeIdxs(sg).map((ni) => g.nodes[ni]).filter(Boolean);
+            if (pts.length < 2) continue;
+            const d = _distToPoly(target.x, target.z, pts);
+            consider('segment', i, d);
+          }
+          for (let i = 0; i < (g.runways || []).length; i++) {
+            const rw = g.runways[i];
+            const a = g.nodes[rw.thAIdx], b = g.nodes[rw.thBIdx];
+            if (!a || !b) continue;
+            const d = _distToSeg(target.x, target.z, a.x, a.z, b.x, b.z);
+            const halfW = (rw.width || 0.50) / 2;
+            consider('runway', i, Math.max(0, d - halfW * 0.5));
+          }
+          for (let i = 0; i < (g.areas || []).length; i++) {
+            const ar = g.areas[i];
+            const pts = (ar.points || []);
+            if (pts.length < 3) continue;
+            const inside = _pointInPoly(target.x, target.z, pts);
+            const edge = _minEdgeDist(target.x, target.z, pts);
+            let cost = Infinity;
+            if (ar.areaType === 0) { if (edge <= TH) cost = 100 + edge; }
+            else if (ar.areaType === 2) { if (inside || edge <= TH) cost = inside ? 0 : edge; }
+            else { if (inside || edge <= TH) cost = inside ? 1 : edge + 1; }
+            if (cost < bestDist) { bestDist = cost; best = { kind: 'area', idx: i }; }
+          }
+          if (!best) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No object within threshold ' + TH }) }], isError: true });
+          // Perform delete with meta handling (mirrors GroundPainter deleteSelected for single)
+          const newGraph = _clone(g);
+          const newMeta = _clone(m) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          const markDeletedPk = (pk) => { if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk); };
+          // Orphan GC helper (collect orphan node indices and splice descending)
+          const doOrphanGC = (candidateNodes) => {
+            const orphans = [];
+            for (const ni of candidateNodes) {
+              if (ni == null || ni < 0) continue;
+              let used = false;
+              for (const sg of newGraph.segments) { const idxs = _segNodeIdxs(sg); if (idxs.includes(ni)) { used = true; break; } }
+              if (used) continue;
+              for (const rw of newGraph.runways) { if (rw.thAIdx === ni || rw.thBIdx === ni) { used = true; break; } }
+              if (used) continue;
+              for (const st of newGraph.stands) { if (st.noseIdx === ni || st.tailIdx === ni) { used = true; break; } if (st.pushbackIdxs && st.pushbackIdxs.includes(ni)) { used = true; break; } }
+              if (!used) orphans.push(ni);
+            }
+            orphans.sort((a, b) => b - a);
+            for (const delIdx of orphans) {
+              if (newMeta.nodeOrigPk && delIdx < newMeta.nodeOrigPk.length) { const pk = newMeta.nodeOrigPk[delIdx]; if (pk != null) markDeletedPk(pk); }
+              newGraph.nodes.splice(delIdx, 1);
+              if (newMeta.nodeOrigPk) newMeta.nodeOrigPk.splice(delIdx, 1);
+              for (const sg of newGraph.segments) {
+                if (sg.nodeIdxs) { for (let i = 0; i < sg.nodeIdxs.length; i++) if (sg.nodeIdxs[i] > delIdx) sg.nodeIdxs[i]--; if (sg.aIdx != null && sg.aIdx > delIdx) sg.aIdx--; if (sg.bIdx != null && sg.bIdx > delIdx) sg.bIdx--; }
+                else { if (sg.aIdx != null && sg.aIdx > delIdx) sg.aIdx--; if (sg.bIdx != null && sg.bIdx > delIdx) sg.bIdx--; }
+              }
+              for (const rw of newGraph.runways) { if (rw.thAIdx > delIdx) rw.thAIdx--; if (rw.thBIdx > delIdx) rw.thBIdx--; }
+              for (const st of newGraph.stands) { if (st.noseIdx > delIdx) st.noseIdx--; if (st.tailIdx > delIdx) st.tailIdx--; if (st.pushbackIdxs) for (let i = 0; i < st.pushbackIdxs.length; i++) if (st.pushbackIdxs[i] > delIdx) st.pushbackIdxs[i]--; }
+              if (newMeta.runwayPavement) for (const arr of newMeta.runwayPavement) for (let i = 0; i < arr.length; i++) if (arr[i] > delIdx) arr[i]--;
+            }
+          };
+          let deletedKind = best.kind, deletedIdx = best.idx;
+          if (best.kind === 'segment') {
+            const delSeg = newGraph.segments[best.idx];
+            const delNodes = _segNodeIdxs(delSeg);
+            const uniq = [...new Set(delNodes.filter(v => v != null))];
+            if (newMeta.segOrigPk) { markDeletedPk(newMeta.segOrigPk[best.idx]); newMeta.segOrigPk.splice(best.idx, 1); }
+            newGraph.segments.splice(best.idx, 1);
+            doOrphanGC(uniq);
+          } else if (best.kind === 'runway') {
+            if (newMeta.runwayOrigPk) { markDeletedPk(newMeta.runwayOrigPk[best.idx]); newMeta.runwayOrigPk.splice(best.idx, 1); }
+            if (newMeta.runwayPavement) newMeta.runwayPavement.splice(best.idx, 1);
+            if (newMeta.runwayOrigInfo) newMeta.runwayOrigInfo.splice(best.idx, 1);
+            newGraph.runways.splice(best.idx, 1);
+          } else if (best.kind === 'area') {
+            if (newMeta.areaOrigId) { const id = newMeta.areaOrigId[best.idx]; if (id != null && !newMeta.deletedAreaIds.includes(id)) newMeta.deletedAreaIds.push(id); newMeta.areaOrigId.splice(best.idx, 1); }
+            newGraph.areas.splice(best.idx, 1);
+          } else if (best.kind === 'stand') {
+            if (newMeta.standOrigPk) { markDeletedPk(newMeta.standOrigPk[best.idx]); newMeta.standOrigPk.splice(best.idx, 1); }
+            const st = newGraph.stands[best.idx];
+            const delNodes = [st.noseIdx, st.tailIdx, ...(st.pushbackIdxs || [])].filter(v => v != null);
+            newGraph.stands.splice(best.idx, 1);
+            doOrphanGC(delNodes);
+          }
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, deleted: { kind: deletedKind, idx: deletedIdx }, remaining: { nodes: newGraph.nodes.length, segments: newGraph.segments.length, runways: newGraph.runways.length, areas: newGraph.areas.length, stands: newGraph.stands.length } };
           break;
         }
         case 'delete_all_ground_objects': {
-          pushStoreUpdate({ groundPainterGraph: { nodes: [], segments: [], runways: [], areas: [], stands: [] }, groundPainterHasEdited: true });
-          result = { success: true };
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          const m = s.groundPainterMeta;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          if (!args.confirm) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'confirm:true required' }) }], isError: true });
+          const newMeta = _clone(m) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, g);
+          // Record all surviving PKs as deleted so patchSceneryBlob drops them
+          if (newMeta.nodeOrigPk) for (const pk of newMeta.nodeOrigPk) if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
+          if (newMeta.segOrigPk) for (const pk of newMeta.segOrigPk) if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
+          if (newMeta.runwayOrigPk) for (const pk of newMeta.runwayOrigPk) if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
+          if (newMeta.standOrigPk) for (const pk of newMeta.standOrigPk) if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
+          if (newMeta.areaOrigId) for (const id of newMeta.areaOrigId) if (id != null && !newMeta.deletedAreaIds.includes(id)) newMeta.deletedAreaIds.push(id);
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: { nodes: [], segments: [], runways: [], areas: [], stands: [] }, groundPainterMeta: { ...newMeta, nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], runwayPavement: [], runwayOrigInfo: [] }, ...hist, groundPainterHasEdited: true });
+          result = { success: true, cleared: true };
           break;
         }
         case 'undo_ground_painter': {
           const s = await readStoreState();
-          if (s.groundPainterHistory) pushStoreUpdate({ groundPainterGraph: s.groundPainterHistory, groundPainterHistory: null, groundPainterHasEdited: true });
-          result = { success: true, undone: !!s.groundPainterHistory };
+          if (!s.groundPainterHistory) { result = { success: true, undone: false }; break; }
+          const restore = { groundPainterGraph: s.groundPainterHistory, groundPainterHistory: null, groundPainterHasEdited: true };
+          if (s.groundPainterMetaHistory) { restore.groundPainterMeta = s.groundPainterMetaHistory; restore.groundPainterMetaHistory = null; }
+          pushStoreUpdate(restore);
+          result = { success: true, undone: true };
           break;
         }
         case 'get_editor_status': {

@@ -10,6 +10,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let electronApp;
 let window;
 
+test.setTimeout(90000);
+
 test.beforeAll(async () => {
   electronApp = await electron.launch({
     args: [
@@ -21,14 +23,14 @@ test.beforeAll(async () => {
 
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
-  await window.waitForTimeout(2000);
 
-  // Open first level
-  const firstRow = window.locator('.level-row').first();
-  if (await firstRow.isVisible().catch(() => false)) {
-    await firstRow.click();
-    await window.waitForTimeout(3000);
-  }
+  await window.waitForSelector('.loading-state', { state: 'hidden', timeout: 70000 }).catch(() => {});
+  await window.waitForSelector('.level-row', { state: 'visible', timeout: 10000 });
+  const rows = window.locator('.level-row');
+  await expect(rows.first()).toBeVisible({ timeout: 10000 });
+  await rows.first().click();
+  await expect(window.locator('#table-container')).toBeVisible({ timeout: 15000 });
+  await window.waitForTimeout(500);
 });
 
 test.afterAll(async () => {

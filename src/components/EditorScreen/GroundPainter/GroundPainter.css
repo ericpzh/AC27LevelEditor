@@ -50,9 +50,6 @@
 .gp-undo:disabled { opacity: 0.4; cursor: default; }
 .gp-undo:not(:disabled) { color: #6aa0ff; }
 .gp-undo:not(:disabled):hover { background: #1f3357; border-color: #6aa0ff; }
-.gp-rotate:disabled { opacity: 0.4; cursor: default; }
-.gp-rotate:not(:disabled) { color: #8a94ff; }
-.gp-rotate:not(:disabled):hover { background: #2a2a57; border-color: #8a94ff; }
 .gp-pool {
   display: inline-flex;
   align-items: center;

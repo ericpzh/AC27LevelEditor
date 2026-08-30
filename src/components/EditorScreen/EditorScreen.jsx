@@ -226,6 +226,90 @@ export default function EditorScreen() {
   const toggleGroundPainter = useAppStore(s => s.toggleGroundPainter);
   const showGroundPainter = useAppStore(s => s.showGroundPainter);
 
+  // ── Ground painter entry gate — warn before opening ──
+  // Desired flow: Editor -> Ground (warn unsaved will be lost) -> Ground loads acl as-of disk
+  // If there are unsaved flight/timeline edits, warn that they will be discarded.
+  // Cancel stays in editor so user can save; Continue discards and opens ground editor.
+  const handleGroundPainterClick = () => {
+    // Already open → this click just closes it, no warning.
+    if (showGroundPainter) { toggleGroundPainter(); return; }
+    const st = useAppStore.getState();
+    const hasFlightMod = st.modified || st.timelineModified.weather || st.timelineModified.wind || st.timelineModified.runway;
+    if (hasFlightMod) {
+      showModal(
+        (tt) => tt('ground_painter_unsaved_title'),
+        (tt) => (
+          <div>
+            <p className="modal-hint-error">{tt('ground_painter_unsaved_body')}</p>
+          </div>
+        ),
+        (tt) => (
+          <div className="modal-actions-row">
+            <button className="btn-cancel" onClick={hideModal}>{tt('modal_btn_cancel')}</button>
+            <button className="btn-confirm" onClick={async () => {
+              hideModal();
+              // Discard unsaved flight/timeline edits and reload from disk so
+              // the ground editor's snapshot (which reads from disk) matches
+              // what the flight editor shows after we return.
+              try {
+                const curPath = useAppStore.getState().currentPath;
+                if (curPath && electronAPI) {
+                  const data = await electronAPI.loadAcl(curPath);
+                  if (data && data.success) {
+                    useAppStore.setState({
+                      flights: data.flights, before: data.before, after: data.after,
+                      arrayContent: data.arrayContent, originalBlocks: data.originalBlocks,
+                      modified: false, highlightedIdx: -1, selectedIndices: new Set(),
+                      _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null,
+                      _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false,
+                      timelineModified: { weather: false, wind: false, runway: false },
+                    });
+                    try {
+                      const tl = await electronAPI.loadTimelines(curPath);
+                      if (tl && tl.success) {
+                        const wsu = tl.windSpeedUnit || WIND_UNITS.KNOTS;
+                        useAppStore.setState({
+                          weatherTimeline: tl.weatherTimeline || [], windTimeline: convertWindSpeed(tl.windTimeline || [], wsu, WIND_UNITS.KNOTS),
+                          runwayTimeline: tl.runwayTimeline || { initialRunways: [], timeline: [] },
+                          weatherPath: tl.weatherPath, windPath: tl.windPath, runwayTimelinePath: tl.runwayTimelinePath,
+                          _windSpeedUnit: wsu,
+                        });
+                      }
+                    } catch (_) {}
+                  } else {
+                    useAppStore.setState({ modified: false, timelineModified: { weather: false, wind: false, runway: false } });
+                  }
+                } else {
+                  useAppStore.setState({ modified: false, timelineModified: { weather: false, wind: false, runway: false } });
+                }
+              } catch (_) {
+                useAppStore.setState({ modified: false, timelineModified: { weather: false, wind: false, runway: false } });
+              }
+              toggleGroundPainter();
+            }}>{tt('ground_painter_unsaved_continue')}</button>
+          </div>
+        )
+      );
+      return;
+    }
+    showModal(
+      (tt) => tt('ground_painter_warn_title'),
+      (tt) => (
+        <div>
+          <p className="modal-hint-error">{tt('ground_painter_warn_experimental')}</p>
+          <p>{tt('ground_painter_warn_backup')}</p>
+          <p>{tt('ground_painter_warn_scope')}</p>
+        </div>
+      ),
+      (tt) => (
+        <div className="modal-actions-row">
+          <button className="btn-cancel" onClick={hideModal}>{tt('ground_painter_warn_exit')}</button>
+          <button className="btn-confirm" onClick={() => { hideModal(); toggleGroundPainter(); }}>{tt('ground_painter_warn_confirm')}</button>
+        </div>
+      )
+    );
+  };
+
   // ── Chat toggle ──
   const chatPanelOpen = useAppStore(s => s.chatPanelOpen);
   const toggleChatPanel = useAppStore(s => s.toggleChatPanel);
@@ -368,7 +452,7 @@ export default function EditorScreen() {
         <div className="toolbar-group secondary-left">
           <button ref={starBtnRef} {...bind(t(BUTTONS.starMap.descKey))} onClick={toggleStarMap} className={showStarMap ? 'btn-map-active' : ''}><IoNavigateOutline size={14} className="btn-icon" /> {t('toolbar_star_map')}</button>
           <button ref={standBtnRef} {...bind(t(BUTTONS.standMap.descKey))} onClick={toggleStandMap} className={showStandMap ? 'btn-map-active' : ''}><IoMapOutline size={14} className="btn-icon" /> {t('toolbar_stand_map')}</button>
-          <button ref={groundPainterBtnRef} onClick={toggleGroundPainter} className={showGroundPainter ? 'btn-map-active' : ''}><IoPencil size={14} className="btn-icon" /> {t('toolbar_ground_painter')}</button>
+          <button ref={groundPainterBtnRef} onClick={handleGroundPainterClick} className={showGroundPainter ? 'btn-map-active' : ''}><IoPencil size={14} className="btn-icon" /> {t('toolbar_ground_painter')}</button>
           <button {...bind(t(BUTTONS.addArrival.descKey))} onClick={addArrival}><span className="btn-icon-wrap btn-icon-arrival"><IoAirplane size={14} /></span> {t('toolbar_add_arrival')}</button>
           <button {...bind(t(BUTTONS.addDeparture.descKey))} onClick={addDeparture}><span className="btn-icon-wrap btn-icon-departure"><IoAirplane size={14} /></span> {t('toolbar_add_departure')}</button>
         </div>

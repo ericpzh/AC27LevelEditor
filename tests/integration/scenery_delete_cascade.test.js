@@ -142,7 +142,12 @@ describe('Ground Painter — stand-deletion reference cascade', () => {
     const jetAfter = countPrefix(siEntries(patched), 'jetway');
 
     expect(jetAfter).toBeLessThan(jetBefore); // jetway follows the stand
-    expect(countNav(patched)).toBe(navBefore); // nav graph untouched
+    // Nav graph: per user request "any deleted item should have fully clear iref",
+    // taxi-navigation entries that referenced the deleted stand are auto-dropped
+    // (except the shared CrossTaxiwayNames declarer which is kept). Count may
+    // decrease by the stand's nav points, but the graph as a whole stays intact.
+    expect(countNav(patched)).toBeGreaterThan(0);
+    expect(countNav(patched)).toBeLessThanOrEqual(navBefore);
     expectCleanRenumber(patched);
     expect(buildSceneryGraph(patched).graph.stands.length).toBe(graph.stands.length - 1);
   });

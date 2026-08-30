@@ -21,7 +21,7 @@ export { polylineLengthMeters, segmentLengthMeters, runwayLengthMeters, formatLe
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
 import { IoClose, IoCheckmark } from 'react-icons/io5';
-import { MAP_ICON_PATH, MAP_PLANE_VB, STAND_LENGTH, RUNWAY_WIDTH, DEFAULT_AIRPORT_SCALE, PUSHBACK_OFFSET_1, PUSHBACK_OFFSET_2 } from '../../../utils/constants';
+import { MAP_ICON_PATH, MAP_PLANE_VB, STAND_LENGTH, RUNWAY_WIDTH, DEFAULT_AIRPORT_SCALE, PUSHBACK_OFFSET_1, PUSHBACK_OFFSET_2, WIND_UNITS } from '../../../utils/constants';
 
 const svgY = (z) => -z;
 
@@ -2888,9 +2888,84 @@ export default function GroundPainter({ vals }) {
       return; // keep the window open so the user can retry / fix
     }
     if (res && res.newText) useAppStore.setState({ groundPainterSnapshotText: res.newText, groundPainterHasEdited: false });
+    // ── Reload flight schedule editor from disk (as-of current state) ──
+    // Desired flow: Ground save (save acl) -> pop back to flight editor (load acl again).
+    // Keep the ground graph's snapshot updated above, then refresh the outer
+    // editor's flights/timelines/airportValues so the toolbar table reflects the
+    // just-saved file. Failure is non-fatal — the ACL save already succeeded.
+    try {
+      const st2 = useAppStore.getState();
+      const curPath = st2.currentPath;
+      const curAirport = st2.currentAirport;
+      const rPath = st2.rootPath;
+      if (curPath) {
+        const data = await window.electronAPI.loadAcl(curPath);
+        if (data && data.success) {
+          useAppStore.setState({
+            flights: data.flights,
+            before: data.before,
+            after: data.after,
+            arrayContent: data.arrayContent,
+            originalBlocks: data.originalBlocks,
+            modified: false,
+            highlightedIdx: -1,
+            selectedIndices: new Set(),
+            _configStartTime: data.config?.startTime || null,
+            _configEndTime: data.config?.endTime || null,
+            _saveSec: data._saveSec,
+            _currentDateTime: data._currentDateTime || null,
+            isDemo: data.isDemo || false,
+            timelineModified: { weather: false, wind: false, runway: false },
+          });
+          try {
+            if (curAirport && useAppStore.getState().fileInfos?.[curAirport]) {
+              const updatedInfo = await window.electronAPI.getFileInfo(curPath);
+              if (updatedInfo && !updatedInfo.error) useAppStore.getState().updateSingleFileInfo(curAirport, curPath, updatedInfo);
+            }
+          } catch (_) {}
+          if (curAirport && rPath) {
+            try {
+              const [vals, audio, tl, rp] = await Promise.all([
+                window.electronAPI.collectValues(rPath, curAirport),
+                window.electronAPI.loadAudioCallsigns(rPath, curAirport),
+                window.electronAPI.loadTimelines(curPath),
+                window.electronAPI.scanRunwayPairs(rPath, curAirport),
+              ]);
+              const wsu = tl && tl.success ? (tl.windSpeedUnit || WIND_UNITS.KNOTS) : WIND_UNITS.KNOTS;
+              const _convWind = (entries, fromUnit, toUnit) => {
+                if (!entries || !entries.length) return entries;
+                if (fromUnit === toUnit) return entries;
+                const MPS_TO_KNOTS = 1.94384;
+                const factor = (fromUnit === WIND_UNITS.MPS && toUnit === WIND_UNITS.KNOTS) ? MPS_TO_KNOTS : (fromUnit === WIND_UNITS.KNOTS && toUnit === WIND_UNITS.MPS) ? (1 / MPS_TO_KNOTS) : 1;
+                if (factor === 1) return entries;
+                return entries.map((e) => ({ ...e, speed: Math.round(e.speed * factor) }));
+              };
+              const st3 = useAppStore.getState();
+              useAppStore.setState({
+                airportValues: { ...st3.airportValues, [curAirport]: vals },
+                audioCallsigns: audio || st3.audioCallsigns,
+                weatherTimeline: tl && tl.success ? (tl.weatherTimeline || []) : st3.weatherTimeline,
+                windTimeline: tl && tl.success ? _convWind(tl.windTimeline || [], wsu, WIND_UNITS.KNOTS) : st3.windTimeline,
+                runwayTimeline: tl && tl.success ? (tl.runwayTimeline || { initialRunways: [], timeline: [] }) : st3.runwayTimeline,
+                _runwayPairs: (rp && rp.success) ? (rp.pairs || []) : st3._runwayPairs,
+                weatherPath: tl ? tl.weatherPath : st3.weatherPath,
+                windPath: tl ? tl.windPath : st3.windPath,
+                runwayTimelinePath: tl ? tl.runwayTimelinePath : st3.runwayTimelinePath,
+                _windSpeedUnit: wsu,
+              });
+            } catch (e) {
+              console.warn('[GP] post-save reload aux failed', e);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[GP] post-save reload failed', e);
+    }
     // Non-fatal: the save succeeded but some geometry could not be written (e.g.
     // a segment whose endpoint node was deleted). Tell the user instead of
-    // silently dropping it.
+    // silently dropping it — the flight editor has already been reloaded above,
+    // so OK just pops back to it.
     if (res && Array.isArray(res.warnings) && res.warnings.length > 0) {
       showModal(
         t('ground_painter_saved_with_warnings') || 'Saved with warnings',
@@ -2899,7 +2974,7 @@ export default function GroundPainter({ vals }) {
       );
       return;
     }
-    close(); // save complete → close the window
+    close(); // save complete -> pop back to flight schedule editor
   }, [t, close, bgImage, showModal, hideModal]);
 
   // Exact copy of the Flight Editor backup-before-save modal (useEditorSaveActions).
@@ -3672,8 +3747,6 @@ export default function GroundPainter({ vals }) {
         multiSelected={multiSelected}
         onDeselect={() => { setSelected(null); setMultiSelected([]); setBoxRect(null); boxDragRef.current = null; }}
         onDelete={deleteSelected}
-        onRotateLeft={() => rotateSelection(45)}
-        onRotateRight={() => rotateSelection(-45)}
         onUndo={undo}
         canUndo={canUndo}
         areaType={areaType}

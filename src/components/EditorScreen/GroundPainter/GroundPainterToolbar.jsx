@@ -3,7 +3,7 @@ import { IoRemoveOutline, IoAirplaneOutline, IoAddOutline, IoRemove, IoScanOutli
 import { PiPolygon, PiSelectionDuotone, PiSelectionThin } from 'react-icons/pi';
 import { FaParking, FaBuilding } from 'react-icons/fa';
 import { FaArrowPointer } from 'react-icons/fa6';
-import { MdDeselect, MdRoundedCorner, MdRotateLeft, MdRotateRight } from 'react-icons/md';
+import { MdDeselect, MdRoundedCorner } from 'react-icons/md';
 import { MAP_ICON_PATH } from '../../../utils/constants';
 import useTooltip from '../../BrowserScreen/useTooltip';
 
@@ -80,7 +80,7 @@ function BgValueInput({ value, min, max, step, unit, disabled, onCommit, classNa
 }
 
 
-export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onToggleSelect, selected, multiSelected, onDeselect, onDelete, onRotateLeft, onRotateRight, onUndo, canUndo, hasEdited, onSave, onCancel, areaType, onAreaType, heading, onHeading, zoomPercent, onZoomIn, onZoomOut, onZoomReset, t, bgPanelOpen, onToggleBgPanel, hasBgImage, bgOffsetX, bgOffsetY, bgScale, bgRotation, bgOpacity, onBgOffsetX, onBgOffsetY, onBgScale, onBgRotation, onBgOpacity, onImportImage, onClearBgImage, onResetBgImage }) {
+export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onToggleSelect, selected, multiSelected, onDeselect, onDelete, onUndo, canUndo, hasEdited, onSave, onCancel, areaType, onAreaType, heading, onHeading, zoomPercent, onZoomIn, onZoomOut, onZoomReset, t, bgPanelOpen, onToggleBgPanel, hasBgImage, bgOffsetX, bgOffsetY, bgScale, bgRotation, bgOpacity, onBgOffsetX, onBgOffsetY, onBgScale, onBgRotation, onBgOpacity, onImportImage, onClearBgImage, onResetBgImage }) {
   const { bind, TooltipPortal } = useTooltip();
   const importFileRef = useRef(null);
 
@@ -95,8 +95,6 @@ export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onTo
   const tipCancel = t('ground_painter_btn_cancel') || '取消';
   const tipSave = t('ground_painter_btn_save') || '保存';
   const tipUndo = t('ground_painter_tool_undo') || '撤销 (Ctrl+Z)';
-  const tipRotateL = t('ground_painter_tool_rotate_left') || '左旋 45° ( [ )';
-  const tipRotateR = t('ground_painter_tool_rotate_right') || '右旋 45° ( ] )';
   const tipBg = t('ground_painter_bg_toggle') || '背景图';
   const tipImport = t('ground_painter_bg_import') || '导入背景图';
 
@@ -146,13 +144,6 @@ export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onTo
             </span>
           );
         })}
-        {/* Rotate (multi-)selection around its center — ↺ / ↻ 45° steps */}
-        <span {...bind(tipRotateL)} style={{ display: 'inline-flex' }}>
-          <button onClick={onRotateLeft} disabled={!selected && (!multiSelected || multiSelected.length === 0)} className="gp-rotate"><MdRotateLeft size={16} /></button>
-        </span>
-        <span {...bind(tipRotateR)} style={{ display: 'inline-flex' }}>
-          <button onClick={onRotateRight} disabled={!selected && (!multiSelected || multiSelected.length === 0)} className="gp-rotate"><MdRotateRight size={16} /></button>
-        </span>
         {/* Delete selected — action button, not a tool mode (same as Delete key) */}
         <span {...bind(t('ground_painter_tool_delete') || '删除选中')} style={{ display: 'inline-flex' }}>
           <button onClick={onDelete} disabled={!selected && (!multiSelected || multiSelected.length === 0)} className="gp-delete"><IoTrashOutline size={16} /></button>
