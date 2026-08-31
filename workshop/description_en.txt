@@ -14,7 +14,7 @@ Please follow these steps:
 [list]
 [*] After subscribing, open your local File Explorer and navigate to your current Steam Workshop folder:
 [code]<Your_Steam_Path>\SteamLibrary\steamapps\workshop\content\4004140\3793213548[/code]
-[*] Double-click [b]AC27Editor.exe[/b] (or AC27EditorVoice.exe) to launch the program.
+[*] Double-click [b]AC27EditorWorkshop.exe[/b] to launch the program.
 [/list]
 
 [h1]User Guide & First-Time Setup[/h1]

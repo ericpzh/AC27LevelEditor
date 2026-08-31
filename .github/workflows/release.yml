@@ -224,9 +224,10 @@ jobs:
           echo "=== Workshop content (workshop build, no auto-update) ==="
           ls -lh release-windows/ release-workshop/
           mkdir -p steam-workshop-content
-          # Workshop exe is AC27EditorWorkshop.exe with workshop.json marker (auto-update disabled)
-          # Rename to AC27Editor.exe for the Workshop content folder (user double-clicks AC27Editor.exe)
-          cp -v release-workshop/AC27EditorWorkshop.exe steam-workshop-content/AC27Editor.exe
+          # Workshop exe is AC27EditorWorkshop.exe with workshop.json marker (auto-update disabled) — keep workshop name
+          cp -v release-workshop/AC27EditorWorkshop.exe steam-workshop-content/
+          # Also ensure no stray rename exists
+          rm -f steam-workshop-content/AC27Editor.exe 2>/dev/null || true
           # Safety: Voice must NOT be in Workshop
           if ls steam-workshop-content/*Voice* 1>/dev/null 2>&1; then
             echo "::error::Voice exe must NOT be in Workshop content"

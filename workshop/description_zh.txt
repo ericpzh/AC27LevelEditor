@@ -15,7 +15,7 @@ Airport Control 27 修改器工具盒。
 [list]
 [*] 订阅后打开你的本地文件资源管理器，导航至你当前的 Steam 创意工坊文件夹：
 [code]<Your_Steam_Path>\SteamLibrary\steamapps\workshop\content\4004140\3793213548\[/code]
-[*] 双击 [b]AC27Editor.exe[/b]（或AC27EditorVoice.exe）即可启动该程序。
+[*] 双击 [b]AC27EditorWorkshop.exe[/b] 即可启动该程序。
 [/list]
 
 [h1]用户指南与首次启动设置[/h1]
