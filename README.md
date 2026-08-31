@@ -5,6 +5,7 @@ Cross-platform desktop level editor for **Airport Control 27** `.acl` flight sch
 [**👇中文**](#chinese)
 
 <img src="public\Screen.png" alt="Screenshot" width="100%"/>
+<img src="public\Radar.png" alt="Screenshot" width="100%"/>
 
 ---
 
