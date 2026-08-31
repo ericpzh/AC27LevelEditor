@@ -248,29 +248,26 @@ jobs:
           if [ -x "$HOME/steamcmd/steamcmd.sh" ]; then echo "$HOME/steamcmd" >> "$GITHUB_PATH"; fi
           which steamcmd || which steamcmd.sh || ls -R "$HOME/steamcmd" | head -n 20
 
-      - name: Generate Workshop VDF (content-only — title/description handled via i18n step)
+      - name: Generate Workshop VDF (content-only — title/description/preview handled separately)
         run: |
           WS_CONTENT="${{ github.workspace }}/steam-workshop-content"
-          WS_PREVIEW="${{ github.workspace }}/icon.png"
           WS_CHANGELOG="Release ${{ steps.version.outputs.version }} — automated Workshop update via GitHub Actions."
-          # NOTE: title/description intentionally OMITTED here — they are set per-language
-          # via the i18n step (ISteamUGC::SetItemUpdateLanguage). Omitting preserves
-          # existing localized values if i18n step is skipped. Preview/visibility kept.
+          # NOTE: title/description intentionally OMITTED — set per-language via i18n step
+          # (ISteamUGC::SetItemUpdateLanguage). previewfile OMITTED — preserves existing
+          # Workshop thumbnail (per user request: don't touch images). Only content+changenote.
           cat > "${{ github.workspace }}/.github/workflows/upload_mod.vdf" <<VDF
           "workshopitem"
           {
               "appid"           "4004140"
               "publishedfileid" "3793213548"
               "contentfolder"   "$WS_CONTENT"
-              "previewfile"     "$WS_PREVIEW"
               "visibility"      "0"
               "changenote"      "$WS_CHANGELOG"
           }
           VDF
-          echo "--- Generated VDF (content-only) ---"
+          echo "--- Generated VDF (content-only, no image) ---"
           cat "${{ github.workspace }}/.github/workflows/upload_mod.vdf"
           test -d "$WS_CONTENT" || (echo "::error::contentfolder not found: $WS_CONTENT" && exit 1)
-          test -f "$WS_PREVIEW" || (echo "::error::previewfile not found: $WS_PREVIEW" && exit 1)
           test -n "$(ls -A "$WS_CONTENT")" || (echo "::error::contentfolder empty" && exit 1)
 
       - name: Publish Workshop content (steamcmd)
