@@ -6,6 +6,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TESTS_DIR = path.resolve(__dirname, '..');
 
 export default async function () {
+  // E2E_KEEP_TMP=1 preserves the sandbox for post-mortem inspection
+  // (reproduce a failure: FUZZ_SEED=<base> + E2E_KEEP_TMP=1, then decode
+  // tests/tmp-e2e/... with tests/tmp-decode/decode.mjs).
+  if (process.env.E2E_KEEP_TMP === '1') {
+    console.log('[E2E teardown] E2E_KEEP_TMP=1 — keeping temp dirs for inspection');
+    return;
+  }
   // Clean up temp dirs (comment out to inspect files after a failed run)
   const tmpDir = path.join(TESTS_DIR, 'tmp-e2e');
   const userDataDir = path.join(TESTS_DIR, 'tmp-e2e-userdata');

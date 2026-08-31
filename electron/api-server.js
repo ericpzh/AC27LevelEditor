@@ -19,6 +19,7 @@ const {
   SCENARIO_END_GRACE_MIN, SCENARIO_END_GRACE_SEC,
 } = require('../src/acl/constants');
 const { CHANNEL_TYPE_APPROACH } = require('../src/utils/constants/aviation');
+const { polygonIsSimple } = require('../src/acl/scenery_graph');
 
 // ── Module state ────────────────────────────────────────────────
 let mainWindow = null;
@@ -100,6 +101,12 @@ function _ensurePainterMetaArrays(meta, graph) {
   if (!Array.isArray(meta.deletedAreaIds)) meta.deletedAreaIds = [];
   if (!Array.isArray(meta.runwayPavement)) meta.runwayPavement = (graph ? graph.runways.map(() => []) : []);
   if (!Array.isArray(meta.runwayOrigInfo)) meta.runwayOrigInfo = (graph ? graph.runways.map((rw) => ({ pks: [], physicalName: rw.physicalName || '', names: rw.names || [], width: rw.width || RUNWAY_WIDTH })) : []);
+  // Names of stands / runways (end names + physical name) removed in this
+  // editing session. The ground save uses these to purge flights whose
+  // Stand/Runway references no longer resolve (game "has no flight plan
+  // reference"-class failures).
+  if (!Array.isArray(meta.deletedStandNames)) meta.deletedStandNames = [];
+  if (!Array.isArray(meta.deletedRunwayNames)) meta.deletedRunwayNames = [];
 }
 function _pushPainterHistory(state) {
   const gClone = _clone(state.groundPainterGraph);
@@ -139,6 +146,85 @@ function _distToPoly(px, pz, pts) {
   let d = Infinity;
   for (let i = 0; i < pts.length - 1; i++) d = Math.min(d, _distToSeg(px, pz, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z));
   return d;
+}
+
+// Shared target resolver for move/delete (mirrors the UI Select hit priority:
+// stand > segment/runway > area; runway pavement strips are not directly
+// selectable as segments — they move with their runway). Returns {kind, idx}.
+function _resolveGroundTarget(g, target, TH) {
+  const TH_STAND = 0.7;
+  let best = null; let bestDist = Infinity;
+  const consider = (kind, idx, dist) => { if (dist <= TH && dist < bestDist) { bestDist = dist; best = { kind, idx }; } };
+  const considerStand = (idx, dist) => { if (dist <= TH_STAND && dist < bestDist) { bestDist = dist; best = { kind: 'stand', idx }; } };
+  // Stands: nose prioritized
+  for (let i = 0; i < (g.stands || []).length; i++) {
+    const st = g.stands[i];
+    const n = g.nodes[st.noseIdx]; if (n) { const d = Math.hypot(target.x - n.x, target.z - n.z); considerStand(i, d); }
+    const t = g.nodes[st.tailIdx]; if (t) { const d = Math.hypot(target.x - t.x, target.z - t.z); considerStand(i, d * 1.1); }
+  }
+  // Segments (skip runway pavement strips by name)
+  const runwayStripNames = new Set((g.runways || []).map((r) => r.physicalName));
+  for (let i = 0; i < (g.segments || []).length; i++) {
+    const sg = g.segments[i];
+    if (sg.name && runwayStripNames.has(sg.name)) continue;
+    const pts = _segNodeIdxs(sg).map((ni) => g.nodes[ni]).filter(Boolean);
+    if (pts.length < 2) continue;
+    const d = _distToPoly(target.x, target.z, pts);
+    consider('segment', i, d);
+  }
+  for (let i = 0; i < (g.runways || []).length; i++) {
+    const rw = g.runways[i];
+    const a = g.nodes[rw.thAIdx], b = g.nodes[rw.thBIdx];
+    if (!a || !b) continue;
+    const d = _distToSeg(target.x, target.z, a.x, a.z, b.x, b.z);
+    const halfW = (rw.width || 0.50) / 2;
+    consider('runway', i, Math.max(0, d - halfW * 0.5));
+  }
+  for (let i = 0; i < (g.areas || []).length; i++) {
+    const ar = g.areas[i];
+    const pts = (ar.points || []);
+    if (pts.length < 3) continue;
+    const inside = _pointInPoly(target.x, target.z, pts);
+    const edge = _minEdgeDist(target.x, target.z, pts);
+    let cost = Infinity;
+    if (ar.areaType === 0) { if (edge <= TH) cost = 100 + edge; }
+    else if (ar.areaType === 2) { if (inside || edge <= TH) cost = inside ? 0 : edge; }
+    else { if (inside || edge <= TH) cost = inside ? 1 : edge + 1; }
+    if (cost < bestDist) { bestDist = cost; best = { kind: 'area', idx: i }; }
+  }
+  return best;
+}
+
+// A runway's coupled pavement-strip node indices: meta.runwayPavement when
+// populated (index-based, survives renames), else a live Name match against the
+// runway's physicalName (runways added this session have no meta entry).
+function _runwayStripNodes(g, meta, rwIdx) {
+  const rw = g.runways && g.runways[rwIdx];
+  if (!rw) return [];
+  let stripNodes = (meta && meta.runwayPavement && meta.runwayPavement[rwIdx]) || [];
+  if (!stripNodes.length) {
+    const seen = new Set();
+    for (const sg of g.segments || []) {
+      if (!sg.name || sg.name !== rw.physicalName) continue;
+      for (const ni of _segNodeIdxs(sg)) if (g.nodes[ni] != null && !seen.has(ni)) seen.add(ni);
+    }
+    stripNodes = [...seen];
+  }
+  return stripNodes.filter((ni) => g.nodes[ni] != null);
+}
+
+// fillet.js is an ESM source file under the typeless package root, so a plain
+// import() of its .js URL parses it as CJS and dies on the export syntax. Load
+// it through a data URL instead — the ESM loader always parses those as ESM.
+// The module is pure math with zero imports, so the rewritten URL context is
+// safe. Cached for the server's lifetime.
+let _filletModPromise = null;
+function _loadFilletModule(filletPath) {
+  if (!_filletModPromise) {
+    _filletModPromise = require('fs').promises.readFile(filletPath, 'utf-8')
+      .then((src) => import('data:text/javascript;base64,' + Buffer.from(src, 'utf-8').toString('base64')));
+  }
+  return _filletModPromise;
 }
 
 /** Parse HH:MM or HH:MM:SS into total seconds */
@@ -627,7 +713,9 @@ const MCP_TOOLS = [
   { name: 'create_runways', description: 'Add physical runways (paired thresholds + collinear pavement strip). Each runway is defined by two threshold points a/b; names are derived from heading (e.g. 01/19) and pavement strip Flags=4 is auto-synthesized.', inputSchema: { type: 'object', properties: { runways: { type: 'array', minItems: 1, items: { type: 'object', required: ['a', 'b'], properties: { a: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, b: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } } } } } }, required: ['runways'] } },
   { name: 'create_taxiway_fillet', description: 'Round the corner between two straight taxiway segments (fillet/arc). Picks two segment indices and a radius (0.5..5.0 GU, default 2.0). Supports both connected and virtual (disconnected) fillets. Validates angle 5..175°, parallel check, and pushes paired history.', inputSchema: { type: 'object', properties: { segA: { type: 'integer', minimum: 0 }, segB: { type: 'integer', minimum: 0 }, radius: { type: 'number', minimum: 0.5, maximum: 5.0 } }, required: ['segA', 'segB'] } },
   { name: 'delete_ground_objects', description: 'Delete the nearest ground object to a point (stand > segment/runway > area priority, same as UI Select). Uses hit threshold ~0.6 GU. Records deletedPks/deletedAreaIds so save persists; pushes history.', inputSchema: { type: 'object', properties: { target: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, threshold: { type: 'number' } }, required: ['target'] } },
-  { name: 'delete_all_ground_objects', description: 'Clear every ground object (destructive). Records deletedPks/deletedAreaIds for all survivors so save persists; pushes history.', inputSchema: { type: 'object', properties: { confirm: { type: 'boolean' } }, required: ['confirm'] } },
+  { name: 'move_ground_objects', description: 'Translate one or more ground objects (mirrors the UI Select body-drag: single, multi-select, or selectAll). Targets resolve like delete_ground_objects (stand > segment/runway > area); a runway move carries its coupled pavement strips; areas translate their polygon points. In-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { targets: { type: 'array', minItems: 1, items: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } } }, selectAll: { type: 'boolean' }, dx: { type: 'number' }, dz: { type: 'number' }, threshold: { type: 'number' } }, required: ['dx', 'dz'] } },
+  { name: 'move_ground_endpoint', description: 'Drag a single graph node (segment endpoint, runway threshold, stand nose/tail/pushback) or an area vertex to a new absolute position. A runway threshold move carries the coupled pavement strips. kind: node (default) or areaVertex. In-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { target: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, to: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, threshold: { type: 'number' }, kind: { type: 'string', enum: ['node', 'areaVertex'] } }, required: ['target', 'to'] } },
+  { name: 'rename_ground_object', description: 'Rename a segment (taxiway Name), a runway (both end names + physicalName; pavement strips renamed in lockstep; end names must match ^[0-9]{1,2}[A-Z]?$ and differ), or a stand (Name/Identifier), by index. In-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['segment', 'runway', 'stand'] }, idx: { type: 'integer', minimum: 0 }, name: { type: 'string' }, names: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 2 } }, required: ['kind', 'idx'] } },
   { name: 'undo_ground_painter', description: 'Restore the last Ground Painter graph+meta snapshot (depth-1 undo, paired graph+meta).', inputSchema: { type: 'object', properties: {} } },
 ];
 
@@ -850,6 +938,9 @@ async function handleMcpMessage(msg) {
             if (at !== 0 && at !== 1 && at !== 2) { errors.push({ index: i, issue: 'areaType must be 0|1|2' }); continue; }
             const pts = ar.points.map((p) => ({ x: Number(p.x), z: Number(p.z) }));
             if (pts.some((p) => !isFinite(p.x) || !isFinite(p.z))) { errors.push({ index: i, issue: 'points x/z must be numbers' }); continue; }
+            // Triangulator guard: the game crashes loading an area whose outline
+            // crosses itself. Same check the vertex-drag enforces.
+            if (!polygonIsSimple(pts)) { errors.push({ index: i, issue: 'area outline crosses itself (self-intersecting polygon)' }); continue; }
             newGraph.areas.push({ areaType: at, points: pts, owner: null });
             newMeta.areaOrigId.push(null);
             added++;
@@ -921,6 +1012,7 @@ async function handleMcpMessage(msg) {
           _ensurePainterMetaArrays(newMeta, newGraph);
           let added = 0;
           const errors = [];
+          const created = [];
           for (let i = 0; i < runways.length; i++) {
             const rw = runways[i];
             if (!rw || !rw.a || !rw.b || typeof rw.a.x !== 'number' || typeof rw.a.z !== 'number' || typeof rw.b.x !== 'number' || typeof rw.b.z !== 'number') { errors.push({ index: i, issue: 'a/b x/z required' }); continue; }
@@ -930,8 +1022,28 @@ async function handleMcpMessage(msg) {
             if (len < 1e-6) { errors.push({ index: i, issue: 'Runway needs distinct endpoints' }); continue; }
             const h = Math.round(((Math.atan2(-dz, dx) * 180) / Math.PI % 360 + 360) % 360);
             let num = Math.round(h / 10) % 36; if (num === 0) num = 36;
-            const name1 = String(num).padStart(2, '0'), name2 = String((num + 18) % 36).padStart(2, '0');
-            const physicalName = name1 + '/' + name2;
+            const base1 = String(num).padStart(2, '0'), base2 = String((num + 18) % 36).padStart(2, '0');
+            // Designation collision handling: the heading-derived pair may already
+            // be used by an existing runway (e.g. drawing a parallel at ~150° when
+            // 15/33 exists). Two runways sharing an end name synthesize duplicate
+            // `$k: runway:<name>` entries — the game's registry then resolves the
+            // original physical runway to zero named runways and refuses the file.
+            // Walk the real-world suffix ladder (L/R by side, then C); give up only
+            // when every variant is taken.
+            const takenPhys = new Set();
+            const takenEnds = new Set();
+            for (const o of newGraph.runways) {
+              if (o.physicalName) takenPhys.add(String(o.physicalName));
+              if (Array.isArray(o.names)) for (const e of o.names) { const v = String(e || '').trim(); if (v) takenEnds.add(v); }
+            }
+            let name1 = null, name2 = null, physicalName = null;
+            for (const [s1, s2] of [['', ''], ['L', 'R'], ['R', 'L'], ['C', 'C']]) {
+              const n1 = base1 + s1, n2 = base2 + s2;
+              if (takenPhys.has(n1 + '/' + n2) || takenEnds.has(n1) || takenEnds.has(n2)) continue;
+              name1 = n1; name2 = n2; physicalName = n1 + '/' + n2;
+              break;
+            }
+            if (!physicalName) { errors.push({ index: i, issue: 'no free runway designation near heading-derived ' + base1 + '/' + base2 + ' (every suffix variant collides with an existing runway)' }); continue; }
             const OH = 0.6; const ux = dx / len, uz = dz / len;
             const overA = { x: a.x - ux * OH, z: a.z - uz * OH }, overB = { x: b.x + ux * OH, z: b.z + uz * OH };
             const iOA = newGraph.nodes.length, iA = iOA + 1, iB = iOA + 2, iOB = iOA + 3;
@@ -944,11 +1056,12 @@ async function handleMcpMessage(msg) {
             newMeta.runwayPavement.push([iOA, iA, iB, iOB]);
             newMeta.runwayOrigInfo.push({ pks: [null, null], physicalName, names: [name1, name2], width: RUNWAY_WIDTH });
             added++;
+            created.push({ names: [name1, name2], physicalName });
           }
           if (added === 0 && errors.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No runways added', details: errors }) }], isError: true });
           const hist = _pushPainterHistory(s);
           pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
-          result = { success: true, added, errors: errors.length ? errors : undefined, totalRunways: newGraph.runways.length };
+          result = { success: true, added, created, errors: errors.length ? errors : undefined, totalRunways: newGraph.runways.length };
           break;
         }
         case 'create_taxiway_fillet': {
@@ -964,14 +1077,12 @@ async function handleMcpMessage(msg) {
           }
           if (segA === segB) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'segA and segB must be different segments' }) }], isError: true });
           if (!isFinite(radius) || radius < 0.5 || radius > 5.0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'radius must be 0.5..5.0' }) }], isError: true });
-          // Dynamic import of fillet helpers (ESM) — reuse the renderer's pure math
+          // Load the fillet helpers (ESM pure math) — reuse the renderer's module
           let fillet;
           try {
-            const u = require('url');
             const p = require('path');
             const filletPath = p.join(__dirname, '..', 'src', 'components', 'EditorScreen', 'GroundPainter', 'fillet.js');
-            const fileUrl = u.pathToFileURL(filletPath).href;
-            fillet = await import(fileUrl);
+            fillet = await _loadFilletModule(filletPath);
           } catch (e) {
             return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'fillet module load failed: ' + e.message }) }], isError: true });
           }
@@ -1031,6 +1142,28 @@ async function handleMcpMessage(msg) {
             const aFlags = segAOrig.flags ?? 2, bFlags = segBOrig.flags ?? 2;
             const aName = segAOrig.name, bName = segBOrig.name;
             const p1Idx = res.p1Idx, p2Idx = res.p2Idx;
+            // Degenerate-fillet guard: when the tangent collapses onto the far
+            // node, or every arc point coincides, the built legs/arc are
+            // zero-length segments the integrity check refuses ("joins vertex
+            // X to itself"). Reject the whole fillet — the working copy is
+            // discarded and the store never sees the poison.
+            const legSpan = (farIdx, tIdx2) => {
+              const fn = newGraph.nodes[farIdx], tn = newGraph.nodes[tIdx2];
+              return fn && tn ? Math.hypot(fn.x - tn.x, fn.z - tn.z) : Infinity;
+            };
+            let arcSpan = 0;
+            const arcPts = res.arcPoints || [];
+            for (let i = 1; i < arcPts.length; i++) arcSpan = Math.max(arcSpan, Math.hypot(arcPts[i].x - arcPts[0].x, arcPts[i].z - arcPts[0].z));
+            if (legSpan(p1Idx, idxT1) < 1e-4 || legSpan(p2Idx, idxT2) < 1e-4 || arcSpan < 1e-4) {
+              try {
+                const dbg = [`connected fillet degenerate: segA=${segA}(name=${aName || '-'}) segB=${segB}(name=${bName || '-'}) r=${res.rEff} virtual=${isVirtual}`];
+                const gp = (i) => { const n = newGraph.nodes[i]; return n ? `(${n.x.toFixed(4)},${n.z.toFixed(4)})` : '?'; };
+                dbg.push(`p1Idx=${p1Idx}@${gp(p1Idx)} idxT1=${idxT1}@${gp(idxT1)} leg1=${legSpan(p1Idx, idxT1).toFixed(6)}`);
+                dbg.push(`p2Idx=${p2Idx}@${gp(p2Idx)} idxT2=${idxT2}@${gp(idxT2)} leg2=${legSpan(p2Idx, idxT2).toFixed(6)} arcSpan=${arcSpan.toFixed(6)}`);
+                dbg.push(`arcPoints=[${arcPts.map((p2) => `(${p2.x.toFixed(4)},${p2.z.toFixed(4)})`).join(' ')}]`);
+                require('fs').appendFileSync(p.join(__dirname, '..', 'tests', 'tmp-e2e', 'fillet-debug.log'), dbg.join('\n') + '\n');              } catch (_) {}
+              return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'fillet rejected: the truncation would collapse a leg or the arc into a point (degenerate geometry)' }) }], isError: true });
+            }
             // Need to map p1/p2 original node indices to still-valid ones? For degree==2 O deletion they are distinct from O, so safe.
             // For deg>2 with duplicate O nodes, the far endpoints remain.
             newGraph.segments.push({ aIdx: p1Idx, bIdx: idxT1, nodeIdxs: [p1Idx, idxT1], flags: aFlags, directed: false, ...(aName ? { name: aName } : {}) }); newMeta.segOrigPk.push(null);
@@ -1056,46 +1189,7 @@ async function handleMcpMessage(msg) {
           const target = args.target;
           if (!target || typeof target.x !== 'number' || typeof target.z !== 'number') return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'target {x,z} required' }) }], isError: true });
           const TH = typeof args.threshold === 'number' ? args.threshold : 0.6;
-          const TH_STAND = 0.7;
-          let best = null; let bestDist = Infinity;
-          const consider = (kind, idx, dist) => { if (dist <= TH && dist < bestDist) { bestDist = dist; best = { kind, idx }; } };
-          const considerStand = (idx, dist) => { if (dist <= TH_STAND && dist < bestDist) { bestDist = dist; best = { kind: 'stand', idx }; } };
-          // Stands: nose prioritized
-          for (let i = 0; i < (g.stands || []).length; i++) {
-            const st = g.stands[i];
-            const n = g.nodes[st.noseIdx]; if (n) { const d = Math.hypot(target.x - n.x, target.z - n.z); considerStand(i, d); }
-            const t = g.nodes[st.tailIdx]; if (t) { const d = Math.hypot(target.x - t.x, target.z - t.z); considerStand(i, d * 1.1); }
-          }
-          // Segments (skip runway pavement strips by name)
-          const runwayStripNames = new Set((g.runways || []).map((r) => r.physicalName));
-          for (let i = 0; i < (g.segments || []).length; i++) {
-            const sg = g.segments[i];
-            if (sg.name && runwayStripNames.has(sg.name)) continue;
-            const pts = _segNodeIdxs(sg).map((ni) => g.nodes[ni]).filter(Boolean);
-            if (pts.length < 2) continue;
-            const d = _distToPoly(target.x, target.z, pts);
-            consider('segment', i, d);
-          }
-          for (let i = 0; i < (g.runways || []).length; i++) {
-            const rw = g.runways[i];
-            const a = g.nodes[rw.thAIdx], b = g.nodes[rw.thBIdx];
-            if (!a || !b) continue;
-            const d = _distToSeg(target.x, target.z, a.x, a.z, b.x, b.z);
-            const halfW = (rw.width || 0.50) / 2;
-            consider('runway', i, Math.max(0, d - halfW * 0.5));
-          }
-          for (let i = 0; i < (g.areas || []).length; i++) {
-            const ar = g.areas[i];
-            const pts = (ar.points || []);
-            if (pts.length < 3) continue;
-            const inside = _pointInPoly(target.x, target.z, pts);
-            const edge = _minEdgeDist(target.x, target.z, pts);
-            let cost = Infinity;
-            if (ar.areaType === 0) { if (edge <= TH) cost = 100 + edge; }
-            else if (ar.areaType === 2) { if (inside || edge <= TH) cost = inside ? 0 : edge; }
-            else { if (inside || edge <= TH) cost = inside ? 1 : edge + 1; }
-            if (cost < bestDist) { bestDist = cost; best = { kind: 'area', idx: i }; }
-          }
+          const best = _resolveGroundTarget(g, target, TH);
           if (!best) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No object within threshold ' + TH }) }], isError: true });
           // Perform delete with meta handling (mirrors GroundPainter deleteSelected for single)
           const newGraph = _clone(g);
@@ -1138,10 +1232,41 @@ async function handleMcpMessage(msg) {
             newGraph.segments.splice(best.idx, 1);
             doOrphanGC(uniq);
           } else if (best.kind === 'runway') {
+            const rw = newGraph.runways[best.idx];
+            const phys = rw ? String(rw.physicalName || '') : '';
+            const endNames = rw && Array.isArray(rw.names) ? rw.names.map((n) => String(n || '').trim()).filter(Boolean) : [];
             if (newMeta.runwayOrigPk) { markDeletedPk(newMeta.runwayOrigPk[best.idx]); newMeta.runwayOrigPk.splice(best.idx, 1); }
+            if (newMeta.runwayOrigInfo) {
+              const info = newMeta.runwayOrigInfo[best.idx];
+              if (info && Array.isArray(info.pks)) for (const pk of info.pks) markDeletedPk(pk);
+              newMeta.runwayOrigInfo.splice(best.idx, 1);
+            }
             if (newMeta.runwayPavement) newMeta.runwayPavement.splice(best.idx, 1);
-            if (newMeta.runwayOrigInfo) newMeta.runwayOrigInfo.splice(best.idx, 1);
             newGraph.runways.splice(best.idx, 1);
+            // Cascade: a runway is its pavement strips + threshold nodes. Remove
+            // the strip segments (named after the physical runway) first so the
+            // orphan GC below can reclaim their nodes and the thresholds —
+            // otherwise the strips survive as nameless paint with dangling
+            // thresholds the game still triangulates.
+            const gcNodes = [];
+            if (rw) { if (rw.thAIdx != null) gcNodes.push(rw.thAIdx); if (rw.thBIdx != null) gcNodes.push(rw.thBIdx); }
+            if (phys) {
+              for (let si = newGraph.segments.length - 1; si >= 0; si--) {
+                const sg = newGraph.segments[si];
+                if (sg.name !== phys) continue;
+                if (newMeta.segOrigPk) { markDeletedPk(newMeta.segOrigPk[si]); newMeta.segOrigPk.splice(si, 1); }
+                for (const ni of _segNodeIdxs(sg)) if (ni != null) gcNodes.push(ni);
+                newGraph.segments.splice(si, 1);
+              }
+            }
+            doOrphanGC(gcNodes);
+            // Record the freed designators so the ground save can purge flights
+            // whose Runway reference no longer resolves.
+            if (newMeta.deletedRunwayNames) {
+              for (const nm of [phys, ...endNames]) {
+                if (nm && !newMeta.deletedRunwayNames.includes(nm)) newMeta.deletedRunwayNames.push(nm);
+              }
+            }
           } else if (best.kind === 'area') {
             if (newMeta.areaOrigId) { const id = newMeta.areaOrigId[best.idx]; if (id != null && !newMeta.deletedAreaIds.includes(id)) newMeta.deletedAreaIds.push(id); newMeta.areaOrigId.splice(best.idx, 1); }
             newGraph.areas.splice(best.idx, 1);
@@ -1151,29 +1276,282 @@ async function handleMcpMessage(msg) {
             const delNodes = [st.noseIdx, st.tailIdx, ...(st.pushbackIdxs || [])].filter(v => v != null);
             newGraph.stands.splice(best.idx, 1);
             doOrphanGC(delNodes);
+            // Record the freed stand id so the ground save can purge flights
+            // parked at it (game "has no flight plan reference"-class failures).
+            if (st && newMeta.deletedStandNames) {
+              for (const nm of [st.identifier, st.name]) {
+                const v = String(nm || '').trim();
+                if (v && !newMeta.deletedStandNames.includes(v)) newMeta.deletedStandNames.push(v);
+              }
+            }
           }
           const hist = _pushPainterHistory(s);
           pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
           result = { success: true, deleted: { kind: deletedKind, idx: deletedIdx }, remaining: { nodes: newGraph.nodes.length, segments: newGraph.segments.length, runways: newGraph.runways.length, areas: newGraph.areas.length, stands: newGraph.stands.length } };
           break;
         }
-        case 'delete_all_ground_objects': {
+        case 'move_ground_objects': {
           const s = await readStoreState();
           const g = s.groundPainterGraph;
-          const m = s.groundPainterMeta;
           if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
-          if (!args.confirm) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'confirm:true required' }) }], isError: true });
-          const newMeta = _clone(m) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
-          _ensurePainterMetaArrays(newMeta, g);
-          // Record all surviving PKs as deleted so patchSceneryBlob drops them
-          if (newMeta.nodeOrigPk) for (const pk of newMeta.nodeOrigPk) if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
-          if (newMeta.segOrigPk) for (const pk of newMeta.segOrigPk) if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
-          if (newMeta.runwayOrigPk) for (const pk of newMeta.runwayOrigPk) if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
-          if (newMeta.standOrigPk) for (const pk of newMeta.standOrigPk) if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk);
-          if (newMeta.areaOrigId) for (const id of newMeta.areaOrigId) if (id != null && !newMeta.deletedAreaIds.includes(id)) newMeta.deletedAreaIds.push(id);
+          const dx = Number(args.dx), dz = Number(args.dz);
+          if (!isFinite(dx) || !isFinite(dz)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'finite dx/dz required' }) }], isError: true });
+          if (dx === 0 && dz === 0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'dx/dz must not both be zero' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          // Collect the node set + area set to translate (mirrors the UI group
+          // body-drag: segment nodes, runway thresholds + coupled pavement
+          // strips, stand nose/tail/pushback nodes, and area polygon points).
+          const nodeSet = new Set();
+          const areaIdxs = new Set();
+          const moved = { segment: 0, runway: 0, stand: 0, area: 0 };
+          const addSegment = (i) => { const sg = newGraph.segments[i]; if (!sg) return; for (const ni of _segNodeIdxs(sg)) if (newGraph.nodes[ni]) nodeSet.add(ni); moved.segment++; };
+          const addRunway = (i) => {
+            const rw = newGraph.runways[i]; if (!rw) return;
+            if (newGraph.nodes[rw.thAIdx]) nodeSet.add(rw.thAIdx);
+            if (newGraph.nodes[rw.thBIdx]) nodeSet.add(rw.thBIdx);
+            for (const ni of _runwayStripNodes(newGraph, newMeta, i)) nodeSet.add(ni);
+            moved.runway++;
+          };
+          const addStand = (i) => { const st = newGraph.stands[i]; if (!st) return; for (const ni of [st.noseIdx, st.tailIdx, ...(st.pushbackIdxs || [])]) if (newGraph.nodes[ni]) nodeSet.add(ni); moved.stand++; };
+          const addArea = (i) => { const ar = newGraph.areas[i]; if (!ar || !Array.isArray(ar.points) || !ar.points.length) return; areaIdxs.add(i); moved.area++; };
+          if (args.selectAll) {
+            for (let i = 0; i < newGraph.segments.length; i++) addSegment(i);
+            for (let i = 0; i < newGraph.runways.length; i++) addRunway(i);
+            for (let i = 0; i < newGraph.stands.length; i++) addStand(i);
+            for (let i = 0; i < newGraph.areas.length; i++) addArea(i);
+          } else {
+            const targets = Array.isArray(args.targets) ? args.targets : (args.target ? [args.target] : []);
+            if (!targets.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'targets array (or selectAll: true) required' }) }], isError: true });
+            const TH = typeof args.threshold === 'number' ? args.threshold : 0.6;
+            const seen = new Set();
+            let unresolved = 0;
+            for (const t of targets) {
+              if (!t || typeof t.x !== 'number' || typeof t.z !== 'number') { unresolved++; continue; }
+              const hit = _resolveGroundTarget(g, t, TH);
+              if (!hit) { unresolved++; continue; }
+              const key = hit.kind + ':' + hit.idx;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              if (hit.kind === 'segment') addSegment(hit.idx);
+              else if (hit.kind === 'runway') addRunway(hit.idx);
+              else if (hit.kind === 'stand') addStand(hit.idx);
+              else if (hit.kind === 'area') addArea(hit.idx);
+            }
+            if (!nodeSet.size && !areaIdxs.size) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no object resolved within threshold of any target (unresolved: ' + unresolved + ')' }) }], isError: true });
+          }
+          for (const ni of nodeSet) { newGraph.nodes[ni].x += dx; newGraph.nodes[ni].z += dz; }
+          for (const ai of areaIdxs) for (const p of newGraph.areas[ai].points) { p.x += dx; p.z += dz; }
+          // Distortion guard: moving a shared junction node stretches every
+          // OTHER polyline that references it. A move that collapses any
+          // polyline (a segment whose ends meet, or two consecutive vertices
+          // at the same position) would serialize as a self-loop the save-time
+          // integrity check refuses — reject the move instead.
+          for (let si = 0; si < newGraph.segments.length; si++) {
+            const sg = newGraph.segments[si];
+            if (sg.aIdx != null && sg.aIdx === sg.bIdx) {
+              return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'move rejected: a shared node would collapse segment #' + si + ' into a self-loop' }) }], isError: true });
+            }
+            let prev = null;
+            for (const ni of _segNodeIdxs(sg)) {
+              const n = newGraph.nodes[ni];
+              if (!n) { prev = null; continue; }
+              if (prev && Math.hypot(n.x - prev.x, n.z - prev.z) < 1e-4) {
+                return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'move rejected: a shared node would fold segment #' + si + ' (two vertices at the same position)' }) }], isError: true });
+              }
+              prev = n;
+            }
+          }
           const hist = _pushPainterHistory(s);
-          pushStoreUpdate({ groundPainterGraph: { nodes: [], segments: [], runways: [], areas: [], stands: [] }, groundPainterMeta: { ...newMeta, nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], runwayPavement: [], runwayOrigInfo: [] }, ...hist, groundPainterHasEdited: true });
-          result = { success: true, cleared: true };
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, moved, nodes: nodeSet.size, areas: areaIdxs.size, dx, dz };
+          break;
+        }
+        case 'move_ground_endpoint': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const target = args.target, to = args.to;
+          if (!target || !isFinite(target.x) || !isFinite(target.z)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'target {x,z} required' }) }], isError: true });
+          if (!to || !isFinite(to.x) || !isFinite(to.z)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'to {x,z} required' }) }], isError: true });
+          const TH = typeof args.threshold === 'number' ? args.threshold : 0.6;
+          const kind = args.kind === 'areaVertex' ? 'areaVertex' : 'node';
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          let movedPoint = null;
+          if (kind === 'node') {
+            // Nearest draggable NODE (segment endpoint / runway threshold / stand nose-tail / pushback)
+            let bestNi = null, bestD = Infinity;
+            const considerNi = (ni, d) => { if (ni == null) return; const n = g.nodes[ni]; if (!n) return; if (d <= TH && d < bestD) { bestD = d; bestNi = ni; } };
+            for (const sg of g.segments || []) {
+              const idxs = _segNodeIdxs(sg);
+              if (!idxs.length) continue;
+              const a = g.nodes[idxs[0]], b = g.nodes[idxs[idxs.length - 1]];
+              if (a) considerNi(idxs[0], Math.hypot(target.x - a.x, target.z - a.z));
+              if (b) considerNi(idxs[idxs.length - 1], Math.hypot(target.x - b.x, target.z - b.z));
+            }
+            for (const rw of g.runways || []) {
+              for (const ni of [rw.thAIdx, rw.thBIdx]) {
+                const n = g.nodes[ni]; if (!n) continue;
+                considerNi(ni, Math.hypot(target.x - n.x, target.z - n.z));
+              }
+            }
+            for (const st of g.stands || []) {
+              for (const ni of [st.noseIdx, st.tailIdx, ...(st.pushbackIdxs || [])]) {
+                const n = g.nodes[ni]; if (!n) continue;
+                considerNi(ni, Math.hypot(target.x - n.x, target.z - n.z));
+              }
+            }
+            if (bestNi == null) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no draggable node within threshold ' + TH }) }], isError: true });
+            const n0 = g.nodes[bestNi];
+            if (Math.hypot(to.x - n0.x, to.z - n0.z) < 1e-6) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'to equals current position' }) }], isError: true });
+            // Degenerate-edge guard: within any polyline containing this node,
+            // no two consecutive nodes may land on the same position — the
+            // writer encodes vertices by coordinate, so co-located neighbours
+            // collapse into one vertex and the segment "joins vertex X to
+            // itself", which the save-time integrity check refuses. Scanning
+            // the whole polyline also catches a move onto a node two positions
+            // away (folding the polyline flat).
+            for (const sg of g.segments || []) {
+              const idxs = _segNodeIdxs(sg);
+              let hits = false;
+              for (const ni of idxs) if (ni === bestNi) { hits = true; break; }
+              if (!hits) continue;
+              let prev = null;
+              for (const ni of idxs) {
+                const pos = ni === bestNi ? to : g.nodes[ni];
+                if (!pos) { prev = null; continue; }
+                if (prev && Math.hypot(pos.x - prev.x, pos.z - prev.z) < 1e-4) {
+                  return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'move rejected: the node would collapse its polyline (two vertices at the same position — degenerate self-loop edge)' }) }], isError: true });
+                }
+                prev = pos;
+              }
+            }
+            newGraph.nodes[bestNi].x = to.x;
+            newGraph.nodes[bestNi].z = to.z;
+            movedPoint = { node: bestNi, from: { x: n0.x, z: n0.z }, to: { x: to.x, z: to.z } };
+            // Runway threshold → carry the coupled pavement strips by the same delta (mirrors the UI node drag)
+            const rwIdx = (newGraph.runways || []).findIndex((rw) => rw.thAIdx === bestNi || rw.thBIdx === bestNi);
+            if (rwIdx >= 0) {
+              const ddx = to.x - n0.x, ddz = to.z - n0.z;
+              let pav = 0;
+              for (const ni of _runwayStripNodes(newGraph, newMeta, rwIdx)) {
+                if (ni === bestNi) continue;
+                newGraph.nodes[ni].x += ddx; newGraph.nodes[ni].z += ddz; pav++;
+              }
+              movedPoint.runwayIdx = rwIdx;
+              movedPoint.pavementNodes = pav;
+            }
+          } else {
+            // Area vertex — areas store raw points, not graph nodes
+            let bestArea = null, bestVert = -1, bestVd = Infinity;
+            for (let i = 0; i < (g.areas || []).length; i++) {
+              const pts = g.areas[i].points || [];
+              for (let v = 0; v < pts.length; v++) {
+                const d = Math.hypot(target.x - pts[v].x, target.z - pts[v].z);
+                if (d <= TH && d < bestVd) { bestVd = d; bestArea = i; bestVert = v; }
+              }
+            }
+            if (bestArea == null) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no area vertex within threshold ' + TH }) }], isError: true });
+            const p0 = newGraph.areas[bestArea].points[bestVert];
+            if (Math.hypot(to.x - p0.x, to.z - p0.z) < 1e-6) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'to equals current position' }) }], isError: true });
+            // Triangulator guard: the game refuses to load an area whose outline
+            // crosses itself (Unity Triangulator "ConstraintEdges ... intersect!"
+            // → NullReferenceException at level load). Reject vertex moves that
+            // would fold the polygon across its own outline.
+            const candidatePts = newGraph.areas[bestArea].points.map((p, vi) => (vi === bestVert ? { x: to.x, z: to.z } : p));
+            if (!polygonIsSimple(candidatePts)) {
+              return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'move rejected: vertex ' + bestVert + ' would fold area #' + bestArea + ' across its own outline (self-intersecting polygon)' }) }], isError: true });
+            }
+            newGraph.areas[bestArea].points[bestVert] = { x: to.x, z: to.z };
+            movedPoint = { area: bestArea, vertex: bestVert, from: { x: p0.x, z: p0.z }, to: { x: to.x, z: to.z } };
+          }
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, moved: movedPoint };
+          break;
+        }
+        case 'rename_ground_object': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const kind = args.kind, idx = parseInt(args.idx, 10);
+          if (!['segment', 'runway', 'stand'].includes(kind)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: "kind must be 'segment'|'runway'|'stand'" }) }], isError: true });
+          const count = kind === 'segment' ? g.segments.length : kind === 'runway' ? g.runways.length : g.stands.length;
+          if (!Number.isFinite(idx) || idx < 0 || idx >= count) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'idx not valid for ' + kind + ' (valid: 0..' + (count - 1) + ')' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          let renamed;
+          if (kind === 'segment') {
+            const name = String(args.name ?? '').trim();
+            if (!name) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'name required' }) }], isError: true });
+            const sg = g.segments[idx];
+            const stripNames = new Set((g.runways || []).map((r) => r.physicalName));
+            if (sg.name && stripNames.has(sg.name)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'segment is a runway pavement strip — rename the runway instead' }) }], isError: true });
+            renamed = { kind, idx, from: sg.name || null, to: name };
+            newGraph.segments[idx] = { ...sg, name };
+          } else if (kind === 'runway') {
+            const rw = g.runways[idx];
+            let names = Array.isArray(args.names) && args.names.length >= 2 ? [String(args.names[0] ?? ''), String(args.names[1] ?? '')] : null;
+            if (!names && args.name != null) {
+              const other = (Array.isArray(rw.names) && rw.names[1]) || String(rw.physicalName || '').split('/')[1] || '';
+              names = [String(args.name), other];
+            }
+            if (!names) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'names [a, b] (or name for end A) required' }) }], isError: true });
+            const nameOk = (n) => /^[0-9]{1,2}[A-Z]?$/.test(n);
+            if (!names.every(nameOk)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'runway end names must match ^[0-9]{1,2}[A-Z]?$ (e.g. 4, 4R, 27L)' }) }], isError: true });
+            if (names[0] === names[1]) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'runway end names must differ' }) }], isError: true });
+            // End-name uniqueness: named runway entities are keyed `$k: runway:<end>`
+            // globally, so two runways sharing an end name (e.g. renaming 04/22 to
+            // 33/15 while 15/33 exists) synthesize duplicate `$k` entries and the
+            // game's physical-runway registry resolves the original to zero named
+            // runways ("must have exactly two named runways, found 0") and refuses
+            // the level. Validate both the physical pair and each end name against
+            // every OTHER runway.
+            for (let j = 0; j < g.runways.length; j++) {
+              if (j === idx) continue;
+              const o = g.runways[j];
+              const oEnds = [];
+              if (Array.isArray(o.names)) oEnds.push(...o.names);
+              if (o.physicalName) oEnds.push(...String(o.physicalName).split('/'));
+              const clash = names.find((n) => oEnds.some((raw) => String(raw || '').trim() === n));
+              if (clash) {
+                return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'runway end name ' + clash + ' is already used by runway ' + (o.physicalName || '?') + ' — choose end names not used by another runway' }) }], isError: true });
+              }
+              if (o.physicalName && String(o.physicalName) === names.join('/')) {
+                return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'physical runway ' + names.join('/') + ' already exists — choose different end names' }) }], isError: true });
+              }
+            }
+            const physicalName = names.join('/');
+            const oldPhys = rw.physicalName || '';
+            renamed = { kind, idx, from: oldPhys || null, to: physicalName };
+            newGraph.runways[idx] = { ...rw, names, name: names[0], physicalName };
+            // Keep the coupled pavement strips named after the runway's physical
+            // name in lockstep (mirrors the UI rename).
+            if (oldPhys && oldPhys !== physicalName) {
+              newGraph.segments = newGraph.segments.map((sg) => (sg.name === oldPhys ? { ...sg, name: physicalName } : sg));
+            }
+          } else {
+            const name = String(args.name ?? '').trim();
+            if (!name) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'name required' }) }], isError: true });
+            const st = g.stands[idx];
+            // Flight plans and aircraft reference stands by Identifier (the Name
+            // is the display name — see _synthesizeStand), and a survivor stand
+            // is keyed `$k: stand:<identifier>` in the file, so re-keying one
+            // would need frame reconciliation. A survivor rename is therefore
+            // display-only (mirrors the UI rename); a stand created this session
+            // is not in the file yet, so its identifier is free to change.
+            const isNew = !(newMeta.standOrigPk && newMeta.standOrigPk[idx] != null);
+            if (isNew) newGraph.stands[idx] = { ...st, name, identifier: name, nameEdited: true };
+            else newGraph.stands[idx] = { ...st, name, nameEdited: true };
+            renamed = { kind, idx, from: st.name || null, to: name, identifierChanged: isNew };
+          }
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, renamed };
           break;
         }
         case 'undo_ground_painter': {

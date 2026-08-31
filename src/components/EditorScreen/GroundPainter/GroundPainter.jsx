@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom';
 import GroundPainterToolbar from './GroundPainterToolbar';
 import './GroundPainter.css';
 import { findSnap, worldSnapDist, dynamicSnapDist, dynamicAngleTolDeg, collectSnapGeometry, SNAP_TYPES } from './snap';
+import { polygonIsSimple } from './polygon_simple.js';
 import { computeFillet, applyVirtualFillet, countIncidentAll, countIncidentByCoord, findNodeIndexByCoord, isStraightSegment, repairGhostRefs, ghostNodeIndices } from './fillet';
 import { segNodeIdxs, polylineLengthMeters, segmentLengthMeters, runwayLengthMeters, formatLengthMeters, buildTaxiPaths } from './metrics';
 // Keep the metrics helpers reachable from the component's import surface.
@@ -1577,6 +1578,26 @@ export default function GroundPainter({ vals }) {
     const nw = findSnap(raw, null, snapGeom, { snapDist: painterSnapDist(viewBox, baseVB), angleToleranceDeg: painterAngleTol(viewBox, baseVB) }) || raw;
 
     if (d.mode === 'node') {
+      // Degenerate-edge guard: within any polyline containing this node, no two
+      // consecutive nodes may land on the same position — the writer encodes
+      // vertices by coordinate, so co-located neighbours collapse into one
+      // encoded vertex ("joins vertex X to itself") and the save-time integrity
+      // check refuses the file. Freeze at the last valid position, like the
+      // area-vertex guard. Scanning the whole polyline also catches a drag onto
+      // a node two positions away (folding the polyline flat).
+      for (const sg of g.segments) {
+        const idxs = segNodeIdxs(sg);
+        let hits = false;
+        for (const ni of idxs) if (ni === d.nodeIdx) { hits = true; break; }
+        if (!hits) continue;
+        let prev = null;
+        for (const ni of idxs) {
+          const pos = ni === d.nodeIdx ? nw : g.nodes[ni];
+          if (!pos) { prev = null; continue; }
+          if (prev && Math.hypot(pos.x - prev.x, pos.z - prev.z) < 1e-4) return;
+          prev = pos;
+        }
+      }
       const nodes = [...g.nodes];
       nodes[d.nodeIdx] = { ...nodes[d.nodeIdx], x: nw.x, z: nw.z };
       // If the dragged node is a runway threshold, re-project the runway's
@@ -1598,6 +1619,10 @@ export default function GroundPainter({ vals }) {
       if (!areas[d.idx] || !areas[d.idx].points) return;
       const points = [...areas[d.idx].points];
       points[d.pointIdx] = { x: nw.x, z: nw.z };
+      // Triangulator guard: the game refuses to load an area whose outline
+      // crosses itself. Freeze the vertex at its last valid position instead
+      // of committing a bowtie; dragging back onto a valid spot re-enables it.
+      if (!polygonIsSimple(points)) return;
       areas[d.idx] = { ...areas[d.idx], points };
       useAppStore.setState({ groundPainterGraph: { ...g, areas }, groundPainterHasEdited: true });
     } else if (d.mode === 'body') {
@@ -1967,6 +1992,52 @@ export default function GroundPainter({ vals }) {
         }
       }
     };
+    // Runway cascade: a runway IS its pavement strips + threshold nodes. Remove
+    // the strip segments named after the physical runway alongside the runway
+    // entry, otherwise they survive as paint with dangling thresholds (and the
+    // game still triangulates them). Freed end designators are recorded in meta
+    // so the ground save can purge flights whose Runway no longer resolves.
+    const cascadeDeleteRunway = (idx, gcSink) => {
+      const rw = gg.runways[idx];
+      const phys = rw ? String(rw.physicalName || '') : '';
+      const endNames = rw && Array.isArray(rw.names) ? rw.names.map((n) => String(n || '').trim()).filter(Boolean) : [];
+      if (mm && mm.runwayOrigPk) { markDeletedPk(mm.runwayOrigPk[idx]); mm.runwayOrigPk.splice(idx, 1); }
+      if (mm && mm.runwayOrigInfo) {
+        const info = mm.runwayOrigInfo[idx];
+        if (info && Array.isArray(info.pks)) for (const pk of info.pks) markDeletedPk(pk);
+        mm.runwayOrigInfo.splice(idx, 1);
+      }
+      if (mm && mm.runwayPavement) mm.runwayPavement.splice(idx, 1);
+      gg.runways.splice(idx, 1);
+      const gcNodes = Array.isArray(gcSink) ? gcSink : [];
+      if (rw) { if (rw.thAIdx != null) gcNodes.push(rw.thAIdx); if (rw.thBIdx != null) gcNodes.push(rw.thBIdx); }
+      if (phys) {
+        for (let si = gg.segments.length - 1; si >= 0; si--) {
+          const sg = gg.segments[si];
+          if (sg.name !== phys) continue;
+          if (mm && mm.segOrigPk) { markDeletedPk(mm.segOrigPk[si]); mm.segOrigPk.splice(si, 1); }
+          for (const ni of segNodeIdxs(sg)) if (ni != null) gcNodes.push(ni);
+          gg.segments.splice(si, 1);
+        }
+      }
+      if (!gcSink && gcNodes.length) doOrphanGC(gcNodes);
+      if (mm) {
+        if (!Array.isArray(mm.deletedRunwayNames)) mm.deletedRunwayNames = [];
+        for (const nm of [phys, ...endNames]) {
+          if (nm && !mm.deletedRunwayNames.includes(nm)) mm.deletedRunwayNames.push(nm);
+        }
+      }
+    };
+    // Record a deleted stand's id(s) so the ground save can purge flights parked
+    // at it (game "has no flight plan reference"-class failures).
+    const recordDeletedStand = (st) => {
+      if (!st || !mm) return;
+      if (!Array.isArray(mm.deletedStandNames)) mm.deletedStandNames = [];
+      for (const nm of [st.identifier, st.name]) {
+        const v = String(nm || '').trim();
+        if (v && !mm.deletedStandNames.includes(v)) mm.deletedStandNames.push(v);
+      }
+    };
     if (hasMulti) {
       // ── Box-select multi delete (NOT AREA) ─────────────────
       const segIdxs = multiSelected.filter((s) => s.kind === 'segment').map((s) => s.idx).sort((a, b) => b - a);
@@ -1985,14 +2056,20 @@ export default function GroundPainter({ vals }) {
         gg.segments.splice(idx, 1);
       }
       for (const idx of rwIdxs) {
-        if (mm && mm.runwayOrigPk) { markDeletedPk(mm.runwayOrigPk[idx]); mm.runwayOrigPk.splice(idx, 1); }
-        if (mm && mm.runwayPavement) mm.runwayPavement.splice(idx, 1);
-        if (mm && mm.runwayOrigInfo) mm.runwayOrigInfo.splice(idx, 1);
-        gg.runways.splice(idx, 1);
+        // The cascade removes the runway's strips and immediately GCs their
+        // nodes. Nodes shared with objects deleted later in this same multi
+        // (e.g. a stand pushback node on a strip endpoint) survive that GC —
+        // the stands branch below feeds them to the final doOrphanGC.
+        cascadeDeleteRunway(idx, null);
       }
       for (const idx of standIdxs) {
         if (mm && mm.standOrigPk) { markDeletedPk(mm.standOrigPk[idx]); mm.standOrigPk.splice(idx, 1); }
+        const st = gg.stands[idx];
+        if (st) {
+          for (const ni of [st.noseIdx, st.tailIdx, ...(st.pushbackIdxs || [])]) if (ni != null) allDelNodes.add(ni);
+        }
         gg.stands.splice(idx, 1);
+        recordDeletedStand(st);
       }
       for (const idx of areaIdxs) {
         if (mm && mm.areaOrigId) {
@@ -2014,10 +2091,7 @@ export default function GroundPainter({ vals }) {
       gg.segments.splice(selected.idx, 1);
       doOrphanGC(uniqueDelNodes);
     } else if (selected.kind === 'runway') {
-      if (mm && mm.runwayOrigPk) { markDeletedPk(mm.runwayOrigPk[selected.idx]); mm.runwayOrigPk.splice(selected.idx, 1); }
-      if (mm && mm.runwayPavement) mm.runwayPavement.splice(selected.idx, 1);
-      if (mm && mm.runwayOrigInfo) mm.runwayOrigInfo.splice(selected.idx, 1);
-      gg.runways.splice(selected.idx, 1);
+      cascadeDeleteRunway(selected.idx, null);
     } else if (selected.kind === 'area') {
       if (mm && mm.areaOrigId) {
         const id = mm.areaOrigId[selected.idx];
@@ -2027,7 +2101,11 @@ export default function GroundPainter({ vals }) {
       gg.areas.splice(selected.idx, 1);
     } else if (selected.kind === 'stand') {
       if (mm && mm.standOrigPk) { markDeletedPk(mm.standOrigPk[selected.idx]); mm.standOrigPk.splice(selected.idx, 1); }
+      const st = gg.stands[selected.idx];
+      const delNodes = st ? [st.noseIdx, st.tailIdx, ...(st.pushbackIdxs || [])].filter((v) => v != null) : [];
       gg.stands.splice(selected.idx, 1);
+      if (delNodes.length) doOrphanGC(delNodes);
+      recordDeletedStand(st);
     } else if (selected.kind === 'bgImage') {
       // Background image: just clear it (not part of graph/meta)
       setBgImage(null);

@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:fuzz": "node tests/e2e/fuzz-cli.mjs",
+    "test:fuzz:ground": "node tests/e2e/fuzz-ground-cli.mjs",
     "test:all": "node tests/run-all.mjs",
     "build": "vite build",
     "build:win": "vite build && node build.js --win",

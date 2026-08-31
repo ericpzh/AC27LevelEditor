@@ -42,24 +42,24 @@ npx vitest run --coverage tests/components/EditorScreen/GroundPainter/ # Ground 
 npm run test:e2e      # Playwright + Electron full user-flow tests
 ```
 
-### Fuzz save test (E2E, gated on `FUZZ_RUN=1`)
+### Fuzz save tests (E2E, gated on `FUZZ_RUN=1`)
 
-Randomized edit storm over the production levels via the MCP API, gated through the
+Randomized edit storms over the production levels via the MCP API, gated through the
 app's real validator, then a real UI save with backup — all in a temp sandbox. Full
-docs in `tests/README.md` ("Fuzz Save"). ⚠️ Requires `npm run build` first and no
+docs in `tests/README.md` ("Fuzz Save" / "Fuzz Ground Save"). ⚠️ Requires `npm run build` first and no
 other editor instance (port 31415).
 
 ```bash
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
-npm run test:fuzz                                   # all 18 prod levels (ZGSZ +5), 50–200 ops each — default target = PROD_VISIBLE_BASES minus ZGSZ_Endless
+npm run test:fuzz                                   # flight fuzz: all 20 prod levels, 50–200 ops each
+npm run test:fuzz:ground                            # ground fuzz: all 20 prod levels, 50–200 scenery ops each (runway/taxiway/fillet/area/stand/select+delete)
 $env:FUZZ_ACL_FILES = "ZSJN/ZSJN_leisure_1.acl"; npm run test:fuzz   # subset (comma-separated)
 $env:FUZZ_SEED = "12345"; npm run test:fuzz         # reproduce a failure deterministically
 npm run test:fuzz -- --replace                      # copy PASSED levels' .acl + .acl.bak into the REAL game install (FUZZ_REPLACE=1 env works too)
+$env:E2E_KEEP_TMP = "1"; npm run test:fuzz:ground   # keep tests/tmp-e2e for post-mortem (decode with tests/tmp-decode/decode.mjs pattern)
 ```
 
-The `--replace` flag is consumed by the `tests/e2e/fuzz-cli.mjs` wrapper (Playwright
-itself rejects unknown flags) — it forwards everything else to Playwright. Without
-`--replace` the real game files are never touched.
+`test:fuzz` and `test:fuzz:ground` share `fuzz-cli.mjs` / `fuzz-ground-cli.mjs` wrappers — the `--replace` flag is consumed by the wrapper (Playwright itself rejects unknown flags) and forwards everything else to Playwright. Without `--replace` the real game files are never touched. `E2E_KEEP_TMP=1` preserves the Playwright sandbox (otherwise `global-teardown.mjs` deletes `tests/tmp-e2e`/`tmp-e2e-userdata`).
 
 ### Integration tests (plain Node.js, in `tests/integration/`)
 
@@ -217,7 +217,7 @@ curl/prototyping or wiring into a TLS wrapper (see
 
 ## GitHub Release
 
-The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags pushed to GitHub. It builds **Windows** (portable `.exe`, both normal and voice), **macOS** (`.dmg`), **Linux** (`.AppImage` + `.deb` — no auto-update, release-attached only like macOS), and the **AC27Approach plugin DLL** (`mods/AC27Approach`, net6.0) in parallel. The Windows builds are uploaded to Cloudflare R2 (`ac27editor/AC27Editor.exe` + `.md5`, and `AC27EditorVoice.exe` + `.md5` in the same bucket) for auto-update delivery, and the plugin DLL is uploaded to `s3://ac27approach/AC27Approach.dll` (dedicated bucket, endpoint `https://66f99fd03d3228c43e0acb85f7b8298f.r2.cloudflarestorage.com`) — served through the `https://ericpzh.rest/ac27approach*` Worker route, which the Flight Strips window's Load DLL button pulls from (download-first, file-dialog fallback; see `mods/docs/cloudflare-worker-routes.md`). All artifacts are attached to a GitHub Release with auto-generated release notes.
+The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags **or `workflow_dispatch`** (manual with optional `version` input — resolves `tag_name` from the tag or the input). It builds **Windows** (portable `.exe`, both normal and voice), **macOS** (`.dmg`), **Linux** (`.AppImage` + `.deb` — no auto-update, release-attached only like macOS), and the **AC27Approach plugin DLL** (`mods/AC27Approach`, net6.0) in parallel (artifacts downloaded to per-variant `release-*` dirs, `tag_name` pinned via `steps.version.outputs.version`). The Windows builds are uploaded to Cloudflare R2 (`ac27editor/AC27Editor.exe` + `.md5`, and `AC27EditorVoice.exe` + `.md5` in the same bucket) for auto-update delivery, and the plugin DLL is uploaded to `s3://ac27approach/AC27Approach.dll` (dedicated bucket, endpoint `https://66f99fd03d3228c43e0acb85f7b8298f.r2.cloudflarestorage.com`) — served through the `https://ericpzh.rest/ac27approach*` Worker route, which the Flight Strips window's Load DLL button pulls from (download-first, file-dialog fallback; see `mods/docs/cloudflare-worker-routes.md`). All artifacts are attached to a GitHub Release with auto-generated release notes. The `release` job also auto-deploys the Windows portable build to **Steam Workshop** (`appid 4004140`, `publishedfileid 3793213548`, `upload_mod.vdf` generated with absolute `contentfolder`/`previewfile` paths) via `game-ci/steam-deploy@v3` (`STEAM_USERNAME`/`STEAM_PASSWORD`/`STEAM_SHARED_SECRET`).
 
 ### How to release a new version
 

@@ -17,36 +17,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: 'npm'
-
       - name: Install dependencies
         run: npm ci
-
       - name: Build Windows (portable — no voice, R2 auto-update variant)
         run: npm run build:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-
       - name: Fetch vosk speech models (voice build)
         run: node scripts/fetch-vosk-model.mjs
-
       - name: Build Windows (portable — voice, vosk models + sox bundled)
         run: npm run build:win:voice -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-
       - name: Upload Windows artifacts (both variants → GitHub release)
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Editor-Windows
           path: release/*.exe
           if-no-files-found: error
-
       - name: Upload to R2 (auto-update — both variants, same bucket)
         # Both AC27Editor.exe and AC27EditorVoice.exe are auto-update sources.
         # Each exe carries a companion .md5 sidecar: the Worker reads it and
@@ -73,19 +66,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: 'npm'
-
       - name: Install dependencies
         run: npm ci
-
       - name: Build macOS (dmg)
         run: npm run build:mac -- --publish never
-
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
@@ -98,19 +87,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: 'npm'
-
       - name: Install dependencies
         run: npm ci
-
       - name: Build Linux (AppImage + deb)
         run: npm run build:linux -- --publish never
-
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
@@ -125,24 +110,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-
       - name: Build plugin DLL
         # Compiles against the vendored refs in mods/AC27Approach/lib (build-time
         # only — never shipped). SkipDeploy keeps CI from writing into lib/.
         run: dotnet build mods/AC27Approach -c Release -p:GameDir="${{ github.workspace }}\mods\AC27Approach\lib" -p:SkipDeploy=true
-
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Plugin-Windows
           path: mods/AC27Approach/bin/Release/net6.0/AC27Approach.dll
           if-no-files-found: error
-
       - name: Upload plugin DLL to R2 (strips-window auto-install source)
         # Serves AC27Approach.dll through the ericpzh.rest/ac27approach* Worker
         # route (public bucket pub-3cf0a07576984a6b82374a2bbc597e59) so the
@@ -160,39 +141,102 @@ jobs:
   release:
     needs: [build-windows, build-macos, build-linux, build-plugin]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
           name: AC27-Editor-Windows
+          path: release-windows
 
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
           name: AC27-Editor-macOS
+          path: release-macos
 
       - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
           name: AC27-Editor-Linux
+          path: release-linux
 
       - name: Download plugin artifact
         uses: actions/download-artifact@v4
         with:
           name: AC27-Plugin-Windows
+          path: release-plugin
+
+      - name: Resolve release version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Resolved version: $(cat $GITHUB_OUTPUT)"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.version }}
           files: |
-            *.exe
-            *.dmg
-            *.AppImage
-            *.deb
-            *.dll
+            release-windows/*.exe
+            release-macos/*.dmg
+            release-linux/*.AppImage
+            release-linux/*.deb
+            release-plugin/*.dll
           generate_release_notes: true
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- STEAM WORKSHOP AUTO-DEPLOY ---
+      - name: Validate Workshop content exists
+        run: |
+          echo "=== Workshop preflight ==="
+          ls -lh release-windows/ || (echo "::error::release-windows missing" && exit 1)
+          ls -lh release-plugin/ || echo "no plugin dll (optional)"
+          test -f icon.png || (echo "::error::icon.png missing at repo root" && exit 1)
+          echo "content ready"
+
+      - name: Generate Steam Workshop VDF (absolute paths for steamcmd)
+        run: |
+          WS_CONTENT="${{ github.workspace }}/release-windows"
+          WS_PREVIEW="${{ github.workspace }}/icon.png"
+          WS_CHANGELOG="Release ${{ steps.version.outputs.version }} — automated Workshop update via GitHub Actions."
+          # steamcmd resolves contentfolder/previewfile relative to cwd (GITHUB_WORKSPACE)
+          # so we must use absolute paths. Overwrite the tracked template.
+          cat > "${{ github.workspace }}/.github/workflows/upload_mod.vdf" <<VDF
+          "workshopitem"
+          {
+              "appid"           "4004140"
+              "publishedfileid" "3793213548"
+              "contentfolder"   "$WS_CONTENT"
+              "previewfile"     "$WS_PREVIEW"
+              "visibility"      "0"
+              "changenote"      "$WS_CHANGELOG"
+          }
+          VDF
+          echo "--- Generated VDF ---"
+          cat "${{ github.workspace }}/.github/workflows/upload_mod.vdf"
+          test -d "$WS_CONTENT" || (echo "::error::contentfolder not found: $WS_CONTENT" && exit 1)
+          test -f "$WS_PREVIEW" || (echo "::error::previewfile not found: $WS_PREVIEW" && exit 1)
+          test -n "$(ls -A "$WS_CONTENT")" || (echo "::error::contentfolder empty" && exit 1)
+
+      - name: Publish to Steam Workshop
+        uses: game-ci/steam-deploy@v3
+        with:
+          username: ${{ secrets.STEAM_USERNAME }}
+          password: ${{ secrets.STEAM_PASSWORD }}
+          sharedSecret: ${{ secrets.STEAM_SHARED_SECRET }}
+          appId: 4004140
+          vdfPath: ./.github/workflows/upload_mod.vdf

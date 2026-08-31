@@ -21,7 +21,16 @@
  *   3. Assert zero validation issues, then hit SAVE via the real UI
  *      (Ctrl+S → backup confirmation modal → success), creating the .acl.bak
  *   4. Verify: .acl.bak exists, saved .acl reloads through the real parser,
- *      flight count + callsign set match what the fuzz left in the store
+ *      flight count + callsign set match what the fuzz left in the store.
+ *      The store is the right baseline for a REGULAR save: it rebuilds the
+ *      file's flight-plan entries from the store (save-acl → generateFullAcl),
+ *      so the saved file is expected to equal the store exactly. Note the
+ *      store can be a SUBSET of the file for demo-classified basenames
+ *      (DEMO_VISIBLE_BASES — e.g. ZSJN_leisure_1.acl ships as a prod file but
+ *      the editor filters it to the CDT demo window at load); those file-only
+ *      flights sit outside the editable window and a regular save drops them
+ *      by design. (The ground-painter save is scenery-only and preserves the
+ *      file's flights — fuzz-ground-save.spec.mjs baselines against the file.)
  *   5. Verify the saved .acl satisfies the game-compatibility invariants
  *      (duplicate flight-plan keys / missing docked entities / stand
  *      conflicts) — catches a stale build whose save pipeline lacks the
@@ -340,6 +349,21 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     if (!resolvedPath.startsWith(tempRoot + path.sep)) {
       throw new Error(`REFUSING to fuzz ${currentPath} — not inside temp root ${process.env.E2E_TMP_DIR}`);
     }
+
+    // Load sanity: the store must be a SUBSET of the file. For demo-classified
+    // basenames (DEMO_VISIBLE_BASES — e.g. ZSJN_leisure_1.acl ships as a prod
+    // file but the editor applies the demo CDT window at load) the store
+    // legitimately holds FEWER flights than the file; those file-only flights
+    // are outside the editable window and a regular save (which rebuilds
+    // flight-plan entries from the store) drops them by design — which is why
+    // the post-save comparison below baselines against the STORE. The inverse
+    // (store flights missing from the file) can never be legitimate.
+    const fileCallsignsAtLoad = new Set(parser.loadFlights(currentPath).flights.map(f => f.CallSign));
+    const storeCallsignsAtLoad = new Set((await getFlights()).flights.map(f => f.CallSign));
+    const phantom = [...storeCallsignsAtLoad].filter(cs => !fileCallsignsAtLoad.has(cs));
+    if (phantom.length) throw new Error(`store contains flights missing from the file: ${phantom.join(',')}`);
+    const fileOnly = [...fileCallsignsAtLoad].filter(cs => !storeCallsignsAtLoad.has(cs));
+    log(`flight baseline: file=${fileCallsignsAtLoad.size} store=${storeCallsignsAtLoad.size}${fileOnly.length ? ` (file-only, outside editable window: ${fileOnly.join(', ')})` : ''}`);
 
     // ── 2. Constraints + time range ──
     const info = await getAirportInfo();

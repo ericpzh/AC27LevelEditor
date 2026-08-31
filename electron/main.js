@@ -1794,6 +1794,164 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   if (createBackup && fs.existsSync(filePath)) fs.copyFileSync(filePath, filePath + '.bak');
   writeAcl(filePath, newText, { format: 'auto', originalText: snapshotText });
   console.log('[GroundPainter] save-ground-painter-data: wrote ' + filePath);
+  // ── Flight-reference reconciliation (stands/runways deleted or renamed) ──
+  // Removing a stand or runway in the Ground Painter strands every flight parked
+  // on that stand or assigned to that runway; renaming one leaves flights under
+  // the old name. Saved as-is, the .acl carries flight-plan entries referencing
+  // scenery the game can no longer resolve. Remap renamed references, purge the
+  // flights whose references no longer resolve, and rebuild the flight sections
+  // through the regular save pipeline (generateFullAcl) so frames, jetway
+  // docking state and EventLog entries that pointed at the purged flights go
+  // with them.
+  // The truth for "which scenery exists" is the SAVED FILE, not the in-memory
+  // graph: the writer's dangling-ref gate may legitimately drop entities the
+  // graph still shows, and a purge that trusted the graph would keep flights
+  // pointing at scenery that is no longer in the file. A reference is only
+  // dangling if it existed in the pre-save snapshot and no longer exists in the
+  // saved file (so garbage that predates the edit is left alone, and a
+  // re-created stand with the same name keeps its flights).
+  let purgedFlights = [];
+  let refsRemapped = 0;
+  let flightSectionsRebuilt = false;
+  try {
+    const { buildSceneryGraph } = require('../src/acl/scenery_graph');
+    const norm = (v) => String(v || '').trim().replace(/^0+/, '');
+    const savedGraph = buildSceneryGraph(readAclText(filePath));
+    const curStandNames = new Set();
+    for (const st of (savedGraph.graph.stands || [])) {
+      for (const nm of [st.identifier, st.name]) { const v = norm(nm); if (v) curStandNames.add(v); }
+    }
+    const curRunwayEnds = new Set();
+    for (const rw of (savedGraph.graph.runways || [])) {
+      if (Array.isArray(rw.names)) for (const n of rw.names) { const v = norm(n); if (v) curRunwayEnds.add(v); }
+      if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) { const v = norm(n); if (v) curRunwayEnds.add(v); }
+    }
+    const snap = buildSceneryGraph(snapshotText);
+    const snapStandNames = new Set();
+    for (const st of (snap.graph.stands || [])) {
+      for (const nm of [st.identifier, st.name]) { const v = norm(nm); if (v) snapStandNames.add(v); }
+    }
+    const snapRunwayEnds = new Set();
+    for (const rw of (snap.graph.runways || [])) {
+      if (Array.isArray(rw.names)) for (const n of rw.names) { const v = norm(n); if (v) snapRunwayEnds.add(v); }
+      if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) { const v = norm(n); if (v) snapRunwayEnds.add(v); }
+    }
+    // Renamed runway ends: surviving runways pair with their original entries by
+    // index (meta arrays are index-parallel — the same pairing the writer uses
+    // for physPatchMap). Walk chains safely (a rename cycle resolves to itself).
+    const runwayRename = new Map(); // normalized old end → new end (exact)
+    if (Array.isArray(meta && meta.runwayOrigInfo) && Array.isArray(meta.runwayOrigPk)) {
+      for (let i = 0; i < graph.runways.length && i < meta.runwayOrigInfo.length && i < meta.runwayOrigPk.length; i++) {
+        if (meta.runwayOrigPk[i] == null) continue;
+        const orig = meta.runwayOrigInfo[i];
+        const cur = graph.runways[i];
+        if (!orig || !cur || !Array.isArray(orig.names) || !Array.isArray(cur.names)) continue;
+        for (let j = 0; j < 2 && j < orig.names.length && j < cur.names.length; j++) {
+          const o = norm(orig.names[j]), n = String(cur.names[j] || '').trim();
+          if (o && n && o !== norm(n)) runwayRename.set(o, n);
+        }
+      }
+    }
+    // A rename target must actually exist in the saved scenery — if the writer
+    // dropped that runway, remapping onto it would trade one dangling reference
+    // for another; the leg is purged instead.
+    for (const [o, n] of [...runwayRename]) {
+      if (!curRunwayEnds.has(norm(n))) runwayRename.delete(o);
+    }
+    // Renamed stands: match by nose position (renames don't move the stand).
+    // Only an Identifier change re-keys the stand — flight plans and aircraft
+    // reference stands by Identifier (the Name is the display name, see
+    // _synthesizeStand), so a display-only rename never touches flights.
+    const standRename = new Map(); // normalized old identifier → new identifier (exact)
+    const snapStandByNose = new Map();
+    for (const st of (snap.graph.stands || [])) {
+      const nose = snap.graph.nodes[st.noseIdx];
+      if (!nose) continue;
+      const key = nose.x.toFixed(4) + ',' + nose.z.toFixed(4);
+      if (!snapStandByNose.has(key)) snapStandByNose.set(key, st);
+    }
+    for (const st of (graph.stands || [])) {
+      const nose = (graph.nodes || [])[st.noseIdx];
+      if (!nose) continue;
+      const key = nose.x.toFixed(4) + ',' + nose.z.toFixed(4);
+      const origSt = snapStandByNose.get(key);
+      if (!origSt) continue;
+      const newIdent = String(st.identifier || '').trim();
+      if (origSt.identifier && newIdent && norm(origSt.identifier) !== norm(newIdent)) {
+        standRename.set(norm(origSt.identifier), newIdent);
+      }
+    }
+    // Same target-existence guard as runway renames (see above).
+    for (const [o, n] of [...standRename]) {
+      if (!curStandNames.has(norm(n))) standRename.delete(o);
+    }
+    const remap = (value, map) => {
+      if (!value || !map.size) return value;
+      let key = norm(value);
+      if (!map.has(key)) return value;
+      const seen = new Set([key]);
+      let cur = map.get(key);
+      while (cur && map.has(norm(cur)) && !seen.has(norm(cur))) { seen.add(norm(cur)); cur = map.get(norm(cur)); }
+      return cur != null ? String(cur) : value;
+    };
+    // The saved file's own flight set is the purge baseline — the scenery patch
+    // does not touch flight sections, so the flight entries on disk right now
+    // are exactly the pre-save ones.
+    const data = loadFlights(filePath);
+    const flights = Array.isArray(data.flights) ? data.flights : [];
+    for (const f of flights) {
+      if (f.Runway) {
+        const mapped = remap(f.Runway, runwayRename);
+        if (mapped !== f.Runway) { f.Runway = mapped; refsRemapped++; }
+      }
+      if (f.Stand) {
+        const mapped = remap(f.Stand, standRename);
+        if (mapped !== f.Stand) { f.Stand = mapped; refsRemapped++; }
+      }
+    }
+    const regKey = (f) => String(f._Registration || f._fpGuid || f.CallSign || '');
+    const danglingLegs = new Set();
+    for (const f of flights) {
+      const standGone = !!f.Stand && !curStandNames.has(norm(f.Stand)) && snapStandNames.has(norm(f.Stand));
+      const runwayGone = !!f.Runway && !curRunwayEnds.has(norm(f.Runway)) && snapRunwayEnds.has(norm(f.Runway));
+      if (standGone || runwayGone) danglingLegs.add(regKey(f));
+    }
+    if (danglingLegs.size || refsRemapped > 0) {
+      purgedFlights = flights
+        .filter((f) => danglingLegs.has(regKey(f)))
+        .map((f) => ({
+          CallSign: f.CallSign || '', Registration: f._Registration || '',
+          Stand: f.Stand || '', Runway: f.Runway || '',
+          reason: (f.Stand && !curStandNames.has(norm(f.Stand)) && snapStandNames.has(norm(f.Stand))) ? 'stand removed or renamed away'
+            : (f.Runway && !curRunwayEnds.has(norm(f.Runway)) && snapRunwayEnds.has(norm(f.Runway))) ? 'runway removed or renamed away' : 'same aircraft leg removed',
+        }));
+      const keptFlights = sortFlightsChronologically(flights.filter((f) => !danglingLegs.has(regKey(f))));
+      flightSectionsRebuilt = true;
+      // Full flight rebuild for the purged/remapped set — same pipeline as the
+      // regular Ctrl+S save (rebuilds flight-plan StaticItems, frame runtime
+      // entities, jetway docking and EventLog; preserves the scenery blob and
+      // weather/wind/runway timeline sections).
+      const icaoMatch = filePath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+      const icao = icaoMatch ? icaoMatch[1] : '';
+      const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
+      generateFullAcl(filePath, keptFlights, null, null, null, null, approachCache, null, null);
+      console.log('[GroundPainter] flight purge: ' + purgedFlights.length + ' flight(s) removed, ' + refsRemapped + ' reference(s) remapped');
+      // Sync the game-side CSV with the kept flight set (best-effort, mirrors save-acl).
+      try {
+        const cfg = resolveConfigTime(readAclText(filePath));
+        if (cfg && cfg.flightScheduleFile) {
+          const csvPath = path.join(path.dirname(filePath), cfg.flightScheduleFile + '.csv');
+          if (createBackup && fs.existsSync(csvPath)) fs.copyFileSync(csvPath, csvPath + '.bak');
+          exportGameCSV(keptFlights, csvPath);
+        }
+      } catch (csvErr) {
+        console.error('[GroundPainter] CSV sync warning: ' + csvErr.message);
+      }
+    }
+  } catch (purgeErr) {
+    // A refused save is safer than a file with dangling flight references.
+    throw new Error('Flight reference reconciliation failed: ' + (purgeErr && purgeErr.message ? purgeErr.message : purgeErr));
+  }
   // Persist the background-image sidecar so the level reopens with the exact image
   // placement (or remove it when the user cleared the image).
   try {
@@ -1816,7 +1974,11 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
     console.error('[GroundPainter] geo_data sync error: ' + (e && e.message));
   }
   if (warnings.length) console.warn('[GroundPainter] save warnings: ' + warnings.map((w) => (w && w.text) || String(w)).join(' | '));
-  return { newText, geoResult, warnings };
+  // When the flight purge rebuilt the flight sections on disk after the scenery
+  // write, newText is stale — return the final on-disk text so the renderer's
+  // snapshot reflects it (a stale snapshot would revert the purge next save).
+  const finalText = flightSectionsRebuilt ? readAclText(filePath) : newText;
+  return { newText: finalText, geoResult, warnings, purgedFlights, refsRemapped };
 });
 
 ipcMain.handle('save-cached-lang', (_event, lang) => {

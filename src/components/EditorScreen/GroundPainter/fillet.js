@@ -533,7 +533,22 @@ export function attachVirtualFilletLeg(graph, meta, segIdx, tPt, o, nx, nz, t) {
   const flags = seg.flags ?? 2;
   const name = seg.name;
   const directed = seg.directed ?? false;
-  const mk = (poly) => ({ aIdx: poly[0], bIdx: poly[poly.length - 1], nodeIdxs: poly, flags, directed, ...(name ? { name } : {}) });
+  const mk = (poly) => {
+    // A piece whose polyline contains two consecutive positions closer than the
+    // write-time coordinate resolution collapses into ONE encoded vertex — the
+    // segment then "joins vertex X to itself" and the save is refused. Drop
+    // duplicate positions; a piece with fewer than two distinct positions is
+    // not a segment at all.
+    const dedup = [];
+    for (const ni of poly) {
+      const n = graph.nodes[ni];
+      const last = dedup.length ? graph.nodes[dedup[dedup.length - 1]] : null;
+      if (last && n && Math.hypot(n.x - last.x, n.z - last.z) < 1e-4) continue;
+      dedup.push(ni);
+    }
+    if (dedup.length < 2) return null;
+    return { aIdx: dedup[0], bIdx: dedup[dedup.length - 1], nodeIdxs: dedup, flags, directed, ...(name ? { name } : {}) };
+  };
   const ghostOrig = () => {
     const pk = meta.segOrigPk[segIdx];
     if (pk != null && !(meta.deletedPks || []).includes(pk)) {
@@ -552,12 +567,13 @@ export function attachVirtualFilletLeg(graph, meta, segIdx, tPt, o, nx, nz, t) {
       if (p === 0 || p === idxs.length - 1) return idxs[p];
       // Interior node of a multi-vertex polyline: split at it so the arc
       // branches off a real junction (both halves keep every original node).
+      const leftPiece = mk(idxs.slice(0, p + 1));
+      const rightPiece = mk(idxs.slice(p));
+      if (!leftPiece || !rightPiece) return idxs[p]; // would degenerate — anchor without splitting
       ghostOrig();
-      const left = idxs.slice(0, p + 1);
-      const right = idxs.slice(p);
       graph.segments.splice(segIdx, 1);
       meta.segOrigPk.splice(segIdx, 1);
-      graph.segments.splice(segIdx, 0, mk(left), mk(right));
+      graph.segments.splice(segIdx, 0, leftPiece, rightPiece);
       meta.segOrigPk.splice(segIdx, 0, null, null);
       return idxs[p];
     }
@@ -572,8 +588,14 @@ export function attachVirtualFilletLeg(graph, meta, segIdx, tPt, o, nx, nz, t) {
   meta.nodeOrigPk.push(null);
   if (Number.isNaN(dNear) || dNear >= t - 1e-9) {
     // Tangent point lies beyond the segment's near endpoint: the segment does
-    // not reach the arc. Keep it untouched and bridge the gap with a stub.
-    graph.segments.push(mk([tIdx, idxs[nearPos]]));
+    // not reach the arc. Keep it untouched and bridge the gap with a stub —
+    // unless the tangent effectively sits ON the near node (a stub would
+    // collapse into a self-loop); then the node itself is the anchor.
+    const nearNode = graph.nodes[idxs[nearPos]];
+    if (nearNode && Math.hypot(tPt.x - nearNode.x, tPt.z - nearNode.z) < 1e-4) return idxs[nearPos];
+    const stub = mk([tIdx, idxs[nearPos]]);
+    if (!stub) return idxs[nearPos];
+    graph.segments.push(stub);
     meta.segOrigPk.push(null);
     return tIdx;
   }
@@ -589,16 +611,29 @@ export function attachVirtualFilletLeg(graph, meta, segIdx, tPt, o, nx, nz, t) {
     // node closest to the tangent point — still removes nothing.
     let bestPos = 0;
     for (let i = 1; i < dots.length; i++) if (Math.abs(dots[i] - t) < Math.abs(dots[bestPos] - t)) bestPos = i;
-    graph.segments.push(mk([tIdx, idxs[bestPos]]));
+    const bestNode = graph.nodes[idxs[bestPos]];
+    if (bestNode && Math.hypot(tPt.x - bestNode.x, tPt.z - bestNode.z) < 1e-4) return idxs[bestPos];
+    const stub = mk([tIdx, idxs[bestPos]]);
+    if (!stub) return idxs[bestPos];
+    graph.segments.push(stub);
     meta.segOrigPk.push(null);
     return tIdx;
   }
-  ghostOrig();
   const left = [...idxs.slice(0, edge + 1), tIdx];
   const right = [tIdx, ...idxs.slice(edge + 1)];
+  const leftPiece = mk(left);
+  const rightPiece = mk(right);
+  if (!leftPiece || !rightPiece) {
+    // The tangent sits (almost) on an existing node — anchoring there beats a
+    // degenerate split. Undo the tentative tangent node and keep the segment.
+    graph.nodes.pop();
+    meta.nodeOrigPk.pop();
+    return Math.abs(dots[edge] - t) <= Math.abs(dots[edge + 1] - t) ? idxs[edge] : idxs[edge + 1];
+  }
+  ghostOrig();
   graph.segments.splice(segIdx, 1);
   meta.segOrigPk.splice(segIdx, 1);
-  graph.segments.splice(segIdx, 0, mk(left), mk(right));
+  graph.segments.splice(segIdx, 0, leftPiece, rightPiece);
   meta.segOrigPk.splice(segIdx, 0, null, null);
   return tIdx;
 }
@@ -611,6 +646,34 @@ export function attachVirtualFilletLeg(graph, meta, segIdx, tPt, o, nx, nz, t) {
  * @returns {{idxT1:number, idxT2:number}} anchor node indices of the arc ends
  */
 export function applyVirtualFillet(graph, meta, res, segIdxA, segIdxB) {
+  // Pre-check (before any mutation): when BOTH legs would anchor at existing
+  // nodes that are the same or share a position, the arc starts and ends at
+  // one encoded vertex ("joins vertex X to itself") — the virtual fillet
+  // cannot represent a corner where the two picked segments meet. Reject
+  // before mutating so callers see a clean error on an untouched graph.
+  const sidesDef = [
+    { segIdx: segIdxA, nx: res.n1x, nz: res.n1z },
+    { segIdx: segIdxB, nx: res.n2x, nz: res.n2z },
+  ];
+  const existingAnchor = sidesDef.map((s) => {
+    const seg = graph.segments[s.segIdx];
+    if (!seg) return null;
+    const idxs = _polyIdxs(seg);
+    for (let p = 0; p < idxs.length; p++) {
+      const n = graph.nodes[idxs[p]];
+      if (!n) continue;
+      if (Math.abs(_dotAlong(res.o, s.nx, s.nz, n) - res.t) < 1e-6) return idxs[p];
+    }
+    return null; // a fresh tangent node will be created for this leg
+  });
+  if (existingAnchor[0] != null && existingAnchor[1] != null) {
+    const na = graph.nodes[existingAnchor[0]];
+    const nb = graph.nodes[existingAnchor[1]];
+    if (existingAnchor[0] === existingAnchor[1] ||
+        (na && nb && Math.hypot(na.x - nb.x, na.z - nb.z) < 1e-4)) {
+      throw new Error('fillet rejected: both arc ends anchor at the same position — the two segments already meet there');
+    }
+  }
   // Higher segment index first: splitting splices the segment array and would
   // shift the other picked index.
   const sides = [
@@ -636,6 +699,20 @@ export function applyVirtualFillet(graph, meta, res, segIdxA, segIdxB) {
     arcIdxs.push(base + i - 1);
   }
   arcIdxs.push(anchors[segIdxB]);
+  // A fillet arc whose two ends anchor at the same node — or at two nodes that
+  // share a position — encodes as a polyline that starts and ends at ONE
+  // vertex: "segment joins vertex X to itself", which the save-time integrity
+  // check refuses. That happens when both legs anchor at the junction where
+  // the two picked segments meet; the virtual (additive) fillet cannot
+  // represent a corner — reject instead of writing poison.
+  {
+    const na = graph.nodes[arcIdxs[0]];
+    const nb = graph.nodes[arcIdxs[arcIdxs.length - 1]];
+    if (arcIdxs[0] === arcIdxs[arcIdxs.length - 1] ||
+        (na && nb && Math.hypot(na.x - nb.x, na.z - nb.z) < 1e-4)) {
+      throw new Error('fillet rejected: both arc ends anchor at the same position — the two segments already meet there');
+    }
+  }
   graph.segments.push({ aIdx: arcIdxs[0], bIdx: arcIdxs[arcIdxs.length - 1], nodeIdxs: arcIdxs, flags: 2, directed: false });
   meta.segOrigPk.push(null);
   return { idxT1: anchors[segIdxA], idxT2: anchors[segIdxB] };
@@ -723,16 +800,28 @@ export function repairGhostRefs(graph, meta) {
     const idxs = sg.nodeIdxs && sg.nodeIdxs.length ? sg.nodeIdxs : [sg.aIdx, sg.bIdx];
     if (!idxs.some((i) => ghosts.has(i) || !graph.nodes[i])) continue;
     const fixed = repairList(idxs);
-    if (fixed.length < 2) {
+    // Twin remapping can fold the polyline: two consecutive ghosts remapped
+    // onto the same live twin produce consecutive duplicates, and a segment
+    // whose ends remap to one node encodes as a self-loop ("joins vertex X to
+    // itself"). Collapse duplicates and drop fully-degenerate segments.
+    const dedup = [];
+    for (const ni of fixed) {
+      if (dedup.length && dedup[dedup.length - 1] === ni) continue;
+      dedup.push(ni);
+    }
+    const n0 = graph.nodes[dedup[0]];
+    const n1 = graph.nodes[dedup[dedup.length - 1]];
+    const endsColocated = dedup.length >= 2 && n0 && n1 && Math.hypot(n0.x - n1.x, n0.z - n1.z) < 1e-4 && dedup.length === 2;
+    if (dedup.length < 2 || endsColocated) {
       graph.segments.splice(s, 1);
       if (meta.segOrigPk && s < meta.segOrigPk.length) meta.segOrigPk.splice(s, 1);
       out.dropped++;
       out.warnings.push('ground_painter_fillet_dropped_leg');
       continue;
     }
-    sg.nodeIdxs = fixed;
-    sg.aIdx = fixed[0];
-    sg.bIdx = fixed[fixed.length - 1];
+    sg.nodeIdxs = dedup;
+    sg.aIdx = dedup[0];
+    sg.bIdx = dedup[dedup.length - 1];
   }
 
   for (let i = (graph.stands || []).length - 1; i >= 0; i--) {
@@ -754,20 +843,81 @@ export function repairGhostRefs(graph, meta) {
 
   for (let i = (graph.runways || []).length - 1; i >= 0; i--) {
     const rw = graph.runways[i];
-    if (!rw || !isNew(meta.runwayOrigPk, i)) continue;
+    if (!rw) continue;
     const a = fix(rw.thAIdx);
     const b = fix(rw.thBIdx);
     if (a == null || b == null) {
+      // Unrepairable thresholds (the node was ghost-deleted and no live node
+      // sits at the same coordinate). Drop the runway AND its pavement strips
+      // AND the meta rows — mirroring the delete cascade — for NEW and
+      // SURVIVOR runways alike. A survivor left behind makes the writer emit
+      // named runway entries whose ThresholdPoints dangle: the game (and this
+      // editor's reader) then drop the runway silently, orphaning its strips
+      // and its physical-runway registry key.
+      const phys = String(rw.physicalName || '');
       graph.runways.splice(i, 1);
-      for (const arr of [meta.runwayOrigPk, meta.runwayPavement, meta.runwayOrigInfo]) {
-        if (arr && i < arr.length) arr.splice(i, 1);
+      if (meta.runwayOrigPk && i < meta.runwayOrigPk.length) {
+        const pk = meta.runwayOrigPk[i];
+        if (pk != null && meta.deletedPks && !meta.deletedPks.includes(pk)) meta.deletedPks.push(pk);
+        meta.runwayOrigPk.splice(i, 1);
+      }
+      if (meta.runwayOrigInfo && i < meta.runwayOrigInfo.length) {
+        const info = meta.runwayOrigInfo[i];
+        if (info && Array.isArray(info.pks)) {
+          for (const pk of info.pks) {
+            if (pk != null && meta.deletedPks && !meta.deletedPks.includes(pk)) meta.deletedPks.push(pk);
+          }
+        }
+        meta.runwayOrigInfo.splice(i, 1);
+      }
+      if (meta.runwayPavement && i < meta.runwayPavement.length) meta.runwayPavement.splice(i, 1);
+      for (let si = (graph.segments || []).length - 1; si >= 0; si--) {
+        const sg = graph.segments[si];
+        if (!sg || sg.name !== phys) continue;
+        if (meta.segOrigPk && si < meta.segOrigPk.length) {
+          const pk = meta.segOrigPk[si];
+          if (pk != null && meta.deletedPks && !meta.deletedPks.includes(pk)) meta.deletedPks.push(pk);
+          meta.segOrigPk.splice(si, 1);
+        }
+        graph.segments.splice(si, 1);
       }
       out.dropped++;
       out.warnings.push('ground_painter_fillet_dropped_runway');
       continue;
     }
+    if (!isNew(meta.runwayOrigPk, i)) continue;
     rw.thAIdx = a;
     rw.thBIdx = b;
+  }
+
+  // Final sweep: drop any segment that would serialize as a degenerate edge —
+  // a self-loop (both ends the same node) or two consecutive vertices at the
+  // same position. These are always paint fragments (unnamed synthesized
+  // pieces whose geometry collapsed); the game's taxiway edge factory
+  // null-derefs on them, so they must never reach the .acl.
+  for (let s = (graph.segments || []).length - 1; s >= 0; s--) {
+    const sg = graph.segments[s];
+    if (!sg) continue;
+    const idxs = sg.nodeIdxs && sg.nodeIdxs.length ? sg.nodeIdxs : [sg.aIdx, sg.bIdx];
+    let bad = sg.aIdx != null && sg.aIdx === sg.bIdx;
+    if (!bad) {
+      let prev = null;
+      for (const ni of idxs) {
+        const n = graph.nodes[ni];
+        if (!n) { prev = null; continue; }
+        if (prev && Math.hypot(n.x - prev.x, n.z - prev.z) < 1e-4) { bad = true; break; }
+        prev = n;
+      }
+    }
+    if (bad) {
+      graph.segments.splice(s, 1);
+      if (meta.segOrigPk && s < meta.segOrigPk.length) {
+        const pk = meta.segOrigPk[s];
+        if (pk != null && meta.deletedPks && !meta.deletedPks.includes(pk)) meta.deletedPks.push(pk);
+        meta.segOrigPk.splice(s, 1);
+      }
+      out.dropped++;
+    }
   }
 
   return out;

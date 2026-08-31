@@ -13,7 +13,8 @@ npm run test:e2e      # 17 Playwright E2E tests (requires npm run build first, ~
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
-npm run test:fuzz     # all 20 production levels (see "Fuzz Save" section for options)
+npm run test:fuzz         # flight fuzz: all 20 production levels (see "Fuzz Save" section)
+npm run test:fuzz:ground  # ground fuzz: all 20 production levels (see "Fuzz Ground Save" section)
 
 node tests/integration/test_api_server.js      # MCP/API tests: 109 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -229,11 +230,30 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | KDCA_peakdeparture | ✓ | all state identical |
 | KDCA_peakarrival | ✓ | all state identical |
 
-### Fuzz Save — randomized edit storm + real SAVE (E2E, requires `E2E_GAME_ROOT` + `FUZZ_RUN=1`)
+### Fuzz Save — randomized flight edit storm + real SAVE (E2E, requires `E2E_GAME_ROOT` + `FUZZ_RUN=1`)
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
 | **F1** | `fuzz-save.spec.mjs` | All 20 production files (or `FUZZ_ACL_FILES` subset) | 20/20 pass, `.acl.bak` created per file, saved file reloads with matching flights |
+
+### Fuzz Ground Save — randomized Ground Painter edit storm + real SAVE (E2E, requires `E2E_GAME_ROOT` + `FUZZ_RUN=1`)
+
+| ID | Spec | Coverage | Expected |
+|----|------|----------|----------|
+| **F2** | `fuzz-ground-save.spec.mjs` | All 20 production files (or `FUZZ_ACL_FILES` subset) | 20/20 pass, `.acl.bak` created per file, saved scenery + flight reconciliation verified |
+
+Drives the Ground Painter the same way `F1` drives flights: opens each level, opens the Ground Painter, applies **50–200 randomized scenery ops per level** through the MCP Ground Painter API, then hits **SAVE through the real Ground Painter UI** (Save → backup confirm → success/warnings). The operation mix is percentage-budgeted: 5% runway (new/move/rename), 5% taxiway new, 25% taxiway mod (move whole/move endpoint/rename), 25% fillet (half connect a new taxiway onto a runway `Flags=4` strip then fillet that junction), 15% area (new/move/move-vertex), 5% stand (new/move/rename), 20% select+delete (single/multi/selectAll move + delete). Every coordinate is inside the live graph bounds (5% padding); runway names are suffix-deduped and always satisfy the save-time validation.
+
+**Post-save flight reconciliation** is verified against the file (not the store — demo-classified basenames like `ZSJN_leisure_1.acl` ship as prod but the editor filters the store to the CDT demo window): flights whose stand/runway was deleted are purged, renamed references are remapped, and the saved file must never keep an unresolved reference, add a flight, or drop one whose reference still resolves. Game-load gates are also checked: no bowtie area polygons (Triangulator), no duplicate runway `$k` ("found 0 named runways"), no pavement strips orphaned from a deleted runway.
+
+```bash
+$env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
+npm run test:fuzz:ground                                   # all 20 production levels
+$env:FUZZ_ACL_FILES = "ZSJN/ZSJN_leisure_1.acl"; npm run test:fuzz:ground # subset
+$env:FUZZ_SEED = "12345"; npm run test:fuzz:ground         # reproduce deterministically
+npm run test:fuzz:ground -- --replace                      # copy PASSED .acl + .acl.bak (+ .bg.json/.csv) into the real game install
+# E2E_KEEP_TMP=1 preserves tests/tmp-e2e for post-mortem (decode with tests/tmp-decode/decode.mjs)
+```
 
 The fuzz test drives the editor the same way an AI agent would: it opens each level in
 the real Electron app, then applies **50–200 randomized operations per level** through the

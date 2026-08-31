@@ -18,7 +18,7 @@ AC27Editor/
 │   ├── main.js              # Electron main process + 77 IPC handlers (incl. load-ground-painter-data / save-ground-painter-data for the Ground Painter)
 │   ├── preload.js           # contextBridge (window.electronAPI, ~95 methods; + loadGroundPainterData / saveGroundPainterData)
 │   ├── updater.js           # Auto-update: HEAD check (R2 ETag), MD5 comparison, exe download, batch script generator
-│   ├── api-server.js        # HTTP API + MCP server (port 31415, auto-starts with app) — + get_ground_painter_state / create_taxiway_lines / create_area / create_stands / delete_ground_objects / delete_all_ground_objects / undo_ground_painter
+│   ├── api-server.js        # HTTP API + MCP server (port 31415, auto-starts with app) — + get_ground_painter_state / create_taxiway_lines / create_area / create_stands / delete_ground_objects / undo_ground_painter
 │   ├── cloud-llm.js         # Multi-vendor cloud LLM chat (DeepSeek/Gemini/Claude/Codex)
 │   └── udp_listener.js      # UDP telemetry — 10 Hz binary aircraft state (127.0.0.1:20266) + commands (20267)
 ├── mcp/

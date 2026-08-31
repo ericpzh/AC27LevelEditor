@@ -389,7 +389,7 @@ function _cascadeOrphanEntries(pkEntries, siEntries, deadIds) {
 // pkDelete (gate-dropped entries) and deletedIds (ids of gate-dropped
 // entries). Returns true when it changed anything — the caller must then skip
 // the lossless no-op path so the repairs actually persist.
-function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings) {
+function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings, droppedRunwayPhys) {
   const deletedSet = new Set(pkDelete);
   // Deleted taxiway-node $id -> coordinate (the rewire source of truth).
   const deadNodeCoord = new Map();
@@ -424,7 +424,11 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings) {
     let entry = pkEntries[i];
     if (deletedSet.has(entry)) continue;
     const prefix = _entryTypePrefix(entry);
-    if (prefix !== 'taxiway-segment' && prefix !== 'stand' && prefix !== 'taxi-navigation') continue;
+    // `runway` is included so a survivor runway whose ThresholdPoints reference
+    // a deleted node is rewired to a live twin (or dropped) — left dangling it
+    // makes the game (and this editor's reader) drop the runway silently,
+    // orphaning its pavement strips.
+    if (prefix !== 'taxiway-segment' && prefix !== 'stand' && prefix !== 'taxi-navigation' && prefix !== 'runway') continue;
 
     // Dead node ids this entry still references (deduped, first-seen order).
     const deadRefs = [];
@@ -453,10 +457,13 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings) {
     //    refs remain. Refs that are bare properties (a stand's NosePosition /
     //    TailPosition) cannot be excised — _exciseIrefFromRcontent returns
     //    null for them and the entry falls through to the drop path.
+    //    Runways never excise: a ThresholdPoints list must keep both ends, an
+    //    one-threshold runway is invalid — an unrepairable threshold drops the
+    //    runway entry instead.
     let excised = 0;
     const totalRefs = (entry.match(/\$iref:\s*\d+/g) || []).length;
     const remaining = [];
-    if (unrepairable.length > 0 && totalRefs - unrepairable.length >= 2) {
+    if (unrepairable.length > 0 && prefix !== 'runway' && totalRefs - unrepairable.length >= 2) {
       for (const d of unrepairable) {
         const out = _exciseIrefFromRcontent(entry, d);
         if (out != null) { entry = out; excised++; } else remaining.push(d);
@@ -505,6 +512,23 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings) {
     }
     if (remaining.length > 0 || degenerate) {
       pkDelete.push(entry);
+      // A dropped runway takes its pavement strips with it (taxiway-segment
+      // entries named after the physical runway) — otherwise they survive as
+      // orphan paint no runway claims.
+      if (prefix === 'runway') {
+        const physM = entry.match(/"PhysicalRunwayStaticItem"[\s\S]{0,500}?"PhysicalName"\s*:\s*"([^"]+)"/) ||
+          entry.match(/"PhysicalName"\s*:\s*"([^"]+)"/);
+        const physName = physM ? physM[1] : null;
+        if (physName) {
+          if (droppedRunwayPhys) droppedRunwayPhys.add(physName);
+          for (const segEntry of pkEntries) {
+            if (deletedSet.has(segEntry) || pkDelete.includes(segEntry)) continue;
+            if (_entryTypePrefix(segEntry) !== 'taxiway-segment') continue;
+            const nm = segEntry.match(/"Name"\s*:\s*"([^"]*)"/);
+            if (nm && nm[1] === physName) pkDelete.push(segEntry);
+          }
+        }
+      }
       let idsToDead = [..._idsInBlock(entry)];
       // Preserve shared CrossTaxiwayNames declaration when dropping a declarer
       if (prefix === 'taxi-navigation' && entry.includes('"CrossTaxiwayNames": { "$id":')) {
@@ -1993,6 +2017,36 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
     return id != null && deletedAreaIds.has(id);
   });
 
+  // ── Referenced-node rescue (runway thresholds only) ──────────────
+  // meta.deletedPks can mark a taxiway-node that a SURVIVING runway's
+  // ThresholdPoints still references ($iref) — e.g. co-located sister entries
+  // and rename cascades can flag the exact node entry a runway points at.
+  // Deleting that node forces the survivor gate to drop the runway
+  // (unrepairable threshold) — silently losing the runway and orphaning its
+  // pavement strips. Only runway-referenced nodes are rescued here;
+  // taxiway/stand refs are handled by _gateSurvivorDanglingRefs (rewire/excise/drop).
+  {
+    const delSet = new Set(pkDelete);
+    for (let pass = 0; pass < 3; pass++) {
+      const referenced = new Set();
+      for (const e of pkEntries) {
+        if (delSet.has(e) || !e.includes('$iref')) continue;
+        if (_entryTypePrefix(e) !== 'runway') continue;
+        for (const m of e.matchAll(/\$iref:\s*(\d+)/g)) referenced.add(parseInt(m[1], 10));
+      }
+      let rescued = 0;
+      for (let i = pkDelete.length - 1; i >= 0; i--) {
+        const idm = pkDelete[i].match(/"\$id"\s*:\s*(\d+)/);
+        if (idm && referenced.has(parseInt(idm[1], 10))) {
+          delSet.delete(pkDelete[i]);
+          pkDelete.splice(i, 1);
+          rescued++;
+        }
+      }
+      if (rescued === 0) break;
+    }
+  }
+
   // Massive-deletion guard removed per user request (was: abort if
   // pkDelete > 40% of pkEntries to catch cross-level contamination).
 
@@ -2012,7 +2066,30 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // are copied verbatim, so without this the stale $iref reaches the .acl and
   // the game's TaxiwaySegment2DFactory null-derefs it on load. Runs before the
   // jetway cascade so a gate-dropped stand's jetways cascade too.
-  const refGateDirty = _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings);
+  const droppedRunwayPhys = new Set();
+  const refGateDirty = _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings, droppedRunwayPhys);
+  // A runway the gate dropped (unrepairable threshold) must vanish COMPLETELY:
+  // cancel its registry rename and orphan both its old and new registry keys —
+  // the name-based orphan scan above ran before the drop, so the keys would
+  // otherwise survive and resolve to zero named runways ("must have exactly
+  // two named runways, found 0").
+  if (droppedRunwayPhys.size > 0) {
+    for (const phys of droppedRunwayPhys) {
+      const newPk = 'physical-runway:' + phys;
+      for (const [oldPk, mappedPk] of [...physPatchMap]) {
+        if (mappedPk === newPk) {
+          physPatchMap.delete(oldPk);
+          orphanSiPks.add(oldPk);
+          // The graph-side strips may carry the POST-rename designation
+          // (synthesized fillet pieces created after the rename) — suppress
+          // both names so no orphan paint survives.
+          const mappedPhys = mappedPk.match(/^physical-runway:(.+)$/);
+          if (mappedPhys) droppedRunwayPhys.add(mappedPhys[1]);
+        }
+      }
+      orphanSiPks.add(newPk);
+    }
+  }
   // Run the cascade to fix point, dropping every jetway entry referencing a
   // now-dead id, and use the filtered arrays.
   const cascaded = _cascadeOrphanEntries(pkEntries, siEntries, deletedIds);
@@ -2321,7 +2398,15 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // After deleting one segment of a multi-segment taxiway the surviving siblings
   // keep a gap in their ordinal suffix; renumber each per-osm group contiguously
   // from 0 so Unity's contiguity invariant is preserved.
-  const pkOutFinal = _renumberTaxiwaySegmentOrdinals(pkOut.concat(synth.entries));
+  const pkOutSynth = pkOut.concat(synth.entries);
+  // Suppress synthesized pavement strips of runways the gate dropped — their
+  // graph segments outlive the runway, but painting them would orphan them
+  // (no runway claims the name any more).
+  const pkOutFinal = _renumberTaxiwaySegmentOrdinals(droppedRunwayPhys.size === 0 ? pkOutSynth : pkOutSynth.filter((e) => {
+    if (_entryTypePrefix(e) !== 'taxiway-segment') return true;
+    const nm = e.match(/"Name"\s*:\s*"([^"]*)"/);
+    return !(nm && droppedRunwayPhys.has(nm[1]));
+  }));
   // Rewrite the `Name` of taxiway-segment pavement strips that are named after a
   // renamed physical runway pair (e.g. "01/19" → "19R/01L") so the strips follow
   // the runway. Matched against the exact Name value only.
@@ -2358,6 +2443,19 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   }
   for (const [phys, id] of physEntries) {
     if (id == null) continue;
+    // A stale registry entry with the same key can survive from a DELETED
+    // runway when a new runway reuses its designation: the name-based orphan
+    // check sees the key as expected (the new runway claims it), but the old
+    // entry's $iref still points at the deleted runway's static item while the
+    // synthesized named runways reference the new inline item. The game's
+    // dictionary resolves the key to one of the two arbitrarily and reports
+    // "must have exactly two named runways, found 0" when it picks the stale
+    // one. Drop any same-key survivor so the synthesized entry is the sole
+    // key holder.
+    siOutFinal = siOutFinal.filter((e) => {
+      const m = e.match(/"\$k"\s*:\s*"physical-runway:([^"]+)"/);
+      return !(m && m[1] === phys);
+    });
     siOutFinal = siOutFinal.concat('{ "$k": "physical-runway:' + phys + '", "$v": $iref:' + id + ' }');
   }
 
