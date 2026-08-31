@@ -258,14 +258,27 @@ jobs:
 
       - name: Install SteamCMD
         run: |
-          sudo apt-get update && sudo apt-get install -y steamcmd || {
+          set -e
+          # Try apt install (needs i386 + 32-bit libs) — but fallback tarball is more reliable on GH runners
+          if ! command -v steamcmd >/dev/null 2>&1; then
+            echo "Installing steamcmd via tarball..."
             mkdir -p "$HOME/steamcmd"
             curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar zxvf - -C "$HOME/steamcmd"
+            chmod +x "$HOME/steamcmd/steamcmd.sh"
+            # Provide both names on PATH
+            ln -sf "$HOME/steamcmd/steamcmd.sh" "$HOME/steamcmd/steamcmd" 2>/dev/null || true
             echo "$HOME/steamcmd" >> "$GITHUB_PATH"
-          }
-          # Ensure steamcmd is on PATH for next step
-          if [ -x "$HOME/steamcmd/steamcmd.sh" ]; then echo "$HOME/steamcmd" >> "$GITHUB_PATH"; fi
-          which steamcmd || which steamcmd.sh || ls -R "$HOME/steamcmd" | head -n 20
+            # Also make available in current step
+            export PATH="$HOME/steamcmd:$PATH"
+          fi
+          # Also try apt for 32-bit deps (best-effort, don't fail job)
+          sudo dpkg --add-architecture i386 2>/dev/null || true
+          sudo apt-get update -qq 2>&1 | tail -n 5 || true
+          sudo apt-get install -y -qq lib32gcc-s1 lib32stdc++6 libc6-i386 libcurl4-gnutls-dev 2>&1 | tail -n 5 || true
+          # Verify
+          export PATH="$HOME/steamcmd:$PATH"
+          which steamcmd || which steamcmd.sh || (ls -lh "$HOME/steamcmd/" && echo "PATH=$PATH")
+          steamcmd +quit 2>&1 | head -n 5 || "$HOME/steamcmd/steamcmd.sh" +quit 2>&1 | head -n 5 || true
 
       - name: Generate Workshop VDF (content-only — title/description/preview handled separately)
         run: |
@@ -293,18 +306,27 @@ jobs:
         run: |
           set -e
           VDF="${{ github.workspace }}/.github/workflows/upload_mod.vdf"
+          # Resolve steamcmd binary (apt = steamcmd, tarball = steamcmd.sh)
+          STEAMCMD="steamcmd"
+          if ! command -v "$STEAMCMD" >/dev/null 2>&1; then
+            if command -v steamcmd.sh >/dev/null 2>&1; then STEAMCMD="steamcmd.sh"
+            elif [ -x "$HOME/steamcmd/steamcmd.sh" ]; then STEAMCMD="$HOME/steamcmd/steamcmd.sh"
+            elif [ -x "$HOME/steamcmd/steamcmd" ]; then STEAMCMD="$HOME/steamcmd/steamcmd"
+            fi
+          fi
+          echo "Using STEAMCMD=$STEAMCMD"
           # Prefer TOTP if available, fallback to raw password (configVdf method also works if STEAM_CONFIG_VDF set)
           if [ -n "${{ steps.steam-totp.outputs.code }}" ]; then
             echo "Logging in with TOTP..."
-            steamcmd +login "${{ secrets.STEAM_USERNAME }}" "${{ secrets.STEAM_PASSWORD }}" "${{ steps.steam-totp.outputs.code }}" +workshop_build_item "$VDF" +quit
+            "$STEAMCMD" +login "${{ secrets.STEAM_USERNAME }}" "${{ secrets.STEAM_PASSWORD }}" "${{ steps.steam-totp.outputs.code }}" +workshop_build_item "$VDF" +quit
           elif [ -n "${{ secrets.STEAM_CONFIG_VDF }}" ]; then
             echo "Logging in with configVdf..."
             mkdir -p "$HOME/Steam/config"
             echo "${{ secrets.STEAM_CONFIG_VDF }}" | base64 -d > "$HOME/Steam/config/config.vdf" 2>/dev/null || echo "${{ secrets.STEAM_CONFIG_VDF }}" > "$HOME/Steam/config/config.vdf"
-            steamcmd +login "${{ secrets.STEAM_USERNAME }}" +workshop_build_item "$VDF" +quit
+            "$STEAMCMD" +login "${{ secrets.STEAM_USERNAME }}" +workshop_build_item "$VDF" +quit
           else
             echo "Logging in with password only (will fail if MFA required)..."
-            steamcmd +login "${{ secrets.STEAM_USERNAME }}" "${{ secrets.STEAM_PASSWORD }}" +workshop_build_item "$VDF" +quit
+            "$STEAMCMD" +login "${{ secrets.STEAM_USERNAME }}" "${{ secrets.STEAM_PASSWORD }}" +workshop_build_item "$VDF" +quit
           fi
 
       - name: Push bilingual title/description (Steam language switcher)
