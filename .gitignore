@@ -10,6 +10,7 @@ dist-electron/
 out/
 release/
 build_*.txt
+.workshop-marker.json
 
 # Python (legacy)
 __pycache__/

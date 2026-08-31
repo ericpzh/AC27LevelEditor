@@ -34,11 +34,23 @@ jobs:
         run: npm run build:win:voice -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-      - name: Upload Windows artifacts (both variants → GitHub release)
+      - name: Build Windows (workshop — no auto-update, Steam handles updates)
+        run: npm run build:win:workshop -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Upload Windows artifacts (normal+voice → GitHub release + R2)
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Editor-Windows
-          path: release/*.exe
+          path: |
+            release/AC27Editor.exe
+            release/AC27EditorVoice.exe
+          if-no-files-found: error
+      - name: Upload Workshop artifact (workshop-only, no auto-update)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AC27-Editor-Workshop
+          path: release/AC27EditorWorkshop.exe
           if-no-files-found: error
       - name: Upload to R2 (auto-update — both variants, same bucket)
         # Both AC27Editor.exe and AC27EditorVoice.exe are auto-update sources.
@@ -154,6 +166,12 @@ jobs:
           name: AC27-Editor-Windows
           path: release-windows
 
+      - name: Download Workshop artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: AC27-Editor-Workshop
+          path: release-workshop
+
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
@@ -200,22 +218,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # --- STEAM WORKSHOP AUTO-DEPLOY (content + bilingual title/description) ---
-      # Workshop gets ONLY AC27Editor.exe (no voice) — GitHub Release keeps both.
-      - name: Prepare Workshop content (filter Voice.exe)
+      # Workshop gets AC27EditorWorkshop.exe (no auto-update) — GitHub Release keeps normal+voice (auto-update).
+      - name: Prepare Workshop content (workshop variant, no Voice)
         run: |
-          echo "=== Workshop content filter ==="
-          ls -lh release-windows/
+          echo "=== Workshop content (workshop build, no auto-update) ==="
+          ls -lh release-windows/ release-workshop/
           mkdir -p steam-workshop-content
-          # Only the non-voice exe goes to Steam Workshop (user request)
-          cp -v release-windows/AC27Editor.exe steam-workshop-content/
-          # Fail if Voice exe accidentally copied
+          # Workshop exe is AC27EditorWorkshop.exe with workshop.json marker (auto-update disabled)
+          # Rename to AC27Editor.exe for the Workshop content folder (user double-clicks AC27Editor.exe)
+          cp -v release-workshop/AC27EditorWorkshop.exe steam-workshop-content/AC27Editor.exe
+          # Safety: Voice must NOT be in Workshop
           if ls steam-workshop-content/*Voice* 1>/dev/null 2>&1; then
             echo "::error::Voice exe must NOT be in Workshop content"
             ls -lh steam-workshop-content/
             exit 1
           fi
           ls -lh steam-workshop-content/
-          echo "Workshop content ready (GitHub Release still has both exes)"
+          echo "Workshop content ready (workshop variant, auto-update disabled; GitHub still has normal+Voice)"
 
       - name: Validate Workshop content exists
         run: |

@@ -15,6 +15,7 @@
     "build": "vite build",
     "build:win": "vite build && node build.js --win",
     "build:win:voice": "vite build && node build.js --win --voice",
+    "build:win:workshop": "vite build && node build.js --win --workshop",
     "build:mac": "vite build && node build.js --mac",
     "build:linux": "vite build && node build.js --linux",
     "build:all": "vite build && node build.js --win --mac"

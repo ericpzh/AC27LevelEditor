@@ -26,6 +26,7 @@ const isWin = args.includes('--win') || args.includes('--windows');
 const isMac = args.includes('--mac') || args.includes('--darwin');
 const isLinux = args.includes('--linux');
 const isVoice = args.includes('--voice');
+const isWorkshop = args.includes('--workshop');
 const publish = args.includes('--publish') ? 'never' : null;   // CI uses --publish never
 
 const BASE = {
@@ -86,6 +87,16 @@ if (isVoice) {
   win.extraResources = [...win.extraResources, ...VOICE_RESOURCES];
   win.artifactName = 'AC27EditorVoice.${ext}';
   console.log('[build] voice variant — bundling STT models/sox/vosk');
+}
+
+if (isWorkshop) {
+  if (isVoice) fail('workshop + voice combo not supported — workshop is non-voice only (Voice stays GitHub/R2)');
+  // Marker file baked into resources — updater checks for it even after exe is moved
+  const markerPath = path.join(__dirname, '.workshop-marker.json');
+  fs.writeFileSync(markerPath, JSON.stringify({ workshop: true, disableAutoUpdate: true }), 'utf-8');
+  win.extraResources = [...(win.extraResources || []), { from: '.workshop-marker.json', to: 'workshop.json' }];
+  win.artifactName = 'AC27EditorWorkshop.${ext}';
+  console.log('[build] workshop variant — auto-update DISABLED (Steam Workshop handles updates)');
 }
 
 if (isWin || (!isWin && !isMac && !isLinux)) config.win = win;

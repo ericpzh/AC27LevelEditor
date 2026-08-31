@@ -65,6 +65,20 @@ const DRY_RUN = app.isPackaged
 // ─── Self-reference for spy-able calls ─────────────────────
 const api = module.exports;
 
+// ─── Workshop gate ────────────────────────────────────────
+
+/**
+ * Workshop build ships with resources/workshop.json marker (see build.js --workshop).
+ * It moves freely — marker travels inside the portable bundle, so path does NOT matter.
+ * @returns {boolean}
+ */
+function isWorkshopBuild() {
+  if (!app.isPackaged) return false;
+  if (typeof process.resourcesPath !== 'string') return false;
+  try { return fs.existsSync(path.join(process.resourcesPath, 'workshop.json')); }
+  catch { return false; }
+}
+
 // ─── Platform gate ─────────────────────────────────────────
 
 /**
@@ -73,9 +87,11 @@ const api = module.exports;
  * Dev mode (!app.isPackaged) also skips.
  * The Voice variant (AC27EditorVoice.exe) auto-updates too — it identifies
  * itself to the same route via a variant header (see variantHeader).
+ * Workshop variant (AC27EditorWorkshop.exe) NEVER auto-updates — Steam Workshop handles updates.
  * @returns {boolean}
  */
 function isUpdateSupported() {
+  if (isWorkshopBuild()) return false;
   return app.isPackaged
     && process.platform === 'win32'
     && !!process.env.PORTABLE_EXECUTABLE_FILE;
@@ -253,7 +269,13 @@ async function checkForUpdate() {
     '| isPackaged:', app.isPackaged,
     '| PORTABLE_EXECUTABLE_FILE:', process.env.PORTABLE_EXECUTABLE_FILE || '(unset)',
     '| variant:', variantName(),
+    '| workshop:', isWorkshopBuild(),
     '| server:', UPDATE_BASE);
+
+  if (isWorkshopBuild()) {
+    log('[Updater] workshop build — auto-update disabled by marker (Steam Workshop handles updates) — skipping');
+    return { hasUpdate: false };
+  }
 
   if (process.platform !== 'win32') {
     log('[Updater] unsupported platform — skipping');
@@ -577,6 +599,7 @@ Object.assign(api, {
   // Public API
   isUpdateSupported,
   isVoiceBuild,
+  isWorkshopBuild,
   variantName,
   variantHeader,
   checkForUpdate,
