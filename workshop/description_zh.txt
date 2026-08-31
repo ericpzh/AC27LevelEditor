@@ -1,0 +1,36 @@
+Airport Control 27 修改器工具盒。
+
+源码请访问 [url=https://github.com]AC27LevelEditor GitHub[/url]。
+
+[h1]核心功能[/h1]
+[list]
+[*] [b]关卡编辑器：[/b] 完整编辑航班计划，天气，跑道。
+[*] [b]高级视图：[/b] 独立雷达屏幕和航班进程条。
+[*] [b]视觉模组：[/b] 轻松更换默认的加载界面视频。
+[*] [b]地图创建器：[/b] 机场地面地图的自定义编辑工具。
+[/list]
+
+[h1]如何启动编辑器[/h1]
+请按照以下步骤操作：
+[list]
+[*] 订阅后打开你的本地文件资源管理器，导航至你当前的 Steam 创意工坊文件夹：
+[code]<Your_Steam_Path>\SteamLibrary\steamapps\workshop\content\4004140\3793213548\[/code]
+[*] 双击 [b]AC27Editor.exe[/b]（或AC27EditorVoice.exe）即可启动该程序。
+[/list]
+
+[h1]用户指南与首次启动设置[/h1]
+[list]
+[*] [b]未签名可执行文件警告：[/b] 在你首次启动时，Windows Defender SmartScreen 可能会触发拦截通知。由于该二进制可执行文件未经过数字签名，这属于正常现象。请点击“更多信息”，然后选择 [b]仍要运行[/b] 来绕过拦截。
+[*] [b]选择游戏根目录：[/b] 应用程序加载并通过安全提示后，请选择你的主游戏安装路径。默认的 Steam 路径通常为：
+[code]...\SteamLibrary\steamapps\common\Airport Control 27[/code]
+[/list]
+
+[h1]紧急恢复游戏文件[/h1]
+如果在使用编辑器时发生运行错误，或者不小心损坏了关卡，你可以利用 Steam 来验证并修复你的游戏安装：
+[list]
+[*] 程序主界面点击“复原”按键，或手动删除你在本地文件中修改过的特定布局目录，例如：
+[code]...\Airport Control 27\Airports\ZSJN\Levels\*[/code]
+[*] 打开你的桌面 [b]Steam 库[/b]，右键点击 [b]Airport Control 27[/b]，然后打开 [b]属性[/b]。
+[*] 导航到 [b]已安装文件[/b] 子菜单选项。
+[*] 点击 [b]验证游戏文件的完整性[/b]。Steam 将自动重新下载原始的关卡文件。
+[/list]

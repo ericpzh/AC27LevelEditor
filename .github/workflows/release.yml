@@ -199,22 +199,63 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- STEAM WORKSHOP AUTO-DEPLOY ---
+      # --- STEAM WORKSHOP AUTO-DEPLOY (content + bilingual title/description) ---
+      # Workshop gets ONLY AC27Editor.exe (no voice) — GitHub Release keeps both.
+      - name: Prepare Workshop content (filter Voice.exe)
+        run: |
+          echo "=== Workshop content filter ==="
+          ls -lh release-windows/
+          mkdir -p steam-workshop-content
+          # Only the non-voice exe goes to Steam Workshop (user request)
+          cp -v release-windows/AC27Editor.exe steam-workshop-content/
+          # Fail if Voice exe accidentally copied
+          if ls steam-workshop-content/*Voice* 1>/dev/null 2>&1; then
+            echo "::error::Voice exe must NOT be in Workshop content"
+            ls -lh steam-workshop-content/
+            exit 1
+          fi
+          ls -lh steam-workshop-content/
+          echo "Workshop content ready (GitHub Release still has both exes)"
+
       - name: Validate Workshop content exists
         run: |
           echo "=== Workshop preflight ==="
-          ls -lh release-windows/ || (echo "::error::release-windows missing" && exit 1)
-          ls -lh release-plugin/ || echo "no plugin dll (optional)"
+          ls -lh steam-workshop-content/ || (echo "::error::steam-workshop-content missing" && exit 1)
           test -f icon.png || (echo "::error::icon.png missing at repo root" && exit 1)
+          # workshop static files — title constant AC27Editor, no generation
+          test -f workshop/title.txt || (echo "::error::workshop/title.txt missing" && exit 1)
+          test -f workshop/description_en.txt || (echo "::error::workshop/description_en.txt missing" && exit 1)
+          test -f workshop/description_zh.txt || (echo "::error::workshop/description_zh.txt missing" && exit 1)
+          grep -q "^AC27Editor$" workshop/title.txt || (echo "::error::workshop/title.txt must be exactly AC27Editor" && exit 1)
+          echo "title: $(cat workshop/title.txt)"
+          wc -c workshop/description_en.txt workshop/description_zh.txt
           echo "content ready"
 
-      - name: Generate Steam Workshop VDF (absolute paths for steamcmd)
+      - name: Generate Steam TOTP (for steamcmd login)
+        id: steam-totp
+        uses: CyberAndrii/steam-totp@v1
+        with:
+          shared_secret: ${{ secrets.STEAM_SHARED_SECRET }}
+
+      - name: Install SteamCMD
         run: |
-          WS_CONTENT="${{ github.workspace }}/release-windows"
+          sudo apt-get update && sudo apt-get install -y steamcmd || {
+            mkdir -p "$HOME/steamcmd"
+            curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar zxvf - -C "$HOME/steamcmd"
+            echo "$HOME/steamcmd" >> "$GITHUB_PATH"
+          }
+          # Ensure steamcmd is on PATH for next step
+          if [ -x "$HOME/steamcmd/steamcmd.sh" ]; then echo "$HOME/steamcmd" >> "$GITHUB_PATH"; fi
+          which steamcmd || which steamcmd.sh || ls -R "$HOME/steamcmd" | head -n 20
+
+      - name: Generate Workshop VDF (content-only — title/description handled via i18n step)
+        run: |
+          WS_CONTENT="${{ github.workspace }}/steam-workshop-content"
           WS_PREVIEW="${{ github.workspace }}/icon.png"
           WS_CHANGELOG="Release ${{ steps.version.outputs.version }} — automated Workshop update via GitHub Actions."
-          # steamcmd resolves contentfolder/previewfile relative to cwd (GITHUB_WORKSPACE)
-          # so we must use absolute paths. Overwrite the tracked template.
+          # NOTE: title/description intentionally OMITTED here — they are set per-language
+          # via the i18n step (ISteamUGC::SetItemUpdateLanguage). Omitting preserves
+          # existing localized values if i18n step is skipped. Preview/visibility kept.
           cat > "${{ github.workspace }}/.github/workflows/upload_mod.vdf" <<VDF
           "workshopitem"
           {
@@ -226,17 +267,37 @@ jobs:
               "changenote"      "$WS_CHANGELOG"
           }
           VDF
-          echo "--- Generated VDF ---"
+          echo "--- Generated VDF (content-only) ---"
           cat "${{ github.workspace }}/.github/workflows/upload_mod.vdf"
           test -d "$WS_CONTENT" || (echo "::error::contentfolder not found: $WS_CONTENT" && exit 1)
           test -f "$WS_PREVIEW" || (echo "::error::previewfile not found: $WS_PREVIEW" && exit 1)
           test -n "$(ls -A "$WS_CONTENT")" || (echo "::error::contentfolder empty" && exit 1)
 
-      - name: Publish to Steam Workshop
-        uses: game-ci/steam-deploy@v3
-        with:
-          username: ${{ secrets.STEAM_USERNAME }}
-          password: ${{ secrets.STEAM_PASSWORD }}
-          sharedSecret: ${{ secrets.STEAM_SHARED_SECRET }}
-          appId: 4004140
-          vdfPath: ./.github/workflows/upload_mod.vdf
+      - name: Publish Workshop content (steamcmd)
+        run: |
+          set -e
+          VDF="${{ github.workspace }}/.github/workflows/upload_mod.vdf"
+          # Prefer TOTP if available, fallback to raw password (configVdf method also works if STEAM_CONFIG_VDF set)
+          if [ -n "${{ steps.steam-totp.outputs.code }}" ]; then
+            echo "Logging in with TOTP..."
+            steamcmd +login "${{ secrets.STEAM_USERNAME }}" "${{ secrets.STEAM_PASSWORD }}" "${{ steps.steam-totp.outputs.code }}" +workshop_build_item "$VDF" +quit
+          elif [ -n "${{ secrets.STEAM_CONFIG_VDF }}" ]; then
+            echo "Logging in with configVdf..."
+            mkdir -p "$HOME/Steam/config"
+            echo "${{ secrets.STEAM_CONFIG_VDF }}" | base64 -d > "$HOME/Steam/config/config.vdf" 2>/dev/null || echo "${{ secrets.STEAM_CONFIG_VDF }}" > "$HOME/Steam/config/config.vdf"
+            steamcmd +login "${{ secrets.STEAM_USERNAME }}" +workshop_build_item "$VDF" +quit
+          else
+            echo "Logging in with password only (will fail if MFA required)..."
+            steamcmd +login "${{ secrets.STEAM_USERNAME }}" "${{ secrets.STEAM_PASSWORD }}" +workshop_build_item "$VDF" +quit
+          fi
+
+      - name: Push bilingual title/description (Steam language switcher)
+        env:
+          STEAM_PUBLISHER_KEY: ${{ secrets.STEAM_PUBLISHER_KEY }}
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+        run: |
+          # Title is constant AC27Editor (workshop/title.txt), descriptions are static files
+          # No generation — files are source of truth per user request.
+          # Uses ISteamUGC::SetItemUpdateLanguage equivalent via Web API (english/schinese).
+          # Skips gracefully if no publisher key is set (content upload already done).
+          node scripts/update-workshop-i18n.mjs || echo "::warning::i18n push failed — content was still uploaded, title/description unchanged"

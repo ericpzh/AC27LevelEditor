@@ -3121,6 +3121,17 @@ ipcMain.handle('reset-all-levels', async () => {
       }
     }
     console.log(`[reset-all-levels] deleted ${totalDeleted} entries across ${airportsProcessed} airports`);
+    // Also clean up cache.json — it holds stale per-level data (STAR/SID/approach caches,
+    // ground anchors, file lists) that is now invalid after all .acl files were removed.
+    try {
+      const cachePath = _cachePath();
+      if (fs.existsSync(cachePath)) {
+        fs.rmSync(cachePath, { force: true });
+        console.log('[reset-all-levels] removed cache.json');
+      }
+    } catch (err) {
+      console.error('[reset-all-levels] failed to remove cache.json', err.message);
+    }
     return { success: true, deletedCount: totalDeleted, airports: airportsProcessed };
   } catch (err) {
     console.error('[reset-all-levels] error', err.message);

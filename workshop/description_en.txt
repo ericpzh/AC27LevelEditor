@@ -1,0 +1,35 @@
+A comprehensive desktop utility and level editor toolbox for [b]Airport Control 27[/b].
+For source code, please visit [url=https://github.com]AC27LevelEditor GitHub[/url].
+
+[h1]Core Features[/h1]
+[list]
+[*] [b]Level Editor:[/b] Fully edit flight schedules, weather, and runways.
+[*] [b]Advanced View:[/b] Standalone radar screen and flight progress strips.
+[*] [b]Visual Mods:[/b] Easily replace the default loading screen videos.
+[*] [b]Map Creator:[/b] Custom editing tools for airport ground maps.
+[/list]
+
+[h1]How to Launch the Editor[/h1]
+Please follow these steps:
+[list]
+[*] After subscribing, open your local File Explorer and navigate to your current Steam Workshop folder:
+[code]<Your_Steam_Path>\SteamLibrary\steamapps\workshop\content\4004140\3793213548[/code]
+[*] Double-click [b]AC27Editor.exe[/b] (or AC27EditorVoice.exe) to launch the program.
+[/list]
+
+[h1]User Guide & First-Time Setup[/h1]
+[list]
+[*] [b]Unsigned Executable Warning:[/b] Upon your first launch, Windows Defender SmartScreen may trigger a blocking notification. This is normal behavior since the binary executable is digitally unsigned. Click "More info" and then select [b]Run anyway[/b] to bypass the warning.
+[*] [b]Select Game Root Directory:[/b] Once the application loads and clears the security prompt, select your main game installation path. The default Steam path is typically:
+[code]...\SteamLibrary\steamapps\common\Airport Control 27[/code]
+[/list]
+
+[h1]Emergency Restoring Game Files[/h1]
+If a runtime error occurs while using the editor, or if levels are accidentally corrupted, you can use Steam to verify and repair your game installation:
+[list]
+[*] Click the "Restore" button on the main interface, or manually delete specific modified layout directories in your local files, such as:
+[code]...\Airport Control 27\Airports\ZSJN\Levels*[/code]
+[*] Open your desktop [b]Steam Library[/b], right-click [b]Airport Control 27[/b], and open [b]Properties[/b].
+[*] Navigate to the [b]Installed Files[/b] submenu.
+[*] Click [b]Verify integrity of game files[/b]. Steam will automatically re-download the original level files.
+[/list]
