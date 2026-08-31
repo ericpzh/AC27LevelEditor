@@ -319,8 +319,60 @@ jobs:
           fi
           echo "Logging in with configVdf..."
           mkdir -p "$HOME/Steam/config"
-          echo "${{ secrets.STEAM_CONFIG_VDF }}" | base64 -d > "$HOME/Steam/config/config.vdf" 2>/dev/null || echo "${{ secrets.STEAM_CONFIG_VDF }}" > "$HOME/Steam/config/config.vdf"
-          "$STEAMCMD" +login "${{ secrets.STEAM_USERNAME }}" +workshop_build_item "$VDF" +quit
+          CFG="$HOME/Steam/config/config.vdf"
+          if echo "${{ secrets.STEAM_CONFIG_VDF }}" | base64 -d > "$CFG" 2>/dev/null; then
+            echo "Secret decoded from base64 OK"
+          else
+            echo "::warning::STEAM_CONFIG_VDF is not valid base64 — wrote raw content instead"
+            echo "${{ secrets.STEAM_CONFIG_VDF }}" > "$CFG"
+          fi
+          # New steamcmd builds keep logs/config under ~/Steam, but the tarball
+          # root (~/steamcmd) is where some builds resolve the Steam path —
+          # seed both so either location finds the cached credentials.
+          mkdir -p "$HOME/steamcmd/config"
+          cp -f "$CFG" "$HOME/steamcmd/config/config.vdf"
+          echo "config.vdf: $(wc -c < "$CFG") bytes at $CFG"
+          # Preflight: ConnectCache holds the cached login token that makes
+          # passwordless +login work. An empty ConnectCache (or non-VDF content)
+          # means the secret was encoded before steamcmd ever saved a token —
+          # +login would hit the password prompt and die (no TTY in CI).
+          if ! grep -q '"ConnectCache"' "$CFG"; then
+            echo "::error::Decoded STEAM_CONFIG_VDF is not a Steam config.vdf (no ConnectCache key). Re-encode the config.vdf from your steamcmd folder as single-line base64 (no certutil headers, no line wrapping)."
+            exit 1
+          fi
+          CACHE_STATE=$(awk '/"ConnectCache"/{f=1;next} f{line=$0; gsub(/^[ \t]+|[ \t\r]+$/,"",line); if(line=="{"){o=1;next} if(o){ if(line=="}") print "EMPTY"; else print "POPULATED"; exit }}' "$CFG")
+          echo "ConnectCache: ${CACHE_STATE:-UNRECOGNIZED}"
+          if [ "$CACHE_STATE" != "POPULATED" ]; then
+            echo "::error::config.vdf has an EMPTY ConnectCache — no cached login token inside. steamcmd never saved one for this account. Fix locally: 'steamcmd +login <user>' (password + Steam Guard code if asked), then confirm 'steamcmd +login <user> +quit' logs in WITHOUT 'Cached credentials not found', and only then re-base64 config.vdf into STEAM_CONFIG_VDF."
+            exit 1
+          fi
+          echo "Accounts recorded in config.vdf:"
+          awk '/"Accounts"/{f=1;next} f{line=$0; gsub(/^[ \t]+|[ \t\r]+$/,"",line); if(!s){ if(line=="{"){s=1;d=1} next } if(line=="{"){d++;next} if(line=="}"){d--; if(d==0)exit; next} if(d==1 && line ~ /^"[^"]*"$/){gsub(/"/,"",line); print "  - " line}}' "$CFG"
+          if ! grep -qi "\"${{ secrets.STEAM_USERNAME }}\"" "$CFG"; then
+            echo "::warning::STEAM_USERNAME '${{ secrets.STEAM_USERNAME }}' not found in config.vdf — cached tokens are stored per account name; a mismatch will fail login."
+          fi
+          echo "Running steamcmd: +login (user: ${{ secrets.STEAM_USERNAME }}) +workshop_build_item $(basename "$VDF") +quit"
+          OUT="$RUNNER_TEMP/steamcmd_publish.log"
+          set +e
+          "$STEAMCMD" +login "${{ secrets.STEAM_USERNAME }}" +workshop_build_item "$VDF" +quit 2>&1 | tee "$OUT"
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "steamcmd exit code: $RC"
+          # steamcmd sometimes exits 0 on failure, so also classify its output.
+          if grep -qi "successfully sent workshop item update" "$OUT"; then
+            echo "::notice::Workshop item update CONFIRMED by steamcmd output."
+          elif grep -q "Invalid Password" "$OUT"; then
+            echo "::error::Invalid Password — the cached token is stale/revoked. Locally: 'steamcmd +login <user>' (password + Steam Guard), verify passwordless 'steamcmd +login <user> +quit', then re-encode config.vdf into STEAM_CONFIG_VDF."
+            exit 1
+          elif grep -q "Cached credentials not found" "$OUT"; then
+            echo "::error::No cached token in the decoded config.vdf (empty ConnectCache). Re-encode a config.vdf from a steamcmd install where passwordless +login works."
+            exit 1
+          elif [ "$RC" -ne 0 ]; then
+            echo "::error::steamcmd failed (exit $RC) — full output above."
+          else
+            echo "::warning::steamcmd exited 0 but no success confirmation found in output — verify the workshop item manually."
+          fi
+          exit "$RC"
 
       - name: Push bilingual title/description (Steam language switcher)
         env:
