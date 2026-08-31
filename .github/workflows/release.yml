@@ -250,12 +250,6 @@ jobs:
           wc -c workshop/description_en.txt workshop/description_zh.txt
           echo "content ready"
 
-      - name: Generate Steam TOTP (for steamcmd login)
-        id: steam-totp
-        uses: CyberAndrii/steam-totp@v1
-        with:
-          shared_secret: ${{ secrets.STEAM_SHARED_SECRET }}
-
       - name: Install SteamCMD
         run: |
           set -e
@@ -302,7 +296,7 @@ jobs:
           test -d "$WS_CONTENT" || (echo "::error::contentfolder not found: $WS_CONTENT" && exit 1)
           test -n "$(ls -A "$WS_CONTENT")" || (echo "::error::contentfolder empty" && exit 1)
 
-      - name: Publish Workshop content (steamcmd)
+      - name: Publish Workshop content (steamcmd — configVdf only, no TOTP)
         run: |
           set -e
           VDF="${{ github.workspace }}/.github/workflows/upload_mod.vdf"
@@ -315,41 +309,17 @@ jobs:
             fi
           fi
           echo "Using STEAMCMD=$STEAMCMD"
-          # Helper to run steamcmd and capture log
-          run_steam() { "$STEAMCMD" "$@" 2>&1 | tee /tmp/steam.log; return ${PIPESTATUS[0]}; }
-          # Prefer configVdf if available (most stable, no TOTP drift). Fallback to TOTP.
-          if [ -n "${{ secrets.STEAM_CONFIG_VDF }}" ]; then
-            echo "Logging in with configVdf (preferred)..."
-            mkdir -p "$HOME/Steam/config"
-            echo "${{ secrets.STEAM_CONFIG_VDF }}" | base64 -d > "$HOME/Steam/config/config.vdf" 2>/dev/null || echo "${{ secrets.STEAM_CONFIG_VDF }}" > "$HOME/Steam/config/config.vdf"
-            if run_steam +login "${{ secrets.STEAM_USERNAME }}" +workshop_build_item "$VDF" +quit; then
-              echo "Workshop upload via configVdf succeeded"
-              exit 0
-            fi
-            echo "::warning::configVdf login failed, falling back to TOTP"
-            cat /tmp/steam.log | tail -n 20
-          fi
-          if [ -n "${{ steps.steam-totp.outputs.code }}" ]; then
-            CODE="${{ steps.steam-totp.outputs.code }}"
-            echo "Logging in with TOTP (code ${#CODE} chars, generated at $(date -u +%Y-%m-%dT%H:%M:%SZ))..."
-            if run_steam +login "${{ secrets.STEAM_USERNAME }}" "${{ secrets.STEAM_PASSWORD }}" "$CODE" +workshop_build_item "$VDF" +quit; then
-              echo "Workshop upload via TOTP succeeded"
-              exit 0
-            fi
-            echo "::error::TOTP login failed — Two-factor code mismatch"
-            cat /tmp/steam.log | tail -n 30
-            echo "--- Diagnostics ---"
-            echo "TOTP code was ${#CODE} chars, generated via CyberAndrii/steam-totp"
-            echo "Common causes: STEAM_SHARED_SECRET is wrong (must be base64 shared_secret from maFile, not identity_secret), clock skew, or secret needs re-extraction via SDA/maFile"
-            echo "Fix: re-export shared_secret from Steam Desktop Authenticator maFile, or set STEAM_CONFIG_VDF (base64 config.vdf after manual steamcmd login) — the latter is more stable"
-            # Also try one more TOTP after 30s (codes rotate every 30s, previous may have expired)
-            echo "Retrying with fresh TOTP after 30s..."
-            sleep 30
-            # Re-generate is not possible in same job, so fail with actionable message
+          if [ -z "${{ secrets.STEAM_CONFIG_VDF }}" ]; then
+            echo "::error::STEAM_CONFIG_VDF is not set — Workshop upload requires it (TOTP removed after SDA migration). Generate it locally:"
+            echo "  steamcmd +login ${{ secrets.STEAM_USERNAME }} YOURPASS +quit   # enter Android code when prompted"
+            echo "  steamcmd +login ${{ secrets.STEAM_USERNAME }} +quit            # should not prompt"
+            echo "  cat config/config.vdf | base64 -w0   # paste as secret STEAM_CONFIG_VDF"
             exit 1
           fi
-          echo "Logging in with password only (will fail if MFA required)..."
-          "$STEAMCMD" +login "${{ secrets.STEAM_USERNAME }}" "${{ secrets.STEAM_PASSWORD }}" +workshop_build_item "$VDF" +quit
+          echo "Logging in with configVdf..."
+          mkdir -p "$HOME/Steam/config"
+          echo "${{ secrets.STEAM_CONFIG_VDF }}" | base64 -d > "$HOME/Steam/config/config.vdf" 2>/dev/null || echo "${{ secrets.STEAM_CONFIG_VDF }}" > "$HOME/Steam/config/config.vdf"
+          "$STEAMCMD" +login "${{ secrets.STEAM_USERNAME }}" +workshop_build_item "$VDF" +quit
 
       - name: Push bilingual title/description (Steam language switcher)
         env:
