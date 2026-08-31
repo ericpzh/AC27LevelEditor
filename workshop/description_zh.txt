@@ -1,4 +1,5 @@
 Airport Control 27 修改器工具盒。
+[b]本模组仅支持 Windows。[/b]如果你使用其他平台，请前往 [url=https://github.com/ericpzh/AC27LevelEditor/releases]GitHub Releases 页面[/url] 下载。
 
 源码请访问 [url=https://github.com]AC27LevelEditor GitHub[/url]。
 

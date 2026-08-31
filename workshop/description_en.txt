@@ -1,4 +1,5 @@
 A comprehensive desktop utility and level editor toolbox for [b]Airport Control 27[/b].
+[b]Note: This mod is for Windows only.[/b] If you are on another platform (macOS / Linux), please download the editor from [url=https://github.com/ericpzh/AC27LevelEditor/releases]GitHub Releases[/url].
 For source code, please visit [url=https://github.com]AC27LevelEditor GitHub[/url].
 
 [h1]Core Features[/h1]
