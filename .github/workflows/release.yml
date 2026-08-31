@@ -311,11 +311,11 @@ jobs:
           fi
           echo "Using STEAMCMD=$STEAMCMD"
           if [ -z "${{ secrets.STEAM_CONFIG_VDF }}" ]; then
-            echo "::error::STEAM_CONFIG_VDF is not set — Workshop upload requires it (TOTP removed after SDA migration). Generate it locally:"
-            echo "  steamcmd +login ${{ secrets.STEAM_USERNAME }} YOURPASS +quit   # enter Android code when prompted"
+            echo "::warning::STEAM_CONFIG_VDF not set — skipping Workshop upload (GitHub Release already done). To enable Workshop:"
+            echo "  steamcmd +login ${{ secrets.STEAM_USERNAME }} YOURPASS +quit   # enter Android code"
             echo "  steamcmd +login ${{ secrets.STEAM_USERNAME }} +quit            # should not prompt"
             echo "  cat config/config.vdf | base64 -w0   # paste as secret STEAM_CONFIG_VDF"
-            exit 1
+            exit 0
           fi
           echo "Logging in with configVdf..."
           mkdir -p "$HOME/Steam/config"
