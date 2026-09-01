@@ -14,19 +14,19 @@ The editor has two AI integration paths:
 ### Architecture
 
 ```
-Claude Code (LLM)                    AC27 Editor (Electron)
-┌──────────────┐   stdio    ┌──────────────┐   HTTP    ┌──────────────────┐
-│  MCP Client  │───────────→│ mcp/bridge.js│─────────→│ electron/        │
-│  (built-in)  │←───────────│ (child proc) │←─────────│ api-server.js    │
-└──────────────┘   JSON-RPC └──────────────┘  :31415  │ 7 tools, 12-pt   │
-                                                       │ validation       │
-                                                       └────────┬─────────┘
-                                                                │ IPC
-                                                       ┌────────▼─────────┐
-                                                       │  Renderer Store   │
-                                                       │  setLegacyState() │
-                                                       │  → UI updates     │
-                                                       └──────────────────┘
+Claude Code (LLM) AC27 Editor (Electron)
+┌──────────────┐ stdio ┌──────────────┐ HTTP ┌──────────────────┐
+│ MCP Client │───────────→│ mcp/bridge.js│─────────→│ electron/ │
+│ (built-in) │←───────────│ (child proc) │←─────────│ api-server.js │
+└──────────────┘ JSON-RPC └──────────────┘ :31415 │ 7 tools, 12-pt │
+ │ validation │
+ └────────┬─────────┘
+ │ IPC
+ ┌────────▼─────────┐
+ │ Renderer Store │
+ │ setLegacyState() │
+ │ → UI updates │
+ └──────────────────┘
 ```
 
 ## Components
@@ -58,12 +58,12 @@ Claude Code (LLM)                    AC27 Editor (Electron)
 ### `.mcp.json` — Project-level MCP config
 ```json
 {
-  "mcpServers": {
-    "ac27-editor": {
-      "command": "node",
-      "args": ["mcp/bridge.js"]
-    }
-  }
+ "mcpServers": {
+ "ac27-editor": {
+ "command": "node",
+ "args": ["mcp/bridge.js"]
+ }
+ }
 }
 ```
 
@@ -115,12 +115,12 @@ node tests/integration/test_api_e2e_examples.js
 User adds to `~/.claude/settings.json`:
 ```json
 {
-  "mcpServers": {
-    "ac27-editor": {
-      "command": "node",
-      "args": ["path/to/mcp/bridge.js"]
-    }
-  }
+ "mcpServers": {
+ "ac27-editor": {
+ "command": "node",
+ "args": ["path/to/mcp/bridge.js"]
+ }
+ }
 }
 ```
 
@@ -133,18 +133,18 @@ Requires Node.js. The bridge connects to `127.0.0.1:31415` (API server auto-star
 ### Architecture
 
 ```
-ChatPanel (React)                electron/main.js               Cloud APIs
-┌──────────────────┐   IPC    ┌─────────────────────┐   HTTP   ┌──────────────┐
-│  ChatPanel.jsx   │─────────→│ ipcMain.handle      │─────────→│ DeepSeek API │
-│  (floating panel)│←─────────│  'cloud-chat'       │←─────────│ Gemini API   │
-│                  │  events  │  ↓                  │  stream  │ Claude API   │
-│  Vendor setup    │←─────────│ cloudLLM.chat()     │←─────────│ Codex/OpenAI │
-│  Model selector  │  (tools, │  ├─ openaiChat()    │          └──────────────┘
-│  Thinking view   │  done)   │  └─ claudeChat()    │
-└──────────────────┘          │  ↓                  │
-                              │  onToolCall →       │
-                              │  handleMcpMessage() │────→ MCP tools (same 7)
-                              └─────────────────────┘
+ChatPanel (React) electron/main.js Cloud APIs
+┌──────────────────┐ IPC ┌─────────────────────┐ HTTP ┌──────────────┐
+│ ChatPanel.jsx │─────────→│ ipcMain.handle │─────────→│ DeepSeek API │
+│ (floating panel)│←─────────│ 'cloud-chat' │←─────────│ Gemini API │
+│ │ events │ ↓ │ stream │ Claude API │
+│ Vendor setup │←─────────│ cloudLLM.chat() │←─────────│ Codex/OpenAI │
+│ Model selector │ (tools, │ ├─ openaiChat() │ └──────────────┘
+│ Thinking view │ done) │ └─ claudeChat() │
+└──────────────────┘ │ ↓ │
+ │ onToolCall → │
+ │ handleMcpMessage() │────→ MCP tools (same 7)
+ └─────────────────────┘
 ```
 
 ### Key Files
@@ -182,11 +182,11 @@ Tool definitions are converted: `MCP_TOOLS → mcpToolsToOpenAITools()` (OpenAI 
 User API keys stored in `config.json` alongside other editor settings:
 ```json
 {
-  "deepseekKey": "sk-...",
-  "geminiKey": "...",
-  "claudeKey": "sk-ant-...",
-  "codexKey": "sk-...",
-  "selectedModel": "deepseek-v4-pro"
+ "deepseekKey": "sk-...",
+ "geminiKey": "...",
+ "claudeKey": "sk-ant-...",
+ "codexKey": "sk-...",
+ "selectedModel": "deepseek-v4-pro"
 }
 ```
 

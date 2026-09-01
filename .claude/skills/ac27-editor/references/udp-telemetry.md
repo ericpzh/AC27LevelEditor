@@ -15,20 +15,20 @@
 `electron/udp_listener.js` (271 lines) is the UDP telemetry engine that bridges the running game's live aircraft data into the Level Editor.
 
 ```
-┌──────────────────────┐    10 Hz UDP (20266)     ┌──────────────────────┐
-│  AC27 Game (Playtest) │ ──────────────────────→ │  electron/udp_       │
-│  AircraftUdpTelemetry │                          │  listener.js         │
-│  Service              │ ←────────────────────── │                      │
-└──────────────────────┘     UDP commands (20267)  │  aircraftMap         │
-                                                   │  trailSnapshots      │
-                                                   │  currentAirport      │
-                                                   └──────────┬───────────┘
-                                                              │ 200ms interval
-                                                   ┌──────────▼───────────┐
-                                                   │  ipcMain → all open  │
-                                                   │  map windows         │
-                                                   │  'udp-aircraft-state'│
-                                                   └──────────────────────┘
+┌──────────────────────┐ 10 Hz UDP port 20266 ┌──────────────────────┐
+│ AC27 Game (Playtest) │ ──────────────────────→ │ electron/udp_ │
+│ AircraftUdpTelemetry │ │ listener.js │
+│ Service │ ←────────────────────── │ │
+└──────────────────────┘ UDP commands port 20267 │ aircraftMap │
+ │ trailSnapshots │
+ │ currentAirport │
+ └──────────┬───────────┘
+ │ 200ms interval
+ ┌──────────▼───────────┐
+ │ ipcMain → all open │
+ │ map windows │
+ │ 'udp-aircraft-state'│
+ └──────────────────────┘
 ```
 
 ## Binary Protocol (Inbound Telemetry, Port 20266)
@@ -94,8 +94,8 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 - **`sendCommand(commandId, payloadBuf)`** → `Promise<{ success, error? }>`
 - 8-byte header: magic (u32 LE, `0x43544147`) + version (u16 LE, `1`) + commandId (u16 LE)
 - **Supported commands:**
-  - commandId=1 (`SelectAircraft`), 12-byte ASCII callSign payload (20B total datagram). A callsign starting with `!` is hijacked by the AC27Approach plugin (Mechanism A — see the `ac27-approach` skill): `!5:<callsign>` = clear_for_appr, no selection happens
-  - commandId=0x00E7 (**extended frame**, consumed by the AC27Approach plugin only): pipe-delimited ASCII payload, NUL-padded to **exactly 64 bytes** (72 B total datagram) — the plugin reads the datagram back from the game's receive buffer post-tick, so the fixed-length NUL-padded payload is a hard contract. Commands: `update_heading|CS|dx|dy[|rate]` (heading-only override, no speed; optional `rate` = smooth-turn speed in °/s of GAME time — the plugin rotates the nose at that rate, scaled with the game's speed multiplier (`timeScale`, this header) and frozen while paused; omitted/≤0 = instant snap), `clear_for_appr|CS[|kts][|appr][|native=0][|rate=N]` (the handoff turn is smooth too — `rate=N` is a KEYED field, a bare numeric would be misread as the kts approach speed; omitted = the plugin's standard-rate default 3°/s; the nose rotates onto the approach course instead of snapping when the transition lands), `altitude|CS|targetFt[|rateFpm]` (climb/descend-and-maintain: forces the aircraft's **Y only** toward `targetFt` feet — ft = `position.y × 100/0.3048` ≈ ×328.084, 1 GU = 100 m, 15.24 GU = 5000 ft; optional UNKEYED `rateFpm` = ft/min of GAME time, omitted/≤0 = the plugin's 1000 default; targetFt ≤ 0/NaN rejected), `track|CS` (diagnostics toggle). Never route `!` frames through `select-aircraft-in-map` (selection side-effects)
+ - commandId=1 (`SelectAircraft`), 12-byte ASCII callSign payload (20B total datagram). A callsign starting with `!` is hijacked by the AC27Approach plugin (Mechanism A — see the `ac27-approach` skill): `!5:<callsign>` = clear_for_appr, no selection happens
+ - commandId=0x00E7 (**extended frame**, consumed by the AC27Approach plugin only): pipe-delimited ASCII payload, NUL-padded to **exactly 64 bytes** (72 B total datagram) — the plugin reads the datagram back from the game's receive buffer post-tick, so the fixed-length NUL-padded payload is a hard contract. Commands: `update_heading|CS|dx|dy[|rate]` (heading-only override, no speed; optional `rate` = smooth-turn speed in °/s of GAME time — the plugin rotates the nose at that rate, scaled with the game's speed multiplier (`timeScale`, this header) and frozen while paused; omitted/≤0 = instant snap), `clear_for_appr|CS[|kts][|appr][|native=0][|rate=N]` (the handoff turn is smooth too — `rate=N` is a KEYED field, a bare numeric would be misread as the kts approach speed; omitted = the plugin's standard-rate default 3°/s; the nose rotates onto the approach course instead of snapping when the transition lands), `altitude|CS|targetFt[|rateFpm]` (climb/descend-and-maintain: forces the aircraft's **Y only** toward `targetFt` feet — ft = `position.y × 100/0.3048` ≈ ×328.084, 1 GU = 100 m, 15.24 GU = 5000 ft; optional UNKEYED `rateFpm` = ft/min of GAME time, omitted/≤0 = the plugin's 1000 default; targetFt ≤ 0/NaN rejected), `track|CS` (diagnostics toggle). Never route `!` frames through `select-aircraft-in-map` (selection side-effects)
 - No response expected — effect is observed through the telemetry stream
 - Preload wraps this as `sendUdpCommand(commandId, callSign)` which base64-encodes a 12-byte callSign buffer
 - Preload `sendPatchCommand(patch)` → `send-patch-command` IPC handler → builds the 0x00E7 frame from `{ type, callSign, dx?, dy?, rate?, kts?, appr?, targetFt? }` (`rate` = smooth-turn °/s of game time on update_heading (5th positional field) and °/s on clear_for_appr (keyed `rate=N` — the plugin's cfa parser treats any bare numeric as the kts approach speed); on `altitude`, `rate` is an UNKEYED ft/min of GAME time and `targetFt` is the target in feet — the altitude parser has its own case, so the plain number is never misread) (types: `update_heading` | `update_position` legacy alias | `clear_for_appr` | `altitude`)

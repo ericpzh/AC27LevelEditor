@@ -10,7 +10,7 @@
 ## Running the App
 
 ```bash
-npm start          # Launch Electron in dev mode (Vite dev server + Electron)
+npm start # Launch Electron in dev mode (Vite dev server + Electron)
 ```
 
 ## Running Tests
@@ -18,8 +18,8 @@ npm start          # Launch Electron in dev mode (Vite dev server + Electron)
 ### Component tests (1200 tests, ~9s)
 
 ```bash
-npm test              # Run all Vitest component + store + utility + electron + MapWindow + updater tests
-npm run test:watch    # Watch mode — re-runs on file changes
+npm test # Run all Vitest component + store + utility + electron + MapWindow + updater tests
+npm run test:watch # Watch mode — re-runs on file changes
 
 # Run only updater tests
 npx vitest run tests/electron/updater.test.js
@@ -30,7 +30,7 @@ npx vitest run tests/electron/updater.test.js
 `vitest.config.js` runs coverage through the **v8** provider (`@vitest/coverage-v8` devDependency) scoped to the two trees that hold the real logic — `src/acl/**` and `src/components/EditorScreen/GroundPainter/**` — and **fails the run** below the thresholds (`statements 55 / branches 40 / functions 48 / lines 55`, a few points of slack under the measured 59.8/44.8/53.7/62.4 baseline). Screens and entry points are deliberately out of scope.
 
 ```bash
-npx vitest run --coverage                                              # full suite + coverage/ report + coverage-summary.json
+npx vitest run --coverage # full suite + coverage/ report + coverage-summary.json
 npx vitest run --coverage tests/components/EditorScreen/GroundPainter/ # Ground Painter only
 ```
 
@@ -39,7 +39,7 @@ npx vitest run --coverage tests/components/EditorScreen/GroundPainter/ # Ground 
 ### E2E tests
 
 ```bash
-npm run test:e2e      # Playwright + Electron full user-flow tests
+npm run test:e2e # Playwright + Electron full user-flow tests
 ```
 
 ### Fuzz save tests (E2E, gated on `FUZZ_RUN=1`)
@@ -51,12 +51,12 @@ other editor instance (port 31415).
 
 ```bash
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
-npm run test:fuzz                                   # flight fuzz: all 20 prod levels, 50–200 ops each
-npm run test:fuzz:ground                            # ground fuzz: all 20 prod levels, 50–200 scenery ops each (runway/taxiway/fillet/area/stand/select+delete)
-$env:FUZZ_ACL_FILES = "ZSJN/ZSJN_leisure_1.acl"; npm run test:fuzz   # subset (comma-separated)
-$env:FUZZ_SEED = "12345"; npm run test:fuzz         # reproduce a failure deterministically
-npm run test:fuzz -- --replace                      # copy PASSED levels' .acl + .acl.bak into the REAL game install (FUZZ_REPLACE=1 env works too)
-$env:E2E_KEEP_TMP = "1"; npm run test:fuzz:ground   # keep tests/tmp-e2e for post-mortem (decode with tests/tmp-decode/decode.mjs pattern)
+npm run test:fuzz # flight fuzz: all 20 prod levels, 50–200 ops each
+npm run test:fuzz:ground # ground fuzz: all 20 prod levels, 50–200 scenery ops each (runway/taxiway/fillet/area/stand/select+delete)
+$env:FUZZ_ACL_FILES = "ZSJN/ZSJN_leisure_1.acl"; npm run test:fuzz # subset (comma-separated)
+$env:FUZZ_SEED = "12345"; npm run test:fuzz # reproduce a failure deterministically
+npm run test:fuzz -- --replace # copy PASSED levels' .acl + .acl.bak into the REAL game install (FUZZ_REPLACE=1 env works too)
+$env:E2E_KEEP_TMP = "1"; npm run test:fuzz:ground # keep tests/tmp-e2e for post-mortem (decode with tests/tmp-decode/decode.mjs pattern)
 ```
 
 `test:fuzz` and `test:fuzz:ground` share `fuzz-cli.mjs` / `fuzz-ground-cli.mjs` wrappers — the `--replace` flag is consumed by the wrapper (Playwright itself rejects unknown flags) and forwards everything else to Playwright. Without `--replace` the real game files are never touched. `E2E_KEEP_TMP=1` preserves the Playwright sandbox (otherwise `global-teardown.mjs` deletes `tests/tmp-e2e`/`tmp-e2e-userdata`).
@@ -67,46 +67,46 @@ All accept `--help` / `-h` for usage. Temp files are written to `tests/integrati
 
 **Vitest-based fixture regression suites** (no game root needed, covered by `npm test`):
 ```bash
-npx vitest run tests/integration/save_gamecompat.test.js   # game-load invariants + _normalizeFlightsForGameCompat auto-repair (4 fuzz-discovered crash classes, ZSJN_leisure_1 fixture; see gamecompat-utils.cjs)
-npx vitest run tests/integration/id_renumber.test.js       # strictly ascending $id ordering + $iref remap (id_renumber.js, ZSJN_peakdeparture jetway:02 crash pattern)
+npx vitest run tests/integration/save_gamecompat.test.js # game-load invariants + _normalizeFlightsForGameCompat auto-repair (4 fuzz-discovered crash classes, ZSJN_leisure_1 fixture; see gamecompat-utils.cjs)
+npx vitest run tests/integration/id_renumber.test.js # strictly ascending $id ordering + $iref remap (id_renumber.js, ZSJN_peakdeparture jetway:02 crash pattern)
 npx vitest run tests/integration/scenery_roundtrip.test.js # Ground Painter §7.1 no-touch invariant: buildSceneryGraph→patchSceneryBlob(no edits) is byte-identical + re-parses equal; shared-node move / add / delete paths
 npx vitest run tests/integration/scenery_physical_runway_cleanup.test.js # Ground Painter runway delete/rename consistency: checkpoint-frame physical-runway RuntimeEntities reconciliation (Unity "PhysicalRunway static item" InvalidOperationException) + _remapRunwayNameFields cascade (Unity "Dynamics.RestoreRuntimeData" NullReferenceException) + _remapTaxiwaySegmentName taxiway-strip coupling + runway↔pavement GEOMETRIC coupling (meta.runwayPavement population, move-reprojects-strip, add-persists-collinear-strip)
 npx vitest run tests/integration/scenery_delete_cascade.test.js # Ground Painter stand-deletion reference cascade: dropping a stand also drops its jetway STATIC item AND its jetway RUNTIME entity from the checkpoint frame (Unity "Jetway: static item 'jetway:NN' does not exist in CurrentLevel.StaticField.StaticItems" reference-integrity break — _reconcileJetwayFrames), keeps the taxi-navigation graph, and renumbers cleanly; also a no-op save self-heals an already-corrupt frame
-npx vitest run tests/components/EditorScreen/GroundPainter/   # Ground Painter pure-math + component suites: snap.js (angle-snap cascade), fillet-connected.test.js (truncation semantics), fillet-virtual.test.js (additive virtual fillet), metrics.test.js (length/path helpers), GroundPainter.test.jsx (mounted component: line tool, fillet tool, Cancel)
+npx vitest run tests/components/EditorScreen/GroundPainter/ # Ground Painter pure-math + component suites: snap.js (angle-snap cascade), fillet-connected.test.js (truncation semantics), fillet-virtual.test.js (additive virtual fillet), metrics.test.js (length/path helpers), GroundPainter.test.jsx (mounted component: line tool, fillet tool, Cancel)
 ```
 
 **Game-root suites** — read a real level through `tests/helpers/gameRoot.js` and **skip cleanly** when the game is not installed (override with `AC27_GAME_ROOT=/path/to/Airport Control 25 Playtest`):
 ```bash
-npx vitest run tests/integration/survivor_ref_gate.test.js    # Ground Painter §8.5/8.6: a deleted taxiway-node must not leave a survivor taxiway-segment/stand holding a dangling $iref (TaxiwaySegment2DFactory NullReferenceException) — rewire to a live coordinate twin / excise from $rcontent / drop the entry, + the last-resort validation pass, + self-heal of a file already corrupt on disk
-npx vitest run tests/integration/ghost_ref_invariant.test.js  # Ground Painter ghost-node invariant: a NEW entity referencing a node that will not be written would serialize "$iref:null" and abort the save — repairGhostRefs re-points it onto a live co-located twin or drops it; survivor entities are never touched
+npx vitest run tests/integration/survivor_ref_gate.test.js # Ground Painter §8.5/8.6: a deleted taxiway-node must not leave a survivor taxiway-segment/stand holding a dangling $iref (TaxiwaySegment2DFactory NullReferenceException) — rewire to a live coordinate twin / excise from $rcontent / drop the entry, + the last-resort validation pass, + self-heal of a file already corrupt on disk
+npx vitest run tests/integration/ghost_ref_invariant.test.js # Ground Painter ghost-node invariant: a NEW entity referencing a node that will not be written would serialize "$iref:null" and abort the save — repairGhostRefs re-points it onto a live co-located twin or drops it; survivor entities are never touched
 ```
 
 **Dangling-`$iref` triage scripts** (Ground Painter / game-load crashes — read real `.acl` files directly):
 ```bash
-node tests/integration/scan_dangling_refs.cjs <level.acl> [...]   # every $iref whose $id does not exist, grouped by owning PK + which section of the level owns it
-node tests/integration/scan_dangling_refs.cjs --diff a.acl b.acl  # what one save changed
-node tests/integration/scan_taxiway_health.cjs <level.acl> [...]  # walks each taxiway-segment's Nodes list the way TaxiwaySegment2DFactory.CreateVisualPaths does: dangling ids, "$iref:null", refs to non-node objects, positionless nodes (the editor's own reader SKIPS non-numeric $irefs, so a level can look fine in the editor and still crash the game)
-node tests/integration/scan_level_health.cjs                      # per-level entity-count + dangling-count table for every ZSJN level (level dir is hard-coded to the Steam install)
+node tests/integration/scan_dangling_refs.cjs <level.acl> [...] # every $iref whose $id does not exist, grouped by owning PK + which section of the level owns it
+node tests/integration/scan_dangling_refs.cjs --diff a.acl b.acl # what one save changed
+node tests/integration/scan_taxiway_health.cjs <level.acl> [...] # walks each taxiway-segment's Nodes list the way TaxiwaySegment2DFactory.CreateVisualPaths does: dangling ids, "$iref:null", refs to non-node objects, positionless nodes (the editor's own reader SKIPS non-numeric $irefs, so a level can look fine in the editor and still crash the game)
+node tests/integration/scan_level_health.cjs # per-level entity-count + dangling-count table for every ZSJN level (level dir is hard-coded to the Steam install)
 ```
 
 New parser module tests (no game root needed):
 ```bash
-node tests/integration/test_tokenizer.js            # String-aware scanner (18 tests)
-node tests/integration/test_acl_json.js             # Pre-processor + serializer round-trips (25 tests)
-node tests/integration/test_acl_document.js         # Document model integration (13 tests)
-node tests/integration/test_sid_goaround.js         # SID + missed approach route parsers (17 tests)
-node tests/integration/test_taxiway.js              # Taxiway centerline parser (11 tests)
+node tests/integration/test_tokenizer.js # String-aware scanner (18 tests)
+node tests/integration/test_acl_json.js # Pre-processor + serializer round-trips (25 tests)
+node tests/integration/test_acl_document.js # Document model integration (13 tests)
+node tests/integration/test_sid_goaround.js # SID + missed approach route parsers (17 tests)
+node tests/integration/test_taxiway.js # Taxiway centerline parser (11 tests)
 ```
 
 UDP telemetry test (mock loopback server, requires port 20266 free):
 ```bash
-node tests/integration/test_udp_listener.js         # Binary protocol parsing + trail buffer (13 tests)
+node tests/integration/test_udp_listener.js # Binary protocol parsing + trail buffer (13 tests)
 ```
 
 MCP / API server tests (mock Electron window, no game root needed):
 ```bash
-node tests/integration/test_api_server.js           # API endpoints + MCP protocol + validation (109 tests)
-node tests/integration/test_api_e2e_examples.js     # Composition examples from MCP skill (44 tests)
+node tests/integration/test_api_server.js # API endpoints + MCP protocol + validation (109 tests)
+node tests/integration/test_api_e2e_examples.js # Composition examples from MCP skill (44 tests)
 ```
 
 Scan-all tests (need game root, default `../../../../` from integration dir):
@@ -133,14 +133,14 @@ node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_ti
 ### Debug data-analysis scripts (`tests/_debug/`, gitignored)
 
 ```bash
-node tests/_debug/extract_aircraft_times.js             # Decode all prod .acl files, extract per-aircraft
-                                                        # callsign + 4 times (runtime _departureTakeoffTime/
-                                                        # _arrivalInBlockTime from RuntimeEntities, scheduled
-                                                        # OffBlockTime/LandingTime from StaticItems) → aircraft_times_report.tsv
-                                                        # Flags: --airports=ZSJN,KJFK,KDCA --include-demo --include-test --out=<path>
-node tests/_debug/compute_taxi_constants.js             # Per-airport median/avg taxi durations from the TSV;
-                                                        # prints ready-to-paste DEPARTURE_TAXI_SECONDS /
-                                                        # ARRIVAL_TAXI_SECONDS blocks for src/utils/constants/timing.js
+node tests/_debug/extract_aircraft_times.js # Decode all prod .acl files, extract per-aircraft
+ # callsign + 4 times (runtime _departureTakeoffTime/
+ # _arrivalInBlockTime from RuntimeEntities, scheduled
+ # OffBlockTime/LandingTime from StaticItems) → aircraft_times_report.tsv
+ # Flags: --airports=ZSJN,KJFK,KDCA --include-demo --include-test --out=<path>
+node tests/_debug/compute_taxi_constants.js # Per-airport median/avg taxi durations from the TSV;
+ # prints ready-to-paste DEPARTURE_TAXI_SECONDS /
+ # ARRIVAL_TAXI_SECONDS blocks for src/utils/constants/timing.js
 ```
 
 Used to re-derive the per-airport taxi-time constants when new production saves become available (e.g. KDCA after playing through a level — its current saves are clean starts with no RuntimeEntities).
@@ -149,8 +149,8 @@ Used to re-derive the per-airport taxi-time constants when new production saves 
 
 ```bash
 # ALWAYS use build.js for local Windows builds — never npm run build:win directly
-node build.js        # Build Windows portable EXE → dist/AC27Editor.exe
-node set_icon.js     # Post-build: embed icon.ico into the EXE
+node build.js # Build Windows portable EXE → dist/AC27Editor.exe
+node set_icon.js # Post-build: embed icon.ico into the EXE
 ```
 
 ### Pre-build cleanup (Windows PowerShell)
@@ -176,14 +176,14 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 - **`resolveTargetExe()`** — resolves the exe to compare: `PORTABLE_EXECUTABLE_FILE` (packaged portable), `process.execPath` (packaged non-portable), `AC27_UPDATE_TARGET` (dev mode explicit path), or auto-discovered build artifact (`release/AC27Editor.exe`, `dist/AC27 Editor.exe`, etc.) in dev mode
 - **Dev mode gating** — `npm start` skips the check by default. Opt in with `AC27_UPDATE_DEV_CHECK=1` (auto-discover) or `AC27_UPDATE_TARGET=<path>` (explicit)
 - **`skip-update` IPC removed** — no more `skipped-update.json`. The "Later" button is ephemeral (next restart re-prompts)
-- **Voice build auto-updates through the shared `/editor` route** (2026-08-16) — `AC27EditorVoice.exe` is no longer skipped. `isVoiceBuild()` (resources/`voice-stt-vosk.js` present) now sends an **`X-AC27-Variant: voice` header** (`variantHeader()`/`variantName()`) on the SAME `/editor` URL as the normal build — the Worker picks the R2 objects per header, so the voice exe's MD5 is compared/verified/downloaded against its own `AC27EditorVoice.exe.md5` sidecar — never the normal build's objects. The check is gated inside `checkForUpdate()` and covers both the main-process push and the renderer fallback. Dev-mode detection of the voice build is impossible (`!app.isPackaged`), so to test the voice branch locally set `AC27_UPDATE_SERVER` to a TLS server that honors the header (the updater refuses plain http) or drive it from the packaged voice exe.
+- **Voice build auto-updates through the shared `/editor` route** — `AC27EditorVoice.exe` is no longer skipped. `isVoiceBuild()` (resources/`voice-stt-vosk.js` present) now sends an **`X-AC27-Variant: voice` header** (`variantHeader()`/`variantName()`) on the SAME `/editor` URL as the normal build — the Worker picks the R2 objects per header, so the voice exe's MD5 is compared/verified/downloaded against its own `AC27EditorVoice.exe.md5` sidecar — never the normal build's objects. The check is gated inside `checkForUpdate()` and covers both the main-process push and the renderer fallback. Dev-mode detection of the voice build is impossible (`!app.isPackaged`), so to test the voice branch locally set `AC27_UPDATE_SERVER` to a TLS server that honors the header (the updater refuses plain http) or drive it from the packaged voice exe.
 - **DRY_RUN defaults** differ by context: `false` for packaged (real install), `true` for dev (safe). Override with `AC27_UPDATE_DRY_RUN=0` / `=1`
 - **Renderer fallback** — `App.jsx` actively invokes `checkForUpdate()` as fallback if the main-process push arrives before the renderer is ready (race condition guarded by `useRef(false)`)
 
 ### Mock update server (local dev testing)
 
 ```bash
-node tests/update-mock-server.js   # Start mock update server on port 9999
+node tests/update-mock-server.js # Start mock update server on port 9999
 ```
 
 Then launch the app pointed at the mock:
@@ -191,7 +191,7 @@ Then launch the app pointed at the mock:
 # Dev mode: opt in and point at the mock
 set AC27_UPDATE_DEV_CHECK=1
 set AC27_UPDATE_SERVER=http://localhost:9999
-set AC27_UPDATE_DRY_RUN=1           # optional — skips actual .bat spawn
+set AC27_UPDATE_DRY_RUN=1 # optional — skips actual .bat spawn
 npm start
 ```
 

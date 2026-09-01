@@ -21,24 +21,24 @@ Control the AC27 Editor from Claude Code. Create, read, modify, and delete fligh
 **Dev setup** (`.mcp.json` at project root — auto-detected):
 ```json
 {
-  "mcpServers": {
-    "ac27-editor": {
-      "command": "node",
-      "args": ["mcp/bridge.js"]
-    }
-  }
+ "mcpServers": {
+ "ac27-editor": {
+ "command": "node",
+ "args": ["mcp/bridge.js"]
+ }
+ }
 }
 ```
 
 **Packaged app setup** (`.mcp.json` next to the `.exe`, with `mcp/bridge.js` in the same folder):
 ```json
 {
-  "mcpServers": {
-    "ac27-editor": {
-      "command": "node",
-      "args": ["./mcp/bridge.js"]
-    }
-  }
+ "mcpServers": {
+ "ac27-editor": {
+ "command": "node",
+ "args": ["./mcp/bridge.js"]
+ }
+ }
 }
 ```
 
@@ -210,14 +210,14 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 1. get_editor_status → confirm level loaded, note currentAirport
 2. get_airport_info → get constraint map (compat lists, flight numbers, registrations)
 3. Construct 10 flight objects (LLM internally):
-   Flight 1: { CallSign:"AAL1001", DepartureAirport:"", ArrivalAirport:"KJFK",
-     Stand:"G1", Runway:"04L", OffBlockTime:"10:00:00", TakeoffTime:"10:05:00",
-     LandingTime:"", InBlockTime:"", AirlineName:"AAL",
-     AircraftType:"A320", Airway:"", Registration:"N123AB",
-     Voice:"en-US-1", Language:"en" }
-   ... (10 flights, incrementing times, varying aircraft/reg from compat lists)
+ Flight 1: { CallSign:"AAL1001", DepartureAirport:"", ArrivalAirport:"KJFK",
+ Stand:"G1", Runway:"04L", OffBlockTime:"10:00:00", TakeoffTime:"10:05:00",
+ LandingTime:"", InBlockTime:"", AirlineName:"AAL",
+ AircraftType:"A320", Airway:"", Registration:"N123AB",
+ Voice:"en-US-1", Language:"en" }
+ ... (10 flights, incrementing times, varying aircraft/reg from compat lists)
 4. create_flights({flights: [f1, f2, ..., f10]})
-   → If 422: read error.details, fix, retry
+ → If 422: read error.details, fix, retry
 5. get_flights({airline:"AAL", type:"departure", limit:20}) → show user
 6. get_validation_issues → report issues
 7. Remind user: "10 flights created. Click Save when ready."
@@ -228,7 +228,7 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 1. get_editor_status
 2. get_airport_info → check runwayStarCompat["01"]
 3. modify_flights({match:{airline:"CCA"}, updates:{Runway:"01"}})
-   → server cascades Airway to first valid STAR for runway 01
+ → server cascades Airway to first valid STAR for runway 01
 4. get_flights({airline:"CCA", limit:200}) → verify
 5. Remind user to save
 ```
@@ -237,7 +237,7 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 ```
 1. get_editor_status
 2. get_flights({airline:"JBU", type:"arrival", timeBefore:"14:00"})
-   → show user, confirm
+ → show user, confirm
 3. delete_flights({match:{callsigns:[...]}})
 4. get_editor_status → confirm new count, remind to save
 ```
@@ -248,17 +248,17 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 ```
 1. get_editor_status → 确认已加载 level，currentAirport = "ZSJN"
 2. get_airport_info → 获取约束：
-   - airlineCode 包含 "CCA"
-   - flightNumbers["CCA"] = ["1501", "1502", ...]
-   - airlineAircraftCompat["CCA"] = ["A320", "B738", "B772"]
-   - configTimeRange = { start: "06:00", end: "22:00" }
+ - airlineCode 包含 "CCA"
+ - flightNumbers["CCA"] = ["1501", "1502", ...]
+ - airlineAircraftCompat["CCA"] = ["A320", "B738", "B772"]
+ - configTimeRange = { start: "06:00", end: "22:00" }
 3. 构造10个完整 flight 对象：
-   Flight 1: { CallSign:"CCA1501", DepartureAirport:"", ArrivalAirport:"ZSJN",
-     Stand:"G1", Runway:"01", OffBlockTime:"10:00:00", TakeoffTime:"10:05:00",
-     LandingTime:"", InBlockTime:"", AirlineName:"CCA",
-     AircraftType:"A320", Airway:"", Registration:"B-1234",
-     Voice:"zh-CN-1", Language:"zh" }
-   ... (LLM 生成10个)
+ Flight 1: { CallSign:"CCA1501", DepartureAirport:"", ArrivalAirport:"ZSJN",
+ Stand:"G1", Runway:"01", OffBlockTime:"10:00:00", TakeoffTime:"10:05:00",
+ LandingTime:"", InBlockTime:"", AirlineName:"CCA",
+ AircraftType:"A320", Airway:"", Registration:"B-1234",
+ Voice:"zh-CN-1", Language:"zh" }
+ ... (LLM 生成10个)
 4. create_flights({flights: [f1, f2, ..., f10]})
 5. get_flights({airline:"CCA", type:"departure", limit:20})
 6. get_validation_issues
@@ -325,7 +325,7 @@ First turn on any ground task: `get_editor_status → get_ground_painter_state`.
 - **Node dedup**: `create_taxiway_lines` reuses an existing node when a coordinate matches within 1e-6 (`_findNodeIndexByCoord`), preserving shared junctions; `create_stands`/`create_runways` create fresh nodes for their geometry (stands are free-placed, runway overhang is synthetic).
 - **Validation**: distinct-endpoint checks (`Segment needs distinct endpoints`), area ≥3 vertices, `areaType` 0|1|2, runway distinct endpoints, fillet straight-only + angle/parallel/radius guards, segment-index range checks, and `target` type checks all return `{success:false, error}` with `isError:true` (no raw throw).
 - **In-memory until Save**: all edits are in-memory until the painter's **Save** (confirm prompt with `.bak` checkbox) — or **Cancel** which discards. The painter renders as a **full-screen fixed overlay** (`z-index:9999`) that visually covers the editor; the MCP API is **not** gated — `create_flights`/`modify_flights` still run while the painter is open. A 0-runway graph cannot be saved (writer validates).
-- **Flight reconciliation (2026-09-01)**: after the scenery write, `save-ground-painter-data` compares the saved file's stands/runways against the pre-save snapshot, remaps renamed runway ends/stand identifiers (index-parallel `runwayOrigInfo`/`runwayOrigPk` + nose-position matching, existence-guarded), purges flights whose `Stand`/`Runway` no longer resolves, rebuilds flight sections via `generateFullAcl` + CSV sync, and returns `purgedFlights`/`refsRemapped` (the renderer's snapshot is refreshed from `readAclText` when flight sections were rebuilt).
+- **Flight reconciliation**: after the scenery write, `save-ground-painter-data` compares the saved file's stands/runways against the pre-save snapshot, remaps renamed runway ends/stand identifiers (index-parallel `runwayOrigInfo`/`runwayOrigPk` + nose-position matching, existence-guarded), purges flights whose `Stand`/`Runway` no longer resolves, rebuilds flight sections via `generateFullAcl` + CSV sync, and returns `purgedFlights`/`refsRemapped` (the renderer's snapshot is refreshed from `readAclText` when flight sections were rebuilt).
 - **Degenerate-edge guards**: node drags freeze when consecutive vertices would colocate; `attachVirtualFilletLeg`/`applyVirtualFillet` reject collapsed legs/arcs and same-anchor fillets before mutating; `create_areas` and area vertex drags reject bowtie polygons via `polygonIsSimple` (`src/acl/scenery_graph.js` + ESM mirror `polygon_simple.js`).
 - **Runway designation dedup**: `create_runways` suffix-deduplicates heading-derived names (`L/R` then `C`) so two runways never share a `$k: runway:<name>` key.
 - **Jetway integrity**: stand deletes via `delete_ground_objects` record PKs, so the save drops `jetway:*` static items and their checkpoint `jetway:*` runtime entities — no more `Jetway: static item 'jetway:NN' does not exist` at level init.
