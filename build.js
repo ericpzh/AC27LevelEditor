@@ -94,9 +94,29 @@ if (isWorkshop) {
   // Marker file baked into resources — updater checks for it even after exe is moved
   const markerPath = path.join(__dirname, '.workshop-marker.json');
   fs.writeFileSync(markerPath, JSON.stringify({ workshop: true, disableAutoUpdate: true }), 'utf-8');
-  win.extraResources = [...(win.extraResources || []), { from: '.workshop-marker.json', to: 'workshop.json' }];
+  const workshopResources = [{ from: '.workshop-marker.json', to: 'workshop.json' }];
+  // Optionally bundle the plugin DLL inside resources/ so the exe is self-
+  // contained even if the sibling copy in the Workshop folder is moved. The
+  // release workflow also copies the DLL as a sibling alongside the exe in
+  // steam-workshop-content/ — either location is accepted by
+  // resolveWorkshopBundledDllPath() (resources/AC27Approach.dll or
+  // <exe-dir>/AC27Approach.dll). CI builds plugin separately, so the artifact
+  // may not exist when the workshop exe is built — that's fine; the release
+  // job's sibling copy is the authoritative Workshop distribution.
+  const pluginRelCandidates = [
+    'mods/AC27Approach/bin/Release/net6.0/AC27Approach.dll',
+    'mods/AC27Approach/bin/Debug/net6.0/AC27Approach.dll',
+  ];
+  const bundledRel = pluginRelCandidates.find(rel => fs.existsSync(path.join(__dirname, rel)));
+  if (bundledRel) {
+    workshopResources.push({ from: bundledRel, to: 'AC27Approach.dll' });
+    console.log('[build] workshop variant — bundling', bundledRel, 'as resources/AC27Approach.dll');
+  } else {
+    console.log('[build] workshop variant — no plugin DLL found to bundle (release workflow will copy sibling AC27Approach.dll alongside exe)');
+  }
+  win.extraResources = [...(win.extraResources || []), ...workshopResources];
   win.artifactName = 'AC27EditorWorkshop.${ext}';
-  console.log('[build] workshop variant — auto-update DISABLED (Steam Workshop handles updates)');
+  console.log('[build] workshop variant — auto-update DISABLED (Steam Workshop handles updates), plugin via bundled/sibling DLL');
 }
 
 if (isWin || (!isWin && !isMac && !isLinux)) config.win = win;

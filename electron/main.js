@@ -2623,6 +2623,56 @@ ipcMain.handle('uninstall-bepinex', async () => {
   }
 });
 
+// Workshop: resolve the DLL that ships with the Workshop item itself.
+// The Workshop distribution contains AC27Approach.dll either (a) as a sibling
+// alongside AC27EditorWorkshop.exe in the Steam Workshop content folder
+// (.../workshop/content/4004140/3793213548/AC27Approach.dll — copied by the
+// release workflow), or (b) as an extraResource bundled inside resources/
+// (resources/AC27Approach.dll) when built via `node build.js --workshop`
+// with the plugin artifact present. Both locations are checked.
+//
+// <exe-dir> resolution — why this is fragile when the exe is moved:
+// - Portable builds (Workshop is portable) set PORTABLE_EXECUTABLE_FILE to the
+//   *real* exe location the user double-clicked (e.g. .../3793213548/AC27EditorWorkshop.exe).
+//   process.execPath and app.getPath('exe') can point to a temp unpack dir
+//   (electron-builder portable unpacks to %TEMP%). We therefore check ALL of
+//   them, in preference order: PORTABLE_EXECUTABLE_FILE → app.getPath('exe') →
+//   process.execPath. Any of those dirnames + AC27Approach.dll is tried.
+// - resources/ is checked first: if the DLL was bundled inside the exe at
+//   build time (build.js --workshop embeds it), moving the exe alone still
+//   works because the DLL is inside the exe. Without that bundle, moving the
+//   exe without its sibling DLL loses the source — we fall back to a manual
+//   file picker (download handler returns WORKSHOP_BUNDLED_MISSING → renderer
+//   opens load-approach-dll dialog).
+function resolveWorkshopBundledDllPath() {
+  if (!updater.isWorkshopBuild()) return null;
+  const candidates = [];
+  try {
+    if (typeof process.resourcesPath === 'string') {
+      candidates.push(path.join(process.resourcesPath, 'AC27Approach.dll'));
+    }
+  } catch (_) {}
+  // <exe-dir> candidates: the user may have moved/copied the exe. Portable
+  // remembers the launch location in PORTABLE_EXECUTABLE_FILE; otherwise
+  // process.execPath or app.getPath('exe') is the best guess.
+  const exeSet = new Set();
+  try { if (process.env.PORTABLE_EXECUTABLE_FILE) exeSet.add(process.env.PORTABLE_EXECUTABLE_FILE); } catch (_) {}
+  try {
+    if (typeof app !== 'undefined' && app && typeof app.getPath === 'function') {
+      const ap = app.getPath('exe');
+      if (ap) exeSet.add(ap);
+    }
+  } catch (_) {}
+  try { if (process.execPath) exeSet.add(process.execPath); } catch (_) {}
+  for (const exe of exeSet) {
+    try { if (exe) candidates.push(path.join(path.dirname(exe), 'AC27Approach.dll')); } catch (_) {}
+  }
+  for (const p of candidates) {
+    try { if (p && fs.existsSync(p)) return p; } catch (_) {}
+  }
+  return null;
+}
+
 // Command window / PTT gate: Debug Mode AND the AC27Approach plugin DLL
 // deployed under BepInEx/plugins AND (2026-08-15) the deployed DLL matching
 // the latest release. The remote DLL object's ETag is the build's MD5
@@ -2632,30 +2682,63 @@ ipcMain.handle('uninstall-bepinex', async () => {
 // ("unknown") — the renderer treats that as OK, so a working plugin is never
 // blocked just because the network is down. Checked once per fly-strip window
 // open.
+// Workshop variant: the "remote" is NOT R2 — it is the DLL that ships with
+// the Workshop item itself (resolveWorkshopBundledDllPath). Comparison is
+// local MD5 vs bundled MD5, never a network HEAD. A missing/outdated plugin
+// is NOT auto-copied — the UI shows the Install prompt and the Install button
+// (download-approach-dll → install-approach-dll) copies from the bundled file
+// on user click (manual fallback to file picker if bundled not found / moved
+// exe without sibling).
 ipcMain.handle('check-command-capability', async () => {
   const cr = _readCache();
   const gameRoot = cr?.data?.gameRoot;
   if (!gameRoot) return { bepInExInstalled: false, pluginInstalled: false, pluginUpToDate: null, error: 'NO_GAME_ROOT' };
 
   const bepInExInstalled = bepinex.checkStatus(gameRoot).installed;
-  const pluginPath = bepinex.approachPluginPath(gameRoot);
-  const pluginInstalled = !!pluginPath;
+  let pluginPath = bepinex.approachPluginPath(gameRoot);
+  let pluginInstalled = !!pluginPath;
 
   let pluginUpToDate = null; // null = can't verify → renderer treats as OK
   let pluginVersion = null;   // local MD5 hex
-  let pluginRemoteVersion = null; // remote MD5 hex (ETag)
+  let pluginRemoteVersion = null; // remote MD5 hex (ETag) or bundled MD5 for Workshop
   if (pluginInstalled) {
     try { pluginVersion = await updater.computeFileMd5(pluginPath); } catch (_) {}
   }
-  try {
-    // Short timeout (4s) — this gates UI, a slow/absent network must not
-    // stall the window decision for long.
-    const remote = await updater.headRemoteExeWithUrl(APPROACH_DLL_DOWNLOAD_URL, 4000);
-    pluginRemoteVersion = remote.etag || null;
-  } catch (err) {
-    console.error('[Capability] remote plugin MD5 check failed:', err.message);
+
+  // Workshop variant: compare against the DLL that ships WITH the Workshop item
+  // itself, never the network. The Workshop content folder (Steam) or the
+  // bundled extraResource (resources/AC27Approach.dll) is the source of truth,
+  // so Steam Workshop handles updates and no R2 HEAD is ever issued.
+  if (updater.isWorkshopBuild()) {
+    const bundledPath = resolveWorkshopBundledDllPath();
+    if (bundledPath) {
+      try { pluginRemoteVersion = await updater.computeFileMd5(bundledPath); } catch (_) {}
+      console.log('[Capability][Workshop] bundled DLL:', bundledPath, 'md5:', pluginRemoteVersion, 'installed:', pluginVersion || '(missing)');
+      if (pluginVersion && pluginRemoteVersion) {
+        pluginUpToDate = pluginVersion === pluginRemoteVersion;
+      } else if (!pluginInstalled) {
+        pluginUpToDate = false; // missing -> Install button will copy from bundled on click
+      } else {
+        pluginUpToDate = null; // can't compare
+      }
+    } else {
+      console.log('[Capability][Workshop] no bundled DLL found (expected sibling AC27Approach.dll or resources/AC27Approach.dll) — skipping update check');
+      // Without a bundled source we cannot verify; keep null so the UI does
+      // not nag. If the plugin is missing the Install prompt will still fire
+      // and the Install button will fall back to the manual file picker.
+      if (!pluginInstalled) pluginUpToDate = false;
+    }
+  } else {
+    try {
+      // Short timeout (4s) — this gates UI, a slow/absent network must not
+      // stall the window decision for long.
+      const remote = await updater.headRemoteExeWithUrl(APPROACH_DLL_DOWNLOAD_URL, 4000);
+      pluginRemoteVersion = remote.etag || null;
+    } catch (err) {
+      console.error('[Capability] remote plugin MD5 check failed:', err.message);
+    }
+    if (pluginVersion && pluginRemoteVersion) pluginUpToDate = pluginVersion === pluginRemoteVersion;
   }
-  if (pluginVersion && pluginRemoteVersion) pluginUpToDate = pluginVersion === pluginRemoteVersion;
 
   return { bepInExInstalled, pluginInstalled, pluginUpToDate, pluginVersion, pluginRemoteVersion };
 });
@@ -2797,7 +2880,33 @@ const APPROACH_DLL_DOWNLOAD_NAME = 'AC27Approach.dll';
 // (proxies the public R2 object with a Content-Disposition attachment header)
 // into a temp dir — mirror of the livery download. The renderer then calls
 // install-approach-dll, falling back to the file dialog on any failure.
+// Workshop variant: never hits the network — the DLL ships with the Workshop
+// item itself (sibling alongside the exe or resources/AC27Approach.dll). The
+// handler returns that bundled path directly so the overlay can install it
+// without a download; the install handler's cleanup guards prevent deleting the
+// Workshop folder (only ac27-approach- temp dirs are removed).
 ipcMain.handle('download-approach-dll', async (_event) => {
+  if (updater.isWorkshopBuild()) {
+    const bundled = resolveWorkshopBundledDllPath();
+    if (bundled && fs.existsSync(bundled)) {
+      try {
+        if (_event.sender && !_event.sender.isDestroyed()) {
+          _event.sender.send('approach-dll-download-progress', { percent: 100 });
+        }
+      } catch (_) {}
+      console.log('[ApproachDll][Workshop] using bundled DLL:', bundled);
+      return { success: true, filePath: bundled, bundled: true };
+    }
+    // Bundled DLL not found — most common when the user moved the exe alone
+    // without its sibling AC27Approach.dll and the exe was built before the
+    // plugin artifact existed (so no resources/ copy). Workshop never tries
+    // R2 — return failure so the renderer falls back to the manual file picker
+    // (load-approach-dll dialog), which is the same path normal builds use
+    // after a network failure.
+    console.log('[ApproachDll][Workshop] no bundled DLL found (moved exe without sibling? expected <exe-dir>/AC27Approach.dll or resources/AC27Approach.dll) — falling back to manual picker');
+    return { success: false, error: 'WORKSHOP_BUNDLED_MISSING' };
+  }
+
   const tmpDir = path.join(app.getPath('temp'), 'ac27-approach-' + Date.now());
   const dllPath = path.join(tmpDir, APPROACH_DLL_DOWNLOAD_NAME);
 

@@ -222,10 +222,25 @@ jobs:
       - name: Prepare Workshop content (workshop variant, no Voice)
         run: |
           echo "=== Workshop content (workshop build, no auto-update) ==="
-          ls -lh release-windows/ release-workshop/
+          ls -lh release-windows/ release-workshop/ release-plugin/
           mkdir -p steam-workshop-content
           # Workshop exe is AC27EditorWorkshop.exe with workshop.json marker (auto-update disabled) — keep workshop name
           cp -v release-workshop/AC27EditorWorkshop.exe steam-workshop-content/
+          # Workshop also ships the plugin DLL alongside the exe so the Workshop
+          # build can auto-install from local content instead of R2 (Steam
+          # Workshop handles updates; no network HEAD). Either a sibling file
+          # or the exe's bundled resources/AC27Approach.dll is accepted — we
+          # ship the sibling for visibility; the exe may also contain a bundled
+          # copy if the plugin artifact existed at workshop-build time.
+          if [ -f release-plugin/AC27Approach.dll ]; then
+            cp -v release-plugin/AC27Approach.dll steam-workshop-content/
+            echo "Workshop plugin DLL copied (auto-install source)"
+            ls -lh steam-workshop-content/AC27Approach.dll
+            sha256sum steam-workshop-content/AC27Approach.dll || certutil -hashfile steam-workshop-content/AC27Approach.dll SHA256 || true
+          else
+            echo "::warning::release-plugin/AC27Approach.dll not found — Workshop will have no bundled plugin (auto-install will try R2 fallback)"
+            ls -lh release-plugin/ || true
+          fi
           # Also ensure no stray rename exists
           rm -f steam-workshop-content/AC27Editor.exe 2>/dev/null || true
           # Safety: Voice must NOT be in Workshop
@@ -235,7 +250,7 @@ jobs:
             exit 1
           fi
           ls -lh steam-workshop-content/
-          echo "Workshop content ready (workshop variant, auto-update disabled; GitHub still has normal+Voice)"
+          echo "Workshop content ready (workshop exe + bundled plugin DLL; GitHub still has normal+Voice)"
 
       - name: Validate Workshop content exists
         run: |

@@ -2,13 +2,16 @@
 
 ## Table of Contents
 
-- [Directory Structure](#directory-structure)
-- [Coding Conventions](#coding-conventions)
-  - [Backend (Node.js / `electron/*.js` + `src/acl/*.js`)](#backend-nodejs--electronjs--srcacljs)
-  - [Frontend (React / `src/components/*.jsx` + `src/hooks/*.jsx`)](#frontend-react--srccomponentsjsx--srchooksjsx)
-  - [IPC Patterns](#ipc-patterns)
-  - [Test Conventions](#test-conventions)
-- [Three-Screen SPA](#three-screen-spa)
+- [AC27 Architecture \& Conventions](#ac27-architecture--conventions)
+  - [Table of Contents](#table-of-contents)
+  - [Directory Structure](#directory-structure)
+  - [Coding Conventions](#coding-conventions)
+    - [Backend (Node.js / `electron/*.js` + `src/acl/*.js`)](#backend-nodejs--electronjs--srcacljs)
+    - [Frontend (React / `src/components/*.jsx` + `src/hooks/*.jsx`)](#frontend-react--srccomponentsjsx--srchooksjsx)
+    - [Tooltip System (`useTooltip`)](#tooltip-system-usetooltip)
+    - [IPC Patterns](#ipc-patterns)
+    - [Test Conventions](#test-conventions)
+  - [Three-Screen SPA](#three-screen-spa)
 
 ## Directory Structure
 
@@ -351,7 +354,7 @@ Airports/ZSJN/Levels/       copy →  _tmp/golden/ZSJN/     copy →  _tmp/resul
 6. **Clean up** `_tmp/` after each file (removed entirely after run)
 7. **Write JSON report** → `tests/_reports_/save-integrity-<timestamp>.json` with per-file metrics and diffs
 
-- Supports `--prod-demo` flag to test only the 21 prod+demo files (18 prod + 3 demo; 13→18 prod with ZGSZ +5, 16→21 total — v1.3.4)
+- Supports `--prod-demo` flag to test only the 21 prod+demo files (18 prod + 3 demo; 13→18 prod with ZGSZ +5, 16→21 total)
 - Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored
 - Full test documentation: `tests/README.md` — test matrix, expected values, execution commands
 
