@@ -17,6 +17,7 @@ import { findSnap, worldSnapDist, dynamicSnapDist, dynamicAngleTolDeg, collectSn
 import { polygonIsSimple } from './polygon_simple.js';
 import { computeFillet, applyVirtualFillet, countIncidentAll, countIncidentByCoord, findNodeIndexByCoord, isStraightSegment, repairGhostRefs, ghostNodeIndices } from './fillet';
 import { segNodeIdxs, polylineLengthMeters, segmentLengthMeters, runwayLengthMeters, formatLengthMeters, buildTaxiPaths } from './metrics';
+import { isSegmentEligibleForRunwayAccess, getSegmentRunwayAccess, getRunwayPavementNodes } from './runwayAccess';
 // Keep the metrics helpers reachable from the component's import surface.
 export { polylineLengthMeters, segmentLengthMeters, runwayLengthMeters, formatLengthMeters, buildTaxiPaths };
 import { useTranslation } from '../../../hooks/useTranslation';
@@ -85,6 +86,17 @@ const TOOL_BOX_SELECT = 'boxSelect';
 // value the game's own runway pavement uses (ZSJN 01/19 strips are all Flags=4).
 const RUNWAY_PAVEMENT_FLAGS = 4;
 
+// Extract the OsmId (the first integer in `taxiway-segment:<osm>:<ord>`) from a
+// segment's original PK. Used to carry the parent strip's OsmId onto the pieces
+// produced by an auto-slice split, so a runway's type-4 pavement stays ONE
+// visual path (its pieces are re-emitted as new ordinals of the SAME OsmId
+// instead of being minted as fresh negative OsmIds, which fragments the path and
+// makes Unity reject it as "discontinuous").
+function osmFromSegPk(pk) {
+  if (!pk) return null;
+  const m = /^taxiway-segment:(-?\d+):\d+$/.exec(pk);
+  return m ? parseInt(m[1], 10) : null;
+}
 
 // While a text/edit field has focus (e.g. the floating runway end-name boxes),
 // keystrokes belong to the textbox — don't hijack Delete/Backspace/Escape/Ctrl+Z.
@@ -660,6 +672,111 @@ export default function GroundPainter({ vals }) {
     const s = useAppStore.getState();
     useAppStore.setState({ groundPainterHistory: s.groundPainterGraph, groundPainterGraph: { ...g, segments }, groundPainterHasEdited: true });
   }, []);
+
+  // ── Runway entrance/exit helpers ──
+  // Eligibility + connected-runway listing live in ./runwayAccess (pure, tested).
+  // A taxiway can configure a runway's entrance/exit ONLY for the runway(s) it is
+  // physically connected to (shares a node with the runway's pavement strip chain).
+  const toggleRunwayAccess = useCallback((segIdx, physIdx, dirName, kind) => {
+    const st = useAppStore.getState();
+    const g = st.groundPainterGraph;
+    const m = st.groundPainterMeta;
+    if (!g || !g.segments[segIdx]) return;
+    const seg = g.segments[segIdx];
+    const segName = seg.name || '';
+    if (!segName) { setGpError(t('ground_painter_runway_access_need_name') || '请先为滑行道命名'); return; }
+    const rw = g.runways[physIdx];
+    if (!rw) return;
+    const isEntrance = kind === 'entrance';
+    const list = isEntrance ? rw.entries : rw.exits;
+    const arr = list || [];
+    const existingIdx = arr.findIndex((e) => e.name === segName && e.runwayName === dirName);
+    const hasExisting = existingIdx >= 0;
+    const newGraph = structuredClone(g);
+    const newRw = newGraph.runways[physIdx];
+    if (!newRw.entries) newRw.entries = [];
+    if (!newRw.exits) newRw.exits = [];
+    newGraph.nodes = [...newGraph.nodes];
+    if (hasExisting) {
+      const removed = (isEntrance ? newRw.entries : newRw.exits).splice(existingIdx, 1)[0];
+      const holdIdx = removed && removed.holdingIdx;
+      if (holdIdx != null) {
+        let stillUsed = false;
+        for (const r of newGraph.runways) {
+          for (const e of r.entries || []) if (e.holdingIdx === holdIdx) stillUsed = true;
+          for (const e of r.exits || []) if (e.holdingIdx === holdIdx) stillUsed = true;
+        }
+        if (!stillUsed && newGraph.nodes[holdIdx]) {
+          newGraph.nodes[holdIdx] = { ...newGraph.nodes[holdIdx], type: 1, flags: 0 };
+        }
+      }
+    } else {
+      const segNodes = seg.nodeIdxs && seg.nodeIdxs.length ? seg.nodeIdxs : [seg.aIdx, seg.bIdx];
+      const thA = newGraph.nodes[newRw.thAIdx];
+      const thB = newGraph.nodes[newRw.thBIdx];
+      if (!thA || !thB) { setGpError('Runway thresholds missing'); return; }
+      const runwayLineDist = (nodeIdx) => {
+        const n = newGraph.nodes[nodeIdx];
+        if (!n) return Infinity;
+        const dx = thB.x - thA.x, dz = thB.z - thA.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const cross = Math.abs((n.x - thA.x) * -dz + (n.z - thA.z) * dx) / len;
+        return cross;
+      };
+      const sorted = [...segNodes].sort((a, b) => runwayLineDist(b) - runwayLineDist(a));
+      const holdingIdx = sorted[0];
+      let defineIdx = sorted.length > 1 ? sorted[1] : holdingIdx;
+      // If seg has many nodes, define as second farthest is okay; if only 2 nodes, define will be near
+      let lineOrExitIdx = null;
+      const pavSet = new Set(getRunwayPavementNodes(newGraph, m, physIdx));
+      let shared = null;
+      for (const ni of segNodes) if (pavSet.has(ni)) { shared = ni; break; }
+      if (shared != null) {
+        lineOrExitIdx = shared;
+      } else {
+        const nearestSegNodeIdx = sorted[sorted.length - 1];
+        const nearestSegPos = newGraph.nodes[nearestSegNodeIdx];
+        if (nearestSegPos) {
+          let best = null; let bestDist = Infinity;
+          for (const pIdx of pavSet) {
+            const p = newGraph.nodes[pIdx];
+            if (!p) continue;
+            const d = Math.hypot(p.x - nearestSegPos.x, p.z - nearestSegPos.z);
+            if (d < bestDist) { bestDist = d; best = pIdx; }
+          }
+          if (best != null) lineOrExitIdx = best;
+          else {
+            const dA = Math.hypot(thA.x - nearestSegPos.x, thA.z - nearestSegPos.z);
+            const dB = Math.hypot(thB.x - nearestSegPos.x, thB.z - nearestSegPos.z);
+            lineOrExitIdx = dA < dB ? newRw.thAIdx : newRw.thBIdx;
+          }
+        } else lineOrExitIdx = newRw.thAIdx;
+      }
+      if (holdingIdx == null || defineIdx == null || lineOrExitIdx == null) { setGpError('无法确定跑道入口/出口节点'); return; }
+      if (newGraph.nodes[holdingIdx]) {
+        newGraph.nodes[holdingIdx] = { ...newGraph.nodes[holdingIdx], type: isEntrance ? 3 : 4, flags: 0 };
+      }
+      if (isEntrance) {
+        newRw.entries.push({ name: segName, holdingIdx, lineUpIdx: lineOrExitIdx, defineIdx, runwayName: dirName });
+      } else {
+        const holdingPos = newGraph.nodes[holdingIdx];
+        let isLeft = false;
+        if (holdingPos && thA && thB) {
+          const dirVec = dirName === newRw.names[0] ? { x: thB.x - thA.x, z: thB.z - thA.z } : { x: thA.x - thB.x, z: thA.z - thB.z };
+          const len = Math.hypot(dirVec.x, dirVec.z) || 1;
+          const ux = dirVec.x / len, uz = dirVec.z / len;
+          const perpX = -uz, perpZ = ux;
+          const offX = holdingPos.x - thA.x, offZ = holdingPos.z - thA.z;
+          const dot = offX * perpX + offZ * perpZ;
+          isLeft = dot > 0;
+        }
+        newRw.exits.push({ name: segName, exitIdx: lineOrExitIdx, holdingIdx, defineIdx, isLeft, runwayName: dirName });
+      }
+    }
+    const prev = st.groundPainterGraph;
+    useAppStore.setState({ groundPainterHistory: structuredClone(prev), groundPainterMetaHistory: structuredClone(m), groundPainterGraph: newGraph, groundPainterHasEdited: true });
+    setGpError(null);
+  }, [t]);
 
   const handleStandHeadingSliderStart = useCallback(() => {
     headingPushRef.current = false;
@@ -1811,11 +1928,16 @@ export default function GroundPainter({ vals }) {
             // Remove original segment (mark deleted)
             const oldPk = newMeta.segOrigPk[segIdx];
             if (oldPk != null && !newMeta.deletedPks.includes(oldPk)) newMeta.deletedPks.push(oldPk);
+            // The split pieces are still part of the ORIGINAL taxiway visual path:
+            // they must be re-emitted under the parent segment's OsmId (as later
+            // ordinals) so the path stays continuous. A freshly-drawn branch (the
+            // newly committed segment below) is separate and gets a fresh OsmId.
+            const parentOsm = oldPk != null ? osmFromSegPk(oldPk) : (seg.parentOsm ?? null);
             segs.splice(segIdx, 1);
             newMeta.segOrigPk.splice(segIdx, 1);
             // Insert pieces as new segments
             for (const piece of pieces) {
-              segs.push({ aIdx: piece[0], bIdx: piece[piece.length - 1], nodeIdxs: piece, flags: seg.flags ?? 2, directed: seg.directed ?? false, name: seg.name });
+              segs.push({ aIdx: piece[0], bIdx: piece[piece.length - 1], nodeIdxs: piece, flags: seg.flags ?? 2, directed: seg.directed ?? false, name: seg.name, ...(parentOsm != null && { parentOsm }) });
               newMeta.segOrigPk.push(null);
             }
           }
@@ -2286,9 +2408,10 @@ export default function GroundPainter({ vals }) {
         if (prevPos < expanded.length - 1) { const tail = expanded.slice(prevPos, expanded.length); if (tail.length >= 2) pieces.push(tail); }
         const oldPk = newMeta.segOrigPk[segIdx];
         if (oldPk != null && !newMeta.deletedPks.includes(oldPk)) newMeta.deletedPks.push(oldPk);
+        const parentOsm = oldPk != null ? osmFromSegPk(oldPk) : (seg.parentOsm ?? null);
         segs.splice(segIdx, 1);
         newMeta.segOrigPk.splice(segIdx, 1);
-        for (const piece of pieces) { segs.push({ aIdx: piece[0], bIdx: piece[piece.length - 1], nodeIdxs: piece, flags: seg.flags ?? 2, directed: seg.directed ?? false, name: seg.name }); newMeta.segOrigPk.push(null); }
+        for (const piece of pieces) { segs.push({ aIdx: piece[0], bIdx: piece[piece.length - 1], nodeIdxs: piece, flags: seg.flags ?? 2, directed: seg.directed ?? false, name: seg.name, ...(parentOsm != null && { parentOsm }) }); newMeta.segOrigPk.push(null); }
       }
       for (let i = 0; i < clean.length - 1; i++) {
         const kA = coordKeyLocal(clean[i].x, clean[i].z), kB = coordKeyLocal(clean[i+1].x, clean[i+1].z);
@@ -2424,11 +2547,12 @@ export default function GroundPainter({ vals }) {
             const rightPoly2=[oNodeIdx, ...idxs.slice(sp.hit.edgeIdx+1)];
             const pk=mSplit.segOrigPk[sp.segIdx];
             if(pk!=null && !mSplit.deletedPks.includes(pk)) mSplit.deletedPks.push(pk);
+            const parentOsm=pk!=null?osmFromSegPk(pk):(seg.parentOsm??null);
             gSplit.segments.splice(sp.segIdx,1);
             mSplit.segOrigPk.splice(sp.segIdx,1);
             const flags=seg.flags??2, name=seg.name;
-            const leftSeg={aIdx:leftPoly2[0], bIdx:leftPoly2[leftPoly2.length-1], nodeIdxs:leftPoly2, flags, directed:false, ...(name?{name}:{})};
-            const rightSeg={aIdx:rightPoly2[0], bIdx:rightPoly2[rightPoly2.length-1], nodeIdxs:rightPoly2, flags, directed:false, ...(name?{name}:{})};
+            const leftSeg={aIdx:leftPoly2[0], bIdx:leftPoly2[leftPoly2.length-1], nodeIdxs:leftPoly2, flags, directed:false, ...(name?{name}:{}), ...(parentOsm!=null&&{parentOsm})};
+            const rightSeg={aIdx:rightPoly2[0], bIdx:rightPoly2[rightPoly2.length-1], nodeIdxs:rightPoly2, flags, directed:false, ...(name?{name}:{}), ...(parentOsm!=null&&{parentOsm})};
             gSplit.segments.splice(sp.segIdx,0, leftSeg, rightSeg);
             mSplit.segOrigPk.splice(sp.segIdx,0, null, null);
             // Update seg indices for picked segs that were after this split
@@ -2542,14 +2666,15 @@ export default function GroundPainter({ vals }) {
         // Remove original segment
         const pk = m.segOrigPk[sp.segIdx];
         if (pk != null && !m.deletedPks.includes(pk)) m.deletedPks.push(pk);
+        const parentOsm = pk != null ? osmFromSegPk(pk) : (seg.parentOsm ?? null);
         g.segments.splice(sp.segIdx, 1);
         m.segOrigPk.splice(sp.segIdx, 1);
         // Insert left and right as new segments (keep order: left then right, but inserted at same position)
         // To keep indices, insert left then right at original position
         const segFlags = seg.flags ?? 2;
         const segName = seg.name;
-        const leftSeg = { aIdx: leftNodes[0], bIdx: leftNodes[leftNodes.length-1], nodeIdxs: leftNodes, flags: segFlags, directed: false, ...(segName?{name:segName}:{}) };
-        const rightSeg = { aIdx: rightNodes[0], bIdx: rightNodes[rightNodes.length-1], nodeIdxs: rightNodes, flags: segFlags, directed: false, ...(segName?{name:segName}:{}) };
+        const leftSeg = { aIdx: leftNodes[0], bIdx: leftNodes[leftNodes.length-1], nodeIdxs: leftNodes, flags: segFlags, directed: false, ...(segName?{name:segName}:{}), ...(parentOsm!=null&&{parentOsm}) };
+        const rightSeg = { aIdx: rightNodes[0], bIdx: rightNodes[rightNodes.length-1], nodeIdxs: rightNodes, flags: segFlags, directed: false, ...(segName?{name:segName}:{}), ...(parentOsm!=null&&{parentOsm}) };
         g.segments.splice(sp.segIdx, 0, leftSeg, rightSeg);
         m.segOrigPk.splice(sp.segIdx, 0, null, null);
         // Adjust segIdxA/B for any picked indices that were after the split point
@@ -2672,7 +2797,7 @@ export default function GroundPainter({ vals }) {
     // For normal 2-point segments O is at endpoint → simple far->T.
     // For runway pavement (4-point, flags 4) where O is interior (threshold), we keep
     // the non-filleted side stub and truncate the filleted side at T.
-    const createTruncatedLeg = (segOrig, farIdx, tIdx) => {
+    const createTruncatedLeg = (segOrig, farIdx, tIdx, parentOsm) => {
       const flags = segOrig?.flags ?? 2;
       const name = segOrig?.name;
       const idxs = segOrig?.nodeIdxs && segOrig.nodeIdxs.length ? segOrig.nodeIdxs : null;
@@ -2690,26 +2815,26 @@ export default function GroundPainter({ vals }) {
           if (isFarAtEnd) {
             // Keep left stub [0..pos] (overhang to O) and create right truncated [T, ...pos+1..end]
             const leftIdxs = idxs.slice(0, pos + 1);
-            g.segments.push({ aIdx: leftIdxs[0], bIdx: leftIdxs[leftIdxs.length - 1], nodeIdxs: leftIdxs, flags, directed: false, ...(name ? { name } : {}) });
+            g.segments.push({ aIdx: leftIdxs[0], bIdx: leftIdxs[leftIdxs.length - 1], nodeIdxs: leftIdxs, flags, directed: false, ...(name ? { name } : {}), ...(parentOsm != null && { parentOsm }) });
             m.segOrigPk.push(null);
             const rightIdxs = [tIdx, ...idxs.slice(pos + 1)];
-            g.segments.push({ aIdx: rightIdxs[0], bIdx: rightIdxs[rightIdxs.length - 1], nodeIdxs: rightIdxs, flags, directed: false, ...(name ? { name } : {}) });
+            g.segments.push({ aIdx: rightIdxs[0], bIdx: rightIdxs[rightIdxs.length - 1], nodeIdxs: rightIdxs, flags, directed: false, ...(name ? { name } : {}), ...(parentOsm != null && { parentOsm }) });
             m.segOrigPk.push(null);
             return;
           } else if (isFarAtStart) {
             // Keep right stub [pos..end] and create left truncated [far..T]
             const rightIdxs = idxs.slice(pos);
-            g.segments.push({ aIdx: rightIdxs[0], bIdx: rightIdxs[rightIdxs.length - 1], nodeIdxs: rightIdxs, flags, directed: false, ...(name ? { name } : {}) });
+            g.segments.push({ aIdx: rightIdxs[0], bIdx: rightIdxs[rightIdxs.length - 1], nodeIdxs: rightIdxs, flags, directed: false, ...(name ? { name } : {}), ...(parentOsm != null && { parentOsm }) });
             m.segOrigPk.push(null);
             const leftIdxs = [...idxs.slice(0, pos), tIdx];
-            g.segments.push({ aIdx: leftIdxs[0], bIdx: leftIdxs[leftIdxs.length - 1], nodeIdxs: leftIdxs, flags, directed: false, ...(name ? { name } : {}) });
+            g.segments.push({ aIdx: leftIdxs[0], bIdx: leftIdxs[leftIdxs.length - 1], nodeIdxs: leftIdxs, flags, directed: false, ...(name ? { name } : {}), ...(parentOsm != null && { parentOsm }) });
             m.segOrigPk.push(null);
             return;
           }
         }
       }
       // Generic: simple far->T
-      g.segments.push({ aIdx: farIdx, bIdx: tIdx, nodeIdxs: [farIdx, tIdx], flags, directed: false, ...(name ? { name } : {}) });
+      g.segments.push({ aIdx: farIdx, bIdx: tIdx, nodeIdxs: [farIdx, tIdx], flags, directed: false, ...(name ? { name } : {}), ...(parentOsm != null && { parentOsm }) });
       m.segOrigPk.push(null);
     };
 
@@ -2722,11 +2847,13 @@ export default function GroundPainter({ vals }) {
       applyVirtualFillet(g, m, res, segIdxA, segIdxB);
     } else {
       // Create truncated legs for both picked segments
-      createTruncatedLeg(segA0, p1Idx, idxT1);
+      const parentOsmA = (m.segOrigPk[segIdxA] != null) ? osmFromSegPk(m.segOrigPk[segIdxA]) : (segA0?.parentOsm ?? null);
+      const parentOsmB = (m.segOrigPk[segIdxB] != null) ? osmFromSegPk(m.segOrigPk[segIdxB]) : (segB0?.parentOsm ?? null);
+      createTruncatedLeg(segA0, p1Idx, idxT1, parentOsmA);
       // For second leg, note direction: T2 -> P2 (still far->T but order reversed for consistency)
       // createTruncatedLeg expects far->T, but for B we have T2->P2 (T to far). Our helper creates far->T, which is same line reversed.
       // To keep direction consistent, call with far P2 and T2
-      createTruncatedLeg(segB0, p2Idx, idxT2);
+      createTruncatedLeg(segB0, p2Idx, idxT2, parentOsmB);
     }
 
     // For T (deg>2) keep the original O-T stubs as well so the 3rd arm stays connected to both filleted arms via O.
@@ -2746,7 +2873,7 @@ export default function GroundPainter({ vals }) {
           return (idxs[0] === oA && idxs[idxs.length-1] === idxT1) || (idxs[0] === idxT1 && idxs[idxs.length-1] === oA);
         });
         if (!existsOT1) {
-          g.segments.push({ aIdx: oA, bIdx: idxT1, nodeIdxs: [oA, idxT1], flags: segAFlags, directed: false, ...(segAName ? { name: segAName } : {}) });
+          g.segments.push({ aIdx: oA, bIdx: idxT1, nodeIdxs: [oA, idxT1], flags: segAFlags, directed: false, ...(segAName ? { name: segAName } : {}), ...(parentOsmA != null && { parentOsm: parentOsmA }) });
           m.segOrigPk.push(null);
         }
       }
@@ -2758,7 +2885,7 @@ export default function GroundPainter({ vals }) {
           return (idxs[0] === oB && idxs[idxs.length-1] === idxT2) || (idxs[0] === idxT2 && idxs[idxs.length-1] === oB);
         });
         if (!existsOT2) {
-          g.segments.push({ aIdx: oB, bIdx: idxT2, nodeIdxs: [oB, idxT2], flags: segBFlags, directed: false, ...(segBName ? { name: segBName } : {}) });
+          g.segments.push({ aIdx: oB, bIdx: idxT2, nodeIdxs: [oB, idxT2], flags: segBFlags, directed: false, ...(segBName ? { name: segBName } : {}), ...(parentOsmB != null && { parentOsm: parentOsmB }) });
           m.segOrigPk.push(null);
         }
       }
@@ -2855,7 +2982,7 @@ export default function GroundPainter({ vals }) {
       { x: overB.x, z: overB.z, type: 2, flags: 0 }];
     const segments = [...gg.segments,
       { aIdx: iA, bIdx: iB, nodeIdxs: [iOA, iA, iB, iOB], name: physicalName, flags: RUNWAY_PAVEMENT_FLAGS, directed: false }];
-    const runways = [...gg.runways, { thAIdx: iA, thBIdx: iB, names: [name1, name2], name: name1, physicalName, width: RUNWAY_WIDTH }];
+    const runways = [...gg.runways, { thAIdx: iA, thBIdx: iB, names: [name1, name2], name: name1, physicalName, width: RUNWAY_WIDTH, entries: [], exits: [] }];
     // Extend meta so the new nodes + strip are persisted and the strip couples
     // to the runway (parallel length checks need meta in lockstep).
     const newMeta = mm ? {
@@ -2865,6 +2992,7 @@ export default function GroundPainter({ vals }) {
       runwayOrigPk: [...mm.runwayOrigPk, null],
       runwayPavement: [...(mm.runwayPavement || []), [iOA, iA, iB, iOB]],
       runwayOrigInfo: [...(mm.runwayOrigInfo || []), { pks: [null, null], physicalName, names: [name1, name2], width: RUNWAY_WIDTH }],
+      runwayEntriesOrig: [...(mm.runwayEntriesOrig || []), { entries: [], exits: [] }],
     } : mm;
     commitGraph({ ...gg, nodes, segments, runways }, newMeta);
     setCommitting(null);
@@ -2896,6 +3024,30 @@ export default function GroundPainter({ vals }) {
     let segments = gg.segments;
     if (oldPhys && oldPhys !== physicalName) {
       segments = gg.segments.map((sg) => (sg.name === oldPhys ? { ...sg, name: physicalName } : sg));
+    }
+    // Keep Entries/Exits grouped by direction in sync: rename follows the end name.
+    const oldNames = Array.isArray(rw.names) ? rw.names : [rw.name || '', (rw.physicalName || '').split('/')[1] || ''];
+    let patchedEntries = runways[idx].entries;
+    let patchedExits = runways[idx].exits;
+    let entriesPatched = false; let exitsPatched = false;
+    if (Array.isArray(patchedEntries) && patchedEntries.length) {
+      const mapped = patchedEntries.map((en) => {
+        if (en.runwayName === oldNames[0] && oldNames[0] !== names[0]) return { ...en, runwayName: names[0] };
+        if (en.runwayName === oldNames[1] && oldNames[1] !== names[1]) return { ...en, runwayName: names[1] };
+        return en;
+      });
+      if (mapped.some((e, i) => e.runwayName !== patchedEntries[i].runwayName)) { patchedEntries = mapped; entriesPatched = true; }
+    }
+    if (Array.isArray(patchedExits) && patchedExits.length) {
+      const mapped = patchedExits.map((ex) => {
+        if (ex.runwayName === oldNames[0] && oldNames[0] !== names[0]) return { ...ex, runwayName: names[0] };
+        if (ex.runwayName === oldNames[1] && oldNames[1] !== names[1]) return { ...ex, runwayName: names[1] };
+        return ex;
+      });
+      if (mapped.some((e, i) => e.runwayName !== patchedExits[i].runwayName)) { patchedExits = mapped; exitsPatched = true; }
+    }
+    if (entriesPatched || exitsPatched) {
+      runways[idx] = { ...runways[idx], entries: patchedEntries, exits: patchedExits };
     }
     pushHist();
     useAppStore.setState({ groundPainterGraph: { ...gg, runways, segments }, groundPainterHasEdited: true });
@@ -3607,10 +3759,14 @@ export default function GroundPainter({ vals }) {
     const lPadX = lFont * 0.5;
     const scaleX = ctm ? Math.abs(ctm.a) : pxScale;
     const distBoxW = (lenText.length * lCharW + lPadX * 2) * scaleX;
-    const dispW = Math.max(distBoxW, 56); // small floor so the box stays typable
-    const rowH = 26;
+    const dispWBase = Math.max(distBoxW, 56);
+    const eligible = isSegmentEligibleForRunwayAccess(graph, meta, selected.idx);
+    const access = eligible ? getSegmentRunwayAccess(graph, meta, selected.idx) : [];
+    const needWide = eligible && access.length > 0;
+    const dispW = needWide ? Math.max(dispWBase, 260) : dispWBase;
+    const rowH = needWide ? 26 + (access.length * 22) + 6 : 26;
     let left = mid.x - dispW / 2;
-    let top = mid.y + 24; // below the length/distance box (which sits above the midpoint)
+    let top = mid.y + 24;
     if (left < 8) left = 8;
     if (left + dispW > rect.width - 8) left = rect.width - dispW - 8;
     if (top < 8) top = 8;
@@ -3631,6 +3787,28 @@ export default function GroundPainter({ vals }) {
           onMouseDown={(e) => e.stopPropagation()}
           style={{ width: '100%', boxSizing: 'border-box', background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '2px 6px', fontSize: 12, outline: 'none' }}
         />
+        {eligible && access.length > 0 && (
+          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4, borderTop: '1px solid #2d3748', paddingTop: 6 }}>
+            {!nameVal && (
+              <div style={{ color: '#8fa2c0', fontSize: 10, fontStyle: 'italic' }}>
+                {t('ground_painter_runway_access_need_name') || '请先为滑行道命名'}
+              </div>
+            )}
+            {access.map((d) => (
+              <div key={d.physName + ':' + d.dirName} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ color: '#ffd34d', fontSize: 11, fontWeight: 700, minWidth: 52 }}>RWY {d.dirName}:</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#e2e8f0', fontSize: 11, cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={!!d.entrance} onChange={() => toggleRunwayAccess(selected.idx, d.physIdx, d.dirName, 'entrance')} onClick={(e) => e.stopPropagation()} style={{ accentColor: '#3fdc6e' }} />
+                  {(t('ground_painter_runway_entrance') || 'entrance').toLowerCase()}
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#e2e8f0', fontSize: 11, cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={!!d.exit} onChange={() => toggleRunwayAccess(selected.idx, d.physIdx, d.dirName, 'exit')} onClick={(e) => e.stopPropagation()} style={{ accentColor: '#ff9f43' }} />
+                  {(t('ground_painter_runway_exit') || 'exit').toLowerCase()}
+                </label>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   })();

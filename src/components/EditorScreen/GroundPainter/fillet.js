@@ -14,6 +14,15 @@ function coordsEqual(a, b, eps = COORD_EPS) {
   return Math.abs(a.x - b.x) < eps && Math.abs(a.z - b.z) < eps;
 }
 
+// OsmId (first integer in `taxiway-segment:<osm>:<ord>`) from a segment PK. Split
+// pieces must keep the parent strip's OsmId so a runway's type-4 pavement stays
+// one continuous visual path (fresh negatives fragment it → "discontinuous").
+function osmFromSegPk(pk) {
+  if (!pk) return null;
+  const m = /^taxiway-segment:(-?\d+):\d+$/.exec(pk);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 /**
  * Find existing node index by coordinate (epsilon 1e-6). Returns index or -1.
  */
@@ -533,6 +542,9 @@ export function attachVirtualFilletLeg(graph, meta, segIdx, tPt, o, nx, nz, t) {
   const flags = seg.flags ?? 2;
   const name = seg.name;
   const directed = seg.directed ?? false;
+  const parentOsm = (meta.segOrigPk && meta.segOrigPk[segIdx]) != null
+    ? osmFromSegPk(meta.segOrigPk[segIdx])
+    : (seg.parentOsm ?? null);
   const mk = (poly) => {
     // A piece whose polyline contains two consecutive positions closer than the
     // write-time coordinate resolution collapses into ONE encoded vertex — the
@@ -547,7 +559,7 @@ export function attachVirtualFilletLeg(graph, meta, segIdx, tPt, o, nx, nz, t) {
       dedup.push(ni);
     }
     if (dedup.length < 2) return null;
-    return { aIdx: dedup[0], bIdx: dedup[dedup.length - 1], nodeIdxs: dedup, flags, directed, ...(name ? { name } : {}) };
+    return { aIdx: dedup[0], bIdx: dedup[dedup.length - 1], nodeIdxs: dedup, flags, directed, ...(name ? { name } : {}), ...(parentOsm != null && { parentOsm }) };
   };
   const ghostOrig = () => {
     const pk = meta.segOrigPk[segIdx];

@@ -224,6 +224,34 @@ function buildSceneryGraph(text) {
   // Ensure runwayOrigInfo exists even if no runways
   if (!meta.runwayOrigInfo) meta.runwayOrigInfo = [];
 
+  // ── runway entries / exits (per physical runway, aggregated from both directions) ──
+  // The game's runway+Entry / runway+Exit tables live inside each directional runway
+  // block (`runway:01` / `runway:19`). The graph collapses the pair to ONE physical
+  // runway, so we aggregate both directions' tables here. Each entry/exit keeps
+  // graph node indices for its Holding/Define/LineUp/Exit positions so the writer can
+  // patch them and the painter can toggle them per taxiway.
+  for (const rw of graph.runways) { rw.entries = []; rw.exits = []; }
+  // physName → graph index (reverse lookup for the collapse)
+  const _physToGraphIdx = new Map();
+  graph.runways.forEach((rw, idx) => _physToGraphIdx.set(rw.physicalName, idx));
+  for (const [physName, rec] of runwayByPhys) {
+    const gIdx = _physToGraphIdx.get(physName);
+    const gRw = graph.runways[gIdx];
+    if (!gRw) continue;
+    for (const dirEntry of rec.entries) {
+      const dirName = extractStringFromV4(dirEntry.block, 'Name') || '';
+      const dirEntries = _extractRunwayEntriesFromBlock(dirEntry.block, idToNodeIdx, graph, meta, text, pkIndex);
+      const dirExits = _extractRunwayExitsFromBlock(dirEntry.block, idToNodeIdx, graph, meta, text, pkIndex);
+      for (const en of dirEntries) { en.runwayName = dirName; gRw.entries.push(en); }
+      for (const ex of dirExits) { ex.runwayName = dirName; gRw.exits.push(ex); }
+    }
+  }
+  // Snapshot for writer dirty-check (deep clone, stored alongside other Orig arrays)
+  meta.runwayEntriesOrig = graph.runways.map((rw) => ({
+    entries: structuredClone(rw.entries || []),
+    exits: structuredClone(rw.exits || []),
+  }));
+
   // ── Runway ↔ pavetment-strip coupling (parallel to runways) ─────
   // A physical runway's pavement is drawn as `taxiway-segment` entries whose
   // Name === the runway's physical name (ZSJN: runway 01/19 ↔ 9 strips named
@@ -419,6 +447,85 @@ function _headingDeg(nose, tail) {
   let deg = Math.atan2(-dz, dx) * (180 / Math.PI);
   deg = ((deg % 360) + 360) % 360;
   return Math.round(deg);
+}
+
+// ─── Runway Entry / Exit → graph ───────────────────────────────────
+
+function _extractRunwayEntriesFromBlock(block, idToNodeIdx, graph, meta, text, pkIndex) {
+  const t = createTokenizer(block);
+  const sec = t.findSection('Entries');
+  if (!sec) return [];
+  const entriesText = t.substring(sec.valueStart, sec.valueEnd);
+  const et = createTokenizer(entriesText);
+  const rcSec = et.findSection('$rcontent');
+  if (!rcSec) return [];
+  if (entriesText[rcSec.valueStart] !== '[') return [];
+  const rcEnd = et.findArrayEnd(rcSec.valueStart);
+  if (rcEnd == null) return [];
+  const content = entriesText.substring(rcSec.valueStart + 1, rcEnd);
+  const entries = [];
+  const ct = createTokenizer(content);
+  let pos = 0;
+  while (pos < content.length) {
+    while (pos < content.length && ' \t\n\r,'.includes(content[pos])) pos++;
+    if (pos >= content.length) break;
+    if (content[pos] !== '{') { pos++; continue; }
+    const end = ct.findObjectEnd(pos);
+    if (end == null) break;
+    const entryBlock = content.substring(pos, end);
+    const name = require('./v4_pk_index').extractStringFromV4(entryBlock, 'Name') || '';
+    const holdingIref = require('./v4_pk_index').extractSingleIref(entryBlock, 'HoldingPosition');
+    const lineUpIref = require('./v4_pk_index').extractSingleIref(entryBlock, 'LineUpPosition');
+    const defineIref = require('./v4_pk_index').extractSingleIref(entryBlock, 'DefinePoint');
+    let holdingIdx = holdingIref != null ? idToNodeIdx.get(holdingIref) : null;
+    if (holdingIdx == null && holdingIref != null) holdingIdx = _resolveAndAddNode(text, pkIndex, holdingIref, graph, meta, idToNodeIdx);
+    let lineUpIdx = lineUpIref != null ? idToNodeIdx.get(lineUpIref) : null;
+    if (lineUpIdx == null && lineUpIref != null) lineUpIdx = _resolveAndAddNode(text, pkIndex, lineUpIref, graph, meta, idToNodeIdx);
+    let defineIdx = defineIref != null ? idToNodeIdx.get(defineIref) : null;
+    if (defineIdx == null && defineIref != null) defineIdx = _resolveAndAddNode(text, pkIndex, defineIref, graph, meta, idToNodeIdx);
+    entries.push({ name, holdingIdx: holdingIdx ?? null, lineUpIdx: lineUpIdx ?? null, defineIdx: defineIdx ?? null, _rawHoldingIref: holdingIref, _rawLineUpIref: lineUpIref, _rawDefineIref: defineIref });
+    pos = end;
+  }
+  return entries;
+}
+
+function _extractRunwayExitsFromBlock(block, idToNodeIdx, graph, meta, text, pkIndex) {
+  const t = createTokenizer(block);
+  const sec = t.findSection('Exits');
+  if (!sec) return [];
+  const exitsText = t.substring(sec.valueStart, sec.valueEnd);
+  const et = createTokenizer(exitsText);
+  const rcSec = et.findSection('$rcontent');
+  if (!rcSec) return [];
+  if (exitsText[rcSec.valueStart] !== '[') return [];
+  const rcEnd = et.findArrayEnd(rcSec.valueStart);
+  if (rcEnd == null) return [];
+  const content = exitsText.substring(rcSec.valueStart + 1, rcEnd);
+  const exits = [];
+  const ct = createTokenizer(content);
+  let pos = 0;
+  while (pos < content.length) {
+    while (pos < content.length && ' \t\n\r,'.includes(content[pos])) pos++;
+    if (pos >= content.length) break;
+    if (content[pos] !== '{') { pos++; continue; }
+    const end = ct.findObjectEnd(pos);
+    if (end == null) break;
+    const exitBlock = content.substring(pos, end);
+    const name = require('./v4_pk_index').extractStringFromV4(exitBlock, 'Name') || '';
+    const exitIref = require('./v4_pk_index').extractSingleIref(exitBlock, 'ExitPosition');
+    const holdingIref = require('./v4_pk_index').extractSingleIref(exitBlock, 'HoldingPosition');
+    const defineIref = require('./v4_pk_index').extractSingleIref(exitBlock, 'DefinePoint');
+    const isLeft = _extractBool(exitBlock, 'IsLeft');
+    let exitIdx = exitIref != null ? idToNodeIdx.get(exitIref) : null;
+    if (exitIdx == null && exitIref != null) exitIdx = _resolveAndAddNode(text, pkIndex, exitIref, graph, meta, idToNodeIdx);
+    let holdingIdx = holdingIref != null ? idToNodeIdx.get(holdingIref) : null;
+    if (holdingIdx == null && holdingIref != null) holdingIdx = _resolveAndAddNode(text, pkIndex, holdingIref, graph, meta, idToNodeIdx);
+    let defineIdx = defineIref != null ? idToNodeIdx.get(defineIref) : null;
+    if (defineIdx == null && defineIref != null) defineIdx = _resolveAndAddNode(text, pkIndex, defineIref, graph, meta, idToNodeIdx);
+    exits.push({ name, exitIdx: exitIdx ?? null, holdingIdx: holdingIdx ?? null, defineIdx: defineIdx ?? null, isLeft: !!isLeft, _rawExitIref: exitIref, _rawHoldingIref: holdingIref, _rawDefineIref: defineIref });
+    pos = end;
+  }
+  return exits;
 }
 
 // ─── NonPK areas → graph ──────────────────────────────────────────

@@ -19,7 +19,7 @@
 
 const path = require('path');
 const { createTokenizer } = require('./tokenizer');
-const { extractVector3FromV4, extractIrefArray } = require('./v4_pk_index');
+const { extractVector3FromV4, extractIrefArray, extractIntFromV4 } = require('./v4_pk_index');
 
 // ─── Taxiway OSM pool (finite reuse) ───────────────────────────────────
 // The game only knows a fixed set of OsmIds per level (those that existed in
@@ -657,6 +657,62 @@ function _entryTypePrefix(entry) {
   return ci >= 0 ? pk.substring(0, ci) : pk;
 }
 
+// ─── Canonical PK type regroup ────────────────────────────────────
+// The game serializes `PKStaticEntities.$rcontent` as a dictionary whose entries
+// are grouped by entity type in a fixed order (verified against the shipped
+// `.acl`: taxiway-node, taxiway-segment, airway-node, airway-segment, runway,
+// stand, taxi-navigation). The rebuild path keeps survivors in their original
+// position and APPENDS synthesized objects at the tail of the array, which would
+// drop a newly-drawn taxiway-node AFTER every taxi-navigation entry — breaking
+// the grouping the game's reader assumes. `_regroupPkByType` restores the
+// source file's type-group order so added objects land inside their type's block.
+//
+// Only the GROUPING is restored here — the within-group relative order is
+// preserved verbatim. That matters twice: (1) `buildSceneryGraph` maps a node's
+// array position to its graph index and the `meta` side-tables are index-parallel,
+// so appending a new node at the END of its type block keeps every original
+// node's index stable across a re-parse; (2) `runway` / `stand` /
+// `taxi-navigation` blocks are NOT key-ordered in the file, so their original
+// order must be kept. New members simply append to their type's block.
+const PK_TYPE_ORDER = ['taxiway-node', 'taxiway-segment', 'airway-node', 'airway-segment', 'runway', 'stand', 'taxi-navigation'];
+
+// The canonical type-group order for a snapshot's PK array: the source file's
+// first-appearance order, padded with the canonical defaults so a type absent
+// from the file (e.g. a brand-new runway in a runway-less level) still gets a
+// deterministic slot instead of the tail.
+function _pkTypeOrder(sourceEntries) {
+  const seen = [];
+  for (const e of sourceEntries || []) {
+    const p = _entryTypePrefix(e);
+    if (!p || seen.includes(p)) continue;
+    seen.push(p);
+  }
+  for (const c of PK_TYPE_ORDER) if (!seen.includes(c)) seen.push(c);
+  return seen;
+}
+
+// Bucket `entries` by type prefix and concatenate in `typeOrder` order, keeping
+// each bucket's relative order intact (stable). Types absent from `typeOrder` (a
+// synthesized type the source never declared) append at the end in first-seen
+// order.
+function _regroupPkByType(entries, typeOrder) {
+  const buckets = new Map();
+  const known = new Set(typeOrder);
+  const tail = [];
+  for (const e of entries) {
+    const p = _entryTypePrefix(e) || '';
+    if (!buckets.has(p)) {
+      buckets.set(p, []);
+      if (!known.has(p)) tail.push(p);
+    }
+    buckets.get(p).push(e);
+  }
+  const out = [];
+  for (const p of typeOrder) { const b = buckets.get(p); if (b) out.push(...b); }
+  for (const p of tail) { const b = buckets.get(p); if (b) out.push(...b); }
+  return out;
+}
+
 // Extract the set of `physical-runway:*` $k keys from an array of entry strings.
 // Used to build the set of static physical-runway keys that legitimately exist,
 // which the checkpoint-frame reconciliation validates stale runtime entities
@@ -733,6 +789,15 @@ function _setVec3XZ(inner, nx, nz) {
   if (nums.length < 3) return inner;
   const y = nums[1];
   return '{ "$type": ' + typeRaw + ', ' + _fmtNum(nx) + ', ' + _fmtNum(y) + ', ' + _fmtNum(nz) + ' }';
+}
+
+// Patch a direct child int field ("Type" / "Flags") in a PK entry.
+function _patchIntField(entry, key, newVal) {
+  const t = createTokenizer(entry);
+  const sec = t.findSection(key);
+  if (!sec) return entry;
+  // Ensure depth 1 (direct child) — _depthValueAbs already handles depth, but findSection is first occurrence; for taxiway-node Type is direct.
+  return entry.slice(0, sec.valueStart) + String(newVal) + entry.slice(sec.valueEnd);
 }
 
 // Patch a taxiway-node entry's ReactivePosition x/z to (nx, nz). Returns the
@@ -991,21 +1056,58 @@ function _synthesizeStand(stand, id, ident, noseId, tailId, pbIds, s) {
     ', "Name": ' + JSON.stringify(standName) + ', "Identifier": "' + ident + '" } }';
 }
 
+// Extract the numeric type id from a $type value: "N|Name", bare N, or quoted "N|Name".
+function _typeId(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  const m = s.match(/"?(\d+)(?:\|(?:[^"]*))?"?/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Sample a runway section's INNER (element) type id — the $type of the FIRST object
+// inside Entries/Exits.$rcontent. The array wrapper's own type ("Runway+Entry[]" /
+// "Runway+Exit[]") is a DIFFERENT type from its elements ("Runway+Entry"/"Runway+Exit")
+// and MUST use a distinct id, or the GATCARC4 writer aborts with
+// "Type id N claimed by both ...". Returns the full "N|name" string, or NULL when the
+// element type id cannot be determined (no $rcontent element anywhere). Callers must
+// assert on a null return — NO hardcoded fallback is allowed.
+function _sampleRunwayInnerType(runwayEntries, sectionType, sectionName, innerName) {
+  const arrId = _typeId(sectionType);
+  const re = new RegExp(
+    '"' + sectionName + '"[\\s\\S]{0,900}?"\\$rcontent"\\s*:\\s*\\[\\s*\\{\\s*"\\$id":\\s*\\d+\\s*,\\s*"\\$type":\\s*("[^"]+"|\\d+)',
+    'm'
+  );
+  for (const e of runwayEntries) {
+    const m = e.match(re);
+    if (!m) continue;
+    const raw = m[1];
+    if (_isCorruptType(raw)) continue;
+    const id = _typeId(raw);
+    if (id !== null && id !== arrId) return '"' + id + '|' + innerName + '"';
+  }
+  return null;
+}
+
 function _sampleRunwayShapes(pkEntries) {
   const s = {
     runwayType: null, itemType: null,
-    entriesType: null, exitsType: null, routesType: null,
+    entriesType: null, exitsType: null, entryInnerType: null, exitInnerType: null, routesType: null,
     edgePointsType: null, thresholdPointsType: null,
     areaVerticesType: null, holdingAreasType: null,
     boolReactiveType: null, vec3Type: null,
   };
   const rw = pkEntries.find((e) => _entryTypePrefix(e) === 'runway');
+  const runwayEntries = pkEntries.filter((e) => _entryTypePrefix(e) === 'runway');
   if (!rw) {
     // No runway to sample — return canonical fallbacks so synthesis never emits "$type": 0.
+    // Array and inner (element) types MUST use distinct ids or the GATCARC4 writer
+    // aborts with "Type id N claimed by both ...".
     s.runwayType = '"13|ContextCross.Models.Runway, GroundATC.Core"';
     s.itemType = '"14|ContextCross.Models.PhysicalRunwayStaticItem, GroundATC.Core"';
     s.entriesType = '"15|ContextCross.Models.Runway+Entry[], GroundATC.Core"';
+    s.entryInnerType = '"16|ContextCross.Models.Runway+Entry, GroundATC.Core"';
     s.exitsType = '"17|ContextCross.Models.Runway+Exit[], GroundATC.Core"';
+    s.exitInnerType = '"18|ContextCross.Models.Runway+Exit, GroundATC.Core"';
     s.routesType = '"19|ContextCross.Models.Route[], GroundATC.Core"';
     s.edgePointsType = '"22|ContextCross.Models.TaxiwayNode[], GroundATC.Core"';
     s.thresholdPointsType = s.edgePointsType;
@@ -1017,28 +1119,27 @@ function _sampleRunwayShapes(pkEntries) {
   }
   const rawRunwayType = _valueOf(rw, '$type');
   s.runwayType = _isCorruptType(rawRunwayType) ? null : rawRunwayType;
-  // Canonical fallback when the sampled type is missing or corrupt (bare 0).
-  if (!s.runwayType) s.runwayType = '"13|ContextCross.Models.Runway, GroundATC.Core"';
   const mItem = rw.match(/"PhysicalRunwayStaticItem":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawItem = mItem ? mItem[1] : null;
   s.itemType = _isCorruptType(rawItem) ? null : rawItem;
-  if (!s.itemType) s.itemType = '"14|ContextCross.Models.PhysicalRunwayStaticItem, GroundATC.Core"';
   const mEntries = rw.match(/"Entries":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawEntries = mEntries ? mEntries[1] : null;
   s.entriesType = _isCorruptType(rawEntries) ? null : rawEntries;
-  if (!s.entriesType) s.entriesType = '"15|ContextCross.Models.Runway+Entry[], GroundATC.Core"';
+  // Inner Entry type (the object inside Entries.$rcontent) — a DIFFERENT type from
+  // the array wrapper ("Runway+Entry[]"), so it MUST use a distinct id. No fallback:
+  // if the element type can't be sampled, leave null and the caller asserts.
+  s.entryInnerType = _sampleRunwayInnerType(runwayEntries, s.entriesType, 'Entries', 'ContextCross.Models.Runway+Entry, GroundATC.Core');
   const mExits = rw.match(/"Exits":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawExits = mExits ? mExits[1] : null;
   s.exitsType = _isCorruptType(rawExits) ? null : rawExits;
-  if (!s.exitsType) s.exitsType = '"17|ContextCross.Models.Runway+Exit[], GroundATC.Core"';
+  // Inner Exit type (the object inside Exits.$rcontent) — distinct from the array.
+  s.exitInnerType = _sampleRunwayInnerType(runwayEntries, s.exitsType, 'Exits', 'ContextCross.Models.Runway+Exit, GroundATC.Core');
   const mRoutes = rw.match(/"Routes":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawRoutes = mRoutes ? mRoutes[1] : null;
   s.routesType = _isCorruptType(rawRoutes) ? null : rawRoutes;
-  if (!s.routesType) s.routesType = '"19|ContextCross.Models.Route[], GroundATC.Core"';
   const mEdge = rw.match(/"EdgePoints":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawEdge = mEdge ? mEdge[1] : null;
   s.edgePointsType = _isCorruptType(rawEdge) ? null : rawEdge;
-  if (!s.edgePointsType) s.edgePointsType = '"22|ContextCross.Models.TaxiwayNode[], GroundATC.Core"';
   const mTh = rw.match(/"ThresholdPoints":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawTh = mTh ? mTh[1] : null;
   s.thresholdPointsType = _isCorruptType(rawTh) ? null : rawTh;
@@ -1046,29 +1147,110 @@ function _sampleRunwayShapes(pkEntries) {
   const mArea = rw.match(/"AreaVertices":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawArea = mArea ? mArea[1] : null;
   s.areaVerticesType = _isCorruptType(rawArea) ? null : rawArea;
-  if (!s.areaVerticesType) s.areaVerticesType = '"23|UnityEngine.Vector3[], UnityEngine.CoreModule"';
   const mHold = rw.match(/"HoldingAreas":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawHold = mHold ? mHold[1] : null;
   s.holdingAreasType = _isCorruptType(rawHold) ? null : rawHold;
-  if (!s.holdingAreasType) s.holdingAreasType = '"24|ContextCross.Models.Runway+HoldingAreaData[], GroundATC.Core"';
   const mBool = rw.match(/"IsActive":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawBool = mBool ? mBool[1] : null;
   s.boolReactiveType = _isCorruptType(rawBool) ? null : rawBool;
-  if (!s.boolReactiveType) s.boolReactiveType = '"26|R3.ReactiveProperty`1[[System.Boolean, mscorlib]], R3"';
   // Vector3 type for AreaVertices points: find { "$type": 5, x,0,z }
   const mVec = rw.match(/"\$type":\s*("[^"]*Vector3[^"]*"|\d+),\s*-?[\d.eE+]+,\s*0,\s*-?[\d.eE+]+/);
   const rawVec = mVec ? mVec[1] : null;
   if (rawVec && !_isCorruptType(rawVec)) s.vec3Type = rawVec;
   else {
     const node = pkEntries.find((e) => _entryTypePrefix(e) === 'taxiway-node');
-    if (node) {
-      const v3 = node.match(/"\$type":\s*("[^"]+"|\d+),\s*-?[\d.eE+]+,/);
-      const rawV3 = v3 ? v3[1] : null;
-      s.vec3Type = _isCorruptType(rawV3) ? null : rawV3;
-      if (!s.vec3Type) s.vec3Type = '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
-    } else s.vec3Type = '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
+    s.vec3Type = node ? (_isCorruptType((node.match(/"\$type":\s*("[^"]+"|\d+),\s*-?[\d.eE+]+,/) || [])[1]) ? null : (node.match(/"\$type":\s*("[^"]+"|\d+),\s*-?[\d.eE+]+,/) || [])[1]) : null;
   }
   return s;
+}
+
+// Assert that a sampled type value is a non-corrupt, non-null Odin $type string.
+// No hardcoded fallback is allowed — if a type can't be determined from the file,
+// fail loudly rather than emitting a guessed (and potentially colliding) type id.
+function _assertSampledType(label, v) {
+  if (v == null || _isCorruptType(v)) {
+    throw new Error(`GATCARC4: cannot determine type "${label}" from the runway — no fallback allowed, refusing to emit a guessed $type`);
+  }
+  return v;
+}
+
+// ─── Runway Entries/Exits patch helpers (for GroundPainter checkbox editing) ──
+
+function _extractSectionObjectText(blockText, sectionName) {
+  const t = createTokenizer(blockText);
+  const sec = t.findSection(sectionName);
+  if (!sec) return null;
+  return t.substring(sec.valueStart, sec.valueEnd);
+}
+
+function _buildEntriesWrapperForPatch(newEntries, origWrapperText, nodeIds, s, nextIdRef) {
+  let origId = null;
+  let origType = null;
+  if (origWrapperText) {
+    const mId = origWrapperText.match(/"\$id"\s*:\s*(\d+)/);
+    if (mId) origId = parseInt(mId[1], 10);
+    const mType = origWrapperText.match(/"\$type"\s*:\s*("[^"]+"|\d+)/);
+    if (mType) origType = mType[1];
+  }
+  if (origId == null) origId = nextIdRef.value++;
+  // No fallback: the array wrapper's type must be determinable (from the block or
+  // the sampled runway). If not, fail loudly rather than emit a guessed $type.
+  if (_isCorruptType(origType)) origType = s.entriesType;
+  origType = _assertSampledType('Runway+Entry[]', origType);
+  const innerStrs = [];
+  for (const en of newEntries || []) {
+    const holding = en.holdingIdx != null ? nodeIds[en.holdingIdx] : null;
+    const lineUp = en.lineUpIdx != null ? nodeIds[en.lineUpIdx] : null;
+    const definePt = en.defineIdx != null ? nodeIds[en.defineIdx] : null;
+    if (holding == null || lineUp == null || definePt == null) continue;
+    const nid = nextIdRef.value++;
+    const name = JSON.stringify(String(en.name || ''));
+    _assertSampledType('Runway+Entry', s.entryInnerType);
+    innerStrs.push(`{ "$id": ${nid}, "$type": ${_fmtType(s.entryInnerType)}, "Name": ${name}, "HoldingPosition": $iref:${holding}, "LineUpPosition": $iref:${lineUp}, "DefinePoint": $iref:${definePt} }`);
+  }
+  return `{ "$id": ${origId}, "$type": ${_fmtType(origType)}, "$rlength": ${innerStrs.length}, "$rcontent": [ ${innerStrs.join(', ')} ] }`;
+}
+
+function _buildExitsWrapperForPatch(newExits, origWrapperText, nodeIds, s, nextIdRef) {
+  let origId = null;
+  let origType = null;
+  if (origWrapperText) {
+    const mId = origWrapperText.match(/"\$id"\s*:\s*(\d+)/);
+    if (mId) origId = parseInt(mId[1], 10);
+    const mType = origWrapperText.match(/"\$type"\s*:\s*("[^"]+"|\d+)/);
+    if (mType) origType = mType[1];
+  }
+  if (origId == null) origId = nextIdRef.value++;
+  if (_isCorruptType(origType)) origType = s.exitsType;
+  origType = _assertSampledType('Runway+Exit[]', origType);
+  const innerStrs = [];
+  for (const ex of newExits || []) {
+    const exitPos = ex.exitIdx != null ? nodeIds[ex.exitIdx] : null;
+    const holding = ex.holdingIdx != null ? nodeIds[ex.holdingIdx] : null;
+    const definePt = ex.defineIdx != null ? nodeIds[ex.defineIdx] : null;
+    if (exitPos == null || holding == null || definePt == null) continue;
+    const nid = nextIdRef.value++;
+    const name = JSON.stringify(String(ex.name || ''));
+    const isLeft = ex.isLeft ? 'true' : 'false';
+    _assertSampledType('Runway+Exit', s.exitInnerType);
+    innerStrs.push(`{ "$id": ${nid}, "$type": ${_fmtType(s.exitInnerType)}, "Name": ${name}, "ExitPosition": $iref:${exitPos}, "HoldingPosition": $iref:${holding}, "DefinePoint": $iref:${definePt}, "IsLeft": ${isLeft} }`);
+  }
+  return `{ "$id": ${origId}, "$type": ${_fmtType(origType)}, "$rlength": ${innerStrs.length}, "$rcontent": [ ${innerStrs.join(', ')} ] }`;
+}
+
+function _patchRunwayBlockWithEntriesExits(blockText, newEntriesWrapper, newExitsWrapper) {
+  let out = blockText;
+  if (newEntriesWrapper) {
+    const t1 = createTokenizer(out);
+    const sec1 = t1.findSection('Entries');
+    if (sec1) out = out.slice(0, sec1.valueStart) + newEntriesWrapper + out.slice(sec1.valueEnd);
+  }
+  if (newExitsWrapper) {
+    const t2 = createTokenizer(out);
+    const sec2 = t2.findSection('Exits');
+    if (sec2) out = out.slice(0, sec2.valueStart) + newExitsWrapper + out.slice(sec2.valueEnd);
+  }
+  return out;
 }
 
 // Emit a full runway pair (both reciprocal directions) sharing one nested
@@ -1143,6 +1325,20 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph) {
   }
   const areaStrA = areaPtsA.map((p) => '{ "$type": ' + _fmtType(s.vec3Type) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
   const areaStrB = areaPtsB.map((p) => '{ "$type": ' + _fmtType(s.vec3Type) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
+  // No fallback is allowed: every type the synthesized runway emits must be
+  // determined from the file, or we refuse to fabricate a (potentially colliding)
+  // $type id.
+  _assertSampledType('Runway', s.runwayType);
+  _assertSampledType('PhysicalRunwayStaticItem', s.itemType);
+  _assertSampledType('Runway+Entry[]', s.entriesType);
+  _assertSampledType('Runway+Exit[]', s.exitsType);
+  _assertSampledType('Route[]', s.routesType);
+  _assertSampledType('TaxiwayNode[] (EdgePoints)', s.edgePointsType);
+  _assertSampledType('TaxiwayNode[] (ThresholdPoints)', s.thresholdPointsType);
+  _assertSampledType('Vector3[]', s.areaVerticesType);
+  _assertSampledType('Runway+HoldingAreaData[]', s.holdingAreasType);
+  _assertSampledType('ReactiveProperty<bool>', s.boolReactiveType);
+  _assertSampledType('Vector3', s.vec3Type);
   const entryTemplate = (rId, name, itemRef, edgeId, thId, areaId, holdId, activeId, entriesId, exitsId, routesId, thFirst, thSecond, areaStr) => {
     return '{ "$k": "runway:' + name + '", "$v": { "$id": ' + rId + ', "$type": ' + _fmtType(s.runwayType) +
       ', "Name": "' + name + '", "PhysicalRunwayStaticItem": ' + itemRef +
@@ -1255,7 +1451,12 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
     }
     const id = nextId;
     nextId += 3; // seg $id, Nodes wrapper $id, inner list $id
-    const segEntry = _synthesizeSegment(seg, id, allocSegOsm(), segNodeIds, s);
+    // A split-piece segment carries `parentOsm` (the original taxiway visual path
+    // it was severed from). Re-emit it under THAT OsmId — as a later ordinal — so a
+    // runway's type-4 pavement keeps ONE continuous path. A genuinely-new taxiway
+    // (no parentOsm) gets a fresh OsmId.
+    const segOsm = seg.parentOsm != null ? seg.parentOsm : allocSegOsm();
+    const segEntry = _synthesizeSegment(seg, id, segOsm, segNodeIds, s);
     if (segEntry) entries.push(segEntry);
   }
 
@@ -1836,6 +2037,64 @@ function _patchEntryName(entry, newName) {
 // surviving entry, grouped by osm and ordered by the CURRENT ordinal (which
 // encodes the path's segment sequence), back to 0..N-1.
 function _escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Order one OsmId's taxiway-segment entries along the connected path, so the
+// renumber below can assign ordinals that encode the path's segment sequence.
+// A visual path is a polyline chain: consecutive entries must share an endpoint
+// node. We walk from a terminus (an endpoint node only one entry touches), then
+// repeatedly attach the next entry sharing the current junction node. This places
+// auto-slice SPLIT PIECES back at their correct position in the parent strip's
+// chain (they otherwise all carry ordinal 0 and would sort to the front, breaking
+// continuity). Falls back to the current ordinal order when the group cannot be
+// walked as one chain (cycle / disconnected / branching).
+function _orderSegmentsForPath(list) {
+  if (list.length <= 1) return list;
+  const endpoints = list.map((it) => {
+    const irefs = extractIrefArray(it.entry, 'Nodes');
+    if (irefs.length >= 2) return [irefs[0], irefs[irefs.length - 1]];
+    return irefs.length === 1 ? [irefs[0], irefs[0]] : [null, null];
+  });
+  const adj = new Map(); // node -> [itemIdx]
+  for (let i = 0; i < list.length; i++) {
+    const [a, b] = endpoints[i];
+    for (const nd of [a, b]) {
+      if (nd == null) continue;
+      if (!adj.has(nd)) adj.set(nd, []);
+      adj.get(nd).push(i);
+    }
+  }
+  // Find a terminus (an entry whose first or last node is touched by no other entry).
+  let start = -1;
+  for (let i = 0; i < list.length; i++) {
+    const [a, b] = endpoints[i];
+    if ((a != null && (adj.get(a) || []).length === 1) || (b != null && (adj.get(b) || []).length === 1)) { start = i; break; }
+  }
+  if (start === -1) start = 0;
+  const used = new Set([start]);
+  const ordered = [list[start]];
+  const [sa, sb] = endpoints[start];
+  let curNode;
+  if (sa != null && (adj.get(sa) || []).length === 1) curNode = sb; // continue from the non-terminus end
+  else if (sb != null && (adj.get(sb) || []).length === 1) curNode = sa;
+  else curNode = sa ?? sb;
+  while (ordered.length < list.length) {
+    let next = -1, nextNode = null;
+    for (let j = 0; j < list.length; j++) {
+      if (used.has(j)) continue;
+      const [a, b] = endpoints[j];
+      if (a === curNode) { next = j; nextNode = b; break; }
+      if (b === curNode) { next = j; nextNode = a; break; }
+    }
+    if (next === -1) break;
+    used.add(next);
+    ordered.push(list[next]);
+    curNode = nextNode;
+  }
+  // Append anything not reached (disconnected group / cycle) in original order.
+  for (let j = 0; j < list.length; j++) if (!used.has(j)) ordered.push(list[j]);
+  return ordered;
+}
+
 function _renumberTaxiwaySegmentOrdinals(entries) {
   const groups = new Map(); // osm -> [{ entry, pk, oldOrd }]
   for (const e of entries) {
@@ -1851,10 +2110,12 @@ function _renumberTaxiwaySegmentOrdinals(entries) {
   let changed = false;
   const newPkByEntry = new Map();
   for (const list of groups.values()) {
-    // Order by current ordinal: it encodes the path's segment sequence.
-    list.sort((a, b) => a.oldOrd - b.oldOrd);
-    for (let i = 0; i < list.length; i++) {
-      const it = list[i];
+    // Order by chain position, so a reinserted split piece lands at its true spot
+    // in the visual path (falling back to current ordinal for unbroken chains,
+    // which are already in path order — no change).
+    const ordered = _orderSegmentsForPath(list);
+    for (let i = 0; i < ordered.length; i++) {
+      const it = ordered[i];
       if (it.oldOrd !== i) {
         newPkByEntry.set(it.entry, 'taxiway-segment:' + it.osm + ':' + i);
         changed = true;
@@ -1884,6 +2145,9 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   const pkArrayValue = snapshotText.substring(ranges.pkRc.start, ranges.pkRc.end);
   const npkArrayValue = snapshotText.substring(ranges.npkRc.start, ranges.npkRc.end);
   let pkEntries = _splitArrayEntries(pkArrayValue);
+  // Canonical type-group order for THIS file (measured first-appearance). New
+  // entities regroup into their type's block on save (see _regroupPkByType).
+  const pkTypeOrder = _pkTypeOrder(pkEntries);
   const npkEntries = _splitArrayEntries(npkArrayValue);
   // StaticItems: physical-runway registry (may be absent in some files, but present for ZSJN)
   let siEntries = [];
@@ -2128,6 +2392,37 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
     }
   }
 
+  // ── Detect Type/Flags changes for taxiway nodes (entrance/exit holdings) ──
+  const typeChangedByPk = new Map();
+  const flagsChangedByPk = new Map();
+  let hasTypeChanges = false;
+  {
+    const nodeEntryByPkForType2 = new Map();
+    for (const e of pkEntries) if (_entryTypePrefix(e) === 'taxiway-node') nodeEntryByPkForType2.set(_entryPk(e), e);
+    if (mm.nodeOrigPk && graph.nodes) {
+      for (let g = 0; g < graph.nodes.length && g < mm.nodeOrigPk.length; g++) {
+        const pk = mm.nodeOrigPk[g];
+        if (pk == null) continue;
+        const entry = nodeEntryByPkForType2.get(pk);
+        if (!entry) continue;
+        let origType = extractIntFromV4(entry, 'Type');
+        if (origType == null) {
+          const m = entry.match(/"Type"\s*:\s*(\d+)/);
+          if (m) origType = parseInt(m[1], 10);
+        }
+        const curType = graph.nodes[g].type;
+        if (curType != null && origType !== curType) { typeChangedByPk.set(pk, curType); hasTypeChanges = true; }
+        let origFlags = extractIntFromV4(entry, 'Flags');
+        if (origFlags == null) {
+          const m2 = entry.match(/"Flags"\s*:\s*(\d+)/);
+          if (m2) origFlags = parseInt(m2[1], 10);
+        }
+        const curFlags = graph.nodes[g].flags;
+        if (curFlags != null && origFlags !== curFlags) { flagsChangedByPk.set(pk, curFlags); hasTypeChanges = true; }
+      }
+    }
+  }
+
   // Detect moved surviving AREAS (NonPK): an area's NodePositions.$rcontent
   // differs from its original entry. Areas are first-class paint targets (drag a
   // vertex / translate the body) but are NOT nodes, so they are invisible to
@@ -2279,6 +2574,28 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   }
   const namesChanged = standNamePatch.size > 0 || segNamePatch.size > 0;
 
+  // ── Runway Entries/Exits dirty check (checkbox editing) ──
+  let runwayEntriesDirty = false;
+  if (graph && mm && Array.isArray(graph.runways) && Array.isArray(mm.runwayEntriesOrig)) {
+    if (graph.runways.length !== mm.runwayEntriesOrig.length) runwayEntriesDirty = true;
+    else {
+      for (let _r = 0; _r < graph.runways.length; _r++) {
+        const cur = graph.runways[_r];
+        const orig = mm.runwayEntriesOrig[_r];
+        if (!orig) { runwayEntriesDirty = true; break; }
+        const curEn = (cur.entries || []).map((e) => `${e.runwayName}:${e.name}:${e.holdingIdx}:${e.lineUpIdx}:${e.defineIdx}`).sort().join('|');
+        const origEn = (orig.entries || []).map((e) => `${e.runwayName}:${e.name}:${e.holdingIdx}:${e.lineUpIdx}:${e.defineIdx}`).sort().join('|');
+        if (curEn !== origEn) { runwayEntriesDirty = true; break; }
+        const curEx = (cur.exits || []).map((e) => `${e.runwayName}:${e.name}:${e.exitIdx}:${e.holdingIdx}:${e.defineIdx}:${e.isLeft}`).sort().join('|');
+        const origEx = (orig.exits || []).map((e) => `${e.runwayName}:${e.name}:${e.exitIdx}:${e.holdingIdx}:${e.defineIdx}:${e.isLeft}`).sort().join('|');
+        if (curEx !== origEx) { runwayEntriesDirty = true; break; }
+      }
+    }
+  } else if (graph && Array.isArray(graph.runways) && graph.runways.some((r) => (r.entries && r.entries.length) || (r.exits && r.exits.length))) {
+    // No orig but graph has entries (newly parsed after code update) — treat as not dirty unless user edited; initial load will have orig set, so this is fallback
+    runwayEntriesDirty = false;
+  }
+
   // Pre-existing corruption check: if the snapshot ALREADY carries crash-class
   // dangling references (e.g. a save produced before the survivor gate
   // existed), skip the lossless no-op so the final validation pass below can
@@ -2301,7 +2618,7 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // text unchanged (still reconcile the checkpoint frame so any PRE-EXISTING
   // stale physical-runway / jetway RuntimeEntities from an earlier corrupt save
   // are repaired on the next save).
-  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && crashDangleCount === 0) {
+  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && crashDangleCount === 0) {
     return _reconcileRuntimeFrames(snapshotText, _runtimeReconcilers(siEntries, physPatchMap));
   }
 
@@ -2336,6 +2653,12 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
     }
     if (segNamePatch.has(pk)) {
       outEntry = _patchEntryName(outEntry, segNamePatch.get(pk));
+    }
+    if (typeChangedByPk.has(pk)) {
+      outEntry = _patchIntField(outEntry, 'Type', typeChangedByPk.get(pk));
+    }
+    if (flagsChangedByPk.has(pk)) {
+      outEntry = _patchIntField(outEntry, 'Flags', flagsChangedByPk.get(pk));
     }
     pkOut.push(outEntry);
   }
@@ -2395,6 +2718,60 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // Pass NPK+SI so allocation starts above the true blobdoc max and never collides
   // with Area ids (previously PK-only max caused 09/01 -> Area 8930).
   const synth = _synthesizeNew(graph, mm, pkEntries, npkEntries, siEntries, warnings);
+  // ── Patch runway Entries/Exits for checkbox editing (after nodeIds are known) ──
+  if (runwayEntriesDirty || runwayDirty) {
+    const sRunway = _sampleRunwayShapes(pkEntries);
+    const nextIdRef = { value: synth.nextId };
+    const nodeIds = synth.nodeIds;
+    const patchArray = (arr) => {
+      for (let idx = 0; idx < arr.length; idx++) {
+        const block = arr[idx];
+        if (_entryTypePrefix(block) !== 'runway') continue;
+        const curPk = _entryPk(block);
+        const curDirName = curPk ? curPk.split(':')[1] : null;
+        if (!curDirName) continue;
+        let gIdx = -1;
+        let gRw = null;
+        for (let gi = 0; gi < graph.runways.length; gi++) {
+          const rw = graph.runways[gi];
+          if (rw.names && rw.names.includes(curDirName)) { gIdx = gi; gRw = rw; break; }
+        }
+        if (gIdx < 0 || !gRw) continue;
+        // Determine if this physical runway's Entries/Exits changed AT ALL. When it
+        // did, rebuild BOTH directional blocks: the inner element type id is declared
+        // by one direction's $rcontent and referenced BARE by the sibling, so
+        // emptying/changing one direction can orphan the sibling's bare $type ref
+        // (→ "unknown type id N" or "Type id N claimed by both ..." on encode).
+        // Re-serializing both with full type declarations keeps the document's type
+        // registry consistent.
+        let dirDirty = true;
+        const origForPhys = mm.runwayEntriesOrig ? mm.runwayEntriesOrig[gIdx] : null;
+        if (origForPhys && !runwayDirty) {
+          const curEntriesAll = gRw.entries || [];
+          const curExitsAll = gRw.exits || [];
+          const origEntriesAll = origForPhys.entries || [];
+          const origExitsAll = origForPhys.exits || [];
+          const curEnKey = curEntriesAll.map((e) => `${e.name}:${e.holdingIdx}:${e.lineUpIdx}:${e.defineIdx}:${e.runwayName}`).sort().join('|');
+          const origEnKey = origEntriesAll.map((e) => `${e.name}:${e.holdingIdx}:${e.lineUpIdx}:${e.defineIdx}:${e.runwayName}`).sort().join('|');
+          const curExKey = curExitsAll.map((e) => `${e.name}:${e.exitIdx}:${e.holdingIdx}:${e.defineIdx}:${e.isLeft}:${e.runwayName}`).sort().join('|');
+          const origExKey = origExitsAll.map((e) => `${e.name}:${e.exitIdx}:${e.holdingIdx}:${e.defineIdx}:${e.isLeft}:${e.runwayName}`).sort().join('|');
+          dirDirty = (curEnKey !== origEnKey) || (curExKey !== origExKey);
+        }
+        if (!dirDirty) continue;
+        const curEntriesForDir = (gRw.entries || []).filter((e) => e.runwayName === curDirName);
+        const curExitsForDir = (gRw.exits || []).filter((e) => e.runwayName === curDirName);
+        const origEntriesWrapper = _extractSectionObjectText(block, 'Entries');
+        const origExitsWrapper = _extractSectionObjectText(block, 'Exits');
+        const newEntriesWrapper = _buildEntriesWrapperForPatch(curEntriesForDir, origEntriesWrapper, nodeIds, sRunway, nextIdRef);
+        const newExitsWrapper = _buildExitsWrapperForPatch(curExitsForDir, origExitsWrapper, nodeIds, sRunway, nextIdRef);
+        const patched = _patchRunwayBlockWithEntriesExits(block, newEntriesWrapper, newExitsWrapper);
+        arr[idx] = patched;
+      }
+    };
+    patchArray(pkOut);
+    patchArray(synth.entries);
+    synth.nextId = nextIdRef.value;
+  }
   // After deleting one segment of a multi-segment taxiway the surviving siblings
   // keep a gap in their ordinal suffix; renumber each per-osm group contiguously
   // from 0 so Unity's contiguity invariant is preserved.
@@ -2586,6 +2963,14 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
     // contiguously again so Unity's group invariant holds.
     if (droppedAny) finalPkOut = _renumberTaxiwaySegmentOrdinals(finalPkOut);
   }
+
+  // ── Canonical type regroup ─────────────────────────────────────
+  // Regroup the surviving + synthesized PK entries into the source file's type
+  // order so a newly-drawn taxiway-node joins the taxiway-node block (instead of
+  // being appended after every taxi-navigation entry). Stable within a group:
+  // the within-group relative order is preserved, so a node's graph index is
+  // unchanged across a re-parse.
+  finalPkOut = _regroupPkByType(finalPkOut, pkTypeOrder);
 
   const newNpkValue = _arrayValue(finalNpkOut);
   const newPkValue = _arrayValue(finalPkOut);
@@ -2797,5 +3182,10 @@ module.exports = {
   _remapTaxiwaySegmentName,
   _patchEntryName,
   _entryNameValue,
+  _typeId,
+  _sampleRunwayInnerType,
+  _sampleRunwayShapes,
   _validateNoDegenerateEdges,
+  _pkTypeOrder,
+  _regroupPkByType,
 };
