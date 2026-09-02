@@ -111,6 +111,36 @@ function _computeAirportGroundAnchor(aclPaths, logPrefix) {
   }
 }
 
+function _computeAirportAirAnchor(aclPaths, logPrefix) {
+  try {
+    const { buildSceneryGraph } = require('../src/acl/scenery_graph');
+    let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+    let nodeCount = 0;
+    for (const p of aclPaths) {
+      try {
+        const text = readAclText(p);
+        const { graph } = buildSceneryGraph(text);
+        for (const n of (graph && graph.airwayNodes) || []) {
+          if (!isFinite(n.x) || !isFinite(n.z)) continue;
+          nodeCount++;
+          if (n.x < minX) minX = n.x;
+          if (n.x > maxX) maxX = n.x;
+          if (n.z < minZ) minZ = n.z;
+          if (n.z > maxZ) maxZ = n.z;
+        }
+      } catch (_) {}
+    }
+    if (nodeCount === 0 || !isFinite(minX) || !isFinite(maxX) || !isFinite(minZ) || !isFinite(maxZ)) return null;
+    const anchorX = (minX + maxX) / 2;
+    const anchorZ = (minZ + maxZ) / 2;
+    if (logPrefix) console.log(logPrefix + ': air anchor = (' + anchorX.toFixed(1) + ', ' + anchorZ.toFixed(1) + ') from ' + nodeCount + ' airway nodes');
+    return { anchorX, anchorZ, minX, minZ, maxX, maxZ };
+  } catch (e) {
+    if (logPrefix) console.log(logPrefix + ': air anchor computation failed: ' + (e && e.message));
+    return null;
+  }
+}
+
 async function createWindow() {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
@@ -483,6 +513,7 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   // computed once during the ACL scan and persisted to cache.json. Used by the
   // Ground Painter's background image so anchorX/anchorZ never drift.
   aclValues._groundAnchor = cached?.groundAnchor || null;
+  aclValues._airAnchor = cached?.airAnchor || null;
 
   // Include SID + Missed Approach paths (for AirMap)
   aclValues._sidPaths = cached?.approachData?.sidPaths || {};
@@ -914,7 +945,22 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       console.log('[INIT-CACHE]   ' + icao + ': ground anchor from disk cache (' + groundAnchor.anchorX.toFixed(1) + ', ' + groundAnchor.anchorZ.toFixed(1) + ')');
     }
 
-    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData, taxiwayOsmPool, groundAnchor };
+    // ── Air-painter anchor (deterministic, per airport) — for Fit in air mode ──
+    // Cached to cache.json so air Fit (⌖ in air mode) can show all airways (far outside
+    // ground bounds) without rescanning ACLs. Computed as the union of airwayNode bounds
+    // across the airport's level ACLs, mirroring the ground anchor logic.
+    let airAnchor = cachedEntry?.airAnchor || null;
+    if (!airAnchor) {
+      const anchorAclFilesAir = [];
+      for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
+        if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) anchorAclFilesAir.push(path.join(levelsDir, le.name));
+      }
+      airAnchor = _computeAirportAirAnchor(anchorAclFilesAir, '[INIT-CACHE]   ' + icao);
+    } else if (airAnchor && airAnchor.anchorX != null) {
+      console.log('[INIT-CACHE]   ' + icao + ': air anchor from disk cache (' + airAnchor.anchorX.toFixed(1) + ', ' + airAnchor.anchorZ.toFixed(1) + ')');
+    }
+
+    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData, taxiwayOsmPool, groundAnchor, airAnchor };
   }
 
   airportCache = cache;
@@ -932,6 +978,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
           areaData: entry.areaData || {},
           taxiwayOsmPool: entry.taxiwayOsmPool || { nodeIds: [], segIds: [] },
           groundAnchor: entry.groundAnchor || null,
+          airAnchor: entry.airAnchor || null,
         };
       }
       const payload = {
@@ -1084,8 +1131,9 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) anchorAclFiles.push(path.join(levelsDir, le.name));
       }
       const groundAnchor = _computeAirportGroundAnchor(anchorAclFiles, '[IPC] refresh-root-scan ' + icao);
+      const airAnchor = _computeAirportAirAnchor(anchorAclFiles, '[IPC] refresh-root-scan ' + icao);
 
-      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData, taxiwayOsmPool, groundAnchor };
+      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData, taxiwayOsmPool, groundAnchor, airAnchor };
     }
 
     airportCache = cache;
@@ -1101,6 +1149,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         areaData: entry.areaData || {},
         taxiwayOsmPool: entry.taxiwayOsmPool || { nodeIds: [], segIds: [] },
         groundAnchor: entry.groundAnchor || null,
+        airAnchor: entry.airAnchor || null,
       };
     }
     const payload = { cacheVersion: CACHE_VERSION, gameRoot: rootPath, lang: preservedLang, builtAt: Date.now(), airports: serialized };
@@ -1722,8 +1771,9 @@ ipcMain.handle('load-ground-painter-data', async (_event, filePath) => {
   const { buildSceneryGraph } = require('../src/acl/scenery_graph');
   const { graph, meta } = buildSceneryGraph(text);
   // Derive taxiway OSM pool from the original snapshot (finite reuse set).
-  const { extractTaxiwayOsmPool, getTaxiwayOsmPoolInfo } = require('../src/acl/scenery_write');
+  const { extractTaxiwayOsmPool, getTaxiwayOsmPoolInfo, extractAirwayOsmPool, getAirwayOsmPoolInfo } = require('../src/acl/scenery_write');
   const pool = extractTaxiwayOsmPool(text);
+  const airwayPool = extractAirwayOsmPool(text);
   // Also compute current free counts from snapshot (no edits yet → all free = pool \ survivors)
   // At load time survivors == pool, so free == 0; after deletions free >0.
   const poolInfo = getTaxiwayOsmPoolInfo(
@@ -1735,7 +1785,16 @@ ipcMain.handle('load-ground-painter-data', async (_event, filePath) => {
     })(),
     graph, meta
   );
-  return { text, graph, meta, pool, poolInfo: { nodePoolSize: poolInfo.nodePoolSize, segPoolSize: poolInfo.segPoolSize, freeNodeCount: poolInfo.freeNodeCount, freeSegCount: poolInfo.freeSegCount }, bg: readBgSidecar(filePath) };
+  const airwayPoolInfo = getAirwayOsmPoolInfo(
+    (() => {
+      const { _splitArrayEntries, _staticEntitiesRanges } = require('../src/acl/scenery_write');
+      const ranges = _staticEntitiesRanges(text);
+      const pkArrayValue = text.substring(ranges.pkRc.start, ranges.pkRc.end);
+      return _splitArrayEntries(pkArrayValue);
+    })(),
+    graph, meta
+  );
+  return { text, graph, meta, pool, poolInfo: { nodePoolSize: poolInfo.nodePoolSize, segPoolSize: poolInfo.segPoolSize, freeNodeCount: poolInfo.freeNodeCount, freeSegCount: poolInfo.freeSegCount }, airwayPool, airwayPoolInfo: { nodePoolSize: airwayPoolInfo.nodePoolSize, segPoolSize: airwayPoolInfo.segPoolSize, freeNodeCount: airwayPoolInfo.freeNodeCount, freeSegCount: airwayPoolInfo.freeSegCount }, bg: readBgSidecar(filePath) };
 });
 
 // Background-image sidecar (<file>.bg.json) — persists the imported reference

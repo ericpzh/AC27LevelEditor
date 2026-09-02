@@ -222,6 +222,78 @@
   cursor: pointer;
 }
 
+/* ── Procedure commit / rename bar (inline [x] stop · [√] finish) ── */
+.gp-proc-bar {
+  position: absolute;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #141c30;
+  border: 1px solid #2c3a5c;
+  border-radius: 8px;
+  padding: 8px 12px;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+.gp-proc-bar-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #cfd8e8;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.gp-proc-bar-hint { color: #9fb0d0; font-size: 11px; }
+.gp-proc-bar .gp-proc-name {
+  width: 140px;
+  padding: 6px 8px;
+  background: #1a2340;
+  border: 1px solid #2c3a5c;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.gp-proc-bar .gp-proc-runway {
+  padding: 6px 8px;
+  background: #1a2340;
+  border: 1px solid #2c3a5c;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.gp-proc-bar .gp-proc-x,
+.gp-proc-bar .gp-proc-check {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  flex: none;
+}
+.gp-proc-bar .gp-proc-x {
+  background: #4a1f2a;
+  color: #ff9e9e;
+  border: 1px solid #7a3145;
+}
+.gp-proc-bar .gp-proc-check {
+  background: #3fdc6e;
+  color: #0a1628;
+  border: 1px solid #3fdc6e;
+}
+.gp-proc-bar .gp-proc-check-disabled {
+  background: #2d3748;
+  border-color: #4a5568;
+  color: #718096;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 /* ── Background image control panel (pops up above the toolbar) ── */
 .gp-bg-panel {
   position: absolute;

@@ -122,6 +122,129 @@ function getTaxiwayOsmPoolInfo(pkEntries, graph, meta) {
   };
 }
 
+// ─── Airway OSM pool (finite reuse) ──────────────────────────────────
+// Mirrors the taxiway pool but for airway-node / airway-segment OsmIds.
+// Airway OsmIds are also negative and finite per level; new airway nodes/segments must reuse a freed id.
+function _airwayOsmPoolsFromEntries(pkEntries) {
+  const nodePool = new Set();
+  const segPool = new Set();
+  const segPoolEntries = [];
+  for (const e of pkEntries || []) {
+    const type = _entryTypePrefix(e);
+    if (type === 'airway-node') {
+      const osm = _entryOsmAirway(e);
+      if (osm != null) nodePool.add(osm);
+    } else if (type === 'airway-segment') {
+      const osm = _entryOsmAirway(e);
+      if (osm != null) {
+        segPool.add(osm);
+        segPoolEntries.push(osm);
+      }
+    }
+  }
+  return { nodePool, segPool, segPoolEntries };
+}
+function _parseOsmFromAirwayNodePk(pk) {
+  const m = /^airway-node:(-?\d+)$/.exec(pk);
+  return m ? parseInt(m[1], 10) : null;
+}
+function _parseOsmFromAirwaySegPk(pk) {
+  const m = /^airway-segment:(-?\d+)$/.exec(pk);
+  if (m) return parseInt(m[1], 10);
+  // Positive OsmId (approach/missed) is like "airway-segment:50097" (no ordinal)
+  const m2 = /^airway-segment:(\d+)$/.exec(pk);
+  return m2 ? parseInt(m2[1], 10) : null;
+}
+function _entryOsmAirway(entry) {
+  const m = /"OsmId"\s*:\s*(-?\d+)/.exec(entry);
+  return m ? parseInt(m[1], 10) : null;
+}
+function _minAirwayOsm(pkEntries) {
+  let min = 0;
+  for (const e of pkEntries || []) {
+    const type = _entryTypePrefix(e);
+    if (type !== 'airway-node' && type !== 'airway-segment') continue;
+    const os = _entryOsmAirway(e);
+    if (os != null && os < min) min = os;
+  }
+  return min;
+}
+function getAirwayOsmPoolInfo(pkEntries, graph, meta) {
+  const { nodePool, segPool, segPoolEntries } = _airwayOsmPoolsFromEntries(pkEntries);
+  const deletedSet = new Set((meta && meta.deletedPks) || []);
+  const deletedAirwaySet = new Set((meta && meta.deletedAirwayPks) || []);
+  const combinedDeleted = new Set([...deletedSet, ...deletedAirwaySet]);
+  const survivorNodeOsm = new Set();
+  const survivorSegOsm = new Set();
+  const survivorSegEntries = [];
+  if (graph && meta) {
+    const airwayNodes = graph.airwayNodes || [];
+    const procs = graph.procedures || [];
+    for (let i = 0; i < airwayNodes.length; i++) {
+      const pk = meta.airwayNodeOrigPk ? meta.airwayNodeOrigPk[i] : null;
+      if (pk != null && !combinedDeleted.has(pk)) {
+        const osm = _parseOsmFromAirwayNodePk(pk);
+        if (osm != null) survivorNodeOsm.add(osm);
+      }
+    }
+    for (let i = 0; i < procs.length; i++) {
+      const pk = meta.airwaySegOrigPk ? meta.airwaySegOrigPk[i] : null;
+      if (pk != null && !combinedDeleted.has(pk)) {
+        const osm = _parseOsmFromAirwaySegPk(pk);
+        if (osm != null) {
+          survivorSegOsm.add(osm);
+          survivorSegEntries.push(osm);
+        }
+      }
+    }
+  }
+  const freeNodeIds = [...nodePool].filter((id) => !survivorNodeOsm.has(id)).sort((a, b) => a - b);
+  const freeSegIds = [...segPool].filter((id) => !survivorSegOsm.has(id)).sort((a, b) => a - b);
+  const totalSegEntries = segPoolEntries.length;
+  const pendingNewSegs = (graph && meta) ? (graph.procedures || []).filter((_, i) => meta?.airwaySegOrigPk?.[i] == null).length : 0;
+  const pendingNewNodes = (graph && meta) ? (graph.airwayNodes || []).filter((_, i) => meta?.airwayNodeOrigPk?.[i] == null).length : 0;
+  const freeSegEntryCount = Math.max(0, totalSegEntries - survivorSegEntries.length - pendingNewSegs);
+  const freeNodeEntryCount = Math.max(0, freeNodeIds.length - pendingNewNodes);
+  const poolSegCountByOsm = new Map();
+  for (const osm of segPoolEntries) poolSegCountByOsm.set(osm, (poolSegCountByOsm.get(osm) || 0) + 1);
+  const survSegCountByOsm = new Map();
+  for (const osm of survivorSegEntries) survSegCountByOsm.set(osm, (survSegCountByOsm.get(osm) || 0) + 1);
+  const freeSegEntryIds = [];
+  for (const [osm, cnt] of poolSegCountByOsm) {
+    const surv = survSegCountByOsm.get(osm) || 0;
+    const free = cnt - surv;
+    for (let i = 0; i < free; i++) freeSegEntryIds.push(osm);
+  }
+  freeSegEntryIds.sort((a, b) => a - b);
+  return {
+    nodePool, segPool, segPoolEntries,
+    survivorNodeOsm, survivorSegOsm, survivorSegEntries,
+    freeNodeIds, freeSegIds, freeSegEntryIds,
+    nodePoolSize: nodePool.size,
+    segPoolSize: segPool.size,
+    segEntriesTotal: totalSegEntries,
+    freeNodeCount: freeNodeIds.length,
+    freeSegCount: freeSegIds.length,
+    freeSegEntryCount,
+    freeNodeEntryCount,
+    pendingNewNodes, pendingNewSegs,
+  };
+}
+function extractAirwayOsmPool(text) {
+  if (!text) return { nodeIds: [], segIds: [], segEntries: [] };
+  const ranges = _staticEntitiesRanges(text);
+  if (!ranges) return { nodeIds: [], segIds: [], segEntries: [] };
+  const pkArrayValue = text.substring(ranges.pkRc.start, ranges.pkRc.end);
+  const pkEntries = _splitArrayEntries(pkArrayValue);
+  const { nodePool, segPool, segPoolEntries } = _airwayOsmPoolsFromEntries(pkEntries);
+  return {
+    nodeIds: [...nodePool].sort((a, b) => a - b),
+    segIds: [...segPool].sort((a, b) => a - b),
+    segEntries: [...segPoolEntries].sort((a, b) => a - b),
+    segEntriesTotal: segPoolEntries.length,
+  };
+}
+
 // Public helper for UI / tests: derive pool sizes from a raw ACL text.
 function extractTaxiwayOsmPool(text) {
   if (!text) return { nodeIds: [], segIds: [], segEntries: [] };
@@ -139,9 +262,9 @@ function extractTaxiwayOsmPool(text) {
 }
 
 // Managed PK type prefixes the painter may add/remove. Everything else
-// (airway-node, airway-segment, taxi-navigation, physical-runway, jetway) is
-// preserved verbatim unless a dedicated reconciliation removes it.
-const MANAGED_PK_TYPES = new Set(['taxiway-node', 'taxiway-segment', 'runway', 'stand']);
+// (taxi-navigation, physical-runway, jetway) is preserved verbatim unless a dedicated reconciliation removes it.
+// Airway types are now managed by the unified painter.
+const MANAGED_PK_TYPES = new Set(['taxiway-node', 'taxiway-segment', 'airway-node', 'airway-segment', 'runway', 'stand']);
 
 // ─── Absolute section navigation (tokenizer is offset-relative) ──
 
@@ -393,13 +516,21 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings, dr
   const deletedSet = new Set(pkDelete);
   // Deleted taxiway-node $id -> coordinate (the rewire source of truth).
   const deadNodeCoord = new Map();
+  const deadAirwayNodeCoord = new Map();
   for (const e of pkDelete) {
-    if (_entryTypePrefix(e) !== 'taxiway-node') continue;
-    const id = _entryId(e);
-    const pos = extractVector3FromV4(e);
-    if (id != null && pos) deadNodeCoord.set(id, pos);
+    const prefix = _entryTypePrefix(e);
+    if (prefix === 'taxiway-node') {
+      const id = _entryId(e);
+      const pos = extractVector3FromV4(e);
+      if (id != null && pos) deadNodeCoord.set(id, pos);
+    } else if (prefix === 'airway-node') {
+      const id = _entryId(e);
+      const pos = extractVector3FromV4(e);
+      if (id != null && pos) deadAirwayNodeCoord.set(id, pos);
+    }
   }
-  if (deadNodeCoord.size === 0) return false;
+  let gateDirtyOverall = false;
+  if (deadNodeCoord.size === 0 && deadAirwayNodeCoord.size === 0) return false;
 
   // Live taxiway-node coordinate -> $id (first wins), skipping deleted entries.
   const liveIdByCoord = new Map();
@@ -562,6 +693,92 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings, dr
         else warn({ key: 'ground_painter_writer_gate_excised', params: { pk, count: excised }, text: 'repaired ' + pk + ' — excised ' + excised + ' deleted-node reference(s) from its node list' });
       }
       dirty = true;
+    }
+  }
+  // ── Airway dangling gate (airway-node deletions) ───────────────
+  if (deadAirwayNodeCoord.size > 0) {
+    const liveAirwayByCoord = new Map();
+    for (const e of pkEntries) {
+      if (deletedSet.has(e)) continue;
+      if (_entryTypePrefix(e) !== 'airway-node') continue;
+      const id = _entryId(e);
+      const pos = extractVector3FromV4(e);
+      if (id == null || !pos) continue;
+      const key = _coordKey(pos.x, pos.z);
+      if (!liveAirwayByCoord.has(key)) liveAirwayByCoord.set(key, id);
+    }
+    for (let i = 0; i < pkEntries.length; i++) {
+      let entry = pkEntries[i];
+      if (deletedSet.has(entry)) continue;
+      const prefix = _entryTypePrefix(entry);
+      if (prefix !== 'airway-segment' && prefix !== 'runway') continue;
+      const deadRefs = [];
+      for (const m of entry.matchAll(/\$iref:\s*(\d+)/g)) {
+        const id = parseInt(m[1], 10);
+        if (deadAirwayNodeCoord.has(id) && !deadRefs.includes(id)) deadRefs.push(id);
+      }
+      if (deadRefs.length === 0) continue;
+      const pk = _entryPk(entry);
+      let repairedA = 0;
+      const unrepairableA = [];
+      for (const d of deadRefs) {
+        const pos = deadAirwayNodeCoord.get(d);
+        const twin = liveAirwayByCoord.get(_coordKey(pos.x, pos.z));
+        if (twin != null && twin !== d) {
+          entry = entry.replace(new RegExp('\\$iref:' + d + '(?!\\d)', 'g'), () => '$iref:' + twin);
+          repairedA++;
+        } else {
+          unrepairableA.push(d);
+        }
+      }
+      let excisedA = 0;
+      const totalRefs = (entry.match(/\$iref:\s*\d+/g) || []).length;
+      const remainingA = [];
+      // For airway, excise when enough refs remain (segment needs 2, Routes entry may have var len but still needs >=2)
+      // Runway Routes entries we do NOT excise for airway refs either? Keep simple: excise only for airway-segment when total- unrepairable >=2
+      if (unrepairableA.length > 0 && prefix === 'airway-segment' && totalRefs - unrepairableA.length >= 2) {
+        for (const d of unrepairableA) {
+          const out = _exciseIrefFromRcontent(entry, d);
+          if (out != null) { entry = out; excisedA++; } else remainingA.push(d);
+        }
+      } else {
+        remainingA.push(...unrepairableA);
+      }
+      let degenerateA = false;
+      if ((repairedA > 0 || excisedA > 0) && prefix === 'airway-segment') {
+        const rcKey = entry.indexOf('"$rcontent"');
+        if (rcKey >= 0) {
+          const open = entry.indexOf('[', rcKey);
+          const close = entry.indexOf(']', open);
+          const refs = [...entry.slice(open + 1, close).matchAll(/\$iref:\s*(\d+)/g)].map((m) => m[1]);
+          if (refs.length > 0 && new Set(refs).size < 2) degenerateA = true;
+        }
+      }
+      if (prefix === 'runway' && (remainingA.length > 0 || degenerateA)) {
+        // For runway: do NOT drop the whole runway when an airway node is deleted — Routes will be rebuilt from procedures, so dangling will be overwritten.
+        // Only apply rewiring if we managed to rewire; otherwise leave as is and rely on Routes patch.
+        if (repairedA > 0 || excisedA > 0) {
+          pkEntries[i] = entry;
+          if (repairedA) warn({ key: 'ground_painter_writer_gate_rewired', params: { pk, count: repairedA }, text: 'repaired ' + pk + ' — rewired ' + repairedA + ' deleted airway node reference(s) to live node(s) at the same coordinate' });
+          if (excisedA) warn({ key: 'ground_painter_writer_gate_excised', params: { pk, count: excisedA }, text: 'repaired ' + pk + ' — excised ' + excisedA + ' deleted airway node reference(s) from its node list' });
+          dirty = true;
+        }
+        continue;
+      }
+      if (remainingA.length > 0 || degenerateA) {
+        pkDelete.push(entry);
+        for (const id of _idsInBlock(entry)) deletedIds.add(id);
+        const msg = remainingA.length ? 'dropped ' + pk + ' — referenced deleted airway node(s) ' + remainingA.join(', ') + ' with no repairable replacement' : 'dropped ' + pk + ' — rewiring its deleted airway node reference(s) would collapse it onto a single node';
+        warn({ key: 'ground_painter_writer_gate_dropped_unrepairable', params: { pk, ids: remainingA.join(', ') }, text: msg });
+        dirty = true;
+        continue;
+      }
+      if (repairedA > 0 || excisedA > 0) {
+        pkEntries[i] = entry;
+        if (repairedA) warn({ key: 'ground_painter_writer_gate_rewired', params: { pk, count: repairedA }, text: 'repaired ' + pk + ' — rewired ' + repairedA + ' deleted airway node reference(s) to live node(s) at the same coordinate' });
+        if (excisedA) warn({ key: 'ground_painter_writer_gate_excised', params: { pk, count: excisedA }, text: 'repaired ' + pk + ' — excised ' + excisedA + ' deleted airway node reference(s) from its node list' });
+        dirty = true;
+      }
     }
   }
   return dirty;
@@ -943,6 +1160,21 @@ function _repairPkEntryTypes(entry) {
       if (i < f.length) return '"$type": ' + f[i++];
       return '"$type": ' + vec3;
     });
+  } else if (prefix === 'airway-node') {
+    const f = [
+      '"9|ContextCross.Models.AirwayNode, GroundATC.Core"',
+      '"5|UnityEngine.Vector3, UnityEngine.CoreModule"',
+    ];
+    let i = 0;
+    return entry.replace(/"\$type":\s*0(?=[,\}\]])/g, () => '"$type": ' + (f[i++] || f[f.length - 1]));
+  } else if (prefix === 'airway-segment') {
+    const f = [
+      '"10|ContextCross.Models.AirwaySegment, GroundATC.Core"',
+      '"11|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[ContextCross.Models.AirwayNode, GroundATC.Core]], mscorlib]], R3"',
+      '"12|System.Collections.Generic.List`1[[ContextCross.Models.AirwayNode, GroundATC.Core]], mscorlib"',
+    ];
+    let i = 0;
+    return entry.replace(/"\$type":\s*0(?=[,\}\]])/g, () => '"$type": ' + (f[i++] || f[f.length - 1]));
   } else if (prefix === 'physical-runway' || prefix === 'jetway' || prefix === 'taxi-navigation') {
     // Should not be managed, but repair generically if needed
     return entry.replace(/"\$type":\s*0(?=[,\}\]])/g, '"$type": "99|Repaired.Fallback, GroundATC.Core"');
@@ -1054,6 +1286,134 @@ function _synthesizeStand(stand, id, ident, noseId, tailId, pbIds, s) {
     ', "$rlength": ' + pbIdsArr.length + ', "$rcontent": [ ' + pbStr + ' ] },' +
     ' "ParkingType": ' + (stand.parkingType ?? 1) + ', "EgressType": ' + (stand.egressType ?? 0) +
     ', "Name": ' + JSON.stringify(standName) + ', "Identifier": "' + ident + '" } }';
+}
+
+// ─── Airway helpers ──────────────────────────────────────────────
+function _sampleAirwayShapes(pkEntries) {
+  const s = { airwayNodeType: null, positionType: null, airwaySegType: null, airwaySegListType: null, airwaySegInnerType: null };
+  const node = pkEntries.find((e) => _entryTypePrefix(e) === 'airway-node');
+  const seg = pkEntries.find((e) => _entryTypePrefix(e) === 'airway-segment');
+  if (node) {
+    const raw = _valueOf(node, '$type');
+    s.airwayNodeType = _isCorruptType(raw) ? null : raw;
+    if (!s.airwayNodeType) s.airwayNodeType = '"9|ContextCross.Models.AirwayNode, GroundATC.Core"';
+    const posM = node.match(/"Position":\s*\{\s*"\$type":\s*("[^"]+"|\d+)/);
+    const rawPos = posM ? posM[1] : null;
+    s.positionType = _isCorruptType(rawPos) ? null : rawPos;
+    if (!s.positionType) s.positionType = '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
+  } else {
+    s.airwayNodeType = '"9|ContextCross.Models.AirwayNode, GroundATC.Core"';
+    s.positionType = '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
+  }
+  if (seg) {
+    const rawSeg = _valueOf(seg, '$type');
+    s.airwaySegType = _isCorruptType(rawSeg) ? null : rawSeg;
+    if (!s.airwaySegType) s.airwaySegType = '"10|ContextCross.Models.AirwaySegment, GroundATC.Core"';
+    const rc = seg.match(/"Nodes":\s*\{[^{]*?"\$type":\s*("[^"]+"|\d+)/);
+    const rawRc = rc ? rc[1] : null;
+    s.airwaySegListType = _isCorruptType(rawRc) ? null : rawRc;
+    if (!s.airwaySegListType) s.airwaySegListType = '"11|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[ContextCross.Models.AirwayNode, GroundATC.Core]], mscorlib]], R3"';
+    const inner = seg.match(/"\$type":\s*("[^"]+"|\d+),\s*"\$rlength"/);
+    const rawInner = inner ? inner[1] : null;
+    s.airwaySegInnerType = _isCorruptType(rawInner) ? null : rawInner;
+    if (!s.airwaySegInnerType) s.airwaySegInnerType = '"12|System.Collections.Generic.List`1[[ContextCross.Models.AirwayNode, GroundATC.Core]], mscorlib"';
+  } else {
+    s.airwaySegType = '"10|ContextCross.Models.AirwaySegment, GroundATC.Core"';
+    s.airwaySegListType = '"11|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[ContextCross.Models.AirwayNode, GroundATC.Core]], mscorlib]], R3"';
+    s.airwaySegInnerType = '"12|System.Collections.Generic.List`1[[ContextCross.Models.AirwayNode, GroundATC.Core]], mscorlib"';
+  }
+  return s;
+}
+function _synthesizeAirwayNode(node, id, osm, s) {
+  const nameVal = node.name != null && String(node.name).length > 0 ? JSON.stringify(String(node.name)) : 'null';
+  return '{ "$k": "airway-node:' + osm + '", "$v": { "$id": ' + id + ', "$type": ' + _fmtType(s.airwayNodeType) +
+    ', "PK": "airway-node:' + osm + '", "Position": { "$type": ' + _fmtType(s.positionType) + ', ' + _fmtNum(node.x) + ', 0, ' + _fmtNum(node.z) + ' },' +
+    ' "OsmId": ' + osm + ', "Name": ' + nameVal + ' } }';
+}
+function _synthesizeAirwaySegment(proc, id, osm, airwayNodeIds, s) {
+  const name = proc.name != null && String(proc.name).length > 0 ? JSON.stringify(String(proc.name)) : '""';
+  const nodesId = id + 1;
+  const innerId = id + 2;
+  const ids = (airwayNodeIds || []).filter((v) => v != null);
+  if (ids.length < 2) return null;
+  const irefStr = ids.map((nid) => '$iref:' + nid).join(', ');
+  return '{ "$k": "airway-segment:' + osm + '", "$v": { "$id": ' + id + ', "$type": ' + _fmtType(s.airwaySegType) + ', "PK": "airway-segment:' + osm + '"' +
+    ', "Name": ' + name + ', "OsmId": ' + osm +
+    ', "Nodes": { "$id": ' + nodesId + ', "$type": ' + _fmtType(s.airwaySegListType) +
+    ', { "$id": ' + innerId + ', "$type": ' + _fmtType(s.airwaySegInnerType) + ', "$rlength": ' + ids.length + ', "$rcontent": [ ' + irefStr + ' ] } } } }';
+}
+function _sampleRouteShapes(pkEntries) {
+  const s = { routesType: null, routeType: null, airwayNodesType: null };
+  const rw = pkEntries.find((e) => _entryTypePrefix(e) === 'runway');
+  if (!rw) {
+    s.routesType = '"18|ContextCross.Models.Runway+Route[], GroundATC.Core"';
+    s.routeType = '"19|ContextCross.Models.Runway+Route, GroundATC.Core"';
+    s.airwayNodesType = '"20|ContextCross.Models.AirwayNode[], GroundATC.Core"';
+    return s;
+  }
+  const mRoutes = rw.match(/"Routes":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+  const rawRoutes = mRoutes ? mRoutes[1] : null;
+  s.routesType = _isCorruptType(rawRoutes) ? null : rawRoutes;
+  if (!s.routesType) s.routesType = '"18|ContextCross.Models.Runway+Route[], GroundATC.Core"';
+  // Inner Route type via same helper as Entries, but for Routes
+  const runwayEntries = pkEntries.filter((e) => _entryTypePrefix(e) === 'runway');
+  const inner = _sampleRunwayInnerType(runwayEntries, s.routesType, 'Routes', 'ContextCross.Models.Runway+Route, GroundATC.Core');
+  s.routeType = inner || '"19|ContextCross.Models.Runway+Route, GroundATC.Core"';
+  // AirwayNodes array type inside Route
+  let airwayNodesType = null;
+  for (const e of runwayEntries) {
+    const m = e.match(/"AirwayNodes":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+    if (m && !_isCorruptType(m[1])) { airwayNodesType = m[1]; break; }
+  }
+  s.airwayNodesType = airwayNodesType || '"20|ContextCross.Models.AirwayNode[], GroundATC.Core"';
+  return s;
+}
+function _buildRoutesWrapperForPatch(newProcedures, origWrapperText, airwayNodeIds, s, nextIdRef) {
+  let origId = null;
+  let origType = null;
+  if (origWrapperText) {
+    const mId = origWrapperText.match(/"\$id"\s*:\s*(\d+)/);
+    if (mId) origId = parseInt(mId[1], 10);
+    const mType = origWrapperText.match(/"\$type"\s*:\s*("[^"]+"|\d+)/);
+    if (mType) origType = mType[1];
+  }
+  if (origId == null) origId = nextIdRef.value++;
+  if (_isCorruptType(origType)) origType = s.routesType;
+  origType = _assertSampledType('Runway+Route[]', origType);
+  const innerStrs = [];
+  for (const proc of newProcedures || []) {
+    const rType = Number.isFinite(Number(proc.routeType)) ? Math.trunc(Number(proc.routeType)) : 0;
+    const name = JSON.stringify(String(proc.name || ''));
+    const nodeIds = (proc.airwayNodeIdxs || []).map((idx) => airwayNodeIds[idx]).filter((v) => v != null);
+    if (nodeIds.length < 2) continue;
+    const awId = nextIdRef.value++;
+    const innerId = nextIdRef.value++;
+    const irefStr = nodeIds.map((nid) => '$iref:' + nid).join(', ');
+    _assertSampledType('Runway+Route', s.routeType);
+    _assertSampledType('AirwayNode[]', s.airwayNodesType);
+    innerStrs.push('{ "$id": ' + innerId + ', "$type": ' + _fmtType(s.routeType) +
+      ', "AirwayNodes": { "$id": ' + awId + ', "$type": ' + _fmtType(s.airwayNodesType) + ', "$rlength": ' + nodeIds.length + ', "$rcontent": [ ' + irefStr + ' ] }' +
+      ', "Name": ' + name + ', "RouteType": ' + rType + ' }');
+  }
+  return '{ "$id": ' + origId + ', "$type": ' + _fmtType(origType) + ', "$rlength": ' + innerStrs.length + ', "$rcontent": [ ' + innerStrs.join(', ') + ' ] }';
+}
+function _patchAirwayNodePosition(entry, nx, nz, s) {
+  // Airway node Position: { "$type": X, x, 0, z } — patch x and z keeping $type.
+  const t = createTokenizer(entry);
+  const ps = t.findSection('Position');
+  if (!ps) return entry;
+  const posText = entry.substring(ps.valueStart, ps.valueEnd);
+  const pt = createTokenizer(posText);
+  const typeSec = pt.findSection('$type');
+  if (!typeSec) return entry;
+  const typeRaw = posText.substring(typeSec.valueStart, typeSec.valueEnd);
+  // Extract numbers after $type: pattern ", x, 0, z" or ", x, y, z"
+  const after = posText.substring(typeSec.valueEnd);
+  const nums = _extractNums(after);
+  if (nums.length < 3) return entry;
+  const y = nums[1];
+  const inner = '{ "$type": ' + typeRaw + ', ' + _fmtNum(nx) + ', ' + _fmtNum(y) + ', ' + _fmtNum(nz) + ' }';
+  return entry.slice(0, ps.valueStart) + inner + entry.slice(ps.valueEnd);
 }
 
 // Extract the numeric type id from a $type value: "N|Name", bare N, or quoted "N|Name".
@@ -1251,6 +1611,12 @@ function _patchRunwayBlockWithEntriesExits(blockText, newEntriesWrapper, newExit
     if (sec2) out = out.slice(0, sec2.valueStart) + newExitsWrapper + out.slice(sec2.valueEnd);
   }
   return out;
+}
+function _patchRunwayBlockRoutes(blockText, newRoutesWrapper) {
+  const t = createTokenizer(blockText);
+  const sec = t.findSection('Routes');
+  if (!sec) return blockText;
+  return blockText.slice(0, sec.valueStart) + newRoutesWrapper + blockText.slice(sec.valueEnd);
 }
 
 // Emit a full runway pair (both reciprocal directions) sharing one nested
@@ -1511,7 +1877,61 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
     entries.push(pair[0], pair[1]);
   }
 
-  return { entries, nodeIds, survivorNodeId, newPhysEntries, nextId };
+  // ── Airway nodes & procedures ─────────────────────────────────
+  const sAir = _sampleAirwayShapes(pkEntries);
+  const survivorAirwayNodeId = new Map();
+  for (const e of pkEntries) {
+    if (_entryTypePrefix(e) === 'airway-node') survivorAirwayNodeId.set(_entryPk(e), _entryId(e));
+  }
+  const airwayDeletedSet = new Set([...deletedSet, ...((meta && meta.deletedAirwayPks) || [])]);
+  const minAirOsm = _minAirwayOsm(pkEntries);
+  let nextAirOsm = minAirOsm <= -1 ? minAirOsm - 1 : -1;
+  // Reserve taxiway negative range? Keep separate — airway OsmIds live in their own negative pool (e.g. -244674...). Use minAirOsm ensures no collision.
+  function allocAirNodeOsm() { return nextAirOsm--; }
+  function allocAirSegOsm() { return nextAirOsm--; }
+  const airwayNodeIds = []; // per graph.airwayNodes index -> $id
+  // Build entries for new airway nodes
+  const airwayNodes = graph.airwayNodes || [];
+  for (let i = 0; i < airwayNodes.length; i++) {
+    const pk = meta.airwayNodeOrigPk ? meta.airwayNodeOrigPk[i] : null;
+    if (pk != null && airwayDeletedSet.has(pk)) {
+      airwayNodeIds[i] = null;
+      continue;
+    }
+    if (pk != null && survivorAirwayNodeId.has(pk) && !airwayDeletedSet.has(pk)) {
+      airwayNodeIds[i] = survivorAirwayNodeId.get(pk);
+    } else {
+      const id = nextId;
+      airwayNodeIds[i] = id;
+      nextId += 1; // airway node consumes 1 id (no ReactiveProperty wrapper)
+      // airway-node Position inner does not have its own $id — just one
+      // Actually airway-node has no extra nested ids; _synthesizeAirwayNode consumes 1 id
+      entries.push(_synthesizeAirwayNode(airwayNodes[i], id, allocAirNodeOsm(), sAir));
+    }
+  }
+  // New airway segments (procedures) — each procedure is one airway-segment PK
+  const procedures = graph.procedures || [];
+  for (let j = 0; j < procedures.length; j++) {
+    const pk = meta.airwaySegOrigPk ? meta.airwaySegOrigPk[j] : null;
+    if (pk != null) continue; // survivor kept verbatim (or patched via Routes)
+    const proc = procedures[j];
+    const nodeIdxs = proc.airwayNodeIdxs || [];
+    const segNodeIds = nodeIdxs.map((ni) => airwayNodeIds[ni]).filter((v) => v != null);
+    if (segNodeIds.length < 2) {
+      const w = { key: 'ground_painter_writer_new_segment_dropped', params: { indices: JSON.stringify(nodeIdxs) },
+        text: 'dropped a new airway segment: its node(s) no longer exist (indices ' + JSON.stringify(nodeIdxs) + ')' };
+      console.warn('[scenery_write] ' + w.text);
+      if (warnings) warnings.push(w);
+      continue;
+    }
+    const id = nextId;
+    nextId += 3; // seg $id, Nodes wrapper $id, inner list $id
+    const segOsm = proc._parentOsm != null ? proc._parentOsm : allocAirSegOsm();
+    const segEntry = _synthesizeAirwaySegment(proc, id, segOsm, segNodeIds, sAir);
+    if (segEntry) entries.push(segEntry);
+  }
+
+  return { entries, nodeIds, airwayNodeIds, survivorNodeId, survivorAirwayNodeId, newPhysEntries, nextId };
 }
 
 /**
@@ -2135,6 +2555,17 @@ function _renumberTaxiwaySegmentOrdinals(entries) {
 }
 
 function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
+  // Handle legacy 3-arg call where blobTypeMap is omitted and meta is passed as third arg:
+  // patchSceneryBlob(text, graph, meta) — detect meta-like object and shift.
+  if (meta === undefined && blobTypeMap && typeof blobTypeMap === 'object' && !(blobTypeMap instanceof Map) && ('nodeOrigPk' in blobTypeMap || 'airwayNodeOrigPk' in blobTypeMap || 'segOrigPk' in blobTypeMap)) {
+    opts = meta;
+    meta = blobTypeMap;
+    blobTypeMap = null;
+  }
+  // Also handle 4-arg call where opts is passed as 4th but meta is 3rd etc. (no shift needed)
+  if (opts === undefined && meta && typeof meta === 'object' && !('nodeOrigPk' in meta) && ('warnings' in meta || 'deletedPks' in meta)) {
+    // Actually opts passed as meta? Not needed
+  }
   // Optional sink for non-fatal problems (e.g. an entity dropped because its
   // node references no longer resolve). Callers that pass `{ warnings: [] }` get
   // a human-readable list back so the drop is visible instead of silent.
@@ -2158,17 +2589,20 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   }
 
   const mm = meta || {};
-  const deletedPks = mm.deletedPks ? new Set(mm.deletedPks) : new Set();
+  const deletedPks = new Set([...(mm.deletedPks || []), ...((mm.deletedAirwayPks || []))]);
   const deletedAreaIds = mm.deletedAreaIds ? new Set(mm.deletedAreaIds) : new Set();
 
   const hasNew = _hasNull(mm.nodeOrigPk) || _hasNull(mm.segOrigPk) ||
     _hasNull(mm.runwayOrigPk) || _hasNull(mm.standOrigPk) ||
     _hasNull(mm.areaOrigId) ||
+    _hasNull(mm.airwayNodeOrigPk) || _hasNull(mm.airwaySegOrigPk) ||
     _arrayLongerThan(mm.nodeOrigPk, graph.nodes) ||
     _arrayLongerThan(mm.segOrigPk, graph.segments) ||
     _arrayLongerThan(mm.runwayOrigPk, graph.runways) ||
     _arrayLongerThan(mm.standOrigPk, graph.stands) ||
-    _arrayLongerThan(mm.areaOrigId, graph.areas);
+    _arrayLongerThan(mm.areaOrigId, graph.areas) ||
+    _arrayLongerThan(mm.airwayNodeOrigPk, graph.airwayNodes) ||
+    _arrayLongerThan(mm.airwaySegOrigPk, graph.procedures);
 
   // ---- Runway reconciliation: expected physical set from graph ----
   const expectedRunwayPks = new Set();
@@ -2287,8 +2721,8 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // and rename cascades can flag the exact node entry a runway points at.
   // Deleting that node forces the survivor gate to drop the runway
   // (unrepairable threshold) — silently losing the runway and orphaning its
-  // pavement strips. Only runway-referenced nodes are rescued here;
-  // taxiway/stand refs are handled by _gateSurvivorDanglingRefs (rewire/excise/drop).
+  // pavement strips. Only runway-referenced TAXIWAY nodes (ThresholdPoints/EdgePoints) are rescued here;
+  // airway node refs (Routes AirwayNodes) are handled by the airway gate, not rescued.
   {
     const delSet = new Set(pkDelete);
     for (let pass = 0; pass < 3; pass++) {
@@ -2296,7 +2730,9 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
       for (const e of pkEntries) {
         if (delSet.has(e) || !e.includes('$iref')) continue;
         if (_entryTypePrefix(e) !== 'runway') continue;
-        for (const m of e.matchAll(/\$iref:\s*(\d+)/g)) referenced.add(parseInt(m[1], 10));
+        // Only threshold/edge refs (taxiway nodes), not Routes AirwayNodes
+        for (const id of extractIrefArray(e, 'ThresholdPoints')) referenced.add(id);
+        for (const id of extractIrefArray(e, 'EdgePoints')) referenced.add(id);
       }
       let rescued = 0;
       for (let i = pkDelete.length - 1; i >= 0; i--) {
@@ -2419,6 +2855,31 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
         }
         const curFlags = graph.nodes[g].flags;
         if (curFlags != null && origFlags !== curFlags) { flagsChangedByPk.set(pk, curFlags); hasTypeChanges = true; }
+      }
+    }
+  }
+
+  // ── Detect moved airway nodes ──────────────────────────────────
+  const airwayMovedByPk = new Map();
+  const airwayMovedByOrigIdx = new Map();
+  let hasMovedAirwayNodes = false;
+  {
+    const airwayEntryByPk = new Map();
+    for (const e of pkEntries) if (_entryTypePrefix(e) === 'airway-node') airwayEntryByPk.set(_entryPk(e), e);
+    if (mm.airwayNodeOrigPk && graph.airwayNodes) {
+      for (let i = 0; i < graph.airwayNodes.length && i < mm.airwayNodeOrigPk.length; i++) {
+        const pk = mm.airwayNodeOrigPk[i];
+        if (pk == null) continue;
+        const entry = airwayEntryByPk.get(pk);
+        if (!entry) continue;
+        const orig = extractVector3FromV4(entry);
+        if (!orig) continue;
+        const cur = graph.airwayNodes[i];
+        if (Math.abs(orig.x - cur.x) > 1e-9 || Math.abs(orig.z - cur.z) > 1e-9) {
+          airwayMovedByPk.set(pk, { x: cur.x, z: cur.z });
+          airwayMovedByOrigIdx.set(i, { x: cur.x, z: cur.z });
+          hasMovedAirwayNodes = true;
+        }
       }
     }
   }
@@ -2572,7 +3033,26 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
       }
     }
   }
-  const namesChanged = standNamePatch.size > 0 || segNamePatch.size > 0;
+  // Airway node name patch map (separate scope)
+  const airwayNodeNamePatch = new Map();
+  {
+    const entryByPk2 = new Map();
+    for (const e of pkEntries) entryByPk2.set(_entryPk(e), e);
+    if (mm.airwayNodeOrigPk && graph.airwayNodes) {
+      for (let i = 0; i < graph.airwayNodes.length && i < mm.airwayNodeOrigPk.length; i++) {
+        const pk = mm.airwayNodeOrigPk[i];
+        if (pk == null) continue;
+        const an = graph.airwayNodes[i];
+        if (!an) continue;
+        const cur = String(an.name || '');
+        const entry = entryByPk2.get(pk);
+        if (!entry) continue;
+        const old = _entryNameValue(entry);
+        if (cur !== old) airwayNodeNamePatch.set(pk, cur);
+      }
+    }
+  }
+  const namesChanged = standNamePatch.size > 0 || segNamePatch.size > 0 || airwayNodeNamePatch.size > 0;
 
   // ── Runway Entries/Exits dirty check (checkbox editing) ──
   let runwayEntriesDirty = false;
@@ -2594,6 +3074,53 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   } else if (graph && Array.isArray(graph.runways) && graph.runways.some((r) => (r.entries && r.entries.length) || (r.exits && r.exits.length))) {
     // No orig but graph has entries (newly parsed after code update) — treat as not dirty unless user edited; initial load will have orig set, so this is fallback
     runwayEntriesDirty = false;
+  }
+
+  // ── Airway Routes dirty check (procedure edits) ──────────────────
+  let airwayRoutesDirty = false;
+  {
+    let origGraph = null;
+    let origProcedures = [];
+    try {
+      const sg = require('./scenery_graph');
+      const orig = sg.buildSceneryGraph(snapshotText);
+      origGraph = orig.graph || null;
+      origProcedures = (origGraph && origGraph.procedures) || [];
+    } catch (_) {}
+    const curProcs = graph.procedures || [];
+    const origPks = mm.airwaySegOrigPk || [];
+    if (curProcs.length !== origProcedures.length) airwayRoutesDirty = true;
+    else if (_hasNull(origPks) || curProcs.length !== origPks.length) airwayRoutesDirty = true;
+    else {
+      for (let i = 0; i < curProcs.length; i++) {
+        const cur = curProcs[i];
+        const orig = origProcedures[i];
+        if (!orig) { airwayRoutesDirty = true; break; }
+        if (cur.name !== orig.name || cur.routeType !== orig.routeType || cur.runwayName !== orig.runwayName) { airwayRoutesDirty = true; break; }
+        const curIdxs = cur.airwayNodeIdxs || [];
+        const origIdxs = orig.airwayNodeIdxs || [];
+        if (curIdxs.length !== origIdxs.length) { airwayRoutesDirty = true; break; }
+        let same = true;
+        for (let k = 0; k < curIdxs.length; k++) {
+          const cn = (graph.airwayNodes || [])[curIdxs[k]];
+          const on = (origGraph && origGraph.airwayNodes && origGraph.airwayNodes[origIdxs[k]]) || null;
+          if (!cn || !on) { if (curIdxs[k] !== origIdxs[k]) same = false; }
+          else if (Math.abs(cn.x - on.x) > 1e-6 || Math.abs(cn.z - on.z) > 1e-6 || cn.name !== on.name) same = false;
+          if (!same) break;
+        }
+        if (!same) { airwayRoutesDirty = true; break; }
+        if (curIdxs.some((v, idx2) => v !== origIdxs[idx2])) {
+          let idxDiff = false;
+          for (let k = 0; k < curIdxs.length; k++) if (curIdxs[k] !== origIdxs[k]) idxDiff = true;
+          if (idxDiff) { airwayRoutesDirty = true; break; }
+        }
+      }
+    }
+    if (!airwayRoutesDirty && hasNew && (graph.procedures || []).length > 0) {
+      const hasNewAirway = _hasNull(mm.airwaySegOrigPk) || _arrayLongerThan(mm.airwaySegOrigPk, graph.procedures);
+      if (hasNewAirway) airwayRoutesDirty = true;
+    }
+    if (!airwayRoutesDirty && (mm.deletedAirwayPks || []).length > 0) airwayRoutesDirty = true;
   }
 
   // Pre-existing corruption check: if the snapshot ALREADY carries crash-class
@@ -2618,7 +3145,7 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // text unchanged (still reconcile the checkpoint frame so any PRE-EXISTING
   // stale physical-runway / jetway RuntimeEntities from an earlier corrupt save
   // are repaired on the next save).
-  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && crashDangleCount === 0) {
+  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !hasMovedAirwayNodes && !airwayRoutesDirty && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && crashDangleCount === 0) {
     return _reconcileRuntimeFrames(snapshotText, _runtimeReconcilers(siEntries, physPatchMap));
   }
 
@@ -2659,6 +3186,17 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
     }
     if (flagsChangedByPk.has(pk)) {
       outEntry = _patchIntField(outEntry, 'Flags', flagsChangedByPk.get(pk));
+    }
+    // Patch moved airway nodes (Position x/z)
+    if (_entryTypePrefix(e) === 'airway-node' && airwayMovedByPk.has(pk)) {
+      const mv = airwayMovedByPk.get(pk);
+      // Need sampling for Position type; synthesize uses sAir but patch reuses existing $type
+      // For moved survivor we patch in place keeping its $type
+      outEntry = _patchAirwayNodePosition(outEntry, mv.x, mv.z, null);
+    }
+    // Airway node name patches (if user renamed a fix)
+    if (_entryTypePrefix(e) === 'airway-node' && airwayNodeNamePatch && airwayNodeNamePatch.has(pk)) {
+      outEntry = _patchEntryName(outEntry, airwayNodeNamePatch.get(pk));
     }
     pkOut.push(outEntry);
   }
@@ -2771,6 +3309,37 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
     patchArray(pkOut);
     patchArray(synth.entries);
     synth.nextId = nextIdRef.value;
+  }
+  // ── Patch runway Routes for airway procedures ──
+  if (airwayRoutesDirty) {
+    const sRoute = _sampleRouteShapes(pkEntries);
+    const airwayNodeIds = synth.airwayNodeIds || [];
+    const nextIdRef2 = { value: synth.nextId };
+    const patchRoutes = (arr) => {
+      for (let idx = 0; idx < arr.length; idx++) {
+        const block = arr[idx];
+        if (_entryTypePrefix(block) !== 'runway') continue;
+        const curPk = _entryPk(block);
+        const curDirName = curPk ? curPk.split(':')[1] : null;
+        if (!curDirName) continue;
+        const procsForDir = (graph.procedures || []).filter((p) => p.runwayName === curDirName);
+        const origRoutesWrapper = _extractSectionObjectText(block, 'Routes');
+        // Only patch if this runway's Routes actually differ; avoids churning unchanged runways
+        let shouldPatch = true;
+        if (origRoutesWrapper && !airwayRoutesDirty) shouldPatch = false;
+        else {
+          // Quick check: compare current Routes entry count vs new; if same and not dirty for this runway, skip
+          // For now, when airwayRoutesDirty globally true, we patch all runways that have any procedure
+          // to keep Route ids stable, we still patch all
+        }
+        const newRoutesWrapper = _buildRoutesWrapperForPatch(procsForDir, origRoutesWrapper, airwayNodeIds, sRoute, nextIdRef2);
+        const patched = _patchRunwayBlockRoutes(block, newRoutesWrapper);
+        arr[idx] = patched;
+      }
+    };
+    patchRoutes(pkOut);
+    patchRoutes(synth.entries);
+    synth.nextId = nextIdRef2.value;
   }
   // After deleting one segment of a multi-segment taxiway the surviving siblings
   // keep a gap in their ordinal suffix; renumber each per-osm group contiguously
@@ -3159,6 +3728,8 @@ module.exports = {
   saveGroundPainterAcl,
   extractTaxiwayOsmPool,
   getTaxiwayOsmPoolInfo,
+  extractAirwayOsmPool,
+  getAirwayOsmPoolInfo,
   // exposed for tests
   _renumberTaxiwaySegmentOrdinals,
   _splitArrayEntries,

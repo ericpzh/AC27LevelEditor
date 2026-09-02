@@ -57,6 +57,16 @@ function painterSnapDist(viewBox, baseVB) {
   return dynamicSnapDist(vbDiag, baseDiag);
 }
 
+// Generous, zoom-aware grab radius for air-mode NODE & PROCEDURE selection and
+// snapping. The dynamic selection threshold (getDynamicSelectThresholds) shrinks
+// quite aggressively when zoomed in, which makes air-mode clicks feel "too weak"
+// precisely when you're zoomed into a busy area. This keeps a comfortably-wide
+// on-screen aperture (still easy to click when zoomed in) with a world-unit floor
+// so it never collapses to a hairline.
+function airGrabRadius(viewBox, baseVB) {
+  return Math.max(painterSnapDist(viewBox, baseVB) * 1.9, 0.95);
+}
+
 // Zoom-aware ANGULAR snap window (degrees), the angular twin of painterSnapDist:
 // at base (fit) zoom it's the classic 2.5° window; zooming IN tightens it
 // ("less snappy" — finer control) and zooming OUT widens it (snaps more readily).
@@ -80,6 +90,9 @@ const TOOL_RUNWAY = 'runwayLine';
 const TOOL_STAND = 'stand';
 const TOOL_SELECT = 'select';
 const TOOL_BOX_SELECT = 'boxSelect';
+const TOOL_AIR_NODE = 'airNode';
+const TOOL_AIR_PROCEDURE = 'airProcedure';
+const TOOL_AIR_FILLET = 'airFillet';
 
 // Taxiway-segment `Flags` bitmask (see src/acl/taxiway.js): 1=standard, 2=wider,
 // 4=special. A runway's coupled pavement strip is flagged 4 (special) — the same
@@ -114,6 +127,27 @@ const AREA_TYPE_STYLES = {
 // Draw order (bottom → top): BOUNDARY < APRON < BUILDING — all BELOW taxiway.
 const AREA_Z_ORDER = [0, 1, 2];
 
+// Procedure routeType → display color (shared with the map render so the toolbar
+// chips and sub-menu labels match the on-map line color).
+const PROCEDURE_TYPE_COLORS = { 0: '#4a8cff', 1: '#ff9e3a', 2: '#4ac06a', 3: '#ff4a4a' };
+const PROCEDURE_TYPE_ALL = [0, 1, 2, 3]; // STAR, APP, SID, MISS
+
+// Line-thickness scale for procedure polylines so they stay visible when zoomed
+// out: 10× at 100% (fit) down to current thickness at 500%, clamped to [1,10].
+function procStrokeScale(zoomPct) {
+  const z = zoomPct || 100;
+  const f = 1 + 9 * ((500 - z) / 400);
+  return Math.min(10, Math.max(1, f));
+}
+
+// Label font scale so text (procedure names, runway designators) stays legible
+// when zoomed out — mirrors the line-thickness scale but gentler. 1× at 500%
+// zoom, up to ~4× at 100% (fit), clamped so labels don't balloon.
+function labelFontScale(zoomPct) {
+  const s = procStrokeScale(zoomPct);
+  return Math.min(4, Math.max(1, s * 0.5));
+}
+
 // Distance from point (px,pz) to segment a-b (in world units).
 function distToSeg(px, pz, ax, az, bx, bz) {
   const dx = bx - ax, dz = bz - az;
@@ -122,6 +156,15 @@ function distToSeg(px, pz, ax, az, bx, bz) {
   let t = ((px - ax) * dx + (pz - az) * dz) / len2;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
+}
+// Closest point on segment a-b to (px,pz).
+function closestPointOnSeg(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az;
+  const len2 = dx * dx + dz * dz;
+  if (len2 < 1e-9) return { x: ax, z: az };
+  let t = ((px - ax) * dx + (pz - az) * dz) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return { x: ax + t * dx, z: az + t * dz };
 }
 function pointInPoly(px, pz, pts) {
   let inside = false;
@@ -593,6 +636,11 @@ export default function GroundPainter({ vals }) {
   const snapshotText = useAppStore((s) => s.groundPainterSnapshotText);
   const currentPath = useAppStore((s) => s.currentPath);
   const setTool = useAppStore((s) => s.setGroundPainterTool);
+  const mode = useAppStore((s) => s.groundPainterMode);
+  const setMode = useAppStore((s) => s.setGroundPainterMode);
+  const activeRunwaysStore = useAppStore((s) => s.groundPainterActiveRunways);
+  const setActiveRunwaysStore = useAppStore((s) => s.setGroundPainterActiveRunways);
+  const isAirMode = mode === 'air';
   const close = useAppStore((s) => s.closeGroundPainter);
   const showModal = useAppStore((s) => s.showModal);
   const hideModal = useAppStore((s) => s.hideModal);
@@ -604,8 +652,21 @@ export default function GroundPainter({ vals }) {
   const dragRef = useRef(null);        // { sx, sy, vb, moved, button } during a pan drag
   const wasDragged = useRef(false);    // suppress the click that ends a drag
   const boxDragRef = useRef(null);     // box-select drag { startWorld, moved }
-  const [viewBox, setViewBox] = useState(null);
-  const [baseVB, setBaseVB] = useState(null); // bounds-derived viewBox (for zoom %/reset)
+  const [viewBoxByMode, setViewBoxByMode] = useState({ ground: null, air: null });
+  const [baseVBByMode, setBaseVBByMode] = useState({ ground: null, air: null }); // per-mode fit cache (ground vs air)
+  const viewBox = viewBoxByMode[isAirMode ? 'air' : 'ground'] ?? null;
+  const baseVB = baseVBByMode[isAirMode ? 'air' : 'ground'] ?? null;
+  const setViewBox = useCallback((vbOrFn) => {
+    setViewBoxByMode((prev) => {
+      const key = isAirMode ? 'air' : 'ground';
+      const cur = prev[key];
+      const next = typeof vbOrFn === 'function' ? vbOrFn(cur) : vbOrFn;
+      return { ...prev, [key]: next };
+    });
+  }, [isAirMode]);
+  const setBaseVB = useCallback((vb) => {
+    setBaseVBByMode((prev) => ({ ...prev, [isAirMode ? 'air' : 'ground']: vb }));
+  }, [isAirMode]);
   const [committing, setCommitting] = useState(null); // in-progress shape (array of points)
   const [world, setWorld] = useState(null); // current snapped world pos (preview)
   const [selected, setSelected] = useState(null); // {kind:'segment'|'runway'|'area'|'stand', idx} | null
@@ -620,6 +681,15 @@ export default function GroundPainter({ vals }) {
   const [hoverSegIdx, setHoverSegIdx] = useState(null); // hover for fillet picking
   const [bgImage, setBgImage] = useState(null); // imported background image state
   const [bgPanelOpen, setBgPanelOpen] = useState(false); // background-image control panel
+  const [committingProcedure, setCommittingProcedure] = useState(null); // in-progress airway procedure: array of airwayNodeIdx
+  const [procedureType, setProcedureType] = useState(0); // 0 STAR, 1 Approach, 2 SID, 3 Missed
+  const [procedureModalName, setProcedureModalName] = useState('');
+  const [procedureModalRunway, setProcedureModalRunway] = useState('');
+  const [activeProcTypes, setActiveProcTypes] = useState(null); // null = all; Set<int> = visible subset (2nd-dimension filter)
+  const [renameProcedureName, setRenameProcedureName] = useState(''); // editable name while an existing procedure is selected
+  const [renameAirwayNodeName, setRenameAirwayNodeName] = useState(''); // editable name while an existing airway node is selected
+  const [selectedAirwayNode, setSelectedAirwayNode] = useState(null); // idx or null
+  const [selectedProcedureIdx, setSelectedProcedureIdx] = useState(null);
   const headingPushRef = useRef(false); // true after pushHist for current slider drag
 
   // ── Stand heading helpers (HEAD=nose icon, TAIL=nose + offset*deg) ──
@@ -821,15 +891,121 @@ export default function GroundPainter({ vals }) {
     setWorld(null);
     setBoxRect(null);
     boxDragRef.current = null;
+    setCommittingProcedure(null);
   }, [resetFillet]);
+
+  const onToggleMode = useCallback(() => {
+    cancelPlacementInput();
+    setCommittingProcedure(null);
+    setSelectedAirwayNode(null);
+    setSelectedProcedureIdx(null);
+    const cur = useAppStore.getState().groundPainterMode;
+    setMode(cur === 'air' ? 'ground' : 'air');
+  }, [cancelPlacementInput, setMode]);
+
+  // Air helpers: find nearest airway node
+  const findNearestAirwayNode = useCallback((wp) => {
+    if (!graph || !wp || !graph.airwayNodes) return null;
+    const radius = airGrabRadius(viewBox, baseVB);
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < graph.airwayNodes.length; i++) {
+      const n = graph.airwayNodes[i];
+      if (!n) continue;
+      const d = Math.hypot(wp.x - n.x, wp.z - n.z);
+      if (d < bestD && d <= radius) { bestD = d; best = i; }
+    }
+    return best;
+  }, [graph, viewBox, baseVB]);
+  const findNearestProcedure = useCallback((wp) => {
+    if (!graph || !wp || !graph.procedures) return null;
+    const radius = airGrabRadius(viewBox, baseVB);
+    let best = null;
+    let bestD = Infinity;
+    const active = useAppStore.getState().groundPainterActiveRunways;
+    const activeSet = active instanceof Set ? active : (active ? new Set(active) : null);
+    // A hidden type (2nd-dimension filter) is not clickable either.
+    const activeTypeSet = activeProcTypes && activeProcTypes.size > 0 ? activeProcTypes : null;
+    for (let i = 0; i < graph.procedures.length; i++) {
+      const proc = graph.procedures[i];
+      if (!proc || proc.airwayNodeIdxs.length < 2) continue;
+      if (isAirMode && activeSet && activeSet.size > 0 && proc.runwayName && !activeSet.has(proc.runwayName)) continue;
+      if (isAirMode && activeTypeSet && !activeTypeSet.has(proc.routeType)) continue;
+      const pts = proc.airwayNodeIdxs.map((idx) => graph.airwayNodes[idx]).filter(Boolean);
+      if (pts.length < 2) continue;
+      const d = distToPoly(wp.x, wp.z, pts);
+      if (d < bestD && d <= radius) { bestD = d; best = i; }
+    }
+    return best;
+  }, [graph, viewBox, baseVB, isAirMode, activeProcTypes]);
+
+  // Air-mode snap: returns the best existing airway node (or the nearest endpoint
+  // fix on an existing procedure line) within the zoom-aware snap distance. This
+  // makes clicking/procedure-building snap reliably onto nodes & procedures even
+  // when zoomed in. Returns { x, z, idx } where idx is an airwayNodeIdx.
+  const findAirSnap = useCallback((wp) => {
+    if (!graph || !wp || !graph.airwayNodes) return null;
+    const radius = airGrabRadius(viewBox, baseVB);
+    // 1) nearest airway node
+    let bestNode = null, bestNodeD = Infinity;
+    for (let i = 0; i < graph.airwayNodes.length; i++) {
+      const n = graph.airwayNodes[i];
+      if (!n) continue;
+      const d = Math.hypot(wp.x - n.x, wp.z - n.z);
+      if (d < bestNodeD) { bestNodeD = d; bestNode = i; }
+    }
+    if (bestNode != null && bestNodeD <= radius) {
+      const n = graph.airwayNodes[bestNode];
+      return { x: n.x, z: n.z, idx: bestNode };
+    }
+    // 2) snap onto an existing procedure polyline → nearest endpoint fix of it.
+    let best = null, bestD = Infinity;
+    for (const proc of (graph.procedures || [])) {
+      if (!proc || !Array.isArray(proc.airwayNodeIdxs) || proc.airwayNodeIdxs.length < 2) continue;
+      const pts = proc.airwayNodeIdxs.map((idx) => graph.airwayNodes[idx]).filter(Boolean);
+      if (pts.length < 2) continue;
+      for (let s = 0; s < pts.length - 1; s++) {
+        const a = pts[s], b = pts[s + 1];
+        const proj = closestPointOnSeg(wp.x, wp.z, a.x, a.z, b.x, b.z);
+        const d = Math.hypot(wp.x - proj.x, wp.z - proj.z);
+        if (d < bestD) {
+          bestD = d;
+          // Resolve to the closer endpoint fix so we always connect a real node.
+          const toA = Math.hypot(wp.x - a.x, wp.z - a.z);
+          const toB = Math.hypot(wp.x - b.x, wp.z - b.z);
+          const pickIdx = toA <= toB ? proc.airwayNodeIdxs[s] : proc.airwayNodeIdxs[s + 1];
+          const pickPt = toA <= toB ? a : b;
+          best = { x: pickPt.x, z: pickPt.z, idx: pickIdx };
+        }
+      }
+    }
+    if (best && bestD <= radius) return best;
+    return null;
+  }, [graph, viewBox, baseVB]);
 
   // Clear fillet picks when leaving the curve tool or when graph changes (new file)
   useEffect(() => {
-    if (tool !== TOOL_CURVE) {
+    if (tool !== TOOL_CURVE && tool !== TOOL_AIR_FILLET) {
       if (filletPicks.length) setFilletPicks([]);
       if (hoverSegIdx != null) setHoverSegIdx(null);
     }
   }, [tool, filletPicks.length, hoverSegIdx]);
+
+  // When an existing procedure is selected, pre-fill its name so the inline
+  // rename bar shows the current name for editing.
+  useEffect(() => {
+    if (selectedProcedureIdx != null && graph?.procedures?.[selectedProcedureIdx]) {
+      setRenameProcedureName(graph.procedures[selectedProcedureIdx].name || '');
+    }
+  }, [selectedProcedureIdx, graph]);
+
+  // When an existing airway node is selected, pre-fill its name so the inline
+  // rename bar shows the current name for editing.
+  useEffect(() => {
+    if (selectedAirwayNode != null && graph?.airwayNodes?.[selectedAirwayNode]) {
+      setRenameAirwayNodeName(graph.airwayNodes[selectedAirwayNode].name || '');
+    }
+  }, [selectedAirwayNode, graph]);
 
   // ── Tool exit: the previous tool fully quits and terminates its input ──
   // Whenever a DIFFERENT tool is selected, cancel any in-progress placement so
@@ -951,13 +1127,17 @@ export default function GroundPainter({ vals }) {
         // image. Without this, baseVB/viewBox stay frozen on the first level and
         // every background-image import is fitted against stale bounds — so the
         // same zoom-slider % maps to a different on-screen size across loads.
-        setBaseVB(null);
-        setViewBox(null);
+        setBaseVBByMode({ ground: null, air: null });
+        setViewBoxByMode({ ground: null, air: null });
         setBgPanelOpen(false);
         setSelected(null);
         setMultiSelected([]);
         setBoxRect(null);
         boxDragRef.current = null;
+        // Filter selection is NOT persisted across editor sessions: every entry
+        // defaults to "everything selected" (both runway + procedure-type filters).
+        setActiveProcTypes(null);
+        setActiveRunwaysStore(null);
         // Restore the persisted background image (if any) for THIS level so its
         // position & scale are reproduced exactly. The anchor is ALWAYS taken
         // from the deterministic per-airport ground anchor (cache.json), so a
@@ -978,24 +1158,65 @@ export default function GroundPainter({ vals }) {
     })();
   }, [currentPath, vals]);
 
-  // ── viewBox from graph bounds + 10% pad (fit ONLY on first load) ──
-  const bounds = useMemo(() => {
-    if (!graph || !graph.nodes.length) return null;
+  // ── viewBox from graph bounds + 10% pad (fit ONLY on first load) — per-mode ──
+  // groundBounds: union of taxiway/runway/stand nodes + area polygon vertices (ground scenery only)
+  const groundBounds = useMemo(() => {
+    if (!graph) return null;
     let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
-    for (const n of graph.nodes) {
+    let has = false;
+    for (const n of (graph.nodes || [])) {
+      if (!isFinite(n.x) || !isFinite(n.z)) continue;
+      has = true;
       if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
       if (n.z < minZ) minZ = n.z; if (n.z > maxZ) maxZ = n.z;
     }
-    return { minX, minZ, maxX, maxZ };
+    for (const ar of (graph.areas || [])) {
+      for (const p of (ar.points || [])) {
+        if (!isFinite(p.x) || !isFinite(p.z)) continue;
+        has = true;
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+      }
+    }
+    return has ? { minX, minZ, maxX, maxZ } : null;
   }, [graph]);
+  // airBounds: union of all airway fix positions (authored airways can be far outside ground bounds)
+  const airBounds = useMemo(() => {
+    if (!graph) return null;
+    let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+    let has = false;
+    for (const n of (graph.airwayNodes || [])) {
+      if (!n || !isFinite(n.x) || !isFinite(n.z)) continue;
+      has = true;
+      if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
+      if (n.z < minZ) minZ = n.z; if (n.z > maxZ) maxZ = n.z;
+    }
+    if (has) return { minX, minZ, maxX, maxZ };
+    // No per-level airway nodes — fall back to cached airport-level airway anchor
+    // (union across all levels, persisted to cache.json) so an empty level still
+    // fits to the airport's known airspace.
+    const airAnchor = vals && vals._airAnchor;
+    if (airAnchor && isFinite(airAnchor.minX) && isFinite(airAnchor.maxX) && isFinite(airAnchor.minZ) && isFinite(airAnchor.maxZ)) {
+      return { minX: airAnchor.minX, minZ: airAnchor.minZ, maxX: airAnchor.maxX, maxZ: airAnchor.maxZ };
+    }
+    return null;
+  }, [graph, vals]);
+  const effectiveBounds = isAirMode ? (airBounds || groundBounds) : groundBounds;
+  // Keep for bg import fallback (ground anchor derived)
+  const bounds = groundBounds;
   useEffect(() => {
-    if (!bounds || baseVB) return; // fit once; keep the user's zoom/pan afterward
-    const padX = (bounds.maxX - bounds.minX) * 0.1 || 5;
-    const padZ = (bounds.maxZ - bounds.minZ) * 0.1 || 5;
-    const vb = [bounds.minX - padX, svgY(bounds.maxZ + padZ), (bounds.maxX - bounds.minX + 2 * padX), (bounds.maxZ - bounds.minZ + 2 * padZ)];
-    setViewBox(vb);
-    setBaseVB(vb);
-  }, [bounds, baseVB]);
+    if (!effectiveBounds) return;
+    const modeKey = isAirMode ? 'air' : 'ground';
+    if (baseVBByMode[modeKey]) return; // already cached for this mode
+    const padX = (effectiveBounds.maxX - effectiveBounds.minX) * 0.1 || 5;
+    const padZ = (effectiveBounds.maxZ - effectiveBounds.minZ) * 0.1 || 5;
+    const vb = [effectiveBounds.minX - padX, svgY(effectiveBounds.maxZ + padZ), (effectiveBounds.maxX - effectiveBounds.minX + 2 * padX), (effectiveBounds.maxZ - effectiveBounds.minZ + 2 * padZ)];
+    // Cache the fit for this mode; only set the live viewBox on first load
+    // (when viewBox is still null). Toggling to air preserves the ground pan
+    // until the user explicitly presses Fit (⌖) — Fit is per-mode.
+    setBaseVBByMode((prev) => ({ ...prev, [modeKey]: vb }));
+    if (!viewBox) setViewBox(vb);
+  }, [effectiveBounds, isAirMode, baseVBByMode, viewBox]);
 
   // ── Zoom (scrollwheel + UI buttons) ──
   const zoomAt = useCallback((sx, sy, f) => {
@@ -1024,7 +1245,16 @@ export default function GroundPainter({ vals }) {
       return [cx - (vw * f) / 2, cy - (vh * f) / 2, vw * f, vh * f];
     });
   }, []);
-  const resetZoom = useCallback(() => { if (baseVB) setViewBox(baseVB); }, [baseVB]);
+  const resetZoom = useCallback(() => {
+    if (baseVB) { setViewBox(baseVB); return; }
+    if (!effectiveBounds) return;
+    const padX = (effectiveBounds.maxX - effectiveBounds.minX) * 0.1 || 5;
+    const padZ = (effectiveBounds.maxZ - effectiveBounds.minZ) * 0.1 || 5;
+    const vb = [effectiveBounds.minX - padX, svgY(effectiveBounds.maxZ + padZ), (effectiveBounds.maxX - effectiveBounds.minX + 2 * padX), (effectiveBounds.maxZ - effectiveBounds.minZ + 2 * padZ)];
+    setViewBox(vb);
+    const modeKey = isAirMode ? 'air' : 'ground';
+    setBaseVBByMode((prev) => ({ ...prev, [modeKey]: vb }));
+  }, [baseVB, effectiveBounds, isAirMode]);
   const zoomPercent = baseVB && viewBox ? Math.round(100 / (viewBox[2] / baseVB[2])) : 100;
 
   // ── Background image: import (file → data URL) + placement controls ──
@@ -1122,6 +1352,47 @@ export default function GroundPainter({ vals }) {
   const snapGeom = useMemo(() => (graph ? collectSnapGeometry(graph) : { points: [], segments: [] }), [graph]);
   const taxiPaths = useMemo(() => (graph ? buildTaxiPaths(graph) : []), [graph]);
 
+  // ── Air mode helpers ────────────────────────
+  const runwayOptions = useMemo(() => {
+    if (!graph) return [];
+    const s = new Set();
+    for (const rw of (graph.runways || [])) {
+      for (const n of (rw.names || [])) s.add(n);
+      if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) s.add(n.trim());
+    }
+    for (const p of (graph.procedures || [])) if (p.runwayName) s.add(p.runwayName);
+    return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [graph]);
+  const activeRunways = useMemo(() => {
+    if (!activeRunwaysStore) return null;
+    return activeRunwaysStore instanceof Set ? activeRunwaysStore : new Set(activeRunwaysStore);
+  }, [activeRunwaysStore]);
+  // 2nd-dimension procedure filter: by routeType (ARR | STAR | SID | MISS).
+  const filteredProcedures = useMemo(() => {
+    let list = graph?.procedures || [];
+    if (isAirMode) {
+      if (activeRunways && activeRunways.size > 0) list = list.filter((p) => activeRunways.has(p.runwayName));
+      if (activeProcTypes && activeProcTypes.size > 0) list = list.filter((p) => activeProcTypes.has(p.routeType));
+    }
+    return list;
+  }, [graph, isAirMode, activeRunways, activeProcTypes]);
+  const onToggleRunway = useCallback((rwy) => {
+    if (rwy === '__all') {
+      setActiveRunwaysStore(null);
+      return;
+    }
+    const cur = activeRunways ? new Set(activeRunways) : new Set(runwayOptions);
+    if (cur.has(rwy)) cur.delete(rwy); else cur.add(rwy);
+    if (cur.size === 0 || cur.size === runwayOptions.length) setActiveRunwaysStore(null);
+    else setActiveRunwaysStore(cur);
+  }, [activeRunways, runwayOptions, setActiveRunwaysStore]);
+  const onToggleProcType = useCallback((value) => {
+    const cur = activeProcTypes ? new Set(activeProcTypes) : new Set(PROCEDURE_TYPE_ALL);
+    if (cur.has(value)) cur.delete(value); else cur.add(value);
+    if (cur.size === 0 || cur.size === PROCEDURE_TYPE_ALL.length) setActiveProcTypes(null);
+    else setActiveProcTypes(cur);
+  }, [activeProcTypes]);
+
   // ── mouse → world + snap (snap is always on) ──
   const toWorld = useCallback((evt) => {
     const svg = svgRef.current; if (!svg) return null;
@@ -1163,6 +1434,36 @@ export default function GroundPainter({ vals }) {
       return;
     }
     const raw = toWorld(evt); if (!raw || !snapGeom) return;
+    // Air mode handling
+    if (isAirMode) {
+      if (tool === TOOL_AIR_FILLET) {
+        const hit = findNearestProcedure(raw);
+        setHoverSegIdx(hit);
+      }
+      if (tool === TOOL_AIR_NODE) {
+        const nearest = findNearestAirwayNode(raw);
+        const snapDist = painterSnapDist(viewBox, baseVB);
+        if (nearest != null) {
+          const n = graph.airwayNodes[nearest];
+          const d = Math.hypot(raw.x - n.x, raw.z - n.z);
+          if (d <= snapDist) {
+            setWorld({ x: n.x, z: n.z, type: SNAP_TYPES.ENDPOINT });
+            return;
+          }
+        }
+        setWorld(raw);
+        return;
+      }
+      if (tool === TOOL_AIR_PROCEDURE && committingProcedure && committingProcedure.length > 0) {
+        const snap = findAirSnap(raw);
+        if (snap) {
+          setWorld({ x: snap.x, z: snap.z, type: SNAP_TYPES.ENDPOINT });
+          return;
+        }
+        setWorld(raw);
+        return;
+      }
+    }
     // Fillet hover: highlight nearest segment
     if (tool === TOOL_CURVE) {
       const hit = findNearestSegmentIdx(raw);
@@ -1198,7 +1499,7 @@ export default function GroundPainter({ vals }) {
     // (prevents 2-point degenerate close; enforces ≥3 points after truncation).
     if (snapped && tool === 'area' && prev && Math.hypot(snapped.x - prev.x, snapped.z - prev.z) < 1e-9) snapped = null;
     setWorld(snapped || raw);
-  }, [toWorld, snapGeom, viewBox, baseVB, committing, applyDrag, tool, findNearestSegmentIdx, graph]);
+  }, [toWorld, snapGeom, viewBox, baseVB, committing, applyDrag, tool, findNearestSegmentIdx, graph, isAirMode, findNearestAirwayNode, findNearestProcedure, committingProcedure, findAirSnap]);
 
   // Start a drag: middle button always pans; Select tool left-drag moves the
   // selected object's endpoint/body, otherwise pans. Non-select tools place.
@@ -1439,6 +1740,38 @@ export default function GroundPainter({ vals }) {
           if (!blocked) onSelected = pointInPoly(wp.x, wp.z, pts) || minEdgeDist(wp.x, wp.z, pts) <= bodyTH;
         }
       }
+      // Airway handling for ground select when in air mode (airway node / procedure)
+      if (isAirMode) {
+        // Generous air-mode grab so dragging a selected node/procedure is easy
+        // at any zoom, matching the click-to-select radius.
+        const airGrab = airGrabRadius(viewBox, baseVB);
+        const airBody = Math.max(0.30, airGrab * 1.15);
+        if (selectedAirwayNode != null) {
+          const n = g.airwayNodes && g.airwayNodes[selectedAirwayNode];
+          if (n && Math.hypot(wp.x - n.x, wp.z - n.z) <= airGrab) {
+            dragRef.current = { mode: 'node', kind: 'airwayNode', idx: selectedAirwayNode, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp };
+            return;
+          }
+        }
+        if (selectedProcedureIdx != null) {
+          const proc = g.procedures && g.procedures[selectedProcedureIdx];
+          if (proc) {
+            const pts = proc.airwayNodeIdxs.map((ii) => g.airwayNodes[ii]).filter(Boolean);
+            if (pts.length >= 2 && distToPoly(wp.x, wp.z, pts) <= airBody) {
+              const origAirwayNodes = proc.airwayNodeIdxs.map((idx) => ({ idx, x: g.airwayNodes[idx].x, z: g.airwayNodes[idx].z }));
+              dragRef.current = { mode: 'body', kind: 'airwayProcedure', idx: selectedProcedureIdx, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp, origAirwayNodes };
+              return;
+            }
+            for (const ni of proc.airwayNodeIdxs) {
+              const nn = g.airwayNodes[ni];
+              if (nn && Math.hypot(wp.x - nn.x, wp.z - nn.z) <= airGrab) {
+                dragRef.current = { mode: 'node', kind: 'airwayNode', idx: ni, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp };
+                return;
+              }
+            }
+          }
+        }
+      }
       if (!onSelected) {
         dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
         return;
@@ -1463,7 +1796,7 @@ export default function GroundPainter({ vals }) {
     }
     // no selection → empty-space pan
     dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
-  }, [viewBox, baseVB, tool, selected, multiSelected, boxRect, graph, meta, toWorld, selectEnabled, bgImage, committing, filletPicks, resetFillet]);
+  }, [viewBox, baseVB, tool, selected, multiSelected, boxRect, graph, meta, toWorld, selectEnabled, bgImage, committing, filletPicks, resetFillet, isAirMode, selectedAirwayNode, selectedProcedureIdx]);
 
   // Pick the single object under a world point using the Select tool's priority
   // (stand > taxiway/runway > area, with area occlusion/edge weighting). Returns
@@ -1692,6 +2025,20 @@ export default function GroundPainter({ vals }) {
       useAppStore.setState({ groundPainterGraph: { ...g, nodes }, groundPainterHasEdited: true });
       return;
     }
+    // Airway node drag — free move, no snap
+    if (d.kind === 'airwayNode') {
+      const airwayNodes = [...g.airwayNodes];
+      if (airwayNodes[d.idx]) airwayNodes[d.idx] = { ...airwayNodes[d.idx], x: raw.x, z: raw.z };
+      useAppStore.setState({ groundPainterGraph: { ...g, airwayNodes }, groundPainterHasEdited: true });
+      return;
+    }
+    if (d.kind === 'airwayProcedure') {
+      const dx = raw.x - d.startWorld.x, dz = raw.z - d.startWorld.z;
+      const airwayNodes = [...(g.airwayNodes || [])];
+      for (const { idx, x, z } of d.origAirwayNodes) if (airwayNodes[idx]) airwayNodes[idx] = { ...airwayNodes[idx], x: x + dx, z: z + dz };
+      useAppStore.setState({ groundPainterGraph: { ...g, airwayNodes }, groundPainterHasEdited: true });
+      return;
+    }
     const nw = findSnap(raw, null, snapGeom, { snapDist: painterSnapDist(viewBox, baseVB), angleToleranceDeg: painterAngleTol(viewBox, baseVB) }) || raw;
 
     if (d.mode === 'node') {
@@ -1793,6 +2140,27 @@ export default function GroundPainter({ vals }) {
       return best;
     };
 
+    if (isAirMode && tool === TOOL_SELECT && selectEnabled) {
+      if (!graph || !raw) return;
+      const nearestNode = findNearestAirwayNode(raw);
+      const nearestProc = findNearestProcedure(raw);
+      // Prefer node over procedure when both in range (like ground stand priority)
+      let pick = null;
+      if (nearestNode != null) {
+        // Generous, zoom-aware radius so air-mode node selection is easy at any zoom.
+        pick = { kind: 'airwayNode', idx: nearestNode };
+      }
+      if (!pick && nearestProc != null) {
+        pick = { kind: 'procedure', idx: nearestProc };
+      }
+      if (pick) {
+        if (pick.kind === 'airwayNode') { setSelectedAirwayNode(pick.idx); setSelectedProcedureIdx(null); setSelected(null); }
+        else { setSelectedProcedureIdx(pick.idx); setSelectedAirwayNode(null); setSelected(null); }
+        return;
+      }
+      if (bgImage && pointInBgBounds(bgImage, raw)) { setSelected({ kind: 'bgImage' }); setSelectedAirwayNode(null); setSelectedProcedureIdx(null); return; }
+      setSelectedAirwayNode(null); setSelectedProcedureIdx(null); setSelected(null); return;
+    }
     if (tool === TOOL_SELECT && selectEnabled) {
       if (!graph || !raw) return;
       // Pick the object under the cursor using the Select tool's priority rule
@@ -1802,6 +2170,93 @@ export default function GroundPainter({ vals }) {
       // No foreground hit — try background image (lowest priority, behind all scenery)
       if (bgImage && pointInBgBounds(bgImage, raw)) { setSelected({ kind: 'bgImage' }); return; }
       setSelected(null); return;
+    }
+    if (isAirMode) {
+      if (tool === TOOL_AIR_NODE) {
+        // Place airway node free (no taxiway snap), snap only to existing airway nodes/runway thresholds
+        let placePos = raw;
+        const nearest = findNearestAirwayNode(raw);
+        const snapDist = painterSnapDist(viewBox, baseVB);
+        if (nearest != null) {
+          const n = graph.airwayNodes[nearest];
+          if (Math.hypot(raw.x - n.x, raw.z - n.z) <= snapDist) placePos = { x: n.x, z: n.z };
+        }
+        // Create node
+        const st = useAppStore.getState();
+        const gg = st.groundPainterGraph;
+        const mm = st.groundPainterMeta;
+        const newGraph = structuredClone(gg);
+        const newMeta = structuredClone(mm);
+        if (!newGraph.airwayNodes) newGraph.airwayNodes = [];
+        if (!newMeta.airwayNodeOrigPk) newMeta.airwayNodeOrigPk = [];
+        const idx = newGraph.airwayNodes.length;
+        newGraph.airwayNodes.push({ x: placePos.x, z: placePos.z, name: 'FIX' + (idx + 1) });
+        newMeta.airwayNodeOrigPk.push(null);
+        useAppStore.setState({ groundPainterHistory: structuredClone(gg), groundPainterMetaHistory: structuredClone(mm), groundPainterGraph: newGraph, groundPainterMeta: newMeta, groundPainterHasEdited: true });
+        setSelectedAirwayNode(idx);
+        setSelectedProcedureIdx(null);
+        return;
+      }
+      if (tool === TOOL_AIR_PROCEDURE) {
+        // Procedure: click EXISTING airway nodes (FIX points) to chain them into a
+        // procedure. No random placement — snapping to an existing node is required.
+        // findAirSnap also catches clicks near a procedure line, resolving to the
+        // nearer endpoint fix so snapping works well at any zoom.
+        const snap = findAirSnap(raw);
+        if (snap == null) return; // click on empty space: ignore
+        const clickIdx = snap.idx;
+        // Clicked on existing node
+        if (!committingProcedure) {
+          setCommittingProcedure([clickIdx]);
+          setProcedureModalName('');
+          setProcedureModalRunway(runwayOptions[0] || '');
+          setGpError(null);
+        } else {
+          // Avoid consecutive duplicate
+          if (committingProcedure[committingProcedure.length - 1] === clickIdx) return;
+          const newDraft = [...committingProcedure, clickIdx];
+          setCommittingProcedure(newDraft);
+          setGpError(null);
+        }
+        return;
+      }
+      if (tool === TOOL_AIR_FILLET) {
+        // Air fillet: pick two procedures that share a node O (connected)
+        const hit = findNearestProcedure(raw);
+        if (hit == null) { setGpError(t('ground_painter_fillet_error_click_near') || 'Click near a procedure'); return; }
+        if (filletPicks.length === 0) {
+          setFilletPicks([hit]);
+          setGpError(null);
+        } else if (filletPicks.length === 1) {
+          if (filletPicks[0] === hit) { setFilletPicks([]); return; }
+          const probe = computeFillet({ nodes: graph.airwayNodes, segments: graph.procedures.map(p => ({ nodeIdxs: p.airwayNodeIdxs, aIdx: p.airwayNodeIdxs[0], bIdx: p.airwayNodeIdxs[p.airwayNodeIdxs.length-1] })) }, filletPicks[0], hit, filletRadius);
+          // computeFillet expects graph with nodes/segments; airway procedures are segments
+          // To avoid hack, we will handle via custom air fillet helper later; for now just store picks
+          if (!probe.ok && probe.error === 'ground_painter_fillet_error_parallel') {
+            setFilletPicks([filletPicks[0], hit]);
+            setGpError(t(probe.error) || probe.error);
+            return;
+          }
+          if (!probe.ok) {
+            setFilletPicks([filletPicks[0], hit]);
+            const msg = probe.errorParams ? t(probe.error, probe.errorParams) : t(probe.error);
+            setGpError(msg);
+            return;
+          }
+          // Check virtualO: air fillet must be connected only
+          if (probe.virtualO) {
+            setFilletPicks([filletPicks[0], hit]);
+            setGpError(t('ground_painter_air_fillet_error_connected') || 'Fillet requires connected segments');
+            return;
+          }
+          setFilletPicks([filletPicks[0], hit]);
+          setGpError(null);
+        } else {
+          setFilletPicks([hit]);
+          setGpError(null);
+        }
+        return;
+      }
     }
     // Compute a FRESH snapped point at click time so a placed vertex snaps even
     // if `world` (last mousemove) never fired; close an area by RAW distance so a
@@ -2030,7 +2485,7 @@ export default function GroundPainter({ vals }) {
       }
       setCommitting([...pts, { x: p.x, z: p.z }]);
     }
-  }, [world, tool, setTool, graph, committing, commitArea, commitRunway, snapGeom, viewBox, baseVB, heading, selectEnabled, filletPicks, filletRadius, findNearestSegmentIdx, t, bgImage, pickForeground]);
+  }, [world, tool, setTool, graph, committing, commitArea, commitRunway, snapGeom, viewBox, baseVB, heading, selectEnabled, filletPicks, filletRadius, findNearestSegmentIdx, t, bgImage, pickForeground, isAirMode, findNearestAirwayNode, findNearestProcedure, findAirSnap, committingProcedure, activeRunways, runwayOptions, selectedAirwayNode, selectedProcedureIdx]);
 
   // Delete key removes the selected object. Deleting MUST also record the
   // removed object's original PK/id in meta.deletedPks / meta.deletedAreaIds and
@@ -2039,11 +2494,12 @@ export default function GroundPainter({ vals }) {
   // so the deletion silently does not persist.
   const deleteSelected = useCallback(() => {
     const hasMulti = multiSelected && multiSelected.length > 0;
-    if (!selected && !hasMulti) return;
+    const hasAirSel = (typeof selectedAirwayNode !== 'undefined' && selectedAirwayNode != null) || (typeof selectedProcedureIdx !== 'undefined' && selectedProcedureIdx != null);
+    if (!selected && !hasMulti && !hasAirSel) return;
     const st = useAppStore.getState();
     const g = st.groundPainterGraph;
     const m = st.groundPainterMeta;
-    const gg = { ...g, nodes: [...g.nodes], segments: [...g.segments], runways: [...g.runways], areas: [...g.areas], stands: [...g.stands] };
+    const gg = { ...g, nodes: [...(g.nodes||[])], segments: [...(g.segments||[])], runways: [...(g.runways||[])], areas: [...(g.areas||[])], stands: [...(g.stands||[])], airwayNodes: [...(g.airwayNodes||[])], procedures: [...(g.procedures||[])] };
     // Clone meta parallel arrays (defensive: meta may be null in a fresh/empty state).
     const mm = m ? {
       ...m,
@@ -2054,10 +2510,58 @@ export default function GroundPainter({ vals }) {
       runwayOrigInfo: m.runwayOrigInfo ? [...m.runwayOrigInfo] : m.runwayOrigInfo,
       areaOrigId: m.areaOrigId ? [...m.areaOrigId] : m.areaOrigId,
       standOrigPk: m.standOrigPk ? [...m.standOrigPk] : m.standOrigPk,
+      airwayNodeOrigPk: m.airwayNodeOrigPk ? [...m.airwayNodeOrigPk] : m.airwayNodeOrigPk,
+      airwaySegOrigPk: m.airwaySegOrigPk ? [...m.airwaySegOrigPk] : m.airwaySegOrigPk,
       deletedPks: m.deletedPks ? [...m.deletedPks] : [],
       deletedAreaIds: m.deletedAreaIds ? [...m.deletedAreaIds] : [],
+      deletedAirwayPks: m.deletedAirwayPks ? [...m.deletedAirwayPks] : [],
     } : m;
     const markDeletedPk = (pk) => { if (pk != null && mm && !mm.deletedPks.includes(pk)) mm.deletedPks.push(pk); };
+    const markDeletedAirwayPk = (pk) => { if (pk != null && mm && !mm.deletedAirwayPks.includes(pk)) mm.deletedAirwayPks.push(pk); };
+    // ── Airway delete handling ─────────────────────
+    if (isAirMode && (selectedAirwayNode != null || selectedProcedureIdx != null)) {
+      pushHist();
+      if (selectedProcedureIdx != null) {
+        const proc = gg.procedures[selectedProcedureIdx];
+        const pk = mm.airwaySegOrigPk ? mm.airwaySegOrigPk[selectedProcedureIdx] : null;
+        if (pk) markDeletedAirwayPk(pk);
+        gg.procedures.splice(selectedProcedureIdx, 1);
+        if (mm.airwaySegOrigPk) mm.airwaySegOrigPk.splice(selectedProcedureIdx, 1);
+        setSelectedProcedureIdx(null);
+        useAppStore.setState({ groundPainterGraph: gg, groundPainterMeta: mm, groundPainterHasEdited: true });
+        return;
+      }
+      if (selectedAirwayNode != null) {
+        const delIdx = selectedAirwayNode;
+        const pk = mm.airwayNodeOrigPk ? mm.airwayNodeOrigPk[delIdx] : null;
+        if (pk) markDeletedAirwayPk(pk);
+        // Remove procedures that would become degenerate (<2 nodes) after this node removal
+        const procsToDrop = [];
+        for (let pi = gg.procedures.length - 1; pi >= 0; pi--) {
+          const proc = gg.procedures[pi];
+          if (!proc.airwayNodeIdxs.includes(delIdx)) continue;
+          const remaining = proc.airwayNodeIdxs.filter((idx) => idx !== delIdx).length;
+          if (remaining < 2) procsToDrop.push(pi);
+        }
+        // Drop those procedures first (so node index shifts not needed yet)
+        for (const pi of procsToDrop) {
+          const pk2 = mm.airwaySegOrigPk ? mm.airwaySegOrigPk[pi] : null;
+          if (pk2) markDeletedAirwayPk(pk2);
+          gg.procedures.splice(pi, 1);
+          if (mm.airwaySegOrigPk) mm.airwaySegOrigPk.splice(pi, 1);
+        }
+        // Now remove the airway node and reindex remaining procedures
+        gg.airwayNodes.splice(delIdx, 1);
+        if (mm.airwayNodeOrigPk) mm.airwayNodeOrigPk.splice(delIdx, 1);
+        for (const proc of gg.procedures) {
+          proc.airwayNodeIdxs = proc.airwayNodeIdxs.filter((idx) => idx !== delIdx).map((idx) => idx > delIdx ? idx - 1 : idx);
+        }
+        setSelectedAirwayNode(null);
+        setSelectedProcedureIdx(null);
+        useAppStore.setState({ groundPainterGraph: gg, groundPainterMeta: mm, groundPainterHasEdited: true });
+        return;
+      }
+    }
     const doOrphanGC = (uniqueDelNodes) => {
       const orphans = [];
       for (const ni of uniqueDelNodes) {
@@ -2147,6 +2651,17 @@ export default function GroundPainter({ vals }) {
         if (!Array.isArray(mm.deletedRunwayNames)) mm.deletedRunwayNames = [];
         for (const nm of [phys, ...endNames]) {
           if (nm && !mm.deletedRunwayNames.includes(nm)) mm.deletedRunwayNames.push(nm);
+        }
+      }
+      // Cascade to airway procedures attached to this runway
+      const delNamesSet = new Set([phys, ...endNames]);
+      for (let pi = gg.procedures.length - 1; pi >= 0; pi--) {
+        const proc = gg.procedures[pi];
+        if (proc.runwayName && delNamesSet.has(proc.runwayName)) {
+          const pk = mm.airwaySegOrigPk ? mm.airwaySegOrigPk[pi] : null;
+          if (pk) markDeletedAirwayPk(pk);
+          gg.procedures.splice(pi, 1);
+          if (mm.airwaySegOrigPk) mm.airwaySegOrigPk.splice(pi, 1);
         }
       }
     };
@@ -2244,8 +2759,10 @@ export default function GroundPainter({ vals }) {
       groundPainterHasEdited: true,
     });
     setSelected(null);
+    setSelectedAirwayNode(null);
+    setSelectedProcedureIdx(null);
     if (hasMulti) setMultiSelected([]);
-  }, [selected, multiSelected]);
+  }, [selected, multiSelected, isAirMode, selectedAirwayNode, selectedProcedureIdx]);
   // Depth-1 undo (Ctrl+Z) and the toolbar undo button share this single slot: restore
   // the prior graph/meta and clear the history so there is nothing left to undo.
   const undo = useCallback(() => {
@@ -2266,6 +2783,8 @@ export default function GroundPainter({ vals }) {
       // do pure text editing — never delete the object, undo the graph, or deselect.
       if (isTextEditTarget(e.target)) return;
       if (e.key === 'Escape') {
+        if (isAirMode && committingProcedure) { setCommittingProcedure(null); return; }
+        if (isAirMode && (selectedAirwayNode != null || selectedProcedureIdx != null)) { setSelectedAirwayNode(null); setSelectedProcedureIdx(null); return; }
         if (tool === TOOL_CURVE && filletPicks.length > 0) {
           resetFillet();
           return;
@@ -2279,9 +2798,19 @@ export default function GroundPainter({ vals }) {
         return;
       }
       if (e.key === 'Enter') {
+        if (isAirMode && tool === TOOL_AIR_PROCEDURE && committingProcedure && committingProcedure.length >= 2) {
+          e.preventDefault();
+          commitProcedure();
+          return;
+        }
         if (tool === TOOL_CURVE && filletPicks.length >= 2) {
           e.preventDefault();
           commitFillet(filletPicks[0], filletPicks[1], filletRadius);
+          return;
+        }
+        if (tool === TOOL_AIR_FILLET && filletPicks.length >= 2) {
+          e.preventDefault();
+          commitAirFillet(filletPicks[0], filletPicks[1], filletRadius);
           return;
         }
       }
@@ -2290,13 +2819,12 @@ export default function GroundPainter({ vals }) {
       // (Select 'A' is also a toggle). Skipped while a text/edit field is focused
       // (guarded above) and when a modifier is held so it never fights Ctrl/Cmd
       // shortcuts (undo, save, flight ops).
-      const TOOL_KEY_MAP = { a: TOOL_SELECT, s: TOOL_BOX_SELECT, d: TOOL_LINE, f: TOOL_CURVE, r: TOOL_RUNWAY, g: 'area', h: TOOL_STAND };
+      const baseMap = isAirMode ? { a: TOOL_SELECT, s: TOOL_BOX_SELECT, n: TOOL_AIR_NODE, c: TOOL_AIR_PROCEDURE, f: TOOL_AIR_FILLET } : { a: TOOL_SELECT, s: TOOL_BOX_SELECT, d: TOOL_LINE, f: TOOL_CURVE, r: TOOL_RUNWAY, g: 'area', h: TOOL_STAND };
+      const TOOL_KEY_MAP = baseMap;
       const k = e.key.toLowerCase();
       if (TOOL_KEY_MAP[k] && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         if (k === 'a') {
-          // Select toggles like the toolbar button: from another tool → activate +
-          // enable; already in select → toggle pan-only mode.
           if (tool !== TOOL_SELECT) { cancelPlacementInput(); setTool(TOOL_SELECT); setSelectEnabled(true); }
           else setSelectEnabled((v) => !v);
         } else {
@@ -2310,7 +2838,7 @@ export default function GroundPainter({ vals }) {
         undo();
         return;
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && (selected || multiSelected.length)) { e.preventDefault(); deleteSelected(); }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && (selected || multiSelected.length || selectedAirwayNode != null || selectedProcedureIdx != null)) { e.preventDefault(); deleteSelected(); }
       // Rotate the whole (multi-)selection around its center in 45° steps — `[` ↺  `]` ↻.
       if ((e.key === '[' || e.key === ']') && (selected || multiSelected.length)) {
         e.preventDefault();
@@ -2320,9 +2848,17 @@ export default function GroundPainter({ vals }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, multiSelected, boxRect, deleteSelected, committing, setTool, tool, filletPicks, filletRadius, resetFillet, undo, cancelPlacementInput, setSelectEnabled, rotateSelection]);
+  }, [selected, multiSelected, boxRect, deleteSelected, committing, setTool, tool, filletPicks, filletRadius, resetFillet, undo, cancelPlacementInput, setSelectEnabled, rotateSelection, commitProcedure, committingProcedure, procedureModalName, procedureModalRunway, procedureType, runwayOptions]);
 
   const onDblClick = useCallback(() => {
+    if (isAirMode && tool === TOOL_AIR_PROCEDURE && committingProcedure && committingProcedure.length >= 2) {
+      commitProcedure();
+      return;
+    }
+    if (isAirMode && tool === TOOL_AIR_FILLET && filletPicks.length >= 2) {
+      commitAirFillet(filletPicks[0], filletPicks[1], filletRadius);
+      return;
+    }
     if (tool === 'area' && committing && committing.length >= 3) commitArea(committing.map((pt) => ({ x: pt.x, z: pt.z })));
     else if (tool === TOOL_CURVE && filletPicks.length >= 2) commitFillet(filletPicks[0], filletPicks[1], filletRadius);
     else if (tool === TOOL_RUNWAY && committing && committing.length >= 2) commitRunway(committing.map((pt) => ({ x: pt.x, z: pt.z })));
@@ -2426,7 +2962,7 @@ export default function GroundPainter({ vals }) {
       useAppStore.setState({ groundPainterHistory: structuredClone(gg), groundPainterMetaHistory: structuredClone(mm), groundPainterGraph: newGraph, groundPainterMeta: newMeta, groundPainterHasEdited: true });
       setCommitting(clean.length >= 2 ? [{ x: clean[clean.length-1].x, z: clean[clean.length-1].z }] : null);
     }
-  }, [tool, committing, commitArea, commitRunway, filletPicks, filletRadius, t]);
+  }, [tool, committing, commitArea, commitRunway, filletPicks, filletRadius, t, isAirMode, committingProcedure, runwayOptions, commitProcedure]);
 
   // ── Save (with .bak prompt) + Cancel ──
   function commitArea(pts) {
@@ -2939,6 +3475,139 @@ export default function GroundPainter({ vals }) {
     setHoverSegIdx(null);
     setGpError(null);
   }
+  function commitAirFillet(segIdxA, segIdxB, radius) {
+    const s = useAppStore.getState();
+    const g0 = s.groundPainterGraph;
+    const m0 = s.groundPainterMeta;
+    const airGraph = { nodes: g0.airwayNodes || [], segments: (g0.procedures || []).map((p) => ({ nodeIdxs: p.airwayNodeIdxs, aIdx: p.airwayNodeIdxs[0], bIdx: p.airwayNodeIdxs[p.airwayNodeIdxs.length - 1] })) };
+    const res = computeFillet(airGraph, segIdxA, segIdxB, radius);
+    if (!res.ok) {
+      setGpError(res.errorParams ? t(res.error, res.errorParams) : t(res.error));
+      return;
+    }
+    if (res.virtualO) {
+      setGpError(t('ground_painter_air_fillet_error_connected') || 'Fillet requires connected segments');
+      return;
+    }
+    // Simple connected air fillet: truncate both legs at T and insert arc
+    const g = structuredClone(g0);
+    const m = structuredClone(m0);
+    if (!Array.isArray(m.deletedAirwayPks)) m.deletedAirwayPks = [];
+    // Truncate legs: find shared node O is res.oIdx (or duplicate). Need to create new nodes for T1/T2 and arc interior
+    // For simplicity, create new airway nodes for T1, T2 and arc interior points, and replace the two procedures' node lists to be trimmed.
+    // This is a simplified version that always deletes the corner segments (the two incident legs) and replaces with trimmed legs + arc.
+    // Implementation: for each of the two procedures, replace its nodeIdxs to be truncated at T.
+    // Since air procedures are straight lines (2+ nodes), O is somewhere interior or endpoint. We'll just insert arc as a new procedure? 
+    // Requirement says always deletes the corner segments and replaces the trimmed legs + arc. For air, that means the two legs sharing O are each truncated, and an arc polyline bridges T1-T2.
+    // To keep it simple, we will create 3 new airway nodes for T1, T2 and arc midpoint, and update procedures accordingly.
+    // Create T nodes
+    const t1Idx = g.airwayNodes.length;
+    g.airwayNodes.push({ x: res.t1.x, z: res.t1.z, name: '' });
+    m.airwayNodeOrigPk.push(null);
+    const t2Idx = g.airwayNodes.length;
+    g.airwayNodes.push({ x: res.t2.x, z: res.t2.z, name: '' });
+    m.airwayNodeOrigPk.push(null);
+    const arcInterior = [];
+    for (let i = 1; i < res.arcPoints.length - 1; i++) {
+      const pt = res.arcPoints[i];
+      const ai = g.airwayNodes.length;
+      g.airwayNodes.push({ x: pt.x, z: pt.z, name: '' });
+      m.airwayNodeOrigPk.push(null);
+      arcInterior.push(ai);
+    }
+    const arcIdxs = [t1Idx, ...arcInterior, t2Idx];
+    // Truncate the two picked procedures at T (simplified: just replace their shared O with T)
+    const procA = g.procedures[segIdxA];
+    const procB = g.procedures[segIdxB];
+    if (procA) {
+      const oIdx = res.oIdxA != null ? res.oIdxA : res.oIdx;
+      // Find position of O in procA's node list and truncate to T1
+      const pos = procA.airwayNodeIdxs.indexOf(oIdx);
+      if (pos >= 0) {
+        // Keep far side + T
+        if (pos === 0) procA.airwayNodeIdxs = [t1Idx, ...procA.airwayNodeIdxs.slice(1)];
+        else if (pos === procA.airwayNodeIdxs.length - 1) procA.airwayNodeIdxs = [...procA.airwayNodeIdxs.slice(0, -1), t1Idx];
+        else {
+          // O interior (should not happen for straight 2-point)
+          procA.airwayNodeIdxs = procA.airwayNodeIdxs.slice(0, pos).concat([t1Idx], procA.airwayNodeIdxs.slice(pos + 1));
+        }
+      }
+    }
+    if (procB) {
+      const oIdxB = res.oIdxB != null ? res.oIdxB : res.oIdx;
+      const posB = procB.airwayNodeIdxs.indexOf(oIdxB);
+      if (posB >= 0) {
+        if (posB === 0) procB.airwayNodeIdxs = [t2Idx, ...procB.airwayNodeIdxs.slice(1)];
+        else if (posB === procB.airwayNodeIdxs.length - 1) procB.airwayNodeIdxs = [...procB.airwayNodeIdxs.slice(0, -1), t2Idx];
+        else procB.airwayNodeIdxs = procB.airwayNodeIdxs.slice(0, posB).concat([t2Idx], procB.airwayNodeIdxs.slice(posB + 1));
+      }
+    }
+    // Insert arc as a new procedure (or as part of one of the procedures? For air, arc is a new segment bridging T1-T2)
+    // According to plan, insert an airway-segment for the arc polyline
+    g.procedures.push({ name: 'ARC' + Date.now() % 1000, routeType: procA ? procA.routeType : 0, runwayName: procA ? procA.runwayName : (runwayOptions[0] || '01'), airwayNodeIdxs: arcIdxs });
+    m.airwaySegOrigPk.push(null);
+    useAppStore.setState({ groundPainterHistory: structuredClone(g0), groundPainterMetaHistory: structuredClone(m0), groundPainterGraph: g, groundPainterMeta: m, groundPainterHasEdited: true });
+    setFilletPicks([]);
+    setHoverSegIdx(null);
+    setGpError(null);
+  }
+  function commitProcedure() {
+    if (!committingProcedure || committingProcedure.length < 2) { setGpError(t('ground_painter_procedure_need_nodes') || 'At least 2 fixes required'); return; }
+    const name = (procedureModalName || '').trim();
+    const rwy = (procedureModalRunway || '').trim();
+    if (!name) { setGpError(t('ground_painter_procedure_need_name') || 'Enter procedure name'); return; }
+    if (!rwy) { setGpError(t('ground_painter_procedure_need_runway') || 'Select a runway'); return; }
+    // Duplicate check (name, runway, type)
+    const s = useAppStore.getState();
+    const g0 = s.groundPainterGraph;
+    const m0 = s.groundPainterMeta;
+    const duplicate = (g0.procedures || []).some((p) => p.name === name && p.runwayName === rwy && p.routeType === procedureType);
+    if (duplicate) { setGpError(t('ground_painter_error_procedure_duplicate', { name, rwy }) || `Procedure "${name}" already exists for runway ${rwy}`); return; }
+    const g = structuredClone(g0);
+    const m = structuredClone(m0);
+    if (!g.procedures) g.procedures = [];
+    if (!m.airwaySegOrigPk) m.airwaySegOrigPk = [];
+    g.procedures.push({ name, routeType: procedureType, runwayName: rwy, airwayNodeIdxs: committingProcedure.slice() });
+    m.airwaySegOrigPk.push(null);
+    useAppStore.setState({ groundPainterHistory: structuredClone(g0), groundPainterMetaHistory: structuredClone(m0), groundPainterGraph: g, groundPainterMeta: m, groundPainterHasEdited: true });
+    setSelectedProcedureIdx(null);
+    setCommittingProcedure(null);
+    setProcedureModalName('');
+    setGpError(null);
+  }
+  // Rename an existing (selected) procedure via the [x][√] commit bar.
+  function renameProcedure() {
+    const idx = selectedProcedureIdx;
+    if (idx == null) return;
+    const name = (renameProcedureName || '').trim();
+    if (!name) { setGpError(t('ground_painter_procedure_need_name') || 'Enter procedure name'); return; }
+    const s = useAppStore.getState();
+    const g0 = s.groundPainterGraph;
+    const m0 = s.groundPainterMeta;
+    if (!g0.procedures || !g0.procedures[idx]) return;
+    const self = g0.procedures[idx];
+    const duplicate = (g0.procedures || []).some((p, i) => i !== idx && p.name === name && p.runwayName === self.runwayName && p.routeType === self.routeType);
+    if (duplicate) { setGpError(t('ground_painter_error_procedure_duplicate', { name, rwy: self.runwayName }) || `Procedure "${name}" already exists for runway ${self.runwayName}`); return; }
+    const g = structuredClone(g0);
+    g.procedures[idx] = { ...self, name };
+    useAppStore.setState({ groundPainterHistory: structuredClone(g0), groundPainterMetaHistory: structuredClone(m0), groundPainterGraph: g, groundPainterHasEdited: true });
+    setSelectedProcedureIdx(null);
+    setGpError(null);
+  }
+  // Rename an existing (selected) airway node via the [x][√] commit bar.
+  function renameAirwayNode() {
+    const idx = selectedAirwayNode;
+    if (idx == null) return;
+    const name = (renameAirwayNodeName || '').trim();
+    const s = useAppStore.getState();
+    const g0 = s.groundPainterGraph;
+    const m0 = s.groundPainterMeta;
+    if (!g0.airwayNodes || !g0.airwayNodes[idx]) return;
+    const g = structuredClone(g0);
+    g.airwayNodes[idx] = { ...g.airwayNodes[idx], name };
+    useAppStore.setState({ groundPainterHistory: structuredClone(g0), groundPainterMetaHistory: structuredClone(m0), groundPainterGraph: g, groundPainterHasEdited: true });
+    setGpError(null);
+  }
   // Legacy alias kept for dbl-click path (now delegates to fillet)
   function commitCurve(pts) {
     setGpError(t('ground_painter_fillet_tool_hint') || 'Curve tool is now fillet: select two straight taxiways');
@@ -3244,28 +3913,30 @@ export default function GroundPainter({ vals }) {
             <image href={bgImage.src} x={cx - bgW / 2} y={svgY(cz) - bgH / 2} width={bgW} height={bgH} preserveAspectRatio="none" opacity={bgImage.opacity ?? 0.6} transform={rot ? `rotate(${rot} ${cx} ${svgY(cz)})` : undefined} />
           );
         })()}
-        {/* Areas (below taxiway): BOUNDARY < APRON < BUILDING */}
-        {[...graph.areas].sort((x, y) => AREA_Z_ORDER.indexOf(x.areaType) - AREA_Z_ORDER.indexOf(y.areaType)).map((ar, i) => {
-          const st = AREA_TYPE_STYLES[ar.areaType] || AREA_TYPE_STYLES[1];
-          return (
-            <polygon key={'a' + i} points={(ar.points || []).map((p) => p.x + ',' + svgY(p.z)).join(' ')} fill={st.fill} fillOpacity={st.opacity} stroke={st.stroke === 'none' ? 'none' : st.stroke} strokeWidth={st.stroke === 'none' ? 0 : taxiW * 0.6} />
-          );
-        })}
-        {/* Taxiways: the graph's own polylines (full curve points straight from the
-            ACL segment Nodes). Single source — no cache.json / merged snapshot. */}
-        {graph.segments.length > 0 && taxiPaths.map((pts, i) => (
-          <polyline key={'twy' + i} points={pts.map((pp) => pp.x + ',' + svgY(pp.z)).join(' ')} fill="none" stroke="#444" strokeWidth={taxiW} strokeLinecap="round" strokeLinejoin="round" />
-        ))}
-        {graph.runways.map((rw, i) => {
-          const a = graph.nodes[rw.thAIdx], b = graph.nodes[rw.thBIdx]; if (!a || !b) return null;
-          const halfW = (rw.width || 0.50) / 2;
-          const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
-          const px = (-dz / len) * halfW, pz = (dx / len) * halfW;
-          const pts = [[a.x - px, a.z - pz], [b.x - px, b.z - pz], [b.x + px, b.z + pz], [a.x + px, a.z + pz]].map(([x, z]) => x + ',' + svgY(z)).join(' ');
-          return <polygon key={'r' + i} points={pts} fill="#000" fillOpacity={0.85} />;
-        })}
-        {/* Stand planes (nose-anchored, heading rotation like StandMap) */}
-        {graph.stands.map((st, i) => {
+        {!isAirMode && (
+          <>
+            {/* Areas (below taxiway): BOUNDARY < APRON < BUILDING */}
+            {[...graph.areas].sort((x, y) => AREA_Z_ORDER.indexOf(x.areaType) - AREA_Z_ORDER.indexOf(y.areaType)).map((ar, i) => {
+              const st = AREA_TYPE_STYLES[ar.areaType] || AREA_TYPE_STYLES[1];
+              return (
+                <polygon key={'a' + i} points={(ar.points || []).map((p) => p.x + ',' + svgY(p.z)).join(' ')} fill={st.fill} fillOpacity={st.opacity} stroke={st.stroke === 'none' ? 'none' : st.stroke} strokeWidth={st.stroke === 'none' ? 0 : taxiW * 0.6} />
+              );
+            })}
+            {/* Taxiways: the graph's own polylines (full curve points straight from the
+                ACL segment Nodes). Single source — no cache.json / merged snapshot. */}
+            {graph.segments.length > 0 && taxiPaths.map((pts, i) => (
+              <polyline key={'twy' + i} points={pts.map((pp) => pp.x + ',' + svgY(pp.z)).join(' ')} fill="none" stroke="#444" strokeWidth={taxiW} strokeLinecap="round" strokeLinejoin="round" />
+            ))}
+            {graph.runways.map((rw, i) => {
+              const a = graph.nodes[rw.thAIdx], b = graph.nodes[rw.thBIdx]; if (!a || !b) return null;
+              const halfW = (rw.width || 0.50) / 2;
+              const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+              const px = (-dz / len) * halfW, pz = (dx / len) * halfW;
+              const pts = [[a.x - px, a.z - pz], [b.x - px, b.z - pz], [b.x + px, b.z + pz], [a.x + px, a.z + pz]].map(([x, z]) => x + ',' + svgY(z)).join(' ');
+              return <polygon key={'r' + i} points={pts} fill="#000" fillOpacity={0.85} />;
+            })}
+            {/* Stand planes (nose-anchored, heading rotation like StandMap) */}
+            {graph.stands.map((st, i) => {
           const nose = graph.nodes[st.noseIdx];
           const tail = graph.nodes[st.tailIdx];
           if (!nose) return null;
@@ -3299,6 +3970,106 @@ export default function GroundPainter({ vals }) {
             </g>
           );
         })}
+          </>
+        )}
+        {isAirMode && (
+          <>
+            {/* Runway context (highlighted + designator labels at each end) */}
+            {graph.runways.map((rw, i) => {
+              const a = graph.nodes[rw.thAIdx], b = graph.nodes[rw.thBIdx]; if (!a || !b) return null;
+              const halfW = 0.14;
+              const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+              const ux = dx / len, uz = dz / len;
+              const px = (-uz) * halfW, pz = ux * halfW;
+              const pts = [[a.x - px, a.z - pz], [b.x - px, b.z - pz], [b.x + px, b.z + pz], [a.x + px, a.z + pz]].map(([x, z]) => x + ',' + svgY(z)).join(' ');
+              const nameA = (rw.names && rw.names[0]) || rw.name;
+              const nameB = (rw.names && rw.names[1]) || null;
+              const strokeScale = procStrokeScale(zoomPercent);
+              const fontScale = labelFontScale(zoomPercent);
+              const rwStroke = 0.16 * strokeScale;          // outline stays visible when zoomed out
+              const labelOff = 0.55 * Math.max(1, fontScale * 0.8); // nudge labels out for the bigger text
+              const aL = { x: a.x - ux * labelOff, z: a.z - uz * labelOff };
+              const bL = { x: b.x + ux * labelOff, z: b.z + uz * labelOff };
+              return (
+                <g key={'ar' + i}>
+                  {/* soft glow behind the runway so the highlight reads when zoomed out */}
+                  <polygon points={pts} fill="none" stroke="#ff5c8a" strokeWidth={rwStroke * 2.1} opacity={0.18} />
+                  <polygon points={pts} fill="#ff5c8a" fillOpacity={0.24} stroke="#ff5c8a" strokeWidth={rwStroke} />
+                  {nameA && <text x={aL.x} y={svgY(aL.z)} textAnchor="middle" fontSize={0.42 * fontScale} fill="#ff5c8a" fontWeight={700} style={{ paintOrder: 'stroke', stroke: '#0a1628', strokeWidth: 0.14 }}>{nameA}</text>}
+                  {nameB && <text x={bL.x} y={svgY(bL.z)} textAnchor="middle" fontSize={0.42 * fontScale} fill="#ff5c8a" fontWeight={700} style={{ paintOrder: 'stroke', stroke: '#0a1628', strokeWidth: 0.14 }}>{nameB}</text>}
+                </g>
+              );
+            })}
+            {/* Procedures */}
+            {filteredProcedures.map((proc, i) => {
+              const pts = (proc.airwayNodeIdxs || []).map((idx) => graph.airwayNodes[idx]).filter(Boolean);
+              if (pts.length < 2) return null;
+              const isSel = selectedProcedureIdx === graph.procedures.indexOf(proc);
+              const type = proc.routeType;
+              let color = '#4a8cff';
+              let dash = null;
+              if (type === 2) { color = '#4ac06a'; }
+              else if (type === 1) { color = '#ff9e3a'; }
+              else if (type === 3) { color = '#ff4a4a'; dash = '6,4'; }
+              const origIdx = graph.procedures.indexOf(proc);
+              const strokeScale = procStrokeScale(zoomPercent);
+              const strokeW = (isSel ? 0.34 : 0.18) * strokeScale; // selected is clearly thicker
+              const arrowLen = 0.6 * strokeScale;
+              const linePts = pts.map((p) => p.x + ',' + svgY(p.z)).join(' ');
+              return (
+                <g key={'proc' + origIdx}>
+                  {/* selected halo — outlined so it pops at any zoom, esp. zoomed out */}
+                  {isSel && <polyline points={linePts} fill="none" stroke="#fff200" strokeWidth={strokeW * 4} opacity={1} />}
+                  <polyline points={linePts} fill="none" stroke={isSel ? '#ffd34d' : color} strokeWidth={strokeW} strokeDasharray={dash || undefined} opacity={0.95} />
+                  {/* arrowhead at end */}
+                  {pts.length >= 2 && (() => {
+                    const a = pts[pts.length - 2], b = pts[pts.length - 1];
+                    const ang = Math.atan2(b.z - a.z, b.x - a.x);
+                    const len = arrowLen;
+                    const p1 = { x: b.x - Math.cos(ang - 0.5) * len, z: b.z - Math.sin(ang - 0.5) * len };
+                    const p2 = { x: b.x - Math.cos(ang + 0.5) * len, z: b.z - Math.sin(ang + 0.5) * len };
+                    return <polygon points={`${b.x},${svgY(b.z)} ${p1.x},${svgY(p1.z)} ${p2.x},${svgY(p2.z)}`} fill={isSel ? '#ffd34d' : color} opacity={0.9} />;
+                  })()}
+                </g>
+              );
+            })}
+            {/* Airway nodes — constant on-screen size (zoom-aware via DOT_R/HL_SW).
+                Name is hidden by default and shown only on the selected node. */}
+            {graph.airwayNodes && graph.airwayNodes.map((n, i) => {
+              const isSel = selectedAirwayNode === i;
+              const isInDraft = committingProcedure && committingProcedure.includes(i);
+              const nodeR = isSel ? DOT_R * 1.5 : DOT_R * 1.0;
+              return (
+                <g key={'an' + i}>
+                  {isSel && <circle cx={n.x} cy={svgY(n.z)} r={nodeR * 1.4} fill="none" stroke="#ffd34d" strokeWidth={HL_SW} opacity={0.95} />}
+                  {isSel && <circle cx={n.x} cy={svgY(n.z)} r={nodeR * 1.85} fill="none" stroke="#fff" strokeWidth={HL_SW * 0.55} opacity={0.9} />}
+                  <circle cx={n.x} cy={svgY(n.z)} r={nodeR} fill={isSel ? '#ffd34d' : isInDraft ? '#4a8cff' : '#fff'} stroke={isSel ? '#fff' : '#4a8cff'} strokeWidth={isSel ? HL_SW * 1.2 : HL_SW} opacity={0.98} />
+                  {isSel && n.name && (
+                    <text x={n.x} y={svgY(n.z) - nodeR * 2.4} textAnchor="middle" fontSize={DOT_R * 1.5} fill="#ffff00" fontWeight={800} style={{ paintOrder: 'stroke', stroke: '#0a1628', strokeWidth: DOT_R * 0.4, strokeLinejoin: 'round' }}>{n.name}</text>
+                  )}
+                </g>
+              );
+            })}
+            {/* Draft procedure preview */}
+            {committingProcedure && committingProcedure.length > 0 && (() => {
+              const pts = committingProcedure.map((idx) => graph.airwayNodes[idx]).filter(Boolean);
+              if (pts.length === 0) return null;
+              const linePts = pts.map((p) => p.x + ',' + svgY(p.z)).join(' ');
+              const previewEnd = world && committingProcedure.length >= 1 ? (() => {
+                const last = pts[pts.length - 1];
+                return [last, world];
+              })() : null;
+              const draftScale = procStrokeScale(zoomPercent);
+              return (
+                <g>
+                  {pts.length >= 2 && <polyline points={linePts} fill="none" stroke="#ffd34d" strokeWidth={0.18 * draftScale} strokeDasharray="4,3" opacity={0.9} />}
+                  {pts.map((p, k) => <circle key={'draftpt' + k} cx={p.x} cy={svgY(p.z)} r={DOT_R * 1.0} fill="#ffd34d" stroke="#fff" strokeWidth={HL_SW} />)}
+                  {previewEnd && <line x1={previewEnd[0].x} y1={svgY(previewEnd[0].z)} x2={previewEnd[1].x} y2={svgY(previewEnd[1].z)} stroke="#ffd34d" strokeWidth={0.12 * draftScale} strokeDasharray="4,3" opacity={0.7} />}
+                </g>
+              );
+            })()}
+          </>
+        )}
         <SelOutline />
         {/* Multi-selection bounding box + rotation handle (↻) — drag it to rotate
             every selected element together around the selection's center. */}
@@ -3508,15 +4279,14 @@ export default function GroundPainter({ vals }) {
 
   const onToggleSelect = useCallback(() => {
     if (tool !== TOOL_SELECT) {
-      // Single-click from any other tool (taxiway line/curve, runway, area, stand, boxSelect)
-      // → switch to select, enable it, and cancel current edit (committing/fillet/box preview)
       cancelPlacementInput();
       setTool(TOOL_SELECT);
       setSelectEnabled(true);
     } else {
-      // Already in select → toggle enabled (pan-only) without touching edit state
       setSelectEnabled((v) => !v);
     }
+    setSelectedAirwayNode(null);
+    setSelectedProcedureIdx(null);
   }, [tool, setTool, cancelPlacementInput]);
 
   const handleRunwayNamesChange = useCallback((newNames) => {
@@ -4001,7 +4771,7 @@ export default function GroundPainter({ vals }) {
         onCancel={() => { resetFillet(); close(); }}
         selected={selected}
         multiSelected={multiSelected}
-        onDeselect={() => { setSelected(null); setMultiSelected([]); setBoxRect(null); boxDragRef.current = null; }}
+        onDeselect={() => { setSelected(null); setSelectedAirwayNode(null); setSelectedProcedureIdx(null); setMultiSelected([]); setBoxRect(null); boxDragRef.current = null; }}
         onDelete={deleteSelected}
         onUndo={undo}
         canUndo={canUndo}
@@ -4014,6 +4784,15 @@ export default function GroundPainter({ vals }) {
         onZoomOut={() => zoomCenter(1.25)}
         onZoomReset={resetZoom}
         t={t}
+        mode={mode}
+        onToggleMode={onToggleMode}
+        runwayOptions={runwayOptions}
+        activeRunways={activeRunways}
+        onToggleRunway={onToggleRunway}
+        procedureType={procedureType}
+        onProcedureType={setProcedureType}
+        activeProcTypes={activeProcTypes}
+        onToggleProcType={onToggleProcType}
         bgPanelOpen={bgPanelOpen}
         onToggleBgPanel={() => setBgPanelOpen((v) => !v)}
         hasBgImage={!!bgImage}
@@ -4033,6 +4812,77 @@ export default function GroundPainter({ vals }) {
       />
 
       {gpError && <div className="gp-error">{gpError}</div>}
+      {/* Procedure commit bar — inline name + runway + [x] stop / [√] finish,
+          shown once the user has chained at least one existing airway node. */}
+      {isAirMode && tool === TOOL_AIR_PROCEDURE && committingProcedure && committingProcedure.length >= 1 && (
+        <div className="gp-proc-bar" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+          <div className="gp-proc-bar-label">
+            <span>{committingProcedure.length} {t('ground_painter_procedure_nodes') || 'fixes'}</span>
+            {committingProcedure.length < 2 && <span className="gp-proc-bar-hint">{t('ground_painter_procedure_hint') || 'Click existing airway nodes to connect'}</span>}
+          </div>
+          <input
+            className="gp-proc-name"
+            value={procedureModalName}
+            onChange={(e) => setProcedureModalName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitProcedure(); } }}
+            placeholder={t('ground_painter_procedure_name') || 'Name'}
+            aria-label={t('ground_painter_procedure_name') || 'Procedure name'}
+          />
+          <select className="gp-proc-runway" value={procedureModalRunway} onChange={(e) => setProcedureModalRunway(e.target.value)} aria-label={t('ground_painter_procedure_runway') || 'Runway'}>
+            {runwayOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <button className="gp-proc-x" onClick={() => { setCommittingProcedure(null); setProcedureModalName(''); }} title={t('ground_painter_procedure_stop') || 'Stop'} aria-label={t('ground_painter_procedure_stop') || 'Stop'}>
+            <IoClose size={16} />
+          </button>
+          <button
+            className={'gp-proc-check' + (committingProcedure.length < 2 ? ' gp-proc-check-disabled' : '')}
+            disabled={committingProcedure.length < 2}
+            onClick={() => commitProcedure()}
+            title={t('ground_painter_procedure_finish') || 'Finish'}
+            aria-label={t('ground_painter_procedure_finish') || 'Finish'}
+          >
+            <IoCheckmark size={16} />
+          </button>
+        </div>
+      )}
+      {/* Rename bar — when an existing procedure is selected, show its name for editing. */}
+      {isAirMode && !committingProcedure && selectedProcedureIdx != null && (
+        <div className="gp-proc-bar gp-proc-rename" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+          <input
+            className="gp-proc-name"
+            value={renameProcedureName}
+            onChange={(e) => setRenameProcedureName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameProcedure(); } }}
+            placeholder={t('ground_painter_procedure_name') || 'Name'}
+            aria-label={t('ground_painter_procedure_name') || 'Procedure name'}
+          />
+          <button className="gp-proc-x" onClick={() => setSelectedProcedureIdx(null)} title={t('ground_painter_procedure_stop') || 'Stop'} aria-label={t('ground_painter_procedure_stop') || 'Stop'}>
+            <IoClose size={16} />
+          </button>
+          <button className="gp-proc-check" onClick={() => renameProcedure()} title={t('ground_painter_procedure_finish') || 'Finish'} aria-label={t('ground_painter_procedure_finish') || 'Finish'}>
+            <IoCheckmark size={16} />
+          </button>
+        </div>
+      )}
+      {/* Rename bar — when an existing airway node is selected, show its name for editing. */}
+      {isAirMode && !committingProcedure && selectedAirwayNode != null && (
+        <div className="gp-proc-bar gp-proc-rename" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+          <input
+            className="gp-proc-name"
+            value={renameAirwayNodeName}
+            onChange={(e) => setRenameAirwayNodeName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameAirwayNode(); } }}
+            placeholder={t('ground_painter_node_name') || 'Airway node name'}
+            aria-label={t('ground_painter_node_name') || 'Airway node name'}
+          />
+          <button className="gp-proc-x" onClick={() => setSelectedAirwayNode(null)} title={t('ground_painter_procedure_stop') || 'Stop'} aria-label={t('ground_painter_procedure_stop') || 'Stop'}>
+            <IoClose size={16} />
+          </button>
+          <button className="gp-proc-check" onClick={() => renameAirwayNode()} title={t('ground_painter_procedure_finish') || 'Finish'} aria-label={t('ground_painter_procedure_finish') || 'Finish'}>
+            <IoCheckmark size={16} />
+          </button>
+        </div>
+      )}
     </div>,
     document.body,
   );

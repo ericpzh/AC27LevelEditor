@@ -3,7 +3,7 @@ import { IoRemoveOutline, IoAirplaneOutline, IoAddOutline, IoRemove, IoScanOutli
 import { PiPolygon, PiSelectionDuotone, PiSelectionThin } from 'react-icons/pi';
 import { FaParking, FaBuilding } from 'react-icons/fa';
 import { FaArrowPointer } from 'react-icons/fa6';
-import { MdDeselect, MdRoundedCorner } from 'react-icons/md';
+import { MdDeselect, MdRoundedCorner, MdFlightLand, MdFlightTakeoff } from 'react-icons/md';
 import { MAP_ICON_PATH } from '../../../utils/constants';
 import useTooltip from '../../BrowserScreen/useTooltip';
 
@@ -23,6 +23,11 @@ const TOOLS = [
   ['area', PiPolygon, '区域多边形', false, 'ground_painter_tool_area', 'G'],
   ['stand', IoAirplaneOutline, '停机位（飞机）', false, 'ground_painter_tool_stand', 'H'],
 ];
+const AIR_TOOLS = [
+  ['airNode', IoAddOutline, '航路点', false, 'ground_painter_tool_air_node', 'N'],
+  ['airProcedure', IoRemoveOutline, '程序', true, 'ground_painter_tool_air_procedure', 'C'],
+  ['airFillet', MdRoundedCorner, '空中圆角', false, 'ground_painter_tool_air_fillet', 'F'],
+];
 
 // Keyboard shortcuts shown on each tool button's hover hint (and wired in the
 // painter's keydown handler). Single-letter, no modifier.
@@ -36,6 +41,21 @@ const AREA_TYPES = [
   { value: 0, Icon: PiSelectionThin, i18nKey: 'ground_painter_area_boundary', fallback: '边界' },
   { value: 1, Icon: FaParking, i18nKey: 'ground_painter_area_apron', fallback: '停机坪' },
   { value: 2, Icon: FaBuilding, i18nKey: 'ground_painter_area_building', fallback: '建筑' },
+];
+
+// Procedure-type toggle group popping above the highlighted air-Procedure button
+// when that tool is active — mirrors the Area tool's sub-menu. Order matches the
+// request: [APP] [STAR] [SID] [MISS]. routeType values (0 STAR, 1 Approach,
+// 2 SID, 3 Missed) match the graph's procedures.routeType; `color` matches the
+// on-map line color so the button/chip text reads like the rendered procedure.
+// `label` is shown in the tool sub-menu; `filterLabel` is shown in the 2nd-dimension
+// filter chips (per request: ARR | STAR | SID | MISS).
+const PROCEDURE_TYPE_COLORS = { 0: '#4a8cff', 1: '#ff9e3a', 2: '#4ac06a', 3: '#ff4a4a' };
+const PROCEDURE_TYPES = [
+  { value: 1, label: 'APP', filterLabel: 'ARR', i18nKey: 'ground_painter_procedure_type_approach', fallback: 'APPR' },
+  { value: 0, label: 'STAR', filterLabel: 'STAR', i18nKey: 'ground_painter_procedure_type_star', fallback: 'STAR' },
+  { value: 2, label: 'SID', filterLabel: 'SID', i18nKey: 'ground_painter_procedure_type_sid', fallback: 'SID' },
+  { value: 3, label: 'MISS', filterLabel: 'MISS', i18nKey: 'ground_painter_procedure_type_missed', fallback: 'Missed' },
 ];
 
 // Editable numeric value shown next to a slider. The slider stays controlled by
@@ -80,7 +100,7 @@ function BgValueInput({ value, min, max, step, unit, disabled, onCommit, classNa
 }
 
 
-export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onToggleSelect, selected, multiSelected, onDeselect, onDelete, onUndo, canUndo, hasEdited, onSave, onCancel, areaType, onAreaType, heading, onHeading, zoomPercent, onZoomIn, onZoomOut, onZoomReset, t, bgPanelOpen, onToggleBgPanel, hasBgImage, bgOffsetX, bgOffsetY, bgScale, bgRotation, bgOpacity, onBgOffsetX, onBgOffsetY, onBgScale, onBgRotation, onBgOpacity, onImportImage, onClearBgImage, onResetBgImage }) {
+export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onToggleSelect, selected, multiSelected, onDeselect, onDelete, onUndo, canUndo, hasEdited, onSave, onCancel, areaType, onAreaType, heading, onHeading, zoomPercent, onZoomIn, onZoomOut, onZoomReset, t, bgPanelOpen, onToggleBgPanel, hasBgImage, bgOffsetX, bgOffsetY, bgScale, bgRotation, bgOpacity, onBgOffsetX, onBgOffsetY, onBgScale, onBgRotation, onBgOpacity, onImportImage, onClearBgImage, onResetBgImage, mode, onToggleMode, activeRunways, onToggleRunway, runwayOptions, procedureType, onProcedureType, activeProcTypes, onToggleProcType }) {
   const { bind, TooltipPortal } = useTooltip();
   const importFileRef = useRef(null);
 
@@ -97,6 +117,80 @@ export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onTo
   const tipUndo = t('ground_painter_tool_undo') || '撤销 (Ctrl+Z)';
   const tipBg = t('ground_painter_bg_toggle') || '背景图';
   const tipImport = t('ground_painter_bg_import') || '导入背景图';
+  const tipToggleAir = t('ground_painter_switch_to_air') || '切换到空中视图 (Air)';
+  const tipToggleGround = t('ground_painter_switch_to_ground') || '切换到地面视图 (Ground)';
+
+  const isAir = mode === 'air';
+  const toolsToShow = isAir ? AIR_TOOLS : TOOLS;
+  const activeTools = isAir ? (
+    <>{AIR_TOOLS.map(([id, Icon, label, rotate45, i18nKey, shortcut]) => {
+      const tip = ((i18nKey && t(i18nKey)) || label) + shortcutSuffix(shortcut);
+      const btn = (
+        <button key={id} {...bind(tip)} className={tool === id ? 'gp-active' : ''} onClick={() => onTool(id)}>
+          {Icon ? <span className={rotate45 ? 'gp-line-45' : ''}><Icon size={16} /></span> : label}
+        </button>
+      );
+      if (id !== 'airProcedure') return btn;
+      return (
+        <span key={id} className="gp-area-wrap">
+          {btn}
+          {tool === 'airProcedure' && (
+            <div className="gp-areatype-group">
+              {PROCEDURE_TYPES.map(({ value, label: procLabel, i18nKey: k, fallback }) => {
+                const tipText = t(k) || fallback;
+                const col = PROCEDURE_TYPE_COLORS[value] || '#4a8cff';
+                return (
+                  <button
+                    key={value}
+                    {...bind(tipText)}
+                    className={procedureType === value ? 'gp-areatype-active' : ''}
+                    onClick={() => onProcedureType(value)}
+                    title={tipText}
+                    style={{ color: col, fontWeight: value === procedureType ? 700 : 500 }}
+                  >
+                    {procLabel}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </span>
+      );
+    })}</>
+  ) : (
+    <>{TOOLS.map(([id, Icon, label, rotate45, i18nKey, shortcut]) => {
+      const tip = ((i18nKey && t(i18nKey)) || label) + shortcutSuffix(shortcut);
+      const btn = (
+        <button key={id} {...bind(tip)} className={tool === id ? 'gp-active' : ''} onClick={() => onTool(id)}>
+          {Icon ? <span className={rotate45 ? 'gp-line-45' : ''}><Icon size={16} /></span> : label}
+        </button>
+      );
+      if (id !== 'area') return btn;
+      return (
+        <span key={id} className="gp-area-wrap">
+          {btn}
+          {tool === 'area' && (
+            <div className="gp-areatype-group">
+              {AREA_TYPES.map(({ value, Icon: TIcon, i18nKey: k, fallback }) => {
+                const tipText = t(k) || fallback;
+                return (
+                  <button
+                    key={value}
+                    {...bind(tipText)}
+                    className={areaType === value ? 'gp-areatype-active' : ''}
+                    onClick={() => onAreaType(value)}
+                    title={tipText}
+                  >
+                    <TIcon size={16} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </span>
+      );
+    })}</>
+  );
 
   return (
     <div className="ground-painter-toolbar">
@@ -111,39 +205,7 @@ export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onTo
         <span {...bind(tipDeselect)} style={{ display: 'inline-flex' }}>
           <button onClick={onDeselect} disabled={!selected && (!multiSelected || multiSelected.length === 0)} className="gp-deselect"><MdDeselect size={16} /></button>
         </span>
-        {TOOLS.map(([id, Icon, label, rotate45, i18nKey, shortcut]) => {
-          const tip = ((i18nKey && t(i18nKey)) || label) + shortcutSuffix(shortcut);
-          const btn = (
-            <button key={id} {...bind(tip)} className={tool === id ? 'gp-active' : ''} onClick={() => onTool(id)}>
-              {Icon ? <span className={rotate45 ? 'gp-line-45' : ''}><Icon size={16} /></span> : label}
-            </button>
-          );
-          if (id !== 'area') return btn;
-          // Area tool: the 3 area-type toggles pop up on top of the highlighted polygon button.
-          return (
-            <span key={id} className="gp-area-wrap">
-              {btn}
-              {tool === 'area' && (
-                <div className="gp-areatype-group">
-                  {AREA_TYPES.map(({ value, Icon: TIcon, i18nKey: k, fallback }) => {
-                    const tipText = t(k) || fallback;
-                    return (
-                      <button
-                        key={value}
-                        {...bind(tipText)}
-                        className={areaType === value ? 'gp-areatype-active' : ''}
-                        onClick={() => onAreaType(value)}
-                        title={tipText}
-                      >
-                        <TIcon size={16} />
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </span>
-          );
-        })}
+        {activeTools}
         {/* Delete selected — action button, not a tool mode (same as Delete key) */}
         <span {...bind(t('ground_painter_tool_delete') || '删除选中')} style={{ display: 'inline-flex' }}>
           <button onClick={onDelete} disabled={!selected && (!multiSelected || multiSelected.length === 0)} className="gp-delete"><IoTrashOutline size={16} /></button>
@@ -153,7 +215,7 @@ export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onTo
           <button onClick={onUndo} disabled={!canUndo} className="gp-undo"><IoArrowUndoOutline size={16} /></button>
         </span>
       </div>
-      {tool === 'stand' && (
+      {tool === 'stand' && !isAir && (
         <label className="gp-heading">
           {t('ground_painter_heading') || '航向'}
           <input
@@ -168,16 +230,65 @@ export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onTo
           <span className="gp-heading-val">{String(heading).padStart(3, '0')}°</span>
         </label>
       )}
+      {isAir && runwayOptions && runwayOptions.length > 0 && (
+        <div className="gp-runway-chips" style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: '#9fb0d0' }}>{t('ground_painter_runway_filter') || '跑道'}</span>
+          {runwayOptions.map((rwy) => {
+            const active = !activeRunways || activeRunways.has(rwy);
+            return (
+              <button
+                key={rwy}
+                {...bind(rwy)}
+                onClick={() => onToggleRunway && onToggleRunway(rwy)}
+                className={active ? 'gp-active' : ''}
+                style={{ padding: '2px 6px', fontSize: 11, borderRadius: 4, border: '1px solid #2c3a5c', background: active ? '#2f4a86' : '#1a2340', color: '#cfd8e8' }}
+              >
+                {rwy}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {isAir && (
+        <div className="gp-proc-type-chips" style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: '#9fb0d0' }}>{t('ground_painter_procedure_type') || '类型'}</span>
+          {PROCEDURE_TYPES.map(({ value, filterLabel, i18nKey: k, fallback }) => {
+            const tipText = t(k) || fallback;
+            const active = !activeProcTypes || activeProcTypes.has(value);
+            const col = PROCEDURE_TYPE_COLORS[value] || '#4a8cff';
+            return (
+              <button
+                key={value}
+                {...bind(tipText)}
+                onClick={() => onToggleProcType && onToggleProcType(value)}
+                className={active ? 'gp-active' : ''}
+                style={{ padding: '2px 6px', fontSize: 11, borderRadius: 4, border: '1px solid #2c3a5c', background: active ? '#1c2b4d' : '#1a2340', color: active ? col : '#68789a' }}
+              >
+                {filterLabel}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Scale group moved to the right, left of Cancel — keeps instant tooltips in both select and non-select modes */}
+      {/* Scale group */}
       <div className="gp-zoom" style={{ marginLeft: 'auto' }}>
         <button {...bind(tipBg)} className={bgPanelOpen ? 'gp-active' : ''} onClick={onToggleBgPanel}><IoImageOutline size={16} /></button>
         <button {...bind(tipZoomOut)} onClick={onZoomOut}><IoRemove size={16} /></button>
         <span className="gp-zoom-pct">{zoomPercent}%</span>
         <button {...bind(tipZoomIn)} onClick={onZoomIn}><IoAddOutline size={16} /></button>
-        <button {...bind(tipZoomReset)} onClick={onZoomReset}><IoScanOutline size={16} /></button>
       </div>
       <div className="gp-actions" style={{ marginLeft: 0 }}>
+        <button {...bind(tipZoomReset)} onClick={onZoomReset}><IoScanOutline size={16} /></button>
+        <button
+          {...bind(isAir ? tipToggleGround : tipToggleAir)}
+          onClick={onToggleMode}
+          data-testid="air-ground-toggle"
+          aria-label="toggle-air-ground"
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px' }}
+        >
+          {isAir ? <MdFlightLand size={16} /> : <MdFlightTakeoff size={16} />}
+        </button>
         <button {...bind(tipCancel)} onClick={onCancel}>{t('ground_painter_btn_cancel') || '取消'}</button>
         <span {...bind(tipSave)} style={{ display: 'inline-flex' }}>
           <button disabled={!hasEdited} onClick={onSave} className="gp-save">{t('ground_painter_btn_save') || '保存'}</button>

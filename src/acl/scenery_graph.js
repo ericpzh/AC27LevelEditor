@@ -99,6 +99,8 @@ function buildSceneryGraph(text) {
     runways: [],
     areas: [],
     stands: [],
+    airwayNodes: [],
+    procedures: [],
   };
   // Internal node-coordinate index (kept live in the Graph but not serialized).
   graph._coordIndex = new Map();
@@ -109,6 +111,9 @@ function buildSceneryGraph(text) {
     runwayOrigPk: [],     // parallel to runways (representative "$k", e.g. "runway:01")
     areaOrigId: [],       // parallel to areas: original "$id" (integer) or null
     standOrigPk: [],      // parallel to stands
+    airwayNodeOrigPk: [], // parallel to airwayNodes
+    airwaySegOrigPk: [],  // parallel to procedures (one per airway-segment / procedure)
+    deletedAirwayPks: [], // tombstones for airway-node / airway-segment
   };
 
   const idToNodeIdx = new Map(); // node $id → graph node index (shared-node dedup)
@@ -324,6 +329,99 @@ function buildSceneryGraph(text) {
   graph.areas = _parseAreasIntoGraph(text);
   for (let i = 0; i < graph.areas.length; i++) {
     meta.areaOrigId.push(graph.areas[i]._origId ?? null);
+  }
+
+  // ── Air-side: airway nodes + procedures (airway-segments + runway Routes) ──
+  // Airway nodes are NOT deduped by coordinate — each fix is semantically distinct
+  // even if co-located. Mapping is 1:1 with airway-node PK entries.
+  graph.airwayNodes = graph.airwayNodes || [];
+  graph.procedures = graph.procedures || [];
+  if (!meta.airwayNodeOrigPk) meta.airwayNodeOrigPk = [];
+  if (!meta.airwaySegOrigPk) meta.airwaySegOrigPk = [];
+  if (!meta.deletedAirwayPks) meta.deletedAirwayPks = [];
+  {
+    const airwayNodeEntries = getPkEntriesByType(pkIndex, 'airway-node');
+    const airwayIdToIdx = new Map();
+    for (const e of airwayNodeEntries) {
+      const pos = extractVector3FromV4(e.block);
+      if (!pos) continue;
+      const idx = graph.airwayNodes.length;
+      graph.airwayNodes.push({ x: pos.x, z: pos.z, name: extractStringFromV4(e.block, 'Name') || '' });
+      meta.airwayNodeOrigPk.push(e.pk);
+      if (e.id != null) airwayIdToIdx.set(e.id, idx);
+    }
+
+    // Build the authoritative procedure list from the runway `Routes` — the same
+    // source the game's approach/SID parsers use (approach.js / sid_goaround.js).
+    // Every directional runway block carries Routes[] where each entry has Name,
+    // RouteType (0 STAR, 1 APPR, 2 SID, 3 MISS) and an ordered AirwayNodes list.
+    // The separate `airway-segment` PK entries are geometry only: for airports like
+    // ZGSZ they are unnamed and NOT 1:1 with Routes, so binding procedures by the
+    // segment's Name silently defaulted everything to routeType=0 (STAR) with no
+    // runway — the "all blue / runway filter is dead" bug. Deriving from Routes
+    // yields the correct name/type/runway for every procedure and matches the rest
+    // of the editor. Procedures that the painter draws are still stored as
+    // one-per-runway-route on save (the writer regenerates runway Routes from them).
+    const segPkByName = new Map(); // named airway-segment PK, for survivor linkage
+    for (const e of getPkEntriesByType(pkIndex, 'airway-segment')) {
+      const nm = extractStringFromV4(e.block, 'Name') || '';
+      if (nm && !segPkByName.has(nm)) segPkByName.set(nm, e.pk);
+    }
+    graph.procedures = [];
+    meta.airwaySegOrigPk = [];
+    const seenRoute = new Set(); // dedupe exact (name|nodes|runway) repeats — keep per-variant duplicates
+    for (const rwEntry of getPkEntriesByType(pkIndex, 'runway')) {
+      const rwName = extractStringFromV4(rwEntry.block, 'Name');
+      if (!rwName) continue;
+      const routesBlock = _extractNestedObject(rwEntry.block, 'Routes');
+      if (!routesBlock) continue;
+      const rt = createTokenizer(routesBlock);
+      const rcSec = rt.findSection('$rcontent');
+      if (!rcSec) continue;
+      const arrStart = rcSec.valueStart;
+      if (routesBlock[arrStart] !== '[') continue;
+      const arrEnd = rt.findArrayEnd(arrStart);
+      if (arrEnd == null) continue;
+      const arrText = routesBlock.substring(arrStart + 1, arrEnd);
+      const at = createTokenizer(arrText);
+      let pos2 = 0;
+      while (pos2 < arrText.length) {
+        while (pos2 < arrText.length && ' \t\n\r,'.includes(arrText[pos2])) pos2++;
+        if (pos2 >= arrText.length) break;
+        if (arrText[pos2] !== '{') { pos2++; continue; }
+        const end = at.findObjectEnd(pos2);
+        if (end == null) break;
+        const entryBlock = arrText.substring(pos2, end);
+        const rName = extractStringFromV4(entryBlock, 'Name');
+        const rType = extractIntFromV4(entryBlock, 'RouteType');
+        const rIrefs = extractIrefArray(entryBlock, 'AirwayNodes');
+        if (rName == null || rType == null || rIrefs.length === 0) { pos2 = end; continue; }
+        const nodeIdxs = rIrefs.map((id) => airwayIdToIdx.get(id)).filter((v) => v != null);
+        if (nodeIdxs.length < 2) { pos2 = end; continue; }
+        const rkey = rName + '|' + rIrefs.join(',') + '|' + rwName;
+        if (seenRoute.has(rkey)) { pos2 = end; continue; }
+        seenRoute.add(rkey);
+        graph.procedures.push({
+          name: rName,
+          routeType: rType,
+          runwayName: rwName,
+          airwayNodeIdxs: nodeIdxs,
+          _routeCarried: true, // definition lives in runway Routes, not an airway-segment
+        });
+        // Survivor linkage: if a named airway-segment carries this route's name,
+        // reuse its PK so the writer's survivor/new checks treat it as existing;
+        // otherwise use an in-band marker (non-null so _hasNull stays false and the
+        // writer's lossless no-op path holds) meaning "route-carried, no segment".
+        const segPk = segPkByName.get(rName);
+        meta.airwaySegOrigPk.push(segPk || '@route');
+        pos2 = end;
+      }
+    }
+
+    // Ensure meta arrays exist for new files with no airway data
+    if (!meta.airwayNodeOrigPk) meta.airwayNodeOrigPk = [];
+    if (!meta.airwaySegOrigPk) meta.airwaySegOrigPk = [];
+    if (!meta.deletedAirwayPks) meta.deletedAirwayPks = [];
   }
 
   // Drop the internal helper (kept off the serialized shape).
@@ -668,7 +766,7 @@ function _stripTypeAndNumbers(vecBlock) {
 // ─── Graph lifecycle helpers ──────────────────────────────────────
 
 function emptyGraph() {
-  return { nodes: [], segments: [], runways: [], areas: [], stands: [] };
+  return { nodes: [], segments: [], runways: [], areas: [], stands: [], airwayNodes: [], procedures: [] };
 }
 
 function cloneGraph(g) {

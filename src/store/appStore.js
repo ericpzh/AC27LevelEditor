@@ -38,9 +38,13 @@ export const useAppStore = create((set, get) => ({
   groundPainterMetaHistory: null,  // depth-1 undo for meta (paired with graph history)
   groundPainterSnapEnabled: true,
   groundPainterTool: 'select',     // select|taxiwayLine|taxiwayCurve|runwayLine|area|stand|delete (taxiwayCurve is now fillet/rounding)
+  groundPainterMode: 'ground',     // 'ground' | 'air' — unified map editor mode
+  groundPainterActiveRunways: null, // Set<string>|null (null = all) for air-side runway filter
   groundPainterCreateBak: true,    // toolbar [✓.bak] default true
   groundPainterOsmPool: null,      // { nodeIds:[], segIds:[] } finite reuse pool from original ACLs
   groundPainterPoolInfo: null,     // { nodePoolSize, segPoolSize, freeNodeCount, freeSegCount }
+  airwayOsmPool: null,             // { nodeIds:[], segIds:[] } airway pool for air mode
+  airwayPoolInfo: null,
 
   // ─── Audio callsigns ───
   audioCallsigns: { byAirline: {}, allCallsigns: [], allAirlines: [] },
@@ -261,6 +265,9 @@ export const useAppStore = create((set, get) => ({
     // keep store value as-is; UI treats taxiwayCurve as rounding/fillet
     return set({ groundPainterTool: tool });
   },
+  setGroundPainterMode: (mode) => set({ groundPainterMode: mode === 'air' ? 'air' : 'ground' }),
+  toggleGroundPainterMode: () => set((s) => ({ groundPainterMode: s.groundPainterMode === 'air' ? 'ground' : 'air' })),
+  setGroundPainterActiveRunways: (setOrNull) => set({ groundPainterActiveRunways: setOrNull }),
   setGroundPainterSnapEnabled: (v) => set({ groundPainterSnapEnabled: !!v }),
   // Overwrite the single undo slot with a structuredClone of the current graph.
   pushPainterHistory: (g) => set({ groundPainterHistory: typeof structuredClone === 'function' ? structuredClone(g) : JSON.parse(JSON.stringify(g)) }),

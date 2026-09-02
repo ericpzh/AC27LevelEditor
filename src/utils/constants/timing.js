@@ -10,7 +10,7 @@ export const TICKS_PER_SECOND_NUM = 10000000;
 export const TICKS_PER_DAY_NUM = 864000000000;
 
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
-export const CACHE_VERSION = 25;
+export const CACHE_VERSION = 26;
 
 // ─── Game timing / scenario ────────────────────────────────
 // Flights are allowed up to SCENARIO_END_GRACE_MIN past scenario end.
