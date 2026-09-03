@@ -254,6 +254,8 @@ export const useAppStore = create((set, get) => ({
     set({
       showGroundPainter: next,
       activeMap: next ? 'ground' : (s.activeMap === 'ground' ? null : s.activeMap),
+      // Always start in ground mode — reset persisted painter state on every enter.
+      ...(next ? { groundPainterMode: 'ground', groundPainterTool: 'select', groundPainterActiveRunways: null } : {}),
     });
   },
   closeGroundPainter: () => set((state) => ({

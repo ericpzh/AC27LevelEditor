@@ -1,22 +1,24 @@
 /**
- * Fuzz Ground Save Test — randomized Ground Painter edit storm + real SAVE (with backup)
+ * Fuzz Ground+Air Save Test — randomized Ground/Air Painter edit storm + real SAVE (with backup)
  *
  * For each target .acl level (default: all 20 production levels):
  *   1. Open the level in the editor (browser row click)
  *   2. Open the Ground Painter (toggleGroundPainter → load-ground-painter-data)
  *   3. FuzzGroundTest(aclPath) applies 50–200 RANDOMIZED operations through the
- *      MCP Ground Painter API (127.0.0.1:31415). The operation mix is
- *      distributed over percentage points of the run's total ops:
+ *      MCP Ground/Air Painter API (127.0.0.1:31415). The operation mix is
+ *      distributed over percentage points of the run's total ops (ground + air unified):
  *        - 5%  runway ops    (create_runways / move via target / rename end names)
  *        - 5%  taxiway new   (create_taxiway_lines)
- *        - 25% taxiway mod   (move whole segment / move one endpoint / rename)
- *        - 25% fillet        (create_taxiway_fillet, radius 0.5..5.0 — half of the
+ *        - 20% taxiway mod   (move whole segment / move one endpoint / rename)
+ *        - 20% fillet        (create_taxiway_fillet, radius 0.5..5.0 — half of the
  *                            fillets first CONNECT a new taxiway onto a runway
  *                            pavement strip (Flags=4) and then fillet that junction)
- *        - 15% area ops      (create_areas areaType 0|1|2 / move whole area / move vertex)
+ *        - 10% area ops      (create_areas areaType 0|1|2 / move whole area / move vertex)
  *        - 5%  stand ops     (create_stands / move / rename)
- *        - 20% select+delete (single-select move / multi-select move /
+ *        - 15% select+delete (single-select move / multi-select move /
  *                            select-all move / delete_ground_objects)
+ *        - 20% air ops       (create_airway_nodes 7, create_airway_procedures 7,
+ *                            create_airway_fillet 3, move/rename/delete airway 3)
  *      Every generated coordinate is inside the level's current scenery bounds
  *      (derived from the live graph's node extents, with 5% padding); runway
  *      names are auto-derived from heading and always satisfy the save-time
@@ -1007,6 +1009,174 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       return false;
     };
 
+    // ── Air helpers ───────────────────────────────────────────────
+    const doAddAirwayNode = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const p = randPoint();
+        const name = 'FIX' + rint(100, 999) + String.fromCharCode(65 + rint(0, 25)) + String.fromCharCode(65 + rint(0, 25));
+        try {
+          const before = (await getGroundState()).summary?.airwayNodes ?? 0;
+          await mcpCall('create_airway_nodes', { nodes: [{ x: p.x, z: p.z, name }] });
+          await countSync(async () => {
+            const gs = await getGroundState();
+            return (gs.summary?.airwayNodes ?? 0) === before + 1;
+          }, 'airway node add apply');
+          await refreshGraph();
+          fuzzLog.accepted.push(`airway node ${name} @ ${p.x.toFixed(1)},${p.z.toFixed(1)}`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+      }
+      fuzzLog.rejected.push('create_airway_nodes: ' + lastReason);
+      return false;
+    };
+    const doAddAirwayProcedure = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await refreshGraph();
+        const nodeCount = graph.airwayNodes?.length ?? 0;
+        if (nodeCount < 2) { lastReason = 'not enough airway nodes (need 2)'; break; }
+        const rwy = graph.runways && graph.runways.length ? rpick(graph.runways) : null;
+        if (!rwy) { lastReason = 'no runway for procedure'; break; }
+        const runwayName = rwy.physicalName ? rwy.physicalName.split('/')[0] : (rwy.names && rwy.names[0]) || '01';
+        const k = rint(2, Math.min(5, nodeCount));
+        // pick k distinct random indices
+        const pool = [...Array(nodeCount).keys()];
+        const chosen = [];
+        for (let i = 0; i < k; i++) {
+          const idx = rint(0, pool.length - 1);
+          chosen.push(pool[idx]);
+          pool.splice(idx, 1);
+        }
+        const name = 'PROC' + rint(100, 999) + String.fromCharCode(65 + rint(0, 25));
+        const routeType = rint(0, 3);
+        try {
+          const before = (await getGroundState()).summary?.procedures ?? 0;
+          await mcpCall('create_airway_procedures', { procedures: [{ name, routeType, runwayName, airwayNodeIdxs: chosen }] });
+          await countSync(async () => {
+            const gs = await getGroundState();
+            return (gs.summary?.procedures ?? 0) === before + 1;
+          }, 'airway procedure add apply');
+          await refreshGraph();
+          fuzzLog.accepted.push(`airway procedure ${name} type=${routeType} rwy=${runwayName} nodes=${chosen.join(',')}`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+      }
+      fuzzLog.rejected.push('create_airway_procedures: ' + lastReason);
+      return false;
+    };
+    const doAirFillet = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await refreshGraph();
+        const procCount = graph.procedures?.length ?? 0;
+        if (procCount < 2) { lastReason = 'not enough procedures'; break; }
+        // find a pair sharing a node
+        const candidates = [];
+        for (let a = 0; a < procCount; a++) for (let b = a + 1; b < procCount; b++) {
+          const pa = graph.procedures[a], pb = graph.procedures[b];
+          if (!pa || !pb) continue;
+          const shared = pa.airwayNodeIdxs.some((v) => pb.airwayNodeIdxs.includes(v));
+          if (shared) candidates.push([a, b]);
+        }
+        if (!candidates.length) { lastReason = 'no connected procedure pair'; break; }
+        const [procA, procB] = rpick(candidates);
+        const radius = Math.round((0.5 + rand() * 4.5) * 20) / 20;
+        try {
+          await mcpCall('create_airway_fillet', { procA, procB, radius });
+          await window.waitForTimeout(200);
+          await refreshGraph();
+          fuzzLog.accepted.push(`air fillet ${procA}–${procB} r=${radius.toFixed(2)}`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+      }
+      fuzzLog.rejected.push('create_airway_fillet: ' + lastReason);
+      return false;
+    };
+    const doMoveAirway = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await refreshGraph();
+        const nodes = graph.airwayNodes || [];
+        if (!nodes.length) { lastReason = 'no airway nodes'; break; }
+        const n = rpick(nodes);
+        const idx = nodes.indexOf(n);
+        const { dx, dz } = randDelta(0.03);
+        try {
+          await mcpCall('move_airway_objects', { targets: [{ x: n.x, z: n.z }], dx, dz });
+          await afterMutation();
+          fuzzLog.accepted.push(`move airway node#${idx} Δ(${dx.toFixed(2)},${dz.toFixed(2)})`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+      }
+      fuzzLog.rejected.push('move_airway_objects: ' + lastReason);
+      return false;
+    };
+    const doRenameAirway = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await refreshGraph();
+        const kind = rand() < 0.5 ? 'airwayNode' : 'procedure';
+        if (kind === 'airwayNode') {
+          const cnt = graph.airwayNodes?.length ?? 0;
+          if (!cnt) { lastReason = 'no airway nodes'; break; }
+          const idx = rint(0, cnt - 1);
+          const name = 'FIX' + rint(100, 999) + String.fromCharCode(65 + rint(0, 25));
+          try {
+            await mcpCall('rename_airway_object', { kind: 'airwayNode', idx, name });
+            await afterMutation();
+            fuzzLog.accepted.push(`rename airway node#${idx} → ${name}`);
+            return true;
+          } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+        } else {
+          const cnt = graph.procedures?.length ?? 0;
+          if (!cnt) { lastReason = 'no procedures'; break; }
+          const idx = rint(0, cnt - 1);
+          const name = 'PROC' + rint(100, 999) + String.fromCharCode(65 + rint(0, 25));
+          try {
+            await mcpCall('rename_airway_object', { kind: 'procedure', idx, name });
+            await afterMutation();
+            fuzzLog.accepted.push(`rename procedure#${idx} → ${name}`);
+            return true;
+          } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+        }
+      }
+      fuzzLog.rejected.push('rename_airway_object: ' + lastReason);
+      return false;
+    };
+    const doDeleteAirway = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await refreshGraph();
+        const nodes = graph.airwayNodes || [];
+        const procs = graph.procedures || [];
+        if (!nodes.length && !procs.length) { lastReason = 'no airway objects'; break; }
+        let target = null;
+        if (procs.length && rand() < 0.5) {
+          const proc = rpick(procs);
+          const pts = proc.airwayNodeIdxs.map((ii) => graph.airwayNodes[ii]).filter(Boolean);
+          if (pts.length) {
+            const mid = pts[Math.floor(pts.length / 2)];
+            target = { x: mid.x + (rand() - 0.5) * 0.2, z: mid.z + (rand() - 0.5) * 0.2 };
+          }
+        }
+        if (!target && nodes.length) {
+          const n = rpick(nodes);
+          target = { x: n.x + (rand() - 0.5) * 0.2, z: n.z + (rand() - 0.5) * 0.2 };
+        }
+        if (!target) target = randPoint();
+        try {
+          await mcpCall('delete_airway_objects', { target });
+          await window.waitForTimeout(200);
+          await refreshGraph();
+          fuzzLog.accepted.push(`delete airway @ ${target.x.toFixed(1)},${target.z.toFixed(1)}`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+      }
+      fuzzLog.rejected.push('delete_airway_objects: ' + lastReason);
+      return false;
+    };
+
     const fuzzLog = { accepted: [], rejected: [] };
     let deleteCount = 0;
 
@@ -1017,31 +1187,41 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       let op;
       if (isEmpty) op = 'add_taxiway';
       else {
-        // Distribution in percentage points of the run's total ops:
-        //   5% runway (new/move/rename) · 5% taxiway new · 25% taxiway mod
-        //   (move/move-endpoint/rename) · 25% fillet (half = type=4 connector)
-        //   15% area (new/move/move-vertex) · 5% stand (new/move/rename)
-        //   20% select & delete (single/multi/select-all move, delete)
+        // Distribution in percentage points of the run's total ops (ground + air unified):
+        //   5% runway (new/move/rename) · 5% taxiway new · 20% taxiway mod
+        //   (move/move-endpoint/rename) · 20% fillet (half = type=4 connector)
+        //   10% area (new/move/move-vertex) · 5% stand (new/move/rename)
+        //   15% select & delete (single/multi/select-all move, delete)
+        //   20% air (node 7, procedure 7, fillet 3, move/rename/delete 3)
         const roll = rint(0, 99);
         if (roll < 5) {
           const r2 = rand();
           op = r2 < 0.4 ? 'add_runway' : r2 < 0.7 ? 'move_runway' : 'rename_runway';
         } else if (roll < 10) {
           op = 'add_taxiway';
-        } else if (roll < 35) {
+        } else if (roll < 30) {
           const r2 = rand();
           op = r2 < 0.34 ? 'move_segment' : r2 < 0.67 ? 'move_endpoint' : 'rename_segment';
-        } else if (roll < 60) {
+        } else if (roll < 50) {
           op = rand() < 0.5 ? 'fillet' : 'fillet_runway_connect';
-        } else if (roll < 75) {
+        } else if (roll < 60) {
           const r2 = rand();
           op = r2 < 0.5 ? 'add_area' : r2 < 0.8 ? 'move_area' : 'move_area_vertex';
-        } else if (roll < 80) {
+        } else if (roll < 65) {
           const r2 = rand();
           op = r2 < 0.4 ? 'add_stand' : r2 < 0.7 ? 'move_stand' : 'rename_stand';
-        } else {
+        } else if (roll < 80) {
           const r2 = rand();
           op = r2 < 0.35 ? 'delete_one' : r2 < 0.65 ? 'move_multi' : r2 < 0.85 ? 'move_select_all' : 'move_single';
+        } else if (roll < 87) {
+          op = 'add_airway_node';
+        } else if (roll < 94) {
+          op = 'add_airway_procedure';
+        } else if (roll < 97) {
+          op = 'air_fillet';
+        } else {
+          const r2 = rand();
+          op = r2 < 0.33 ? 'move_airway' : r2 < 0.66 ? 'rename_airway' : 'delete_airway';
         }
       }
       let done = false;
@@ -1065,6 +1245,12 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       else if (op === 'move_multi') done = await doMoveMulti(fuzzLog);
       else if (op === 'move_select_all') done = await doMoveSelectAll(fuzzLog);
       else if (op === 'move_single') done = await doMoveSingle(fuzzLog);
+      else if (op === 'add_airway_node') done = await doAddAirwayNode(fuzzLog);
+      else if (op === 'add_airway_procedure') done = await doAddAirwayProcedure(fuzzLog);
+      else if (op === 'air_fillet') done = await doAirFillet(fuzzLog);
+      else if (op === 'move_airway') done = await doMoveAirway(fuzzLog);
+      else if (op === 'rename_airway') done = await doRenameAirway(fuzzLog);
+      else if (op === 'delete_airway') done = await doDeleteAirway(fuzzLog);
       if (op === 'delete_one' && done) deleteCount++;
       summary.accepted += done ? 1 : 0;
       summary.rejected += done ? 0 : 1;
@@ -1093,7 +1279,7 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       curSum = (await getGroundState()).summary;
       guard++;
     }
-    log(`final ground counts: segs=${curSum?.segments ?? 0} rw=${curSum?.runways ?? 0} areas=${curSum?.areas ?? 0} stands=${curSum?.stands ?? 0} nodes=${curSum?.nodes ?? 0}`);
+    log(`final ground counts: segs=${curSum?.segments ?? 0} rw=${curSum?.runways ?? 0} areas=${curSum?.areas ?? 0} stands=${curSum?.stands ?? 0} nodes=${curSum?.nodes ?? 0} airwayNodes=${curSum?.airwayNodes ?? 0} procedures=${curSum?.procedures ?? 0}`);
 
     // Snapshot expected scenery + flights for reload comparison
     const expectedGround = (await getGroundState()).summary;
@@ -1139,9 +1325,11 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       runways: reloadedGraph ? reloadedGraph.runways.length : -1,
       areas: reloadedGraph ? reloadedGraph.areas.length : -1,
       stands: reloadedGraph ? reloadedGraph.stands.length : -1,
+      airwayNodes: reloadedGraph ? (reloadedGraph.airwayNodes || []).length : -1,
+      procedures: reloadedGraph ? (reloadedGraph.procedures || []).length : -1,
       flights: reloadedFlights ? reloadedFlights.length : -1,
     };
-    log(`reload: segs=${summary.reloaded.segments} (expected ${expected.ground?.segments ?? '?'}) flights=${summary.reloaded.flights} (file baseline ${fileCallsignsBefore.size})`);
+    log(`reload: segs=${summary.reloaded.segments} (expected ${expected.ground?.segments ?? '?'}) airwayNodes=${summary.reloaded.airwayNodes} procedures=${summary.reloaded.procedures} flights=${summary.reloaded.flights} (file baseline ${fileCallsignsBefore.size})`);
     // Ground counts are allowed to be repaired by the writer (gate drops degenerate
     // dangling refs), so we only assert the file parses and the flight contract
     // below holds. Flight baseline is the FILE, not the store (demo-classified

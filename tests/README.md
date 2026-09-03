@@ -7,14 +7,14 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (1355) + save integrity (21) + jetway rebuild (16) + runway pairs (5) + E2E (17, ~5 min)
-npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (1355 tests, 70 files, ~25s)
+npm run test:all      # Full suite: Vitest (1365) + save integrity (21) + jetway rebuild (16) + runway pairs (5) + E2E (17, ~5 min)
+npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (1365 tests, 72 files, ~25s)
 npm run test:e2e      # 17 Playwright E2E tests (requires npm run build first, ~4 min; 15 pass, 2 skipped — E12a overlay timing + fuzz gated on FUZZ_RUN)
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
 npm run test:fuzz         # flight fuzz: all 20 production levels (see "Fuzz Save" section)
-npm run test:fuzz:ground  # ground fuzz: all 20 production levels (see "Fuzz Ground Save" section)
+npm run test:fuzz:ground  # ground+air fuzz: all 20 production levels (see "Fuzz Ground+Air Save" section)
 
 node tests/integration/test_api_server.js      # MCP/API tests: 109 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
@@ -31,11 +31,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (1355 tests, 70 files)
+## Layer 1 — Vitest Component Tests (1365 tests, 72 files)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 1355 pass (70 test files; includes the Ground Painter scenery suite)
+### `npm test` — 1365 pass (72 test files; includes the Ground Painter scenery suite + airway roundtrip)
 
 Coverage (`npx vitest run --coverage`, provider `@vitest/coverage-v8`, config in `vitest.config.js`) is
 scoped to the core logic trees — `src/acl/**` + `src/components/EditorScreen/GroundPainter/**` — with
@@ -92,9 +92,11 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 | `integration/runway_entry_type_id.test.js` | 8 | **Runway Entries/Exits type-id distinctness + no-fallback assert** — the GATCARC4 writer requires distinct ids for the array wrapper (`Runway+Entry[]`/`Runway+Exit[]`) vs the element (`Runway+Entry`/`Runway+Exit`); a guessed id collides as `"Type id N claimed by both ..."`. Pins `_typeId` parsing, `_sampleRunwayInnerType` returning `16` distinct from `15` (and `18` vs `17` for exits) and `null` with no fallback, editing entries/exits on the real fixture encodes with distinct ids, removing a direction's only entry still encodes (both directions re-serialized), no-edit round-trip, and synthesizing a runway without a sampled type **asserts** (`no fallback allowed`) instead of emitting `"$type": 0`. Requires the `ZSJN` fixture (via `tests/fixtures/game-root`). |
 | `integration/scenery_taxiway_split.test.js` | 2 | **Pavement OsmId continuity (auto-slice split)** — when the painter draws a taxiway onto a runway's type-4 pavement strip, the strip is split at the junction. Regression for `Taxiway visual path 'N' is discontinuous`: split pieces must be re-emitted under the parent strip's OsmId (as later ordinals of the SAME OsmId) via `parentOsm`, not fresh negatives. Pins that both split pieces fold into `OSM 50095` (`01/19` chain stays continuous) and a genuinely-new taxiway (no `parentOsm`) still gets its own fresh OsmId. Same `_debug` fixture requirement. |
 | `integration/scenery_type_regroup.test.js` | 4 | **PK static-entity type regroup** — `patchSceneryBlob` regenerates `PKStaticEntities.$rcontent` in the file's canonical type order (`taxiway-node`, `taxiway-segment`, `airway-node`, `airway-segment`, `runway`, `stand`, `taxi-navigation`) so a newly-drawn node/segment joins its TYPE block instead of being appended after every `taxi-navigation` entry. Asserts no-touch stays byte-identical, the post-patch array is one contiguous run per type, the added node/segment counts land in the right blocks (original node indices stable across a re-parse), and `_regroupPkByType` buckets by type while preserving within-group order. Same `_debug` fixture requirement. |
-| **Electron backend (existing):** | **74** | |
+| `integration/scenery_airway.test.js` | 8 | **Airway roundtrip (unified painter air mode)** — `buildSceneryGraph`/`patchSceneryBlob` with `airwayNodes`/`procedures`: no-touch lossless, add airway nodes (2 FIX), add procedure chaining 3 nodes, move airway node propagates to procedure geometry, delete via `deletedAirwayPks` drops node + degenerate procedure, `extractAirwayOsmPool`/`getAirwayOsmPoolInfo`, rename node/procedure persists. Same `_debug` fixture requirement. |
+| **Electron backend (existing):** | **76** | |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
 | `electron/updater.test.js` | 35 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **isUpdateSupported (5):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set — the voice build is now supported too (auto-updates via the shared `/editor` route, header-scoped). **isVoiceBuild (4)** + **variantName (2)** + **variantHeader (2):** normal/voice names and the `X-AC27-Variant` header they produce (single `/editor` route — the Worker selects objects per header, no path change). **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skipped etag recognized. **resolveTargetExe (5):** PORTABLE_EXECUTABLE_FILE, execPath fallback, AC27_UPDATE_TARGET in dev, auto-discovered artifact, null when no candidate. **checkForUpdate gates (6):** packaged but not portable, voice build proceeds to the network route, dev with AC27_UPDATE_TARGET, dev by default (opt-out), dev with AC27_UPDATE_DEV_CHECK=1, dev with no target exe. **installUpdate (2):** dev dry-run default, dry-run skips spawn+quit. |
+| `electron/api-server-air.test.js` | 2 | **Air MCP tools registry** — `MCP_TOOLS` contains `create_airway_nodes`, `create_airway_procedures`, `delete_airway_objects`, `move_airway_objects`, `rename_airway_object`, `create_airway_fillet`; `get_ground_painter_state` description mentions graph. |
 | **MapWindows (19 files):** | **712** | |
 | `components/MapWindows/voiceNumberParser.test.js` | 46 | `parseEnglishFlightNumber`: individual digits, "oh"→0, teens, grouped pairs, "triple X"/"double X" aviation shorthand, stop at non-numbers, >6-digit filter, empty input, "the" mid-number skip, digit confusables ("new"→two/nine). `parseChineseFlightNumber`: 幺-series, 一-series, 洞/两/零 variants, multi-token, stop at non-digits. `generateCallsignCandidates`, `lookupEnNumberToken` fuzzy guard ("right" blocked), `lookupUnitWord` |
 | `components/MapWindows/voiceCallsignParser.test.js` | 71 | `detectLanguage`: EN/ZH/empty/mixed. `parseCallsign` (EN): "united eleven eleven"→UAL1111, full airline name, 3-letter code, "delta"→DAL, KLM, longest-match priority, teen numbers, callsign-only (no command), null on no-match/empty. `parseCallsign` (ZH): 东方/中国东方航空/国航 with digits. Proximity + phonetic-skeleton fallbacks, pre-number "at" strip, "new" confusables, "the" skip, Korean Air→KAL, `callsignCandidates` |
@@ -134,7 +136,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 
 ### Known Vitest failures (none)
 
-All 1355 Vitest tests pass (70 files; verified 2026-09-02). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
+All 1365 Vitest tests pass (72 files; verified 2026-09-02). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 
@@ -240,13 +242,13 @@ Iterates every level row in the browser: open → disable time validation → Ct
 |----|------|----------|----------|
 | **F1** | `fuzz-save.spec.mjs` | All 20 production files (or `FUZZ_ACL_FILES` subset) | 20/20 pass, `.acl.bak` created per file, saved file reloads with matching flights |
 
-### Fuzz Ground Save — randomized Ground Painter edit storm + real SAVE (E2E, requires `E2E_GAME_ROOT` + `FUZZ_RUN=1`)
+### Fuzz Ground+Air Save — randomized Ground/Air Painter edit storm + real SAVE (E2E, requires `E2E_GAME_ROOT` + `FUZZ_RUN=1`)
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
 | **F2** | `fuzz-ground-save.spec.mjs` | All 20 production files (or `FUZZ_ACL_FILES` subset) | 20/20 pass, `.acl.bak` created per file, saved scenery + flight reconciliation verified |
 
-Drives the Ground Painter the same way `F1` drives flights: opens each level, opens the Ground Painter, applies **50–200 randomized scenery ops per level** through the MCP Ground Painter API, then hits **SAVE through the real Ground Painter UI** (Save → backup confirm → success/warnings). The operation mix is percentage-budgeted: 5% runway (new/move/rename), 5% taxiway new, 25% taxiway mod (move whole/move endpoint/rename), 25% fillet (half connect a new taxiway onto a runway `Flags=4` strip then fillet that junction), 15% area (new/move/move-vertex), 5% stand (new/move/rename), 20% select+delete (single/multi/selectAll move + delete). Every coordinate is inside the live graph bounds (5% padding); runway names are suffix-deduped and always satisfy the save-time validation.
+Drives the Ground Painter the same way `F1` drives flights: opens each level, opens the Ground Painter, applies **50–200 randomized scenery+airway ops per level** through the MCP Ground/Air Painter API (unified Ground+Air distribution), then hits **SAVE through the real Ground Painter UI** (Save → backup confirm → success/warnings). The operation mix is percentage-budgeted (ground + air unified): 5% runway (new/move/rename), 5% taxiway new, 20% taxiway mod (move whole/move endpoint/rename), 20% fillet (half connect a new taxiway onto a runway `Flags=4` strip then fillet that junction), 10% area (new/move/move-vertex), 5% stand (new/move/rename), 15% select+delete (single/multi/selectAll move + delete), 20% air (node 7, procedure 7, fillet 3, move/rename/delete 3). Every coordinate is inside the live graph bounds (5% padding); runway names are suffix-deduped and always satisfy the save-time validation.
 
 **Post-save flight reconciliation** is verified against the file (not the store — demo-classified basenames like `ZSJN_leisure_1.acl` ship as prod but the editor filters the store to the CDT demo window): flights whose stand/runway was deleted are purged, renamed references are remapped, and the saved file must never keep an unresolved reference, add a flight, or drop one whose reference still resolves. Game-load gates are also checked: no bowtie area polygons (Triangulator), no duplicate runway `$k` ("found 0 named runways"), no pavement strips orphaned from a deleted runway.
 

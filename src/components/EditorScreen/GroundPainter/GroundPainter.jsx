@@ -23,7 +23,7 @@ export { polylineLengthMeters, segmentLengthMeters, runwayLengthMeters, formatLe
 import { useTranslation } from '../../../hooks/useTranslation';
 import { useAppStore } from '../../../store/appStore';
 import { IoClose, IoCheckmark } from 'react-icons/io5';
-import { MAP_ICON_PATH, MAP_PLANE_VB, STAND_LENGTH, RUNWAY_WIDTH, DEFAULT_AIRPORT_SCALE, PUSHBACK_OFFSET_1, PUSHBACK_OFFSET_2, WIND_UNITS } from '../../../utils/constants';
+import { MAP_ICON_PATH, MAP_PLANE_VB, STAND_LENGTH, RUNWAY_WIDTH, DEFAULT_AIRPORT_SCALE, PUSHBACK_OFFSET_1, PUSHBACK_OFFSET_2, WIND_UNITS, NM_TO_GU } from '../../../utils/constants';
 
 const svgY = (z) => -z;
 
@@ -641,6 +641,10 @@ export default function GroundPainter({ vals }) {
   const activeRunwaysStore = useAppStore((s) => s.groundPainterActiveRunways);
   const setActiveRunwaysStore = useAppStore((s) => s.setGroundPainterActiveRunways);
   const isAirMode = mode === 'air';
+  // Ref mirror of isAirMode so stable callbacks (zoom) always write to the
+  // *current* mode's viewBox instead of the mode captured at mount.
+  const isAirModeRef = useRef(isAirMode);
+  useEffect(() => { isAirModeRef.current = isAirMode; }, [isAirMode]);
   const close = useAppStore((s) => s.closeGroundPainter);
   const showModal = useAppStore((s) => s.showModal);
   const hideModal = useAppStore((s) => s.hideModal);
@@ -658,15 +662,15 @@ export default function GroundPainter({ vals }) {
   const baseVB = baseVBByMode[isAirMode ? 'air' : 'ground'] ?? null;
   const setViewBox = useCallback((vbOrFn) => {
     setViewBoxByMode((prev) => {
-      const key = isAirMode ? 'air' : 'ground';
+      const key = isAirModeRef.current ? 'air' : 'ground';
       const cur = prev[key];
       const next = typeof vbOrFn === 'function' ? vbOrFn(cur) : vbOrFn;
       return { ...prev, [key]: next };
     });
-  }, [isAirMode]);
+  }, []);
   const setBaseVB = useCallback((vb) => {
-    setBaseVBByMode((prev) => ({ ...prev, [isAirMode ? 'air' : 'ground']: vb }));
-  }, [isAirMode]);
+    setBaseVBByMode((prev) => ({ ...prev, [isAirModeRef.current ? 'air' : 'ground']: vb }));
+  }, []);
   const [committing, setCommitting] = useState(null); // in-progress shape (array of points)
   const [world, setWorld] = useState(null); // current snapped world pos (preview)
   const [selected, setSelected] = useState(null); // {kind:'segment'|'runway'|'area'|'stand', idx} | null
@@ -690,7 +694,23 @@ export default function GroundPainter({ vals }) {
   const [renameAirwayNodeName, setRenameAirwayNodeName] = useState(''); // editable name while an existing airway node is selected
   const [selectedAirwayNode, setSelectedAirwayNode] = useState(null); // idx or null
   const [selectedProcedureIdx, setSelectedProcedureIdx] = useState(null);
+  const [hovered, setHovered] = useState(null); // {kind, idx} hover candidate in single-select mode (vague highlight)
   const headingPushRef = useRef(false); // true after pushHist for current slider drag
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [modeTransition, setModeTransition] = useState(null); // { from: 'ground'|'air', to: 'ground'|'air' } while animating
+  const pendingModeRef = useRef(null); // target mode while transition overlay is painting
+
+  // Always start in ground mode whenever the painter is entered (mounted).
+  // Local tool/selection state already resets via mount, but the store-persisted
+  // groundPainterMode/Tool/ActiveRunways survive across closes — reset here as
+  // a safety net for any entry path that bypasses toggleGroundPainter (e.g.
+  // setLegacyState / MCP / direct set).
+  useEffect(() => {
+    setMode('ground');
+    // Also clear the transition overlay if the painter was closed mid-transition.
+    setModeTransition(null);
+    pendingModeRef.current = null;
+  }, [setMode]);
 
   // ── Stand heading helpers (HEAD=nose icon, TAIL=nose + offset*deg) ──
   // Tail is derived from nose + heading so the icon stays as HEAD.
@@ -895,13 +915,62 @@ export default function GroundPainter({ vals }) {
   }, [resetFillet]);
 
   const onToggleMode = useCallback(() => {
+    if (modeTransition) return; // ignore rapid double-clicks while overlay is up
     cancelPlacementInput();
     setCommittingProcedure(null);
     setSelectedAirwayNode(null);
     setSelectedProcedureIdx(null);
     const cur = useAppStore.getState().groundPainterMode;
-    setMode(cur === 'air' ? 'ground' : 'air');
-  }, [cancelPlacementInput, setMode]);
+    const next = cur === 'air' ? 'ground' : 'air';
+    // Show the transition overlay BEFORE committing the mode change so the heavy
+    // SVG subtree remount (ground ↔ air layers) is covered and the user gets
+    // immediate feedback instead of a frozen frame.
+    setModeTransition({ from: cur, to: next });
+    pendingModeRef.current = next;
+    // Defer the actual store write to the next frame so the overlay paints first.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (pendingModeRef.current) {
+          setMode(pendingModeRef.current);
+          pendingModeRef.current = null;
+        }
+      });
+    });
+  }, [cancelPlacementInput, setMode, modeTransition]);
+
+  // Dismiss the transition overlay after the new mode's viewBox has settled.
+  // viewBox/baseVB are per-mode caches; the first switch to a mode may still be
+  // fitting bounds via the effectiveBounds effect, so wait until that viewBox
+  // exists. Enforce a minimum visible duration so the overlay never flashes.
+  const transitionStartRef = useRef(0);
+  useEffect(() => {
+    if (modeTransition) transitionStartRef.current = performance.now();
+  }, [modeTransition]);
+  useEffect(() => {
+    if (!modeTransition) return;
+    const target = modeTransition.to;
+    const targetViewBox = viewBoxByMode[target];
+    const elapsed = performance.now() - (transitionStartRef.current || 0);
+    const minMs = targetViewBox ? 180 : 260; // fit-path needs slightly longer
+    const remaining = Math.max(0, minMs - elapsed);
+    // If the target viewBox is still null (first fit), poll until it lands.
+    if (!targetViewBox) {
+      const id = setTimeout(() => {
+        // Re-evaluate via state change — effect will re-run when viewBox arrives.
+        // Force a re-check by touching transition state.
+        setModeTransition((prev) => (prev ? { ...prev } : prev));
+      }, 40);
+      return () => clearTimeout(id);
+    }
+    // ViewBox ready → schedule overlay dismissal with double-rAF so the new SVG
+    // gets at least one paint before the overlay lifts.
+    const tid = setTimeout(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setModeTransition(null));
+      });
+    }, remaining);
+    return () => clearTimeout(tid);
+  }, [modeTransition, viewBoxByMode]);
 
   // Air helpers: find nearest airway node
   const findNearestAirwayNode = useCallback((wp) => {
@@ -1104,13 +1173,17 @@ export default function GroundPainter({ vals }) {
 
   // ── Load on open: graph + meta built in the MAIN process ──
   useEffect(() => {
+    let cancelled = false;
+    setIsInitialLoading(true);
     (async () => {
       try {
         console.log('[GP] load begin currentPath=', currentPath);
         const res = await window.electronAPI.loadGroundPainterData(currentPath);
+        if (cancelled) return;
         console.log('[GP] load res keys=', res ? Object.keys(res) : null, 'textLen=', res && res.text ? res.text.length : null);
         if (!res || !res.graph) {
           console.error('[GP][ASSERT] empty graph on open', { currentPath });
+          setIsInitialLoading(false);
           return;
         }
         const g = res.graph;
@@ -1153,9 +1226,23 @@ export default function GroundPainter({ vals }) {
           }
         }
       } catch (e) {
-        console.error('[GP][ASSERT] open failed', e);
+        if (!cancelled) console.error('[GP][ASSERT] open failed', e);
+      } finally {
+        if (!cancelled) {
+          // Ensure the loading overlay is visible for at least one paint.
+          // Use rAF when available (Electron) but always schedule a timeout
+          // fallback so jsdom/vitest doesn't hang if rAF never fires.
+          const dismiss = () => { if (!cancelled) setIsInitialLoading(false); };
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => requestAnimationFrame(dismiss));
+            setTimeout(dismiss, 50);
+          } else {
+            dismiss();
+          }
+        }
       }
     })();
+    return () => { cancelled = true; };
   }, [currentPath, vals]);
 
   // ── viewBox from graph bounds + 10% pad (fit ONLY on first load) — per-mode ──
@@ -1226,7 +1313,7 @@ export default function GroundPainter({ vals }) {
       const nw = vw * f, nh = vh * f;
       return [sx - ((sx - vx) / vw) * nw, sy - ((sy - vy) / vh) * nh, nw, nh];
     });
-  }, []);
+  }, [setViewBox]);
   const onWheel = useCallback((evt) => {
     // React attaches onWheel passively → preventDefault() warns. The canvas is
     // fixed/overflow-hidden so the page won't scroll; just zoom.
@@ -1244,7 +1331,7 @@ export default function GroundPainter({ vals }) {
       const cx = vx + vw / 2, cy = vy + vh / 2;
       return [cx - (vw * f) / 2, cy - (vh * f) / 2, vw * f, vh * f];
     });
-  }, []);
+  }, [setViewBox]);
   const resetZoom = useCallback(() => {
     if (baseVB) { setViewBox(baseVB); return; }
     if (!effectiveBounds) return;
@@ -1252,9 +1339,9 @@ export default function GroundPainter({ vals }) {
     const padZ = (effectiveBounds.maxZ - effectiveBounds.minZ) * 0.1 || 5;
     const vb = [effectiveBounds.minX - padX, svgY(effectiveBounds.maxZ + padZ), (effectiveBounds.maxX - effectiveBounds.minX + 2 * padX), (effectiveBounds.maxZ - effectiveBounds.minZ + 2 * padZ)];
     setViewBox(vb);
-    const modeKey = isAirMode ? 'air' : 'ground';
+    const modeKey = isAirModeRef.current ? 'air' : 'ground';
     setBaseVBByMode((prev) => ({ ...prev, [modeKey]: vb }));
-  }, [baseVB, effectiveBounds, isAirMode]);
+  }, [baseVB, effectiveBounds, setViewBox]);
   const zoomPercent = baseVB && viewBox ? Math.round(100 / (viewBox[2] / baseVB[2])) : 100;
 
   // ── Background image: import (file → data URL) + placement controls ──
@@ -1343,6 +1430,12 @@ export default function GroundPainter({ vals }) {
       boxDragRef.current = null;
     }
   }, [tool, selected, multiSelected.length, boxRect]);
+
+  // Clear hover preview when leaving single-select mode, toggling off select, or switching air/ground
+  useEffect(() => {
+    if (tool !== TOOL_SELECT || !selectEnabled) setHovered(null);
+  }, [tool, selectEnabled, isAirMode]);
+  useEffect(() => { setHovered(null); }, [isAirMode]);
 
   // Legacy migration: 'delete' was previously a tool mode — now it's an action button.
   useEffect(() => {
@@ -1433,12 +1526,90 @@ export default function GroundPainter({ vals }) {
       }
       return;
     }
-    const raw = toWorld(evt); if (!raw || !snapGeom) return;
+    const raw = toWorld(evt); if (!raw || !snapGeom) { setHovered(null); return; }
+    // ── Single-select hover (air & ground both) — vaguer highlight of what would be selected ──
+    const isSingleSelect = tool === TOOL_SELECT && selectEnabled;
+    if (isSingleSelect) {
+      let hoverCand = null;
+      if (isAirMode) {
+        if (graph) {
+          const nearestNode = findNearestAirwayNode(raw);
+          if (nearestNode != null) hoverCand = { kind: 'airwayNode', idx: nearestNode };
+          else {
+            const nearestProc = findNearestProcedure(raw);
+            if (nearestProc != null) hoverCand = { kind: 'procedure', idx: nearestProc };
+            else if (bgImage && pointInBgBounds(bgImage, raw)) hoverCand = { kind: 'bgImage' };
+          }
+        }
+      } else {
+        // ground — same priority as pickForeground (stand > line > area), plus bg fallback
+        if (graph) {
+          const { TH, TH_STAND, tightStand } = getDynamicSelectThresholds(viewBox, baseVB);
+          let bestStand = null;
+          const considerStand = (idx, dist, th) => { if (dist <= th && (!bestStand || dist < bestStand.dist)) bestStand = { kind: 'stand', idx, dist }; };
+          graph.stands.forEach((st, i) => {
+            const n = graph.nodes[st.noseIdx]; if (n) considerStand(i, Math.hypot(raw.x - n.x, raw.z - n.z), TH_STAND);
+            const t = graph.nodes[st.tailIdx]; if (t) considerStand(i, Math.hypot(raw.x - t.x, raw.z - t.z), TH_STAND * 0.62);
+          });
+          let bestLine = null;
+          const considerLine = (kind, idx, dist, th) => { if (dist <= th && (!bestLine || dist < bestLine.dist)) bestLine = { kind, idx, dist }; };
+          const runwayStripNames = new Set((graph.runways || []).map((r) => r.physicalName));
+          graph.segments.forEach((sg, i) => {
+            if (sg.name && runwayStripNames.has(sg.name)) return;
+            const pts = segNodeIdxs(sg).map((ni) => graph.nodes[ni]).filter(Boolean);
+            if (pts.length >= 2) considerLine('segment', i, distToPoly(raw.x, raw.z, pts), TH);
+          });
+          graph.runways.forEach((rw, i) => {
+            const a = graph.nodes[rw.thAIdx], b = graph.nodes[rw.thBIdx];
+            if (a && b) considerLine('runway', i, distToSeg(raw.x, raw.z, a.x, a.z, b.x, b.z), TH);
+          });
+          const bestLinear = bestStand || bestLine;
+          let bestArea = null;
+          graph.areas.forEach((ar, i) => {
+            const pts = ar.points || [];
+            const inside = pointInPoly(raw.x, raw.z, pts);
+            const edge = minEdgeDist(raw.x, raw.z, pts);
+            let cost;
+            if (ar.areaType === 0) { if (edge > TH) return; cost = 100 + edge; }
+            else if (ar.areaType === 2) { if (edge > TH && !inside) return; cost = inside ? 0 : edge; }
+            else { if (edge > TH && !inside) return; cost = inside ? 1 : edge + 1; }
+            if (!bestArea || cost < bestArea.cost) bestArea = { kind: 'area', idx: i, cost, inside, edge };
+          });
+          if (!bestLinear && !bestArea) hoverCand = null;
+          else if (bestLinear && !bestArea) hoverCand = { kind: bestLinear.kind, idx: bestLinear.idx };
+          else if (!bestLinear && bestArea) hoverCand = { kind: bestArea.kind, idx: bestArea.idx };
+          else {
+            const areaInside = bestArea.inside;
+            if (areaInside && bestLinear.kind === 'stand' && bestLinear.dist > tightStand) hoverCand = { kind: bestArea.kind, idx: bestArea.idx };
+            else hoverCand = { kind: bestLinear.kind, idx: bestLinear.idx };
+          }
+          if (!hoverCand && bgImage && pointInBgBounds(bgImage, raw)) hoverCand = { kind: 'bgImage' };
+        }
+      }
+      // Avoid flicker by only updating when changed
+      setHovered((prev) => {
+        if (!prev && !hoverCand) return prev;
+        if (prev && hoverCand && prev.kind === hoverCand.kind && prev.idx === hoverCand.idx) return prev;
+        return hoverCand;
+      });
+    } else {
+      setHovered((prev) => (prev ? null : prev));
+    }
     // Air mode handling
     if (isAirMode) {
       if (tool === TOOL_AIR_FILLET) {
         const hit = findNearestProcedure(raw);
         setHoverSegIdx(hit);
+      }
+      // Select tool in air mode — snap to nearest airway node (fix) and show highlight
+      if (tool === TOOL_SELECT && selectEnabled) {
+        const snap = findAirSnap(raw);
+        if (snap) {
+          setWorld({ x: snap.x, z: snap.z, type: SNAP_TYPES.ENDPOINT });
+        } else {
+          setWorld(null);
+        }
+        return;
       }
       if (tool === TOOL_AIR_NODE) {
         const nearest = findNearestAirwayNode(raw);
@@ -1454,7 +1625,8 @@ export default function GroundPainter({ vals }) {
         setWorld(raw);
         return;
       }
-      if (tool === TOOL_AIR_PROCEDURE && committingProcedure && committingProcedure.length > 0) {
+      // Procedure tool — snap on the init node (first pick) as well as subsequent picks
+      if (tool === TOOL_AIR_PROCEDURE) {
         const snap = findAirSnap(raw);
         if (snap) {
           setWorld({ x: snap.x, z: snap.z, type: SNAP_TYPES.ENDPOINT });
@@ -1499,13 +1671,15 @@ export default function GroundPainter({ vals }) {
     // (prevents 2-point degenerate close; enforces ≥3 points after truncation).
     if (snapped && tool === 'area' && prev && Math.hypot(snapped.x - prev.x, snapped.z - prev.z) < 1e-9) snapped = null;
     setWorld(snapped || raw);
-  }, [toWorld, snapGeom, viewBox, baseVB, committing, applyDrag, tool, findNearestSegmentIdx, graph, isAirMode, findNearestAirwayNode, findNearestProcedure, committingProcedure, findAirSnap]);
+  }, [toWorld, snapGeom, viewBox, baseVB, committing, applyDrag, tool, selectEnabled, findNearestSegmentIdx, graph, isAirMode, findNearestAirwayNode, findNearestProcedure, committingProcedure, findAirSnap, bgImage]);
 
   // Start a drag: middle button always pans; Select tool left-drag moves the
   // selected object's endpoint/body, otherwise pans. Non-select tools place.
   // Box-select (多选) has its own rectangle drag plus multi-body move.
   const onMouseDown = useCallback((evt) => {
     if (!viewBox) return;
+    // Hide hover while dragging (panning or moving geometry)
+    if (hovered) setHovered(null);
     // Right-click → cancel/backtrack the active placement tool input and clear
     // all selection (single or box multi-select), returning to the tool's
     // initial just-entered state. Unlike Escape (which switches to the Select
@@ -1526,6 +1700,10 @@ export default function GroundPainter({ vals }) {
         // Backtrack: each right-click pops the last placed vertex, down to 0.
         // Keep `world` so the cursor preview stays for continued drawing.
         setCommitting((c) => (c && c.length > 1 ? c.slice(0, -1) : null));
+      } else if (isAirMode && tool === TOOL_AIR_PROCEDURE && committingProcedure && committingProcedure.length > 0) {
+        // Procedure backtrack — one vertex at a time, like the area tool
+        setCommittingProcedure((c) => (c && c.length > 1 ? c.slice(0, -1) : null));
+        setGpError(null);
       }
       // Always clear any selection (single or box multi-select) too.
       if (selected || (multiSelected && multiSelected.length) || boxRect) {
@@ -1533,6 +1711,14 @@ export default function GroundPainter({ vals }) {
         if (multiSelected && multiSelected.length) setMultiSelected([]);
         if (boxRect) setBoxRect(null);
         boxDragRef.current = null;
+      }
+      // Air-mode selection is separate state — clear it on right-click when not backtracking a procedure draft
+      if (isAirMode && (selectedAirwayNode != null || selectedProcedureIdx != null)) {
+        // Don't wipe the selection if we just backtracked the procedure draft (draft is still active)
+        if (!(tool === TOOL_AIR_PROCEDURE && committingProcedure && committingProcedure.length > 0)) {
+          setSelectedAirwayNode(null);
+          setSelectedProcedureIdx(null);
+        }
       }
       dragRef.current = null;
       return;
@@ -1796,7 +1982,7 @@ export default function GroundPainter({ vals }) {
     }
     // no selection → empty-space pan
     dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
-  }, [viewBox, baseVB, tool, selected, multiSelected, boxRect, graph, meta, toWorld, selectEnabled, bgImage, committing, filletPicks, resetFillet, isAirMode, selectedAirwayNode, selectedProcedureIdx]);
+  }, [viewBox, baseVB, tool, selected, multiSelected, boxRect, graph, meta, toWorld, selectEnabled, bgImage, committing, committingProcedure, filletPicks, resetFillet, isAirMode, selectedAirwayNode, selectedProcedureIdx, hovered]);
 
   // Pick the single object under a world point using the Select tool's priority
   // (stand > taxiway/runway > area, with area occlusion/edge weighting). Returns
@@ -1831,7 +2017,7 @@ export default function GroundPainter({ vals }) {
       const inside = pointInPoly(raw.x, raw.z, pts);
       const edge = minEdgeDist(raw.x, raw.z, pts);
       let cost;
-      if (ar.areaType === 0) { if (edge > TH) return; cost = 100 + edge; }
+      if (ar.areaType === 0) { if (edge > TH && !inside) return; cost = inside ? 100 : 100 + edge; }
       else if (ar.areaType === 2) { if (edge > TH && !inside) return; cost = inside ? 0 : edge; }
       else { if (edge > TH && !inside) return; cost = inside ? 1 : edge + 1; }
       if (!bestArea || cost < bestArea.cost) bestArea = { kind: 'area', idx: i, cost, inside, edge };
@@ -3913,6 +4099,57 @@ export default function GroundPainter({ vals }) {
             <image href={bgImage.src} x={cx - bgW / 2} y={svgY(cz) - bgH / 2} width={bgW} height={bgH} preserveAspectRatio="none" opacity={bgImage.opacity ?? 0.6} transform={rot ? `rotate(${rot} ${cx} ${svgY(cz)})` : undefined} />
           );
         })()}
+        {/* Air-mode background grid — 10 NM square cells centered at Unity origin (0,0) */}
+        {isAirMode && viewBox && (() => {
+          const step = 10 * NM_TO_GU; // 185.2 GU
+          const worldMinX = viewBox[0];
+          const worldMaxX = viewBox[0] + viewBox[2];
+          const worldMinZ = -(viewBox[1] + viewBox[3]);
+          const worldMaxZ = -viewBox[1];
+          const startX = Math.floor(worldMinX / step) * step;
+          const endX = Math.ceil(worldMaxX / step) * step;
+          const startZ = Math.floor(worldMinZ / step) * step;
+          const endZ = Math.ceil(worldMaxZ / step) * step;
+          const gridStroke = 0.9 / pxScale;
+          const axisStroke = 1.6 / pxScale;
+          const labelFont = Math.max(3.2 / pxScale, 0.55);
+          const lines = [];
+          // Minor grid lines (vertical x = k*step)
+          for (let x = startX; x <= endX + 1e-6; x += step) {
+            if (Math.abs(x) < 1e-6) continue; // axis drawn separately
+            lines.push(<line key={'agv' + x} x1={x} y1={svgY(startZ)} x2={x} y2={svgY(endZ)} stroke="#1e3a5a" strokeWidth={gridStroke} opacity={0.38} pointerEvents="none" />);
+          }
+          // Minor grid lines (horizontal z = k*step)
+          for (let z = startZ; z <= endZ + 1e-6; z += step) {
+            if (Math.abs(z) < 1e-6) continue;
+            lines.push(<line key={'agh' + z} x1={startX} y1={svgY(z)} x2={endX} y2={svgY(z)} stroke="#1e3a5a" strokeWidth={gridStroke} opacity={0.38} pointerEvents="none" />);
+          }
+          // Axes (Unity origin) — thicker, higher contrast
+          lines.push(<line key="agAx" x1={0} y1={svgY(startZ)} x2={0} y2={svgY(endZ)} stroke="#2f5a8a" strokeWidth={axisStroke} opacity={0.9} pointerEvents="none" />);
+          lines.push(<line key="agAz" x1={startX} y1={svgY(0)} x2={endX} y2={svgY(0)} stroke="#2f5a8a" strokeWidth={axisStroke} opacity={0.9} pointerEvents="none" />);
+          // Origin marker
+          lines.push(<circle key="agO" cx={0} cy={svgY(0)} r={4.2 / pxScale} fill="#0a1628" stroke="#6aa0ff" strokeWidth={1.2 / pxScale} opacity={0.95} pointerEvents="none" />);
+          lines.push(<circle key="agOi" cx={0} cy={svgY(0)} r={1.6 / pxScale} fill="#6aa0ff" opacity={0.95} pointerEvents="none" />);
+          // Origin label
+          lines.push(<text key="agOl" x={5 / pxScale} y={svgY(0) - 5 / pxScale} fontSize={labelFont} fill="#6aa0ff" fontWeight={700} style={{ paintOrder: 'stroke', stroke: '#0a1628', strokeWidth: 0.9 / pxScale, strokeLinejoin: 'round' }} pointerEvents="none">0,0</text>);
+          // NM labels along axes (every 10 NM) — avoid clutter by showing only within view
+          const maxLabels = 20;
+          let labelCount = 0;
+          for (let x = startX; x <= endX + 1e-6 && labelCount < maxLabels; x += step) {
+            if (Math.abs(x) < 1e-6) continue;
+            const nm = Math.round(x / NM_TO_GU);
+            lines.push(<text key={'aglx' + x} x={x} y={svgY(0) - 4 / pxScale} textAnchor="middle" fontSize={labelFont * 0.9} fill="#3a5a8a" style={{ paintOrder: 'stroke', stroke: '#0a1628', strokeWidth: 0.7 / pxScale }} pointerEvents="none">{nm}</text>);
+            labelCount++;
+          }
+          labelCount = 0;
+          for (let z = startZ; z <= endZ + 1e-6 && labelCount < maxLabels; z += step) {
+            if (Math.abs(z) < 1e-6) continue;
+            const nm = Math.round(z / NM_TO_GU);
+            lines.push(<text key={'aglz' + z} x={4 / pxScale} y={svgY(z) + labelFont * 0.35} fontSize={labelFont * 0.9} fill="#3a5a8a" style={{ paintOrder: 'stroke', stroke: '#0a1628', strokeWidth: 0.7 / pxScale }} pointerEvents="none">{nm}</text>);
+            labelCount++;
+          }
+          return <g key="air-grid">{lines}</g>;
+        })()}
         {!isAirMode && (
           <>
             {/* Areas (below taxiway): BOUNDARY < APRON < BUILDING */}
@@ -4034,7 +4271,8 @@ export default function GroundPainter({ vals }) {
               );
             })}
             {/* Airway nodes — constant on-screen size (zoom-aware via DOT_R/HL_SW).
-                Name is hidden by default and shown only on the selected node. */}
+                Fix name is NEVER rendered on the map; editing is via the
+                floating rename box anchored to the selected point. */}
             {graph.airwayNodes && graph.airwayNodes.map((n, i) => {
               const isSel = selectedAirwayNode === i;
               const isInDraft = committingProcedure && committingProcedure.includes(i);
@@ -4044,9 +4282,6 @@ export default function GroundPainter({ vals }) {
                   {isSel && <circle cx={n.x} cy={svgY(n.z)} r={nodeR * 1.4} fill="none" stroke="#ffd34d" strokeWidth={HL_SW} opacity={0.95} />}
                   {isSel && <circle cx={n.x} cy={svgY(n.z)} r={nodeR * 1.85} fill="none" stroke="#fff" strokeWidth={HL_SW * 0.55} opacity={0.9} />}
                   <circle cx={n.x} cy={svgY(n.z)} r={nodeR} fill={isSel ? '#ffd34d' : isInDraft ? '#4a8cff' : '#fff'} stroke={isSel ? '#fff' : '#4a8cff'} strokeWidth={isSel ? HL_SW * 1.2 : HL_SW} opacity={0.98} />
-                  {isSel && n.name && (
-                    <text x={n.x} y={svgY(n.z) - nodeR * 2.4} textAnchor="middle" fontSize={DOT_R * 1.5} fill="#ffff00" fontWeight={800} style={{ paintOrder: 'stroke', stroke: '#0a1628', strokeWidth: DOT_R * 0.4, strokeLinejoin: 'round' }}>{n.name}</text>
-                  )}
                 </g>
               );
             })}
@@ -4070,6 +4305,7 @@ export default function GroundPainter({ vals }) {
             })()}
           </>
         )}
+        <HoverOutline />
         <SelOutline />
         {/* Multi-selection bounding box + rotation handle (↻) — drag it to rotate
             every selected element together around the selection's center. */}
@@ -4222,6 +4458,8 @@ export default function GroundPainter({ vals }) {
         )}
         {/* snap feedback for placement tools (line/area/stand) */}
         {(placing && world) && <SnapIndicator world={world} vb={viewBox} dotR={DOT_R} sw={HL_SW} />}
+        {/* air-mode snap highlight — select & procedure init node snaps to fixes */}
+        {isAirMode && world && world.type === SNAP_TYPES.ENDPOINT && <SnapIndicator world={world} vb={viewBox} dotR={DOT_R} sw={HL_SW} />}
         {/* angle arc between the last edge and the candidate edge when a snap fires */}
         {world && angleLabel && (world.type === SNAP_TYPES.EXTENSION_180 || world.type === SNAP_TYPES.PERPENDICULAR_90 || world.type === SNAP_TYPES.DIAGONAL_45) && (() => {
           const r = DOT_R * 2.2;
@@ -4365,6 +4603,112 @@ export default function GroundPainter({ vals }) {
       return null;
     };
     return <>{allSels.map((s, i) => renderOne(s, `${s.kind}-${s.idx}-${i}`))}</>;
+  };
+
+  // ── Hover preview (single-select mode, air & ground both) — vaguely highlights what click would select ──
+  const HoverOutline = () => {
+    if (!graph || !hovered) return null;
+    if (tool !== TOOL_SELECT || !selectEnabled) return null;
+    // Don't hover-highlight what's already selected (would duplicate the solid highlight)
+    if (selected && selected.kind === hovered.kind && selected.idx === hovered.idx) return null;
+    if (multiSelected && multiSelected.some((s) => s.kind === hovered.kind && s.idx === hovered.idx)) return null;
+    if (hovered.kind === 'airwayNode' && selectedAirwayNode === hovered.idx) return null;
+    if (hovered.kind === 'procedure' && selectedProcedureIdx === hovered.idx) return null;
+    if (hovered.kind === 'bgImage' && selected && selected.kind === 'bgImage') return null;
+    const HOVER = '#ffd34d';
+    const hSw = HL_SW * 0.85;
+    const hDr = DOT_R;
+    const n = graph.nodes;
+    // Ground objects
+    if (hovered.kind === 'segment') {
+      const sg = graph.segments[hovered.idx];
+      if (!sg) return null;
+      const idxs = segNodeIdxs(sg);
+      const ppt = idxs.map((ni) => n[ni]).filter(Boolean);
+      if (ppt.length < 2) return null;
+      return (
+        <g pointerEvents="none">
+          <polyline points={ppt.map((pp) => pp.x + ',' + svgY(pp.z)).join(' ')} fill="none" stroke={HOVER} strokeWidth={hSw} strokeDasharray="8 5" opacity={0.45} />
+          {ppt.map((pp, k) => <circle key={k} cx={pp.x} cy={svgY(pp.z)} r={hDr * 0.75} fill={HOVER} opacity={0.35} />)}
+        </g>
+      );
+    }
+    if (hovered.kind === 'runway') {
+      const rw = graph.runways[hovered.idx]; if (!rw) return null;
+      const a = n[rw.thAIdx], b = n[rw.thBIdx]; if (!a || !b) return null;
+      const halfW = (rw.width || 0.50) / 2;
+      const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+      const px = (-dz / len) * halfW, pz = (dx / len) * halfW;
+      const pts = [[a.x - px, a.z - pz], [b.x - px, b.z - pz], [b.x + px, b.z + pz], [a.x + px, a.z + pz]].map(([x, z]) => x + ',' + svgY(z)).join(' ');
+      return (
+        <g pointerEvents="none">
+          <polygon points={pts} fill={HOVER} fillOpacity={0.10} stroke={HOVER} strokeWidth={hSw} strokeDasharray="8 5" opacity={0.50} />
+          <circle cx={a.x} cy={svgY(a.z)} r={hDr * 0.75} fill={HOVER} opacity={0.35} />
+          <circle cx={b.x} cy={svgY(b.z)} r={hDr * 0.75} fill={HOVER} opacity={0.35} />
+        </g>
+      );
+    }
+    if (hovered.kind === 'area') {
+      const ar = (graph.areas && graph.areas[hovered.idx]) || { points: [] };
+      const pts = (ar.points || []).map((p) => p.x + ',' + svgY(p.z)).join(' ');
+      if (!pts) return null;
+      return (
+        <g pointerEvents="none">
+          <polygon points={pts} fill={HOVER} fillOpacity={0.08} stroke={HOVER} strokeWidth={hSw} strokeDasharray="8 5" opacity={0.45} />
+          {(ar.points || []).map((pt, ii) => <circle key={ii} cx={pt.x} cy={svgY(pt.z)} r={hDr * 0.65} fill={HOVER} opacity={0.30} />)}
+        </g>
+      );
+    }
+    if (hovered.kind === 'stand') {
+      const st = graph.stands[hovered.idx]; if (!st) return null;
+      const nose = n[st.noseIdx], tail = n[st.tailIdx];
+      if (!nose) return null;
+      const baseDiagForSel = baseVB ? Math.max(baseVB[2], baseVB[3]) : (viewBox ? Math.max(viewBox[2], viewBox[3]) : 60);
+      const fixedWorldSizeSel = baseDiagForSel * 0.028 / 2.4;
+      const iconHalf = fixedWorldSizeSel / 2 || 0.6;
+      const half = iconHalf * 1.15;
+      return (
+        <g pointerEvents="none">
+          {tail && <line x1={nose.x} y1={svgY(nose.z)} x2={tail.x} y2={svgY(tail.z)} stroke={HOVER} strokeWidth={hSw} strokeDasharray="8 5" opacity={0.45} />}
+          <rect x={nose.x - half} y={svgY(nose.z) - half} width={half * 2} height={half * 2} fill="none" stroke={HOVER} strokeWidth={hSw} strokeDasharray="8 5" rx={half * 0.18} opacity={0.45} />
+          <circle cx={nose.x} cy={svgY(nose.z)} r={hDr * 0.45} fill={HOVER} opacity={0.35} />
+        </g>
+      );
+    }
+    // Air objects
+    if (hovered.kind === 'airwayNode') {
+      const an = graph.airwayNodes && graph.airwayNodes[hovered.idx];
+      if (!an) return null;
+      return (
+        <g pointerEvents="none">
+          <circle cx={an.x} cy={svgY(an.z)} r={hDr * 1.45} fill="none" stroke={HOVER} strokeWidth={hSw} strokeDasharray="8 5" opacity={0.55} />
+          <circle cx={an.x} cy={svgY(an.z)} r={hDr * 0.95} fill={HOVER} opacity={0.28} />
+        </g>
+      );
+    }
+    if (hovered.kind === 'procedure') {
+      const proc = graph.procedures && graph.procedures[hovered.idx];
+      if (!proc) return null;
+      const pts = (proc.airwayNodeIdxs || []).map((idx) => graph.airwayNodes[idx]).filter(Boolean);
+      if (pts.length < 2) return null;
+      const linePts = pts.map((p) => p.x + ',' + svgY(p.z)).join(' ');
+      return (
+        <g pointerEvents="none">
+          <polyline points={linePts} fill="none" stroke={HOVER} strokeWidth={hSw * 1.05} strokeDasharray="8 5" opacity={0.45} />
+        </g>
+      );
+    }
+    if (hovered.kind === 'bgImage' && bgImage) {
+      const b = getBgBounds(bgImage);
+      if (!b) return null;
+      const rot = bgImage.rotation || 0;
+      return (
+        <g pointerEvents="none" transform={rot ? `rotate(${rot} ${b.cx} ${svgY(b.cz)})` : undefined}>
+          <rect x={b.minX} y={svgY(b.maxZ)} width={b.w} height={b.h} fill="none" stroke={HOVER} strokeWidth={hSw} strokeDasharray="8 5" opacity={0.35} />
+        </g>
+      );
+    }
+    return null;
   };
 
   // Floating runway endpoint editors — threshold name boxes outward beyond each end.
@@ -4583,6 +4927,109 @@ export default function GroundPainter({ vals }) {
     );
   })();
 
+  // ── Airway node rename — floating box anchored to the selected FIX point
+  const airwayNodeRenameOverlay = (() => {
+    if (!isAirMode || committingProcedure || selectedAirwayNode == null || !graph || !viewBox || !svgRef.current) return null;
+    const node = graph.airwayNodes && graph.airwayNodes[selectedAirwayNode];
+    if (!node) return null;
+    const svg = svgRef.current;
+    const rect = svg.getBoundingClientRect();
+    const ctm = svg.getScreenCTM ? svg.getScreenCTM() : null;
+    const toScreen = (wx, wz) => {
+      if (ctm && svg.createSVGPoint) {
+        const pt = svg.createSVGPoint();
+        pt.x = wx; pt.y = svgY(wz);
+        const sp = pt.matrixTransform(ctm);
+        return { x: sp.x - rect.left, y: sp.y - rect.top };
+      }
+      const [vx, vy, vw, vh] = viewBox;
+      const sx = ((wx - vx) / vw) * rect.width;
+      const sy = ((svgY(wz) - vy) / vh) * rect.height;
+      return { x: sx, y: sy };
+    };
+    const scr = toScreen(node.x, node.z);
+    const panelW = 210, panelH = 36;
+    let left = scr.x + 18;
+    let top = scr.y - panelH / 2 - 14;
+    if (left + panelW > rect.width - 8) left = scr.x - panelW - 18;
+    if (left < 8) left = 8;
+    if (top < 8) top = 8;
+    if (top + panelH > rect.height - 8) top = rect.height - panelH - 8;
+    return (
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{ position: 'absolute', left, top, width: panelW, pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: '#0a1628', border: '1px solid #ffd34d', borderRadius: 6, padding: '4px 6px', boxShadow: '0 4px 16px rgba(0,0,0,0.45)' }}
+      >
+        <input
+          type="text"
+          value={renameAirwayNodeName}
+          onChange={(e) => setRenameAirwayNodeName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameAirwayNode(); } }}
+          placeholder={t('ground_painter_node_name') || 'Fix name'}
+          aria-label={t('ground_painter_node_name') || 'Fix name'}
+          style={{ flex: 1, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '4px 6px', fontSize: 12, outline: 'none' }}
+        />
+        <button onClick={(e) => { e.stopPropagation(); setSelectedAirwayNode(null); }} title={t('modal_btn_cancel') || 'Cancel'} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a2332', border: '1px solid #4a5568', borderRadius: 4, color: '#a0aec0', cursor: 'pointer' }}><IoClose size={14} /></button>
+        <button onClick={(e) => { e.stopPropagation(); renameAirwayNode(); }} title={t('modal_btn_confirm_save') || 'Confirm'} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#3fdc6e', border: '1px solid #3fdc6e', borderRadius: 4, color: '#0a1628', cursor: 'pointer' }}><IoCheckmark size={14} /></button>
+      </div>
+    );
+  })();
+
+  // ── Procedure rename — floating box anchored to the selected procedure's midpoint
+  const procedureRenameOverlay = (() => {
+    if (!isAirMode || committingProcedure || selectedProcedureIdx == null || !graph || !viewBox || !svgRef.current) return null;
+    const proc = graph.procedures && graph.procedures[selectedProcedureIdx];
+    if (!proc) return null;
+    const pts = (proc.airwayNodeIdxs || []).map((idx) => graph.airwayNodes[idx]).filter(Boolean);
+    if (!pts.length) return null;
+    let mx = 0, mz = 0;
+    for (const p of pts) { mx += p.x; mz += p.z; }
+    mx /= pts.length; mz /= pts.length;
+    const svg = svgRef.current;
+    const rect = svg.getBoundingClientRect();
+    const ctm = svg.getScreenCTM ? svg.getScreenCTM() : null;
+    const toScreen = (wx, wz) => {
+      if (ctm && svg.createSVGPoint) {
+        const pt = svg.createSVGPoint();
+        pt.x = wx; pt.y = svgY(wz);
+        const sp = pt.matrixTransform(ctm);
+        return { x: sp.x - rect.left, y: sp.y - rect.top };
+      }
+      const [vx, vy, vw, vh] = viewBox;
+      const sx = ((wx - vx) / vw) * rect.width;
+      const sy = ((svgY(wz) - vy) / vh) * rect.height;
+      return { x: sx, y: sy };
+    };
+    const scr = toScreen(mx, mz);
+    const panelW = 210, panelH = 36;
+    let left = scr.x + 18;
+    let top = scr.y - panelH / 2;
+    if (left + panelW > rect.width - 8) left = scr.x - panelW - 18;
+    if (left < 8) left = 8;
+    if (top < 8) top = 8;
+    if (top + panelH > rect.height - 8) top = rect.height - panelH - 8;
+    return (
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{ position: 'absolute', left, top, width: panelW, pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: '#0a1628', border: '1px solid #ffd34d', borderRadius: 6, padding: '4px 6px', boxShadow: '0 4px 16px rgba(0,0,0,0.45)' }}
+      >
+        <input
+          type="text"
+          value={renameProcedureName}
+          onChange={(e) => setRenameProcedureName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameProcedure(); } }}
+          placeholder={t('ground_painter_procedure_name') || 'Procedure name'}
+          aria-label={t('ground_painter_procedure_name') || 'Procedure name'}
+          style={{ flex: 1, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '4px 6px', fontSize: 12, outline: 'none' }}
+        />
+        <button onClick={(e) => { e.stopPropagation(); setSelectedProcedureIdx(null); }} title={t('modal_btn_cancel') || 'Cancel'} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a2332', border: '1px solid #4a5568', borderRadius: 4, color: '#a0aec0', cursor: 'pointer' }}><IoClose size={14} /></button>
+        <button onClick={(e) => { e.stopPropagation(); renameProcedure(); }} title={t('modal_btn_confirm_save') || 'Confirm'} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#3fdc6e', border: '1px solid #3fdc6e', borderRadius: 4, color: '#0a1628', cursor: 'pointer' }}><IoCheckmark size={14} /></button>
+      </div>
+    );
+  })();
+
   // ── Background image rotation slider overlay — appears when bg image is selected
   const bgRotationOverlay = (() => {
     if (!selected || selected.kind !== 'bgImage' || !bgImage || !viewBox || !svgRef.current) return null;
@@ -4740,24 +5187,43 @@ export default function GroundPainter({ vals }) {
     );
   })();
 
+  const transitionLabel = modeTransition
+    ? (modeTransition.to === 'air'
+      ? (t('ground_painter_loading_air') || 'Loading air view…')
+      : (t('ground_painter_loading_ground') || 'Loading ground view…'))
+    : null;
+
   return createPortal(
     <div className="ground-painter">
       <div className="ground-painter-canvas" style={{ position: 'relative' }}>
         {viewBox ? (
           <>
-            <svg ref={svgRef} viewBox={viewBox.join(' ')} width="100%" height="100%" onMouseMove={onMove} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onClick={onClick} onDoubleClick={onDblClick} onWheel={onWheel} onContextMenu={(e) => e.preventDefault()}>
+            <svg ref={svgRef} viewBox={viewBox.join(' ')} width="100%" height="100%" onMouseMove={onMove} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={(e) => { setHovered(null); onMouseUp(e); }} onClick={onClick} onDoubleClick={onDblClick} onWheel={onWheel} onContextMenu={(e) => e.preventDefault()}>
               {render()}
             </svg>
             <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
               {runwayOverlay}
               {standSliderOverlay}
               {segmentNameOverlay}
+              {airwayNodeRenameOverlay}
+              {procedureRenameOverlay}
               {bgRotationOverlay}
               {filletOverlay}
             </div>
+            {(isInitialLoading || modeTransition) && (
+              <div className="gp-loading-overlay" role="status" aria-live="polite" aria-busy="true">
+                <div className="gp-spinner" aria-hidden="true" />
+                <div className="gp-loading-text">{modeTransition ? transitionLabel : (t('ground_painter_loading') || 'Loading…')}</div>
+              </div>
+            )}
+            {/* Keep .gp-empty in DOM for legacy test compat while loading */}
+            {isInitialLoading && <div className="gp-empty" style={{ display: 'none' }} aria-hidden="true" />}
           </>
         ) : (
-          <div className="gp-empty">Loading scenery…</div>
+          <div className="gp-empty gp-loading-overlay gp-loading-overlay--initial" role="status" aria-live="polite" aria-busy="true">
+            <div className="gp-spinner" aria-hidden="true" />
+            <div className="gp-loading-text">{t('ground_painter_loading') || 'Loading…'}</div>
+          </div>
         )}
       </div>
 
@@ -4845,44 +5311,7 @@ export default function GroundPainter({ vals }) {
           </button>
         </div>
       )}
-      {/* Rename bar — when an existing procedure is selected, show its name for editing. */}
-      {isAirMode && !committingProcedure && selectedProcedureIdx != null && (
-        <div className="gp-proc-bar gp-proc-rename" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
-          <input
-            className="gp-proc-name"
-            value={renameProcedureName}
-            onChange={(e) => setRenameProcedureName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameProcedure(); } }}
-            placeholder={t('ground_painter_procedure_name') || 'Name'}
-            aria-label={t('ground_painter_procedure_name') || 'Procedure name'}
-          />
-          <button className="gp-proc-x" onClick={() => setSelectedProcedureIdx(null)} title={t('ground_painter_procedure_stop') || 'Stop'} aria-label={t('ground_painter_procedure_stop') || 'Stop'}>
-            <IoClose size={16} />
-          </button>
-          <button className="gp-proc-check" onClick={() => renameProcedure()} title={t('ground_painter_procedure_finish') || 'Finish'} aria-label={t('ground_painter_procedure_finish') || 'Finish'}>
-            <IoCheckmark size={16} />
-          </button>
-        </div>
-      )}
-      {/* Rename bar — when an existing airway node is selected, show its name for editing. */}
-      {isAirMode && !committingProcedure && selectedAirwayNode != null && (
-        <div className="gp-proc-bar gp-proc-rename" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
-          <input
-            className="gp-proc-name"
-            value={renameAirwayNodeName}
-            onChange={(e) => setRenameAirwayNodeName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameAirwayNode(); } }}
-            placeholder={t('ground_painter_node_name') || 'Airway node name'}
-            aria-label={t('ground_painter_node_name') || 'Airway node name'}
-          />
-          <button className="gp-proc-x" onClick={() => setSelectedAirwayNode(null)} title={t('ground_painter_procedure_stop') || 'Stop'} aria-label={t('ground_painter_procedure_stop') || 'Stop'}>
-            <IoClose size={16} />
-          </button>
-          <button className="gp-proc-check" onClick={() => renameAirwayNode()} title={t('ground_painter_procedure_finish') || 'Finish'} aria-label={t('ground_painter_procedure_finish') || 'Finish'}>
-            <IoCheckmark size={16} />
-          </button>
-        </div>
-      )}
+
     </div>,
     document.body,
   );

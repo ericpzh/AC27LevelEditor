@@ -285,7 +285,8 @@ export default function GroundPainterToolbar({ tool, onTool, selectEnabled, onTo
           onClick={onToggleMode}
           data-testid="air-ground-toggle"
           aria-label="toggle-air-ground"
-          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px' }}
+          aria-busy={isAir ? undefined : undefined}
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', position: 'relative' }}
         >
           {isAir ? <MdFlightLand size={16} /> : <MdFlightTakeoff size={16} />}
         </button>

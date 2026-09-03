@@ -17,6 +17,50 @@
   justify-content: center;
   height: 100%;
 }
+.gp-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(10, 22, 40, 0.92);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  pointer-events: auto;
+}
+.gp-loading-overlay--initial {
+  position: relative;
+  background: #0a1628;
+  flex: 1 1 auto;
+  min-height: 240px;
+}
+.gp-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #1e2e4a;
+  border-top-color: #6aa0ff;
+  border-radius: 50%;
+  animation: gp-spin 0.75s linear infinite;
+}
+.gp-spinner--sm {
+  width: 18px;
+  height: 18px;
+  border-width: 2.5px;
+}
+@keyframes gp-spin {
+  to { transform: rotate(360deg); }
+}
+.gp-loading-text {
+  color: #cfd8e8;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+}
+.gp-loading-sub {
+  color: #6b7a99;
+  font-size: 11px;
+}
 .ground-painter-toolbar {
   position: relative;
   display: flex;

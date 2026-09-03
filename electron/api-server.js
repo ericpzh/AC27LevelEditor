@@ -107,6 +107,10 @@ function _ensurePainterMetaArrays(meta, graph) {
   // reference"-class failures).
   if (!Array.isArray(meta.deletedStandNames)) meta.deletedStandNames = [];
   if (!Array.isArray(meta.deletedRunwayNames)) meta.deletedRunwayNames = [];
+  // Airway (unified painter)
+  if (!Array.isArray(meta.airwayNodeOrigPk)) meta.airwayNodeOrigPk = (graph && graph.airwayNodes ? graph.airwayNodes.map(() => null) : []);
+  if (!Array.isArray(meta.airwaySegOrigPk)) meta.airwaySegOrigPk = (graph && graph.procedures ? graph.procedures.map(() => null) : []);
+  if (!Array.isArray(meta.deletedAirwayPks)) meta.deletedAirwayPks = [];
 }
 function _pushPainterHistory(state) {
   const gClone = _clone(state.groundPainterGraph);
@@ -187,7 +191,7 @@ function _resolveGroundTarget(g, target, TH) {
     const inside = _pointInPoly(target.x, target.z, pts);
     const edge = _minEdgeDist(target.x, target.z, pts);
     let cost = Infinity;
-    if (ar.areaType === 0) { if (edge <= TH) cost = 100 + edge; }
+    if (ar.areaType === 0) { if (inside || edge <= TH) cost = inside ? 100 : 100 + edge; }
     else if (ar.areaType === 2) { if (inside || edge <= TH) cost = inside ? 0 : edge; }
     else { if (inside || edge <= TH) cost = inside ? 1 : edge + 1; }
     if (cost < bestDist) { bestDist = cost; best = { kind: 'area', idx: i }; }
@@ -211,6 +215,33 @@ function _runwayStripNodes(g, meta, rwIdx) {
     stripNodes = [...seen];
   }
   return stripNodes.filter((ni) => g.nodes[ni] != null);
+}
+
+// ── Air helpers ───────────────────────────────────────────────────
+function _distToAirProcedure(px, pz, proc, airwayNodes) {
+  if (!proc || !Array.isArray(proc.airwayNodeIdxs) || proc.airwayNodeIdxs.length < 2) return Infinity;
+  const pts = proc.airwayNodeIdxs.map((idx) => airwayNodes[idx]).filter(Boolean);
+  if (pts.length < 2) return Infinity;
+  return _distToPoly(px, pz, pts);
+}
+function _resolveAirTarget(g, target, TH) {
+  const airwayNodes = g.airwayNodes || [];
+  const procedures = g.procedures || [];
+  let best = null; let bestDist = Infinity;
+  // Airway node
+  for (let i = 0; i < airwayNodes.length; i++) {
+    const n = airwayNodes[i];
+    if (!n) continue;
+    const d = Math.hypot(target.x - n.x, target.z - n.z);
+    if (d <= TH && d < bestDist) { bestDist = d; best = { kind: 'airwayNode', idx: i }; }
+  }
+  // Procedures (airway segments)
+  for (let i = 0; i < procedures.length; i++) {
+    const proc = procedures[i];
+    const d = _distToAirProcedure(target.x, target.z, proc, airwayNodes);
+    if (d <= TH && d < bestDist) { bestDist = d; best = { kind: 'procedure', idx: i }; }
+  }
+  return best;
 }
 
 // fillet.js is an ESM source file under the typeless package root, so a plain
@@ -716,6 +747,12 @@ const MCP_TOOLS = [
   { name: 'move_ground_objects', description: 'Translate one or more ground objects (mirrors the UI Select body-drag: single, multi-select, or selectAll). Targets resolve like delete_ground_objects (stand > segment/runway > area); a runway move carries its coupled pavement strips; areas translate their polygon points. In-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { targets: { type: 'array', minItems: 1, items: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } } }, selectAll: { type: 'boolean' }, dx: { type: 'number' }, dz: { type: 'number' }, threshold: { type: 'number' } }, required: ['dx', 'dz'] } },
   { name: 'move_ground_endpoint', description: 'Drag a single graph node (segment endpoint, runway threshold, stand nose/tail/pushback) or an area vertex to a new absolute position. A runway threshold move carries the coupled pavement strips. kind: node (default) or areaVertex. In-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { target: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, to: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, threshold: { type: 'number' }, kind: { type: 'string', enum: ['node', 'areaVertex'] } }, required: ['target', 'to'] } },
   { name: 'rename_ground_object', description: 'Rename a segment (taxiway Name), a runway (both end names + physicalName; pavement strips renamed in lockstep; end names must match ^[0-9]{1,2}[A-Z]?$ and differ), or a stand (Name/Identifier), by index. In-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['segment', 'runway', 'stand'] }, idx: { type: 'integer', minimum: 0 }, name: { type: 'string' }, names: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 2 } }, required: ['kind', 'idx'] } },
+  { name: 'create_airway_nodes', description: 'Add airway FIX nodes to the airside graph (in-memory until Save). Each node needs x/z and optional name; pushes paired history.', inputSchema: { type: 'object', properties: { nodes: { type: 'array', minItems: 1, items: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' }, name: { type: 'string' } } } } }, required: ['nodes'] } },
+  { name: 'create_airway_procedures', description: 'Add airway procedures (STAR/APP/SID/MISS) chaining existing airway nodes. Each procedure needs name, routeType 0..3, runwayName, and airwayNodeIdxs (≥2 existing node indices). Validates duplicate (name+runway+type) and pushes paired history.', inputSchema: { type: 'object', properties: { procedures: { type: 'array', minItems: 1, items: { type: 'object', required: ['name', 'routeType', 'runwayName', 'airwayNodeIdxs'], properties: { name: { type: 'string' }, routeType: { type: 'number', enum: [0, 1, 2, 3] }, runwayName: { type: 'string' }, airwayNodeIdxs: { type: 'array', minItems: 2, items: { type: 'integer', minimum: 0 } } } } } }, required: ['procedures'] } },
+  { name: 'delete_airway_objects', description: 'Delete the nearest airside object to a point (airway node > procedure priority). Uses hit threshold ~0.6 GU. Records deletedAirwayPks so save persists; pushes history.', inputSchema: { type: 'object', properties: { target: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, threshold: { type: 'number' } }, required: ['target'] } },
+  { name: 'move_airway_objects', description: 'Translate one or more airside objects (mirrors the UI drag: single airway node / procedure body / selectAll). Targets resolve like delete_airway_objects; a procedure move carries its nodes; in-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { targets: { type: 'array', minItems: 1, items: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } } }, selectAll: { type: 'boolean' }, dx: { type: 'number' }, dz: { type: 'number' }, threshold: { type: 'number' } }, required: ['dx', 'dz'] } },
+  { name: 'rename_airway_object', description: 'Rename an airway node or procedure by index. For airwayNode: new name string; for procedure: new procedure name (duplicate check against name+runway+type). In-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['airwayNode', 'procedure'] }, idx: { type: 'integer', minimum: 0 }, name: { type: 'string' } }, required: ['kind', 'idx', 'name'] } },
+  { name: 'create_airway_fillet', description: 'Round the corner between two airway procedures that share a node (connected fillet). Picks two procedure indices and a radius (0.5..5.0 GU, default 2.0). Connected-only (no virtual). Validates straight-only, angle 5..175°, parallel guard.', inputSchema: { type: 'object', properties: { procA: { type: 'integer', minimum: 0 }, procB: { type: 'integer', minimum: 0 }, radius: { type: 'number', minimum: 0.5, maximum: 5.0 } }, required: ['procA', 'procB'] } },
   { name: 'undo_ground_painter', description: 'Restore the last Ground Painter graph+meta snapshot (depth-1 undo, paired graph+meta).', inputSchema: { type: 'object', properties: {} } },
 ];
 
@@ -870,10 +907,11 @@ async function handleMcpMessage(msg) {
             isOpen: !!s.showGroundPainter,
             hasEdited: !!s.groundPainterHasEdited,
             tool: s.groundPainterTool || 'select',
+            mode: s.groundPainterMode || 'ground',
             historyDepth: s.groundPainterHistory ? 1 : 0,
             graph: g,
-            summary: g ? { nodes: g.nodes.length, segments: g.segments.length, runways: g.runways.length, areas: g.areas.length, stands: g.stands.length } : null,
-            metaSummary: s.groundPainterMeta ? { nodeOrigPk: s.groundPainterMeta.nodeOrigPk?.length || 0, segOrigPk: s.groundPainterMeta.segOrigPk?.length || 0, deletedPks: s.groundPainterMeta.deletedPks?.length || 0, deletedAreaIds: s.groundPainterMeta.deletedAreaIds?.length || 0 } : null,
+            summary: g ? { nodes: g.nodes.length, segments: g.segments.length, runways: g.runways.length, areas: g.areas.length, stands: g.stands.length, airwayNodes: (g.airwayNodes || []).length, procedures: (g.procedures || []).length } : null,
+            metaSummary: s.groundPainterMeta ? { nodeOrigPk: s.groundPainterMeta.nodeOrigPk?.length || 0, segOrigPk: s.groundPainterMeta.segOrigPk?.length || 0, deletedPks: s.groundPainterMeta.deletedPks?.length || 0, deletedAreaIds: s.groundPainterMeta.deletedAreaIds?.length || 0, airwayNodeOrigPk: s.groundPainterMeta.airwayNodeOrigPk?.length || 0, airwaySegOrigPk: s.groundPainterMeta.airwaySegOrigPk?.length || 0, deletedAirwayPks: s.groundPainterMeta.deletedAirwayPks?.length || 0 } : null,
           };
           break;
         }
@@ -1552,6 +1590,292 @@ async function handleMcpMessage(msg) {
           const hist = _pushPainterHistory(s);
           pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
           result = { success: true, renamed };
+          break;
+        }
+        case 'create_airway_nodes': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const nodes = args.nodes || [];
+          if (!Array.isArray(nodes) || nodes.length === 0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'nodes array required (≥1)' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          if (!Array.isArray(newGraph.airwayNodes)) newGraph.airwayNodes = [];
+          if (!Array.isArray(newMeta.airwayNodeOrigPk)) newMeta.airwayNodeOrigPk = [];
+          let added = 0;
+          const errors = [];
+          for (let i = 0; i < nodes.length; i++) {
+            const nd = nodes[i];
+            if (!nd || typeof nd.x !== 'number' || typeof nd.z !== 'number') { errors.push({ index: i, issue: 'x/z required' }); continue; }
+            if (!isFinite(nd.x) || !isFinite(nd.z)) { errors.push({ index: i, issue: 'x/z must be finite' }); continue; }
+            const name = nd.name != null ? String(nd.name).trim() : 'FIX' + (newGraph.airwayNodes.length + 1);
+            newGraph.airwayNodes.push({ x: nd.x, z: nd.z, name: name || 'FIX' + (newGraph.airwayNodes.length + 1) });
+            newMeta.airwayNodeOrigPk.push(null);
+            added++;
+          }
+          if (added === 0 && errors.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No airway nodes added', details: errors }) }], isError: true });
+          const hist2 = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist2, groundPainterHasEdited: true });
+          result = { success: true, added, errors: errors.length ? errors : undefined, totalAirwayNodes: newGraph.airwayNodes.length };
+          break;
+        }
+        case 'create_airway_procedures': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const procedures = args.procedures || [];
+          if (!Array.isArray(procedures) || procedures.length === 0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procedures array required (≥1)' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          if (!Array.isArray(newGraph.airwayNodes)) newGraph.airwayNodes = [];
+          if (!Array.isArray(newGraph.procedures)) newGraph.procedures = [];
+          if (!Array.isArray(newMeta.airwaySegOrigPk)) newMeta.airwaySegOrigPk = [];
+          if (!Array.isArray(newMeta.airwayNodeOrigPk)) newMeta.airwayNodeOrigPk = newGraph.airwayNodes.map(() => null);
+          let added = 0;
+          const errors = [];
+          const rwNames = new Set((newGraph.runways || []).map((r) => r.physicalName).concat((newGraph.runways || []).flatMap((r) => r.names || [])));
+          // also allow any runway end name that exists as physical half
+          for (let i = 0; i < procedures.length; i++) {
+            const p = procedures[i];
+            if (!p || typeof p.name !== 'string' || !p.name.trim()) { errors.push({ index: i, issue: 'name required' }); continue; }
+            const name = p.name.trim();
+            if (!Number.isFinite(Number(p.routeType)) || ![0, 1, 2, 3].includes(Math.trunc(Number(p.routeType)))) { errors.push({ index: i, issue: 'routeType must be 0|1|2|3' }); continue; }
+            const routeType = Math.trunc(Number(p.routeType));
+            const runwayName = String(p.runwayName || '').trim();
+            if (!runwayName) { errors.push({ index: i, issue: 'runwayName required' }); continue; }
+            // Validate runway exists (allow any known runway name)
+            if (rwNames.size > 0 && !rwNames.has(runwayName)) { errors.push({ index: i, issue: 'runwayName ' + runwayName + ' not found in graph', valid: [...rwNames].slice(0, 20) }); continue; }
+            const idxs = p.airwayNodeIdxs;
+            if (!Array.isArray(idxs) || idxs.length < 2) { errors.push({ index: i, issue: 'airwayNodeIdxs needs ≥2 indices' }); continue; }
+            const badIdx = idxs.find((v) => !Number.isInteger(v) || v < 0 || v >= newGraph.airwayNodes.length);
+            if (badIdx != null) { errors.push({ index: i, issue: 'airwayNodeIdxs out of range (0..' + (newGraph.airwayNodes.length - 1) + ')' }); continue; }
+            // duplicate consecutive?
+            let dup = false;
+            for (let k = 1; k < idxs.length; k++) if (idxs[k] === idxs[k - 1]) dup = true;
+            if (dup) { errors.push({ index: i, issue: 'consecutive duplicate node indices' }); continue; }
+            const duplicate = (newGraph.procedures || []).some((ex) => ex.name === name && ex.runwayName === runwayName && ex.routeType === routeType);
+            if (duplicate) { errors.push({ index: i, issue: 'procedure "' + name + '" already exists for runway ' + runwayName + ' routeType ' + routeType }); continue; }
+            // also check within this batch
+            if (procedures.slice(0, i).some((pp, j) => errors.find((e) => e.index === j) == null && pp.name === name && pp.runwayName === runwayName && Math.trunc(Number(pp.routeType)) === routeType)) { errors.push({ index: i, issue: 'duplicate procedure in batch' }); continue; }
+            newGraph.procedures.push({ name, routeType, runwayName, airwayNodeIdxs: idxs.slice() });
+            newMeta.airwaySegOrigPk.push(null);
+            added++;
+          }
+          if (added === 0 && errors.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No procedures added', details: errors }) }], isError: true });
+          const hist3 = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist3, groundPainterHasEdited: true });
+          result = { success: true, added, errors: errors.length ? errors : undefined, totalProcedures: newGraph.procedures.length };
+          break;
+        }
+        case 'delete_airway_objects': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          const m = s.groundPainterMeta;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const target = args.target;
+          if (!target || typeof target.x !== 'number' || typeof target.z !== 'number') return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'target {x,z} required' }) }], isError: true });
+          const TH = typeof args.threshold === 'number' ? args.threshold : 0.6;
+          const best = _resolveAirTarget(g, target, TH);
+          if (!best) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No airway object within threshold ' + TH }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(m) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          if (!Array.isArray(newMeta.deletedAirwayPks)) newMeta.deletedAirwayPks = [];
+          if (!Array.isArray(newMeta.airwayNodeOrigPk)) newMeta.airwayNodeOrigPk = (newGraph.airwayNodes || []).map(() => null);
+          if (!Array.isArray(newMeta.airwaySegOrigPk)) newMeta.airwaySegOrigPk = (newGraph.procedures || []).map(() => null);
+          if (!Array.isArray(newGraph.airwayNodes)) newGraph.airwayNodes = [];
+          if (!Array.isArray(newGraph.procedures)) newGraph.procedures = [];
+          let deletedKind = best.kind, deletedIdx = best.idx;
+          if (best.kind === 'procedure') {
+            const pk = newMeta.airwaySegOrigPk[best.idx];
+            if (pk != null && !newMeta.deletedAirwayPks.includes(pk)) newMeta.deletedAirwayPks.push(pk);
+            newGraph.procedures.splice(best.idx, 1);
+            newMeta.airwaySegOrigPk.splice(best.idx, 1);
+          } else if (best.kind === 'airwayNode') {
+            const pk = newMeta.airwayNodeOrigPk[best.idx];
+            if (pk != null && !newMeta.deletedAirwayPks.includes(pk)) newMeta.deletedAirwayPks.push(pk);
+            // Drop procedures that would become degenerate (<2 nodes)
+            const toDrop = [];
+            for (let pi = newGraph.procedures.length - 1; pi >= 0; pi--) {
+              const proc = newGraph.procedures[pi];
+              if (!proc.airwayNodeIdxs.includes(best.idx)) continue;
+              const remain = proc.airwayNodeIdxs.filter((v) => v !== best.idx).length;
+              if (remain < 2) toDrop.push(pi);
+            }
+            for (const pi of toDrop) {
+              const pk2 = newMeta.airwaySegOrigPk[pi];
+              if (pk2 != null && !newMeta.deletedAirwayPks.includes(pk2)) newMeta.deletedAirwayPks.push(pk2);
+              newGraph.procedures.splice(pi, 1);
+              newMeta.airwaySegOrigPk.splice(pi, 1);
+            }
+            newGraph.airwayNodes.splice(best.idx, 1);
+            newMeta.airwayNodeOrigPk.splice(best.idx, 1);
+            for (const proc of newGraph.procedures) {
+              proc.airwayNodeIdxs = proc.airwayNodeIdxs.filter((v) => v !== best.idx).map((v) => v > best.idx ? v - 1 : v);
+            }
+          }
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, deleted: { kind: deletedKind, idx: deletedIdx }, remaining: { airwayNodes: newGraph.airwayNodes.length, procedures: newGraph.procedures.length } };
+          break;
+        }
+        case 'move_airway_objects': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const dx = Number(args.dx), dz = Number(args.dz);
+          if (!isFinite(dx) || !isFinite(dz)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'finite dx/dz required' }) }], isError: true });
+          if (dx === 0 && dz === 0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'dx/dz must not both be zero' }) }], isError: true });
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          if (!Array.isArray(newGraph.airwayNodes)) newGraph.airwayNodes = [];
+          if (!Array.isArray(newGraph.procedures)) newGraph.procedures = [];
+          const nodeSet = new Set();
+          const TH = typeof args.threshold === 'number' ? args.threshold : 0.6;
+          if (args.selectAll) {
+            for (let i = 0; i < newGraph.airwayNodes.length; i++) nodeSet.add(i);
+          } else {
+            const targets = Array.isArray(args.targets) ? args.targets : (args.target ? [args.target] : []);
+            if (!targets.length) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'targets array (or selectAll: true) required' }) }], isError: true });
+            const seen = new Set();
+            let unresolved = 0;
+            for (const t of targets) {
+              if (!t || typeof t.x !== 'number' || typeof t.z !== 'number') { unresolved++; continue; }
+              const hit = _resolveAirTarget(g, t, TH);
+              if (!hit) { unresolved++; continue; }
+              const key = hit.kind + ':' + hit.idx;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              if (hit.kind === 'airwayNode') nodeSet.add(hit.idx);
+              else if (hit.kind === 'procedure') {
+                const proc = newGraph.procedures[hit.idx];
+                if (proc) for (const ni of proc.airwayNodeIdxs) nodeSet.add(ni);
+              }
+            }
+            if (!nodeSet.size) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no airway object resolved within threshold of any target (unresolved: ' + unresolved + ')' }) }], isError: true });
+          }
+          for (const ni of nodeSet) { if (newGraph.airwayNodes[ni]) { newGraph.airwayNodes[ni].x += dx; newGraph.airwayNodes[ni].z += dz; } }
+          const hist = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+          result = { success: true, moved: { nodes: nodeSet.size }, dx, dz };
+          break;
+        }
+        case 'rename_airway_object': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          const kind = args.kind;
+          const idx = parseInt(args.idx, 10);
+          const name = String(args.name ?? '').trim();
+          if (!['airwayNode', 'procedure'].includes(kind)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: "kind must be 'airwayNode'|'procedure'" }) }], isError: true });
+          if (!name) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'name required' }) }], isError: true });
+          const count = kind === 'airwayNode' ? (g.airwayNodes || []).length : (g.procedures || []).length;
+          if (!Number.isFinite(idx) || idx < 0 || idx >= count) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'idx not valid for ' + kind + ' (valid: 0..' + (count - 1) + ')' }) }], isError: true });
+          if (kind === 'airwayNode' && !/^([A-Z0-9]{1,5})$/.test(name)) {
+            // Advisory only: allow any non-empty name but warn if not FIX-style; we don't reject here to keep MCP flexible
+          }
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          let renamed;
+          if (kind === 'airwayNode') {
+            const prev = newGraph.airwayNodes[idx].name || '';
+            newGraph.airwayNodes[idx] = { ...newGraph.airwayNodes[idx], name };
+            renamed = { kind, idx, from: prev || null, to: name };
+          } else {
+            const prevName = newGraph.procedures[idx].name || '';
+            const proc = newGraph.procedures[idx];
+            const duplicate = (newGraph.procedures || []).some((p, i) => i !== idx && p.name === name && p.runwayName === proc.runwayName && p.routeType === proc.routeType);
+            if (duplicate) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procedure "' + name + '" already exists for runway ' + proc.runwayName + ' routeType ' + proc.routeType }) }], isError: true });
+            newGraph.procedures[idx] = { ...proc, name };
+            renamed = { kind, idx, from: prevName || null, to: name };
+          }
+          const hist4 = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist4, groundPainterHasEdited: true });
+          result = { success: true, renamed };
+          break;
+        }
+        case 'create_airway_fillet': {
+          const s = await readStoreState();
+          const g = s.groundPainterGraph;
+          if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
+          let procA = args.procA, procB = args.procB;
+          const radius = args.radius != null ? Number(args.radius) : 2.0;
+          if (procA == null || procB == null) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA and procB procedure indices required' }) }], isError: true });
+          procA = parseInt(procA, 10); procB = parseInt(procB, 10);
+          const procCount = (g.procedures || []).length;
+          if (!Number.isFinite(procA) || !Number.isFinite(procB) || procA < 0 || procB < 0 || procA >= procCount || procB >= procCount) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA/procB out of range (0..' + (procCount - 1) + ')' }) }], isError: true });
+          }
+          if (procA === procB) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA and procB must be different procedures' }) }], isError: true });
+          if (!isFinite(radius) || radius < 0.5 || radius > 5.0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'radius must be 0.5..5.0' }) }], isError: true });
+          let fillet;
+          try {
+            const p = require('path');
+            const filletPath = p.join(__dirname, '..', 'src', 'components', 'EditorScreen', 'GroundPainter', 'fillet.js');
+            fillet = await _loadFilletModule(filletPath);
+          } catch (e) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'fillet module load failed: ' + e.message }) }], isError: true });
+          }
+          // Build a tiny graph view for fillet validation (nodes = airwayNodes, segments = procedures)
+          const airGraph = { nodes: g.airwayNodes || [], segments: (g.procedures || []).map((p) => ({ nodeIdxs: p.airwayNodeIdxs, aIdx: p.airwayNodeIdxs[0], bIdx: p.airwayNodeIdxs[p.airwayNodeIdxs.length - 1] })) };
+          if (fillet.isStraightSegment && !fillet.isStraightSegment(airGraph.segments[procA])) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA is not a straight procedure segment (only straight procedures can be filleted)' }) }], isError: true });
+          if (fillet.isStraightSegment && !fillet.isStraightSegment(airGraph.segments[procB])) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procB is not a straight procedure segment (only straight procedures can be filleted)' }) }], isError: true });
+          const res = fillet.computeFillet(airGraph, procA, procB, radius);
+          if (!res.ok) {
+            const msg = res.error || 'fillet compute failed';
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: msg }) }], isError: true });
+          }
+          if (res.virtualO) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'airway fillet requires connected procedures (shared node), virtual not supported' }) }], isError: true });
+          // Connected fillet: truncate legs and insert arc via simplified air logic (mirrors GroundPainter.jsx:commitAirFillet)
+          const newGraph = _clone(g);
+          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+          _ensurePainterMetaArrays(newMeta, newGraph);
+          if (!Array.isArray(newMeta.deletedAirwayPks)) newMeta.deletedAirwayPks = [];
+          // Create T nodes and arc interior
+          const t1Idx = newGraph.airwayNodes.length;
+          newGraph.airwayNodes.push({ x: res.t1.x, z: res.t1.z, name: '' });
+          newMeta.airwayNodeOrigPk.push(null);
+          const t2Idx = newGraph.airwayNodes.length;
+          newGraph.airwayNodes.push({ x: res.t2.x, z: res.t2.z, name: '' });
+          newMeta.airwayNodeOrigPk.push(null);
+          const arcInterior = [];
+          for (let i = 1; i < res.arcPoints.length - 1; i++) {
+            const pt = res.arcPoints[i];
+            const ai = newGraph.airwayNodes.length;
+            newGraph.airwayNodes.push({ x: pt.x, z: pt.z, name: '' });
+            newMeta.airwayNodeOrigPk.push(null);
+            arcInterior.push(ai);
+          }
+          const arcIdxs = [t1Idx, ...arcInterior, t2Idx];
+          const procAObj = newGraph.procedures[procA];
+          const procBObj = newGraph.procedures[procB];
+          if (procAObj) {
+            const oIdx = res.oIdxA != null ? res.oIdxA : res.oIdx;
+            const pos = procAObj.airwayNodeIdxs.indexOf(oIdx);
+            if (pos >= 0) {
+              if (pos === 0) procAObj.airwayNodeIdxs = [t1Idx, ...procAObj.airwayNodeIdxs.slice(1)];
+              else if (pos === procAObj.airwayNodeIdxs.length - 1) procAObj.airwayNodeIdxs = [...procAObj.airwayNodeIdxs.slice(0, -1), t1Idx];
+              else procAObj.airwayNodeIdxs = procAObj.airwayNodeIdxs.slice(0, pos).concat([t1Idx], procAObj.airwayNodeIdxs.slice(pos + 1));
+            }
+          }
+          if (procBObj) {
+            const oIdxB = res.oIdxB != null ? res.oIdxB : res.oIdx;
+            const posB = procBObj.airwayNodeIdxs.indexOf(oIdxB);
+            if (posB >= 0) {
+              if (posB === 0) procBObj.airwayNodeIdxs = [t2Idx, ...procBObj.airwayNodeIdxs.slice(1)];
+              else if (posB === procBObj.airwayNodeIdxs.length - 1) procBObj.airwayNodeIdxs = [...procBObj.airwayNodeIdxs.slice(0, -1), t2Idx];
+              else procBObj.airwayNodeIdxs = procBObj.airwayNodeIdxs.slice(0, posB).concat([t2Idx], procBObj.airwayNodeIdxs.slice(posB + 1));
+            }
+          }
+          newGraph.procedures.push({ name: 'ARC' + String(Date.now() % 10000).padStart(4, '0'), routeType: procAObj ? procAObj.routeType : 0, runwayName: procAObj ? procAObj.runwayName : (newGraph.runways && newGraph.runways[0] ? newGraph.runways[0].physicalName.split('/')[0] : '01'), airwayNodeIdxs: arcIdxs });
+          newMeta.airwaySegOrigPk.push(null);
+          const hist5 = _pushPainterHistory(s);
+          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist5, groundPainterHasEdited: true });
+          result = { success: true, virtual: !!res.virtualO, radius: res.rEff, center: res.center, t1: res.t1, t2: res.t2 };
           break;
         }
         case 'undo_ground_painter': {
