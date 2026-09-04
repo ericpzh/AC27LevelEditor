@@ -113,10 +113,11 @@ function osmFromSegPk(pk) {
 
 // While a text/edit field has focus (e.g. the floating runway end-name boxes),
 // keystrokes belong to the textbox — don't hijack Delete/Backspace/Escape/Ctrl+Z.
+// Delete should delete the next char (forward delete) inside any textbox.
 const isTextEditTarget = (el) => {
   if (!el) return false;
-  const tag = el.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  const tag = (el.tagName || '').toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el.isContentEditable;
 };
 // Same styling as GroundMapWindow AREA_TYPE_STYLES so the painter matches the Ground Map.
 const AREA_TYPE_STYLES = {
@@ -1642,7 +1643,11 @@ export default function GroundPainter({ vals }) {
         if (graph) {
           const nearestNode = findNearestAirwayNode(raw);
           if (nearestNode != null) hoverCand = { kind: 'airwayNode', idx: nearestNode };
-          else if (bgImage && pointInBgBounds(bgImage, raw)) hoverCand = { kind: 'bgImage' };
+          else {
+            const nearestProc = findNearestProcedure(raw);
+            if (nearestProc != null) hoverCand = { kind: 'procedure', idx: nearestProc };
+            else if (bgImage && pointInBgBounds(bgImage, raw)) hoverCand = { kind: 'bgImage' };
+          }
         }
       } else {
         // ground — same priority as pickForeground (stand > line > area), plus bg fallback
@@ -2060,9 +2065,10 @@ export default function GroundPainter({ vals }) {
           }
         }
       }
-      // Airway handling for air mode — only NODEs are selectable
+      // Airway handling for air mode — NODEs and PROCEDUREs are selectable via single/click
       if (isAirMode) {
         const airGrab = airGrabRadius(viewBox, baseVB);
+        const airBody = Math.max(0.30, airGrab * 1.15);
         if (selectedAirwayNode != null) {
           const n = g.airwayNodes && g.airwayNodes[selectedAirwayNode];
           if (n && Math.hypot(wp.x - n.x, wp.z - n.z) <= airGrab) {
@@ -2070,8 +2076,26 @@ export default function GroundPainter({ vals }) {
             return;
           }
         }
+        if (selectedProcedureIdx != null) {
+          const proc = g.procedures && g.procedures[selectedProcedureIdx];
+          if (proc) {
+            const pts = proc.airwayNodeIdxs.map((ii) => g.airwayNodes[ii]).filter(Boolean);
+            if (pts.length >= 2 && distToPoly(wp.x, wp.z, pts) <= airBody) {
+              const origAirwayNodes = proc.airwayNodeIdxs.map((idx) => ({ idx, x: g.airwayNodes[idx].x, z: g.airwayNodes[idx].z }));
+              dragRef.current = { mode: 'body', kind: 'airwayProcedure', idx: selectedProcedureIdx, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp, origAirwayNodes };
+              return;
+            }
+            for (const ni of proc.airwayNodeIdxs) {
+              const nn = g.airwayNodes[ni];
+              if (nn && Math.hypot(wp.x - nn.x, wp.z - nn.z) <= airGrab) {
+                dragRef.current = { mode: 'node', kind: 'airwayNode', idx: ni, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp };
+                return;
+              }
+            }
+          }
+        }
         // Air selection exists but cursor not on it → pan (don't fall through to ground body drag)
-        if (selectedAirwayNode != null) {
+        if (selectedAirwayNode != null || selectedProcedureIdx != null) {
           dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
           return;
         }
@@ -2164,6 +2188,8 @@ export default function GroundPainter({ vals }) {
     const hit = isAir ? (() => {
       const ni = findNearestAirwayNode(wp);
       if (ni != null) return { kind: 'airwayNode', idx: ni };
+      const pi = findNearestProcedure(wp);
+      if (pi != null) return { kind: 'procedure', idx: pi };
       return null;
     })() : pickForeground(wp);
     if (shift) {
@@ -2172,7 +2198,8 @@ export default function GroundPainter({ vals }) {
     }
     if (hit) {
       if (isAir) {
-        setSelectedAirwayNode(hit.idx); setSelectedProcedureIdx(null);
+        if (hit.kind === 'airwayNode') { setSelectedAirwayNode(hit.idx); setSelectedProcedureIdx(null); }
+        else { setSelectedProcedureIdx(hit.idx); setSelectedAirwayNode(null); }
         setMultiSelected([hit]); setSelected(null);
       } else {
         setMultiSelected([hit]); setSelected(null);
@@ -2181,7 +2208,7 @@ export default function GroundPainter({ vals }) {
       if (isAir) { setSelectedAirwayNode(null); setSelectedProcedureIdx(null); }
       setSelected(null); setMultiSelected([]);
     }
-  }, [graph, pickForeground, findNearestAirwayNode]);
+  }, [graph, pickForeground, findNearestAirwayNode, findNearestProcedure]);
 
   const onMouseUp = useCallback((evt) => {
     // Finish box-select rectangle / click
@@ -2480,8 +2507,16 @@ export default function GroundPainter({ vals }) {
     if (isAirMode && tool === TOOL_SELECT && selectEnabled) {
       if (!graph || !raw) return;
       const nearestNode = findNearestAirwayNode(raw);
-      if (nearestNode != null) {
-        setSelectedAirwayNode(nearestNode); setSelectedProcedureIdx(null); setSelected(null);
+      let pick = null;
+      if (nearestNode != null) pick = { kind: 'airwayNode', idx: nearestNode };
+      else {
+        const nearestProc = findNearestProcedure(raw);
+        if (nearestProc != null) pick = { kind: 'procedure', idx: nearestProc };
+      }
+      if (pick) {
+        if (pick.kind === 'airwayNode') { setSelectedAirwayNode(pick.idx); setSelectedProcedureIdx(null); }
+        else { setSelectedProcedureIdx(pick.idx); setSelectedAirwayNode(null); }
+        setSelected(null);
         return;
       }
       if (bgImage && pointInBgBounds(bgImage, raw)) { setSelected({ kind: 'bgImage' }); setSelectedAirwayNode(null); setSelectedProcedureIdx(null); return; }
@@ -2835,7 +2870,7 @@ export default function GroundPainter({ vals }) {
   // so the deletion silently does not persist.
   const deleteSelected = useCallback(() => {
     const hasMulti = multiSelected && multiSelected.length > 0;
-    const hasAirSel = (typeof selectedAirwayNode !== 'undefined' && selectedAirwayNode != null);
+    const hasAirSel = (typeof selectedAirwayNode !== 'undefined' && selectedAirwayNode != null) || (typeof selectedProcedureIdx !== 'undefined' && selectedProcedureIdx != null);
     if (!selected && !hasMulti && !hasAirSel) return;
     const st = useAppStore.getState();
     const g = st.groundPainterGraph;
@@ -2859,7 +2894,7 @@ export default function GroundPainter({ vals }) {
     } : m;
     const markDeletedPk = (pk) => { if (pk != null && mm && !mm.deletedPks.includes(pk)) mm.deletedPks.push(pk); };
     const markDeletedAirwayPk = (pk) => { if (pk != null && mm && !mm.deletedAirwayPks.includes(pk)) mm.deletedAirwayPks.push(pk); };
-    // ── Airway delete handling — only NODEs are deletable (procedure auto-cascades when degenerated to <=1) ─────
+    // ── Airway delete handling — NODEs and PROCEDUREs are deletable (single-select) ─────
     if (isAirMode && selectedAirwayNode != null) {
       pushHist();
       {
@@ -2887,6 +2922,20 @@ export default function GroundPainter({ vals }) {
         for (const proc of gg.procedures) {
           proc.airwayNodeIdxs = proc.airwayNodeIdxs.filter((idx) => idx !== delIdx).map((idx) => idx > delIdx ? idx - 1 : idx);
         }
+        setSelectedAirwayNode(null);
+        setSelectedProcedureIdx(null);
+        useAppStore.setState({ groundPainterGraph: gg, groundPainterMeta: mm, groundPainterHasEdited: true });
+        return;
+      }
+    }
+    if (isAirMode && selectedProcedureIdx != null) {
+      pushHist();
+      {
+        const delIdx = selectedProcedureIdx;
+        const pk = mm.airwaySegOrigPk ? mm.airwaySegOrigPk[delIdx] : null;
+        if (pk) markDeletedAirwayPk(pk);
+        gg.procedures.splice(delIdx, 1);
+        if (mm.airwaySegOrigPk) mm.airwaySegOrigPk.splice(delIdx, 1);
         setSelectedAirwayNode(null);
         setSelectedProcedureIdx(null);
         useAppStore.setState({ groundPainterGraph: gg, groundPainterMeta: mm, groundPainterHasEdited: true });
@@ -3013,6 +3062,7 @@ export default function GroundPainter({ vals }) {
       const standIdxs = multiSelected.filter((s) => s.kind === 'stand').map((s) => s.idx).sort((a, b) => b - a);
       const areaIdxs = multiSelected.filter((s) => s.kind === 'area').map((s) => s.idx).sort((a, b) => b - a);
       const airNodeIdxs = multiSelected.filter((s) => s.kind === 'airwayNode').map((s) => s.idx).sort((a, b) => b - a);
+      const airProcIdxs = multiSelected.filter((s) => s.kind === 'procedure').map((s) => s.idx).sort((a, b) => b - a);
       // collect all del nodes from segments before splicing
       const allDelNodes = new Set();
       for (const idx of segIdxs) {
@@ -3048,7 +3098,17 @@ export default function GroundPainter({ vals }) {
         }
         gg.areas.splice(idx, 1);
       }
-      // ── Airway multi delete (box-select in air mode) — only nodes are directly selected
+      // ── Airway multi delete — direct procedure picks (click / shift+click) + node cascade
+      // Box-drag marquee only ever produces airwayNode hits (computeAirBoxSelection), so airProcIdxs will only appear via click/shift+click.
+      // Direct procedure deletes first.
+      if (airProcIdxs.length) {
+        for (const pi of airProcIdxs) {
+          const pk = mm.airwaySegOrigPk ? mm.airwaySegOrigPk[pi] : null;
+          if (pk) markDeletedAirwayPk(pk);
+          gg.procedures.splice(pi, 1);
+          if (mm.airwaySegOrigPk) mm.airwaySegOrigPk.splice(pi, 1);
+        }
+      }
       // Any procedure that would become degenerate (<=1 nodes) after these node deletions is cascaded.
       if (airNodeIdxs.length) {
         const delSet = new Set(airNodeIdxs);
@@ -3910,6 +3970,9 @@ export default function GroundPainter({ vals }) {
         return;
       }
       // Create nameless nodes for T1, T2 and arc interior
+      // t1 belongs to edgeA, t2 to edgeB — but procedure order is prev->O->next.
+      // Clicking B then A must yield the same result, so map tangents to the
+      // procedure's direction rather than the pick order (head/tail invariant).
       const t1Idx = g.airwayNodes.length;
       g.airwayNodes.push({ x: res.t1.x, z: res.t1.z, name: '' });
       m.airwayNodeOrigPk.push(null);
@@ -3924,9 +3987,14 @@ export default function GroundPainter({ vals }) {
         m.airwayNodeOrigPk.push(null);
         arcInterior.push(ai);
       }
-      // Route the procedure through the new arc: replace O with T1 + arcInterior + T2
-      // Procedure goes ... prev -> T1 -> arc -> T2 -> next ...
-      const newSeq = proc.airwayNodeIdxs.slice(0, pos).concat([t1Idx], arcInterior, [t2Idx], proc.airwayNodeIdxs.slice(pos + 1));
+      // Order tangents along the procedure (prev -> next) regardless of pick order.
+      const prevNodeIdx = proc.airwayNodeIdxs[pos - 1];
+      const edgeAIsPrev = edgeA.aIdx === prevNodeIdx || edgeA.bIdx === prevNodeIdx;
+      const tPrevIdx = edgeAIsPrev ? t1Idx : t2Idx;
+      const tNextIdx = edgeAIsPrev ? t2Idx : t1Idx;
+      const orderedInterior = edgeAIsPrev ? arcInterior : [...arcInterior].reverse();
+      // Route the procedure through the new arc: replace O with Tprev + arc + Tnext
+      const newSeq = proc.airwayNodeIdxs.slice(0, pos).concat([tPrevIdx], orderedInterior, [tNextIdx], proc.airwayNodeIdxs.slice(pos + 1));
       proc.airwayNodeIdxs = newSeq;
       useAppStore.setState({ groundPainterHistory: structuredClone(g0), groundPainterMetaHistory: structuredClone(m0), groundPainterGraph: g, groundPainterMeta: m, groundPainterHasEdited: true });
       setFilletPicks([]);
@@ -4053,6 +4121,8 @@ export default function GroundPainter({ vals }) {
     g.airwayNodes[idx] = { ...g.airwayNodes[idx], name };
     useAppStore.setState({ groundPainterHistory: structuredClone(g0), groundPainterMetaHistory: structuredClone(m0), groundPainterGraph: g, groundPainterHasEdited: true });
     setGpError(null);
+    // tick should close the box (un-select) — matches renameProcedure behaviour
+    setSelectedAirwayNode(null);
   }
   // Legacy alias kept for dbl-click path (now delegates to fillet)
   function commitCurve(pts) {
@@ -4502,14 +4572,14 @@ export default function GroundPainter({ vals }) {
             {filteredProcedures.map((proc, i) => {
               const pts = (proc.airwayNodeIdxs || []).map((idx) => graph.airwayNodes[idx]).filter(Boolean);
               if (pts.length < 2) return null;
-              const isSel = false; // procedures are never directly selectable — only NODEs
+              const origIdx = graph.procedures.indexOf(proc);
+              const isSel = selectedProcedureIdx === origIdx || isMultiSelected(multiSelected, 'procedure', origIdx);
               const type = proc.routeType;
               let color = '#4a8cff';
               let dash = null;
               if (type === 2) { color = '#4ac06a'; }
               else if (type === 1) { color = '#ff9e3a'; }
               else if (type === 3) { color = '#ff4a4a'; dash = '6,4'; }
-              const origIdx = graph.procedures.indexOf(proc);
               const strokeScale = procStrokeScale(zoomPercent);
               const strokeW = (isSel ? 0.34 : 0.18) * strokeScale; // selected is clearly thicker
               const arrowLen = 0.6 * strokeScale;
@@ -5051,8 +5121,8 @@ export default function GroundPainter({ vals }) {
     const inputStyle = { width: 46, height: 20, background: '#0a1628', color: '#ffd34d', border: '1px solid #ffd34d', borderRadius: 3, textAlign: 'center', fontSize: 12, fontWeight: 700, outline: 'none' };
     return (
       <>
-        <input type="text" value={names[0] || ''} onChange={(e) => handleRunwayNamesChange([e.target.value, names[1]])} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} maxLength={3} style={{ position: 'absolute', left: pa.x - 23, top: pa.y - 10, ...inputStyle, pointerEvents: 'auto' }} />
-        <input type="text" value={names[1] || ''} onChange={(e) => handleRunwayNamesChange([names[0], e.target.value])} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} maxLength={3} style={{ position: 'absolute', left: pb.x - 23, top: pb.y - 10, ...inputStyle, pointerEvents: 'auto' }} />
+        <input type="text" value={names[0] || ''} onChange={(e) => handleRunwayNamesChange([e.target.value, names[1]])} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} maxLength={3} style={{ position: 'absolute', left: pa.x - 23, top: pa.y - 10, ...inputStyle, pointerEvents: 'auto' }} />
+        <input type="text" value={names[1] || ''} onChange={(e) => handleRunwayNamesChange([names[0], e.target.value])} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} maxLength={3} style={{ position: 'absolute', left: pb.x - 23, top: pb.y - 10, ...inputStyle, pointerEvents: 'auto' }} />
       </>
     );
   })();
@@ -5107,6 +5177,7 @@ export default function GroundPainter({ vals }) {
           onChange={(e) => updateStandName(selected.idx, e.target.value)}
           onClick={stop}
           onMouseDown={stop}
+          onKeyDown={(e) => e.stopPropagation()}
           style={{ flex: 1, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '2px 6px', fontSize: 12, outline: 'none' }}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -5196,6 +5267,7 @@ export default function GroundPainter({ vals }) {
           onChange={(e) => updateSegmentName(selected.idx, e.target.value)}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
           style={{ width: '100%', boxSizing: 'border-box', background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '2px 6px', fontSize: 12, outline: 'none' }}
         />
         {eligible && access.length > 0 && (
@@ -5262,7 +5334,7 @@ export default function GroundPainter({ vals }) {
           type="text"
           value={renameAirwayNodeName}
           onChange={(e) => setRenameAirwayNodeName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameAirwayNode(); } }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameAirwayNode(); } e.stopPropagation(); }}
           placeholder={t('ground_painter_node_name') || 'Fix name'}
           aria-label={t('ground_painter_node_name') || 'Fix name'}
           style={{ flex: '1 1 0', minWidth: 0, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '4px 6px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }}
@@ -5316,7 +5388,7 @@ export default function GroundPainter({ vals }) {
           type="text"
           value={renameProcedureName}
           onChange={(e) => setRenameProcedureName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameProcedure(); } }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameProcedure(); } e.stopPropagation(); }}
           placeholder={t('ground_painter_procedure_name') || 'Procedure name'}
           aria-label={t('ground_painter_procedure_name') || 'Procedure name'}
           style={{ flex: '1 1 0', minWidth: 0, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '4px 6px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }}
