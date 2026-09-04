@@ -292,12 +292,17 @@ function standHeadingPlacement(nose, hdg, st) {
 function buildRotationPlan(graph, meta, sels) {
   if (!graph || !sels || !sels.length) return null;
   const nodeMap = new Map();   // ni -> {ni,x,z}
+  const airwayMap = new Map(); // ai -> {ai,x,z}  (air-mode fixes)
   const areas = [];            // {idx, points:[{x,z}]}
   const stands = [];           // {idx, heading}
   const pts = [];              // all points (for the bounding-box center)
   const addNode = (ni) => {
     const n = graph.nodes[ni];
     if (n && !nodeMap.has(ni)) nodeMap.set(ni, { ni, x: n.x, z: n.z });
+  };
+  const addAirNode = (ai) => {
+    const an = graph.airwayNodes && graph.airwayNodes[ai];
+    if (an && !airwayMap.has(ai)) airwayMap.set(ai, { ai, x: an.x, z: an.z });
   };
   const acc = (x, z) => { pts.push({ x, z }); };
   for (const sel of sels) {
@@ -321,6 +326,14 @@ function buildRotationPlan(graph, meta, sels) {
       const points = (ar.points || []).map((p) => ({ x: p.x, z: p.z }));
       areas.push({ idx: sel.idx, points });
       for (const p of points) acc(p.x, p.z);
+    } else if (sel.kind === 'airwayNode') {
+      const an = graph.airwayNodes && graph.airwayNodes[sel.idx]; if (!an) continue;
+      addAirNode(sel.idx); acc(an.x, an.z);
+    } else if (sel.kind === 'procedure') {
+      const proc = graph.procedures && graph.procedures[sel.idx]; if (!proc) continue;
+      for (const ai of (proc.airwayNodeIdxs || [])) {
+        const an = graph.airwayNodes && graph.airwayNodes[ai]; if (an) { addAirNode(ai); acc(an.x, an.z); }
+      }
     }
   }
   if (!pts.length) return null;
@@ -329,7 +342,7 @@ function buildRotationPlan(graph, meta, sels) {
     if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
     if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
   }
-  return { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, minX, maxX, minZ, maxZ, nodes: [...nodeMap.values()], areas, stands };
+  return { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, minX, maxX, minZ, maxZ, nodes: [...nodeMap.values()], airwayNodes: [...airwayMap.values()], areas, stands };
 }
 // ── Box-select helpers (NOT AREA) ─────────────────────────────
 // Rect is {minX,maxX,minZ,maxZ} in world units. "Inside" = fully inside for
@@ -348,14 +361,14 @@ function computeBoxSelection(graph, box) {
     if (sg.name && runwayStripNames.has(sg.name)) continue;
     const pts = segNodeIdxs(sg).map((ni) => graph.nodes[ni]).filter(Boolean);
     if (pts.length < 2) continue;
-    // fully inside: every vertex inside box
-    if (pts.every((p) => pointInBox(p, box))) out.push({ kind: 'segment', idx: i });
+    // select all nodes that it enclosed — any vertex inside counts (more intuitive than requiring every vertex)
+    if (pts.some((p) => pointInBox(p, box))) out.push({ kind: 'segment', idx: i });
   }
   for (let i = 0; i < (graph.runways || []).length; i++) {
     const rw = graph.runways[i];
     const a = graph.nodes[rw.thAIdx], b = graph.nodes[rw.thBIdx];
     if (!a || !b) continue;
-    if (pointInBox(a, box) && pointInBox(b, box)) out.push({ kind: 'runway', idx: i });
+    if (pointInBox(a, box) || pointInBox(b, box)) out.push({ kind: 'runway', idx: i });
   }
   for (let i = 0; i < (graph.stands || []).length; i++) {
     const st = graph.stands[i];
@@ -365,12 +378,22 @@ function computeBoxSelection(graph, box) {
   }
   // Areas are box-selectable ALONGSIDE taxiways/runways/stands (no occlusion
   // gate — a box may select areas at the same time as the lines/stands on top).
-  // Matching rule is identical to segments/runways: the box fully encloses the
-  // area (every vertex inside).
+  // Any vertex inside counts, so a large area can be grabbed by enclosing any corner.
   for (let i = 0; i < (graph.areas || []).length; i++) {
     const ar = graph.areas[i];
     const pts = (ar && ar.points) || [];
-    if (pts.length >= 3 && pts.every((p) => pointInBox(p, box))) out.push({ kind: 'area', idx: i });
+    if (pts.length >= 3 && pts.some((p) => pointInBox(p, box))) out.push({ kind: 'area', idx: i });
+  }
+  return out;
+}
+function computeAirBoxSelection(graph, box) {
+  if (!graph || !box) return [];
+  const out = [];
+  // Only NODEs are selectable in air mode — procedures are never directly selected
+  for (let i = 0; i < (graph.airwayNodes || []).length; i++) {
+    const n = graph.airwayNodes[i];
+    if (!n) continue;
+    if (pointInBox(n, box)) out.push({ kind: 'airwayNode', idx: i });
   }
   return out;
 }
@@ -400,6 +423,16 @@ function pointOnMultiSelected(graph, multiSelected, wp) {
       const ar = graph.areas && graph.areas[sel.idx];
       const pts = (ar && ar.points) || [];
       if (pts.length >= 3 && (pointInPoly(wp.x, wp.z, pts) || minEdgeDist(wp.x, wp.z, pts) <= TH)) return true;
+    } else if (sel.kind === 'airwayNode') {
+      const an = graph.airwayNodes && graph.airwayNodes[sel.idx];
+      // Use generous radius for air nodes (matches single-select airGrabRadius) so multi-drag is easy to grab
+      if (an && Math.hypot(wp.x - an.x, wp.z - an.z) <= Math.max(TH * 1.9, 1.2)) return true;
+    } else if (sel.kind === 'procedure') {
+      const proc = graph.procedures && graph.procedures[sel.idx];
+      if (proc) {
+        const pts = (proc.airwayNodeIdxs || []).map((ai) => graph.airwayNodes[ai]).filter(Boolean);
+        if (pts.length >= 2 && distToPoly(wp.x, wp.z, pts) <= Math.max(TH * 1.9, 1.2)) return true;
+      }
     }
   }
   return false;
@@ -680,7 +713,17 @@ export default function GroundPainter({ vals }) {
   const [areaType, setAreaType] = useState(2);    // 0 boundary | 1 apron | 2 building (default building)
   const [heading, setHeading] = useState(360);    // stand heading 1..360 for NEXT stand (toolbar)
   const [gpError, setGpError] = useState(null);   // transient validation message
-  const [filletRadius, setFilletRadius] = useState(2.00); // GU, for rounding tool (range 0.50~5.00)
+  const [filletRadius, setFilletRadius] = useState(2.00); // GU, ground 0.50~5.00, air 50~500 — NM scale needs much larger (user: 50~500)
+  const FILLET_LIMITS = isAirMode
+    ? { min: 50.0, max: 500.0, step: 5.0 }
+    : { min: 0.5, max: 5.0, step: 0.05 };
+  // Keep radius inside the active mode's limits when switching ground<->air
+  useEffect(() => {
+    const lim = isAirMode ? { min: 50, max: 500 } : { min: 0.5, max: 5 };
+    if (filletRadius < lim.min || filletRadius > lim.max) {
+      setFilletRadius(isAirMode ? 120 : 2.0);
+    }
+  }, [isAirMode]);
   const [filletPicks, setFilletPicks] = useState([]); // [segIdxA, segIdxB?] for fillet tool
   const [hoverSegIdx, setHoverSegIdx] = useState(null); // hover for fillet picking
   const [bgImage, setBgImage] = useState(null); // imported background image state
@@ -1052,6 +1095,33 @@ export default function GroundPainter({ vals }) {
     return null;
   }, [graph, viewBox, baseVB]);
 
+  // Airway edge picker for intra-procedure fillet: returns {procIdx, edgeIdx, aIdx, bIdx} of nearest edge
+  // Same-procedure lock: after first pick, only edges from that AAA procedure are highlightable/selectable
+  const findNearestAirwayEdge = useCallback((wp) => {
+    if (!graph || !wp || !graph.procedures || !graph.airwayNodes) return null;
+    const radius = airGrabRadius(viewBox, baseVB);
+    let best = null;
+    let bestD = Infinity;
+    const lockedProc = filletPicks.length === 1 && filletPicks[0] && typeof filletPicks[0].procIdx === 'number' ? filletPicks[0].procIdx : null;
+    for (let pi = 0; pi < graph.procedures.length; pi++) {
+      if (lockedProc != null && pi !== lockedProc) continue;
+      const proc = graph.procedures[pi];
+      if (!proc || !Array.isArray(proc.airwayNodeIdxs) || proc.airwayNodeIdxs.length < 2) continue;
+      // Do not filter by runway/type while fillet-picking — the second segment must be from same AAA
+      // regardless of current visibility filters; first pick respects normal visibility via hover fallback
+      for (let ei = 0; ei < proc.airwayNodeIdxs.length - 1; ei++) {
+        const aIdx = proc.airwayNodeIdxs[ei];
+        const bIdx = proc.airwayNodeIdxs[ei + 1];
+        const a = graph.airwayNodes[aIdx];
+        const b = graph.airwayNodes[bIdx];
+        if (!a || !b) continue;
+        const d = distToSeg(wp.x, wp.z, a.x, a.z, b.x, b.z);
+        if (d < bestD && d <= radius) { bestD = d; best = { procIdx: pi, edgeIdx: ei, aIdx, bIdx, a, b }; }
+      }
+    }
+    return best;
+  }, [graph, viewBox, baseVB, filletPicks]);
+
   // Clear fillet picks when leaving the curve tool or when graph changes (new file)
   useEffect(() => {
     if (tool !== TOOL_CURVE && tool !== TOOL_AIR_FILLET) {
@@ -1101,8 +1171,42 @@ export default function GroundPainter({ vals }) {
     }
     if (filletPicks.length >= 2) {
       const res = computeFillet(graph, filletPicks[0], filletPicks[1], filletRadius);
-      if (!res.ok) return { error: res.error, picks: filletPicks.slice() };
+      if (!res.ok) return { error: res.error, errorParams: res.errorParams, picks: filletPicks.slice() };
       return { ...res, picks: filletPicks.slice() };
+    }
+    return null;
+  }, [tool, graph, filletPicks, filletRadius]);
+
+  const airFilletPreview = useMemo(() => {
+    if (tool !== TOOL_AIR_FILLET) return null;
+    if (!graph || !graph.airwayNodes) return null;
+    if (filletPicks.length === 1) {
+      return { picks: filletPicks.slice() };
+    }
+    if (filletPicks.length >= 2) {
+      const a = filletPicks[0];
+      const b = filletPicks[1];
+      // Picks are edge objects {procIdx, edgeIdx, aIdx, bIdx}
+      const isEdgePick = a && typeof a === 'object' && a.procIdx != null;
+      if (isEdgePick) {
+        const ea = a, eb = b;
+        const tmpGraph = {
+          nodes: graph.airwayNodes,
+          segments: [
+            { nodeIdxs: [ea.aIdx, ea.bIdx], aIdx: ea.aIdx, bIdx: ea.bIdx },
+            { nodeIdxs: [eb.aIdx, eb.bIdx], aIdx: eb.aIdx, bIdx: eb.bIdx },
+          ],
+        };
+        const res = computeFillet(tmpGraph, 0, 1, filletRadius);
+        if (!res.ok) return { error: res.error, errorParams: res.errorParams, picks: filletPicks.slice() };
+        if (res.virtualO) return { error: 'ground_painter_air_fillet_error_connected', picks: filletPicks.slice() };
+        return { ...res, picks: filletPicks.slice(), edgeA: ea, edgeB: eb };
+      }
+      // Fallback: legacy procedure picks (whole procedure)
+      const res2 = computeFillet({ nodes: graph.airwayNodes, segments: graph.procedures.map(p => ({ nodeIdxs: p.airwayNodeIdxs, aIdx: p.airwayNodeIdxs[0], bIdx: p.airwayNodeIdxs[p.airwayNodeIdxs.length-1] })) }, a, b, filletRadius);
+      if (!res2.ok) return { error: res2.error, errorParams: res2.errorParams, picks: filletPicks.slice() };
+      if (res2.virtualO) return { error: 'ground_painter_air_fillet_error_connected', picks: filletPicks.slice() };
+      return { ...res2, picks: filletPicks.slice() };
     }
     return null;
   }, [tool, graph, filletPicks, filletRadius]);
@@ -1431,9 +1535,11 @@ export default function GroundPainter({ vals }) {
     }
   }, [tool, selected, multiSelected.length, boxRect]);
 
-  // Clear hover preview when leaving single-select mode, toggling off select, or switching air/ground
+  // Clear hover preview when leaving select modes, toggling off select, or switching air/ground
+  // Box-select also shows hover (behave like single select on click)
   useEffect(() => {
-    if (tool !== TOOL_SELECT || !selectEnabled) setHovered(null);
+    const isHoverTool = tool === TOOL_SELECT || tool === TOOL_BOX_SELECT;
+    if (!isHoverTool || (tool === TOOL_SELECT && !selectEnabled)) setHovered(null);
   }, [tool, selectEnabled, isAirMode]);
   useEffect(() => { setHovered(null); }, [isAirMode]);
 
@@ -1528,18 +1634,15 @@ export default function GroundPainter({ vals }) {
     }
     const raw = toWorld(evt); if (!raw || !snapGeom) { setHovered(null); return; }
     // ── Single-select hover (air & ground both) — vaguer highlight of what would be selected ──
-    const isSingleSelect = tool === TOOL_SELECT && selectEnabled;
-    if (isSingleSelect) {
+    // Box-select also shows hover so a click (tiny box) behaves like single select
+    const isHoverTool = (tool === TOOL_SELECT && selectEnabled) || tool === TOOL_BOX_SELECT;
+    if (isHoverTool) {
       let hoverCand = null;
       if (isAirMode) {
         if (graph) {
           const nearestNode = findNearestAirwayNode(raw);
           if (nearestNode != null) hoverCand = { kind: 'airwayNode', idx: nearestNode };
-          else {
-            const nearestProc = findNearestProcedure(raw);
-            if (nearestProc != null) hoverCand = { kind: 'procedure', idx: nearestProc };
-            else if (bgImage && pointInBgBounds(bgImage, raw)) hoverCand = { kind: 'bgImage' };
-          }
+          else if (bgImage && pointInBgBounds(bgImage, raw)) hoverCand = { kind: 'bgImage' };
         }
       } else {
         // ground — same priority as pickForeground (stand > line > area), plus bg fallback
@@ -1598,7 +1701,9 @@ export default function GroundPainter({ vals }) {
     // Air mode handling
     if (isAirMode) {
       if (tool === TOOL_AIR_FILLET) {
-        const hit = findNearestProcedure(raw);
+        let hit = findNearestAirwayEdge(raw);
+        // Same-procedure constraint: after first pick, only highlight/snap to that procedure's segments
+        if (hit && filletPicks.length === 1 && hit.procIdx !== filletPicks[0].procIdx) hit = null;
         setHoverSegIdx(hit);
       }
       // Select tool in air mode — snap to nearest airway node (fix) and show highlight
@@ -1671,7 +1776,7 @@ export default function GroundPainter({ vals }) {
     // (prevents 2-point degenerate close; enforces ≥3 points after truncation).
     if (snapped && tool === 'area' && prev && Math.hypot(snapped.x - prev.x, snapped.z - prev.z) < 1e-9) snapped = null;
     setWorld(snapped || raw);
-  }, [toWorld, snapGeom, viewBox, baseVB, committing, applyDrag, tool, selectEnabled, findNearestSegmentIdx, graph, isAirMode, findNearestAirwayNode, findNearestProcedure, committingProcedure, findAirSnap, bgImage]);
+  }, [toWorld, snapGeom, viewBox, baseVB, committing, applyDrag, tool, selectEnabled, findNearestSegmentIdx, graph, isAirMode, findNearestAirwayNode, findNearestProcedure, findNearestAirwayEdge, committingProcedure, findAirSnap, bgImage, filletPicks]);
 
   // Start a drag: middle button always pans; Select tool left-drag moves the
   // selected object's endpoint/body, otherwise pans. Non-select tools place.
@@ -1694,6 +1799,9 @@ export default function GroundPainter({ vals }) {
         setWorld(null);
       } else if (tool === TOOL_CURVE && filletPicks.length > 0) {
         // One (or two) fillet segment(s) picked: reset the picks.
+        resetFillet();
+        setWorld(null);
+      } else if (tool === TOOL_AIR_FILLET && filletPicks.length > 0) {
         resetFillet();
         setWorld(null);
       } else if (tool === 'area' && committing && committing.length > 0) {
@@ -1741,19 +1849,36 @@ export default function GroundPainter({ vals }) {
         // Rotation handle (↻ at the selection's top-center) — drag to rotate the
         // WHOLE group around the selection's bounding-box center. Checked first so
         // the gizmo wins over body-move/marquee when they overlap.
-        const rotPlan = buildRotationPlan(graph, meta, dragSet);
-        if (rotPlan) {
-          const rotHandleR = Math.max(0.5, painterSnapDist(viewBox, baseVB) * 1.1);
-          if (Math.hypot(wp.x - rotPlan.cx, wp.z - rotPlan.maxZ) <= rotHandleR * 1.9) {
-            dragRef.current = {
-              mode: 'multiRotate', sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp,
-              plan: rotPlan, startAngle: Math.atan2(wp.z - rotPlan.cz, wp.x - rotPlan.cx) * 180 / Math.PI,
-            };
-            return;
+        // Disabled in air mode — airway selections are translation-only.
+        if (!isAirMode) {
+          const rotPlan = buildRotationPlan(graph, meta, dragSet);
+          if (rotPlan) {
+            const rotHandleR = Math.max(0.5, painterSnapDist(viewBox, baseVB) * 1.1);
+            if (Math.hypot(wp.x - rotPlan.cx, wp.z - rotPlan.maxZ) <= rotHandleR * 1.9) {
+              dragRef.current = {
+                mode: 'multiRotate', sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp,
+                plan: rotPlan, startAngle: Math.atan2(wp.z - rotPlan.cz, wp.x - rotPlan.cx) * 180 / Math.PI,
+              };
+              return;
+            }
           }
         }
         // if click on any already-selected object → move the whole group
         let onMulti = pointOnMultiSelected(graph, dragSet, wp);
+        // For air mode, also allow dragging when clicking inside the selection's bounding box (more intuitive than requiring exact node hit)
+        if (!onMulti && isAirMode && dragSet.some((s) => s.kind === 'airwayNode')) {
+          let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+          for (const s of dragSet) if (s.kind === 'airwayNode') {
+            const n = graph.airwayNodes && graph.airwayNodes[s.idx];
+            if (!n) continue;
+            if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
+            if (n.z < minZ) minZ = n.z; if (n.z > maxZ) maxZ = n.z;
+          }
+          if (isFinite(minX)) {
+            const pad = Math.max(1.5, painterSnapDist(viewBox, baseVB) * 1.2);
+            if (wp.x >= minX - pad && wp.x <= maxX + pad && wp.z >= minZ - pad && wp.z <= maxZ + pad) onMulti = true;
+          }
+        }
         // also allow grabbing an endpoint of a selected segment/runway
         let grabNode = null;
         let grabRunwayIdx = null;
@@ -1785,6 +1910,7 @@ export default function GroundPainter({ vals }) {
           const nodeSet = new Set();
           const multiRwPavs = [];
           const origAreas = [];
+          const airwayNodeSet = new Set();
           for (const sel of dragSet) {
             if (sel.kind === 'segment') {
               for (const ni of segNodeIdxs(graph.segments[sel.idx])) if (graph.nodes[ni] != null) nodeSet.add(ni);
@@ -1807,10 +1933,16 @@ export default function GroundPainter({ vals }) {
               // group drag moves the polygon with the lines/stands on top.
               const ar = graph.areas && graph.areas[sel.idx];
               if (ar && Array.isArray(ar.points)) origAreas.push({ idx: sel.idx, points: ar.points.map((p) => ({ x: p.x, z: p.z })) });
+            } else if (sel.kind === 'airwayNode') {
+              if (graph.airwayNodes && graph.airwayNodes[sel.idx]) airwayNodeSet.add(sel.idx);
+            } else if (sel.kind === 'procedure') {
+              const proc = graph.procedures && graph.procedures[sel.idx];
+              if (proc && Array.isArray(proc.airwayNodeIdxs)) for (const ai of proc.airwayNodeIdxs) airwayNodeSet.add(ai);
             }
           }
           const origNodes = [...nodeSet].map((ni) => ({ ni, x: graph.nodes[ni].x, z: graph.nodes[ni].z }));
-          dragRef.current = { mode: 'body', kind: 'multi', sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp, origNodes, multiSelected: [...dragSet], multiRwPavs, origAreas };
+          const origAirwayNodes = [...airwayNodeSet].map((ai) => ({ idx: ai, x: graph.airwayNodes[ai].x, z: graph.airwayNodes[ai].z }));
+          dragRef.current = { mode: 'body', kind: 'multi', sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp, origNodes, origAirwayNodes, multiSelected: [...dragSet], multiRwPavs, origAreas };
           return;
         }
       }
@@ -1850,88 +1982,87 @@ export default function GroundPainter({ vals }) {
       dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
       return;
     }
-    if (selected && wp) {
+    if (wp && (selected || isAirMode)) {
       const g = graph;
       const { TH: dynTH } = getDynamicSelectThresholds(viewBox, baseVB);
       const grabTH = dynTH; // node/vertex grab radius (dynamic, shrinks when zoomed in)
       const bodyTH = Math.max(0.22, dynTH * 1.10); // body drag threshold
-      if (selected.kind === 'area') {
-        const ar = g.areas && g.areas[selected.idx];
-        const pts = (ar && ar.points) || [];
-        for (let pi = 0; pi < pts.length; pi++) {
-          if (Math.hypot(wp.x - pts[pi].x, wp.z - pts[pi].z) <= grabTH) {
-            dragRef.current = { mode: 'vertex', idx: selected.idx, pointIdx: pi, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp };
-            return;
-          }
-        }
-      } else if (selected.kind === 'stand') {
-        // Stands use HEAD/TAIL derived from heading — dragging a single endpoint would
-        // break the frozen STAND_LENGTH. Only body drag (translate HEAD+TAIL together)
-        // is allowed; heading is controlled by the floating 1..360 slider.
-      } else {
-        const pts = [];
-        if (selected.kind === 'segment') { const sg = g.segments[selected.idx]; for (const ni of segNodeIdxs(sg)) if (g.nodes[ni]) pts.push(ni); }
-        if (selected.kind === 'runway') { const rw = g.runways[selected.idx]; if (g.nodes[rw.thAIdx]) pts.push(rw.thAIdx); if (g.nodes[rw.thBIdx]) pts.push(rw.thBIdx); }
-        for (const ni of pts) {
-          const n = g.nodes[ni];
-          if (Math.hypot(wp.x - n.x, wp.z - n.z) <= grabTH) {
-            const dr = { mode: 'node', nodeIdx: ni, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp };
-            if (selected.kind === 'runway') {
-              dr.runwayIdx = selected.idx;
-              dr.rwPav = runwayPavement(g, meta, selected.idx);
-            }
-            dragRef.current = dr;
-            return;
-          }
-        }
-      }
-      // Dynamic body-hit test (replaces pointOnSelected with zoom-dependent thresholds)
       let onSelected = false;
-      if (selected.kind === 'segment') {
-        const sg = g.segments[selected.idx];
-        const pts = segNodeIdxs(sg).map((ni) => g.nodes[ni]).filter(Boolean);
-        if (pts.length >= 2) onSelected = distToPoly(wp.x, wp.z, pts) <= bodyTH;
-      } else if (selected.kind === 'runway') {
-        const rw = g.runways[selected.idx];
-        const a = g.nodes[rw.thAIdx], b = g.nodes[rw.thBIdx];
-        if (a && b) {
-          const halfW = (rw.width || 0.50) / 2;
-          onSelected = distToSeg(wp.x, wp.z, a.x, a.z, b.x, b.z) <= Math.max(bodyTH, halfW);
+      if (selected) {
+        if (selected.kind === 'area') {
+          const ar = g.areas && g.areas[selected.idx];
+          const pts = (ar && ar.points) || [];
+          for (let pi = 0; pi < pts.length; pi++) {
+            if (Math.hypot(wp.x - pts[pi].x, wp.z - pts[pi].z) <= grabTH) {
+              dragRef.current = { mode: 'vertex', idx: selected.idx, pointIdx: pi, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp };
+              return;
+            }
+          }
+        } else if (selected.kind === 'stand') {
+          // Stands use HEAD/TAIL derived from heading — dragging a single endpoint would
+          // break the frozen STAND_LENGTH. Only body drag (translate HEAD+TAIL together)
+          // is allowed; heading is controlled by the floating 1..360 slider.
+        } else {
+          const pts = [];
+          if (selected.kind === 'segment') { const sg = g.segments[selected.idx]; for (const ni of segNodeIdxs(sg)) if (g.nodes[ni]) pts.push(ni); }
+          if (selected.kind === 'runway') { const rw = g.runways[selected.idx]; if (g.nodes[rw.thAIdx]) pts.push(rw.thAIdx); if (g.nodes[rw.thBIdx]) pts.push(rw.thBIdx); }
+          for (const ni of pts) {
+            const n = g.nodes[ni];
+            if (Math.hypot(wp.x - n.x, wp.z - n.z) <= grabTH) {
+              const dr = { mode: 'node', nodeIdx: ni, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp };
+              if (selected.kind === 'runway') {
+                dr.runwayIdx = selected.idx;
+                dr.rwPav = runwayPavement(g, meta, selected.idx);
+              }
+              dragRef.current = dr;
+              return;
+            }
+          }
         }
-      } else if (selected.kind === 'stand') {
-        const st = g.stands[selected.idx];
-        const nose = g.nodes[st.noseIdx];
-        if (nose) onSelected = Math.hypot(wp.x - nose.x, wp.z - nose.z) <= bodyTH;
-      } else if (selected.kind === 'area') {
-        const ar = g.areas && g.areas[selected.idx];
-        const pts = (ar && ar.points) || [];
-        if (pts.length >= 3) {
-          // area is occluded by a line/stand on top (dynamic check)
-          let blocked = false;
-          const lineTH = bodyTH;
-          for (let i = 0; i < (g.segments || []).length && !blocked; i++) {
-            const segPts = segNodeIdxs(g.segments[i]).map((ni) => g.nodes[ni]).filter(Boolean);
-            if (segPts.length >= 2 && distToPoly(wp.x, wp.z, segPts) <= lineTH) blocked = true;
+        // Dynamic body-hit test (replaces pointOnSelected with zoom-dependent thresholds)
+        if (selected.kind === 'segment') {
+          const sg = g.segments[selected.idx];
+          const pts = segNodeIdxs(sg).map((ni) => g.nodes[ni]).filter(Boolean);
+          if (pts.length >= 2) onSelected = distToPoly(wp.x, wp.z, pts) <= bodyTH;
+        } else if (selected.kind === 'runway') {
+          const rw = g.runways[selected.idx];
+          const a = g.nodes[rw.thAIdx], b = g.nodes[rw.thBIdx];
+          if (a && b) {
+            const halfW = (rw.width || 0.50) / 2;
+            onSelected = distToSeg(wp.x, wp.z, a.x, a.z, b.x, b.z) <= Math.max(bodyTH, halfW);
           }
-          for (let i = 0; i < (g.runways || []).length && !blocked; i++) {
-            const rw2 = g.runways[i];
-            const a2 = g.nodes[rw2.thAIdx], b2 = g.nodes[rw2.thBIdx];
-            if (a2 && b2 && distToSeg(wp.x, wp.z, a2.x, a2.z, b2.x, b2.z) <= lineTH) blocked = true;
+        } else if (selected.kind === 'stand') {
+          const st = g.stands[selected.idx];
+          const nose = g.nodes[st.noseIdx];
+          if (nose) onSelected = Math.hypot(wp.x - nose.x, wp.z - nose.z) <= bodyTH;
+        } else if (selected.kind === 'area') {
+          const ar = g.areas && g.areas[selected.idx];
+          const pts = (ar && ar.points) || [];
+          if (pts.length >= 3) {
+            // area is occluded by a line/stand on top (dynamic check)
+            let blocked = false;
+            const lineTH = bodyTH;
+            for (let i = 0; i < (g.segments || []).length && !blocked; i++) {
+              const segPts = segNodeIdxs(g.segments[i]).map((ni) => g.nodes[ni]).filter(Boolean);
+              if (segPts.length >= 2 && distToPoly(wp.x, wp.z, segPts) <= lineTH) blocked = true;
+            }
+            for (let i = 0; i < (g.runways || []).length && !blocked; i++) {
+              const rw2 = g.runways[i];
+              const a2 = g.nodes[rw2.thAIdx], b2 = g.nodes[rw2.thBIdx];
+              if (a2 && b2 && distToSeg(wp.x, wp.z, a2.x, a2.z, b2.x, b2.z) <= lineTH) blocked = true;
+            }
+            for (let i = 0; i < (g.stands || []).length && !blocked; i++) {
+              const st2 = g.stands[i];
+              const nose2 = g.nodes[st2.noseIdx];
+              if (nose2 && Math.hypot(wp.x - nose2.x, wp.z - nose2.z) <= lineTH) blocked = true;
+            }
+            if (!blocked) onSelected = pointInPoly(wp.x, wp.z, pts) || minEdgeDist(wp.x, wp.z, pts) <= bodyTH;
           }
-          for (let i = 0; i < (g.stands || []).length && !blocked; i++) {
-            const st2 = g.stands[i];
-            const nose2 = g.nodes[st2.noseIdx];
-            if (nose2 && Math.hypot(wp.x - nose2.x, wp.z - nose2.z) <= lineTH) blocked = true;
-          }
-          if (!blocked) onSelected = pointInPoly(wp.x, wp.z, pts) || minEdgeDist(wp.x, wp.z, pts) <= bodyTH;
         }
       }
-      // Airway handling for ground select when in air mode (airway node / procedure)
+      // Airway handling for air mode — only NODEs are selectable
       if (isAirMode) {
-        // Generous air-mode grab so dragging a selected node/procedure is easy
-        // at any zoom, matching the click-to-select radius.
         const airGrab = airGrabRadius(viewBox, baseVB);
-        const airBody = Math.max(0.30, airGrab * 1.15);
         if (selectedAirwayNode != null) {
           const n = g.airwayNodes && g.airwayNodes[selectedAirwayNode];
           if (n && Math.hypot(wp.x - n.x, wp.z - n.z) <= airGrab) {
@@ -1939,46 +2070,35 @@ export default function GroundPainter({ vals }) {
             return;
           }
         }
-        if (selectedProcedureIdx != null) {
-          const proc = g.procedures && g.procedures[selectedProcedureIdx];
-          if (proc) {
-            const pts = proc.airwayNodeIdxs.map((ii) => g.airwayNodes[ii]).filter(Boolean);
-            if (pts.length >= 2 && distToPoly(wp.x, wp.z, pts) <= airBody) {
-              const origAirwayNodes = proc.airwayNodeIdxs.map((idx) => ({ idx, x: g.airwayNodes[idx].x, z: g.airwayNodes[idx].z }));
-              dragRef.current = { mode: 'body', kind: 'airwayProcedure', idx: selectedProcedureIdx, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp, origAirwayNodes };
-              return;
-            }
-            for (const ni of proc.airwayNodeIdxs) {
-              const nn = g.airwayNodes[ni];
-              if (nn && Math.hypot(wp.x - nn.x, wp.z - nn.z) <= airGrab) {
-                dragRef.current = { mode: 'node', kind: 'airwayNode', idx: ni, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp };
-                return;
-              }
-            }
-          }
+        // Air selection exists but cursor not on it → pan (don't fall through to ground body drag)
+        if (selectedAirwayNode != null) {
+          dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
+          return;
         }
       }
-      if (!onSelected) {
-        dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
+      if (selected) {
+        if (!onSelected) {
+          dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
+          return;
+        }
+        // not on a handle but on the selected object → move the whole object's body
+        const nodePts = [];
+        if (selected.kind === 'segment') { const sg = g.segments[selected.idx]; for (const ni of segNodeIdxs(sg)) if (g.nodes[ni]) nodePts.push(ni); }
+        if (selected.kind === 'runway') { const rw = g.runways[selected.idx]; if (g.nodes[rw.thAIdx]) nodePts.push(rw.thAIdx); if (g.nodes[rw.thBIdx]) nodePts.push(rw.thBIdx); }
+        if (selected.kind === 'stand') {
+          const st = g.stands[selected.idx];
+          if (g.nodes[st.noseIdx]) nodePts.push(st.noseIdx);
+          if (g.nodes[st.tailIdx]) nodePts.push(st.tailIdx);
+          for (const pi of (st.pushbackIdxs || [])) if (g.nodes[pi]) nodePts.push(pi);
+        }
+        dragRef.current = {
+          mode: 'body', kind: selected.kind, idx: selected.idx, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp,
+          origNodes: nodePts.map((ni) => ({ ni, x: g.nodes[ni].x, z: g.nodes[ni].z })),
+          origPoints: selected.kind === 'area' ? (g.areas[selected.idx].points || []).map((p) => ({ x: p.x, z: p.z })) : null,
+          rwPav: selected.kind === 'runway' ? runwayPavement(g, meta, selected.idx) : null,
+        };
         return;
       }
-      // not on a handle but on the selected object → move the whole object's body
-      const nodePts = [];
-      if (selected.kind === 'segment') { const sg = g.segments[selected.idx]; for (const ni of segNodeIdxs(sg)) if (g.nodes[ni]) nodePts.push(ni); }
-      if (selected.kind === 'runway') { const rw = g.runways[selected.idx]; if (g.nodes[rw.thAIdx]) nodePts.push(rw.thAIdx); if (g.nodes[rw.thBIdx]) nodePts.push(rw.thBIdx); }
-      if (selected.kind === 'stand') {
-        const st = g.stands[selected.idx];
-        if (g.nodes[st.noseIdx]) nodePts.push(st.noseIdx);
-        if (g.nodes[st.tailIdx]) nodePts.push(st.tailIdx);
-        for (const pi of (st.pushbackIdxs || [])) if (g.nodes[pi]) nodePts.push(pi);
-      }
-      dragRef.current = {
-        mode: 'body', kind: selected.kind, idx: selected.idx, sx: evt.clientX, sy: evt.clientY, moved: false, startWorld: wp,
-        origNodes: nodePts.map((ni) => ({ ni, x: g.nodes[ni].x, z: g.nodes[ni].z })),
-        origPoints: selected.kind === 'area' ? (g.areas[selected.idx].points || []).map((p) => ({ x: p.x, z: p.z })) : null,
-        rwPav: selected.kind === 'runway' ? runwayPavement(g, meta, selected.idx) : null,
-      };
-      return;
     }
     // no selection → empty-space pan
     dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false };
@@ -2034,22 +2154,34 @@ export default function GroundPainter({ vals }) {
   // Resolve a box-select CLICK (no marquee drag) at a world point.
   // - Shift+click = join: add the clicked item to the multi-selection.
   // - Plain click = single-select (like the Select tool). Empty click deselects.
+  // In air mode the hit test is airway-aware (fixes/procedures) and still
+  // populates `multiSelected` so the box tool keeps one selection store across
+  // modes; single-click Select in air mode keeps its own `selectedAirwayNode`
+  // state separately (handled in onClick).
   const applyBoxClick = useCallback((wp, shift) => {
     if (!wp || !graph) return;
+    const isAir = isAirModeRef.current;
+    const hit = isAir ? (() => {
+      const ni = findNearestAirwayNode(wp);
+      if (ni != null) return { kind: 'airwayNode', idx: ni };
+      return null;
+    })() : pickForeground(wp);
     if (shift) {
-      const hit = pickForeground(wp);
-      // click on empty under Shift keeps the existing selection (no-op)
       if (hit) setMultiSelected((prev) => (isMultiSelected(prev, hit.kind, hit.idx) ? prev : [...prev, hit]));
       return;
     }
-    const hit = pickForeground(wp);
-    // Plain click = single-select (like the Select tool). Empty click deselects.
-    // Stored as a ONE-element multi-selection (not `selected`): the box-select tool
-    // keeps everything in the multi-selection set, and the tool-change effect
-    // would otherwise force a set `selected` back to null while in box mode.
-    if (hit) { setMultiSelected([hit]); setSelected(null); }
-    else { setSelected(null); setMultiSelected([]); }
-  }, [graph, pickForeground]);
+    if (hit) {
+      if (isAir) {
+        setSelectedAirwayNode(hit.idx); setSelectedProcedureIdx(null);
+        setMultiSelected([hit]); setSelected(null);
+      } else {
+        setMultiSelected([hit]); setSelected(null);
+      }
+    } else {
+      if (isAir) { setSelectedAirwayNode(null); setSelectedProcedureIdx(null); }
+      setSelected(null); setMultiSelected([]);
+    }
+  }, [graph, pickForeground, findNearestAirwayNode]);
 
   const onMouseUp = useCallback((evt) => {
     // Finish box-select rectangle / click
@@ -2071,8 +2203,9 @@ export default function GroundPainter({ vals }) {
           if (b.startWorld) applyBoxClick(b.startWorld, shift);
         } else {
           const box = { minX, maxX, minZ, maxZ };
-          const hits = computeBoxSelection(graph, box);
-          if (shift) {
+          const isAir = isAirModeRef.current;
+          const hits = isAir ? computeAirBoxSelection(graph, box) : computeBoxSelection(graph, box);
+           if (shift) {
             // Shift+drag = join: union the marquee hits into the existing selection
             setMultiSelected((prev) => {
               const merged = [...prev];
@@ -2082,6 +2215,7 @@ export default function GroundPainter({ vals }) {
           } else {
             setMultiSelected(hits);
             setSelected(null);
+            if (isAir) { setSelectedAirwayNode(null); setSelectedProcedureIdx(null); }
           }
           setBoxRect(null);
         }
@@ -2131,12 +2265,21 @@ export default function GroundPainter({ vals }) {
         for (const pb of place.pushbacks) if (nodes[pb.idx]) nodes[pb.idx] = { ...nodes[pb.idx], x: pb.x, z: pb.z };
       }
     }
-    useAppStore.setState({ groundPainterGraph: { ...g, nodes, areas: areas || g.areas, stands: stands || g.stands }, groundPainterHasEdited: true });
+    const airwayNodes = [...(g.airwayNodes || [])];
+    let airDirty = false;
+    for (const { ai, x, z } of (plan.airwayNodes || [])) {
+      if (airwayNodes[ai]) { airwayNodes[ai] = { ...airwayNodes[ai], ...rotateWorldPoint(x, z, cx, cz, deg) }; airDirty = true; }
+    }
+    const next = { ...g, nodes, areas: areas || g.areas, stands: stands || g.stands };
+    if (airDirty) next.airwayNodes = airwayNodes;
+    useAppStore.setState({ groundPainterGraph: next, groundPainterHasEdited: true });
   }, [normalizeHeading]);
 
   // Rotate the current (multi-)selection around its common center by `deg`.
   // Used by [ / ] keyboard shortcuts and the toolbar rotate buttons.
+  // Disabled in air mode — airway selections are translation-only.
   const rotateSelection = useCallback((deg) => {
+    if (isAirModeRef.current) return;
     const sels = (multiSelected && multiSelected.length) ? multiSelected : (selected ? [selected] : []);
     if (!sels.length) return;
     const st = useAppStore.getState();
@@ -2178,6 +2321,7 @@ export default function GroundPainter({ vals }) {
       return;
     }
     if (d.mode === 'multiRotate') {
+      if (isAirModeRef.current) return;
       const plan = d.plan;
       if (!plan) return;
       const curAngle = Math.atan2(raw.z - plan.cz, raw.x - plan.cx) * 180 / Math.PI;
@@ -2190,7 +2334,7 @@ export default function GroundPainter({ vals }) {
     if (d.kind === 'multi') {
       const dx = raw.x - d.startWorld.x, dz = raw.z - d.startWorld.z;
       const nodes = [...g.nodes];
-      for (const { ni, x, z } of d.origNodes) nodes[ni] = { ...nodes[ni], x: x + dx, z: z + dz };
+      for (const { ni, x, z } of (d.origNodes || [])) nodes[ni] = { ...nodes[ni], x: x + dx, z: z + dz };
       // Also translate any co-selected area polygons so the group moves as one.
       let areas = g.areas;
       if (d.origAreas && d.origAreas.length) {
@@ -2200,7 +2344,14 @@ export default function GroundPainter({ vals }) {
           areas[oa.idx] = { ...areas[oa.idx], points: oa.points.map((p) => ({ x: p.x + dx, z: p.z + dz })) };
         }
       }
-      useAppStore.setState({ groundPainterGraph: { ...g, nodes, areas }, groundPainterHasEdited: true });
+      const airwayNodes = [...(g.airwayNodes || [])];
+      let airDirty = false;
+      for (const { idx, x, z } of (d.origAirwayNodes || [])) {
+        if (airwayNodes[idx]) { airwayNodes[idx] = { ...airwayNodes[idx], x: x + dx, z: z + dz }; airDirty = true; }
+      }
+      const nextGraph = { ...g, nodes, areas };
+      if (airDirty) nextGraph.airwayNodes = airwayNodes;
+      useAppStore.setState({ groundPainterGraph: nextGraph, groundPainterHasEdited: true });
       return;
     }
     // Stand should not snap at all — free drag to avoid icon jumping
@@ -2329,19 +2480,8 @@ export default function GroundPainter({ vals }) {
     if (isAirMode && tool === TOOL_SELECT && selectEnabled) {
       if (!graph || !raw) return;
       const nearestNode = findNearestAirwayNode(raw);
-      const nearestProc = findNearestProcedure(raw);
-      // Prefer node over procedure when both in range (like ground stand priority)
-      let pick = null;
       if (nearestNode != null) {
-        // Generous, zoom-aware radius so air-mode node selection is easy at any zoom.
-        pick = { kind: 'airwayNode', idx: nearestNode };
-      }
-      if (!pick && nearestProc != null) {
-        pick = { kind: 'procedure', idx: nearestProc };
-      }
-      if (pick) {
-        if (pick.kind === 'airwayNode') { setSelectedAirwayNode(pick.idx); setSelectedProcedureIdx(null); setSelected(null); }
-        else { setSelectedProcedureIdx(pick.idx); setSelectedAirwayNode(null); setSelected(null); }
+        setSelectedAirwayNode(nearestNode); setSelectedProcedureIdx(null); setSelected(null);
         return;
       }
       if (bgImage && pointInBgBounds(bgImage, raw)) { setSelected({ kind: 'bgImage' }); setSelectedAirwayNode(null); setSelectedProcedureIdx(null); return; }
@@ -2407,35 +2547,50 @@ export default function GroundPainter({ vals }) {
         return;
       }
       if (tool === TOOL_AIR_FILLET) {
-        // Air fillet: pick two procedures that share a node O (connected)
-        const hit = findNearestProcedure(raw);
+        // Air fillet: strictly same-procedure — two connected edges within one procedure (AAA)
+        const hit = findNearestAirwayEdge(raw);
         if (hit == null) { setGpError(t('ground_painter_fillet_error_click_near') || 'Click near a procedure'); return; }
+        const sameEdge = (a, b) => a && b && a.procIdx === b.procIdx && a.edgeIdx === b.edgeIdx;
         if (filletPicks.length === 0) {
           setFilletPicks([hit]);
           setGpError(null);
         } else if (filletPicks.length === 1) {
-          if (filletPicks[0] === hit) { setFilletPicks([]); return; }
-          const probe = computeFillet({ nodes: graph.airwayNodes, segments: graph.procedures.map(p => ({ nodeIdxs: p.airwayNodeIdxs, aIdx: p.airwayNodeIdxs[0], bIdx: p.airwayNodeIdxs[p.airwayNodeIdxs.length-1] })) }, filletPicks[0], hit, filletRadius);
-          // computeFillet expects graph with nodes/segments; airway procedures are segments
-          // To avoid hack, we will handle via custom air fillet helper later; for now just store picks
-          if (!probe.ok && probe.error === 'ground_painter_fillet_error_parallel') {
-            setFilletPicks([filletPicks[0], hit]);
-            setGpError(t(probe.error) || probe.error);
+          const first = filletPicks[0];
+          if (sameEdge(first, hit)) { setFilletPicks([]); setGpError(null); return; }
+          // Same-procedure validation: second segment must be from same AAA procedure (routeType-agnostic: STAR/SID/APP/MISS all allowed)
+          if (hit.procIdx !== first.procIdx) {
+            setGpError(t('ground_painter_air_fillet_error_same_procedure') || 'Second segment must be from same procedure');
             return;
           }
+          // Must be consecutive edges sharing the interior fix (edgeIdx diff ===1 and share node)
+          const consecutive = Math.abs(hit.edgeIdx - first.edgeIdx) === 1;
+          const shared = hit.aIdx === first.aIdx || hit.aIdx === first.bIdx || hit.bIdx === first.aIdx || hit.bIdx === first.bIdx;
+          if (!consecutive || !shared) {
+            setFilletPicks([first, hit]);
+            setGpError(t('ground_painter_air_fillet_error_connected') || 'Fillet requires connected segments');
+            return;
+          }
+          // Probe geometry using the two 2-point edge segments
+          const tmpGraph = {
+            nodes: graph.airwayNodes,
+            segments: [
+              { nodeIdxs: [first.aIdx, first.bIdx], aIdx: first.aIdx, bIdx: first.bIdx },
+              { nodeIdxs: [hit.aIdx, hit.bIdx], aIdx: hit.aIdx, bIdx: hit.bIdx },
+            ],
+          };
+          const probe = computeFillet(tmpGraph, 0, 1, filletRadius);
           if (!probe.ok) {
-            setFilletPicks([filletPicks[0], hit]);
+            setFilletPicks([first, hit]);
             const msg = probe.errorParams ? t(probe.error, probe.errorParams) : t(probe.error);
             setGpError(msg);
             return;
           }
-          // Check virtualO: air fillet must be connected only
           if (probe.virtualO) {
-            setFilletPicks([filletPicks[0], hit]);
+            setFilletPicks([first, hit]);
             setGpError(t('ground_painter_air_fillet_error_connected') || 'Fillet requires connected segments');
             return;
           }
-          setFilletPicks([filletPicks[0], hit]);
+          setFilletPicks([first, hit]);
           setGpError(null);
         } else {
           setFilletPicks([hit]);
@@ -2671,7 +2826,7 @@ export default function GroundPainter({ vals }) {
       }
       setCommitting([...pts, { x: p.x, z: p.z }]);
     }
-  }, [world, tool, setTool, graph, committing, commitArea, commitRunway, snapGeom, viewBox, baseVB, heading, selectEnabled, filletPicks, filletRadius, findNearestSegmentIdx, t, bgImage, pickForeground, isAirMode, findNearestAirwayNode, findNearestProcedure, findAirSnap, committingProcedure, activeRunways, runwayOptions, selectedAirwayNode, selectedProcedureIdx]);
+  }, [world, tool, setTool, graph, committing, commitArea, commitRunway, snapGeom, viewBox, baseVB, heading, selectEnabled, filletPicks, filletRadius, findNearestSegmentIdx, t, bgImage, pickForeground, isAirMode, findNearestAirwayNode, findNearestProcedure, findNearestAirwayEdge, findAirSnap, committingProcedure, activeRunways, runwayOptions, selectedAirwayNode, selectedProcedureIdx]);
 
   // Delete key removes the selected object. Deleting MUST also record the
   // removed object's original PK/id in meta.deletedPks / meta.deletedAreaIds and
@@ -2680,7 +2835,7 @@ export default function GroundPainter({ vals }) {
   // so the deletion silently does not persist.
   const deleteSelected = useCallback(() => {
     const hasMulti = multiSelected && multiSelected.length > 0;
-    const hasAirSel = (typeof selectedAirwayNode !== 'undefined' && selectedAirwayNode != null) || (typeof selectedProcedureIdx !== 'undefined' && selectedProcedureIdx != null);
+    const hasAirSel = (typeof selectedAirwayNode !== 'undefined' && selectedAirwayNode != null);
     if (!selected && !hasMulti && !hasAirSel) return;
     const st = useAppStore.getState();
     const g = st.groundPainterGraph;
@@ -2704,30 +2859,20 @@ export default function GroundPainter({ vals }) {
     } : m;
     const markDeletedPk = (pk) => { if (pk != null && mm && !mm.deletedPks.includes(pk)) mm.deletedPks.push(pk); };
     const markDeletedAirwayPk = (pk) => { if (pk != null && mm && !mm.deletedAirwayPks.includes(pk)) mm.deletedAirwayPks.push(pk); };
-    // ── Airway delete handling ─────────────────────
-    if (isAirMode && (selectedAirwayNode != null || selectedProcedureIdx != null)) {
+    // ── Airway delete handling — only NODEs are deletable (procedure auto-cascades when degenerated to <=1) ─────
+    if (isAirMode && selectedAirwayNode != null) {
       pushHist();
-      if (selectedProcedureIdx != null) {
-        const proc = gg.procedures[selectedProcedureIdx];
-        const pk = mm.airwaySegOrigPk ? mm.airwaySegOrigPk[selectedProcedureIdx] : null;
-        if (pk) markDeletedAirwayPk(pk);
-        gg.procedures.splice(selectedProcedureIdx, 1);
-        if (mm.airwaySegOrigPk) mm.airwaySegOrigPk.splice(selectedProcedureIdx, 1);
-        setSelectedProcedureIdx(null);
-        useAppStore.setState({ groundPainterGraph: gg, groundPainterMeta: mm, groundPainterHasEdited: true });
-        return;
-      }
-      if (selectedAirwayNode != null) {
+      {
         const delIdx = selectedAirwayNode;
         const pk = mm.airwayNodeOrigPk ? mm.airwayNodeOrigPk[delIdx] : null;
         if (pk) markDeletedAirwayPk(pk);
-        // Remove procedures that would become degenerate (<2 nodes) after this node removal
+        // Remove procedures that would become degenerate (<=1 nodes) after this node removal
         const procsToDrop = [];
         for (let pi = gg.procedures.length - 1; pi >= 0; pi--) {
           const proc = gg.procedures[pi];
           if (!proc.airwayNodeIdxs.includes(delIdx)) continue;
           const remaining = proc.airwayNodeIdxs.filter((idx) => idx !== delIdx).length;
-          if (remaining < 2) procsToDrop.push(pi);
+          if (remaining <= 1) procsToDrop.push(pi);
         }
         // Drop those procedures first (so node index shifts not needed yet)
         for (const pi of procsToDrop) {
@@ -2862,11 +3007,12 @@ export default function GroundPainter({ vals }) {
       }
     };
     if (hasMulti) {
-      // ── Box-select multi delete (NOT AREA) ─────────────────
+      // ── Box-select multi delete — ground + air ─────────────
       const segIdxs = multiSelected.filter((s) => s.kind === 'segment').map((s) => s.idx).sort((a, b) => b - a);
       const rwIdxs = multiSelected.filter((s) => s.kind === 'runway').map((s) => s.idx).sort((a, b) => b - a);
       const standIdxs = multiSelected.filter((s) => s.kind === 'stand').map((s) => s.idx).sort((a, b) => b - a);
       const areaIdxs = multiSelected.filter((s) => s.kind === 'area').map((s) => s.idx).sort((a, b) => b - a);
+      const airNodeIdxs = multiSelected.filter((s) => s.kind === 'airwayNode').map((s) => s.idx).sort((a, b) => b - a);
       // collect all del nodes from segments before splicing
       const allDelNodes = new Set();
       for (const idx of segIdxs) {
@@ -2901,6 +3047,39 @@ export default function GroundPainter({ vals }) {
           mm.areaOrigId.splice(idx, 1);
         }
         gg.areas.splice(idx, 1);
+      }
+      // ── Airway multi delete (box-select in air mode) — only nodes are directly selected
+      // Any procedure that would become degenerate (<=1 nodes) after these node deletions is cascaded.
+      if (airNodeIdxs.length) {
+        const delSet = new Set(airNodeIdxs);
+        const extraProcs = [];
+        for (let pi = gg.procedures.length - 1; pi >= 0; pi--) {
+          const proc = gg.procedures[pi];
+          if (!proc || !Array.isArray(proc.airwayNodeIdxs)) continue;
+          // skip already-deleted procedures (already handled above, but indices shifted)
+          // Instead check if any of its nodes are in delSet.
+          let remaining = 0;
+          for (const ai of proc.airwayNodeIdxs) if (!delSet.has(ai)) remaining++;
+          if (remaining < 2 && proc.airwayNodeIdxs.some((ai) => delSet.has(ai))) extraProcs.push(pi);
+        }
+        extraProcs.sort((a, b) => b - a);
+        for (const pi of extraProcs) {
+          const pk = mm.airwaySegOrigPk ? mm.airwaySegOrigPk[pi] : null;
+          if (pk) markDeletedAirwayPk(pk);
+          gg.procedures.splice(pi, 1);
+          if (mm.airwaySegOrigPk) mm.airwaySegOrigPk.splice(pi, 1);
+        }
+        // Delete nodes descending — reindex remaining procedures after each.
+        airNodeIdxs.sort((a, b) => b - a);
+        for (const delIdx of airNodeIdxs) {
+          const pk = mm.airwayNodeOrigPk ? mm.airwayNodeOrigPk[delIdx] : null;
+          if (pk) markDeletedAirwayPk(pk);
+          gg.airwayNodes.splice(delIdx, 1);
+          if (mm.airwayNodeOrigPk) mm.airwayNodeOrigPk.splice(delIdx, 1);
+          for (const proc of gg.procedures) {
+            proc.airwayNodeIdxs = proc.airwayNodeIdxs.filter((ai) => ai !== delIdx).map((ai) => ai > delIdx ? ai - 1 : ai);
+          }
+        }
       }
       // Not all Del nodes are used by deleted segments/stands (some may be shared
       // with survivors); the survivors re-indexed below account for that via doOrphanGC.
@@ -3026,7 +3205,8 @@ export default function GroundPainter({ vals }) {
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && (selected || multiSelected.length || selectedAirwayNode != null || selectedProcedureIdx != null)) { e.preventDefault(); deleteSelected(); }
       // Rotate the whole (multi-)selection around its center in 45° steps — `[` ↺  `]` ↻.
-      if ((e.key === '[' || e.key === ']') && (selected || multiSelected.length)) {
+      // Disabled in air mode — airway selections are translation-only.
+      if ((e.key === '[' || e.key === ']') && (selected || multiSelected.length) && !isAirModeRef.current) {
         e.preventDefault();
         rotateSelection(e.key === ']' ? -45 : 45);
         return;
@@ -3661,12 +3841,36 @@ export default function GroundPainter({ vals }) {
     setHoverSegIdx(null);
     setGpError(null);
   }
-  function commitAirFillet(segIdxA, segIdxB, radius) {
+  function commitAirFillet(a, b, radius) {
     const s = useAppStore.getState();
     const g0 = s.groundPainterGraph;
     const m0 = s.groundPainterMeta;
-    const airGraph = { nodes: g0.airwayNodes || [], segments: (g0.procedures || []).map((p) => ({ nodeIdxs: p.airwayNodeIdxs, aIdx: p.airwayNodeIdxs[0], bIdx: p.airwayNodeIdxs[p.airwayNodeIdxs.length - 1] })) };
-    const res = computeFillet(airGraph, segIdxA, segIdxB, radius);
+    const isEdgePick = a && typeof a === 'object' && a.procIdx != null;
+    let edgeA = null, edgeB = null;
+    let segIdxA = null, segIdxB = null;
+    if (isEdgePick) {
+      edgeA = a; edgeB = b;
+    } else {
+      segIdxA = a; segIdxB = b;
+    }
+    // Helper to compute fillet from two edge objects or legacy indices
+    const computeFromEdges = (ea, eb) => {
+      const tmpGraph = {
+        nodes: g0.airwayNodes,
+        segments: [
+          { nodeIdxs: [ea.aIdx, ea.bIdx], aIdx: ea.aIdx, bIdx: ea.bIdx },
+          { nodeIdxs: [eb.aIdx, eb.bIdx], aIdx: eb.aIdx, bIdx: eb.bIdx },
+        ],
+      };
+      return computeFillet(tmpGraph, 0, 1, radius);
+    };
+    let res = null;
+    if (isEdgePick) {
+      res = computeFromEdges(edgeA, edgeB);
+    } else {
+      const legacyGraph = { nodes: g0.airwayNodes || [], segments: (g0.procedures || []).map((p) => ({ nodeIdxs: p.airwayNodeIdxs, aIdx: p.airwayNodeIdxs[0], bIdx: p.airwayNodeIdxs[p.airwayNodeIdxs.length - 1] })) };
+      res = computeFillet(legacyGraph, segIdxA, segIdxB, radius);
+    }
     if (!res.ok) {
       setGpError(res.errorParams ? t(res.error, res.errorParams) : t(res.error));
       return;
@@ -3675,18 +3879,72 @@ export default function GroundPainter({ vals }) {
       setGpError(t('ground_painter_air_fillet_error_connected') || 'Fillet requires connected segments');
       return;
     }
-    // Simple connected air fillet: truncate both legs at T and insert arc
     const g = structuredClone(g0);
     const m = structuredClone(m0);
     if (!Array.isArray(m.deletedAirwayPks)) m.deletedAirwayPks = [];
-    // Truncate legs: find shared node O is res.oIdx (or duplicate). Need to create new nodes for T1/T2 and arc interior
-    // For simplicity, create new airway nodes for T1, T2 and arc interior points, and replace the two procedures' node lists to be trimmed.
-    // This is a simplified version that always deletes the corner segments (the two incident legs) and replaces with trimmed legs + arc.
-    // Implementation: for each of the two procedures, replace its nodeIdxs to be truncated at T.
-    // Since air procedures are straight lines (2+ nodes), O is somewhere interior or endpoint. We'll just insert arc as a new procedure? 
-    // Requirement says always deletes the corner segments and replaces the trimmed legs + arc. For air, that means the two legs sharing O are each truncated, and an arc polyline bridges T1-T2.
-    // To keep it simple, we will create 3 new airway nodes for T1, T2 and arc midpoint, and update procedures accordingly.
-    // Create T nodes
+    if (!Array.isArray(m.airwayNodeOrigPk)) m.airwayNodeOrigPk = (g.airwayNodes || []).map(() => null);
+
+    // Determine if this is intra-procedure (same proc, two consecutive edges sharing a node)
+    const isIntra = isEdgePick && edgeA.procIdx === edgeB.procIdx;
+
+    if (isIntra) {
+      const procIdx = edgeA.procIdx;
+      const proc = g.procedures[procIdx];
+      if (!proc || proc.airwayNodeIdxs.length < 3) {
+        setGpError('Procedure needs at least 3 fixes to fillet');
+        return;
+      }
+      // Shared node O is the common airway node between the two edges
+      let oIdx = null;
+      if (edgeA.aIdx === edgeB.aIdx) oIdx = edgeA.aIdx;
+      else if (edgeA.aIdx === edgeB.bIdx) oIdx = edgeA.aIdx;
+      else if (edgeA.bIdx === edgeB.aIdx) oIdx = edgeA.bIdx;
+      else if (edgeA.bIdx === edgeB.bIdx) oIdx = edgeA.bIdx;
+      if (oIdx == null) {
+        setGpError(t('ground_painter_air_fillet_error_connected') || 'Fillet requires connected segments');
+        return;
+      }
+      const pos = proc.airwayNodeIdxs.indexOf(oIdx);
+      if (pos <= 0 || pos >= proc.airwayNodeIdxs.length - 1) {
+        setGpError('Corner must be interior to the procedure');
+        return;
+      }
+      // Create nameless nodes for T1, T2 and arc interior
+      const t1Idx = g.airwayNodes.length;
+      g.airwayNodes.push({ x: res.t1.x, z: res.t1.z, name: '' });
+      m.airwayNodeOrigPk.push(null);
+      const t2Idx = g.airwayNodes.length;
+      g.airwayNodes.push({ x: res.t2.x, z: res.t2.z, name: '' });
+      m.airwayNodeOrigPk.push(null);
+      const arcInterior = [];
+      for (let i = 1; i < res.arcPoints.length - 1; i++) {
+        const pt = res.arcPoints[i];
+        const ai = g.airwayNodes.length;
+        g.airwayNodes.push({ x: pt.x, z: pt.z, name: '' });
+        m.airwayNodeOrigPk.push(null);
+        arcInterior.push(ai);
+      }
+      // Route the procedure through the new arc: replace O with T1 + arcInterior + T2
+      // Procedure goes ... prev -> T1 -> arc -> T2 -> next ...
+      const newSeq = proc.airwayNodeIdxs.slice(0, pos).concat([t1Idx], arcInterior, [t2Idx], proc.airwayNodeIdxs.slice(pos + 1));
+      proc.airwayNodeIdxs = newSeq;
+      useAppStore.setState({ groundPainterHistory: structuredClone(g0), groundPainterMetaHistory: structuredClone(m0), groundPainterGraph: g, groundPainterMeta: m, groundPainterHasEdited: true });
+      setFilletPicks([]);
+      setHoverSegIdx(null);
+      setGpError(null);
+      return;
+    }
+
+    // Inter-procedure (two different procedures sharing a node) — keep legacy truncation + ARC procedure
+    let procAIdx, procBIdx;
+    if (isEdgePick) {
+      procAIdx = edgeA.procIdx;
+      procBIdx = edgeB.procIdx;
+    } else {
+      procAIdx = segIdxA;
+      procBIdx = segIdxB;
+    }
+    // Create T nodes and arc interior (nameless)
     const t1Idx = g.airwayNodes.length;
     g.airwayNodes.push({ x: res.t1.x, z: res.t1.z, name: '' });
     m.airwayNodeOrigPk.push(null);
@@ -3702,35 +3960,37 @@ export default function GroundPainter({ vals }) {
       arcInterior.push(ai);
     }
     const arcIdxs = [t1Idx, ...arcInterior, t2Idx];
-    // Truncate the two picked procedures at T (simplified: just replace their shared O with T)
-    const procA = g.procedures[segIdxA];
-    const procB = g.procedures[segIdxB];
+    const procA = g.procedures[procAIdx];
+    const procB = g.procedures[procBIdx];
+    const findPos = (proc, oIdx) => (proc ? proc.airwayNodeIdxs.indexOf(oIdx) : -1);
+    // For edge picks, O is one of the shared indices; for legacy, use res.oIdx
+    let oA = null, oB = null;
+    if (isEdgePick) {
+      if (edgeA.aIdx === edgeB.aIdx || edgeA.aIdx === edgeB.bIdx) oA = edgeA.aIdx;
+      else oA = edgeA.bIdx;
+      if (edgeB.aIdx === edgeA.aIdx || edgeB.aIdx === edgeA.bIdx) oB = edgeB.aIdx;
+      else oB = edgeB.bIdx;
+    } else {
+      oA = res.oIdxA != null ? res.oIdxA : res.oIdx;
+      oB = res.oIdxB != null ? res.oIdxB : res.oIdx;
+    }
     if (procA) {
-      const oIdx = res.oIdxA != null ? res.oIdxA : res.oIdx;
-      // Find position of O in procA's node list and truncate to T1
-      const pos = procA.airwayNodeIdxs.indexOf(oIdx);
+      const pos = findPos(procA, oA);
       if (pos >= 0) {
-        // Keep far side + T
         if (pos === 0) procA.airwayNodeIdxs = [t1Idx, ...procA.airwayNodeIdxs.slice(1)];
         else if (pos === procA.airwayNodeIdxs.length - 1) procA.airwayNodeIdxs = [...procA.airwayNodeIdxs.slice(0, -1), t1Idx];
-        else {
-          // O interior (should not happen for straight 2-point)
-          procA.airwayNodeIdxs = procA.airwayNodeIdxs.slice(0, pos).concat([t1Idx], procA.airwayNodeIdxs.slice(pos + 1));
-        }
+        else procA.airwayNodeIdxs = procA.airwayNodeIdxs.slice(0, pos).concat([t1Idx], procA.airwayNodeIdxs.slice(pos + 1));
       }
     }
     if (procB) {
-      const oIdxB = res.oIdxB != null ? res.oIdxB : res.oIdx;
-      const posB = procB.airwayNodeIdxs.indexOf(oIdxB);
+      const posB = findPos(procB, oB);
       if (posB >= 0) {
         if (posB === 0) procB.airwayNodeIdxs = [t2Idx, ...procB.airwayNodeIdxs.slice(1)];
         else if (posB === procB.airwayNodeIdxs.length - 1) procB.airwayNodeIdxs = [...procB.airwayNodeIdxs.slice(0, -1), t2Idx];
         else procB.airwayNodeIdxs = procB.airwayNodeIdxs.slice(0, posB).concat([t2Idx], procB.airwayNodeIdxs.slice(posB + 1));
       }
     }
-    // Insert arc as a new procedure (or as part of one of the procedures? For air, arc is a new segment bridging T1-T2)
-    // According to plan, insert an airway-segment for the arc polyline
-    g.procedures.push({ name: 'ARC' + Date.now() % 1000, routeType: procA ? procA.routeType : 0, runwayName: procA ? procA.runwayName : (runwayOptions[0] || '01'), airwayNodeIdxs: arcIdxs });
+    g.procedures.push({ name: 'ARC' + String(Date.now() % 10000).padStart(4, '0'), routeType: procA ? procA.routeType : 0, runwayName: procA ? procA.runwayName : (runwayOptions[0] || '01'), airwayNodeIdxs: arcIdxs });
     m.airwaySegOrigPk.push(null);
     useAppStore.setState({ groundPainterHistory: structuredClone(g0), groundPainterMetaHistory: structuredClone(m0), groundPainterGraph: g, groundPainterMeta: m, groundPainterHasEdited: true });
     setFilletPicks([]);
@@ -4072,10 +4332,11 @@ export default function GroundPainter({ vals }) {
   // Multi-selection rotation plan (bounding-box pivot + nodes/areas/stands to
   // rotate). Only built while the Box-Select tool holds a multi-selection, so the
   // ↻ gizmo and its drag both operate on the same geometry set.
+  // Disabled in air mode — airway selections are translation-only.
   const multiRotatePlan = useMemo(() => {
-    if (tool !== TOOL_BOX_SELECT || !multiSelected.length) return null;
+    if (isAirMode || tool !== TOOL_BOX_SELECT || !multiSelected.length) return null;
     return buildRotationPlan(graph, meta, multiSelected);
-  }, [graph, meta, multiSelected, tool]);
+  }, [graph, meta, multiSelected, tool, isAirMode]);
 
   // ── svg layer rendering (GroundMapWindow order) ──
   const render = () => {
@@ -4085,7 +4346,7 @@ export default function GroundPainter({ vals }) {
     const vbDiag = viewBox ? Math.max(viewBox[2], viewBox[3]) : 1;
     return (
       <>
-        <rect x={-1e6} y={-1e6} width={2e6} height={2e6} fill="#0a1628" />
+        <rect x={-1e6} y={-1e6} width={2e6} height={2e6} fill="#0a1628" pointerEvents="none" />
         {/* Imported background image — map-anchored reference layer behind the
             scenery. Rendered in world/SVG coords so it stays aligned with the
             map as the user pans/zooms to trace over it. */}
@@ -4241,7 +4502,7 @@ export default function GroundPainter({ vals }) {
             {filteredProcedures.map((proc, i) => {
               const pts = (proc.airwayNodeIdxs || []).map((idx) => graph.airwayNodes[idx]).filter(Boolean);
               if (pts.length < 2) return null;
-              const isSel = selectedProcedureIdx === graph.procedures.indexOf(proc);
+              const isSel = false; // procedures are never directly selectable — only NODEs
               const type = proc.routeType;
               let color = '#4a8cff';
               let dash = null;
@@ -4274,7 +4535,7 @@ export default function GroundPainter({ vals }) {
                 Fix name is NEVER rendered on the map; editing is via the
                 floating rename box anchored to the selected point. */}
             {graph.airwayNodes && graph.airwayNodes.map((n, i) => {
-              const isSel = selectedAirwayNode === i;
+              const isSel = selectedAirwayNode === i || isMultiSelected(multiSelected, 'airwayNode', i);
               const isInDraft = committingProcedure && committingProcedure.includes(i);
               const nodeR = isSel ? DOT_R * 1.5 : DOT_R * 1.0;
               return (
@@ -4363,11 +4624,46 @@ export default function GroundPainter({ vals }) {
           const w = maxX - minX, h = maxZ - minZ;
           if (w < 1e-9 && h < 1e-9) return null;
           return (
-            <g>
-              <rect x={minX} y={svgY(maxZ)} width={w} height={h} fill="#6aa0ff" fillOpacity={0.12} stroke="#6aa0ff" strokeWidth={HL_SW * 0.9} strokeDasharray="6 4" opacity={0.95} />
-              <rect x={minX} y={svgY(maxZ)} width={w} height={h} fill="none" stroke="#fff" strokeWidth={HL_SW * 0.4} strokeDasharray="6 4" opacity={0.35} />
+            <g pointerEvents="none">
+              <rect x={minX} y={svgY(maxZ)} width={w} height={h} fill="#6aa0ff" fillOpacity={0.22} stroke="#6aa0ff" strokeWidth={HL_SW * 1.1} strokeDasharray="6 4" opacity={0.98} />
+              <rect x={minX} y={svgY(maxZ)} width={w} height={h} fill="none" stroke="#fff" strokeWidth={HL_SW * 0.5} strokeDasharray="6 4" opacity={0.5} />
             </g>
           );
+        })()}
+        {/* Air fillet picks / hover highlight and preview (edge-based, intra-procedure supported) */}
+        {tool === TOOL_AIR_FILLET && graph && (() => {
+          const highlights = [];
+          const isSameEdge = (a,b)=> a&&b&&a.procIdx===b.procIdx&&a.edgeIdx===b.edgeIdx;
+          if (hoverSegIdx && typeof hoverSegIdx === 'object' && hoverSegIdx.procIdx != null) {
+            const isPicked = filletPicks.some(p=> isSameEdge(p, hoverSegIdx));
+            if (!isPicked) {
+              const a = graph.airwayNodes[hoverSegIdx.aIdx], b = graph.airwayNodes[hoverSegIdx.bIdx];
+              if (a&&b) highlights.push(<line key="hover" x1={a.x} y1={svgY(a.z)} x2={b.x} y2={svgY(b.z)} stroke="#8a94ff" strokeWidth={HL_SW*1.4} strokeDasharray="4,3" opacity={0.9} />);
+            }
+          }
+          for (const pick of filletPicks) {
+            if (pick && typeof pick === 'object' && pick.procIdx!=null) {
+              const a = graph.airwayNodes[pick.aIdx], b = graph.airwayNodes[pick.bIdx];
+              if (a&&b) highlights.push(<line key={"pick"+pick.procIdx+"-"+pick.edgeIdx} x1={a.x} y1={svgY(a.z)} x2={b.x} y2={svgY(b.z)} stroke="#ffd34d" strokeWidth={HL_SW*1.6} opacity={1} />);
+            }
+          }
+          let preview=null;
+          if (airFilletPreview && airFilletPreview.ok && airFilletPreview.arcPoints) {
+            const ap = airFilletPreview.arcPoints;
+            preview = (
+              <g key="airFilletPreview">
+                <line x1={airFilletPreview.p1.x} y1={svgY(airFilletPreview.p1.z)} x2={airFilletPreview.t1.x} y2={svgY(airFilletPreview.t1.z)} stroke="#ffd34d" strokeWidth={HL_SW} strokeDasharray="6,4" opacity={0.95} />
+                <line x1={airFilletPreview.t2.x} y1={svgY(airFilletPreview.t2.z)} x2={airFilletPreview.p2.x} y2={svgY(airFilletPreview.p2.z)} stroke="#ffd34d" strokeWidth={HL_SW} strokeDasharray="6,4" opacity={0.95} />
+                <polyline points={ap.map(pp=>pp.x+','+svgY(pp.z)).join(' ')} fill="none" stroke="#3fdc6e" strokeWidth={HL_SW*1.2} strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx={airFilletPreview.t1.x} cy={svgY(airFilletPreview.t1.z)} r={DOT_R*0.9} fill="#3fdc6e" />
+                <circle cx={airFilletPreview.t2.x} cy={svgY(airFilletPreview.t2.z)} r={DOT_R*0.9} fill="#3fdc6e" />
+                <circle cx={airFilletPreview.center.x} cy={svgY(airFilletPreview.center.z)} r={DOT_R*0.5} fill="#8a94ff" opacity={0.9} />
+              </g>
+            );
+          } else if (airFilletPreview && airFilletPreview.error && filletPicks.length >= 2) {
+            preview = <text x={0} y={0} fontSize={DOT_R*1.2} fill="#ff6b6b">{airFilletPreview.errorParams ? t(airFilletPreview.error, airFilletPreview.errorParams) : t(airFilletPreview.error)}</text>;
+          }
+          return <g>{highlights}{preview}</g>;
         })()}
         {/* Fillet picks / hover highlight and preview */}
         {tool === TOOL_CURVE && graph && (() => {
@@ -4605,10 +4901,11 @@ export default function GroundPainter({ vals }) {
     return <>{allSels.map((s, i) => renderOne(s, `${s.kind}-${s.idx}-${i}`))}</>;
   };
 
-  // ── Hover preview (single-select mode, air & ground both) — vaguely highlights what click would select ──
+  // ── Hover preview (single-select + box-select, air & ground both) — vaguely highlights what click would select ──
   const HoverOutline = () => {
     if (!graph || !hovered) return null;
-    if (tool !== TOOL_SELECT || !selectEnabled) return null;
+    const isHoverTool = (tool === TOOL_SELECT && selectEnabled) || tool === TOOL_BOX_SELECT;
+    if (!isHoverTool) return null;
     // Don't hover-highlight what's already selected (would duplicate the solid highlight)
     if (selected && selected.kind === hovered.kind && selected.idx === hovered.idx) return null;
     if (multiSelected && multiSelected.some((s) => s.kind === hovered.kind && s.idx === hovered.idx)) return null;
@@ -4959,7 +5256,7 @@ export default function GroundPainter({ vals }) {
       <div
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
-        style={{ position: 'absolute', left, top, width: panelW, pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: '#0a1628', border: '1px solid #ffd34d', borderRadius: 6, padding: '4px 6px', boxShadow: '0 4px 16px rgba(0,0,0,0.45)' }}
+        style={{ position: 'absolute', left, top, width: panelW, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box', pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: '#0a1628', border: '1px solid #ffd34d', borderRadius: 6, padding: '4px 6px', boxShadow: '0 4px 16px rgba(0,0,0,0.45)', overflow: 'hidden' }}
       >
         <input
           type="text"
@@ -4968,10 +5265,10 @@ export default function GroundPainter({ vals }) {
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameAirwayNode(); } }}
           placeholder={t('ground_painter_node_name') || 'Fix name'}
           aria-label={t('ground_painter_node_name') || 'Fix name'}
-          style={{ flex: 1, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '4px 6px', fontSize: 12, outline: 'none' }}
+          style={{ flex: '1 1 0', minWidth: 0, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '4px 6px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }}
         />
-        <button onClick={(e) => { e.stopPropagation(); setSelectedAirwayNode(null); }} title={t('modal_btn_cancel') || 'Cancel'} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a2332', border: '1px solid #4a5568', borderRadius: 4, color: '#a0aec0', cursor: 'pointer' }}><IoClose size={14} /></button>
-        <button onClick={(e) => { e.stopPropagation(); renameAirwayNode(); }} title={t('modal_btn_confirm_save') || 'Confirm'} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#3fdc6e', border: '1px solid #3fdc6e', borderRadius: 4, color: '#0a1628', cursor: 'pointer' }}><IoCheckmark size={14} /></button>
+        <button onClick={(e) => { e.stopPropagation(); setSelectedAirwayNode(null); }} title={t('modal_btn_cancel') || 'Cancel'} style={{ width: 26, height: 26, minWidth: 26, flex: '0 0 26px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a2332', border: '1px solid #4a5568', borderRadius: 4, color: '#a0aec0', cursor: 'pointer', boxSizing: 'border-box' }}><IoClose size={14} /></button>
+        <button onClick={(e) => { e.stopPropagation(); renameAirwayNode(); }} title={t('modal_btn_confirm_save') || 'Confirm'} style={{ width: 26, height: 26, minWidth: 26, flex: '0 0 26px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#3fdc6e', border: '1px solid #3fdc6e', borderRadius: 4, color: '#0a1628', cursor: 'pointer', boxSizing: 'border-box' }}><IoCheckmark size={14} /></button>
       </div>
     );
   })();
@@ -5013,7 +5310,7 @@ export default function GroundPainter({ vals }) {
       <div
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
-        style={{ position: 'absolute', left, top, width: panelW, pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: '#0a1628', border: '1px solid #ffd34d', borderRadius: 6, padding: '4px 6px', boxShadow: '0 4px 16px rgba(0,0,0,0.45)' }}
+        style={{ position: 'absolute', left, top, width: panelW, maxWidth: 'calc(100% - 16px)', boxSizing: 'border-box', pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: '#0a1628', border: '1px solid #ffd34d', borderRadius: 6, padding: '4px 6px', boxShadow: '0 4px 16px rgba(0,0,0,0.45)', overflow: 'hidden' }}
       >
         <input
           type="text"
@@ -5022,10 +5319,10 @@ export default function GroundPainter({ vals }) {
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); renameProcedure(); } }}
           placeholder={t('ground_painter_procedure_name') || 'Procedure name'}
           aria-label={t('ground_painter_procedure_name') || 'Procedure name'}
-          style={{ flex: 1, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '4px 6px', fontSize: 12, outline: 'none' }}
+          style={{ flex: '1 1 0', minWidth: 0, background: '#1a2332', color: '#ffd34d', border: '1px solid #4a5568', borderRadius: 3, padding: '4px 6px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }}
         />
-        <button onClick={(e) => { e.stopPropagation(); setSelectedProcedureIdx(null); }} title={t('modal_btn_cancel') || 'Cancel'} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a2332', border: '1px solid #4a5568', borderRadius: 4, color: '#a0aec0', cursor: 'pointer' }}><IoClose size={14} /></button>
-        <button onClick={(e) => { e.stopPropagation(); renameProcedure(); }} title={t('modal_btn_confirm_save') || 'Confirm'} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#3fdc6e', border: '1px solid #3fdc6e', borderRadius: 4, color: '#0a1628', cursor: 'pointer' }}><IoCheckmark size={14} /></button>
+        <button onClick={(e) => { e.stopPropagation(); setSelectedProcedureIdx(null); }} title={t('modal_btn_cancel') || 'Cancel'} style={{ width: 26, height: 26, minWidth: 26, flex: '0 0 26px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a2332', border: '1px solid #4a5568', borderRadius: 4, color: '#a0aec0', cursor: 'pointer', boxSizing: 'border-box' }}><IoClose size={14} /></button>
+        <button onClick={(e) => { e.stopPropagation(); renameProcedure(); }} title={t('modal_btn_confirm_save') || 'Confirm'} style={{ width: 26, height: 26, minWidth: 26, flex: '0 0 26px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#3fdc6e', border: '1px solid #3fdc6e', borderRadius: 4, color: '#0a1628', cursor: 'pointer', boxSizing: 'border-box' }}><IoCheckmark size={14} /></button>
       </div>
     );
   })();
@@ -5087,9 +5384,11 @@ export default function GroundPainter({ vals }) {
     );
   })();
 
-  // ── Fillet floating slider + confirm/cancel — appears after two valid picks
+  // ── Fillet floating slider + confirm/cancel — appears after picks (ground + air)
   const filletOverlay = (() => {
-    if (tool !== TOOL_CURVE) return null;
+    const isGround = tool === TOOL_CURVE;
+    const isAir = tool === TOOL_AIR_FILLET;
+    if (!isGround && !isAir) return null;
     if (!graph || !viewBox || !svgRef.current) return null;
     if (filletPicks.length < 1) return null;
     const svg = svgRef.current;
@@ -5107,28 +5406,47 @@ export default function GroundPainter({ vals }) {
       const sy = ((svgY(wz) - vy) / vh) * rect.height;
       return { x: sx, y: sy };
     };
-    // anchor at intersection O (or midpoint of t1/t2 if available); with one
-    // pick (hint panel only), anchor at the picked segment's midpoint
     let anchor = null;
+    const preview = isAir ? airFilletPreview : filletPreview;
     if (filletPicks.length < 2) {
-      const sgA = graph.segments[filletPicks[0]];
-      if (sgA) {
-        const pts = segNodeIdxs(sgA).map((ni) => graph.nodes[ni]).filter(Boolean);
-        if (pts.length >= 2) anchor = { x: (pts[0].x + pts[pts.length - 1].x) / 2, z: (pts[0].z + pts[pts.length - 1].z) / 2 };
+      if (isAir) {
+        const pick = filletPicks[0];
+        if (pick && typeof pick === 'object' && pick.aIdx != null) {
+          const a = graph.airwayNodes[pick.aIdx], b = graph.airwayNodes[pick.bIdx];
+          if (a && b) anchor = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+        }
+      } else {
+        const sgA = graph.segments[filletPicks[0]];
+        if (sgA) {
+          const pts = segNodeIdxs(sgA).map((ni) => graph.nodes[ni]).filter(Boolean);
+          if (pts.length >= 2) anchor = { x: (pts[0].x + pts[pts.length - 1].x) / 2, z: (pts[0].z + pts[pts.length - 1].z) / 2 };
+        }
       }
-    } else if (filletPreview && filletPreview.o) anchor = filletPreview.o;
-    else if (filletPreview && filletPreview.center) anchor = filletPreview.center;
+    } else if (preview && preview.o) anchor = preview.o;
+    else if (preview && preview.center) anchor = preview.center;
     else {
-      // fallback: midpoint of the two picked segments' midpoints
-      const sgA = graph.segments[filletPicks[0]];
-      const sgB = graph.segments[filletPicks[1]];
-      if (sgA && sgB) {
-        const aPts = segNodeIdxs(sgA).map((ni) => graph.nodes[ni]).filter(Boolean);
-        const bPts = segNodeIdxs(sgB).map((ni) => graph.nodes[ni]).filter(Boolean);
-        if (aPts.length >= 2 && bPts.length >= 2) {
-          const amx = (aPts[0].x + aPts[aPts.length-1].x)/2, amz = (aPts[0].z + aPts[aPts.length-1].z)/2;
-          const bmx = (bPts[0].x + bPts[bPts.length-1].x)/2, bmz = (bPts[0].z + bPts[bPts.length-1].z)/2;
-          anchor = { x: (amx+bmx)/2, z: (amz+bmz)/2 };
+      if (isAir) {
+        const a = filletPicks[0], b = filletPicks[1];
+        if (a && b && a.aIdx != null && b.aIdx != null) {
+          const aa = graph.airwayNodes[a.aIdx], ab = graph.airwayNodes[a.bIdx];
+          const ba = graph.airwayNodes[b.aIdx], bb = graph.airwayNodes[b.bIdx];
+          if (aa && ab && ba && bb) {
+            const amx = (aa.x + ab.x)/2, amz = (aa.z + ab.z)/2;
+            const bmx = (ba.x + bb.x)/2, bmz = (ba.z + bb.z)/2;
+            anchor = { x: (amx+bmx)/2, z: (amz+bmz)/2 };
+          }
+        }
+      } else {
+        const sgA = graph.segments[filletPicks[0]];
+        const sgB = graph.segments[filletPicks[1]];
+        if (sgA && sgB) {
+          const aPts = segNodeIdxs(sgA).map((ni) => graph.nodes[ni]).filter(Boolean);
+          const bPts = segNodeIdxs(sgB).map((ni) => graph.nodes[ni]).filter(Boolean);
+          if (aPts.length >= 2 && bPts.length >= 2) {
+            const amx = (aPts[0].x + aPts[aPts.length-1].x)/2, amz = (aPts[0].z + aPts[aPts.length-1].z)/2;
+            const bmx = (bPts[0].x + bPts[bPts.length-1].x)/2, bmz = (bPts[0].z + bPts[bPts.length-1].z)/2;
+            anchor = { x: (amx+bmx)/2, z: (amz+bmz)/2 };
+          }
         }
       }
     }
@@ -5141,7 +5459,11 @@ export default function GroundPainter({ vals }) {
     if (left < 8) left = 8;
     if (top < 8) top = 8;
     if (top + panelH > rect.height - 8) top = rect.height - panelH - 8;
-    const hasError = filletPreview && filletPreview.error;
+    const hasError = preview && preview.error;
+    const onConfirm = () => {
+      if (isAir) commitAirFillet(filletPicks[0], filletPicks[1], filletRadius);
+      else commitFillet(filletPicks[0], filletPicks[1], filletRadius);
+    };
     return (
       <div
         onClick={(e) => e.stopPropagation()}
@@ -5151,13 +5473,13 @@ export default function GroundPainter({ vals }) {
         {filletPicks.length < 2 ? (
           <span style={{ color: '#ffd34d', fontSize: 12, flex: 1 }}>{t('ground_painter_fillet_pick_second') || 'pick second'}</span>
         ) : hasError ? (
-          <span style={{ color: '#ff6b6b', fontSize: 12, flex: 1 }}>{filletPreview.errorParams ? t(filletPreview.error, filletPreview.errorParams) : t(filletPreview.error)}</span>
+          <span style={{ color: '#ff6b6b', fontSize: 12, flex: 1 }}>{preview.errorParams ? t(preview.error, preview.errorParams) : t(preview.error)}</span>
         ) : (
           <input
             type="range"
-            min={0.5}
-            max={5.0}
-            step={0.05}
+            min={FILLET_LIMITS.min}
+            max={FILLET_LIMITS.max}
+            step={FILLET_LIMITS.step}
             value={filletRadius}
             onChange={(e) => setFilletRadius(parseFloat(e.target.value))}
             title={t('ground_painter_fillet_radius') || 'Fillet radius'}
@@ -5174,7 +5496,7 @@ export default function GroundPainter({ vals }) {
         </button>
         {filletPicks.length >= 2 && (
           <button
-            onClick={(e) => { e.stopPropagation(); commitFillet(filletPicks[0], filletPicks[1], filletRadius); }}
+            onClick={(e) => { e.stopPropagation(); onConfirm(); }}
             disabled={!!hasError}
             title={t('modal_btn_confirm_save') || '确认 (Enter)'}
             aria-label={t('ground_painter_fillet_ready') || 'press Enter to confirm'}

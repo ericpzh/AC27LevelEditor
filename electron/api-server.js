@@ -752,7 +752,7 @@ const MCP_TOOLS = [
   { name: 'delete_airway_objects', description: 'Delete the nearest airside object to a point (airway node > procedure priority). Uses hit threshold ~0.6 GU. Records deletedAirwayPks so save persists; pushes history.', inputSchema: { type: 'object', properties: { target: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, threshold: { type: 'number' } }, required: ['target'] } },
   { name: 'move_airway_objects', description: 'Translate one or more airside objects (mirrors the UI drag: single airway node / procedure body / selectAll). Targets resolve like delete_airway_objects; a procedure move carries its nodes; in-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { targets: { type: 'array', minItems: 1, items: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } } }, selectAll: { type: 'boolean' }, dx: { type: 'number' }, dz: { type: 'number' }, threshold: { type: 'number' } }, required: ['dx', 'dz'] } },
   { name: 'rename_airway_object', description: 'Rename an airway node or procedure by index. For airwayNode: new name string; for procedure: new procedure name (duplicate check against name+runway+type). In-memory until Save; pushes history.', inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['airwayNode', 'procedure'] }, idx: { type: 'integer', minimum: 0 }, name: { type: 'string' } }, required: ['kind', 'idx', 'name'] } },
-  { name: 'create_airway_fillet', description: 'Round the corner between two airway procedures that share a node (connected fillet). Picks two procedure indices and a radius (0.5..5.0 GU, default 2.0). Connected-only (no virtual). Validates straight-only, angle 5..175°, parallel guard.', inputSchema: { type: 'object', properties: { procA: { type: 'integer', minimum: 0 }, procB: { type: 'integer', minimum: 0 }, radius: { type: 'number', minimum: 0.5, maximum: 5.0 } }, required: ['procA', 'procB'] } },
+  { name: 'create_airway_fillet', description: 'Round the corner between two connected edges within the SAME airway procedure (AAA). After picking one edge from AAA, the second must also be from AAA — highlight/snap/select is locked to that procedure. For API: pass procedure+vertex (vertex is position index of the corner node within airwayNodeIdxs, 1..len-2, radius 50..500 GU, default 120) OR legacy procA==procB (same index, vertex optional). Inter-procedure (procA!=procB) is rejected. Creates nameless arc nodes (50..500 GU radius) and reroutes the procedure through them.', inputSchema: { type: 'object', properties: { procA: { type: 'integer', minimum: 0 }, procB: { type: 'integer', minimum: 0 }, procedure: { type: 'integer', minimum: 0 }, vertex: { type: 'integer', minimum: 0 }, radius: { type: 'number', minimum: 50, maximum: 500 } }, required: [] } },
   { name: 'undo_ground_painter', description: 'Restore the last Ground Painter graph+meta snapshot (depth-1 undo, paired graph+meta).', inputSchema: { type: 'object', properties: {} } },
 ];
 
@@ -1803,15 +1803,10 @@ async function handleMcpMessage(msg) {
           const g = s.groundPainterGraph;
           if (!g) return respond({ content: [{ type: 'text', text: JSON.stringify(_groundPainterNotReady()) }], isError: true });
           let procA = args.procA, procB = args.procB;
-          const radius = args.radius != null ? Number(args.radius) : 2.0;
-          if (procA == null || procB == null) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA and procB procedure indices required' }) }], isError: true });
-          procA = parseInt(procA, 10); procB = parseInt(procB, 10);
-          const procCount = (g.procedures || []).length;
-          if (!Number.isFinite(procA) || !Number.isFinite(procB) || procA < 0 || procB < 0 || procA >= procCount || procB >= procCount) {
-            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA/procB out of range (0..' + (procCount - 1) + ')' }) }], isError: true });
-          }
-          if (procA === procB) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA and procB must be different procedures' }) }], isError: true });
-          if (!isFinite(radius) || radius < 0.5 || radius > 5.0) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'radius must be 0.5..5.0' }) }], isError: true });
+          let procSingle = args.procedure;
+          let vertex = args.vertex;
+          const radius = args.radius != null ? Number(args.radius) : 120.0;
+          if (!isFinite(radius) || radius < 50 || radius > 500) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'radius must be 50..500 for air (ground is 0.5..5.0)' }) }], isError: true });
           let fillet;
           try {
             const p = require('path');
@@ -1820,63 +1815,92 @@ async function handleMcpMessage(msg) {
           } catch (e) {
             return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'fillet module load failed: ' + e.message }) }], isError: true });
           }
-          // Build a tiny graph view for fillet validation (nodes = airwayNodes, segments = procedures)
-          const airGraph = { nodes: g.airwayNodes || [], segments: (g.procedures || []).map((p) => ({ nodeIdxs: p.airwayNodeIdxs, aIdx: p.airwayNodeIdxs[0], bIdx: p.airwayNodeIdxs[p.airwayNodeIdxs.length - 1] })) };
-          if (fillet.isStraightSegment && !fillet.isStraightSegment(airGraph.segments[procA])) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA is not a straight procedure segment (only straight procedures can be filleted)' }) }], isError: true });
-          if (fillet.isStraightSegment && !fillet.isStraightSegment(airGraph.segments[procB])) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procB is not a straight procedure segment (only straight procedures can be filleted)' }) }], isError: true });
-          const res = fillet.computeFillet(airGraph, procA, procB, radius);
-          if (!res.ok) {
-            const msg = res.error || 'fillet compute failed';
-            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: msg }) }], isError: true });
-          }
-          if (res.virtualO) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'airway fillet requires connected procedures (shared node), virtual not supported' }) }], isError: true });
-          // Connected fillet: truncate legs and insert arc via simplified air logic (mirrors GroundPainter.jsx:commitAirFillet)
-          const newGraph = _clone(g);
-          const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
-          _ensurePainterMetaArrays(newMeta, newGraph);
-          if (!Array.isArray(newMeta.deletedAirwayPks)) newMeta.deletedAirwayPks = [];
-          // Create T nodes and arc interior
-          const t1Idx = newGraph.airwayNodes.length;
-          newGraph.airwayNodes.push({ x: res.t1.x, z: res.t1.z, name: '' });
-          newMeta.airwayNodeOrigPk.push(null);
-          const t2Idx = newGraph.airwayNodes.length;
-          newGraph.airwayNodes.push({ x: res.t2.x, z: res.t2.z, name: '' });
-          newMeta.airwayNodeOrigPk.push(null);
-          const arcInterior = [];
-          for (let i = 1; i < res.arcPoints.length - 1; i++) {
-            const pt = res.arcPoints[i];
-            const ai = newGraph.airwayNodes.length;
-            newGraph.airwayNodes.push({ x: pt.x, z: pt.z, name: '' });
+          const procCount = (g.procedures || []).length;
+          // Intra-procedure via procedure+vertex
+          if (procSingle != null || (procA != null && procB != null && parseInt(procA, 10) === parseInt(procB, 10) && vertex != null)) {
+            const pIdx = procSingle != null ? parseInt(procSingle, 10) : parseInt(procA, 10);
+            const vPos = vertex != null ? parseInt(vertex, 10) : null;
+            if (!Number.isFinite(pIdx) || pIdx < 0 || pIdx >= procCount) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procedure out of range (0..' + (procCount - 1) + ')' }) }], isError: true });
+            const proc = g.procedures[pIdx];
+            if (!proc || !Array.isArray(proc.airwayNodeIdxs) || proc.airwayNodeIdxs.length < 3) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procedure needs at least 3 fixes to fillet' }) }], isError: true });
+            let pos = vPos;
+            if (pos == null) {
+              // auto-pick the sharpest interior corner that can be filleted
+              let best = null; let bestAngle = 180;
+              for (let i = 1; i < proc.airwayNodeIdxs.length - 1; i++) {
+                const a = g.airwayNodes[proc.airwayNodeIdxs[i-1]], o = g.airwayNodes[proc.airwayNodeIdxs[i]], b = g.airwayNodes[proc.airwayNodeIdxs[i+1]];
+                if (!a || !o || !b) continue;
+                const n1x = a.x - o.x, n1z = a.z - o.z, n2x = b.x - o.x, n2z = b.z - o.z;
+                const l1 = Math.hypot(n1x,n1z), l2=Math.hypot(n2x,n2z);
+                if (l1<1e-9||l2<1e-9) continue;
+                const dot = (n1x*n2x+n1z*n2z)/(l1*l2);
+                const ang = Math.acos(Math.max(-1,Math.min(1,dot)))*180/Math.PI;
+                const corner = 180 - ang;
+                if (corner < bestAngle && corner >=5 && corner <=175) { bestAngle=corner; best=i; }
+              }
+              if (best==null) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no filletable corner found in procedure ' + pIdx }) }], isError: true });
+              pos = best;
+            }
+            if (pos <=0 || pos >= proc.airwayNodeIdxs.length-1) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'vertex must be interior (1..' + (proc.airwayNodeIdxs.length-2) + ')' }) }], isError: true });
+            const prevIdx = proc.airwayNodeIdxs[pos-1], oIdx = proc.airwayNodeIdxs[pos], nextIdx = proc.airwayNodeIdxs[pos+1];
+            const aN = g.airwayNodes[prevIdx], oN = g.airwayNodes[oIdx], bN = g.airwayNodes[nextIdx];
+            if (!aN || !oN || !bN) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'corner nodes missing' }) }], isError: true });
+            const tmpGraph = { nodes: g.airwayNodes, segments: [{ nodeIdxs:[prevIdx,oIdx], aIdx:prevIdx,bIdx:oIdx }, { nodeIdxs:[oIdx,nextIdx], aIdx:oIdx,bIdx:nextIdx }] };
+            const res = fillet.computeFillet(tmpGraph, 0, 1, radius);
+            if (!res.ok) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: res.error }) }], isError: true });
+            if (res.virtualO) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'airway fillet requires connected segments' }) }], isError: true });
+            const newGraph = _clone(g);
+            const newMeta = _clone(s.groundPainterMeta) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
+            _ensurePainterMetaArrays(newMeta, newGraph);
+            if (!Array.isArray(newMeta.deletedAirwayPks)) newMeta.deletedAirwayPks = [];
+            if (!Array.isArray(newMeta.airwayNodeOrigPk)) newMeta.airwayNodeOrigPk = (newGraph.airwayNodes||[]).map(()=>null);
+            const t1Idx = newGraph.airwayNodes.length;
+            newGraph.airwayNodes.push({ x: res.t1.x, z: res.t1.z, name: '' });
             newMeta.airwayNodeOrigPk.push(null);
-            arcInterior.push(ai);
+            const t2Idx = newGraph.airwayNodes.length;
+            newGraph.airwayNodes.push({ x: res.t2.x, z: res.t2.z, name: '' });
+            newMeta.airwayNodeOrigPk.push(null);
+            const arcInterior=[];
+            for (let i=1;i<res.arcPoints.length-1;i++){ const pt=res.arcPoints[i]; const ai=newGraph.airwayNodes.length; newGraph.airwayNodes.push({ x: pt.x, z: pt.z, name: '' }); newMeta.airwayNodeOrigPk.push(null); arcInterior.push(ai); }
+            const procObj = newGraph.procedures[pIdx];
+            procObj.airwayNodeIdxs = procObj.airwayNodeIdxs.slice(0,pos).concat([t1Idx], arcInterior, [t2Idx], procObj.airwayNodeIdxs.slice(pos+1));
+            const hist = _pushPainterHistory(s);
+            pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist, groundPainterHasEdited: true });
+            result = { success: true, intra: true, procedure: pIdx, vertex: pos, radius: res.rEff, center: res.center, t1: res.t1, t2: res.t2, newNodes: 2+arcInterior.length };
+            break;
           }
-          const arcIdxs = [t1Idx, ...arcInterior, t2Idx];
-          const procAObj = newGraph.procedures[procA];
-          const procBObj = newGraph.procedures[procB];
-          if (procAObj) {
-            const oIdx = res.oIdxA != null ? res.oIdxA : res.oIdx;
-            const pos = procAObj.airwayNodeIdxs.indexOf(oIdx);
-            if (pos >= 0) {
-              if (pos === 0) procAObj.airwayNodeIdxs = [t1Idx, ...procAObj.airwayNodeIdxs.slice(1)];
-              else if (pos === procAObj.airwayNodeIdxs.length - 1) procAObj.airwayNodeIdxs = [...procAObj.airwayNodeIdxs.slice(0, -1), t1Idx];
-              else procAObj.airwayNodeIdxs = procAObj.airwayNodeIdxs.slice(0, pos).concat([t1Idx], procAObj.airwayNodeIdxs.slice(pos + 1));
-            }
+          if (procA == null || procB == null) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA/procB or procedure+vertex required. For intra-procedure: {procedure, vertex, radius}. For inter-procedure: {procA, procB, radius}' }) }], isError: true });
+          procA = parseInt(procA, 10); procB = parseInt(procB, 10);
+          if (!Number.isFinite(procA) || !Number.isFinite(procB) || procA < 0 || procB < 0 || procA >= procCount || procB >= procCount) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procA/procB out of range (0..' + (procCount - 1) + ')' }) }], isError: true });
           }
-          if (procBObj) {
-            const oIdxB = res.oIdxB != null ? res.oIdxB : res.oIdx;
-            const posB = procBObj.airwayNodeIdxs.indexOf(oIdxB);
-            if (posB >= 0) {
-              if (posB === 0) procBObj.airwayNodeIdxs = [t2Idx, ...procBObj.airwayNodeIdxs.slice(1)];
-              else if (posB === procBObj.airwayNodeIdxs.length - 1) procBObj.airwayNodeIdxs = [...procBObj.airwayNodeIdxs.slice(0, -1), t2Idx];
-              else procBObj.airwayNodeIdxs = procBObj.airwayNodeIdxs.slice(0, posB).concat([t2Idx], procBObj.airwayNodeIdxs.slice(posB + 1));
-            }
+          if (procA === procB) {
+            // Same procedure without explicit vertex -> auto-pick sharpest corner as intra
+            const pIdx = procA;
+            const proc = g.procedures[pIdx];
+            if (!proc || proc.airwayNodeIdxs.length < 3) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'procedure needs at least 3 fixes to fillet' }) }], isError: true });
+            let best=null; let bestAngle=180;
+            for (let i=1;i<proc.airwayNodeIdxs.length-1;i++){ const a=g.airwayNodes[proc.airwayNodeIdxs[i-1]], o=g.airwayNodes[proc.airwayNodeIdxs[i]], b=g.airwayNodes[proc.airwayNodeIdxs[i+1]]; if(!a||!o||!b) continue; const n1x=a.x-o.x,n1z=a.z-o.z,n2x=b.x-o.x,n2z=b.z-o.z; const l1=Math.hypot(n1x,n1z),l2=Math.hypot(n2x,n2z); if(l1<1e-9||l2<1e-9)continue; const dot=(n1x*n2x+n1z*n2z)/(l1*l2); const ang=Math.acos(Math.max(-1,Math.min(1,dot)))*180/Math.PI; const corner=180-ang; if(corner<bestAngle&&corner>=5&&corner<=175){bestAngle=corner; best=i;} }
+            if(best==null) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'no filletable corner found' }) }], isError: true });
+            const prevIdx=proc.airwayNodeIdxs[best-1], oIdx=proc.airwayNodeIdxs[best], nextIdx=proc.airwayNodeIdxs[best+1];
+            const tmpGraph={ nodes:g.airwayNodes, segments:[{ nodeIdxs:[prevIdx,oIdx],aIdx:prevIdx,bIdx:oIdx},{ nodeIdxs:[oIdx,nextIdx],aIdx:oIdx,bIdx:nextIdx}]};
+            const res=fillet.computeFillet(tmpGraph,0,1,radius);
+            if(!res.ok) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: res.error }) }], isError: true });
+            const newGraph=_clone(g); const newMeta=_clone(s.groundPainterMeta)||{ nodeOrigPk:[],segOrigPk:[],runwayOrigPk:[],areaOrigId:[],standOrigPk:[],deletedPks:[],deletedAreaIds:[],runwayPavement:[],runwayOrigInfo:[]}; _ensurePainterMetaArrays(newMeta,newGraph); if(!Array.isArray(newMeta.deletedAirwayPks)) newMeta.deletedAirwayPks=[]; if(!Array.isArray(newMeta.airwayNodeOrigPk)) newMeta.airwayNodeOrigPk=(newGraph.airwayNodes||[]).map(()=>null);
+            const t1Idx=newGraph.airwayNodes.length; newGraph.airwayNodes.push({x:res.t1.x,z:res.t1.z,name:''}); newMeta.airwayNodeOrigPk.push(null);
+            const t2Idx=newGraph.airwayNodes.length; newGraph.airwayNodes.push({x:res.t2.x,z:res.t2.z,name:''}); newMeta.airwayNodeOrigPk.push(null);
+            const arcInterior=[]; for(let i=1;i<res.arcPoints.length-1;i++){const pt=res.arcPoints[i]; const ai=newGraph.airwayNodes.length; newGraph.airwayNodes.push({x:pt.x,z:pt.z,name:''}); newMeta.airwayNodeOrigPk.push(null); arcInterior.push(ai);}
+            const procObj=newGraph.procedures[pIdx]; procObj.airwayNodeIdxs=procObj.airwayNodeIdxs.slice(0,best).concat([t1Idx],arcInterior,[t2Idx],procObj.airwayNodeIdxs.slice(best+1));
+            const hist=_pushPainterHistory(s); pushStoreUpdate({ groundPainterGraph:newGraph, groundPainterMeta:newMeta, ...hist, groundPainterHasEdited:true });
+            result={ success:true, intra:true, procedure:pIdx, vertex:best, radius:res.rEff, center:res.center, t1:res.t1, t2:res.t2 };
+            break;
           }
-          newGraph.procedures.push({ name: 'ARC' + String(Date.now() % 10000).padStart(4, '0'), routeType: procAObj ? procAObj.routeType : 0, runwayName: procAObj ? procAObj.runwayName : (newGraph.runways && newGraph.runways[0] ? newGraph.runways[0].physicalName.split('/')[0] : '01'), airwayNodeIdxs: arcIdxs });
-          newMeta.airwaySegOrigPk.push(null);
-          const hist5 = _pushPainterHistory(s);
-          pushStoreUpdate({ groundPainterGraph: newGraph, groundPainterMeta: newMeta, ...hist5, groundPainterHasEdited: true });
-          result = { success: true, virtual: !!res.virtualO, radius: res.rEff, center: res.center, t1: res.t1, t2: res.t2 };
-          break;
+          // Same-procedure enforcement: air fillet must be two connected edges within the SAME procedure (AAA)
+          if (procA !== procB) {
+            return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Air fillet requires two segments from same procedure (after picking AAA, next must be from AAA; got proc ' + procA + ' and proc ' + procB + ')' }) }], isError: true });
+          }
+          // procA === procB already handled above (auto-pick via procedure+vertex); reaching here means procA==procB without vertex and no corner found - already returned
+          return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Use procedure+vertex for intra-procedure fillet' }) }], isError: true });
         }
         case 'undo_ground_painter': {
           const s = await readStoreState();
