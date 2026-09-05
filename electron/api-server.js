@@ -323,6 +323,7 @@ function buildConstraints(state, cache) {
     configStartTime: state._configStartTime,
     configEndTime: state._configEndTime,
     currentAirport: state.currentAirport,
+    runwayTimeline: state.runwayTimeline || { initialRunways: [], timeline: [] },
   };
 }
 
@@ -440,6 +441,34 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
           message: `Registration '${f.Registration}' is not valid for ${pairKey}.`,
           valid: validRegs.slice(0, 20),
         });
+      }
+    }
+
+    // 8b. Landing runway must be active at LandingTime (mirrors validators.js val_runway_inactive)
+    if (isArrival(f) && f.Runway && f.LandingTime && constraints.runwayTimeline && Array.isArray(constraints.runwayTimeline.initialRunways)) {
+      const toSec = t => { const p = String(t || '').split(':'); return (parseInt(p[0], 10) || 0) * 3600 + (parseInt(p[1], 10) || 0) * 60 + (parseInt(p[2], 10) || 0); };
+      const landSec = toSec(f.LandingTime);
+      if (!isNaN(landSec)) {
+        const initials = (constraints.runwayTimeline.initialRunways || []).map(s => String(s).trim()).filter(Boolean);
+        const sortedTl = [...(constraints.runwayTimeline.timeline || [])].filter(e => e && e.time).sort((a, b) => toSec(a.time) - toSec(b.time));
+        const active = new Set(initials);
+        for (const entry of sortedTl) {
+          if (toSec(entry.time) <= landSec) {
+            for (const ch of (entry.changes || [])) {
+              const src = String(ch.source || '').trim(), dst = String(ch.dest || '').trim();
+              if (!src || !dst) continue;
+              if (active.has(src)) { active.delete(src); active.add(dst); }
+            }
+          }
+        }
+        if (!active.has(String(f.Runway).trim())) {
+          details.push({
+            index: idx, field: 'Runway', value: f.Runway,
+            issue: 'runway_inactive_at_landing',
+            message: `Landing runway '${f.Runway}' not active at ${f.LandingTime} (active: ${[...active].sort().join(', ') || '(none)'}).`,
+            valid: [...active],
+          });
+        }
       }
     }
 

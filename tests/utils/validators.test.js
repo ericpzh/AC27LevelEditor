@@ -367,3 +367,167 @@ describe('sidecar _isNew stripping', () => {
     expect(parsed[1]._isNew).toBeUndefined();
   });
 });
+
+describe('runTripleValidation runway timeline duplicate / empty', () => {
+  const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
+  const baseVals = { ZSJN: { Stand: ['A01'], Runway: ['01','15','19','22','33'] } };
+  function run(tl) {
+    return runTripleValidation([], baseVals, 'ZSJN', AUDIO, null, '06:00', '22:00', tl);
+  }
+
+  it('flags empty changes', () => {
+    const tl = { initialRunways: ['15','19'], timeline: [{ time: '08:00:00', changes: [] }] };
+    const issues = run(tl);
+    expect(issues.some(m => m.includes('未选择') || m.includes('no runway switch'))).toBe(true);
+  });
+
+  it('flags duplicate time (exact HH:MM:SS)', () => {
+    const tl = {
+      initialRunways: ['15','19'],
+      timeline: [
+        { time: '21:23:09', changes: [{ source: '01', dest: '19' }] },
+        { time: '21:23:09', changes: [{ source: '15', dest: '33' }] },
+      ],
+    };
+    const issues = run(tl);
+    expect(issues.some(m => m.includes('21:23:09') && (m.includes('重复') || m.includes('duplicates')))).toBe(true);
+  });
+
+  it('does not flag different times in same minute', () => {
+    const tl = {
+      initialRunways: ['15','19'],
+      timeline: [
+        { time: '21:23:09', changes: [{ source: '01', dest: '19' }] },
+        { time: '21:23:10', changes: [{ source: '15', dest: '33' }] },
+      ],
+    };
+    const issues = run(tl);
+    expect(issues.filter(m => m.includes('重复') || m.includes('duplicates'))).toHaveLength(0);
+  });
+
+  it('flags duplicate pair across entries as source not active (no intervening reversal)', () => {
+    const tl = {
+      initialRunways: ['01','15','22'],
+      timeline: [
+        { time: '21:23:09', changes: [{ source: '01', dest: '19' }] },
+        { time: '21:37:48', changes: [{ source: '01', dest: '19' }] },
+      ],
+    };
+    const issues = run(tl);
+    expect(issues.some(m => m.includes('01') && (m.includes('未激活') || m.includes('not active')))).toBe(true);
+  });
+
+  it('allows valid recurrence after reversal (01->19, 19->01, 01->19)', () => {
+    const tl = {
+      initialRunways: ['01','04'],
+      timeline: [
+        { time: '21:10:00', changes: [{ source: '01', dest: '19' }, { source: '04', dest: '22' }] },
+        { time: '21:20:00', changes: [{ source: '19', dest: '01' }] },
+        { time: '21:30:00', changes: [{ source: '01', dest: '19' }] },
+      ],
+    };
+    const issues = run(tl);
+    expect(issues.filter(m => m.includes('重复') || m.includes('duplicates') || m.includes('未激活') || m.includes('not active') || m.includes('未选择') || m.includes('no runway'))).toHaveLength(0);
+  });
+
+  it('allows same pair inside single entry (togglePair dedupes within entry, not across)', () => {
+    const tl = {
+      initialRunways: ['01','15'],
+      timeline: [
+        { time: '08:00:00', changes: [{ source: '01', dest: '19' }, { source: '01', dest: '19' }] },
+      ],
+    };
+    // Single entry with duplicate pair is not flagged as cross-entry duplicate;
+    // the UI prevents this via togglePair, but validator only checks cross-entry.
+    // This test documents the boundary.
+    const issues = run(tl);
+    expect(issues.filter(m => m.includes('01') && m.includes('19') && (m.includes('重复') || m.includes('duplicates')))).toHaveLength(0);
+  });
+
+  it('does not flag duplicate pair when timelines are otherwise valid', () => {
+    const tl = {
+      initialRunways: ['01','15','22'],
+      timeline: [
+        { time: '21:23:09', changes: [{ source: '01', dest: '19' }] },
+        { time: '21:48:57', changes: [{ source: '15', dest: '33' }] },
+      ],
+    };
+    const issues = run(tl);
+    expect(issues.filter(m => m.includes('重复') || m.includes('duplicates'))).toHaveLength(0);
+  });
+});
+
+describe('runTripleValidation arrival runway active at landing', () => {
+  const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
+  const V = { ZSJN: { Stand: ['A01','E49'], Runway: ['01','15','19','22','33'], _starRunwayMap: { 'CLIRP3.19': ['19'] } } };
+  function run(flights, tl) {
+    return runTripleValidation(flights, V, 'ZSJN', AUDIO, null, '21:00:00', '22:00:00', tl);
+  }
+
+  it('flags arrival landing on runway not in initial set', () => {
+    const tl = { initialRunways: ['01','15','22'], timeline: [] };
+    const flights = [{ CallSign: 'CES0001', LandingTime: '21:15:00', Runway: '19', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    const issues = run(flights, tl);
+    expect(issues.some(m => m.includes('19') && (m.includes('未激活') || m.includes('not active')))).toBe(true);
+  });
+
+  it('allows arrival after runway becomes active via timeline', () => {
+    const tl = { initialRunways: ['01','15','22'], timeline: [{ time: '21:23:09', changes: [{ source: '01', dest: '19' }] }] };
+    const flights = [{ CallSign: 'CES0001', LandingTime: '21:30:00', Runway: '19', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    const issues = run(flights, tl);
+    expect(issues.filter(m => m.includes('未激活') || m.includes('not active'))).toHaveLength(0);
+  });
+
+  it('flags arrival after runway becomes inactive', () => {
+    const tl = { initialRunways: ['01','15','22'], timeline: [{ time: '21:23:09', changes: [{ source: '01', dest: '19' }] }] };
+    const flights = [{ CallSign: 'CES0002', LandingTime: '21:30:00', Runway: '01', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    const issues = run(flights, tl);
+    expect(issues.some(m => m.includes('01') && (m.includes('未激活') || m.includes('not active')))).toBe(true);
+  });
+
+  it('does not flag departures (OffBlockTime) for inactive runway', () => {
+    const tl = { initialRunways: ['01','15','22'], timeline: [] };
+    const flights = [{ CallSign: 'CES0003', OffBlockTime: '21:15:00', TakeoffTime: '21:20:00', Runway: '19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    const issues = run(flights, tl);
+    expect(issues.filter(m => m.includes('未激活') || m.includes('not active'))).toHaveLength(0);
+  });
+
+  it('handles unsorted timeline by sorting chronologically', () => {
+    // Timeline given reverse order: 21:48 before 21:23 — validator should sort
+    const tl = {
+      initialRunways: ['01','15','22'],
+      timeline: [
+        { time: '21:48:57', changes: [{ source: '15', dest: '33' }] },
+        { time: '21:23:09', changes: [{ source: '01', dest: '19' }] },
+      ],
+    };
+    const before = [{ CallSign: 'CES0001', LandingTime: '21:20:00', Runway: '19', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    expect(run(before, tl).some(m => m.includes('not active') || m.includes('未激活'))).toBe(true);
+    const after = [{ CallSign: 'CES0002', LandingTime: '21:30:00', Runway: '19', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    expect(run(after, tl).filter(m => m.includes('not active') || m.includes('未激活'))).toHaveLength(0);
+  });
+
+  it('reports active set at landing time (reproduces KDCA_peakarrival fuzz)', () => {
+    const tl = {
+      initialRunways: ['01','15','22'],
+      timeline: [
+        { time: '21:23:09', changes: [{ source: '01', dest: '19' }] },
+        { time: '21:37:48', changes: [{ source: '01', dest: '19' }] },
+        { time: '21:48:57', changes: [{ source: '15', dest: '33' }] },
+      ],
+    };
+    const flights = [{ CallSign: 'CES0001', LandingTime: '21:15:00', Runway: '19', Airway: 'CLIRP3.19', Stand: 'E49', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    const issues = run(flights, tl);
+    const inactive = issues.find(m => m.includes('CES0001') && (m.includes('未激活') || m.includes('not active')));
+    expect(inactive).toBeDefined();
+    expect(inactive).toContain('19');
+  });
+
+  it('landing exactly at change time uses post-change active set', () => {
+    const tl = { initialRunways: ['01','15'], timeline: [{ time: '21:23:09', changes: [{ source: '01', dest: '19' }] }] };
+    const at = [{ CallSign: 'CES0001', LandingTime: '21:23:09', Runway: '19', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    expect(run(at, tl).filter(m => m.includes('not active') || m.includes('未激活'))).toHaveLength(0);
+    const before = [{ CallSign: 'CES0002', LandingTime: '21:23:08', Runway: '19', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    expect(run(before, tl).some(m => m.includes('not active') || m.includes('未激活'))).toBe(true);
+  });
+});

@@ -18,15 +18,15 @@ Claude Code (LLM) AC27 Editor (Electron)
 ┌──────────────┐ stdio ┌──────────────┐ HTTP ┌──────────────────┐
 │ MCP Client │───────────→│ mcp/bridge.js│─────────→│ electron/ │
 │ (built-in) │←───────────│ (child proc) │←─────────│ api-server.js │
-└──────────────┘ JSON-RPC └──────────────┘ :31415 │ 7 tools, 12-pt │
+└──────────────┘ JSON-RPC └──────────────┘ :31415 │ 7 tools, 14-pt │
  │ validation │
  └────────┬─────────┘
  │ IPC
- ┌────────▼─────────┐
- │ Renderer Store │
- │ setLegacyState() │
- │ → UI updates │
- └──────────────────┘
+┌────────▼─────────┐
+│ Renderer Store │
+│ setLegacyState() │
+│ → UI updates │
+└──────────────────┘
 ```
 
 ## Components
@@ -36,7 +36,7 @@ Claude Code (LLM) AC27 Editor (Electron)
 - 7 REST endpoints: `GET/POST/PATCH /api/*`
 - `GET/POST /mcp` — MCP SSE endpoint + JSON-RPC handler
 - `handleMcpMessage(msg)` — dispatches JSON-RPC to internal API functions (no HTTP round-trip)
-- 13-point validation suite (`validateFlightObjects`) on every mutating call
+- 14-point validation suite (`validateFlightObjects`) on every mutating call
 - Exports for testing: `validateFlightObjects`, `buildConstraints`, `applyCascades`, `handleMcpMessage`, `MCP_TOOLS`
 
 ### `mcp/bridge.js` (~40 lines)
@@ -71,7 +71,7 @@ Claude Code (LLM) AC27 Editor (Electron)
 
 | Tool | Purpose |
 |------|---------|
-| `create_flights` | Insert complete flight objects (15 fields each). Server validates all 12 constraints. |
+| `create_flights` | Insert complete flight objects (15 fields each). Server validates all 14 constraints. |
 | `get_flights` | Read flights with optional filters (type, airline, callsign, stand, runway, time range). |
 | `modify_flights` | Update fields on matching flights. Cascade: AirlineCode → CallSign+AircraftType+Registration; Runway → Airway. |
 | `delete_flights` | Delete matching flights by callsign, airline, type, stand, runway, or aircraft type. |
@@ -80,7 +80,7 @@ Claude Code (LLM) AC27 Editor (Electron)
 | `get_validation_issues` | Run 13-point validation on current flights. Returns structured issues. |
 | `send_voice_command` | Parse a spoken sentence against the LIVE aircraft list (same pipeline as the PTT mic) and dispatch patch frames to the game. Needs game + BepInEx plugin running. Prints `[VOICE-PARSE]` to the main-process log. |
 
-## Validation (13 checks)
+## Validation (14 checks)
 
 1. All 15 fields present
 2. Airline code known (from audio callsigns + dropdown values)
@@ -95,6 +95,7 @@ Claude Code (LLM) AC27 Editor (Electron)
 11. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
 12. Duplicate callsigns
 13. Stand conflicts + duplicate registrations
+14. Runway inactive at landing — arrival `Runway` must be in active set at `LandingTime` (`initialRunways` + `timeline` sweep sorted chronologically; `<= landingTime` applies, unsorted input handled, departures ignored, exact-time landing uses post-change set; `val_runway_inactive` / `runway_inactive_at_landing`)
 
 ## Testing
 

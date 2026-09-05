@@ -4579,7 +4579,11 @@ function _generateRunwayTimelineSection(data, meta) {
   const L = [];
   const I = '    ';
   const ir = data.initialRunways || [];
-  const tl = data.timeline || [];
+  // Defensive sort — file order should be chronological; validation blocks duplicates but sort guarantees determinism
+  const tl = [...(data.timeline || [])].sort((a, b) => {
+    const toSec = t => { const p = String(t || '').split(':'); return (parseInt(p[0]) || 0) * 3600 + (parseInt(p[1]) || 0) * 60 + (parseInt(p[2]) || 0); };
+    return toSec(a.time) - toSec(b.time);
+  });
 
   L.push(`${I}"RunwayTimeline": {`);
   L.push(`${I}    "$id": ${meta.parentId},`);
@@ -4746,6 +4750,7 @@ function _rebuildTimelineSections(aclPath, weatherTimeline, windTimeline, runway
   const _toSec = (t) => { const p = String(t || '').split(':'); return (parseInt(p[0]) || 0) * 3600 + (parseInt(p[1]) || 0) * 60 + (parseInt(p[2]) || 0); };
   if (weatherTimeline && weatherTimeline.length > 1) weatherTimeline.sort((a, b) => _toSec(a.time) - _toSec(b.time));
   if (windTimeline && windTimeline.length > 1) windTimeline.sort((a, b) => _toSec(a.time) - _toSec(b.time));
+  if (runwayTimeline && runwayTimeline.timeline && runwayTimeline.timeline.length > 1) runwayTimeline.timeline.sort((a, b) => _toSec(a.time) - _toSec(b.time));
 
   _rebuildV4TimelineSections(aclPath, text, weatherTimeline, windTimeline, runwayTimeline, log);
 }

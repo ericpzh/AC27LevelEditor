@@ -39,10 +39,47 @@ export default function RunwayEditor() {
 
   const update = (fn) => { const st = useAppStore.getState(); fn(st); st.setTimelineModified('runway', true); };
   const toggleInit = (n) => update(st => { const cur=new Set(st.runwayTimeline.initialRunways||[]); cur.has(n)?cur.delete(n):cur.add(n); useAppStore.setState({runwayTimeline:{...st.runwayTimeline,initialRunways:[...cur]}}); });
-  const addChange = () => update(st => { useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:[...(st.runwayTimeline.timeline||[]),{time:getDefaultTime({_configStartTime:_s,_configEndTime:_e}),changes:[],_isNew:true}]}}); });
+  const addChange = () => update(st => {
+    const existingTimes = new Set((st.runwayTimeline.timeline||[]).map(e=>String(e.time||'').trim()).filter(Boolean));
+    let candidate = getDefaultTime({_configStartTime:_s,_configEndTime:_e});
+    let tries = 0;
+    const toSec = t => { const p=String(t).split(':').map(Number); return (p[0]||0)*3600+(p[1]||0)*60+(p[2]||0); };
+    // Nudge by 1 minute until free (covers midpoint duplicates from fuzz)
+    while (existingTimes.has(candidate) && tries < 120) {
+      let sec = toSec(candidate) + 60;
+      sec = ((sec % 86400) + 86400) % 86400;
+      candidate = String(Math.floor(sec/3600)%24).padStart(2,'0')+':'+String(Math.floor(sec/60)%60).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
+      tries++;
+    }
+    if (existingTimes.has(candidate)) {
+      useAppStore.getState().showToast(t('val_runway_change_duplicate_time', { i: (st.runwayTimeline.timeline||[]).length+1, time: candidate, j: 1 }), 'error');
+      return;
+    }
+    useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:[...(st.runwayTimeline.timeline||[]),{time:candidate,changes:[],_isNew:true}]}});
+  });
   const delChange = (entry) => update(st => { const tl=[...(st.runwayTimeline.timeline||[])]; const idx=tl.indexOf(entry); if(idx>=0) tl.splice(idx,1); useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}}); });
-  const chgTime = (entry,v) => update(st => { const tl=[...(st.runwayTimeline.timeline||[])]; const idx=tl.indexOf(entry); if(idx>=0) tl[idx]={...tl[idx],time:v}; useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}}); });
-  const togglePair = (entry,s,d) => update(st => { const tl=[...(st.runwayTimeline.timeline||[])]; const idx=tl.indexOf(entry); if(idx<0)return; const changes=[...(tl[idx].changes||[])]; const key=s+'|'+d; const ci=changes.findIndex(c=>(c.source+'|'+c.dest)===key); ci>=0?changes.splice(ci,1):changes.push({source:s,dest:d}); tl[idx]={...tl[idx],changes}; useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}}); });
+  const chgTime = (entry,v) => update(st => {
+    const tl=[...(st.runwayTimeline.timeline||[])]; const idx=tl.indexOf(entry); if(idx<0) return;
+    const dupIdx = tl.findIndex((e,i)=>i!==idx && String(e.time||'').trim()===String(v||'').trim());
+    if (dupIdx>=0) {
+      useAppStore.getState().showToast(t('val_runway_change_duplicate_time', { i: idx+1, time: v, j: dupIdx+1 }), 'error');
+      return;
+    }
+    tl[idx]={...tl[idx],time:v}; useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}});
+  });
+  const togglePair = (entry,s,d) => update(st => {
+    const tl=[...(st.runwayTimeline.timeline||[])]; const idx=tl.indexOf(entry); if(idx<0)return;
+    const changes=[...(tl[idx].changes||[])]; const key=s+'|'+d; const ci=changes.findIndex(c=>(c.source+'|'+c.dest)===key);
+    if (ci>=0) { changes.splice(ci,1); }
+    else {
+      // No cross-entry duplicate check here — a valid recurrence like
+      //   t1: 01->19, t2: 19->01, t3: 01->19
+      // reuses the same pair after it was reversed, which the save-gate
+      // active-set sweep (val_runway_change_source_not_active) correctly allows.
+      changes.push({source:s,dest:d});
+    }
+    tl[idx]={...tl[idx],changes}; useAppStore.setState({runwayTimeline:{...st.runwayTimeline,timeline:tl}});
+  });
 
   return (
     <div id="timeline-block-runway" className={`tl-embed-block ${collapsed ? 'collapsed' : ''}`}>

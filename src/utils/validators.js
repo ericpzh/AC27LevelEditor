@@ -289,16 +289,133 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
   }
 
   // Runway timeline validation
-  if (_configStartTime && _configEndTime && runwayTimeline && runwayTimeline.timeline) {
-    const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
-    const startMin = toMin(_configStartTime), endMin = toMin(_configEndTime);
+  if (runwayTimeline && runwayTimeline.timeline) {
+    // Bounds check (only when config window is known)
+    if (_configStartTime && _configEndTime) {
+      const toMin = t => { const p = String(t).split(':'); return parseInt(p[0]) * 60 + parseInt(p[1]); };
+      const startMin = toMin(_configStartTime), endMin = toMin(_configEndTime);
+      runwayTimeline.timeline.forEach((entry, i) => {
+        if (!entry.time) return;
+        const t = toMin(entry.time);
+        if (t <= startMin || t >= endMin) {
+          issues.push(T('val_runway_change_bounds', { i: i + 1, time: entry.time, min: _configStartTime, max: _configEndTime }));
+        }
+      });
+    }
+    // Empty changes
     runwayTimeline.timeline.forEach((entry, i) => {
-      if (!entry.time) return;
-      const t = toMin(entry.time);
-      if (t <= startMin || t >= endMin) {
-        issues.push(T('val_runway_change_bounds', { i: i + 1, time: entry.time, min: _configStartTime, max: _configEndTime }));
+      if (!entry.changes || entry.changes.length === 0) {
+        issues.push(T('val_runway_change_empty', { i: i + 1, time: entry.time || '?' }));
       }
     });
+    // Duplicate time (exact HH:MM:SS match — covers getDefaultTime() midpoints)
+    {
+      const byTime = new Map();
+      runwayTimeline.timeline.forEach((entry, i) => {
+        const t = String(entry.time || '').trim();
+        if (!t) return;
+        if (!byTime.has(t)) byTime.set(t, []);
+        byTime.get(t).push(i + 1);
+      });
+      for (const [time, indices] of byTime.entries()) {
+        if (indices.length > 1) {
+          for (let k = 1; k < indices.length; k++) {
+            issues.push(T('val_runway_change_duplicate_time', { i: indices[k], time, j: indices[0] }));
+          }
+        }
+      }
+    }
+    // Timeline active-set consistency: each change's source must be active at its time.
+    // A naive "duplicate pair across entries" check would flag valid recurrences like
+    //   t1: 01->19, 04->22
+    //   t2: 19->01
+    //   t3: 01->19  (valid recurrence after reversal — must NOT be blocked)
+    // so we sweep the timeline chronologically and verify source ∈ active.
+    if (runwayTimeline.initialRunways) {
+      const toSec = t => { const p = String(t).split(':'); return (parseInt(p[0], 10) || 0) * 3600 + (parseInt(p[1], 10) || 0) * 60 + (parseInt(p[2], 10) || 0); };
+      const sorted = [...runwayTimeline.timeline].map((e, origIdx) => ({ e, origIdx })).sort((a, b) => toSec(a.e.time) - toSec(b.e.time));
+      const active = new Set((runwayTimeline.initialRunways || []).map(s => String(s).trim()).filter(Boolean));
+      for (const { e, origIdx } of sorted) {
+        const changes = e.changes || [];
+        // Check all sources are active before applying any (simultaneous changes)
+        for (const ch of changes) {
+          const src = String(ch.source || '').trim();
+          const dst = String(ch.dest || '').trim();
+          if (!src || !dst) continue;
+          if (!active.has(src)) {
+            issues.push(T('val_runway_change_source_not_active', {
+              i: origIdx + 1, source: src, dest: dst, time: e.time || '?',
+              active: [...active].sort((a, b) => {
+                const na = parseInt(a, 10) || 0, nb = parseInt(b, 10) || 0;
+                if (na !== nb) return na - nb;
+                return a.localeCompare(b);
+              }).join(', ') || '(none)',
+            }));
+          }
+        }
+        // Apply all changes together
+        for (const ch of changes) {
+          const src = String(ch.source || '').trim();
+          const dst = String(ch.dest || '').trim();
+          if (!src || !dst) continue;
+          if (active.has(src)) {
+            active.delete(src);
+            active.add(dst);
+          }
+        }
+      }
+    }
+  }
+
+  // Arrivals landing on inactive runway (timeline-aware)
+  // A landing runway must be in the active set at LandingTime: initialRunways
+  // plus all timeline changes with time <= landingTime, applied in chronological order.
+  // This catches the KDCA_peakarrival fuzz: initial [01,15,22] with N8 19 @21:15 while active is 01,15,22.
+  if (runwayTimeline && Array.isArray(runwayTimeline.initialRunways) && flights && flights.length) {
+    const toSec = t => {
+      const p = String(t || '').split(':');
+      return (parseInt(p[0], 10) || 0) * 3600 + (parseInt(p[1], 10) || 0) * 60 + (parseInt(p[2], 10) || 0);
+    };
+    const initials = (runwayTimeline.initialRunways || []).map(s => String(s).trim()).filter(Boolean);
+    // Sort timeline chronologically for sweep — file order may be unsorted (flight_plans.js didn't sort runway)
+    const sortedTl = [...(runwayTimeline.timeline || [])]
+      .filter(e => e && e.time)
+      .sort((a, b) => toSec(a.time) - toSec(b.time));
+    for (const fl of flights) {
+      const landing = (fl.LandingTime || '').trim();
+      const runway = (fl.Runway || '').trim();
+      if (!landing || !runway) continue;
+      // Only arrivals have LandingTime — departures use OffBlockTime
+      const isArrival = !!(fl.LandingTime || '').trim();
+      if (!isArrival) continue;
+      const landSec = toSec(landing);
+      const active = new Set(initials);
+      for (const entry of sortedTl) {
+        if (toSec(entry.time) <= landSec) {
+          for (const ch of (entry.changes || [])) {
+            const src = String(ch.source || '').trim();
+            const dst = String(ch.dest || '').trim();
+            if (!src || !dst) continue;
+            if (active.has(src)) {
+              active.delete(src);
+              active.add(dst);
+            }
+          }
+        }
+      }
+      if (!active.has(runway)) {
+        issues.push(T('val_runway_inactive', {
+          cs: fl.CallSign || '?',
+          runway,
+          time: landing,
+          active: [...active].sort((a, b) => {
+            const na = parseInt(a, 10) || 0, nb = parseInt(b, 10) || 0;
+            if (na !== nb) return na - nb;
+            return a.localeCompare(b);
+          }).join(', ') || '(none)',
+        }));
+      }
+    }
   }
 
   // Stand conflict detection
