@@ -273,8 +273,8 @@ window.electronAPI ipcRenderer.invoke() ipcMain.handle()
 - Renderer NEVER accesses `require()` or Node.js APIs directly
 - All file I/O goes through IPC handlers in `electron/main.js`
 - IPC channels use kebab-case strings matching the handler name
-- Every `ipcMain.handle()` must return `{ success: true/false }`
-- New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer. Ground Painter channels: `load-ground-painter-data` (→ readAclText + buildSceneryGraph) and `save-ground-painter-data` (→ patchSceneryBlob + .bak + writeAcl, returns the new baseline text).
+ - Every `ipcMain.handle()` must return `{ success: true/false }`
+ - New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer. Ground Painter channels: `load-ground-painter-data` (→ readAclText + buildSceneryGraph) and `save-ground-painter-data` (→ patchSceneryBlob + .bak + writeAcl, returns the new baseline text; also refreshes `liveSceneryCache` in-memory for the saved file). Live-scenery channels: `get-live-values` (→ `_getOrComputeLiveScenery` from the open `.acl`, populates `liveSceneryCache`, returns full `collect-values`-shaped `vals`) and `invalidate-live-values` (→ `_invalidateLiveCache`), bridged as `getLiveValues`/`invalidateLiveValues` in `preload.js`; renderer uses `get-live-values` on Editor mount and after GroundPainter save, with `collect-values` as fallback.
 - **Main→renderer events:**
  - `cache-build-progress` — per-file progress during scan: `{ current: number, total: number }`; preload bridges via `onCacheBuildProgress(cb)` / `offCacheBuildProgress(cb)` (uses handler-map pattern, same function reference required for cleanup)
  - `store-api-update` — pushes bulk state updates from MCP/API server to renderer: `{ flights, modified, ... }`; preload bridges via `onStoreApiUpdate(cb)` / `offStoreApiUpdate(cb)` (handler-map pattern). Renderer converts arrays→Sets and calls `setLegacyState()`.
@@ -354,7 +354,7 @@ Airports/ZSJN/Levels/ copy → _tmp/golden/ZSJN/ copy → _tmp/result/ZSJN/
 6. **Clean up** `_tmp/` after each file (removed entirely after run)
 7. **Write JSON report** → `tests/_reports_/save-integrity-<timestamp>.json` with per-file metrics and diffs
 
-- Supports `--prod-demo` flag to test only the 21 prod+demo files (18 prod + 3 demo; prod with ZGSZ +5, total)
+- Supports `--prod-demo` flag to test only the 28 prod+demo files (25 prod (24 + ZGSZ_Endless) + 3 demo extra; prod with ZGSZ +5 + surfaceradar +4, total)
 - Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored
 - Full test documentation: `tests/README.md` — test matrix, expected values, execution commands
 

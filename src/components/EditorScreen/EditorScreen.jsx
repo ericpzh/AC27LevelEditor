@@ -330,7 +330,21 @@ export default function EditorScreen() {
       const st = useAppStore.getState();
       st.setLegacyState({ chatPanelOpen: false, currentPath: filePath, currentAirport: airportIcao, flights: data.flights, modified: false, highlightedIdx: -1, selectedIndices: new Set(), _configStartTime: data.config?.startTime || null, _configEndTime: data.config?.endTime || null, _saveSec: data._saveSec, _currentDateTime: data._currentDateTime || null, isDemo: data.isDemo || false });
       if (rootPath && airportIcao) {
-        const [vals, audio, tl, rp] = await Promise.all([electronAPI.collectValues(rootPath, airportIcao), electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
+        // Live scenery is authoritative for Stand/Runway/Airway — derive from the open file, not cache.json
+        let vals;
+        try {
+          const liveRes = await electronAPI.getLiveValues(filePath, airportIcao);
+          if (liveRes && liveRes.success && liveRes.vals) {
+            vals = liveRes.vals;
+          } else {
+            console.warn('[Editor] getLiveValues failed, using collectValues fallback:', liveRes?.error);
+            vals = await electronAPI.collectValues(rootPath, airportIcao);
+          }
+        } catch (e) {
+          console.warn('[Editor] getLiveValues threw:', e?.message || e);
+          vals = await electronAPI.collectValues(rootPath, airportIcao);
+        }
+        const [audio, tl, rp] = await Promise.all([electronAPI.loadAudioCallsigns(rootPath, airportIcao), electronAPI.loadTimelines(filePath), electronAPI.scanRunwayPairs(rootPath, airportIcao)]);
         console.log('[Editor] loaded aux data', { airportIcao, valsKeys: Object.keys(vals||{}), dropdowns: { Stand: vals?.Stand?.length, Runway: vals?.Runway?.length, AircraftType: vals?.AircraftType?.length } });
         // Auto-remove runway timeline entries outside the level time range
         // (mirrors the demo flight auto-removal in load-acl IPC for consistency)

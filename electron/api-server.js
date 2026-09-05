@@ -1029,7 +1029,8 @@ async function handleMcpMessage(msg) {
             const tail = { x: st.x - Math.cos(rad) * STAND_LENGTH, z: st.z + Math.sin(rad) * STAND_LENGTH };
             const ni = newGraph.nodes.length; newGraph.nodes.push(nose); newMeta.nodeOrigPk.push(null);
             const ti = newGraph.nodes.length; newGraph.nodes.push(tail); newMeta.nodeOrigPk.push(null);
-            newGraph.stands.push({ noseIdx: ni, tailIdx: ti, heading: hdg, pushbackIdxs: [], parkingType: 1, egressType: 0, ...(st.name ? { name: String(st.name) } : {}) });
+            const standName = st.name ? String(st.name) : '';
+            newGraph.stands.push({ noseIdx: ni, tailIdx: ti, heading: hdg, pushbackIdxs: [], parkingType: 1, egressType: 0, ...(standName ? { name: standName, identifier: standName, nameEdited: true } : {}) });
             newMeta.standOrigPk.push(null);
             added++;
           }

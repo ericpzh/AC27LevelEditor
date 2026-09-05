@@ -790,12 +790,22 @@ export default function GroundPainter({ vals }) {
 
   // ── Stand / taxiway name editing ──
   const updateStandName = useCallback((idx, newName) => {
-    const g = useAppStore.getState().groundPainterGraph;
+    const st = useAppStore.getState();
+    const g = st.groundPainterGraph;
+    const meta = st.groundPainterMeta;
     if (!g || !g.stands[idx]) return;
     const stands = [...g.stands];
-    stands[idx] = { ...stands[idx], name: String(newName ?? ''), nameEdited: true };
-    const s = useAppStore.getState();
-    useAppStore.setState({ groundPainterHistory: s.groundPainterGraph, groundPainterGraph: { ...g, stands }, groundPainterHasEdited: true });
+    const isNew = !(meta?.standOrigPk && meta.standOrigPk[idx] != null);
+    const name = String(newName ?? '');
+    if (isNew) {
+      // For a newly-created stand the PK/Identifier has not been fixed yet —
+      // renaming must re-key the stand so the dropdown (Identifier) reflects the
+      // user-typed name. Survivor stands keep their Identifier (Name is display only).
+      stands[idx] = { ...stands[idx], name, identifier: name, nameEdited: true };
+    } else {
+      stands[idx] = { ...stands[idx], name, nameEdited: true };
+    }
+    useAppStore.setState({ groundPainterHistory: st.groundPainterGraph, groundPainterGraph: { ...g, stands }, groundPainterHasEdited: true });
   }, []);
 
   const updateSegmentName = useCallback((idx, newName) => {
@@ -4340,8 +4350,14 @@ export default function GroundPainter({ vals }) {
           } catch (_) {}
           if (curAirport && rPath) {
             try {
-              const [vals, audio, tl, rp] = await Promise.all([
-                window.electronAPI.collectValues(rPath, curAirport),
+              let vals;
+              try {
+                const liveRes = await window.electronAPI.getLiveValues(curPath, curAirport);
+                vals = (liveRes && liveRes.success) ? liveRes.vals : await window.electronAPI.collectValues(rPath, curAirport);
+              } catch (_) {
+                vals = await window.electronAPI.collectValues(rPath, curAirport);
+              }
+              const [audio, tl, rp] = await Promise.all([
                 window.electronAPI.loadAudioCallsigns(rPath, curAirport),
                 window.electronAPI.loadTimelines(curPath),
                 window.electronAPI.scanRunwayPairs(rPath, curAirport),

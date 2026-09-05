@@ -1830,19 +1830,36 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
   // reference the newly-synthesized (or survivor) nose/tail/pushback node ids.
   const ss = _sampleStandShapes(pkEntries);
   let maxStand = 0;
+  const existingIdents = new Set();
   for (const e of pkEntries) {
     if (_entryTypePrefix(e) === 'stand') {
       const pk = _entryPk(e);
+      if (pk && pk.startsWith('stand:')) existingIdents.add(pk.slice(6));
       const num = /^stand:(\d+)$/.exec(pk);
       if (num) { const n = parseInt(num[1], 10); if (n > maxStand) maxStand = n; }
     }
   }
+  const allocatedIdents = new Set(existingIdents);
   let nextStand = maxStand + 1;
   for (let st = 0; st < graph.stands.length; st++) {
     const pk = meta.standOrigPk ? meta.standOrigPk[st] : null;
     if (pk != null) continue; // survivor kept verbatim
     const stand = graph.stands[st];
-    const ident = String(nextStand++);
+    // Prefer the stand's identifier when the UI/MCP explicitly set it (e.g. rename of a newly-created stand to "A13").
+    // This makes the dropdown (Identifier) reflect the user-typed name. Fall back to dense numeric allocation.
+    let ident;
+    const desired = stand.identifier != null ? String(stand.identifier).trim() : '';
+    if (desired && !desired.includes(':') && !desired.includes('"') && !allocatedIdents.has(desired)) {
+      ident = desired;
+      allocatedIdents.add(ident);
+      // Keep nextStand in sync if desired is numeric and >= nextStand
+      const asNum = parseInt(desired, 10);
+      if (!isNaN(asNum) && String(asNum) === desired && asNum >= nextStand) nextStand = asNum + 1;
+    } else {
+      ident = String(nextStand++);
+      while (allocatedIdents.has(ident)) ident = String(nextStand++);
+      allocatedIdents.add(ident);
+    }
     const noseId = nodeIds[stand.noseIdx], tailId = nodeIds[stand.tailIdx];
     const pbIds = (stand.pushbackIdxs || []).map((i) => nodeIds[i]).filter((v) => v != null);
     if (noseId == null || tailId == null) {

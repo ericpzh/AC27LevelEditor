@@ -1,7 +1,7 @@
 /**
  * Fuzz Ground+Air Save Test — randomized Ground/Air Painter edit storm + real SAVE (with backup)
  *
- * For each target .acl level (default: all 20 production levels):
+ * For each target .acl level (default: all 24 production levels):
  *   1. Open the level in the editor (browser row click)
  *   2. Open the Ground Painter (toggleGroundPainter → load-ground-painter-data)
  *   3. FuzzGroundTest(aclPath) applies 50–200 RANDOMIZED operations through the
@@ -79,12 +79,12 @@ const API_BASE = process.env.FUZZ_API_BASE || 'http://127.0.0.1:31415/mcp';
 const DEFAULT_PROD_FILES = [
   'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
   'ZSJN/ZSJN_peakdeparture.acl', 'ZSJN/ZSJN_runwaychange.acl',
-  'ZSJN/ZSJN_taixwayclosed.acl',
-  'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl', 'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl',
+  'ZSJN/ZSJN_taixwayclosed.acl', 'ZSJN/ZSJN_surfaceradarinvisible.acl',
+  'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl', 'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl', 'KJFK/KJFK_surfaceradarinvisible.acl',
   'KDCA/KDCA_leisure_1.acl', 'KDCA/KDCA_leisure_2.acl',
-  'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl',
+  'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl', 'KDCA/KDCA_surfaceradarinvisible.acl',
   'ZGSZ/ZGSZ_leisure_1.acl', 'ZGSZ/ZGSZ_leisure_2.acl',
-  'ZGSZ/ZGSZ_runwaychange.acl', 'ZGSZ/ZGSZ_peakdeparture.acl', 'ZGSZ/ZGSZ_peakarrival.acl',
+  'ZGSZ/ZGSZ_runwaychange.acl', 'ZGSZ/ZGSZ_peakdeparture.acl', 'ZGSZ/ZGSZ_peakarrival.acl', 'ZGSZ/ZGSZ_surfaceradarinvisible.acl',
 ];
 
 // ── Deterministic random ────────────────────────────────────────────

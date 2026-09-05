@@ -40,25 +40,26 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
  - Extracts SID data: `sidPaths` (departure route polylines from PKStaticEntities runway `Routes`, RouteType=2), `sidRunwayMap` (SID→[runways]), `runwaySidMap` (runway→[SIDs]) — parsed by `sid_goaround.js` — **merged across every `.acl`** (v5 per-level filtering, `_extractRouteMappingsByType` now resolves `PhysicalName` via `PhysicalRunwayStaticItem`)
  - Extracts Missed Approach data: `missedAppPaths` (go-around route polylines from PKStaticEntities runway `Routes`, RouteType=3), `missedAppMap` (MA name→runway), `runwayMissedAppMap` (runway→MA names) — parsed by `sid_goaround.js` — merged across all files (same `PhysicalRunwayStaticItem` fix)
  - Extracts APPR data: `apprPaths` (RNAV approach routes, RouteType=1 via `sid_goaround.js`'s `extractApprRunwayMappings`/`buildApprPaths`), `apprRunwayMap`/`runwayApprMap` — also merged across all files
- - Collects dropdown values (`collectUniqueValues`) and runway pairs (`extractV4RunwayPairs` on the first .acl — reciprocal pairs grouped by `PhysicalName` in PKStaticEntities)
- - Merges audio flight numbers into `_flightNums` per airline code
- - **Stand dropdown from PKStaticEntities:** Stand identifiers parsed by `_parseStandPositions()` (stand `TailPosition`/`NosePosition` `$iref`s) become the authoritative dropdown options (sorted), replacing any hardcoded or ACL-derived stand lists
- - **STAR dropdown from PKStaticEntities:** STAR names come from `starRunwayMap` keys (runway `Routes` with RouteType=0), same pattern as Stand — static scenery is the single source of truth. `starRunwayMap` is built by `extractStarRunwayMappings()` and already excludes stubs (`$rlength:0`)
- - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData }`
- - `approachData` now includes: `taxiwayPaths`, `sidPaths`, `missedAppPaths`, `apprPaths`, `sidRunwayMap`, `runwaySidMap`, `missedAppMap`, `runwayMissedAppMap`, `apprRunwayMap`, `runwayApprMap`, `starWaypoints` (all serialized through `serializeApproachCache`/`deserializeApproachCache`)
- - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint) plus `tailX`/`tailZ`/`noseX`/`noseZ` for heading/orientation
- - `areaData` parsed from first .acl via `_parseAreas()` — maps AreaType (0=boundary, 1=stand/apron, 2=building) → `[{guid, enabled, points[{x,z}]}]` — used by GroundMapWindow
- - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan`
- - **Centralized cache I/O:** `_readCache(opts)` and `_writeCache(data)` in `electron/main.js` handle all `cache.json` reads/writes. `_readCache` validates `cacheVersion` and `gameRoot`. All IPC handlers MUST use these helpers — never read/write `cache.json` directly.
+  - Collects dropdown values (`collectUniqueValues`) and runway pairs (`extractV4RunwayPairs` on the first .acl — reciprocal pairs grouped by `PhysicalName` in PKStaticEntities) — **except `Stand`/`Runway`/`Airway` which are live-only (see below) and stripped before persist**
+  - Merges audio flight numbers into `_flightNums` per airline code
+  - **Stand / Runway / STAR are live-only (in-memory, per-file):** `Stand`/`Runway`/`Airway` are **never read from or written to `cache.json`** — they are derived per `.acl` file at open/save time via `liveSceneryCache` (Map keyed by absolute `aclPath`, `{icao, mtimeMs, vals}`, mtime-checked). `init-airport-cache` and `refresh-root-scan` strip those three keys (and `standPositions` / derived `starRunwayMap` stubs) on read and omit them on `_writeCache`; `collect-values` serves them from `liveSceneryCache` (union of entries for the ICAO) and returns `[]` when no live entry exists (not stale disk data). `starRunwayMap` as authoritative STAR list follows the same live path.
+  - Caches in memory as `airportCache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData }` — `dropdownValues` no longer contains `Stand`/`Runway`/`Airway`; `standPositions` in the persisted shape is always `{}` (live map lives in `liveSceneryCache`).
+  - `approachData` now includes: `taxiwayPaths`, `sidPaths`, `missedAppPaths`, `apprPaths`, `sidRunwayMap`, `runwaySidMap`, `missedAppMap`, `runwayMissedAppMap`, `apprRunwayMap`, `runwayApprMap`, `starWaypoints` (all serialized through `serializeApproachCache`/`deserializeApproachCache`)
+  - `standPositions` parsed from first .acl via `_parseStandPositions()` — maps stand identifier → `{x, y}` (midpoint) plus `tailX`/`tailZ`/`noseX`/`noseZ` for heading/orientation — **only for non-live consumers; dropdown truth is `liveSceneryCache`**
+  - `areaData` parsed from first .acl via `_parseAreas()` — maps AreaType (0=boundary, 1=stand/apron, 2=building) → `[{guid, enabled, points[{x,z}]}]` — used by GroundMapWindow — **live union also carries `areaData`/`taxiwayPaths`/`runwayThresholds`/`starPaths` etc. per file so StandMap/StarMap reflect the open file**
+  - Persisted to disk (`cache.json` in userData, unified with `gameRoot`, `lang`, `cacheVersion`) — no TTL, refreshed via `refresh-root-scan` — **live keys are never persisted**
+  - **Centralized cache I/O:** `_readCache(opts)` and `_writeCache(data)` in `electron/main.js` handle all `cache.json` reads/writes. `_readCache` validates `cacheVersion` and `gameRoot`. All IPC handlers MUST use these helpers — never read/write `cache.json` directly.
 
 ## Phase 1: Load Level
 
 1. User clicks a level row → `window._pendingEditor = { filePath, airportIcao }` → `setScreen('editor')`
 2. EditorScreen's `useEffect` reads `window._pendingEditor` and loads:
- - `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
- - `load-timelines` IPC → reads timelines from ACL + `windSpeedUnit` from `airport_config.json` (defaults to `'knots'`)
- - `collect-values` IPC → reads dropdown values from airport cache (no file I/O). Also returns `_taxiwayPaths`, `_runwayData`, `_sidPaths`, `_missedAppPaths`, `_sidRunwayMap`, `_runwaySidMap`, `_starWaypoints` (ordered per-STAR waypoint lists, `{ "STAR|runway": [{name, x, z}, ...] }` in route order entry→IAF — the patch composer's "Fly Waypoint" picker target set) for map window rendering.
- - `load-audio-callsigns` IPC → reads audio callsigns from airport cache (no file I/O)
+  - `load-acl` IPC → reads `.acl` → parses FlightPlans as primary flight data
+  - `load-timelines` IPC → reads timelines from ACL + `windSpeedUnit` from `airport_config.json` (defaults to `'knots'`)
+  - `get-live-values` IPC (primary) → derives `Stand`/`Runway`/`Airway` + `_standPositions`/`_starRunwayMap`/`_runwayStarMap`/`_runwayThresholds`/`_taxiwayPaths`/`_areaData`/`_starPaths`/`_starWaypoints`/`_airwayNodes`/SID/APPR directly from the **open `.acl` file** (`_collectLiveSceneryForFile` → `liveSceneryCache`, mtime-checked, in-memory only, no `cache.json`). Falls back to `collect-values` for non-live fields if the live parse fails.
+  - `collect-values` IPC → reads non-live dropdown values from airport cache (no file I/O) + **live fields from `liveSceneryCache` union** (returns `[]` for `Stand`/`Runway`/`Airway` when no live entry yet — never stale disk data). Also returns `_taxiwayPaths`, `_runwayData`, `_sidPaths`, `_missedAppPaths`, `_sidRunwayMap`, `_runwaySidMap`, `_starWaypoints` (ordered per-STAR waypoint lists, `{ "STAR|runway": [{name, x, z}, ...] }` in route order entry→IAF — the patch composer's "Fly Waypoint" picker target set) — now **per-file live** when a live entry exists.
+  - `load-audio-callsigns` IPC → reads audio callsigns from airport cache (no file I/O)
+  - `scan-runway-pairs` IPC → returns `liveSceneryCache` union `runwayPairs` when present, else cached `runwayPairs`
 3. **Wind speed conversion:** If `windSpeedUnit` is `'mps'`, speeds are converted to knots on load (1 m/s = 1.94384 kt). The zustand store always holds knots. Stored in `_windSpeedUnit`.
 4. Zustand store is populated and React renders the flight table
 
@@ -107,6 +108,16 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
  - **Demo-window files treated identically** — all files in `DEMO_VISIBLE_BASES` (including `_emerg`) write to their `.acl`/`.demo.acl` + shared `.csv` + shared timeline `.json` files with the same 30-minute window logic via `_isDemoFile()`
 5. Timeline saves (separate IPC per type) → writes JSON files
 6. Backup: `.bak` copies created before overwrite (optional, checkbox in save dialog). For `.demo.acl` files, creates `.demo.acl.bak`
+
+## Live Scenery Cache (in-memory only, per-file)
+
+`electron/main.js:liveSceneryCache` (`Map<aclPath, {icao, mtimeMs, vals, computedAt}>`) is the **only** store for `Stand`/`Runway`/`Airway` and their derived maps (`_standPositions`, `_starRunwayMap`/`_runwayStarMap`, `_runwayThresholds`/`_runwayData`, `_taxiwayPaths`, `_areaData`, `_starPaths`/`_starWaypoints`, `_airwayNodes`, SID/APPR). Triggers:
+
+- **Trigger A — first entrance Browser→Editor:** `EditorScreen.jsx` calls `get-live-values` (`electron/main.js:_getOrComputeLiveScenery` → `_collectLiveSceneryForFile` via `readAclText` + `_parseStandPositions` / `extractV4RunwayPairs`+`buildSceneryGraph` / `extractStarRunwayMappings`+`buildStarPaths` etc.). Result populates `appStore.airportValues[ICAO]`; CellEditor/FlightTable re-render.
+- **Trigger B — after GroundPainter Save:** `save-ground-painter-data` does `writeAcl` → `_invalidateLiveCache(filePath)` → `_getOrComputeLiveScenery(filePath, icao)` (mtime now matches new file) before returning; renderer then calls `get-live-values` to refresh `airportValues`. No `cache.json` write.
+- **Invalidation:** mtime check (`_isLiveCacheFresh`) on every `get-live-values` / `collect-values` read; explicit `_invalidateLiveCache` on save. Union helper `_unionLiveEntries(entries)` merges all live entries for an ICAO when `collect-values` is called with only ICAO (dedup by `Stand`/`Runway`/`Airway` set, `runwayPairs` by `source|dest`, `starRunwayMap` array-union, etc.). No disk persistence.
+
+`cache.json` on disk never contains `Stand`/`Runway`/`Airway` (stripped on read/write); old files still carrying them are ignored and disappear on next `_writeCache` of other fields.
 
 ## Cache State & Version Detection
 
@@ -227,14 +238,14 @@ When editing an Airway cell in the flight table, a non-blocking overlay panel sh
 
 **Visibility is whitelist-based** in `src/utils/constants/ui.js`:
 
-- `PROD_VISIBLE_BASES` (ordered array, **21 entries**, 20 + `ZGSZ_Endless.acl`) — the only levels shown in production (non-demo) mode; **array position = browser display order**:
- `ZSJN_leisure_1.acl`, `ZSJN_leisure_2.acl`, `ZSJN_runwaychange.acl`, `ZSJN_peakdeparture.acl`, `ZSJN_taixwayclosed.acl`, `KJFK_leisure_1.acl`, `KJFK_leisure_2.acl`, `KJFK_runwaychange.acl`, `KJFK_peakdeparture.acl`, `KJFK_peakarrival.acl`, `KDCA_leisure_1.acl`, `KDCA_leisure_2.acl`, `KDCA_runwaychange.acl`, `KDCA_peakdeparture.acl`, `KDCA_peakarrival.acl`, **`ZGSZ_leisure_1.acl`, `ZGSZ_leisure_2.acl`, `ZGSZ_runwaychange.acl`, `ZGSZ_peakdeparture.acl`, `ZGSZ_peakarrival.acl`**, `ZGSZ_Endless.acl` — the 5 `ZGSZ_*` production levels were added (v5). Excluding `ZGSZ_Endless.acl`, the browser's default production scope is **18** levels (`` in tests: `fuzz-save.spec.mjs` `DEFAULT_PROD_FILES`, `global-setup.mjs` `` prod+demo, `test_save_integrity_all.js` ``).
+- `PROD_VISIBLE_BASES` (ordered array, **25 entries**, 24 + `ZGSZ_Endless.acl`) — the only levels shown in production (non-demo) mode; **array position = browser display order**:
+ `ZSJN_leisure_1.acl`, `ZSJN_leisure_2.acl`, `ZSJN_runwaychange.acl`, `ZSJN_peakdeparture.acl`, `ZSJN_taixwayclosed.acl`, `ZSJN_surfaceradarinvisible.acl`, `KJFK_leisure_1.acl`, `KJFK_leisure_2.acl`, `KJFK_runwaychange.acl`, `KJFK_peakdeparture.acl`, `KJFK_peakarrival.acl`, `KJFK_surfaceradarinvisible.acl`, `KDCA_leisure_1.acl`, `KDCA_leisure_2.acl`, `KDCA_runwaychange.acl`, `KDCA_peakdeparture.acl`, `KDCA_peakarrival.acl`, `KDCA_surfaceradarinvisible.acl`, **`ZGSZ_leisure_1.acl`, `ZGSZ_leisure_2.acl`, `ZGSZ_runwaychange.acl`, `ZGSZ_peakdeparture.acl`, `ZGSZ_peakarrival.acl`**, `ZGSZ_Endless.acl`, `ZGSZ_surfaceradarinvisible.acl` — the 5 `ZGSZ_*` production levels were added (v5) + 4 `*_surfaceradarinvisible.acl` (Surface Radar Invisible / 无场面雷达) were added. Excluding `ZGSZ_Endless.acl`, the browser's default production scope is **24** levels (`` in tests: `fuzz-save.spec.mjs` `DEFAULT_PROD_FILES`, `global-setup.mjs` `` prod+demo, `test_save_integrity_all.js` ``).
 - `DEMO_VISIBLE_ORDER` (ordered array, 4 entries) — the only levels shown in demo mode (root path contains "Airport Control 27 Demo"); array position = browser display order:
  `KJFK_leisure_1.demo.acl`, `KJFK_peakarrival.demo.acl`, `ZSJN_leisure_1.acl`, `ZSJN_peakdeparture.demo.acl`
 - `DEMO_VISIBLE_BASES` (Set) — derived from `DEMO_VISIBLE_ORDER` for lookups
 - `ZSJN_leisure_1.acl` appears in **both** lists — it ships as a regular level but is also playable in demo mode. (`ZSJN_leisure_2.acl` is prod-only.)
 
-**Display names:** Levels show localized names from `src/utils/i18n.js` under `level_name_<base-filename-without-.acl>` keys (e.g. `level_name_ZSJN_leisure_1` → "悠闲时刻" / "Relax Time"; `.demo` variants included, e.g. `'level_name_KJFK_peakarrival.demo'` — quoted because the key contains dots; `ZGSZ_*` keys added : `level_name_ZGSZ_leisure_1`/`_leisure_2`/`_runwaychange`/`_peakdeparture`/`_peakarrival` → "Relax/Busy Time…", `ZGSZ_Endless` → "Endless"/"无尽"). BrowserScreen looks up `t('level_name_' + filename.replace(/\.acl$/i, ''))`; `t()` falls back to the raw key if missing.
+**Display names:** Levels show localized names from `src/utils/i18n.js` under `level_name_<base-filename-without-.acl>` keys (e.g. `level_name_ZSJN_leisure_1` → "悠闲时刻" / "Relax Time"; `.demo` variants included, e.g. `'level_name_KJFK_peakarrival.demo'` — quoted because the key contains dots; `ZGSZ_*` keys added : `level_name_ZGSZ_leisure_1`/`_leisure_2`/`_runwaychange`/`_peakdeparture`/`_peakarrival` → "Relax/Busy Time…", `ZGSZ_Endless` → "Endless"/"无尽", `*_surfaceradarinvisible` → "Surface Radar Invisible"/"无场面雷达"). BrowserScreen looks up `t('level_name_' + filename.replace(/\.acl$/i, ''))`; `t()` falls back to the raw key if missing.
 
 **Row layout:** `[display name — large, replaces the old time-of-day label (Morning/Afternoon)] [time range HH:MM-HH:MM] [small filename via stripSuffixes] [arrivals/departures stats] [arrow]`. Time-of-day label (dawn/morning/afternoon/dusk/night) is gone; the name took its slot. The first column is fixed-width per language (`--tod-width`: zh 80px / en 130px, set inline on `#screen-browser`) so the name/time/filename sections align vertically across airport cards. `sortLevelRows` no longer sorts by time.
 

@@ -47,6 +47,250 @@ const WITCH_SHEET_COUNT = 15;
 let cachedScan = null; // cached scan result { airports, totalFiles }
 let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns } }
 
+// ─── Live scenery in-memory cache (fully dynamic, never persisted to cache.json) ──
+// Keyed by absolute aclPath (per-level truth). Invalidated on save or mtime change.
+const liveSceneryCache = new Map(); // aclPath -> { icao, mtimeMs, vals, computedAt }
+
+function _liveCacheKey(aclPath) { return path.resolve(aclPath); }
+function _isLiveCacheFresh(entry, aclPath) {
+  try { return entry && fs.existsSync(aclPath) && fs.statSync(aclPath).mtimeMs === entry.mtimeMs; }
+  catch (_) { return false; }
+}
+function _invalidateLiveCache(aclPath) { liveSceneryCache.delete(_liveCacheKey(aclPath)); }
+
+/**
+ * Derive live scenery values from ONE .acl file (no cache.json read/write).
+ * Reuses the same parsers the Ground Painter and maps trust — now fully per-file
+ * so StandMap / StarMap update immediately after a Ground-Painter save.
+ */
+function _collectLiveSceneryForFile(aclPath) {
+  const text = readAclText(aclPath);
+
+  // Stand — src/acl/scenery.js:61
+  let standPositions = {};
+  try { standPositions = _parseStandPositions(text) || {}; } catch (_) { standPositions = {}; }
+  const standList = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
+
+  // Area — src/acl/scenery.js
+  let areaData = {};
+  try { areaData = _parseAreas(text) || {}; } catch (_) { areaData = {}; }
+
+  // Runway — extractV4RunwayPairs + buildSceneryGraph fallback for v5 PhysicalRunwayStaticItem
+  let runwayPairs = [];
+  try { runwayPairs = extractV4RunwayPairs(text) || []; } catch (_) { runwayPairs = []; }
+  const runwayNames = new Set();
+  for (const p of runwayPairs) { if (p.source) runwayNames.add(p.source); if (p.dest) runwayNames.add(p.dest); }
+  let sceneryGraph = null;
+  try {
+    const { buildSceneryGraph } = require('../src/acl/scenery_graph');
+    const res = buildSceneryGraph(text);
+    sceneryGraph = res.graph;
+    for (const rw of (sceneryGraph.runways || [])) {
+      for (const n of (rw.names || [])) if (n) runwayNames.add(String(n).trim());
+      if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) if (n) runwayNames.add(String(n).trim());
+    }
+  } catch (_) {}
+  const runwayList = [...runwayNames].sort((a, b) => a.localeCompare(b));
+
+  // STAR / Airway — src/acl/approach.js
+  let starRunwayMap = {}, runwayStarMap = {};
+  try {
+    const approach = require('../src/acl/approach');
+    const mappings = approach.extractStarRunwayMappings(text);
+    starRunwayMap = mappings.starRunwayMap || {};
+    runwayStarMap = mappings.runwayStarMap || {};
+  } catch (_) {}
+  const airwayList = Object.keys(starRunwayMap).sort((a, b) => a.localeCompare(b));
+
+  // Taxiway paths — src/acl/taxiway.js (for StandMap)
+  let taxiwayPaths = { paths: [] };
+  try {
+    const { parseTaxiwayPaths } = require('../src/acl/taxiway');
+    const tw = parseTaxiwayPaths(text);
+    if (tw && Array.isArray(tw.paths)) taxiwayPaths = tw;
+  } catch (_) { taxiwayPaths = { paths: [] }; }
+
+  // Runway thresholds — src/acl/approach.js (for StarMap + StandMap runwayData)
+  let runwayThresholds = {};
+  try {
+    const approach = require('../src/acl/approach');
+    if (typeof approach._parseRunwayThresholds === 'function') {
+      runwayThresholds = approach._parseRunwayThresholds(text) || {};
+    }
+  } catch (_) { runwayThresholds = {}; }
+
+  // Star paths & waypoints — per-file (for StarMap)
+  let starPaths = {};
+  let starWaypoints = {};
+  let airwayNodes = [];
+  try {
+    const approach = require('../src/acl/approach');
+    // starPaths from SceneryData (fly approach points) — per-file
+    if (typeof approach.buildStarPaths === 'function') {
+      try { starPaths = approach.buildStarPaths(text, null, starRunwayMap) || {}; } catch (_) { starPaths = {}; }
+    }
+    if (typeof approach.extractStarWaypoints === 'function') {
+      try { starWaypoints = approach.extractStarWaypoints(text) || {}; } catch (_) { starWaypoints = {}; }
+    }
+    // airwayNodes — per-file PK extraction (same filter as buildApproachCache)
+    try {
+      const { buildPkIndex, getPkEntriesByType, extractVector3FromV4, extractStringFromV4, extractIntFromV4 } = require('../src/acl/v4_pk_index');
+      const { FIX_NAME_RE } = require('../src/utils/constants/aviation');
+      const pkIndex = buildPkIndex(text);
+      const nodes = [];
+      for (const entry of getPkEntriesByType(pkIndex, 'airway-node')) {
+        const pos = extractVector3FromV4(entry.block);
+        if (!pos) continue;
+        const name = extractStringFromV4(entry.block, 'Name');
+        if (!name || !FIX_NAME_RE.test(name)) continue;
+        nodes.push({ pk: entry.pk, name, osmId: extractIntFromV4(entry.block, 'OsmId'), x: pos.x, z: pos.z });
+      }
+      airwayNodes = nodes;
+    } catch (_) { airwayNodes = []; }
+  } catch (_) {}
+
+  // SID / APPR / Missed — keep per-file if available (optional, for AirMap filter)
+  let sidPaths = {}, missedAppPaths = {}, apprPaths = {};
+  let sidRunwayMap = {}, runwaySidMap = {}, missedAppMap = {}, runwayMissedAppMap = {}, apprRunwayMap = {}, runwayApprMap = {};
+  try {
+    const { extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths, extractApprRunwayMappings, buildApprPaths } = require('../src/acl/sid_goaround');
+    const sidM = extractSidRunwayMappings(text) || {};
+    sidRunwayMap = sidM.sidRunwayMap || {}; runwaySidMap = sidM.runwaySidMap || {};
+    const maM = extractMissedApproachMappings(text) || {};
+    missedAppMap = maM.missedAppMap || {}; runwayMissedAppMap = maM.runwayMissedAppMap || {};
+    const apprM = extractApprRunwayMappings(text) || {};
+    apprRunwayMap = apprM.apprRunwayMap || {}; runwayApprMap = apprM.runwayApprMap || {};
+    try { sidPaths = buildSidPaths(text, sidRunwayMap) || {}; } catch (_) {}
+    try { missedAppPaths = buildMissedApproachPaths(text, missedAppMap) || {}; } catch (_) {}
+    try { apprPaths = buildApprPaths(text, apprRunwayMap) || {}; } catch (_) {}
+  } catch (_) {}
+
+  return {
+    standPositions, areaData, taxiwayPaths, runwayThresholds, starRunwayMap, runwayStarMap,
+    starPaths, starWaypoints, airwayNodes,
+    sidPaths, missedAppPaths, apprPaths, sidRunwayMap, runwaySidMap, missedAppMap, runwayMissedAppMap, apprRunwayMap, runwayApprMap,
+    runwayPairs,
+    dropdownPatch: { Stand: standList, Runway: runwayList, Airway: airwayList },
+    approachPatch: { starRunwayMap, runwayStarMap },
+  };
+}
+
+function _getOrComputeLiveScenery(aclPath, icao) {
+  const key = _liveCacheKey(aclPath);
+  const cached = liveSceneryCache.get(key);
+  if (_isLiveCacheFresh(cached, aclPath)) return cached.vals;
+  const live = _collectLiveSceneryForFile(aclPath);
+  const mtimeMs = fs.existsSync(aclPath) ? fs.statSync(aclPath).mtimeMs : 0;
+  const entry = { icao, mtimeMs, vals: live, computedAt: Date.now() };
+  liveSceneryCache.set(key, entry);
+  return live;
+}
+
+function _unionLiveEntries(entries) {
+  if (!entries || entries.length === 0) return null;
+  const standSet = new Set();
+  const runwaySet = new Set();
+  const airwaySet = new Set();
+  const standPositions = {};
+  let runwayPairs = [];
+  let starRunwayMap = {}, runwayStarMap = {};
+  // Extended per-file maps for StandMap / StarMap
+  const areaData = {};
+  let taxiwayPaths = { paths: [] };
+  const taxiSeen = new Set();
+  const runwayThresholds = {};
+  const starPaths = {};
+  const starWaypoints = {};
+  const airwayNodes = [];
+  const airwaySeen = new Set();
+  const sidPaths = {}, missedAppPaths = {}, apprPaths = {};
+  const sidRunwayMap = {}, runwaySidMap = {}, missedAppMap = {}, runwayMissedAppMap = {}, apprRunwayMap = {}, runwayApprMap = {};
+  for (const e of entries) {
+    const v = e.vals;
+    if (!v) continue;
+    for (const s of (v.dropdownPatch?.Stand || [])) standSet.add(s);
+    for (const r of (v.dropdownPatch?.Runway || [])) runwaySet.add(r);
+    for (const a of (v.dropdownPatch?.Airway || [])) airwaySet.add(a);
+    Object.assign(standPositions, v.standPositions || {});
+    if (Array.isArray(v.runwayPairs)) runwayPairs = runwayPairs.concat(v.runwayPairs);
+    // Merge starRunwayMap with array union per key
+    for (const [k, arr] of Object.entries(v.starRunwayMap || {})) {
+      if (!starRunwayMap[k]) starRunwayMap[k] = [];
+      for (const r of arr) if (!starRunwayMap[k].includes(r)) starRunwayMap[k].push(r);
+    }
+    for (const [k, arr] of Object.entries(v.runwayStarMap || {})) {
+      if (!runwayStarMap[k]) runwayStarMap[k] = [];
+      for (const s of arr) if (!runwayStarMap[k].includes(s)) runwayStarMap[k].push(s);
+    }
+    // areaData — merge per type
+    for (const [type, list] of Object.entries(v.areaData || {})) {
+      if (!areaData[type]) areaData[type] = [];
+      const seenGuids = new Set(areaData[type].map(a => a.guid));
+      for (const a of list) if (!seenGuids.has(a.guid)) { areaData[type].push(a); seenGuids.add(a.guid); }
+    }
+    // taxiwayPaths
+    if (v.taxiwayPaths && Array.isArray(v.taxiwayPaths.paths)) {
+      for (const tp of v.taxiwayPaths.paths) {
+        const key = (tp.name || '') + '|' + (tp.points || []).map(p => `${p.x.toFixed(2)},${(p.z!==undefined?p.z:0).toFixed(2)}`).join('|');
+        if (!taxiSeen.has(key)) { taxiSeen.add(key); taxiwayPaths.paths.push(tp); }
+      }
+    }
+    // runwayThresholds
+    Object.assign(runwayThresholds, v.runwayThresholds || {});
+    // starPaths — merge per star dedup by runway
+    for (const [k, arr] of Object.entries(v.starPaths || {})) {
+      if (!starPaths[k]) starPaths[k] = [];
+      const seenRwy = new Set(starPaths[k].map(e => e.runway));
+      for (const e of arr) if (!seenRwy.has(e.runway)) { starPaths[k].push(e); seenRwy.add(e.runway); }
+    }
+    Object.assign(starWaypoints, v.starWaypoints || {});
+    // airwayNodes dedup by pk
+    for (const n of (v.airwayNodes || [])) {
+      if (!airwaySeen.has(n.pk)) { airwaySeen.add(n.pk); airwayNodes.push(n); }
+    }
+    // SID/APPR etc. — shallow merge, merging arrays per key similarly to starPaths
+    const mergeMapArr = (dst, src) => {
+      for (const [k, arr] of Object.entries(src || {})) {
+        if (!dst[k]) dst[k] = [];
+        for (const r of arr) if (!dst[k].includes(r)) dst[k].push(r);
+      }
+    };
+    mergeMapArr(sidRunwayMap, v.sidRunwayMap); mergeMapArr(runwaySidMap, v.runwaySidMap);
+    mergeMapArr(missedAppMap, v.missedAppMap); mergeMapArr(runwayMissedAppMap, v.runwayMissedAppMap);
+    mergeMapArr(apprRunwayMap, v.apprRunwayMap); mergeMapArr(runwayApprMap, v.runwayApprMap);
+    for (const [k, arr] of Object.entries(v.sidPaths || {})) {
+      if (!sidPaths[k]) sidPaths[k] = [];
+      const seenRwy = new Set(sidPaths[k].map(e => e.runway));
+      for (const e of arr) if (!seenRwy.has(e.runway)) sidPaths[k].push(e);
+    }
+    for (const [k, arr] of Object.entries(v.missedAppPaths || {})) {
+      if (!missedAppPaths[k]) missedAppPaths[k] = [];
+      const seenRwy = new Set(missedAppPaths[k].map(e => e.runway));
+      for (const e of arr) if (!seenRwy.has(e.runway)) missedAppPaths[k].push(e);
+    }
+    for (const [k, arr] of Object.entries(v.apprPaths || {})) {
+      if (!apprPaths[k]) apprPaths[k] = [];
+      const seenRwy = new Set(apprPaths[k].map(e => e.runway));
+      for (const e of arr) if (!seenRwy.has(e.runway)) apprPaths[k].push(e);
+    }
+  }
+  // dedup runwayPairs by source|dest
+  const seen = new Set();
+  const deduped = [];
+  for (const p of runwayPairs) {
+    const k = p.source + '|' + p.dest;
+    if (!seen.has(k)) { seen.add(k); deduped.push(p); }
+  }
+  return {
+    Stand: [...standSet].sort((a, b) => a.localeCompare(b)),
+    Runway: [...runwaySet].sort((a, b) => a.localeCompare(b)),
+    Airway: [...airwaySet].sort((a, b) => a.localeCompare(b)),
+    standPositions, runwayPairs: deduped, starRunwayMap, runwayStarMap,
+    areaData, taxiwayPaths, runwayThresholds, starPaths, starWaypoints, airwayNodes,
+    sidPaths, missedAppPaths, apprPaths, sidRunwayMap, runwaySidMap, missedAppMap, runwayMissedAppMap, apprRunwayMap, runwayApprMap,
+  };
+}
+
 /** Parse Area polygons from the first .acl file in a list. Returns {} on any error. */
 function _parseAreaFromAcl(aclPaths, logPrefix) {
   try {
@@ -424,10 +668,19 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
 
 // ─── IPC: Collect valid values for an airport ─────────────
 
-ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
-  // Read from airport cache (built during init-airport-cache / refresh-root-scan)
+/**
+ * Build the non-live portion of collect-values response (used by both collect-values and get-live-values).
+ */
+function _buildCollectValuesBase(airportIcao, rootPath) {
   const cached = airportCache && airportCache[airportIcao];
   const aclValues = cached?.dropdownValues ? { ...cached.dropdownValues } : {};
+  // Ensure live keys never come from the persisted cache
+  delete aclValues.Stand; delete aclValues.Runway; delete aclValues.Airway;
+  return { cached, aclValues };
+}
+
+ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
+  const { cached, aclValues } = _buildCollectValuesBase(airportIcao, rootPath);
 
   // Language: derive from audio_clips_*.json existence
   const availableLanguages = [];
@@ -449,30 +702,57 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
     aclValues.AircraftType = aclValues.AircraftType.filter(t => knownTypes.has(t));
   }
 
-  // Include stand positions from airport cache
-  aclValues._standPositions = cached?.standPositions || {};
+  // Live-only fields: Stand / Runway / Airway (and derived maps) come from in-memory liveSceneryCache, never cache.json.
+  // If no live entry yet (user hasn't opened a level this session), return empty (not stale).
+  // StandMap / StarMap are now also per-ACL (per-file) — they override the per-airport cached maps.
+  const liveEntries = [...liveSceneryCache.values()].filter(e => e.icao === airportIcao);
+  const liveUnion = _unionLiveEntries(liveEntries);
+  if (liveUnion) {
+    aclValues.Stand = liveUnion.Stand;
+    aclValues.Runway = liveUnion.Runway;
+    aclValues.Airway = liveUnion.Airway;
+    aclValues._standPositions = liveUnion.standPositions;
+    aclValues._starRunwayMap = liveUnion.starRunwayMap;
+    aclValues._runwayStarMap = liveUnion.runwayStarMap;
+  } else {
+    aclValues.Stand = [];
+    aclValues.Runway = [];
+    aclValues.Airway = [];
+    aclValues._standPositions = {};
+    aclValues._starRunwayMap = {};
+    aclValues._runwayStarMap = {};
+  }
 
-  // Include STAR paths for the Airway column graph popup
-  aclValues._starPaths = cached?.approachData?.starPaths || {};
+  // Include STAR paths for the Airway column graph popup — per-file live when available
+  if (liveUnion && liveUnion.starPaths && Object.keys(liveUnion.starPaths).length > 0) {
+    aclValues._starPaths = liveUnion.starPaths;
+  } else if (liveUnion) {
+    aclValues._starPaths = {};
+  } else {
+    aclValues._starPaths = cached?.approachData?.starPaths || {};
+  }
 
   // Ordered STAR waypoint names (the patch composer's "Fly Waypoint" picker):
   // { "STAR|runway": [{name, x, z}, ...] } in route order, entry → IAF.
-  aclValues._starWaypoints = cached?.approachData?.starWaypoints || {};
-
-  // Use authoritative STAR↔runway mappings extracted from SceneryData.Runways[].Routes[].Type=0.
-  // This captures ALL valid STAR-runway combinations, not just those present in appPointMap
-  // (which is limited to State=30 aircraft entries at snapshot time).
-  aclValues._starRunwayMap = cached?.approachData?.starRunwayMap || {};
-  aclValues._runwayStarMap = cached?.approachData?.runwayStarMap || {};
+  if (liveUnion && liveUnion.starWaypoints && Object.keys(liveUnion.starWaypoints).length > 0) {
+    aclValues._starWaypoints = liveUnion.starWaypoints;
+  } else if (liveUnion) {
+    aclValues._starWaypoints = {};
+  } else {
+    aclValues._starWaypoints = cached?.approachData?.starWaypoints || {};
+  }
 
   // Build runway threshold lines for StarMap visualization.
   // Data from SceneryData.Runways (parsed by _parseRunwayThresholds),
   // keyed by PhysicalName (e.g. "13L/31R"). Each entry already has both
   // threshold points — just convert to {a, b} format for StarMap.
+  // Per-file live when available.
+  const liveThreshSource = (liveUnion && liveUnion.runwayThresholds && Object.keys(liveUnion.runwayThresholds).length > 0) ? liveUnion.runwayThresholds : (liveUnion ? {} : (cached?.approachData?.runwayThresholds || {}));
   const runwayThresholds = {};
-  if (cached?.approachData?.runwayThresholds) {
-    const rwyData = cached.approachData.runwayThresholds;
-    console.log('[COLLECT-VALUES] runway pairs from scenery:', Object.keys(rwyData).join(', '));
+  {
+    const rwyData = liveThreshSource;
+    if (liveUnion && Object.keys(liveThreshSource).length > 0) console.log('[COLLECT-VALUES] runway thresholds from live per-file:', Object.keys(rwyData).join(', '));
+    else if (!liveUnion) console.log('[COLLECT-VALUES] runway pairs from scenery:', Object.keys(rwyData).join(', '));
     for (const [name, entry] of Object.entries(rwyData)) {
       if (entry.thresholds && entry.thresholds.length === 2) {
         const a = entry.thresholds[0];
@@ -489,13 +769,19 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   }
   aclValues._runwayThresholds = runwayThresholds;
 
-  // Include taxiway paths (for GroundMap)
-  aclValues._taxiwayPaths = cached?.approachData?.taxiwayPaths || { paths: [] };
+  // Include taxiway paths (for GroundMap) — per-file live when available
+  if (liveUnion && liveUnion.taxiwayPaths) {
+    aclValues._taxiwayPaths = liveUnion.taxiwayPaths;
+  } else if (liveUnion) {
+    aclValues._taxiwayPaths = { paths: [] };
+  } else {
+    aclValues._taxiwayPaths = cached?.approachData?.taxiwayPaths || { paths: [] };
+  }
 
-  // Build runway rectangles for GroundMap (original endpoints, not 3x extended)
+  // Build runway rectangles for GroundMap (original endpoints, not 3x extended) — per-file
   aclValues._runwayData = {};
-  if (cached?.approachData?.runwayThresholds) {
-    const rwyThresh = cached.approachData.runwayThresholds;
+  {
+    const rwyThresh = liveThreshSource;
     for (const [name, entry] of Object.entries(rwyThresh)) {
       if (entry.thresholds && entry.thresholds.length === 2) {
         aclValues._runwayData[name] = {
@@ -506,8 +792,14 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
     }
   }
 
-  // Include area polygons (for GroundMap)
-  aclValues._areaData = cached?.areaData || {};
+  // Include area polygons (for GroundMap) — per-file live when available
+  if (liveUnion && liveUnion.areaData && Object.keys(liveUnion.areaData).length > 0) {
+    aclValues._areaData = liveUnion.areaData;
+  } else if (liveUnion) {
+    aclValues._areaData = {};
+  } else {
+    aclValues._areaData = cached?.areaData || {};
+  }
 
   // Deterministic ground-painter anchor (center of the airport's ground bounds),
   // computed once during the ACL scan and persisted to cache.json. Used by the
@@ -515,18 +807,36 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   aclValues._groundAnchor = cached?.groundAnchor || null;
   aclValues._airAnchor = cached?.airAnchor || null;
 
-  // Include SID + Missed Approach paths (for AirMap)
-  aclValues._sidPaths = cached?.approachData?.sidPaths || {};
-  aclValues._missedAppPaths = cached?.approachData?.missedAppPaths || {};
-  aclValues._sidRunwayMap = cached?.approachData?.sidRunwayMap || {};
-  aclValues._runwaySidMap = cached?.approachData?.runwaySidMap || {};
-  aclValues._missedAppMap = cached?.approachData?.missedAppMap || {};
-  aclValues._runwayMissedAppMap = cached?.approachData?.runwayMissedAppMap || {};
+  // Include SID + Missed Approach paths (for AirMap) — per-file live when available
+  if (liveUnion && liveUnion.sidPaths) aclValues._sidPaths = liveUnion.sidPaths;
+  else if (liveUnion) aclValues._sidPaths = {};
+  else aclValues._sidPaths = cached?.approachData?.sidPaths || {};
+  if (liveUnion && liveUnion.missedAppPaths) aclValues._missedAppPaths = liveUnion.missedAppPaths;
+  else if (liveUnion) aclValues._missedAppPaths = {};
+  else aclValues._missedAppPaths = cached?.approachData?.missedAppPaths || {};
+  if (liveUnion && liveUnion.sidRunwayMap) aclValues._sidRunwayMap = liveUnion.sidRunwayMap;
+  else if (liveUnion) aclValues._sidRunwayMap = {};
+  else aclValues._sidRunwayMap = cached?.approachData?.sidRunwayMap || {};
+  if (liveUnion && liveUnion.runwaySidMap) aclValues._runwaySidMap = liveUnion.runwaySidMap;
+  else if (liveUnion) aclValues._runwaySidMap = {};
+  else aclValues._runwaySidMap = cached?.approachData?.runwaySidMap || {};
+  if (liveUnion && liveUnion.missedAppMap) aclValues._missedAppMap = liveUnion.missedAppMap;
+  else if (liveUnion) aclValues._missedAppMap = {};
+  else aclValues._missedAppMap = cached?.approachData?.missedAppMap || {};
+  if (liveUnion && liveUnion.runwayMissedAppMap) aclValues._runwayMissedAppMap = liveUnion.runwayMissedAppMap;
+  else if (liveUnion) aclValues._runwayMissedAppMap = {};
+  else aclValues._runwayMissedAppMap = cached?.approachData?.runwayMissedAppMap || {};
 
-  // Include APPR (RNAV approach) paths for AirMap category toggle
-  aclValues._apprPaths = cached?.approachData?.apprPaths || {};
-  aclValues._apprRunwayMap = cached?.approachData?.apprRunwayMap || {};
-  aclValues._runwayApprMap = cached?.approachData?.runwayApprMap || {};
+  // Include APPR (RNAV approach) paths for AirMap category toggle — per-file live when available
+  if (liveUnion && liveUnion.apprPaths) aclValues._apprPaths = liveUnion.apprPaths;
+  else if (liveUnion) aclValues._apprPaths = {};
+  else aclValues._apprPaths = cached?.approachData?.apprPaths || {};
+  if (liveUnion && liveUnion.apprRunwayMap) aclValues._apprRunwayMap = liveUnion.apprRunwayMap;
+  else if (liveUnion) aclValues._apprRunwayMap = {};
+  else aclValues._apprRunwayMap = cached?.approachData?.apprRunwayMap || {};
+  if (liveUnion && liveUnion.runwayApprMap) aclValues._runwayApprMap = liveUnion.runwayApprMap;
+  else if (liveUnion) aclValues._runwayApprMap = {};
+  else aclValues._runwayApprMap = cached?.approachData?.runwayApprMap || {};
 
   // Build runway designator list for the air radar runway filter sidebar.
   // Only include runways that have actual path data: for each procedure with
@@ -547,13 +857,137 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
   collectFromPaths(aclValues._missedAppPaths, aclValues._missedAppMap);
   aclValues._runwayList = Array.from(runwaysWithData).sort();
 
-  // Fixes/waypoints for the AirMap Waypoints layer — intentionally NOT runway-filtered
-  aclValues._airwayNodes = cached?.approachData?.airwayNodes || [];
+  // Fixes/waypoints for the AirMap Waypoints layer — intentionally NOT runway-filtered — per-file live when available
+  if (liveUnion && liveUnion.airwayNodes) aclValues._airwayNodes = liveUnion.airwayNodes;
+  else if (liveUnion) aclValues._airwayNodes = [];
+  else aclValues._airwayNodes = cached?.approachData?.airwayNodes || [];
 
   // Taxiway OSM pool (finite reuse set) — for ground painter limit display
   aclValues._taxiwayOsmPool = cached?.taxiwayOsmPool || { nodeIds: [], segIds: [] };
 
   return aclValues;
+});
+
+// ─── IPC: get-live-values / invalidate-live-values (fully dynamic, per-file) ──
+function _buildCollectValuesWithLive(airportIcao, rootPath, live) {
+  const { cached, aclValues } = _buildCollectValuesBase(airportIcao, rootPath);
+  // Language + AircraftType etc. already in base; override live fields from the single file's live data
+  // Per-file live: StandMap / StarMap are now per-ACL, not per-airport.
+  const hasLive = !!live;
+  if (hasLive) {
+    aclValues.Stand = live.dropdownPatch?.Stand || [];
+    aclValues.Runway = live.dropdownPatch?.Runway || [];
+    aclValues.Airway = live.dropdownPatch?.Airway || [];
+    aclValues._standPositions = live.standPositions || {};
+    aclValues._starRunwayMap = live.starRunwayMap || {};
+    aclValues._runwayStarMap = live.runwayStarMap || {};
+    aclValues._runwayPairs = live.runwayPairs || [];
+  }
+  // Per-file live maps — prefer live when present, otherwise fall back to cached
+  const threshSource = hasLive && live.runwayThresholds && Object.keys(live.runwayThresholds).length > 0 ? live.runwayThresholds : (cached?.approachData?.runwayThresholds || {});
+  const rwyThresh = {};
+  for (const [name, entry] of Object.entries(threshSource)) {
+    if (entry.thresholds && entry.thresholds.length === 2) {
+      const a = entry.thresholds[0]; const b = entry.thresholds[1];
+      const dx = b.x - a.x; const dz = b.z - a.z;
+      rwyThresh[name] = { a: { x: a.x - dx, z: a.z - dz }, b: { x: b.x + dx, z: b.z + dz } };
+    }
+  }
+  aclValues._runwayThresholds = rwyThresh;
+  aclValues._taxiwayPaths = hasLive && live.taxiwayPaths ? live.taxiwayPaths : (cached?.approachData?.taxiwayPaths || { paths: [] });
+  aclValues._runwayData = {};
+  for (const [name, entry] of Object.entries(threshSource)) {
+    if (entry.thresholds && entry.thresholds.length === 2) {
+      aclValues._runwayData[name] = { thresholds: entry.thresholds, width: 0.50 };
+    }
+  }
+  aclValues._areaData = hasLive && live.areaData && Object.keys(live.areaData).length > 0 ? live.areaData : (cached?.areaData || {});
+  aclValues._groundAnchor = cached?.groundAnchor || null;
+  aclValues._airAnchor = cached?.airAnchor || null;
+  aclValues._sidPaths = hasLive && live.sidPaths ? live.sidPaths : (cached?.approachData?.sidPaths || {});
+  aclValues._missedAppPaths = hasLive && live.missedAppPaths ? live.missedAppPaths : (cached?.approachData?.missedAppPaths || {});
+  aclValues._sidRunwayMap = hasLive && live.sidRunwayMap ? live.sidRunwayMap : (cached?.approachData?.sidRunwayMap || {});
+  aclValues._runwaySidMap = hasLive && live.runwaySidMap ? live.runwaySidMap : (cached?.approachData?.runwaySidMap || {});
+  aclValues._missedAppMap = hasLive && live.missedAppMap ? live.missedAppMap : (cached?.approachData?.missedAppMap || {});
+  aclValues._runwayMissedAppMap = hasLive && live.runwayMissedAppMap ? live.runwayMissedAppMap : (cached?.approachData?.runwayMissedAppMap || {});
+  aclValues._apprPaths = hasLive && live.apprPaths ? live.apprPaths : (cached?.approachData?.apprPaths || {});
+  aclValues._apprRunwayMap = hasLive && live.apprRunwayMap ? live.apprRunwayMap : (cached?.approachData?.apprRunwayMap || {});
+  aclValues._runwayApprMap = hasLive && live.runwayApprMap ? live.runwayApprMap : (cached?.approachData?.runwayApprMap || {});
+  aclValues._starPaths = hasLive && live.starPaths ? live.starPaths : (cached?.approachData?.starPaths || {});
+  aclValues._starWaypoints = hasLive && live.starWaypoints ? live.starWaypoints : (cached?.approachData?.starWaypoints || {});
+  aclValues._airwayNodes = hasLive && live.airwayNodes ? live.airwayNodes : (cached?.approachData?.airwayNodes || []);
+  aclValues._taxiwayOsmPool = cached?.taxiwayOsmPool || { nodeIds: [], segIds: [] };
+  // runwayList derived from paths + mappings (uses live mappings if present)
+  const runwaysWithData2 = new Set();
+  const c2 = (pathsObj, fwd) => {
+    if (!pathsObj || !fwd) return;
+    for (const pn of Object.keys(pathsObj)) { const rwys = fwd[pn]; if (rwys) rwys.forEach(r => { if (r) runwaysWithData2.add(r); }); }
+  };
+  c2(aclValues._starPaths, aclValues._starRunwayMap);
+  c2(aclValues._sidPaths, aclValues._sidRunwayMap);
+  c2(aclValues._apprPaths, aclValues._apprRunwayMap);
+  c2(aclValues._missedAppPaths, aclValues._missedAppMap);
+  aclValues._runwayList = Array.from(runwaysWithData2).sort();
+  return aclValues;
+}
+
+ipcMain.handle('get-live-values', async (_event, aclPath, icao) => {
+  try {
+    if (!aclPath || !fs.existsSync(aclPath)) return { success: false, error: 'file not found' };
+    const rootPath = (() => {
+      try {
+        const m = String(aclPath).match(/^(.*)[\\/]GroundATC_Data[\\/]/i);
+        if (m) return m[1];
+        const st = useAppStore ? null : null;
+        return null;
+      } catch (_) { return null; }
+    })();
+    // Derive rootPath from cachedScan or airportCache if not inferrable
+    let effectiveRoot = rootPath;
+    if (!effectiveRoot) {
+      try {
+        const cr = _readCache();
+        if (cr.data && cr.data.gameRoot) effectiveRoot = cr.data.gameRoot;
+      } catch (_) {}
+    }
+    // Fallback to any cached airport's root? Use empty string; Language fallback will just skip.
+    if (!effectiveRoot) effectiveRoot = '';
+    const live = _getOrComputeLiveScenery(aclPath, icao);
+    // Build full vals shape the renderer expects (collect-values shape) with live fields injected
+    let vals;
+    try {
+      // Prefer building via the live-aware helper (includes non-live fields from airportCache)
+      // We need a temporary cached lookup — reuse _buildCollectValuesWithLive logic but need rootPath
+      // For now reconstruct similarly to collect-values but with live override
+      const { cached, aclValues: base } = _buildCollectValuesBase(icao, effectiveRoot);
+      // Apply live overrides
+      base.Stand = live.dropdownPatch?.Stand || [];
+      base.Runway = live.dropdownPatch?.Runway || [];
+      base.Airway = live.dropdownPatch?.Airway || [];
+      base._standPositions = live.standPositions || {};
+      base._starRunwayMap = live.starRunwayMap || {};
+      base._runwayStarMap = live.runwayStarMap || {};
+      // Fill remaining fields from cached (similar to _buildCollectValuesWithLive)
+      // Reuse helper for remaining fields
+      vals = _buildCollectValuesWithLive(icao, effectiveRoot, live);
+      // Ensure live overrides are not clobbered — helper already did, but double-ensure
+      vals.Stand = live.dropdownPatch?.Stand || [];
+      vals.Runway = live.dropdownPatch?.Runway || [];
+      vals.Airway = live.dropdownPatch?.Airway || [];
+      vals._standPositions = live.standPositions || {};
+      vals._starRunwayMap = live.starRunwayMap || {};
+      vals._runwayStarMap = live.runwayStarMap || {};
+    } catch (e) {
+      console.warn('[get-live-values] build fallback failed:', e.message);
+      vals = { Stand: live.dropdownPatch?.Stand || [], Runway: live.dropdownPatch?.Runway || [], Airway: live.dropdownPatch?.Airway || [], _standPositions: live.standPositions || {}, _starRunwayMap: live.starRunwayMap || {}, _runwayStarMap: live.runwayStarMap || {} };
+    }
+    return { success: true, vals, live };
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('invalidate-live-values', async (_event, aclPath) => {
+  try { _invalidateLiveCache(aclPath); return { success: true }; }
+  catch (e) { return { success: false, error: e.message }; }
 });
 
 // ─── IPC: Renderer-side logging (so renderer console.log goes to file too) ──
@@ -700,10 +1134,18 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     let dropdownValues = {};
     let runwayPairs = [];
     const cachedEntry = diskCache && diskCache[icao];
-    const hasCachedDropdowns = cachedEntry && cachedEntry.dropdownValues;
+    // Live-only keys (Stand/Runway/Airway + derived maps) are never served from cache.json.
+    // Strip them from the disk entry so hasCachedDropdowns does not consider them.
+    if (cachedEntry && cachedEntry.dropdownValues) {
+      delete cachedEntry.dropdownValues.Stand;
+      delete cachedEntry.dropdownValues.Runway;
+      delete cachedEntry.dropdownValues.Airway;
+    }
+    // Ignore stale standPositions/star mappings backed by cache.json — live path recomputes per file.
+    const hasCachedDropdowns = cachedEntry && cachedEntry.dropdownValues && Object.keys(cachedEntry.dropdownValues).filter(k => !k.startsWith('_')).length > 0;
 
     if (hasCachedDropdowns) {
-      dropdownValues = cachedEntry.dropdownValues;
+      dropdownValues = { ...cachedEntry.dropdownValues };
       runwayPairs = cachedEntry.runwayPairs || [];
       console.log('[INIT-CACHE]   ' + icao + ': dropdowns from disk cache (' + Object.keys(dropdownValues).filter(k => !k.startsWith('_')).join(',') + ')');
     } else {
@@ -716,9 +1158,17 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         }
       } catch (_) {}
       dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
+      // Remove live-only keys even from fresh scan — they are per-file, not per-airport.
+      delete dropdownValues.Stand;
+      delete dropdownValues.Runway;
+      delete dropdownValues.Airway;
       runwayPairs = _collectAirportRunwayPairs(aclPaths);
       console.log('[INIT-CACHE]   ' + icao + ': dropdowns scanned from ' + aclPaths.length + ' .acl files, runway pairs: ' + runwayPairs.length);
     }
+    // Ensure live keys are never present in the persisted shape (even if collectUniqueValues added Runway)
+    delete dropdownValues.Stand;
+    delete dropdownValues.Runway;
+    delete dropdownValues.Airway;
 
     // Parse stand positions from first .acl file (airport-level, shared across all levels)
     let standPositions = cachedEntry?.standPositions || null;
@@ -755,10 +1205,8 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         (areaData[2]?.length || 0) + ' Type2)');
     }
 
-    // Use SceneryData stand identifiers as the authoritative stand list
-    if (standPositions && Object.keys(standPositions).length > 0) {
-      dropdownValues.Stand = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
-    }
+    // Stand / Runway / Airway are live-only (per-file, in-memory). Do not populate from airport scan.
+    // (Previously dropdownValues.Stand was set from standPositions here; removed per v2 plan.)
 
     // Merge audio flight numbers into dropdown _flightNums
     if (audioCallsigns?.byAirline) {
@@ -890,16 +1338,11 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       console.log('[INIT-CACHE]   ' + icao + ': approach scanned from files');
     }
 
-    // Use starRunwayMap keys as the authoritative STAR list.
-    // Follows the same pattern as Stand filtering above — the scenery
-    // data is the single source of truth. starRunwayMap is built from
-    // SceneryData Type=0 Routes and already excludes stubs ($rlength:0).
-    if (approachData && approachData.starRunwayMap) {
-      const stars = Object.keys(approachData.starRunwayMap);
-      if (stars.length > 0) {
-        dropdownValues.Airway = stars.sort((a, b) => a.localeCompare(b));
-      }
-    }
+    // Airway / STAR is live-only (per-file). No longer populate from approachData here.
+    // Ensure no stale live keys leak into persisted shape.
+    delete dropdownValues.Stand;
+    delete dropdownValues.Runway;
+    delete dropdownValues.Airway;
 
     // ── Taxiway OSM pool (finite reuse set) ──────────────────────────
     // Union across all level ACLs for this airport — the game's fixed set
@@ -970,11 +1413,15 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     try {
       const serialized = {};
       for (const [icao, entry] of Object.entries(cache)) {
+        const dv = { ...(entry.dropdownValues || {}) };
+        delete dv.Stand; delete dv.Runway; delete dv.Airway;
+        // Also strip live-only derived maps so stale STAR/runway never round-trips via cache.json
+        const sp = {}; // standPositions is live-only — do not persist
         serialized[icao] = {
           approachData: entry.approachData ? serializeApproachCache(entry.approachData) : null,
-          dropdownValues: entry.dropdownValues || {},
+          dropdownValues: dv,
           runwayPairs: entry.runwayPairs || [],
-          standPositions: entry.standPositions || {},
+          standPositions: sp,
           areaData: entry.areaData || {},
           taxiwayOsmPool: entry.taxiwayOsmPool || { nodeIds: [], segIds: [] },
           groundAnchor: entry.groundAnchor || null,
@@ -1054,7 +1501,8 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
           }
         }
       } catch (_) {}
-      const dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
+      let dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
+      delete dropdownValues.Stand; delete dropdownValues.Runway; delete dropdownValues.Airway;
       const runwayPairs = _collectAirportRunwayPairs(aclPaths);
 
       // Merge audio flight numbers into dropdown _flightNums
@@ -1095,19 +1543,8 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       // Parse area polygons from SceneryData.Areas
       const areaData = _parseAreaFromAcl(aclPaths, null);
 
-      // Use SceneryData stand identifiers as the authoritative stand list
-      if (standPositions && Object.keys(standPositions).length > 0) {
-        dropdownValues.Stand = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
-      }
-
-      // Use starRunwayMap keys as the authoritative STAR list
-      // (same pattern as Stand — scenery is the single source of truth).
-      if (approachData && approachData.starRunwayMap) {
-        const stars = Object.keys(approachData.starRunwayMap);
-        if (stars.length > 0) {
-          dropdownValues.Airway = stars.sort((a, b) => a.localeCompare(b));
-        }
-      }
+      // Stand / Runway / Airway are live-only — do not populate from airport scan.
+      delete dropdownValues.Stand; delete dropdownValues.Runway; delete dropdownValues.Airway;
 
       // ── Taxiway OSM pool (union across all level files) ─────────────
       const poolNodeSetR = new Set();
@@ -1138,14 +1575,16 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
 
     airportCache = cache;
 
-    // Persist new cache
+    // Persist new cache — strip live-only keys (Stand/Runway/Airway + standPositions)
     const serialized = {};
     for (const [icao, entry] of Object.entries(cache)) {
+      const dvR = { ...(entry.dropdownValues || {}) };
+      delete dvR.Stand; delete dvR.Runway; delete dvR.Airway;
       serialized[icao] = {
         approachData: entry.approachData ? serializeApproachCache(entry.approachData) : null,
-        dropdownValues: entry.dropdownValues || {},
+        dropdownValues: dvR,
         runwayPairs: entry.runwayPairs || [],
-        standPositions: entry.standPositions || {},
+        standPositions: {},
         areaData: entry.areaData || {},
         taxiwayOsmPool: entry.taxiwayOsmPool || { nodeIds: [], segIds: [] },
         groundAnchor: entry.groundAnchor || null,
@@ -1657,6 +2096,20 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
       _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + WARMUP_SEC;
     }
 
+    // Clear cache.json — restored file may have stale cached approach data etc.
+    // Also invalidate in-memory live scenery entry for this file so next
+    // get-live-values / collect-values recomputes from the restored .acl.
+    try { _invalidateLiveCache(filePath); } catch (_) {}
+    try {
+      const cachePath = _cachePath();
+      if (fs.existsSync(cachePath)) {
+        fs.rmSync(cachePath, { force: true });
+        console.log('[restore-latest-backup] removed cache.json');
+      }
+    } catch (err) {
+      console.error('[restore-latest-backup] failed to remove cache.json', err.message);
+    }
+
     return { success: true, path: filePath, restored, config, _saveSec, _currentDateTime, isDemo, ...data };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1853,6 +2306,19 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   if (createBackup && fs.existsSync(filePath)) fs.copyFileSync(filePath, filePath + '.bak');
   writeAcl(filePath, newText, { format: 'auto', originalText: snapshotText });
   console.log('[GroundPainter] save-ground-painter-data: wrote ' + filePath);
+  // ── In-memory live cache refresh (v2: fully dynamic, no cache.json) ──
+  try {
+    const m = String(filePath).match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+    const icaoForLive = m ? m[1] : null;
+    _invalidateLiveCache(filePath);
+    if (icaoForLive) {
+      try { _getOrComputeLiveScenery(filePath, icaoForLive); console.log('[GroundPainter] liveSceneryCache refreshed for', path.basename(filePath)); } catch (e) { console.warn('[GroundPainter] live cache refresh failed:', e.message); }
+    } else {
+      console.warn('[GroundPainter] live cache refresh skipped — could not derive ICAO from', filePath);
+    }
+  } catch (e) {
+    console.warn('[GroundPainter] live cache refresh outer failed:', e.message);
+  }
   // ── Flight-reference reconciliation (stands/runways deleted or renamed) ──
   // Removing a stand or runway in the Ground Painter strands every flight parked
   // on that stand or assigned to that runway; renaming one leaves flights under
@@ -2168,7 +2634,12 @@ ipcMain.handle('save-runway-timeline', async (_event, { filePath, data }) => {
 // ─── IPC: Scan runway pairs from ACL RunwayTimeline sections ─
 
 ipcMain.handle('scan-runway-pairs', async (_event, rootPath, airportIcao) => {
-  // Read from airport cache (built during init-airport-cache / refresh-root-scan)
+  // Live-only: prefer in-memory per-file runwayPairs when present
+  const liveEntries = [...liveSceneryCache.values()].filter(e => e.icao === airportIcao);
+  const liveUnion = _unionLiveEntries(liveEntries);
+  if (liveUnion && liveUnion.runwayPairs && liveUnion.runwayPairs.length > 0) {
+    return { success: true, pairs: liveUnion.runwayPairs };
+  }
   const cached = airportCache && airportCache[airportIcao];
   return { success: true, pairs: cached?.runwayPairs || [] };
 });

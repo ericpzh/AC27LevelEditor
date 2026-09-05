@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileInfo: (filePath) => ipcRenderer.invoke('get-file-info', filePath),
   getAirportFilesInfo: (icao, rootPath) => ipcRenderer.invoke('get-airport-files-info', icao, rootPath),
   collectValues: (rootPath, icao) => ipcRenderer.invoke('collect-values', rootPath, icao),
+  getLiveValues: (aclPath, icao) => ipcRenderer.invoke('get-live-values', aclPath, icao),
+  invalidateLiveValues: (aclPath) => ipcRenderer.invoke('invalidate-live-values', aclPath),
   loadAudioCallsigns: (rootPath, icao) => ipcRenderer.invoke('load-audio-callsigns', rootPath, icao),
   refreshRootScan: (rootPath) => ipcRenderer.invoke('refresh-root-scan', rootPath),
   // Editor

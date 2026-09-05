@@ -8,8 +8,8 @@ const FIXTURES_DIR = path.join(TESTS_DIR, 'fixtures', 'game-root');
 const TMP_DIR = path.join(TESTS_DIR, 'tmp-e2e');
 const USERDATA_DIR = path.join(TESTS_DIR, 'tmp-e2e-userdata');
 
-// ── 23 prod+demo files to include when sourcing from real game ──
-// Mirrors PROD_VISIBLE_BASES (20, the full production set minus
+// ── 27 prod+demo files to include when sourcing from real game ──
+// Mirrors PROD_VISIBLE_BASES (24, the full production set minus
 // ZGSZ_Endless) + the demo entries of DEMO_VISIBLE_BASES
 // (4: three .demo.acl + ZSJN_leisure_1.acl, which the demo install ships
 // under the prod filename) in src/utils/constants/ui.js — only these are
@@ -17,14 +17,14 @@ const USERDATA_DIR = path.join(TESTS_DIR, 'tmp-e2e-userdata');
 const PROD_DEMO_FILES = [
   'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
   'ZSJN/ZSJN_peakdeparture.acl', 'ZSJN/ZSJN_runwaychange.acl',
-  'ZSJN/ZSJN_taixwayclosed.acl', 'ZSJN/ZSJN_peakdeparture.demo.acl',
+  'ZSJN/ZSJN_taixwayclosed.acl', 'ZSJN/ZSJN_surfaceradarinvisible.acl', 'ZSJN/ZSJN_peakdeparture.demo.acl',
   'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl',
-  'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl',
+  'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl', 'KJFK/KJFK_surfaceradarinvisible.acl',
   'KJFK/KJFK_leisure_1.demo.acl', 'KJFK/KJFK_peakarrival.demo.acl',
   'KDCA/KDCA_leisure_1.acl', 'KDCA/KDCA_leisure_2.acl',
-  'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl',
+  'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl', 'KDCA/KDCA_surfaceradarinvisible.acl',
   'ZGSZ/ZGSZ_leisure_1.acl', 'ZGSZ/ZGSZ_leisure_2.acl',
-  'ZGSZ/ZGSZ_runwaychange.acl', 'ZGSZ/ZGSZ_peakdeparture.acl', 'ZGSZ/ZGSZ_peakarrival.acl',
+  'ZGSZ/ZGSZ_runwaychange.acl', 'ZGSZ/ZGSZ_peakdeparture.acl', 'ZGSZ/ZGSZ_peakarrival.acl', 'ZGSZ/ZGSZ_surfaceradarinvisible.acl',
 ];
 
 export default async function () {
@@ -35,8 +35,8 @@ export default async function () {
   // 2. Copy game data → temp
   const gameRoot = process.env.E2E_GAME_ROOT;
   if (gameRoot && existsSync(gameRoot)) {
-    // Source from real game installation — copy the 21 specific files
-    console.log('[E2E setup] Sourcing 21 prod+demo files from:', gameRoot);
+    // Source from real game installation — copy the 27 specific files
+    console.log('[E2E setup] Sourcing 27 prod+demo files from:', gameRoot);
     const srcAirports = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
     const dstAirports = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'Airports');
 

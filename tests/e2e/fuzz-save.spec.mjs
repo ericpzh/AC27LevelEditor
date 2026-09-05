@@ -1,7 +1,7 @@
 /**
  * Fuzz Save Test — randomized edit storm + real SAVE (with backup)
  *
- * For each target .acl level (default: all 13 production levels):
+ * For each target .acl level (default: all 24 production levels):
  *   1. Open the level in the editor (browser row click)
  *   2. FuzzTest(aclPath) applies 50–200 RANDOMIZED operations through the
  *      MCP API (127.0.0.1:31415, same tools the MCP bridge exposes):
@@ -81,17 +81,17 @@ const WEATHER_PRESETS = ['Sunny', 'FewCloudy', 'MidCloudy', 'PartlyCloudy', 'Ove
 
 const SCENARIO_END_GRACE_SEC = 30 * 60;
 
-// Default target: the 20 production levels staged by global-setup.mjs
+// Default target: the 24 production levels staged by global-setup.mjs
 // (PROD_VISIBLE_BASES minus demo files minus ZGSZ_Endless).
 const DEFAULT_PROD_FILES = [
   'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
   'ZSJN/ZSJN_peakdeparture.acl', 'ZSJN/ZSJN_runwaychange.acl',
-  'ZSJN/ZSJN_taixwayclosed.acl',
-  'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl', 'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl',
+  'ZSJN/ZSJN_taixwayclosed.acl', 'ZSJN/ZSJN_surfaceradarinvisible.acl',
+  'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl', 'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl', 'KJFK/KJFK_surfaceradarinvisible.acl',
   'KDCA/KDCA_leisure_1.acl', 'KDCA/KDCA_leisure_2.acl',
-  'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl',
+  'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl', 'KDCA/KDCA_surfaceradarinvisible.acl',
   'ZGSZ/ZGSZ_leisure_1.acl', 'ZGSZ/ZGSZ_leisure_2.acl',
-  'ZGSZ/ZGSZ_runwaychange.acl', 'ZGSZ/ZGSZ_peakdeparture.acl', 'ZGSZ/ZGSZ_peakarrival.acl',
+  'ZGSZ/ZGSZ_runwaychange.acl', 'ZGSZ/ZGSZ_peakdeparture.acl', 'ZGSZ/ZGSZ_peakarrival.acl', 'ZGSZ/ZGSZ_surfaceradarinvisible.acl',
 ];
 
 // ── Deterministic random ────────────────────────────────────────────

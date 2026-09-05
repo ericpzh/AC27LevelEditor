@@ -29,28 +29,34 @@ const {
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
 } = parser;
 
-// ── The 18 production + 3 demo .acl files ───────────────────────
-// Mirrors PROD_VISIBLE_BASES (18) + the .demo entries of
-// DEMO_VISIBLE_BASES (3) in src/utils/constants/ui.js
+// ── The 24 production + 3 demo .acl files ───────────────────────
+// Mirrors PROD_VISIBLE_BASES (24 non-Endless + ZGSZ_Endless = 25) + the .demo entries of
+// DEMO_VISIBLE_BASES (3 extra) in src/utils/constants/ui.js — total 27 unique (28 incl. Endless)
 const PROD_DEMO_FILES = [
   { icao: 'ZSJN', name: 'ZSJN_leisure_1.acl' },
   { icao: 'ZSJN', name: 'ZSJN_leisure_2.acl' },
   { icao: 'ZSJN', name: 'ZSJN_peakdeparture.acl' },
   { icao: 'ZSJN', name: 'ZSJN_runwaychange.acl' },
   { icao: 'ZSJN', name: 'ZSJN_taixwayclosed.acl' },
+  { icao: 'ZSJN', name: 'ZSJN_surfaceradarinvisible.acl' },
   { icao: 'KJFK', name: 'KJFK_leisure_1.acl' },
   { icao: 'KJFK', name: 'KJFK_leisure_2.acl' },
+  { icao: 'KJFK', name: 'KJFK_runwaychange.acl' },
+  { icao: 'KJFK', name: 'KJFK_peakdeparture.acl' },
   { icao: 'KJFK', name: 'KJFK_peakarrival.acl' },
+  { icao: 'KJFK', name: 'KJFK_surfaceradarinvisible.acl' },
   { icao: 'KDCA', name: 'KDCA_leisure_1.acl' },
   { icao: 'KDCA', name: 'KDCA_leisure_2.acl' },
   { icao: 'KDCA', name: 'KDCA_runwaychange.acl' },
   { icao: 'KDCA', name: 'KDCA_peakdeparture.acl' },
   { icao: 'KDCA', name: 'KDCA_peakarrival.acl' },
+  { icao: 'KDCA', name: 'KDCA_surfaceradarinvisible.acl' },
   { icao: 'ZGSZ', name: 'ZGSZ_leisure_1.acl' },
   { icao: 'ZGSZ', name: 'ZGSZ_leisure_2.acl' },
   { icao: 'ZGSZ', name: 'ZGSZ_runwaychange.acl' },
   { icao: 'ZGSZ', name: 'ZGSZ_peakdeparture.acl' },
   { icao: 'ZGSZ', name: 'ZGSZ_peakarrival.acl' },
+  { icao: 'ZGSZ', name: 'ZGSZ_surfaceradarinvisible.acl' },
   { icao: 'KJFK', name: 'KJFK_peakarrival.demo.acl' },
   { icao: 'KJFK', name: 'KJFK_leisure_1.demo.acl' },
   { icao: 'ZSJN', name: 'ZSJN_peakdeparture.demo.acl' },
@@ -69,7 +75,7 @@ for (let i = 2; i < process.argv.length; i++) {
     console.log('');
     console.log('Flow: copy from game root → golden/ → snapshot → copy golden→result/ → save on result/ → compare golden vs result');
     console.log('  --root <path>   Game root directory (required)');
-    console.log('  --prod-demo     Test 13 production + 3 demo .acl files');
+    console.log('  --prod-demo     Test 24 production + 3 demo .acl files');
     console.log('  --all           Test every .acl file found (default, excludes Endless)');
     process.exit(0);
   }
@@ -89,7 +95,7 @@ if (!fs.existsSync(dataDir)) {
 const aclFiles = [];
 
 if (prodDemoOnly) {
-  console.log('Target: 13 production + 3 demo .acl files');
+  console.log('Target: 24 production + 3 demo .acl files');
   for (const f of PROD_DEMO_FILES) {
     const fullPath = path.join(dataDir, f.icao, 'Levels', f.name);
     if (fs.existsSync(fullPath)) {
