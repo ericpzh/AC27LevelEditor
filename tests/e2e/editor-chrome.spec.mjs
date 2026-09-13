@@ -40,12 +40,11 @@ test.afterAll(async () => {
 // ── E12a: Help button ────────────────────────────────────────────
 
 test('E12a — help button opens tutorial overlay', async () => {
-  // Help button: <button title="Help"> with IoHelpCircleOutline icon
-  const helpBtn = window.locator('#toolbar button[title="Help"]');
-  if (!(await helpBtn.isVisible().catch(() => false))) {
-    test.skip(true, 'Help button not visible');
-    return;
-  }
+  // Help button renders the IoHelpCircleOutline icon + the i18n `toolbar_help`
+  // label ("Help" / "帮助"). Its tooltip is applied via useTooltip's bind(),
+  // NOT a title="Help" attribute, so match on the rendered label.
+  const helpBtn = window.locator('#toolbar button').filter({ hasText: /Help|帮助/ }).first();
+  await expect(helpBtn).toBeVisible({ timeout: 10000 });
 
   await helpBtn.click();
   await window.waitForTimeout(500);

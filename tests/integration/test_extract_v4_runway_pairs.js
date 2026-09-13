@@ -114,7 +114,9 @@ if (kdcaPath) {
     const pairs = extractV4RunwayPairs(text);
     assertEq(pairs.length, 6, 'KDCA must produce 6 pairs (3 groups × 2 directions)');
     const keys = new Set(pairs.map(pairKey));
-    for (const k of ['01|19', '19|01', '04|22', '22|04', '15|33', '33|15']) {
+    // KDCA stores its runway designations UNPADDED ("runway:1", PhysicalName "1/19"),
+    // so the extracted names are 1/4/15/19/22/33 — not 01/04/…
+    for (const k of ['1|19', '19|1', '4|22', '22|4', '15|33', '33|15']) {
       assert(keys.has(k), 'missing KDCA pair ' + k);
     }
   });

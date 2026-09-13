@@ -1,5 +1,5 @@
 /**
- * E2E Save Integrity — all 16 prod+demo .acl files.
+ * E2E Save Integrity — every production .acl file (PROD_VISIBLE_BASES).
  *
  * For each level row visible in the browser:
  *   1. Click to open in editor
@@ -8,6 +8,9 @@
  *   4. Run save-integrity-check.js on the saved .acl vs .bak
  *   5. Navigate back to browser
  *   6. Report per-file results
+ *
+ * A final coverage guard asserts that EVERY staged production file was
+ * exercised — a missing browser row or a missing result fails the test.
  *
  * Requires: E2E_GAME_ROOT env var pointing to real game installation.
  *   npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
@@ -18,19 +21,18 @@ import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import fs from 'fs';
 
-// Mirror of DEMO_VISIBLE_ORDER in src/utils/constants/ui.js — files that get
-// the app's 30-min demo-window treatment. Cannot import ui.js directly (repo
-// has no "type":"module", .js is CommonJS; ui.js is ESM-only). Keep in sync
-// with the app constant; same mirror convention as global-setup.mjs.
-const DEMO_VISIBLE_FILENAMES = new Set([
-  'KJFK_leisure_1.demo.acl',
-  'KJFK_peakarrival.demo.acl',
-  'ZSJN_leisure_1.acl',
-  'ZSJN_peakdeparture.demo.acl',
-]);
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP_DIR = process.env.E2E_TMP_DIR;
+
+// Import the app's own visibility whitelists — the same single source of truth
+// global-setup.mjs stages from — so this spec can never drift from production
+// mode. `ui.js` can't be imported by path under Playwright's loader, so its
+// source is evaluated via a data: URL.
+const UI_CONSTANTS_PATH = path.join(__dirname, '..', '..', 'src', 'utils', 'constants', 'ui.js');
+const { PROD_VISIBLE_BASES, DEMO_VISIBLE_ORDER } = await import(
+  'data:text/javascript;base64,' + Buffer.from(fs.readFileSync(UI_CONSTANTS_PATH, 'utf-8')).toString('base64')
+);
+const DEMO_VISIBLE_FILENAMES = new Set(DEMO_VISIBLE_ORDER);
 
 let electronApp;
 let window;
@@ -46,7 +48,10 @@ test.beforeAll(async () => {
 
   window = await electronApp.firstWindow();
   await window.waitForLoadState('domcontentloaded');
-  await window.waitForTimeout(2000);
+  // Cold scan of the full prod set (incl. the ~5 MB ZGSZ levels) can take a
+  // while; wait for the loading spinner to disappear before the level rows.
+  await window.waitForSelector('.loading-state', { state: 'hidden', timeout: 120000 }).catch(() => {});
+  await window.waitForTimeout(1000);
 });
 
 test.afterAll(async () => {
@@ -151,13 +156,13 @@ async function goBackToBrowser() {
 
 // ── Test: iterate all levels ─────────────────────────────────────
 
-test.setTimeout(600000); // 10 min for 16 files
+test.setTimeout(900000); // 15 min for the full production set
 
 test('E2E save integrity — all prod+demo levels', async () => {
   // Wait for the browser's level list to finish rendering (the airport scan
   // runs async after startup — rows.count() does not auto-wait).
   const rows = window.locator('.level-row');
-  await expect(rows.first()).toBeVisible({ timeout: 30000 });
+  await expect(rows.first()).toBeVisible({ timeout: 120000 });
   const totalRows = await rows.count();
   console.log(`\nFound ${totalRows} level rows`);
   expect(totalRows).toBeGreaterThanOrEqual(1);
@@ -212,7 +217,7 @@ test('E2E save integrity — all prod+demo levels', async () => {
       const saveResult = await saveViaUI();
       if (!saveResult.saved) {
         console.log('  SKIP: save blocked by validation');
-        results.push({ label, status: 'skipped', reason: 'validation blocked save' });
+        results.push({ label, basename: currentPathBasename, status: 'skipped', reason: 'validation blocked save' });
         await goBackToBrowser();
         continue;
       }
@@ -240,7 +245,7 @@ test('E2E save integrity — all prod+demo levels', async () => {
       if (!bakExists) {
         console.log('  FAIL: no .bak created');
         failed++;
-        results.push({ label, status: 'failed', reason: 'no .bak created' });
+        results.push({ label, basename: currentPathBasename, status: 'failed', reason: 'no .bak created' });
         await goBackToBrowser();
         continue;
       }
@@ -258,17 +263,17 @@ test('E2E save integrity — all prod+demo levels', async () => {
           const demoTag = isDemo ? ' (demo)' : '';
           console.log(`  ✓ PASSED${demoTag}`);
           passed++;
-          results.push({ label, status: 'passed', file: path.basename(currentPath) });
+          results.push({ label, basename: currentPathBasename, status: 'passed', file: path.basename(currentPath) });
         } else {
           console.log('  ✗ Checker did not pass');
           failed++;
-          results.push({ label, status: 'failed', reason: 'checker output mismatch' });
+          results.push({ label, basename: currentPathBasename, status: 'failed', reason: 'checker output mismatch' });
         }
       } catch (e) {
         const errDetail = (e.stdout || e.stderr || e.message || '').substring(0, 500);
         console.log('  ✗ Checker error:', errDetail);
         failed++;
-        results.push({ label, status: 'failed', reason: 'checker error', detail: errDetail });
+        results.push({ label, basename: currentPathBasename, status: 'failed', reason: 'checker error', detail: errDetail });
       }
 
     } catch (e) {
@@ -282,6 +287,20 @@ test('E2E save integrity — all prod+demo levels', async () => {
     await window.waitForTimeout(1000);
   }
 
+  // ── Coverage guard ────────────────────────────────────────────
+  // EVERY staged production file must have been exercised. A prod file that
+  // was never staged (not found / list drift) or never appeared as a browser
+  // row leaves no result here and must fail the run rather than pass silently.
+  const stagedProd = findAclFiles(TMP_DIR)
+    .filter((f) => PROD_VISIBLE_BASES.includes(f.name))
+    .map((f) => f.name);
+  const attemptedProd = new Set(results.map((r) => r.basename).filter(Boolean));
+  const notAttempted = stagedProd.filter((n) => !attemptedProd.has(n));
+  if (notAttempted.length > 0) {
+    console.log(`  COVERAGE GAP: prod files not exercised: ${notAttempted.join(', ')}`);
+  }
+  console.log(`  Prod coverage: ${attemptedProd.size}/${stagedProd.length} staged production files exercised`);
+
   // ── Report ────────────────────────────────────────────────────
   const skipped = results.filter(r => r.status === 'skipped').length;
   console.log(`\n${'═'.repeat(60)}`);
@@ -293,5 +312,7 @@ test('E2E save integrity — all prod+demo levels', async () => {
   });
   console.log(`${'═'.repeat(60)}\n`);
 
+  expect(stagedProd.length).toBeGreaterThanOrEqual(1);
+  expect(notAttempted).toEqual([]);
   expect(failed).toBe(0);
 });

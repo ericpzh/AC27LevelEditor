@@ -79,7 +79,7 @@ The `preprocessUnityJson()` function transforms Unity JSON into valid JSON in 3 
 
 - `MetaData` (`ContextCross.Saves.LevelMetaData`) — `BaseTime` (DateTime tick value as inline `{ "$type": 2, ticks }`), nested `Config` (`startTime`/`endTime`, file references), plus the timeline sections `WeatherFrames` / `WindFrames` / `RunwayTimeline` (rebuilt by `_rebuildV4TimelineSections`)
 - `StaticData` — `byte[]` field whose value is a decoded nested Odin document (`"$blobdoc"`) containing `PKStaticEntities`, `NonPKStaticEntities`, `StaticItems`
-- Checkpoint-frame documents — `CheckpointFrame` → `Snapshot` (RuntimeSnapshot) → `RuntimeData` → `$blobdoc` → `RuntimeField` → `RuntimeEntities` (runtime aircraft / jetway / event entries)
+- Checkpoint-frame documents — `CheckpointPayload` → `RuntimeData` (newer frames; older ones nest `Snapshot` → `RuntimeData`) → `$blobdoc` → `RuntimeField` → `RuntimeEntities` (runtime aircraft / jetway / event entries)
 - No `SceneryData` or `WorldState` sections exist; `GameTime` is usually absent (snapshot time comes from `MetaData.BaseTime`)
 
 ### Timeline Frames (Weather / Wind / Runway)
@@ -102,33 +102,66 @@ A game update introduced the **v4 schema**; it is now the only schema. Every `.a
 | `StaticData` | `byte[]` field whose value is a decoded nested Odin binary document (`"$blobdoc"`), containing `PKStaticEntities`, `NonPKStaticEntities`, `StaticItems` |
 | `GameTime` | (usually absent — snapshot time derived from `MetaData.BaseTime` instead) |
 
-Each appended **checkpoint frame** document contains `Snapshot` (RuntimeSnapshot) → `RuntimeData` → `$blobdoc` → `RuntimeField` → `RuntimeEntities` — the runtime aircraft / jetway / event entries rebuilt by the save pipeline.
+Each appended **checkpoint frame** document is a `CheckpointPayload`. Newer (v5+) frames expose `RuntimeData` directly (alongside `RecentMessages`); older fixtures nest it as `Snapshot` (RuntimeSnapshot) → `RuntimeData`. Either way the runtime entries live at `RuntimeData.$blobdoc.RuntimeField.RuntimeEntities` — the aircraft / jetway / event entries reconciled and rebuilt by the save pipeline.
 
 All files are v4 — there is no schema detection and no `isV4` parameter anywhere in the code.
 
 ### GATCARC4 Binary Container
 
-GATCARC4 is an append-only binary archive format that wraps Odin-serialized payloads. All sections:
+GATCARC4 is an append-only binary archive format that wraps Odin-serialized payloads. There are **two on-disk storage versions**, both handled transparently by `src/acl/gatcarc.js` as long as the magic is `GATCARC4` and the storage version is `1` or `2` (`SUPPORTED_VERSIONS = [1, 2]`); any other version throws `unsupported ... storage version`.
+
+**v1 (storage version 1) — the legacy layout:**
 
 ```
 Header segment:
  [0..7] ASCII magic "GATCARC4"
- [8..11] uint32 storage version (currently 1)
+ [8..11] uint32 storage version (1)
  [12..15] uint32 payload length N
  [16..16+N) payload: OdinSerializer binary document
+   (root ContextCross.Saves.SaveSystem+ArchiveHeader)
  [16+N..16+N+32) SHA-256 of payload bytes
  [16+N+32..16+N+36) ASCII commit marker "NODH"
 
 Zero or more appended checkpoint frames:
  [0..3] ASCII frame marker "MARF"
- [4..7] uint32 storage version
+ [4..7] uint32 storage version (1)
  [8..11] uint32 payload length M
  [12..12+M) payload: OdinSerializer binary document
+   (root ...CheckpointFrame)
  [12+M..12+M+32) SHA-256 of payload bytes
  [12+M+32..12+M+36) ASCII commit marker "NODF"
 ```
 
-Each payload is an independent OdinSerializer binary document. Nested `byte[]` fields (such as `ArchiveHeader.StaticData`, `RuntimeSnapshot.RuntimeData`) contain complete nested Odin binary documents, decoded inline as `"$blobdoc": { ... }` entries.
+**v2 (storage version 2) — introduced by a game update:** the header payload is now UTF-8 **JSON** (`{schemaHash, archiveGuid, progressDisplayName, levelGuid, airportIcao}`) committed with `NODS` (not `NODH`), the user-editable content moves into a **main `LevelPayload` segment** that has no magic of its own (length-prefixed immediately after the header), and each checkpoint frame embeds its own commit inside the payload:
+
+```
+Header segment:
+ [0..7] ASCII magic "GATCARC4"
+ [8..11] uint32 storage version (2)
+ [12..15] uint32 header JSON length N
+ [16..16+N) payload: UTF-8 JSON {schemaHash, archiveGuid, ...}
+ [16+N..16+N+32) SHA-256 of JSON bytes
+ [16+N+32..16+N+36) ASCII commit marker "NODS"
+
+Main LevelPayload segment (no magic; length-prefixed):
+ [0..3] uint32 payload length P
+ [4..4+P) payload: OdinSerializer binary document
+   (root ContextCross.Saves.SaveSystem+LevelPayload — THE editable document)
+ [4+P..4+P+32) SHA-256 of payload bytes
+ [4+P+32..4+P+36) ASCII commit marker "NODH"
+
+Zero or more appended checkpoint frames (same MARF framing):
+ [0..3] marf, [4..7] uint32 storage version (2), [8..11] uint32 length M
+ [12..12+M) payload: [4 jsonLen][json][32 jsonHash][4 binLen][binPayload][32 binHash][NODF]
+   — the commit "NODF" is the trailing 4 bytes of the payload; there is NO outer hash
+```
+
+- The parser tolerates a v1-style outer hash+`NODF` frame when the payload does not end in `NODF`, so mixed/downgraded files still read.
+- `getStorageVersion(buffer)` reads the version at offset 8 (returns `null` for non-GATCARC4 input). `parseV2Archive()` validates the header + main hashes; `parseArchive()` maps v2's main payload onto a v1-shaped `{version, header, frames, _v2}` result for compatibility.
+- **Only the v2 main `LevelPayload` is decoded to editable text.** The JSON header and raw checkpoint-frame bytes are preserved opaquely: `encodeV2Archive(text, originalBuffer)` re-serializes the main payload and copies the original header segment + `framesRaw` verbatim (frame edits made in the decoded text are **not** re-encoded for v2).
+- `writeAcl()` **preserves the on-disk storage version**: an existing v2 file stays v2 (via `encodeV2Archive`), an existing v1 file stays v1 (via `encodeArchive`), and a **new** file (no existing file on disk) is written as v2 with a synthesized header (`buildV2HeaderSegment` uses `DEFAULT_SCHEMA_HASH`, deriving `archiveGuid`/`airportIcao` from the path/text).
+
+Each Odin payload (the v1 `ArchiveHeader`, the v2 main `LevelPayload`) is an independent OdinSerializer binary document. Nested `byte[]` fields (such as `ArchiveHeader.StaticData`, `RuntimeSnapshot.RuntimeData`) contain complete nested Odin binary documents, decoded inline as `"$blobdoc": { ... }` entries.
 
 **Multi-frame archives** are decoded into multiple Odin JSON documents separated by a sentinel line:
 ```
@@ -136,8 +169,8 @@ $$$ GATCARC4 CHECKPOINT FRAME $$$
 ```
 
 **I/O rules:**
-- `readAclText(path)` — universal read: decodes GATCARC4 binary via `decodeArchive()` to Odin JSON text.
-- `writeAcl(path, text, { format })` — writes binary (GATCARC4 archive) or text. Default `'auto'` preserves whatever the file was on disk. New files default to binary (`'text'` exists for debugging only).
+- `readAclText(path)` — universal read: decodes a GATCARC4 archive to Odin JSON text. `decodeArchive()` handles v1; `decodeV2Archive()` handles v2 (decoding the main `LevelPayload`, plus any checkpoint frame whose inner binary payload hash-verifies and looks like a checkpoint). Non-archive input passes through unchanged.
+- `writeAcl(path, text, { format })` — writes binary (GATCARC4 archive, v2 if the file was v2 or is new, v1 if it was v1) or text. Default `'auto'` preserves the on-disk format; `'text'` exists for debugging only.
 - All game `.acl` files are GATCARC4 binary archives — the editor never writes plain text.
 
 All ACL I/O in the editor goes through `src/acl/gatcarc.js`. No code calls `fs.readFileSync(path, 'utf-8')` on `.acl` files.
@@ -150,7 +183,7 @@ Decoded GATCARC4 payloads use the Odin JSON text dialect — the extensions list
 
 | Aspect | v4 |
 |--------|-----|
-| Top-level sections | Header document: `MetaData` (nested `Config` + timeline sections), `StaticData` (`$blobdoc`); checkpoint frames: `Snapshot.RuntimeData` |
+| Top-level sections | Header document: `MetaData` (nested `Config` + timeline sections), `StaticData` (`$blobdoc`); checkpoint frames: `RuntimeData` (newer) or `Snapshot.RuntimeData` (older) |
 | Scenery entities | `StaticData.$blobdoc.PKStaticEntities` (flat array, all entity types) + `NonPKStaticEntities` (areas) |
 | Entity references | `$iref:N` pointer to `$id:N` |
 | Flight plans | `StaticData.$blobdoc.StaticItems.$rcontent` with `flight-plan:REGISTRATION` keys |
@@ -358,6 +391,12 @@ meta = { nodeOrigPk:[], segOrigPk:[], runwayOrigPk:[], areaOrigId:[], standOrigP
 7c. **PK static-entity type regroup (`_pkTypeOrder` + `_regroupPkByType`):** the game serializes `PKStaticEntities.$rcontent` grouped by entity type in a fixed order (`taxiway-node`, `taxiway-segment`, `airway-node`, `airway-segment`, `runway`, `stand`, `taxi-navigation`). The rebuild used to keep survivors in place and **append** synthesized objects at the tail, so a newly-drawn `taxiway-node` landed AFTER every `taxi-navigation` entry, breaking the grouping. `patchSceneryBlob` now calls `_regroupPkByType(finalPkOut, _pkTypeOrder(sourceEntries))` after synthesis/renumbering: bucket by `typePrefix` (`_entryTypePrefix`), concatenate buckets in the source file's first-appearance order padded with `PK_TYPE_ORDER` (so a type absent from the file — e.g. a brand-new runway — still gets a deterministic slot), stable within each bucket (original node indices stay stable across a re-parse because new nodes append to their type's block; `runway`/`stand` blocks are NOT key-ordered, so original order is preserved). Covered by `tests/integration/scenery_type_regroup.test.js` (no-touch byte-identical, original file already canonical, added node/segment lands in the right block).
 
 7d. **Runway Entries/Exits — distinct array vs element type ids + painter checkbox (`runwayAccess.js` + `_sampleRunwayInnerType` + `_assertSampledType`):** each directional runway block (`runway:01`/`runway:19`) carries two tables: `Entries` (`Runway+Entry[]` → `Runway+Entry`) and `Exits` (`Runway+Exit[]` → `Runway+Exit`). The **array wrapper** and the **element** are DISTINCT Odin types and must use different type ids; a hardcoded fallback that reused the same id for both caused `Type id N claimed by both "Runway+Entry[]" and "Runway+Entry"` on encode. `buildSceneryGraph` aggregates both directions into the collapsed physical runway (`rw.entries`/`rw.exits` — each `{name, runwayName, holdingIdx, lineUpIdx/exitIdx, defineIdx, isLeft}` plus raw `$iref`s) and snapshots `meta.runwayEntriesOrig` for the writer's dirty-check. The painter's checkbox panel (`src/components/EditorScreen/GroundPainter/runwayAccess.js`, pure) is gated ONLY on a **physical connection** (the taxiway shares a graph node with the runway's coupled pavement-strip chain — `getRunwayPavementNodes` prefers the **live graph** name-match with `meta.runwayPavement` fallback so a junction created by splitting the strip counts even when the snapshot is stale; a name match against an existing entry is NOT a connection, eligibility ignores the taxiway name, toggling requires one, and `toggleRunwayAccess` patches node `Type`/`Flags` and keeps `entries`/`exits` direction-grouped on runway rename). Save re-serializes both directional wrappers via `_buildEntriesWrapperForPatch`/`_buildExitsWrapperForPatch` and samples the inner element ids with `_sampleRunwayInnerType` (regex over `Entries`/`Exits` `$rcontent` first element's `$type`, filtered by `_typeId`, required to differ from the array id); `_sampleRunwayShapes` no longer falls back to hardcoded ids, and `_assertSampledType` **asserts** (`no fallback allowed`) for every type the synthesized runway emits — a file that cannot supply a type refuses to emit a guessed id. When one direction's Entries change, BOTH directions are re-serialized so the shared element type stays declared for the sibling (bare `$type` refs would otherwise orphan). Also patches `Type`/`Flags` for entrance/exit holding nodes and keeps `runwayEntriesDirty` / `hasTypeChanges` in the no-op gate. Covered by `tests/components/EditorScreen/GroundPainter/runwayAccess.test.js` (6, eligibility + physical-only listing) and `tests/integration/runway_entry_type_id.test.js` (8, distinct ids + no-fallback asserts + encode + sibling re-serialization).
+7e. **Stand companions (taxi-navigation + jetway) and runway derived geometry (`_synthesizeNew`):** the painter Graph models only nodes/segments/runways/areas/stands, but the game expects every stand to carry a Type-4 `taxi-navigation:stand` point and every gate stand a `jetway` StaticItem, and every runway to carry edge/touchdown nodes + holding areas. `_synthesizeNew` now emits these, sampling every `$type` from the file (`_sampleTaxiNavShapes` / `_sampleJetwayShapes`, and `_findInlineType` / `_sampleRunwayInnerType` searching **all** runway entries when the first omits a sub-object) — `_assertSampledType` still refuses to guess:
+ - **New stand** → `taxi-navigation:stand:<ident>` (Type 4, `Reference` → the stand `$id`, `RelatedStand` = the identifier, `Position` = the stand's tail node) plus one `taxi-navigation:pushback:<ident>:<osm>` (Type 3) per pushback node. All taxi-nav points share ONE `CrossTaxiwayNames` `System.String[]` wrapper — the first emitted point (reusing an existing shared id when the file has one, else declaring a fresh one) emits it inline, later points `$iref` it (`sharedCrossId`).
+ - **New gate stand** (`parkingType === 1`) → a `jetway:<ident>` `StaticItem` whose `Stands` array `$iref`s the stand (pushed into `newJetwaySiEntries` → appended to `StaticItems`). The checkpoint-frame jetway reconciler is now `addMissing` (like physical-runway), so a runtime `Jetway` entity is synthesized for every static jetway that lacks one.
+ - **Retro-heal survivors:** a survivor stand whose identifier has no Type-4 `taxi-navigation:stand` gets one synthesized on the next save. Jetway and pushback are **not** retro-healed (cargo stands legitimately have no jetway/docked state).
+ - **Survivor companion sync:** when a survivor stand's tail node moves or its identifier changes, the writer patches the matching `taxi-navigation` entries — `_patchTaxiNavPosition` on the Type-4 `Position`, `_patchTaxiNavRelatedStand` on `RelatedStand`, and the Type-3 pushback `Position` follows its moved `Reference` node (via `movedByPk`, with a `movedByCoord` fallback for co-located twins). `standCompanionDirty` defeats the lossless no-op early return so those patches serialize; the guard also fires when any pushback node moved.
+ - **Runway derived geometry:** `_synthesizeRunway` emits distinct `edge`/`touchdown` `taxiway-node`s (edge outward by `RW_EDGE_OFFSET` 0.58, touchdown inset by `RW_TD_OFFSET` 4.80), an `AreaVertices` rectangle around the **edge** points, and `HoldingAreas` inferred by `_inferHoldingsForRunway` from the runway's `entries`/`exits` holding nodes or (fallback) taxiway segments crossing the runway strip; each holding is a `Runway+HoldingAreaData` with a 4-point rectangle (`RW_HOLD_W` 0.037 across × `RW_HOLD_L` 0.314 along, `_holdingRectAround`). Both directions share one `PhysicalRunwayStaticItem` but get their own `TouchDownPoint`/`EdgePoints`/`ThresholdPoints` `$iref`s. `_synthesizeNew` pre-allocates the derived node/holding ids (outside `_synthesizeRunway`'s fixed 19-id budget) and passes them in via `extra`; the derived `nodeOsms[]` map is also returned so pushback PKs can carry the source OsmId.
 
 8. Final `$id`/`$iref` renumbering is done **only** by `writeAcl` → `renumberAclIds` — never inside `patchSceneryBlob` (double-renumber corrupts).
 
@@ -370,7 +409,7 @@ meta = { nodeOrigPk:[], segOrigPk:[], runwayOrigPk:[], areaOrigId:[], standOrigP
 
 8.6. **Final dangling-`$iref` validation (last line of defence):** after every repair/type-fix stage and **before** the final arrays are joined back into text, `patchSceneryBlob` collects the flat declared-id set of the whole document — `_collectDeclaredIds` over `_textOutsideListSpans(snapshotText, ranges)` (the document **minus** the three managed list bodies, whose ids this writer never touches but which legally declare ids that PK entries may reference) plus the emitted PK/NPK/SI arrays — and then, in up to **16 passes to fixpoint**, drops every `taxiway-segment`/`stand` entry that still `$iref`s an undeclared id (the crash class). A following **report-only** pass emits a warning for every remaining dangling owner of any kind (`PK`/`NonPK`/`StaticItems`) instead of dropping it — dropping a `taxi-navigation` node would cascade-delete the shared sub-objects it declares and nuke the whole graph, so those are surfaced, not removed. If anything was dropped, `_renumberTaxiwaySegmentOrdinals` runs again so each per-osm group stays contiguous. `crashDangleCount` (the same count over the *input* emitted arrays, computed just before the no-op check) makes a file that was **already** corrupt before this save go through the rebuild path and get healed, rather than being re-committed verbatim by the early return. Both stages push `{ key, params, text }` warnings into `opts.warnings`.
 
-9. **Checkpoint-frame physical-runway reconciliation + runway-name cascade:** a GATCARC4 `.acl` may be multi-segment: a header document plus `$$$ GATCARC4 CHECKPOINT FRAME $$$` segments, each an independent Odin `$blobdoc`. The checkpoint frame snapshots **runtime** state (`RuntimeData.$blobdoc.RuntimeEntities`), which includes a `PhysicalRunway` runtime entity per physical runway, keyed `physical-runway:XX/YY`. Unity reconciles RuntimeEntities against the static `StaticItems` on load, so two edit classes were previously corrupting the file:
+9. **Checkpoint-frame physical-runway reconciliation + runway-name cascade:** a GATCARC4 `.acl` may be multi-segment: a header document plus `$$$ GATCARC4 CHECKPOINT FRAME $$$` segments, each an independent Odin `$blobdoc`. The checkpoint frame snapshots **runtime** state (`RuntimeData.$blobdoc.RuntimeEntities`), which includes a `PhysicalRunway` runtime entity per physical runway, keyed `physical-runway:XX/YY`. Unity reconciles RuntimeEntities against the static `StaticItems` on load, so two edit classes were previously corrupting the file (**v2 note:** `writeAcl` re-copies the original v2 checkpoint frames verbatim, so these file-level frame reconciliations persist only for v1 archives — see GATCARC4 Binary Container):
  - **Runway delete** → the static `StaticItems` lost the `physical-runway:XX/YY` key, but the checkpoint frame kept the runtime `PhysicalRunway` entity → `InvalidOperationException: PhysicalRunway: static item 'physical-runway:XX/YY' does not exist in CurrentLevel.StaticField.StaticItems`.
  - **Runway rename** → the rename updated the runway entity + static key, but flight-plan `"Runway"`, aircraft `"RelatedRunway"`/`"_departureRunway"`/`"_arrivalRunway"`, and the `InitialRunways` string[] kept the **old end name** → `NullReferenceException` in `Dynamics.RestoreRuntimeData` when a flight referenced a runway that no longer existed.
 
@@ -734,7 +773,7 @@ and `InitialPosition.y = 15.24` for aircraft at the approach ceiling. The
 
 **Designator Mapping & Cache:**
 - `buildDesignatorMapping(aclText)` → `Map<AircraftType, Designator>` — cross-references `StaticItems` (flight-plan → Registration, AircraftType, Stand) with `RuntimeEntities`. Scans `StaticItems` for flight-plan entries then cross-references `RuntimeEntities` in two passes: **(Pass A)** `aircraft:REG` entries (Registration → Specification.Designator), **(Pass B)** `jetway:STAND` entries with `DockingAircraft.Specification.Designator` (linked via Stand → AircraftType from static-item Stand field). Jetway fallback covers aircraft whose only runtime representation is inside a jetway's `DockingAircraft`. Produces a complete map for spec lookup during save. **v5:** the global CSV seeds the map before the scan (see above).
-- `buildApproachCache(airportDir, progressCallback?, fileFilter?)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, typeNameIndex, fileTypeMaps, fileTypeNameIndexes, state5ParamsMap, starPaths, starWaypoints, runwayThresholds, airportScale, starRunwayMap, runwayStarMap, taxiwayPaths, sidRunwayMap, runwaySidMap, sidPaths, missedAppMap, runwayMissedAppMap, missedAppPaths, apprRunwayMap, runwayApprMap, apprPaths, airwayNodes}` — scans all `.acl` files for an airport. **v5:** collects `allAclTexts[]` and **merges every scenery-derived map across all files** (STAR/SID/APPR/runway/waypoints/thresholds/airwayNodes/sidPaths/missedAppPaths/apprPaths all multi-file with dedup) because each level now carries only a subset of runways/procedures (ZSJN `leisure_1` = RWY19 only, others = RWY01 only). Also loads the global `specDB`/`designatorMap` from `aircraft_profiles.csv` before the per-file loop (same for all airports). The first file no longer dominates. `fileFilter(filename)` overrides the built-in skip regex (`/tutorial|bench|test|crossrunway|dev|endless|\.prod/i`); `electron/main.js` passes `isCacheAclFile` so whitelisted demo/prod visible bases (e.g. `ZGSZ_Endless.acl`) are scanned even when they match the regex — without it their geometry cache would come back empty.
+- `buildApproachCache(airportDir, progressCallback?, fileFilter?)` → `{specDB, appPointMap, totalApproachTimes, designatorMap, saveTimeOffsets, typeMap, typeNameIndex, fileTypeMaps, fileTypeNameIndexes, state5ParamsMap, starPaths, starWaypoints, runwayThresholds, airportScale, starRunwayMap, runwayStarMap, taxiwayPaths, sidRunwayMap, runwaySidMap, sidPaths, missedAppMap, runwayMissedAppMap, missedAppPaths, apprRunwayMap, runwayApprMap, apprPaths, airwayNodes}` — scans all `.acl` files for an airport. **v5:** collects `allAclTexts[]` and **merges every scenery-derived map across all files** (STAR/SID/APPR/runway/waypoints/thresholds/airwayNodes/sidPaths/missedAppPaths/apprPaths all multi-file with dedup) because each level now carries only a subset of runways/procedures (ZSJN `leisure_1` = RWY19 only, others = RWY01 only). Also loads the global `specDB`/`designatorMap` from `aircraft_profiles.csv` before the per-file loop (same for all airports). The first file no longer dominates. `fileFilter(filename)` overrides the built-in skip regex (`/tutorial|bench|test|crossrunway|dev|endless|\.prod/i`); `electron/main.js` passes `isCacheAclFile` so whitelisted demo/prod visible bases are scanned even when they match the regex — without it their geometry cache would come back empty.
 
 **Assembly:**
 - `buildApproachAircraftBlock({flightPlanGuid, route, flyPoints, appPoints, progressRatio, spec, radioChannelGuid?, touchDownPosition?, approachCap?, typeNums?, acTypeNum?, nextId?})` → `{guid, block, nextId}` — State=30 `$k/$v` JSON block

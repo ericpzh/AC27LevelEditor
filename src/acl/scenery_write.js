@@ -1040,6 +1040,30 @@ function _patchNodePosition(entry, nx, nz) {
   return entry.slice(0, rp.valueStart) + newRpVal + entry.slice(rp.valueEnd);
 }
 
+// Patch a taxi-navigation FixedTaxiNavigationPoint's Position x/z (Vector3).
+function _patchTaxiNavPosition(entry, nx, nz) {
+  const t = createTokenizer(entry);
+  const posSec = t.findSection('Position');
+  if (!posSec) return entry;
+  const posText = entry.substring(posSec.valueStart, posSec.valueEnd);
+  const pt = createTokenizer(posText);
+  const typeSec = pt.findSection('$type');
+  if (!typeSec) return entry;
+  const typeRaw = posText.substring(typeSec.valueStart, typeSec.valueEnd);
+  const after = posText.substring(typeSec.valueEnd);
+  const nums = _extractNums(after);
+  if (nums.length < 3) return entry;
+  const y = nums[1];
+  const newInner = '{ "$type": ' + typeRaw + ', ' + _fmtNum(nx) + ', ' + _fmtNum(y) + ', ' + _fmtNum(nz) + ' }';
+  return entry.slice(0, posSec.valueStart) + newInner + entry.slice(posSec.valueEnd);
+}
+function _patchTaxiNavRelatedStand(entry, newStand) {
+  const t = createTokenizer(entry);
+  const sec = t.findSection('RelatedStand');
+  if (!sec) return entry;
+  return entry.slice(0, sec.valueStart) + JSON.stringify(String(newStand)) + entry.slice(sec.valueEnd);
+}
+
 // ─── New-object synthesis (nodes + segments) ─────────────────────
 
 function _valueOf(entry, key) {
@@ -1288,6 +1312,76 @@ function _synthesizeStand(stand, id, ident, noseId, tailId, pbIds, s) {
     ', "Name": ' + JSON.stringify(standName) + ', "Identifier": "' + ident + '" } }';
 }
 
+// ─── Taxi-navigation + Jetway helpers (GroundPainter stand companions) ──
+function _sampleTaxiNavShapes(pkEntries) {
+  const s = { navType: null, posType: null, crossType: null, dirType: null, sharedCrossId: null };
+  const sample = pkEntries.find((e) => _entryTypePrefix(e) === 'taxi-navigation');
+  if (sample) {
+    const rawNav = _valueOf(sample, '$type');
+    s.navType = _isCorruptType(rawNav) ? null : rawNav;
+    const posM = sample.match(/"Position":\s*\{\s*"\$type":\s*("[^"]+"|\d+)/);
+    s.posType = posM && !_isCorruptType(posM[1]) ? posM[1] : null;
+    const crossM = sample.match(/"CrossTaxiwayNames":\s*\{\s*"\$id":\s*(\d+)\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+    if (crossM) {
+      s.sharedCrossId = parseInt(crossM[1], 10);
+      s.crossType = !_isCorruptType(crossM[2]) ? crossM[2] : null;
+    } else {
+      const crossRef = sample.match(/"CrossTaxiwayNames":\s*\$iref:(\d+)/);
+      if (crossRef) s.sharedCrossId = parseInt(crossRef[1], 10);
+      const ct = sample.match(/"CrossTaxiwayNames":\s*(?:\{[^}]*?"\$type":\s*("[^"]+"|\d+))/);
+      if (ct && !_isCorruptType(ct[1])) s.crossType = ct[1];
+    }
+    const dirM = sample.match(/"Direction":\s*\{\s*"\$type":\s*("[^"]+"|\d+)/);
+    s.dirType = dirM && !_isCorruptType(dirM[1]) ? dirM[1] : null;
+  }
+  if (!s.navType || _isCorruptType(s.navType)) s.navType = '"27|ContextCross.Models.FixedTaxiNavigationPoint, GroundATC.Core"';
+  if (!s.posType || _isCorruptType(s.posType)) s.posType = '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
+  if (!s.crossType || _isCorruptType(s.crossType)) s.crossType = '"28|System.String[], mscorlib"';
+  if (!s.dirType || _isCorruptType(s.dirType)) s.dirType = s.posType;
+  return s;
+}
+function _sampleJetwayShapes(siEntries) {
+  const s = { jetwayType: null, standsArrayType: null };
+  const jw = (siEntries || []).find((e) => _entryTypePrefix(e) === 'jetway');
+  if (jw) {
+    const rawJw = _valueOf(jw, '$type');
+    s.jetwayType = _isCorruptType(rawJw) ? null : rawJw;
+    const m = jw.match(/"Stands":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+    if (m && !_isCorruptType(m[1])) s.standsArrayType = m[1];
+  }
+  if (!s.jetwayType || _isCorruptType(s.jetwayType)) s.jetwayType = '"34|ContextCross.Models.JetwayStaticItem, GroundATC.Core"';
+  if (!s.standsArrayType || _isCorruptType(s.standsArrayType)) s.standsArrayType = '"35|ContextCross.Models.Stand[], GroundATC.Core"';
+  return s;
+}
+function _synthesizeTaxiNavStand(taxiIdent, standId, relatedStandIdent, tailPos, s, entryId, sharedCrossId, isDeclarer) {
+  const crossPart = isDeclarer
+    ? '{ "$id": ' + sharedCrossId + ', "$type": ' + _fmtType(s.crossType) + ', "$rlength": 0, "$rcontent": [] }'
+    : '$iref:' + sharedCrossId;
+  return '{ "$k": "taxi-navigation:stand:' + taxiIdent + '", "$v": { "$id": ' + entryId +
+    ', "$type": ' + _fmtType(s.navType) +
+    ', "PK": "taxi-navigation:stand:' + taxiIdent + '", "Type": 4' +
+    ', "Position": { "$type": ' + _fmtType(s.posType) + ', ' + _fmtNum(tailPos.x) + ', 0, ' + _fmtNum(tailPos.z) + ' }' +
+    ', "Reference": $iref:' + standId +
+    ', "TaxiwayName": "", "CrossTaxiwayNames": ' + crossPart +
+    ', "RelatedRunway": "", "RelatedStand": ' + JSON.stringify(relatedStandIdent) +
+    ', "Direction": { "$type": ' + _fmtType(s.dirType) + ', 0, 0, 0 } } }';
+}
+function _synthesizeTaxiNavPushback(pushbackPk, pushbackNodeId, relatedStandIdent, nodePos, s, entryId, sharedCrossId) {
+  return '{ "$k": "' + pushbackPk + '", "$v": { "$id": ' + entryId +
+    ', "$type": ' + _fmtType(s.navType) +
+    ', "PK": "' + pushbackPk + '", "Type": 3' +
+    ', "Position": { "$type": ' + _fmtType(s.posType) + ', ' + _fmtNum(nodePos.x) + ', 0, ' + _fmtNum(nodePos.z) + ' }' +
+    ', "Reference": $iref:' + pushbackNodeId +
+    ', "TaxiwayName": "", "CrossTaxiwayNames": $iref:' + sharedCrossId +
+    ', "RelatedRunway": "", "RelatedStand": ' + JSON.stringify(relatedStandIdent) +
+    ', "Direction": { "$type": ' + _fmtType(s.dirType) + ', 0, 0, 0 } } }';
+}
+function _synthesizeJetwayStatic(jetwayName, standId, s, entryId, standsArrayId) {
+  return '{ "$k": "jetway:' + jetwayName + '", "$v": { "$id": ' + entryId + ', "$type": ' + _fmtType(s.jetwayType) +
+    ', "Name": ' + JSON.stringify(jetwayName) +
+    ', "Stands": { "$id": ' + standsArrayId + ', "$type": ' + _fmtType(s.standsArrayType) + ', "$rlength": 1, "$rcontent": [ $iref:' + standId + ' ] }' +
+    ', "InitialStatus": 0, "InitialProgress": 0, "InitialAutoUndockFinished": false } }';
+}
 // ─── Airway helpers ──────────────────────────────────────────────
 function _sampleAirwayShapes(pkEntries) {
   const s = { airwayNodeType: null, positionType: null, airwaySegType: null, airwaySegListType: null, airwaySegInnerType: null };
@@ -1521,6 +1615,45 @@ function _sampleRunwayShapes(pkEntries) {
     const node = pkEntries.find((e) => _entryTypePrefix(e) === 'taxiway-node');
     s.vec3Type = node ? (_isCorruptType((node.match(/"\$type":\s*("[^"]+"|\d+),\s*-?[\d.eE+]+,/) || [])[1]) ? null : (node.match(/"\$type":\s*("[^"]+"|\d+),\s*-?[\d.eE+]+,/) || [])[1]) : null;
   }
+  // Sampling aid: the FIRST runway may use `$iref` shorthand for a shared nested
+  // object whose inline declaration lives on another runway entry, so search all
+  // runway entries before giving up. This is still SAMPLING from the file — we
+  // never guess a type id. An unsampleable type stays null and `_assertSampledType`
+  // refuses to emit a guessed (and potentially colliding) `$type`.
+  const _findInlineType = (re) => {
+    for (const e of runwayEntries) {
+      const m = e.match(re);
+      if (m && !_isCorruptType(m[1])) return m[1];
+    }
+    return null;
+  };
+  if (!s.itemType) {
+    s.itemType = _findInlineType(/"PhysicalRunwayStaticItem":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+  }
+  if (!s.entriesType) {
+    s.entriesType = _findInlineType(/"Entries":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+  }
+  if (!s.entryInnerType) {
+    s.entryInnerType = _sampleRunwayInnerType(runwayEntries, s.entriesType, 'Entries', 'ContextCross.Models.Runway+Entry, GroundATC.Core');
+  }
+  if (!s.exitsType) {
+    s.exitsType = _findInlineType(/"Exits":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+  }
+  if (!s.exitInnerType) {
+    s.exitInnerType = _sampleRunwayInnerType(runwayEntries, s.exitsType, 'Exits', 'ContextCross.Models.Runway+Exit, GroundATC.Core');
+  }
+  if (!s.routesType) {
+    s.routesType = _findInlineType(/"Routes":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+  }
+  if (!s.areaVerticesType) {
+    s.areaVerticesType = _findInlineType(/"AreaVertices":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+  }
+  if (!s.holdingAreasType) {
+    s.holdingAreasType = _findInlineType(/"HoldingAreas":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+  }
+  if (!s.boolReactiveType) {
+    s.boolReactiveType = _findInlineType(/"IsActive":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
+  }
   return s;
 }
 
@@ -1619,11 +1752,88 @@ function _patchRunwayBlockRoutes(blockText, newRoutesWrapper) {
   return blockText.slice(0, sec.valueStart) + newRoutesWrapper + blockText.slice(sec.valueEnd);
 }
 
+// ─── Runway derived geometry (inferred from taxiway & runway input) ───────
+// ZSJN decoded shows: EdgePoints are the physical pavement ends (~0.58 beyond
+// ThresholdPoints), TouchDownPoint is ~4.8 inside the threshold toward the
+// opposite end, and HoldingAreas are small rectangles around each taxiway
+// holding position. We infer these from the ground-editor's taxiway & runway
+// graph so a newly painted runway gets valid game data without the user having
+// to place four extra entities manually.
+const RW_EDGE_OFFSET = 0.58;
+const RW_TD_OFFSET = 4.80;
+const RW_HOLD_W = 0.037; // across runway (perp)
+const RW_HOLD_L = 0.314; // along runway
+
+function _holdingRectAround(center, ux, uz, w, l, s) {
+  const hw = w / 2, hl = l / 2;
+  // perp unit
+  const px = -uz, pz = ux;
+  const p1 = { x: center.x + px * hw + ux * hl, z: center.z + pz * hw + uz * hl };
+  const p2 = { x: center.x - px * hw + ux * hl, z: center.z - pz * hw + uz * hl };
+  const p3 = { x: center.x - px * hw - ux * hl, z: center.z - pz * hw - uz * hl };
+  const p4 = { x: center.x + px * hw - ux * hl, z: center.z + pz * hw - uz * hl };
+  return [p1, p2, p3, p4];
+}
+
+function _inferHoldingsForRunway(graph, rw, ux, uz) {
+  const holdings = [];
+  const seenHoldingIdx = new Set();
+  // From explicit runway entries / exits (user checked taxiways in Ground Painter)
+  const pushFromIdx = (hIdx, entryName) => {
+    if (hIdx == null || seenHoldingIdx.has(hIdx)) return;
+    const node = graph.nodes[hIdx];
+    if (!node) return;
+    seenHoldingIdx.add(hIdx);
+    const verts = _holdingRectAround(node, ux, uz, RW_HOLD_W, RW_HOLD_L);
+    holdings.push({ vertices: verts, entryName: entryName || `H${holdings.length + 1}` });
+  };
+  for (const en of (rw.entries || [])) pushFromIdx(en.holdingIdx, en.name);
+  for (const ex of (rw.exits || [])) pushFromIdx(ex.holdingIdx, ex.name);
+  // Fallback: scan taxiway segments that intersect the runway strip. If no
+  // explicit holdings exist but taxiways cross the runway, each crossing's
+  // outside node becomes a holding. Excludes pavement strips named after the runway.
+  if (holdings.length === 0 && Array.isArray(graph.segments) && Array.isArray(graph.nodes)) {
+    const phys = rw.physicalName || (Array.isArray(rw.names) ? rw.names.join('/') : '');
+    const a = graph.nodes[rw.thAIdx], b = graph.nodes[rw.thBIdx];
+    if (!a || !b) return holdings;
+    const halfW = ((rw.width != null && Number(rw.width) !== 0 ? Number(rw.width) : 0.50) / 2) + 0.2;
+    const len = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    const inside = (pt) => {
+      const apx = pt.x - a.x, apz = pt.z - a.z;
+      const proj = (apx * ux + apz * uz);
+      if (proj < -0.5 || proj > len + 0.5) return false;
+      const perp = Math.abs(apx * (-uz) + apz * ux);
+      return perp <= halfW;
+    };
+    const candidateIdxs = new Map(); // outsideIdx -> segName
+    for (const seg of graph.segments) {
+      if (!seg || seg.name === phys) continue;
+      const idxs = seg.nodeIdxs && seg.nodeIdxs.length >= 2 ? seg.nodeIdxs : [seg.aIdx, seg.bIdx];
+      if (!idxs || idxs.length < 2) continue;
+      // Check each consecutive pair in polyline for a crossing edge
+      for (let k = 0; k < idxs.length - 1; k++) {
+        const iA = idxs[k], iB = idxs[k + 1];
+        const nA = graph.nodes[iA], nB = graph.nodes[iB];
+        if (!nA || !nB) continue;
+        const inA = inside(nA), inB = inside(nB);
+        if (inA === inB) continue;
+        const outIdx = inA ? iB : iA;
+        if (!candidateIdxs.has(outIdx)) candidateIdxs.set(outIdx, seg.name || '');
+      }
+    }
+    for (const [outIdx, segName] of candidateIdxs) {
+      pushFromIdx(outIdx, segName || `H${holdings.length + 1}`);
+    }
+  }
+  return holdings;
+}
+
 // Emit a full runway pair (both reciprocal directions) sharing one nested
 // PhysicalRunwayStaticItem, with threshold $irefs into the node $ids.
-// Generates valid Unity entries: includes Entries/Exits/Routes (empty), Edge/Threshold
-// with proper $id wrappers, AreaVertices rectangle, HoldingAreas empty, IsActive.
-function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph) {
+// Generates valid Unity entries: Edge/Threshold as distinct nodes (edge
+// offset outward, threshold as given), TouchDown distinct (inset), AreaVertices
+// around edge points, and HoldingAreas inferred from taxiway & runway input.
+function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph, extra) {
   // Support both new graph shape (names:[A,B]) and legacy (name + physicalName)
   let nameA, nameB, phys;
   if (Array.isArray(rw.names) && rw.names.length >= 2) {
@@ -1661,10 +1871,19 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph) {
   const areaB = cur++;
   const holdB = cur++;
   const activeB = cur++;
-  // AreaVertices rectangle around thresholds with halfWidth
-  const nodeA = graph ? graph.nodes[thAId] : null; // thAId is $id of node, not graph index! Wait we pass nodeIds, not graph nodes
-  // Instead compute AreaVertices from graph nodes via th indices: we have graph.nodes[runway.thAIdx] etc.
-  // But here we receive thAId as $id of taxiway-node, not coordinates. Need coordinates via graph.
+  // Derived geometry inferred from taxiway & runway input
+  // - EdgePoints: threshold outward by RW_EDGE_OFFSET
+  // - TouchDownPoint: threshold inward by RW_TD_OFFSET
+  // - HoldingAreas: rectangles around holding nodes (entries/exits or taxiway intersections)
+  // 'extra' carries pre-allocated derived node ids and holding lists from _synthesizeNew;
+  // fallback to legacy (threshold) when extra is absent (e.g. direct test call).
+  const tdAIdExtra = extra && extra.tdAId != null ? extra.tdAId : thAId;
+  const tdBIdExtra = extra && extra.tdBId != null ? extra.tdBId : thBId;
+  const edgeAIdExtra = extra && extra.edgeAId != null ? extra.edgeAId : thAId;
+  const edgeBIdExtra = extra && extra.edgeBId != null ? extra.edgeBId : thBId;
+  const holdingsExtra = extra && Array.isArray(extra.holdings) ? extra.holdings : [];
+
+  // AreaVertices rectangle — around edge points when available, else thresholds
   let areaPtsA = [];
   let areaPtsB = [];
   if (graph && rw.thAIdx != null && rw.thBIdx != null) {
@@ -1674,26 +1893,59 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph) {
       const halfW = (Number(width) || 0.50) / 2;
       const dx = b.x - a.x, dz = b.z - a.z;
       const len = Math.hypot(dx, dz) || 1;
-      const px = (-dz / len) * halfW, pz = (dx / len) * halfW;
+      const ux = dx / len, uz = dz / len;
+      const px = (-uz) * halfW, pz = ux * halfW;
+      // Use edge offset for area so pavement encloses the overrun
+      const aE = { x: a.x - ux * RW_EDGE_OFFSET, z: a.z - uz * RW_EDGE_OFFSET };
+      const bE = { x: b.x + ux * RW_EDGE_OFFSET, z: b.z + uz * RW_EDGE_OFFSET };
       areaPtsA = [
-        { x: a.x - px, z: a.z - pz },
-        { x: b.x - px, z: b.z - pz },
-        { x: b.x + px, z: b.z + pz },
-        { x: a.x + px, z: a.z + pz },
+        { x: aE.x - px, z: aE.z - pz },
+        { x: bE.x - px, z: bE.z - pz },
+        { x: bE.x + px, z: bE.z + pz },
+        { x: aE.x + px, z: aE.z + pz },
       ];
-      areaPtsB = areaPtsA.slice(); // same rectangle
+      areaPtsB = areaPtsA.slice();
     }
   }
   if (areaPtsA.length === 0) {
-    // Fallback: generate degenerate rectangle around origin if missing
     areaPtsA = [{x:0,z:0},{x:1,z:0},{x:1,z:1},{x:0,z:1}];
     areaPtsB = areaPtsA;
   }
   const areaStrA = areaPtsA.map((p) => '{ "$type": ' + _fmtType(s.vec3Type) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
   const areaStrB = areaPtsB.map((p) => '{ "$type": ' + _fmtType(s.vec3Type) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
-  // No fallback is allowed: every type the synthesized runway emits must be
-  // determined from the file, or we refuse to fabricate a (potentially colliding)
-  // $type id.
+
+  // Build HoldingAreas $rcontent string from inferred holdings (shared per physical runway)
+  // Holdings are per direction in the file but share the same vertices; we emit the same list for both.
+  let holdingsStrA = '';
+  let holdingsLenA = 0;
+  let holdingsStrB = '';
+  let holdingsLenB = 0;
+  if (holdingsExtra.length > 0) {
+    // Allocate wrapper ids for holding vertices inside the runway entry: each holding needs 1 id for vertices list
+    // We reuse the single holdA/holdB wrapper's $rcontent to hold the array of HoldingAreaData objects.
+    // Each HoldingAreaData has its own $id, $type and a Vertices array (4 Vector3). To keep the 19-id budget,
+    // we embed holding vertices as inline objects without extra $ids for the inner array — but we need ids.
+    // Instead we synthesize holdings inline with allocated ids from the extra's nextId.
+    // 'extra.holdingsWithIds' is pre-built with ids if provided; fallback to simple vertices without ids.
+    if (extra && extra.holdingsEntriesA && extra.holdingsEntriesB) {
+      holdingsStrA = extra.holdingsEntriesA.map((h) => h.block).join(', ');
+      holdingsLenA = extra.holdingsEntriesA.length;
+      holdingsStrB = extra.holdingsEntriesB.map((h) => h.block).join(', ');
+      holdingsLenB = extra.holdingsEntriesB.length;
+    } else {
+      // Fallback: build inline without dedicated ids (still valid but shares ids from the 19 budget — vertices reuse the wrapper id space)
+      // This path is for direct _synthesizeRunway calls without _synthesizeNew allocation.
+      const buildHoldingsInline = (holds) => holds.map((h) => {
+        const vs = h.vertices.map((p) => '{ "$type": ' + _fmtType(s.vec3Type) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
+        return '{ "$type": "24|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core", "Vertices": { "$type": ' + _fmtType(s.areaVerticesType) + ', "$rlength": 4, "$rcontent": [ ' + vs + ' ] }, "EntryName": ' + JSON.stringify(String(h.entryName || '')) + ' }';
+      }).join(', ');
+      holdingsStrA = buildHoldingsInline(holdingsExtra);
+      holdingsLenA = holdingsExtra.length;
+      holdingsStrB = holdingsStrA;
+      holdingsLenB = holdingsLenA;
+    }
+  }
+
   _assertSampledType('Runway', s.runwayType);
   _assertSampledType('PhysicalRunwayStaticItem', s.itemType);
   _assertSampledType('Runway+Entry[]', s.entriesType);
@@ -1705,24 +1957,24 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph) {
   _assertSampledType('Runway+HoldingAreaData[]', s.holdingAreasType);
   _assertSampledType('ReactiveProperty<bool>', s.boolReactiveType);
   _assertSampledType('Vector3', s.vec3Type);
-  const entryTemplate = (rId, name, itemRef, edgeId, thId, areaId, holdId, activeId, entriesId, exitsId, routesId, thFirst, thSecond, areaStr) => {
+  const entryTemplate = (rId, name, itemRef, edgeId, thId, areaId, holdId, activeId, entriesId, exitsId, routesId, tdId, edgeFirst, edgeSecond, thFirst, thSecond, areaStr, holdingsLen, holdingsStr) => {
     return '{ "$k": "runway:' + name + '", "$v": { "$id": ' + rId + ', "$type": ' + _fmtType(s.runwayType) +
       ', "Name": "' + name + '", "PhysicalRunwayStaticItem": ' + itemRef +
       ', "Entries": { "$id": ' + entriesId + ', "$type": ' + _fmtType(s.entriesType) + ', "$rlength": 0, "$rcontent": [] }' +
       ', "Exits": { "$id": ' + exitsId + ', "$type": ' + _fmtType(s.exitsType) + ', "$rlength": 0, "$rcontent": [] }' +
       ', "Routes": { "$id": ' + routesId + ', "$type": ' + _fmtType(s.routesType) + ', "$rlength": 0, "$rcontent": [] }' +
-      ', "TouchDownPoint": $iref:' + thFirst +
-      ', "EdgePoints": { "$id": ' + edgeId + ', "$type": ' + _fmtType(s.edgePointsType) + ', "$rlength": 2, "$rcontent": [ $iref:' + thFirst + ', $iref:' + thSecond + ' ] }' +
+      ', "TouchDownPoint": $iref:' + tdId +
+      ', "EdgePoints": { "$id": ' + edgeId + ', "$type": ' + _fmtType(s.edgePointsType) + ', "$rlength": 2, "$rcontent": [ $iref:' + edgeFirst + ', $iref:' + edgeSecond + ' ] }' +
       ', "ThresholdPoints": { "$id": ' + thId + ', "$type": ' + _fmtType(s.thresholdPointsType) + ', "$rlength": 2, "$rcontent": [ $iref:' + thFirst + ', $iref:' + thSecond + ' ] }' +
       ', "AreaVertices": { "$id": ' + areaId + ', "$type": ' + _fmtType(s.areaVerticesType) + ', "$rlength": 4, "$rcontent": [ ' + areaStr + ' ] }' +
-      ', "HoldingAreas": { "$id": ' + holdId + ', "$type": ' + _fmtType(s.holdingAreasType) + ', "$rlength": 0, "$rcontent": [] }' +
+      ', "HoldingAreas": { "$id": ' + holdId + ', "$type": ' + _fmtType(s.holdingAreasType) + ', "$rlength": ' + holdingsLen + ', "$rcontent": [ ' + holdingsStr + ' ] }' +
       ', "Width": ' + _fmtNum(width) +
-      ', "LabelPositionNode": $iref:' + thFirst +
+      ', "LabelPositionNode": $iref:' + edgeFirst +
       ', "IsActive": { "$id": ' + activeId + ', "$type": ' + _fmtType(s.boolReactiveType) + ', ' + (name === nameA ? 'true' : 'false') + ' } } }';
   };
   const itemInline = '{ "$id": ' + itemId + ', "$type": ' + _fmtType(s.itemType) + ', "PhysicalName": "' + phys + '" }';
-  const entryA = entryTemplate(rA, nameA, itemInline, edgeA, thA, areaA, holdA, activeA, entriesA, exitsA, routesA, thAId, thBId, areaStrA);
-  const entryB = entryTemplate(rB, nameB, '$iref:' + itemId, edgeB, thB, areaB, holdB, activeB, entriesB, exitsB, routesB, thBId, thAId, areaStrB);
+  const entryA = entryTemplate(rA, nameA, itemInline, edgeA, thA, areaA, holdA, activeA, entriesA, exitsA, routesA, tdAIdExtra, edgeAIdExtra, edgeBIdExtra, thAId, thBId, areaStrA, holdingsLenA, holdingsStrA);
+  const entryB = entryTemplate(rB, nameB, '$iref:' + itemId, edgeB, thB, areaB, holdB, activeB, entriesB, exitsB, routesB, tdBIdExtra, edgeBIdExtra, edgeAIdExtra, thBId, thAId, areaStrB, holdingsLenB, holdingsStrB);
   return [entryA, entryB];
 }
 
@@ -1826,9 +2078,46 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
     if (segEntry) entries.push(segEntry);
   }
 
+  // Track OsmId per graph node index for pushback PK generation
+  const nodeOsms = [];
+  // Re-populate nodeOsms for survivor nodes (need OsmId for pushback PK)
+  for (let g = 0; g < graph.nodes.length; g++) {
+    const pk = meta.nodeOrigPk ? meta.nodeOrigPk[g] : null;
+    if (pk != null && survivorNodeId.has(pk)) {
+      const e = pkEntries.find((en) => _entryPk(en) === pk);
+      nodeOsms[g] = e ? _entryOsm(e) : null;
+    }
+  }
+  // Fill nodeOsms for newly synthesized nodes (those just pushed)
+  // The node loop above already pushed OsmIds, but we need to store them now.
+  // Re-derive from entries? Instead, capture during synthesis: patch nodeIds loop to also fill nodeOsms
+  // For nodes just created, OsmId is allocNodeOsm's value — we store it in nodeOsms
+  // (the previous loop's allocNodeOsm calls already set nodeOsms via closure — ensure it)
+  // Ensure nodeOsms for new nodes: if nodeIds[g] was newly allocated but nodeOsms[g] undefined, look up from entries
+  for (let g = 0; g < graph.nodes.length; g++) {
+    if (nodeOsms[g] == null && nodeIds[g] != null) {
+      // New node: find its entry among `entries` and parse OsmId
+      const nid = nodeIds[g];
+      for (const ent of entries) {
+        if (ent.includes('"$id": ' + nid + ',')) {
+          const os = _entryOsm(ent);
+          if (os != null) { nodeOsms[g] = os; break; }
+        }
+      }
+    }
+  }
+
   // New stands: allocate a dense unique Identifier above the file's max, and
   // reference the newly-synthesized (or survivor) nose/tail/pushback node ids.
   const ss = _sampleStandShapes(pkEntries);
+  const taxiS = _sampleTaxiNavShapes(pkEntries);
+  const jetS = _sampleJetwayShapes(siEntries);
+  // Shared CrossTaxiwayNames id: reuse existing if present, else allocate fresh for first new nav point
+  let sharedCrossId = taxiS.sharedCrossId;
+  let needsDeclareSharedCross = (sharedCrossId == null);
+  // For jetway synthesis, track new SI entries
+  const newJetwaySiEntries = [];
+  const newStandInfos = []; // { ident, standId, tailPos, standIdx }
   let maxStand = 0;
   const existingIdents = new Set();
   for (const e of pkEntries) {
@@ -1873,10 +2162,111 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
     const id = nextId;
     nextId += 2; // stand $id + PushbackLimitPositions wrapper $id
     const standEntry = _synthesizeStand(stand, id, ident, noseId, tailId, pbIds, ss);
-    if (standEntry) entries.push(standEntry);
+    if (standEntry) {
+      entries.push(standEntry);
+      // ── Taxi-navigation:stand + Jetway for this NEW stand ──
+      const tailPos = graph.nodes[stand.tailIdx];
+      if (tailPos) {
+        let entryId, isDeclarer;
+        if (needsDeclareSharedCross) {
+          entryId = nextId;
+          sharedCrossId = nextId + 1;
+          nextId += 2;
+          isDeclarer = true;
+          needsDeclareSharedCross = false;
+        } else {
+          entryId = nextId;
+          nextId += 1;
+          isDeclarer = false;
+        }
+        const taxiStandIdent = ident; // PK suffix mirrors stand identifier
+        const tns = _synthesizeTaxiNavStand(taxiStandIdent, id, ident, tailPos, taxiS, entryId, sharedCrossId, isDeclarer);
+        if (tns) entries.push(tns);
+        newStandInfos.push({ ident, standId: id, taxiIdent: taxiStandIdent });
+      }
+      // Pushback taxi-nav for each pushback node (if any)
+      for (let p = 0; p < (stand.pushbackIdxs || []).length; p++) {
+        const pbIdx = stand.pushbackIdxs[p];
+        const pbNodeId = nodeIds[pbIdx];
+        const pbPos = graph.nodes[pbIdx];
+        const pbOsm = nodeOsms[pbIdx];
+        if (pbNodeId == null || !pbPos || pbOsm == null) continue;
+        const pushbackPk = 'taxi-navigation:pushback:' + ident + ':' + pbOsm;
+        const pbEntryId = nextId;
+        nextId += 1;
+        const pbs = _synthesizeTaxiNavPushback(pushbackPk, pbNodeId, ident, pbPos, taxiS, pbEntryId, sharedCrossId);
+        if (pbs) entries.push(pbs);
+      }
+      // Jetway static item for gate stands (ParkingType 1)
+      const pType = stand.parkingType ?? 1;
+      if (pType === 1) {
+        const jetwayName = ident;
+        // Avoid duplicate jetway PK if already exists (should not for new ident)
+        const existsJetway = (siEntries || []).some((en) => _entryPk(en) === 'jetway:' + jetwayName);
+        if (!existsJetway && !newJetwaySiEntries.some((en) => en.includes('"jetway:' + jetwayName + '"'))) {
+          const jwId = nextId;
+          const jwArrId = nextId + 1;
+          nextId += 2;
+          const jwEntry = _synthesizeJetwayStatic(jetwayName, id, jetS, jwId, jwArrId);
+          if (jwEntry) newJetwaySiEntries.push(jwEntry);
+        }
+      }
+    }
+  }
+
+  // ── Retro-heal: survivor stands missing taxi-nav (not jetway) ──
+  // Jetway is intentionally NOT retro-healed for survivors: cargo stands (e.g. 300-series) never had a jetway and should stay without one.
+  // Only taxi-navigation (stand + pushback) is healed, because every stand is expected to have a Type-4 stand point.
+  for (let st = 0; st < graph.stands.length; st++) {
+    const pk = meta.standOrigPk ? meta.standOrigPk[st] : null;
+    if (pk == null) continue; // new stands already handled
+    if (deletedSet.has(pk)) continue; // do not heal a stand that is being deleted
+    const stand = graph.stands[st];
+    const origEntry = pkEntries.find((en) => _entryPk(en) === pk);
+    if (!origEntry) continue;
+    const oldIdentMatch = origEntry.match(/"Identifier"\s*:\s*"([^"]*)"/);
+    const oldIdent = oldIdentMatch ? oldIdentMatch[1] : (function(){ const m2 = origEntry.match(/"Name"\s*:\s*"([^"]*)"/); return m2 ? m2[1] : null; })();
+    if (!oldIdent) continue;
+    const standId = _entryId(origEntry);
+    if (standId == null) continue;
+    // Check taxi-navigation:stand existence (Type 4, RelatedStand == oldIdent)
+    const hasTaxiNav = pkEntries.some((en) => _entryTypePrefix(en) === 'taxi-navigation' && en.includes('"RelatedStand": "' + oldIdent + '"') && en.includes('"Type": 4'));
+    // Also check if a taxi-nav for this stand was already synthesized in this patch (new entries)
+    const alreadySynthesized = entries.some((en) => en.includes('"taxi-navigation:stand:' + oldIdent + '"') || (newStandInfos && newStandInfos.some((ns) => ns.ident === oldIdent && en.includes(ns.taxiIdent))));
+    if (!hasTaxiNav && !alreadySynthesized) {
+      const tailPos = graph.nodes[stand.tailIdx];
+      if (tailPos) {
+        let entryId, isDeclarer;
+        if (needsDeclareSharedCross) {
+          entryId = nextId;
+          sharedCrossId = nextId + 1;
+          nextId += 2;
+          isDeclarer = true;
+          needsDeclareSharedCross = false;
+        } else {
+          // If sharedCrossId was null because no existing taxi-nav at all, but we just allocated above, now it exists
+          if (sharedCrossId == null) {
+            sharedCrossId = nextId + 1;
+            entryId = nextId;
+            nextId += 2;
+            isDeclarer = true;
+          } else {
+            entryId = nextId;
+            nextId += 1;
+            isDeclarer = false;
+          }
+        }
+        const taxiIdent = oldIdent;
+        const tns = _synthesizeTaxiNavStand(taxiIdent, standId, oldIdent, tailPos, taxiS, entryId, sharedCrossId, isDeclarer);
+        if (tns) entries.push(tns);
+      }
+    }
+    // Pushback taxi-nav for survivors is not retro-healed (see comment above)
   }
 
   // New runways: emit a full pair (both directions) sharing one PhysicalRunwayStaticItem.
+  // Derived geometry: EdgePoints (~0.58 beyond threshold), TouchDownPoint (~4.8 inside),
+  // and HoldingAreas (inferred from taxiway & runway input) are synthesized here.
   const rs = _sampleRunwayShapes(pkEntries);
   const newPhysEntries = []; // for StaticItems
   for (let k = 0; k < graph.runways.length; k++) {
@@ -1885,10 +2275,66 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
     const rw = graph.runways[k];
     const thAId = nodeIds[rw.thAIdx], thBId = nodeIds[rw.thBIdx];
     if (thAId == null || thBId == null) continue;
-    const pair = _synthesizeRunway(rw, nextId, thAId, thBId, rs, graph);
-    // _synthesizeRunway allocates 19 ids (1 item + 2*9)
+    const aCoord = graph.nodes[rw.thAIdx], bCoord = graph.nodes[rw.thBIdx];
+    if (!aCoord || !bCoord) continue;
+    const dx = bCoord.x - aCoord.x, dz = bCoord.z - aCoord.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const ux = dx / len, uz = dz / len;
+    // Allocate derived touchdown & edge nodes (distinct taxiway-node entries)
+    const sTaxi = s; // _sampleShapes from above (nodeType, reactiveType, vec3Type)
+    const edgeACoord = { x: aCoord.x - ux * RW_EDGE_OFFSET, z: aCoord.z - uz * RW_EDGE_OFFSET };
+    const edgeBCoord = { x: bCoord.x + ux * RW_EDGE_OFFSET, z: bCoord.z + uz * RW_EDGE_OFFSET };
+    const tdACoord = { x: aCoord.x + ux * RW_TD_OFFSET, z: aCoord.z + uz * RW_TD_OFFSET };
+    const tdBCoord = { x: bCoord.x - ux * RW_TD_OFFSET, z: bCoord.z - uz * RW_TD_OFFSET };
+    const edgeANode = { x: edgeACoord.x, z: edgeACoord.z, type: 1, flags: 0 };
+    const edgeBNode = { x: edgeBCoord.x, z: edgeBCoord.z, type: 1, flags: 0 };
+    const tdANode = { x: tdACoord.x, z: tdACoord.z, type: 1, flags: 0 };
+    const tdBNode = { x: tdBCoord.x, z: tdBCoord.z, type: 1, flags: 0 };
+    const edgeAId = nextId; entries.push(_synthesizeNode(edgeANode, edgeAId, allocNodeOsm(), sTaxi)); nextId += 3;
+    const edgeBId = nextId; entries.push(_synthesizeNode(edgeBNode, edgeBId, allocNodeOsm(), sTaxi)); nextId += 3;
+    const tdAId = nextId; entries.push(_synthesizeNode(tdANode, tdAId, allocNodeOsm(), sTaxi)); nextId += 3;
+    const tdBId = nextId; entries.push(_synthesizeNode(tdBNode, tdBId, allocNodeOsm(), sTaxi)); nextId += 3;
+    // Infer holdings from taxiway & runway input (entries/exits or segment crossings)
+    const inferredHoldings = _inferHoldingsForRunway(graph, rw, ux, uz);
+    // Build holding blocks with proper ids (each needs a HoldingAreaData $id and a Vertices wrapper $id)
+    let holdingsEntriesA = [];
+    let holdingsEntriesB = [];
+    if (inferredHoldings.length > 0) {
+      // Sample holding types from rs (fallback inside _synthesizeRunway handles it, but we need ids here)
+      // Allocate ids for each holding's wrapper objects before calling _synthesizeRunway
+      for (const h of inferredHoldings) {
+        const holdId = nextId++;
+        const vertsId = nextId++;
+        // Use sampled types: fall back to canonical when rs not yet fully sampled (direct call)
+        const holdType = rs.holdingAreasType || '"24|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"';
+        const vertsType = rs.areaVerticesType || '"23|UnityEngine.Vector3[], UnityEngine.CoreModule"';
+        const vecType = rs.vec3Type || sTaxi.vec3Type || '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
+        const vs = h.vertices.map((p) => '{ "$type": ' + _fmtType(vecType) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
+        const block = '{ "$id": ' + holdId + ', "$type": ' + _fmtType(holdType) + ', "Vertices": { "$id": ' + vertsId + ', "$type": ' + _fmtType(vertsType) + ', "$rlength": 4, "$rcontent": [ ' + vs + ' ] }, "EntryName": ' + JSON.stringify(String(h.entryName || '')) + ' }';
+        holdingsEntriesA.push({ block, id: holdId });
+        holdingsEntriesB.push({ block, id: holdId }); // shared content — duplicate block for second direction; ids will be re-allocated per direction in _synthesizeRunway fallback? But we pre-allocate shared ids, so both directions reference same vertices content — acceptable to duplicate.
+      }
+      // For the second direction we need distinct ids to avoid duplicate $id across the two runway entries (same id would collide in the flat declared set).
+      // Re-allocate B side ids separately.
+      holdingsEntriesB = [];
+      for (const h of inferredHoldings) {
+        const holdId = nextId++;
+        const vertsId = nextId++;
+        const holdType = rs.holdingAreasType || '"24|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"';
+        const vertsType = rs.areaVerticesType || '"23|UnityEngine.Vector3[], UnityEngine.CoreModule"';
+        const vecType = rs.vec3Type || sTaxi.vec3Type || '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
+        const vs = h.vertices.map((p) => '{ "$type": ' + _fmtType(vecType) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
+        const block = '{ "$id": ' + holdId + ', "$type": ' + _fmtType(holdType) + ', "Vertices": { "$id": ' + vertsId + ', "$type": ' + _fmtType(vertsType) + ', "$rlength": 4, "$rcontent": [ ' + vs + ' ] }, "EntryName": ' + JSON.stringify(String(h.entryName || '')) + ' }';
+        holdingsEntriesB.push({ block, id: holdId });
+      }
+      // holdingsEntriesA already consumed nextId; holdingsEntriesB consumed more — need to account for the extra allocation of A side that we already did? We allocated A then B, so nextId already advanced for both.
+      // But we allocated A first using nextId++ per holding (2 per), then B similarly, so total 4*H ids used.
+    }
+    const extra = { tdAId, tdBId, edgeAId, edgeBId, holdings: inferredHoldings, holdingsEntriesA, holdingsEntriesB };
+    const pair = _synthesizeRunway(rw, nextId, thAId, thBId, rs, graph, extra);
+    // _synthesizeRunway allocates 19 ids (1 item + 2*9) — holdings inner ids already allocated above outside that budget
     const phys = (Array.isArray(rw.names) ? rw.names.join('/') : (rw.physicalName || '01/19'));
-    const itemId = nextId; // first allocated is item
+    const itemId = nextId; // first allocated is item inside _synthesizeRunway
     newPhysEntries.push({ phys, itemId });
     nextId += 19;
     entries.push(pair[0], pair[1]);
@@ -1948,7 +2394,7 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
     if (segEntry) entries.push(segEntry);
   }
 
-  return { entries, nodeIds, airwayNodeIds, survivorNodeId, survivorAirwayNodeId, newPhysEntries, nextId };
+  return { entries, nodeIds, nodeOsms, airwayNodeIds, survivorNodeId, survivorAirwayNodeId, newPhysEntries, newJetwaySiEntries, nextId, sharedCrossId };
 }
 
 /**
@@ -2338,7 +2784,8 @@ function _runtimeReconcilers(siEntries, physPatchMap) {
     // registered physical runway that lacks one (a runway added/renamed by the
     // painter would otherwise have no checkpoint-frame runtime snapshot).
     { prefix: 'physical-runway', validKeys: _physKeysFromEntries(siEntries), patchMap: physPatchMap || null, addMissing: true },
-    { prefix: 'jetway', validKeys: _jetwayKeysFromEntries(siEntries), patchMap: null },
+    // jetway: also ADD a runtime Jetway entity for every static jetway that lacks one (new gate stands)
+    { prefix: 'jetway', validKeys: _jetwayKeysFromEntries(siEntries), patchMap: null, addMissing: true },
   ];
 }
 
@@ -3071,6 +3518,86 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   }
   const namesChanged = standNamePatch.size > 0 || segNamePatch.size > 0 || airwayNodeNamePatch.size > 0;
 
+  // ── Stand taxi-nav / jetway companion dirty detection ──
+  // For survivor stands we need to keep taxi-navigation:stand Position in sync with TailPosition
+  // and pushback Position in sync with its node, plus RelatedStand when Identifier changes.
+  const standTaxiNavPatch = new Map(); // oldIdent -> { newTailPos, newIdent, standId }
+  const standJetwayPatch = new Map(); // oldIdent -> newIdent (for jetway Name)
+  let standCompanionDirty = false;
+  {
+    const entryByPkForStand = new Map();
+    for (const e of pkEntries) entryByPkForStand.set(_entryPk(e), e);
+    // Build helper to get stand Identifier from entry
+    const getStandIdent = (ent) => {
+      if (!ent) return null;
+      const m = ent.match(/"Identifier"\s*:\s*"([^"]*)"/);
+      if (m) return m[1];
+      const m2 = ent.match(/"Name"\s*:\s*"([^"]*)"/);
+      return m2 ? m2[1] : null;
+    };
+    // Map node PK -> newPos for moved nodes (already computed)
+    // movedByPk already captures tail/pushback moves
+    for (let i = 0; i < (graph.stands || []).length && i < (mm.standOrigPk || []).length; i++) {
+      const pk = mm.standOrigPk[i];
+      if (pk == null) continue;
+      const origEntry = entryByPkForStand.get(pk);
+      if (!origEntry) continue;
+      const oldIdent = getStandIdent(origEntry);
+      if (!oldIdent) continue;
+      const standId = _entryId(origEntry);
+      const st = graph.stands[i];
+      if (!st) continue;
+      // New identifier: for survivor, identifier stays oldIdent unless nameEdited changed Identifier (only new stands); keep oldIdent
+      const newIdent = oldIdent; // survivor identifier not changed via nameEdited
+      // Check tail position moved
+      const tailIdx = st.tailIdx;
+      if (tailIdx != null && graph.nodes[tailIdx]) {
+        const newPos = graph.nodes[tailIdx];
+        // Find original tail node position
+        const tailPk = (mm.nodeOrigPk && mm.nodeOrigPk[tailIdx] != null) ? mm.nodeOrigPk[tailIdx] : null;
+        let oldPos = null;
+        if (tailPk) {
+          const tailEntry = entryByPkForStand.get(tailPk);
+          if (tailEntry) oldPos = extractVector3FromV4(tailEntry);
+        }
+        // If we cannot find oldPos via PK, fallback to movedByPk check
+        let moved = false;
+        if (oldPos) {
+          if (Math.abs(oldPos.x - newPos.x) > 1e-9 || Math.abs(oldPos.z - newPos.z) > 1e-9) moved = true;
+        } else if (tailPk && movedByPk.has(tailPk)) {
+          moved = true;
+        }
+        // Also consider pushed via movedByCoord (co-located sister)
+        if (!moved && oldPos && movedByCoord && movedByCoord.has(_coordKey(oldPos.x, oldPos.z))) moved = true;
+        if (moved || (oldIdent !== newIdent)) {
+          standTaxiNavPatch.set(oldIdent, { newTailPos: newPos, newIdent, standId, oldIdent });
+          if (moved) standCompanionDirty = true;
+        }
+        if (oldIdent !== newIdent) {
+          standJetwayPatch.set(oldIdent, newIdent);
+          standCompanionDirty = true;
+        }
+      }
+    }
+    // Pushback position moves are handled via movedByPk for taxiway-nodes; mark dirty if any pushback node moved
+    // Do a quick scan: if any movedByPk node is referenced by a pushback taxi-nav, mark dirty
+    if (!standCompanionDirty && movedByPk.size > 0) {
+      // Check if any moved node PK corresponds to a pushback node of any stand
+      const pushbackNodePks = new Set();
+      for (let i = 0; i < (graph.stands || []).length; i++) {
+        const st = graph.stands[i];
+        if (!st || !st.pushbackIdxs) continue;
+        for (const pbIdx of st.pushbackIdxs) {
+          const pkb = mm.nodeOrigPk ? mm.nodeOrigPk[pbIdx] : null;
+          if (pkb) pushbackNodePks.add(pkb);
+        }
+      }
+      for (const movedPk of movedByPk.keys()) {
+        if (pushbackNodePks.has(movedPk)) { standCompanionDirty = true; break; }
+      }
+    }
+  }
+
   // ── Runway Entries/Exits dirty check (checkbox editing) ──
   let runwayEntriesDirty = false;
   if (graph && mm && Array.isArray(graph.runways) && Array.isArray(mm.runwayEntriesOrig)) {
@@ -3162,9 +3689,25 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // text unchanged (still reconcile the checkpoint frame so any PRE-EXISTING
   // stale physical-runway / jetway RuntimeEntities from an earlier corrupt save
   // are repaired on the next save).
-  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !hasMovedAirwayNodes && !airwayRoutesDirty && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && crashDangleCount === 0) {
+  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !hasMovedAirwayNodes && !airwayRoutesDirty && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && !standCompanionDirty && crashDangleCount === 0) {
     return _reconcileRuntimeFrames(snapshotText, _runtimeReconcilers(siEntries, physPatchMap));
   }
+
+  // Build node $id -> newPos map for taxi-nav pushback Position patching
+  const nodeIdToNewPos = new Map();
+  for (const [pk, newPos] of movedByPk.entries()) {
+    const ent = pkEntries.find((en) => _entryPk(en) === pk);
+    if (ent) {
+      const nid = _entryId(ent);
+      if (nid != null) nodeIdToNewPos.set(nid, newPos);
+    }
+  }
+  // Also handle co-located sister moves (movedByCoord) — need to map via coordinate?
+  // For taxi-nav pushback, the node's Position is same as its taxiway-node Position, so sister moves also affect.
+  // We handle via direct pk lookup above; movedByCoord sisters will be patched via pkOut node loop already, but taxi-nav pushback will be patched via nodeIdToNewPos if its PK was in movedByPk.
+  // For sisters not in movedByPk but in movedByCoord, we also need to map via coordinate.
+  // Build coordKey -> newPos from movedByCoord for fallback
+  const movedCoordToNewPos = movedByCoord; // already Map coordKey -> newPos
 
   // Rebuild: keep every surviving entry verbatim (so Routes/etc. survive),
   // drop explicitly-deleted ones, patch moved node coords and runway name/width, splice right-to-left.
@@ -3214,6 +3757,56 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
     // Airway node name patches (if user renamed a fix)
     if (_entryTypePrefix(e) === 'airway-node' && airwayNodeNamePatch && airwayNodeNamePatch.has(pk)) {
       outEntry = _patchEntryName(outEntry, airwayNodeNamePatch.get(pk));
+    }
+    // Taxi-navigation companion patches for edited stands
+    if (_entryTypePrefix(e) === 'taxi-navigation') {
+      const rsMatch = outEntry.match(/"RelatedStand"\s*:\s*"([^"]*)"/);
+      if (rsMatch) {
+        const oldRs = rsMatch[1];
+        const patch = standTaxiNavPatch.get(oldRs);
+        if (patch) {
+          const typeM = outEntry.match(/"Type"\s*:\s*(\d+)/);
+          const typ = typeM ? parseInt(typeM[1], 10) : null;
+          if (typ === 4 && patch.newTailPos) {
+            outEntry = _patchTaxiNavPosition(outEntry, patch.newTailPos.x, patch.newTailPos.z);
+          }
+          if (patch.newIdent && patch.newIdent !== oldRs) {
+            outEntry = _patchTaxiNavRelatedStand(outEntry, patch.newIdent);
+          }
+        }
+      }
+      // Pushback Position sync (Type 3) — reference node moved
+      const typeM2 = outEntry.match(/"Type"\s*:\s*(\d+)/);
+      const typ2 = typeM2 ? parseInt(typeM2[1], 10) : null;
+      if (typ2 === 3) {
+        const refM = outEntry.match(/"Reference"\s*:\s*\$iref:(\d+)/);
+        if (refM) {
+          const refId = parseInt(refM[1], 10);
+          let newPos = nodeIdToNewPos.get(refId);
+          if (!newPos) {
+            // Fallback via coordinate of the referenced node entry's original Position
+            const refEnt = pkEntries.find((en) => _entryId(en) === refId);
+            if (refEnt) {
+              const v = extractVector3FromV4(refEnt);
+              if (v) newPos = movedCoordToNewPos.get(_coordKey(v.x, v.z)) || null;
+            }
+          }
+          if (newPos) outEntry = _patchTaxiNavPosition(outEntry, newPos.x, newPos.z);
+        }
+        // Also patch RelatedStand for pushback if its stand was renamed (already handled above via rsMatch/patch)
+        // but ensure pushback also gets RelatedStand patch even if stand patch not applied for Type 4
+        const rsMatch2 = outEntry.match(/"RelatedStand"\s*:\s*"([^"]*)"/);
+        if (rsMatch2) {
+          const oldRs2 = rsMatch2[1];
+          const patch2 = standTaxiNavPatch.get(oldRs2);
+          if (patch2 && patch2.newIdent && patch2.newIdent !== oldRs2) {
+            // If not already patched (Type 4 case already did), patch again
+            if (!outEntry.includes('"RelatedStand": "' + patch2.newIdent + '"')) {
+              outEntry = _patchTaxiNavRelatedStand(outEntry, patch2.newIdent);
+            }
+          }
+        }
+      }
     }
     pkOut.push(outEntry);
   }
@@ -3420,6 +4013,13 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
       return !(m && m[1] === phys);
     });
     siOutFinal = siOutFinal.concat('{ "$k": "physical-runway:' + phys + '", "$v": $iref:' + id + ' }');
+  }
+  // Append jetway StaticItems for new gate stands (and retro-heal missing)
+  for (const je of synth.newJetwaySiEntries || []) {
+    const pk = _entryPk(je);
+    if (pk && siOutFinal.some((en) => _entryPk(en) === pk)) continue;
+    siOutFinal.push(je);
+    siDirty = true;
   }
 
   // New-area synthesis: append synthesized NonPK areas. A graph area is new when

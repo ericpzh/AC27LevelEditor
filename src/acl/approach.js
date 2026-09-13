@@ -2318,8 +2318,8 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
   const log = (msg) => console.log('[APPROACH-CACHE]', msg);
 
   // Find all .acl files. A caller-supplied fileFilter (e.g. main.js's isCacheAclFile,
-  // which whitelists demo/production visible bases like ZGSZ_Endless.acl) wins over the
-  // built-in skip regex — without it, whitelisted endless/scenery levels would be dropped
+  // which whitelists demo/production visible bases) wins over the built-in skip regex —
+  // without it, a whitelisted level whose name matches the skip regex would be dropped
   // and the airport's geometry cache (taxiways/stands/areas) would come back empty.
   const RE_SKIP = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
   const useFilter = typeof fileFilter === 'function'

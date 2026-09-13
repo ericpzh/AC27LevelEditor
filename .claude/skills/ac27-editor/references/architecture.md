@@ -153,7 +153,7 @@ AC27Editor/
 │ ├── zipUtils.js # Pure Node.js ZIP (zlib, no deps)
 │ └── logger.js # Console → file redirect (dev mode)
 │
-├── tests/ # 1200 Vitest + 17 Playwright E2E + 29 Node.js integration scripts
+├── tests/ # 1456 Vitest + 18 Playwright E2E + 29 Node.js integration scripts
 │ ├── electron/cloud-llm.test.js # cloud-llm backend tests (49 tests, node env)
 │ ├── electron/updater.test.js # updater backend tests (25 tests, node env)
 │ ├── components/MapWindows/ # MapWindow component & hook tests (19 files, 712 tests)
@@ -354,7 +354,7 @@ Airports/ZSJN/Levels/ copy → _tmp/golden/ZSJN/ copy → _tmp/result/ZSJN/
 6. **Clean up** `_tmp/` after each file (removed entirely after run)
 7. **Write JSON report** → `tests/_reports_/save-integrity-<timestamp>.json` with per-file metrics and diffs
 
-- Supports `--prod-demo` flag to test only the 28 prod+demo files (25 prod (24 + ZGSZ_Endless) + 3 demo extra; prod with ZGSZ +5 + surfaceradar +4, total)
+- Supports `--prod-demo` flag to test only the 27 prod+demo files (24 prod + 3 demo extra)
 - Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored
 - Full test documentation: `tests/README.md` — test matrix, expected values, execution commands
 

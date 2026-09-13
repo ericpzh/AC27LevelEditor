@@ -30,8 +30,8 @@ const {
 } = parser;
 
 // ── The 24 production + 3 demo .acl files ───────────────────────
-// Mirrors PROD_VISIBLE_BASES (24 non-Endless + ZGSZ_Endless = 25) + the .demo entries of
-// DEMO_VISIBLE_BASES (3 extra) in src/utils/constants/ui.js — total 27 unique (28 incl. Endless)
+// Mirrors PROD_VISIBLE_BASES (24) + the .demo entries of DEMO_VISIBLE_BASES
+// (3 extra) in src/utils/constants/ui.js — total 27 unique.
 const PROD_DEMO_FILES = [
   { icao: 'ZSJN', name: 'ZSJN_leisure_1.acl' },
   { icao: 'ZSJN', name: 'ZSJN_leisure_2.acl' },

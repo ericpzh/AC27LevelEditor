@@ -24,9 +24,9 @@ const voiceStt = require('./voiceSttWorker');
 
 // Which .acl files feed the airport cache (dropdowns, stand/runway/area geometry,
 // approach data) that map windows read via collectValues. Browser-whitelisted
-// levels are ALWAYS scanned regardless of the "hidden level" blacklist regex —
-// e.g. an endless/scenery level like ZGSZ_Endless.acl (matches `endless`) still
-// contributes its geometry so its radar windows aren't blank.
+// levels are ALWAYS scanned regardless of the "hidden level" blacklist regex,
+// so a whitelisted level whose name matches `tutorial|bench|test|…` still
+// contributes its geometry (otherwise its radar windows would be blank).
 const HIDDEN_LEVEL_RE = /tutorial|bench|test|crossrunway|dev|endless|\.prod/i;
 function isCacheAclFile(filename) {
   if (!filename || !filename.endsWith('.acl')) return false;
@@ -3235,11 +3235,14 @@ ipcMain.handle('check-command-capability', async () => {
     try { pluginVersion = await updater.computeFileMd5(pluginPath); } catch (_) {}
   }
 
-  // Workshop variant: compare against the DLL that ships WITH the Workshop item
-  // itself, never the network. The Workshop content folder (Steam) or the
-  // bundled extraResource (resources/AC27Approach.dll) is the source of truth,
-  // so Steam Workshop handles updates and no R2 HEAD is ever issued.
-  if (updater.isWorkshopBuild()) {
+  // Dev mode (npm start) never enforces the plugin version — the dev loop
+  // mutates the DLL locally and the game must be restarted to pick it up;
+  // a forced HEAD → outdated nag would block PTT/composer while developing.
+  // Matches updater.js dev gating (isUpdateSupported/checkForUpdate skip).
+  if (!app.isPackaged) {
+    console.log('[Capability] dev mode (npm start) — skipping remote plugin version check');
+    pluginUpToDate = null;
+  } else if (updater.isWorkshopBuild()) {
     const bundledPath = resolveWorkshopBundledDllPath();
     if (bundledPath) {
       try { pluginRemoteVersion = await updater.computeFileMd5(bundledPath); } catch (_) {}

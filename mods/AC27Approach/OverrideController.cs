@@ -215,7 +215,10 @@ public static class OverrideController
             // v7: Delta is diagnostic only (stubbed getter — 0.00000 live);
             // TimeScale × FixedDeltaTime is the operative dt. The ×10 test
             // must read TimeScale 10.0; the pause test IsPaused True.
-            Plugin.LogMsg($"game-time: clock resolved — Delta {GameClock.Delta:F5} s/tick (stubbed — unused), TimeScale {GameClock.TimeScale:F1}, FixedDeltaTime {GameTime.FixedDeltaTime:F5} s, IsPaused {GameClock.IsPaused}");
+            // v14 (2026-09): GameTime.IsPaused changed from bool to ReadOnlyReactiveProperty<bool> — read CurrentValue.
+            bool isPaused = false;
+            try { isPaused = GameClock.IsPaused.CurrentValue; } catch { }
+            Plugin.LogMsg($"game-time: clock resolved — Delta {GameClock.Delta:F5} s/tick (stubbed — unused), TimeScale {GameClock.TimeScale:F1}, FixedDeltaTime {GameTime.FixedDeltaTime:F5} s, IsPaused {isPaused}");
         }
         if (!_clockFailLogged && GameClock == null)
         {
@@ -238,8 +241,11 @@ public static class OverrideController
                 // time — 1/60 at ×1, 1/6 at ×10, 0 while paused (the
                 // IsPaused gate is a belt-and-suspenders — Aircraft.Step may
                 // not even fire while paused).
+                // v14 (2026-09): IsPaused is now ReadOnlyReactiveProperty<bool> (was bool) — read CurrentValue.
                 float dt = GameTime.FixedDeltaTime * GameClock.TimeScale;
-                if (GameClock.IsPaused) dt = 0f;
+                bool isPaused = false;
+                try { isPaused = GameClock.IsPaused.CurrentValue; } catch { }
+                if (isPaused) dt = 0f;
                 return Mathf.Max(0f, dt);
             }
             catch { GameClock = null; }   // per-level service — a stale cache across level switches re-resolves
@@ -1369,7 +1375,10 @@ public static class OverrideController
         {
             try
             {
-                ac.CommandContinueApproach();
+                // 2026-09: CommandContinueApproach removed in game update — invoke via reflection if present.
+                var m = AccessTools.Method(ac.GetType(), "CommandContinueApproach");
+                if (m != null) m.Invoke(ac, null);
+                else Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach not found — skipped (removed in game update)");
                 // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
                 // Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach → ok");
             }
@@ -1712,13 +1721,13 @@ public static class OverrideController
     }
 
     /// <summary>Resolve the airport's tower RadioChannel instance — the game's
-    /// OWN resolver first (RadioChannelManager.GetResolvedChannel(EChannel.Tower),
+    /// OWN resolver (RadioChannelManager.GetResolvedChannel(EChannel.Tower),
     /// the same path Aircraft / AircraftFactory / RuntimeAircraftSpawnService
-    /// use for their channel work; VContainer [Inject]-registered), then the
-    /// RadioSystem audio bindings as fallback (PK → RadioChannelBinding — the
-    /// private-field-as-public-property gotcha again). Returns null when
-    /// unresolvable — the caller keeps the current behavior (the aircraft
-    /// stays on approach and self-heals on touchdown).</summary>
+    /// use for their channel work; VContainer [Inject]-registered). The old
+    /// RadioSystem audio-bindings fallback was removed in the 2026-09 game
+    /// update (type no longer exists) — the manager is now the sole source.
+    /// Returns null when unresolvable — the caller keeps the current behavior
+    /// (the aircraft stays on approach and self-heals on touchdown).</summary>
     private static RadioChannel ResolveTowerRadioChannel()
     {
         foreach (var scope in UnityEngine.Object.FindObjectsOfType<LifetimeScope>())
@@ -1733,21 +1742,6 @@ public static class OverrideController
                 }
             }
             catch { }   // a partially-initialized scope — try the next
-        }
-        foreach (var scope in UnityEngine.Object.FindObjectsOfType<LifetimeScope>())
-        {
-            if (scope.Container == null) continue;
-            try
-            {
-                if (scope.Container.TryResolve(out RadioSystem radio) && radio._radioChannelBindings != null)
-                    foreach (var pair in radio._radioChannelBindings)
-                    {
-                        var b = pair.Value;
-                        if (b != null && b.Channel != null && b.Channel.Type == EChannel.Tower)
-                            return b.Channel;
-                    }
-            }
-            catch { }
         }
         return null;
     }

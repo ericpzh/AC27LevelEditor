@@ -171,7 +171,12 @@ function analyze(text) {
   const frameFp = new Map();
   if (docs.length > 1) {
     const b = new TB(); readJson(frame, b); decodeBlobs(b.root);
-    const rf = b.root.fields.Snapshot.fields.RuntimeData.fields.$blob;
+    // Frame layout: v5+ is CheckpointPayload { RuntimeData, RecentMessages } directly;
+    // older fixtures used CheckpointPayload { Snapshot { RuntimeData } }. Handle both.
+    const snapshotNode = b.root.fields.Snapshot || b.root;
+    const runtimeDataField = snapshotNode.fields.RuntimeData || b.root.fields.RuntimeData;
+    if (!runtimeDataField) throw new Error('frame has no RuntimeData (neither Snapshot.RuntimeData nor RuntimeData)');
+    const rf = runtimeDataField.fields.$blob;
     const ents = rf.fields.RuntimeEntities;
     const content = ents.fields.$rcontent || ents.fields['null'];
     for (const entry of content.value) {

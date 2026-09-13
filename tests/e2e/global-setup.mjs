@@ -1,31 +1,27 @@
-import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
+import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TESTS_DIR = path.resolve(__dirname, '..');            // tests/
+const ROOT = path.resolve(TESTS_DIR, '..');                 // repo root
 const FIXTURES_DIR = path.join(TESTS_DIR, 'fixtures', 'game-root');
 const TMP_DIR = path.join(TESTS_DIR, 'tmp-e2e');
 const USERDATA_DIR = path.join(TESTS_DIR, 'tmp-e2e-userdata');
 
-// ── 27 prod+demo files to include when sourcing from real game ──
-// Mirrors PROD_VISIBLE_BASES (24, the full production set minus
-// ZGSZ_Endless) + the demo entries of DEMO_VISIBLE_BASES
-// (4: three .demo.acl + ZSJN_leisure_1.acl, which the demo install ships
-// under the prod filename) in src/utils/constants/ui.js — only these are
-// visible in the browser.
-const PROD_DEMO_FILES = [
-  'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
-  'ZSJN/ZSJN_peakdeparture.acl', 'ZSJN/ZSJN_runwaychange.acl',
-  'ZSJN/ZSJN_taixwayclosed.acl', 'ZSJN/ZSJN_surfaceradarinvisible.acl', 'ZSJN/ZSJN_peakdeparture.demo.acl',
-  'KJFK/KJFK_leisure_1.acl', 'KJFK/KJFK_leisure_2.acl',
-  'KJFK/KJFK_runwaychange.acl', 'KJFK/KJFK_peakdeparture.acl', 'KJFK/KJFK_peakarrival.acl', 'KJFK/KJFK_surfaceradarinvisible.acl',
-  'KJFK/KJFK_leisure_1.demo.acl', 'KJFK/KJFK_peakarrival.demo.acl',
-  'KDCA/KDCA_leisure_1.acl', 'KDCA/KDCA_leisure_2.acl',
-  'KDCA/KDCA_runwaychange.acl', 'KDCA/KDCA_peakdeparture.acl', 'KDCA/KDCA_peakarrival.acl', 'KDCA/KDCA_surfaceradarinvisible.acl',
-  'ZGSZ/ZGSZ_leisure_1.acl', 'ZGSZ/ZGSZ_leisure_2.acl',
-  'ZGSZ/ZGSZ_runwaychange.acl', 'ZGSZ/ZGSZ_peakdeparture.acl', 'ZGSZ/ZGSZ_peakarrival.acl', 'ZGSZ/ZGSZ_surfaceradarinvisible.acl',
-];
+// ── Single source of truth ───────────────────────────────────────
+// Import the app's own visibility whitelists instead of duplicating them.
+// `ui.js` cannot be imported by file path under Playwright's loader (the repo
+// is CommonJS, ui.js is ESM-only), so evaluate its SOURCE via a data: URL —
+// Node's ESM loader handles that directly. E2E staging then stays in lockstep
+// with prod/demo mode: EVERY production file is staged and iterated. Update
+// levels in src/utils/constants/ui.js only.
+const UI_CONSTANTS_PATH = path.join(ROOT, 'src', 'utils', 'constants', 'ui.js');
+const { PROD_VISIBLE_BASES, DEMO_VISIBLE_ORDER } = await import(
+  'data:text/javascript;base64,' + Buffer.from(readFileSync(UI_CONSTANTS_PATH, 'utf-8')).toString('base64')
+);
+// Union of prod + demo filenames (ZSJN_leisure_1.acl is in both).
+const STAGE_BASENAMES = [...new Set([...PROD_VISIBLE_BASES, ...DEMO_VISIBLE_ORDER])];
 
 export default async function () {
   // 1. Clean up from previous run
@@ -35,68 +31,60 @@ export default async function () {
   // 2. Copy game data → temp
   const gameRoot = process.env.E2E_GAME_ROOT;
   if (gameRoot && existsSync(gameRoot)) {
-    // Source from real game installation — copy the 27 specific files
-    console.log('[E2E setup] Sourcing 27 prod+demo files from:', gameRoot);
+    console.log(`[E2E setup] Sourcing ${STAGE_BASENAMES.length} prod+demo files from:`, gameRoot);
     const srcAirports = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
     const dstAirports = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'Airports');
 
-    for (const relPath of PROD_DEMO_FILES) {
-      const [icao, name] = relPath.split('/');
-      const srcFile = path.join(srcAirports, icao, 'Levels', name);
-      const dstDir = path.join(dstAirports, icao, 'Levels');
-      if (!existsSync(srcFile)) {
-        console.log(`  SKIP (not found): ${relPath}`);
+    // Map each whitelisted basename → its airport by scanning the Levels dirs.
+    const basenameToIcao = new Map();
+    for (const ae of readdirSync(srcAirports, { withFileTypes: true })) {
+      if (!ae.isDirectory()) continue;
+      const levelsDir = path.join(srcAirports, ae.name, 'Levels');
+      if (!existsSync(levelsDir)) continue;
+      for (const le of readdirSync(levelsDir, { withFileTypes: true })) {
+        if (le.isFile() && !basenameToIcao.has(le.name)) basenameToIcao.set(le.name, ae.name);
+      }
+    }
+
+    const involvedIcaos = new Set();
+    let staged = 0;
+    for (const name of STAGE_BASENAMES) {
+      const icao = basenameToIcao.get(name);
+      if (!icao) {
+        console.log(`  SKIP (not found): ${name}`);
         continue;
       }
+      const srcFile = path.join(srcAirports, icao, 'Levels', name);
+      const dstDir = path.join(dstAirports, icao, 'Levels');
       mkdirSync(dstDir, { recursive: true });
       cpSync(srcFile, path.join(dstDir, name));
+      staged++;
+      involvedIcaos.add(icao);
 
-      // Copy associated timeline JSONs and config
-      const srcLevelDir = path.join(srcAirports, icao, 'Levels');
-      const baseName = name.replace(/\.acl$/, '');
-      const jsonPatterns = [
-        'weather_timeline.json', 'wind_timeline.json',
-        `runway_timeline_${baseName}.json`,
-      ];
-      for (const pat of jsonPatterns) {
-        const jsonSrc = path.join(srcLevelDir, pat);
-        if (existsSync(jsonSrc)) cpSync(jsonSrc, path.join(dstDir, pat));
-      }
-
-      // Copy airport_config.json if not already copied
-      const cfgSrc = path.join(srcAirports, icao, 'airport_config.json');
-      const cfgDst = path.join(dstAirports, icao, 'airport_config.json');
-      if (existsSync(cfgSrc) && !existsSync(cfgDst)) cpSync(cfgSrc, cfgDst);
-
-      // For .demo.acl files, also copy the parent .acl
+      // For .demo.acl files, also copy the parent .acl they derive from.
       if (name.endsWith('.demo.acl')) {
         const parentName = name.replace('.demo.acl', '.acl');
-        const parentSrc = path.join(srcLevelDir, parentName);
+        const parentSrc = path.join(srcAirports, icao, 'Levels', parentName);
         if (existsSync(parentSrc)) cpSync(parentSrc, path.join(dstDir, parentName));
       }
     }
-    // Copy audio clips + CSV files for each airport (needed for validation)
-    const airportsDone = new Set();
-    for (const relPath of PROD_DEMO_FILES) {
-      const [icao] = relPath.split('/');
-      if (airportsDone.has(icao)) continue;
-      airportsDone.add(icao);
+
+    // For every involved airport, stage the non-.acl companions (embedded
+    // timeline JSON, .aclcfg, flight-schedule CSVs, audio clips, airport
+    // config) so the editor loads and validates each level fully.
+    for (const icao of involvedIcaos) {
       const srcLevels = path.join(srcAirports, icao, 'Levels');
       const dstLevels = path.join(dstAirports, icao, 'Levels');
-      // Audio clips (language detection + callsign validation)
-      for (const clip of ['audio_clips_en.json', 'audio_clips_zh.json']) {
-        const s = path.join(srcLevels, clip);
-        if (existsSync(s)) cpSync(s, path.join(dstLevels, clip));
+      for (const le of readdirSync(srcLevels, { withFileTypes: true })) {
+        if (!le.isFile()) continue;
+        if (le.name.endsWith('.acl') || le.name.endsWith('.acl.bak')) continue;
+        cpSync(path.join(srcLevels, le.name), path.join(dstLevels, le.name));
       }
-      // CSV flight schedules (config reference)
-      const levelEnts = readdirSync(srcLevels, { withFileTypes: true });
-      for (const le of levelEnts) {
-        if (le.isFile() && le.name.endsWith('.csv')) {
-          cpSync(path.join(srcLevels, le.name), path.join(dstLevels, le.name));
-        }
-      }
+      const cfgSrc = path.join(srcAirports, icao, 'airport_config.json');
+      const cfgDst = path.join(dstAirports, icao, 'airport_config.json');
+      if (existsSync(cfgSrc) && !existsSync(cfgDst)) cpSync(cfgSrc, cfgDst);
     }
-    console.log(`[E2E setup] Copied files to ${TMP_DIR}`);
+    console.log(`[E2E setup] Staged ${staged} files to ${TMP_DIR}`);
   } else {
     // Fall back to committed fixture (ZSJN_leisure_1.acl); copy it to
     // ZSJN_leisure_2.acl so the browser shows two rows in prod mode

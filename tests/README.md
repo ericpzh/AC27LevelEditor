@@ -7,9 +7,9 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (1456) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (17, ~5 min)
+npm run test:all      # Full suite: Vitest (1456) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
 npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (1456 tests, 78 files, ~10s)
-npm run test:e2e      # 17 Playwright E2E tests (requires npm run build first, ~4 min; 15 pass, 2 skipped — E12a overlay timing + fuzz gated on FUZZ_RUN)
+npm run test:e2e      # 18 Playwright E2E tests (requires npm run build first, ~8 min; 16 pass, 2 skipped — both fuzz specs gated on FUZZ_RUN)
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
@@ -145,7 +145,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 
 ### Known Vitest failures (none)
 
-All 1456 Vitest tests pass (78 files; verified 2026-09-05). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
+All 1456 Vitest tests pass (78 files; verified 2026-09-13). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 
@@ -155,13 +155,15 @@ All 1456 Vitest tests pass (78 files; verified 2026-09-05). The former `scenery_
 
 ---
 
-## Layer 2 — Playwright E2E Tests (17 tests, 15 pass, 2 skipped)
+## Layer 2 — Playwright E2E Tests (18 tests, 16 pass, 2 skipped)
 
-Launches the real Electron app against a temp copy of real game data (via `E2E_GAME_ROOT` env var set by `run-all.mjs`). File isolation is guaranteed — the real game installation is never touched. The 17 tests = 14 specs below + S1b (24-level integrity) + S1 + the fuzz spec (skipped unless `FUZZ_RUN=1`); the two skips are E12a (overlay timing) and fuzz (gated).
+Launches the real Electron app against a temp copy of real game data (via `E2E_GAME_ROOT` env var set by `run-all.mjs`). File isolation is guaranteed — the real game installation is never touched. The 18 tests = the browser/editor specs below + S1b (24-level integrity) + S1 + the two fuzz specs (gated). The only skips are the two fuzz specs (`FUZZ_RUN` not set); `E12a` runs for real (it no longer skips — see below).
 
 ### `npm run test:e2e` — requires `npm run build` first, Playwright + Electron capable environment
 
 ⚠ **Known limitation**: The E2E suite requires an interactive display (X11/Wayland/Windows desktop) for Electron to render. In headless/CI environments without a display server, the first test (B1 — airport list) fails with a worker teardown timeout. Run locally on a desktop machine.
+
+⚠ **Known open failures** (all in the gated fuzz suite): Ground Painter can't synthesize a runway on real v5 levels (`cannot determine type ... no fallback allowed`); save fuzz `KJFK_peakarrival` (`FlightPlanArrivalLeg not in bdTypeMap`); `KJFK_runwaychange` no-change save blocked by the inactive-runway validator.
 
 ### Browser Screen (4 tests)
 
@@ -199,7 +201,7 @@ Launches the real Electron app against a temp copy of real game data (via `E2E_G
 
 | ID | Test | Expected |
 |----|------|----------|
-| **E12a** | Help button | Click "Help" → tutorial overlay appears; Escape closes it (⚠ occasionally skipped — overlay selector timing) |
+| **E12a** | Help button | Click "Help" (label "Help"/"帮助"; the tooltip is bound, so the old `title="Help"` selector was wrong) → tutorial overlay appears; Escape closes it |
 | **E12d** | Back button (no changes) | Click Back → returns to Browser screen without unsaved-changes modal |
 
 ### Save Integrity — single file (1 test, fixture-based)
@@ -212,7 +214,7 @@ Launches the real Electron app against a temp copy of real game data (via `E2E_G
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **S1b** | `save-integrity-all-e2e.spec.mjs` | 24 production files across ZSJN + KJFK + ZGSZ + KDCA | 24 passed, 0 skipped |
+| **S1b** | `save-integrity-all-e2e.spec.mjs` | 24 production files across ZSJN + KJFK + ZGSZ + KDCA | 23 passed, 1 skipped (KJFK_runwaychange — inactive-runway validator); coverage guard: 24/24 staged prod files exercised |
 
 ```bash
 # Run standalone (requires E2E_GAME_ROOT env var):
@@ -220,7 +222,7 @@ $env:E2E_GAME_ROOT = "<game-root>"
 npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
 ```
 
-Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~3 minutes for 24 files. The 24 files mirror `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` minus `ZGSZ_Endless` (the spec's global-setup copy excludes `.demo.acl` files, so demo files never appear in the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead):
+Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~6 minutes for 24 files. The list is derived directly from `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` (global-setup stages exactly those files, so it can never drift; a coverage guard fails the run if any staged prod file is not exercised). The spec excludes `.demo.acl` files from the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead:
 
 | File | Status | Note |
 |------|--------|------|
@@ -231,7 +233,7 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | ZSJN_taixwayclosed | ✓ | all state identical |
 | KJFK_leisure_1 | ✓ | all state identical |
 | KJFK_leisure_2 | ✓ | all state identical |
-| KJFK_runwaychange | ✓ | all state identical |
+| KJFK_runwaychange | − | skipped — validator blocks the no-change save (inactive-runway rule) |
 | KJFK_peakdeparture | ✓ | all state identical |
 | KJFK_peakarrival | ✓ | all state identical |
 | ZGSZ_leisure_1 | ✓ | all state identical |
@@ -249,17 +251,19 @@ Iterates every level row in the browser: open → disable time validation → Ct
 | KDCA_surfaceradarinvisible | ✓ | all state identical |
 | ZGSZ_surfaceradarinvisible | ✓ | all state identical |
 
+The 24 files are exactly `PROD_VISIBLE_BASES`. `ZGSZ_Endless.acl` is deliberately **not** listed there: it is a flightless scenery level (`flight_schedule_endless.csv` is header-only), so the browser renders no row and it cannot go through a save-integrity round-trip. The spec derives its expected list from the same `PROD_VISIBLE_BASES` constant global-setup stages from and fails if any staged prod file is not exercised.
+
 ### Fuzz Save — randomized flight edit storm + real SAVE (E2E, requires `E2E_GAME_ROOT` + `FUZZ_RUN=1`)
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **F1** | `fuzz-save.spec.mjs` | All 24 production files (or `FUZZ_ACL_FILES` subset) | 24/24 pass, `.acl.bak` created per file, saved file reloads with matching flights |
+| **F1** | `fuzz-save.spec.mjs` | All 24 production files (or `FUZZ_ACL_FILES` subset) | `.acl.bak` created per file, saved file reloads with matching flights. ⚠ currently fails on `KJFK_peakarrival` (missing `FlightPlanArrivalLeg` blobdoc type); the fuzz harness `storeSnap` stale-snapshot bug is fixed |
 
 ### Fuzz Ground+Air Save — randomized Ground/Air Painter edit storm + real SAVE (E2E, requires `E2E_GAME_ROOT` + `FUZZ_RUN=1`)
 
 | ID | Spec | Coverage | Expected |
 |----|------|----------|----------|
-| **F2** | `fuzz-ground-save.spec.mjs` | All 24 production files (or `FUZZ_ACL_FILES` subset) | 24/24 pass, `.acl.bak` created per file, saved scenery + flight reconciliation verified |
+| **F2** | `fuzz-ground-save.spec.mjs` | All 24 production files (or `FUZZ_ACL_FILES` subset) | `.acl.bak` created per file, saved scenery + flight reconciliation verified. ⚠ currently **red** on real v5 levels: Ground Painter runway synthesis refuses unsampleable types |
 
 Drives the Ground Painter the same way `F1` drives flights: opens each level, opens the Ground Painter, applies **50–200 randomized scenery+airway ops per level** through the MCP Ground/Air Painter API (unified Ground+Air distribution), then hits **SAVE through the real Ground Painter UI** (Save → backup confirm → success/warnings). The operation mix is percentage-budgeted (ground + air unified): 5% runway (new/move/rename), 5% taxiway new, 20% taxiway mod (move whole/move endpoint/rename), 20% fillet (half connect a new taxiway onto a runway `Flags=4` strip then fillet that junction), 10% area (new/move/move-vertex), 5% stand (new/move/rename), 15% select+delete (single/multi/selectAll move + delete), 20% air (node 7, procedure 7, fillet 3, move/rename/delete 3). Every coordinate is inside the live graph bounds (5% padding); runway names are suffix-deduped and always satisfy the save-time validation.
 
@@ -496,7 +500,7 @@ Airports/<ICAO>/Levels/     copy →  _tmp/golden/<ICAO>/    copy →  _tmp/resu
 
 Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored.
 
-**Production (24 prod levels across ZSJN/KJFK/ZGSZ/KDCA)** — with `--prod-demo` the runner tests 27 files (24 prod + 3 demo; 28 incl. ZGSZ_Endless).
+**Production (24 prod levels across ZSJN/KJFK/ZGSZ/KDCA)** — with `--prod-demo` the runner tests 27 files (24 prod + 3 demo).
 
 **Demo (3 .demo files + 1 shared):** KJFK_leisure_1.demo, KJFK_peakarrival.demo, ZSJN_leisure_1 (shared with prod), ZSJN_peakdeparture.demo
 
@@ -516,7 +520,7 @@ Runs all three layers sequentially (Vitest → save integrity 27 files → jetwa
 
 All supported .acl files use the **v4 GATCArc4 binary** format (StaticData.$blobdoc; flight plans are StaticItems dictionary entries keyed `"$k": "flight-plan:<REG>"`, referenced by `$fstrref` tokens). v2/v3 text-format support has been removed from the code and tests.
 
-- **Save integrity**: 27/27 files pass (24 production + 3 demo; 28 incl. ZGSZ_Endless) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (`_rebuildStaticDataSections`).
+- **Save integrity**: 27/27 files pass (24 production + 3 demo) — flights, config, scenery, timelines all match after save→reload through `generateFullAcl` (`_rebuildStaticDataSections`).
 - **Save/load round-trip**: `test_e2e_save_load.js` — flight data identical after load→save→load (21 flights on ZSJN_leisure_1, 61 on KJFK_peakarrival).
 - **Section rebuild**: `test_rebuild_sections.js` (StaticItems rebuild + binary re-encode, reload-verified) and `test_rebuild_timelines.js` (MetaData subsection rebuild + re-encode) both pass.
 - **Linkage**: `test_acl_linkage.js` — 48 flight-plan definitions self-consistent, 48 `$fstrref` references resolve.
