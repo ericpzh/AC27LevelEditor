@@ -15,7 +15,7 @@ using UnityEngine;
 namespace AC27Approach;
 
 /// <summary>
-/// Per-second parameter tracer for the clear_for_appr handoff (2026-08-03).
+/// Per-second parameter tracer for the clear_for_appr handoff.
 /// `track|CS` toggles a 1 s dump of one aircraft's full params: aircraft
 /// state (Fly/Approach), dynamics state (FlyApproaching/Approaching), the
 /// DynamicsParams object — whichever class it is, with its path lists
@@ -103,7 +103,7 @@ public static class ParamTrace
         var dp = ac.DynamicsData;
         if (dp == null) { sb.Append(" params=<null DynamicsData>"); return sb.ToString(); }
         sb.Append(" dynState=").Append(dp.DynamicsState != null ? dp.DynamicsState.Value.ToString() : "<null>");
-        // Data-channel speed fields (2026-08-04): the crawl diagnostic — the
+        // Data-channel speed fields: the crawl diagnostic — the
         // aircraft-level `spd` read above does NOT reflect these; the approach
         // path-following speed comes from the channel (prime suspect: kts-less
         // frames left them unset → the ~1-4 u/s crawl instead of 240 kt).
@@ -111,7 +111,7 @@ public static class ParamTrace
         sb.Append(" chTts=").Append(F(dp.TargetTaxiSpeed));
         sb.Append(" chDTts=").Append(F(dp.DynamicsTargetTaxiSpeed));
         sb.Append(" chFwd=").Append(dp.ForwardSpeed);
-        // Actual motion + dynamics-level speed (2026-08-04 v4): chTs=240 alone
+        // Actual motion + dynamics-level speed (v4): chTs=240 alone
         // does NOT prove the aircraft moves at 240 kt — the live-log crawl
         // showed every channel speed field at 240 while the rigidbody crept at
         // 1.24 u/s. rbVel/dynVel = the Aircraft3D rigidbody velocity magnitude
@@ -141,7 +141,7 @@ public static class ParamTrace
             for (int i = 0; i < w.Length; i++) { if (i > 0) sb.Append(','); sb.Append((int)w[i]); }
             sb.Append(']');
         }
-        // Radio channels (2026-08-03): Type/PK of the aircraft's two channel
+        // Radio channels: Type/PK of the aircraft's two channel
         // slots — the jurisdiction handoff's proof and re-assert detector
         // (AFTER shows rc=Approach/… jrc=Tower/…; a jrc flip back names the
         // culprit flow via the log line before it).
@@ -157,7 +157,7 @@ public static class ParamTrace
     /// IDynamicsParams: identify the concrete class by native class pointer
     /// and re-wrap. For the two flight states the state's own list summary
     /// and progress ratio are included; `pos` (the aircraft's position) feeds
-    /// the ApproachState hold diagnostics (2026-08-04).</summary>
+    /// the ApproachState hold diagnostics.</summary>
     private static string DescribeState(Dynamics dyn, Vector3 pos)
     {
         var cur = dyn._currentState;
@@ -188,7 +188,7 @@ public static class ParamTrace
     /// Public for the state-check verdict line (state vs channel in one log).</summary>
     public static string DescribeParams(object p)
     {
-        // Interop gotcha (live-verified 2026-08-03): DynamicsData.DynamicsParams
+        // Interop gotcha (live-verified): DynamicsData.DynamicsParams
         // is typed IDynamicsParams, and Il2CppInterop wraps the getter's return
         // in the INTERFACE's interop class — GetType().Name is literally
         // "IDynamicsParams" and `is FlyApproachDynamicsParams` / `is
@@ -238,7 +238,7 @@ public static class ParamTrace
         return sb.ToString();
     }
 
-    /// <summary>ApproachState hold diagnostics (2026-08-04): the Init-derived
+    /// <summary>ApproachState hold diagnostics: the Init-derived
     /// copies and the 2-D vs 3-D distance from the aircraft to BOTH path[0]
     /// surfaces — the gate-target discriminator. stA0 near 0/15 while rtA0 is
     /// large = the gate reads the runtime-data path (stale 5-pt); both near
@@ -262,7 +262,7 @@ public static class ParamTrace
             {
                 sb.Append(" afmRem=").Append(st.afm.RemainingDistance.ToString("F1"));
                 try { sb.Append(" afmAppT=").Append(st.afm._appRouteTime); } catch { sb.Append(" afmAppT=?"); }
-                // 2026-08-04 v4: the docs' §8.17 "next suspect" once chTs=240
+                // v4: the docs' §8.17 "next suspect" once chTs=240
                 // is visible — the flight model's speed adjustment + plan ETA.
                 try { sb.Append(" afmAdj=").Append(st.afm.SpeedAdjustment); } catch { sb.Append(" afmAdj=?"); }
                 try { sb.Append(" afmETA=").Append(st.afm.ETA); } catch { sb.Append(" afmETA=?"); }

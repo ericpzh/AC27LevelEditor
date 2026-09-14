@@ -43,7 +43,7 @@ const BASE = {
  *  runtime (it runs as plain node via ELECTRON_RUN_AS_NODE, which has no
  *  asar support, so these land beside the app in resources/).
  *  Models: en = LARGE vosk-model-en-us-0.22 (~1.9 GB, accuracy — the small
- *  en-us-0.15 was ditched 2026-08-06), zh = small vosk-model-small-cn-0.22.
+ *  en-us-0.15 was ditched), zh = small vosk-model-small-cn-0.22.
  *  Keep this list in sync with the constants in electron/voice-stt-vosk.js. */
 const VOICE_RESOURCES = [
   { from: 'electron/voice-stt-vosk.js', to: 'voice-stt-vosk.js' },

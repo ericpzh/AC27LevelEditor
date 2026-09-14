@@ -43,36 +43,36 @@ import {
  * composed for the same aircraft without re-clicking the strip. Selection
  * is released by clicking the window background.
  *
- * HEADING-ONLY override (2026-08-03, decoupled): the heading frame itself
+ * HEADING-ONLY override (decoupled): the heading frame itself
  * carries no speed — the plugin never touches speed ON THIS FRAME. The
  * aircraft keeps flying its own route at the game's own speed; only the
  * nose heading is overridden (it points at the commanded heading while
  * the game's dynamics keeps moving it). Speed is commandable separately
- * via Fly Speed (2026-08-04) — the `update_speed` frame is the one place
+ * via Fly Speed  — the `update_speed` frame is the one place
  * the plugin touches speed.
  *
- * SMOOTH TURN (2026-08-03): the update_heading frame carries a rate (°/s
+ * SMOOTH TURN:  the update_heading frame carries a rate (°/s
  * of GAME time, TURN_RATE_DEG_S below) — the plugin rotates the nose to
  * the commanded heading at that rate instead of snapping in one frame,
  * scaled with the game's speed multiplier (×2 turns twice as fast per
  * wall-second, same game time) and frozen while the game is paused.
  * Omitted/<=0 rate = instant (backward compatible for scripts).
  *
- * CLEAR FOR APPROACH IS SMOOTH TOO (2026-08-03): the clear_for_appr frame
+ * CLEAR FOR APPROACH IS SMOOTH TOO:  the clear_for_appr frame
  * carries the same rate (keyed field rate=N). The plugin arms the turn at
  * the handoff — the nose rotates from where it actually points onto the
  * approach course at that rate (same game-time scaling + pause behavior)
  * instead of snapping when the approach transition lands. The frame's
  * optional approach speed (kts) is still supported for scripted use; the
- * UI's speed control is the separate Fly Speed command (2026-08-04) —
+ * UI's speed control is the separate Fly Speed command  —
  * cfa's scripted kts stays for the approach speed.
  *
- * FLY ALTITUDE (2026-08-04): a single climb/descend-and-maintain command —
+ * FLY ALTITUDE:  a single climb/descend-and-maintain command —
  * picking it opens a slider panel exactly like Fly Heading's: a 1000-ft
  * range from ALT_MIN_FT (1000) up to max(ALT_MAX_FT (9000), the aircraft's
  * CURRENT altitude rounded to the nearest 1000), the thumb defaulting to
  * the rounded current (3300 ft → thumb at 3000) so Send always has a
- * value. CHINA (Z* ICAO) AIRPORTS FLY METERS (2026-08-15): ZXXX airports
+ * value. CHINA (Z* ICAO) AIRPORTS FLY METERS:  ZXXX airports
  * show a fixed 300-2700 m range in 300-m steps (300, 600, 900, … 2700),
  * the thumb at the rounded current clamped in range; the payload converts
  * meters → feet (FT_PER_METER) before dispatch. The pick sends an
@@ -85,7 +85,7 @@ import {
  * descend). Only Y is overridden — X/Z, heading, speed and route stay the
  * game's (speed is commandable separately — Fly Speed below).
  *
- * FLY SPEED (2026-08-04): a single fly-speed command — picking it opens a
+ * FLY SPEED:  a single fly-speed command — picking it opens a
  * slider panel exactly like Fly Heading's: a 180-240 kt range (step 1),
  * the thumb defaulting to the aircraft's live speed (telemetry
  * airSpeedKnot is raw knots — clamped into range) so Send always has a
@@ -103,7 +103,7 @@ import {
  * per-aircraft override entry, so heading + speed + altitude all stay
  * active at once).
  *
- * FLY WAYPOINT (2026-08-15): the UI sibling of the voice pipeline's
+ * FLY WAYPOINT:  the UI sibling of the voice pipeline's
  * 'fly direct to X' — picking it swaps the option row for the aircraft's
  * current-approach waypoint list (the STAR telemetry reports on its
  * assigned runway, from the airport cache's per-STAR lists; falls back to

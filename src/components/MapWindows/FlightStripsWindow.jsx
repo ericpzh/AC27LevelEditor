@@ -447,7 +447,7 @@ export default function FlightStripsWindow({ airportIcao }) {
 
   // Load DLL: install AC27Approach.dll into BepInEx/plugins.
   // Visible while the DLL is missing; with Debug Mode off it explains what
-  // to do instead of showing the download. Flow (2026-08-14): try the R2
+  // to do instead of showing the download. Flow: try the R2
   // download+install first (progress overlay), falling back on any failure
   // to the local file dialog — the download-first pattern of the Livery
   // button. On success the capability check re-runs (deliberate exception to
@@ -1093,7 +1093,7 @@ export default function FlightStripsWindow({ airportIcao }) {
           <span className="flight-strips-timescale">{timeScale > 0 ? '×' + timeScale : ''}</span>
         </div>
         <div className="flight-strips-bar-actions">
-          {/* Push-to-talk voice input (2026-08-05): retargeted to the patch-
+          {/* Push-to-talk voice input: retargeted to the patch-
               command vocabulary — the chain dispatches via sendPatchCommand
               like the composer's Send. Selection works for ANY aircraft;
               patch commands only execute on the approach channel (the
@@ -1114,7 +1114,7 @@ export default function FlightStripsWindow({ airportIcao }) {
               onRelease={voice.stopListening}
             />
           )}
-          {/* Load DLL (2026-08-06): pick AC27Approach.dll to copy into
+          {/* Load DLL: pick AC27Approach.dll to copy into
               BepInEx/plugins. Shown while the DLL is missing — once present,
               the PTT button + command bar take over. With Debug Mode off the
               press shows an explanation popup instead of the file dialog. */}

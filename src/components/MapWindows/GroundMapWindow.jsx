@@ -87,7 +87,7 @@ export default function GroundMapWindow({ airportIcao }) {
   useCrossWindowSelection(airportIcao, electronAPI, setSelectedCallSign);
 
   // ── Debug: log selected aircraft full UDP data every 5s ────
-  // log audit 2026-08-06: full-state dump — commented out; uncomment to re-enable
+  // log audit: full-state dump — commented out; uncomment to re-enable
   // useEffect(() => {
   //   if (!selectedCallSign) return;
   //   const tick = () => {

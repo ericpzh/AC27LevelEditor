@@ -271,7 +271,7 @@ describe('parseCallsign', () => {
     expect(r.callsign).toBe('DAL3401');
   });
 
-  // ─── Pre-number noise + digit confusables (2026-08-06 round 3) ───────
+  // ─── Pre-number noise + digit confusables (round 3) ───────
 
   it('strips pre-number "at" ("korean air at twenty twenty one" → KAL2021)', () => {
     const r = parseCallsign('korean air at twenty twenty one', 'en', aircraftList);

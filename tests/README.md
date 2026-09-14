@@ -122,7 +122,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 | `components/MapWindows/voiceSpokenNumberValue.test.js` | 34 | `parseSpokenNumberValue` EN/ZH values incl. the runway fuzzyGuard (three one right → 31, never 318) |
 | `components/MapWindows/voiceFuzzy.test.js` | 32 | D-L/curated-confusable policy leaf behavior |
 | `components/MapWindows/voiceFuzzyAcceptance.test.js` | 17 | Round-trip of the exhaustive acceptance fixture + flight-number guard pins |
-| `components/MapWindows/voiceSkeleton.test.js` | 6 | `enSkeleton`/`skeletonMatch` (2026-08-06 phonetic stage: digraphs, guards, ties) + runway fallback integration |
+| `components/MapWindows/voiceSkeleton.test.js` | 6 | `enSkeleton`/`skeletonMatch` (phonetic stage: digraphs, guards, ties) + runway fallback integration |
 | `components/MapWindows/voiceWaypointMatcher.test.js` | 19 | Direct-to waypoint slot: single-token exact → D-L ≤ 2 → spelled-letter sequences |
 | `components/MapWindows/voiceCandidates.test.js` | 14 | `parseVoiceCandidates` primary/alternate ordering + waypoint threading |
 | `components/MapWindows/voiceGrammarConsistency.test.js` | 3 | Pins `electron/voice-grammar.json` ⇄ live parser tables (en + zh) |
@@ -152,7 +152,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 
 ### Known Vitest failures (none)
 
-All 1479 Vitest tests pass (85 files; verified 2026-09-13). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
+All 1479 Vitest tests pass (85 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 

@@ -9,7 +9,7 @@
  * selection only (bare callsign → active/yellow). The caller dispatches the
  * chain; selection of the matched callsign is the caller's selection effect.
  *
- * Speech backend (2026-08-06): in Electron, offline vosk — electron/voice-stt-vosk.js
+ * Speech backend:  in Electron, offline vosk — electron/voice-stt-vosk.js
  * (spawned by voiceSttWorker.js via process.execPath + ELECTRON_RUN_AS_NODE;
  * sox mic capture, EN+ZH grammar-constrained decoding) — the Chromium Web
  * Speech API uploads mic audio to Google's speech API, which is shut down for

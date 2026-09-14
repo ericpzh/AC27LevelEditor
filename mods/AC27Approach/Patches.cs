@@ -23,13 +23,13 @@ public static class Patches
         => OverrideController.OnAircraftStep(__instance);
 
     // ── Design A v2: view-level direction hijack ────────────────────────
-    // Live 2026-08-03: the commanded heading did NOT stick — a second patch's
+    // Live: the commanded heading did NOT stick — a second patch's
     // before-state showed the game's original heading, meaning the game's own
     // systems re-assert the model direction after our postfix (or the visual
     // reads a channel we don't write). The view's direction sync is the LAST
     // writer of the visible orientation, so feed the override's commanded
     // heading there: whenever Aircraft3D syncs its direction, use OUR heading.
-    // (POSITION is NOT hijacked — since 2026-08-03 the override is
+    // (POSITION is NOT hijacked —  the override is
     // heading-only; the game keeps full control of position and speed.)
     public static void Aircraft3DSetDirectionPrefix(Aircraft3D __instance, ref Vector3 direction)
     {
@@ -42,7 +42,7 @@ public static class Patches
         if (d.sqrMagnitude > 1e-6f) direction = d;
     }
 
-    // ── Design A v4: view-level ALTITUDE hijack (2026-08-04) ─────────────
+    // ── Design A v4: view-level ALTITUDE hijack  ─────────────
     // The 3D view syncs the visible transform from the model's reactive
     // properties via SetWorldPosition — the LAST writer of the visible
     // position (same class + pattern as the SetDirection hijack). Only Y is
@@ -63,11 +63,11 @@ public static class Patches
     // (the dynamics' own path-tangent heading inside Step, a later-phase
     // sync) carries the commanded heading instead. Idempotent with our own
     // postfix writes — they read the same commanded value. (Position is NOT
-    // locked — game-owned since 2026-08-03.)
+    // locked — game-owned.)
     public static void SetDirectionPrefix(Aircraft __instance, ref Vector3 value)
     {
         if (!OverrideController.IsOverridden(__instance)) return;
-        // cfa-turn mode (2026-08-03): this prefix sees the game's TRUE
+        // cfa-turn mode: this prefix sees the game's TRUE
         // path-tangent heading (the only place it is visible — everything
         // else reads the substituted value) — pass it through so
         // CommandedDirection can stash it as the rotation target.
@@ -76,7 +76,7 @@ public static class Patches
     }
 
     // ── UDP Mechanism A: `!`-prefixed callsigns are patch frames (§5.4) ─
-    // Runtime-verified (2026-08-03): `Execute(in UdpCommand)` NREs inside the
+    // Runtime-verified: `Execute(in UdpCommand)` NREs inside the
     // Harmony trampoline — the `in`-byref binding is broken in this IL2CPP
     // context ("applied" at load, crashes per call). `ExecuteSelectAircraft(string)`
     // is called for every successfully-parsed SelectAircraft command and has a
@@ -105,7 +105,7 @@ public static class Patches
     }
 
     // ── UDP Mechanism B: extended frames on command id 0x00E7 (§5.4) ────
-    // Runtime-verified (2026-08-03): `TryParse(ReadOnlySpan<byte>, out …)`
+    // Runtime-verified: `TryParse(ReadOnlySpan<byte>, out …)`
     // CANNOT be patched — the Harmony DMD declares a ref-struct param and the
     // CLR rejects the trampoline (InvalidProgramException on EVERY frame, even
     // plain selects). `Execute(in UdpCommand)` NREs in its trampoline. Both
@@ -115,7 +115,7 @@ public static class Patches
     // `_receiveBuffer` inside `FixedTick()` — a postfix on FixedTick (no params
     // — safe) reads the datagram back out of the buffer.
     //
-    // INTEROP GOTCHA (2026-08-03, live game): Il2CppInterop stubs do NOT expose
+    // INTEROP GOTCHA (live game): Il2CppInterop stubs do NOT expose
     // private fields as FieldInfo — `Traverse.Field("_receiveBuffer")` returns
     // null and silently yields nothing. The field surfaces as a PUBLIC property
     // with the same name (`_receiveBuffer`) of type `Il2CppStructArray<byte>`,
@@ -256,7 +256,7 @@ public static class Patches
                 // Canonical: update_heading|CS|dx|dy[|rate] — HEADING-ONLY
                 // override (the game keeps full control of position and
                 // speed). 5th field = smooth-turn rate in °/GAME-second
-                // (2026-08-03): the nose rotates toward the heading at that
+                // the nose rotates toward the heading at that
                 // rate, scaled by the game's speed multiplier and frozen
                 // while paused (see OverrideController.OnAircraftStep);
                 // omitted or <= 0 = INSTANT — the pre-smoothing behavior.
@@ -289,7 +289,7 @@ public static class Patches
                 break;
             case "altitude":
                 // altitude|CS|targetFt[|rateFpm] — climb/descend-and-maintain
-                // override (2026-08-04): forces the aircraft's Y toward
+                // override: forces the aircraft's Y toward
                 // targetFt (feet) at rateFpm ft/GAME-minute (smooth — the same
                 // GameDt-scaled fixed-tick interpolation as the heading turn,
                 // frozen while paused); rateFpm omitted or <= 0 = the plugin
@@ -316,7 +316,7 @@ public static class Patches
                 break;
             case "update_speed":
                 // update_speed|CS|kts[|accel=N] — fly-speed override
-                // (2026-08-04; v12 2026-08-05 accel=N): kts = raw knots (int;
+                // (v12 accel=N): kts = raw knots (int;
                 // the editor slider range 180-240). POSITIONAL parse — the
                 // 3rd field is ALWAYS kts (unlike cfa's keyed scan, where any
                 // bare numeric field is kts); the optional 4th field MUST be
@@ -357,9 +357,9 @@ public static class Patches
                 // FlyApproaching"), the suspected revert back to the STAR;
                 // rate=N is the bounded de-snap's rotation rate — the
                 // pre-capture nose rotation toward the IAF at that many
-                // °/GAME-second (v6, 2026-08-04; the frame's rate, or the
+                // °/GAME-second (v6; the frame's rate, or the
                 // plugin's 3°/s default; the v5 note "inert — no tangent snap"
-                // was superseded by the de-snap); accel=N (v12, 2026-08-05)
+                // was superseded by the de-snap); accel=N (v12)
                 // is the pre-capture speed-lift ramp rate in kt of GAME time
                 // per second (omitted = the plugin default 5 kt/s).
                 // Keyed scan (not positional): any field after CS that is
@@ -416,7 +416,7 @@ public static class Patches
         }
     }
 
-    // ── Level-restart state reset (2026-08-05) ───────────────────────────
+    // ── Level-restart state reset  ───────────────────────────
     // The plugin is process-lifetime: an in-game level restart (game stays
     // up) leaves static state stale. ResetDispatchState clears the frame
     // dedup (a re-sent identical frame would otherwise be swallowed forever
@@ -429,7 +429,7 @@ public static class Patches
         _restoreLogged.Clear();
     }
 
-    // ── Level restart detection (2026-08-05) ────────────────────────────
+    // ── Level restart detection  ────────────────────────────
     // The game's AircraftUdpCommandService is a per-level VContainer service
     // (IStartable/IFixedTickable/IDisposable — same DI family as GameTime
     // and AirwayRouteService): Start() fires when the command channel
@@ -466,7 +466,7 @@ public static class Patches
     }
 
     // ── Diagnostics: Dynamics.RestoreRuntimeData — the revert suspect ─────
-    // Live 2026-08-03: "Dynamics: restore runtime data: FlyApproaching" is the
+    // Live: "Dynamics: restore runtime data: FlyApproaching" is the
     // level-loader's restore path (fires at level load; the stack showed only
     // the postfix itself — the caller is the game's native code, so a stack
     // is useless). Every call logs the owning aircraft (via the per-tick
@@ -476,7 +476,7 @@ public static class Patches
     // spam on every load); tracked aircraft log every call.
     private static readonly HashSet<string> _restoreLogged = new(StringComparer.Ordinal);
 
-    // v12 (2026-08-05): level-load burst detection — a level load restores
+    // v12: level-load burst detection — a level load restores
     // EVERY aircraft, so a burst of FIRST-TIME callsigns within a 1 s window
     // is the load signature (a cfa-deferred restore is a REPEAT call for an
     // already-logged callsign — never counts). Fires one reset per burst;
@@ -536,7 +536,7 @@ public static class Patches
         catch { }   // never throw into the game's state machine
     }
 
-    // ── v10 probe (2026-08-05): AVCController.SetTargetSpeed — the game's
+    // ── v10 probe: AVCController.SetTargetSpeed — the game's
     // own speed-target writes (the ~144-kt writer hunt for the update_speed
     // override). Postfix on a plain method (the plugin itself calls it — not
     // an IL2CPP field accessor, so the patch applies cleanly). The owner map
@@ -556,7 +556,7 @@ public static class Patches
         catch { }   // never throw into the game's speed controller
     }
 
-    // ── v11 probe (2026-08-05): SpeedController.SetTargetSpeed — the ramp's
+    // ── v11 probe: SpeedController.SetTargetSpeed — the ramp's
     // own target setter; the suspected REAL speed-target writer (the v10 AVC
     // probe caught NO game-side AVCController.SetTargetSpeed calls live, so
     // the game either writes the targetSpeed field directly or targets the

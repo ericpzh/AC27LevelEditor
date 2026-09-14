@@ -459,7 +459,7 @@ function matchSpokenPrefix(lower, stripped, spoken) {
   );
 }
 
-// ─── Phonetic skeleton stage (2026-08-06) ──────────────────────────────
+// ─── Phonetic skeleton stage  ──────────────────────────────
 
 /** Single-word spoken airline keys (full-name/first-word entries without
  *  spaces) for the phonetic skeleton stage — memoized. 3-letter codes are
@@ -517,7 +517,7 @@ function matchSpokenSkeleton(lower, stripped) {
   return null;
 }
 
-// ─── Proximity fallback (2026-08-06) ───────────────────────────────────
+// ─── Proximity fallback  ───────────────────────────────────
 
 /** D-L ≤ 1 proximity fallback against the LIVE aircraft list, fired only
  *  when candidates exist but none matched exactly. Approach-seat only

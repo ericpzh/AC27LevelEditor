@@ -3,7 +3,7 @@ import { enSkeleton, skeletonMatch } from '../../../src/components/MapWindows/vo
 import { parseVoiceTranscript } from '../../../src/components/MapWindows/voiceTranscriptParser';
 
 /**
- * Phonetic consonant-skeleton stage (2026-08-06) — the closed-set fallback
+ * Phonetic consonant-skeleton stage  — the closed-set fallback
  * for sound-alikes the letter-D-L caps can't catch ("cafe"→cathay cf/cθ,
  * "ethiopian"→"three one" θpn/θrn). Encoder + guards pinned here; the
  * end-to-end rows live in voiceDeviationMatrix.test.js (group 6b/8c).

@@ -111,7 +111,7 @@ export const ZH_PATTERNS = [
   { type: 'maintain', chars: '保持' },
   { type: 'speed', chars: '速度' },
   { type: 'cfa', chars: '进近' },
-  // 2026-08-06: implicit-meters + approach phraseology
+  // implicit-meters + approach phraseology
   { type: 'altitude', chars: '下降到' },
   { type: 'altitude', chars: '下到' },
   { type: 'speed', chars: '减速到' },
@@ -347,7 +347,7 @@ function runwaySkeletonMatch(tokens, i) {
  *  ("runway 13 left", "rwy one three", "runway 13L"). The designator is
  *  parsed and range-checked (1–36) but NEVER becomes a command or notice —
  *  the aircraft's assigned runway stays authoritative (user decision
- *  2026-08-05). Returns { rest } on a full match, or null (nothing consumed;
+ *). Returns { rest } on a full match, or null (nothing consumed;
  *  the caller falls through → "runway banana" becomes an unsupported notice). */
 function matchRunwayValue(rest, zh) {
   if (zh) {

@@ -1,7 +1,7 @@
 // fetch-vosk-model.mjs — download the vosk recognition models into models/.
 //
 // Downloads vosk-model-en-us-0.22 (~1.9 GB — the LARGE en model, shipped in
-// the voice build for accuracy; the small en-us-0.15 was ditched 2026-08-06
+// the voice build for accuracy; the small en-us-0.15 was ditched 
 // as too inaccurate) and vosk-model-small-cn-0.22 (~42 MB — zh stays small)
 // from alphacephei.com, extracts, and verifies each model's conf/model.conf
 // sentinel. Idempotent: skips models already present. Zips are deleted after

@@ -221,7 +221,7 @@ module.exports = {
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
   _extractConfig,
   createZip, listZipFiles, extractZip,
-  // New object-based parser (v1.0.10+)
+  // New object-based parser
   createTokenizer, preprocessUnityJson, serializeUnityJson, isUnityJson,
   parseOdinValue, parseOdinObject, parseOdinArray,
   AclDocument,

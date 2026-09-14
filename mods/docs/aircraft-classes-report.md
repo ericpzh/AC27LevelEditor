@@ -2,7 +2,7 @@
 
 > Extracted from `GameAssembly.dll` (IL2CPP, native C++) + `global-metadata.dat` using Cpp2IL (development build 2022.1.0-development.1673).
 > Game: **GroundATC** — Unity **6000.3.12f1**, IL2CPP metadata version **39**.
-> Dump date: 2026-08-03. Source: `ContextCross` assemblies — the game code lives in `GroundATC.Core` (plus `GroundATC.Modding`, `GroundATC.Shared`); `Assembly-CSharp` contains only legacy/environment code (Enviro, Gaia, cameras).
+> Source: `ContextCross` assemblies — the game code lives in `GroundATC.Core` (plus `GroundATC.Modding`, `GroundATC.Shared`); `Assembly-CSharp` contains only legacy/environment code (Enviro, Gaia, cameras).
 
 **All gameplay code is namespaced `ContextCross.*`** — an API-style architecture shared with the game's companion web app: domain logic in `ContextCross.Models`, state machines in `ContextCross.Aircrafts` / `ContextCross.Dynamics`, reactive event plumbing (R3/UniRx-style `ReactiveProperty`, `StateMachine`, `IPublisher`/`ISubscriber`), and HTTP-like endpoint classes under `ContextCross.Api`.
 

@@ -47,7 +47,7 @@ const { VoskModel, VoskRecognizer } = require('./voskFfi.js');
 const SAMPLE_RATE = 16000;
 // The voice build ships these exact models (see build.js VOICE_RESOURCES):
 // en uses the LARGE vosk-model-en-us-0.22 for accuracy (the small en-us-0.15
-// was ditched 2026-08-06 — too inaccurate); zh stays on the small cn-0.22.
+// was ditched — too inaccurate); zh stays on the small cn-0.22.
 const EN_MODEL = 'vosk-model-en-us-0.22';
 const ZH_MODEL = 'vosk-model-small-cn-0.22';
 

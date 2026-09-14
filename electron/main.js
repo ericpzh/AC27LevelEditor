@@ -2882,7 +2882,7 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 
 // ─── IPC: Send patch command to game (plugin UDP Mechanism B, extended frame 0x00E7) ───
 // patch: { type: 'update_heading'|'update_position'|'clear_for_appr'|'altitude'|'update_speed', callSign, dx?, dy?, rate?, kts?, appr?, targetFt? }
-// update_heading is HEADING-ONLY (2026-08-03, decoupled): it carries no
+// update_heading is HEADING-ONLY (decoupled): it carries no
 // speed — the plugin never touches speed on this frame; the game keeps
 // position & speed and only the nose heading is overridden (update_speed is
 // the ONE frame that commands speed — see below). Optional rate = smooth-
@@ -2893,16 +2893,16 @@ ipcMain.handle('send-udp-command', async (_e, commandId, payloadB64) => {
 // carry rate). kts on a clear_for_appr frame is the approach speed in raw
 // knots (omitted = the aircraft's speed is left untouched); appr = named
 // approach procedure. rate on a clear_for_appr frame (sent as the keyed
-// field rate=N, 2026-08-03) = smooth-turn °/s of game time for the handoff
+// field rate=N) = smooth-turn °/s of game time for the handoff
 // turn — the nose rotates onto the approach course instead of snapping;
 // omitted = the plugin's standard-rate default (3°/s). 'altitude'
-// (2026-08-04) = climb/descend-and-maintain: targetFt in FEET — the
+//  = climb/descend-and-maintain: targetFt in FEET — the
 // plugin's conversion is ft = position.y × 100/0.3048 (1 GU = 100 m,
 // user-confirmed; 15.24 GU = 5000 ft). Optional rate = ft/min of GAME time
 // (UNKEYED field — the altitude parser reads it as ft/min, unlike cfa's
 // keyed rate=; omitted = the plugin's 1000 ft/min default). Only Y is
 // overridden — X/Z, heading and speed stay the game's. 'update_speed'
-// (2026-08-04) = fly-speed override: kts in raw knots (int — the editor
+//  = fly-speed override: kts in raw knots (int — the editor
 // slider range 180-240; telemetry airSpeedKnot is raw knots too). The plugin
 // re-asserts the commanded speed every tick; the aircraft ramps via the
 // game's own acceleration fields. No end command — the override persists
@@ -3204,7 +3204,7 @@ function resolveWorkshopBundledDllPath() {
 }
 
 // Command window / PTT gate: Debug Mode AND the AC27Approach plugin DLL
-// deployed under BepInEx/plugins AND (2026-08-15) the deployed DLL matching
+// deployed under BepInEx/plugins AND  the deployed DLL matching
 // the latest release. The remote DLL object's ETag is the build's MD5
 // (single-part upload — verified to equal Get-FileHash), so an outdated
 // installed plugin is detected by comparing local MD5 vs the remote ETag.

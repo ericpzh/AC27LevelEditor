@@ -7,7 +7,7 @@ description: AC27Approach — the BepInEx 6 IL2CPP plugin for Airport Control 25
 
 ## What This Is
 
-A BepInEx 6 IL2CPP plugin (`com.ac27.approach` v1.0.1) that live-patches aircraft in Airport Control 25 (Playtest) **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Four patch commands (plus `track` diagnostics):
+A BepInEx 6 IL2CPP plugin (`com.ac27.approach`) that live-patches aircraft in Airport Control 25 (Playtest) **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Four patch commands (plus `track` diagnostics):
 
 | Command | What it does |
 |---|---|

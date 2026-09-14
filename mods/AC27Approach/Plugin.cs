@@ -34,7 +34,7 @@ public class Plugin : BasePlugin
         // Design A v2: hijack the view's direction sync — the last writer of
         // the visible orientation (the model field alone didn't hold the
         // commanded heading in the live test). POSITION is NOT hijacked:
-        // since 2026-08-03 the override is heading-only — the game keeps
+        //  the override is heading-only — the game keeps
         // full control of position and speed.
         TryPatch(harmony, "View hijack (Aircraft3D.SetDirection)",
             AccessTools.Method(typeof(Aircraft3D), "SetDirection"),
@@ -46,12 +46,12 @@ public class Plugin : BasePlugin
         // only direction write path; while overridden, ANY game direction
         // write (the dynamics' own path-tangent heading inside Step, a
         // later-phase sync) carries the commanded heading instead. Position
-        // is NOT locked — game-owned since 2026-08-03 (heading-only override).
+        // is NOT locked — game-owned  (heading-only override).
         TryPatch(harmony, "Channel lock (Aircraft.set_Direction)",
             AccessTools.PropertySetter(typeof(Aircraft), "Direction"),
             prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.SetDirectionPrefix))));
 
-        // Design A v4 (2026-08-04): hijack the view's position sync — the
+        // Design A v4: hijack the view's position sync — the
         // last writer of the visible transform (same rationale as the
         // SetDirection hijack). Only Y is hijacked: the altitude override
         // commands the aircraft's vertical position; X/Z stay the game's.
@@ -60,7 +60,7 @@ public class Plugin : BasePlugin
             prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.Aircraft3DSetWorldPositionPrefix))));
 
         // UDP Mechanism A (report §5.4): `!`-prefixed callsigns are patch frames.
-        // Runtime-verified hook (2026-08-03): `ExecuteSelectAircraft(string)` —
+        // Runtime-verified hook: `ExecuteSelectAircraft(string)` —
         // plain string param, always binds. (`Execute(in UdpCommand)` NREs at
         // runtime in this IL2CPP context despite applying cleanly at load.)
         TryPatch(harmony, "UDP Mechanism A (AircraftUdpCommandService.ExecuteSelectAircraft)",
@@ -68,7 +68,7 @@ public class Plugin : BasePlugin
             prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpExecuteSelectAircraftPrefix))));
 
         // UDP Mechanism B (report §5.4): extended frames on command id 0x00E7.
-        // Runtime-verified hook (2026-08-03): FixedTick() postfix reads the
+        // Runtime-verified hook: FixedTick() postfix reads the
         // datagram back from the service's `_receiveBuffer` — via the stub's
         // public `get__receiveBuffer()` accessor (the field is NOT exposed as
         // FieldInfo; Traverse.Field resolves null and silently no-ops). A
@@ -90,7 +90,7 @@ public class Plugin : BasePlugin
             AccessTools.Method(typeof(Socket), "Receive", new[] { typeof(Il2CppStructArray<byte>) }),
             postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpSocketReceiveSimplePostfix))));
 
-        // Level restart (2026-08-05): the game's AircraftUdpCommandService is
+        // Level restart: the game's AircraftUdpCommandService is
         // a per-level VContainer service (same DI family as GameTime and
         // AirwayRouteService) — Start() fires when the command channel
         // (re)binds, Dispose() when it tears down: the exact moments per-level
@@ -119,7 +119,7 @@ public class Plugin : BasePlugin
 
         // Diagnostics: Dynamics.RestoreRuntimeData — "Dynamics: restore runtime
         // data: FlyApproaching" fires right after the clear_for_appr patch
-        // (2026-08-03 live log) and is the suspected revert mechanism back to
+        // (live log) and is the suspected revert mechanism back to
         // the STAR. One-shot trace of the caller (managed stack + callsign).
         TryPatch(harmony, "Dynamics.RestoreRuntimeData (trace)",
             AccessTools.Method(typeof(Dynamics), "RestoreRuntimeData"),
@@ -134,7 +134,7 @@ public class Plugin : BasePlugin
             AccessTools.Method(typeof(Dynamics), "SetCurrentState"),
             postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.DynamicsSetCurrentStatePostfix))));
 
-        // v10 probe (2026-08-05): AVCController.SetTargetSpeed postfix — the
+        // v10 probe: AVCController.SetTargetSpeed postfix — the
         // game's own speed-target writes (the ~144-kt writer hunt for the
         // update_speed override). The AVCController type is resolved via the
         // Dynamics.AVCController property accessor (never name the interop
@@ -149,7 +149,7 @@ public class Plugin : BasePlugin
         else
             Log.LogWarning("[AC27Approach] AVC speed-target probe: AVCController type not resolved — NOT applied");
 
-        // v11 probe (2026-08-05): SpeedController.SetTargetSpeed postfix — the
+        // v11 probe: SpeedController.SetTargetSpeed postfix — the
         // ramp's own target setter; the suspected real speed-target writer the
         // AVC probe cannot see (no game-side AVCController.SetTargetSpeed
         // calls appeared live). Type resolved from the AVCController's

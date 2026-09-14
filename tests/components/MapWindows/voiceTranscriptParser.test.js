@@ -52,7 +52,7 @@ describe('parseVoiceTranscript — user examples', () => {
   });
 });
 
-// ─── The 2026-08-06 DAL3401 regression ─────────────────────────────────
+// ─── The DAL3401 regression ─────────────────────────────────
 
 describe('parseVoiceTranscript — DAL3401 regression (turn left + reduce speed)', () => {
   it('"delta thirty four o one, turn left heading three six zero, reduce speed to two hundred knots" → heading 360 + speed 200', () => {

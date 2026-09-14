@@ -41,24 +41,24 @@ public static class OverrideController
         public Aircraft3D View;        // cached visible view (diagnostics)
         public bool CfaFollow;         // v6: clear_for_appr bounded de-snap — nose tracks path[0] at rate while pre-capture
         public Vector3 Path0;          // v6: approach path start (the IAF) — the de-snap target + release gate
-        public float TargetKts;        // v6: commanded speed (kt) — the cfa pre-capture AVC target lift AND the fly-speed override re-assert (2026-08-04)
+        public float TargetKts;        // v6: commanded speed (kt) — the cfa pre-capture AVC target lift AND the fly-speed override re-assert 
         public int CfaTicks;           // v6: de-snap step counter (10 s hard cap)
         public int RescheduleLogs;     // v7: per-tick reschedule re-assert log spam guard (first 3, then every 30th)
         public Vector3 GameIntended;   // v8-d: the game's own steering output (path tangent), stashed per tick by CommandedDirection
         public float AltTargetFt;      // COMMANDED altitude, ft; <= 0 = no altitude command (nothing written)
         public float AltCurrentFt;     // smoothed intermediate altitude, ft — what is actually written each tick
         public float AltRateFpm;       // vertical rate, ft/GAME-minute; <= 0 = INSTANT (seeded at the command)
-        public bool SpeedFollow;       // fly-speed override (2026-08-04): while true, re-assert TargetKts every tick (AVC target + flight-model ETA)
-        public int SpeedDiagTicks;     // v10 (2026-08-05): speed-correlation log counter — sample every 10 ticks, first 300
+        public bool SpeedFollow;       // fly-speed override: while true, re-assert TargetKts every tick (AVC target + flight-model ETA)
+        public int SpeedDiagTicks;     // v10: speed-correlation log counter — sample every 10 ticks, first 300
         public int SpeedLastTick;      // v10: SpeedDiagTicks at the previous sample (0 = none yet) — the displacement-pace window
         public Vector3 SpeedLastPos;   // v10: position at the previous sample — the measured-motion ground truth
-        public float SpeedCurrentKts;  // v12 (2026-08-05): the drive's OWN ramped pace state (kt) — the ONE value written to every speed surface each tick; constant-acceleration climb, seeded from the aircraft's actual speed at arm, NEVER re-read from a surface the game may be easing
+        public float SpeedCurrentKts;  // v12: the drive's OWN ramped pace state (kt) — the ONE value written to every speed surface each tick; constant-acceleration climb, seeded from the aircraft's actual speed at arm, NEVER re-read from a surface the game may be easing
         public float AccelKtsPerSec;   // v12: ramp rate, kt of GAME time per second; <= 0 = the AvcDriveAccelKtsPerSec plugin default (1.5, v13)
     }
 
     private static readonly Dictionary<Aircraft, Entry> _overrides = new();
 
-    // ── diagnostics state (2026-08-03) ──────────────────────────────────
+    // ── diagnostics state  ──────────────────────────────────
     // Reverse lookups: the game has no public link back from Dynamics /
     // AircraftDynamicsData to the aircraft — the restore/state/params traces
     // need the callsign. A per-tick cache (refreshed in OnAircraftStep for
@@ -67,7 +67,7 @@ public static class OverrideController
     private static readonly Dictionary<Dynamics, string> _dynToCs = new();
     private static readonly Dictionary<AircraftDynamicsData, string> _dataToCs = new();
 
-    // v10 AVC probe (2026-08-05): AVCController → aircraft, keyed by the
+    // v10 AVC probe: AVCController → aircraft, keyed by the
     // interop native pointer (wrapper identity is not guaranteed across
     // reads). Registered wherever the plugin calls SetTargetSpeed so the
     // probe (Patches.AvcSetTargetSpeedPostfix → OnAvcTargetWrite) can
@@ -75,7 +75,7 @@ public static class OverrideController
     // the game's own re-plans (value != armed — the ~144-kt writer hunt).
     private static readonly Dictionary<IntPtr, Aircraft> _avcOwners = new();
 
-    // v11 probe (2026-08-05): SpeedController → aircraft, same keying as the
+    // v11 probe: SpeedController → aircraft, same keying as the
     // AVC probe. Registered by DriveAvcSpeed wherever the drive runs so
     // OnScTargetWrite (Patches.ScSetTargetSpeedPostfix) can distinguish OUR
     // writes (value == armed — filtered) from the game's own (the suspected
@@ -109,7 +109,7 @@ public static class OverrideController
 
     // v6 de-snap (clear_for_appr): release when the aircraft reaches the join
     // window (~1 s out at 240 kt — the game's tangent steering then owns the
-    // final turn at the IAF) or the hard cap. v9 (2026-08-04): the on-aim
+    // final turn at the IAF) or the hard cap. v9: the on-aim
     // release is GONE — the 21:36 post-release evidence (live CCA4851: the
     // game's re-engagement line-capture swung the nose 253.3° → 232.5° — 21°
     // PAST the IAF bearing at its max ~23°/s, then τ≈5 s back) proved the
@@ -121,10 +121,10 @@ public static class OverrideController
     private const float CfaJoinDist = 120f;
     private const int CfaDeSnapCap = 36000;
 
-    // v11 (2026-08-05): AVC-drive constants — the per-tick speed re-assert
+    // v11: AVC-drive constants — the per-tick speed re-assert
     // for update_speed + the cfa pre-capture lift (DriveAvcSpeed). The ramp
     // rate is kt of GAME time per second, symmetric (accel AND decel).
-    // v13 (2026-08-05): 1.5 kt/s — the user's pick, 737-class: 180→240 kt
+    // v13: 1.5 kt/s — the user's pick, 737-class: 180→240 kt
     // (a 60 kt delta) takes ~40 s, in the real 30–50 s range (the v12 5 kt/s
     // was "way too fast"). A full crawl 2.4→240 lift takes ~2.6 min.
     private const float AvcDriveAccelKtsPerSec = 1.5f;
@@ -134,7 +134,7 @@ public static class OverrideController
     // callers are removed in v11; this guards the dormant fallback).
     private const float RescheduleMinRemU = 100f;
 
-    // v7 (2026-08-04): the game's own clock — the speed multiplier lives in
+    // v7: the game's own clock — the speed multiplier lives in
     // ContextCross.Clock.GameTime (TimeScale / IsPaused / FixedDeltaTime),
     // NOT Unity's Time.timeScale (which reads 1 at any game speed — the
     // CES5578 ×10 slow-turn log: 0.048°/step = the unscaled 3°/s).
@@ -154,7 +154,7 @@ public static class OverrideController
     private static bool _clockLogged;
     private static bool _clockFailLogged;   // v8-d: one failure line when the resolution scans find nothing
 
-    // ── Level-load reset (2026-08-05) ────────────────────────────────────
+    // ── Level-load reset  ────────────────────────────────────
     // The plugin is process-lifetime; an in-game level restart (game stays
     // up) rebuilds every scene object but leaves this static state stale:
     // _overrides and the object-keyed caches hold dead wrappers (entries can
@@ -253,7 +253,7 @@ public static class OverrideController
         return Time.fixedDeltaTime * Mathf.Max(0f, Time.timeScale);
     }
 
-    // ── altitude constants (2026-08-04) ──────────────────────────────────
+    // ── altitude constants  ──────────────────────────────────
     // Conversion (user-confirmed): 1 GU = 100 m → ft = y × 100/0.3048 ≈
     // y × 328.084; GU = ft × 0.003048. Sanity: Y = 15.24 GU = 5000 ft (the
     // game's approach ceiling — the same 15.24 clearForApproach's
@@ -302,7 +302,7 @@ public static class OverrideController
 
         var cmd = direction.sqrMagnitude > 1e-6f ? direction.normalized : Vector3.zero;
 
-        // Smooth-turn start pose (2026-08-03): seed Current from where the nose
+        // Smooth-turn start pose: seed Current from where the nose
         // ACTUALLY points so the rotation starts from the real heading — the
         // aircraft's own motion has been writing ac.Direction up to this tick.
         // Mid-turn re-commands keep the existing entry's Current: the aircraft
@@ -320,7 +320,7 @@ public static class OverrideController
                 current = ac.Direction.normalized;                      // fresh command — start from the real nose
         }
 
-        // Mutate-in-place (2026-08-04): a heading command must not disturb an
+        // Mutate-in-place: a heading command must not disturb an
         // active climb/descend-and-maintain — the altitude channels
         // (AltTargetFt/AltCurrentFt/AltRateFpm) survive on the existing entry.
         var e = existing != null ? existing : new Entry();
@@ -337,7 +337,7 @@ public static class OverrideController
         return true;
     }
 
-    // ── altitude: climb/descend-and-maintain override (2026-08-04) ───────
+    // ── altitude: climb/descend-and-maintain override  ───────
 
     /// <summary>Force the aircraft's Y toward `targetFt` (feet). X/Z, heading,
     /// speed, and route stay 100% the game's — the aircraft keeps flying its
@@ -388,7 +388,7 @@ public static class OverrideController
         return true;
     }
 
-    // ── fly-speed override (2026-08-04) ──────────────────────────────
+    // ── fly-speed override  ──────────────────────────────
 
     /// <summary>Force the aircraft's cruise speed toward `kts` (raw knots).
     /// Heading, altitude, and route stay 100% the game's — only the speed is
@@ -475,7 +475,7 @@ public static class OverrideController
 
     /// <summary>
     /// Heading in the game's convention — the UI shows atan2(dir.x, dir.z) in
-    /// degrees (verified live 2026-08-03: Vector3(-1,0,0) displays as 270° west).
+    /// degrees (verified live: Vector3(-1,0,0) displays as 270° west).
     /// To command heading H send (dx, dy) = (sin H, cos H): +Z = north, +X = east
     /// (360 → (0,1), 180 → (0,−1), 270 → (−1,0), 90 → (1,0)).
     /// </summary>
@@ -517,7 +517,7 @@ public static class OverrideController
             int done = ApproachWatchBudget - remain;
             _approachWatch[ac] = remain - 1;
             if (remain - 1 <= 0) _approachWatch.Remove(ac);
-            // log audit 2026-08-05: per-step watch dump — commented out; uncomment to re-enable
+            // log audit: per-step watch dump — commented out; uncomment to re-enable
             // if (done % 10 == 0)
             //     Plugin.LogMsg($"watch: {ac.CallSign} step {done} {ParamTrace.BuildDump(ac)}");
         }
@@ -536,7 +536,7 @@ public static class OverrideController
             IntPtr curPtr = cur is Il2CppObjectBase curOb ? curOb.Pointer : IntPtr.Zero;
             if (curPtr != planted)
             {
-                // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+                // log audit: per-update diag — commented out; uncomment to re-enable
                 // Plugin.LogMsg($"params-replant: {ac.CallSign} DynamicsParams ← {ReplantName(cur)} (was 0x{planted.ToInt64():X}, now 0x{curPtr.ToInt64():X})");
                 _plantedParams[ac] = curPtr;               // log each distinct re-plant once
             }
@@ -553,7 +553,7 @@ public static class OverrideController
             int prDone = PostReleaseBudget - prLeft;
             _postRelease[ac] = prLeft - 1;
             if (prLeft - 1 <= 0) _postRelease.Remove(ac);
-            // log audit 2026-08-05: post-release observer sample — commented out; uncomment to re-enable
+            // log audit: post-release observer sample — commented out; uncomment to re-enable
             // if (prDone % 10 == 0)
             // {
             //     float spd = -1f;
@@ -567,7 +567,7 @@ public static class OverrideController
 
         if (!_overrides.TryGetValue(ac, out var e)) return;
 
-        // v6 (2026-08-04) CLEAR_FOR_APPR bounded de-snap: while the aircraft
+        // v6 CLEAR_FOR_APPR bounded de-snap: while the aircraft
         // is pre-capture (ahead of path[0]), rotate the nose at the frame's
         // rate toward the approach path start — the IAF — which IS the game's
         // own pre-capture steering aim (zero fight; without this the game's
@@ -575,7 +575,7 @@ public static class OverrideController
         // re-lift the AVC target speed to the commanded knots every tick (the
         // OPERATIVE speed target — the approach state leaves the stale STAR
         // pace ~2.4 kt in place until capture, so the aircraft otherwise
-        // crawls at ~1.24 u/s — live CJX2697). v9 (2026-08-04): released ONLY
+        // crawls at ~1.24 u/s — live CJX2697). v9: released ONLY
         // on capture (dist to path[0] < ~1 s at 240 kt — the game's tangent
         // steering takes over and flies the final turn at the IAF) or the cap
         // — the on-aim release is GONE (the 21:36 evidence: the game's
@@ -589,7 +589,7 @@ public static class OverrideController
         if (e.CfaFollow)
         {
             e.CfaTicks++;
-            // v11 (2026-08-05): the per-tick RescheduleEta re-assert is GONE —
+            // v11: the per-tick RescheduleEta re-assert is GONE —
             // the plan-anchor shift cannot change the model's pace (rem/ETA
             // are end-anchored: rem ≈ pace × ETA — the stale STAR pace) and
             // its cascade (ETA 1033→12.3→0.1 s, rem 1276→15→0 u — the v10
@@ -617,7 +617,7 @@ public static class OverrideController
             // sweep evidence: Δ ≈ 0 through the hold = the zero-fight claim
             // holds; Δ growing = the game's own turn starts, and toward WHAT
             // heading. The release-time behavior must be observed, not assumed.
-            // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+            // log audit: per-update diag — commented out; uncomment to re-enable
             // if (e.CfaTicks % 10 == 0)
             // {
             //     bool aimOk = dist > 1e-4f;
@@ -630,7 +630,7 @@ public static class OverrideController
             {
                 _postRelease[ac] = PostReleaseBudget;   // v8-d: observe the game-owned nose for 5 s
                 _overrides.Remove(ac);
-                // log audit 2026-08-05: per-aircraft event log — commented out; uncomment to re-enable
+                // log audit: per-aircraft event log — commented out; uncomment to re-enable
                 // Plugin.LogMsg($"cfa: {ac.CallSign} de-snap released ({(dist < CfaJoinDist ? "captured" : "cap")}) — the game's steering owns the heading");
                 return;
             }
@@ -640,8 +640,8 @@ public static class OverrideController
             DriveAvcSpeed(ac, e);
         }
 
-        // FLY-SPEED override (2026-08-04): re-assert the commanded speed every
-        // tick. v11 (2026-08-05): DriveAvcSpeed writes the surfaces the game
+        // FLY-SPEED override: re-assert the commanded speed every
+        // tick. v11: DriveAvcSpeed writes the surfaces the game
         // actually integrates — the AVC controller's targetSpeed FIELD (the
         // game writes the field directly, never SetTargetSpeed — the v10
         // avc-probe silence), the SpeedController ramp output `speed`
@@ -689,7 +689,7 @@ public static class OverrideController
             // may have just disarmed.
             else if (e.SpeedFollow)
             {
-                // v10 correlation diag (2026-08-05, debug — find the operative
+                // v10 correlation diag (debug — find the operative
                 // speed surface): every 10 ticks for the first ~300, sample
                 // BEFORE our writes (postfix start = the game's end-of-tick
                 // state — a surface already back at the game's own number
@@ -698,13 +698,13 @@ public static class OverrideController
                 // the ground truth every candidate must match).
                 if (++e.SpeedDiagTicks % 10 == 0 && e.SpeedDiagTicks <= 300)
                 {
-                    // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+                    // log audit: per-update diag — commented out; uncomment to re-enable
                     // LogSpeedCorrelation(ac, e, after: false);
                 }
                 DriveAvcSpeed(ac, e);
                 if (e.SpeedDiagTicks % 10 == 0 && e.SpeedDiagTicks <= 300)
                 {
-                    // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+                    // log audit: per-update diag — commented out; uncomment to re-enable
                     // LogSpeedCorrelation(ac, e, after: true);
                 }
             }
@@ -717,11 +717,11 @@ public static class OverrideController
         // lock. Zero direction = no heading command (nothing is touched).
         if (e.Direction != Vector3.zero)
         {
-            // SMOOTH TURN (2026-08-03): rotate the intermediate heading toward
+            // SMOOTH TURN: rotate the intermediate heading toward
             // the commanded heading by at most rate × dt per fixed tick —
             // shortest arc (RotateTowards handles the 0/360 wrap; never
-            // reimplement with euler angles). GAME-TIME-aware dt (v6,
-            // 2026-08-04): the rotation must track the game's sim clock, not
+            // reimplement with euler angles). GAME-TIME-aware dt (v6):
+            // the rotation must track the game's sim clock, not
             // Unity's — the speed multiplier lives in ContextCross.Clock.
             // GameTime (Delta = the TRUE per-tick advanced game time: 1/60 at
             // ×1, 1/6 at ×10, 0 while paused → the rotation freezes with the
@@ -741,7 +741,7 @@ public static class OverrideController
             WriteHeading(ac, e);
         }
 
-        // ALTITUDE override (2026-08-04): force the aircraft's vertical
+        // ALTITUDE override: force the aircraft's vertical
         // position toward the commanded altitude. X/Z stay 100% the game's —
         // the dynamics keeps integrating its own lateral path; only Y (model
         // + HeightFeet readout) is overridden, and the SetWorldPosition
@@ -750,7 +750,7 @@ public static class OverrideController
         if (e.AltTargetFt > 0f)
         {
             // SMOOTH VERTICAL — the same GAME-TIME-aware dt rule as the turn
-            // (GameDt, 2026-08-04): rate ft/GAME-minute → per-tick step =
+            // (GameDt): rate ft/GAME-minute → per-tick step =
             // rate × dt/60. 0 while paused → frozen with the game; ×2 speed
             // doubles the per-tick step so the move completes in the same
             // GAME time. Rate <= 0 = INSTANT — AltCurrentFt was seeded at the
@@ -773,7 +773,7 @@ public static class OverrideController
         e.StepCount++;
         if (e.StepCount <= 30 && (e.StepCount == 1 || e.StepCount % 10 == 0))
         {
-            // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+            // log audit: per-update diag — commented out; uncomment to re-enable
             // LogDiagnostic(ac, e);
         }
     }
@@ -836,12 +836,12 @@ public static class OverrideController
         string dynPos = dyn != null ? $"({dyn.Position.x:F1},{dyn.Position.y:F1},{dyn.Position.z:F1})" : "none";
         string dynVel = dyn != null ? dyn.Velocity.magnitude.ToString("F2") : "none";
         // Altitude after-state: the commanded/smoothed readout vs the target
-        // (2026-08-04). Note the game's own dynPos above shows the game's Y —
+        // Note the game's own dynPos above shows the game's Y —
         // the "untouched lateral motion" proof.
         string altStr = "altCur n/a altTgt n/a";
         if (e.AltTargetFt > 0f)
             altStr = $"altCur {p.y * FeetPerGameUnit:F0}ft altTgt {e.AltTargetFt:F0}ft";
-        // v10 correlation block (2026-08-05, the speed-override crawl debug):
+        // v10 correlation block (the speed-override crawl debug):
         // the state (Fly vs Approach — the crawl's missing discriminator), the
         // flight model's implied pace (rem ÷ ETA in kt — the plan-paced crawl
         // formula, report §8 item 17's suspect), the SpeedAdjustment enum, and
@@ -871,12 +871,12 @@ public static class OverrideController
         Plugin.LogMsg($"diag: {ac.CallSign} step {e.StepCount} spd {kts:F0} pos ({p.x:F1},{p.y:F1},{p.z:F1}) propHdg {propHdg:F2}° rxHdg {rxHdg:F2}° rot {rot:F2}° view3D-euler {view} view3D-pos {viewPos} rbVel {rbVel} dynPos {dynPos} dynVel {dynVel} {altStr} {stateStr} {afmStr} {dynSpd}");
     }
 
-    /// <summary>v10 AVC probe (2026-08-05, debug): every SetTargetSpeed call on
+    /// <summary>v10 AVC probe (debug): every SetTargetSpeed call on
     /// a speed-overridden aircraft's controller. Our own per-tick re-assert
     /// writes exactly the armed TargetKts — filtered by the `==` check — so a
     /// hit is BY DEFINITION a game-side write of a different target (the
     /// ~144-kt writer, with its exact value and cadence). Diagnostic-only.
-    /// v12 (2026-08-05): unchanged semantics — our writes are DIRECT FIELD
+    /// v12: unchanged semantics — our writes are DIRECT FIELD
     /// assignments (DriveAvcSpeed), they never pass through SetTargetSpeed,
     /// so the `== TargetKts` filter only excludes game calls equal to the
     /// armed target; a game call landing exactly on the mid-ramp value is
@@ -887,11 +887,11 @@ public static class OverrideController
         if (!_avcOwners.TryGetValue(ctrl.Pointer, out var ac)) return;
         if (!_overrides.TryGetValue(ac, out var e) || (!e.SpeedFollow && !e.CfaFollow)) return;
         if (value == e.TargetKts) return;   // our own write
-        // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+        // log audit: per-update diag — commented out; uncomment to re-enable
         // Plugin.LogMsg($"avc-probe: {ac.CallSign} game wrote SetTargetSpeed {value:F0} kt (armed {e.TargetKts:F0} kt)");
     }
 
-    /// <summary>v11 probe (2026-08-05, debug): every SpeedController.SetTargetSpeed
+    /// <summary>v11 probe (debug): every SpeedController.SetTargetSpeed
     /// call on a speed-overridden aircraft's controller. Mirror of the v10 AVC
     /// probe — the suspected REAL speed-target writer the AVC probe cannot see
     /// (no game-side AVCController.SetTargetSpeed calls appeared live; the game
@@ -906,11 +906,11 @@ public static class OverrideController
         if (!_scOwners.TryGetValue(ctrl.Pointer, out var ac)) return;
         if (!_overrides.TryGetValue(ac, out var e) || (!e.SpeedFollow && !e.CfaFollow)) return;
         if (value == e.TargetKts) return;   // our own write
-        // log audit 2026-08-05: per-update diag — commented out; uncomment to re-enable
+        // log audit: per-update diag — commented out; uncomment to re-enable
         // Plugin.LogMsg($"sc-probe: {ac.CallSign} game wrote SpeedController.SetTargetSpeed {value:F0} kt (armed {e.TargetKts:F0} kt)");
     }
 
-    /// <summary>v10 correlation sample (2026-08-05, debug): every candidate
+    /// <summary>v10 correlation sample (debug): every candidate
     /// speed surface at Aircraft.Step-postfix time vs the ACTUAL displacement
     /// pace. `after` = post-our-writes; `before` (the next sample) = the
     /// game's end-of-tick state — a surface already back at the game's own
@@ -967,7 +967,7 @@ public static class OverrideController
         Plugin.LogMsg($"speedcorr: {ac.CallSign} {(after ? "after" : "before")} spd {react} air {air} {dynSpd} {afmStr} {pace} {avcStr} ramp {e.SpeedCurrentKts:F0} armed {e.TargetKts:F0}");
     }
 
-    /// <summary>v11 AVC drive (2026-08-05): the per-tick speed re-assert for
+    /// <summary>v11 AVC drive: the per-tick speed re-assert for
     /// BOTH the update_speed override and the cfa de-snap pre-capture lift.
     /// v10's SetTargetSpeed alone did not stick — the live log showed the
     /// game's per-tick target (the flight model's pace, ~2.4 kt) pinned the
@@ -979,7 +979,7 @@ public static class OverrideController
     /// targetSpeed — plus re-asserts every tick the surfaces the game eases
     /// toward 144 (written at arm only before v11): the Dynamics-level
     /// fields, the data-channel block and the reactives.
-    /// v12 (2026-08-05): the speed transition is a CONSTANT-ACCELERATION
+    /// v12: the speed transition is a CONSTANT-ACCELERATION
     /// ramp — e.SpeedCurrentKts (the plugin's OWN stored pace state, the
     /// speed sibling of e.Current/e.AltCurrentFt) steps toward TargetKts at
     /// AvcDriveAccelKtsPerSec (or the frame's accel=N) kt/s of GAME time and
@@ -1076,10 +1076,10 @@ public static class OverrideController
     }
 
     /// <summary>Read accessor for the view-level hijack (Patches). Returns the
-    /// SMOOTHED intermediate heading (2026-08-03) — the channel locks must
+    /// SMOOTHED intermediate heading  — the channel locks must
     /// feed Current, not Command, or the game's own path-tangent write inside
     /// Step would snap the nose back to the full command every tick. (v6,
-    /// 2026-08-04: the cfa bounded de-snap sets its per-tick Direction itself
+    /// the cfa bounded de-snap sets its per-tick Direction itself
     /// — the pre-capture aim at path[0] — so the gameIntended parameter
     /// remains unused.)</summary>
     public static Vector3 CommandedDirection(Aircraft ac, Vector3 gameIntended = default)
@@ -1189,17 +1189,17 @@ public static class OverrideController
     /// speedKnots &gt; 0 commands the approach speed (raw knots — the game's own
     /// ApproachSpeedKts scale); speedKnots &lt;= 0 uses the ACL default 240 —
     /// the approach speed is ALWAYS written (v3).
-    /// v5 (2026-08-04) NATURAL FLOW: no path is planted. The game's own
+    /// v5 NATURAL FLOW: no path is planted. The game's own
     /// ApproachState.Init derives the approach path from the aircraft's own
     /// AppPointList (its procedure from the IAF), and the game's pre-capture
-    /// steering naturally heads the aircraft there. v6 (2026-08-04): the
+    /// steering naturally heads the aircraft there. v6: the
     /// flight model's ETA is re-anchored post-Init (plan + _appRouteTime —
     /// the schedule-derived floor that kept the pace at ~3 u/s, live
     /// CJX2697), the AVC target speed is lifted while pre-capture (the stale
     /// STAR pace otherwise holds ~1.24 u/s), and turnRateDeg is honored again
     /// via a bounded de-snap — the nose rotates at rate °/GAME-second toward
     /// the IAF (the game's own pre-capture aim) until capture, then the
-    /// game's steering flies the final turn. v7 (2026-08-04): the re-anchor
+    /// game's steering flies the final turn. v7: the re-anchor
     /// is re-asserted per-tick from the de-snap branch — the transition
     /// finalize rebuilds the flight model once from the level schedule and
     /// clobbers a dispatch-only shift (live CCA4851); rotations step by
@@ -1254,7 +1254,7 @@ public static class OverrideController
         var dp = ac.DynamicsData;                    // the serialized data channel
         if (dp == null) return false;
 
-        // 4) v5 (2026-08-04) NATURAL FLOW: nothing is planted. The approach
+        // 4) v5 NATURAL FLOW: nothing is planted. The approach
         //    path is the AIRCRAFT'S OWN procedure — its
         //    FlyApproachDynamicsParams AppPointList (the same list the game's
         //    own ApproachState.Init derives the approach path from, from the
@@ -1287,7 +1287,7 @@ public static class OverrideController
                     if (appPts != null && appPts.Count >= 2)
                     {
                         for (int i = 0; i < appPts.Count; i++) sourceNodes.Add(appPts[i]);
-                        // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                        // log audit: per-handoff event log — commented out; uncomment to re-enable
                         // Plugin.LogMsg($"cfa: {callsign} approach path = the aircraft's own procedure (AppPointList, len={sourceNodes.Count}) — natural IAF join");
                     }
                     else
@@ -1323,7 +1323,7 @@ public static class OverrideController
         //    moved to 6b2 (post-Init — v1 at 5b shifted only the plan anchor
         //    and the ETA floor held; live CJX2697). The DynamicsState enum
         //    write is at step 6c, AFTER the transition attempts: live log
-        //    2026-08-03 showed a pre-set enum + gated fires = a HALF-transition
+        // showed a pre-set enum + gated fires = a HALF-transition
         //    — enum Approaching while the ACTIVE STATE object stayed
         //    FlyApproachState — and the readback (IsInState / dynState=) then
         //    lied about it. The enum reflects the transition, not pre-empts it.
@@ -1333,7 +1333,7 @@ public static class OverrideController
         // carries TaxiSpeed=240 (editor constants 240/1/-2); the pre-v3
         // kts-only behavior (fields untouched without a kts field) is the
         // prime suspect for the approach path-following crawl — ~1-4 u/s
-        // instead of ~123 u/s at 240 kt (live log 2026-08-03: stPr advanced
+        // instead of ~123 u/s at 240 kt (live log: stPr advanced
         // 0.005/s; the aircraft crept along the STAR tail for minutes).
         // speedKnots > 0 overrides the default 240.
         float apprSpeedKts = speedKnots > 0f ? speedKnots : 240f;
@@ -1352,7 +1352,7 @@ public static class OverrideController
         if (ac.AirSpeedKnot != null) ac.AirSpeedKnot.Value = cfaSeedKts;
         dp.ForwardSpeed = true;
         dp.PositiveTaxiAcceleration = 1f; dp.NegativeTaxiAcceleration = -2f;   // ACL constants
-        // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+        // log audit: per-handoff event log — commented out; uncomment to re-enable
         // Plugin.LogMsg($"cfa: {callsign} speed: ts={cfaSeedKts:F0} tts={cfaSeedKts:F0} dtts={cfaSeedKts:F0} fwd=True accel 1/-2 → ramp {cfaSeedKts:F0}→{apprSpeedKts:F0} kt at {cfaRampKts:F0} kt/s{(speedKnots > 0f ? "" : " (default 240)")}");
 
         // 6) Fire the game's own transitions. The aircraft-level machine's
@@ -1379,19 +1379,19 @@ public static class OverrideController
                 var m = AccessTools.Method(ac.GetType(), "CommandContinueApproach");
                 if (m != null) m.Invoke(ac, null);
                 else Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach not found — skipped (removed in game update)");
-                // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                // log audit: per-handoff event log — commented out; uncomment to re-enable
                 // Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach → ok");
             }
             catch (Exception ex) { Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach FAILED: {ex.GetType().Name}: {ex.Message}"); }
         }
-        // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+        // log audit: per-handoff event log — commented out; uncomment to re-enable
         // else Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach SKIPPED (native=0)");
         if (ac.IsInState(EAircraftState.Fly))
         {
             try
             {
                 ac._stateMachine.Fire(EAircraftTrigger.Approach);
-                // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                // log audit: per-handoff event log — commented out; uncomment to re-enable
                 // Plugin.LogMsg($"cfa: {callsign} Fire(Approach) → ok");
             }
             catch (Exception ex) { Plugin.LogMsg($"cfa: {callsign} Fire(Approach) FAILED: {ex.GetType().Name}: {ex.Message}"); }
@@ -1401,7 +1401,7 @@ public static class OverrideController
             try
             {
                 ac._dynamics.FlyApproach2Approach();
-                // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                // log audit: per-handoff event log — commented out; uncomment to re-enable
                 // Plugin.LogMsg($"cfa: {callsign} FlyApproach2Approach → ok");
             }
             catch (Exception ex) { Plugin.LogMsg($"cfa: {callsign} FlyApproach2Approach FAILED: {ex.GetType().Name}: {ex.Message}"); }
@@ -1442,13 +1442,13 @@ public static class OverrideController
                         AccelKtsPerSec = speedAccelKtsPerSec, // v12: 0 = the plugin default 5 kt/s
                     };
                     _overrides[ac] = deSnap;
-                    // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                    // log audit: per-handoff event log — commented out; uncomment to re-enable
                     // Plugin.LogMsg($"cfa: {callsign} de-snap armed: rate {deSnap.TurnRateDeg:F0}°/s toward IAF {expectedPath[0]}, pre-capture speed {apprSpeedKts:F0} kt (ramp {cfaSeedKts:F0}→{apprSpeedKts:F0} at {cfaRampKts:F0} kt/s)");
                 }
 
                 if (curOb.ObjectClass == Il2CppClassPointerStore<ApproachState>.NativeClassPtr)
                 {
-                    // log audit 2026-08-05: per-handoff state-check dump — commented out; uncomment to re-enable
+                    // log audit: per-handoff state-check dump — commented out; uncomment to re-enable
                     // var st = new ApproachState(curOb.Pointer);
                     // bool pathMismatch = PathMismatch(st._pathPointList, expectedPath);
                     // bool rtMismatch = st._runtimeData == null || PathMismatch(st._runtimeData.PathPointList, expectedPath);
@@ -1460,7 +1460,7 @@ public static class OverrideController
                 }
                 else if (curOb.ObjectClass == Il2CppClassPointerStore<FlyApproachState>.NativeClassPtr)
                 {
-                    // Live 2026-08-03: the transition NEVER activates the state
+                    // Live: the transition NEVER activates the state
                     // OBJECT. The fires flipped the enum (dyn.CurrentState →
                     // Approaching — the AFTER dump read Appr(5)/Approaching)
                     // but `_currentState` stayed FlyApproachState through all
@@ -1567,7 +1567,7 @@ public static class OverrideController
             }
         }
 
-        // 6b2) FLIGHT-MODEL RESCHEDULE — REMOVED in v11 (2026-08-05). The
+        // 6b2) FLIGHT-MODEL RESCHEDULE — REMOVED in v11. The
         //     plan-anchor + _appRouteTime shift cannot change the model's
         //     pace (rem/ETA are end-anchored: rem ≈ pace × ETA — the v10
         //     live log: the −1020 s shift moved ETA 1033→12.3 s AND rem
@@ -1585,7 +1585,7 @@ public static class OverrideController
         //     keeps the AFTER dump's readback (IsInState / dynState=) honest.
         dp.DynamicsState.Value = State.Approaching;       // 2 — ACL's DynamicsState
 
-        // 6d) RADIO HANDOFF (v2, 2026-08-04): ACL parity — the state-5 block
+        // 6d) RADIO HANDOFF (v2): ACL parity — the state-5 block
         //     stores the tower channel in BOTH radio slots (RadioChannelGuid
         //     AND JurisdictionRadioChannelGuid = tower). v1 wrote only the
         //     jurisdiction slot and the aircraft stayed on the approach
@@ -1603,7 +1603,7 @@ public static class OverrideController
                 Plugin.LogMsg($"cfa: {callsign} radio: tower channel NOT resolved ({(tower == null ? "no tower channel" : "missing radio slot")}) — stays on approach (self-heals on touchdown)");
             else
             {
-                // log audit 2026-08-05: per-handoff event log — commented out; uncomment to re-enable
+                // log audit: per-handoff event log — commented out; uncomment to re-enable
                 // var rcBefore = rc.Value != null ? rc.Value.PK : "<null>";
                 // var jcBefore = jc.Value != null ? jc.Value.PK : "<null>";
                 rc.Value = tower;
@@ -1639,7 +1639,7 @@ public static class OverrideController
         // are the ones that show whether the RNAV holds or the aircraft
         // reverts. Arm the per-step watch (~3.3 s at step resolution) so the
         // aftermath lands in the log without the 1 s auto-trace spam (the
-        // 30-line-per-handoff trace stream is gone since 2026-08-03 v2 —
+        // 30-line-per-handoff trace stream is gone  v2 —
         // `track|CS` remains for deliberate 1 s dumps).
         _approachWatch[ac] = ApproachWatchBudget;
         ParamTrace.DumpNow(callsign, "AFTER");
@@ -1649,7 +1649,7 @@ public static class OverrideController
 
     // ── helpers ─────────────────────────────────────────────────────────
 
-    /// <summary>Path-list identity for the state check (2026-08-04): count +
+    /// <summary>Path-list identity for the state check: count +
     /// LAST point only — enough to prove the active state carries the
     /// aircraft's own procedure (the game's Init-derived path is the same
     /// point sequence; first-point differences are cosmetic).</summary>
@@ -1658,7 +1658,7 @@ public static class OverrideController
         => l == null || expected == null || l.Count != expected.Count
         || (l.Count > 0 && l[l.Count - 1] != expected[expected.Count - 1]);
 
-    /// <summary>v11 (2026-08-05): DORMANT — all callers removed. The v5–v10
+    /// <summary>v11: DORMANT — all callers removed. The v5–v10
     /// flight-model reschedule shifted BOTH the plan anchor and _appRouteTime
     /// by (ETA − remaining/speed) so ETA = remaining/speed and the model's
     /// pace target = the commanded knots (the crawl = rem/ETA against the
@@ -1752,7 +1752,7 @@ public static class OverrideController
         // keys it. RunwayReactive can hold a runway RouteDict doesn't
         // (no routes registered, or a different instance than the keys),
         // and GetRoute's dictionary access then throws KeyNotFoundException
-        // (live log 2026-08-03). Resolve against the keys by identity/name
+        // (live log). Resolve against the keys by identity/name
         // so the service always receives one of its own instances.
         var rw = ac.RunwayReactive?.CurrentValue;                // assigned runway (public)
         if (rw != null)

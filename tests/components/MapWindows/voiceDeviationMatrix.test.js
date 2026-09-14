@@ -250,14 +250,14 @@ itRow([
   { name: '"clear the runway" → unsupported (no approach tail)', input: 'CSC6918: clear the runway', callsign: 'CSC6918', noticeIncl: 'unsupported' },
   { name: '"clear for approach, climb to 3000" (chain after cfa superseded)', input: 'CSC6918: clear for approach, climb to 3000', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'] },
   { name: 'ZH: 可以进近，跑道幺三左 → runway consumed', input: '川航六九幺八可以进近，跑道幺三左', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
-  // 2026-08-06 real STT deviations — cfa head budget (free number/connector
+  // real STT deviations — cfa head budget (free number/connector
   // skip + one curated/fuzzy deviation) + phonetic runway fallback.
   { name: 'real STT: "virgin twenty five heavy clear forty approach" (forty → "for the")', input: 'virgin twenty five heavy clear forty approach', aircraft: [ac('VIR25')], callsign: 'VIR25', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
   { name: 'real STT: "virgin twenty five heavy clear foot the oh approach runway three one right" (foot→for curated, oh number-skip)', input: 'virgin twenty five heavy clear foot the oh approach runway three one right', aircraft: [ac('VIR25')], callsign: 'VIR25', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
   { name: 'real STT: "cathay seven five twenty two clear for the ah approach runway ethiopian right" (ah filler, ethiopian→three one→31R)', input: 'cathay seven five twenty two clear for the ah approach runway ethiopian right', aircraft: [ac('CPA7522')], callsign: 'CPA7522', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
   { name: 'runway golden path — "clear for the approach runway three one right" (right NOT swallowed as eight; Fix 2 regression)', input: 'CSC6918: clear for the approach runway three one right', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
   { name: '"clear forty approach" (bare forty → "for the" mishearing)', input: 'CSC6918: clear forty approach', callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
-  // ── round 3 (2026-08-06): letter-spelled ILS, 'i' connector, suffix plurals,
+  // ── round 3: letter-spelled ILS, 'i' connector, suffix plurals,
   //    Korean Air code fix, runway confusables ──
   { name: 'real STT: "jetblue twenty thirty nine clear for the eye oh ess approach runway four right" (eye oh ess → i-o-s ≈ ils, letter-run)', input: 'jetblue twenty thirty nine clear for the eye oh ess approach runway four right', aircraft: [ac('JBU2039')], callsign: 'JBU2039', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
   { name: 'real STT: "jetblue twenty three and i clear for the ios approach runway for rights" (i connector, ios→ils, for→four, rights plural suffix)', input: 'jetblue twenty three and i clear for the ios approach runway for rights', aircraft: [ac('JBU2039')], callsign: 'JBU2039', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
@@ -360,7 +360,7 @@ itRow([
   { name: 'two deviations not allowed ("climb then an maintain 9000") → pattern fails (limitation)', input: 'CSC6918: climb then an maintain 9000', callsign: 'CSC6918', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 9000'], noticeIncl: 'unsupported' },
 ], 'deviation matrix — fuzzy acceptance');
 
-// ─── 8c. Callsign proximity + phonetic skeleton (2026-08-06) ────────────
+// ─── 8c. Callsign proximity + phonetic skeleton  ────────────
 // Real STT sound-alikes: the letter-D-L layer caps at ≤1/≤2, so
 // phonetically-close but letter-distant words ("cafe"→cathay,
 // "ethiopian"→"three one") resolve through the consonant-skeleton stage —
@@ -374,7 +374,7 @@ itRow([
   { name: 'phonetic OOV: "cafeteria one two three" must NOT resolve (limitation)', input: 'cafeteria one two three', ok: false, reasonIncl: 'airline' },
   { name: 'proximity tie → fail (limitation)', input: 'united one one one one', aircraft: [ac('UAL1110'), ac('UAL11111')], ok: false, reasonIncl: 'UAL1111' },
   { name: 'proximity restricted to approach seat (limitation)', input: 'united one one one one', aircraft: [Object.assign(ac('UAL11111'), { controlSeat: 3 })], ok: false, reasonIncl: 'UAL1111' },
-  // ── round 3 (2026-08-06): Korean Air code fix, pre-number 'at', digit confusables ──
+  // ── round 3: Korean Air code fix, pre-number 'at', digit confusables ──
   { name: 'Korean Air → KAL code ("korean air one two three four" → KAL1234; was AAR)', input: 'korean air one two three four', aircraft: [ac('KAL1234')], callsign: 'KAL1234' },
   { name: 'real STT: "korean air at twenty twenty one" → KAL2021 (pre-number at strip)', input: 'korean air at twenty twenty one', aircraft: [ac('KAL2021')], callsign: 'KAL2021', noNotices: true },
   { name: 'real STT: "korean air new one heavy turn right heading one eight zero" → KAL21 (new→two confusable)', input: 'korean air new one heavy turn right heading one eight zero', aircraft: [ac('KAL21')], callsign: 'KAL21', commandTypes: ['update_heading'], commandLabels: ['Fly Heading 180'], noNotices: true },
@@ -430,7 +430,7 @@ itRow([
   { name: 'selection only (国航1388重型)', input: '国航1388重型', callsign: 'CCA1388', noNotices: true },
   { name: 'mixed run of 重/重型 (东航重型重五八八八爬升至九千)', input: '东航重型重五八八八爬升至九千', callsign: 'CES5888', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 29528'], noNotices: true },
   { name: 'mid-number 重 → fail (limitation — Chinese stays exact-only)', input: '国航一重型二三四', ok: false, reasonIncl: 'CCA1' },
-  // ── implicit meters + new phraseology (2026-08-06) ──
+  // ── implicit meters + new phraseology  ──
   { name: '下降到两千四 (implicit meters → 2400 m → 7874 ft)', input: '国航1388下降到两千四', callsign: 'CCA1388', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 7874'], noNotices: true },
   { name: '下到幺八 (<100 → ×100 m → 5906 ft)', input: '海南拐三三六，下到幺八', callsign: 'CHH7336', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 5906'], noNotices: true },
   { name: '下降到幺八 (下降到 + shorthand → 5906 ft)', input: '国航1388下降到幺八', callsign: 'CCA1388', commandTypes: ['altitude'], commandLabels: ['Fly Altitude 5906'], noNotices: true },
@@ -526,7 +526,7 @@ itRow([
   { name: 'empty waypoint ("fly direct to") → notice', input: 'CSC6918: fly direct to', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: [], noticeIncl: 'unknown waypoint' },
   { name: 'cfa supersedes a direct', input: 'CSC6918: fly direct to beltt, clear for approach', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['clear_for_appr'], commandLabels: ['Clear for Approach'], noNotices: true },
   { name: 'chains with a heading command', input: 'CSC6918: turn left heading 120, fly direct to beltt', waypoints: FIX_WAYPOINTS, callsign: 'CSC6918', commandTypes: ['update_heading', 'direct'], commandLabels: ['Fly Heading 120', 'Fly Direct To BELTT'], noNotices: true },
-  // ── round 3 (2026-08-06): 'the' mid-number skip, flight-prefix direct patterns,
+  // ── round 3: 'the' mid-number skip, flight-prefix direct patterns,
   //    curated "the wreck" → direct ──
   { name: 'real STT: "emirates for the eight thirty eight heavy flight direct duffy" → UAE4838 + direct DUFFY (the skip; flight-prefix pattern)', input: 'emirates for the eight thirty eight heavy flight direct duffy', aircraft: [ac('UAE4838')], waypoints: FIX_WAYPOINTS, callsign: 'UAE4838', commandTypes: ['direct'], commandLabels: ['Fly Direct To DUFFY'], noNotices: true },
   { name: 'real STT: "america six ninety six flight the wreck duffy" → AAL696 + direct DUFFY (the wreck → direct curated)', input: 'america six ninety six flight the wreck duffy', aircraft: [ac('AAL696')], waypoints: FIX_WAYPOINTS, callsign: 'AAL696', commandTypes: ['direct'], commandLabels: ['Fly Direct To DUFFY'], noNotices: true },
