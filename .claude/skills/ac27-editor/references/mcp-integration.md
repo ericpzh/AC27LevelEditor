@@ -95,7 +95,7 @@ Claude Code (LLM) AC27 Editor (Electron)
 11. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
 12. Duplicate callsigns
 13. Stand conflicts + duplicate registrations
-14. Runway inactive at landing — arrival `Runway` must be in active set at `LandingTime` (`initialRunways` + `timeline` sweep sorted chronologically; `<= landingTime` applies, unsorted input handled, departures ignored, exact-time landing uses post-change set; `val_runway_inactive` / `runway_inactive_at_landing`)
+14. Runway inactive at landing — arrival `Runway` must be in active set at `LandingTime` (`initialRunways` + `timeline` sweep sorted chronologically; `<= landingTime` applies, unsorted input handled, departures ignored, exact-time landing uses post-change set; `val_runway_inactive` / `runway_inactive_at_landing`; **skipped when the level has no active-runway source — empty `initialRunways` + empty `timeline` — so arrivals are not all false-flagged**)
 
 ## Testing
 

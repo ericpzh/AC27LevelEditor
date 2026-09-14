@@ -445,7 +445,14 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
     }
 
     // 8b. Landing runway must be active at LandingTime (mirrors validators.js val_runway_inactive)
-    if (isArrival(f) && f.Runway && f.LandingTime && constraints.runwayTimeline && Array.isArray(constraints.runwayTimeline.initialRunways)) {
+    // Skip when the file has no active-runway source at all (empty initialRunways + empty
+    // timeline) — otherwise every arrival would be flagged as landing on an inactive runway.
+    const _rtInitials = (constraints.runwayTimeline && Array.isArray(constraints.runwayTimeline.initialRunways))
+      ? constraints.runwayTimeline.initialRunways.filter(s => String(s).trim())
+      : [];
+    const _rtHasData = _rtInitials.length > 0
+      || (constraints.runwayTimeline && Array.isArray(constraints.runwayTimeline.timeline) && constraints.runwayTimeline.timeline.length > 0);
+    if (isArrival(f) && f.Runway && f.LandingTime && constraints.runwayTimeline && Array.isArray(constraints.runwayTimeline.initialRunways) && _rtHasData) {
       const toSec = t => { const p = String(t || '').split(':'); return (parseInt(p[0], 10) || 0) * 3600 + (parseInt(p[1], 10) || 0) * 60 + (parseInt(p[2], 10) || 0); };
       const landSec = toSec(f.LandingTime);
       if (!isNaN(landSec)) {

@@ -375,7 +375,13 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
   // already on final when the active set switched (e.g. KJFK_runwaychange lands
   // 31R/4L up to ~9 min after the 18:30 switch).
   // This catches the KDCA_peakarrival fuzz: initial [01,15,22] with N8 19 @21:15 while active is 01,15,22.
-  if (runwayTimeline && Array.isArray(runwayTimeline.initialRunways) && flights && flights.length) {
+  // Skip when the file carries no active-runway source at all (empty initialRunways +
+  // empty timeline) — otherwise every arrival is flagged as landing on an inactive runway.
+  const _hasRunwayActiveData = runwayTimeline && Array.isArray(runwayTimeline.initialRunways) && (
+    runwayTimeline.initialRunways.some(s => String(s).trim()) ||
+    (Array.isArray(runwayTimeline.timeline) && runwayTimeline.timeline.length > 0)
+  );
+  if (runwayTimeline && Array.isArray(runwayTimeline.initialRunways) && _hasRunwayActiveData && flights && flights.length) {
     const toSec = t => {
       const p = String(t || '').split(':');
       return (parseInt(p[0], 10) || 0) * 3600 + (parseInt(p[1], 10) || 0) * 60 + (parseInt(p[2], 10) || 0);
