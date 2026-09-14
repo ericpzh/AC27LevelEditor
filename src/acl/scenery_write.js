@@ -2994,24 +2994,186 @@ function _remapRunwayNameFields(text, oldNameToNewName) {
 // A scenery save can DELETE/rename-away a runway that the level's RunwayTimeline
 // still activates. The game resolves `InitialRunways` at level load, so a name
 // with no matching `runway:` entry throws NullReferenceException (ZSJN_leisure_2
-// ground fuzz left `InitialRunways: ["19"]` after the `01/19` runway was gone).
-// Prune every dead runway end; if that would empty the list, seed it with a live
-// end (a saved level always keeps >=1 runway).
+// ground fuzz left `InitialRunways: ["19"]` after the `01/19` runway was gone),
+// and the AC27 playtest throws ArgumentException "runway.initialRunways
+// references runway '01' that does not exist in the loaded airport" (ZSJN
+// runwaychange, where the Ground Painter deleted every runway but the embedded
+// `InitialRunways`/`RunwayChange` frames survived). Prune every dead runway end
+// from BOTH `InitialRunways` and the `Timeline` change frames. When some live
+// runways remain but every initially-active end is dead, seed `InitialRunways`
+// with a live end (a saved level normally keeps >=1 active runway); when the
+// painter removed every runway, leave the list empty rather than fabricate one.
+
+// Replace the `$rlength` + `$rcontent` of a small wrapper object (InitialRunways,
+// Timeline, Changes) with the given raw list. `quote` JSON-encodes plain strings
+// (InitialRunways), otherwise entries are spliced verbatim (object arrays). Keeps
+// the wrapper's `$id`/`$type` untouched.
+function _setArrayRcontent(objText, rawValues, quote) {
+  const t = createTokenizer(objText);
+  const rcSec = t.findSection('$rcontent');
+  if (!rcSec) return objText;
+  const lenSec = t.findSection('$rlength');
+  const rendered = '[' + rawValues.map((v) => (quote ? JSON.stringify(String(v)) : v)).join(', ') + ']';
+  let out = objText;
+  if (lenSec) out = out.slice(0, lenSec.valueStart) + String(rawValues.length) + out.slice(lenSec.valueEnd);
+  const t2 = createTokenizer(out);
+  const rc2 = t2.findSection('$rcontent');
+  return out.slice(0, rc2.valueStart) + rendered + out.slice(rc2.valueEnd);
+}
+
+function _pruneInitialRunwaysText(irText, isLive, firstLive) {
+  const t = createTokenizer(irText);
+  const rcSec = t.findSection('$rcontent');
+  if (!rcSec) return irText;
+  const rcText = t.substring(rcSec.valueStart, rcSec.valueEnd);
+  const open = rcText.indexOf('[');
+  const close = rcText.lastIndexOf(']');
+  if (open < 0 || close <= open) return irText;
+  const names = [...rcText.slice(open + 1, close).matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  if (!names.length) return irText;
+  let kept = names.filter((n) => isLive(n));
+  if (kept.length === names.length) return irText;
+  if (kept.length === 0 && firstLive != null) kept = [firstLive];
+  return _setArrayRcontent(irText, kept, true);
+}
+
+// Drop `RunwayChange` entries whose Source/Dest no longer resolve, then drop any
+// frame whose Changes list becomes empty. Recomputes every `$rlength`.
+function _pruneRunwayTimelineFrames(tlText, isLive) {
+  const t = createTokenizer(tlText);
+  const rcSec = t.findSection('$rcontent');
+  if (!rcSec) return tlText;
+  const frames = _splitArrayEntries(t.substring(rcSec.valueStart, rcSec.valueEnd));
+  const keptFrames = [];
+  let dropped = false;
+  for (const frame of frames) {
+    const ft = createTokenizer(frame);
+    const chSec = ft.findSection('Changes');
+    if (!chSec) { keptFrames.push(frame); continue; }
+    const chText = ft.substring(chSec.valueStart, chSec.valueEnd);
+    const chT = createTokenizer(chText);
+    const chRc = chT.findSection('$rcontent');
+    if (!chRc) { keptFrames.push(frame); continue; }
+    const changes = _splitArrayEntries(chT.substring(chRc.valueStart, chRc.valueEnd));
+    const keptChanges = changes.filter((c) => {
+      const s = /"Source"\s*:\s*"([^"]*)"/.exec(c);
+      const d = /"Dest"\s*:\s*"([^"]*)"/.exec(c);
+      if (!s || !d) return true;
+      return isLive(s[1]) && isLive(d[1]);
+    });
+    if (keptChanges.length === changes.length) { keptFrames.push(frame); continue; }
+    dropped = true;
+    if (keptChanges.length === 0) continue;
+    const newCh = _setArrayRcontent(chText, keptChanges, false);
+    keptFrames.push(frame.slice(0, chSec.valueStart) + newCh + frame.slice(chSec.valueEnd));
+  }
+  if (!dropped) return tlText;
+  return _setArrayRcontent(tlText, keptFrames, false);
+}
+
+// Live runway end names from the post-edit graph (each physical runway's `names`
+// array, falling back to the end name + physical pair). Drives the RunwayTimeline
+// dead-reference prune.
+function _liveRunwayEndsFromGraph(graph) {
+  const live = new Set();
+  for (const rw of (graph && graph.runways) || []) {
+    const names = Array.isArray(rw.names) && rw.names.length
+      ? rw.names
+      : [rw.name, ...(String(rw.physicalName || '').split('/'))];
+    for (const n of names) { const s = String(n || '').trim(); if (s) live.add(s); }
+  }
+  return live;
+}
+
+// One end name per painter-CREATED runway (`meta.runwayOrigPk[i] == null`). Used
+// to seed the level's InitialRunways with the new runway as the primary active
+// end. Survivor runways are ignored (their activation is the author's choice).
+function _newRunwayEndsFromMeta(graph, mm) {
+  const ends = [];
+  const orig = mm && mm.runwayOrigPk;
+  if (!Array.isArray(orig)) return ends;
+  const runways = (graph && graph.runways) || [];
+  for (let i = 0; i < runways.length && i < orig.length; i++) {
+    if (orig[i] != null) continue;
+    const rw = runways[i];
+    if (!rw) continue;
+    const names = Array.isArray(rw.names) && rw.names.length
+      ? rw.names
+      : [rw.name, ...(String(rw.physicalName || '').split('/'))];
+    const first = names.map((n) => String(n || '').trim()).filter(Boolean)[0];
+    if (first) ends.push(first);
+  }
+  return ends;
+}
+
 function _pruneRunwayTimelineReferences(text, liveEnds) {
-  if (!text || !liveEnds || liveEnds.size === 0) return text;
-  const firstLive = liveEnds.values().next().value;
-  return text.replace(
-    /("InitialRunways"\s*:\s*\{)([^{}]*?)("\$rcontent"\s*:\s*\[)([^\]]*)(\])/g,
-    (m, head, mid, pre, body, post) => {
-      const names = [...body.matchAll(/"([^"]*)"/g)].map((x) => x[1]);
-      if (!names.length) return m;
-      let kept = names.filter((n) => liveEnds.has(n));
-      if (kept.length === names.length) return m;
-      if (!kept.length) kept = [firstLive];
-      const newMid = mid.replace(/("\$rlength"\s*:\s*)\d+/, '$1' + kept.length);
-      return head + newMid + pre + kept.map((n) => '"' + n + '"').join(', ') + post;
+  if (!text) return text;
+  const live = liveEnds instanceof Set ? liveEnds : new Set(liveEnds || []);
+  const isLive = (n) => live.has(String(n == null ? '' : n).trim());
+  const firstLive = live.size ? live.values().next().value : null;
+
+  const t = createTokenizer(text);
+  const rtSec = t.findSection('RunwayTimeline');
+  if (!rtSec) return text;
+  let rtText = t.substring(rtSec.valueStart, rtSec.valueEnd);
+  let changed = false;
+
+  const irT = createTokenizer(rtText);
+  const irSec = irT.findSection('InitialRunways');
+  if (irSec) {
+    const irText = irT.substring(irSec.valueStart, irSec.valueEnd);
+    const pruned = _pruneInitialRunwaysText(irText, isLive, firstLive);
+    if (pruned !== irText) {
+      rtText = rtText.slice(0, irSec.valueStart) + pruned + rtText.slice(irSec.valueEnd);
+      changed = true;
     }
-  );
+  }
+
+  const tlT = createTokenizer(rtText);
+  const tlSec = tlT.findSection('Timeline');
+  if (tlSec) {
+    const tlText = tlT.substring(tlSec.valueStart, tlSec.valueEnd);
+    const pruned = _pruneRunwayTimelineFrames(tlText, isLive);
+    if (pruned !== tlText) {
+      rtText = rtText.slice(0, tlSec.valueStart) + pruned + rtText.slice(tlSec.valueEnd);
+      changed = true;
+    }
+  }
+
+  if (!changed) return text;
+  return text.slice(0, rtSec.valueStart) + rtText + text.slice(rtSec.valueEnd);
+}
+
+// Add any end names missing from `InitialRunways`. A newly-synthesized runway
+// must join the active set or the game rejects the load with
+// `ArgumentException: runway.initialRunways is empty` (or, when other runways
+// exist, the new runway simply never activates).
+function _ensureInitialRunwaysContain(text, endNames) {
+  if (!text || !endNames || !endNames.length) return text;
+  const required = [...new Set(endNames.map((n) => String(n || '').trim()).filter(Boolean))];
+  if (!required.length) return text;
+
+  const t = createTokenizer(text);
+  const rtSec = t.findSection('RunwayTimeline');
+  if (!rtSec) return text;
+  let rtText = t.substring(rtSec.valueStart, rtSec.valueEnd);
+  const irT = createTokenizer(rtText);
+  const irSec = irT.findSection('InitialRunways');
+  if (!irSec) return text;
+  const irText = irT.substring(irSec.valueStart, irSec.valueEnd);
+  const irTextT = createTokenizer(irText);
+  const rcSec = irTextT.findSection('$rcontent');
+  if (!rcSec) return text;
+  const rcText = irTextT.substring(rcSec.valueStart, rcSec.valueEnd);
+  const open = rcText.indexOf('[');
+  const close = rcText.lastIndexOf(']');
+  if (open < 0 || close <= open) return text;
+  const current = [...rcText.slice(open + 1, close).matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  const missing = required.filter((n) => !current.includes(n));
+  if (!missing.length) return text;
+  const newIr = _setArrayRcontent(irText, [...current, ...missing], true);
+  rtText = rtText.slice(0, irSec.valueStart) + newIr + rtText.slice(irSec.valueEnd);
+  return text.slice(0, rtSec.valueStart) + rtText + text.slice(rtSec.valueEnd);
 }
 
 // ─── Taxiway runway-name coupling (rename/move cascade) ─────────
@@ -3950,6 +4112,14 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // early return would otherwise return the corrupt snapshot verbatim.
   const hasCorruptTypes = pkEntries.some((e) => /"\$type":\s*0(?=[,\}\]])/.test(e)) || npkEntries.some((e) => /"\$type":\s*0(?=[,\}\]])/.test(e));
 
+  // Live runway end names from the (post-edit) graph — drive the RunwayTimeline
+  // dead-reference prune on BOTH the lossless no-op path and the rebuild path.
+  const liveRunwayEnds = _liveRunwayEndsFromGraph(graph);
+  // Ends of runways the painter CREATED (runwayOrigPk null) — auto-added to the
+  // level's InitialRunways so a newly-drawn runway is active (the game refuses a
+  // level whose InitialRunways is empty).
+  const newRunwayEnds = _newRunwayEndsFromMeta(graph, mm);
+
   // Lossless no-op: no removals, no new elements, no moved nodes, no moved areas,
   // no runway dirty, no orphan, no siDirty, no name change, no corrupt types, no
   // dangling-reference gate repairs, no pre-existing crash-class dangling refs →
@@ -3957,7 +4127,15 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // stale physical-runway / jetway RuntimeEntities from an earlier corrupt save
   // are repaired on the next save).
   if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !hasMovedAirwayNodes && !airwayRoutesDirty && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && !standCompanionDirty && crashDangleCount === 0 && dropCounts.taxiNavigation === 0 && dropCounts.jetway === 0) {
-    return _reconcileRuntimeFrames(snapshotText, _runtimeReconcilers(siEntries, physPatchMap));
+    // Self-heal the embedded RunwayTimeline even on a no-op save (a stale
+    // InitialRunways / change frame can survive an earlier corrupt save).
+    return _ensureInitialRunwaysContain(
+      _pruneRunwayTimelineReferences(
+        _reconcileRuntimeFrames(snapshotText, _runtimeReconcilers(siEntries, physPatchMap)),
+        liveRunwayEnds
+      ),
+      newRunwayEnds
+    );
   }
 
   // Build node $id -> newPos map for taxi-nav pushback Position patching
@@ -4450,17 +4628,11 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   out = _remapRunwayNameFields(out, oldNameToNewName);
   // Drop references to runways that no longer exist from the embedded
   // RunwayTimeline (`InitialRunways` / change frames), or the game NREs trying
-  // to activate a deleted runway on load.
-  {
-    const liveRunwayEnds = new Set();
-    for (const rw of graph.runways || []) {
-      const names = Array.isArray(rw.names) && rw.names.length
-        ? rw.names
-        : [rw.name, ...(String(rw.physicalName || '').split('/'))];
-      for (const n of names) { const s = String(n || '').trim(); if (s) liveRunwayEnds.add(s); }
-    }
-    out = _pruneRunwayTimelineReferences(out, liveRunwayEnds);
-  }
+  // to activate a deleted runway on load. Then ensure every painter-created
+  // runway is in InitialRunways so a new runway is active (the game refuses an
+  // empty InitialRunways).
+  out = _pruneRunwayTimelineReferences(out, liveRunwayEnds);
+  out = _ensureInitialRunwaysContain(out, newRunwayEnds);
   if (dropCounts.jetway > 0) {
     console.log(
       '[GroundPainter] cascade: dropped ' + dropCounts.jetway +
@@ -4651,6 +4823,7 @@ module.exports = {
   _entryTypePrefix,
   _remapRunwayNameFields,
   _pruneRunwayTimelineReferences,
+  _ensureInitialRunwaysContain,
   _remapTaxiwaySegmentName,
   _patchEntryName,
   _entryNameValue,

@@ -81,7 +81,10 @@ function makeText() {
     '    "PKStaticEntities": { "$rlength": ' + pkEntries.length + ', "$rcontent": ' + pkArr + ' },\n' +
     '    "NonPKStaticEntities": { "$rlength": 0, "$rcontent": [] },\n' +
     '    "StaticItems": { "$rlength": ' + siEntries.length + ', "$rcontent": ' + siArr + ' }\n' +
-    '  } }\n' +
+    '  } },\n' +
+    '  "RunwayTimeline": { "$id": 10, "$type": "9|ContextCross.States.RunwayTimelineData, GroundATC.Core", ' +
+    '"InitialRunways": { "$id": 11, "$type": "10|System.String[], mscorlib", "$rlength": 1, "$rcontent": [ "01" ] }, ' +
+    '"Timeline": { "$id": 12, "$type": "11|ContextCross.States.RunwayChangeFrame[], GroundATC.Core", "$rlength": 0, "$rcontent": [] } }\n' +
     '}';
 
   const frame =
@@ -453,5 +456,11 @@ describe('Ground Painter — runway↔pavement geometric coupling', () => {
     expect(nodes.every((p) => Math.abs(p.z - 5) < 1e-6)).toBe(true);
     const thA = nodes.find((p) => Math.abs(p.x - newRw.thAIdx) >= 0 && Math.abs(p.x - g1.nodes[newRw.thAIdx].x) < 1e-6);
     expect(thA).toBeTruthy();
+    // The newly-created runway is auto-added to the level's InitialRunways
+    // (its primary end), so the game does not reject an empty active set.
+    const ir = out.match(/"InitialRunways"\s*:\s*\{[^}]*?"\$rcontent"\s*:\s*\[([^\]]*)\]/);
+    expect(ir).toBeTruthy();
+    expect(ir[1]).toContain('"01"');
+    expect(ir[1]).toContain('"36"');
   });
 });

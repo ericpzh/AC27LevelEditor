@@ -4324,6 +4324,12 @@ export default function GroundPainter({ vals }) {
     // Leading zeros are stripped by the game's `_normalizeRunway`, so both
     // "4R" and "04R" are valid end names.
     const g = st.groundPainterGraph;
+    // A level must keep at least one runway — the game refuses to load a level
+    // whose embedded RunwayTimeline.InitialRunways is empty.
+    if (!g || !Array.isArray(g.runways) || g.runways.length === 0) {
+      setGpError(t('ground_painter_validation_runway_required') || 'Cannot save - at least one runway is required');
+      return; // keep the window open so the user can draw a runway
+    }
     if (g && Array.isArray(g.runways)) {
       const nameOk = (n) => /^[0-9]{1,2}[A-Z]?$/.test(String(n));
       for (const rw of g.runways) {

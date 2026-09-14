@@ -2295,6 +2295,16 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   if (integrityIssues.length > 0) {
     throw new Error('保存被拒绝：编辑后的滑行道会生成损坏的图结构（' + integrityIssues.join('；') + '）。请撤销最近的曲线/拖拽操作后重试。');
   }
+  // Runway guard: a level must keep at least one runway. The game resolves the
+  // embedded RunwayTimeline.InitialRunways at load and throws
+  // `ArgumentException: runway.initialRunways is empty` when the scenery has no
+  // runway (typically after the painter deleted every runway). The writer
+  // auto-adds newly drawn runways to InitialRunways, but a level with zero
+  // runways must never reach disk.
+  const runwayCount = (newText.match(/"\$k"\s*:\s*"runway:[^"]+"/g) || []).length;
+  if (runwayCount === 0) {
+    throw new Error('保存被拒绝：关卡必须至少保留一条跑道（游戏要求 InitialRunways 非空）。请先绘制一条跑道再保存。');
+  }
   // Corrupt-type auto-repair: patchSceneryBlob already repairs bare "$type": 0
   // inside PK/NonPK entries (see _repairPkEntryTypes / _repairNpkEntryTypes).
   // If any somehow remain (e.g. in an outer envelope), repair in-place so the
