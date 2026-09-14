@@ -187,6 +187,28 @@ public static class OverrideController
         Plugin.LogMsg($"level reset: {reason} — overrides/dedup/route-cache cleared");
     }
 
+    // IsPaused drifted across interop versions: a plain `bool` in some builds, a
+    // `ReadOnlyReactiveProperty<bool>` (read `.CurrentValue`) in others. The
+    // vendored/live interop refs can lag the shipping game, and a DIRECT call to
+    // a member the running game no longer exposes throws a JIT-time
+    // MissingMethodException that ESCAPES a surrounding try/catch (the v1.3.6
+    // crash: `Method not found: Boolean ContextCross.Clock.GameTime.get_IsPaused()`
+    // on every Aircraft.Step). Read it reflectively so a missing/renamed member
+    // degrades to null instead of killing the tick. The operative pause gate is
+    // `TimeScale` (0 while paused), which needs no interop member.
+    private static bool? TryReadIsPaused(GameTime gt)
+    {
+        try
+        {
+            var v = gt.GetType().GetProperty("IsPaused")?.GetValue(gt);
+            if (v is bool b) return b;
+            var cv = v?.GetType().GetProperty("CurrentValue")?.GetValue(v);
+            if (cv is bool b2) return b2;
+        }
+        catch { }
+        return null;
+    }
+
     private static float GameDt()
     {
         if (GameClock == null)
@@ -215,12 +237,11 @@ public static class OverrideController
             // v7: Delta is diagnostic only (stubbed getter — 0.00000 live);
             // TimeScale × FixedDeltaTime is the operative dt. The ×10 test
             // must read TimeScale 10.0; the pause test IsPaused True.
-            // IsPaused is a plain bool in the current interop (it was briefly a
-            // ReadOnlyReactiveProperty<bool> in an earlier build). The compiler
-            // against <GameDir>\BepInEx\interop is the source of truth.
-            bool isPaused = false;
-            try { isPaused = GameClock.IsPaused; } catch { }
-            Plugin.LogMsg($"game-time: clock resolved — Delta {GameClock.Delta:F5} s/tick (stubbed — unused), TimeScale {GameClock.TimeScale:F1}, FixedDeltaTime {GameTime.FixedDeltaTime:F5} s, IsPaused {isPaused}");
+            // IsPaused drifted across interop versions (plain bool vs
+            // ReadOnlyReactiveProperty<bool>) and the vendored/live refs can lag
+            // the shipping game, so it is read reflectively — see TryReadIsPaused.
+            bool? paused = TryReadIsPaused(GameClock);
+            Plugin.LogMsg($"game-time: clock resolved — Delta {GameClock.Delta:F5} s/tick (stubbed — unused), TimeScale {GameClock.TimeScale:F1}, FixedDeltaTime {GameTime.FixedDeltaTime:F5} s, IsPaused {(paused.HasValue ? paused.Value.ToString() : "?")}");
         }
         if (!_clockFailLogged && GameClock == null)
         {
@@ -243,12 +264,8 @@ public static class OverrideController
                 // time — 1/60 at ×1, 1/6 at ×10, 0 while paused (the
                 // IsPaused gate is a belt-and-suspenders — Aircraft.Step may
                 // not even fire while paused).
-                // IsPaused is a plain bool in the current interop (see the
-                // resolved-clock log above).
                 float dt = GameTime.FixedDeltaTime * GameClock.TimeScale;
-                bool isPaused = false;
-                try { isPaused = GameClock.IsPaused; } catch { }
-                if (isPaused) dt = 0f;
+                if (TryReadIsPaused(GameClock) == true) dt = 0f;
                 return Mathf.Max(0f, dt);
             }
             catch { GameClock = null; }   // per-level service — a stale cache across level switches re-resolves
