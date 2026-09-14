@@ -268,6 +268,20 @@ function copyToRealGame(tmpAclPath) {
   fs.copyFileSync(tmpAclPath, dest);
   fs.copyFileSync(bakSrc, dest + '.bak');
   console.log(`  [replace] → ${dest} (+ .bak)`);
+  // A flight save rewrites the level's `flight_schedule_<level>.csv` next to the
+  // .acl (fuzz ops purge/rename flights), so it must propagate too — a stale CSV
+  // whose flight set no longer matches the .acl's flight-plan entries makes the
+  // game throw on load.
+  const icao = path.basename(path.dirname(path.dirname(tmpAclPath))); // <TMP>/.../Airports/<ICAO>/Levels/<file>
+  const baseName = path.basename(tmpAclPath, '.acl');
+  const levelSuffix = baseName.startsWith(icao + '_') ? baseName.slice(icao.length + 1) : baseName;
+  const csvSrc = path.join(path.dirname(tmpAclPath), 'flight_schedule_' + levelSuffix + '.csv');
+  if (fs.existsSync(csvSrc)) {
+    const csvDest = path.join(path.dirname(dest), path.basename(csvSrc));
+    fs.copyFileSync(csvSrc, csvDest);
+    if (fs.existsSync(csvSrc + '.bak')) fs.copyFileSync(csvSrc + '.bak', csvDest + '.bak');
+    console.log(`  [replace] → ${csvDest}${fs.existsSync(csvSrc + '.bak') ? ' (+ .bak)' : ''}`);
+  }
 }
 
 async function goBackToBrowser(window) {
@@ -1081,13 +1095,15 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     // still produces broken levels. Assert the saved file is game-clean.
     const gcA = analyze(readAclText(currentPath));
     const gc = runChecks(gcA);
-    // Filter out known-flaky game-compat codes that the save pipeline does not yet
-    // guarantee for heavily-fuzzed leisure levels: orphan aircraft (resolution-missing-leg)
-    // and docked-stand-before-offblock (arrival lands before docked off-block) are
-    // correctly detected but not yet auto-repaired by _normalizeFlightsForGameCompat.
-    // The other invariants (dup-plan-key, docked-missing-entity, stand conflicts, STAR)
-    // are enforced and must pass.
-    const filteredIssues = gc.issues.filter(i => !['resolution-missing-leg', 'docked-stand-before-offblock'].includes(i.code));
+    // Filter out the one game-compat code the save pipeline does not yet
+    // guarantee: docked-stand-before-offblock (arrival lands before a docked
+    // departure's off-block) is correctly detected but not auto-repaired by
+    // _normalizeFlightsForGameCompat. `resolution-missing-leg` used to be
+    // filtered too — it is now enforced: the save pipeline reconciles the
+    // checkpoint frame (orphan runtime-entity removal + stale $fstrref nulling)
+    // and encodeV2Archive persists those frame edits (they were previously
+    // discarded, re-copying the original v2 frame bytes verbatim).
+    const filteredIssues = gc.issues.filter(i => !['docked-stand-before-offblock'].includes(i.code));
     if (filteredIssues.length) {
       // Keep the offending file + diagnostic detail for offline RCA
       // (teardown removes the temp root, so persist the artifact here).

@@ -346,7 +346,7 @@ function _staticEntitiesRanges(text) {
     siLen = _depthValueAbs(text, si.start, si.end, '$rlength');
     siRc = _childAbs(text, si, '$rcontent');
   }
-  return { pkLen, pkRc, npkLen, npkRc, siLen, siRc };
+  return { bd, pkLen, pkRc, npkLen, npkRc, siLen, siRc };
 }
 
 // ─── Array entry splitting ────────────────────────────────────────
@@ -448,22 +448,26 @@ function _referencesDeleted(entry, deletedIds) {
 // taxi-navigation entries that $iref a deleted entity are now dropped as well
 // (except the single declarer of the shared CrossTaxiwayNames array, which is
 // kept and rewired by the gate instead of being deleted).
-function _cascadeOrphanEntries(pkEntries, siEntries, deadIds) {
+function _cascadeOrphanEntries(pkEntries, siEntries, deadIds, liveStandIdents) {
   const drop = { jetway: 0, taxiNavigation: 0 };
   let changed = true;
   while (changed) {
     changed = false;
     // PK: drop orphaned taxi-navigation (stand / pushback) that reference a deleted id
+    // OR whose RelatedStand names a stand that no longer exists. A PUSHBACK point
+    // keeps a live taxiway-node `Reference`, so the dead-id test misses it after
+    // its stand was deleted — but its RelatedStand then names a missing stand and
+    // the game NREs resolving the taxi-navigation/pushback graph.
     const newPkEntries = [];
     for (const e of pkEntries) {
-      if (_entryTypePrefix(e) === 'taxi-navigation' && _referencesDeleted(e, deadIds)) {
-        const isDeclarer = e.includes('"CrossTaxiwayNames": { "$id":');
-        if (isDeclarer) {
-          // Keep the declarer — its shared array is $iref'd by every other nav point.
-          // The gate will rewire its Reference instead of dropping it.
-          newPkEntries.push(e);
-          continue;
-        }
+      if (_entryTypePrefix(e) !== 'taxi-navigation') { newPkEntries.push(e); continue; }
+      const isDeclarer = e.includes('"CrossTaxiwayNames": { "$id":');
+      const rsM = e.match(/"RelatedStand"\s*:\s*"([^"]*)"/);
+      const rs = rsM ? rsM[1].trim() : '';
+      const staleStand = !!(rs && liveStandIdents && !liveStandIdents.has(rs));
+      if (!isDeclarer && (_referencesDeleted(e, deadIds) || staleStand)) {
+        // Declarer exception: its shared CrossTaxiwayNames array is $iref'd by
+        // every other nav point, so it is kept and rewired by the gate instead.
         for (const id of _idsInBlock(e)) deadIds.add(id);
         drop.taxiNavigation++;
         changed = true;
@@ -1542,12 +1546,65 @@ function _sampleRunwayInnerType(runwayEntries, sectionType, sectionName, innerNa
   return null;
 }
 
-function _sampleRunwayShapes(pkEntries) {
+// Build a lookup of every expanded `"$type": "N|Full.Name, Assembly"` declaration
+// in the supplied slice (the PK blobdoc scope). Canonical shared objects — e.g.
+// `R3.ReactiveProperty<bool>` — are declared once as a singleton and never
+// inlined, so sampling only runway blocks cannot find them. Keyed by the exact
+// "Full.Name, Assembly" text → full '"N|Full.Name, Assembly"'.
+function _documentTypesByName(text) {
+  const map = new Map();
+  if (!text) return map;
+  const re = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const id = parseInt(m[1], 10);
+    const full = m[2];
+    if (!map.has(full)) map.set(full, '"' + id + '|' + full + '"');
+  }
+  return map;
+}
+
+// Canonical full names for the runway sub-object types we may need to synthesize.
+// Resolved against _documentTypesByName so a shipped file that omits a field
+// inline (v5 drops unused/inline-optional sub-objects) still yields a REAL id
+// from its own type table — never a guessed/hardcoded one.
+const _RUNWAY_TYPE_NAMES = {
+  runwayType: ['ContextCross.Models.Runway, GroundATC.Core'],
+  itemType: ['ContextCross.Models.PhysicalRunwayStaticItem, GroundATC.Core'],
+  entriesType: ['ContextCross.Models.Runway+Entry[], GroundATC.Core'],
+  entryInnerType: ['ContextCross.Models.Runway+Entry, GroundATC.Core'],
+  exitsType: ['ContextCross.Models.Runway+Exit[], GroundATC.Core'],
+  exitInnerType: ['ContextCross.Models.Runway+Exit, GroundATC.Core'],
+  routesType: ['ContextCross.Models.Runway+Route[], GroundATC.Core', 'ContextCross.Models.Route[], GroundATC.Core'],
+  edgePointsType: ['ContextCross.Models.TaxiwayNode[], GroundATC.Core'],
+  areaVerticesType: ['UnityEngine.Vector3[], UnityEngine.CoreModule'],
+  holdingAreasType: ['ContextCross.Models.Runway+HoldingAreaData[], GroundATC.Core'],
+  holdingInnerType: ['ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core'],
+  boolReactiveType: ['R3.ReactiveProperty`1[[System.Boolean, mscorlib]], R3'],
+  vec3Type: ['UnityEngine.Vector3, UnityEngine.CoreModule'],
+};
+
+// Fill runway shapes from the document's PK-blobdoc type table. By default only
+// nulls are filled (inline samples win); `force` lets the no-runway path replace
+// its guessed canonical ids with the file's real ones.
+function _applyDocumentTypes(s, docTypes, force) {
+  if (!docTypes || !docTypes.size) return;
+  for (const [key, names] of Object.entries(_RUNWAY_TYPE_NAMES)) {
+    if (!force && s[key]) continue;
+    for (const full of names) {
+      const v = docTypes.get(full);
+      if (v) { s[key] = v; break; }
+    }
+  }
+  if (!s.thresholdPointsType) s.thresholdPointsType = s.edgePointsType;
+}
+
+function _sampleRunwayShapes(pkEntries, docTypes) {
   const s = {
     runwayType: null, itemType: null,
     entriesType: null, exitsType: null, entryInnerType: null, exitInnerType: null, routesType: null,
     edgePointsType: null, thresholdPointsType: null,
-    areaVerticesType: null, holdingAreasType: null,
+    areaVerticesType: null, holdingAreasType: null, holdingInnerType: null,
     boolReactiveType: null, vec3Type: null,
   };
   const rw = pkEntries.find((e) => _entryTypePrefix(e) === 'runway');
@@ -1567,8 +1624,17 @@ function _sampleRunwayShapes(pkEntries) {
     s.thresholdPointsType = s.edgePointsType;
     s.areaVerticesType = '"23|UnityEngine.Vector3[], UnityEngine.CoreModule"';
     s.holdingAreasType = '"24|ContextCross.Models.Runway+HoldingAreaData[], GroundATC.Core"';
+    s.holdingInnerType = '"25|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"';
     s.boolReactiveType = '"26|R3.ReactiveProperty`1[[System.Boolean, mscorlib]], R3"';
     s.vec3Type = '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
+    // Prefer the file's own (per-file, version-specific) ids when it declares
+    // them anywhere — the canonical numbers above are only a last resort.
+    _applyDocumentTypes(s, docTypes, true);
+    // If the PK blobdoc scope is known but does not declare a bool-reactive type,
+    // omit the optional IsActive field rather than emit a guessed/colliding id.
+    if (docTypes && docTypes.size && !_RUNWAY_TYPE_NAMES.boolReactiveType.some((n) => docTypes.has(n))) {
+      s.boolReactiveType = null;
+    }
     return s;
   }
   const rawRunwayType = _valueOf(rw, '$type');
@@ -1604,6 +1670,10 @@ function _sampleRunwayShapes(pkEntries) {
   const mHold = rw.match(/"HoldingAreas":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawHold = mHold ? mHold[1] : null;
   s.holdingAreasType = _isCorruptType(rawHold) ? null : rawHold;
+  // Inner HoldingAreaData type (element inside HoldingAreas.$rcontent) — a
+  // DIFFERENT type from the array wrapper; using the array id here makes the
+  // game deserialize every holding as null (HoldingAreaController.Init NRE).
+  s.holdingInnerType = _sampleRunwayInnerType(runwayEntries, s.holdingAreasType, 'HoldingAreas', 'ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core');
   const mBool = rw.match(/"IsActive":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawBool = mBool ? mBool[1] : null;
   s.boolReactiveType = _isCorruptType(rawBool) ? null : rawBool;
@@ -1651,9 +1721,17 @@ function _sampleRunwayShapes(pkEntries) {
   if (!s.holdingAreasType) {
     s.holdingAreasType = _findInlineType(/"HoldingAreas":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   }
+  if (!s.holdingInnerType) {
+    s.holdingInnerType = _sampleRunwayInnerType(runwayEntries, s.holdingAreasType, 'HoldingAreas', 'ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core');
+  }
   if (!s.boolReactiveType) {
     s.boolReactiveType = _findInlineType(/"IsActive":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   }
+  // Last resort before asserting: resolve from the PK blobdoc type table.
+  // Shipped v5 files omit inline-optional fields (e.g. `IsActive`) but still
+  // declare their types once as shared singletons — sampling only runway blocks
+  // misses them. This stays a real, file-sourced id (no guessed id).
+  _applyDocumentTypes(s, docTypes);
   return s;
 }
 
@@ -1937,7 +2015,7 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph, extra) {
       // This path is for direct _synthesizeRunway calls without _synthesizeNew allocation.
       const buildHoldingsInline = (holds) => holds.map((h) => {
         const vs = h.vertices.map((p) => '{ "$type": ' + _fmtType(s.vec3Type) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
-        return '{ "$type": "24|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core", "Vertices": { "$type": ' + _fmtType(s.areaVerticesType) + ', "$rlength": 4, "$rcontent": [ ' + vs + ' ] }, "EntryName": ' + JSON.stringify(String(h.entryName || '')) + ' }';
+        return '{ "$type": ' + _fmtType(s.holdingInnerType || '"25|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"') + ', "Vertices": { "$type": ' + _fmtType(s.areaVerticesType) + ', "$rlength": 4, "$rcontent": [ ' + vs + ' ] }, "EntryName": ' + JSON.stringify(String(h.entryName || '')) + ' }';
       }).join(', ');
       holdingsStrA = buildHoldingsInline(holdingsExtra);
       holdingsLenA = holdingsExtra.length;
@@ -1955,7 +2033,11 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph, extra) {
   _assertSampledType('TaxiwayNode[] (ThresholdPoints)', s.thresholdPointsType);
   _assertSampledType('Vector3[]', s.areaVerticesType);
   _assertSampledType('Runway+HoldingAreaData[]', s.holdingAreasType);
-  _assertSampledType('ReactiveProperty<bool>', s.boolReactiveType);
+  if (holdingsExtra.length > 0) _assertSampledType('Runway+HoldingAreaData', s.holdingInnerType);
+  // `ReactiveProperty<bool>` / `IsActive` is OPTIONAL: shipped v5 files omit the
+  // field from every runway and do not declare the type in the PK blobdoc scope
+  // (the game defaults it). Emit it only when the file actually declares it;
+  // otherwise the runway is synthesized without `IsActive` (see entryTemplate).
   _assertSampledType('Vector3', s.vec3Type);
   const entryTemplate = (rId, name, itemRef, edgeId, thId, areaId, holdId, activeId, entriesId, exitsId, routesId, tdId, edgeFirst, edgeSecond, thFirst, thSecond, areaStr, holdingsLen, holdingsStr) => {
     return '{ "$k": "runway:' + name + '", "$v": { "$id": ' + rId + ', "$type": ' + _fmtType(s.runwayType) +
@@ -1970,7 +2052,8 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph, extra) {
       ', "HoldingAreas": { "$id": ' + holdId + ', "$type": ' + _fmtType(s.holdingAreasType) + ', "$rlength": ' + holdingsLen + ', "$rcontent": [ ' + holdingsStr + ' ] }' +
       ', "Width": ' + _fmtNum(width) +
       ', "LabelPositionNode": $iref:' + edgeFirst +
-      ', "IsActive": { "$id": ' + activeId + ', "$type": ' + _fmtType(s.boolReactiveType) + ', ' + (name === nameA ? 'true' : 'false') + ' } } }';
+      (s.boolReactiveType ? ', "IsActive": { "$id": ' + activeId + ', "$type": ' + _fmtType(s.boolReactiveType) + ', ' + (name === nameA ? 'true' : 'false') + ' }' : '') +
+      ' } }';
   };
   const itemInline = '{ "$id": ' + itemId + ', "$type": ' + _fmtType(s.itemType) + ', "PhysicalName": "' + phys + '" }';
   const entryA = entryTemplate(rA, nameA, itemInline, edgeA, thA, areaA, holdA, activeA, entriesA, exitsA, routesA, tdAIdExtra, edgeAIdExtra, edgeBIdExtra, thAId, thBId, areaStrA, holdingsLenA, holdingsStrA);
@@ -1987,7 +2070,7 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph, extra) {
 // no two declarations share the same old $id before renumber. Duplicate old
 // ids cause renumberAclIds (scope.map last-wins) to misbind $iref targets,
 // which previously produced the 09/01 -> Area 8930 corruption.
-function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings) {
+function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings, docTypes) {
   const s = _sampleShapes(pkEntries);
   // survivor node $id by original pk
   const survivorNodeId = new Map();
@@ -2062,6 +2145,22 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
       // write a blob the game cannot read.
       const w = { key: 'ground_painter_writer_new_segment_dropped', params: { indices: JSON.stringify(nodePkIdxs) },
         text: 'dropped a new taxiway segment: its endpoint node(s) no longer exist (indices ' +
+          JSON.stringify(nodePkIdxs) + ')' };
+      console.warn('[scenery_write] ' + w.text);
+      if (warnings) warnings.push(w);
+      continue;
+    }
+    // A new segment whose consecutive endpoints resolve to the SAME persisted node
+    // is a zero-length self-loop: the game dedups nodes by `$k`, so the edge
+    // "joins vertex X to itself" and the save-time integrity guard refuses it.
+    // Never let one reach the .acl (drop like the null-ref case).
+    let selfLoop = false;
+    for (let i = 1; i < segNodeIds.length; i++) {
+      if (segNodeIds[i - 1] === segNodeIds[i]) { selfLoop = true; break; }
+    }
+    if (selfLoop) {
+      const w = { key: 'ground_painter_writer_new_segment_dropped', params: { indices: JSON.stringify(nodePkIdxs) },
+        text: 'dropped a new taxiway segment: its endpoints resolve to the same node (zero-length self-loop, index ' +
           JSON.stringify(nodePkIdxs) + ')' };
       console.warn('[scenery_write] ' + w.text);
       if (warnings) warnings.push(w);
@@ -2267,7 +2366,7 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
   // New runways: emit a full pair (both directions) sharing one PhysicalRunwayStaticItem.
   // Derived geometry: EdgePoints (~0.58 beyond threshold), TouchDownPoint (~4.8 inside),
   // and HoldingAreas (inferred from taxiway & runway input) are synthesized here.
-  const rs = _sampleRunwayShapes(pkEntries);
+  const rs = _sampleRunwayShapes(pkEntries, docTypes);
   const newPhysEntries = []; // for StaticItems
   for (let k = 0; k < graph.runways.length; k++) {
     const pk = meta.runwayOrigPk ? meta.runwayOrigPk[k] : null;
@@ -2306,7 +2405,7 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
         const holdId = nextId++;
         const vertsId = nextId++;
         // Use sampled types: fall back to canonical when rs not yet fully sampled (direct call)
-        const holdType = rs.holdingAreasType || '"24|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"';
+        const holdType = rs.holdingInnerType || '"25|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"';
         const vertsType = rs.areaVerticesType || '"23|UnityEngine.Vector3[], UnityEngine.CoreModule"';
         const vecType = rs.vec3Type || sTaxi.vec3Type || '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
         const vs = h.vertices.map((p) => '{ "$type": ' + _fmtType(vecType) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
@@ -2320,7 +2419,7 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings)
       for (const h of inferredHoldings) {
         const holdId = nextId++;
         const vertsId = nextId++;
-        const holdType = rs.holdingAreasType || '"24|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"';
+        const holdType = rs.holdingInnerType || '"25|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"';
         const vertsType = rs.areaVerticesType || '"23|UnityEngine.Vector3[], UnityEngine.CoreModule"';
         const vecType = rs.vec3Type || sTaxi.vec3Type || '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
         const vs = h.vertices.map((p) => '{ "$type": ' + _fmtType(vecType) + ', ' + _fmtNum(p.x) + ', 0, ' + _fmtNum(p.z) + ' }').join(', ');
@@ -2823,8 +2922,37 @@ function _remapRunwayNameFields(text, oldNameToNewName) {
         return newBody === body ? m : pre + newBody + post;
       }
     );
+    // Runway change frames use `Source`/`Dest` (not a `*Runway*` field name), so
+    // a renamed runway's timeline frames are otherwise left stale.
+    out = out.replace(
+      new RegExp('("(?:Source|Dest)"\\s*:\\s*")' + esc + '(")', 'g'),
+      (m, p1) => p1 + lead + '"'
+    );
   }
   return out;
+}
+
+// A scenery save can DELETE/rename-away a runway that the level's RunwayTimeline
+// still activates. The game resolves `InitialRunways` at level load, so a name
+// with no matching `runway:` entry throws NullReferenceException (ZSJN_leisure_2
+// ground fuzz left `InitialRunways: ["19"]` after the `01/19` runway was gone).
+// Prune every dead runway end; if that would empty the list, seed it with a live
+// end (a saved level always keeps >=1 runway).
+function _pruneRunwayTimelineReferences(text, liveEnds) {
+  if (!text || !liveEnds || liveEnds.size === 0) return text;
+  const firstLive = liveEnds.values().next().value;
+  return text.replace(
+    /("InitialRunways"\s*:\s*\{)([^{}]*?)("\$rcontent"\s*:\s*\[)([^\]]*)(\])/g,
+    (m, head, mid, pre, body, post) => {
+      const names = [...body.matchAll(/"([^"]*)"/g)].map((x) => x[1]);
+      if (!names.length) return m;
+      let kept = names.filter((n) => liveEnds.has(n));
+      if (kept.length === names.length) return m;
+      if (!kept.length) kept = [firstLive];
+      const newMid = mid.replace(/("\$rlength"\s*:\s*)\d+/, '$1' + kept.length);
+      return head + newMid + pre + kept.map((n) => '"' + n + '"').join(', ') + post;
+    }
+  );
 }
 
 // ─── Taxiway runway-name coupling (rename/move cascade) ─────────
@@ -2922,61 +3050,73 @@ function _patchEntryName(entry, newName) {
 // encodes the path's segment sequence), back to 0..N-1.
 function _escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-// Order one OsmId's taxiway-segment entries along the connected path, so the
-// renumber below can assign ordinals that encode the path's segment sequence.
-// A visual path is a polyline chain: consecutive entries must share an endpoint
-// node. We walk from a terminus (an endpoint node only one entry touches), then
-// repeatedly attach the next entry sharing the current junction node. This places
-// auto-slice SPLIT PIECES back at their correct position in the parent strip's
-// chain (they otherwise all carry ordinal 0 and would sort to the front, breaking
-// continuity). Falls back to the current ordinal order when the group cannot be
-// walked as one chain (cycle / disconnected / branching).
-function _orderSegmentsForPath(list) {
-  if (list.length <= 1) return list;
-  const endpoints = list.map((it) => {
-    const irefs = extractIrefArray(it.entry, 'Nodes');
-    if (irefs.length >= 2) return [irefs[0], irefs[irefs.length - 1]];
-    return irefs.length === 1 ? [irefs[0], irefs[0]] : [null, null];
-  });
-  const adj = new Map(); // node -> [itemIdx]
-  for (let i = 0; i < list.length; i++) {
-    const [a, b] = endpoints[i];
-    for (const nd of [a, b]) {
+// Reverse a taxiway-segment's `Nodes.$rcontent` `$iref` list in place (its
+// `Head` node reference is kept — the head is a physical end, not a list index).
+function _reverseSegmentNodes(entry) {
+  const t = createTokenizer(entry);
+  const nodes = t.findSection('Nodes');
+  if (!nodes) return entry;
+  const nodesText = entry.substring(nodes.valueStart, nodes.valueEnd);
+  const nt = createTokenizer(nodesText);
+  const rc = nt.findSection('$rcontent');
+  if (!rc) return entry;
+  const rcText = nodesText.substring(rc.valueStart, rc.valueEnd);
+  const refs = [...rcText.matchAll(/\$iref:\s*\d+/g)].map((m) => m[0]);
+  if (refs.length < 2) return entry;
+  let k = refs.length - 1;
+  const reversedRc = rcText.replace(/\$iref:\s*\d+/g, () => refs[k--]);
+  const newNodesText = nodesText.slice(0, rc.valueStart) + reversedRc + nodesText.slice(rc.valueEnd);
+  return entry.slice(0, nodes.valueStart) + newNodesText + entry.slice(nodes.valueEnd);
+}
+
+// Decompose one OsmId group into maximal LINEAR chains. A visual path must be a
+// simple polyline; a fillet stub that inherited the runway's `parentOsm` and
+// attached at an interior/shared node makes the group branched (a degree-3 node)
+// and Unity cannot order it ("Taxiway visual path 'N' is discontinuous"). Each
+// returned chain is a list of { i, reversed } that concatenates continuously.
+function _splitGroupIntoLinearChains(list, endpoints) {
+  const n = list.length;
+  const nodePieces = new Map(); // node -> [pieceIdx]
+  const deg = new Map();
+  for (let i = 0; i < n; i++) {
+    for (const nd of [endpoints[i][0], endpoints[i][1]]) {
       if (nd == null) continue;
-      if (!adj.has(nd)) adj.set(nd, []);
-      adj.get(nd).push(i);
+      deg.set(nd, (deg.get(nd) || 0) + 1);
+      if (!nodePieces.has(nd)) nodePieces.set(nd, []);
+      nodePieces.get(nd).push(i);
     }
   }
-  // Find a terminus (an entry whose first or last node is touched by no other entry).
-  let start = -1;
-  for (let i = 0; i < list.length; i++) {
-    const [a, b] = endpoints[i];
-    if ((a != null && (adj.get(a) || []).length === 1) || (b != null && (adj.get(b) || []).length === 1)) { start = i; break; }
-  }
-  if (start === -1) start = 0;
-  const used = new Set([start]);
-  const ordered = [list[start]];
-  const [sa, sb] = endpoints[start];
-  let curNode;
-  if (sa != null && (adj.get(sa) || []).length === 1) curNode = sb; // continue from the non-terminus end
-  else if (sb != null && (adj.get(sb) || []).length === 1) curNode = sa;
-  else curNode = sa ?? sb;
-  while (ordered.length < list.length) {
-    let next = -1, nextNode = null;
-    for (let j = 0; j < list.length; j++) {
-      if (used.has(j)) continue;
-      const [a, b] = endpoints[j];
-      if (a === curNode) { next = j; nextNode = b; break; }
-      if (b === curNode) { next = j; nextNode = a; break; }
+  const remaining = new Set([...Array(n).keys()]);
+  const chains = [];
+  const walk = (startNode) => {
+    const chain = [];
+    let cur = startNode;
+    while (true) {
+      const next = (nodePieces.get(cur) || []).find((i) => remaining.has(i));
+      if (next == null) break;
+      remaining.delete(next);
+      const [a, b] = endpoints[next];
+      const reversed = a !== cur;
+      chain.push({ i: next, reversed });
+      cur = reversed ? a : b;
     }
-    if (next === -1) break;
-    used.add(next);
-    ordered.push(list[next]);
-    curNode = nextNode;
+    return chain;
+  };
+  // Open chains start at a degree-1 node.
+  for (const [node, d] of deg) {
+    if (d !== 1) continue;
+    if (!(nodePieces.get(node) || []).some((i) => remaining.has(i))) continue;
+    const chain = walk(node);
+    if (chain.length) chains.push(chain);
   }
-  // Append anything not reached (disconnected group / cycle) in original order.
-  for (let j = 0; j < list.length; j++) if (!used.has(j)) ordered.push(list[j]);
-  return ordered;
+  // Remaining pieces are cycles.
+  while (remaining.size) {
+    const i0 = remaining.values().next().value;
+    const chain = walk(endpoints[i0][0]);
+    if (!chain.length) { remaining.delete(i0); chains.push([{ i: i0, reversed: false }]); }
+    else chains.push(chain);
+  }
+  return chains;
 }
 
 function _renumberTaxiwaySegmentOrdinals(entries) {
@@ -2991,31 +3131,94 @@ function _renumberTaxiwaySegmentOrdinals(entries) {
     if (!groups.has(osm)) groups.set(osm, []);
     groups.get(osm).push({ entry: e, pk, oldOrd, osm });
   }
+  // Fresh negative OsmIds for branch chains (same allocation rule as synthesis:
+  // below the current minimum so they never collide with existing paths).
+  let minOsm = 0;
+  for (const osm of groups.keys()) { const v = parseInt(osm, 10); if (v < minOsm) minOsm = v; }
+  let nextFresh = minOsm <= -1 ? minOsm - 1 : -1;
   let changed = false;
-  const newPkByEntry = new Map();
-  for (const list of groups.values()) {
-    // Order by chain position, so a reinserted split piece lands at its true spot
-    // in the visual path (falling back to current ordinal for unbroken chains,
-    // which are already in path order — no change).
-    const ordered = _orderSegmentsForPath(list);
-    for (let i = 0; i < ordered.length; i++) {
-      const it = ordered[i];
-      if (it.oldOrd !== i) {
-        newPkByEntry.set(it.entry, 'taxiway-segment:' + it.osm + ':' + i);
-        changed = true;
+  const patchedByEntry = new Map(); // original entry string -> { pk, entry, newOsmId }
+  for (const [osm, list] of groups) {
+    const endpoints = list.map((it) => {
+      const irefs = extractIrefArray(it.entry, 'Nodes');
+      if (irefs.length >= 2) return [irefs[0], irefs[irefs.length - 1]];
+      return irefs.length === 1 ? [irefs[0], irefs[0]] : [null, null];
+    });
+    let chains;
+    if (list.length <= 1) {
+      chains = [list.map((it, i) => ({ i, reversed: false }))];
+    } else {
+      chains = _splitGroupIntoLinearChains(list, endpoints);
+      // Longest chain keeps the original OsmId; the rest are branch offshoots.
+      chains.sort((a, b) => b.length - a.length);
+    }
+    for (let c = 0; c < chains.length; c++) {
+      const chain = chains[c];
+      const chainOsm = c === 0 ? osm : String(nextFresh--);
+      const chainChanged = c > 0;
+      for (let i = 0; i < chain.length; i++) {
+        const it = list[chain[i].i];
+        const newPk = 'taxiway-segment:' + chainOsm + ':' + i;
+        if (it.oldOrd !== i || chain[i].reversed || chainChanged) {
+          const entry = chain[i].reversed ? _reverseSegmentNodes(it.entry) : it.entry;
+          patchedByEntry.set(it.entry, { pk: newPk, entry, newOsmId: chainChanged ? chainOsm : null });
+          changed = true;
+        }
       }
     }
   }
   if (!changed) return entries;
   const out = [];
   for (const e of entries) {
-    const newPk = newPkByEntry.get(e);
-    if (!newPk) { out.push(e); continue; }
+    const np = patchedByEntry.get(e);
+    if (!np) { out.push(e); continue; }
     // The pk string appears both as the Odin "$k" and inside "$v" as "PK";
-    // rewriting both keeps the runtime's mirrored key in sync.
-    out.push(e.replace(new RegExp(_escapeRe(_entryPk(e)), 'g'), newPk));
+    // rewriting both keeps the runtime's mirrored key in sync. A branch chain
+    // also needs its `OsmId` field rewritten to the new path id.
+    let patched = np.entry.replace(new RegExp(_escapeRe(_entryPk(np.entry)), 'g'), np.pk);
+    if (np.newOsmId != null) {
+      const oldOsm = _entryPk(np.entry).match(/^taxiway-segment:(-?\d+):/);
+      if (oldOsm) patched = patched.replace(new RegExp('("OsmId"\\s*:\\s*)' + oldOsm[1] + '(?![\\d])'), '$1' + np.newOsmId);
+    }
+    out.push(patched);
   }
   return out;
+}
+
+// A runway dropped by the survivor gate must vanish COMPLETELY from both the
+// named-runway entries and the physical-runway registry. The gate records the
+// SURVIVOR entry's PhysicalName — the PRE-rename designation when the user
+// renamed the runway this session — while the coupled pavement strips carry the
+// POST-rename designation. Cancel the registry rename and expand
+// `droppedRunwayPhys` with every old→new alias (a session can chain renames), so
+// the later name-based pavement-strip suppression drops BOTH the old and the new
+// strip names instead of leaving orphan flags=4 paint.
+function _cancelRunwayRegistryForDrops(droppedRunwayPhys, physPatchMap, orphanSiPks) {
+  const work = [...droppedRunwayPhys];
+  for (let wi = 0; wi < work.length; wi++) {
+    const phys = work[wi];
+    const oldPk = 'physical-runway:' + phys;
+    const mappedPk = physPatchMap.get(oldPk);
+    if (mappedPk) {
+      // phys is the OLD name of a renamed survivor: orphan both keys and record
+      // the new designation for strip suppression.
+      physPatchMap.delete(oldPk);
+      orphanSiPks.add(oldPk);
+      orphanSiPks.add(mappedPk);
+      const mappedPhys = mappedPk.match(/^physical-runway:(.+)$/);
+      if (mappedPhys && !droppedRunwayPhys.has(mappedPhys[1])) {
+        droppedRunwayPhys.add(mappedPhys[1]);
+        work.push(mappedPhys[1]);
+      }
+    } else {
+      orphanSiPks.add(oldPk);
+      // The recorded name may already BE the post-rename designation: cancel any
+      // old key that maps to it so its registry entry is orphaned too.
+      for (const [k, v] of [...physPatchMap]) {
+        if (v === oldPk) { physPatchMap.delete(k); orphanSiPks.add(k); }
+      }
+    }
+  }
 }
 
 function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
@@ -3036,6 +3239,12 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   const warnings = (opts && opts.warnings) || null;
   const ranges = _staticEntitiesRanges(snapshotText);
   if (!ranges) throw new Error('[scenery_write] could not locate PK/NonPK static entities');
+
+  // PK blobdoc-scoped type table (name → '"N|Name"') so runway synthesis can
+  // resolve inline-optional sub-objects the shipped file declares only as shared
+  // singletons. MUST be the blobdoc scope: type ids are per-scope, and the same
+  // number can mean a different type in another `$blobdoc` / the checkpoint frame.
+  const docTypes = _documentTypesByName(snapshotText.substring(ranges.bd.start, ranges.bd.end));
 
   const pkArrayValue = snapshotText.substring(ranges.pkRc.start, ranges.pkRc.end);
   const npkArrayValue = snapshotText.substring(ranges.npkRc.start, ranges.npkRc.end);
@@ -3238,25 +3447,24 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // otherwise survive and resolve to zero named runways ("must have exactly
   // two named runways, found 0").
   if (droppedRunwayPhys.size > 0) {
-    for (const phys of droppedRunwayPhys) {
-      const newPk = 'physical-runway:' + phys;
-      for (const [oldPk, mappedPk] of [...physPatchMap]) {
-        if (mappedPk === newPk) {
-          physPatchMap.delete(oldPk);
-          orphanSiPks.add(oldPk);
-          // The graph-side strips may carry the POST-rename designation
-          // (synthesized fillet pieces created after the rename) — suppress
-          // both names so no orphan paint survives.
-          const mappedPhys = mappedPk.match(/^physical-runway:(.+)$/);
-          if (mappedPhys) droppedRunwayPhys.add(mappedPhys[1]);
-        }
-      }
-      orphanSiPks.add(newPk);
-    }
+    // The gate records a dropped runway's SURVIVOR entry PhysicalName, which is
+    // the PRE-rename designation when the user renamed it this session. The
+    // post-rename pavement strips (synthesized fillet pieces, or survivor strips
+    // already renamed in the graph) carry the NEW designation, so we must map
+    // old→new and suppress BOTH names or the renamed strips survive as orphan
+    // paint (`saved file has pavement strips without a runway`).
+    _cancelRunwayRegistryForDrops(droppedRunwayPhys, physPatchMap, orphanSiPks);
   }
   // Run the cascade to fix point, dropping every jetway entry referencing a
-  // now-dead id, and use the filtered arrays.
-  const cascaded = _cascadeOrphanEntries(pkEntries, siEntries, deletedIds);
+  // now-dead id AND every taxi-navigation point whose RelatedStand names a stand
+  // that no longer exists in the graph (deleted stands leave their pushback
+  // points behind — they reference live taxiway nodes, so the dead-id gate skips
+  // them, and the game NREs resolving the missing stand).
+  const liveStandIdents = new Set();
+  for (const st of graph.stands || []) {
+    for (const v of [st.identifier, st.name]) { const s = String(v || '').trim(); if (s) liveStandIdents.add(s); }
+  }
+  const cascaded = _cascadeOrphanEntries(pkEntries, siEntries, deletedIds, liveStandIdents);
   pkEntries = cascaded.pkEntries;
   siEntries = cascaded.siEntries;
   const dropCounts = cascaded.drop;
@@ -3689,7 +3897,7 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // text unchanged (still reconcile the checkpoint frame so any PRE-EXISTING
   // stale physical-runway / jetway RuntimeEntities from an earlier corrupt save
   // are repaired on the next save).
-  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !hasMovedAirwayNodes && !airwayRoutesDirty && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && !standCompanionDirty && crashDangleCount === 0) {
+  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !hasMovedAirwayNodes && !airwayRoutesDirty && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && !standCompanionDirty && crashDangleCount === 0 && dropCounts.taxiNavigation === 0 && dropCounts.jetway === 0) {
     return _reconcileRuntimeFrames(snapshotText, _runtimeReconcilers(siEntries, physPatchMap));
   }
 
@@ -3865,10 +4073,10 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // New-object synthesis: append synthesized entries for NEW nodes + segments.
   // Pass NPK+SI so allocation starts above the true blobdoc max and never collides
   // with Area ids (previously PK-only max caused 09/01 -> Area 8930).
-  const synth = _synthesizeNew(graph, mm, pkEntries, npkEntries, siEntries, warnings);
+  const synth = _synthesizeNew(graph, mm, pkEntries, npkEntries, siEntries, warnings, docTypes);
   // ── Patch runway Entries/Exits for checkbox editing (after nodeIds are known) ──
   if (runwayEntriesDirty || runwayDirty) {
-    const sRunway = _sampleRunwayShapes(pkEntries);
+    const sRunway = _sampleRunwayShapes(pkEntries, docTypes);
     const nextIdRef = { value: synth.nextId };
     const nodeIds = synth.nodeIds;
     const patchArray = (arr) => {
@@ -4181,6 +4389,19 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // Cascade the runway renames to flight-plan / aircraft runway-name references
   // so the game's dynamic-flight engine can resolve them on load.
   out = _remapRunwayNameFields(out, oldNameToNewName);
+  // Drop references to runways that no longer exist from the embedded
+  // RunwayTimeline (`InitialRunways` / change frames), or the game NREs trying
+  // to activate a deleted runway on load.
+  {
+    const liveRunwayEnds = new Set();
+    for (const rw of graph.runways || []) {
+      const names = Array.isArray(rw.names) && rw.names.length
+        ? rw.names
+        : [rw.name, ...(String(rw.physicalName || '').split('/'))];
+      for (const n of names) { const s = String(n || '').trim(); if (s) liveRunwayEnds.add(s); }
+    }
+    out = _pruneRunwayTimelineReferences(out, liveRunwayEnds);
+  }
   if (dropCounts.jetway > 0) {
     console.log(
       '[GroundPainter] cascade: dropped ' + dropCounts.jetway +
@@ -4349,6 +4570,8 @@ module.exports = {
   getAirwayOsmPoolInfo,
   // exposed for tests
   _renumberTaxiwaySegmentOrdinals,
+  _cancelRunwayRegistryForDrops,
+  _cascadeOrphanEntries,
   _splitArrayEntries,
   _arrayValue,
   _staticEntitiesRanges,
@@ -4367,6 +4590,7 @@ module.exports = {
   _entryId,
   _entryTypePrefix,
   _remapRunwayNameFields,
+  _pruneRunwayTimelineReferences,
   _remapTaxiwaySegmentName,
   _patchEntryName,
   _entryNameValue,

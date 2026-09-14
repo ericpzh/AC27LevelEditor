@@ -2953,7 +2953,13 @@ export default function GroundPainter({ vals }) {
       }
     }
     const doOrphanGC = (uniqueDelNodes) => {
-      const orphans = [];
+      // Dedup REQUIRED: a runway delete feeds its two thresholds AND every
+      // pavement-strip node, and the strips' end nodes ARE the thresholds
+      // (consecutive strips also share endpoints). Splicing the same index twice
+      // deletes an unrelated node and over-decrements indices above it, which
+      // can collapse a segment's endpoints onto one index (self-loop → the save
+      // is refused with "joins vertex … to itself").
+      const orphans = new Set();
       for (const ni of uniqueDelNodes) {
         if (ni == null || ni < 0) continue;
         let used = false;
@@ -2970,10 +2976,10 @@ export default function GroundPainter({ vals }) {
           if (st.noseIdx === ni || st.tailIdx === ni) { used = true; break; }
           if (st.pushbackIdxs && st.pushbackIdxs.includes(ni)) { used = true; break; }
         }
-        if (!used) orphans.push(ni);
+        if (!used) orphans.add(ni);
       }
-      orphans.sort((a, b) => b - a);
-      for (const delIdx of orphans) {
+      const sortedOrphans = [...orphans].sort((a, b) => b - a);
+      for (const delIdx of sortedOrphans) {
         if (mm && mm.nodeOrigPk && delIdx < mm.nodeOrigPk.length) {
           const pk = mm.nodeOrigPk[delIdx];
           if (pk != null) markDeletedPk(pk);

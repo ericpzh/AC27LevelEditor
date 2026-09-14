@@ -263,7 +263,7 @@ function copyToRealGame(tmpAclPath) {
   // the .acl, so it propagates alongside (identical content when no purge
   // ran, so this is always safe). csv.bak keeps the rollback chain aligned
   // with the .acl.bak.
-  const icao = path.basename(path.dirname(tmpAclPath));
+  const icao = path.basename(path.dirname(path.dirname(tmpAclPath))); // <TMP>/.../Airports/<ICAO>/Levels/<file>
   const baseName = path.basename(tmpAclPath, '.acl');
   const levelSuffix = baseName.startsWith(icao + '_') ? baseName.slice(icao.length + 1) : baseName;
   const csvSrc = path.join(path.dirname(tmpAclPath), 'flight_schedule_' + levelSuffix + '.csv');
@@ -1300,7 +1300,12 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     // immediately instead of as a .bak timeout — the reason text is the
     // app's own refusal message.
     const gpErr = await window.locator('div.gp-error').textContent({ timeout: 300 }).catch(() => null);
-    if (gpErr) return { saved: false, blockedBy: 'app refused save: ' + gpErr.trim().substring(0, 300) };
+    if (gpErr) {
+      const reason = 'app refused save: ' + gpErr.trim().substring(0, 300);
+      summary.error = reason;
+      log('FAIL:', reason);
+      return { ...summary, ok: false };
+    }
     await waitFor(() => fs.existsSync(bakPath), { timeout: 10000, interval: 300, label: '.acl.bak creation' });
     summary.backupCreated = true;
     log('backup created:', bakPath);
@@ -1446,7 +1451,13 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     for (const sg of reloadedGraph.segments) {
       if (sg.name && rwNameRe.test(sg.name) && !physNames.has(sg.name)) orphanStrips.add(sg.name);
     }
-    if (orphanStrips.size) throw new Error(`saved file has pavement strips without a runway: ${[...orphanStrips].join(',')}`);
+    if (orphanStrips.size) {
+      try { fs.copyFileSync(currentPath, path.join(__dirname, '..', '_debug', 'ground-fail-' + base + '.acl')); } catch (_) {}
+      const detail = reloadedGraph.segments
+        .filter((sg) => orphanStrips.has(sg.name))
+        .map((sg) => ({ name: sg.name, flags: sg.flags, aIdx: sg.aIdx, bIdx: sg.bIdx, nodeIdxs: sg.nodeIdxs }));
+      throw new Error(`saved file has pavement strips without a runway: ${[...orphanStrips].join(',')} | runways=${[...physNames].join(',')} | strips=${JSON.stringify(detail)}`);
+    }
 
     // Node/segment counts must at least parse (>=0) — exact equality not required
     // because the writer's survivor gate may drop degenerate dangling entities.

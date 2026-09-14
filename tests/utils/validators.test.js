@@ -478,9 +478,20 @@ describe('runTripleValidation arrival runway active at landing', () => {
     expect(issues.filter(m => m.includes('未激活') || m.includes('not active'))).toHaveLength(0);
   });
 
-  it('flags arrival after runway becomes inactive', () => {
+  it('allows arrival within the 10-min runway-transition grace after it becomes inactive', () => {
+    // Change 01→19 at 21:23:09; landing 21:30:00 on 01 is 7 min later — inside the
+    // 10-min grace (aircraft already on final when the active set switched).
     const tl = { initialRunways: ['01','15','22'], timeline: [{ time: '21:23:09', changes: [{ source: '01', dest: '19' }] }] };
     const flights = [{ CallSign: 'CES0002', LandingTime: '21:30:00', Runway: '01', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
+    const issues = run(flights, tl);
+    expect(issues.filter(m => m.includes('01') && (m.includes('未激活') || m.includes('not active')))).toHaveLength(0);
+  });
+
+  it('flags arrival after the runway-transition grace elapses', () => {
+    // Change 01→19 at 21:23:09; landing 21:40:00 on 01 is 17 min later — outside
+    // the 10-min grace, so the inactive-runway rule applies.
+    const tl = { initialRunways: ['01','15','22'], timeline: [{ time: '21:23:09', changes: [{ source: '01', dest: '19' }] }] };
+    const flights = [{ CallSign: 'CES0002', LandingTime: '21:40:00', Runway: '01', Airway: 'CLIRP3.19', Stand: 'A01', AircraftType: 'B738', Voice: 'x', Language: 'en' }];
     const issues = run(flights, tl);
     expect(issues.some(m => m.includes('01') && (m.includes('未激活') || m.includes('not active')))).toBe(true);
   });

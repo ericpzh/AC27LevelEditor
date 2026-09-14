@@ -16,6 +16,12 @@ export const CACHE_VERSION = 28;
 // Flights are allowed up to SCENARIO_END_GRACE_MIN past scenario end.
 export const SCENARIO_END_GRACE_MIN = 30;
 export const SCENARIO_END_GRACE_SEC = SCENARIO_END_GRACE_MIN * 60;
+// Runway-change transition grace: an arrival may still land on a runway that a
+// runway-timeline change deactivated within this window of the landing time
+// (aircraft already on final when the active set switched). Mirrored in the
+// validator's inactive-arrival-runway rule.
+export const RUNWAY_TRANSITION_GRACE_MIN = 10;
+export const RUNWAY_TRANSITION_GRACE_SEC = RUNWAY_TRANSITION_GRACE_MIN * 60;
 export const WARMUP_SEC = 780;             // 13-minute game warmup
 export const GRACE_TTL = -60;              // max seconds-past-landing filter
 export const DEMO_WINDOW_SEC = 1800;       // 30-minute demo window

@@ -1264,9 +1264,16 @@ async function handleMcpMessage(msg) {
           const newMeta = _clone(m) || { nodeOrigPk: [], segOrigPk: [], runwayOrigPk: [], areaOrigId: [], standOrigPk: [], deletedPks: [], deletedAreaIds: [], runwayPavement: [], runwayOrigInfo: [] };
           _ensurePainterMetaArrays(newMeta, newGraph);
           const markDeletedPk = (pk) => { if (pk != null && !newMeta.deletedPks.includes(pk)) newMeta.deletedPks.push(pk); };
-          // Orphan GC helper (collect orphan node indices and splice descending)
+          // Orphan GC helper (collect orphan node indices and splice descending).
+          // Candidates frequently repeat — a runway's `gcNodes` pushes its two
+          // threshold indices AND every pavement-strip node, and the strips' end
+          // nodes ARE the thresholds (consecutive strips also share endpoints).
+          // Deduping is REQUIRED: splicing the same index twice deletes a second,
+          // unrelated node and over-decrements every index above it, collapsing a
+          // segment's two endpoints onto one index (a self-loop the save refuses:
+          // "joins vertex … to itself").
           const doOrphanGC = (candidateNodes) => {
-            const orphans = [];
+            const orphans = new Set();
             for (const ni of candidateNodes) {
               if (ni == null || ni < 0) continue;
               let used = false;
@@ -1275,10 +1282,10 @@ async function handleMcpMessage(msg) {
               for (const rw of newGraph.runways) { if (rw.thAIdx === ni || rw.thBIdx === ni) { used = true; break; } }
               if (used) continue;
               for (const st of newGraph.stands) { if (st.noseIdx === ni || st.tailIdx === ni) { used = true; break; } if (st.pushbackIdxs && st.pushbackIdxs.includes(ni)) { used = true; break; } }
-              if (!used) orphans.push(ni);
+              if (!used) orphans.add(ni);
             }
-            orphans.sort((a, b) => b - a);
-            for (const delIdx of orphans) {
+            const sortedOrphans = [...orphans].sort((a, b) => b - a);
+            for (const delIdx of sortedOrphans) {
               if (newMeta.nodeOrigPk && delIdx < newMeta.nodeOrigPk.length) { const pk = newMeta.nodeOrigPk[delIdx]; if (pk != null) markDeletedPk(pk); }
               newGraph.nodes.splice(delIdx, 1);
               if (newMeta.nodeOrigPk) newMeta.nodeOrigPk.splice(delIdx, 1);

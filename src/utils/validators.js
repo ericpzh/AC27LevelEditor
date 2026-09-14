@@ -1,5 +1,5 @@
 import { T } from './i18n.js';
-import { FIELD_LABELS, SCENARIO_END_GRACE_MIN, STAND_DEP_BEFORE_ESTIMATE_MIN, STAND_ARR_AFTER_ESTIMATE_MIN, STAND_LANDING_BEFORE_INBLOCK_MIN, STAND_OCCUPANCY_START_OFFSET_MIN, STAND_OCCUPANCY_END_OFFSET_MIN, MINUTES_PER_DAY, VALID_LANGUAGES } from './constants.js';
+import { FIELD_LABELS, SCENARIO_END_GRACE_MIN, RUNWAY_TRANSITION_GRACE_SEC, STAND_DEP_BEFORE_ESTIMATE_MIN, STAND_ARR_AFTER_ESTIMATE_MIN, STAND_LANDING_BEFORE_INBLOCK_MIN, STAND_OCCUPANCY_START_OFFSET_MIN, STAND_OCCUPANCY_END_OFFSET_MIN, MINUTES_PER_DAY, VALID_LANGUAGES } from './constants.js';
 
 // ── Stand conflict detection helpers ──
 
@@ -370,6 +370,10 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
   // Arrivals landing on inactive runway (timeline-aware)
   // A landing runway must be in the active set at LandingTime: initialRunways
   // plus all timeline changes with time <= landingTime, applied in chronological order.
+  // Transition grace: a runway that a change deactivated within
+  // RUNWAY_TRANSITION_GRACE_SEC of the landing still counts as active — aircraft
+  // already on final when the active set switched (e.g. KJFK_runwaychange lands
+  // 31R/4L up to ~9 min after the 18:30 switch).
   // This catches the KDCA_peakarrival fuzz: initial [01,15,22] with N8 19 @21:15 while active is 01,15,22.
   if (runwayTimeline && Array.isArray(runwayTimeline.initialRunways) && flights && flights.length) {
     const toSec = t => {
@@ -381,17 +385,11 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     const sortedTl = [...(runwayTimeline.timeline || [])]
       .filter(e => e && e.time)
       .sort((a, b) => toSec(a.time) - toSec(b.time));
-    for (const fl of flights) {
-      const landing = (fl.LandingTime || '').trim();
-      const runway = (fl.Runway || '').trim();
-      if (!landing || !runway) continue;
-      // Only arrivals have LandingTime — departures use OffBlockTime
-      const isArrival = !!(fl.LandingTime || '').trim();
-      if (!isArrival) continue;
-      const landSec = toSec(landing);
+    // Active set as of `asOfSec`: initials + every change with time <= asOfSec.
+    const activeSetAt = (asOfSec) => {
       const active = new Set(initials);
       for (const entry of sortedTl) {
-        if (toSec(entry.time) <= landSec) {
+        if (toSec(entry.time) <= asOfSec) {
           for (const ch of (entry.changes || [])) {
             const src = String(ch.source || '').trim();
             const dst = String(ch.dest || '').trim();
@@ -403,18 +401,32 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
           }
         }
       }
-      if (!active.has(runway)) {
-        issues.push(T('val_runway_inactive', {
-          cs: fl.CallSign || '?',
-          runway,
-          time: landing,
-          active: [...active].sort((a, b) => {
-            const na = parseInt(a, 10) || 0, nb = parseInt(b, 10) || 0;
-            if (na !== nb) return na - nb;
-            return a.localeCompare(b);
-          }).join(', ') || '(none)',
-        }));
-      }
+      return active;
+    };
+    for (const fl of flights) {
+      const landing = (fl.LandingTime || '').trim();
+      const runway = (fl.Runway || '').trim();
+      if (!landing || !runway) continue;
+      // Only arrivals have LandingTime — departures use OffBlockTime
+      const isArrival = !!(fl.LandingTime || '').trim();
+      if (!isArrival) continue;
+      const landSec = toSec(landing);
+      const active = activeSetAt(landSec);
+      if (active.has(runway)) continue;
+      // Not active at landing — allow if it was active within the transition
+      // grace window before landing (recently deactivated by a runway change).
+      const graceActive = activeSetAt(landSec - RUNWAY_TRANSITION_GRACE_SEC);
+      if (graceActive.has(runway)) continue;
+      issues.push(T('val_runway_inactive', {
+        cs: fl.CallSign || '?',
+        runway,
+        time: landing,
+        active: [...active].sort((a, b) => {
+          const na = parseInt(a, 10) || 0, nb = parseInt(b, 10) || 0;
+          if (na !== nb) return na - nb;
+          return a.localeCompare(b);
+        }).join(', ') || '(none)',
+      }));
     }
   }
 

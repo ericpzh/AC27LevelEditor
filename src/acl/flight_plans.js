@@ -5124,28 +5124,42 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
     return null;
   };
 
-  const _assertBdTn = (search, label) => {
+  // Resolve a blobdoc-scoped type number by name. If the game has STRIPPED the
+  // (now-unused) type from StaticData.$blobdoc — which happens on any save whose
+  // store contained no leg of that direction — re-declare it under the next
+  // unused blobdoc-scope id instead of aborting. The emitter writes the expanded
+  // `"N|Full.Name, Assembly"` form, which self-registers in the blobdoc type
+  // table on first use, so a later save that reintroduces an arrival/departure
+  // leg can always be encoded (previously: `blobdoc type "…" not in bdTypeMap`).
+  const _bdTnOrAlloc = (search, label, fullName) => {
     const val = _bdTn(search);
-    if (val == null) throw new Error(
-      `[V4-BUILD] _rebuildStaticDataSections: blobdoc type "${label}" not in bdTypeMap.\n` +
-      `  Search: "${search}"\n  typeMap (${bdTypeMap.size}): ${[...bdTypeMap.entries()].map(([k, v]) => `${k}?${v}`).join(', ')}`
-    );
-    return val;
+    if (val != null) {
+      // Reserve a globally-resolved number so a second lookup in this same
+      // blobdoc scope cannot hand the same id to a different type.
+      if (!bdTypeMap.has(val)) bdTypeMap.set(val, fullName);
+      return val;
+    }
+    let num = 0;
+    for (const k of bdTypeMap.keys()) if (k > num) num = k;
+    num += 1;
+    bdTypeMap.set(num, fullName);
+    log(`blobdoc type "${label}" not declared (stripped by a prior save) — allocated id ${num}`);
+    return num;
   };
   // FlightPlanDepartureLeg / DateTime resolve lazily too: a 0-flight save clears
   // every flight-plan entry, so the game strips those (now-unused) types from the
   // StaticData.$blobdoc type table — the same reason FlightPlanArrivalLeg resolves
-  // lazily below. The strict assert must only fire when a flight-plan entry will
-  // actually be emitted (i.e. there is at least one flight).
+  // lazily below. Resolution only runs when a flight-plan entry will actually be
+  // emitted (i.e. there is at least one flight); a missing type is re-allocated.
   const hasFlights = !!(flights && flights.length > 0);
-  const dtTypeNum = hasFlights ? _assertBdTn('System.DateTime,', 'DateTime') : null;
-  const depLegTypeNum = hasFlights ? _assertBdTn('FlightPlanDepartureLeg,', 'FlightPlanDepartureLeg') : null;
+  const dtTypeNum = hasFlights ? _bdTnOrAlloc('System.DateTime,', 'DateTime', 'System.DateTime, mscorlib') : null;
+  const depLegTypeNum = hasFlights ? _bdTnOrAlloc('FlightPlanDepartureLeg,', 'FlightPlanDepartureLeg', 'ContextCross.Models.FlightPlanDepartureLeg, GroundATC.Core') : null;
   // FlightPlanArrivalLeg resolves lazily: all-departure schedules (e.g. the
   // PerfBench_MaxParked fixtures) never declare it in the blobdoc scope —
-  // the game strips unused types from the type table. The strict assert
-  // must only fire when an arrival leg will actually be emitted below.
+  // the game strips unused types from the type table. The lookup only runs when
+  // an arrival leg will actually be emitted below.
   const hasArrivals = flights.some((flight) => !_isDepartureFlight(flight));
-  const arrLegTypeNum = hasArrivals ? _assertBdTn('FlightPlanArrivalLeg,', 'FlightPlanArrivalLeg') : null;
+  const arrLegTypeNum = hasArrivals ? _bdTnOrAlloc('FlightPlanArrivalLeg,', 'FlightPlanArrivalLeg', 'ContextCross.Models.FlightPlanArrivalLeg, GroundATC.Core') : null;
 
   const dtTypeFull = hasFlights ? '"' + dtTypeNum + '|System.DateTime, mscorlib"' : null;
   const arrLegTypeFull = hasArrivals
@@ -5190,14 +5204,14 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   let fpFirstStart = -1, fpLastEnd = -1;
   // Blobdoc-scoped lookup: the emitted entries live inside StaticData.$blobdoc,
   // whose type numbering is independent of the file-global map (the checkpoint
-  // frame claims the same number for a different type).  _assertBdTn throws
-  // with a scope dump when the type is not declared there.  Lazy behind
-  // hasFlights: a 0-flight save has no FlightPlanStaticItem left in the
-  // (stripped) StaticData scope — there is no entry to emit, so no %type to resolve.
+  // frame claims the same number for a different type).  _bdTnOrAlloc re-declares
+  // the type if a prior save stripped it.  Lazy behind hasFlights: a 0-flight save
+  // has no FlightPlanStaticItem left in the (stripped) StaticData scope — there is
+  // no entry to emit, so no %type to resolve.
   let fpItemNum = null;
   let fpTypeStr = null;
   if (hasFlights) {
-    fpItemNum = _assertBdTn('ContextCross.Models.FlightPlanStaticItem,', 'FlightPlanStaticItem');
+    fpItemNum = _bdTnOrAlloc('ContextCross.Models.FlightPlanStaticItem,', 'FlightPlanStaticItem', 'ContextCross.Models.FlightPlanStaticItem, GroundATC.Core');
     fpTypeStr = `"$type": "${fpItemNum}|ContextCross.Models.FlightPlanStaticItem, GroundATC.Core"`;
   }
   const oldFpData = []; // [{ oldReg, callsign }]

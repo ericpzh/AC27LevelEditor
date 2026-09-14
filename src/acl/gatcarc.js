@@ -45,6 +45,12 @@
  *                            the trailing 4 bytes of the payload are "NODF" itself)
  *       — v1 frames had outer [32 hash][NODF] after the payload; v2 embeds the commit
  *         inside the payload and has no outer hash. The parser handles both.
+ *       On write, the header is preserved verbatim and each decodable checkpoint
+ *       frame is RE-ENCODED from its (possibly edited) decoded text document —
+ *       preserving the frame's opaque JSON metadata and recomputing the inner
+ *       binary length/hash — so save-pipeline frame edits (orphan runtime-entity
+ *       removal, stale $fstrref nulling, $iref remapping) actually persist.
+ *       Frames that do not decode to a checkpoint doc are copied verbatim.
  *
  * Nested payloads: byte[] fields such as ArchiveHeader.StaticData and
  * RuntimeSnapshot.RuntimeData contain complete nested Odin binary documents.
@@ -54,8 +60,9 @@
  * Decoded text form: each segment becomes one Odin JSON document (the game's
  * legacy text .acl dialect); frame documents follow the header document,
  * separated by a FRAME_SENTINEL line. For v2 the "header document" is the
- * decoded LevelPayload (the only user-editable content); the JSON header
- * (schemaHash etc) is preserved opaquely.
+ * decoded LevelPayload and each decodable checkpoint frame is a following
+ * document (both are user-editable and re-encoded on write); only the JSON
+ * header (schemaHash etc) is preserved opaquely.
  *
  * This module is the only API the rest of the editor uses:
  *   readAclText(path)  — universal read: binary -> decoded Odin JSON text, text -> as-is
@@ -197,8 +204,10 @@ function parseV2Archive(buffer) {
 
   // Checkpoint frames
   const frames = [];
+  const frameMeta = []; // per-frame { version, raw, payload, v2Style } so encode can rebuild
   let framesRawStart = pos;
   while (pos < buffer.length) {
+    const frameStart = pos;
     if (pos + 12 > buffer.length) {
       throw new Error(`GATCARC4: truncated v2 frame header at offset ${pos}`);
     }
@@ -236,6 +245,12 @@ function parseV2Archive(buffer) {
       frames.push(framePayload);
       pos += 12 + frameLen + HASH_LENGTH + 4;
     }
+    frameMeta.push({
+      version: frameVersion,
+      raw: buffer.subarray(frameStart, pos),
+      payload: framePayload,
+      v2Style: endsWithNODF,
+    });
   }
 
   let headerJson = null;
@@ -249,6 +264,7 @@ function parseV2Archive(buffer) {
     mainPayload,
     mainEnd,
     frames,
+    frameMeta,
     framesRawStart,
     framesRaw: buffer.subarray(mainEnd),
     rawHeaderSegment: buffer.subarray(0, headerEnd),
@@ -324,6 +340,31 @@ function decodeArchive(buffer) {
 }
 
 /**
+ * Extract + verify the inner binary payload of a v2 checkpoint frame, returning
+ * its decoded Odin text (or null when it is not a decodable checkpoint doc).
+ * Frame payload layout: [4 jsonLen][json][32 jsonHash][4 binLen][binPayload][32 binHash][NODF?]
+ */
+function _decodeV2FrameInnerText(framePayload) {
+  if (framePayload.length < 4) return null;
+  const jsonLen = framePayload.readUInt32LE(0);
+  if (jsonLen + 4 + 32 > framePayload.length) return null;
+  const afterJson = framePayload.subarray(4 + jsonLen + 32);
+  if (afterJson.length < 4) return null;
+  const binLen = afterJson.readUInt32LE(0);
+  if (binLen + 4 + 32 > afterJson.length) return null;
+  const binPayload = afterJson.subarray(4, 4 + binLen);
+  const storedBinHash = afterJson.subarray(4 + binLen, 4 + binLen + 32);
+  const calcBinHash = crypto.createHash('sha256').update(binPayload).digest();
+  if (!storedBinHash.equals(calcBinHash)) return null;
+  const innerText = decodePayloadToText(binPayload);
+  // Heuristic: only treat as an editable checkpoint doc when it is one
+  if (innerText.includes('Checkpoint') || innerText.includes('LevelPayload') || innerText.includes('SaveSystem')) {
+    return innerText;
+  }
+  return null;
+}
+
+/**
  * Decode a v2 GATCARC4 archive buffer into Odin JSON text.
  * The text is the decoded LevelPayload (main segment). Checkpoint frames are
  * decoded if their inner binary payload is decodable and appended with sentinel
@@ -332,29 +373,10 @@ function decodeArchive(buffer) {
 function decodeV2Archive(buffer) {
   const v2 = parseV2Archive(buffer);
   const docs = [decodePayloadToText(v2.mainPayload)];
-  // Attempt to decode checkpoint frame inner binary payloads for completeness.
-  // Each v2 frame payload is: [4 jsonLen][json][32 jsonHash][4 binLen][binPayload][32 binHash][NODF?]
-  // We extract binPayload and try to decode it; if it looks like Odin binary, add as extra doc.
   for (const fp of v2.frames) {
     try {
-      if (fp.length < 4) continue;
-      const jsonLen = fp.readUInt32LE(0);
-      if (jsonLen + 4 + 32 > fp.length) continue;
-      const afterJson = fp.subarray(4 + jsonLen + 32);
-      if (afterJson.length < 4) continue;
-      const binLen = afterJson.readUInt32LE(0);
-      if (binLen + 4 + 32 > afterJson.length) continue;
-      const binPayload = afterJson.subarray(4, 4 + binLen);
-      // Verify bin hash before decoding
-      const storedBinHash = afterJson.subarray(4 + binLen, 4 + binLen + 32);
-      const calcBinHash = crypto.createHash('sha256').update(binPayload).digest();
-      if (!storedBinHash.equals(calcBinHash)) continue;
-      // Try decode
-      const innerText = decodePayloadToText(binPayload);
-      // Heuristic: only add if it looks like a checkpoint (contains Checkpoint or LevelPayload)
-      if (innerText.includes('Checkpoint') || innerText.includes('LevelPayload') || innerText.includes('SaveSystem')) {
-        docs.push(innerText);
-      }
+      const innerText = _decodeV2FrameInnerText(fp);
+      if (innerText !== null) docs.push(innerText);
     } catch (_) {
       // ignore frame decode errors — frames are preserved verbatim on write
     }
@@ -395,6 +417,26 @@ function buildV2MainSegment(payload) {
   return Buffer.concat([lenBuf, payload, hash, HEADER_COMMIT]);
 }
 
+/**
+ * Rebuild a v2 checkpoint frame MARF segment from its original payload (to
+ * preserve the opaque JSON metadata + its hash) and a freshly encoded inner
+ * binary payload. Layout: [MARF][uint32 version][uint32 len]
+ *   [4 jsonLen][json][32 jsonHash][4 binLen][bin][32 binHash][NODF]
+ */
+function buildV2FrameSegment(frameVersion, originalPayload, binPayload) {
+  const jsonLen = originalPayload.readUInt32LE(0);
+  const prefix = originalPayload.subarray(0, 4 + jsonLen + HASH_LENGTH); // [len][json][jsonHash]
+  const lenBuf = Buffer.alloc(4);
+  lenBuf.writeUInt32LE(binPayload.length, 0);
+  const binHash = crypto.createHash('sha256').update(binPayload).digest();
+  const payload = Buffer.concat([prefix, lenBuf, binPayload, binHash, FRAME_COMMIT]);
+  const head = Buffer.alloc(12);
+  FRAME_MARKER.copy(head, 0);
+  head.writeUInt32LE(frameVersion, 4);
+  head.writeUInt32LE(payload.length, 8);
+  return Buffer.concat([head, payload]);
+}
+
 /** Encode Odin JSON text (with optional FRAME_SENTINEL-separated frame docs) into a v1 archive. */
 function encodeArchive(text) {
   const docs = text.split(RE_FRAME_SENTINEL);
@@ -405,22 +447,37 @@ function encodeArchive(text) {
   return Buffer.concat(parts);
 }
 
-/** Encode Odin JSON text into a v2 archive, preserving header/frames from originalBuffer if provided. */
+/** Encode Odin JSON text into a v2 archive, preserving header from originalBuffer if provided. */
 function encodeV2Archive(text, originalBuffer) {
   const docs = text.split(RE_FRAME_SENTINEL);
   const mainText = docs[0];
   const mainPayload = encodeTextToPayload(mainText);
 
   let headerSegment;
-  let framesRaw;
+  const frameSegments = [];
   if (originalBuffer && isGatcArchive(originalBuffer) && getStorageVersion(originalBuffer) === 2) {
     const v2 = parseV2Archive(originalBuffer);
     headerSegment = v2.rawHeaderSegment;
-    framesRaw = v2.framesRaw; // includes all MARF frames verbatim
-    // If the edited text contained extra frame docs beyond the main, append them as new frames
-    // (preserving the v2 frame internal format is non-trivial; for now we preserve original frames only
-    // and ignore extra docs — the editor's flight-save path regenerates the LevelPayload and
-    // leaves checkpoints stale, which the game handles)
+    // Re-encode every checkpoint frame whose inner payload decodes to a doc the
+    // caller may have edited. The save pipeline rewrites the frame text (orphan
+    // runtime-entity removal, stale $fstrref nulling, $iref remapping); reusing
+    // framesRaw verbatim silently discarded those edits and left stale runtime
+    // entities referencing static items that no longer exist (the game aborts
+    // GameStateRegistry.RestoreWorld with "Data layout mismatch").
+    let docIdx = 1;
+    for (const fm of v2.frameMeta) {
+      let innerText = null;
+      try { innerText = _decodeV2FrameInnerText(fm.payload); } catch (_) { innerText = null; }
+      if (innerText !== null && docIdx < docs.length) {
+        frameSegments.push(buildV2FrameSegment(fm.version, fm.payload, encodeTextToPayload(docs[docIdx])));
+        docIdx++;
+      } else {
+        // Not an editable checkpoint doc, or no matching edited doc — keep verbatim.
+        frameSegments.push(fm.raw);
+      }
+    }
+    // Extra docs beyond the known frames are dropped (the editor never
+    // synthesizes new checkpoint frames).
   } else {
     // No original v2 to preserve — synthesize a minimal header
     // Derive archiveGuid / airportIcao from the text if possible, otherwise use placeholders
@@ -438,14 +495,12 @@ function encodeV2Archive(text, originalBuffer) {
       if (gm) archiveGuid = gm[1];
     } catch (_) {}
     headerSegment = buildV2HeaderSegment(archiveGuid, airportIcao);
-    framesRaw = Buffer.alloc(0);
     // New files start with 0 frames; checkpoint frames are append-only runtime saves
-    // and are not synthesized from text docs (the v2 checkpoint internal format is not
-    // round-trippable via the text sentinel). Extra docs beyond the main are dropped.
+    // and are not synthesized from text docs. Extra docs beyond the main are dropped.
   }
 
   const mainSegment = buildV2MainSegment(mainPayload);
-  return Buffer.concat([headerSegment, mainSegment, framesRaw]);
+  return Buffer.concat([headerSegment, mainSegment, ...frameSegments]);
 }
 
 /**
@@ -568,6 +623,8 @@ module.exports = {
   encodeV2Archive,
   buildV2HeaderSegment,
   buildV2MainSegment,
+  buildV2FrameSegment,
+  _decodeV2FrameInnerText,
   decodePayloadToText,
   encodeTextToPayload,
   readAclText,

@@ -153,7 +153,7 @@ AC27Editor/
 │ ├── zipUtils.js # Pure Node.js ZIP (zlib, no deps)
 │ └── logger.js # Console → file redirect (dev mode)
 │
-├── tests/ # 1456 Vitest + 18 Playwright E2E + 29 Node.js integration scripts
+├──   tests/               # 1479 Vitest + 18 Playwright E2E + 29 Node.js integration scripts
 │ ├── electron/cloud-llm.test.js # cloud-llm backend tests (49 tests, node env)
 │ ├── electron/updater.test.js # updater backend tests (25 tests, node env)
 │ ├── components/MapWindows/ # MapWindow component & hook tests (19 files, 712 tests)

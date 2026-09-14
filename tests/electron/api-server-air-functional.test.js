@@ -274,3 +274,62 @@ describe('scenery_write OsmPool and ghost helpers (air)', () => {
     expect(res.remapped).toBeGreaterThanOrEqual(0);
   });
 });
+
+// Regression (ground-fuzz `delete_one` self-loop refusal): the runway-delete
+// orphan GC receives its threshold indices AND every pavement-strip node — and
+// the strips' end nodes ARE the thresholds, plus consecutive strips share
+// endpoints — so the candidate list contains duplicates. Without dedup the GC
+// splices the same index twice, over-decrements every index above it, and
+// collapses a nearby segment's endpoints onto one index → a zero-length
+// self-loop that `_validateNoDegenerateEdges` refuses ("joins vertex … to
+// itself"). The GC must dedup its orphan set.
+describe('api-server delete_ground_objects — runway orphan GC', () => {
+  function runwayState() {
+    const g = {
+      nodes: [
+        { x: 0, z: 0 }, { x: 0, z: 10 }, { x: 0, z: 20 },
+        { x: 5, z: 0 }, { x: 5, z: 10 }, { x: 5, z: 20 },
+      ],
+      segments: [
+        { aIdx: 1, bIdx: 2, nodeIdxs: [1, 2], name: '01/19', flags: 4, directed: false },
+        { aIdx: 3, bIdx: 4, nodeIdxs: [3, 4], flags: 2, directed: false },
+      ],
+      runways: [{ thAIdx: 1, thBIdx: 2, names: ['01', '19'], name: '01', physicalName: '01/19', width: 0.5, entries: [], exits: [] }],
+      areas: [], stands: [], airwayNodes: [], procedures: [],
+    };
+    const m = {
+      nodeOrigPk: [100, 101, 102, 103, 104, 105],
+      segOrigPk: [200, 201],
+      runwayOrigPk: [300],
+      runwayPavement: [[1, 2]],
+      runwayOrigInfo: [{ pks: ['runway:01', 'runway:19'], physicalName: '01/19', names: ['01', '19'], width: 0.5 }],
+      areaOrigId: [], standOrigPk: [], airwayNodeOrigPk: [], airwaySegOrigPk: [],
+      deletedPks: [], deletedAreaIds: [], deletedAirwayPks: [],
+    };
+    return { g, m };
+  }
+
+  it('dedups overlapping threshold/strip nodes and never creates a self-loop segment', async () => {
+    makeState();
+    const { g, m } = runwayState();
+    fakeState.groundPainterGraph = g;
+    fakeState.groundPainterMeta = m;
+
+    // Target the runway midpoint; `_resolveGroundTarget` skips pavement strips by
+    // name, so the runway (not the strip) is deleted.
+    const r = await callTool('delete_ground_objects', { target: { x: 0, z: 15 } });
+    expect(r.success).toBe(true);
+    expect(r.deleted.kind).toBe('runway');
+
+    const ng = fakeState.groundPainterGraph;
+    expect(ng.runways).toHaveLength(0);
+    // Pavement strip removed with the runway.
+    expect(ng.segments.some((sg) => sg.name === '01/19')).toBe(false);
+    // No segment may collapse to a self-loop / consecutive duplicate endpoint.
+    for (const sg of ng.segments) {
+      const ix = sg.nodeIdxs && sg.nodeIdxs.length ? sg.nodeIdxs : [sg.aIdx, sg.bIdx];
+      expect(sg.aIdx != null && sg.aIdx === sg.bIdx).toBe(false);
+      for (let k = 1; k < ix.length; k++) expect(ix[k - 1]).not.toBe(ix[k]);
+    }
+  });
+});

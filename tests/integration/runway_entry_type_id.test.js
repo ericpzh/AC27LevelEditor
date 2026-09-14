@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 import path from 'path';
+import { levelPath, gameLevelExists } from '../helpers/gameRoot';
 
 const require = createRequire(import.meta.url);
 const { readAclText, encodeArchive } = require('../../src/acl/gatcarc');
@@ -23,6 +24,7 @@ const {
   patchSceneryBlob,
   _typeId,
   _sampleRunwayInnerType,
+  _sampleRunwayShapes,
 } = require('../../src/acl/scenery_write');
 
 const ENTRY_ARR = '15|ContextCross.Models.Runway+Entry[], GroundATC.Core';
@@ -62,6 +64,19 @@ describe('Runway Entries/Exits type-id distinctness', () => {
   it('returns NULL (no fallback) when no element type can be sampled', () => {
     // Empty runway set → the element type cannot be determined → null, never a guess.
     expect(_sampleRunwayInnerType([], '"' + ENTRY_ARR + '"', 'Entries', ENTRY_EL)).toBe(null);
+  });
+
+  // A HoldingAreaData element must use its OWN type id, not the HoldingAreas
+  // array id. Using the array id deserialized every holding as null and the game
+  // threw NullReferenceException in HoldingAreaController.Init on level load.
+  it('samples the HoldingAreaData element type distinct from the HoldingAreas array type', () => {
+    const HOLD_ARR = '24|ContextCross.Models.Runway+HoldingAreaData[], GroundATC.Core';
+    const HOLD_EL = 'ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core';
+    const block = '"$k": "runway:01", "$v": { "HoldingAreas": { "$id": 1, "$type": "' + HOLD_ARR + '", "$rlength": 1, "$rcontent": [ { "$id": 2, "$type": "25|' + HOLD_EL + '", "EntryName": "A1" } ] } }';
+    const s = _sampleRunwayShapes([block]);
+    expect(_typeId(s.holdingAreasType)).toBe(24);
+    expect(_typeId(s.holdingInnerType)).toBe(25);
+    expect(_typeId(s.holdingInnerType)).not.toBe(_typeId(s.holdingAreasType));
   });
 
   it('editing entries/exits on the real fixture yields distinct array/inner ids and encodes', () => {
@@ -111,5 +126,36 @@ describe('Runway Entries/Exits type-id distinctness', () => {
     const na = g.nodes.length - 2, nb = g.nodes.length - 1;
     g.runways = [...g.runways, { thAIdx: na, thBIdx: nb, names: ['08', '26'], physicalName: '08/26', width: 0.5, entries: [{ name: 'NEWR', holdingIdx: na, lineUpIdx: nb, defineIdx: na, runwayName: '08' }], exits: [] }];
     expect(() => patchSceneryBlob(text, g, null, structuredClone(meta), { warnings: [] })).toThrow(/no fallback allowed/);
+  });
+});
+
+// Shipped v5 levels omit inline-optional runway sub-objects (e.g. `IsActive`)
+// and declare their types only as shared singletons — the document-wide sampler
+// must not guess (nor collide) but omit the optional field and encode. Skipped
+// cleanly where the game is not installed.
+const describeWithRealLevel = gameLevelExists('ZSJN', 'ZSJN_leisure_1.acl') ? describe : describe.skip;
+
+describeWithRealLevel('runway synthesis on a shipped v5 level', () => {
+  it('omits optional IsActive (type not declared in the PK blobdoc) and still encodes', () => {
+    const text = readAclText(levelPath('ZSJN', 'ZSJN_leisure_1.acl'));
+    const { graph, meta } = buildSceneryGraph(text);
+    const g = structuredClone(graph);
+    g.nodes = [...g.nodes, { x: 800, z: 0, type: 1, flags: 0 }, { x: 900, z: 0, type: 1, flags: 0 }];
+    const na = g.nodes.length - 2, nb = g.nodes.length - 1;
+    g.runways = [...g.runways, { thAIdx: na, thBIdx: nb, names: ['08', '26'], physicalName: '08/26', width: 0.5, entries: [{ name: 'NEWR', holdingIdx: na, lineUpIdx: nb, defineIdx: na, runwayName: '08' }], exits: [] }];
+    const out = patchSceneryBlob(text, g, null, structuredClone(meta), { warnings: [] });
+    expect(() => encodeArchive(out)).not.toThrow();
+    const idx = out.indexOf('"runway:08"');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const block = out.slice(idx, idx + 2500);
+    expect(block).not.toMatch(/"IsActive"/);
+    // PhysicalRunwayStaticItem resolved to the file's real PK-blobdoc id (14).
+    expect(block).toMatch(/"PhysicalRunwayStaticItem":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*"14\|/);
+    // Synthesized HoldingAreaData elements must use the element type, not the array type.
+    const holdArr = block.match(/"HoldingAreas"\s*:\s*\{\s*"\$id"\s*:\s*\d+\s*,\s*"\$type"\s*:\s*("?[^",}]*"?)/);
+    const holdEl = block.match(/"HoldingAreas"\s*:\s*\{[\s\S]{0,900}?"\$rcontent"\s*:\s*\[\s*\{\s*"\$id"\s*:\s*\d+\s*,\s*"\$type"\s*:\s*("?[^",}]*"?)/);
+    expect(holdArr).toBeTruthy();
+    expect(holdEl).toBeTruthy();
+    expect(_typeId(holdEl[1])).not.toBe(_typeId(holdArr[1]));
   });
 });
