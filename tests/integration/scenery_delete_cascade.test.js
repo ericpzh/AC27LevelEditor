@@ -29,7 +29,7 @@ import path from 'path';
 
 const require = createRequire(import.meta.url);
 const { buildSceneryGraph } = require('../../src/acl/scenery_graph');
-const { patchSceneryBlob, _staticEntitiesRanges, _splitArrayEntries, _entryPk, _entryId, _entryTypePrefix, _reconcileJetwayFrames, _jetwayKeysFromEntries } =
+const { patchSceneryBlob, _staticEntitiesRanges, _splitArrayEntries, _entryPk, _entryId, _entryTypePrefix, _reconcileJetwayFrames, _jetwayKeysFromEntries, _reconcileRuntimeFrames, _runtimeReconcilers, _isMalformedRuntimeJetway } =
   require('../../src/acl/scenery_write');
 const { renumberAclIds, countIdDescents } = require('../../src/acl/id_renumber');
 const { RE_FRAME_SENTINEL } = require('../../src/acl/gatcarc');
@@ -247,6 +247,16 @@ describe('_reconcileJetwayFrames / _jetwayKeysFromEntries', () => {
     return header + SEP + frame;
   };
 
+  // Like makeText, but the frame entries are raw strings (for malformed `$v`).
+  const makeTextRaw = (staticKeys, frameEntries) => {
+    const si = staticKeys.map((k) => entry(k));
+    const siArr = '[\n      ' + si.join(',\n      ') + '\n    ]';
+    const header = '{ "$type": "0|Header", "StaticData": { "$blobdoc": { "StaticItems": { "$rlength": ' + si.length + ', "$rcontent": ' + siArr + ' } } } }';
+    const rc = '[\n      ' + frameEntries.join(',\n      ') + '\n    ]';
+    const frame = '{ "$type": "0|Frame", "RuntimeData": { "$blobdoc": { "RuntimeEntities": { "$rlength": ' + frameEntries.length + ', "$rcontent": ' + rc + ' } } } }';
+    return header + SEP + frame;
+  };
+
   it('drops an orphaned jetway runtime entity but preserves valid ones and other entry types', { timeout: 60000 }, () => {
     const text = makeText(['jetway:01', 'jetway:02'], ['jetway:02', 'jetway:03', 'physical-runway:01/19']);
     const out = _reconcileJetwayFrames(text, _jetwayKeysFromEntries(['{ "$k": "jetway:01" }', '{ "$k": "jetway:02" }']));
@@ -270,5 +280,29 @@ describe('_reconcileJetwayFrames / _jetwayKeysFromEntries', () => {
   it('_jetwayKeysFromEntries only returns jetway keys', { timeout: 60000 }, () => {
     const keys = _jetwayKeysFromEntries(['{ "$k": "jetway:01" }', '{ "$k": "jetway:07A" }', '{ "$k": "stand:1" }', '{ "$k": "physical-runway:01/19" }']);
     expect([...keys].sort()).toEqual(['jetway:01', 'jetway:07A']);
+  });
+
+  // Regression: a build enabled `addMissing` for jetway, which synthesizes with
+  // the PhysicalRunway template (`{ "$id", "$type", "_latestDepartureRoll" }`).
+  // Unity rejects that entity with "Jetway 'jetway:NN' is missing required
+  // runtime fields." We must never fabricate a jetway runtime entity, and any
+  // already-written malformed one must be dropped on the next save (self-heal).
+  it('does NOT fabricate a runtime jetway for a static jetway that lacks one', { timeout: 60000 }, () => {
+    const text = makeText(['jetway:01'], []);
+    const out = _reconcileRuntimeFrames(text, _runtimeReconcilers(['{ "$k": "jetway:01" }'], null));
+    expect(frameJetwayKeys(out)).not.toContain('jetway:01');
+  });
+
+  it('drops a malformed jetway runtime entity (PhysicalRunway-shaped) but keeps a valid sibling', { timeout: 60000 }, () => {
+    const malformed = '{ "$k": "jetway:01", "$v": { "$id": 9, "$type": 4, "_latestDepartureRoll": null } }';
+    const valid = '{ "$k": "jetway:02", "$v": { "$id": 10, "$type": 4, "DockingAircraft": null, "DockingDoorIndex": 0, "Status": 0, "Progress": 0, "TrigEvent": 0, "AutoUndockFinished": false } }';
+    expect(_isMalformedRuntimeJetway(malformed)).toBe(true);
+    expect(_isMalformedRuntimeJetway(valid)).toBe(false);
+    const text = makeTextRaw(['jetway:01', 'jetway:02'], [malformed, valid]);
+    const out = _reconcileJetwayFrames(text, _jetwayKeysFromEntries(['{ "$k": "jetway:01" }', '{ "$k": "jetway:02" }']));
+    expect(frameJetwayKeys(out)).not.toContain('jetway:01'); // malformed → dropped
+    expect(frameJetwayKeys(out)).toContain('jetway:02');     // valid → kept
+    const rl = out.match(/RuntimeEntities":\s*\{\s*"\$rlength":\s*(\d+)/);
+    expect(rl && parseInt(rl[1], 10)).toBe(1); // 2 → 1
   });
 });

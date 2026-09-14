@@ -198,4 +198,34 @@ describe('GroundPainter — fillet (rounding) tool', () => {
     // The fillet panel closed after commit (picks reset).
     expect(screen.queryByTitle('Save')).toBeNull();
   });
+
+  it('commits a fillet on a T junction (deg>2) without a ReferenceError', async () => {
+    // T: three arms share O=(5,0) — west [0,1], north [1,2], east [1,3].
+    // Regression for "parentOsmA is not defined": the O-T stub bookkeeping in
+    // the deg>2 branch referenced a `const` declared inside a sibling block.
+    const t = {
+      nodes: [{ x: 0, z: 0 }, { x: 5, z: 0 }, { x: 5, z: 5 }, { x: 8, z: 0 }],
+      segments: [
+        { aIdx: 0, bIdx: 1, nodeIdxs: [0, 1], flags: 2, directed: false },
+        { aIdx: 1, bIdx: 2, nodeIdxs: [1, 2], flags: 2, directed: false },
+        { aIdx: 1, bIdx: 3, nodeIdxs: [1, 3], flags: 2, directed: false },
+      ],
+      runways: [], areas: [], stands: [],
+    };
+    window.electronAPI.loadGroundPainterData = vi.fn(async () => ({ graph: t, meta: mkMeta(t), text: '<acl/>' }));
+    seedStore({ groundPainterTool: 'taxiwayCurve' });
+    await renderPainter();
+    const svg = document.querySelector('.ground-painter svg');
+    // Pick the west arm then the north arm.
+    fireEvent.click(svg, { clientX: 2, clientY: -0.2 });
+    fireEvent.click(svg, { clientX: 5.2, clientY: -2 });
+    const confirmBtn = await waitFor(() => screen.getByTitle('Save'), { timeout: 5000 });
+    fireEvent.click(confirmBtn);
+
+    const s = useAppStore.getState();
+    expect(document.querySelector('.gp-error')).toBeNull();
+    // Arc + truncated legs + O-T stubs were committed; meta stays in lockstep.
+    expect(s.groundPainterGraph.segments.length).toBeGreaterThan(3);
+    expect(s.groundPainterMeta.segOrigPk).toHaveLength(s.groundPainterGraph.segments.length);
+  });
 });

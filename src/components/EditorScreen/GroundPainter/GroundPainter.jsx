@@ -1894,11 +1894,15 @@ export default function GroundPainter({ vals }) {
             if (wp.x >= minX - pad && wp.x <= maxX + pad && wp.z >= minZ - pad && wp.z <= maxZ + pad) onMulti = true;
           }
         }
-        // also allow grabbing an endpoint of a selected segment/runway
+        // Endpoint grab takes priority over body drag — same as the Select tool.
+        // Must run even when `onMulti` is true: pointOnMultiSelected considers any
+        // point on the line "on selection", so without this a runway/segment
+        // endpoint could never be dragged in box-select mode (the body would move
+        // instead). Clicking the body away from a node still body-drags.
         let grabNode = null;
         let grabRunwayIdx = null;
         let grabRwPav = null;
-        if (!onMulti) {
+        {
           const { TH: dynTH2 } = getDynamicSelectThresholds(viewBox, baseVB);
           for (const sel of dragSet) {
             if (sel.kind === 'segment') {
@@ -2413,7 +2417,34 @@ export default function GroundPainter({ vals }) {
       useAppStore.setState({ groundPainterGraph: { ...g, airwayNodes }, groundPainterHasEdited: true });
       return;
     }
-    const nw = findSnap(raw, null, snapGeom, { snapDist: painterSnapDist(viewBox, baseVB), angleToleranceDeg: painterAngleTol(viewBox, baseVB) }) || raw;
+    // When dragging a node, never let it snap to ITSELF or to the geometry it
+    // shares an end with. The dragged node's own current coordinate is in
+    // `snapGeom.points` and its incident segments' endpoints coincide with it, so
+    // endpoint/on-segment snap would pin the node in place until the cursor
+    // traveled a full snap radius away — the "endpoint drag comes loose after
+    // some distance" bug. For a runway threshold, also drop the runway's coupled
+    // pavement strip (Flags=4): it is collinear with the runway, so every strip
+    // vertex would capture the threshold as it passes, making the drag stutter
+    // between strip nodes instead of following the cursor.
+    let dragSnapGeom = snapGeom;
+    if (d.mode === 'node' && d.nodeIdx != null) {
+      const cur = g.nodes[d.nodeIdx];
+      if (cur) {
+        const exclude = [{ x: cur.x, z: cur.z }];
+        if (d.runwayIdx != null && d.rwPav && Array.isArray(d.rwPav.stripNodes)) {
+          for (const s of d.rwPav.stripNodes) {
+            const n = g.nodes[s.ni];
+            if (n) exclude.push({ x: n.x, z: n.z });
+          }
+        }
+        const isSelf = (x, z) => exclude.some((p) => Math.abs(p.x - x) < 1e-9 && Math.abs(p.z - z) < 1e-9);
+        dragSnapGeom = {
+          points: snapGeom.points.filter((p) => !isSelf(p.x, p.z)),
+          segments: snapGeom.segments.filter((s) => !isSelf(s.a.x, s.a.z) && !isSelf(s.b.x, s.b.z)),
+        };
+      }
+    }
+    const nw = findSnap(raw, null, dragSnapGeom, { snapDist: painterSnapDist(viewBox, baseVB), angleToleranceDeg: painterAngleTol(viewBox, baseVB) }) || raw;
 
     if (d.mode === 'node') {
       // Degenerate-edge guard: within any polyline containing this node, no two
@@ -3770,6 +3801,8 @@ export default function GroundPainter({ vals }) {
     }
     const p1Idx = res.p1Idx;
     const p2Idx = res.p2Idx;
+    const parentOsmA = (m.segOrigPk[segIdxA] != null) ? osmFromSegPk(m.segOrigPk[segIdxA]) : (segA0?.parentOsm ?? null);
+    const parentOsmB = (m.segOrigPk[segIdxB] != null) ? osmFromSegPk(m.segOrigPk[segIdxB]) : (segB0?.parentOsm ?? null);
 
     // Helper: create truncated leg for a segment, handling runway pavement interior split
     // For normal 2-point segments O is at endpoint → simple far->T.
@@ -3825,8 +3858,6 @@ export default function GroundPainter({ vals }) {
       applyVirtualFillet(g, m, res, segIdxA, segIdxB);
     } else {
       // Create truncated legs for both picked segments
-      const parentOsmA = (m.segOrigPk[segIdxA] != null) ? osmFromSegPk(m.segOrigPk[segIdxA]) : (segA0?.parentOsm ?? null);
-      const parentOsmB = (m.segOrigPk[segIdxB] != null) ? osmFromSegPk(m.segOrigPk[segIdxB]) : (segB0?.parentOsm ?? null);
       createTruncatedLeg(segA0, p1Idx, idxT1, parentOsmA);
       // For second leg, note direction: T2 -> P2 (still far->T but order reversed for consistency)
       // createTruncatedLeg expects far->T, but for B we have T2->P2 (T to far). Our helper creates far->T, which is same line reversed.

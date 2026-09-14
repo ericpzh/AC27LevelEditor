@@ -18,12 +18,58 @@ import path from 'path';
 const require = createRequire(import.meta.url);
 const { buildSceneryGraph } = require('../../src/acl/scenery_graph');
 const { patchSceneryBlob } = require('../../src/acl/scenery_write');
+const { createTokenizer } = require('../../src/acl/tokenizer');
 const {
   buildPkIndex, getPkEntriesByType, resolveIref, extractVector3FromV4, extractIrefArray,
 } = require('../../src/acl/v4_pk_index');
 
 const FIXTURE = path.join(__dirname, '..', '_debug', 'ZSJN_leisure_1.decoded.txt');
 const text = fs.readFileSync(FIXTURE, 'utf8');
+
+// Force one segment's `IsUnselectable` so a split piece can be checked for
+// visual-property inheritance.
+function setUnselectable(t, pk, val) {
+  const at = t.indexOf('"' + pk + '"');
+  if (at < 0) return t;
+  const blockStart = t.lastIndexOf('{', at);
+  const ct = createTokenizer(t.substring(blockStart));
+  const end = ct.findObjectEnd(0);
+  const entry = t.substring(blockStart, blockStart + end);
+  const patched = entry.replace(/"IsUnselectable":\s*(true|false)/, '"IsUnselectable": ' + val);
+  return t.slice(0, blockStart) + patched + t.slice(blockStart + end);
+}
+
+// Real levels mark runway pavement strips unselectable; apply that to every
+// segment of one OsmId (the state before a split).
+function setOsmUnselectable(t, osm, val) {
+  const idx = buildPkIndex(t);
+  const pks = getPkEntriesByType(idx, 'taxiway-segment')
+    .filter((s) => new RegExp('"OsmId":\\s*' + osm + '\\b').test(s.block))
+    .map((s) => s.pk);
+  let out = t;
+  for (const pk of pks) out = setUnselectable(out, pk, val);
+  return out;
+}
+
+// Every taxiway-segment of one OsmId must carry identical visual properties
+// (Unity: "... have inconsistent visual properties").
+function osmVisualConsistency(aclText, osm) {
+  const idx = buildPkIndex(aclText);
+  const segs = getPkEntriesByType(idx, 'taxiway-segment')
+    .filter((s) => new RegExp('"OsmId":\\s*' + osm + '\\b').test(s.block));
+  const sig = (b) => {
+    const g = (re) => { const m = b.match(re); return m ? m[1] : '(none)'; };
+    return [
+      g(/"Flags":\s*(-?\d+)/),
+      g(/"Directed":\s*(true|false)/),
+      g(/"Head":\s*([^,}]+)/).trim(),
+      g(/"IsHidden":\s*(true|false)/),
+      g(/"IsUnselectable":\s*(true|false)/),
+    ].join('|');
+  };
+  const sigs = new Set(segs.map((s) => sig(s.block)));
+  return { ok: sigs.size <= 1, count: segs.length, sigs: [...sigs] };
+}
 
 // Walk one OsmId's taxiway-segment entries by ordinal and check each consecutive
 // pair shares an endpoint node (the game's continuity criterion), and that the
@@ -123,5 +169,55 @@ describe('Ground Painter — taxiway auto-slice keeps pavement OsmId continuous'
     const osm = parseInt(found.block.match(/"OsmId":\s*(-?\d+)/)[1], 10);
     // Fresh taxiway is NOT forced into an existing pavement OsmId.
     expect(osm).not.toBe(50095);
+  });
+
+  it('split pieces inherit the parent pavement visual properties (no "inconsistent visual properties")', () => {
+    // Mark the parent 01/19 pavement strip unselectable, the way real levels
+    // (e.g. KDCA's "F" strip) mark runway pavement. The synthesized split piece
+    // must inherit it — a hardcoded false default makes Unity reject the level:
+    //   InvalidOperationException: Taxiway segments '...:0' and '...:5' for OSM
+    //   way '...' have inconsistent visual properties.
+    const near = (n, x, z) => n && Math.abs(n.x - x) < 1e-3 && Math.abs(n.z - z) < 1e-3;
+    const findSeg = (g) => g.segments.findIndex((s) => {
+      if (s.name !== '01/19' || s.flags !== 4) return false;
+      const idxs = s.nodeIdxs || [s.aIdx, s.bIdx];
+      return near(g.nodes[idxs[0]], 0.829433, -5.468824) &&
+        near(g.nodes[idxs[idxs.length - 1]], 0.812175, -18.041498);
+    });
+    const text2 = setOsmUnselectable(text, 50095, 'true');
+
+    const { graph, meta } = buildSceneryGraph(text2);
+    const segIdx = findSeg(graph);
+    expect(segIdx).toBeGreaterThanOrEqual(0);
+    const origIdxs = graph.segments[segIdx].nodeIdxs;
+
+    const junction = graph.nodes.length;
+    graph.nodes.push({ x: 0.822093, z: -10.832563, type: 2, flags: 0 });
+    meta.nodeOrigPk.push(null);
+
+    const oldPk = meta.segOrigPk[segIdx];
+    if (!meta.deletedPks) meta.deletedPks = [];
+    meta.deletedPks.push(oldPk);
+
+    const pieceA = [origIdxs[0], junction];
+    const pieceB = [junction, ...origIdxs.slice(1)];
+    graph.segments.splice(segIdx, 1);
+    meta.segOrigPk.splice(segIdx, 1);
+    graph.segments.push({ aIdx: pieceA[0], bIdx: pieceA[1], nodeIdxs: pieceA, flags: 4, directed: false, name: '01/19', parentOsm: 50095 });
+    meta.segOrigPk.push(null);
+    graph.segments.push({ aIdx: pieceA[1], bIdx: pieceB[pieceB.length - 1], nodeIdxs: pieceB, flags: 4, directed: false, name: '01/19', parentOsm: 50095 });
+    meta.segOrigPk.push(null);
+
+    const patched = patchSceneryBlob(text2, graph, null, meta);
+    const cons = osmVisualConsistency(patched, 50095);
+    expect(cons.ok, 'inconsistent visual signatures: ' + JSON.stringify(cons.sigs)).toBe(true);
+
+    // The synthesized pieces must specifically carry IsUnselectable: true.
+    const idx2 = buildPkIndex(patched);
+    const inherited = getPkEntriesByType(idx2, 'taxiway-segment').filter((s) => {
+      const osm = s.block.match(/"OsmId":\s*(-?\d+)/);
+      return osm && parseInt(osm[1], 10) === 50095 && /"IsUnselectable":\s*true/.test(s.block);
+    });
+    expect(inherited.length).toBeGreaterThan(0);
   });
 });

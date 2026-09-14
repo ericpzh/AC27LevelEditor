@@ -1260,6 +1260,11 @@ function _synthesizeSegment(seg, id, osm, segNodeIds, s) {
   // that the game dropped from its ground/route graph (the "doesn't show up
   // in-game" report). See _sampleShapes-verified ambient type.
   const head = seg.directed && ids[0] != null ? '$iref:' + ids[0] : 'null';
+  // Unity requires every segment of one OSM visual way (same OsmId) to share
+  // the same visual properties. A split piece re-emitted under the parent's
+  // OsmId inherits them via seg.isHidden/seg.isUnselectable (default false).
+  const isHidden = seg.isHidden === true;
+  const isUnselectable = seg.isUnselectable === true;
   // Canonical TaxiwaySegment field ORDER (matches the game's serializer): Odin's
   // binary format is POSITIONAL — data fields must appear in the type's declared
   // order ($id, $type, PK, Name, OsmId, Nodes, Flags, Directed, Head, IsHidden,
@@ -1274,7 +1279,7 @@ function _synthesizeSegment(seg, id, osm, segNodeIds, s) {
     ', "Nodes": { "$id": ' + nodesId + ', "$type": ' + _fmtType(s.segListType) +
     ', { "$id": ' + innerId + ', "$type": ' + _fmtType(s.segInnerType) + ', "$rlength": ' + ids.length + ', "$rcontent": [ ' + irefStr + ' ] } },' +
     ' "Flags": ' + segFlags + ', "Directed": ' + (seg.directed ? 'true' : 'false') +
-    ', "Head": ' + head + ', "IsHidden": false, "IsUnselectable": false } }';
+    ', "Head": ' + head + ', "IsHidden": ' + (isHidden ? 'true' : 'false') + ', "IsUnselectable": ' + (isUnselectable ? 'true' : 'false') + ' } }';
 }
 
 function _sampleStandShapes(pkEntries) {
@@ -2072,6 +2077,24 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph, extra) {
 // which previously produced the 09/01 -> Area 8930 corruption.
 function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings, docTypes) {
   const s = _sampleShapes(pkEntries);
+  // Unity requires every segment of one OSM visual way (same OsmId) to share the
+  // SAME visual properties; otherwise level load throws "Taxiway segments
+  // '...:0' and '...:5' for OSM way '...' have inconsistent visual properties".
+  // A split pavement piece is re-emitted under the parent's OsmId, so it must
+  // inherit the parent survivor's Flags/IsHidden/IsUnselectable instead of the
+  // hardcoded false defaults.
+  const segVisualByOsm = new Map();
+  for (const e of pkEntries) {
+    if (_entryTypePrefix(e) !== 'taxiway-segment') continue;
+    const osmM = e.match(/"OsmId"\s*:\s*(-?\d+)/);
+    if (!osmM || segVisualByOsm.has(osmM[1])) continue;
+    const fm = e.match(/"Flags"\s*:\s*(\d+)/);
+    segVisualByOsm.set(osmM[1], {
+      flags: fm ? parseInt(fm[1], 10) : null,
+      isHidden: /"IsHidden"\s*:\s*true/.test(e),
+      isUnselectable: /"IsUnselectable"\s*:\s*true/.test(e),
+    });
+  }
   // survivor node $id by original pk
   const survivorNodeId = new Map();
   for (const e of pkEntries) {
@@ -2173,7 +2196,18 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings,
     // runway's type-4 pavement keeps ONE continuous path. A genuinely-new taxiway
     // (no parentOsm) gets a fresh OsmId.
     const segOsm = seg.parentOsm != null ? seg.parentOsm : allocSegOsm();
-    const segEntry = _synthesizeSegment(seg, id, segOsm, segNodeIds, s);
+    let segEff = seg;
+    if (seg.parentOsm != null) {
+      const pv = segVisualByOsm.get(String(seg.parentOsm));
+      if (pv) {
+        segEff = Object.assign({}, seg, {
+          isHidden: pv.isHidden,
+          isUnselectable: pv.isUnselectable,
+          flags: pv.flags != null ? pv.flags : seg.flags,
+        });
+      }
+    }
+    const segEntry = _synthesizeSegment(segEff, id, segOsm, segNodeIds, s);
     if (segEntry) entries.push(segEntry);
   }
 
@@ -2699,9 +2733,24 @@ function _patchRunwayEntry(entry, oldName, newName, oldPhys, newPhys, newWidth) 
 // `validKeys` is a Set of `<prefix>:` keys derived from the final STATIC
 // StaticItems. `prefix` is the entry-type prefix this reconciler owns
 // (e.g. 'physical-runway', 'jetway'). `patchMap` is optional (old → new key).
-// A single segment is reconciled against one or more reconcilers so a checkpoint
-// frame can clean up both stale physical-runway AND stale jetway runtime
-// entities in one pass.
+// `malformed` is an optional predicate on the raw entry text: when it returns
+// true the runtime entity is dropped (self-heal of an entity an earlier build
+// fabricated incorrectly). A single segment is reconciled against one or more
+// reconcilers so a checkpoint frame can clean up both stale physical-runway AND
+// stale jetway runtime entities in one pass.
+//
+// Jetway runtime entities require their docking fields, but the shared
+// `addMissing` template was built for PhysicalRunway (`{ "$id", "$type",
+// "_latestDepartureRoll" }`). A build that reused it for jetway wrote a runtime
+// entity Unity rejects on load:
+//   InvalidOperationException: Jetway 'jetway:NN' is missing required runtime fields.
+// We therefore never fabricate jetway entities (see _runtimeReconcilers) and
+// drop any such malformed entry left on disk so a no-op save self-heals.
+const JETWAY_RUNTIME_FIELDS = ['DockingAircraft', 'DockingDoorIndex', 'Status', 'Progress', 'TrigEvent', 'AutoUndockFinished'];
+function _isMalformedRuntimeJetway(entryText) {
+  if (!entryText.includes('"_latestDepartureRoll"')) return false; // only the fabricated PhysicalRunway-shaped template
+  return !JETWAY_RUNTIME_FIELDS.some((f) => entryText.includes('"' + f + '"'));
+}
 function _reconcileRuntimeSegment(segText, reconciles) {
   const t = createTokenizer(segText);
   const reSec = t.findSection('RuntimeEntities');
@@ -2745,6 +2794,13 @@ function _reconcileRuntimeSegment(segText, reconciles) {
         for (const rec of reconciles) {
           // Only the reconciler that owns this entry type acts on it.
           if (!key.startsWith(rec.prefix + ':')) continue;
+          if (rec.malformed && rec.malformed(modifiedEntry)) {
+            // Malformed runtime entity (e.g. a jetway fabricated with the
+            // PhysicalRunway template) — drop it rather than let the game abort.
+            isOrphan = true;
+            finalKey = key;
+            break;
+          }
           if (rec.patchMap && rec.patchMap.has(key)) {
             // Rename follows the static rename so the runtime snapshot stays
             // valid (e.g. physical-runway:01/19 → physical-runway:04/22).
@@ -2870,7 +2926,7 @@ function _reconcilePhysicalRunwayFrames(text, validPhysKeys, physPatchMap) {
 // 'jetway:NN' does not exist in CurrentLevel.StaticField.StaticItems".
 function _reconcileJetwayFrames(text, validJetwayKeys) {
   return _reconcileRuntimeFrames(text, [
-    { prefix: 'jetway', validKeys: validJetwayKeys, patchMap: null },
+    { prefix: 'jetway', validKeys: validJetwayKeys, patchMap: null, malformed: _isMalformedRuntimeJetway },
   ]);
 }
 
@@ -2883,8 +2939,11 @@ function _runtimeReconcilers(siEntries, physPatchMap) {
     // registered physical runway that lacks one (a runway added/renamed by the
     // painter would otherwise have no checkpoint-frame runtime snapshot).
     { prefix: 'physical-runway', validKeys: _physKeysFromEntries(siEntries), patchMap: physPatchMap || null, addMissing: true },
-    // jetway: also ADD a runtime Jetway entity for every static jetway that lacks one (new gate stands)
-    { prefix: 'jetway', validKeys: _jetwayKeysFromEntries(siEntries), patchMap: null, addMissing: true },
+    // jetway: drop orphaned/malformed runtime entities, but NEVER fabricate one —
+    // the addMissing template is PhysicalRunway-shaped and produces a Jetway
+    // "missing required runtime fields". The game owns creation of new jetway
+    // runtime entities for new gate stands (same reasoning as the comment above).
+    { prefix: 'jetway', validKeys: _jetwayKeysFromEntries(siEntries), patchMap: null, malformed: _isMalformedRuntimeJetway },
   ];
 }
 
@@ -4584,6 +4643,7 @@ module.exports = {
   _reconcileJetwayFrames,
   _reconcileRuntimeFrames,
   _runtimeReconcilers,
+  _isMalformedRuntimeJetway,
   _physKeysFromEntries,
   _jetwayKeysFromEntries,
   _entryPk,
