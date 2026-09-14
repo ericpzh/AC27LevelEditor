@@ -121,6 +121,21 @@ describe('GroundPainter — runway endpoint drag', () => {
     expect(g.nodes[5].z).toBeCloseTo(-6, 6);
   });
 
+  it('disables the floating overlay hit-testing for the duration of a drag', async () => {
+    seedStore();
+    await renderPainter();
+    const svg = document.querySelector('.ground-painter svg');
+    fireEvent.click(svg, { clientX: 5, clientY: 0 }); // select runway → name boxes render
+    const overlays = document.querySelector('.gp-overlays');
+    expect(overlays).toBeTruthy();
+    expect(overlays.classList.contains('gp-overlays--dragging')).toBe(false);
+    fireEvent.mouseDown(svg, { clientX: 0, clientY: 0, button: 0 });
+    expect(overlays.classList.contains('gp-overlays--dragging')).toBe(true);
+    fireEvent.mouseMove(svg, { clientX: -6, clientY: 0, button: 0 });
+    fireEvent.mouseUp(svg, { clientX: -6, clientY: 0, button: 0 });
+    expect(overlays.classList.contains('gp-overlays--dragging')).toBe(false);
+  });
+
   it('tracks the cursor smoothly across collinear pavement strip nodes (no snap stutter)', async () => {
     // A far-away area inflates the map bounds so the snap radius is large enough
     // to capture; the Flags=4 pavement vertices are collinear with the runway and

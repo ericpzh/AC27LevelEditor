@@ -7,8 +7,8 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (1489) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
-npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (1489 tests, 87 files, ~10s)
+npm run test:all      # Full suite: Vitest (1490) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
+npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (1490 tests, 87 files, ~10s)
 npm run test:e2e      # 18 Playwright E2E tests (requires npm run build first, ~8 min; 16 pass, 2 skipped — both fuzz specs gated on FUZZ_RUN)
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
@@ -31,11 +31,11 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 ---
 
-## Layer 1 — Vitest Component Tests (1489 tests, 87 files)
+## Layer 1 — Vitest Component Tests (1490 tests, 87 files)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 1489 pass (87 test files; includes the Ground Painter scenery suite + airway roundtrip)
+### `npm test` — 1490 pass (87 test files; includes the Ground Painter scenery suite + airway roundtrip)
 
 Coverage (`npx vitest run --coverage`, provider `@vitest/coverage-v8`, config in `vitest.config.js`) is
 scoped to the core logic trees — `src/acl/**` + `src/components/EditorScreen/GroundPainter/**` — with
@@ -72,7 +72,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 | `components/EditorScreen/GroundPainter/polygon_simple.test.js` | 12 | **Polygon simplicity guard** — `polygonIsSimple` / `polysSimple` (Triangulator): bowtie/self-crossing outlines rejected via `segProperCross` with bbox pre-filter, adjacent edges exempt, degenerate edges ignored; both CJS (`src/acl/scenery_graph.js`) and ESM mirror (`polygon_simple.js`) stay in sync |
 | `components/EditorScreen/GroundPainter/airMode.test.jsx` | 10 | **Air mode (unified Ground/Air painter)** — air/ground toggle, airway-node markers (zoom-aware sizing), procedure chaining via `create_airway_procedures`/graph `procedures[]`, air fillet, move/rename/delete airway objects, `extractAirwayOsmPool`/`getAirwayOsmPoolInfo` |
 | `components/EditorScreen/GroundPainter/GroundPainter.test.jsx` | 7 | **Ground Painter component (jsdom + real zustand store)** — smoke mount (loading state → SVG canvas + taxiway polylines + toolbar), Cancel closes via the store; taxiway-line tool: two clicks commit a segment into the graph (nodes/segment/meta + history push + dirty flag) and a zero-length draft shows the inline "distinct endpoints" error without committing; fillet tool: picking a curved segment shows the straight-only error, two picks on the L corner commit through the floating panel — legs truncated to the tangents, 11-point arc added, corner O ghost-deleted (`deletedPks` = 2 seg PKs + node PK), picks reset; **T junction (deg>2)** commits without a `ReferenceError` (the O-T stub bookkeeping used a `const` from a sibling block — `parentOsmA is not defined`) and keeps `meta.segOrigPk` in lockstep with `graph.segments` |
-| `components/EditorScreen/GroundPainter/runwayEndpointDrag.test.jsx` | 4 | **Runway threshold (endpoint) drag** — Select tool grabs the threshold (leaves the other end fixed) and the coupled Flags=4 pavement strips follow via proportional re-projection (`-6.96/-1.2/5.2/10.96` for a 0..10 → −6..10 reshape); Box Select also grabs the threshold instead of body-dragging the whole runway (the endpoint grab must run before `pointOnMultiSelected`, which treats the whole line as "on selection"); Box Select body-drag away from a node still moves the whole runway; **snap tracking:** with a realistic snap radius and 1-GU-spaced collinear pavement vertices, the threshold must track the cursor exactly (the node-drag snap geometry excludes the dragged node and its runway's own pavement strips, otherwise it sticks to each strip vertex then jumps) |
+| `components/EditorScreen/GroundPainter/runwayEndpointDrag.test.jsx` | 5 | **Runway threshold (endpoint) drag** — Select tool grabs the threshold (leaves the other end fixed) and the coupled Flags=4 pavement strips follow via proportional re-projection (`-6.96/-1.2/5.2/10.96` for a 0..10 → −6..10 reshape); Box Select also grabs the threshold instead of body-dragging the whole runway (the endpoint grab must run before `pointOnMultiSelected`, which treats the whole line as "on selection"); Box Select body-drag away from a node still moves the whole runway; **snap tracking:** with a realistic snap radius and 1-GU-spaced collinear pavement vertices, the threshold must track the cursor exactly (the node-drag snap geometry excludes the dragged node and its runway's own pavement strips, otherwise it sticks to each strip vertex then jumps); **overlay hit-testing is disabled while dragging** (`.gp-overlays--dragging` toggles on mousedown/mouseup so the runway end-name boxes can't intercept the drag) |
 | `hooks/useEditorSaveActions.test.jsx` | 7 | **Save flow (3):** `handleSave`/`handleSaveAs` call `runTripleValidation` with the store flights; no issues → backup modal (not issues modal); duplicate callsigns block save before validation. **Restore/import (2):** `handleRestore`/`handleImport` load flights via `setLegacyState`. **Back (2):** no modifications → straight to browser; modifications → unsaved-changes modal. |
 | `electron/bepinex.test.js` | 28 | checkStatus (null, partial, full, empty); findDownloadUrl (URL extraction, artifact not found, HTTP error); downloadZip (happy path — file content + progress 0→100%, incremental multi-chunk progress, HTTP 404 rejects + file cleanup, network error rejects + cleanup, timeout rejects + cleanup); extractZip (non-Windows guard); installFiles (subdirectory, missing items, flat structure); removeFiles (all items, partial, non-existent); installLatest (full pipeline incl. downloadZip, error cleanup, download progress normalization) |
 | `unit/live-scenery.test.js` | 11 | **Live scenery / geo_osm transform** — `fitTransform`/`syncGeoData` internals: linear lat/lon↔x/z fitting from shared graph nodes (≥3), lat/lon bounds, node/way sync, `.bak` sidecar handling |
@@ -154,7 +154,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 
 ### Known Vitest failures (none)
 
-All 1489 Vitest tests pass (87 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
+All 1490 Vitest tests pass (87 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
 

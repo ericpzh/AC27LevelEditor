@@ -18,6 +18,15 @@
   user-select: none;
   -webkit-user-select: none;
 }
+/* While a drag is in progress the floating overlays (runway end-name boxes,
+   stand/segment/rename panels) must not intercept the pointer: their hit areas
+   sit near the geometry, so a threshold drag would hit an overlay and the SVG
+   would stop receiving mousemove/mouseup. `!important` beats the inline
+   pointer-events:auto each overlay otherwise sets. */
+.gp-overlays--dragging,
+.gp-overlays--dragging * {
+  pointer-events: none !important;
+}
 .gp-empty {
   color: #6b7a99;
   display: flex;

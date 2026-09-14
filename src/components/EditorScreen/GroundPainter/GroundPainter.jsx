@@ -711,6 +711,7 @@ export default function GroundPainter({ vals }) {
   const [multiSelected, setMultiSelected] = useState([]); // [{kind, idx}] for box-select (NOT AREA)
   const [boxRect, setBoxRect] = useState(null); // {x0,z0,x1,z1} world rect preview during box drag
   const [selectEnabled, setSelectEnabled] = useState(true); // Select tool toggle (off = pan-only)
+  const [dragging, setDragging] = useState(false); // pointer drag in progress — disables overlay hit-testing
   const [areaType, setAreaType] = useState(2);    // 0 boundary | 1 apron | 2 building (default building)
   const [heading, setHeading] = useState(360);    // stand heading 1..360 for NEXT stand (toolbar)
   const [gpError, setGpError] = useState(null);   // transient validation message
@@ -1847,6 +1848,11 @@ export default function GroundPainter({ vals }) {
       return;
     }
     const wp = toWorld(evt);
+    // Any left/middle mousedown on the map begins a potential drag. Disable the
+    // floating overlays' hit-testing for the duration (see `dragging`), so the
+    // runway end-name boxes (and the stand/segment/rename panels) can't intercept
+    // the mousemove/mouseup and break an in-progress threshold drag.
+    if (evt.button === 0 || evt.button === 1) setDragging(true);
     if (evt.button === 1) { // middle → pan always
       evt.preventDefault();
       dragRef.current = { mode: 'pan', sx: evt.clientX, sy: evt.clientY, vb: viewBox.slice(), moved: false, button: 1 };
@@ -2225,6 +2231,9 @@ export default function GroundPainter({ vals }) {
   }, [graph, pickForeground, findNearestAirwayNode, findNearestProcedure]);
 
   const onMouseUp = useCallback((evt) => {
+    // End the drag on every exit path (box marquee / pan / geometry move), which
+    // re-enables the floating overlays' hit-testing.
+    setDragging(false);
     // Finish box-select rectangle / click
     if (boxDragRef.current) {
       const b = boxDragRef.current;
@@ -5648,7 +5657,7 @@ export default function GroundPainter({ vals }) {
             <svg ref={svgRef} viewBox={viewBox.join(' ')} width="100%" height="100%" onMouseMove={onMove} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={(e) => { setHovered(null); onMouseUp(e); }} onClick={onClick} onDoubleClick={onDblClick} onWheel={onWheel} onContextMenu={(e) => e.preventDefault()}>
               {render()}
             </svg>
-            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+            <div className={'gp-overlays' + (dragging ? ' gp-overlays--dragging' : '')} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
               {runwayOverlay}
               {standSliderOverlay}
               {segmentNameOverlay}
