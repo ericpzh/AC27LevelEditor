@@ -10,6 +10,14 @@
   flex: 1 1 auto;
   overflow: hidden;
 }
+/* The map is a direct-manipulation canvas: a drag must never start a text
+   selection, which otherwise highlights the length/angle/designator labels
+   while moving a runway threshold or taxiway node. Scoped to the SVG so the
+   floating name/heading inputs stay selectable. */
+.ground-painter-canvas svg {
+  user-select: none;
+  -webkit-user-select: none;
+}
 .gp-empty {
   color: #6b7a99;
   display: flex;
