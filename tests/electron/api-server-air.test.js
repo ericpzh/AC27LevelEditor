@@ -4,7 +4,7 @@ import { MCP_TOOLS } from '../../electron/api-server';
 describe('api-server — air MCP tools', () => {
   it('exposes air tools', () => {
     const names = MCP_TOOLS.map((t) => t.name);
-    for (const n of ['create_airway_nodes', 'create_airway_procedures', 'delete_airway_objects', 'move_airway_objects', 'rename_airway_object', 'create_airway_fillet']) {
+    for (const n of ['create_airway_nodes', 'create_airway_procedures', 'delete_airway_objects', 'move_airway_objects', 'rename_airway_object', 'create_airway_fillet', 'set_ground_painter_mode']) {
       expect(names).toContain(n);
     }
   });

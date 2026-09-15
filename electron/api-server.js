@@ -773,6 +773,7 @@ const MCP_TOOLS = [
     },
   },
   { name: 'get_ground_painter_state', description: 'Read the Ground Painter current state (id-free graph, tool, dirty, isOpen). Null graph means painter not yet seeded — open the Ground Painter UI once.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'set_ground_painter_mode', description: "Switch the Ground/Air Painter between the ground scenery view and the airside view ('ground' | 'air'). Mirrors the toolbar's air/ground toggle. Only affects the UI mode — the id-free graph is shared across both modes and the MCP edit tools are mode-agnostic.", inputSchema: { type: 'object', properties: { mode: { type: 'string', enum: ['ground', 'air'] } }, required: ['mode'] } },
   { name: 'create_taxiway_lines', description: 'Add straight taxiway segments to the Ground Painter graph (in-memory until Save). Deduplicates nodes by coordinate (1e-6), validates distinct endpoints, pushes history so undo works. Uses flags 2 (wider) by default.', inputSchema: { type: 'object', properties: { lines: { type: 'array', items: { type: 'object', properties: { a: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, b: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } }, name: { type: 'string' }, flags: { type: 'number' } }, required: ['a', 'b'] } } }, required: ['lines'] } },
   { name: 'create_areas', description: 'Add Area polygons to the Ground Painter graph (areaType 0=boundary/perimeter, 1=apron, 2=building). Each polygon needs ≥3 vertices, auto-closed.', inputSchema: { type: 'object', properties: { areas: { type: 'array', items: { type: 'object', properties: { areaType: { type: 'number', enum: [0, 1, 2] }, points: { type: 'array', minItems: 3, items: { type: 'object', required: ['x', 'z'], properties: { x: { type: 'number' }, z: { type: 'number' } } } } }, required: ['areaType', 'points'] } } }, required: ['areas'] } },
   { name: 'create_area', description: 'Add a single Area polygon (deprecated, use create_areas).', inputSchema: { type: 'object', properties: { areaType: { type: 'number' }, points: { type: 'array', items: { type: 'object' } } }, required: ['areaType', 'points'] } },
@@ -949,6 +950,18 @@ async function handleMcpMessage(msg) {
             summary: g ? { nodes: g.nodes.length, segments: g.segments.length, runways: g.runways.length, areas: g.areas.length, stands: g.stands.length, airwayNodes: (g.airwayNodes || []).length, procedures: (g.procedures || []).length } : null,
             metaSummary: s.groundPainterMeta ? { nodeOrigPk: s.groundPainterMeta.nodeOrigPk?.length || 0, segOrigPk: s.groundPainterMeta.segOrigPk?.length || 0, deletedPks: s.groundPainterMeta.deletedPks?.length || 0, deletedAreaIds: s.groundPainterMeta.deletedAreaIds?.length || 0, airwayNodeOrigPk: s.groundPainterMeta.airwayNodeOrigPk?.length || 0, airwaySegOrigPk: s.groundPainterMeta.airwaySegOrigPk?.length || 0, deletedAirwayPks: s.groundPainterMeta.deletedAirwayPks?.length || 0 } : null,
           };
+          break;
+        }
+        case 'set_ground_painter_mode': {
+          const s = await readStoreState();
+          const mode = args.mode === 'air' ? 'air' : args.mode === 'ground' ? 'ground' : null;
+          if (!mode) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: "mode must be 'ground' or 'air'" }) }], isError: true });
+          const previous = s.groundPainterMode || 'ground';
+          // Mirror the UI toggle: entering ground clears the air-only runway filter
+          // so the ground view isn't silently filtered by a stale air selection.
+          if (mode === 'ground') pushStoreUpdate({ groundPainterMode: mode, groundPainterActiveRunways: null });
+          else pushStoreUpdate({ groundPainterMode: mode });
+          result = { success: true, previous, mode };
           break;
         }
         case 'create_taxiway_lines': {

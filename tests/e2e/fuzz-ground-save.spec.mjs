@@ -5,32 +5,50 @@
  *   1. Open the level in the editor (browser row click)
  *   2. Open the Ground Painter (toggleGroundPainter → load-ground-painter-data)
  *   3. FuzzGroundTest(aclPath) applies 50–200 RANDOMIZED operations through the
- *      MCP Ground/Air Painter API (127.0.0.1:31415). The operation mix is
- *      distributed over percentage points of the run's total ops (ground + air unified):
- *        - 5%  runway ops    (create_runways / move via target / rename end names)
- *        - 5%  taxiway new   (create_taxiway_lines)
- *        - 20% taxiway mod   (move whole segment / move one endpoint / rename)
- *        - 20% fillet        (create_taxiway_fillet, radius 0.5..5.0 — half of the
- *                            fillets first CONNECT a new taxiway onto a runway
- *                            pavement strip (Flags=4) and then fillet that junction)
- *        - 10% area ops      (create_areas areaType 0|1|2 / move whole area / move vertex)
- *        - 5%  stand ops     (create_stands / move / rename)
- *        - 15% select+delete (single-select move / multi-select move /
- *                            select-all move / delete_ground_objects)
- *        - 20% air ops       (create_airway_nodes 7, create_airway_procedures 7,
- *                            create_airway_fillet 3, move/rename/delete airway 3)
- *      Every generated coordinate is inside the level's current scenery bounds
- *      (derived from the live graph's node extents, with 5% padding); runway
- *      names are auto-derived from heading and always satisfy the save-time
- *      validation regex `^[0-9]{1,2}[A-Z]?$`. Rejected operations are retried
- *      with fresh random values; a validation rejection that names a distinct-
- *      endpoint or vertex-count error is treated as retryable and does not fail
- *      the run.
- *   4. Ensure the graph is viable (≥1 taxiway family), then hit SAVE through
- *      the real Ground Painter UI (Save → backup confirmation modal → success),
+ *      MCP Ground/Air Painter API (127.0.0.1:31415) in TWO MODE-PARTITIONED
+ *      PHASES (2/3 ground, 1/3 air — e.g. 200 ops → ~133 ground + ~67 air),
+ *      mirroring how a user actually edits a level:
+ *        PHASE 1 — GROUND MODE (groundPainterMode='ground', the painter's default):
+ *          - 7%  runway ops    (create_runways / move via target / rename end names)
+ *          - 7%  taxiway new   (create_taxiway_lines)
+ *          - 25% taxiway mod   (move whole segment / move one endpoint / rename)
+ *          - 25% fillet        (create_taxiway_fillet, radius 0.5..5.0 — half of the
+ *                              fillets first CONNECT a new taxiway onto a runway
+ *                              pavement strip (Flags=4) and then fillet that junction)
+ *          - 12% area ops      (create_areas areaType 0|1|2 / move whole area / move vertex)
+ *          - 6%  stand ops     (create_stands / move / rename)
+ *          - 18% select+delete (single-select move / multi-select move /
+ *                              select-all move / delete_ground_objects)
+ *        MODE SWAP — the real toolbar air/ground toggle is clicked
+ *          (`[data-testid="air-ground-toggle"]`, `set_ground_painter_mode` MCP
+ *          fallback) and the run asserts `get_ground_painter_state().mode==='air'`.
+ *        PHASE 2 — AIR MODE (groundPainterMode='air', air bounds), 30% node-
+ *        related / 70% procedure-related:
+ *          - node-related (30%): create_airway_nodes 16% · move_airway_objects
+ *                (node target) 6% · rename_airway_object(kind='airwayNode') 5%
+ *                · delete_airway_objects (node target) 3%
+ *          - procedure-related (70%): create_airway_procedures 30% ·
+ *                create_airway_fillet 18% (intra-procedure AAA, radius 50..500
+ *                GU, MCP auto-picks the sharpest interior corner) ·
+ *                move_airway_objects (procedure-body target) 8% ·
+ *                rename_airway_object(kind='procedure') 7% ·
+ *                delete_airway_objects (procedure-body target) 7%
+ *      Ground coordinates come from the graph's node extents (5% padding); air
+ *      coordinates come from the authored airway-node extents (or a wide box
+ *      around the ground center when the level has no fixes) so procedure legs
+ *      and fillets are geometrically meaningful. Runway names are auto-derived
+ *      from heading and always satisfy the save-time validation regex
+ *      `^[0-9]{1,2}[A-Z]?$`. Rejected operations are retried with fresh random
+ *      values; a validation rejection that names a distinct-endpoint or
+ *      vertex-count error is treated as retryable and does not fail the run.
+ *   4. Ensure the ground graph is viable (≥1 taxiway family), then hit SAVE
+ *      through the real Ground Painter UI (Save → backup confirmation modal →
+ *      success) — still in air mode, exercising the mode-independent save path —
  *      creating the .acl.bak
  *   5. Verify: .acl.bak exists, saved .acl reloads through the real scenery
- *      graph + flight parser, and the editor's guarantees hold. The flight
+ *      graph + flight parser (including airway nodes/procedures, which must be
+ *      non-degenerate and fully resolvable), and the editor's guarantees hold.
+ *      The flight
  *      baseline is the file, NOT the store (demo-classified basenames —
  *      DEMO_VISIBLE_BASES, e.g. ZSJN_leisure_1.acl ships as a prod file but
  *      the editor filters the store to the CDT demo window at load — hold only
@@ -155,6 +173,29 @@ async function getStatus() {
 
 async function getGroundState() {
   return mcpCall('get_ground_painter_state', {});
+}
+
+async function getPainterMode() {
+  const st = await getGroundState();
+  return st.mode || 'ground';
+}
+
+// Switch the painter between its ground and air views. Prefers the real toolbar
+// toggle (`[data-testid="air-ground-toggle"]` → store `groundPainterMode`) so the
+// click-driven UI path is exercised; falls back to the `set_ground_painter_mode`
+// MCP tool if the button is unavailable/intercepted by an overlay.
+async function switchPainterMode(window, target) {
+  if ((await getPainterMode()) === target) return true;
+  const btn = window.locator('[data-testid="air-ground-toggle"]');
+  if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await btn.click({ timeout: 3000 }).catch(() => {});
+    const ok = await waitFor(async () => (await getPainterMode()) === target, { timeout: 6000, interval: 150, label: `painter mode ${target} (UI)` })
+      .then(() => true).catch(() => false);
+    if (ok) return true;
+  }
+  await mcpCall('set_ground_painter_mode', { mode: target });
+  await waitFor(async () => (await getPainterMode()) === target, { timeout: 6000, interval: 150, label: `painter mode ${target} (MCP)` });
+  return true;
 }
 
 async function waitFor(fn, { timeout = 10000, interval = 200, label = 'condition' } = {}) {
@@ -285,6 +326,19 @@ async function goBackToBrowser(window) {
     await window.waitForTimeout(400);
   } catch (_) {}
   for (let attempt = 0; attempt < 4; attempt++) {
+    // A save-with-warnings / save-success modal can appear AFTER the save loop
+    // returns (the flight-rebuild IPC resolves late) and its overlay intercepts
+    // the Back click. Dismiss any open modal BEFORE navigating.
+    for (let p = 0; p < 3; p++) {
+      const modal = window.locator('#modal-overlay');
+      if (!(await modal.isVisible({ timeout: 800 }).catch(() => false))) break;
+      const title = await window.locator('#modal-title').textContent().catch(() => '');
+      console.log(`    Pre-back modal [${p}]: "${title}"`);
+      const btn = window.locator('#modal-actions .btn-confirm, #modal-actions .btn-cancel').first();
+      if (!(await btn.isVisible().catch(() => false))) break;
+      await btn.click().catch(() => {});
+      await window.waitForTimeout(500);
+    }
     const saveBtn = window.locator('button:has-text("Save"), button:has-text("保存")').first();
     if (!(await saveBtn.isVisible({ timeout: 2000 }).catch(() => false))) return;
     const backBtn = window.locator('button:has-text("Back"), button:has-text("返回")').first();
@@ -307,7 +361,10 @@ async function goBackToBrowser(window) {
 }
 
 /**
- * FuzzGroundTest(aclFilePath) — randomized Ground Painter edit storm on one level, then SAVE.
+ * FuzzGroundTest(aclFilePath) — randomized Ground Painter edit storm on one level
+ * then SAVE. Two mode-partitioned phases: ground edits in ground mode, a real
+ * toolbar air-mode swap, then air edits in air mode, then (still in air mode) the
+ * real Ground Painter Save → backup modal → success.
  *
  * @param {string} aclFilePath   Full path to the .acl file in the temp game root
  * @param {object} opts
@@ -315,7 +372,7 @@ async function goBackToBrowser(window) {
  * @param {number} [opts.seed]   RNG seed (default Date.now())
  * @param {number} [opts.minOps] min random operations (default 50)
  * @param {number} [opts.maxOps] max random operations (default 200)
- * @returns {Promise<object>} summary { ok, file, seed, ops, accepted, rejected, deletes, rejectedReasons, backupCreated, reloaded, error? }
+ * @returns {Promise<object>} summary { ok, file, seed, ops, accepted, rejected, airAccepted, deletes, rejectedReasons, backupCreated, reloaded, error? }
  */
 export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), minOps = 50, maxOps = 200 } = {}) {
   const base = path.basename(aclFilePath, '.acl');
@@ -384,8 +441,10 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     let graph = groundState.graph;
     if (!graph) throw new Error('ground painter graph is null after open');
 
-    // Derive bounds from current graph nodes (with fallback)
-    let bounds = null;
+    // Derive ground bounds from current graph nodes (with fallback). The active
+    // `bounds` scopes randPoint/randDelta/clampToBounds and is swapped to the
+    // air bounds when the run switches to air mode.
+    const FALLBACK_BOUNDS = { minX: -20, maxX: 20, minZ: -20, maxZ: 20, w: 40, h: 40 };
     const computeBounds = (g) => {
       if (!g || !g.nodes || !g.nodes.length) return null;
       let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
@@ -401,13 +460,32 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       const padZ = (maxZ - minZ) * 0.05;
       return { minX: minX - padX, maxX: maxX + padX, minZ: minZ - padZ, maxZ: maxZ + padZ, w: maxX - minX, h: maxZ - minZ };
     };
-    bounds = computeBounds(graph);
-    if (!bounds) bounds = { minX: -20, maxX: 20, minZ: -20, maxZ: 20, w: 40, h: 40 };
-    log(`graph ready: nodes=${graph.nodes.length} segs=${graph.segments.length} rw=${graph.runways.length} areas=${graph.areas.length} stands=${graph.stands.length} bounds=${bounds.minX.toFixed(1)},${bounds.minZ.toFixed(1)} → ${bounds.maxX.toFixed(1)},${bounds.maxZ.toFixed(1)}`);
+    // Air bounds: authored airway-node extents (when present) with a fallback to
+    // a wide box around the ground center. Ground scale is a few GU wide, while
+    // real STAR/SID fixes sit hundreds of GU out and the air fillet radius is
+    // 50..500 GU — a ground-scale box would produce degenerate procedures.
+    const AIR_FALLBACK_SPAN = 400;
+    const computeAirBounds = (gb, g) => {
+      const cx = gb ? (gb.minX + gb.maxX) / 2 : 0;
+      const cz = gb ? (gb.minZ + gb.maxZ) / 2 : 0;
+      const minSpan = Math.max(gb ? Math.max(gb.w, gb.h) : 0, AIR_FALLBACK_SPAN);
+      const pts = ((g && g.airwayNodes) || []).filter((n) => n && isFinite(n.x) && isFinite(n.z));
+      if (pts.length >= 3) {
+        let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+        for (const n of pts) { if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x; if (n.z < minZ) minZ = n.z; if (n.z > maxZ) maxZ = n.z; }
+        const padX = Math.max((maxX - minX) * 0.1, minSpan * 0.2);
+        const padZ = Math.max((maxZ - minZ) * 0.1, minSpan * 0.2);
+        return { minX: minX - padX, maxX: maxX + padX, minZ: minZ - padZ, maxZ: maxZ + padZ, w: (maxX - minX) + 2 * padX, h: (maxZ - minZ) + 2 * padZ };
+      }
+      return { minX: cx - minSpan / 2, maxX: cx + minSpan / 2, minZ: cz - minSpan / 2, maxZ: cz + minSpan / 2, w: minSpan, h: minSpan };
+    };
+    let groundBounds = computeBounds(graph) || FALLBACK_BOUNDS;
+    let airBounds = null;
+    let airPhase = false;
+    let bounds = groundBounds;
+    log(`graph ready: nodes=${graph.nodes.length} segs=${graph.segments.length} rw=${graph.runways.length} areas=${graph.areas.length} stands=${graph.stands.length} airwayNodes=${(graph.airwayNodes || []).length} procedures=${(graph.procedures || []).length} bounds=${bounds.minX.toFixed(1)},${bounds.minZ.toFixed(1)} → ${bounds.maxX.toFixed(1)},${bounds.maxZ.toFixed(1)}`);
 
     const randPoint = () => {
-      const w = bounds.w || (bounds.maxX - bounds.minX) || 10;
-      const h = bounds.h || (bounds.maxZ - bounds.minZ) || 10;
       const x = bounds.minX + rand() * (bounds.maxX - bounds.minX);
       const z = bounds.minZ + rand() * (bounds.maxZ - bounds.minZ);
       // If the level has no scenery yet, w/h may be 0 — jitter around center
@@ -423,19 +501,25 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       return randPoint();
     };
 
-    // Helpers to read latest graph after mutations
+    // Helpers to read latest graph after mutations. In ground phase the active
+    // bounds track the live ground extents; in air phase they stay pinned to the
+    // air box (airway edits don't move the ground scenery).
     const refreshGraph = async () => {
       groundState = await getGroundState();
       graph = groundState.graph;
       const b = computeBounds(graph);
-      if (b) bounds = b;
+      if (b) groundBounds = b;
+      if (!airPhase && b) bounds = b;
       return graph;
     };
 
     // ── 3. Randomized operations ──
     const nOps = rint(Math.min(minOps, maxOps), maxOps);
+    // 2/3 ground, 1/3 air (e.g. 200 ops → ~133 ground + ~67 air).
+    const groundOps = Math.max(1, Math.round(nOps * 2 / 3));
+    const airOps = Math.max(1, nOps - groundOps);
     summary.ops = nOps;
-    log(`fuzzing ground with ${nOps} operations (seed ${summary.seed})`);
+    log(`fuzzing with ${nOps} operations (${groundOps} ground + ${airOps} air, seed ${summary.seed})`);
 
     const countSync = async (checkFn, label) => {
       await waitFor(async () => {
@@ -1065,42 +1149,54 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       fuzzLog.rejected.push('create_airway_procedures: ' + lastReason);
       return false;
     };
+    // Air fillet is intra-procedure only (matches the UI: after picking an edge
+    // of procedure AAA the snap/select is locked to AAA's edges). `procedure`
+    // without a vertex makes the MCP auto-pick the sharpest filletable interior
+    // corner and the radius (50..500 GU) is clamped to the leg length, so the
+    // run only fails when the procedure has no corner in the 5..175° band.
     const doAirFillet = async (fuzzLog) => {
       let lastReason = null;
       for (let attempt = 0; attempt < 6; attempt++) {
         await refreshGraph();
-        const procCount = graph.procedures?.length ?? 0;
-        if (procCount < 2) { lastReason = 'not enough procedures'; break; }
-        // find a pair sharing a node
-        const candidates = [];
-        for (let a = 0; a < procCount; a++) for (let b = a + 1; b < procCount; b++) {
-          const pa = graph.procedures[a], pb = graph.procedures[b];
-          if (!pa || !pb) continue;
-          const shared = pa.airwayNodeIdxs.some((v) => pb.airwayNodeIdxs.includes(v));
-          if (shared) candidates.push([a, b]);
-        }
-        if (!candidates.length) { lastReason = 'no connected procedure pair'; break; }
-        const [procA, procB] = rpick(candidates);
-        const radius = Math.round((0.5 + rand() * 4.5) * 20) / 20;
+        const procs = graph.procedures || [];
+        const candidates = procs.map((_, i) => i).filter((i) => (procs[i].airwayNodeIdxs || []).length >= 3);
+        if (!candidates.length) { lastReason = 'no procedures with ≥3 fixes'; break; }
+        const idx = rpick(candidates);
+        const radius = rint(50, 500);
         try {
-          await mcpCall('create_airway_fillet', { procA, procB, radius });
-          await window.waitForTimeout(200);
-          await refreshGraph();
-          fuzzLog.accepted.push(`air fillet ${procA}–${procB} r=${radius.toFixed(2)}`);
+          const r = await mcpCall('create_airway_fillet', { procedure: idx, radius });
+          await afterMutation();
+          fuzzLog.accepted.push(`air fillet proc#${idx} r=${radius} +${r.newNodes} nodes`);
           return true;
         } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
       }
       fuzzLog.rejected.push('create_airway_fillet: ' + lastReason);
       return false;
     };
-    const doMoveAirway = async (fuzzLog) => {
+    // A point on a procedure's BODY (edge midpoint) kept ≥1 GU from its fixes,
+    // so `move/delete_airway_objects` resolves to the procedure — not a node
+    // (the resolver gives airway nodes priority when within threshold).
+    const pickProcedureBodyPoint = (proc) => {
+      const ix = (proc && proc.airwayNodeIdxs) || [];
+      const pts = ix.map((i) => graph.airwayNodes[i]).filter(Boolean);
+      if (pts.length < 2) return null;
+      for (let k = 0; k < pts.length - 1; k++) {
+        const a = pts[k], b = pts[k + 1];
+        const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+        if (Math.hypot(mx - a.x, mz - a.z) < 1 || Math.hypot(mx - b.x, mz - b.z) < 1) continue;
+        return { x: mx, z: mz };
+      }
+      return null;
+    };
+
+    const doMoveAirwayNode = async (fuzzLog) => {
       let lastReason = null;
       for (let attempt = 0; attempt < 6; attempt++) {
         await refreshGraph();
         const nodes = graph.airwayNodes || [];
         if (!nodes.length) { lastReason = 'no airway nodes'; break; }
-        const n = rpick(nodes);
-        const idx = nodes.indexOf(n);
+        const idx = rint(0, nodes.length - 1);
+        const n = nodes[idx];
         const { dx, dz } = randDelta(0.03);
         try {
           await mcpCall('move_airway_objects', { targets: [{ x: n.x, z: n.z }], dx, dz });
@@ -1109,121 +1205,115 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
           return true;
         } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
       }
-      fuzzLog.rejected.push('move_airway_objects: ' + lastReason);
+      fuzzLog.rejected.push('move_airway_objects(node): ' + lastReason);
       return false;
     };
-    const doRenameAirway = async (fuzzLog) => {
+
+    const doMoveAirwayProcedure = async (fuzzLog) => {
       let lastReason = null;
       for (let attempt = 0; attempt < 6; attempt++) {
         await refreshGraph();
-        const kind = rand() < 0.5 ? 'airwayNode' : 'procedure';
-        if (kind === 'airwayNode') {
-          const cnt = graph.airwayNodes?.length ?? 0;
-          if (!cnt) { lastReason = 'no airway nodes'; break; }
-          const idx = rint(0, cnt - 1);
-          const name = 'FIX' + rint(100, 999) + String.fromCharCode(65 + rint(0, 25));
-          try {
-            await mcpCall('rename_airway_object', { kind: 'airwayNode', idx, name });
-            await afterMutation();
-            fuzzLog.accepted.push(`rename airway node#${idx} → ${name}`);
-            return true;
-          } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
-        } else {
-          const cnt = graph.procedures?.length ?? 0;
-          if (!cnt) { lastReason = 'no procedures'; break; }
-          const idx = rint(0, cnt - 1);
-          const name = 'PROC' + rint(100, 999) + String.fromCharCode(65 + rint(0, 25));
-          try {
-            await mcpCall('rename_airway_object', { kind: 'procedure', idx, name });
-            await afterMutation();
-            fuzzLog.accepted.push(`rename procedure#${idx} → ${name}`);
-            return true;
-          } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
-        }
+        const procs = graph.procedures || [];
+        if (!procs.length) { lastReason = 'no procedures'; break; }
+        const idx = rint(0, procs.length - 1);
+        const target = pickProcedureBodyPoint(procs[idx]);
+        if (!target) { lastReason = 'no procedure body point'; continue; }
+        const { dx, dz } = randDelta(0.03);
+        try {
+          await mcpCall('move_airway_objects', { targets: [target], dx, dz });
+          await afterMutation();
+          fuzzLog.accepted.push(`move airway procedure#${idx} (${procs[idx].name || '?'}) Δ(${dx.toFixed(2)},${dz.toFixed(2)})`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
       }
-      fuzzLog.rejected.push('rename_airway_object: ' + lastReason);
+      fuzzLog.rejected.push('move_airway_objects(procedure): ' + lastReason);
       return false;
     };
-    const doDeleteAirway = async (fuzzLog) => {
+
+    const doRenameAirwayNode = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await refreshGraph();
+        const cnt = graph.airwayNodes?.length ?? 0;
+        if (!cnt) { lastReason = 'no airway nodes'; break; }
+        const idx = rint(0, cnt - 1);
+        const name = 'FIX' + rint(100, 999) + String.fromCharCode(65 + rint(0, 25));
+        try {
+          await mcpCall('rename_airway_object', { kind: 'airwayNode', idx, name });
+          await afterMutation();
+          fuzzLog.accepted.push(`rename airway node#${idx} → ${name}`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+      }
+      fuzzLog.rejected.push('rename_airway_object(node): ' + lastReason);
+      return false;
+    };
+
+    const doRenameAirwayProcedure = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await refreshGraph();
+        const cnt = graph.procedures?.length ?? 0;
+        if (!cnt) { lastReason = 'no procedures'; break; }
+        const idx = rint(0, cnt - 1);
+        const name = 'PROC' + rint(100, 999) + String.fromCharCode(65 + rint(0, 25));
+        try {
+          await mcpCall('rename_airway_object', { kind: 'procedure', idx, name });
+          await afterMutation();
+          fuzzLog.accepted.push(`rename procedure#${idx} → ${name}`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+      }
+      fuzzLog.rejected.push('rename_airway_object(procedure): ' + lastReason);
+      return false;
+    };
+
+    const doDeleteAirwayNode = async (fuzzLog) => {
       let lastReason = null;
       for (let attempt = 0; attempt < 6; attempt++) {
         await refreshGraph();
         const nodes = graph.airwayNodes || [];
-        const procs = graph.procedures || [];
-        if (!nodes.length && !procs.length) { lastReason = 'no airway objects'; break; }
-        let target = null;
-        if (procs.length && rand() < 0.5) {
-          const proc = rpick(procs);
-          const pts = proc.airwayNodeIdxs.map((ii) => graph.airwayNodes[ii]).filter(Boolean);
-          if (pts.length) {
-            const mid = pts[Math.floor(pts.length / 2)];
-            target = { x: mid.x + (rand() - 0.5) * 0.2, z: mid.z + (rand() - 0.5) * 0.2 };
-          }
-        }
-        if (!target && nodes.length) {
-          const n = rpick(nodes);
-          target = { x: n.x + (rand() - 0.5) * 0.2, z: n.z + (rand() - 0.5) * 0.2 };
-        }
-        if (!target) target = randPoint();
+        if (!nodes.length) { lastReason = 'no airway nodes'; break; }
+        const n = rpick(nodes);
+        const target = { x: n.x, z: n.z };
         try {
           await mcpCall('delete_airway_objects', { target });
           await window.waitForTimeout(200);
           await refreshGraph();
-          fuzzLog.accepted.push(`delete airway @ ${target.x.toFixed(1)},${target.z.toFixed(1)}`);
+          fuzzLog.accepted.push(`delete airway node @ ${target.x.toFixed(1)},${target.z.toFixed(1)}`);
           return true;
         } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
       }
-      fuzzLog.rejected.push('delete_airway_objects: ' + lastReason);
+      fuzzLog.rejected.push('delete_airway_objects(node): ' + lastReason);
+      return false;
+    };
+
+    const doDeleteAirwayProcedure = async (fuzzLog) => {
+      let lastReason = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await refreshGraph();
+        const procs = graph.procedures || [];
+        if (!procs.length) { lastReason = 'no procedures'; break; }
+        const idx = rint(0, procs.length - 1);
+        const target = pickProcedureBodyPoint(procs[idx]);
+        if (!target) { lastReason = 'no procedure body point'; continue; }
+        try {
+          await mcpCall('delete_airway_objects', { target });
+          await window.waitForTimeout(200);
+          await refreshGraph();
+          fuzzLog.accepted.push(`delete airway procedure#${idx} (${procs[idx].name || '?'})`);
+          return true;
+        } catch (e) { lastReason = reasonOf(e); await window.waitForTimeout(80); }
+      }
+      fuzzLog.rejected.push('delete_airway_objects(procedure): ' + lastReason);
       return false;
     };
 
     const fuzzLog = { accepted: [], rejected: [] };
     let deleteCount = 0;
 
-    for (let i = 0; i < nOps; i++) {
-      // Always keep viable state: if graph is empty, add something
-      const curSummary = (await getGroundState()).summary;
-      const isEmpty = !curSummary || (curSummary.segments === 0 && curSummary.runways === 0 && curSummary.areas === 0 && curSummary.stands === 0);
-      let op;
-      if (isEmpty) op = 'add_taxiway';
-      else {
-        // Distribution in percentage points of the run's total ops (ground + air unified):
-        //   5% runway (new/move/rename) · 5% taxiway new · 20% taxiway mod
-        //   (move/move-endpoint/rename) · 20% fillet (half = type=4 connector)
-        //   10% area (new/move/move-vertex) · 5% stand (new/move/rename)
-        //   15% select & delete (single/multi/select-all move, delete)
-        //   20% air (node 7, procedure 7, fillet 3, move/rename/delete 3)
-        const roll = rint(0, 99);
-        if (roll < 5) {
-          const r2 = rand();
-          op = r2 < 0.4 ? 'add_runway' : r2 < 0.7 ? 'move_runway' : 'rename_runway';
-        } else if (roll < 10) {
-          op = 'add_taxiway';
-        } else if (roll < 30) {
-          const r2 = rand();
-          op = r2 < 0.34 ? 'move_segment' : r2 < 0.67 ? 'move_endpoint' : 'rename_segment';
-        } else if (roll < 50) {
-          op = rand() < 0.5 ? 'fillet' : 'fillet_runway_connect';
-        } else if (roll < 60) {
-          const r2 = rand();
-          op = r2 < 0.5 ? 'add_area' : r2 < 0.8 ? 'move_area' : 'move_area_vertex';
-        } else if (roll < 65) {
-          const r2 = rand();
-          op = r2 < 0.4 ? 'add_stand' : r2 < 0.7 ? 'move_stand' : 'rename_stand';
-        } else if (roll < 80) {
-          const r2 = rand();
-          op = r2 < 0.35 ? 'delete_one' : r2 < 0.65 ? 'move_multi' : r2 < 0.85 ? 'move_select_all' : 'move_single';
-        } else if (roll < 87) {
-          op = 'add_airway_node';
-        } else if (roll < 94) {
-          op = 'add_airway_procedure';
-        } else if (roll < 97) {
-          op = 'air_fillet';
-        } else {
-          const r2 = rand();
-          op = r2 < 0.33 ? 'move_airway' : r2 < 0.66 ? 'rename_airway' : 'delete_airway';
-        }
-      }
+    // Operation dispatch — shared by both phases.
+    const dispatchOp = async (op, idx, total) => {
       let done = false;
       lastOpName = op + ' #' + (fuzzLog.accepted.length + fuzzLog.rejected.length + 1);
       if (op === 'add_taxiway') done = await doAddTaxiway(fuzzLog);
@@ -1248,15 +1338,108 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       else if (op === 'add_airway_node') done = await doAddAirwayNode(fuzzLog);
       else if (op === 'add_airway_procedure') done = await doAddAirwayProcedure(fuzzLog);
       else if (op === 'air_fillet') done = await doAirFillet(fuzzLog);
-      else if (op === 'move_airway') done = await doMoveAirway(fuzzLog);
-      else if (op === 'rename_airway') done = await doRenameAirway(fuzzLog);
-      else if (op === 'delete_airway') done = await doDeleteAirway(fuzzLog);
+      else if (op === 'move_airway_node') done = await doMoveAirwayNode(fuzzLog);
+      else if (op === 'move_airway_procedure') done = await doMoveAirwayProcedure(fuzzLog);
+      else if (op === 'rename_airway_node') done = await doRenameAirwayNode(fuzzLog);
+      else if (op === 'rename_airway_procedure') done = await doRenameAirwayProcedure(fuzzLog);
+      else if (op === 'delete_airway_node') done = await doDeleteAirwayNode(fuzzLog);
+      else if (op === 'delete_airway_procedure') done = await doDeleteAirwayProcedure(fuzzLog);
       if (op === 'delete_one' && done) deleteCount++;
       summary.accepted += done ? 1 : 0;
       summary.rejected += done ? 0 : 1;
-      log(`op ${i + 1}/${nOps} ${op} → ${done ? '✔' : '✖'}`);
+      log(`op ${idx + 1}/${total} ${op} → ${done ? '✔' : '✖'}`);
       await window.waitForTimeout(90);
+      return done;
+    };
+
+    // Ground-only distribution (percentage points).
+    const pickGroundOp = () => {
+      const roll = rint(0, 99);
+      if (roll < 7) { const r2 = rand(); return r2 < 0.4 ? 'add_runway' : r2 < 0.7 ? 'move_runway' : 'rename_runway'; }
+      if (roll < 14) return 'add_taxiway';
+      if (roll < 39) { const r2 = rand(); return r2 < 0.34 ? 'move_segment' : r2 < 0.67 ? 'move_endpoint' : 'rename_segment'; }
+      if (roll < 64) return rand() < 0.5 ? 'fillet' : 'fillet_runway_connect';
+      if (roll < 76) { const r2 = rand(); return r2 < 0.5 ? 'add_area' : r2 < 0.8 ? 'move_area' : 'move_area_vertex'; }
+      if (roll < 82) { const r2 = rand(); return r2 < 0.4 ? 'add_stand' : r2 < 0.7 ? 'move_stand' : 'rename_stand'; }
+      const r2 = rand();
+      return r2 < 0.35 ? 'delete_one' : r2 < 0.65 ? 'move_multi' : r2 < 0.85 ? 'move_select_all' : 'move_single';
+    };
+
+    // Air-only distribution (percentage points): 30% node-related, 70%
+    // procedure-related. Primed so a procedure always has fixes to chain and at
+    // least one procedure exists (fillet/move/delete need it). Without a runway
+    // a procedure can't be created/renamed, so those slots fall back to nodes.
+    //   nodes    (30): create 16 · move 6 · rename 5 · delete 3
+    //   procs    (70): create 30 · fillet 18 · move 8 · rename 7 · delete 7
+    const pickAirOp = (curSummary) => {
+      if (!curSummary || (curSummary.airwayNodes || 0) < 2) return 'add_airway_node';
+      const hasRunway = (graph.runways || []).length > 0;
+      const procCount = curSummary.procedures || 0;
+      if (hasRunway && procCount === 0) return 'add_airway_procedure';
+      const roll = rint(0, 99);
+      if (roll < 16) return 'add_airway_node';
+      if (roll < 22) return 'move_airway_node';
+      if (roll < 27) return 'rename_airway_node';
+      if (roll < 30) return 'delete_airway_node';
+      if (roll < 60) return hasRunway ? 'add_airway_procedure' : 'move_airway_node';
+      if (roll < 78) return procCount > 0 ? 'air_fillet' : (hasRunway ? 'add_airway_procedure' : 'add_airway_node');
+      if (roll < 86) return procCount > 0 ? 'move_airway_procedure' : 'move_airway_node';
+      if (roll < 93) return procCount > 0 ? 'rename_airway_procedure' : 'rename_airway_node';
+      return procCount > 0 ? 'delete_airway_procedure' : 'delete_airway_node';
+    };
+
+    // Guarantee the writer accepts the file: at least one taxiway family AND at
+    // least one runway ("无法保存 — 至少需要一条跑道"). Pins the active bounds to
+    // the ground extents regardless of the current mode.
+    const ensureGroundViable = async () => {
+      airPhase = false;
+      bounds = groundBounds;
+      let curSum = (await getGroundState()).summary;
+      let guard = 0;
+      while ((!curSum || (curSum.segments === 0 && curSum.runways === 0)) && guard < 3) {
+        if (!(await doAddTaxiway(fuzzLog))) throw new Error('could not re-add taxiway for save (rejections: ' + fuzzLog.rejected.join('; ') + ')');
+        curSum = (await getGroundState()).summary;
+        guard++;
+      }
+      guard = 0;
+      while ((!curSum || curSum.runways === 0) && guard < 3) {
+        if (!(await doAddRunway(fuzzLog))) throw new Error('could not re-add runway for save (rejections: ' + fuzzLog.rejected.join('; ') + ')');
+        curSum = (await getGroundState()).summary;
+        guard++;
+      }
+      return (await getGroundState()).summary;
+    };
+
+    // ── Phase 1: ground edits in ground mode ──
+    await switchPainterMode(window, 'ground');
+    log(`ground phase: ${groundOps} ops (mode=ground)`);
+    for (let i = 0; i < groundOps; i++) {
+      const curSummary = (await getGroundState()).summary;
+      const isEmpty = !curSummary || (curSummary.segments === 0 && curSummary.runways === 0 && curSummary.areas === 0 && curSummary.stands === 0);
+      const op = isEmpty ? 'add_taxiway' : pickGroundOp();
+      await dispatchOp(op, i, groundOps);
     }
+    await ensureGroundViable();
+    log(`ground phase done: ${fuzzLog.accepted.length} accepted / ${fuzzLog.rejected.length} rejected`);
+
+    // ── Mode swap: switch the real painter to the air view ──
+    log('switching painter to air mode…');
+    await switchPainterMode(window, 'air');
+    const modeNow = (await getGroundState()).mode || 'ground';
+    if (modeNow !== 'air') throw new Error(`painter did not switch to air mode (mode=${modeNow})`);
+
+    // ── Phase 2: air edits in air mode ──
+    airPhase = true;
+    airBounds = computeAirBounds(groundBounds, graph);
+    bounds = airBounds;
+    const acceptedBeforeAir = fuzzLog.accepted.length;
+    log(`air phase: ${airOps} ops (mode=air) air bounds=${airBounds.minX.toFixed(1)},${airBounds.minZ.toFixed(1)} → ${airBounds.maxX.toFixed(1)},${airBounds.maxZ.toFixed(1)}`);
+    for (let i = 0; i < airOps; i++) {
+      const curSummary = (await getGroundState()).summary;
+      const op = pickAirOp(curSummary);
+      await dispatchOp(op, i, airOps);
+    }
+    summary.airAccepted = fuzzLog.accepted.length - acceptedBeforeAir;
     summary.deletes = deleteCount;
 
     for (const r of fuzzLog.rejected) {
@@ -1272,14 +1455,8 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     }
 
     // ── 4. Ensure viable save state (≥1 segment family), re-add if needed ──
-    let curSum = (await getGroundState()).summary;
-    let guard = 0;
-    while ((!curSum || (curSum.segments === 0 && curSum.runways === 0)) && guard < 3) {
-      if (!(await doAddTaxiway(fuzzLog))) throw new Error('could not re-add taxiway for save (rejections: ' + fuzzLog.rejected.join('; ') + ')');
-      curSum = (await getGroundState()).summary;
-      guard++;
-    }
-    log(`final ground counts: segs=${curSum?.segments ?? 0} rw=${curSum?.runways ?? 0} areas=${curSum?.areas ?? 0} stands=${curSum?.stands ?? 0} nodes=${curSum?.nodes ?? 0} airwayNodes=${curSum?.airwayNodes ?? 0} procedures=${curSum?.procedures ?? 0}`);
+    const curSum = await ensureGroundViable();
+    log(`final counts: segs=${curSum?.segments ?? 0} rw=${curSum?.runways ?? 0} areas=${curSum?.areas ?? 0} stands=${curSum?.stands ?? 0} nodes=${curSum?.nodes ?? 0} airwayNodes=${curSum?.airwayNodes ?? 0} procedures=${curSum?.procedures ?? 0}`);
 
     // Snapshot expected scenery + flights for reload comparison
     const expectedGround = (await getGroundState()).summary;
@@ -1335,6 +1512,46 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       flights: reloadedFlights ? reloadedFlights.length : -1,
     };
     log(`reload: segs=${summary.reloaded.segments} (expected ${expected.ground?.segments ?? '?'}) airwayNodes=${summary.reloaded.airwayNodes} procedures=${summary.reloaded.procedures} flights=${summary.reloaded.flights} (file baseline ${fileCallsignsBefore.size})`);
+    // ── Air-graph gates (airside edits must persist consistently) ──
+    // The writer drops degenerate procedures (<2 fixes) and gates dangling
+    // airway refs, so a saved procedure may disappear but never exist in an
+    // invalid shape. Every stored procedure must have ≥2 distinct fixes that
+    // resolve within the saved airway-node list, and the save must never ADD
+    // air objects relative to the pre-save snapshot.
+    const reloadedAirNodes = reloadedGraph.airwayNodes || [];
+    reloadedAirNodes.forEach((n, i) => {
+      if (!n || !isFinite(n.x) || !isFinite(n.z)) throw new Error(`saved file has a non-finite airway node at index ${i}`);
+    });
+    // Consecutive duplicate fixes can be PRE-EXISTING authored data — the ZGSZ
+    // files ship `OVGOT1.33` with one — and survivors are copied verbatim, so
+    // exempt any procedure whose (name|runway|routeType) already had one in the
+    // .bak. Only a NEW one is a regression.
+    const { buildSceneryGraph: buildBakGraph } = require('../../src/acl/scenery_graph');
+    const procKey = (p) => `${(p && p.name) || ''}|${(p && p.runwayName) || ''}|${p && p.routeType}`;
+    const bakDupProcs = new Set();
+    for (const p of ((buildBakGraph(readAclText(bakPath)).graph.procedures) || [])) {
+      const ix = p.airwayNodeIdxs || [];
+      for (let k = 1; k < ix.length; k++) if (ix[k] === ix[k - 1]) { bakDupProcs.add(procKey(p)); break; }
+    }
+    const badProcs = [];
+    (reloadedGraph.procedures || []).forEach((p, i) => {
+      const idxs = p && p.airwayNodeIdxs;
+      const name = (p && p.name) || '?';
+      if (!Array.isArray(idxs) || idxs.length < 2) { badProcs.push(`proc#${i} (${name}) has <2 fixes`); return; }
+      const bad = idxs.filter((v) => !Number.isInteger(v) || v < 0 || v >= reloadedAirNodes.length);
+      if (bad.length) badProcs.push(`proc#${i} (${name}) references missing fix(es) ${bad.join(',')}`);
+      for (let k = 1; k < idxs.length; k++) {
+        if (idxs[k] === idxs[k - 1]) {
+          if (!bakDupProcs.has(procKey(p))) badProcs.push(`proc#${i} (${name}) has NEW consecutive duplicate fixes`);
+          break;
+        }
+      }
+    });
+    if (badProcs.length) throw new Error(`saved file has invalid airway procedures: ${badProcs.join('; ')}`);
+    const expectedAirNodes = expected.ground?.airwayNodes ?? 0;
+    const expectedProcs = expected.ground?.procedures ?? 0;
+    if (summary.reloaded.airwayNodes > expectedAirNodes) throw new Error(`save added airway nodes: ${summary.reloaded.airwayNodes} > ${expectedAirNodes}`);
+    if (summary.reloaded.procedures > expectedProcs) throw new Error(`save added procedures: ${summary.reloaded.procedures} > ${expectedProcs}`);
     // Ground counts are allowed to be repaired by the writer (gate drops degenerate
     // dangling refs), so we only assert the file parses and the flight contract
     // below holds. Flight baseline is the FILE, not the store (demo-classified
@@ -1543,9 +1760,12 @@ function resolveTargetFiles() {
   });
 }
 
-test.setTimeout(3600000);
+// Two mode-partitioned phases per level + 24 production levels: the suite runs
+// ~65-75 min wall-clock, so allow 2 h (the previous single-phase budget of 1 h
+// truncates the run and surfaces as a spurious "fetch failed").
+test.setTimeout(7200000);
 
-test('Fuzz ground save — randomized Ground Painter edit storm on production levels', async () => {
+test('Fuzz ground+air save — ground phase, air-mode swap, air phase, save', async () => {
   test.skip(!FUZZ_RUN, 'Skipped — set FUZZ_RUN=1 (or FUZZ_GROUND_RUN=1) to run the ground fuzz save test');
   const rows = window.locator('.level-row');
   await rows.first().waitFor({ state: 'visible', timeout: 90000 }).catch(() => {});
@@ -1584,8 +1804,8 @@ test('Fuzz ground save — randomized Ground Painter edit storm on production le
   console.log(`  Total: ${results.length}  Passed: ${passed}  Failed: ${failed}`);
   results.forEach(r => {
     const icon = r.ok && !r.error ? '✓' : '✗';
-    const reload = r.reloaded ? ` segs=${r.reloaded.segments} rw=${r.reloaded.runways} stands=${r.reloaded.stands}` : '';
-    console.log(`  ${icon} ${r.file} (seed ${r.seed}, ${r.accepted}✓/${r.rejected}✖ ops, deletes=${r.deletes ?? 0}, backup=${r.backupCreated}${reload}${r.error ? ` err=${r.error}` : ''})`);
+    const reload = r.reloaded ? ` segs=${r.reloaded.segments} rw=${r.reloaded.runways} stands=${r.reloaded.stands} air=${r.reloaded.airwayNodes}/${r.reloaded.procedures}` : '';
+    console.log(`  ${icon} ${r.file} (seed ${r.seed}, ${r.accepted}✓/${r.rejected}✖ ops [air ${r.airAccepted ?? 0}✓], deletes=${r.deletes ?? 0}, backup=${r.backupCreated}${reload}${r.error ? ` err=${r.error}` : ''})`);
     if (r.rejectedReasons && Object.keys(r.rejectedReasons).length) {
       console.log(`      rejected reasons: ${JSON.stringify(r.rejectedReasons)}`);
     }

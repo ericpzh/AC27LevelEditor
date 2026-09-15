@@ -49,6 +49,8 @@ function makeState(overrides = {}) {
     if (updates.groundPainterHistory) fakeState.groundPainterHistory = updates.groundPainterHistory;
     if (updates.groundPainterMetaHistory) fakeState.groundPainterMetaHistory = updates.groundPainterMetaHistory;
     if ('groundPainterHasEdited' in updates) fakeState.groundPainterHasEdited = updates.groundPainterHasEdited;
+    if ('groundPainterMode' in updates) fakeState.groundPainterMode = updates.groundPainterMode;
+    if ('groundPainterActiveRunways' in updates) fakeState.groundPainterActiveRunways = updates.groundPainterActiveRunways;
   });
   fakeState = {
     screen: 'editor', currentPath: '/tmp/test.acl', currentAirport: 'ZSPD',
@@ -71,6 +73,32 @@ beforeEach(() => {
   api.startServer(fakeWindow, 0, fakeCacheGetter);
 });
 afterEach(() => { try { api.stopServer(); } catch (_) {} });
+
+describe('api-server air tools — set_ground_painter_mode', () => {
+  it('rejects a missing or invalid mode', async () => {
+    makeState({ groundPainterMode: 'ground' });
+    let r = await callTool('set_ground_painter_mode', {});
+    expect(r.success).toBe(false);
+    r = await callTool('set_ground_painter_mode', { mode: 'sideways' });
+    expect(r.success).toBe(false);
+    expect(fakeState.groundPainterMode).toBe('ground');
+  });
+  it('switches ground → air and reports the previous mode', async () => {
+    makeState({ groundPainterMode: 'ground' });
+    const r = await callTool('set_ground_painter_mode', { mode: 'air' });
+    expect(r.success).toBe(true);
+    expect(r.previous).toBe('ground');
+    expect(r.mode).toBe('air');
+    expect(fakeState.groundPainterMode).toBe('air');
+  });
+  it('clears the air runway filter when returning to ground', async () => {
+    makeState({ groundPainterMode: 'air', groundPainterActiveRunways: ['01'] });
+    const r = await callTool('set_ground_painter_mode', { mode: 'ground' });
+    expect(r.success).toBe(true);
+    expect(fakeState.groundPainterMode).toBe('ground');
+    expect(fakeState.groundPainterActiveRunways).toBe(null);
+  });
+});
 
 describe('api-server air tools — create_airway_nodes', () => {
   it('rejects when nodes missing or empty', async () => {
