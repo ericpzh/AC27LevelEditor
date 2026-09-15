@@ -361,3 +361,29 @@ describe('api-server delete_ground_objects — runway orphan GC', () => {
     }
   });
 });
+
+describe('api-server — runway rename cascades to air/route references', () => {
+  it('rewrites procedures + entries/exits to follow the renamed end names', async () => {
+    makeState();
+    const g = fakeState.groundPainterGraph;
+    g.runways[0] = {
+      ...g.runways[0],
+      names: ['01', '19'], name: '01', physicalName: '01/19',
+      entries: [{ name: 'A', runwayName: '01', holdingIdx: 1, lineUpIdx: 2, defineIdx: 2 }],
+      exits: [{ name: 'B', runwayName: '19', exitIdx: 2, holdingIdx: 1, defineIdx: 2, isLeft: false }],
+    };
+
+    const r = await callTool('rename_ground_object', { kind: 'runway', idx: 0, names: ['32R', '3C'] });
+    expect(r.success).toBe(true);
+
+    const ng = fakeState.groundPainterGraph;
+    expect(ng.runways[0].names).toEqual(['32R', '3C']);
+    expect(ng.runways[0].physicalName).toBe('32R/3C');
+    // The writer groups procedures by `runwayName === <runway PK suffix>`; without
+    // this remap every STAR/APP route on the runway was dropped on save and the
+    // game null-derefed spawning arrivals that still referenced them.
+    expect(ng.procedures[0].runwayName).toBe('32R');
+    expect(ng.runways[0].entries[0].runwayName).toBe('32R');
+    expect(ng.runways[0].exits[0].runwayName).toBe('3C');
+  });
+});

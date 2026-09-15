@@ -1622,12 +1622,34 @@ async function handleMcpMessage(msg) {
             }
             const physicalName = names.join('/');
             const oldPhys = rw.physicalName || '';
+            const oldNames = Array.isArray(rw.names) ? rw.names : [rw.name || '', String(rw.physicalName || '').split('/')[1] || ''];
             renamed = { kind, idx, from: oldPhys || null, to: physicalName };
             newGraph.runways[idx] = { ...rw, names, name: names[0], physicalName };
             // Keep the coupled pavement strips named after the runway's physical
             // name in lockstep (mirrors the UI rename).
             if (oldPhys && oldPhys !== physicalName) {
               newGraph.segments = newGraph.segments.map((sg) => (sg.name === oldPhys ? { ...sg, name: physicalName } : sg));
+            }
+            // Entries/Exits and procedures are keyed by the directional end name.
+            // A stale end name orphans a runway's `Routes` on save (the writer
+            // groups procedures by `runwayName === <runway PK suffix>`), which made
+            // the game null-deref spawning arrivals whose STAR lived on it. Mirror
+            // the UI rename's cascade so both paths stay consistent.
+            newGraph.runways[idx] = {
+              ...newGraph.runways[idx],
+              entries: (newGraph.runways[idx].entries || []).map((en) => (
+                en.runwayName === oldNames[0] && oldNames[0] !== names[0] ? { ...en, runwayName: names[0] }
+                  : en.runwayName === oldNames[1] && oldNames[1] !== names[1] ? { ...en, runwayName: names[1] } : en)),
+              exits: (newGraph.runways[idx].exits || []).map((ex) => (
+                ex.runwayName === oldNames[0] && oldNames[0] !== names[0] ? { ...ex, runwayName: names[0] }
+                  : ex.runwayName === oldNames[1] && oldNames[1] !== names[1] ? { ...ex, runwayName: names[1] } : ex)),
+            };
+            if (Array.isArray(newGraph.procedures) && newGraph.procedures.length) {
+              newGraph.procedures = newGraph.procedures.map((p) => {
+                if (p.runwayName === oldNames[0] && oldNames[0] !== names[0]) return { ...p, runwayName: names[0] };
+                if (p.runwayName === oldNames[1] && oldNames[1] !== names[1]) return { ...p, runwayName: names[1] };
+                return p;
+              });
             }
           } else {
             const name = String(args.name ?? '').trim();

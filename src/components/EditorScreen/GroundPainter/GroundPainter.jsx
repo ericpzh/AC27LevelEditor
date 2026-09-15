@@ -4290,8 +4290,24 @@ export default function GroundPainter({ vals }) {
     if (entriesPatched || exitsPatched) {
       runways[idx] = { ...runways[idx], entries: patchedEntries, exits: patchedExits };
     }
+    // Keep this runway's procedures bound to their renamed directional end. The
+    // writer groups `graph.procedures` by `runwayName === <runway PK suffix>` when
+    // it rebuilds each runway's `Routes`; a stale end name therefore matched no
+    // runway and every STAR/APP route on it was dropped from the saved file. The
+    // game then null-derefed in RuntimeAircraftSpawnService.SpawnFlyApproachingAircraft
+    // for arrivals still referencing those STARs.
+    let procedures = gg.procedures;
+    if (Array.isArray(procedures) && procedures.length) {
+      let procsPatched = false;
+      const mapped = procedures.map((p) => {
+        if (p.runwayName === oldNames[0] && oldNames[0] !== names[0]) { procsPatched = true; return { ...p, runwayName: names[0] }; }
+        if (p.runwayName === oldNames[1] && oldNames[1] !== names[1]) { procsPatched = true; return { ...p, runwayName: names[1] }; }
+        return p;
+      });
+      if (procsPatched) procedures = mapped;
+    }
     pushHist();
-    useAppStore.setState({ groundPainterGraph: { ...gg, runways, segments }, groundPainterHasEdited: true });
+    useAppStore.setState({ groundPainterGraph: { ...gg, runways, segments, procedures }, groundPainterHasEdited: true });
   }
 
   // Undo helpers (depth-1): push the pre-mutation graph on each committed edit.
