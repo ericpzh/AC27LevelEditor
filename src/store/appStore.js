@@ -68,6 +68,16 @@ export const useAppStore = create((set, get) => ({
   fileInfos: {},
   geomCache: {},
   browserDataLoaded: false,
+  // One-shot guard for the airport auto-collapse fit pass. It runs once per
+  // app session (first time the level list loads) and is never re-triggered
+  // by navigation, resizes, or user toggles.
+  browserAutoCollapseDone: false,
+  // Collapse state persisted for the session so the user's choices survive
+  // navigating into a level and back. `browserCollapsedAirports` holds the
+  // explicit user preferences (true = collapsed); `browserAutoCollapsed` is
+  // the one-shot fit pass result.
+  browserCollapsedAirports: {},
+  browserAutoCollapsed: {},
 
   // ─── Radar window tracking (ICAO codes of open windows) ───
   openGroundRadarAirports: new Set(),
@@ -107,10 +117,13 @@ export const useAppStore = create((set, get) => ({
 
   // ─── Actions: Screen ───
   setScreen: (screen) => set({ screen, ...(screen !== 'editor' ? { showStandMap: false, showStarMap: false, showGroundPainter: false, activeMap: null } : {}) }),
-  setRootPath: (rootPath, airports) => set({ rootPath, airports, fileInfos: {}, geomCache: {}, browserDataLoaded: false }),
+  setRootPath: (rootPath, airports) => set({ rootPath, airports, fileInfos: {}, geomCache: {}, browserDataLoaded: false, browserAutoCollapseDone: false, browserCollapsedAirports: {}, browserAutoCollapsed: {} }),
 
   // ─── Actions: Browser Cache ───
   setBrowserCache: (fileInfos, geomCache) => set({ fileInfos, geomCache, browserDataLoaded: true }),
+  markBrowserAutoCollapseDone: () => set({ browserAutoCollapseDone: true }),
+  setBrowserCollapsedAirport: (icao, collapsed) => set((state) => ({ browserCollapsedAirports: { ...state.browserCollapsedAirports, [icao]: collapsed } })),
+  setBrowserAutoCollapsed: (map) => set({ browserAutoCollapsed: map }),
   updateSingleFileInfo: (icao, filePath, newInfo) => set((state) => {
     const oldList = state.fileInfos[icao] || [];
     const newList = oldList.map(info =>

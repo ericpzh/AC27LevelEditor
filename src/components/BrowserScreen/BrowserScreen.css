@@ -94,6 +94,40 @@
   padding: 14px 20px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.airport-card.collapsed .airport-card-header {
+  border-bottom: none;
+}
+
+.airport-card-header:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.airport-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.airport-collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition: color var(--transition);
+}
+
+.airport-collapse-toggle.open {
+  color: var(--text-secondary);
+}
+
+.airport-card-header:hover .airport-collapse-toggle {
+  color: var(--accent);
 }
 
 .airport-icao {

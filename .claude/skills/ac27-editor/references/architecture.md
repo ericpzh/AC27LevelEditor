@@ -42,7 +42,7 @@ AC27Editor/
 │ ├── components/
 │ │ ├── SetupScreen/ # Game root directory selection
 │ │ │ ├── SetupScreen.jsx + .css
-│ │ ├── BrowserScreen/ # Airport card listing, file browsing
+│ │ ├── BrowserScreen/ # Airport card listing, file browsing (collapsible cards + session auto-collapse)
 │ │ │ ├── BrowserScreen.jsx + .css
 │ │ │ ├── AirportCardMap.jsx + .css # Mini ground-radar SVG per card
 │ │ │ ├── BrowserHelpOverlay.jsx + .css # Help overlay with button descriptions

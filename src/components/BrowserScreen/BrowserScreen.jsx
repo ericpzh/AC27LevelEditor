@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import './BrowserScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline, IoRefreshOutline } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline, IoRefreshOutline, IoChevronDown } from 'react-icons/io5';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { DEMO_VISIBLE_BASES, DEMO_VISIBLE_ORDER, PROD_VISIBLE_BASES } from '../../utils/constants';
@@ -27,6 +27,20 @@ function sortLevelRows(a, b, isDemo) {
 }
 function toHHMM(s) { return String(s).substring(0, 5); }
 
+// Fallback geometry for the auto-collapse fit pass. Real values are measured
+// from the DOM once the cards are laid out (see the layout effect below);
+// these only kick in before the first measurement (e.g. jsdom, hidden window).
+const CARD_GAP = 20;        // .airport-card margin-bottom
+const FALLBACK_HEADER_H = 48;
+const FALLBACK_ROW_H = 37;
+
+function sameCollapseMap(a, b) {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every(k => a[k] === b[k]);
+}
+
 export default function BrowserScreen() {
   const { t, toggleLang, lang } = useTranslation();
   const electronAPI = useElectronAPI();
@@ -47,6 +61,14 @@ export default function BrowserScreen() {
   const geomCache = useAppStore(s => s.geomCache);
   const browserDataLoaded = useAppStore(s => s.browserDataLoaded);
   const setBrowserCache = useAppStore(s => s.setBrowserCache);
+  const browserAutoCollapseDone = useAppStore(s => s.browserAutoCollapseDone);
+  const markBrowserAutoCollapseDone = useAppStore(s => s.markBrowserAutoCollapseDone);
+  // Collapse state lives in the store so the user's choices survive leaving
+  // the browser for a level and coming back.
+  const collapsedAirports = useAppStore(s => s.browserCollapsedAirports);
+  const autoCollapsed = useAppStore(s => s.browserAutoCollapsed);
+  const setBrowserCollapsedAirport = useAppStore(s => s.setBrowserCollapsedAirport);
+  const setBrowserAutoCollapsed = useAppStore(s => s.setBrowserAutoCollapsed);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [appVersion, setAppVersion] = useState('');
@@ -57,6 +79,8 @@ export default function BrowserScreen() {
   const [bepInExLoading, setBepInExLoading] = useState(false);
   const [bepInExInstallOpen, setBepInExInstallOpen] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
+  const contentRef = useRef(null);
+  const measuredRef = useRef({});
   const { bind, TooltipPortal } = useTooltip();
 
   useEffect(() => {
@@ -274,6 +298,77 @@ export default function BrowserScreen() {
 
   const totalFileCount = Object.values(fileInfos).flat().length;
 
+  const isAirportCollapsed = (icao) =>
+    icao in collapsedAirports ? collapsedAirports[icao] : !!autoCollapsed[icao];
+
+  const toggleAirportCollapse = (icao) => {
+    setBrowserCollapsedAirport(icao, !isAirportCollapsed(icao));
+  };
+
+  // Auto-collapse: measure the real card geometry, then collapse trailing
+  // airports (last first) until every airport fits the visible content box.
+  // Runs exactly once per app session (the first time the level list loads);
+  // afterwards it is inert, so navigation, resizing, or user toggles are
+  // never overridden.
+  useLayoutEffect(() => {
+    if (browserAutoCollapseDone) return;
+    const el = contentRef.current;
+    if (!el || loading) return;
+
+    const cards = el.querySelectorAll('.airport-card');
+    cards.forEach(card => {
+      const icao = card.getAttribute('data-icao');
+      if (!icao) return;
+      const headerEl = card.querySelector('.airport-card-header');
+      const header = headerEl ? headerEl.offsetHeight : 0;
+      const rows = card.querySelectorAll('.level-row').length;
+      const expanded = card.getAttribute('data-expanded') === 'true';
+      if (header <= 0 && card.offsetHeight <= 0) return;
+      const entry = measuredRef.current[icao] || {};
+      if (header > 0) entry.collapsed = header;
+      if (expanded) entry.expanded = card.offsetHeight;
+      entry.rows = rows;
+      measuredRef.current[icao] = entry;
+    });
+
+    const cs = window.getComputedStyle(el);
+    const padY = parseFloat(cs.paddingTop || 0) + parseFloat(cs.paddingBottom || 0);
+    const avail = el.clientHeight - padY;
+    if (!(avail > 0)) return; // not laid out yet (jsdom / hidden window)
+
+    const list = [...airports]
+      .sort((a, b) => airportSortOrder(a.icao) - airportSortOrder(b.icao))
+      .filter(a => (fileInfos[a.icao] || []).length > 0);
+    if (list.length === 0) {
+      markBrowserAutoCollapseDone();
+      if (Object.keys(autoCollapsed).length) setBrowserAutoCollapsed({});
+      return;
+    }
+
+    let total = 0;
+    const entries = list.map(a => {
+      const m = measuredRef.current[a.icao] || {};
+      const rows = m.rows ?? (fileInfos[a.icao] || []).filter(i => !i.error).length;
+      // m.collapsed is the header's own height; add the card's 2px borders.
+      const collapsed = m.collapsed ? m.collapsed + 2 : FALLBACK_HEADER_H;
+      const expanded = m.expanded || (collapsed + rows * FALLBACK_ROW_H);
+      const pref = (a.icao in collapsedAirports) ? collapsedAirports[a.icao] : null;
+      total += CARD_GAP + (pref === null ? expanded : (pref ? collapsed : expanded));
+      return { icao: a.icao, expanded, collapsed, pref };
+    });
+
+    const next = {};
+    for (let i = entries.length - 1; i >= 0 && total > avail; i--) {
+      const e = entries[i];
+      if (e.pref !== null) continue; // user-controlled — respect their choice
+      next[e.icao] = true;
+      total -= (e.expanded - e.collapsed);
+    }
+
+    markBrowserAutoCollapseDone();
+    if (!sameCollapseMap(autoCollapsed, next)) setBrowserAutoCollapsed(next);
+  }, [loading, airports, fileInfos, collapsedAirports, autoCollapsed, browserAutoCollapseDone, markBrowserAutoCollapseDone, setBrowserAutoCollapsed]);
+
   return (
     <div id="screen-browser" className="screen" style={{ '--tod-width': lang === 'zh' ? '80px' : '130px' }}>
       <header className="browser-header">
@@ -308,84 +403,105 @@ export default function BrowserScreen() {
         </div>
       </header>
 
-      <main className="browser-content">
+      <main className="browser-content" ref={contentRef}>
         {loading ? (
           <div className="loading-state"><div className="spinner" /><p>{t('browser_loading')}</p></div>
         ) : totalFileCount === 0 ? (
           <div className="browser-empty">{t('browser_no_files')}</div>
         ) : (
-          allAirportsWithFiles.map(airport => (
-            <div key={airport.icao} className="airport-card">
-              {(() => {
-                const geom = geomCache[airport.icao];
-                const nRows = (fileInfos[airport.icao] || []).length;
-                return geom ? (
+          allAirportsWithFiles.map(airport => {
+            const collapsed = isAirportCollapsed(airport.icao);
+            const geom = geomCache[airport.icao];
+            const nRows = (fileInfos[airport.icao] || []).length;
+            return (
+              <div
+                key={airport.icao}
+                className={'airport-card' + (collapsed ? ' collapsed' : '')}
+                data-icao={airport.icao}
+                data-expanded={collapsed ? 'false' : 'true'}
+              >
+                {geom ? (
                   <AirportCardMap
                     areaData={geom.areaData}
                     taxiwayPaths={geom.taxiwayPaths}
                     runwayData={geom.runwayData}
-                    numRows={nRows}
+                    numRows={collapsed ? 0 : nRows}
                   />
                 ) : (
-                  <AirportCardMap numRows={nRows} />
-                );
-              })()}
-              <div className="airport-card-header">
-                <span className="airport-icao">{airportDisplayName(airport.icao, t)}</span>
-                <div className="airport-card-actions">
-                  {!isDemo && (
-                  <>
-                  <button
-                    className={'btn-radar-toggle' + (openGroundRadarAirports.has(airport.icao) ? ' active' : '')}
-                    {...bind(t(BUTTONS.surfaceRadar.descKey))}
-                    onClick={(e) => { e.stopPropagation(); handleToggleSurfaceRadar(airport.icao); }}
-                  >
-                    <IoMapOutline size={13} /> {t('toolbar_surface_radar')}
-                  </button>
-                  <button
-                    className={'btn-radar-toggle' + (openAirRadarAirports.has(airport.icao) ? ' active' : '')}
-                    {...bind(t(BUTTONS.approachRadar.descKey))}
-                    onClick={(e) => { e.stopPropagation(); handleToggleApproachRadar(airport.icao); }}
-                  >
-                    <IoNavigateOutline size={13} /> {t('toolbar_approach_radar')}
-                  </button>
-                  <button
-                    className={'btn-radar-toggle' + (openFlightStripAirports.has(airport.icao) ? ' active' : '')}
-                    {...bind(t(BUTTONS.flightStrips.descKey))}
-                    onClick={(e) => { e.stopPropagation(); handleToggleFlightStrips(airport.icao); }}
-                  >
-                    <IoListOutline size={13} /> {t('toolbar_flight_strips')}
-                  </button>
-                  </>
-                  )}
-                </div>
-              </div>
-              {fileInfos[airport.icao].map((info, i) => {
-                // Levels that can't be opened (e.g. "No WorldState flight data") render
-                // no row at all — the airport header + radar toggles stay visible.
-                if (info.error) return null;
-                // Display name replaces the old time-of-day label as the
-                // large leading element of the row. Comes from i18n
-                // (level_name_<base>); t() falls back to the key itself
-                // if a file has no translation entry.
-                const displayName = t('level_name_' + info.filename.replace(/\.acl$/i, ''));
-                const fileName = stripSuffixes(info.filename);
-                const timeRange = info.startTime && info.endTime ? toHHMM(info.startTime) + '-' + toHHMM(info.endTime) : '';
-                return (
-                  <div key={i} className="level-row" onClick={() => handleOpenFile(info.path, airport.icao)}>
-                    <span className="level-tod">{displayName}</span>
-                    <span className="level-timerange">{timeRange}</span>
-                    <span className="level-name">{fileName}</span>
-                    <span className="level-stats">
-                      <span className="level-stat"><span className="level-stat-dot arrival" />{t('table_arrivals')} {info.arrivals || 0}</span>
-                      <span className="level-stat"><span className="level-stat-dot departure" />{t('table_departures')} {info.departures || 0}</span>
+                  <AirportCardMap numRows={collapsed ? 0 : nRows} />
+                )}
+                <div
+                  className="airport-card-header"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={!collapsed}
+                  title={t(collapsed ? 'browser_airport_expand' : 'browser_airport_collapse')}
+                  onClick={() => toggleAirportCollapse(airport.icao)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAirportCollapse(airport.icao); }
+                  }}
+                >
+                  <span className="airport-header-left">
+                    <span className={'airport-collapse-toggle' + (collapsed ? '' : ' open')}>
+                      {collapsed ? <IoChevronForward size={15} /> : <IoChevronDown size={15} />}
                     </span>
-                    <span className="level-arrow"><IoChevronForward size={14} /></span>
+                    <span className="airport-icao">{airportDisplayName(airport.icao, t)}</span>
+                  </span>
+                  <div className="airport-card-actions">
+                    {!isDemo && (
+                    <>
+                    <button
+                      className={'btn-radar-toggle' + (openGroundRadarAirports.has(airport.icao) ? ' active' : '')}
+                      {...bind(t(BUTTONS.surfaceRadar.descKey))}
+                      onClick={(e) => { e.stopPropagation(); handleToggleSurfaceRadar(airport.icao); }}
+                    >
+                      <IoMapOutline size={13} /> {t('toolbar_surface_radar')}
+                    </button>
+                    <button
+                      className={'btn-radar-toggle' + (openAirRadarAirports.has(airport.icao) ? ' active' : '')}
+                      {...bind(t(BUTTONS.approachRadar.descKey))}
+                      onClick={(e) => { e.stopPropagation(); handleToggleApproachRadar(airport.icao); }}
+                    >
+                      <IoNavigateOutline size={13} /> {t('toolbar_approach_radar')}
+                    </button>
+                    <button
+                      className={'btn-radar-toggle' + (openFlightStripAirports.has(airport.icao) ? ' active' : '')}
+                      {...bind(t(BUTTONS.flightStrips.descKey))}
+                      onClick={(e) => { e.stopPropagation(); handleToggleFlightStrips(airport.icao); }}
+                    >
+                      <IoListOutline size={13} /> {t('toolbar_flight_strips')}
+                    </button>
+                    </>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          ))
+                </div>
+                {!collapsed && fileInfos[airport.icao].map((info, i) => {
+                  // Levels that can't be opened (e.g. "No WorldState flight data") render
+                  // no row at all — the airport header + radar toggles stay visible.
+                  if (info.error) return null;
+                  // Display name replaces the old time-of-day label as the
+                  // large leading element of the row. Comes from i18n
+                  // (level_name_<base>); t() falls back to the key itself
+                  // if a file has no translation entry.
+                  const displayName = t('level_name_' + info.filename.replace(/\.acl$/i, ''));
+                  const fileName = stripSuffixes(info.filename);
+                  const timeRange = info.startTime && info.endTime ? toHHMM(info.startTime) + '-' + toHHMM(info.endTime) : '';
+                  return (
+                    <div key={i} className="level-row" onClick={() => handleOpenFile(info.path, airport.icao)}>
+                      <span className="level-tod">{displayName}</span>
+                      <span className="level-timerange">{timeRange}</span>
+                      <span className="level-name">{fileName}</span>
+                      <span className="level-stats">
+                        <span className="level-stat"><span className="level-stat-dot arrival" />{t('table_arrivals')} {info.arrivals || 0}</span>
+                        <span className="level-stat"><span className="level-stat-dot departure" />{t('table_departures')} {info.departures || 0}</span>
+                      </span>
+                      <span className="level-arrow"><IoChevronForward size={14} /></span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })
         )}
       </main>
 
