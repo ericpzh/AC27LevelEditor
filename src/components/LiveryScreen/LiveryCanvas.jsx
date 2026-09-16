@@ -28,11 +28,11 @@ import {
   IoTextOutline,
   IoArrowUndoOutline,
   IoArrowRedoOutline,
-  IoTrashOutline,
   IoAddOutline,
   IoRemove,
   IoScanOutline,
 } from 'react-icons/io5';
+import { AiOutlineClear } from 'react-icons/ai';
 import { FaEraser } from 'react-icons/fa';
 import { FaArrowPointer } from 'react-icons/fa6';
 import { TbSticker2 } from 'react-icons/tb';
@@ -47,11 +47,46 @@ export const TEXTURE = 2048;
 // model's own texture, so a transparent background would render as holes.
 export const DEFAULT_BASE_COLOR = '#ffffff';
 
+// ── Base painting helpers (shared by mount + Clear) ──────────
+function clearBase(ctx) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, TEXTURE, TEXTURE);
+  ctx.restore();
+}
+
+function fillBase(ctx) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = DEFAULT_BASE_COLOR;
+  ctx.fillRect(0, 0, TEXTURE, TEXTURE);
+  ctx.restore();
+}
+
+// Paints the base texture: the given image when present, else the opaque
+// neutral fill. `onDone` fires once the base is on the canvas (the image path
+// is async).
+function drawBase(ctx, dataUrl, onDone) {
+  if (!dataUrl) { fillBase(ctx); if (onDone) onDone(); return; }
+  const img = new Image();
+  img.onload = () => {
+    clearBase(ctx);
+    ctx.drawImage(img, 0, 0, TEXTURE, TEXTURE);
+    if (onDone) onDone();
+  };
+  img.onerror = () => { fillBase(ctx); if (onDone) onDone(); };
+  img.src = dataUrl;
+}
+
 const TOOLS = ['select', 'brush', 'eraser', 'eyedropper', 'fill', 'line', 'rect', 'ellipse', 'text'];
 
 // Photoshop-style left-rail tool icons + advertised keyboard shortcuts.
 const TOOL_META = {
-  select: { Icon: FaArrowPointer, key: 'V' },
+  select: { Icon: FaArrowPointer, key: 'A' },
   brush: { Icon: IoBrushOutline, key: 'B' },
   eraser: { Icon: FaEraser, key: 'E' },
   eyedropper: { Icon: IoEyedropOutline, key: 'I' },
@@ -77,10 +112,21 @@ const ZOOM_STEPS = [0.125, 0.25, 0.5, 0.75, 1, 1.5, 2];
 
 // ── Live objects ───────────────────────────────────────────
 // A live object is a non-destructive, moveable overlay element flattened onto
-// the texture only at export: either a sticker image (`kind: 'sticker'`, with
-// `img`) or a text box (`kind: 'text'`, with `text`/`font`/`size`/…).
-// Shared fields: x, y, w, h, rot, flipX, flipY, selected.
+// the texture only at export: a sticker image (`kind: 'sticker'`, with `img`),
+// a text box (`kind: 'text'`, with `text`/`font`/`size`/…), or a shape
+// (`kind: 'line' | 'rect' | 'ellipse'`, with `color`/`width`/`filled`/`opacity`).
+// Shared fields: x, y, w, h, rot, flipX, flipY, selected. Shapes are centred
+// on their bounding box; lines use `w` = length, `h` = thickness, `rot` = angle.
+const SHAPE_KINDS = ['line', 'rect', 'ellipse'];
 const liveFont = (o) => `${o.italic ? 'italic ' : ''}${o.bold ? 'bold ' : ''}${o.size}px ${o.font}`;
+
+// True when a live object has a drawable/exportable payload.
+function hasLiveVisual(o) {
+  if (!o) return false;
+  if (o.kind === 'text') return Boolean(o.text);
+  if (SHAPE_KINDS.includes(o.kind)) return o.w > 0 || o.h > 0;
+  return Boolean(o.img);
+}
 
 // Paint a live object centred on its own origin (caller positions the frame).
 function paintLiveObject(ctx, o) {
@@ -95,6 +141,20 @@ function paintLiveObject(ctx, o) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(o.text, 0, 0);
+  } else if (SHAPE_KINDS.includes(o.kind)) {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = o.opacity == null ? 1 : o.opacity;
+    ctx.strokeStyle = o.color || '#000000';
+    ctx.fillStyle = o.color || '#000000';
+    ctx.lineWidth = o.width || 1;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    if (o.kind === 'line') { ctx.moveTo(-o.w / 2, 0); ctx.lineTo(o.w / 2, 0); }
+    else if (o.kind === 'rect') { ctx.rect(-o.w / 2, -o.h / 2, o.w, o.h); }
+    else { ctx.ellipse(0, 0, o.w / 2, o.h / 2, 0, 0, Math.PI * 2); }
+    if (o.kind === 'line' || !o.filled) ctx.stroke();
+    else { ctx.fill(); ctx.globalAlpha = 1; ctx.stroke(); }
   } else if (o.img) {
     ctx.drawImage(o.img, -o.w / 2, -o.h / 2, o.w, o.h);
   }
@@ -114,6 +174,30 @@ function measureLiveText(ctx, text, o) {
   }
   if (!w || !isFinite(w)) w = Math.max(8, String(text).length * o.size * 0.6);
   return { w, h: o.size * 1.2 };
+}
+
+// Build a live shape object from a drag (a = start, b = current). Rectangles
+// and ellipses are centred on their bounding box; a line stores length as `w`,
+// thickness as `h` and the angle as `rot`.
+function makeShapeObject(kind, a, b, brush, opts) {
+  const color = brush.color;
+  const opacity = brush.opacity == null ? 1 : brush.opacity;
+  const width = Math.max(1, opts.width || 1);
+  if (kind === 'line') {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    return {
+      kind: 'line', color, width, opacity, filled: false,
+      w: Math.hypot(dx, dy), h: width,
+      x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
+      rot: Math.atan2(dy, dx), flipX: false, flipY: false, selected: true,
+    };
+  }
+  return {
+    kind, color, width, opacity, filled: !!opts.filled,
+    w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y),
+    x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
+    rot: 0, flipX: false, flipY: false, selected: true,
+  };
 }
 
 /**
@@ -203,38 +287,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     setDirty(false);
     setLive(null);
     setTextAnchor(null);
-    const clearBase = () => {
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 1;
-      ctx.clearRect(0, 0, TEXTURE, TEXTURE);
-      ctx.restore();
-    };
-    // Opaque default: a livery BaseMap replaces the model's texture, so a
-    // transparent canvas would render as holes. Unpainted areas fall back to
-    // a neutral white instead.
-    const fillBase = () => {
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = DEFAULT_BASE_COLOR;
-      ctx.fillRect(0, 0, TEXTURE, TEXTURE);
-      ctx.restore();
-    };
-    if (initialImageDataUrl) {
-      const img = new Image();
-      img.onload = () => {
-        clearBase();
-        ctx.drawImage(img, 0, 0, TEXTURE, TEXTURE);
-        scheduleOverlay();
-      };
-      img.onerror = () => fillBase();
-      img.src = initialImageDataUrl;
-    } else {
-      fillBase();
-    }
+    drawBase(ctx, initialImageDataUrl, scheduleOverlay);
     scheduleOverlay();
     // Mount-only: the parent remounts (key) whenever the base changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -323,26 +376,17 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ctx.clearRect(0, 0, TEXTURE, TEXTURE);
     ctx.restore();
     const st = liveRef.current;
-    if (st && (st.kind === 'text' ? st.text : st.img)) {
+    if (hasLiveVisual(st)) {
       const z = effZoom || 1;
       const gap = 40 / z;
       const hr = 7 / z;
       const active = st.selected && toolRef.current === 'select';
+      // The visual (flip applied); the selection box below is drawn in the
+      // unflipped frame so its handles stay put when mirrored.
+      paintLiveObject(ctx, st);
       ctx.save();
       ctx.translate(st.x, st.y);
       ctx.rotate(st.rot || 0);
-      ctx.save();
-      ctx.scale(st.flipX ? -1 : 1, st.flipY ? -1 : 1);
-      if (st.kind === 'text') {
-        ctx.fillStyle = st.color || '#000000';
-        ctx.font = liveFont(st);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(st.text, 0, 0);
-      } else {
-        ctx.drawImage(st.img, -st.w / 2, -st.h / 2, st.w, st.h);
-      }
-      ctx.restore();
       ctx.lineWidth = (active ? 2 : 1) / z;
       ctx.strokeStyle = active ? '#6aa0ff' : 'rgba(106, 160, 255, 0.55)';
       ctx.setLineDash(active ? [] : [6 / z, 4 / z]);
@@ -487,7 +531,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         return;
       }
       const k = e.key.toLowerCase();
-      const map = { v: 'select', b: 'brush', e: 'eraser', i: 'eyedropper', g: 'fill', l: 'line', r: 'rect', o: 'ellipse', t: 'text' };
+      const map = { a: 'select', b: 'brush', e: 'eraser', i: 'eyedropper', g: 'fill', l: 'line', r: 'rect', o: 'ellipse', t: 'text' };
       if (map[k] && TOOLS.includes(map[k])) { commitText(); setTool(map[k]); }
     };
     const onKeyUp = (e) => { if (e.key === ' ') spaceRef.current = false; };
@@ -552,8 +596,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const t = toolRef.current;
     const capture = () => { canvasRef.current.setPointerCapture && e.target.setPointerCapture(e.pointerId); };
 
-    // Sticker interactions (Select tool): click to select / move, drag the
-    // handles to scale / rotate, click away to deselect.
+    // Live-object interactions (Select tool): click to select / move, drag the
+    // handles to scale / rotate, click away to deselect. Lines get a taller
+    // hit band since their box is only the stroke thickness.
     const st = liveRef.current;
     if (st && t === 'select') {
       const z = effZoom || 1;
@@ -562,7 +607,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       const lp = stickerLocal(st, p);
       const dResize = Math.hypot(lp.x - st.w / 2, lp.y - st.h / 2);
       const dRotate = Math.hypot(lp.x, lp.y - (-st.h / 2 - gap));
-      const inside = Math.abs(lp.x) <= st.w / 2 && Math.abs(lp.y) <= st.h / 2;
+      const hitY = st.kind === 'line' ? Math.max(st.h / 2, 14 / z) : st.h / 2;
+      const inside = Math.abs(lp.x) <= st.w / 2 && Math.abs(lp.y) <= hitY;
       if (st.selected && dResize < grab) {
         dragRef.current = { mode: 'resize', startW: st.w, startH: st.h, startSize: st.size, startP: p };
         capture(); return;
@@ -594,7 +640,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       if (changed) { ctx.putImageData(img, 0, 0); }
       else { undoRef.current.past.pop(); }
     } else if (t === 'line' || t === 'rect' || t === 'ellipse') {
-      pushSnapshot();
       shapeRef.current = { tool: t, start: p, current: p };
       capture();
     } else if (t === 'text') {
@@ -651,15 +696,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (shapeRef.current) {
       const sh = shapeRef.current;
       shapeRef.current = null;
-      const ctx = ctxRef.current;
-      drawShape(ctx, sh.tool, sh.start, sh.current, brushRef.current, shapeOptsRef.current, false);
-      scheduleOverlay();
+      commitShape(sh);
       return;
     }
     dragRef.current = null;
   };
 
-  // ── Shape commit ───────────────────────────────────────────
+  // ── Shape preview (drawn on the overlay while dragging) ────
   function drawShape(ctx, shapeTool, a, b, brushOpts, sOpts, preview) {
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
@@ -675,6 +718,19 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     else { ctx.fill(); if (preview) ctx.stroke(); else { ctx.globalAlpha = 1; ctx.stroke(); } }
     ctx.restore();
   }
+
+  // ── Shape commit — becomes a selectable live object (not rasterised) ──
+  const commitShape = (sh) => {
+    const o = makeShapeObject(sh.tool, sh.start, sh.current, brushRef.current, shapeOptsRef.current);
+    // Ignore an accidental click (no drag) — nothing to select or move.
+    const tooSmall = sh.tool === 'line' ? o.w < 2 : (o.w < 2 && o.h < 2);
+    if (tooSmall) { setTool('select'); scheduleOverlay(); return; }
+    flattenLive();
+    setLive(o);
+    setTool('select');
+    setDirty(true);
+    scheduleOverlay();
+  };
 
   // ── Text commit — becomes a selectable live object (not rasterised) ──
   // Reads the ref-mirrored draft so pressing Enter, clicking away (blur) and
@@ -702,6 +758,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   // ── Clear / reset (confirm modal) ──────────────────────────
+  // Resets to the base the canvas was opened with — the aircraft's built-in
+  // default livery template for a new livery (never a blank transparent
+  // canvas), the origin picture for an edit, or the imported image.
   const handleClear = () => {
     const { showModal, hideModal } = useAppStore.getState();
     showModal(
@@ -713,15 +772,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           <button className="btn-danger" onClick={() => {
             hideModal();
             pushSnapshot();
-            const ctx = ctxRef.current;
-            ctx.save();
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.globalAlpha = 1;
-            ctx.clearRect(0, 0, TEXTURE, TEXTURE);
-            ctx.fillStyle = DEFAULT_BASE_COLOR;
-            ctx.fillRect(0, 0, TEXTURE, TEXTURE);
-            ctx.restore();
+            drawBase(ctxRef.current, initialImageDataUrl, scheduleOverlay);
             setLive(null);
             setTextAnchor(null);
             scheduleOverlay();
@@ -877,7 +928,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           <div className="lp-rail-group">
             <button className="lp-tool" {...bind(t('livery_paint_undo'))} aria-label={t('livery_paint_undo')} onClick={doUndo} disabled={undoRef.current.past.length === 0}><IoArrowUndoOutline size={18} /></button>
             <button className="lp-tool" {...bind(t('livery_paint_redo'))} aria-label={t('livery_paint_redo')} onClick={doRedo} disabled={undoRef.current.future.length === 0}><IoArrowRedoOutline size={18} /></button>
-            <button className="lp-tool lp-danger" {...bind(t('livery_paint_clear'))} aria-label={t('livery_paint_clear')} onClick={handleClear}><IoTrashOutline size={18} /></button>
+            <button className="lp-tool lp-danger" {...bind(t('livery_paint_clear'))} aria-label={t('livery_paint_clear')} onClick={handleClear}><AiOutlineClear size={18} /></button>
           </div>
           <div className="lp-rail-sep" />
           <div className="lp-rail-group">

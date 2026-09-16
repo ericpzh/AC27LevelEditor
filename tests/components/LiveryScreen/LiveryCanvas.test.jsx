@@ -422,7 +422,8 @@ describe('LiveryCanvas tools — paint operations', () => {
       fireEvent.pointerDown(cv, { clientX: 40, clientY: 40, button: 0, pointerId: 1 });
       fireEvent.pointerMove(cv, { clientX: 160, clientY: 120, button: 0, pointerId: 1 });
       fireEvent.pointerUp(cv, { pointerId: 1 });
-      expect(ctxs.some(c => c[probe].mock.calls.length > 0)).toBe(true);
+      // The shape is previewed on the overlay (rAF) before it commits.
+      await waitFor(() => expect(ctxs.some(c => c[probe].mock.calls.length > 0)).toBe(true));
     }
   });
 
@@ -466,6 +467,52 @@ describe('LiveryCanvas tools — paint operations', () => {
   });
 });
 
+describe('shape objects (selectable, movable)', () => {
+  it('rect / ellipse / line commit as live objects, not rasterised', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    const cv = mainCanvas();
+    for (const tool of ['Rect', 'Ellipse', 'Line']) {
+      await user.click(screen.getByRole('button', { name: tool }));
+      fireEvent.pointerDown(cv, { clientX: 40, clientY: 40, button: 0, pointerId: 1 });
+      fireEvent.pointerMove(cv, { clientX: 200, clientY: 160, button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+      // The shape became a selected live object and the tool handed to Select.
+      expect(screen.getByRole('button', { name: 'Select' }).className).toContain('lp-active');
+      expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false);
+      expect(screen.getByRole('button', { name: 'Duplicate Sticker' }).disabled).toBe(false);
+    }
+  });
+
+  it('a committed shape can be picked up and moved with the Select tool', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    await waitFor(() => expect(ctxs.some(c => c.translate.mock.calls.length > 0)).toBe(true));
+    const startX = ctxs.find(c => c.translate.mock.calls.length > 0).translate.mock.calls[0][0];
+    // Escape deselects; clicking the centre re-selects and drags it right.
+    fireEvent.keyDown(window, { key: 'Escape' });
+    ctxs.length = 0;
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 190, clientY: 150, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    await waitFor(() => {
+      expect(ctxs.some(c => c.translate.mock.calls.some(([x]) => x > startX + 10))).toBe(true);
+    });
+  });
+
+  it('"A" selects the Select tool', () => {
+    renderCanvas();
+    fireEvent.keyDown(window, { key: 'a' });
+    expect(screen.getByRole('button', { name: 'Select' }).className).toContain('lp-active');
+  });
+});
+
 describe('LiveryCanvas undo/redo + clear', () => {
   it('undo/redo buttons replay snapshots after a stroke', async () => {
     const user = userEvent.setup();
@@ -489,14 +536,32 @@ describe('LiveryCanvas undo/redo + clear', () => {
     expect(ctxs[0].putImageData.mock.calls.length).toBeGreaterThan(before + 1);
   });
 
-  it('clear asks for confirmation and wipes the canvas', async () => {
+  it('clear asks for confirmation and resets the canvas to the default base', async () => {
     const user = userEvent.setup();
     renderCanvas();
-    const clearRect = ctxs[0].clearRect;
+    const fillRect = ctxs[0].fillRect;
+    const before = fillRect.mock.calls.length;
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(screen.getByText('Confirm Clear')).toBeInTheDocument());
     await user.click(screen.getByText('Clear', { selector: '.btn-danger' }).closest('button'));
-    await waitFor(() => expect(clearRect.mock.calls.length).toBeGreaterThan(0));
+    await waitFor(() => expect(fillRect.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('clear re-draws the aircraft default-livery base image when one is primed', async () => {
+    const user = userEvent.setup();
+    renderCanvas({ initialImageDataUrl: 'data:image/png;base64,TEMPLATE' });
+    // Mount primed the base from the template (async image load).
+    await waitFor(() => {
+      expect(ctxs[0].drawImage.mock.calls.some(c => c.length === 5)).toBe(true);
+    });
+    const before = ctxs[0].drawImage.mock.calls.filter(c => c.length === 5).length;
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(screen.getByText('Confirm Clear')).toBeInTheDocument());
+    await user.click(screen.getByText('Clear', { selector: '.btn-danger' }).closest('button'));
+    await waitFor(() => {
+      const after = ctxs[0].drawImage.mock.calls.filter(c => c.length === 5).length;
+      expect(after).toBeGreaterThan(before);
+    });
   });
 
   it('clear cancel keeps the canvas untouched', async () => {
@@ -504,10 +569,10 @@ describe('LiveryCanvas undo/redo + clear', () => {
     renderCanvas();
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(screen.getByText('Confirm Clear')).toBeInTheDocument());
-    const before = ctxs[0].clearRect.mock.calls.length;
+    const before = ctxs[0].fillRect.mock.calls.length;
     await user.click(screen.getByText('Cancel'));
     await waitFor(() => expect(screen.queryByText('Confirm Clear')).toBeNull());
-    expect(ctxs[0].clearRect.mock.calls.length).toBe(before);
+    expect(ctxs[0].fillRect.mock.calls.length).toBe(before);
   });
 
   it('keyboard shortcuts switch tools and drive undo', () => {

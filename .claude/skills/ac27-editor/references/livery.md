@@ -110,13 +110,17 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   takes `{ onCreated, onCancel, onHelp }`). Given `CreateTab.prefill` it
   snapshots an `origin` `{folder, airline, planeId, pack, imageDataUrl}` with
   `pack` `'mine'` / `'reference'`; the canvas starts primed with the origin
-  picture (lazy `readLiveryImage` when the thumbnail was not ready) and the
-  background is **always transparent**. Form: a custom airline dropdown
+  picture (lazy `readLiveryImage` when the thumbnail was not ready). For a
+  **new** livery the canvas is primed with the selected aircraft type's
+  **built-in UV template** (see "Aircraft template" below) so the background is
+  opaque and shows the real model shape; the template effect never clobbers an
+  origin picture or a user-imported image (only replaces a previous template or
+  an empty canvas). Form: a custom airline dropdown
   (`lp-airline-*` — full list, never text-filtered, unlike a native
   `<datalist>`) + plane-id `<select>`; `folderPreview = folderFor(planeId,
   airline)` is only the Save As prefill. Actions:
   - **Import image** (`IoImageOutline`) → `fileToDataUrl` + `normalizeToTexture`
-    (`'transparent'`) → new canvas base.
+    (default white fill) → new canvas base.
   - **Import livery** (`FaFileImport`) → `loadLiveryZip` → normalize + prime
     airline/planeId from the manifest.
   - **Export livery** (`FaFileExport`) → writes the canvas via `createLivery`
@@ -160,10 +164,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   description"; the self-referential Help chip, and the undo/redo/zoom/fit and
   duplicate/remove-sticker chips, are not listed. Escape/backdrop/X close; i18n
   `livery_help_*` (zh + en).
-- `LiveryCanvas.jsx` — fixed 2048² backing store, **transparent** (no base
-  fill), CSS-scaled view. Layout: Photoshop-style **left icon rail** +
-  contextual options bar + bottom zoom status bar.
-  - Tools `TOOLS`: `select` (`FaArrowPointer`, V), brush (B), eraser (E),
+- `LiveryCanvas.jsx` — fixed 2048² backing store, **opaque** base (the
+  per-aircraft template image, or `DEFAULT_BASE_COLOR = '#ffffff'` when there
+  is none), CSS-scaled view. Layout: Photoshop-style **left icon rail** +
+  contextual options bar + bottom zoom status bar. Shared `clearBase`/
+  `fillBase`/`drawBase(ctx, dataUrl, onDone)` helpers paint the base on mount
+  and on **Clear**.
+  - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
     eyedropper (I), fill (G), line (L), rect (R), ellipse (O), text (T).
     `TOOL_META` advertises the shortcut; the keyboard map mirrors it.
   - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none):
@@ -173,13 +180,24 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit; mouse-wheel
     zoom anchored at the cursor. Brush/eraser draw a true-size cursor ring
     (`lp-cursor-ring`).
-  - **Live objects** (`liveRef`, one at a time): either a sticker image
-    (`kind:'sticker'`, `img`) or a **text box** (`kind:'text'` — `text`, `font`,
-    `size`, `bold`, `italic`, `color`). Import a sticker via
+  - **Live objects** (`liveRef`, one at a time): a sticker image
+    (`kind:'sticker'`, `img`), a **text box** (`kind:'text'` — `text`, `font`,
+    `size`, `bold`, `italic`, `color`), or a **shape** (`kind:'line'|'rect'|
+    'ellipse'` — `color`, `width`, `filled`, `opacity`; centred on the bounding
+    box, a line's `w` is its length / `h` its thickness / `rot` its angle,
+    built by `makeShapeObject`). Drawing a shape with the Line/Rect/Ellipse
+    tool commits it as a selected live object (`commitShape`, ignores a
+    zero-drag click) and hands over to Select — no rasterisation. Import a sticker via
     `selectLiveryImage`/`readDiskImage` from the rail or `importSticker()`;
-    commit text by clicking with the Text tool, typing, and pressing Enter —
-    it is **not rasterised** but becomes a live object (the clicked point is
-    the box's top-left; dimensions from `measureLiveText`). With the Select
+    commit text by clicking with the Text tool and typing — the draft is
+    committed (announced same as Enter) on **Enter, the input losing focus
+    (clicking away), switching tools (rail or keyboard), or clicking elsewhere
+    on the canvas**; only Escape cancels. It is **not rasterised** but becomes
+    a live object (the clicked point is the box's top-left; dimensions from
+    `measureLiveText`). The draft + anchor are mirrored in refs
+    (`textDraftRef`/`textAnchorRef`) so those handlers read fresh values;
+    `commitText()` itself never changes the active tool (Enter/blur → Select,
+    tool switch → the picked tool, canvas click → stays on Text). With the Select
     tool: click to select/move, drag handles to scale/rotate (a text box
     scales its `size` with the frame), Escape / click-away to deselect,
     `Delete`/`Backspace` to remove. The rail also has **Flip Horizontal /
@@ -195,12 +213,34 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     previous one is never silently lost. Only `exportPNG()` returns the
     flattened texture.
   - Undo/redo via `createUndoStack`/`pushSnapshot` (cap `MAX_UNDO = 20`
-    ImageData snapshots). Clear/reset via confirm modal. Unsaved flag via
+    ImageData snapshots). **Clear** (`AiOutlineClear`, `react-icons/ai`) opens a
+    confirm modal and re-paints the base via `drawBase(ctx, initialImageDataUrl)`
+    — i.e. restores the aircraft's built-in default livery for a new livery, the
+    origin picture for an edit, or the imported image (never a blank canvas).
+    Unsaved flag via
     `onDirty`.
 - Display names: `airlineDisplayName(code, lang)` +
   `AIRLINE_CODE_TO_NAMES` live in `src/utils/constants/airlines.js`
   (derived from `AIRLINE_CODE_MAP`; CJK name picked for `zh`, otherwise the
   English name; unknown codes return the raw code).
+
+## Aircraft template (per-type painter background)
+
+A livery PNG is a straight **1:1 square UV atlas** applied to the mesh's
+`BaseMap` slot — the manifest's `parts[].partName` (`Body`, or `Fuselage`/
+`Wing`/`Wingtip` for multi-mesh aircraft) binds each texture file to a part.
+The game ships the neutral default livery for **every** type under
+`GroundATC_Data/StreamingAssets/BuiltInAircraftLivery/AircraftDefaultLivery/
+<PLANE_ID>/` (`base[_Part].dds` = BaseMap, DXT1/BC1, 2048² — C919 is 4096²;
+plus `mask.dds` DXT5, `lit.dds` DXT1, `coat.dds` BC4U). That default IS the UV
+template, so the painter uses it as the per-aircraft background instead of
+being transparent. `electron/dds.js` (pure, no deps) decodes the BaseMap
+(`decodeDds` DXT1/DXT5/DXT3 → RGBA, `encodePng` minimal RGBA8 encoder) and
+`electron/livery.js:readAircraftTemplate(gameRoot, planeId)` picks the
+`Body`→`Fuselage`→first part, returns a PNG data-URL (`{success, imageDataUrl,
+partName}`), caches successes per plane id, and reports `NO_TEMPLATE` when the
+type has no built-in folder. Multi-part aircraft only seed the main
+(Fuselage/Body) canvas — Wing/Wingtip maps are not separately addressable yet.
 
 ## IPC (`electron/livery.js` ← `electron/main.js` handlers ← `electron/preload.js`)
 
@@ -210,6 +250,8 @@ gameRoot/dialog/cleanup and delegates. Channels: `list-liveries` →
 hasBasePng, mtime}` (skip non-dirs; corrupt manifest → row with `error`,
 never abort; also creates the own pack dir + repairs `mod_info.json`);
 `read-livery-image(folder, pack)` → PNG data-URL;
+`get-aircraft-template(planeId)` → the built-in default BaseMap as a PNG
+data-URL (`readAircraftTemplate`, see "Aircraft template" above);
 `create-livery({imageDataUrl, airline, targetPlaneId, folder})` → validates
 (airline `/^[A-Z]{3}$/`, plane id resolves through `PLANE_ID_TO_SHORT_CODE`,
 PNG data-URL, IHDR = 2048², folder matches `LIVERY_FOLDER_SAFE_RE` +
@@ -226,19 +268,25 @@ save dialog + copy + temp cleanup; `load-livery-zip()` → open dialog → temp
 extract → `{folder, shortCode, manifest, imageDataUrl}` where `shortCode` is
 derived from `manifest.targetPlaneId` (temp cleaned). Errors: `NO_GAME_ROOT` /
 `BAD_AIRLINE` / `BAD_PLANE` / `BAD_IMAGE` / `BAD_IMAGE_DIMENSIONS` /
-`BAD_FOLDER` / `BAD_MANIFEST` / `IMAGE_MISSING` / `BAD_ZIP` / `ZIP_MISSING`
+`BAD_FOLDER` / `BAD_MANIFEST` / `IMAGE_MISSING` / `BAD_ZIP` / `ZIP_MISSING` /
+`NO_TEMPLATE` / `BAD_TEMPLATE`
 — renderer maps via `livery_err_*` i18n keys. PNG size via IHDR bytes 16–23;
 containment via `path.relative`. ZIP via `src/utils/zipUtils.js` (no new deps);
-image normalize in renderer canvas (`src/utils/liveryImage.js`, zero new deps).
-Preload exposes `exportLiveryToDir(folder)` alongside the others;
-`tests/setup.js` stubs it.
+image normalize in renderer canvas (`src/utils/liveryImage.js`, zero new deps);
+DDS decode + PNG encode in `electron/dds.js` (zero new deps).
+Preload exposes `exportLiveryToDir(folder)`/`getAircraftTemplate(planeId)`
+alongside the others; `tests/setup.js` stubs them.
 
 ## Image rules (locked)
 
-Base texture is **transparent** — the painter no longer paints a base fill
-(`LiveryCanvas` clear is `clearRect`, `normalizeToTexture(dataUrl,
-'transparent')`). Shrink-to-fit inside 2048², aspect preserved, centered;
-smaller images as-is (never upscale). Main only writes bytes + checks IHDR.
+Base texture is **opaque** — the painter seeds a new canvas with the
+per-aircraft built-in template (or a neutral `#ffffff` fill), so a saved
+`base.png` never has transparent holes (a BaseMap replaces the model's own
+texture). `LiveryCanvas` **Clear** restores the primed base (template / origin
+/ imported image, else `DEFAULT_BASE_COLOR`), and
+`normalizeToTexture(dataUrl)` fills white by default. Shrink-to-fit inside
+2048², aspect preserved, centered; smaller images as-is (never upscale). Main
+only writes bytes + checks IHDR.
 Overwrite always on the backend, no `.bak` (delete keeps its confirm). The
 renderer guards the naming dialog (Save / Save As): a folder name that already
 exists pops a confirm/cancel prompt (`confirmOverride` in `CreateTab`), except
@@ -265,7 +313,11 @@ manifest for a free-form zip folder).
   load, free-form folder accepted verbatim, unsafe folder rejected, traversal,
   IHDR, reference read-only, manifest-derived shortCode, `mod_info.json`
   created on load/create at the pack root, reference-name + corrupt-JSON
-  repair, existing own file untouched, UTF-8 zh name round-trip).
+  repair, existing own file untouched, UTF-8 zh name round-trip,
+  `readAircraftTemplate` guards + DXT1→PNG decode + part preference + PNG base
+  passthrough + cache), `tests/electron/dds.test.js` (`decodeDds` DXT1 block /
+  bad magic / unsupported fourCC / truncated payload, `encodePng` IHDR + IDAT
+  round-trip, `ddsToPngDataUrl` pixel round-trip).
 - `tests/components/LiveryScreen/` (header actions/back/install overlay/search,
   in-card checkbox select driving the header Export/Delete commands + their
   disabled-until-selected states, single vs batch delete confirms, painter
