@@ -396,6 +396,18 @@
   border-radius: 3px;
 }
 .lp-airline-toggle:hover { color: var(--text); background: var(--bg); }
+/* Locked (reference) liveries: airline/type are display-only */
+.lp-inline input[type="text"]:disabled,
+.lp-inline select:disabled {
+  color: var(--text-muted);
+  background: var(--bg);
+  border-color: var(--border);
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.lp-inline.lp-locked .lp-inline-label { opacity: 0.7; }
+.lp-airline-toggle:disabled { color: var(--text-muted); opacity: 0.5; cursor: not-allowed; }
+.lp-airline-toggle:disabled:hover { color: var(--text-muted); background: transparent; }
 .lp-airline-list {
   position: absolute;
   top: calc(100% + 4px);

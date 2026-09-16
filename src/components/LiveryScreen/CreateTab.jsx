@@ -67,7 +67,7 @@ function SaveNameDialog({ initial, isSaveAs, onConfirm }) {
   );
 }
 
-function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId }) {
+function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locked }) {
   const { t, lang } = useTranslation();
   const airlineOptions = useMemo(() => {
     const set = new Set(Object.values(AIRLINE_CODE_MAP));
@@ -95,7 +95,7 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId }) {
   }, [open ]);
   return (
     <>
-      <label className="lp-inline">
+      <label className={'lp-inline' + (locked ? ' lp-locked' : '')}>
         <span className="lp-inline-label">{t('livery_airline')}</span>
         <span className="lp-airline-wrap" ref={wrapRef}>
           <input
@@ -107,13 +107,15 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId }) {
             role="combobox"
             aria-expanded={open}
             aria-controls="livery-airline-list"
+            disabled={locked}
             onChange={(e) => setAirline(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))}
-            onFocus={() => setOpen(true)}
+            onFocus={() => { if (!locked) setOpen(true); }}
           />
           <button
             type="button"
             className="lp-airline-toggle"
             aria-label="airlines"
+            disabled={locked}
             onClick={() => setOpen((v) => !v)}
           >
             ▾
@@ -136,9 +138,9 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId }) {
           )}
         </span>
       </label>
-      <label className="lp-inline">
+      <label className={'lp-inline' + (locked ? ' lp-locked' : '')}>
         <span className="lp-inline-label">{t('livery_aircraft')}</span>
-        <select value={planeId} onChange={(e) => setPlaneId(e.target.value)}>
+        <select value={planeId} disabled={locked} onChange={(e) => setPlaneId(e.target.value)}>
           {PLANE_IDS.map(id => (
             <option key={id} value={id}>{id}</option>
           ))}
@@ -566,7 +568,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
             </span>
           )}
           <span className="lp-sep" />
-          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} />
+          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReference} />
         </div>
 
         <div className="lp-group lp-group-end">

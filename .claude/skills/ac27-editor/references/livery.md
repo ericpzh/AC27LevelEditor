@@ -110,18 +110,23 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   takes `{ onCreated, onCancel, onHelp }`). Given `CreateTab.prefill` it
   snapshots an `origin` `{folder, airline, planeId, pack, imageDataUrl}` with
   `pack` `'mine'` / `'reference'`; the canvas starts primed with the origin
-  picture (lazy `readLiveryImage` when the thumbnail was not ready). For a
-  **new** livery the canvas is primed with the selected aircraft type's
-  **built-in UV template** (see "Aircraft template" below) so the background is
-  opaque and shows the real model shape; the template effect never clobbers an
-  origin picture or a user-imported image (only replaces a previous template or
-  an empty canvas). Form: a custom airline dropdown
+  picture (lazy `readLiveryImage` when the thumbnail was not ready). The
+  selected aircraft type's **built-in UV template** (see "Aircraft template"
+  below) is fetched whenever a type is known — **including when editing a saved
+  livery** — and held in `templateDataUrl`, passed to the canvas as
+  `defaultLiveryDataUrl`. For a **new** livery it also becomes the canvas base
+  (opaque background showing the real model shape); for a saved origin /
+  imported image it never clobbers the base, but it is what **Clear** restores.
+  Form: a custom airline dropdown
   (`lp-airline-*` — full list, never text-filtered, unlike a native
   `<datalist>`) + plane-id `<select>`; `folderPreview = folderFor(planeId,
   airline)` is only the Save As prefill. A brand-new livery **defaults to the
   first airline code + `AIRBUS A-319neo`** (`DEFAULT_AIRLINE`/`DEFAULT_PLANE_ID`)
   so the form is valid out of the box, and the type `<select>` has **no blank
-  placeholder option** (an origin/zip still supplies its own pair). Actions:
+  placeholder option** (an origin/zip still supplies its own pair). For a
+  **reference (locked) origin** both the airline input (+ its toggle) and the
+  type `<select>` are `disabled` and greyed (`.lp-locked`) — the pair is
+  display-only, and Save As reuses it. Actions:
   - **Import image** (`IoImageOutline`) → `fileToDataUrl` + `normalizeToTexture`
     (default white fill) → new canvas base.
   - **Import livery** (`FaFileImport`) → `loadLiveryZip` → normalize + prime
@@ -228,10 +233,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     flattened texture.
   - Undo/redo via `createUndoStack`/`pushSnapshot` (cap `MAX_UNDO = 20`
     ImageData snapshots). **Clear** (`AiOutlineClear`, `react-icons/ai`) opens a
-    confirm modal and re-paints the base via `drawBase(ctx, initialImageDataUrl)`
-    — i.e. restores the aircraft's built-in default livery for a new livery, the
-    origin picture for an edit, or the imported image (never a blank canvas).
-    Unsaved flag via
+    confirm modal and re-paints the base via
+    `drawBase(ctx, defaultLiveryRef.current || initialImageDataUrl)` — always
+    the **selected aircraft type's built-in default livery**, even when editing
+    a saved livery / reference / imported image; falls back to the neutral fill
+    only when the type template is unavailable. The `defaultLiveryDataUrl` prop
+    is mirrored into `defaultLiveryRef` so the modal closure reads the latest
+    value. Unsaved flag via
     `onDirty`.
 - Display names: `airlineDisplayName(code, lang)` +
   `AIRLINE_CODE_TO_NAMES` live in `src/utils/constants/airlines.js`
@@ -248,7 +256,9 @@ The game ships the neutral default livery for **every** type under
 <PLANE_ID>/` (`base[_Part].dds` = BaseMap, DXT1/BC1, 2048² — C919 is 4096²;
 plus `mask.dds` DXT5, `lit.dds` DXT1, `coat.dds` BC4U). That default IS the UV
 template, so the painter uses it as the per-aircraft background instead of
-being transparent. `electron/dds.js` (pure, no deps) decodes the BaseMap
+being transparent, and as the target of the **Clear** button for every livery
+(new, saved, reference or imported). `electron/dds.js` (pure, no deps) decodes
+the BaseMap
 (`decodeDds` DXT1/DXT5/DXT3 → RGBA, `encodePng` minimal RGBA8 encoder) and
 `electron/livery.js:readAircraftTemplate(gameRoot, planeId)` picks the
 `Body`→`Fuselage`→first part, returns a PNG data-URL (`{success, imageDataUrl,
@@ -296,8 +306,9 @@ alongside the others; `tests/setup.js` stubs them.
 Base texture is **opaque** — the painter seeds a new canvas with the
 per-aircraft built-in template (or a neutral `#ffffff` fill), so a saved
 `base.png` never has transparent holes (a BaseMap replaces the model's own
-texture). `LiveryCanvas` **Clear** restores the primed base (template / origin
-/ imported image, else `DEFAULT_BASE_COLOR`), and
+texture). `LiveryCanvas` **Clear** always restores the selected aircraft type's
+built-in default livery (`defaultLiveryDataUrl`), falling back to the opened
+base image / `DEFAULT_BASE_COLOR` only when that template is unavailable; and
 `normalizeToTexture(dataUrl)` fills white by default. Shrink-to-fit inside
 2048², aspect preserved, centered; smaller images as-is (never upscale). Main
 only writes bytes + checks IHDR.

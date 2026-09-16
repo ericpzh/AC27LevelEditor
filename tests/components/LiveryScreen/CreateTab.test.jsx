@@ -348,6 +348,9 @@ describe('CreateTab edit origins (mine vs reference)', () => {
     renderCreate({ onCreated });
 
     expect(screen.getByPlaceholderText('CCA').value).toBe('CCA');
+    // Own liveries keep the airline/aircraft fields editable.
+    expect(screen.getByPlaceholderText('CCA').disabled).toBe(false);
+    expect(document.querySelector('.lp-root select').disabled).toBe(false);
     const btn = saveBtn();
     await waitFor(() => expect(btn.disabled).toBe(false));
     await user.click(btn);
@@ -406,6 +409,10 @@ describe('CreateTab edit origins (mine vs reference)', () => {
     expect(screen.getByPlaceholderText('CCA').value).toBe('CES');
     // Locked notice.
     expect(document.querySelector('.lp-lock')).toBeInTheDocument();
+    // Airline + aircraft are greyed out / display-only for a locked reference.
+    expect(screen.getByPlaceholderText('CCA').disabled).toBe(true);
+    expect(document.querySelector('.lp-root select').disabled).toBe(true);
+    expect(document.querySelector('.lp-airline-toggle').disabled).toBe(true);
     // Save blocked, Save As open (form primed from the reference).
     expect(saveBtn().disabled).toBe(true);
     const asBtn = saveAsBtn();
