@@ -111,16 +111,34 @@ describe('LiveryCanvas tools', () => {
     expect(main.lineTo).toHaveBeenCalled();
   });
 
-  it('text commit flattens to raster (fillText called)', async () => {
+  it('text commit creates a selectable live object, not rasterised', async () => {
     const user = userEvent.setup();
-    renderCanvas();
+    const ref = React.createRef();
+    render(
+      <I18nProvider>
+        <LiveryCanvas ref={ref} />
+        <Modal />
+        <Toast />
+      </I18nProvider>
+    );
+    await waitFor(() => expect(ref.current).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Text' }));
     const cv = mainCanvas();
     fireEvent.pointerDown(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
     const input = screen.getByPlaceholderText('Type text, Enter to commit…');
     await user.type(input, 'hello');
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(ctxs[0].fillText).toHaveBeenCalledWith('hello', expect.any(Number), expect.any(Number));
+    // The text becomes a live object: object actions light up and the base
+    // canvas stays untouched (no raster fillText).
+    const removeBtn = screen.getByRole('button', { name: 'Remove Sticker' });
+    await waitFor(() => expect(removeBtn.disabled).toBe(false));
+    expect(screen.getByRole('button', { name: 'Flip Horizontal' }).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Duplicate Sticker' }).disabled).toBe(false);
+    expect(ctxs[0].fillText).not.toHaveBeenCalled();
+    // Export flattens the text into the output.
+    act(() => { ref.current.exportPNG(); });
+    const exportCtx = ctxs[ctxs.length - 1];
+    expect(exportCtx.fillText).toHaveBeenCalledWith('hello', 0, 0);
   });
 
   it('sticker import creates a live object flattened into the export', async () => {
@@ -261,6 +279,57 @@ describe('sticker flip', () => {
     await user.click(hBtn());
     await waitFor(() => {
       expect(ctxs.some(c => c.scale.mock.calls.some(([x, y]) => x === -1 && y === 1))).toBe(true);
+    });
+  });
+});
+
+describe('text object (selectable, flippable)', () => {
+  async function commitText(user, ref, text = 'hi') {
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    const input = screen.getByPlaceholderText('Type text, Enter to commit…');
+    await user.type(input, text);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    // Select tool is active after commit; wait for the overlay box to draw.
+    // (Each draw calls overlay.getContext, so scan all mocked contexts.)
+    await waitFor(() => expect(ctxs.some(c => c.translate.mock.calls.length > 0)).toBe(true));
+  }
+
+  it('is selectable and moveable with the Select tool', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await commitText(user, ref);
+    const overlayCtx = ctxs.find(c => c.translate.mock.calls.length > 0);
+    const committedX = overlayCtx.translate.mock.calls[0][0];
+    // Escape deselects but keeps the object around.
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false);
+    // Click inside the box and drag right: re-selects and moves the object.
+    ctxs.length = 0;
+    fireEvent.pointerDown(mainCanvas(), { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(mainCanvas(), { clientX: 344, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(mainCanvas(), { pointerId: 1 });
+    await waitFor(() => {
+      expect(ctxs.some(c => c.translate.mock.calls.some(([x]) => x > committedX + 10))).toBe(true);
+    });
+  });
+
+  it('flips horizontally then vertically', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await commitText(user, ref);
+    ctxs.length = 0;
+    await user.click(screen.getByRole('button', { name: 'Flip Horizontal' }));
+    await waitFor(() => {
+      expect(ctxs.some(c => c.scale.mock.calls.some(([x, y]) => x === -1 && y === 1))).toBe(true);
+    });
+    ctxs.length = 0;
+    await user.click(screen.getByRole('button', { name: 'Flip Vertical' }));
+    await waitFor(() => {
+      expect(ctxs.some(c => c.scale.mock.calls.some(([x, y]) => x === -1 && y === -1))).toBe(true);
     });
   });
 });

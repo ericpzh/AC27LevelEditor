@@ -173,21 +173,30 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit; mouse-wheel
     zoom anchored at the cursor. Brush/eraser draw a true-size cursor ring
     (`lp-cursor-ring`).
-  - Sticker is a **live, non-destructive object** (`stickerRef`): import via
-    `selectLiveryImage`/`readDiskImage` from the rail or `importSticker()`.
-    With the Select tool: click to select/move, drag handles to scale/rotate,
-    Escape / click-away to deselect, `Delete`/`Backspace` to remove. The rail
-    also has **Flip Horizontal / Flip Vertical** buttons
-    (`livery_paint_flip_h`/`_v`, `LuFlipHorizontal`/`LuFlipVertical`,
-    disabled without a sticker) → `flipSticker('flipX'|'flipY')` toggles the
-    `st.flipX`/`st.flipY` flags; every draw/flatten path wraps `drawImage` in
-    `ctx.save(); ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1); …; ctx.restore()`.
-    Ref methods `importSticker`/`removeSticker`/`duplicateSticker`; duplicate
-    stamps the current sticker onto the base (transform included) and leaves a
-    nudged copy. Only `exportPNG()` flattens it (over the transparent base).
+  - **Live objects** (`liveRef`, one at a time): either a sticker image
+    (`kind:'sticker'`, `img`) or a **text box** (`kind:'text'` — `text`, `font`,
+    `size`, `bold`, `italic`, `color`). Import a sticker via
+    `selectLiveryImage`/`readDiskImage` from the rail or `importSticker()`;
+    commit text by clicking with the Text tool, typing, and pressing Enter —
+    it is **not rasterised** but becomes a live object (the clicked point is
+    the box's top-left; dimensions from `measureLiveText`). With the Select
+    tool: click to select/move, drag handles to scale/rotate (a text box
+    scales its `size` with the frame), Escape / click-away to deselect,
+    `Delete`/`Backspace` to remove. The rail also has **Flip Horizontal /
+    Flip Vertical** buttons (`livery_paint_flip_h`/`_v`,
+    `LuFlipHorizontal`/`LuFlipVertical`, disabled without a live object) →
+    `flipSticker('flipX'|'flipY')` toggles the `flipX`/`flipY` flags; every
+    overlay/duplicate/export path funnels through `paintLiveObject`
+    (`ctx.save(); translate; rotate; scale(flipX ? -1 : 1, flipY ? -1 : 1);
+    drawImage|fillText; restore`). Ref methods
+    `importSticker`/`removeSticker`/`duplicateSticker`; duplicate stamps the
+    current object onto the base (transform included) and leaves a nudged
+    copy, and creating a new object calls `flattenLive()` first so the
+    previous one is never silently lost. Only `exportPNG()` returns the
+    flattened texture.
   - Undo/redo via `createUndoStack`/`pushSnapshot` (cap `MAX_UNDO = 20`
     ImageData snapshots). Clear/reset via confirm modal. Unsaved flag via
-    `onDirty`. Text commits to raster on Enter.
+    `onDirty`.
 - Display names: `airlineDisplayName(code, lang)` +
   `AIRLINE_CODE_TO_NAMES` live in `src/utils/constants/airlines.js`
   (derived from `AIRLINE_CODE_MAP`; CJK name picked for `zh`, otherwise the

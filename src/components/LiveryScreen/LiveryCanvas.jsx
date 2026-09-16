@@ -43,6 +43,10 @@ import useTooltip from '../BrowserScreen/useTooltip';
 
 export const TEXTURE = 2048;
 
+// Opaque fallback base for a new/cleared canvas. The BaseMap replaces the
+// model's own texture, so a transparent background would render as holes.
+export const DEFAULT_BASE_COLOR = '#ffffff';
+
 const TOOLS = ['select', 'brush', 'eraser', 'eyedropper', 'fill', 'line', 'rect', 'ellipse', 'text'];
 
 // Photoshop-style left-rail tool icons + advertised keyboard shortcuts.
@@ -71,11 +75,53 @@ const FONT_OPTIONS = [
 // Zoom ladder for the +/- buttons.
 const ZOOM_STEPS = [0.125, 0.25, 0.5, 0.75, 1, 1.5, 2];
 
+// ── Live objects ───────────────────────────────────────────
+// A live object is a non-destructive, moveable overlay element flattened onto
+// the texture only at export: either a sticker image (`kind: 'sticker'`, with
+// `img`) or a text box (`kind: 'text'`, with `text`/`font`/`size`/…).
+// Shared fields: x, y, w, h, rot, flipX, flipY, selected.
+const liveFont = (o) => `${o.italic ? 'italic ' : ''}${o.bold ? 'bold ' : ''}${o.size}px ${o.font}`;
+
+// Paint a live object centred on its own origin (caller positions the frame).
+function paintLiveObject(ctx, o) {
+  if (!ctx || !o) return;
+  ctx.save();
+  ctx.translate(o.x, o.y);
+  ctx.rotate(o.rot || 0);
+  ctx.scale(o.flipX ? -1 : 1, o.flipY ? -1 : 1);
+  if (o.kind === 'text') {
+    ctx.fillStyle = o.color || '#000000';
+    ctx.font = liveFont(o);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(o.text, 0, 0);
+  } else if (o.img) {
+    ctx.drawImage(o.img, -o.w / 2, -o.h / 2, o.w, o.h);
+  }
+  ctx.restore();
+}
+
+// Text box dimensions — real font metrics when the context supports them, a
+// linear estimate otherwise (jsdom's context stub has no measureText).
+function measureLiveText(ctx, text, o) {
+  let w = 0;
+  if (ctx && typeof ctx.measureText === 'function') {
+    ctx.save();
+    ctx.font = liveFont(o);
+    const m = ctx.measureText(text);
+    w = m && m.width;
+    ctx.restore();
+  }
+  if (!w || !isFinite(w)) w = Math.max(8, String(text).length * o.size * 0.6);
+  return { w, h: o.size * 1.2 };
+}
+
 /**
  * LiveryCanvas — flat 2048×2048 texture painter (P2).
- * Transparent background, CSS-scaled view, zoom in/out/fit, space-/middle-drag
- * pan, coalesced pointer strokes. Stickers are live, non-destructive moveable
- * objects (select / move / scale / rotate) flattened only on export.
+ * Opaque base (per-aircraft template or a neutral fill), CSS-scaled view,
+ * zoom in/out/fit, space-/middle-drag pan, coalesced pointer strokes. Stickers
+ * are live, non-destructive moveable objects (select / move / scale / rotate)
+ * flattened only on export.
  */
 const LiveryCanvas = forwardRef(function LiveryCanvas(
   { initialImageDataUrl, onDirty },
@@ -95,7 +141,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const shapeRef = useRef(null);
   const dragRef = useRef(null);
   const rafRef = useRef(0);
-  const stickerRef = useRef(null);
+  const liveRef = useRef(null);
   const cursorRingRef = useRef(null);
   const toolRef = useRef('brush');
   const brushRef = useRef({ color: '#ff0000', size: 12, opacity: 1, hard: true });
@@ -110,7 +156,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const [textOpts, setTextOptsState] = useState(textOptsRef.current);
   const [zoom, setZoom] = useState('fit');
   const [fitScale, setFitScale] = useState(0.25);
-  const [sticker, setStickerState] = useState(null);
+  const [live, setLiveState] = useState(null);
   const [textAnchor, setTextAnchor] = useState(null);
   const [textDraft, setTextDraft] = useState('');
   const [dirty, setDirtyState] = useState(false);
@@ -119,9 +165,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const setBrush = (v) => { brushRef.current = v; setBrushState(v); };
   const setShapeOpts = (v) => { shapeOptsRef.current = v; setShapeOptsState(v); };
   const setTextOpts = (v) => { textOptsRef.current = v; setTextOptsState(v); };
-  const setSticker = (v) => {
-    stickerRef.current = v;
-    setStickerState(v);
+  const setLive = (v) => {
+    liveRef.current = v;
+    setLiveState(v);
   };
   const setDirty = (v) => {
     setDirtyState(v);
@@ -149,7 +195,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ctxRef.current = ctx;
     undoRef.current = createUndoStack();
     setDirty(false);
-    setSticker(null);
+    setLive(null);
     setTextAnchor(null);
     const clearBase = () => {
       ctx.save();
@@ -159,6 +205,18 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       ctx.clearRect(0, 0, TEXTURE, TEXTURE);
       ctx.restore();
     };
+    // Opaque default: a livery BaseMap replaces the model's texture, so a
+    // transparent canvas would render as holes. Unpainted areas fall back to
+    // a neutral white instead.
+    const fillBase = () => {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = DEFAULT_BASE_COLOR;
+      ctx.fillRect(0, 0, TEXTURE, TEXTURE);
+      ctx.restore();
+    };
     if (initialImageDataUrl) {
       const img = new Image();
       img.onload = () => {
@@ -166,10 +224,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         ctx.drawImage(img, 0, 0, TEXTURE, TEXTURE);
         scheduleOverlay();
       };
-      img.onerror = () => clearBase();
+      img.onerror = () => fillBase();
       img.src = initialImageDataUrl;
     } else {
-      clearBase();
+      fillBase();
     }
     scheduleOverlay();
     // Mount-only: the parent remounts (key) whenever the base changes.
@@ -258,8 +316,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, TEXTURE, TEXTURE);
     ctx.restore();
-    const st = stickerRef.current;
-    if (st && st.img) {
+    const st = liveRef.current;
+    if (st && (st.kind === 'text' ? st.text : st.img)) {
       const z = effZoom || 1;
       const gap = 40 / z;
       const hr = 7 / z;
@@ -269,7 +327,15 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       ctx.rotate(st.rot || 0);
       ctx.save();
       ctx.scale(st.flipX ? -1 : 1, st.flipY ? -1 : 1);
-      ctx.drawImage(st.img, -st.w / 2, -st.h / 2, st.w, st.h);
+      if (st.kind === 'text') {
+        ctx.fillStyle = st.color || '#000000';
+        ctx.font = liveFont(st);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(st.text, 0, 0);
+      } else {
+        ctx.drawImage(st.img, -st.w / 2, -st.h / 2, st.w, st.h);
+      }
       ctx.restore();
       ctx.lineWidth = (active ? 2 : 1) / z;
       ctx.strokeStyle = active ? '#6aa0ff' : 'rgba(106, 160, 255, 0.55)';
@@ -299,7 +365,21 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     rafRef.current = requestAnimationFrame(drawOverlay);
   }
 
-  useEffect(() => { scheduleOverlay(); }, [sticker, textAnchor, scheduleOverlay]);
+  useEffect(() => { scheduleOverlay(); }, [live, textAnchor, scheduleOverlay]);
+
+  // Replace the current live object, stamping the old one onto the base first
+  // so nothing is silently lost.
+  const flattenLive = () => {
+    const st = liveRef.current;
+    const ctx = ctxRef.current;
+    if (!st || !ctx) return;
+    pushSnapshot();
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    paintLiveObject(ctx, st);
+    ctx.restore();
+  };
 
   // ── Sticker import (flush into a live, moveable object) ────
   const importSticker = async () => {
@@ -315,7 +395,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       img.onload = () => {
         const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
         const k = Math.min(1, 1024 / Math.max(w, h));
-        setSticker({ img, w: w * k, h: h * k, x: TEXTURE / 2, y: TEXTURE / 2, rot: 0, flipX: false, flipY: false, selected: true });
+        flattenLive();
+        setLive({ kind: 'sticker', img, w: w * k, h: h * k, x: TEXTURE / 2, y: TEXTURE / 2, rot: 0, flipX: false, flipY: false, selected: true });
         setTool('select');
         setDirty(true);
         scheduleOverlay();
@@ -328,56 +409,46 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   const removeSticker = () => {
-    if (!stickerRef.current) return;
-    setSticker(null);
+    if (!liveRef.current) return;
+    setLive(null);
     setDirty(true);
     scheduleOverlay();
   };
 
   const flipSticker = (axis) => {
-    const st = stickerRef.current;
+    const st = liveRef.current;
     if (!st) return;
-    setSticker({ ...st, [axis]: !st[axis], selected: true });
+    setLive({ ...st, [axis]: !st[axis], selected: true });
     setDirty(true);
     scheduleOverlay();
   };
 
-  // ── Duplicate: stamp the live sticker onto the base, keep a nudged copy ─
+  // ── Duplicate: stamp the live object onto the base, keep a nudged copy ─
   const duplicateSticker = () => {
-    const st = stickerRef.current;
+    const st = liveRef.current;
     const ctx = ctxRef.current;
-    if (!st || !st.img || !ctx) return;
+    if (!st || !ctx) return;
     pushSnapshot();
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
-    ctx.translate(st.x, st.y);
-    ctx.rotate(st.rot || 0);
-    ctx.scale(st.flipX ? -1 : 1, st.flipY ? -1 : 1);
-    ctx.drawImage(st.img, -st.w / 2, -st.h / 2, st.w, st.h);
+    ctx.globalAlpha = 1;
+    paintLiveObject(ctx, st);
     ctx.restore();
     const nudge = Math.max(st.w, st.h) * 0.15 + 20;
-    setSticker({ ...st, x: st.x + nudge, y: st.y + nudge, selected: true });
+    setLive({ ...st, x: st.x + nudge, y: st.y + nudge, selected: true });
     setTool('select');
     setDirty(true);
     scheduleOverlay();
   };
 
-  // ── Export (transparent background + live sticker flattened) ─
+  // ── Export (opaque base + live object flattened) ───────────
   useImperativeHandle(ref, () => ({
     exportPNG() {
       const out = document.createElement('canvas');
       out.width = TEXTURE; out.height = TEXTURE;
       const ctx = out.getContext('2d');
       ctx.drawImage(canvasRef.current, 0, 0);
-      const st = stickerRef.current;
-      if (st && st.img) {
-        ctx.save();
-        ctx.translate(st.x, st.y);
-        ctx.rotate(st.rot || 0);
-        ctx.scale(st.flipX ? -1 : 1, st.flipY ? -1 : 1);
-        ctx.drawImage(st.img, -st.w / 2, -st.h / 2, st.w, st.h);
-        ctx.restore();
-      }
+      paintLiveObject(ctx, liveRef.current);
       return out.toDataURL('image/png');
     },
     importSticker,
@@ -402,11 +473,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); return; }
       if (e.key === 'Escape') {
-        if (stickerRef.current && stickerRef.current.selected) { setSticker({ ...stickerRef.current, selected: false }); scheduleOverlay(); }
+        if (liveRef.current && liveRef.current.selected) { setLive({ ...liveRef.current, selected: false }); scheduleOverlay(); }
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (stickerRef.current && stickerRef.current.selected) { setSticker(null); setDirty(true); scheduleOverlay(); }
+        if (liveRef.current && liveRef.current.selected) { setLive(null); setDirty(true); scheduleOverlay(); }
         return;
       }
       const k = e.key.toLowerCase();
@@ -477,7 +548,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
     // Sticker interactions (Select tool): click to select / move, drag the
     // handles to scale / rotate, click away to deselect.
-    const st = stickerRef.current;
+    const st = liveRef.current;
     if (st && t === 'select') {
       const z = effZoom || 1;
       const gap = 40 / z;
@@ -487,7 +558,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       const dRotate = Math.hypot(lp.x, lp.y - (-st.h / 2 - gap));
       const inside = Math.abs(lp.x) <= st.w / 2 && Math.abs(lp.y) <= st.h / 2;
       if (st.selected && dResize < grab) {
-        dragRef.current = { mode: 'resize', startW: st.w, startH: st.h, startP: p };
+        dragRef.current = { mode: 'resize', startW: st.w, startH: st.h, startSize: st.size, startP: p };
         capture(); return;
       }
       if (st.selected && dRotate < grab) {
@@ -495,11 +566,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         capture(); return;
       }
       if (inside) {
-        if (!st.selected) setSticker({ ...st, selected: true });
+        if (!st.selected) setLive({ ...st, selected: true });
         dragRef.current = { mode: 'move', dx: st.x - p.x, dy: st.y - p.y };
         capture(); scheduleOverlay(); return;
       }
-      if (st.selected) { setSticker({ ...st, selected: false }); scheduleOverlay(); }
+      if (st.selected) { setLive({ ...st, selected: false }); scheduleOverlay(); }
     }
 
     if (t === 'brush' || t === 'eraser') {
@@ -541,18 +612,21 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       scheduleOverlay();
       return;
     }
-    if (dragRef.current && stickerRef.current) {
-      const st = stickerRef.current;
+    if (dragRef.current && liveRef.current) {
+      const st = liveRef.current;
       const p = toTexture(e.clientX, e.clientY);
       const mode = dragRef.current.mode;
-      if (mode === 'move') setSticker({ ...st, x: p.x + dragRef.current.dx, y: p.y + dragRef.current.dy, selected: true });
+      if (mode === 'move') setLive({ ...st, x: p.x + dragRef.current.dx, y: p.y + dragRef.current.dy, selected: true });
       else if (mode === 'resize') {
         const d = dragRef.current;
         const startDist = Math.max(1, Math.hypot(d.startP.x - st.x, d.startP.y - st.y));
         const k = Math.max(0.02, Math.hypot(p.x - st.x, p.y - st.y) / startDist);
-        setSticker({ ...st, w: Math.max(8, d.startW * k), h: Math.max(8, d.startH * k), selected: true });
+        const next = { ...st, w: Math.max(8, d.startW * k), h: Math.max(8, d.startH * k), selected: true };
+        // Text scales its font with the box so the glyphs match the frame.
+        if (st.kind === 'text' && d.startSize) next.size = Math.max(4, d.startSize * k);
+        setLive(next);
       } else if (mode === 'rotate') {
-        setSticker({ ...st, rot: Math.atan2(p.y - st.y, p.x - st.x) + Math.PI / 2, selected: true });
+        setLive({ ...st, rot: Math.atan2(p.y - st.y, p.x - st.x) + Math.PI / 2, selected: true });
       }
       setDirty(true);
       scheduleOverlay();
@@ -589,21 +663,25 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ctx.restore();
   }
 
-  // ── Text commit ────────────────────────────────────────────
+  // ── Text commit — becomes a selectable live object (not rasterised) ──
   const commitText = () => {
-    if (!textAnchor || !textDraft) { setTextAnchor(null); return; }
-    const ctx = ctxRef.current;
-    pushSnapshot();
+    const raw = String(textDraft || '').trim();
+    if (!textAnchor || !raw) { setTextAnchor(null); setTextDraft(''); return; }
     const o = textOptsRef.current;
-    ctx.save();
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = brushRef.current.color;
-    ctx.font = `${o.italic ? 'italic ' : ''}${o.bold ? 'bold ' : ''}${o.size}px ${o.font}`;
-    ctx.textBaseline = 'top';
-    ctx.fillText(textDraft, textAnchor.x, textAnchor.y);
-    ctx.restore();
+    const { w, h } = measureLiveText(ctxRef.current, raw, o);
+    flattenLive();
+    // Keep the clicked point as the top-left corner of the text box.
+    setLive({
+      kind: 'text', text: raw, font: o.font, size: o.size, bold: o.bold, italic: o.italic,
+      color: brushRef.current.color, w, h,
+      x: textAnchor.x + w / 2, y: textAnchor.y + h / 2,
+      rot: 0, flipX: false, flipY: false, selected: true,
+    });
     setTextAnchor(null);
     setTextDraft('');
+    setTool('select');
+    setDirty(true);
+    scheduleOverlay();
   };
 
   // ── Clear / reset (confirm modal) ──────────────────────────
@@ -624,8 +702,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             ctx.globalCompositeOperation = 'source-over';
             ctx.globalAlpha = 1;
             ctx.clearRect(0, 0, TEXTURE, TEXTURE);
+            ctx.fillStyle = DEFAULT_BASE_COLOR;
+            ctx.fillRect(0, 0, TEXTURE, TEXTURE);
             ctx.restore();
-            setSticker(null);
+            setLive(null);
             setTextAnchor(null);
             scheduleOverlay();
           }}>{t('livery_paint_clear')}</button>
@@ -771,10 +851,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           <div className="lp-rail-sep" />
           <div className="lp-rail-group">
             <button className="lp-tool" {...bind(t('livery_paint_import_sticker'))} aria-label={t('livery_paint_import_sticker')} onClick={importSticker}><TbSticker2 size={18} /></button>
-            <button className="lp-tool" {...bind(t('livery_paint_duplicate_sticker'))} aria-label={t('livery_paint_duplicate_sticker')} disabled={!sticker} onClick={duplicateSticker}><HiDocumentDuplicate size={18} /></button>
-            <button className="lp-tool" {...bind(t('livery_paint_flip_h'))} aria-label={t('livery_paint_flip_h')} disabled={!sticker} onClick={() => flipSticker('flipX')}><LuFlipHorizontal size={18} /></button>
-            <button className="lp-tool" {...bind(t('livery_paint_flip_v'))} aria-label={t('livery_paint_flip_v')} disabled={!sticker} onClick={() => flipSticker('flipY')}><LuFlipVertical size={18} /></button>
-            <button className="lp-tool lp-danger" {...bind(t('livery_paint_delete_sticker'))} aria-label={t('livery_paint_delete_sticker')} disabled={!sticker} onClick={removeSticker}><CiBookmarkRemove size={18} /></button>
+            <button className="lp-tool" {...bind(t('livery_paint_duplicate_sticker'))} aria-label={t('livery_paint_duplicate_sticker')} disabled={!live} onClick={duplicateSticker}><HiDocumentDuplicate size={18} /></button>
+            <button className="lp-tool" {...bind(t('livery_paint_flip_h'))} aria-label={t('livery_paint_flip_h')} disabled={!live} onClick={() => flipSticker('flipX')}><LuFlipHorizontal size={18} /></button>
+            <button className="lp-tool" {...bind(t('livery_paint_flip_v'))} aria-label={t('livery_paint_flip_v')} disabled={!live} onClick={() => flipSticker('flipY')}><LuFlipVertical size={18} /></button>
+            <button className="lp-tool lp-danger" {...bind(t('livery_paint_delete_sticker'))} aria-label={t('livery_paint_delete_sticker')} disabled={!live} onClick={removeSticker}><CiBookmarkRemove size={18} /></button>
           </div>
           <div className="lp-rail-sep" />
           <div className="lp-rail-group">
