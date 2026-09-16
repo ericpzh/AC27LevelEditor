@@ -35,8 +35,8 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
   // Collapsed aircraft groups, keyed by targetPlaneId ('' = unknown).
   // Mine + reference share one folder set; reference rows are read-only.
   const [collapsed, setCollapsed] = useState(new Set());
-  // Selected own-pack folders for batch delete (reference never selectable).
-  // Acted on from the header bar via cmdRef.
+  // Selected own-pack folders (reference never selectable). The card checkbox
+  // drives export / delete in the header bar via cmdRef.
   const [selected, setSelected] = useState(new Set());
   const { bind, TooltipPortal } = useTooltip();
 
@@ -105,28 +105,40 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
     });
   };
 
-  const handleDelete = (folder) => {
+  // One confirm/delete path shared by the header delete button (acts on the
+  // one or many selected folders). Cards no longer carry their own actions.
+  const confirmDelete = (folders) => {
+    if (!folders || folders.length === 0) return;
+    const single = folders.length === 1;
     const { showModal, hideModal } = useAppStore.getState();
     showModal(
       () => t('livery_delete_confirm_title'),
-      () => <p>{t('livery_delete_confirm_body', { folder })}</p>,
+      () => <p>{single
+        ? t('livery_delete_confirm_body', { folder: folders[0] })
+        : t('livery_delete_multi_body', { n: folders.length })}</p>,
       () => (
         <>
           <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
           <button className="btn-danger" onClick={async () => {
             hideModal();
-            try {
-              const res = await electronAPI.deleteLivery(folder);
-              const { showToast } = useAppStore.getState();
-              if (res && res.success) {
-                showToast(t('livery_deleted'), 'success');
-                refresh();
-              } else {
-                showToast(t(errKey(res && res.error)), 'error');
+            const { showToast } = useAppStore.getState();
+            let ok = 0;
+            for (const folder of folders) {
+              try {
+                const res = await electronAPI.deleteLivery(folder);
+                if (res && res.success) ok++;
+                else showToast(t(errKey(res && res.error)), 'error');
+              } catch (err) {
+                showToast(err.message, 'error');
               }
-            } catch (err) {
-              useAppStore.getState().showToast(err.message, 'error');
             }
+            setSelected(prev => {
+              const next = new Set(prev);
+              folders.forEach(f => next.delete(f));
+              return next;
+            });
+            if (ok > 0) showToast(single ? t('livery_deleted') : t('livery_deleted_multi', { n: ok }), 'success');
+            refresh();
           }}>{t('livery_delete')}</button>
         </>
       )
@@ -150,20 +162,6 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
     }
   };
 
-  const handleCopyName = async (folder) => {
-    const { showToast } = useAppStore.getState();
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(folder);
-        showToast(t('livery_copied', { folder }), 'success');
-      } else {
-        showToast(folder, '');
-      }
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  };
-
   const groupTitle = (planeId) => {
     return planeId || t('livery_unknown_aircraft');
   };
@@ -173,11 +171,11 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
       className={'livery-card clickable' + (selected.has(row.folder) ? ' selected' : '')}
       key={'mine:' + row.folder}
       onClick={(e) => {
-        if (e.target.closest('button, input, select, a')) return;
+        if (e.target.closest('button, input, select, a, label')) return;
         if (onEdit) onEdit({ ...row, pack: 'mine', imageDataUrl: thumbs['mine:' + row.folder] || null });
       }}
       onKeyDown={(e) => {
-        if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button, input, select, a') && onEdit) {
+        if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button, input, select, a, label') && onEdit) {
           e.preventDefault();
           onEdit({ ...row, pack: 'mine', imageDataUrl: thumbs['mine:' + row.folder] || null });
         }
@@ -185,23 +183,21 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
       tabIndex={0}
       title={t('livery_tip_edit')}
     >
-      {thumbs['mine:' + row.folder] && <img src={thumbs['mine:' + row.folder]} alt={row.folder} />}
-      <div className="livery-meta livery-meta-row">
-        <input
-          type="checkbox"
-          className="livery-select"
-          checked={selected.has(row.folder)}
-          onChange={() => toggleSelect(row.folder)}
-        />
+      <div className="livery-thumb">
+        {thumbs['mine:' + row.folder] && <img src={thumbs['mine:' + row.folder]} alt={row.folder} />}
+        <label className="livery-check" {...bind(t('livery_tip_select'))} onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            className="livery-select"
+            checked={selected.has(row.folder)}
+            onChange={() => toggleSelect(row.folder)}
+          />
+        </label>
+      </div>
+      <div className="livery-meta">
         <strong>{airlineDisplayName(row.airline, lang)}</strong>
       </div>
       {row.error && <div className="livery-meta">{t(errKey(row.error))}</div>}
-      <div className="livery-actions">
-        <button className="btn-sm" {...bind(t('livery_tip_edit'))} onClick={() => onEdit && onEdit({ ...row, pack: 'mine', imageDataUrl: thumbs['mine:' + row.folder] || null })}>{t('livery_edit')}</button>
-        <button className="btn-sm" {...bind(t('livery_tip_export'))} onClick={() => handleExport(row.folder)}>{t('livery_export')}</button>
-        <button className="btn-sm" {...bind(t('livery_tip_copy'))} onClick={() => handleCopyName(row.folder)}>{t('livery_copy_name')}</button>
-        <button className="btn-sm" {...bind(t('livery_tip_delete'))} onClick={() => handleDelete(row.folder)}>{t('livery_delete')}</button>
-      </div>
     </div>
   );
 
@@ -222,7 +218,9 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
       tabIndex={0}
       title={t('livery_tip_edit')}
     >
-      {thumbs['reference:' + row.folder] && <img src={thumbs['reference:' + row.folder]} alt={row.folder} />}
+      <div className="livery-thumb">
+        {thumbs['reference:' + row.folder] && <img src={thumbs['reference:' + row.folder]} alt={row.folder} />}
+      </div>
       <div className="livery-meta">
         <strong>{airlineDisplayName(row.airline, lang)}</strong>
         {' '}
@@ -276,13 +274,18 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
 
   const allSelected = mine.length > 0 && mine.every(r => selected.has(r.folder));
 
-  // Publish header-bar state + commands (select-all / delete-selected live in
-  // the LiveryScreen header now, not a bottom bar).
+  // Publish header-bar state + commands (select-all / export / delete all live
+  // in the LiveryScreen header now, not on the cards).
   useEffect(() => {
-    if (onBarState) onBarState({ mineCount: mine.length, selectedCount: selected.size, allSelected });
+    if (onBarState) onBarState({
+      mineCount: mine.length,
+      selectedCount: selected.size,
+      allSelected,
+      oneSelected: selected.size === 1,
+    });
   }, [mine, selected, allSelected]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (cmdRef) cmdRef.current = { toggleSelectAll, deleteSelected };
+    if (cmdRef) cmdRef.current = { toggleSelectAll, deleteSelected, exportSelected };
   }); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSelectAll = () => {
@@ -290,36 +293,13 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
     else setSelected(new Set(mine.map(r => r.folder)));
   };
 
-  const deleteSelected = () => {
-    if (selected.size === 0) return;
-    const folders = [...selected];
-    const { showModal, hideModal } = useAppStore.getState();
-    showModal(
-      () => t('livery_delete_confirm_title'),
-      () => <p>{t('livery_delete_multi_body', { n: folders.length })}</p>,
-      () => (
-        <>
-          <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
-          <button className="btn-danger" onClick={async () => {
-            hideModal();
-            const { showToast } = useAppStore.getState();
-            let ok = 0;
-            for (const folder of folders) {
-              try {
-                const res = await electronAPI.deleteLivery(folder);
-                if (res && res.success) ok++;
-                else showToast(t(errKey(res && res.error)), 'error');
-              } catch (err) {
-                showToast(err.message, 'error');
-              }
-            }
-            setSelected(new Set());
-            if (ok > 0) showToast(t('livery_deleted_multi', { n: ok }), 'success');
-            refresh();
-          }}>{t('livery_delete')}</button>
-        </>
-      )
-    );
+  const singleSelected = () => (selected.size === 1 ? [...selected][0] : null);
+
+  const deleteSelected = () => confirmDelete([...selected]);
+
+  const exportSelected = () => {
+    const folder = singleSelected();
+    if (folder) handleExport(folder);
   };
 
   if (loading) return <div className="livery-placeholder">{t('editor_loading')}</div>;

@@ -60,11 +60,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   painter view hides the header entirely (`livery-screen--painter`) and lets
   `CreateTab` use `livery-content--painter`. Header buttons: Back (`goBack`:
   create → mine, mine → browser), Pack (`handleInstallPack` → `InstallPackTab`
-  in an app modal), Create, Select All/Deselect All, Delete Selected, Find
-  input (`IoSearchOutline`), Help `?` → `LiveryHelpOverlay`. Header bar state
-  (`{mineCount, selectedCount, allSelected}`) + commands are published by
-  `MyLiveriesTab` through `onBarState` / `mineCmdRef`
-  (`toggleSelectAll`/`deleteSelected`). Unsaved-painter guard: `CreateTab`
+  in an app modal), New, Select All/Deselect All, **Export** (`FaFileExport`,
+  enabled with exactly one selected) and Delete Selected (both icon + label,
+  greyed via `.btn-sm:disabled`), Find input (`IoSearchOutline`), Help `?`
+  (`#livery-help-btn`) → `LiveryHelpOverlay`. Header bar state
+  (`{mineCount, selectedCount, allSelected, oneSelected}`) + commands are
+  published by `MyLiveriesTab` through `onBarState` / `mineCmdRef`
+  (`toggleSelectAll`/`exportSelected`/`deleteSelected`). Unsaved-painter guard: `CreateTab`
   registers `window.__liveryPaintGuard = { isDirty() }`; Back/Create call
   `guardLeave` and prompt via `useAppStore.showModal`. `CreateTab.prefill`
   holds the clicked row (or null); the create `key` includes
@@ -75,20 +77,21 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   share the folders with a lock read-only mark (`IoLockClosed`,
   `livery_tip_readonly`). Cards are **clickable to open the painter** for both
   packs (`onEdit({...row, pack, imageDataUrl})`, also Enter/Space; clicks on
-  buttons/inputs/selects/links are ignored) and own rows carry a checkbox for
-  batch select. Cards show only the readable airline name
-  (`airlineDisplayName(code, lang)` from `src/utils/constants/airlines.js` —
-  inverted `AIRLINE_CODE_MAP`, zh picks the CJK name; unknown codes fall back
-  to the raw code); the `{SHORT}_{AIRLINE}` folder stays internal (edit/
-  export/copy/delete payloads, toasts, painter prefill). Per-row Export →
-  `exportLivery` + `saveLiveryDialog`, copy folder name, Delete → confirm
-  modal → `deleteLivery` → refresh; Edit opens the painter. Batch actions live
-  in `LiveryScreen` (header) and reach this component via `cmdRef`; batch
-  delete builds a count confirm (`livery_delete_multi_body`) and deletes each
-  folder in turn (`livery_deleted_multi`). Header Find filters rows by
-  folder / airline code+name / aircraft / manifest name (empty result shows
-  `livery_search_empty`; empty pack shows `livery_empty_mine`). Renders
-  `TooltipPortal`.
+  buttons/inputs/selects/anchors/labels are ignored). Own cards carry no
+  per-card action buttons — only a selection checkbox **inside the card,
+  pinned over the thumbnail** (`.livery-thumb .livery-check`). Cards show only
+  the readable airline name (`airlineDisplayName(code, lang)` from
+  `src/utils/constants/airlines.js` — inverted `AIRLINE_CODE_MAP`, zh picks
+  the CJK name; unknown codes fall back to the raw code); the
+  `{SHORT}_{AIRLINE}` folder stays internal (payloads, toasts, painter
+  prefill). Header actions live in `LiveryScreen` and reach this component via
+  `cmdRef`: **Export** (enabled with exactly one selected → `exportLivery` +
+  `saveLiveryDialog`) and **Delete** (≥1 selected → count confirm
+  `livery_delete_multi_body`, or the single `livery_delete_confirm_body`, then
+  `deleteLivery` per folder → `livery_deleted` / `livery_deleted_multi`). The
+  header Find filters rows by folder / airline code+name / aircraft / manifest
+  name (empty result shows `livery_search_empty`; empty pack shows
+  `livery_empty_mine`). Renders `TooltipPortal`.
 - `CreateTab.jsx` — the **painter page** (upload mode is gone; default export
   takes `{ onCreated, onCancel, onHelp }`). Given `CreateTab.prefill` it
   snapshots an `origin` `{folder, airline, planeId, pack, imageDataUrl}` with
@@ -120,9 +123,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   (`modal_btn_close`); renders `../BrowserScreen/LiveryInstallOverlay`
   (z-index above the app modal).
 - `LiveryHelpOverlay.jsx` — help overlay driven by a `BUTTONS` registry
-  (icon + label key + description key per button); sections: views / header bar
-  / painter / paint tools. Each item renders as "icon + label — description".
-  Escape/backdrop/X close; i18n `livery_help_*` (zh + en).
+  (icon + label key + optional description key per button); sections: views /
+  header bar / painter / paint tools. Each item renders as "icon + label —
+  description"; self-explanatory entries (`undo`/`redo`/`zoomOut`/`zoomIn`/
+  `fit`) omit `descKey` and render chip-only, and the self-referential Help chip
+  is not listed. Escape/backdrop/X close; i18n `livery_help_*` (zh + en).
 - `LiveryCanvas.jsx` — fixed 2048² backing store, **transparent** (no base
   fill), CSS-scaled view. Layout: Photoshop-style **left icon rail** +
   contextual options bar + bottom zoom status bar.
@@ -208,9 +213,10 @@ manifest for a free-form zip folder).
   load, free-form folder accepted verbatim, unsafe folder rejected, traversal,
   IHDR, reference read-only, manifest-derived shortCode).
 - `tests/components/LiveryScreen/` (header actions/back/install overlay/search,
-  mine-list batch select + batch delete, painter validation + save/save-as
-  dialogs, free-form folder name, load-from-ZIP, import image, cancel, mine vs
-  reference origin save rules, canvas tools/stroke/text/sticker/save payload
-  with stubbed 2d context).
+  in-card checkbox select driving the header Export/Delete commands + their
+  disabled-until-selected states, single vs batch delete confirms, painter
+  validation + save/save-as dialogs, free-form folder name, load-from-ZIP,
+  import image, cancel, mine vs reference origin save rules, canvas
+  tools/stroke/text/sticker/save payload with stubbed 2d context).
 - In-game acceptance (manual): create via UI → launch game → livery on model
   (validates the own-pack-dir assumption).

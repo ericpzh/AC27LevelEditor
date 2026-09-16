@@ -11,6 +11,7 @@ import {
   IoSearchOutline,
 } from 'react-icons/io5';
 import { MdAdd } from 'react-icons/md';
+import { FaFileExport } from 'react-icons/fa6';
 import useTooltip from '../BrowserScreen/useTooltip';
 import MyLiveriesTab from './MyLiveriesTab';
 import CreateTab from './CreateTab';
@@ -26,7 +27,7 @@ export default function LiveryScreen() {
   const { bind, TooltipPortal } = useTooltip();
   // Mine-list commands + bar state, published by MyLiveriesTab.
   const mineCmdRef = useRef({});
-  const [barState, setBarState] = useState({ mineCount: 0, selectedCount: 0, allSelected: false });
+  const [barState, setBarState] = useState({ mineCount: 0, selectedCount: 0, allSelected: false, oneSelected: false });
 
   // Unsaved painter guard: CreateTab paint mode registers
   // window.__liveryPaintGuard = { isDirty() }. Tab-leave/back prompts via
@@ -110,6 +111,14 @@ export default function LiveryScreen() {
                 </button>
                 <button
                   className="btn-sm"
+                  {...bind(t('livery_tip_export'))}
+                  onClick={() => mineCmdRef.current.exportSelected && mineCmdRef.current.exportSelected()}
+                  disabled={!barState.oneSelected}
+                >
+                  <FaFileExport size={14} className="btn-icon" />{t('livery_export')}
+                </button>
+                <button
+                  className="btn-sm"
                   {...bind(t('livery_tip_delete_selected'))}
                   onClick={() => mineCmdRef.current.deleteSelected && mineCmdRef.current.deleteSelected()}
                   disabled={barState.selectedCount === 0}
@@ -127,7 +136,12 @@ export default function LiveryScreen() {
                 </span>
               </>
             )}
-            <button className="btn-lang-toggle-top btn-icon-only" onClick={() => setHelpOpen(true)}>
+            <button
+              id="livery-help-btn"
+              className="btn-lang-toggle-top btn-icon-only"
+              aria-label={t('livery_help_short')}
+              onClick={() => setHelpOpen(true)}
+            >
               <IoHelpCircleOutline size={14} />
             </button>
           </div>

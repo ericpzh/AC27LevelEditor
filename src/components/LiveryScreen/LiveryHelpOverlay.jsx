@@ -8,7 +8,6 @@ import {
   IoCheckmarkDone,
   IoTrashOutline,
   IoSearchOutline,
-  IoHelpCircleOutline,
   IoImageOutline,
   IoBrushOutline,
   IoEyedropOutline,
@@ -35,10 +34,10 @@ import { CiBookmarkRemove } from 'react-icons/ci';
 // ─── Button registry: icon + label key + short description key ──
 const BUTTONS = {
   back: { icon: IoArrowBack, labelKey: 'livery_back', descKey: 'livery_help_d_back' },
-  help: { icon: IoHelpCircleOutline, labelKey: 'livery_help_short' },
   pack: { icon: IoCloudDownloadOutline, labelKey: 'livery_tab_install', descKey: 'livery_help_d_pack' },
   create: { icon: MdAdd, labelKey: 'livery_tab_create', descKey: 'livery_help_d_create' },
   selectAll: { icon: IoCheckmarkDone, labelKey: 'toolbar_select_all', descKey: 'livery_help_d_select_all' },
+  exportSelected: { icon: FaFileExport, labelKey: 'livery_export', descKey: 'livery_help_d_export_selected' },
   delete: { icon: IoTrashOutline, labelKey: 'toolbar_delete_selected', descKey: 'livery_help_d_delete' },
   search: { icon: IoSearchOutline, labelKey: 'livery_search', descKey: 'livery_help_d_search' },
   importImage: { icon: IoImageOutline, labelKey: 'livery_import_image', descKey: 'livery_help_d_import_image' },
@@ -69,8 +68,8 @@ const BUTTONS = {
 
 // ─── Section definitions — one button per line, "button — description" ──
 const SECTIONS = [
-  { id: 'tabs', headingKey: 'livery_help_tabs_heading', items: ['create', 'back', 'help'] },
-  { id: 'bar', headingKey: 'livery_help_bar_heading', items: ['pack', 'selectAll', 'delete', 'search'] },
+  { id: 'tabs', headingKey: 'livery_help_tabs_heading', items: ['create', 'back'] },
+  { id: 'bar', headingKey: 'livery_help_bar_heading', items: ['pack', 'selectAll', 'exportSelected', 'delete', 'search'] },
   { id: 'painter', headingKey: 'livery_help_painter_heading', items: ['importImage', 'importZip', 'exportZip', 'save', 'saveAs'] },
   {
     id: 'paint', headingKey: 'livery_help_paint_heading',

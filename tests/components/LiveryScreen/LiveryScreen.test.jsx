@@ -9,7 +9,7 @@ import Toast from '../../../src/components/common/Toast';
 import { useAppStore } from '../../../src/store/appStore';
 import { mockIpcInvoke } from '../../setup';
 import { I18nProvider } from '../../../src/hooks/useTranslation';
-import { setLang } from '../../../src/utils/i18n';
+import { setLang, T } from '../../../src/utils/i18n';
 
 function renderLivery() {
   return render(
@@ -85,10 +85,12 @@ describe('LiveryScreen', () => {
     // LHS: Back + Pack only.
     const lhsBtns = [...groups[0].querySelectorAll('button')].map(b => b.textContent);
     expect(lhsBtns).toEqual(['Back', 'Pack']);
-    // RHS: Create, Select All, Delete, search, help.
-    expect(groups[1].textContent).toContain('Create');
+    // RHS: Create, Select All, Export, Delete (icon + label), search, help.
+    expect(groups[1].textContent).toContain(T('livery_tab_create'));
     expect(groups[1].textContent).toContain('Select All');
-    expect(groups[1].textContent).toContain('Delete');
+    expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Help' })).toBeInTheDocument();
     expect(groups[1].querySelector('.livery-search input')).toBeInTheDocument();
     // Old chrome is gone.
     expect(document.querySelector('.livery-tabbar')).toBeNull();
@@ -122,7 +124,7 @@ describe('LiveryScreen', () => {
     const user = userEvent.setup();
     renderLivery();
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    await user.click(screen.getByText('Create'));
+    await user.click(screen.getByText(T('livery_tab_create')));
     await waitFor(() => {
       // Painter view: canvas + Photoshop-style edge toolbars.
       expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
@@ -148,8 +150,7 @@ describe('LiveryScreen', () => {
       expect([...document.querySelectorAll('.livery-select')].every(b => b.checked)).toBe(true);
     });
     expect(screen.getByText('Deselect All')).toBeInTheDocument();
-    const headerDeleteBtn = [...document.querySelectorAll('#screen-livery .browser-header button')]
-      .find(b => b.textContent === 'Delete');
+    const headerDeleteBtn = screen.getByRole('button', { name: 'Delete' });
     await user.click(headerDeleteBtn);
     await waitFor(() => {
       expect(screen.getByText('Delete 2 selected liveries?')).toBeInTheDocument();
@@ -161,6 +162,31 @@ describe('LiveryScreen', () => {
     expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'B738_AAL');
     await waitFor(() => {
       expect(screen.getByText('Deleted 2 liveries')).toBeInTheDocument();
+    });
+  });
+
+  it('export / delete header buttons stay disabled until a livery is selected', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }) });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    const exportBtn = screen.getByRole('button', { name: 'Export' });
+    const deleteBtn = screen.getByRole('button', { name: 'Delete' });
+    expect(exportBtn).toBeDisabled();
+    expect(deleteBtn).toBeDisabled();
+
+    // One selected: both enable.
+    await user.click(document.querySelector('.livery-select'));
+    await waitFor(() => {
+      expect(exportBtn).not.toBeDisabled();
+      expect(deleteBtn).not.toBeDisabled();
+    });
+
+    // Two selected: export needs a single target, delete still works.
+    await user.click(screen.getByText('Select All'));
+    await waitFor(() => {
+      expect(exportBtn).toBeDisabled();
+      expect(deleteBtn).not.toBeDisabled();
     });
   });
 
@@ -212,7 +238,7 @@ describe('LiveryScreen', () => {
     setupMocks();
     const user = userEvent.setup();
     renderLivery();
-    const helpBtn = document.querySelector('.browser-actions .btn-icon-only');
+    const helpBtn = document.getElementById('livery-help-btn');
     await user.click(helpBtn);
     await waitFor(() => {
       expect(screen.getByText('Livery Help')).toBeInTheDocument();
@@ -220,13 +246,19 @@ describe('LiveryScreen', () => {
     expect(screen.getByText('Views')).toBeInTheDocument();
     expect(screen.getByText('Header bar')).toBeInTheDocument();
     expect(screen.getByText('Paint tools')).toBeInTheDocument();
+    // The "Views" section lists only documented buttons — the self-referential
+    // Help chip (no description) was removed.
+    const viewItems = [...document.querySelectorAll('#livery-help-tabs .livery-help-item')];
+    expect(viewItems).toHaveLength(2);
+    expect(viewItems.every(el => el.querySelector('.livery-help-btn'))).toBe(true);
+    expect(viewItems.every(el => el.querySelector('.livery-help-text'))).toBe(true);
   });
 
   it('Escape closes the help overlay', async () => {
     setupMocks();
     const user = userEvent.setup();
     renderLivery();
-    await user.click(document.querySelector('.browser-actions .btn-icon-only'));
+    await user.click(document.getElementById('livery-help-btn'));
     await waitFor(() => {
       expect(screen.getByText('Livery Help')).toBeInTheDocument();
     });
@@ -240,7 +272,7 @@ describe('LiveryScreen', () => {
     setupMocks();
     const user = userEvent.setup();
     renderLivery();
-    await user.click(document.querySelector('.browser-actions .btn-icon-only'));
+    await user.click(document.getElementById('livery-help-btn'));
     await waitFor(() => {
       expect(screen.getByText('Livery Help')).toBeInTheDocument();
     });
@@ -259,7 +291,7 @@ describe('LiveryScreen', () => {
     expect(tip.textContent).toContain('livery pack');
     fireEvent.mouseLeave(screen.getByText('Pack'));
     // Create carries no tooltip — its label says it all.
-    fireEvent.mouseEnter(screen.getByText('Create'));
+    fireEvent.mouseEnter(screen.getByText(T('livery_tab_create')));
     expect(document.body.querySelector('.tooltip-popup')).toBeNull();
   });
 });
@@ -271,7 +303,7 @@ describe('LiveryScreen unsaved guard + wizard', () => {
     renderLivery();
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
     window.__liveryPaintGuard = { isDirty: () => true };
-    await user.click(screen.getByText('Create'));
+    await user.click(screen.getByText(T('livery_tab_create')));
     await waitFor(() => expect(screen.getByText('Unsaved Changes')).toBeInTheDocument());
     // Still on the list until Discard.
     expect(screen.queryByRole('button', { name: 'Save As' })).toBeNull();

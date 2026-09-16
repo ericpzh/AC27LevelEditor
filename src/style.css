@@ -127,7 +127,9 @@ body {
   transition: all var(--transition);
 }
 
-.btn-sm:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--accent); }
+.btn-sm:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text); border-color: var(--accent); }
+
+.btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .btn-icon-only { min-width: auto; padding: 5px 10px; }
 

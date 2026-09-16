@@ -30,6 +30,16 @@ const ROW = {
   mtime: 0,
 };
 
+const ROW2 = {
+  folder: 'B738_AAL',
+  id: 'b738_aal_default',
+  name: 'B738 AAL Default Livery',
+  airline: 'AAL',
+  targetPlaneId: 'BOEING 737-800',
+  hasBasePng: true,
+  mtime: 0,
+};
+
 function setupMocks(overrides = {}) {
   mockIpcInvoke.mockImplementation((channel, ...args) => {
     if (overrides[channel] !== undefined) return overrides[channel];
@@ -61,16 +71,7 @@ describe('MyLiveriesTab', () => {
   });
 
   it('search filter narrows groups by airline, folder or aircraft', async () => {
-    const row2 = {
-      folder: 'B738_AAL',
-      id: 'b738_aal_default',
-      name: 'B738 AAL Default Livery',
-      airline: 'AAL',
-      targetPlaneId: 'BOEING 737-800',
-      hasBasePng: true,
-      mtime: 0,
-    };
-    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, row2], reference: [] }) });
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }) });
     renderMine({ search: 'american' });
     await waitFor(() => expect(screen.getByText('American Airlines')).toBeInTheDocument());
     expect(screen.queryByText('Air China')).toBeNull();
@@ -84,37 +85,34 @@ describe('MyLiveriesTab', () => {
     });
   });
 
-  it('renders rows with edit/export/copy/delete actions', async () => {
+  it('renders each own card with an in-card checkbox and no per-card actions', async () => {
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
-    const onEdit = vi.fn();
-    renderMine({ onEdit });
+    renderMine();
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    expect(screen.getByText('Air China')).toBeInTheDocument();
-
-    const editBtn = screen.getByText('Edit').closest('button');
-    const exportBtn = screen.getByText('Export').closest('button');
-    expect(exportBtn.disabled).toBe(false);
-
-    const user = userEvent.setup();
-    await user.click(editBtn);
-    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ folder: 'A20N_CCA' }));
+    const card = screen.getByText('Air China').closest('.livery-card');
+    // No buttons on the card anymore — actions live in the header bar.
+    expect(card.querySelectorAll('button')).toHaveLength(0);
+    expect(screen.queryByText('Edit')).toBeNull();
+    // The checkbox sits inside the thumbnail, not beside the name.
+    expect(card.querySelector('.livery-thumb .livery-check .livery-select')).toBeInTheDocument();
   });
 
-  it('delete opens a confirm modal and refreshes on confirm', async () => {
+  it('header delete command confirms and deletes the single selected livery', async () => {
     setupMocks({
       'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
       'delete-livery': Promise.resolve({ success: true }),
     });
     const user = userEvent.setup();
-    renderMine();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
 
-    const rowDeleteBtn = [...screen.getByText('Air China').closest('.livery-card').querySelectorAll('button')]
-      .find(b => b.textContent === 'Delete');
-    await user.click(rowDeleteBtn);
+    await user.click(document.querySelector('.livery-select'));
+    act(() => { cmdRef.current.deleteSelected(); });
     await waitFor(() => {
       expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
     });
+    expect(screen.getByText('Delete livery A20N_CCA?')).toBeInTheDocument();
     await user.click(screen.getByText('Delete', { selector: '.btn-danger' }).closest('button'));
 
     await waitFor(() => {
@@ -125,16 +123,18 @@ describe('MyLiveriesTab', () => {
     });
   });
 
-  it('export runs export + save dialog and toasts the zip name', async () => {
+  it('export command runs export + save dialog and toasts the zip name', async () => {
     setupMocks({
       'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
       'export-livery': Promise.resolve({ success: true, filePath: '/tmp/A20N_CCA.zip' }),
       'save-livery-dialog': Promise.resolve({ canceled: false, success: true, filePath: '/dl/A20N_CCA.zip' }),
     });
     const user = userEvent.setup();
-    renderMine();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    await user.click(screen.getByText('Export').closest('button'));
+    await user.click(document.querySelector('.livery-select'));
+    act(() => { cmdRef.current.exportSelected(); });
     await waitFor(() => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('export-livery', 'A20N_CCA');
     });
@@ -156,9 +156,11 @@ describe('MyLiveriesTab', () => {
       'save-livery-dialog': Promise.resolve({ canceled: true }),
     });
     const user = userEvent.setup();
-    renderMine();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    await user.click(screen.getByText('Export').closest('button'));
+    await user.click(document.querySelector('.livery-select'));
+    act(() => { cmdRef.current.exportSelected(); });
     await waitFor(() => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('save-livery-dialog', expect.anything());
     });
@@ -166,46 +168,20 @@ describe('MyLiveriesTab', () => {
     expect(screen.queryByText(/Livery exported/)).toBeNull();
   });
 
-  it('copy folder name writes to clipboard and toasts', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
-    const user = userEvent.setup();
-    renderMine();
-    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    // NB: define AFTER userEvent.setup() — setup() replaces
-    // window.navigator.clipboard with its own stub getter.
-    Object.defineProperty(window.navigator, 'clipboard', { value: { writeText }, configurable: true });
-    await user.click(screen.getByText('Copy folder name').closest('button'));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('A20N_CCA'));
-    await waitFor(() => {
-      expect(screen.getByText('Copied A20N_CCA')).toBeInTheDocument();
-    });
-    delete window.navigator.clipboard;
-  });
-
-  it('row buttons show tooltips on hover', async () => {
+  it('the in-card checkbox shows a select tooltip on hover', async () => {
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
     renderMine();
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    fireEvent.mouseEnter(screen.getByText('Export').closest('button'));
+    fireEvent.mouseEnter(document.querySelector('.livery-check'));
     const tip = document.body.querySelector('.tooltip-popup');
     expect(tip).not.toBeNull();
-    expect(tip.textContent).toContain('shareable ZIP');
-    fireEvent.mouseLeave(screen.getByText('Export').closest('button'));
+    expect(tip.textContent).toContain('Select this livery');
+    fireEvent.mouseLeave(document.querySelector('.livery-check'));
     expect(document.body.querySelector('.tooltip-popup')).toBeNull();
   });
 
   it('groups liveries by aircraft type with counts', async () => {
-    const row2 = {
-      folder: 'B738_AAL',
-      id: 'b738_aal_default',
-      name: 'B738 AAL Default Livery',
-      airline: 'AAL',
-      targetPlaneId: 'BOEING 737-800',
-      hasBasePng: true,
-      mtime: 0,
-    };
-    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, row2], reference: [] }) });
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }) });
     renderMine();
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
     expect(screen.getByText('American Airlines')).toBeInTheDocument();
@@ -249,14 +225,14 @@ describe('MyLiveriesTab', () => {
     expect(screen.getByText('2 liveries')).toBeInTheDocument();
     // No separate reference section anymore.
     expect(screen.queryByText('Reference liveries (read-only)')).toBeNull();
-    // Reference card carries the lock mark and no action buttons.
+    // Reference card carries the lock mark and no checkbox.
     const lock = document.querySelector('.livery-readonly');
     expect(lock).toBeInTheDocument();
     expect(lock.querySelector('svg')).toBeTruthy();
     const refCard = screen.getByText('China Eastern').closest('.livery-card');
-    expect(refCard.querySelector('button')).toBeNull();
-    const mineCard = screen.getByText('Air China').closest('.livery-card');
-    expect(mineCard.querySelectorAll('button').length).toBeGreaterThan(0);
+    expect(refCard.querySelector('.livery-select')).toBeNull();
+    // Only the own-pack card is selectable.
+    expect(document.querySelectorAll('.livery-select')).toHaveLength(1);
   });
 
   it('lock mark shows a read-only tooltip on hover', async () => {
@@ -279,11 +255,7 @@ describe('MyLiveriesTab', () => {
   });
 
   it('select-all command toggles every own-pack checkbox', async () => {
-    const row2 = {
-      folder: 'B738_AAL', id: 'b738_aal_default', name: 'B738 AAL',
-      airline: 'AAL', targetPlaneId: 'BOEING 737-800', hasBasePng: true, mtime: 0,
-    };
-    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, row2], reference: [] }) });
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }) });
     const cmdRef = { current: {} };
     const barStates = [];
     renderMine({ cmdRef, onBarState: (s) => barStates.push(s) });
@@ -295,7 +267,7 @@ describe('MyLiveriesTab', () => {
     await waitFor(() => {
       expect(boxes().every(b => b.checked)).toBe(true);
     });
-    expect(barStates[barStates.length - 1]).toMatchObject({ mineCount: 2, selectedCount: 2, allSelected: true });
+    expect(barStates[barStates.length - 1]).toMatchObject({ mineCount: 2, selectedCount: 2, allSelected: true, oneSelected: false });
     // Toggles to deselect.
     act(() => { cmdRef.current.toggleSelectAll(); });
     await waitFor(() => {
@@ -304,12 +276,8 @@ describe('MyLiveriesTab', () => {
   });
 
   it('delete-selected command confirms and batch-deletes', async () => {
-    const row2 = {
-      folder: 'B738_AAL', id: 'b738_aal_default', name: 'B738 AAL',
-      airline: 'AAL', targetPlaneId: 'BOEING 737-800', hasBasePng: true, mtime: 0,
-    };
     setupMocks({
-      'list-liveries': Promise.resolve({ success: true, mine: [ROW, row2], reference: [] }),
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }),
       'delete-livery': Promise.resolve({ success: true }),
     });
     const user = userEvent.setup();
@@ -387,14 +355,14 @@ describe('MyLiveriesTab', () => {
     }));
   });
 
-  it('card action buttons do not trigger the card-open', async () => {
+  it('checkbox clicks select without opening the painter', async () => {
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
     const onEdit = vi.fn();
     const user = userEvent.setup();
     renderMine({ onEdit });
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    // Checkbox clicks select, they must not open the painter.
     await user.click(document.querySelector('.livery-select'));
+    expect(document.querySelector('.livery-select').checked).toBe(true);
     expect(onEdit).not.toHaveBeenCalled();
   });
 });
@@ -420,11 +388,12 @@ describe('MyLiveriesTab error + edge paths', () => {
       'delete-livery': Promise.resolve({ success: false, error: 'BAD_FOLDER' }),
     });
     const user = userEvent.setup();
-    renderMine();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    const rowDeleteBtn = [...screen.getByText('Air China').closest('.livery-card').querySelectorAll('button')]
-      .find(b => b.textContent === 'Delete');
-    await user.click(rowDeleteBtn);
+    await user.click(document.querySelector('.livery-select'));
+    act(() => { cmdRef.current.deleteSelected(); });
+    await waitFor(() => expect(screen.getByText('Confirm Delete')).toBeInTheDocument());
     await user.click(screen.getByText('Delete', { selector: '.btn-danger' }).closest('button'));
     await waitFor(() => {
       expect(screen.getByText('Invalid folder name.')).toBeInTheDocument();
@@ -437,9 +406,11 @@ describe('MyLiveriesTab error + edge paths', () => {
       'export-livery': Promise.resolve({ success: false, error: 'BAD_FOLDER' }),
     });
     const user = userEvent.setup();
-    renderMine();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    await user.click(screen.getByText('Export').closest('button'));
+    await user.click(document.querySelector('.livery-select'));
+    act(() => { cmdRef.current.exportSelected(); });
     await waitFor(() => {
       expect(screen.getByText('Invalid folder name.')).toBeInTheDocument();
     });
@@ -452,9 +423,11 @@ describe('MyLiveriesTab error + edge paths', () => {
       'save-livery-dialog': Promise.resolve({ canceled: false, success: false, error: 'BAD_FOLDER' }),
     });
     const user = userEvent.setup();
-    renderMine();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    await user.click(screen.getByText('Export').closest('button'));
+    await user.click(document.querySelector('.livery-select'));
+    act(() => { cmdRef.current.exportSelected(); });
     await waitFor(() => {
       expect(screen.getByText('Invalid folder name.')).toBeInTheDocument();
     });
@@ -491,23 +464,9 @@ describe('MyLiveriesTab error + edge paths', () => {
     expect(onEdit).toHaveBeenCalledTimes(2);
   });
 
-  it('copy folder name falls back to a plain toast when clipboard is unavailable', async () => {
-    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
-    const originalClipboard = Object.getOwnPropertyDescriptor(window.navigator, 'clipboard');
-    if (originalClipboard) delete window.navigator.clipboard;
-    renderMine();
-    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('Copy folder name').closest('button'));
-    await waitFor(() => {
-      expect(document.getElementById('toast').textContent).toBe('A20N_CCA');
-    });
-    if (originalClipboard) Object.defineProperty(window.navigator, 'clipboard', originalClipboard);
-  });
-
   it('batch delete reports partial success', async () => {
-    const row2 = { folder: 'B738_AAL', id: 'b738_aal_default', name: 'B738 AAL', airline: 'AAL', targetPlaneId: 'BOEING 737-800', hasBasePng: true, mtime: 0 };
     mockIpcInvoke.mockImplementation((channel, folder) => {
-      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW, row2], reference: [] });
+      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] });
       if (channel === 'delete-livery') return Promise.resolve(folder === 'A20N_CCA' ? { success: true } : { success: false, error: 'BAD_FOLDER' });
       return Promise.resolve({});
     });
