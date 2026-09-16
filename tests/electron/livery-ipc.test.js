@@ -366,3 +366,125 @@ describe('share round-trip (export → delete → load-zip)', () => {
     expect(livery.loadLiveryZip(zipPath).error).toBe('BAD_ZIP');
   });
 });
+
+// ── Built-in per-aircraft UV template ───────────────────────
+const TEMPLATE_DIR = path.join(
+  'GroundATC_Data', 'StreamingAssets', 'BuiltInAircraftLivery', 'AircraftDefaultLivery',
+);
+
+// A single solid-colour DXT1 block (4×4) wrapped in a DDS header.
+function dds4x4(c0 = 0xffff, c1 = 0x0000, fourCC = 'DXT1') {
+  const header = Buffer.alloc(128);
+  header.write('DDS ', 0, 'ascii');
+  header.writeUInt32LE(124, 4);
+  header.writeUInt32LE(4, 12);
+  header.writeUInt32LE(4, 16);
+  header.writeUInt32LE(32, 76);
+  header.writeUInt32LE(0x4, 80);
+  header.write(fourCC, 84, 'ascii');
+  const block = Buffer.alloc(fourCC === 'DXT1' ? 8 : 16);
+  if (fourCC === 'DXT1') { block.writeUInt16LE(c0, 0); block.writeUInt16LE(c1, 2); }
+  return Buffer.concat([header, block]);
+}
+
+function writeTemplate(planeId, { baseFile = 'base.dds', baseData, partName = 'Body', textures } = {}) {
+  const dir = path.join(gameRoot, TEMPLATE_DIR, planeId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, baseFile), baseData || dds4x4());
+  const tex = textures || [{ property: 'BaseMap', fileName: baseFile }];
+  fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+    id: `${planeId}_default`,
+    targetPlaneId: planeId,
+    parts: [{ partName, textures: tex }],
+  }));
+  return dir;
+}
+
+describe('readAircraftTemplate', () => {
+  it('returns NO_GAME_ROOT / BAD_PLANE guards', () => {
+    expect(livery.readAircraftTemplate(null, 'AIRBUS A-320neo').error).toBe('NO_GAME_ROOT');
+    expect(livery.readAircraftTemplate(gameRoot, 'NOT A PLANE').error).toBe('BAD_PLANE');
+    expect(livery.readAircraftTemplate(gameRoot, '').error).toBe('BAD_PLANE');
+  });
+
+  it('returns NO_TEMPLATE when the aircraft has no built-in default folder', () => {
+    expect(livery.readAircraftTemplate(gameRoot, 'AIRBUS A-320neo').error).toBe('NO_TEMPLATE');
+  });
+
+  it('decodes the built-in DXT1 BaseMap into a PNG data-URL and caches it', () => {
+    writeTemplate('AIRBUS A-319neo', { partName: 'Body' });
+    const res = livery.readAircraftTemplate(gameRoot, 'AIRBUS A-319neo');
+    expect(res.success).toBe(true);
+    expect(res.partName).toBe('Body');
+    expect(res.imageDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    const png = Buffer.from(res.imageDataUrl.split(',')[1], 'base64');
+    expect(png.readUInt32BE(16)).toBe(4);
+    expect(png.readUInt32BE(20)).toBe(4);
+    // Second call is served from the in-memory cache.
+    expect(livery.readAircraftTemplate(gameRoot, 'AIRBUS A-319neo').imageDataUrl).toBe(res.imageDataUrl);
+  });
+
+  it('prefers the Body/Fuselage part and returns PNG bases verbatim', () => {
+    const pngBase = pngBuffer(2048, 2048);
+    writeTemplate('BOEING 737-800', {
+      baseFile: 'base_Fuselage.png',
+      baseData: pngBase,
+      partName: 'Fuselage',
+      textures: [
+        { property: 'MaskMap', fileName: 'mask.dds' },
+        { property: 'BaseMap', fileName: 'base_Fuselage.png' },
+      ],
+    });
+    const res = livery.readAircraftTemplate(gameRoot, 'BOEING 737-800');
+    expect(res.success).toBe(true);
+    expect(res.partName).toBe('Fuselage');
+    expect(res.imageDataUrl).toBe('data:image/png;base64,' + pngBase.toString('base64'));
+  });
+
+  it('reports BAD_TEMPLATE for an unsupported DDS encoding', () => {
+    writeTemplate('AIRBUS A-330-300', { baseData: dds4x4(0xffff, 0x0000, 'BC5U') });
+    expect(livery.readAircraftTemplate(gameRoot, 'AIRBUS A-330-300').error).toBe('BAD_TEMPLATE');
+  });
+
+  it('reports IMAGE_MISSING when the manifest has no BaseMap', () => {
+    writeTemplate('AIRBUS A-321neo', {
+      textures: [{ property: 'MaskMap', fileName: 'mask.dds' }],
+    });
+    expect(livery.readAircraftTemplate(gameRoot, 'AIRBUS A-321neo').error).toBe('IMAGE_MISSING');
+  });
+
+  it('reports IMAGE_MISSING when the manifest has no parts array', () => {
+    const dir = path.join(gameRoot, TEMPLATE_DIR, 'BOEING 787-9');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({ parts: null }));
+    expect(livery.readAircraftTemplate(gameRoot, 'BOEING 787-9').error).toBe('IMAGE_MISSING');
+  });
+
+  it('returns a JPEG BaseMap verbatim as a data-URL', () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+    writeTemplate('BOEING 747-8I', { baseFile: 'base.jpg', baseData: jpeg });
+    const res = livery.readAircraftTemplate(gameRoot, 'BOEING 747-8I');
+    expect(res.success).toBe(true);
+    expect(res.imageDataUrl).toBe('data:image/jpeg;base64,' + jpeg.toString('base64'));
+  });
+
+  it('falls back to the first part when there is no Body/Fuselage', () => {
+    const pngBase = pngBuffer(64, 64);
+    writeTemplate('AIRBUS A-380-800', { baseFile: 'base_Wing.png', baseData: pngBase, partName: 'Wing' });
+    const res = livery.readAircraftTemplate(gameRoot, 'AIRBUS A-380-800');
+    expect(res.success).toBe(true);
+    expect(res.partName).toBe('Wing');
+    expect(res.imageDataUrl).toBe('data:image/png;base64,' + pngBase.toString('base64'));
+  });
+
+  it('surfaces a manifest parse error instead of a template', () => {
+    const dir = path.join(gameRoot, TEMPLATE_DIR, 'BOEING 777-300ER');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), '{not json');
+    const res = livery.readAircraftTemplate(gameRoot, 'BOEING 777-300ER');
+    expect(res.success).toBe(false);
+    expect(res.error).not.toBe('NO_TEMPLATE');
+    expect(res.error).toBeTruthy();
+  });
+});
+

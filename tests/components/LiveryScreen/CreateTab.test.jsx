@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
@@ -333,6 +333,77 @@ describe('CreateTab aircraft template', () => {
     // Template is fetched for the origin's aircraft type (used by Clear), but
     // the canvas base is still the saved livery image.
     expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-320neo');
+  });
+});
+
+describe('CreateTab airline/aircraft dropdowns just close', () => {
+  beforeEach(() => { mockIpcInvoke.mockClear(); });
+
+  function dirtyCanvas() {
+    const cv = document.querySelector('.livery-canvas-wrap canvas');
+    fireEvent.pointerDown(cv, { clientX: 30, clientY: 30, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 50, clientY: 50, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+  }
+
+  async function settleInitialTemplate() {
+    setupMocks({
+      'get-aircraft-template': Promise.resolve({ success: true, imageDataUrl: FAKE_PNG }),
+    });
+    renderCreate();
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-319neo');
+    });
+    // Let the initial priming remount settle before capturing the canvas node.
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+  }
+
+  it('changing the aircraft type on an untouched canvas re-primes the template', async () => {
+    await settleInitialTemplate();
+    const user = userEvent.setup();
+    const wrapBefore = document.querySelector('.livery-canvas-wrap');
+    await user.selectOptions(document.querySelector('.lp-root select'), 'AIRBUS A-320neo');
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-320neo');
+    });
+    await waitFor(() => {
+      expect(document.querySelector('.livery-canvas-wrap')).not.toBe(wrapBefore);
+    });
+  });
+
+  it('changing the aircraft type after painting does not reset the canvas', async () => {
+    await settleInitialTemplate();
+    const user = userEvent.setup();
+    const wrapBefore = document.querySelector('.livery-canvas-wrap');
+    dirtyCanvas();
+    await user.selectOptions(document.querySelector('.lp-root select'), 'AIRBUS A-320neo');
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-320neo');
+    });
+    // No remount: the painted canvas survives the type pick.
+    expect(document.querySelector('.livery-canvas-wrap')).toBe(wrapBefore);
+  });
+
+  it('selecting an airline never remounts the canvas', async () => {
+    await settleInitialTemplate();
+    const user = userEvent.setup();
+    const wrapBefore = document.querySelector('.livery-canvas-wrap');
+    await user.click(screen.getByPlaceholderText('CCA'));
+    const list = document.querySelector('#livery-airline-list');
+    const ual = [...list.querySelectorAll('.lp-airline-option')].find(o => o.textContent.includes('UAL'));
+    await user.click(ual);
+    expect(screen.getByPlaceholderText('CCA').value).toBe('UAL');
+    expect(document.querySelector('#livery-airline-list')).toBeNull();
+    expect(document.querySelector('.livery-canvas-wrap')).toBe(wrapBefore);
+  });
+
+  it('a painted canvas still prompts on Back after picking a type', async () => {
+    await settleInitialTemplate();
+    const user = userEvent.setup();
+    dirtyCanvas();
+    await user.selectOptions(document.querySelector('.lp-root select'), 'AIRBUS A-320neo');
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('Unsaved Changes')).toBeInTheDocument();
   });
 });
 
@@ -965,6 +1036,20 @@ describe('CreateTab lazy origin + chrome', () => {
     const ual = [...list.querySelectorAll('.lp-airline-option')].find(o => o.textContent.includes('UAL'));
     await user.click(ual);
     expect(screen.getByPlaceholderText('CCA').value).toBe('UAL');
+    expect(document.querySelector('#livery-airline-list')).toBeNull();
+  });
+
+  it('keeps the airline list closed after a pick (not wrapped in a <label>)', async () => {
+    setupMocks();
+    const user = userEvent.setup();
+    renderCreate();
+    const input = screen.getByPlaceholderText('CCA');
+    // A <button> inside a <label> makes Chromium refocus the labelled input,
+    // which re-fires onFocus and reopened the list right after a pick.
+    expect(input.closest('label')).toBeNull();
+    await user.click(input);
+    const ual = [...document.querySelectorAll('.lp-airline-option')].find(o => o.textContent.includes('UAL'));
+    await user.click(ual);
     expect(document.querySelector('#livery-airline-list')).toBeNull();
   });
 

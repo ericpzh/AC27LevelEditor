@@ -275,6 +275,13 @@ describe('LiveryScreen', () => {
     const paintItems = [...document.querySelectorAll('#livery-help-paint .livery-help-item')];
     expect(paintItems.length).toBeGreaterThan(0);
     expect(paintItems.every(el => el.querySelector('.livery-help-text'))).toBe(true);
+    // The painter top bar documents the delete-this (folder) action.
+    const barItems = [...document.querySelectorAll('#livery-help-painter .livery-help-item')];
+    expect(barItems.length).toBeGreaterThan(0);
+    expect(barItems.every(el => el.querySelector('.livery-help-text'))).toBe(true);
+    expect(
+      barItems.some(el => el.textContent.includes('Delete this livery folder entirely')),
+    ).toBe(true);
   });
 
   it('Escape closes the help overlay', async () => {

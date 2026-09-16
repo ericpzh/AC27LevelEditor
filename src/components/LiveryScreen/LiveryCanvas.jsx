@@ -209,7 +209,7 @@ function makeShapeObject(kind, a, b, brush, opts) {
  * flattened only on export.
  */
 const LiveryCanvas = forwardRef(function LiveryCanvas(
-  { initialImageDataUrl, onDirty },
+  { initialImageDataUrl, defaultLiveryDataUrl, onDirty },
   ref,
 ) {
   const { t } = useTranslation();
@@ -235,6 +235,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const shapeOptsRef = useRef({ width: 8, filled: true });
   const fillTolRef = useRef(32);
   const textOptsRef = useRef({ font: 'sans-serif', size: 120, bold: false, italic: false, color: '#000000' });
+  // Clear target — the aircraft type's built-in default livery. Kept in a ref
+  // so the confirm-modal closure reads the latest value even if the template
+  // finished loading after the Clear button was clicked.
+  const defaultLiveryRef = useRef(defaultLiveryDataUrl);
+  useEffect(() => { defaultLiveryRef.current = defaultLiveryDataUrl; }, [defaultLiveryDataUrl]);
 
   const [tool, setToolState] = useState('brush');
   const [brush, setBrushState] = useState(brushRef.current);
@@ -786,9 +791,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   // ── Clear / reset (confirm modal) ──────────────────────────
-  // Resets to the base the canvas was opened with — the aircraft's built-in
-  // default livery template for a new livery (never a blank transparent
-  // canvas), the origin picture for an edit, or the imported image.
+  // Always resets to the selected aircraft type's built-in default livery
+  // (whether editing a saved livery, a new one, or an imported image). Falls
+  // back to the opened base image, then the neutral fill, when the type's
+  // template is unavailable.
   const handleClear = () => {
     const { showModal, hideModal } = useAppStore.getState();
     showModal(
@@ -800,7 +806,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           <button className="btn-danger" onClick={() => {
             hideModal();
             pushSnapshot();
-            drawBase(ctxRef.current, initialImageDataUrl, scheduleOverlay);
+            drawBase(ctxRef.current, defaultLiveryRef.current || initialImageDataUrl, scheduleOverlay);
             setLive(null);
             setTextAnchor(null);
             scheduleOverlay();

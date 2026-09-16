@@ -20,6 +20,7 @@ import {
   IoSaveOutline,
 } from 'react-icons/io5';
 import { FaFileImport, FaFileExport, FaArrowPointer } from 'react-icons/fa6';
+import { AiOutlineClear } from 'react-icons/ai';
 import { FaEraser } from 'react-icons/fa';
 import { MdAdd, MdSaveAs } from 'react-icons/md';
 import { TbSticker2 } from 'react-icons/tb';
@@ -32,6 +33,7 @@ const BUTTONS = {
   selectAll: { icon: IoCheckmarkDone, labelKey: 'toolbar_select_all', descKey: 'livery_help_d_select_all' },
   exportSelected: { icon: FaFileExport, labelKey: 'livery_export', descKey: 'livery_help_d_export_selected' },
   delete: { icon: IoTrashOutline, labelKey: 'toolbar_delete_selected', descKey: 'livery_help_d_delete' },
+  deleteThis: { icon: IoTrashOutline, labelKey: 'livery_delete', descKey: 'livery_help_d_delete_this' },
   search: { icon: IoSearchOutline, labelKey: 'livery_search', descKey: 'livery_help_d_search' },
   importImage: { icon: IoImageOutline, labelKey: 'livery_import_image', descKey: 'livery_help_d_import_image' },
   importZip: { icon: FaFileImport, labelKey: 'livery_import_zip', descKey: 'livery_help_d_import_zip' },
@@ -49,7 +51,7 @@ const BUTTONS = {
   text: { icon: IoTextOutline, labelKey: 'livery_paint_text', descKey: 'livery_help_d_text' },
   sticker: { icon: TbSticker2, labelKey: 'livery_paint_import_sticker', descKey: 'livery_help_d_sticker' },
   select: { icon: FaArrowPointer, labelKey: 'livery_paint_select', descKey: 'livery_help_d_select' },
-  clear: { icon: IoTrashOutline, labelKey: 'livery_paint_clear', descKey: 'livery_help_d_clear' },
+  clear: { icon: AiOutlineClear, labelKey: 'livery_paint_clear', descKey: 'livery_help_d_clear' },
 };
 
 // ─── Section definitions — one button per line, "button — description" ──
@@ -58,7 +60,7 @@ const LIST_SECTIONS = [
   { id: 'bar', items: ['back', 'pack', 'create', 'selectAll', 'exportSelected', 'delete', 'search'] },
 ];
 const PAINTER_SECTIONS = [
-  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'saveAs', 'save'] },
+  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'deleteThis', 'saveAs', 'save'] },
   {
     id: 'paint',
     items: [

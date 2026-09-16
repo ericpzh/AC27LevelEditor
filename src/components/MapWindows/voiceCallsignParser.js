@@ -93,7 +93,7 @@ export function getSpokenToCode() {
     '山航': 'CDG',
     '春秋': 'CQH',
     '奥凯': 'CJX',
-    '西藏': 'UEA',
+    '西藏': 'TBA',
   };
   for (const [zh, code] of Object.entries(zhShortForms)) {
     entries.push([zh, code]);

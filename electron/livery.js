@@ -7,9 +7,16 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { createZip, listZipFiles, extractZip } = require('../src/utils/zipUtils');
+const { ddsToPngDataUrl } = require('./dds');
 
 const OWN_PACK = 'AC27 Custom Liveries';
 const REFERENCE_PACK = 'AC27 Realistic Aircraft Livery';
+// The game ships one neutral default livery per aircraft type — the exact UV
+// atlas the model expects. The painter seeds new canvases with this so the
+// background is never transparent and each aircraft gets its real shape.
+const AIRCRAFT_DEFAULT_LIVERY_DIR = path.join(
+  'GroundATC_Data', 'StreamingAssets', 'BuiltInAircraftLivery', 'AircraftDefaultLivery',
+);
 // The game treats a folder under Mods/ as a mod only when it carries a
 // mod_info.json. The official pack zip ships one inside our own folder that
 // still names the *reference* pack, so we (re)write ours on every save/load.
@@ -148,6 +155,61 @@ function readLiveryImage(gameRoot, folder, pack = 'mine') {
   } catch (_) {
     return { success: false, error: 'IMAGE_MISSING' };
   }
+}
+
+// Picks the part to seed the single painter canvas with: the body/fuselage is
+// the large paintable surface. Multi-part aircraft (A388/B38M) also ship
+// Wing/Wingtip maps the painter cannot address yet — ignored here.
+function _pickMainPart(parts) {
+  if (!Array.isArray(parts)) return null;
+  return parts.find(p => p && p.partName === 'Body')
+    || parts.find(p => p && p.partName === 'Fuselage')
+    || parts[0] || null;
+}
+
+const _templateCache = new Map();
+
+// Returns the built-in default livery's BaseMap for `planeId` as a PNG
+// data-URL — the exact UV atlas the model uses, used as the painter's
+// per-aircraft template background. Cached per plane id; never throws.
+function readAircraftTemplate(gameRoot, planeId) {
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+  const id = String(planeId || '');
+  if (!PLANE_ID_TO_SHORT_CODE[id]) return { success: false, error: 'BAD_PLANE' };
+  if (_templateCache.has(id)) return _templateCache.get(id);
+  const dir = path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, id);
+  let result;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    const part = _pickMainPart(manifest.parts);
+    const tex = part && Array.isArray(part.textures)
+      ? part.textures.find(t => t && t.property === 'BaseMap' && t.fileName)
+      : null;
+    if (!tex) {
+      result = { success: false, error: 'IMAGE_MISSING' };
+    } else {
+      const file = path.join(dir, path.basename(tex.fileName));
+      const buf = fs.readFileSync(file);
+      if (/\.dds$/i.test(file)) {
+        const png = ddsToPngDataUrl(buf);
+        result = png
+          ? { success: true, imageDataUrl: png, partName: part.partName }
+          : { success: false, error: 'BAD_TEMPLATE' };
+      } else {
+        const mime = /\.png$/i.test(file) ? 'image/png' : 'image/jpeg';
+        result = {
+          success: true,
+          imageDataUrl: `data:${mime};base64,` + buf.toString('base64'),
+          partName: part.partName,
+        };
+      }
+    }
+  } catch (err) {
+    result = { success: false, error: err.code === 'ENOENT' ? 'NO_TEMPLATE' : err.message };
+  }
+  // Cache only successes — a missing file may appear after a game update.
+  if (result.success) _templateCache.set(id, result);
+  return result;
 }
 
 // The caller supplies only manifest-truth fields (airline + targetPlaneId)
@@ -329,6 +391,7 @@ module.exports = {
   listPackDir,
   listLiveries,
   readLiveryImage,
+  readAircraftTemplate,
   createLivery,
   deleteLivery,
   readDiskImage,

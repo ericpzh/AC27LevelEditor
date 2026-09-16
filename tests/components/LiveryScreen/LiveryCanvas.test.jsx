@@ -13,6 +13,7 @@ import { setLang } from '../../../src/utils/i18n';
 
 // ── Canvas stubs (jsdom has no 2d context) ───────────────────
 let ctxs = [];
+let imageSrcs = [];
 function makeCtx() {
   return {
     save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(),
@@ -32,6 +33,7 @@ class MockImage {
   constructor() { this._src = ''; this.onload = null; this.onerror = null; }
   set src(v) {
     this._src = v;
+    imageSrcs.push(v);
     setTimeout(() => {
       this.naturalWidth = 100; this.naturalHeight = 50;
       this.width = 100; this.height = 50;
@@ -52,6 +54,7 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
   CreateTab.prefill = null;
   ctxs = [];
+  imageSrcs = [];
   getCtxSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => {
     const c = makeCtx();
     ctxs.push(c);
@@ -580,6 +583,21 @@ describe('LiveryCanvas undo/redo + clear', () => {
     await waitFor(() => {
       const after = ctxs[0].drawImage.mock.calls.filter(c => c.length === 5).length;
       expect(after).toBeGreaterThan(before);
+    });
+  });
+
+  it('clear restores the aircraft default livery even when a saved origin image is open', async () => {
+    const user = userEvent.setup();
+    renderCanvas({
+      initialImageDataUrl: 'data:image/png;base64,SAVEDORIGIN',
+      defaultLiveryDataUrl: 'data:image/png;base64,DEFAULTLIVERY',
+    });
+    await waitFor(() => expect(imageSrcs).toContain('data:image/png;base64,SAVEDORIGIN'));
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(screen.getByText('Confirm Clear')).toBeInTheDocument());
+    await user.click(screen.getByText('Clear', { selector: '.btn-danger' }).closest('button'));
+    await waitFor(() => {
+      expect(imageSrcs[imageSrcs.length - 1]).toBe('data:image/png;base64,DEFAULTLIVERY');
     });
   });
 

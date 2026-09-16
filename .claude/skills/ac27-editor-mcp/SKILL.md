@@ -65,6 +65,9 @@ When a user says "国航" or "Air China", resolve to the 3-letter ICAO code.
 | 山东航空 | Shandong Airlines | CDG | 山航 |
 | 春秋航空 | Spring Airlines | CQH | 春秋 |
 | 吉祥航空 | Juneyao Air | DKH | 吉祥 |
+| 上海航空 | Shanghai Airlines | CSH | 上航 |
+| 成都航空 | Chengdu Airlines | UEA | 成都 |
+| 西藏航空 | Tibet Airlines | TBA | 西藏 |
 
 #### Major International Airlines (主要国际航司)
 
@@ -85,6 +88,9 @@ When a user says "国航" or "Air China", resolve to the 3-letter ICAO code.
 | 中华航空 | China Airlines | CAL | 华航 |
 | 卡塔尔航空 | Qatar Airways | QTR | 卡航 |
 | 土耳其航空 | Turkish Airlines | THY | 土航 |
+| 西南航空 | Southwest Airlines | SWA | 西南 |
+| 边疆航空 | Frontier Airlines | FFT | 边疆 |
+| 夏威夷航空 | Hawaiian Airlines | HAL | 夏威夷 |
 | 加拿大航空 | Air Canada | ACA | 加航 |
 | 澳洲航空 | Qantas | QFA | 澳航 |
 | 荷兰皇家航空 | KLM | KLM | 荷航 |

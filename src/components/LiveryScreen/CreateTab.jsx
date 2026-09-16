@@ -95,7 +95,10 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
   }, [open ]);
   return (
     <>
-      <label className={'lp-inline' + (locked ? ' lp-locked' : '')}>
+      {/* A <span>, not a <label>: a <button> inside a <label> makes Chromium
+          re-focus the labelled input on click, which fired onFocus and
+          immediately reopened the list right after an airline was picked. */}
+      <span className={'lp-inline' + (locked ? ' lp-locked' : '')}>
         <span className="lp-inline-label">{t('livery_airline')}</span>
         <span className="lp-airline-wrap" ref={wrapRef}>
           <input
@@ -105,11 +108,13 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
             placeholder="CCA"
             autoComplete="off"
             role="combobox"
+            aria-label={t('livery_airline')}
             aria-expanded={open}
             aria-controls="livery-airline-list"
             disabled={locked}
             onChange={(e) => setAirline(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))}
             onFocus={() => { if (!locked) setOpen(true); }}
+            onClick={() => { if (!locked) setOpen(true); }}
           />
           <button
             type="button"
@@ -127,6 +132,7 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
                   <button
                     type="button"
                     className={'lp-airline-option' + (c === airline ? ' selected' : '')}
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => { setAirline(c); setOpen(false); }}
                   >
                     <strong>{c}</strong>
@@ -137,7 +143,7 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
             </ul>
           )}
         </span>
-      </label>
+      </span>
       <label className={'lp-inline' + (locked ? ' lp-locked' : '')}>
         <span className="lp-inline-label">{t('livery_aircraft')}</span>
         <select value={planeId} disabled={locked} onChange={(e) => setPlaneId(e.target.value)}>
@@ -245,8 +251,9 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   // Aircraft type's built-in UV template (the game's own default livery).
   // Fetched whenever a type is known — including when editing a saved livery —
   // so the painter's Clear can always restore it. It only becomes the canvas
-  // base for a brand-new livery; a saved origin / imported image is never
-  // clobbered.
+  // base for a brand-new, untouched livery; a saved origin / imported image /
+  // in-progress painting is never clobbered — picking a different Airline or
+  // Aircraft just updates the form and closes the dropdown.
   const [templateDataUrl, setTemplateDataUrl] = useState(null);
   const baseRef = useRef(base);
   useEffect(() => { baseRef.current = base; }, [base]);
@@ -259,7 +266,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         if (cancelled || !res || !res.success || !res.imageDataUrl) return;
         setTemplateDataUrl(res.imageDataUrl);
         const cur = baseRef.current;
-        if (!origin && (!cur || cur.isTemplate)) {
+        if (!origin && !dirtyRef.current && (!cur || cur.isTemplate)) {
           setBase({ imageDataUrl: res.imageDataUrl, isTemplate: true });
           setCanvasKey(k => k + 1);
         }

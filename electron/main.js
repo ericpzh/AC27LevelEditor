@@ -3427,6 +3427,17 @@ ipcMain.handle('read-livery-image', async (_event, folder, pack = 'mine') => {
   return livery.readLiveryImage(_liveryGameRoot(), folder, pack);
 });
 
+// Per-aircraft UV template: the game's built-in default livery BaseMap
+// (decoded DDS → PNG data-URL) used as the painter's background for a type.
+ipcMain.handle('get-aircraft-template', async (_event, planeId) => {
+  try {
+    return livery.readAircraftTemplate(_liveryGameRoot(), planeId);
+  } catch (err) {
+    console.error('[Livery] template failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('create-livery', async (_event, payload) => {
   try {
     return livery.createLivery(_liveryGameRoot(), payload || {});

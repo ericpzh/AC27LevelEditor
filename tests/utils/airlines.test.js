@@ -18,6 +18,23 @@ describe('airlineDisplayName', () => {
     expect(airlineDisplayName('', 'en')).toBe('');
   });
 
+  it('maps Tibet Airlines to its ICAO code TBA (not UEA)', () => {
+    expect(AIRLINE_CODE_MAP['Tibet Airlines']).toBe('TBA');
+    expect(AIRLINE_CODE_MAP['西藏航空']).toBe('TBA');
+    expect(airlineDisplayName('TBA', 'en')).toBe('Tibet Airlines');
+    expect(airlineDisplayName('TBA', 'zh')).toBe('西藏航空');
+  });
+
+  it('resolves the added carriers by code', () => {
+    expect(airlineDisplayName('UEA', 'en')).toBe('Chengdu Airlines');
+    expect(airlineDisplayName('UEA', 'zh')).toBe('成都航空');
+    expect(airlineDisplayName('CSH', 'en')).toBe('Shanghai Airlines');
+    expect(airlineDisplayName('CSH', 'zh')).toBe('上海航空');
+    expect(airlineDisplayName('SWA', 'en')).toBe('Southwest Airlines');
+    expect(airlineDisplayName('FFT', 'en')).toBe('Frontier Airlines');
+    expect(airlineDisplayName('HAL', 'en')).toBe('Hawaiian Airlines');
+  });
+
   it('collects every name per code without duplicates', () => {
     expect(AIRLINE_CODE_TO_NAMES.CCA).toEqual(['Air China', '中国国航']);
     for (const [code, names] of Object.entries(AIRLINE_CODE_TO_NAMES)) {

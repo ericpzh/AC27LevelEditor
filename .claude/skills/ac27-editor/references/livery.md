@@ -121,6 +121,15 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `defaultLiveryDataUrl`. For a **new** livery it also becomes the canvas base
   (opaque background showing the real model shape); for a saved origin /
   imported image it never clobbers the base, but it is what **Clear** restores.
+  A brand-new canvas is re-primed only while **untouched** — the template
+  effect checks `dirtyRef.current` (and `base.isTemplate`) before swapping the
+  base, so picking another Airline/Aircraft just updates the form and closes
+  the dropdown and never discards in-progress painting. The airline combobox is
+  wrapped in a **`<span>`, not a `<label>`** (a `<button>` inside a `<label>`
+  makes Chromium refocus the labelled input, which re-fired `onFocus` and
+  reopened the list right after a pick); each option also calls
+  `onMouseDown={e => e.preventDefault()}` so the pick keeps focus without the
+  refocus dance.
   Form: a custom airline dropdown
   (`lp-airline-*` — full list, never text-filtered, unlike a native
   `<datalist>`) + plane-id `<select>`; `folderPreview = folderFor(planeId,
@@ -138,6 +147,10 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   - **Export livery** (`FaFileExport`) → writes the canvas via `createLivery`
     then `exportLiveryToDir` (directory picker; cancel leaves the saved
     livery, success `livery_exported` with `<folder>.zip`).
+  - **Delete** (`IoTrashOutline`, tooltip `livery_tip_delete` — or
+    `livery_tip_readonly` for a reference) → confirm (`Confirm Delete` /
+    `livery_delete_confirm_body`) then `delete-livery`; disabled without an
+    origin folder (brand-new livery) and for a reference origin.
   - **Save** (`IoSaveOutline`, disabled for reference) → naming dialog
     prefilled with the origin folder, keeps the origin airline/aircraft.
   - **Save As** (`MdSaveAs`) → naming dialog prefilled with the conventional
@@ -170,7 +183,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   prop (`'list'` default / `'painter'`) and renders **only that page's**
   sections: `LIST_SECTIONS` = Header bar (`back`/`pack`/`create`/`selectAll`/
   `exportSelected`/`delete`/`search`); `PAINTER_SECTIONS` = Painter
-  (`back`/`importImage`/`importZip`/`exportZip`/`saveAs`/`save`) + Paint tools
+  (`back`/`importImage`/`importZip`/`exportZip`/`deleteThis`/`saveAs`/`save`) +
+  Paint tools
   (`color`/`brush`/`eraser`/`eyedropper`/`fill`/`line`/`rect`/`ellipse`/`text`/
   `sticker`/`select`/`clear`). Each item renders as "icon + label —
   description"; the self-referential Help chip, and the undo/redo/zoom/fit and
@@ -343,10 +357,13 @@ manifest for a free-form zip folder).
   IHDR, reference read-only, manifest-derived shortCode, `mod_info.json`
   created on load/create at the pack root, reference-name + corrupt-JSON
   repair, existing own file untouched, UTF-8 zh name round-trip,
-  `readAircraftTemplate` guards + DXT1→PNG decode + part preference + PNG base
-  passthrough + cache), `tests/electron/dds.test.js` (`decodeDds` DXT1 block /
-  bad magic / unsupported fourCC / truncated payload, `encodePng` IHDR + IDAT
-  round-trip, `ddsToPngDataUrl` pixel round-trip).
+  `readAircraftTemplate` guards + DXT1→PNG decode + part preference + PNG/JPEG
+  base passthrough + `parts[0]` fallback + no-parts/parse-error paths + cache),
+  `tests/electron/dds.test.js` (`decodeDds` DXT1 block / DXT5 alpha + colour /
+  DXT3 4-bit alpha / 1/3+2/3 blend when c0>c1 / transparent-black mode when
+  c0<=c1 / bad magic / unsupported fourCC / truncated payload / dimension
+  guards, `encodePng` IHDR + IDAT round-trip, `ddsToPngDataUrl` DXT1 + DXT5
+  pixel round-trip).
 - `tests/components/LiveryScreen/` (header actions/back/install overlay/search,
   in-card checkbox select driving the header Export/Delete commands + their
   disabled-until-selected states, single vs batch delete confirms, painter

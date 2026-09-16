@@ -489,6 +489,11 @@ describe('MyLiveriesTab error + edge paths', () => {
     renderMine({ cmdRef });
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
     act(() => { cmdRef.current.toggleSelectAll(); });
+    // Let the selection commit (and cmdRef re-publish) before deleting —
+    // calling deleteSelected in the same tick read the stale empty selection.
+    await waitFor(() => {
+      expect(document.querySelectorAll('.livery-select:checked').length).toBe(2);
+    });
     act(() => { cmdRef.current.deleteSelected(); });
     await waitFor(() => expect(screen.getByText('Confirm Delete')).toBeInTheDocument());
     await user.click(screen.getByText('Delete', { selector: '.btn-danger' }).closest('button'));
