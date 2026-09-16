@@ -3,6 +3,11 @@
 // default liveries as .dds textures (BaseMap = DXT1/BC1); the livery painter
 // uses them as the per-aircraft UV template background, so main decodes them
 // to a PNG data-URL the renderer can draw like any other image.
+//
+// Orientation: the game stores those DDS BaseMaps bottom-up, i.e. vertically
+// mirrored from the PNG orientation the engine (and the community livery packs)
+// actually use as a BaseMap. A default decoded as-is paints the UV atlas upside
+// down, so `ddsToPngDataUrl` flips Y; `decodeDds` itself stays a raw decoder.
 
 const zlib = require('zlib');
 
@@ -199,11 +204,24 @@ function encodePng(width, height, rgba) {
   ]);
 }
 
+// Returns the RGBA buffer flipped vertically (top row <-> bottom row).
+function flipY(width, height, rgba) {
+  const stride = width * 4;
+  const out = Buffer.alloc(rgba.length);
+  for (let y = 0; y < height; y++) {
+    rgba.copy(out, y * stride, (height - 1 - y) * stride, (height - y) * stride);
+  }
+  return out;
+}
+
 // Decodes a DDS buffer and returns a PNG data-URL, or null when unsupported.
+// Y-flipped: the shipped DDS BaseMaps are bottom-up relative to the PNG
+// orientation the engine uses for a painted BaseMap (see the file header).
 function ddsToPngDataUrl(buf) {
   const decoded = decodeDds(buf);
   if (!decoded) return null;
-  const png = encodePng(decoded.width, decoded.height, decoded.rgba);
+  const rgba = flipY(decoded.width, decoded.height, decoded.rgba);
+  const png = encodePng(decoded.width, decoded.height, rgba);
   return 'data:image/png;base64,' + png.toString('base64');
 }
 

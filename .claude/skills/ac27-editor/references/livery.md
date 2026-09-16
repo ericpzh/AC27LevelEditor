@@ -202,10 +202,12 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     **Right-click** on the canvas picks the pixel colour under the cursor via
     the shared `pickColorAt` (same as the Eyedropper, but it keeps the active
     tool); the canvas `onContextMenu` is suppressed.
-  - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none):
-    brush/eraser size + (brush only) opacity + hard/soft; fill tolerance;
-    line/rect/ellipse width + fill toggle; text font (`FONT_OPTIONS`) + size +
-    bold/italic. Colour lives on the rail (`lp-rail-color`).
+  - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none of their own
+    — but Select **does** render the text options while a text object is
+    selected): brush/eraser size + (brush only) opacity + hard/soft; fill
+    tolerance; line/rect/ellipse width + fill toggle; text font (`FONT_OPTIONS`)
+    + size + bold/italic (bound to `shownText`, applying to the selected text
+    object in Select mode). Colour lives on the rail (`lp-rail-color`).
   - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit. Mouse-wheel
     steps the ladder **anchored to the cursor**: the wheel handler records the
     content point under the pointer (`cx/cy` = `scrollLeft + viewport offset`,
@@ -217,14 +219,18 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     `spaceHeld` state) and drag the wrap. While Space is held the canvas cursor
     is hidden and a **hand icon** (`FaRegHandPaper`, `.lp-hand-cursor`,
     position:fixed) follows the pointer via `moveHand`.
-  - **Live objects** (`liveRef`, one at a time): a sticker image
-    (`kind:'sticker'`, `img`), a **text box** (`kind:'text'` — `text`, `font`,
-    `size`, `bold`, `italic`, `color`), or a **shape** (`kind:'line'|'rect'|
-    'ellipse'` — `color`, `width`, `filled`, `opacity`; centred on the bounding
-    box, a line's `w` is its length / `h` its thickness / `rot` its angle,
-    built by `makeShapeObject`). Drawing a shape with the Line/Rect/Ellipse
-    tool commits it as a selected live object (`commitShape`, ignores a
-    zero-drag click) and hands over to Select — no rasterisation. Import a sticker via
+  - **Live objects** (`objectsRef`, a stack — every object stays selectable):
+    a sticker image (`kind:'sticker'`, `img`), a **text box** (`kind:'text'` —
+    `text`, `font`, `size`, `bold`, `italic`, `color`), or a **shape**
+    (`kind:'line'|'rect'|'ellipse'` — `color`, `width`, `filled`, `opacity`;
+    centred on the bounding box, a line's `w` is its length / `h` its thickness
+    / `rot` its angle, built by `makeShapeObject`). Each carries a unique `id`;
+    the active one is `selIdRef` (selection is id-based, not a `selected` flag).
+    Drawing a shape with the Line/Rect/Ellipse tool commits it as a selected
+    live object (`commitShape`, ignores a zero-drag click) and keeps the shape
+    tool active so several can be drawn in a row — no rasterisation, and the
+    previously drawn shapes are **not** flattened (the topmost object under the
+    cursor wins a Select-tool hit test). Import a sticker via
     `selectLiveryImage`/`readDiskImage` from the rail or `importSticker()`;
     commit text by clicking with the Text tool and typing — the draft is
     committed (announced same as Enter) on **Enter, the input losing focus
@@ -235,22 +241,29 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     (`textDraftRef`/`textAnchorRef`) so those handlers read fresh values;
     `commitText()` itself never changes the active tool (Enter/blur → Select,
     tool switch → the picked tool, canvas click → stays on Text). With the Select
-    tool: click to select/move, drag handles to scale/rotate (a text box
-    scales its `size` with the frame), Escape / click-away to deselect,
-    `Delete`/`Backspace` to remove. The rail also has **Flip Horizontal /
-    Flip Vertical** buttons (`livery_paint_flip_h`/`_v`,
-    `LuFlipHorizontal`/`LuFlipVertical`, disabled without a live object) →
-    `flipSticker('flipX'|'flipY')` toggles the `flipX`/`flipY` flags; every
-    overlay/duplicate/export path funnels through `paintLiveObject`
-    (`ctx.save(); translate; rotate; scale(flipX ? -1 : 1, flipY ? -1 : 1);
-    drawImage|fillText; restore`). Ref methods
-    `importSticker`/`removeSticker`/`duplicateSticker`; duplicate stamps the
-    current object onto the base (transform included) and leaves a nudged
-    copy, and creating a new object calls `flattenLive()` first so the
-    previous one is never silently lost. Only `exportPNG()` returns the
-    flattened texture.
+    tool: click an object to select/move it, drag handles to scale/rotate (a
+    text box scales its `size` with the frame), Escape / click-away to deselect,
+    `Delete`/`Backspace` to remove the selected object. **Selecting a text box
+    re-exposes the text options** (font/size/bold/italic) and edits that object
+    in place via `applyTextOpt` (box re-measured, no new object); **double-click
+    or Enter re-opens the inline editor prefilled** (`startTextEdit` sets
+    `editingIdRef`; `commitText` then updates that object's content instead of
+    adding a new one). The rail also has
+    **Flip Horizontal / Flip Vertical** buttons (`livery_paint_flip_h`/`_v`,
+    `LuFlipHorizontal`/`LuFlipVertical`, disabled without any object) →
+    `flipSticker('flipX'|'flipY')` toggles the `flipX`/`flipY` flags on the
+    selected (else last) object; every overlay/duplicate/export path funnels
+    through `paintLiveObject` (`ctx.save(); translate; rotate;
+    scale(flipX ? -1 : 1, flipY ? -1 : 1); drawImage|fillText; restore`). Ref
+    methods `importSticker`/`removeSticker`/`duplicateSticker` (+
+    `getObjectCount` for tests); duplicate stamps the target object onto the
+    base (transform included) and leaves a nudged copy selected, while the other
+    objects stay live. Only `exportPNG()` returns the flattened texture (base +
+    every live object).
   - Undo/redo via `createUndoStack`/`pushSnapshot` (cap `MAX_UNDO = 20`
-    ImageData snapshots). **Clear** (`AiOutlineClear`, `react-icons/ai`) opens a
+    `{img, objects, selId}` snapshots — the base raster **and** the live-object
+    layer, so undo also removes/re-instates objects). **Clear**
+    (`AiOutlineClear`, `react-icons/ai`) opens a
     confirm modal and re-paints the base via
     `drawBase(ctx, defaultLiveryRef.current || initialImageDataUrl)` — always
     the **selected aircraft type's built-in default livery**, even when editing
@@ -275,14 +288,21 @@ The game ships the neutral default livery for **every** type under
 plus `mask.dds` DXT5, `lit.dds` DXT1, `coat.dds` BC4U). That default IS the UV
 template, so the painter uses it as the per-aircraft background instead of
 being transparent, and as the target of the **Clear** button for every livery
-(new, saved, reference or imported). `electron/dds.js` (pure, no deps) decodes
-the BaseMap
+(new, saved, reference or imported). **The shipped DDS BaseMaps are stored
+bottom-up** — a raw decode is vertically mirrored from the PNG orientation the
+engine and the community livery packs use (verified: `Mods/AC27 Realistic
+Aircraft Livery/<TYPE>_<AIRLINE>/base.png` is a clean vertical flip of the
+matching built-in `base.dds`), so the painter using the raw decode painted the
+atlas upside down. `ddsToPngDataUrl` therefore flips Y; `decodeDds` itself
+stays a raw decoder. `electron/dds.js` (pure, no deps) decodes the BaseMap
 (`decodeDds` DXT1/DXT5/DXT3 → RGBA, `encodePng` minimal RGBA8 encoder) and
 `electron/livery.js:readAircraftTemplate(gameRoot, planeId)` picks the
 `Body`→`Fuselage`→first part, returns a PNG data-URL (`{success, imageDataUrl,
 partName}`), caches successes per plane id, and reports `NO_TEMPLATE` when the
-type has no built-in folder. Multi-part aircraft only seed the main
-(Fuselage/Body) canvas — Wing/Wingtip maps are not separately addressable yet.
+type has no built-in folder. A PNG base file is returned verbatim (no flip —
+packs already ship the engine orientation). Multi-part aircraft only seed the
+main (Fuselage/Body) canvas — Wing/Wingtip maps are not separately addressable
+yet.
 
 ## IPC (`electron/livery.js` ← `electron/main.js` handlers ← `electron/preload.js`)
 
@@ -363,7 +383,7 @@ manifest for a free-form zip folder).
   DXT3 4-bit alpha / 1/3+2/3 blend when c0>c1 / transparent-black mode when
   c0<=c1 / bad magic / unsupported fourCC / truncated payload / dimension
   guards, `encodePng` IHDR + IDAT round-trip, `ddsToPngDataUrl` DXT1 + DXT5
-  pixel round-trip).
+  pixel round-trip + the Y-flip that matches the in-game BaseMap orientation).
 - `tests/components/LiveryScreen/` (header actions/back/install overlay/search,
   in-card checkbox select driving the header Export/Delete commands + their
   disabled-until-selected states, single vs batch delete confirms, painter

@@ -190,9 +190,9 @@
 .level-row {
   display: grid;
   /* display name (large, first) | time range | filename | stats | arrow.
-     --tod-width is set per language (zh 70px / en 130px) so the three
+     --tod-width is set per language (zh 80px / en 180px) so the three
      leading sections align vertically across all airport cards. */
-  grid-template-columns: var(--tod-width, 130px) 90px 1fr auto auto;
+  grid-template-columns: var(--tod-width, 180px) 90px 1fr auto auto;
   align-items: center;
   gap: 0;
   padding: 10px 20px;

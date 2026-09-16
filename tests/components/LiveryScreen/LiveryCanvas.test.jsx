@@ -384,6 +384,76 @@ describe('text object (selectable, flippable)', () => {
   });
 });
 
+describe('text object re-editing (Select tool)', () => {
+  async function makeText(user, ref, text = 'hi') {
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    const input = screen.getByPlaceholderText('Type text, Enter to commit…');
+    await user.type(input, text);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    // Select tool is active and the overlay box has been drawn.
+    await waitFor(() => expect(ctxs.some(c => c.translate.mock.calls.length > 0)).toBe(true));
+  }
+
+  it('exposes font/size/bold/italic for the selected text and edits it in place', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await makeText(user, ref, 'hi');
+    // Select tool + selected text → the text options show without the Text tool.
+    expect(screen.getByRole('combobox', { name: /Font/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('slider', { name: /Size/ }), { target: { value: '200' } });
+    await user.click(screen.getByRole('button', { name: 'Bold' }));
+    await user.click(screen.getByRole('button', { name: 'Italic' }));
+    expect(screen.getByRole('button', { name: 'Bold' }).getAttribute('aria-pressed')).toBe('true');
+    // The style lands on the existing object (no new one is created).
+    act(() => { ref.current.exportPNG(); });
+    const exportCtx = ctxs[ctxs.length - 1];
+    expect(exportCtx.font).toBe('italic bold 200px sans-serif');
+    expect(ref.current.getObjectCount()).toBe(1);
+  });
+
+  it('double-click re-opens the editor prefilled and updates the content', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await makeText(user, ref, 'hi');
+    // Double-click the text centre (texture ≈1272,1272 at 4× → client 318).
+    fireEvent.doubleClick(mainCanvas(), { clientX: 318, clientY: 318, button: 0, pointerId: 1 });
+    const input = await screen.findByPlaceholderText('Type text, Enter to commit…');
+    expect(input.value).toBe('hi');
+    await user.clear(input);
+    await user.type(input, 'hello world');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.queryByPlaceholderText('Type text, Enter to commit…')).toBeNull();
+    act(() => { ref.current.exportPNG(); });
+    const exportCtx = ctxs[ctxs.length - 1];
+    expect(exportCtx.fillText).toHaveBeenCalledWith('hello world', 0, 0);
+    expect(ref.current.getObjectCount()).toBe(1);
+  });
+
+  it('Enter opens the editor and Escape cancels, leaving the text unchanged', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await makeText(user, ref, 'hi');
+    // Enter with the text selected re-opens the inline editor.
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const input = await screen.findByPlaceholderText('Type text, Enter to commit…');
+    expect(input.value).toBe('hi');
+    await user.clear(input);
+    await user.type(input, 'bye');
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByPlaceholderText('Type text, Enter to commit…')).toBeNull();
+    // The original content survives the cancelled edit.
+    act(() => { ref.current.exportPNG(); });
+    const exportCtx = ctxs[ctxs.length - 1];
+    expect(exportCtx.fillText).toHaveBeenCalledWith('hi', 0, 0);
+    expect(ref.current.getObjectCount()).toBe(1);
+  });
+});
+
 describe('LiveryCanvas tools — paint operations', () => {
   it('eyedropper picks the pixel colour and switches back to brush', async () => {
     const user = userEvent.setup();
@@ -412,6 +482,22 @@ describe('LiveryCanvas tools — paint operations', () => {
     const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     mainCanvas().dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it('prevents the canvas mousedown default so an open text box keeps focus', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    const input = screen.getByPlaceholderText('Type text, Enter to commit…');
+    // A real browser would move focus to the focusable wrapper on mousedown,
+    // blurring the just-mounted input; canceling the default keeps it open.
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    mainCanvas().dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(input).toBeInTheDocument();
+    await user.type(input, 'hi');
+    expect(input.value).toBe('hi');
   });
 
   it('fill floods the region and commits pixels', async () => {
@@ -499,8 +585,10 @@ describe('shape objects (selectable, movable)', () => {
       fireEvent.pointerDown(cv, { clientX: 40, clientY: 40, button: 0, pointerId: 1 });
       fireEvent.pointerMove(cv, { clientX: 200, clientY: 160, button: 0, pointerId: 1 });
       fireEvent.pointerUp(cv, { pointerId: 1 });
-      // The shape became a selected live object and the tool handed to Select.
-      expect(screen.getByRole('button', { name: 'Select' }).className).toContain('lp-active');
+      // The shape became a selected live object; the shape tool stays active
+      // so several shapes can be drawn in a row (no auto-switch to Select).
+      expect(screen.getByRole('button', { name: tool }).className).toContain('lp-active');
+      expect(screen.getByRole('button', { name: 'Select' }).className).not.toContain('lp-active');
       expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false);
       expect(screen.getByRole('button', { name: 'Duplicate Sticker' }).disabled).toBe(false);
     }
@@ -517,7 +605,9 @@ describe('shape objects (selectable, movable)', () => {
     fireEvent.pointerUp(cv, { pointerId: 1 });
     await waitFor(() => expect(ctxs.some(c => c.translate.mock.calls.length > 0)).toBe(true));
     const startX = ctxs.find(c => c.translate.mock.calls.length > 0).translate.mock.calls[0][0];
+    // Hand over to Select (the shape tool no longer auto-switches), then
     // Escape deselects; clicking the centre re-selects and drags it right.
+    await user.click(screen.getByRole('button', { name: 'Select' }));
     fireEvent.keyDown(window, { key: 'Escape' });
     ctxs.length = 0;
     fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
@@ -532,6 +622,59 @@ describe('shape objects (selectable, movable)', () => {
     renderCanvas();
     fireEvent.keyDown(window, { key: 'a' });
     expect(screen.getByRole('button', { name: 'Select' }).className).toContain('lp-active');
+  });
+
+  it('keeps previously drawn shapes selectable after a new one is drawn', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    const draw = async (tool, a, b) => {
+      await user.click(screen.getByRole('button', { name: tool }));
+      fireEvent.pointerDown(cv, { clientX: a[0], clientY: a[1], button: 0, pointerId: 1 });
+      fireEvent.pointerMove(cv, { clientX: b[0], clientY: b[1], button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+    };
+    // Drawing a second shape must not flatten the first.
+    await draw('Rect', [100, 100], [200, 200]);
+    await draw('Ellipse', [400, 400], [500, 500]);
+    expect(ref.current.getObjectCount()).toBe(2);
+    // The first still responds to Select (click its centre and drag it right).
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 190, clientY: 150, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(2);
+    // Removing the selected shape leaves the other one in place.
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(ref.current.getObjectCount()).toBe(1);
+  });
+
+  it('duplicate stamps the selected shape but keeps the other objects live', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    const draw = async (tool, a, b) => {
+      await user.click(screen.getByRole('button', { name: tool }));
+      fireEvent.pointerDown(cv, { clientX: a[0], clientY: a[1], button: 0, pointerId: 1 });
+      fireEvent.pointerMove(cv, { clientX: b[0], clientY: b[1], button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+    };
+    await draw('Rect', [100, 100], [200, 200]);
+    await draw('Ellipse', [400, 400], [500, 500]);
+    // Select the rect, then duplicate it (stamps the rect, leaves a copy).
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const baseCtx = ctxs[0];
+    const stamped = baseCtx.fill.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: 'Duplicate Sticker' }));
+    // Rect replaced by its copy; the ellipse is untouched.
+    expect(ref.current.getObjectCount()).toBe(2);
+    expect(baseCtx.fill.mock.calls.length).toBeGreaterThan(stamped);
   });
 });
 
@@ -556,6 +699,24 @@ describe('LiveryCanvas undo/redo + clear', () => {
     expect(redoBtn()).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'y', ctrlKey: true });
     expect(ctxs[0].putImageData.mock.calls.length).toBeGreaterThan(before + 1);
+  });
+
+  it('undo removes a just-drawn object (objects ride along in the snapshots)', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(1);
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(ref.current.getObjectCount()).toBe(0);
+    // Redo restores it.
+    fireEvent.keyDown(window, { key: 'y', ctrlKey: true });
+    expect(ref.current.getObjectCount()).toBe(1);
   });
 
   it('clear asks for confirmation and resets the canvas to the default base', async () => {

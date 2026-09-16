@@ -7,6 +7,9 @@ Cross-platform desktop level editor for **Airport Control 27** `.acl` flight sch
 <img src="public\Screen.png" alt="Screenshot" width="100%"/>
 <img src="public\Radar.png" alt="Screenshot" width="100%"/>
 
+<img src="public\Livery1.png" alt="Livery" width="49%"/> <img src="public\Livery2.png" alt="Livery" width="49%"/>
+<img src="public\Painter1.png" alt="Ground Painter" width="49%"/> <img src="public\Painter2.png" alt="Ground Painter" width="49%"/>
+
 ---
 
 # User Guide
@@ -197,7 +200,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (98 test files, 1656 tests) + Playwright (E2E, 9 spec files) + Node.js (integration, 60 scripts; 173 MCP/API tests)
+- **Tests:** Vitest (100 test files, 1750 tests) + Playwright (E2E, 9 spec files) + Node.js (integration, 60 scripts; 173 MCP/API tests)
 
 ### Quick Start
 
@@ -387,7 +390,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │       ├── debugLog.js          # Gated debug logging (localStorage + URL param)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 98 Vitest files (1656 tests) + 9 Playwright E2E specs + 60 Node.js integration scripts
+├── tests/               # 100 Vitest files (1750 tests) + 9 Playwright E2E specs + 60 Node.js integration scripts
 └── dist/                # Build output (gitignored)
 ```
 
@@ -411,7 +414,7 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (16 files) + jetway rebuild (16 v4) + v4 runway pairs + build + Playwright E2E (~4.5 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 98 test files, 1656 tests):**
+**Component tests (Vitest — 100 test files, 1750 tests):**
 ```bash
 npm test              # Run all component + store + utility + MapWindow + updater tests (~8s)
 npm run test:watch    # Watch mode — re-runs on file changes

@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import zlib from 'zlib';
 
 const livery = require('../../electron/livery');
 
@@ -387,6 +388,36 @@ function dds4x4(c0 = 0xffff, c1 = 0x0000, fourCC = 'DXT1') {
   return Buffer.concat([header, block]);
 }
 
+// A non-uniform DXT1 4×8 DDS: a solid `topC0` block over a solid `botC0` block
+// (index 0 everywhere), so a Y-flip is observable in the decoded PNG.
+function dds4x8(topC0, botC0) {
+  const header = Buffer.alloc(128);
+  header.write('DDS ', 0, 'ascii');
+  header.writeUInt32LE(124, 4);
+  header.writeUInt32LE(8, 12);
+  header.writeUInt32LE(4, 16);
+  header.writeUInt32LE(32, 76);
+  header.writeUInt32LE(0x4, 80);
+  header.write('DXT1', 84, 'ascii');
+  const block = (c0) => { const b = Buffer.alloc(8); b.writeUInt16LE(c0, 0); b.writeUInt16LE(0, 2); return b; };
+  return Buffer.concat([header, block(topC0), block(botC0)]);
+}
+
+// First RGBA pixel of a PNG data-URL (inflates IDAT, skips the filter byte).
+function pngFirstPixel(dataUrl) {
+  const png = Buffer.from(dataUrl.split(',')[1], 'base64');
+  const parts = [];
+  let off = 8;
+  while (off < png.length) {
+    const len = png.readUInt32BE(off);
+    const type = png.toString('ascii', off + 4, off + 8);
+    if (type === 'IDAT') parts.push(png.subarray(off + 8, off + 8 + len));
+    off += 12 + len;
+    if (type === 'IEND') break;
+  }
+  return Array.from(zlib.inflateSync(Buffer.concat(parts)).subarray(1, 5));
+}
+
 function writeTemplate(planeId, { baseFile = 'base.dds', baseData, partName = 'Body', textures } = {}) {
   const dir = path.join(gameRoot, TEMPLATE_DIR, planeId);
   fs.mkdirSync(dir, { recursive: true });
@@ -422,6 +453,16 @@ describe('readAircraftTemplate', () => {
     expect(png.readUInt32BE(20)).toBe(4);
     // Second call is served from the in-memory cache.
     expect(livery.readAircraftTemplate(gameRoot, 'AIRBUS A-319neo').imageDataUrl).toBe(res.imageDataUrl);
+  });
+
+  it('Y-flips the built-in BaseMap to the in-game orientation', () => {
+    // The shipped DDS BaseMaps are stored bottom-up, so the DDS's BOTTOM row
+    // (blue here) must become the PNG's first scanline — the community livery
+    // packs are a clean vertical flip of the built-in defaults.
+    writeTemplate('AIRBUS A-350-900', { baseData: dds4x8(0xf800, 0x001f) });
+    const res = livery.readAircraftTemplate(gameRoot, 'AIRBUS A-350-900');
+    expect(res.success).toBe(true);
+    expect(pngFirstPixel(res.imageDataUrl)).toEqual([0, 0, 255, 255]);
   });
 
   it('prefers the Body/Fuselage part and returns PNG bases verbatim', () => {

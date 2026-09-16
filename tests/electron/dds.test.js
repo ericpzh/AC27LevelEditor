@@ -183,6 +183,23 @@ describe('ddsToPngDataUrl', () => {
     expect(info.height).toBe(4);
   });
 
+  it('flips Y so the PNG matches the in-game BaseMap orientation', () => {
+    // Top block red, bottom block blue — a non-uniform texture, so the flip is
+    // observable. The game ships its DDS BaseMaps bottom-up; the PNG must come
+    // out top-down (the community livery packs are a clean vertical flip of the
+    // shipped defaults).
+    const buf = makeDds(4, 8, 'DXT1', [dxt1Block(0xf800, 0x0000), dxt1Block(0x001f, 0x0000)]);
+    const png = Buffer.from(ddsToPngDataUrl(buf).split(',')[1], 'base64');
+    const raw = zlib.inflateSync(pngIdat(png));
+    const stride = 4 * 4;
+    // First scanline is the DDS's bottom row (blue)…
+    expect(raw[0]).toBe(0);
+    expect(Array.from(raw.subarray(1, 5))).toEqual([0, 0, 255, 255]);
+    // …and the last scanline is its top row (red).
+    const last = (8 - 1) * (stride + 1) + 1;
+    expect(Array.from(raw.subarray(last, last + 4))).toEqual([255, 0, 0, 255]);
+  });
+
   it('returns null for an unsupported texture', () => {
     expect(ddsToPngDataUrl(Buffer.from('nope'))).toBeNull();
   });

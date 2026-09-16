@@ -370,7 +370,7 @@ export default function BrowserScreen() {
   }, [loading, airports, fileInfos, collapsedAirports, autoCollapsed, browserAutoCollapseDone, markBrowserAutoCollapseDone, setBrowserAutoCollapsed]);
 
   return (
-    <div id="screen-browser" className="screen" style={{ '--tod-width': lang === 'zh' ? '80px' : '130px' }}>
+    <div id="screen-browser" className="screen" style={{ '--tod-width': lang === 'zh' ? '80px' : '180px' }}>
       <header className="browser-header">
         <div className="browser-title"><span>{t('browser_title')}</span></div>
         <div className="browser-actions">

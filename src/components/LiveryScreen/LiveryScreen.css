@@ -638,6 +638,8 @@
 .lp-workspace button:focus-visible,
 .lp-workspace input:focus,
 .lp-workspace input:focus-visible,
+.lp-workspace select:focus,
+.lp-workspace select:focus-visible,
 .lp-workspace .livery-canvas-wrap:focus,
 .lp-workspace .livery-canvas-wrap:focus-visible {
   outline: none;
