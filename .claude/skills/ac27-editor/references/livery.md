@@ -176,10 +176,15 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   - Sticker is a **live, non-destructive object** (`stickerRef`): import via
     `selectLiveryImage`/`readDiskImage` from the rail or `importSticker()`.
     With the Select tool: click to select/move, drag handles to scale/rotate,
-    Escape / click-away to deselect, `Delete`/`Backspace` to remove. Ref
-    methods `importSticker`/`removeSticker`/`duplicateSticker`; duplicate
-    stamps the current sticker onto the base and leaves a nudged copy. Only
-    `exportPNG()` flattens it (over the transparent base).
+    Escape / click-away to deselect, `Delete`/`Backspace` to remove. The rail
+    also has **Flip Horizontal / Flip Vertical** buttons
+    (`livery_paint_flip_h`/`_v`, `LuFlipHorizontal`/`LuFlipVertical`,
+    disabled without a sticker) → `flipSticker('flipX'|'flipY')` toggles the
+    `st.flipX`/`st.flipY` flags; every draw/flatten path wraps `drawImage` in
+    `ctx.save(); ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1); …; ctx.restore()`.
+    Ref methods `importSticker`/`removeSticker`/`duplicateSticker`; duplicate
+    stamps the current sticker onto the base (transform included) and leaves a
+    nudged copy. Only `exportPNG()` flattens it (over the transparent base).
   - Undo/redo via `createUndoStack`/`pushSnapshot` (cap `MAX_UNDO = 20`
     ImageData snapshots). Clear/reset via confirm modal. Unsaved flag via
     `onDirty`. Text commits to raster on Enter.

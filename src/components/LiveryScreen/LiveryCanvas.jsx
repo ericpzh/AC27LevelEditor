@@ -38,6 +38,7 @@ import { FaArrowPointer } from 'react-icons/fa6';
 import { TbSticker2 } from 'react-icons/tb';
 import { HiDocumentDuplicate } from 'react-icons/hi';
 import { CiBookmarkRemove } from 'react-icons/ci';
+import { LuFlipHorizontal, LuFlipVertical } from 'react-icons/lu';
 import useTooltip from '../BrowserScreen/useTooltip';
 
 export const TEXTURE = 2048;
@@ -266,7 +267,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       ctx.save();
       ctx.translate(st.x, st.y);
       ctx.rotate(st.rot || 0);
+      ctx.save();
+      ctx.scale(st.flipX ? -1 : 1, st.flipY ? -1 : 1);
       ctx.drawImage(st.img, -st.w / 2, -st.h / 2, st.w, st.h);
+      ctx.restore();
       ctx.lineWidth = (active ? 2 : 1) / z;
       ctx.strokeStyle = active ? '#6aa0ff' : 'rgba(106, 160, 255, 0.55)';
       ctx.setLineDash(active ? [] : [6 / z, 4 / z]);
@@ -311,7 +315,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       img.onload = () => {
         const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
         const k = Math.min(1, 1024 / Math.max(w, h));
-        setSticker({ img, w: w * k, h: h * k, x: TEXTURE / 2, y: TEXTURE / 2, rot: 0, selected: true });
+        setSticker({ img, w: w * k, h: h * k, x: TEXTURE / 2, y: TEXTURE / 2, rot: 0, flipX: false, flipY: false, selected: true });
         setTool('select');
         setDirty(true);
         scheduleOverlay();
@@ -330,6 +334,14 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     scheduleOverlay();
   };
 
+  const flipSticker = (axis) => {
+    const st = stickerRef.current;
+    if (!st) return;
+    setSticker({ ...st, [axis]: !st[axis], selected: true });
+    setDirty(true);
+    scheduleOverlay();
+  };
+
   // ── Duplicate: stamp the live sticker onto the base, keep a nudged copy ─
   const duplicateSticker = () => {
     const st = stickerRef.current;
@@ -340,6 +352,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ctx.globalCompositeOperation = 'source-over';
     ctx.translate(st.x, st.y);
     ctx.rotate(st.rot || 0);
+    ctx.scale(st.flipX ? -1 : 1, st.flipY ? -1 : 1);
     ctx.drawImage(st.img, -st.w / 2, -st.h / 2, st.w, st.h);
     ctx.restore();
     const nudge = Math.max(st.w, st.h) * 0.15 + 20;
@@ -361,6 +374,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         ctx.save();
         ctx.translate(st.x, st.y);
         ctx.rotate(st.rot || 0);
+        ctx.scale(st.flipX ? -1 : 1, st.flipY ? -1 : 1);
         ctx.drawImage(st.img, -st.w / 2, -st.h / 2, st.w, st.h);
         ctx.restore();
       }
@@ -758,6 +772,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           <div className="lp-rail-group">
             <button className="lp-tool" {...bind(t('livery_paint_import_sticker'))} aria-label={t('livery_paint_import_sticker')} onClick={importSticker}><TbSticker2 size={18} /></button>
             <button className="lp-tool" {...bind(t('livery_paint_duplicate_sticker'))} aria-label={t('livery_paint_duplicate_sticker')} disabled={!sticker} onClick={duplicateSticker}><HiDocumentDuplicate size={18} /></button>
+            <button className="lp-tool" {...bind(t('livery_paint_flip_h'))} aria-label={t('livery_paint_flip_h')} disabled={!sticker} onClick={() => flipSticker('flipX')}><LuFlipHorizontal size={18} /></button>
+            <button className="lp-tool" {...bind(t('livery_paint_flip_v'))} aria-label={t('livery_paint_flip_v')} disabled={!sticker} onClick={() => flipSticker('flipY')}><LuFlipVertical size={18} /></button>
             <button className="lp-tool lp-danger" {...bind(t('livery_paint_delete_sticker'))} aria-label={t('livery_paint_delete_sticker')} disabled={!sticker} onClick={removeSticker}><CiBookmarkRemove size={18} /></button>
           </div>
           <div className="lp-rail-sep" />

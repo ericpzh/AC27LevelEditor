@@ -20,7 +20,7 @@ function makeCtx() {
     beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
     fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(),
     strokeRect: vi.fn(), setLineDash: vi.fn(),
-    fillText: vi.fn(), putImageData: vi.fn(), translate: vi.fn(), rotate: vi.fn(),
+    fillText: vi.fn(), putImageData: vi.fn(), translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
     getImageData: vi.fn((x, y, w, h) => ({
       data: new Uint8ClampedArray(Math.max(4, w * h * 4)),
       width: w, height: h,
@@ -231,6 +231,37 @@ describe('sticker duplicate', () => {
     );
     expect(dupBtn().disabled).toBe(false);
     expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false);
+  });
+});
+
+describe('sticker flip', () => {
+  it('flip buttons reflect the sticker transform and disable without one', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    render(
+      <I18nProvider>
+        <LiveryCanvas ref={ref} />
+        <Modal />
+        <Toast />
+      </I18nProvider>
+    );
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const hBtn = () => screen.getByRole('button', { name: 'Flip Horizontal' });
+    const vBtn = () => screen.getByRole('button', { name: 'Flip Vertical' });
+    expect(hBtn().disabled).toBe(true);
+    expect(vBtn().disabled).toBe(true);
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(hBtn().disabled).toBe(false));
+    ctxs.length = 0;
+    await user.click(hBtn());
+    await waitFor(() => {
+      expect(ctxs.some(c => c.scale.mock.calls.some(([x, y]) => x === -1 && y === 1))).toBe(true);
+    });
   });
 });
 

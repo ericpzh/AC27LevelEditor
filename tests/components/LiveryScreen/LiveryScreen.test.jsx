@@ -61,7 +61,7 @@ beforeEach(() => {
     beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
     fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(),
     strokeRect: vi.fn(), setLineDash: vi.fn(), fillText: vi.fn(), putImageData: vi.fn(),
-    translate: vi.fn(), rotate: vi.fn(),
+    translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
     getImageData: vi.fn((x, y, w, h) => ({
       data: new Uint8ClampedArray(Math.max(4, w * h * 4)), width: w, height: h,
     })),
