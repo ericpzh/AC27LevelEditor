@@ -119,6 +119,7 @@ vi.stubGlobal('electronAPI', {
   selectLiveryImage: () => mockIpcInvoke('select-livery-image'),
   readDiskImage: (filePath) => mockIpcInvoke('read-disk-image', filePath),
   exportLivery: (folder) => mockIpcInvoke('export-livery', folder),
+  exportLiveryToDir: (folder) => mockIpcInvoke('export-livery-to-dir', folder),
   saveLiveryDialog: (opts) => mockIpcInvoke('save-livery-dialog', opts),
   loadLiveryZip: () => mockIpcInvoke('load-livery-zip'),
 

@@ -59,20 +59,21 @@ Replace default aircraft liveries with realistic paint schemes via ZIP file:
 
 1. Download the livery ZIP file (e.g., `AC27 Realistic Aircraft Livery v26.06.0.zip`)
 2. In the browser screen header, click **Livery** (palette icon) — this opens the **Livery page**
-3. Go to the **Install Pack** tab and wait for the automatic download, or pick a local ZIP in the file dialog fallback
+3. Click the **Pack** button in the header bar and wait for the automatic download, or pick a local ZIP in the file dialog fallback
 4. The editor extracts the contents to the game's `Mods/` folder automatically
 
 **Note:** If the `Mods/` folder does not exist in the game root, the editor creates it automatically.
 
 ### Custom Liveries (Livery Page)
+Create and share your own `Body`/`BaseMap` aircraft liveries. The Livery page (browser header → **Livery**) has two views — the livery list and the painter — with every list action in a single header bar:
 
-Create and share your own `Body`/`BaseMap` aircraft liveries. The Livery page (browser header → **Livery**) has three tabs:
+- **Back** — returns to the browser (from the painter, back returns to the list first).
+- **Pack** — the original realistic-livery download/install flow in a dialog.
+- **Create** — opens the full-page painter: a 2048×2048 **transparent** canvas (brush/eraser/picker/fill/shapes/text/sticker, undo depth 20, no 3D preview). The top bar holds the airline/aircraft plus **Import image** / **Import livery** (ZIP) / **Export livery** / **Save** / **Save As**; the left rail holds the tools; the bottom bar holds zoom. Saving overwrites silently (no `.bak`, no confirm); reference liveries are read-only and only offer Save As.
+- **Select All**/**Deselect All**, batch **Delete**, and **Find** (filters the list by airline, folder or aircraft).
+- The list groups every livery in `<gameRoot>/Mods/AC27 Custom Liveries/` by aircraft type into collapsible folders (reference-pack liveries share the same folders with a lock read-only mark); **click a card to open it in the painter**; per-row **Export** (saves a shareable ZIP), **Copy folder name**, and **Delete** (with confirm). Folder names are free-form (filesystem-safe only) and never parsed — the manifest carries the airline/aircraft.
 
-- **My Liveries** — every livery in `<gameRoot>/Mods/AC27 Custom Liveries/` grouped by aircraft type into collapsible folders (reference-pack liveries share the same folders with a lock read-only mark); per-row **Edit** (opens the painter), **Export** (saves a shareable ZIP), **Copy folder name**, and **Delete** (with confirm).
-- **Create** — **Upload** mode (drop a PNG/JPG, pick airline + aircraft, live `{SHORT}_{AIRLINE}` folder preview, shrink-to-fit note) or **Paint** mode (2048×2048 flat-texture canvas: brush/eraser/picker/fill/shapes/text/sticker, undo depth 20, no 3D preview). Saving overwrites silently (no `.bak`, no confirm).
-- **Install Pack** — the original realistic-livery download/install flow.
-
-**Share contract:** Export produces `<FOLDER>.zip` containing `<FOLDER>/aircraft_livery_manifest.json` + `<FOLDER>/base.png`. Send it to a friend — they install it via **Create → Load from ZIP**, or by unzipping straight into `<gameRoot>/Mods/AC27 Custom Liveries/`.
+**Share contract:** Export produces `<FOLDER>.zip` containing `<FOLDER>/aircraft_livery_manifest.json` + `<FOLDER>/base.png`. Send it to a friend — they install it via **Import livery** in the painter, or by unzipping straight into `<gameRoot>/Mods/AC27 Custom Liveries/`.
 
 ### Auto-Update (Windows)
 
@@ -152,20 +153,22 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 1. 下载涂装 ZIP 文件（例如 `AC27 Realistic Aircraft Livery v26.06.0.zip`）
 2. 在浏览器界面顶栏中，点击 **涂装**（调色板图标）—— 打开**涂装页面**
-3. 在**安装涂装包**页签等待自动下载，或在弹出的文件选择对话框中选择本地 ZIP 文件
+3. 点击顶栏的**涂装包**按钮，等待自动下载，或在弹出的文件选择对话框中选择本地 ZIP 文件
 4. 编辑器自动将内容解压到游戏根目录下的 `Mods/` 文件夹
 
 **注意：** 如果 `Mods/` 文件夹不存在，编辑器会自动创建。
 
 ### 自制涂装（涂装页面）
 
-创建并分享你自己的机身（`Body`/`BaseMap`）涂装。涂装页面（浏览器顶栏 → **涂装**）有三个页签：
+创建并分享你自己的机身（`Body`/`BaseMap`）涂装。涂装页面（浏览器顶栏 → **涂装**）分为涂装列表与绘制器两个视图，列表的所有操作都集中在单一顶栏中：
 
-- **我的涂装** —— `<游戏根目录>/Mods/AC27 Custom Liveries/` 下的所有涂装，按机型分组为可折叠文件夹（真实涂装包中的参考涂装在同一分组内，带锁形只读标记）；每行可**编辑**（打开绘制器）、**导出**（保存为可分享的 ZIP）、**复制文件夹名**、**删除**（需确认）。
-- **新建涂装** —— **上传图片**模式（拖入 PNG/JPG，选择航司 + 机型，实时 `{SHORT}_{AIRLINE}` 文件夹名预览，超大图等比缩小说明）或**绘制**模式（2048×2048 扁平纹理画布：画笔/橡皮/取色/填充/图形/文字/贴纸，20 步撤销，无 3D 预览）。保存时直接覆盖（无 `.bak`、无确认）。
-- **安装涂装包** —— 原有的真实涂装下载/安装流程。
+- **返回** —— 回到浏览器（在绘制器中则先返回列表）。
+- **涂装包** —— 原有的真实涂装下载/安装流程，以弹窗打开。
+- **新建** —— 打开整页绘制器：2048×2048 **透明**画布（画笔/橡皮/取色/填充/图形/文字/贴花，20 步撤销，无 3D 预览）。顶栏放置航司/机型以及**导入图片** / **导入涂装**（ZIP）/ **导出涂装** / **保存** / **另存为**，左侧竖排工具栏，底部为缩放。保存时直接覆盖（无 `.bak`、无确认）；参考涂装只读，仅可另存为。
+- **全选**/**取消全选**、批量**删除**与**查找**（按航司、文件夹名或机型过滤）。
+- 列表将 `<游戏根目录>/Mods/AC27 Custom Liveries/` 下的所有涂装按机型分组为可折叠文件夹（真实涂装包中的参考涂装在同一分组内，带锁形只读标记）；**点击卡片即可在绘制器中打开**；每行可**导出**（保存为可分享的 ZIP）、**复制文件夹名**、**删除**（需确认）。文件夹名可自由命名（仅需文件系统安全），编辑器不会解析其含义，航司/机型由清单文件决定。
 
-**分享约定：** 导出的 `<文件夹名>.zip` 内含 `<文件夹名>/aircraft_livery_manifest.json` + `<文件夹名>/base.png`。发给朋友后，对方在**新建涂装 → 从 zip 载入**即可安装，或直接解压到 `<游戏根目录>/Mods/AC27 Custom Liveries/`。
+**分享约定：** 导出的 `<文件夹名>.zip` 内含 `<文件夹名>/aircraft_livery_manifest.json` + `<文件夹名>/base.png`。发给朋友后，对方在绘制器中使用**导入涂装**即可安装，或直接解压到 `<游戏根目录>/Mods/AC27 Custom Liveries/`。
 
 ### 清理编辑器本地缓存
 
@@ -189,12 +192,12 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.3.6
+- **Version:** v1.3.7
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (58 test files; count stale after the Ground-Painter WIP + new save regressions — recount via `npm test`) + Playwright (E2E, 17 tests) + Node.js (integration, 35 scripts, 151 MCP/API tests)
+- **Tests:** Vitest (98 test files, 1656 tests) + Playwright (E2E, 9 spec files) + Node.js (integration, 60 scripts; 173 MCP/API tests)
 
 ### Quick Start
 
@@ -206,10 +209,10 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 64 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install, auto-update check & install
-electron/preload.js  →  contextBridge: exposes ~90 methods on window.electronAPI
+electron/main.js     →  Electron main process, 89 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install, auto-update check & install
+electron/preload.js  →  contextBridge: exposes ~133 methods on window.electronAPI
 electron/updater.js  →  Auto-update: HEAD check (R2 ETag), MD5 comparison, file-based logging to updater.log, resolveTargetExe (dev-mode support), exe download, batch script generation
-electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 7 tools)
+electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 27 tools)
 electron/bepinex.js     →  BepInEx debug mode — download, install, uninstall (IL2CPP bleeding edge)
 electron/udp_listener.js →  UDP telemetry engine (10 Hz aircraft state v2: simFlags, timeScale, heartbeatSeq, auto-reset)
 electron/voice-stt-vosk.js →  Offline vosk STT worker child (EN+ZH models, grammar-constrained, sox mic capture; runs under ELECTRON_RUN_AS_NODE; --wav/--test CLI modes)
@@ -219,10 +222,10 @@ mcp/bridge.js        →  MCP stdio↔HTTP bridge (launched by Claude Code for A
 index.html           →  Vite HTML entry, loads src/main.jsx
 src/main.jsx         →  React entry: ReactDOM.createRoot → <App />
 src/App.jsx          →  Root component: providers + screen routing (+ map window routing + MCP store listener)
-src/components/      →  React component tree (Setup, Browser, Editor, common, MapWindows)
+src/components/      →  React component tree (Setup, Browser, Livery, Editor, common, MapWindows)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
-src/acl/             →  CommonJS backend modules (parser facade + 17 modules + OdinSerializer binary codec)
+src/acl/             →  CommonJS backend modules (parser facade + 19 modules + OdinSerializer binary codec)
 src/acl/config.js    →  Centralized config time resolution: resolveConfigTime (CDT override), resolveDisplayTimes
 src/acl/gatcarc.js   →  GATCARC4 binary container: readAclText/writeAcl universal I/O (binary + text)
 src/acl/v4_pk_index.js → v4 PK entity index: $iref→$id lookup, vector3/string/iref extraction helpers
@@ -230,24 +233,24 @@ src/acl/odin/        →  OdinSerializer binary codec (reader, writer, JSON read
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
-The app has three screens managed by React component rendering: **Setup → Browser → Editor**. All time display uses `resolveConfigTime()` — a centralized resolver that extracts Config.startTime from the ACL and overrides it with `GameTime.CurrentDateTime` (the player's actual in-game time including warmup). Demo files show a 30-min window at CurrentDateTime. The browser screen caches file infos and geometry data in the zustand store across editor→browser navigation, avoiding a full re-scan on return. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), cross-window selection sync, and push-to-talk voice command input (patch-command vocabulary: heading/altitude/speed/clear-for-approach sent to the AC27Approach plugin; offline vosk recognition — EN+ZH, grammar-constrained, sox mic capture; CLI sim via `scripts/voice_sim.mjs`, TTS round-trip via `scripts/voice-stt-test.mjs`). Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
+The app has three main screens managed by React component rendering: **Setup → Browser → Editor** (plus the **Livery** page reached from the browser header). All time display uses `resolveConfigTime()` — a centralized resolver that extracts Config.startTime from the ACL and overrides it with `GameTime.CurrentDateTime` (the player's actual in-game time including warmup). Demo files show a 30-min window at CurrentDateTime. The browser screen caches file infos and geometry data in the zustand store across editor→browser navigation, avoiding a full re-scan on return. Three additional window types — **Surface Radar**, **Approach Radar**, and **Flight Strips** — open as separate Electron windows. Surface/Approach Radar show live aircraft positions from the game's UDP telemetry stream (v2 protocol with simFlags/timeScale/heartbeatSeq). Aircraft state auto-resets on 5s stale timeout or game level change (hasLevel 0→1 transition). Flight Strips display live progress strips sorted by controller seat (RAMP→GRO→TWR→DEP→APPR→DEL→APN) with drag-to-reorder, game speed multiplier display (×1/×2 from timeScale), cross-window selection sync, and push-to-talk voice command input (patch-command vocabulary: heading/altitude/speed/clear-for-approach sent to the AC27Approach plugin; offline vosk recognition — EN+ZH, grammar-constrained, sox mic capture; CLI sim via `scripts/voice_sim.mjs`, TTS round-trip via `scripts/voice-stt-test.mjs`). Double-click the Label button on either radar to toggle **witch mode** — replaces aircraft with animated sprites from 15 round-robin character sheets (1536×768, 3×6 grid of 256×256 cells, clipped via nested SVG with `clipPath`). Active (click-selected) aircraft get a white silhouette glow via `feDropShadow`; any click exits witch mode.
 
 All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The renderer never touches the filesystem directly.
 
 ### Data Flow
 
 ```
-Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths (merged from all .acl files) + dropdowns + runway pairs → AirportCache. Progress bar shows global 0–100% across all airports/files. Detects v2/v3 vs v4 schema from first file.
-Phase 1 (load):   .acl → readAclText() (GATCARC4 decode if binary) → parse flights + timelines → zustand store. Dual parser paths: v2/v3 uses WorldState.FlightPlans, v4 uses StaticData.$blobdoc.StaticItems (flight-plan: entries). Config startTime resolved via resolveConfigTime (overrides with GameTime.CurrentDateTime if present).
-Phase 2 (edit):   All edits go through zustand store actions. v4 files hide InBlockTime/TakeoffTime columns.
-Phase 3 (save):   Validation → generate flights → writeAcl() to .acl + .csv + timeline .json. v4: rebuilds StaticData.$blobdoc.StaticItems (no AircraftStates), v2/v3: rebuilds WorldState.FlightPlans + Aircrafts. Container format auto-preserved (binary stays binary, text stays text). A **0-flight level** (scenery-only / fully-cleared schedule) is now a valid save — the pipeline runs with an empty flight set, removing every flight-plan/aircraft/animator runtime entity while preserving jetways, radio channels, and scenery, and `loadFlights` reloads it as an empty schedule. Rebuilt runtime-adjacent types (e.g. `AircraftAnimator`) and the `StaticData.$blobdoc` types that the game strips from a flight-less level resolve lazily / with fallback so a lean scope never aborts a save.
+Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths (merged from all .acl files) + dropdowns + runway pairs → AirportCache. Progress bar shows global 0–100% across all airports/files.
+Phase 1 (load):   .acl → readAclText() (GATCARC4 decode) → parse flights + timelines → zustand store. All files are v4: StaticData.$blobdoc.StaticItems (flight-plan: entries). Config startTime resolved via resolveConfigTime (overrides with GameTime.CurrentDateTime if present).
+Phase 2 (edit):   All edits go through zustand store actions. InBlockTime/TakeoffTime columns are hidden.
+Phase 3 (save):   Validation → generate flights → writeAcl() to .acl + .csv + timeline .json. Rebuilds StaticData.$blobdoc.StaticItems (no AircraftStates). The GATCARC4 container version is preserved on disk (v1 stays v1, v2 stays v2). A **0-flight level** (scenery-only / fully-cleared schedule) is now a valid save — the pipeline runs with an empty flight set, removing every flight-plan/aircraft/animator runtime entity while preserving jetways, radio channels, and scenery, and `loadFlights` reloads it as an empty schedule. Rebuilt runtime-adjacent types (e.g. `AircraftAnimator`) and the `StaticData.$blobdoc` types that the game strips from a flight-less level resolve lazily / with fallback so a lean scope never aborts a save.
 UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar / Flight Strips)
 MCP (AI agent):   Claude Code → stdio → mcp/bridge.js → HTTP :31415 → api-server.js → IPC → store → UI
 ```
 
 ### MCP / AI Agent Integration
 
-The editor includes a built-in MCP (Model Context Protocol) server that allows AI agents like Claude Code to control the editor — create, read, modify, and delete flights via natural language. The API server auto-starts on `127.0.0.1:31415` when the app opens.
+The editor includes a built-in MCP (Model Context Protocol) server that allows AI agents like Claude Code to control the editor — create, read, modify, and delete flights plus ground/air scenery via natural language. The API server auto-starts on `127.0.0.1:31415` when the app opens.
 
 **Setup (one time):**
 
@@ -271,11 +274,11 @@ The editor includes a built-in MCP (Model Context Protocol) server that allows A
 
 3. Make sure Node.js is installed (the bridge is a tiny Node.js script — requires Node 18+)
 
-**7 MCP tools:** `create_flights`, `get_flights`, `modify_flights`, `delete_flights`, `get_editor_status`, `get_airport_info`, `get_validation_issues`. Supports English and Chinese (中文).
+**27 MCP tools:** the flight tools `create_flights`, `get_flights`, `modify_flights`, `delete_flights`, `get_editor_status`, `get_airport_info`, `get_validation_issues`, `send_voice_command`; the Ground Painter tools `get_ground_painter_state`, `set_ground_painter_mode`, `create_taxiway_lines`, `create_areas`, `create_area`, `create_stands`, `create_runways`, `create_taxiway_fillet`, `delete_ground_objects`, `move_ground_objects`, `move_ground_endpoint`, `rename_ground_object`, `undo_ground_painter`; and the air-mode tools `create_airway_nodes`, `create_airway_procedures`, `delete_airway_objects`, `move_airway_objects`, `rename_airway_object`, `create_airway_fillet`. Supports English and Chinese (中文).
 
 **Testing:**
 ```bash
-node tests/integration/test_api_server.js           # API + MCP protocol (85 tests)
+node tests/integration/test_api_server.js           # API + MCP protocol (129 tests)
 node tests/integration/test_api_e2e_examples.js     # Composition examples (44 tests)
 ```
 
@@ -283,9 +286,12 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 
 ```
 ├── electron/
-│   ├── main.js              # Electron main process + 65 IPC handlers
-│   ├── preload.js           # contextBridge (window.electronAPI, ~90 methods)
+│   ├── main.js              # Electron main process + 89 IPC handlers
+│   ├── preload.js           # contextBridge (window.electronAPI, ~133 methods)
 │   ├── updater.js           # Auto-update: HEAD check, MD5, file logging, resolveTargetExe, download, batch script
+│   ├── api-server.js        # HTTP API + MCP server (port 31415, 27 tools)
+│   ├── cloud-llm.js         # Multi-vendor cloud LLM chat (DeepSeek/Gemini/Claude/Codex)
+│   ├── livery.js            # Custom livery pack logic (list/create/delete/export/load)
 │   ├── bepinex.js           # BepInEx debug mode — one-click install/uninstall
 │   └── udp_listener.js      # UDP telemetry — 10 Hz aircraft state + commands
 ├── index.html               # Vite HTML entry
@@ -301,6 +307,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   ├── components/
 │   │   ├── SetupScreen/         # Game root directory picker
 │   │   ├── BrowserScreen/       # Airport & level browser
+│   │   ├── LiveryScreen/        # Custom livery list + painter (canvas, stickers, ZIP share)
 │   │   ├── EditorScreen/        # Main editor: table + timelines
 │   │   │   ├── FlightTable/     # Sortable flight table with inline editing
 │   │   │   ├── CellEditor/      # SVG clock & compass popovers
@@ -331,9 +338,10 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │   ├── useTranslation.jsx   # I18n Context Provider (zh/en)
 │   │   ├── useElectronAPI.jsx   # electronAPI Context Provider
 │   │   ├── useEditorShell.jsx   # Keyboard shortcuts
+│   │   ├── useEditorSaveActions.jsx  # Save/export/backup logic
 │   │   ├── useKeyboardShortcuts.js  # Generic shortcut registry
-│   │   ├── useSaveAcl.jsx       # Save/export/backup logic
-│   │   └── useDrag.js          # Shared drag behavior for floating panels
+│   │   ├── useDrag.js          # Shared drag behavior for floating panels
+│   │   └── map/                # Map-window hooks (cross-window selection, witch animation, knob positions)
 │   │
 │   ├── store/
 │   │   ├── appStore.js          # zustand store — all app state
@@ -344,7 +352,11 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │   ├── config.js            # Centralized time resolution (resolveConfigTime, CDT override)
 │   │   ├── parser.js            # FACADE — main.js imports everything through here
 │   │   ├── gatcarc.js           # GATCARC4 binary container (universal readAclText/writeAcl)
+│   │   ├── id_renumber.js       # Strictly-ascending $id/$iref renumbering for the game's checkpoint reader
 │   │   ├── v4_pk_index.js       # v4 PK entity index + $iref resolution
+│   │   ├── scenery_graph.js     # Ground Painter read path — id-free scenery Graph + meta
+│   │   ├── scenery_write.js     # Ground Painter write path — lossless patchSceneryBlob (+ frame reconcile)
+│   │   ├── geo_osm.js           # geo_data.osm sync on Ground Painter save
 │   │   ├── odin/                # OdinSerializer binary codec (reader, writer, JSON, .NET values)
 │   │   ├── tokenizer.js         # String-aware section boundary scanner
 │   │   ├── acl_json.js          # Pre-processor (Unity JSON → valid JSON) + serializer
@@ -360,17 +372,22 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │   └── utils.js             # Enrichment, sorting, audio, import utils
 │   │
 │   └── utils/               # Shared utilities (ESM for frontend)
-│       ├── constants.js         # Central constants — single source of truth for all app constants
+│       ├── constants/           # Domain constants barrel (timing, fields, aviation, airlines, acl-format, map-config, ui, livery)
 │       ├── timeUtils.js         # Tick↔time conversion + timeline helpers
 │       ├── starDisplay.js       # STAR/SID display dedup (ZGSZ-style runway-suffixed names grouped under the base route)
+│       ├── liveryImage.js       # Livery shrink-to-fit texture normalize + file→dataURL
+│       ├── liveryPaint.js       # Pure canvas paint helpers (floodFill, undo stack, colour math)
+│       ├── patchCommands.js     # Flight-strip patch-command framing/helpers
 │       ├── i18n.js              # Chinese/English translation system
 │       ├── validators.js        # Save validation logic
 │       ├── htmlUtils.js         # escapeHtml, stripSuffixes
+│       ├── safeHtml.jsx         # Renders i18n strings with an allowlist of HTML tags as safe JSX
 │       ├── csvIo.js             # CSV export
 │       ├── zipUtils.js          # Pure Node.js ZIP (zlib, no deps)
+│       ├── debugLog.js          # Gated debug logging (localStorage + URL param)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 1200 Vitest + 17 Playwright E2E + 35 Node.js integration tests
+├── tests/               # 98 Vitest files (1656 tests) + 9 Playwright E2E specs + 60 Node.js integration scripts
 └── dist/                # Build output (gitignored)
 ```
 
@@ -394,13 +411,13 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (16 files) + jetway rebuild (16 v4) + v4 runway pairs + build + Playwright E2E (~4.5 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 58 test files; count stale — recount via `npm test`):**
+**Component tests (Vitest — 98 test files, 1656 tests):**
 ```bash
 npm test              # Run all component + store + utility + MapWindow + updater tests (~8s)
 npm run test:watch    # Watch mode — re-runs on file changes
 ```
 
-**E2E tests (Playwright + Electron — 17 tests in 8 files; 15 pass, 2 skipped):**
+**E2E tests (Playwright + Electron — 9 spec files):**
 ```bash
 npm run build         # Build required first (produces dist-electron/main.js)
 npm run test:e2e      # UI flow tests against real game data (~4 min)
@@ -408,7 +425,7 @@ npm run test:e2e      # UI flow tests against real game data (~4 min)
 
 **Demo files:** Save completes but produces a smaller file because the demo save flow strips CurrentDateTime content. Flight data is preserved — verified by the integration test. The 30-min demo window end time is rounded to the nearest 5-minute boundary (:X0 or :X5). Emergency (`_emerg`) files show "Challenge Level" / "挑战关卡" as their time-of-day label instead of dawn/morning/etc.
 
-**Save integrity — all .acl files (Node.js integration — 26 scripts):**
+**Save integrity — all .acl files (Node.js integration):**
 
 Test every .acl file across all airports for save→reload→compare round-trip:
 ```bash
@@ -462,20 +479,23 @@ node --require ./tests/integration/preload.cjs tests/integration/test_rebuild_ti
 ### Building
 
 `build.js` is the single source of truth for the electron-builder config (do
-not edit the `build` key in package.json — there isn't one). Two Windows
-variants are produced:
+not edit the `build` key in package.json — there isn't one). Windows
+(normal / voice / workshop), macOS, and Linux builds are produced:
 
 | Command | Artifact | Contents |
 | --- | --- | --- |
 | `npm run build:win` | `release/AC27Editor.exe` | Normal build — **no voice assets**. This is the auto-update variant served from R2 (small). Voice UI shows "unavailable" (worker JS not shipped). |
 | `npm run build:win:voice` | `release/AC27EditorVoice.exe` | Voice build — bundles the offline vosk STT (large EN model `vosk-model-en-us-0.22` ~1.9 GB + small ZH `vosk-model-small-cn-0.22` ~42 MB, sox, vosk DLLs, koffi). Auto-updates through the R2 `/editor` route too — sends `X-AC27-Variant: voice` so the Worker serves its own objects. |
+| `npm run build:win:workshop` | `release/AC27EditorWorkshop.exe` | Steam Workshop build — bundles the AC27Approach plugin DLL offline (`resources/AC27Approach.dll`); **auto-update disabled** (Steam Workshop handles updates). Not attached to the GitHub release. |
 | `npm run build:mac` | `release/*.dmg` | macOS (voice is Windows-only). |
+| `npm run build:linux` | `release/*.AppImage` + `*.deb` | Linux (no auto-update). |
 
-Both Windows variants go to the GitHub release and both reach R2 for
-auto-update — both served via the single `/editor` route, the Worker switching
-objects on the `X-AC27-Variant` header (`normal` → `AC27Editor.exe(.md5)`,
-`voice` → `AC27EditorVoice.exe(.md5)`; the release workflow pins the exact
-filenames).
+The normal + voice Windows variants go to the GitHub release and both reach R2
+for auto-update — both served via the single `/editor` route, the Worker
+switching objects on the `X-AC27-Variant` header (`normal` →
+`AC27Editor.exe(.md5)`, `voice` → `AC27EditorVoice.exe(.md5)`; the release
+workflow pins the exact filenames). The workshop exe is published to Steam
+Workshop only.
 
 ```powershell
 # Normal build
@@ -493,7 +513,7 @@ npm run build:win:voice
 node set_icon.js
 ```
 
-Output: `dist\AC27LevelEditor.exe` (~180 MB portable).
+Output: `release\AC27Editor.exe` (portable).
 
 **First-time Windows setup** — if the build fails with winCodeSign errors:
 
@@ -505,4 +525,4 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ### CI/CD
 
-The release workflow (`.github/workflows/release.yml`) pushes to `v*` tags triggers **Windows** (portable `.exe`), **macOS** (`.dmg`), and **AC27Approach plugin DLL** builds in parallel. The Windows build is uploaded to Cloudflare R2 for auto-update delivery, and the plugin DLL is uploaded to the dedicated `ac27approach` R2 bucket (`s3://ac27approach/AC27Approach.dll`) — served via the `https://ericpzh.rest/ac27approach*` Worker route that the Flight Strips window's Load DLL button downloads from. All artifacts are attached to a GitHub Release with auto-generated release notes. See `mods/docs/cloudflare-worker-routes.md` for the Worker/R2 infrastructure.
+The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags (or a manual `workflow_dispatch`) and builds **Windows** (normal + voice + workshop portable `.exe`), **macOS** (`.dmg`), **Linux** (`.AppImage` + `.deb`), and the **AC27Approach plugin DLL** in parallel. The normal + voice Windows builds are uploaded to Cloudflare R2 for auto-update delivery, and the plugin DLL is uploaded to the dedicated `ac27approach` R2 bucket (`s3://ac27approach/AC27Approach.dll`) — served via the `https://ericpzh.rest/ac27approach*` Worker route that the Flight Strips window's Load DLL button downloads from. The workshop exe auto-deploys to Steam Workshop (appid 4004140). All normal + voice + plugin artifacts are attached to a GitHub Release with auto-generated release notes. See `mods/docs/cloudflare-worker-routes.md` for the Worker/R2 infrastructure.

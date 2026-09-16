@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LiveryScreen from '../../../src/components/LiveryScreen/LiveryScreen';
+import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
 import { useAppStore } from '../../../src/store/appStore';
@@ -20,12 +21,29 @@ function renderLivery() {
   );
 }
 
+const ROW = {
+  folder: 'A20N_CCA',
+  id: 'a20n_cca_default',
+  name: 'A20N CCA Default Livery',
+  airline: 'CCA',
+  targetPlaneId: 'AIRBUS A-320neo',
+  hasBasePng: true,
+  mtime: 0,
+};
+
+const ROW2 = {
+  folder: 'B738_AAL', id: 'b738_aal_default', name: 'B738 AAL',
+  airline: 'AAL', targetPlaneId: 'BOEING 737-800', hasBasePng: true, mtime: 0,
+};
+
 function setupMocks(overrides = {}) {
   mockIpcInvoke.mockImplementation((channel, ...args) => {
     if (overrides[channel] !== undefined) return overrides[channel];
     switch (channel) {
       case 'list-liveries':
         return Promise.resolve({ mine: [], reference: [] });
+      case 'read-livery-image':
+        return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
       default:
         return Promise.resolve({});
     }
@@ -36,15 +54,59 @@ beforeEach(() => {
   setLang('en');
   useAppStore.setState(useAppStore.getInitialState());
   useAppStore.setState({ screen: 'livery' });
+  // The painter view always mounts LiveryCanvas; jsdom has no 2d context.
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+    save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(),
+    fillRect: vi.fn(), clearRect: vi.fn(), drawImage: vi.fn(),
+    beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
+    fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(),
+    strokeRect: vi.fn(), setLineDash: vi.fn(), fillText: vi.fn(), putImageData: vi.fn(),
+    translate: vi.fn(), rotate: vi.fn(),
+    getImageData: vi.fn((x, y, w, h) => ({
+      data: new Uint8ClampedArray(Math.max(4, w * h * 4)), width: w, height: h,
+    })),
+  }));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  CreateTab.prefill = null;
+  window.__liveryPaintGuard = null;
 });
 
 describe('LiveryScreen', () => {
-  it('renders 3 tabs', async () => {
+  it('header bar hosts all actions, no title/tabs/bottom bar', async () => {
     setupMocks();
     renderLivery();
-    expect(screen.getByText('My Liveries')).toBeInTheDocument();
-    expect(screen.getByText('Create')).toBeInTheDocument();
-    expect(screen.getByText('Install Pack')).toBeInTheDocument();
+    const header = document.querySelector('#screen-livery .browser-header');
+    expect(header).toBeInTheDocument();
+    const groups = header.querySelectorAll(':scope > .browser-actions');
+    expect(groups).toHaveLength(2);
+    // LHS: Back + Pack only.
+    const lhsBtns = [...groups[0].querySelectorAll('button')].map(b => b.textContent);
+    expect(lhsBtns).toEqual(['Back', 'Pack']);
+    // RHS: Create, Select All, Delete, search, help.
+    expect(groups[1].textContent).toContain('Create');
+    expect(groups[1].textContent).toContain('Select All');
+    expect(groups[1].textContent).toContain('Delete');
+    expect(groups[1].querySelector('.livery-search input')).toBeInTheDocument();
+    // Old chrome is gone.
+    expect(document.querySelector('.livery-tabbar')).toBeNull();
+    expect(document.querySelector('.livery-bottombar')).toBeNull();
+    expect(header.textContent).not.toContain('Livery');
+    await waitFor(() => {
+      expect(screen.getByText('No custom liveries yet — create one.')).toBeInTheDocument();
+    });
+  });
+
+  it('search box renders with its placeholder and carries no tooltip', async () => {
+    setupMocks();
+    renderLivery();
+    const input = document.querySelector('.livery-search input');
+    expect(input).toBeInTheDocument();
+    expect(input.getAttribute('placeholder')).toBe('Search');
+    fireEvent.mouseEnter(document.querySelector('.livery-search'));
+    expect(document.body.querySelector('.tooltip-popup')).toBeNull();
   });
 
   it('back button navigates to browser', async () => {
@@ -55,33 +117,98 @@ describe('LiveryScreen', () => {
     expect(useAppStore.getState().screen).toBe('browser');
   });
 
-  it('install tab shows download overlay on click', async () => {
+  it('Create opens the painter view, Back there returns to the list', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(screen.getByText('Create'));
+    await waitFor(() => {
+      // Painter view: canvas + Photoshop-style edge toolbars.
+      expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Save As' })).toBeInTheDocument();
+    });
+    // Mine-only header controls hide in create view.
+    expect(screen.queryByText('Select All')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    expect(useAppStore.getState().screen).toBe('livery');
+  });
+
+  it('header select-all + delete batch-delete end to end', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }),
+      'delete-livery': Promise.resolve({ success: true }),
+    });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(screen.getByText('Select All'));
+    await waitFor(() => {
+      expect([...document.querySelectorAll('.livery-select')].every(b => b.checked)).toBe(true);
+    });
+    expect(screen.getByText('Deselect All')).toBeInTheDocument();
+    const headerDeleteBtn = [...document.querySelectorAll('#screen-livery .browser-header button')]
+      .find(b => b.textContent === 'Delete');
+    await user.click(headerDeleteBtn);
+    await waitFor(() => {
+      expect(screen.getByText('Delete 2 selected liveries?')).toBeInTheDocument();
+    });
+    await user.click(screen.getByText('Delete', { selector: '.btn-danger' }).closest('button'));
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'A20N_CCA');
+    });
+    expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'B738_AAL');
+    await waitFor(() => {
+      expect(screen.getByText('Deleted 2 liveries')).toBeInTheDocument();
+    });
+  });
+
+  it('header search filters the mine list', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }) });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.type(document.querySelector('.livery-search input'), 'american');
+    await waitFor(() => {
+      expect(screen.queryByText('Air China')).toBeNull();
+    });
+    expect(screen.getByText('American Airlines')).toBeInTheDocument();
+  });
+
+  it('header Pack button opens the install modal + overlay', async () => {
     setupMocks({
       'download-livery': new Promise(() => {}),
     });
     const user = userEvent.setup();
     renderLivery();
-    await user.click(screen.getByText('Install Pack'));
-    const installBtn = document.querySelector('.livery-content .btn-sm');
-    expect(installBtn).toBeInTheDocument();
-    await user.click(installBtn);
+    await user.click(screen.getByText('Pack'));
+    await waitFor(() => {
+      expect(screen.getByText(/extract it into the game Mods\/ folder/)).toBeInTheDocument();
+    });
+    const modalInstallBtn = document.querySelector('#modal-box .livery-install-btn');
+    expect(modalInstallBtn).toBeInTheDocument();
+    expect(modalInstallBtn.textContent).toContain('Install pack');
+    await user.click(modalInstallBtn);
     await waitFor(() => {
       expect(document.getElementById('livery-overlay')).toBeInTheDocument();
     });
   });
 
-  it('install tab explains the flow and shows the Mods target', async () => {
+  it('install modal explains the flow and shows the Mods target', async () => {
     setupMocks();
     useAppStore.setState({ rootPath: 'D:\\Games\\Airport Control 27' });
     const user = userEvent.setup();
     renderLivery();
-    await user.click(screen.getByText('Install Pack'));
-    expect(screen.getByText(/extract it into the game Mods\/ folder/)).toBeInTheDocument();
-    expect(screen.getByText('Install target:')).toBeInTheDocument();
-    expect(document.querySelector('.livery-content code').textContent).toContain('Mods');
+    await user.click(screen.getByText('Pack'));
+    await waitFor(() => {
+      expect(screen.getByText(/extract it into the game Mods\/ folder/)).toBeInTheDocument();
+    });
+    expect(screen.getByText('Install target')).toBeInTheDocument();
+    expect(document.querySelector('.livery-install-path').textContent).toContain('Mods');
   });
 
-  it('help button opens the overlay with tab and tool sections', async () => {
+  it('help button opens the overlay with view and header sections', async () => {
     setupMocks();
     const user = userEvent.setup();
     renderLivery();
@@ -90,9 +217,9 @@ describe('LiveryScreen', () => {
     await waitFor(() => {
       expect(screen.getByText('Livery Help')).toBeInTheDocument();
     });
-    expect(screen.getByText('Tabs')).toBeInTheDocument();
+    expect(screen.getByText('Views')).toBeInTheDocument();
+    expect(screen.getByText('Header bar')).toBeInTheDocument();
     expect(screen.getByText('Paint tools')).toBeInTheDocument();
-    expect(screen.getByText('Sharing')).toBeInTheDocument();
   });
 
   it('Escape closes the help overlay', async () => {
@@ -123,12 +250,64 @@ describe('LiveryScreen', () => {
     });
   });
 
-  it('tab buttons show tooltips on hover', async () => {
+  it('header buttons show tooltips on hover, except Create', async () => {
     setupMocks();
     renderLivery();
-    fireEvent.mouseEnter(screen.getByText('My Liveries'));
+    fireEvent.mouseEnter(screen.getByText('Pack'));
     const tip = document.body.querySelector('.tooltip-popup');
     expect(tip).not.toBeNull();
-    expect(tip.textContent).toContain('browse');
+    expect(tip.textContent).toContain('livery pack');
+    fireEvent.mouseLeave(screen.getByText('Pack'));
+    // Create carries no tooltip — its label says it all.
+    fireEvent.mouseEnter(screen.getByText('Create'));
+    expect(document.body.querySelector('.tooltip-popup')).toBeNull();
+  });
+});
+
+describe('LiveryScreen unsaved guard + wizard', () => {
+  it('prompts before leaving the list for the painter when the guard is dirty', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    window.__liveryPaintGuard = { isDirty: () => true };
+    await user.click(screen.getByText('Create'));
+    await waitFor(() => expect(screen.getByText('Unsaved Changes')).toBeInTheDocument());
+    // Still on the list until Discard.
+    expect(screen.queryByRole('button', { name: 'Save As' })).toBeNull();
+    await user.click(screen.getByText('Discard').closest('button'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save As' })).toBeInTheDocument());
+  });
+
+  it('prompts before Back to the browser when the guard is dirty', async () => {
+    setupMocks();
+    const user = userEvent.setup();
+    renderLivery();
+    window.__liveryPaintGuard = { isDirty: () => true };
+    await user.click(screen.getByText('Back'));
+    await waitFor(() => expect(screen.getByText('Unsaved Changes')).toBeInTheDocument());
+    expect(useAppStore.getState().screen).toBe('livery');
+    await user.click(screen.getByText('Discard').closest('button'));
+    await waitFor(() => expect(useAppStore.getState().screen).toBe('browser'));
+  });
+
+  it('clicking a livery card opens the painter prefilled with that livery', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(screen.getByText('Air China').closest('.livery-card'));
+    await waitFor(() => expect(document.querySelector('.lp-root')).toBeInTheDocument());
+    expect(screen.getByPlaceholderText('CCA').value).toBe('CCA');
+  });
+
+  it('the install modal Close button dismisses it', async () => {
+    setupMocks();
+    const user = userEvent.setup();
+    renderLivery();
+    await user.click(screen.getByText('Pack'));
+    await waitFor(() => expect(document.querySelector('#modal-box')).toBeInTheDocument());
+    await user.click(screen.getByText('Close'));
+    await waitFor(() => expect(document.querySelector('#modal-box')).toBeNull());
   });
 });

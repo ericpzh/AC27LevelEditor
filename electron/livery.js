@@ -17,7 +17,12 @@ const SHORT_CODE_TO_PLANE_ID = {
   B738: 'BOEING 737-800', B748: 'BOEING 747-8I', B77W: 'BOEING 777-300ER',
   B789: 'BOEING 787-9', C919: 'COMAC C-919',
 };
-const LIVERY_FOLDER_RE = /^[A-Z0-9]{3,4}_[A-Z]{3}$/;
+// The manifest's targetPlaneId is the source of truth; the short code is only
+// a display convenience derived from it — never from the folder name.
+const PLANE_ID_TO_SHORT_CODE = Object.fromEntries(
+  Object.entries(SHORT_CODE_TO_PLANE_ID).map(([code, id]) => [id, code]),
+);
+const LIVERY_FOLDER_SAFE_RE = /^(?![.\s])(?!.*[.\s]$)(?!.*[<>:"/\\|?*\x00-\x1f]).{1,64}$/;
 const AIRLINE_RE = /^[A-Z]{3}$/;
 const TEXTURE_SIZE = 2048;
 
@@ -46,8 +51,11 @@ function pngSize(buf) {
 }
 
 function buildManifest({ folder, shortCode, airline, targetPlaneId }) {
+  // Free-form folders can contain spaces/symbols — sanitize for the id.
+  // No-op for conventional SHORT_AIRLINE folders (a20n_cca_default as before).
+  const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
   return {
-    id: `${String(folder).toLowerCase()}_default`,
+    id: `${safeId}_default`,
     name: `${shortCode} ${airline} Default Livery`,
     airline,
     targetPlaneId,
@@ -111,14 +119,17 @@ function readLiveryImage(gameRoot, folder, pack = 'mine') {
   }
 }
 
-function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, shortCode }) {
+// The caller supplies only manifest-truth fields (airline + targetPlaneId)
+// plus a free-form, filesystem-safe folder name used verbatim as the storage
+// key. The short code and the manifest id are derived — never parsed from
+// the folder name, which carries no meaning to this app.
+function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, folder }) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   if (!AIRLINE_RE.test(String(airline || ''))) return { success: false, error: 'BAD_AIRLINE' };
-  if (!SHORT_CODE_TO_PLANE_ID[shortCode] || SHORT_CODE_TO_PLANE_ID[shortCode] !== targetPlaneId) {
-    return { success: false, error: 'BAD_PLANE' };
-  }
-  const folder = `${shortCode}_${airline}`;
-  if (!LIVERY_FOLDER_RE.test(folder)) return { success: false, error: 'BAD_AIRLINE' };
+  const shortCode = PLANE_ID_TO_SHORT_CODE[targetPlaneId];
+  if (!shortCode) return { success: false, error: 'BAD_PLANE' };
+  const rawFolder = String(folder == null ? '' : folder).trim();
+  if (!LIVERY_FOLDER_SAFE_RE.test(rawFolder)) return { success: false, error: 'BAD_FOLDER' };
   const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(imageDataUrl || ''));
   if (!m) return { success: false, error: 'BAD_IMAGE' };
   let buf;
@@ -130,17 +141,17 @@ function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, shortCod
   }
   try {
     const packDir = ensureOwnPackDir(gameRoot);
-    const resolved = containmentCheck(packDir, folder);
+    const resolved = containmentCheck(packDir, rawFolder);
     if (!resolved) return { success: false, error: 'BAD_FOLDER' };
     if (!fs.existsSync(resolved)) fs.mkdirSync(resolved, { recursive: true });
     // Silent overwrite — no .bak, no confirm (locked decision §0.4).
     fs.writeFileSync(path.join(resolved, 'base.png'), buf);
     fs.writeFileSync(
       path.join(resolved, 'aircraft_livery_manifest.json'),
-      JSON.stringify(buildManifest({ folder, shortCode, airline, targetPlaneId }), null, 2),
+      JSON.stringify(buildManifest({ folder: rawFolder, shortCode, airline, targetPlaneId }), null, 2),
       'utf-8',
     );
-    return { success: true, folder };
+    return { success: true, folder: rawFolder };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -252,7 +263,9 @@ function loadLiveryZip(zipPath) {
       return { success: false, error: 'IMAGE_MISSING' };
     }
     const folder = manifestDir === '.' ? path.basename(String(zipPath), path.extname(String(zipPath))) : path.basename(manifestDir);
-    const shortCode = String(folder).split('_')[0] || '';
+    // Everything comes from the manifest — the folder is only the storage key
+    // (and the unzip target the share contract depends on).
+    const shortCode = PLANE_ID_TO_SHORT_CODE[manifest.targetPlaneId] || '';
     return {
       success: true,
       folder,
@@ -269,7 +282,8 @@ module.exports = {
   OWN_PACK,
   REFERENCE_PACK,
   SHORT_CODE_TO_PLANE_ID,
-  LIVERY_FOLDER_RE,
+  PLANE_ID_TO_SHORT_CODE,
+  LIVERY_FOLDER_SAFE_RE,
   AIRLINE_RE,
   TEXTURE_SIZE,
   ownPackDir,
@@ -286,5 +300,6 @@ module.exports = {
   readDiskImage,
   exportLivery,
   copyExportedZip,
+  cleanExportTemp: _cleanExportTemp,
   loadLiveryZip,
 };

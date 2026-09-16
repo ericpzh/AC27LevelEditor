@@ -74,7 +74,24 @@
 }
 
 #livery-help-body .livery-help-item {
-  display: block; width: 100%;
-  margin: 0 0 6px; font-size: 13px; line-height: 1.65; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px; font-size: 13px; line-height: 1.6; color: var(--text-secondary);
 }
 #livery-help-body .livery-help-item:last-child { margin-bottom: 0; }
+.livery-help-text { color: var(--text-secondary); }
+
+/* ─── Inline toolbar-button chips ───────────────────────── */
+.livery-help-btn {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); border-radius: var(--radius-sm);
+  padding: 2px 8px; font-size: 12px; font-weight: 500;
+  font-family: inherit; white-space: nowrap;
+  vertical-align: middle; margin: 0 1px;
+  cursor: default; user-select: none;
+}
+.livery-help-btn .btn-icon { margin-right: 1px; }
+.livery-help-btn:hover {
+  background: var(--bg-surface); border-color: var(--accent);
+  color: var(--accent);
+}

@@ -24,17 +24,28 @@ export const PLANE_ID_TO_SHORT_CODE = Object.fromEntries(
   Object.entries(SHORT_CODE_TO_PLANE_ID).map(([k, v]) => [v, k]),
 );
 
-export const LIVERY_FOLDER_RE = /^[A-Z0-9]{3,4}_[A-Z]{3}$/;
+// Free-form folder names: anything filesystem-safe. Excludes Windows-reserved
+// characters (< > : " / \ | ? *) + control chars, rejects leading/trailing
+// dots/spaces (Windows mangles those), caps at 64 chars. Path traversal is
+// additionally rejected by containmentCheck in electron/livery.js — the folder
+// is used verbatim and is NOT parsed back into parts.
+export const LIVERY_FOLDER_SAFE_RE = /^(?![.\s])(?!.*[.\s]$)(?!.*[<>:"/\\|?*\x00-\x1f]).{1,64}$/;
 
 export const TEXTURE_SIZE = 2048;
 
-export function folderFor(shortCode, airline) {
+// Conventional default name suggested in the Save As dialog (the layout the
+// game's own reference pack uses). Purely a label — nothing is ever parsed
+// back out of a folder name.
+export function folderFor(planeId, airline) {
+  const shortCode = PLANE_ID_TO_SHORT_CODE[planeId] || planeId;
   return `${shortCode}_${airline}`;
 }
 
 export function buildManifest({ folder, shortCode, airline, targetPlaneId }) {
+  // Mirrors electron/livery.js: sanitize free-form folders for the id.
+  const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
   return {
-    id: `${String(folder).toLowerCase()}_default`,
+    id: `${safeId}_default`,
     name: `${shortCode} ${airline} Default Livery`,
     airline,
     targetPlaneId,

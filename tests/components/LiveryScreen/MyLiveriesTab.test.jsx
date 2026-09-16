@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -13,7 +13,7 @@ import { setLang } from '../../../src/utils/i18n';
 function renderMine(props = {}) {
   return render(
     <I18nProvider>
-      <MyLiveriesTab {...props} />
+      <MyLiveriesTab cmdRef={{ current: {} }} onBarState={() => {}} {...props} />
       <Modal />
       <Toast />
     </I18nProvider>
@@ -50,24 +50,46 @@ beforeEach(() => {
 });
 
 describe('MyLiveriesTab', () => {
-  it('shows empty state with a create shortcut', async () => {
+  it('empty list shows a placeholder and no groups', async () => {
     setupMocks();
-    const onCreate = vi.fn();
-    const user = userEvent.setup();
-    renderMine({ onCreate });
+    renderMine();
     await waitFor(() => {
       expect(screen.getByText('No custom liveries yet — create one.')).toBeInTheDocument();
     });
-    await user.click(screen.getByText('Create'));
-    expect(onCreate).toHaveBeenCalled();
+    expect(document.querySelector('.livery-bottombar')).toBeNull();
+    expect(document.querySelector('.livery-tabbar')).toBeNull();
+  });
+
+  it('search filter narrows groups by airline, folder or aircraft', async () => {
+    const row2 = {
+      folder: 'B738_AAL',
+      id: 'b738_aal_default',
+      name: 'B738 AAL Default Livery',
+      airline: 'AAL',
+      targetPlaneId: 'BOEING 737-800',
+      hasBasePng: true,
+      mtime: 0,
+    };
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, row2], reference: [] }) });
+    renderMine({ search: 'american' });
+    await waitFor(() => expect(screen.getByText('American Airlines')).toBeInTheDocument());
+    expect(screen.queryByText('Air China')).toBeNull();
+  });
+
+  it('search with no match shows the empty-search placeholder', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    renderMine({ search: 'zzz-no-such-airline' });
+    await waitFor(() => {
+      expect(screen.getByText('No matching liveries')).toBeInTheDocument();
+    });
   });
 
   it('renders rows with edit/export/copy/delete actions', async () => {
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
     const onEdit = vi.fn();
     renderMine({ onEdit });
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
-    expect(screen.getByText('CCA · AIRBUS A-320neo')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    expect(screen.getByText('Air China')).toBeInTheDocument();
 
     const editBtn = screen.getByText('Edit').closest('button');
     const exportBtn = screen.getByText('Export').closest('button');
@@ -85,9 +107,11 @@ describe('MyLiveriesTab', () => {
     });
     const user = userEvent.setup();
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
 
-    await user.click(screen.getByText('Delete').closest('button'));
+    const rowDeleteBtn = [...screen.getByText('Air China').closest('.livery-card').querySelectorAll('button')]
+      .find(b => b.textContent === 'Delete');
+    await user.click(rowDeleteBtn);
     await waitFor(() => {
       expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
     });
@@ -109,7 +133,7 @@ describe('MyLiveriesTab', () => {
     });
     const user = userEvent.setup();
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
     await user.click(screen.getByText('Export').closest('button'));
     await waitFor(() => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('export-livery', 'A20N_CCA');
@@ -133,7 +157,7 @@ describe('MyLiveriesTab', () => {
     });
     const user = userEvent.setup();
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
     await user.click(screen.getByText('Export').closest('button'));
     await waitFor(() => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('save-livery-dialog', expect.anything());
@@ -147,7 +171,7 @@ describe('MyLiveriesTab', () => {
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
     const user = userEvent.setup();
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
     // NB: define AFTER userEvent.setup() — setup() replaces
     // window.navigator.clipboard with its own stub getter.
     Object.defineProperty(window.navigator, 'clipboard', { value: { writeText }, configurable: true });
@@ -162,7 +186,7 @@ describe('MyLiveriesTab', () => {
   it('row buttons show tooltips on hover', async () => {
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
     fireEvent.mouseEnter(screen.getByText('Export').closest('button'));
     const tip = document.body.querySelector('.tooltip-popup');
     expect(tip).not.toBeNull();
@@ -183,10 +207,10 @@ describe('MyLiveriesTab', () => {
     };
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, row2], reference: [] }) });
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
-    expect(screen.getByText('B738_AAL')).toBeInTheDocument();
-    expect(screen.getByText('A20N · AIRBUS A-320neo')).toBeInTheDocument();
-    expect(screen.getByText('B738 · BOEING 737-800')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    expect(screen.getByText('American Airlines')).toBeInTheDocument();
+    expect(screen.getByText('AIRBUS A-320neo')).toBeInTheDocument();
+    expect(screen.getByText('BOEING 737-800')).toBeInTheDocument();
     expect(screen.getAllByText('1 liveries')).toHaveLength(2);
   });
 
@@ -194,15 +218,15 @@ describe('MyLiveriesTab', () => {
     const user = userEvent.setup();
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
-    const header = screen.getByText('A20N · AIRBUS A-320neo').closest('.livery-group-header');
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    const header = screen.getByText('AIRBUS A-320neo').closest('.livery-group-header');
     await user.click(header);
     await waitFor(() => {
-      expect(screen.queryByText('A20N_CCA')).toBeNull();
+      expect(screen.queryByText('Air China')).toBeNull();
     });
     await user.click(header);
     await waitFor(() => {
-      expect(screen.getByText('A20N_CCA')).toBeInTheDocument();
+      expect(screen.getByText('Air China')).toBeInTheDocument();
     });
   });
 
@@ -218,10 +242,10 @@ describe('MyLiveriesTab', () => {
     };
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [refRow] }) });
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CCA')).toBeInTheDocument());
-    expect(screen.getByText('A20N_CES')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    expect(screen.getByText('China Eastern')).toBeInTheDocument();
     // One shared folder, count covers both packs.
-    expect(screen.getAllByText('A20N · AIRBUS A-320neo')).toHaveLength(1);
+    expect(screen.getAllByText('AIRBUS A-320neo')).toHaveLength(1);
     expect(screen.getByText('2 liveries')).toBeInTheDocument();
     // No separate reference section anymore.
     expect(screen.queryByText('Reference liveries (read-only)')).toBeNull();
@@ -229,9 +253,9 @@ describe('MyLiveriesTab', () => {
     const lock = document.querySelector('.livery-readonly');
     expect(lock).toBeInTheDocument();
     expect(lock.querySelector('svg')).toBeTruthy();
-    const refCard = screen.getByText('A20N_CES').closest('.livery-card');
+    const refCard = screen.getByText('China Eastern').closest('.livery-card');
     expect(refCard.querySelector('button')).toBeNull();
-    const mineCard = screen.getByText('A20N_CCA').closest('.livery-card');
+    const mineCard = screen.getByText('Air China').closest('.livery-card');
     expect(mineCard.querySelectorAll('button').length).toBeGreaterThan(0);
   });
 
@@ -247,10 +271,259 @@ describe('MyLiveriesTab', () => {
     };
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [refRow] }) });
     renderMine();
-    await waitFor(() => expect(screen.getByText('A20N_CES')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('China Eastern')).toBeInTheDocument());
     fireEvent.mouseEnter(document.querySelector('.livery-readonly'));
     const tip = document.body.querySelector('.tooltip-popup');
     expect(tip).not.toBeNull();
     expect(tip.textContent).toContain('Read-only');
+  });
+
+  it('select-all command toggles every own-pack checkbox', async () => {
+    const row2 = {
+      folder: 'B738_AAL', id: 'b738_aal_default', name: 'B738 AAL',
+      airline: 'AAL', targetPlaneId: 'BOEING 737-800', hasBasePng: true, mtime: 0,
+    };
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, row2], reference: [] }) });
+    const cmdRef = { current: {} };
+    const barStates = [];
+    renderMine({ cmdRef, onBarState: (s) => barStates.push(s) });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    const boxes = () => [...document.querySelectorAll('.livery-select')];
+    expect(boxes()).toHaveLength(2);
+    expect(boxes().every(b => !b.checked)).toBe(true);
+    act(() => { cmdRef.current.toggleSelectAll(); });
+    await waitFor(() => {
+      expect(boxes().every(b => b.checked)).toBe(true);
+    });
+    expect(barStates[barStates.length - 1]).toMatchObject({ mineCount: 2, selectedCount: 2, allSelected: true });
+    // Toggles to deselect.
+    act(() => { cmdRef.current.toggleSelectAll(); });
+    await waitFor(() => {
+      expect(boxes().every(b => !b.checked)).toBe(true);
+    });
+  });
+
+  it('delete-selected command confirms and batch-deletes', async () => {
+    const row2 = {
+      folder: 'B738_AAL', id: 'b738_aal_default', name: 'B738 AAL',
+      airline: 'AAL', targetPlaneId: 'BOEING 737-800', hasBasePng: true, mtime: 0,
+    };
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW, row2], reference: [] }),
+      'delete-livery': Promise.resolve({ success: true }),
+    });
+    const user = userEvent.setup();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    act(() => { cmdRef.current.toggleSelectAll(); });
+    await waitFor(() => {
+      expect([...document.querySelectorAll('.livery-select')].every(b => b.checked)).toBe(true);
+    });
+    act(() => { cmdRef.current.deleteSelected(); });
+    await waitFor(() => {
+      expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Delete 2 selected liveries?')).toBeInTheDocument();
+    await user.click(screen.getByText('Delete', { selector: '.btn-danger' }).closest('button'));
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'A20N_CCA');
+    });
+    expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'B738_AAL');
+    await waitFor(() => {
+      expect(screen.getByText('Deleted 2 liveries')).toBeInTheDocument();
+    });
+  });
+
+  it('reference rows are not selectable', async () => {
+    const refRow = {
+      folder: 'A20N_CES', id: 'a20n_ces_default', name: 'A20N CES',
+      airline: 'CES', targetPlaneId: 'AIRBUS A-320neo', hasBasePng: true, mtime: 0,
+    };
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [refRow] }) });
+    const cmdRef = { current: {} };
+    const barStates = [];
+    renderMine({ cmdRef, onBarState: (s) => barStates.push(s) });
+    await waitFor(() => expect(screen.getByText('China Eastern')).toBeInTheDocument());
+    // Only the own-pack card has a checkbox.
+    expect(document.querySelectorAll('.livery-select')).toHaveLength(1);
+    act(() => { cmdRef.current.toggleSelectAll(); });
+    await waitFor(() => {
+      expect(barStates[barStates.length - 1]).toMatchObject({ mineCount: 1, selectedCount: 1 });
+    });
+  });
+
+  it('clicking a mine card opens it in the painter (with pack + thumbnail)', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const onEdit = vi.fn();
+    const user = userEvent.setup();
+    renderMine({ onEdit });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('read-livery-image', 'A20N_CCA', 'mine'));
+    const card = screen.getByText('Air China').closest('.livery-card');
+    await user.click(card);
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({
+      folder: 'A20N_CCA',
+      pack: 'mine',
+      imageDataUrl: expect.any(String),
+    }));
+  });
+
+  it('clicking a locked reference card opens it in the painter as reference', async () => {
+    const refRow = {
+      folder: 'A20N_CES', id: 'a20n_ces_default', name: 'A20N CES',
+      airline: 'CES', targetPlaneId: 'AIRBUS A-320neo', hasBasePng: true, mtime: 0,
+    };
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [refRow] }) });
+    const onEdit = vi.fn();
+    const user = userEvent.setup();
+    renderMine({ onEdit });
+    await waitFor(() => expect(screen.getByText('China Eastern')).toBeInTheDocument());
+    const refCard = screen.getByText('China Eastern').closest('.livery-card');
+    await user.click(refCard);
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({
+      folder: 'A20N_CES',
+      pack: 'reference',
+    }));
+  });
+
+  it('card action buttons do not trigger the card-open', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const onEdit = vi.fn();
+    const user = userEvent.setup();
+    renderMine({ onEdit });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    // Checkbox clicks select, they must not open the painter.
+    await user.click(document.querySelector('.livery-select'));
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+});
+
+describe('MyLiveriesTab error + edge paths', () => {
+  it('list failure toasts the mapped error', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: false, error: 'BAD_MANIFEST' }) });
+    renderMine();
+    await waitFor(() => {
+      expect(screen.getByText('Corrupt livery manifest.')).toBeInTheDocument();
+    });
+  });
+
+  it('list rejection toasts the thrown message', async () => {
+    setupMocks({ 'list-liveries': Promise.reject(new Error('boom')) });
+    renderMine();
+    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+  });
+
+  it('delete failure toasts the mapped error', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
+      'delete-livery': Promise.resolve({ success: false, error: 'BAD_FOLDER' }),
+    });
+    const user = userEvent.setup();
+    renderMine();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    const rowDeleteBtn = [...screen.getByText('Air China').closest('.livery-card').querySelectorAll('button')]
+      .find(b => b.textContent === 'Delete');
+    await user.click(rowDeleteBtn);
+    await user.click(screen.getByText('Delete', { selector: '.btn-danger' }).closest('button'));
+    await waitFor(() => {
+      expect(screen.getByText('Invalid folder name.')).toBeInTheDocument();
+    });
+  });
+
+  it('export failure toasts the mapped error', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
+      'export-livery': Promise.resolve({ success: false, error: 'BAD_FOLDER' }),
+    });
+    const user = userEvent.setup();
+    renderMine();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(screen.getByText('Export').closest('button'));
+    await waitFor(() => {
+      expect(screen.getByText('Invalid folder name.')).toBeInTheDocument();
+    });
+  });
+
+  it('save-dialog failure toasts the mapped error', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
+      'export-livery': Promise.resolve({ success: true, filePath: '/tmp/A20N_CCA.zip' }),
+      'save-livery-dialog': Promise.resolve({ canceled: false, success: false, error: 'BAD_FOLDER' }),
+    });
+    const user = userEvent.setup();
+    renderMine();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(screen.getByText('Export').closest('button'));
+    await waitFor(() => {
+      expect(screen.getByText('Invalid folder name.')).toBeInTheDocument();
+    });
+  });
+
+  it('renders a bad-manifest row with its error message', async () => {
+    const badRow = { folder: 'A20N_CCA', id: '', name: '', airline: '', targetPlaneId: '', hasBasePng: true, mtime: 0, error: 'BAD_MANIFEST' };
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [badRow], reference: [] }) });
+    renderMine();
+    await waitFor(() => {
+      expect(screen.getByText('Corrupt livery manifest.')).toBeInTheDocument();
+    });
+  });
+
+  it('groups rows with an unknown aircraft under the fallback title', async () => {
+    const unknown = { folder: 'MYSTERY', id: '', name: '', airline: 'CCA', targetPlaneId: '', hasBasePng: true, mtime: 0 };
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [unknown], reference: [] }) });
+    renderMine();
+    await waitFor(() => {
+      expect(screen.getByText('Unknown aircraft')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Air China')).toBeInTheDocument();
+  });
+
+  it('Enter / Space on a focused card opens it in the painter', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const onEdit = vi.fn();
+    renderMine({ onEdit });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    const card = screen.getByText('Air China').closest('.livery-card');
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ folder: 'A20N_CCA' }));
+    fireEvent.keyDown(card, { key: ' ' });
+    expect(onEdit).toHaveBeenCalledTimes(2);
+  });
+
+  it('copy folder name falls back to a plain toast when clipboard is unavailable', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const originalClipboard = Object.getOwnPropertyDescriptor(window.navigator, 'clipboard');
+    if (originalClipboard) delete window.navigator.clipboard;
+    renderMine();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Copy folder name').closest('button'));
+    await waitFor(() => {
+      expect(document.getElementById('toast').textContent).toBe('A20N_CCA');
+    });
+    if (originalClipboard) Object.defineProperty(window.navigator, 'clipboard', originalClipboard);
+  });
+
+  it('batch delete reports partial success', async () => {
+    const row2 = { folder: 'B738_AAL', id: 'b738_aal_default', name: 'B738 AAL', airline: 'AAL', targetPlaneId: 'BOEING 737-800', hasBasePng: true, mtime: 0 };
+    mockIpcInvoke.mockImplementation((channel, folder) => {
+      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW, row2], reference: [] });
+      if (channel === 'delete-livery') return Promise.resolve(folder === 'A20N_CCA' ? { success: true } : { success: false, error: 'BAD_FOLDER' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    act(() => { cmdRef.current.toggleSelectAll(); });
+    act(() => { cmdRef.current.deleteSelected(); });
+    await waitFor(() => expect(screen.getByText('Confirm Delete')).toBeInTheDocument());
+    await user.click(screen.getByText('Delete', { selector: '.btn-danger' }).closest('button'));
+    await waitFor(() => {
+      expect(screen.getByText('Deleted 1 liveries')).toBeInTheDocument();
+    });
+    // Both folders were attempted; the success toast is the last one shown.
+    expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'A20N_CCA');
+    expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'B738_AAL');
   });
 });

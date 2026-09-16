@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
-import { IoColorPaletteOutline } from 'react-icons/io5';
+import { IoCloudDownloadOutline } from 'react-icons/io5';
 import useTooltip from '../BrowserScreen/useTooltip';
 import LiveryInstallOverlay from '../BrowserScreen/LiveryInstallOverlay';
 
@@ -15,9 +15,12 @@ export default function InstallPackTab() {
   const { t } = useTranslation();
   const electronAPI = useElectronAPI();
   const rootPath = useAppStore(s => s.rootPath);
+  const hideModal = useAppStore(s => s.hideModal);
   const [liveryLoading, setLiveryLoading] = useState(false);
   const [liveryOverlayOpen, setLiveryOverlayOpen] = useState(false);
   const { bind, TooltipPortal } = useTooltip();
+  const sep = rootPath && rootPath.includes('\\') ? '\\' : '/';
+  const modsPath = rootPath ? `${rootPath.replace(/[\\/]+$/, '')}${sep}Mods` : '';
 
   const handleInstallLivery = () => {
     if (liveryLoading) return;
@@ -68,18 +71,19 @@ export default function InstallPackTab() {
   };
 
   return (
-    <div>
-      <h3 className="livery-section-title">{t('livery_tab_install')}</h3>
-      <p className="livery-desc">{t('livery_install_desc')}</p>
+    <div className="livery-install-panel">
+      <p className="livery-install-lead">{t('livery_install_desc')}</p>
       {rootPath && (
-        <p className="livery-desc">
-          {t('livery_install_target')}: <code>{rootPath}/Mods</code>
-        </p>
+        <div className="livery-install-target">
+          <span className="livery-install-target-label">{t('livery_install_target')}</span>
+          <div className="livery-install-path">{modsPath}</div>
+        </div>
       )}
-      <div className="livery-form-row">
-        <button className="btn-sm" {...bind(t('livery_tip_install'))} onClick={handleInstallLivery} disabled={liveryLoading}>
-          <IoColorPaletteOutline size={14} className="btn-icon" />{t('browser_livery')}
+      <div className="livery-install-actions">
+        <button className="livery-install-btn" {...bind(t('livery_tip_install'))} onClick={handleInstallLivery} disabled={liveryLoading}>
+          <IoCloudDownloadOutline size={16} className="btn-icon" />{t('livery_install_btn')}
         </button>
+        <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_close')}</button>
       </div>
       {liveryOverlayOpen && (
         <LiveryInstallOverlay

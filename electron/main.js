@@ -3469,6 +3469,32 @@ ipcMain.handle('save-livery-dialog', async (_event, { sourcePath, suggestedName 
   }
 });
 
+// Export a saved livery folder to a user-chosen DIRECTORY (folder picker).
+ipcMain.handle('export-livery-to-dir', async (_event, folder) => {
+  const parent = _event.sender && !_event.sender.isDestroyed()
+    ? BrowserWindow.fromWebContents(_event.sender)
+    : mainWindow;
+  try {
+    const exp = livery.exportLivery(_liveryGameRoot(), folder);
+    if (!exp.success) return { canceled: false, success: false, error: exp.error };
+    const result = await dialog.showOpenDialog(parent, {
+      title: 'Export Livery ZIP to Folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths.length) {
+      livery.cleanExportTemp(exp.filePath);
+      return { canceled: true };
+    }
+    const destPath = path.join(result.filePaths[0], `${folder}.zip`);
+    const copied = livery.copyExportedZip(exp.filePath, destPath);
+    if (!copied.success) return { canceled: false, success: false, error: copied.error };
+    return { canceled: false, success: true, filePath: destPath };
+  } catch (err) {
+    console.error('[Livery] export to folder failed:', err.message);
+    return { canceled: false, success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('load-livery-zip', async (_event) => {
   const parent = _event.sender && !_event.sender.isDestroyed()
     ? BrowserWindow.fromWebContents(_event.sender)

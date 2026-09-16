@@ -249,7 +249,7 @@ beforeEach(() => {
 
       const tip = document.body.querySelector('.tooltip-popup');
       expect(tip).not.toBeNull();
-      expect(tip.textContent).toContain('Realistic Aircraft Livery');
+      expect(tip.textContent).toContain('Aircraft Livery');
     });
 
     it('navigates to livery screen on click and shows no overlay', async () => {
@@ -285,7 +285,7 @@ beforeEach(() => {
 
       const tip = document.body.querySelector('.tooltip-popup');
       expect(tip).not.toBeNull();
-      expect(tip.textContent).toBe('Change the game directory. Select a different installation path.');
+      expect(tip.textContent).toBe('Select a different game installation path.');
     });
 
     it('hides tooltip on mouse leave', async () => {

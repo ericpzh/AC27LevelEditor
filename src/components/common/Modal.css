@@ -87,7 +87,8 @@
 
 #modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
-#modal-actions button {
+#modal-actions button,
+.modal-actions-row button {
   padding: 8px 18px;
   border-radius: var(--radius-sm);
   font-size: 13px;
@@ -96,6 +97,8 @@
   border: 1px solid var(--border);
   transition: all var(--transition);
 }
+#modal-actions button:disabled,
+.modal-actions-row button:disabled { opacity: 0.5; cursor: default; }
 
 .btn-cancel { background: transparent; color: var(--text-secondary); }
 .btn-cancel:hover { background: var(--bg); color: var(--text); }

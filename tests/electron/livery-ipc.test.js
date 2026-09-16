@@ -74,11 +74,12 @@ describe('listLiveries', () => {
 });
 
 describe('createLivery round-trip', () => {
-  const payload = () => ({
+  const payload = (overrides = {}) => ({
     imageDataUrl: png2048(),
     airline: 'CCA',
     targetPlaneId: 'AIRBUS A-320neo',
-    shortCode: 'A20N',
+    folder: 'A20N_CCA',
+    ...overrides,
   });
 
   it('creates pack dir, writes base.png + manifest, lists and reads back', () => {
@@ -114,6 +115,33 @@ describe('createLivery round-trip', () => {
     expect(read.imageDataUrl).toBe(payload().imageDataUrl);
   });
 
+  it('accepts a free-form folder name verbatim', () => {
+    const created = livery.createLivery(gameRoot, payload({ folder: 'My First Livery 01' }));
+    expect(created).toEqual({ success: true, folder: 'My First Livery 01' });
+
+    const manifest = JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'My First Livery 01', 'aircraft_livery_manifest.json'), 'utf-8'));
+    // Manifest keeps the structured parts; only the id derives from the folder.
+    expect(manifest).toMatchObject({
+      id: 'my_first_livery_01_default',
+      name: 'A20N CCA Default Livery',
+      airline: 'CCA',
+      targetPlaneId: 'AIRBUS A-320neo',
+    });
+
+    const listed = livery.listLiveries(gameRoot);
+    expect(listed.mine).toHaveLength(1);
+    expect(listed.mine[0]).toMatchObject({ folder: 'My First Livery 01', airline: 'CCA' });
+    expect(livery.readLiveryImage(gameRoot, 'My First Livery 01', 'mine').success).toBe(true);
+  });
+
+  it('rejects filesystem-unsafe folder names', () => {
+    for (const folder of ['', '   ', '../evil', 'a/b', 'a\\b', 'a:b', '.hidden', 'trailing.', 'x'.repeat(65)]) {
+      expect(livery.createLivery(gameRoot, payload({ folder })).error).toBe('BAD_FOLDER');
+    }
+    expect(livery.createLivery(gameRoot, payload({ folder: undefined })).error).toBe('BAD_FOLDER');
+  });
+
   it('silently overwrites without .bak', () => {
     expect(livery.createLivery(gameRoot, payload()).success).toBe(true);
     expect(livery.createLivery(gameRoot, payload()).success).toBe(true);
@@ -125,9 +153,9 @@ describe('createLivery round-trip', () => {
   it('rejects bad airline / plane / image', () => {
     expect(livery.createLivery(gameRoot, { ...payload(), airline: 'cc' }).error).toBe('BAD_AIRLINE');
     expect(livery.createLivery(gameRoot, { ...payload(), airline: 'C/CA' }).error).toBe('BAD_AIRLINE');
-    expect(livery.createLivery(gameRoot, { ...payload(), shortCode: 'XXXX' }).error).toBe('BAD_PLANE');
-    // Mismatched short-code ↔ plane id.
-    expect(livery.createLivery(gameRoot, { ...payload(), targetPlaneId: 'BOEING 737-800' }).error).toBe('BAD_PLANE');
+    // Unknown plane id (the short code is derived from it, never sent).
+    expect(livery.createLivery(gameRoot, { ...payload(), targetPlaneId: 'NOPE' }).error).toBe('BAD_PLANE');
+    expect(livery.createLivery(gameRoot, { ...payload(), targetPlaneId: '' }).error).toBe('BAD_PLANE');
     expect(livery.createLivery(gameRoot, { ...payload(), imageDataUrl: 'not-a-data-url' }).error).toBe('BAD_IMAGE');
     expect(livery.createLivery(null, payload()).error).toBe('NO_GAME_ROOT');
   });
@@ -160,7 +188,8 @@ describe('traversal rejection', () => {
 describe('deleteLivery', () => {
   it('removes the own-pack folder', () => {
     livery.createLivery(gameRoot, {
-      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', shortCode: 'A20N',
+      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      folder: 'A20N_CCA',
     });
     expect(livery.deleteLivery(gameRoot, 'A20N_CCA')).toEqual({ success: true });
     expect(livery.listLiveries(gameRoot).mine).toEqual([]);
@@ -172,7 +201,8 @@ describe('deleteLivery', () => {
     fs.mkdirSync(refDir, { recursive: true });
     fs.writeFileSync(path.join(refDir, 'base.png'), pngBuffer(2048, 2048));
     livery.createLivery(gameRoot, {
-      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', shortCode: 'A20N',
+      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      folder: 'A20N_CCA',
     });
     expect(livery.deleteLivery(gameRoot, 'A20N_CCA')).toEqual({ success: true });
     // Reference folder survives; reference read still works.
@@ -211,7 +241,7 @@ describe('share round-trip (export → delete → load-zip)', () => {
     imageDataUrl: png2048(),
     airline: 'CCA',
     targetPlaneId: 'AIRBUS A-320neo',
-    shortCode: 'A20N',
+    folder: 'A20N_CCA',
   };
 
   it('round-trips pixel-identical base.png + deep-equal manifest', () => {
@@ -246,6 +276,24 @@ describe('share round-trip (export → delete → load-zip)', () => {
     expect(loaded.shortCode).toBe('A20N');
     expect(loaded.manifest).toEqual(JSON.parse(manifestRaw0));
     expect(loaded.imageDataUrl).toBe('data:image/png;base64,' + png0.toString('base64'));
+  });
+
+  it('derives shortCode from the manifest for free-form zip folders', () => {
+    const { createZip } = require('../../src/utils/zipUtils');
+    expect(livery.createLivery(gameRoot, {
+      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      folder: 'My Custom Livery',
+    }).success).toBe(true);
+    const dir = path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'My Custom Livery');
+    const zipPath = path.join(gameRoot, 'custom.zip');
+    createZip([
+      { name: 'My Custom Livery/aircraft_livery_manifest.json', data: fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json')) },
+      { name: 'My Custom Livery/base.png', data: fs.readFileSync(path.join(dir, 'base.png')) },
+    ], zipPath);
+    const loaded = livery.loadLiveryZip(zipPath);
+    expect(loaded.success).toBe(true);
+    expect(loaded.folder).toBe('My Custom Livery');
+    expect(loaded.shortCode).toBe('A20N');
   });
 
   it('rejects bad export/load inputs', () => {

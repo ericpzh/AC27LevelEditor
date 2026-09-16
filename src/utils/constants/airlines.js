@@ -45,6 +45,31 @@ export function getAirlineCode(airlineName) {
   return airlineName.substring(0, 3).toUpperCase();
 }
 
+// ─── Code → human-readable names (inverted map) ─────────
+// The game/editor store 3-letter codes; the UI shows names. Each code can
+// have several names (EN + ZH entries in AIRLINE_CODE_MAP); pick by UI lang:
+// a name containing CJK chars is the Chinese display name, otherwise English.
+// Unknown codes fall back to the raw code.
+const CJK_RE = /[\u4e00-\u9fff]/;
+
+export const AIRLINE_CODE_TO_NAMES = (() => {
+  const map = {};
+  for (const [name, code] of Object.entries(AIRLINE_CODE_MAP)) {
+    if (!map[code]) map[code] = [];
+    if (!map[code].includes(name)) map[code].push(name);
+  }
+  return map;
+})();
+
+export function airlineDisplayName(code, lang) {
+  const names = AIRLINE_CODE_TO_NAMES[code];
+  if (!names || names.length === 0) return code;
+  if (lang === 'zh') {
+    return names.find(n => CJK_RE.test(n)) || names[0];
+  }
+  return names.find(n => !CJK_RE.test(n)) || names[0];
+}
+
 export function airportDisplayName(icao, t) {
   if (t) {
     const key = 'airport_' + icao;

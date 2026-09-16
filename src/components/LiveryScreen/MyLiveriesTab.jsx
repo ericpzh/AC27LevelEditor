@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
-import { OWN_PACK_NAME, PLANE_ID_TO_SHORT_CODE } from '../../utils/constants/livery';
+import { airlineDisplayName } from '../../utils/constants/airlines';
 import { IoChevronForward, IoChevronDown, IoFolderOutline, IoLockClosed } from 'react-icons/io5';
 import useTooltip from '../BrowserScreen/useTooltip';
 
@@ -25,8 +25,8 @@ function groupByAircraft(rows) {
   });
 }
 
-export default function MyLiveriesTab({ onEdit, onCreate }) {
-  const { t } = useTranslation();
+export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState }) {
+  const { t, lang } = useTranslation();
   const electronAPI = useElectronAPI();
   const [mine, setMine] = useState([]);
   const [reference, setReference] = useState([]);
@@ -35,7 +35,27 @@ export default function MyLiveriesTab({ onEdit, onCreate }) {
   // Collapsed aircraft groups, keyed by targetPlaneId ('' = unknown).
   // Mine + reference share one folder set; reference rows are read-only.
   const [collapsed, setCollapsed] = useState(new Set());
+  // Selected own-pack folders for batch delete (reference never selectable).
+  // Acted on from the header bar via cmdRef.
+  const [selected, setSelected] = useState(new Set());
   const { bind, TooltipPortal } = useTooltip();
+
+  // One folder set across both packs (mine rows carry pack:'mine' for
+  // thumbnails/actions, reference rows pack:'reference' + lock mark).
+  const allRows = useMemo(() => [
+    ...mine.map(r => ({ ...r, pack: 'mine' })),
+    ...reference.map(r => ({ ...r, pack: 'reference' })),
+  ], [mine, reference]);
+
+  // Header search filter: folder, airline code/name, aircraft, manifest name.
+  const filteredRows = useMemo(() => {
+    const q = String(search || '').trim().toLowerCase();
+    if (!q) return allRows;
+    return allRows.filter(r => (
+      [r.folder, r.airline, airlineDisplayName(r.airline, lang), r.targetPlaneId, r.name]
+        .some(v => String(v || '').toLowerCase().includes(q))
+    ));
+  }, [allRows, search, lang]);
 
   const refresh = async () => {
     setLoading(true);
@@ -113,8 +133,6 @@ export default function MyLiveriesTab({ onEdit, onCreate }) {
     );
   };
 
-  if (loading) return <div className="livery-placeholder">{t('editor_loading')}</div>;
-
   const handleExport = async (folder) => {
     try {
       const exp = await electronAPI.exportLivery(folder);
@@ -147,19 +165,39 @@ export default function MyLiveriesTab({ onEdit, onCreate }) {
   };
 
   const groupTitle = (planeId) => {
-    const code = PLANE_ID_TO_SHORT_CODE[planeId];
-    const name = planeId || t('livery_unknown_aircraft');
-    return code ? `${code} · ${name}` : name;
+    return planeId || t('livery_unknown_aircraft');
   };
 
   const renderMineCard = (row) => (
-    <div className="livery-card" key={'mine:' + row.folder}>
+    <div
+      className={'livery-card clickable' + (selected.has(row.folder) ? ' selected' : '')}
+      key={'mine:' + row.folder}
+      onClick={(e) => {
+        if (e.target.closest('button, input, select, a')) return;
+        if (onEdit) onEdit({ ...row, pack: 'mine', imageDataUrl: thumbs['mine:' + row.folder] || null });
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button, input, select, a') && onEdit) {
+          e.preventDefault();
+          onEdit({ ...row, pack: 'mine', imageDataUrl: thumbs['mine:' + row.folder] || null });
+        }
+      }}
+      tabIndex={0}
+      title={t('livery_tip_edit')}
+    >
       {thumbs['mine:' + row.folder] && <img src={thumbs['mine:' + row.folder]} alt={row.folder} />}
-      <div className="livery-meta"><strong>{row.folder}</strong></div>
-      <div className="livery-meta">{row.airline} · {row.targetPlaneId}</div>
+      <div className="livery-meta livery-meta-row">
+        <input
+          type="checkbox"
+          className="livery-select"
+          checked={selected.has(row.folder)}
+          onChange={() => toggleSelect(row.folder)}
+        />
+        <strong>{airlineDisplayName(row.airline, lang)}</strong>
+      </div>
       {row.error && <div className="livery-meta">{t(errKey(row.error))}</div>}
       <div className="livery-actions">
-        <button className="btn-sm" {...bind(t('livery_tip_edit'))} onClick={() => onEdit && onEdit({ ...row, imageDataUrl: thumbs['mine:' + row.folder] || null })}>{t('livery_edit')}</button>
+        <button className="btn-sm" {...bind(t('livery_tip_edit'))} onClick={() => onEdit && onEdit({ ...row, pack: 'mine', imageDataUrl: thumbs['mine:' + row.folder] || null })}>{t('livery_edit')}</button>
         <button className="btn-sm" {...bind(t('livery_tip_export'))} onClick={() => handleExport(row.folder)}>{t('livery_export')}</button>
         <button className="btn-sm" {...bind(t('livery_tip_copy'))} onClick={() => handleCopyName(row.folder)}>{t('livery_copy_name')}</button>
         <button className="btn-sm" {...bind(t('livery_tip_delete'))} onClick={() => handleDelete(row.folder)}>{t('livery_delete')}</button>
@@ -168,16 +206,30 @@ export default function MyLiveriesTab({ onEdit, onCreate }) {
   );
 
   const renderRefCard = (row) => (
-    <div className="livery-card" key={'ref:' + row.folder}>
+    <div
+      className="livery-card clickable"
+      key={'ref:' + row.folder}
+      onClick={(e) => {
+        if (e.target.closest('button, input, select, a')) return;
+        if (onEdit) onEdit({ ...row, pack: 'reference', imageDataUrl: thumbs['reference:' + row.folder] || null });
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button, input, select, a') && onEdit) {
+          e.preventDefault();
+          onEdit({ ...row, pack: 'reference', imageDataUrl: thumbs['reference:' + row.folder] || null });
+        }
+      }}
+      tabIndex={0}
+      title={t('livery_tip_edit')}
+    >
       {thumbs['reference:' + row.folder] && <img src={thumbs['reference:' + row.folder]} alt={row.folder} />}
       <div className="livery-meta">
-        <strong>{row.folder}</strong>
+        <strong>{airlineDisplayName(row.airline, lang)}</strong>
         {' '}
         <span className="livery-readonly" {...bind(t('livery_tip_readonly'))}>
           <IoLockClosed size={12} />
         </span>
       </div>
-      <div className="livery-meta">{row.airline} · {row.targetPlaneId}</div>
     </div>
   );
 
@@ -213,23 +265,74 @@ export default function MyLiveriesTab({ onEdit, onCreate }) {
     </div>
   );
 
-  // One folder set across both packs (mine rows carry pack:'mine' for
-  // thumbnails/actions, reference rows pack:'reference' + lock mark).
-  const allRows = [
-    ...mine.map(r => ({ ...r, pack: 'mine' })),
-    ...reference.map(r => ({ ...r, pack: 'reference' })),
-  ];
+  const toggleSelect = (folder) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(folder)) next.delete(folder);
+      else next.add(folder);
+      return next;
+    });
+  };
+
+  const allSelected = mine.length > 0 && mine.every(r => selected.has(r.folder));
+
+  // Publish header-bar state + commands (select-all / delete-selected live in
+  // the LiveryScreen header now, not a bottom bar).
+  useEffect(() => {
+    if (onBarState) onBarState({ mineCount: mine.length, selectedCount: selected.size, allSelected });
+  }, [mine, selected, allSelected]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (cmdRef) cmdRef.current = { toggleSelectAll, deleteSelected };
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleSelectAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(mine.map(r => r.folder)));
+  };
+
+  const deleteSelected = () => {
+    if (selected.size === 0) return;
+    const folders = [...selected];
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal(
+      () => t('livery_delete_confirm_title'),
+      () => <p>{t('livery_delete_multi_body', { n: folders.length })}</p>,
+      () => (
+        <>
+          <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
+          <button className="btn-danger" onClick={async () => {
+            hideModal();
+            const { showToast } = useAppStore.getState();
+            let ok = 0;
+            for (const folder of folders) {
+              try {
+                const res = await electronAPI.deleteLivery(folder);
+                if (res && res.success) ok++;
+                else showToast(t(errKey(res && res.error)), 'error');
+              } catch (err) {
+                showToast(err.message, 'error');
+              }
+            }
+            setSelected(new Set());
+            if (ok > 0) showToast(t('livery_deleted_multi', { n: ok }), 'success');
+            refresh();
+          }}>{t('livery_delete')}</button>
+        </>
+      )
+    );
+  };
+
+  if (loading) return <div className="livery-placeholder">{t('editor_loading')}</div>;
 
   return (
-    <div>
-      {mine.length === 0 && (
-        <div className="livery-placeholder">
-          <p>{t('livery_empty_mine')}</p>
-          <button className="btn-sm" onClick={onCreate}>{t('livery_tab_create')}</button>
-        </div>
-      )}
-      {allRows.length > 0 && renderGroups(allRows)}
-      <p className="livery-folder-preview">{t('livery_share_help', { pack: OWN_PACK_NAME })}</p>
+    <div className="livery-mine-wrap">
+      {filteredRows.length > 0
+        ? renderGroups(filteredRows)
+        : (!loading && (
+          <div className="livery-placeholder">
+            {String(search || '').trim() ? t('livery_search_empty') : t('livery_empty_mine')}
+          </div>
+        ))}
       {TooltipPortal}
     </div>
   );

@@ -3,7 +3,7 @@ import {
   OWN_PACK_NAME,
   SHORT_CODE_TO_PLANE_ID,
   PLANE_ID_TO_SHORT_CODE,
-  LIVERY_FOLDER_RE,
+  LIVERY_FOLDER_SAFE_RE,
   TEXTURE_SIZE,
   buildManifest,
   folderFor,
@@ -27,24 +27,36 @@ describe('livery constants', () => {
     }
   });
 
-  it('folder regex accepts valid names', () => {
-    expect(LIVERY_FOLDER_RE.test('A20N_CCA')).toBe(true);
-    expect(LIVERY_FOLDER_RE.test('B38M_AAL')).toBe(true);
-    expect(LIVERY_FOLDER_RE.test('A333_CES')).toBe(true);
+  it('safe folder regex accepts conventional + free-form names', () => {
+    expect(LIVERY_FOLDER_SAFE_RE.test('A20N_CCA')).toBe(true);
+    expect(LIVERY_FOLDER_SAFE_RE.test('B38M_AAL')).toBe(true);
+    expect(LIVERY_FOLDER_SAFE_RE.test('My First Livery 01')).toBe(true);
+    expect(LIVERY_FOLDER_SAFE_RE.test('a20n_cca')).toBe(true); // case no longer matters
+    expect(LIVERY_FOLDER_SAFE_RE.test('涂装测试')).toBe(true);
   });
 
-  it('folder regex rejects invalid names', () => {
-    expect(LIVERY_FOLDER_RE.test('A2_CCA')).toBe(false); // short code too short
-    expect(LIVERY_FOLDER_RE.test('A20000_CCA')).toBe(false); // too long
-    expect(LIVERY_FOLDER_RE.test('A20N_CCA1')).toBe(false);
-    expect(LIVERY_FOLDER_RE.test('a20n_cca')).toBe(false); // lowercase
-    expect(LIVERY_FOLDER_RE.test('../evil')).toBe(false); // traversal
-    expect(LIVERY_FOLDER_RE.test('A20N-CCA')).toBe(false);
-    expect(LIVERY_FOLDER_RE.test('')).toBe(false);
+  it('safe folder regex rejects filesystem-unsafe names', () => {
+    expect(LIVERY_FOLDER_SAFE_RE.test('')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('   ')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('../evil')).toBe(false); // traversal
+    expect(LIVERY_FOLDER_SAFE_RE.test('a/b')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('a\\b')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('a:b')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('a*b')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('a?b')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('a"b')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('a<b')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('a|b')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('.hidden')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('trailing.')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('trailing ')).toBe(false);
+    expect(LIVERY_FOLDER_SAFE_RE.test('x'.repeat(65))).toBe(false); // too long
   });
 
-  it('folderFor joins short code and airline', () => {
-    expect(folderFor('A20N', 'CCA')).toBe('A20N_CCA');
+  it('folderFor builds the conventional default name from the plane id', () => {
+    expect(folderFor('AIRBUS A-320neo', 'CCA')).toBe('A20N_CCA');
+    // Unknown plane ids fall back to the id itself (never a folder parse).
+    expect(folderFor('COMAC C-1000', 'CCA')).toBe('COMAC C-1000_CCA');
   });
 
   it('buildManifest matches the on-disk template', () => {
@@ -64,6 +76,19 @@ describe('livery constants', () => {
       targetModelVer: '1',
       parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }],
     });
+  });
+
+  it('buildManifest sanitizes free-form folders into the id', () => {
+    const m = buildManifest({
+      folder: 'My First Livery 01',
+      shortCode: 'A20N',
+      airline: 'CCA',
+      targetPlaneId: 'AIRBUS A-320neo',
+    });
+    expect(m.id).toBe('my_first_livery_01_default');
+    // Display name still comes from the structured parts, not the folder.
+    expect(m.name).toBe('A20N CCA Default Livery');
+    expect(m.airline).toBe('CCA');
   });
 
   it('texture size is 2048', () => {

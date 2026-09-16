@@ -4,7 +4,10 @@
   position: fixed; inset: 0;
   background: var(--overlay);
   display: flex; align-items: center; justify-content: center;
-  z-index: 110;
+  /* Above the app modal (20000): the install flow now opens from a
+     bottom-bar button inside a modal, and the progress overlay must
+     stay visible on top of it. */
+  z-index: 20010;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }

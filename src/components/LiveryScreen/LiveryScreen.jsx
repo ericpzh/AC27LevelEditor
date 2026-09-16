@@ -1,8 +1,16 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import './LiveryScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useAppStore } from '../../store/appStore';
-import { IoArrowBackOutline, IoHelpCircleOutline } from 'react-icons/io5';
+import {
+  IoArrowBack,
+  IoHelpCircleOutline,
+  IoCloudDownloadOutline,
+  IoCheckmarkDone,
+  IoTrashOutline,
+  IoSearchOutline,
+} from 'react-icons/io5';
+import { MdAdd } from 'react-icons/md';
 import useTooltip from '../BrowserScreen/useTooltip';
 import MyLiveriesTab from './MyLiveriesTab';
 import CreateTab from './CreateTab';
@@ -14,7 +22,11 @@ export default function LiveryScreen() {
   const setScreen = useAppStore(s => s.setScreen);
   const [tab, setTab] = useState('mine');
   const [helpOpen, setHelpOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const { bind, TooltipPortal } = useTooltip();
+  // Mine-list commands + bar state, published by MyLiveriesTab.
+  const mineCmdRef = useRef({});
+  const [barState, setBarState] = useState({ mineCount: 0, selectedCount: 0, allSelected: false });
 
   // Unsaved painter guard: CreateTab paint mode registers
   // window.__liveryPaintGuard = { isDirty() }. Tab-leave/back prompts via
@@ -44,50 +56,100 @@ export default function LiveryScreen() {
     proceed();
   };
 
-  const goTab = (next) => {
-    if (next === tab) return;
+  const goCreate = () => {
+    if (tab === 'create') return;
     guardLeave(() => {
-      if (next !== 'create') CreateTab.prefill = null;
-      setTab(next);
+      setTab('create');
     });
   };
 
-  const goBack = () => guardLeave(() => { CreateTab.prefill = null; setScreen('browser'); });
+  // Header back: create view → mine list; mine list → browser.
+  const goBack = () => guardLeave(() => {
+    if (tab === 'create') { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); return; }
+    CreateTab.prefill = null; setScreen('browser');
+  });
+
+  // Install pack opens in a modal (moved up from the old bottom bar so the
+  // header button works in both views).
+  const handleInstallPack = () => {
+    const { showModal } = useAppStore.getState();
+    showModal(
+      () => t('livery_tab_install'),
+      <InstallPackTab />,
+    );
+  };
+
+  const isMine = tab === 'mine';
+  const isCreate = tab === 'create';
 
   return (
-    <div id="screen-livery" className="screen">
-      <header className="browser-header">
-        <div className="browser-title"><span>{t('livery_title')}</span></div>
-        <div className="browser-actions">
-          <button className="btn-sm" {...bind(t('livery_back'))} onClick={goBack}>
-            <IoArrowBackOutline size={14} className="btn-icon" />{t('livery_back')}
-          </button>
-          <button className="btn-lang-toggle-top btn-icon-only" {...bind(t('livery_help_btn'))} onClick={() => setHelpOpen(true)}>
-            <IoHelpCircleOutline size={14} />
-          </button>
-        </div>
-      </header>
-      <div className="livery-tabbar">
-        <button
-          className={'livery-tab' + (tab === 'mine' ? ' active' : '')}
-          {...bind(t('livery_help_mine'))}
-          onClick={() => goTab('mine')}
-        >{t('livery_tab_mine')}</button>
-        <button
-          className={'livery-tab' + (tab === 'create' ? ' active' : '')}
-          {...bind(t('livery_help_create'))}
-          onClick={() => goTab('create')}
-        >{t('livery_tab_create')}</button>
-        <button
-          className={'livery-tab' + (tab === 'install' ? ' active' : '')}
-          {...bind(t('livery_help_install'))}
-          onClick={() => goTab('install')}
-        >{t('livery_tab_install')}</button>
-      </div>
-      <main className="livery-content">
-        {tab === 'mine' && <MyLiveriesTab onEdit={(row) => { CreateTab.prefill = row; setTab('create'); }} onCreate={() => setTab('create')} />}
-        {tab === 'create' && <CreateTab key={tab + JSON.stringify(CreateTab.prefill && CreateTab.prefill.folder)} onCreated={() => setTab('mine')} />}
-        {tab === 'install' && <InstallPackTab />}
+    <div id="screen-livery" className={'screen' + (isCreate ? ' livery-screen--painter' : '')}>
+      {!isCreate && (
+        <header className="browser-header">
+          <div className="browser-actions">
+            <button className="btn-sm" {...bind(t('livery_back'))} onClick={goBack}>
+              <IoArrowBack size={14} className="btn-icon" />{t('livery_back')}
+            </button>
+            <button className="btn-sm" {...bind(t('livery_tip_install'))} onClick={handleInstallPack}>
+              <IoCloudDownloadOutline size={14} className="btn-icon" />{t('livery_tab_install')}
+            </button>
+          </div>
+          <div className="browser-actions">
+            {isMine && (
+              <>
+                <button className="btn-sm" onClick={goCreate}>
+                  <MdAdd size={14} className="btn-icon" />{t('livery_tab_create')}
+                </button>
+                <button
+                  className="btn-sm"
+                  {...bind(t('livery_tip_select_all'))}
+                  onClick={() => mineCmdRef.current.toggleSelectAll && mineCmdRef.current.toggleSelectAll()}
+                  disabled={barState.mineCount === 0}
+                >
+                  <IoCheckmarkDone size={14} className="btn-icon" />{barState.allSelected ? t('toolbar_deselect_all') : t('toolbar_select_all')}
+                </button>
+                <button
+                  className="btn-sm"
+                  {...bind(t('livery_tip_delete_selected'))}
+                  onClick={() => mineCmdRef.current.deleteSelected && mineCmdRef.current.deleteSelected()}
+                  disabled={barState.selectedCount === 0}
+                >
+                  <IoTrashOutline size={14} className="btn-icon" />{t('toolbar_delete_selected')}
+                </button>
+                <span className="livery-search">
+                  <IoSearchOutline size={14} className="livery-search-icon" />
+                  <input
+                    type="text"
+                    value={search}
+                    placeholder={t('livery_search')}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </span>
+              </>
+            )}
+            <button className="btn-lang-toggle-top btn-icon-only" onClick={() => setHelpOpen(true)}>
+              <IoHelpCircleOutline size={14} />
+            </button>
+          </div>
+        </header>
+      )}
+      <main className={'livery-content' + (isCreate ? ' livery-content--painter' : '')}>
+        {isMine && (
+          <MyLiveriesTab
+            search={search}
+            cmdRef={mineCmdRef}
+            onBarState={setBarState}
+            onEdit={(row) => { CreateTab.prefill = row; setTab('create'); }}
+          />
+        )}
+        {isCreate && (
+          <CreateTab
+            key={tab + JSON.stringify(CreateTab.prefill && { folder: CreateTab.prefill.folder, pack: CreateTab.prefill.pack })}
+            onCreated={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
+            onCancel={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
+            onHelp={() => setHelpOpen(true)}
+          />
+        )}
       </main>
       {helpOpen && <LiveryHelpOverlay onClose={() => setHelpOpen(false)} />}
       {TooltipPortal}
