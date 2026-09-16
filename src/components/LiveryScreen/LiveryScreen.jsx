@@ -91,6 +91,14 @@ export default function LiveryScreen() {
             <button className="btn-sm" {...bind(t('livery_back'))} onClick={goBack}>
               <IoArrowBack size={14} className="btn-icon" />{t('livery_back')}
             </button>
+            <button
+              id="livery-help-btn"
+              className="btn-lang-toggle-top btn-icon-only"
+              aria-label={t('livery_help_short')}
+              onClick={() => setHelpOpen(true)}
+            >
+              <IoHelpCircleOutline size={14} />
+            </button>
             <button className="btn-sm" {...bind(t('livery_tip_install'))} onClick={handleInstallPack}>
               <IoCloudDownloadOutline size={14} className="btn-icon" />{t('livery_tab_install')}
             </button>
@@ -136,14 +144,6 @@ export default function LiveryScreen() {
                 </span>
               </>
             )}
-            <button
-              id="livery-help-btn"
-              className="btn-lang-toggle-top btn-icon-only"
-              aria-label={t('livery_help_short')}
-              onClick={() => setHelpOpen(true)}
-            >
-              <IoHelpCircleOutline size={14} />
-            </button>
           </div>
         </header>
       )}
@@ -165,7 +165,7 @@ export default function LiveryScreen() {
           />
         )}
       </main>
-      {helpOpen && <LiveryHelpOverlay onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <LiveryHelpOverlay page={isCreate ? 'painter' : 'list'} onClose={() => setHelpOpen(false)} />}
       {TooltipPortal}
     </div>
   );

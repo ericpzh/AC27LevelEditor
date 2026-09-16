@@ -10,6 +10,17 @@ const { createZip, listZipFiles, extractZip } = require('../src/utils/zipUtils')
 
 const OWN_PACK = 'AC27 Custom Liveries';
 const REFERENCE_PACK = 'AC27 Realistic Aircraft Livery';
+// The game treats a folder under Mods/ as a mod only when it carries a
+// mod_info.json. The official pack zip ships one inside our own folder that
+// still names the *reference* pack, so we (re)write ours on every save/load.
+// Field set mirrors the working reference mod (modName + localized names).
+const OWN_PACK_MOD_INFO = {
+  modName: 'AC27_Custom_Liveries',
+  modNameEn: 'AC27 Custom Liveries',
+  modNameZhHans: 'AC27 自定义涂装',
+  modDescriptionEn: 'Custom aircraft liveries created with the AC27 Level Editor.',
+  modDescriptionZhHans: '使用 AC27 关卡编辑器创建的自定义飞机涂装。',
+};
 const SHORT_CODE_TO_PLANE_ID = {
   A19N: 'AIRBUS A-319neo', A20N: 'AIRBUS A-320neo', A21N: 'AIRBUS A-321neo',
   A319: 'AIRBUS A-319ceo', A320: 'AIRBUS A-320ceo', A333: 'AIRBUS A-330-300',
@@ -28,9 +39,28 @@ const TEXTURE_SIZE = 2048;
 
 function ownPackDir(gameRoot) { return path.join(gameRoot, 'Mods', OWN_PACK); }
 function referencePackDir(gameRoot) { return path.join(gameRoot, 'Mods', REFERENCE_PACK); }
+
+// Writes our mod_info.json when it is missing, unreadable or still carries a
+// foreign modName (the reference pack's). Best-effort: never throws, so a
+// read-only game dir can't break listing/creating.
+function ensureModInfo(packDir) {
+  const file = path.join(packDir, 'mod_info.json');
+  try {
+    const current = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    if (current && current.modName === OWN_PACK_MOD_INFO.modName) return true;
+  } catch (_) {}
+  try {
+    fs.writeFileSync(file, JSON.stringify(OWN_PACK_MOD_INFO, null, 2) + '\n', 'utf-8');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function ensureOwnPackDir(gameRoot) {
   const dir = ownPackDir(gameRoot);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  ensureModInfo(dir);
   return dir;
 }
 
@@ -96,6 +126,7 @@ function listPackDir(packDir) {
 function listLiveries(gameRoot) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   try {
+    try { ensureOwnPackDir(gameRoot); } catch (_) {}
     return {
       success: true,
       mine: listPackDir(ownPackDir(gameRoot)),
@@ -144,7 +175,8 @@ function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, folder }
     const resolved = containmentCheck(packDir, rawFolder);
     if (!resolved) return { success: false, error: 'BAD_FOLDER' };
     if (!fs.existsSync(resolved)) fs.mkdirSync(resolved, { recursive: true });
-    // Silent overwrite — no .bak, no confirm (locked decision §0.4).
+    // Silent overwrite — no .bak (locked decision §0.4). The renderer's Save
+    // As flow confirms first when a foreign folder would be clobbered.
     fs.writeFileSync(path.join(resolved, 'base.png'), buf);
     fs.writeFileSync(
       path.join(resolved, 'aircraft_livery_manifest.json'),
@@ -281,6 +313,7 @@ function loadLiveryZip(zipPath) {
 module.exports = {
   OWN_PACK,
   REFERENCE_PACK,
+  OWN_PACK_MOD_INFO,
   SHORT_CODE_TO_PLANE_ID,
   PLANE_ID_TO_SHORT_CODE,
   LIVERY_FOLDER_SAFE_RE,
@@ -289,6 +322,7 @@ module.exports = {
   ownPackDir,
   referencePackDir,
   ensureOwnPackDir,
+  ensureModInfo,
   containmentCheck,
   pngSize,
   buildManifest,

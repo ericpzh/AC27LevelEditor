@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Cache
   getCachedLang: () => ipcRenderer.invoke('get-cached-lang'),
   saveCachedLang: (lang) => ipcRenderer.invoke('save-cached-lang', lang),
+  getCacheFlag: (key) => ipcRenderer.invoke('get-cache-flag', key),
+  setCacheFlag: (key, value) => ipcRenderer.invoke('set-cache-flag', key, value),
 
   // Navigation events from menu
   onNavBrowser: (cb) => ipcRenderer.on('nav-browser', () => cb()),

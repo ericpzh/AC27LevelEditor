@@ -7,6 +7,7 @@ const ffmpegPath = require('ffmpeg-static');
 const { initLogger, closeLogger } = require('../src/utils/logger');
 const bepinex = require('./bepinex');
 const updater = require('./updater');
+const { readCacheFlag, writeCacheFlag } = require('./cache-flags');
 
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
 // Skip file logging in E2E tests so we can see console output
@@ -1432,6 +1433,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         cacheVersion: CACHE_VERSION,
         gameRoot: rootPath,
         lang: cr.data?.lang ?? null,
+        flags: cr.data?.flags || {},
         builtAt: Date.now(),
         airports: serialized,
       };
@@ -1450,10 +1452,14 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
 ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
   console.log('[IPC] refresh-root-scan START');
   try {
-    // Preserve lang from old cache before deleting
+    // Preserve lang + flags from old cache before deleting
     let preservedLang = null;
+    let preservedFlags = {};
     const cr = _readCache();
-    if (cr.data) preservedLang = cr.data.lang || null;
+    if (cr.data) {
+      preservedLang = cr.data.lang || null;
+      preservedFlags = cr.data.flags || {};
+    }
 
     // Delete disk cache to force re-scan
     const cachePath = _cachePath();
@@ -1591,7 +1597,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
         airAnchor: entry.airAnchor || null,
       };
     }
-    const payload = { cacheVersion: CACHE_VERSION, gameRoot: rootPath, lang: preservedLang, builtAt: Date.now(), airports: serialized };
+    const payload = { cacheVersion: CACHE_VERSION, gameRoot: rootPath, lang: preservedLang, flags: preservedFlags, builtAt: Date.now(), airports: serialized };
     _writeCache(payload);
 
     console.log('[IPC] refresh-root-scan OK — ' + Object.keys(cache).length + ' airports');
@@ -2570,6 +2576,24 @@ ipcMain.handle('save-cached-lang', (_event, lang) => {
     return { success: true };
   } catch (err) {
     console.error('[save-cached-lang] error:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Cache flags (persisted UI prefs, e.g. dismissed hints) ──
+// Stored as the top-level `flags` bag in cache.json. The whitelist + merge
+// logic lives in electron/cache-flags.js (pure, unit-tested).
+ipcMain.handle('get-cache-flag', (_event, key) => readCacheFlag(_readCache().data, key));
+
+ipcMain.handle('set-cache-flag', (_event, key, value) => {
+  try {
+    const cr = _readCache();
+    const res = writeCacheFlag(cr.data, key, value);
+    if (!res.success) return res;
+    _writeCache(res.data);
+    return { success: true };
+  } catch (err) {
+    console.error('[set-cache-flag] error:', err.message);
     return { success: false, error: err.message };
   }
 });

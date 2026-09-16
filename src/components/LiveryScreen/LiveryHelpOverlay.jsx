@@ -16,11 +16,6 @@ import {
   IoSquareOutline,
   IoEllipseOutline,
   IoTextOutline,
-  IoArrowUndoOutline,
-  IoArrowRedoOutline,
-  IoAddOutline,
-  IoRemove,
-  IoScanOutline,
   IoColorPaletteOutline,
   IoSaveOutline,
 } from 'react-icons/io5';
@@ -28,8 +23,6 @@ import { FaFileImport, FaFileExport, FaArrowPointer } from 'react-icons/fa6';
 import { FaEraser } from 'react-icons/fa';
 import { MdAdd, MdSaveAs } from 'react-icons/md';
 import { TbSticker2 } from 'react-icons/tb';
-import { HiDocumentDuplicate } from 'react-icons/hi';
-import { CiBookmarkRemove } from 'react-icons/ci';
 
 // ─── Button registry: icon + label key + short description key ──
 const BUTTONS = {
@@ -56,33 +49,29 @@ const BUTTONS = {
   text: { icon: IoTextOutline, labelKey: 'livery_paint_text', descKey: 'livery_help_d_text' },
   sticker: { icon: TbSticker2, labelKey: 'livery_paint_import_sticker', descKey: 'livery_help_d_sticker' },
   select: { icon: FaArrowPointer, labelKey: 'livery_paint_select', descKey: 'livery_help_d_select' },
-  duplicate: { icon: HiDocumentDuplicate, labelKey: 'livery_paint_duplicate_sticker', descKey: 'livery_help_d_duplicate' },
-  removeSticker: { icon: CiBookmarkRemove, labelKey: 'livery_paint_delete_sticker', descKey: 'livery_help_d_remove_sticker' },
-  undo: { icon: IoArrowUndoOutline, labelKey: 'livery_paint_undo' },
-  redo: { icon: IoArrowRedoOutline, labelKey: 'livery_paint_redo' },
   clear: { icon: IoTrashOutline, labelKey: 'livery_paint_clear', descKey: 'livery_help_d_clear' },
-  zoomOut: { icon: IoRemove, labelKey: 'livery_paint_zoom_out' },
-  zoomIn: { icon: IoAddOutline, labelKey: 'livery_paint_zoom_in' },
-  fit: { icon: IoScanOutline, labelKey: 'livery_paint_fit' },
 };
 
 // ─── Section definitions — one button per line, "button — description" ──
-const SECTIONS = [
-  { id: 'tabs', headingKey: 'livery_help_tabs_heading', items: ['create', 'back'] },
-  { id: 'bar', headingKey: 'livery_help_bar_heading', items: ['pack', 'selectAll', 'exportSelected', 'delete', 'search'] },
-  { id: 'painter', headingKey: 'livery_help_painter_heading', items: ['importImage', 'importZip', 'exportZip', 'save', 'saveAs'] },
+// The list page and the painter page each document ONLY their own buttons.
+const LIST_SECTIONS = [
+  { id: 'bar', items: ['back', 'pack', 'create', 'selectAll', 'exportSelected', 'delete', 'search'] },
+];
+const PAINTER_SECTIONS = [
+  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'saveAs', 'save'] },
   {
-    id: 'paint', headingKey: 'livery_help_paint_heading',
+    id: 'paint',
     items: [
       'color', 'brush', 'eraser', 'eyedropper', 'fill', 'line', 'rect', 'ellipse', 'text',
-      'sticker', 'select', 'duplicate', 'removeSticker', 'undo', 'redo', 'clear', 'zoomOut', 'zoomIn', 'fit',
+      'sticker', 'select', 'clear',
     ],
   },
 ];
 
 // ─── Component ────────────────────────────────────────────
-export default function LiveryHelpOverlay({ onClose }) {
+export default function LiveryHelpOverlay({ onClose, page = 'list' }) {
   const { t } = useTranslation();
+  const sections = page === 'painter' ? PAINTER_SECTIONS : LIST_SECTIONS;
 
   useEffect(() => {
     const handler = (e) => {
@@ -107,9 +96,9 @@ export default function LiveryHelpOverlay({ onClose }) {
         </div>
 
         <div id="livery-help-body">
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <section key={s.id} id={'livery-help-' + s.id} className="livery-help-section">
-              <h2>{t(s.headingKey)}</h2>
+              {s.headingKey && <h2>{t(s.headingKey)}</h2>}
               {s.items.map((key) => {
                 const b = BUTTONS[key];
                 if (!b) return null;

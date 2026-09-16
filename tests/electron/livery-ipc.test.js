@@ -73,6 +73,58 @@ describe('listLiveries', () => {
   });
 });
 
+describe('mod_info.json', () => {
+  const modInfoPath = () => path.join(livery.ownPackDir(gameRoot), 'mod_info.json');
+  const readModInfo = () => JSON.parse(fs.readFileSync(modInfoPath(), 'utf-8'));
+
+  it('listLiveries creates the pack dir + our mod_info when missing', () => {
+    expect(fs.existsSync(livery.ownPackDir(gameRoot))).toBe(false);
+    expect(livery.listLiveries(gameRoot).mine).toEqual([]);
+    expect(readModInfo()).toEqual(livery.OWN_PACK_MOD_INFO);
+    // Not surfaced as a livery row.
+    expect(livery.listLiveries(gameRoot).mine).toEqual([]);
+  });
+
+  it('createLivery writes it at the pack root, not inside the livery folder', () => {
+    livery.createLivery(gameRoot, {
+      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA',
+    });
+    expect(readModInfo().modNameEn).toBe('AC27 Custom Liveries');
+    const liveryDir = path.join(livery.ownPackDir(gameRoot), 'A20N_CCA');
+    expect(fs.existsSync(path.join(liveryDir, 'mod_info.json'))).toBe(false);
+  });
+
+  it('repairs a mod_info shipped with the reference pack name', () => {
+    fs.mkdirSync(livery.ownPackDir(gameRoot), { recursive: true });
+    fs.writeFileSync(modInfoPath(), JSON.stringify({
+      modName: 'Airline_Realistic_Liveries',
+      modNameEn: 'AC27 Realistic Aircraft Livery',
+    }), 'utf-8');
+    livery.listLiveries(gameRoot);
+    expect(readModInfo()).toEqual(livery.OWN_PACK_MOD_INFO);
+  });
+
+  it('repairs unreadable JSON', () => {
+    fs.mkdirSync(livery.ownPackDir(gameRoot), { recursive: true });
+    fs.writeFileSync(modInfoPath(), '{not json', 'utf-8');
+    livery.listLiveries(gameRoot);
+    expect(readModInfo()).toEqual(livery.OWN_PACK_MOD_INFO);
+  });
+
+  it('leaves an existing own mod_info untouched', () => {
+    fs.mkdirSync(livery.ownPackDir(gameRoot), { recursive: true });
+    const mine = { ...livery.OWN_PACK_MOD_INFO, author: 'me' };
+    fs.writeFileSync(modInfoPath(), JSON.stringify(mine), 'utf-8');
+    expect(livery.ensureModInfo(livery.ownPackDir(gameRoot))).toBe(true);
+    expect(readModInfo()).toEqual(mine);
+  });
+
+  it('round-trips the Chinese name as UTF-8', () => {
+    livery.listLiveries(gameRoot);
+    expect(readModInfo().modNameZhHans).toBe('AC27 自定义涂装');
+  });
+});
+
 describe('createLivery round-trip', () => {
   const payload = (overrides = {}) => ({
     imageDataUrl: png2048(),

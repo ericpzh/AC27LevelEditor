@@ -60,6 +60,8 @@ vi.stubGlobal('electronAPI', {
   // Cache
   getCachedLang: () => mockIpcInvoke('get-cached-lang'),
   saveCachedLang: (lang) => mockIpcInvoke('save-cached-lang', lang),
+  getCacheFlag: (key) => mockIpcInvoke('get-cache-flag', key),
+  setCacheFlag: (key, value) => mockIpcInvoke('set-cache-flag', key, value),
 
   // Navigation
   onNavBrowser: (cb) => mockIpcOn('nav-browser', cb),

@@ -121,7 +121,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
 
 ## Cache State & Version Detection
 
-The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.json` + `lastRoot.json` + `localStorage.ac27_lang`). It contains `gameRoot`, `lang`, `cacheVersion`, `builtAt`, and `airports`.
+The app uses a unified **`cache.json`** in `userData` (replaces `approachCache.json` + `lastRoot.json` + `localStorage.ac27_lang`). It contains `gameRoot`, `lang`, `cacheVersion`, `builtAt`, and `airports`, plus a top-level **`flags`** bag for persisted UI prefs (e.g. `flags.liveryModHintDismissed` from the post-save mod-enable prompt). Both cache rebuild paths (`init-airport-cache`, `refresh-root-scan`) carry `flags` over from the old cache — never drop it.
 
 Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integer, hand-bumped in `src/utils/constants.js`), NOT by `app.getVersion()`. This decouples cache invalidation from app updates.
 
@@ -151,9 +151,11 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 - `useTranslation` reads from cache JSON when `localStorage` is empty, and writes to both on toggle
 - IPC handlers: `get-cached-lang`, `save-cached-lang`
 
-**IPC handlers (new):** `get-cache-state`, `get-cached-lang`, `save-cached-lang`
+**Cache flags:** `get-cache-flag(key)` / `set-cache-flag(key, value)` read/write booleans in the `flags` bag. The whitelist (`CACHE_FLAG_KEYS`), read coercion and merge logic live in the pure `electron/cache-flags.js` (`readCacheFlag`/`writeCacheFlag`, node-env test `tests/electron/cache-flags.test.js`); `main.js` only reads/writes cache.json and delegates. Unknown keys → `BAD_FLAG`; a flag write on a missing cache → `NO_CACHE` (a flag write must never create cache.json, or boot would treat a version-matching but empty record as ready). Used by the livery post-save mod-enable hint.
+
+**IPC handlers (new):** `get-cache-state`, `get-cached-lang`, `save-cached-lang`, `get-cache-flag`, `set-cache-flag`
 **IPC handlers (removed):** `get-last-root`, `save-last-root`, `check-version-mismatch`, `update-cached-version`, `cache-invalidated` event
-**Preload bridges (new):** `getCacheState()`, `getCachedLang()`, `saveCachedLang(lang)`
+**Preload bridges (new):** `getCacheState()`, `getCachedLang()`, `saveCachedLang(lang)`, `getCacheFlag(key)`, `setCacheFlag(key, value)`
 **Preload bridges (removed):** `onCacheInvalidated(cb)`
 
 ## Toolbar Backup Button

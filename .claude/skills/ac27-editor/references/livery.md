@@ -4,9 +4,10 @@ Custom aircraft livery page (`Body`/`BaseMap`/`base.png` only) plus the legacy
 realistic-pack installer. Screens: browser header **Livery** button →
 `screen === 'livery'` (`src/App.jsx` `ScreenRouter` + `UpdateOverlay` wrapper).
 Two views (`mine` list / `create` painter, local `useState`, **no tab bar**):
-the list view has a single header bar (Back, Pack, Create, Select All /
-Deselect All, Delete, Find, Help `?`); the painter view hides the header and
-has its own top bar.
+the list view has a single header bar (LHS: Back, Help `?`, Pack; RHS: New,
+Select All / Deselect All, Export, Delete, Find); the painter view hides the
+header and has its own top bar. The help overlay is **page-scoped** — each view
+documents only its own buttons.
 
 ## On-disk format
 
@@ -14,6 +15,16 @@ has its own top bar.
   constant `OWN_PACK` in `electron/livery.js`, `OWN_PACK_NAME` in
   `src/utils/constants/livery.js`). Never write into
   `AC27 Realistic Aircraft Livery` (read-only reference).
+- The pack root carries a `mod_info.json` — the game only treats a folder
+  under `Mods/` as a mod when it has one. `ensureModInfo()` (called by
+  `ensureOwnPackDir`, i.e. on create, and by `listLiveries`, i.e. on load)
+  writes it when it is missing/unreadable **or still carries a foreign
+  `modName`**: the official pack ZIP ships a copy naming the *reference* pack
+  (`Airline_Realistic_Liveries`), which this repairs. Best-effort (never
+  throws). Fields mirror the working reference mod: `modName` +
+  `modNameEn`/`modNameZhHans`/`modDescriptionEn`/`modDescriptionZhHans`
+  (`OWN_PACK_MOD_INFO`); the file is pack-level, never inside a livery folder
+  and never part of a share ZIP.
 - One livery = one folder under the pack dir containing exactly
   `aircraft_livery_manifest.json` + `base.png` (2048×2048). The **folder name
   is an opaque storage key** — the app never parses meaning out of it (it is
@@ -58,12 +69,15 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   (`'mine'` list / `'create'` painter). The list view renders a single header
   bar and passes `search` + `mineCmdRef`/`onBarState` to `MyLiveriesTab`; the
   painter view hides the header entirely (`livery-screen--painter`) and lets
-  `CreateTab` use `livery-content--painter`. Header buttons: Back (`goBack`:
-  create → mine, mine → browser), Pack (`handleInstallPack` → `InstallPackTab`
-  in an app modal), New, Select All/Deselect All, **Export** (`FaFileExport`,
-  enabled with exactly one selected) and Delete Selected (both icon + label,
-  greyed via `.btn-sm:disabled`), Find input (`IoSearchOutline`), Help `?`
-  (`#livery-help-btn`) → `LiveryHelpOverlay`. Header bar state
+  `CreateTab` use `livery-content--painter`. Header buttons (LHS group): Back
+  (`goBack`: create → mine, mine → browser), Help `?` (`#livery-help-btn`,
+  icon-only, moved left of Pack to match the painter's top bar) → page-scoped
+  `LiveryHelpOverlay`, Pack (`handleInstallPack` → `InstallPackTab` in an app
+  modal); (RHS group): New, Select All/Deselect All, **Export**
+  (`FaFileExport`, enabled with exactly one selected) and Delete Selected (both
+  icon + label, greyed via `.btn-sm:disabled`), Find input
+  (`IoSearchOutline`). `LiveryHelpOverlay` gets
+  `page={isCreate ? 'painter' : 'list'}`. Header bar state
   (`{mineCount, selectedCount, allSelected, oneSelected}`) + commands are
   published by `MyLiveriesTab` through `onBarState` / `mineCmdRef`
   (`toggleSelectAll`/`exportSelected`/`deleteSelected`). Unsaved-painter guard: `CreateTab`
@@ -113,9 +127,22 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   - **Save As** (`MdSaveAs`) → naming dialog prefilled with the conventional
     form folder, uses the live form airline/aircraft.
   Save/Save As share `SaveNameDialog` (typed name = folder verbatim,
-  `LIVERY_FOLDER_SAFE_RE` gated, buttons inside the modal body) and both
+  `LIVERY_FOLDER_SAFE_RE` gated, buttons inside the modal body). On confirm,
+  `confirmOverride(folder, isSaveAs, proceed)` checks `listLiveries()` for a
+  `mine` folder with that name (case-insensitive — Windows paths): a collision
+  pops an **Overwrite** confirm (`livery_override_title`/`_body`,
+  Cancel/`modal_btn_overwrite`). Only plain **Save** re-writing the current
+  livery's own origin folder is exempt — **Save As always asks**, including
+  when its prefill equals the origin folder; fresh names save straight through
+  and an unreadable list falls through. Both then
   funnel through `submitCreate(imageDataUrl, airline, planeId, folder)` →
-  `createLivery` → toast + `onCreated`. Cancel (back arrow) runs
+  `createLivery` → toast + `onCreated`. On success it also fires
+  `showModHint()`: unless the `liveryModHintDismissed` cache flag is set
+  (`get-cache-flag`), it opens the **Enable the Mod in Game** prompt
+  (`livery_mod_hint_title`/`_body`, OK = `modal_btn_ok`) telling the user to
+  enable **AC27 Custom Liveries** on the in-game "More Liveries" page, with a
+  *Don't show again* checkbox that persists via `set-cache-flag` (stored in the
+  cache.json `flags` bag; `CACHE_VERSION` bumped for the new key). Cancel (back arrow) runs
   `confirmDiscard` then `onCancel`; the help button calls `onHelp`.
 - `InstallPackTab.jsx` — legacy download/install/fallback flow (NOT a tab:
   opened from the header Pack button inside an app modal) with an explanatory
@@ -123,11 +150,16 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   (`modal_btn_close`); renders `../BrowserScreen/LiveryInstallOverlay`
   (z-index above the app modal).
 - `LiveryHelpOverlay.jsx` — help overlay driven by a `BUTTONS` registry
-  (icon + label key + optional description key per button); sections: views /
-  header bar / painter / paint tools. Each item renders as "icon + label —
-  description"; self-explanatory entries (`undo`/`redo`/`zoomOut`/`zoomIn`/
-  `fit`) omit `descKey` and render chip-only, and the self-referential Help chip
-  is not listed. Escape/backdrop/X close; i18n `livery_help_*` (zh + en).
+  (icon + label key + optional description key per button). Takes a `page`
+  prop (`'list'` default / `'painter'`) and renders **only that page's**
+  sections: `LIST_SECTIONS` = Header bar (`back`/`pack`/`create`/`selectAll`/
+  `exportSelected`/`delete`/`search`); `PAINTER_SECTIONS` = Painter
+  (`back`/`importImage`/`importZip`/`exportZip`/`saveAs`/`save`) + Paint tools
+  (`color`/`brush`/`eraser`/`eyedropper`/`fill`/`line`/`rect`/`ellipse`/`text`/
+  `sticker`/`select`/`clear`). Each item renders as "icon + label —
+  description"; the self-referential Help chip, and the undo/redo/zoom/fit and
+  duplicate/remove-sticker chips, are not listed. Escape/backdrop/X close; i18n
+  `livery_help_*` (zh + en).
 - `LiveryCanvas.jsx` — fixed 2048² backing store, **transparent** (no base
   fill), CSS-scaled view. Layout: Photoshop-style **left icon rail** +
   contextual options bar + bottom zoom status bar.
@@ -162,12 +194,14 @@ Pure logic in `electron/livery.js` (unit-tested); `main.js` only resolves
 gameRoot/dialog/cleanup and delegates. Channels: `list-liveries` →
 `{mine, reference}` rows `{folder, id, name, airline, targetPlaneId,
 hasBasePng, mtime}` (skip non-dirs; corrupt manifest → row with `error`,
-never abort); `read-livery-image(folder, pack)` → PNG data-URL;
+never abort; also creates the own pack dir + repairs `mod_info.json`);
+`read-livery-image(folder, pack)` → PNG data-URL;
 `create-livery({imageDataUrl, airline, targetPlaneId, folder})` → validates
 (airline `/^[A-Z]{3}$/`, plane id resolves through `PLANE_ID_TO_SHORT_CODE`,
 PNG data-URL, IHDR = 2048², folder matches `LIVERY_FOLDER_SAFE_RE` +
 containment) and derives the short code + manifest id → writes `base.png` +
-manifest (**silent overwrite, no `.bak`**), returns `{success, folder}`;
+manifest (**silent overwrite, no `.bak`** — the renderer's Save As override
+prompt is the guard, see `CreateTab`), returns `{success, folder}`;
 `delete-livery(folder)` (own-pack only, containment-checked `rm -rf`);
 `select-livery-image` (png/jpg dialog) + `read-disk-image(filePath)`;
 `export-livery(folder)` → `createZip` to temp `<folder>.zip` with
@@ -191,7 +225,11 @@ Base texture is **transparent** — the painter no longer paints a base fill
 (`LiveryCanvas` clear is `clearRect`, `normalizeToTexture(dataUrl,
 'transparent')`). Shrink-to-fit inside 2048², aspect preserved, centered;
 smaller images as-is (never upscale). Main only writes bytes + checks IHDR.
-Overwrite always, no `.bak`, no confirm (delete keeps its confirm).
+Overwrite always on the backend, no `.bak` (delete keeps its confirm). The
+renderer guards the naming dialog (Save / Save As): a folder name that already
+exists pops a confirm/cancel prompt (`confirmOverride` in `CreateTab`), except
+plain Save re-writing the livery's own folder. `handleExport` still writes
+without a prompt.
 
 ## Share contract
 
@@ -211,11 +249,16 @@ manifest for a free-form zip folder).
   dedup), `tests/utils/liveryPaint.test.js` (undo depth ≥20, flood fill),
   `tests/electron/livery-ipc.test.js` (temp-gameRoot list/create/delete/export/
   load, free-form folder accepted verbatim, unsafe folder rejected, traversal,
-  IHDR, reference read-only, manifest-derived shortCode).
+  IHDR, reference read-only, manifest-derived shortCode, `mod_info.json`
+  created on load/create at the pack root, reference-name + corrupt-JSON
+  repair, existing own file untouched, UTF-8 zh name round-trip).
 - `tests/components/LiveryScreen/` (header actions/back/install overlay/search,
   in-card checkbox select driving the header Export/Delete commands + their
   disabled-until-selected states, single vs batch delete confirms, painter
-  validation + save/save-as dialogs, free-form folder name, load-from-ZIP,
+  validation + save/save-as dialogs, Save As overwrite confirm (collision →
+  prompt, Overwrite saves, Cancel aborts, fresh name + own-folder re-save skip
+  it), post-save mod-enable hint (flag read/write, checkbox persistence,
+  hidden once dismissed), free-form folder name, load-from-ZIP,
   import image, cancel, mine vs reference origin save rules, canvas
   tools/stroke/text/sticker/save payload with stubbed 2d context).
 - In-game acceptance (manual): create via UI → launch game → livery on model

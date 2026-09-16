@@ -82,15 +82,16 @@ describe('LiveryScreen', () => {
     expect(header).toBeInTheDocument();
     const groups = header.querySelectorAll(':scope > .browser-actions');
     expect(groups).toHaveLength(2);
-    // LHS: Back + Pack only.
-    const lhsBtns = [...groups[0].querySelectorAll('button')].map(b => b.textContent);
-    expect(lhsBtns).toEqual(['Back', 'Pack']);
-    // RHS: Create, Select All, Export, Delete (icon + label), search, help.
+    // LHS: Back + Help (icon-only, moved here to match the painter) + Pack.
+    expect(groups[0].textContent).toContain('Back');
+    expect(groups[0].textContent).toContain('Pack');
+    expect(groups[0].querySelector('#livery-help-btn')).toBeInTheDocument();
+    // RHS: Create, Select All, Export, Delete (icon + label), search.
     expect(groups[1].textContent).toContain(T('livery_tab_create'));
     expect(groups[1].textContent).toContain('Select All');
     expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Help' })).toBeInTheDocument();
+    expect(groups[1].querySelector('#livery-help-btn')).toBeNull();
     expect(groups[1].querySelector('.livery-search input')).toBeInTheDocument();
     // Old chrome is gone.
     expect(document.querySelector('.livery-tabbar')).toBeNull();
@@ -234,24 +235,46 @@ describe('LiveryScreen', () => {
     expect(document.querySelector('.livery-install-path').textContent).toContain('Mods');
   });
 
-  it('help button opens the overlay with view and header sections', async () => {
+  it('list help shows only the list-page sections', async () => {
     setupMocks();
     const user = userEvent.setup();
     renderLivery();
-    const helpBtn = document.getElementById('livery-help-btn');
-    await user.click(helpBtn);
+    await user.click(document.getElementById('livery-help-btn'));
     await waitFor(() => {
       expect(screen.getByText('Livery Help')).toBeInTheDocument();
     });
-    expect(screen.getByText('Views')).toBeInTheDocument();
-    expect(screen.getByText('Header bar')).toBeInTheDocument();
-    expect(screen.getByText('Paint tools')).toBeInTheDocument();
-    // The "Views" section lists only documented buttons — the self-referential
-    // Help chip (no description) was removed.
-    const viewItems = [...document.querySelectorAll('#livery-help-tabs .livery-help-item')];
-    expect(viewItems).toHaveLength(2);
-    expect(viewItems.every(el => el.querySelector('.livery-help-btn'))).toBe(true);
-    expect(viewItems.every(el => el.querySelector('.livery-help-text'))).toBe(true);
+    // Only the list section is present.
+    const barSection = document.querySelector('#livery-help-bar');
+    expect(barSection).toBeInTheDocument();
+    expect(document.querySelector('#livery-help-painter')).toBeNull();
+    expect(document.querySelector('#livery-help-paint')).toBeNull();
+    const barItems = [...barSection.querySelectorAll('.livery-help-item')];
+    expect(barItems.length).toBeGreaterThan(0);
+    // Every documented chip carries help text (no label-only rows).
+    expect(barItems.every(el => el.querySelector('.livery-help-text'))).toBe(true);
+    // Painter-only chips are absent.
+    expect(screen.queryByText('Import image')).toBeNull();
+    expect(screen.queryByText('Import livery')).toBeNull();
+  });
+
+  it('painter help shows only the painter sections', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(screen.getByText(T('livery_tab_create')));
+    await waitFor(() => expect(document.querySelector('.lp-root')).toBeInTheDocument());
+    // Painter top-left group: [Back, Help] (help is the icon-only second button).
+    const helpBtn = document.querySelectorAll('.lp-topbar .lp-group')[0].querySelectorAll('button')[1];
+    await user.click(helpBtn);
+    await waitFor(() => expect(screen.getByText('Livery Help')).toBeInTheDocument());
+    expect(document.querySelector('#livery-help-painter')).toBeInTheDocument();
+    expect(document.querySelector('#livery-help-paint')).toBeInTheDocument();
+    // List-only section is absent on the painter page.
+    expect(document.querySelector('#livery-help-bar')).toBeNull();
+    const paintItems = [...document.querySelectorAll('#livery-help-paint .livery-help-item')];
+    expect(paintItems.length).toBeGreaterThan(0);
+    expect(paintItems.every(el => el.querySelector('.livery-help-text'))).toBe(true);
   });
 
   it('Escape closes the help overlay', async () => {

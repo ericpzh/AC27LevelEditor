@@ -69,9 +69,9 @@ Create and share your own `Body`/`BaseMap` aircraft liveries. The Livery page (b
 
 - **Back** — returns to the browser (from the painter, back returns to the list first).
 - **Pack** — the original realistic-livery download/install flow in a dialog.
-- **New** — opens the full-page painter: a 2048×2048 **transparent** canvas (brush/eraser/picker/fill/shapes/text/sticker, undo depth 20, no 3D preview). The top bar holds the airline/aircraft plus **Import image** / **Import livery** (ZIP) / **Export livery** / **Save** / **Save As**; the left rail holds the tools; the bottom bar holds zoom. Saving overwrites silently (no `.bak`, no confirm); reference liveries are read-only and only offer Save As.
+- **New** — opens the full-page painter: a 2048×2048 **transparent** canvas (brush/eraser/picker/fill/shapes/text/sticker, undo depth 20, no 3D preview). The top bar holds the airline/aircraft plus **Import image** / **Import livery** (ZIP) / **Export livery** / **Save** / **Save As**; the left rail holds the tools; the bottom bar holds zoom. Saving a livery over its own folder via **Save** overwrites silently (no `.bak`); **Save As** — and any Save that is renamed onto another livery's folder — pops a confirm/cancel prompt before overwriting. After a successful save a prompt reminds you to enable the **AC27 Custom Liveries** mod on the in-game "More Liveries" page; tick **Don't show again** to silence it (stored in `cache.json`). Reference liveries are read-only and only offer Save As.
 - **Select All**/**Deselect All**, **Export** (single selection), batch **Delete**, and **Find** (filters the list by airline, folder or aircraft).
-- The list groups every livery in `<gameRoot>/Mods/AC27 Custom Liveries/` by aircraft type into collapsible folders (reference-pack liveries share the same folders with a lock read-only mark); **click a card to open it in the painter**. Each card carries a selection checkbox pinned over its thumbnail; the header-bar **Export** (needs exactly one selected; saves a shareable ZIP) and **Delete** (one or many, with confirm) act on the selection. Folder names are free-form (filesystem-safe only) and never parsed — the manifest carries the airline/aircraft.
+- The list groups every livery in `<gameRoot>/Mods/AC27 Custom Liveries/` by aircraft type into collapsible folders (reference-pack liveries share the same folders with a lock read-only mark); **click a card to open it in the painter**. Each card carries a selection checkbox pinned over its thumbnail; the header-bar **Export** (needs exactly one selected; saves a shareable ZIP) and **Delete** (one or many, with confirm) act on the selection. Folder names are free-form (filesystem-safe only) and never parsed — the manifest carries the airline/aircraft. The pack root's `mod_info.json` is maintained automatically: it is written on load/create with the **AC27 Custom Liveries** mod name, repairing the copy the official pack ZIP ships (which still names the reference pack).
 
 **Share contract:** Export produces `<FOLDER>.zip` containing `<FOLDER>/aircraft_livery_manifest.json` + `<FOLDER>/base.png`. Send it to a friend — they install it via **Import livery** in the painter, or by unzipping straight into `<gameRoot>/Mods/AC27 Custom Liveries/`.
 
@@ -164,9 +164,9 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 - **返回** —— 回到浏览器（在绘制器中则先返回列表）。
 - **涂装包** —— 原有的真实涂装下载/安装流程，以弹窗打开。
-- **新建** —— 打开整页绘制器：2048×2048 **透明**画布（画笔/橡皮/取色/填充/图形/文字/贴花，20 步撤销，无 3D 预览）。顶栏放置航司/机型以及**导入图片** / **导入涂装**（ZIP）/ **导出涂装** / **保存** / **另存为**，左侧竖排工具栏，底部为缩放。保存时直接覆盖（无 `.bak`、无确认）；参考涂装只读，仅可另存为。
+- **新建** —— 打开整页绘制器：2048×2048 **透明**画布（画笔/橡皮/取色/填充/图形/文字/贴花，20 步撤销，无 3D 预览）。顶栏放置航司/机型以及**导入图片** / **导入涂装**（ZIP）/ **导出涂装** / **保存** / **另存为**，左侧竖排工具栏，底部为缩放。**保存**到自身文件夹时直接覆盖（无 `.bak`）；**另存为**（或保存时改用其他已存在的文件夹名）会先弹出确认/取消提示再覆盖。保存成功后还会提示前往游戏内“更多涂装”页面启用 **AC27 自定义涂装** Mod，勾选**不再提示**即可关闭（记录在 `cache.json`）。参考涂装只读，仅可另存为。
 - **全选**/**取消全选**、**导出**（需单选）、批量**删除**与**查找**（按航司、文件夹名或机型过滤）。
-- 列表将 `<游戏根目录>/Mods/AC27 Custom Liveries/` 下的所有涂装按机型分组为可折叠文件夹（真实涂装包中的参考涂装在同一分组内，带锁形只读标记）；**点击卡片即可在绘制器中打开**。每张卡片缩略图上带选择框；顶部栏的**导出**（需单选，保存为可分享的 ZIP）与**删除**（可单选或多选，需确认）作用于所选涂装。文件夹名可自由命名（仅需文件系统安全），编辑器不会解析其含义，航司/机型由清单文件决定。
+- 列表将 `<游戏根目录>/Mods/AC27 Custom Liveries/` 下的所有涂装按机型分组为可折叠文件夹（真实涂装包中的参考涂装在同一分组内，带锁形只读标记）；**点击卡片即可在绘制器中打开**。每张卡片缩略图上带选择框；顶部栏的**导出**（需单选，保存为可分享的 ZIP）与**删除**（可单选或多选，需确认）作用于所选涂装。文件夹名可自由命名（仅需文件系统安全），编辑器不会解析其含义，航司/机型由清单文件决定。包根目录的 `mod_info.json` 会自动维护：在加载/创建时写入 **AC27 Custom Liveries** 模组名，并修正官方涂装包 ZIP 附带的那份仍使用参考涂装包名称的文件。
 
 **分享约定：** 导出的 `<文件夹名>.zip` 内含 `<文件夹名>/aircraft_livery_manifest.json` + `<文件夹名>/base.png`。发给朋友后，对方在绘制器中使用**导入涂装**即可安装，或直接解压到 `<游戏根目录>/Mods/AC27 Custom Liveries/`。
 

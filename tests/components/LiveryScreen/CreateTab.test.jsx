@@ -383,6 +383,306 @@ describe('CreateTab edit origins (mine vs reference)', () => {
   });
 });
 
+describe('CreateTab overwrite confirm (Save As onto an existing folder)', () => {
+  // mockIpcInvoke keeps its call history across tests; scope it here so the
+  // "nothing written yet" assertions stay meaningful.
+  beforeEach(() => { mockIpcInvoke.mockClear(); });
+
+  const mineList = (folders) => Promise.resolve({
+    success: true,
+    mine: folders.map(folder => ({ folder, id: '', name: '', airline: '', targetPlaneId: '', hasBasePng: true, mtime: 0 })),
+    reference: [],
+  });
+
+  it('asks before overwriting a same-named folder, then saves on Overwrite', async () => {
+    setupMocks({
+      'list-liveries': mineList(['A20N_CCA']),
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+    });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save As');
+
+    // Collision → confirm first, nothing written yet.
+    expect(await screen.findByText('Overwrite Existing Livery')).toBeInTheDocument();
+    expect(screen.getByText(/A livery named A20N_CCA already exists/)).toBeInTheDocument();
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('create-livery', expect.anything());
+
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'Overwrite' }));
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
+      'create-livery',
+      { imageDataUrl: FAKE_PNG, airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
+    ));
+    expect(onCreated).toHaveBeenCalled();
+  });
+
+  it('cancel on the overwrite pop-up aborts the save', async () => {
+    setupMocks({
+      'list-liveries': mineList(['A20N_CCA']),
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+    });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save As');
+
+    const modal = await waitFor(() => {
+      const box = document.querySelector('#modal-box');
+      expect(box).toBeInTheDocument();
+      return box;
+    });
+    await user.click(within(modal).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByText('Overwrite Existing Livery')).toBeNull());
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('create-livery', expect.anything());
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.queryByText('Livery created')).toBeNull();
+  });
+
+  it('Save As still asks when the prefilled name equals the origin folder', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({
+      'list-liveries': mineList(['A20N_CCA']),
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+    });
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+
+    const asBtn = saveAsBtn();
+    await waitFor(() => expect(asBtn.disabled).toBe(false));
+    await user.click(asBtn);
+    // Prefill is the conventional form folder — same as the origin here.
+    const input = await screen.findByLabelText('Folder name');
+    expect(input.value).toBe('A20N_CCA');
+    await confirmNameDialog(user, 'Save As');
+
+    expect(await screen.findByText('Overwrite Existing Livery')).toBeInTheDocument();
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('create-livery', expect.anything());
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'Overwrite' }));
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.objectContaining({
+      folder: 'A20N_CCA',
+    })));
+  });
+
+  it('matches the folder name case-insensitively (Windows paths)', async () => {
+    setupMocks({
+      'list-liveries': mineList(['A20N_CCA']),
+      'create-livery': Promise.resolve({ success: true, folder: 'a20n_cca' }),
+    });
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    const input = await screen.findByLabelText('Folder name');
+    await user.clear(input);
+    await user.type(input, 'a20n_cca');
+    await confirmNameDialog(user, 'Save As');
+
+    expect(await screen.findByText('Overwrite Existing Livery')).toBeInTheDocument();
+  });
+
+  it('a fresh name skips the pop-up', async () => {
+    setupMocks({
+      'list-liveries': mineList(['SOMETHING_ELSE']),
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+    });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save As');
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.anything()));
+    expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
+    expect(onCreated).toHaveBeenCalled();
+  });
+
+  it('Save re-writing the current livery’s own folder is exempt', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({
+      'list-liveries': mineList(['A20N_CCA']),
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+    });
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+
+    const btn = saveBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save');
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.objectContaining({
+      folder: 'A20N_CCA',
+    })));
+    expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
+  });
+
+  it('an unreadable livery list falls through to the save', async () => {
+    const rejected = Promise.reject(new Error('boom'));
+    rejected.catch(() => {}); // mark handled — the component swallows it
+    setupMocks({
+      'list-liveries': rejected,
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+    });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save As');
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.anything()));
+    expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
+    expect(onCreated).toHaveBeenCalled();
+  });
+
+  it('a failed list result falls through to the save', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: false, error: 'NO_GAME_ROOT' }),
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+    });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save As');
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.anything()));
+    expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
+    expect(onCreated).toHaveBeenCalled();
+  });
+});
+
+describe('CreateTab post-save mod hint', () => {
+  beforeEach(() => { mockIpcInvoke.mockClear(); });
+
+  const saveSuccess = { 'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }) };
+
+  // Save As a fresh livery and wait for the success path to settle.
+  async function saveAs(user) {
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save As');
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.anything()));
+  }
+
+  it('prompts to enable the mod in game after a successful save', async () => {
+    setupMocks(saveSuccess);
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+    await saveAs(user);
+
+    expect(await screen.findByText('Enable the Mod in Game')).toBeInTheDocument();
+    expect(screen.getByText(/More Liveries/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: "Don't show again" })).not.toBeChecked();
+    expect(mockIpcInvoke).toHaveBeenCalledWith('get-cache-flag', 'liveryModHintDismissed');
+  });
+
+  it('OK without ticking closes the prompt and writes no flag', async () => {
+    setupMocks(saveSuccess);
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+    await saveAs(user);
+
+    await screen.findByText('Enable the Mod in Game');
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => expect(screen.queryByText('Enable the Mod in Game')).toBeNull());
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('set-cache-flag', expect.anything(), expect.anything());
+  });
+
+  it('"Don\'t show again" persists the cache flag on OK', async () => {
+    setupMocks(saveSuccess);
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+    await saveAs(user);
+
+    await user.click(await screen.findByRole('checkbox', { name: "Don't show again" }));
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
+      'set-cache-flag', 'liveryModHintDismissed', true,
+    ));
+  });
+
+  it('stays hidden once the dismissed flag is set', async () => {
+    setupMocks({ ...saveSuccess, 'get-cache-flag': Promise.resolve({ success: true, value: true }) });
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+    await saveAs(user);
+
+    expect(mockIpcInvoke).toHaveBeenCalledWith('get-cache-flag', 'liveryModHintDismissed');
+    expect(screen.queryByText('Enable the Mod in Game')).toBeNull();
+  });
+
+  it('shows the hint when the dismissed-flag read fails', async () => {
+    const rejected = Promise.reject(new Error('boom'));
+    rejected.catch(() => {}); // mark handled — the component swallows it
+    setupMocks({ ...saveSuccess, 'get-cache-flag': rejected });
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+    await saveAs(user);
+
+    expect(await screen.findByText('Enable the Mod in Game')).toBeInTheDocument();
+  });
+
+  it('a failed save never reads the flag or shows the hint', async () => {
+    setupMocks({ 'create-livery': Promise.resolve({ success: false, error: 'BAD_FOLDER' }) });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save As');
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.anything()));
+    expect(screen.queryByText('Enable the Mod in Game')).toBeNull();
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('get-cache-flag', expect.anything());
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+});
+
 describe('CreateTab export + load ZIP flows', () => {
   it('export saves the canvas then writes a ZIP to the chosen directory', async () => {
     setupMocks({

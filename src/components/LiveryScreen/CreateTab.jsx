@@ -249,6 +249,36 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     );
   };
 
+  // A name that already exists on disk clobbers another livery, so ask before
+  // saving. Only plain Save re-writing the current livery's own folder stays
+  // silent — Save As is an explicit "write this name", so it always asks (its
+  // prefill is the origin folder for an existing livery). Lookup is
+  // best-effort: an unreadable list falls through to the save.
+  const confirmOverride = async (folder, isSaveAs, proceed) => {
+    // Windows paths are case-insensitive — a case-only rename is the same folder.
+    const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+    const ownFolder = !isSaveAs && origin && origin.pack !== 'reference' ? origin.folder : null;
+    if (ownFolder && same(folder, ownFolder)) { await proceed(); return; }
+    let exists = false;
+    try {
+      const res = await electronAPI.listLiveries();
+      exists = Boolean(res && res.success && Array.isArray(res.mine) &&
+        res.mine.some(r => r && same(r.folder, folder)));
+    } catch (_) { exists = false; }
+    if (!exists) { await proceed(); return; }
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal(
+      () => t('livery_override_title'),
+      () => <p>{t('livery_override_body', { folder })}</p>,
+      () => (
+        <>
+          <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
+          <button className="btn-danger" onClick={() => { hideModal(); proceed(); }}>{t('modal_btn_overwrite')}</button>
+        </>
+      )
+    );
+  };
+
   const loadBaseUrl = (file) => {
     confirmDiscard(async () => {
       if (!file) return;
@@ -267,6 +297,42 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   };
 
   const paintBaseUrl = base ? base.imageDataUrl || null : null;
+
+  // Post-save nudge: a saved livery only shows up in-game once its mod is
+  // enabled on the in-game "More Liveries" page. Shown after every successful
+  // Save / Save As unless the user ticked "Don't show again" (persisted as the
+  // `liveryModHintDismissed` flag in cache.json).
+  const showModHint = async () => {
+    let dismissed = false;
+    try {
+      const st = await electronAPI.getCacheFlag('liveryModHintDismissed');
+      dismissed = Boolean(st && st.success && st.value);
+    } catch (_) { dismissed = false; }
+    if (dismissed) return;
+    const { showModal, hideModal } = useAppStore.getState();
+    let dontShow = false;
+    showModal(
+      () => t('livery_mod_hint_title'),
+      () => (
+        <div>
+          <p>{t('livery_mod_hint_body')}</p>
+          <label className="modal-checkbox-row">
+            <input type="checkbox" className="modal-checkbox" onChange={(e) => { dontShow = e.target.checked; }} />
+            <span>{t('livery_mod_hint_dont_show')}</span>
+          </label>
+        </div>
+      ),
+      () => (
+        <button
+          className="btn-confirm"
+          onClick={() => {
+            hideModal();
+            if (dontShow) Promise.resolve(electronAPI.setCacheFlag('liveryModHintDismissed', true)).catch(() => {});
+          }}
+        >{t('modal_btn_ok')}</button>
+      )
+    );
+  };
 
   // Only manifest-truth fields are sent (airline + targetPlaneId) plus the
   // free-form folder name; the backend derives everything else.
@@ -287,6 +353,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         dirtyRef.current = false;
         showToast(t('livery_created'), 'success');
         if (onCreated) onCreated();
+        showModHint();
         return true;
       }
       showToast(t(errKey(res && res.error)), 'error');
@@ -311,9 +378,10 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
       <SaveNameDialog
         initial={initialFolder}
         isSaveAs={isSaveAs}
-        onConfirm={async (folder) => {
+        onConfirm={(folder) => {
+          const imageDataUrl = canvasRef.current.exportPNG();
           hideModal();
-          await submitCreate(canvasRef.current.exportPNG(), targetAirline, targetPlaneId, folder);
+          confirmOverride(folder, isSaveAs, () => submitCreate(imageDataUrl, targetAirline, targetPlaneId, folder));
         }}
       />,
     );
