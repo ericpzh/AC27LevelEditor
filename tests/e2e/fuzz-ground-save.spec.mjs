@@ -1524,14 +1524,25 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     });
     // Consecutive duplicate fixes can be PRE-EXISTING authored data — the ZGSZ
     // files ship `OVGOT1.33` with one — and survivors are copied verbatim, so
-    // exempt any procedure whose (name|runway|routeType) already had one in the
-    // .bak. Only a NEW one is a regression.
+    // exempt any procedure whose baseline already had one. The exemption keys on
+    // the DUPLICATED PAIR'S COORDINATES (+ name|routeType), NOT the runway: a
+    // runway rename cascades `procedures[].runwayName` (the writer keys Routes by
+    // it), so a runway-based key stopped matching after a rename and the authored
+    // dup was misreported as NEW. Coordinates survive a rename, while a dup the
+    // fuzz creates at a new position still fails.
     const { buildSceneryGraph: buildBakGraph } = require('../../src/acl/scenery_graph');
-    const procKey = (p) => `${(p && p.name) || ''}|${(p && p.runwayName) || ''}|${p && p.routeType}`;
-    const bakDupProcs = new Set();
-    for (const p of ((buildBakGraph(readAclText(bakPath)).graph.procedures) || [])) {
+    const bakGraph = buildBakGraph(readAclText(bakPath)).graph || {};
+    const r3 = (v) => Number(v).toFixed(3);
+    const dupSig = (p, a) => `${(p && p.name) || ''}|${p && p.routeType}|${a ? r3(a.x) + ',' + r3(a.z) : '?'}`;
+    const bakDupSigs = new Set();
+    for (const p of (bakGraph.procedures || [])) {
       const ix = p.airwayNodeIdxs || [];
-      for (let k = 1; k < ix.length; k++) if (ix[k] === ix[k - 1]) { bakDupProcs.add(procKey(p)); break; }
+      const nodes = bakGraph.airwayNodes || [];
+      for (let k = 1; k < ix.length; k++) {
+        if (ix[k] !== ix[k - 1]) continue;
+        bakDupSigs.add(dupSig(p, nodes[ix[k - 1]]));
+        break;
+      }
     }
     const badProcs = [];
     (reloadedGraph.procedures || []).forEach((p, i) => {
@@ -1542,7 +1553,7 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       if (bad.length) badProcs.push(`proc#${i} (${name}) references missing fix(es) ${bad.join(',')}`);
       for (let k = 1; k < idxs.length; k++) {
         if (idxs[k] === idxs[k - 1]) {
-          if (!bakDupProcs.has(procKey(p))) badProcs.push(`proc#${i} (${name}) has NEW consecutive duplicate fixes`);
+          if (!bakDupSigs.has(dupSig(p, reloadedAirNodes[idxs[k - 1]]))) badProcs.push(`proc#${i} (${name}) has NEW consecutive duplicate fixes`);
           break;
         }
       }
@@ -1594,12 +1605,43 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       if (Array.isArray(rw.names)) for (const n of rw.names) { const v = normSt(n); if (v) preRunwayEnds.add(v); }
       if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) { const v = normSt(n); if (v) preRunwayEnds.add(v); }
     }
+    // Procedure names, globally and per runway, for both the saved file and the
+    // pre-save baseline — mirroring the save's STAR reconciliation. The game
+    // resolves `FlightPlan.STAR` among the routes of the flight's OWN runway, so
+    // a save may legitimately purge a leg whose STAR vanished entirely OR whose
+    // (STAR, runway) variant no longer exists (KLGA/KJFK `SIE.CAMRM5@4L` was
+    // renamed away while the same STAR survived on 4R/15L).
+    const procsByRunwayG = (gr) => {
+      const m = new Map();
+      for (const p of (gr.procedures || [])) {
+        const rw = normSt(p.runwayName), nm = normSt(p.name);
+        if (!rw || !nm) continue;
+        if (!m.has(rw)) m.set(rw, new Set());
+        m.get(rw).add(nm);
+      }
+      return m;
+    };
+    const savedProcNames = new Set((reloadedGraph.procedures || []).map((p) => normSt(p.name)).filter(Boolean));
+    const preProcNames = new Set((bakGraphGates.graph.procedures || []).map((p) => normSt(p.name)).filter(Boolean));
+    const savedProcsByRunway = procsByRunwayG(reloadedGraph);
+    const preProcsByRunway = procsByRunwayG(bakGraphGates.graph);
+    const starPurgeWarranted = (f) => {
+      if (!f.Airway) return false;
+      const st = normSt(f.Airway);
+      if (preProcNames.has(st) && !savedProcNames.has(st)) return true;
+      if (!f.Runway) return false;
+      const pre = preProcsByRunway.get(normSt(f.Runway));
+      if (!pre || !pre.has(st)) return false;
+      const cur = savedProcsByRunway.get(normSt(f.Runway));
+      return !(cur && cur.has(st));
+    };
     // True when this leg's reference was resolvable pre-save and no longer
     // resolves in the saved scenery — i.e. the save was REQUIRED to purge (or
     // remap) this leg. Renames count as resolved (the save remaps them).
     const purgeWarranted = (f) =>
       (f.Stand && preStandNames.has(normSt(f.Stand)) && !savedStandNames.has(normSt(f.Stand))) ||
-      (f.Runway && preRunwayEnds.has(normSt(f.Runway)) && !savedRunwayEnds.has(normSt(f.Runway)));
+      (f.Runway && preRunwayEnds.has(normSt(f.Runway)) && !savedRunwayEnds.has(normSt(f.Runway))) ||
+      starPurgeWarranted(f);
     const unresolved = reloadedFlights.filter(purgeWarranted)
       .map(f => `${f.CallSign}(stand=${f.Stand || '-'} runway=${f.Runway || '-'})`);
     if (unresolved.length) {

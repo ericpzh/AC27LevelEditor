@@ -2383,6 +2383,23 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
     };
     const curStarNames = procNamesOf(savedGraph);
     const snapStarNames = procNamesOf(snap);
+    // STAR validity is PER RUNWAY: the game resolves `FlightPlan.STAR` among the
+    // routes of the flight's runway (`Runways[rwy].Routes`), so a STAR that still
+    // exists on another runway is not enough. Map normalized end name → set of
+    // normalized procedure names for both the saved file and the snapshot; a leg
+    // whose (STAR, runway) pair was valid before but not after is purged.
+    const procsByRunwayOf = (g) => {
+      const m = new Map();
+      for (const p of (g.graph.procedures || [])) {
+        const rw = norm(p.runwayName), nm = norm(p.name);
+        if (!rw || !nm) continue;
+        if (!m.has(rw)) m.set(rw, new Set());
+        m.get(rw).add(nm);
+      }
+      return m;
+    };
+    const curProcsByRunway = procsByRunwayOf(savedGraph);
+    const snapProcsByRunway = procsByRunwayOf(snap);
     // Renamed runway ends: surviving runways pair with their original entries by
     // index (meta arrays are index-parallel — the same pairing the writer uses
     // for physPatchMap). Walk chains safely (a rename cycle resolves to itself).
@@ -2459,10 +2476,18 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
     const regKey = (f) => String(f._Registration || f._fpGuid || f.CallSign || '');
     const danglingLegs = new Set();
     const starGoneOf = (f) => !!f.Airway && !curStarNames.has(norm(f.Airway)) && snapStarNames.has(norm(f.Airway));
+    const starOffRunwayOf = (f) => {
+      if (!f.Airway || !f.Runway) return false;
+      const rw = norm(f.Runway), st = norm(f.Airway);
+      const sn = snapProcsByRunway.get(rw);
+      if (!sn || !sn.has(st)) return false; // never valid for this runway — not ours to purge
+      const cur = curProcsByRunway.get(rw);
+      return !(cur && cur.has(st));
+    };
     for (const f of flights) {
       const standGone = !!f.Stand && !curStandNames.has(norm(f.Stand)) && snapStandNames.has(norm(f.Stand));
       const runwayGone = !!f.Runway && !curRunwayEnds.has(norm(f.Runway)) && snapRunwayEnds.has(norm(f.Runway));
-      if (standGone || runwayGone || starGoneOf(f)) danglingLegs.add(regKey(f));
+      if (standGone || runwayGone || starGoneOf(f) || starOffRunwayOf(f)) danglingLegs.add(regKey(f));
     }
     if (danglingLegs.size || refsRemapped > 0) {
       purgedFlights = flights
@@ -2473,7 +2498,8 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
           STAR: f.Airway || '',
           reason: (f.Stand && !curStandNames.has(norm(f.Stand)) && snapStandNames.has(norm(f.Stand))) ? 'stand removed or renamed away'
             : (f.Runway && !curRunwayEnds.has(norm(f.Runway)) && snapRunwayEnds.has(norm(f.Runway))) ? 'runway removed or renamed away'
-              : starGoneOf(f) ? 'STAR procedure removed or renamed away' : 'same aircraft leg removed',
+              : starGoneOf(f) ? 'STAR procedure removed or renamed away'
+                : starOffRunwayOf(f) ? 'STAR variant removed or renamed away for this runway' : 'same aircraft leg removed',
         }));
       const keptFlights = sortFlightsChronologically(flights.filter((f) => !danglingLegs.has(regKey(f))));
       flightSectionsRebuilt = true;
