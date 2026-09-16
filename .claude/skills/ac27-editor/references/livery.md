@@ -105,7 +105,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `deleteLivery` per folder → `livery_deleted` / `livery_deleted_multi`). The
   header Find filters rows by folder / airline code+name / aircraft / manifest
   name (empty result shows `livery_search_empty`; empty pack shows
-  `livery_empty_mine`). Renders `TooltipPortal`.
+  `livery_empty_mine`). Thumbnails load lazily (sequential `readLiveryImage`
+  over mine+reference) into a `thumbs[pack:folder]` map; `.livery-thumb`
+  reserves a 2:1 box with a **solid `#222` placeholder** up front (`aspect-ratio`
+  + `background`), so cards never reflow while the images trickle in and the
+  `<img>` fades in on load. Renders `TooltipPortal`.
 - `CreateTab.jsx` — the **painter page** (upload mode is gone; default export
   takes `{ onCreated, onCancel, onHelp }`). Given `CreateTab.prefill` it
   snapshots an `origin` `{folder, airline, planeId, pack, imageDataUrl}` with

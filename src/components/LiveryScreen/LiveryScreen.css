@@ -121,6 +121,13 @@
 .livery-thumb {
   position: relative;
   display: block;
+  width: 100%;
+  /* Reserve the 2:1 thumbnail box up-front so the card never reflows while
+     the (slow) image loads — the solid color is the loading placeholder. */
+  aspect-ratio: 2 / 1;
+  border-radius: 4px;
+  background: #222;
+  overflow: hidden;
 }
 /* Selection checkbox pinned inside the card, over the thumbnail. */
 .livery-check {
@@ -164,11 +171,16 @@
   outline-offset: 2px;
 }
 .livery-card img {
+  display: block;
   width: 100%;
-  aspect-ratio: 2 / 1;
+  height: 100%;
   object-fit: contain;
-  background: #222;
   border-radius: 4px;
+  animation: livery-thumb-in 150ms ease-out;
+}
+@keyframes livery-thumb-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .livery-card .livery-meta {
   font-size: 12px;
@@ -408,6 +420,17 @@
 .lp-inline.lp-locked .lp-inline-label { opacity: 0.7; }
 .lp-airline-toggle:disabled { color: var(--text-muted); opacity: 0.5; cursor: not-allowed; }
 .lp-airline-toggle:disabled:hover { color: var(--text-muted); background: transparent; }
+/* The Airline / Aircraft dropdowns keep focus after a pick and Chromium then
+   paints its UA focus ring — a yellow outline on some Windows accent colours.
+   Suppress it here (same as the .lp-workspace tool controls). */
+.lp-topbar .lp-inline input[type="text"]:focus,
+.lp-topbar .lp-inline input[type="text"]:focus-visible,
+.lp-topbar .lp-inline select:focus,
+.lp-topbar .lp-inline select:focus-visible,
+.lp-topbar .lp-airline-toggle:focus,
+.lp-topbar .lp-airline-toggle:focus-visible {
+  outline: none;
+}
 .lp-airline-list {
   position: absolute;
   top: calc(100% + 4px);
@@ -605,6 +628,19 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+/* The painter is fully keyboard-driven (held Space pans, single-letter tool
+   hotkeys), so the instant a key is pressed Chromium promotes the focused
+   control to :focus-visible and paints its UA focus ring — a yellow outline on
+   some Windows accent colours. Suppress it here; the .lp-active / .lp-on tool
+   states and the zoom button's .lp-active are the visual focus cues instead. */
+.lp-workspace button:focus,
+.lp-workspace button:focus-visible,
+.lp-workspace input:focus,
+.lp-workspace input:focus-visible,
+.lp-workspace .livery-canvas-wrap:focus,
+.lp-workspace .livery-canvas-wrap:focus-visible {
+  outline: none;
 }
 .livery-canvas-wrap {
   flex: 1;

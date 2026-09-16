@@ -97,6 +97,20 @@ describe('MyLiveriesTab', () => {
     expect(card.querySelector('.livery-thumb .livery-check .livery-select')).toBeInTheDocument();
   });
 
+  it('reserves the thumbnail box (no img yet) while the picture is still loading', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
+      'read-livery-image': new Promise(() => {}), // never resolves
+    });
+    renderMine();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    const thumb = screen.getByText('Air China').closest('.livery-card').querySelector('.livery-thumb');
+    // The box (with its solid placeholder background) is there before the
+    // image resolves, so the card never reflows as thumbnails arrive.
+    expect(thumb).toBeInTheDocument();
+    expect(thumb.querySelector('img')).toBeNull();
+  });
+
   it('header delete command confirms and deletes the single selected livery', async () => {
     setupMocks({
       'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
