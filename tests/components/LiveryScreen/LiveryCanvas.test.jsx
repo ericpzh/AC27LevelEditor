@@ -392,6 +392,25 @@ describe('LiveryCanvas tools — paint operations', () => {
     expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
   });
 
+  it('right-click picks the pixel colour without switching tools', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    const color = () => screen.getByLabelText('Color').value;
+    expect(color()).toBe('#ff0000');
+    fireEvent.pointerDown(mainCanvas(), { clientX: 10, clientY: 10, button: 2, pointerId: 1 });
+    // Mock pixel is transparent black → #000000, and Select stays active.
+    expect(color()).toBe('#000000');
+    expect(screen.getByRole('button', { name: 'Select' }).className).toContain('lp-active');
+  });
+
+  it('suppresses the native context menu on the canvas', () => {
+    renderCanvas();
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    mainCanvas().dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
   it('fill floods the region and commits pixels', async () => {
     const user = userEvent.setup();
     renderCanvas();
@@ -608,6 +627,31 @@ describe('LiveryCanvas zoom + stickers', () => {
     expect(pct()).toBe('25%');
     await user.click(screen.getByRole('button', { name: 'Fit' }));
     expect(pct()).toBe('24%');
+  });
+
+  it('wheel zooms using the cursor position as the anchor', async () => {
+    renderCanvas();
+    const wrap = document.querySelector('.livery-canvas-wrap');
+    const pct = () => document.querySelector('.lp-zoom-pct').textContent;
+    expect(pct()).toBe('24%'); // fit
+    fireEvent.wheel(wrap, { deltaY: -120, clientX: 120, clientY: 120 });
+    await waitFor(() => expect(pct()).toBe('25%'));
+    fireEvent.wheel(wrap, { deltaY: 120, clientX: 120, clientY: 120 });
+    await waitFor(() => expect(pct()).toBe('13%'));
+  });
+
+  it('shows a hand icon following the pointer while Space is held', async () => {
+    renderCanvas();
+    const hand = () => document.querySelector('.lp-hand-cursor');
+    expect(hand().style.display).toBe('none');
+    fireEvent.keyDown(window, { key: ' ' });
+    await waitFor(() => expect(hand().style.display).toBe('block'));
+    expect(mainCanvas().style.cursor).toBe('none');
+    fireEvent.pointerMove(document.querySelector('.livery-canvas-wrap'), { clientX: 60, clientY: 70 });
+    expect(hand().style.transform).toContain('60px');
+    expect(hand().style.transform).toContain('70px');
+    fireEvent.keyUp(window, { key: ' ' });
+    await waitFor(() => expect(hand().style.display).toBe('none'));
   });
 
   it('remove sticker button is enabled only while a sticker exists', async () => {

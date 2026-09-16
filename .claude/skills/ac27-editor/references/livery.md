@@ -173,13 +173,24 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
     eyedropper (I), fill (G), line (L), rect (R), ellipse (O), text (T).
     `TOOL_META` advertises the shortcut; the keyboard map mirrors it.
+    **Right-click** on the canvas picks the pixel colour under the cursor via
+    the shared `pickColorAt` (same as the Eyedropper, but it keeps the active
+    tool); the canvas `onContextMenu` is suppressed.
   - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none):
     brush/eraser size + (brush only) opacity + hard/soft; fill tolerance;
     line/rect/ellipse width + fill toggle; text font (`FONT_OPTIONS`) + size +
     bold/italic. Colour lives on the rail (`lp-rail-color`).
-  - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit; mouse-wheel
-    zoom anchored at the cursor. Brush/eraser draw a true-size cursor ring
+  - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit. Mouse-wheel
+    steps the ladder **anchored to the cursor**: the wheel handler records the
+    content point under the pointer (`cx/cy` = `scrollLeft + viewport offset`,
+    `k` = next/cur) into `zoomAnchorRef`, and a `useLayoutEffect` on `[zoom]`
+    re-applies `scrollLeft = cx*k - vx` after the new size is rendered (a plain
+    rAF could race the DOM update). Brush/eraser draw a true-size cursor ring
     (`lp-cursor-ring`).
+  - **Pan:** middle-drag or hold **Space** (`spaceRef`; mirrored to
+    `spaceHeld` state) and drag the wrap. While Space is held the canvas cursor
+    is hidden and a **hand icon** (`FaRegHandPaper`, `.lp-hand-cursor`,
+    position:fixed) follows the pointer via `moveHand`.
   - **Live objects** (`liveRef`, one at a time): a sticker image
     (`kind:'sticker'`, `img`), a **text box** (`kind:'text'` — `text`, `font`,
     `size`, `bold`, `italic`, `color`), or a **shape** (`kind:'line'|'rect'|

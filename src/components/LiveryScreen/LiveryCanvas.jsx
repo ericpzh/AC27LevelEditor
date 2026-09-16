@@ -1,5 +1,6 @@
 import React, {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useCallback,
@@ -33,7 +34,7 @@ import {
   IoScanOutline,
 } from 'react-icons/io5';
 import { AiOutlineClear } from 'react-icons/ai';
-import { FaEraser } from 'react-icons/fa';
+import { FaEraser, FaRegHandPaper } from 'react-icons/fa';
 import { FaArrowPointer } from 'react-icons/fa6';
 import { TbSticker2 } from 'react-icons/tb';
 import { HiDocumentDuplicate } from 'react-icons/hi';
@@ -221,6 +222,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const undoRef = useRef(createUndoStack());
   const spaceRef = useRef(false);
   const panRef = useRef(null);
+  const handRef = useRef(null);
+  const zoomAnchorRef = useRef(null);
   const strokeRef = useRef(null);
   const shapeRef = useRef(null);
   const dragRef = useRef(null);
@@ -240,6 +243,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const [textOpts, setTextOptsState] = useState(textOptsRef.current);
   const [zoom, setZoom] = useState('fit');
   const [fitScale, setFitScale] = useState(0.25);
+  const [spaceHeld, setSpaceHeld] = useState(false);
   const [live, setLiveState] = useState(null);
   const [textAnchor, setTextAnchorState] = useState(null);
   const [textDraft, setTextDraftState] = useState('');
@@ -309,6 +313,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   }, []);
 
   // ── Wheel zoom (anchored to the cursor) ────────────────────
+  // Record the content point under the cursor, change the zoom, then re-apply
+  // the scroll in a layout effect so it uses the already-rendered new size
+  // (a rAF could race the DOM update). The point under the cursor stays put.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -323,17 +330,26 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       const rect = el.getBoundingClientRect();
       const vx = e.clientX - rect.left;
       const vy = e.clientY - rect.top;
-      const cx = el.scrollLeft + vx;
-      const cy = el.scrollTop + vy;
-      const k = next / cur;
+      zoomAnchorRef.current = {
+        vx, vy,
+        cx: el.scrollLeft + vx,
+        cy: el.scrollTop + vy,
+        k: next / cur,
+      };
       setZoom(next);
-      requestAnimationFrame(() => {
-        el.scrollLeft = cx * k - vx;
-        el.scrollTop = cy * k - vy;
-      });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
+  }, [zoom, fitScale]);
+
+  // Keep the cursor's content point fixed once the zoomed size has landed.
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    const a = zoomAnchorRef.current;
+    if (!el || !a) return;
+    zoomAnchorRef.current = null;
+    el.scrollLeft = a.cx * a.k - a.vx;
+    el.scrollTop = a.cy * a.k - a.vy;
   }, [zoom, fitScale]);
 
   const pushSnapshot = () => {
@@ -515,7 +531,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         if (e.key === 'Escape' && textAnchor) { setTextAnchor(null); setTextDraft(''); }
         return;
       }
-      if (e.key === ' ') { spaceRef.current = true; e.preventDefault(); return; }
+      if (e.key === ' ') { spaceRef.current = true; setSpaceHeld(true); e.preventDefault(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) doRedo(); else doUndo();
@@ -534,7 +550,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       const map = { a: 'select', b: 'brush', e: 'eraser', i: 'eyedropper', g: 'fill', l: 'line', r: 'rect', o: 'ellipse', t: 'text' };
       if (map[k] && TOOLS.includes(map[k])) { commitText(); setTool(map[k]); }
     };
-    const onKeyUp = (e) => { if (e.key === ' ') spaceRef.current = false; };
+    const onKeyUp = (e) => { if (e.key === ' ') { spaceRef.current = false; setSpaceHeld(false); } };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
@@ -587,12 +603,25 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     return { x: dx * c - dy * s, y: dx * s + dy * c };
   };
 
+  // Eyedropper shared by the Eyedropper tool and the right-click shortcut:
+  // read the base pixel under `p` and make it the current brush colour.
+  const pickColorAt = (p) => {
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    const x = Math.max(0, Math.min(TEXTURE - 1, p.x | 0));
+    const y = Math.max(0, Math.min(TEXTURE - 1, p.y | 0));
+    const d = ctx.getImageData(x, y, 1, 1).data;
+    setBrush({ ...brushRef.current, color: rgbaToHex(d[0], d[1], d[2]) });
+  };
+
   // ── Canvas pointer handlers ────────────────────────────────
   const onCanvasDown = (e) => {
     if (e.button === 1 || spaceRef.current) return; // pan handled by wrapper
     const ctx = ctxRef.current;
     if (!ctx) return;
     const p = toTexture(e.clientX, e.clientY);
+    // Right-click = pick the pixel colour (keeps the active tool).
+    if (e.button === 2) { pickColorAt(p); return; }
     const t = toolRef.current;
     const capture = () => { canvasRef.current.setPointerCapture && e.target.setPointerCapture(e.pointerId); };
 
@@ -630,8 +659,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       strokeRef.current = { last: p, erase: t === 'eraser' };
       capture();
     } else if (t === 'eyedropper') {
-      const d = ctx.getImageData(Math.max(0, Math.min(TEXTURE - 1, p.x | 0)), Math.max(0, Math.min(TEXTURE - 1, p.y | 0)), 1, 1).data;
-      setBrush({ ...brushRef.current, color: rgbaToHex(d[0], d[1], d[2]) });
+      pickColorAt(p);
       setTool('brush');
     } else if (t === 'fill') {
       pushSnapshot();
@@ -802,6 +830,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const ringDiameter = Math.max(5, brush.size * effZoom);
 
   // ── Wrapper pan (space-drag + middle-drag) ─────────────────
+  // The hand icon follows the pointer while Space is held (view-port fixed).
+  const moveHand = (clientX, clientY) => {
+    const el = handRef.current;
+    if (!el) return;
+    el.style.transform = `translate(${clientX}px, ${clientY}px) translate(-50%, -50%)`;
+  };
   const onWrapDown = (e) => {
     if (e.button === 1 || spaceRef.current) {
       e.preventDefault();
@@ -810,6 +844,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
   };
   const onWrapMove = (e) => {
+    if (spaceRef.current) moveHand(e.clientX, e.clientY);
     if (!panRef.current) return;
     wrapRef.current.scrollLeft = panRef.current.sl - (e.clientX - panRef.current.sx);
     wrapRef.current.scrollTop = panRef.current.st - (e.clientY - panRef.current.sy);
@@ -951,15 +986,19 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           onPointerMove={onWrapMove}
           onPointerUp={onWrapUp}
         >
+          <div ref={handRef} className="lp-hand-cursor" style={{ display: spaceHeld ? 'block' : 'none' }} aria-hidden="true">
+            <FaRegHandPaper size={22} />
+          </div>
           <div className="lp-canvas-stage" style={{ width: TEXTURE * effZoom, height: TEXTURE * effZoom }} onPointerMove={showBrushRing ? moveCursorRing : undefined} onPointerDown={showBrushRing ? moveCursorRing : undefined} onPointerLeave={showBrushRing ? hideCursorRing : undefined}>
             <canvas
               ref={canvasRef}
               width={TEXTURE}
               height={TEXTURE}
-              style={{ width: TEXTURE * effZoom, height: TEXTURE * effZoom, cursor: tool === 'text' ? 'text' : (tool === 'select' ? 'default' : (showBrushRing ? 'none' : 'crosshair')), touchAction: 'none' }}
+              style={{ width: TEXTURE * effZoom, height: TEXTURE * effZoom, cursor: spaceHeld ? 'none' : (tool === 'text' ? 'text' : (tool === 'select' ? 'default' : (showBrushRing ? 'none' : 'crosshair'))), touchAction: 'none' }}
               onPointerDown={onCanvasDown}
               onPointerMove={onCanvasMove}
               onPointerUp={onCanvasUp}
+              onContextMenu={(e) => e.preventDefault()}
             />
             <canvas
               ref={overlayRef}
