@@ -10,3 +10,4 @@ export * from './airlines.js';
 export * from './acl-format.js';
 export * from './map-config.js';
 export * from './ui.js';
+export * from './livery.js';

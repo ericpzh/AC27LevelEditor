@@ -104,6 +104,7 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 | UDP Telemetry | `references/udp-telemetry.md` | Working on UDP listener, binary protocol, telemetry pipeline, command channel |
 | ACL Format & Approach Math | `references/acl-format.md` | Working on ACL parsing, approach aircraft, scenery data, State=30/State=5 math, TAT formula, Ground Painter id-free scenery graph/read-write |
 | MCP / AI Agent Integration | `references/mcp-integration.md` | Working on API server, MCP tools, SSE endpoint, store-update IPC bridge, AI agent control flow |
+| Livery Editor | `references/livery.md` | Working on custom aircraft liveries, the Livery page/painter, livery IPC, or the share/export contract |
 | Cloud LLM / Chat Panel | `references/mcp-integration.md` | Working on `electron/cloud-llm.js`, `ChatPanel` component, multi-vendor chat, tool-calling loop, thinking/nudge |
 | Dev Commands | `references/dev-commands.md` | Running, testing, building, or releasing the app |
 
@@ -116,6 +117,7 @@ This skill uses **progressive disclosure** — the central SKILL.md (this file) 
 - **`acl-format.md`** — Unity JSON extensions, two-pass preprocessing, section types (v4 GATCARC4 binary only), $blobdoc nested documents, PKStaticEntities $iref/$id. Complete State=30/State=5 approach aircraft construction math: unified path, PR formula, 3° glideslope Y, TAT computation from SceneryData, approach ceiling, module API reference.
 - **`mcp-integration.md`** — API server (port 31415), 8 MCP tools, 14-point validation (time bounds allow end +30 min grace + runway inactive at landing via chronological active-set sweep), SSE/JSON-RPC endpoints. Also covers `electron/cloud-llm.js` (DeepSeek/Gemini/Claude/Codex chat with tool calling) and the `ChatPanel` React component.
 - **`dev-commands.md`** — All npm/node commands: component tests, E2E tests, integration tests (with `--acl` and `--root` variants), local build (`node build.js`), GitHub release workflow.
+- **`livery.md`** — Custom livery page: on-disk format + manifest template, 14-row short-code table, component/IPC map, renderer-canvas image rules, painter scope (undo 20, export flatten), share/export ZIP contract.
 
 ## Schema
 

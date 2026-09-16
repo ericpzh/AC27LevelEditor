@@ -111,6 +111,17 @@ vi.stubGlobal('electronAPI', {
   onLiveryDownloadProgress: (cb) => mockIpcOn('livery-download-progress', cb),
   offLiveryDownloadProgress: (cb) => { /* unsubscribe */ },
 
+  // ─── Custom Liveries (own pack) ─────────────────────────
+  listLiveries: () => mockIpcInvoke('list-liveries'),
+  readLiveryImage: (folder, pack) => mockIpcInvoke('read-livery-image', folder, pack),
+  createLivery: (payload) => mockIpcInvoke('create-livery', payload),
+  deleteLivery: (folder) => mockIpcInvoke('delete-livery', folder),
+  selectLiveryImage: () => mockIpcInvoke('select-livery-image'),
+  readDiskImage: (filePath) => mockIpcInvoke('read-disk-image', filePath),
+  exportLivery: (folder) => mockIpcInvoke('export-livery', folder),
+  saveLiveryDialog: (opts) => mockIpcInvoke('save-livery-dialog', opts),
+  loadLiveryZip: () => mockIpcInvoke('load-livery-zip'),
+
   // ─── UDP telemetry ───────────────────────────────────────
   getUdpStatus: () => mockIpcInvoke('get-udp-status'),
   getUdpAircraftState: () => mockIpcInvoke('get-udp-aircraft-state'),

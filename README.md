@@ -58,11 +58,21 @@ Enable in-game debugging by installing BepInEx (IL2CPP) with one click:
 Replace default aircraft liveries with realistic paint schemes via ZIP file:
 
 1. Download the livery ZIP file (e.g., `AC27 Realistic Aircraft Livery v26.06.0.zip`)
-2. In the browser screen header, click **Livery** (palette icon)
-3. Select the downloaded ZIP file in the file dialog
+2. In the browser screen header, click **Livery** (palette icon) — this opens the **Livery page**
+3. Go to the **Install Pack** tab and wait for the automatic download, or pick a local ZIP in the file dialog fallback
 4. The editor extracts the contents to the game's `Mods/` folder automatically
 
 **Note:** If the `Mods/` folder does not exist in the game root, the editor creates it automatically.
+
+### Custom Liveries (Livery Page)
+
+Create and share your own `Body`/`BaseMap` aircraft liveries. The Livery page (browser header → **Livery**) has three tabs:
+
+- **My Liveries** — every livery in `<gameRoot>/Mods/AC27 Custom Liveries/` grouped by aircraft type into collapsible folders (reference-pack liveries share the same folders with a lock read-only mark); per-row **Edit** (opens the painter), **Export** (saves a shareable ZIP), **Copy folder name**, and **Delete** (with confirm).
+- **Create** — **Upload** mode (drop a PNG/JPG, pick airline + aircraft, live `{SHORT}_{AIRLINE}` folder preview, shrink-to-fit note) or **Paint** mode (2048×2048 flat-texture canvas: brush/eraser/picker/fill/shapes/text/sticker, undo depth 20, no 3D preview). Saving overwrites silently (no `.bak`, no confirm).
+- **Install Pack** — the original realistic-livery download/install flow.
+
+**Share contract:** Export produces `<FOLDER>.zip` containing `<FOLDER>/aircraft_livery_manifest.json` + `<FOLDER>/base.png`. Send it to a friend — they install it via **Create → Load from ZIP**, or by unzipping straight into `<gameRoot>/Mods/AC27 Custom Liveries/`.
 
 ### Auto-Update (Windows)
 
@@ -141,11 +151,21 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 通过 ZIP 文件一键安装真实飞机涂装：
 
 1. 下载涂装 ZIP 文件（例如 `AC27 Realistic Aircraft Livery v26.06.0.zip`）
-2. 在浏览器界面顶栏中，点击 **涂装**（调色板图标）
-3. 在弹出的文件选择对话框中选择下载的 ZIP 文件
+2. 在浏览器界面顶栏中，点击 **涂装**（调色板图标）—— 打开**涂装页面**
+3. 在**安装涂装包**页签等待自动下载，或在弹出的文件选择对话框中选择本地 ZIP 文件
 4. 编辑器自动将内容解压到游戏根目录下的 `Mods/` 文件夹
 
 **注意：** 如果 `Mods/` 文件夹不存在，编辑器会自动创建。
+
+### 自制涂装（涂装页面）
+
+创建并分享你自己的机身（`Body`/`BaseMap`）涂装。涂装页面（浏览器顶栏 → **涂装**）有三个页签：
+
+- **我的涂装** —— `<游戏根目录>/Mods/AC27 Custom Liveries/` 下的所有涂装，按机型分组为可折叠文件夹（真实涂装包中的参考涂装在同一分组内，带锁形只读标记）；每行可**编辑**（打开绘制器）、**导出**（保存为可分享的 ZIP）、**复制文件夹名**、**删除**（需确认）。
+- **新建涂装** —— **上传图片**模式（拖入 PNG/JPG，选择航司 + 机型，实时 `{SHORT}_{AIRLINE}` 文件夹名预览，超大图等比缩小说明）或**绘制**模式（2048×2048 扁平纹理画布：画笔/橡皮/取色/填充/图形/文字/贴纸，20 步撤销，无 3D 预览）。保存时直接覆盖（无 `.bak`、无确认）。
+- **安装涂装包** —— 原有的真实涂装下载/安装流程。
+
+**分享约定：** 导出的 `<文件夹名>.zip` 内含 `<文件夹名>/aircraft_livery_manifest.json` + `<文件夹名>/base.png`。发给朋友后，对方在**新建涂装 → 从 zip 载入**即可安装，或直接解压到 `<游戏根目录>/Mods/AC27 Custom Liveries/`。
 
 ### 清理编辑器本地缓存
 

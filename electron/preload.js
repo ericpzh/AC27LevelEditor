@@ -303,6 +303,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   downloadLivery: () => ipcRenderer.invoke('download-livery'),
 
+  // ─── Custom Liveries (own pack) ─────────────────────────
+  listLiveries: () => ipcRenderer.invoke('list-liveries'),
+  readLiveryImage: (folder, pack) => ipcRenderer.invoke('read-livery-image', folder, pack),
+  createLivery: (payload) => ipcRenderer.invoke('create-livery', payload),
+  deleteLivery: (folder) => ipcRenderer.invoke('delete-livery', folder),
+  selectLiveryImage: () => ipcRenderer.invoke('select-livery-image'),
+  readDiskImage: (filePath) => ipcRenderer.invoke('read-disk-image', filePath),
+  exportLivery: (folder) => ipcRenderer.invoke('export-livery', folder),
+  saveLiveryDialog: (opts) => ipcRenderer.invoke('save-livery-dialog', opts),
+  loadLiveryZip: () => ipcRenderer.invoke('load-livery-zip'),
+
   _liveryProgressHandlers: new Map(),
   onLiveryDownloadProgress: function (cb) {
     const handler = (_e, data) => cb(data);

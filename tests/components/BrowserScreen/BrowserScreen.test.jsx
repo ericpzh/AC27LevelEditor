@@ -224,8 +224,8 @@ beforeEach(() => {
     });
   });
 
-  describe('Livery Install', () => {
-    it('renders livery install button in the header', async () => {
+  describe('Livery Button', () => {
+    it('renders livery button in the header', async () => {
       setupDefaultMocks();
       renderBrowser();
 
@@ -252,10 +252,8 @@ beforeEach(() => {
       expect(tip.textContent).toContain('Realistic Aircraft Livery');
     });
 
-    it('shows progress overlay on click and disables button', async () => {
-      setupDefaultMocks({
-        'download-livery': new Promise(() => {}), // never resolves — overlay stays open
-      });
+    it('navigates to livery screen on click and shows no overlay', async () => {
+      setupDefaultMocks();
       const user = userEvent.setup();
       renderBrowser();
 
@@ -266,95 +264,8 @@ beforeEach(() => {
       const liveryBtn = screen.getByText('Livery').closest('button');
       await user.click(liveryBtn);
 
-      // Button should be disabled while overlay is open
-      await waitFor(() => {
-        expect(liveryBtn.disabled).toBe(true);
-      });
-
-      // Overlay should be visible
-      expect(document.getElementById('livery-overlay')).toBeInTheDocument();
-    });
-
-    it('downloads and installs successfully', async () => {
-      setupDefaultMocks({
-        'download-livery': Promise.resolve({ success: true, filePath: '/tmp/livery.zip' }),
-        'install-livery': Promise.resolve({ success: true }),
-      });
-      const user = userEvent.setup();
-      renderBrowser();
-
-      await waitFor(() => {
-        expect(screen.getByText('Levels')).toBeInTheDocument();
-      });
-
-      const liveryBtn = screen.getByText('Livery').closest('button');
-      await user.click(liveryBtn);
-
-      await waitFor(() => {
-        expect(screen.getByText('Livery installed successfully')).toBeInTheDocument();
-      });
-    });
-
-    it('falls back to file dialog on download failure', async () => {
-      setupDefaultMocks({
-        'download-livery': Promise.resolve({ success: false, error: 'LIVERY_DOWNLOAD_HTTP_404' }),
-        'select-livery-zip': Promise.resolve({ canceled: false, filePath: '/tmp/livery.zip' }),
-        'install-livery': Promise.resolve({ success: true }),
-      });
-      const user = userEvent.setup();
-      renderBrowser();
-
-      await waitFor(() => {
-        expect(screen.getByText('Levels')).toBeInTheDocument();
-      });
-
-      const liveryBtn = screen.getByText('Livery').closest('button');
-      await user.click(liveryBtn);
-
-      await waitFor(() => {
-        expect(screen.getByText('Livery installed successfully')).toBeInTheDocument();
-      });
-    });
-
-    it('handles canceled file dialog after download failure', async () => {
-      setupDefaultMocks({
-        'download-livery': Promise.resolve({ success: false, error: 'LIVERY_DOWNLOAD_TIMEOUT' }),
-        'select-livery-zip': Promise.resolve({ canceled: true }),
-      });
-      const user = userEvent.setup();
-      renderBrowser();
-
-      await waitFor(() => {
-        expect(screen.getByText('Levels')).toBeInTheDocument();
-      });
-
-      const liveryBtn = screen.getByText('Livery').closest('button');
-      await user.click(liveryBtn);
-
-      // Wait briefly — no toast should appear for cancel
-      await new Promise(r => setTimeout(r, 100));
-      expect(screen.queryByText('Livery installed successfully')).toBeNull();
+      expect(useAppStore.getState().screen).toBe('livery');
       expect(document.getElementById('livery-overlay')).toBeNull();
-    });
-
-    it('shows error toast when install fails after download', async () => {
-      setupDefaultMocks({
-        'download-livery': Promise.resolve({ success: true, filePath: '/tmp/livery.zip' }),
-        'install-livery': Promise.resolve({ success: false, error: 'CRC mismatch' }),
-      });
-      const user = userEvent.setup();
-      renderBrowser();
-
-      await waitFor(() => {
-        expect(screen.getByText('Levels')).toBeInTheDocument();
-      });
-
-      const liveryBtn = screen.getByText('Livery').closest('button');
-      await user.click(liveryBtn);
-
-      await waitFor(() => {
-        expect(screen.getByText('CRC mismatch')).toBeInTheDocument();
-      });
     });
   });
 

@@ -3379,6 +3379,116 @@ ipcMain.handle('install-livery', async (_event, zipPath) => {
   }
 });
 
+// ─── IPC: Custom Liveries (own pack dir) ────────────────────
+// Logic lives in electron/livery.js (pure + unit-tested); the handlers here
+// only resolve gameRoot / dialog and delegate. Renderer table source of
+// truth: src/utils/constants/livery.js (kept in sync with livery.js).
+const livery = require('./livery');
+
+function _liveryGameRoot() {
+  const cr = _readCache();
+  return cr?.data?.gameRoot || null;
+}
+
+ipcMain.handle('list-liveries', async () => {
+  try {
+    return livery.listLiveries(_liveryGameRoot());
+  } catch (err) {
+    console.error('[Livery] list failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('read-livery-image', async (_event, folder, pack = 'mine') => {
+  return livery.readLiveryImage(_liveryGameRoot(), folder, pack);
+});
+
+ipcMain.handle('create-livery', async (_event, payload) => {
+  try {
+    return livery.createLivery(_liveryGameRoot(), payload || {});
+  } catch (err) {
+    console.error('[Livery] create failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('delete-livery', async (_event, folder) => {
+  try {
+    return livery.deleteLivery(_liveryGameRoot(), folder);
+  } catch (err) {
+    console.error('[Livery] delete failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('select-livery-image', async (_event) => {
+  const parent = _event.sender && !_event.sender.isDestroyed()
+    ? BrowserWindow.fromWebContents(_event.sender)
+    : mainWindow;
+  const result = await dialog.showOpenDialog(parent, {
+    title: 'Select Livery Image',
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths.length) return { canceled: true };
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+ipcMain.handle('read-disk-image', async (_event, filePath) => {
+  return livery.readDiskImage(filePath);
+});
+
+// ─── IPC: Livery share / load (P3) ─────────────────────────
+
+ipcMain.handle('export-livery', async (_event, folder) => {
+  try {
+    return livery.exportLivery(_liveryGameRoot(), folder);
+  } catch (err) {
+    console.error('[Livery] export failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('save-livery-dialog', async (_event, { sourcePath, suggestedName }) => {
+  const parent = _event.sender && !_event.sender.isDestroyed()
+    ? BrowserWindow.fromWebContents(_event.sender)
+    : mainWindow;
+  try {
+    const result = await dialog.showSaveDialog(parent, {
+      title: 'Export Livery ZIP',
+      defaultPath: suggestedName || 'livery.zip',
+      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    const copied = livery.copyExportedZip(sourcePath, result.filePath);
+    if (!copied.success) return { canceled: false, success: false, error: copied.error };
+    return { canceled: false, success: true, filePath: result.filePath };
+  } catch (err) {
+    console.error('[Livery] save dialog failed:', err.message);
+    return { canceled: false, success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('load-livery-zip', async (_event) => {
+  const parent = _event.sender && !_event.sender.isDestroyed()
+    ? BrowserWindow.fromWebContents(_event.sender)
+    : mainWindow;
+  try {
+    const picked = await dialog.showOpenDialog(parent, {
+      title: 'Select Shared Livery ZIP',
+      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+      properties: ['openFile'],
+    });
+    if (picked.canceled || !picked.filePaths.length) return { canceled: true };
+    const parsed = livery.loadLiveryZip(picked.filePaths[0]);
+    if (!parsed.success) return { canceled: false, success: false, error: parsed.error };
+    return { canceled: false, ...parsed };
+  } catch (err) {
+    console.error('[Livery] load zip failed:', err.message);
+    return { canceled: false, success: false, error: err.message };
+  }
+});
+
 // ─── Shared HTTPS download helper ─────────────────────────
 
 // Follows redirects (up to 5), streams to destPath, reports percent progress.

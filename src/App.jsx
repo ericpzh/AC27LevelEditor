@@ -5,6 +5,7 @@ import { useElectronAPI } from './hooks/useElectronAPI';
 import SetupScreen from './components/SetupScreen/SetupScreen';
 import BrowserScreen from './components/BrowserScreen/BrowserScreen';
 import EditorScreen from './components/EditorScreen/EditorScreen';
+import LiveryScreen from './components/LiveryScreen/LiveryScreen';
 import GroundMapWindow from './components/MapWindows/GroundMapWindow';
 import AirMapWindow from './components/MapWindows/AirMapWindow';
 import FlightStripsWindow from './components/MapWindows/FlightStripsWindow';
@@ -277,6 +278,7 @@ setUpdateState('idle');
     case 'setup':   return <><SetupScreen />{updateState === 'downloading' && <UpdateOverlay onComplete={(result) => { setDownloadResult(result); setUpdateState('installing'); }} onError={(errorMsg) => { setUpdateState('error'); useAppStore.getState().showToast(errorMsg, 'error'); }} />}</>;
     case 'browser': return <><BrowserScreen />{updateState === 'downloading' && <UpdateOverlay onComplete={(result) => { setDownloadResult(result); setUpdateState('installing'); }} onError={(errorMsg) => { setUpdateState('error'); useAppStore.getState().showToast(errorMsg, 'error'); }} />}</>;
     case 'editor':  return <><EditorScreen />{updateState === 'downloading' && <UpdateOverlay onComplete={(result) => { setDownloadResult(result); setUpdateState('installing'); }} onError={(errorMsg) => { setUpdateState('error'); useAppStore.getState().showToast(errorMsg, 'error'); }} />}</>;
+    case 'livery':  return <><LiveryScreen />{updateState === 'downloading' && <UpdateOverlay onComplete={(result) => { setDownloadResult(result); setUpdateState('installing'); }} onError={(errorMsg) => { setUpdateState('error'); useAppStore.getState().showToast(errorMsg, 'error'); }} />}</>;
     default:        return null;
   }
 }
