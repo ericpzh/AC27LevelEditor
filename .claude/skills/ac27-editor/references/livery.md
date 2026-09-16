@@ -118,7 +118,10 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   an empty canvas). Form: a custom airline dropdown
   (`lp-airline-*` — full list, never text-filtered, unlike a native
   `<datalist>`) + plane-id `<select>`; `folderPreview = folderFor(planeId,
-  airline)` is only the Save As prefill. Actions:
+  airline)` is only the Save As prefill. A brand-new livery **defaults to the
+  first airline code + `AIRBUS A-319neo`** (`DEFAULT_AIRLINE`/`DEFAULT_PLANE_ID`)
+  so the form is valid out of the box, and the type `<select>` has **no blank
+  placeholder option** (an origin/zip still supplies its own pair). Actions:
   - **Import image** (`IoImageOutline`) → `fileToDataUrl` + `normalizeToTexture`
     (default white fill) → new canvas base.
   - **Import livery** (`FaFileImport`) → `loadLiveryZip` → normalize + prime

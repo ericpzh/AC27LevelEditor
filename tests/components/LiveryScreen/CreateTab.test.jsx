@@ -10,6 +10,9 @@ import { mockIpcInvoke } from '../../setup';
 import { I18nProvider } from '../../../src/hooks/useTranslation';
 import { setLang } from '../../../src/utils/i18n';
 import { fileToDataUrl, normalizeToTexture } from '../../../src/utils/liveryImage';
+import { AIRLINE_CODE_MAP } from '../../../src/utils/constants/airlines';
+
+const DEFAULT_AIRLINE = [...new Set(Object.values(AIRLINE_CODE_MAP))].sort()[0];
 
 vi.mock('../../../src/utils/liveryImage', () => ({
   fileToDataUrl: vi.fn(),
@@ -80,7 +83,9 @@ afterEach(() => {
 });
 
 async function fillForm(user, airline = 'CCA', planeId = 'AIRBUS A-320neo') {
-  await user.type(screen.getByPlaceholderText('CCA'), airline);
+  const input = screen.getByPlaceholderText('CCA');
+  await user.clear(input);
+  await user.type(input, airline);
   await user.selectOptions(document.querySelector('.lp-root select'), planeId);
 }
 
@@ -94,33 +99,33 @@ async function confirmNameDialog(user, confirmName) {
 }
 
 describe('CreateTab painter validation', () => {
-  it('save/save-as are disabled until airline + aircraft are valid', async () => {
+  it('defaults to the first airline + A-319neo (valid out of the box)', async () => {
     setupMocks();
     const user = userEvent.setup();
     renderCreate();
 
-    expect(saveAsBtn().disabled).toBe(true);
-    // New livery: Save tracks the form too.
-    expect(saveBtn().disabled).toBe(true);
-
+    // Defaults: first airline code + A-319neo, no blank/placeholder option.
     const airlineInput = screen.getByPlaceholderText('CCA');
+    expect(airlineInput.value).toBe(DEFAULT_AIRLINE);
+    const select = document.querySelector('.lp-root select');
+    expect(select.value).toBe('AIRBUS A-319neo');
+    expect([...select.options].some(o => o.value === '')).toBe(false);
+
+    // The form is immediately valid.
+    await waitFor(() => expect(saveAsBtn().disabled).toBe(false));
+    expect(saveBtn().disabled).toBe(false);
+
+    // Editing the code still validates + uppercases; full list stays available.
+    await user.clear(airlineInput);
     await user.type(airlineInput, 'cca');
     expect(airlineInput.value).toBe('CCA');
-    // Human-readable airline name hint.
     expect(screen.getAllByText('Air China').length).toBeGreaterThanOrEqual(1);
-    // Dropdown always displays ALL airlines, even with CCA typed.
     const dropdownOptions = document.querySelectorAll('#livery-airline-list .lp-airline-option');
     expect(dropdownOptions.length).toBeGreaterThan(10);
     const codes = [...dropdownOptions].map(o => o.textContent);
     expect(codes.some(t => t.includes('CCA'))).toBe(true);
     expect(codes.some(t => t.includes('UAL'))).toBe(true);
     expect(codes.some(t => t.includes('CES'))).toBe(true);
-
-    const select = document.querySelector('.lp-root select');
-    await user.selectOptions(select, 'AIRBUS A-320neo');
-
-    await waitFor(() => expect(saveAsBtn().disabled).toBe(false));
-    await waitFor(() => expect(saveBtn().disabled).toBe(false));
   });
 
   it('rejects short airline codes', async () => {
@@ -128,9 +133,8 @@ describe('CreateTab painter validation', () => {
     const user = userEvent.setup();
     renderCreate();
     const airlineInput = screen.getByPlaceholderText('CCA');
+    await user.clear(airlineInput);
     await user.type(airlineInput, 'CC');
-    const select = document.querySelector('.lp-root select');
-    await user.selectOptions(select, 'AIRBUS A-320neo');
     expect(saveAsBtn().disabled).toBe(true);
     expect(saveBtn().disabled).toBe(true);
   });
@@ -294,6 +298,41 @@ describe('CreateTab painter validation', () => {
     renderCreate({ onCancel });
     await user.click(screen.getByRole('button', { name: 'Back' }));
     expect(onCancel).toHaveBeenCalled();
+  });
+});
+
+describe('CreateTab aircraft template', () => {
+  it('primes a new canvas with the selected type built-in UV template', async () => {
+    mockIpcInvoke.mockClear();
+    setupMocks({
+      'get-aircraft-template': Promise.resolve({ success: true, imageDataUrl: FAKE_PNG, partName: 'Body' }),
+    });
+    const user = userEvent.setup();
+    renderCreate();
+    // The default type (A-319neo) loads its template right away.
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-319neo');
+    });
+    await user.selectOptions(document.querySelector('.lp-root select'), 'AIRBUS A-320neo');
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-320neo');
+    });
+  });
+
+  it('fetches the type template for a saved livery so Clear can restore it (base stays the origin image)', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    mockIpcInvoke.mockClear();
+    setupMocks({
+      'get-aircraft-template': Promise.resolve({ success: true, imageDataUrl: FAKE_PNG }),
+    });
+    renderCreate();
+    await waitFor(() => expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument());
+    // Template is fetched for the origin's aircraft type (used by Clear), but
+    // the canvas base is still the saved livery image.
+    expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-320neo');
   });
 });
 
@@ -797,6 +836,90 @@ describe('CreateTab unsaved-changes guard', () => {
     await user.click(screen.getByRole('button', { name: 'Back' }));
     expect(onCancel).toHaveBeenCalled();
     expect(screen.queryByText('Unsaved Changes')).toBeNull();
+  });
+});
+
+describe('CreateTab delete (true folder delete)', () => {
+  beforeEach(() => { mockIpcInvoke.mockClear(); });
+
+  function deleteBtn() {
+    return screen.getByRole('button', { name: 'Delete' });
+  }
+
+  it('is disabled for a brand-new unsaved livery (no folder yet)', async () => {
+    setupMocks();
+    renderCreate();
+    expect(deleteBtn().disabled).toBe(true);
+  });
+
+  it('is disabled for a read-only reference origin', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CES', airline: 'CES', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'reference', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks();
+    renderCreate();
+    expect(deleteBtn().disabled).toBe(true);
+  });
+
+  it('deletes the origin folder after confirm and returns to the list', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({ 'delete-livery': Promise.resolve({ success: true }) });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await user.click(deleteBtn());
+    expect(await screen.findByText('Confirm Delete')).toBeInTheDocument();
+    expect(screen.getByText('Delete livery A20N_CCA?')).toBeInTheDocument();
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('delete-livery', expect.anything());
+
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'A20N_CCA'));
+    expect(onCreated).toHaveBeenCalled();
+  });
+
+  it('cancel on the delete pop-up keeps the livery', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({ 'delete-livery': Promise.resolve({ success: true }) });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await user.click(deleteBtn());
+    await screen.findByText('Confirm Delete');
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByText('Confirm Delete')).toBeNull());
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('delete-livery', expect.anything());
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it('toasts the mapped error when delete fails', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({ 'delete-livery': Promise.resolve({ success: false, error: 'BAD_FOLDER' }) });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await user.click(deleteBtn());
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(screen.getByText('Invalid folder name.')).toBeInTheDocument());
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });
 

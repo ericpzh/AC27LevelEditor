@@ -12,6 +12,7 @@ import {
   IoImageOutline,
   IoSaveOutline,
   IoHelpCircleOutline,
+  IoTrashOutline,
 } from 'react-icons/io5';
 import { MdSaveAs } from 'react-icons/md';
 import { FaFileImport, FaFileExport } from 'react-icons/fa6';
@@ -22,6 +23,10 @@ function errKey(code) {
 }
 
 const PLANE_IDS = Object.keys(PLANE_ID_TO_SHORT_CODE);
+// Sensible form defaults for a brand-new livery: the first airline (alphabetical
+// code) and the A-319neo, so the painter is usable without touching the form.
+const DEFAULT_AIRLINE = [...new Set(Object.values(AIRLINE_CODE_MAP))].sort()[0];
+const DEFAULT_PLANE_ID = 'AIRBUS A-319neo';
 
 // Naming dialog shared by Save / Save As: the typed name is used verbatim
 // as the livery folder name (free-form, filesystem-safe only — see
@@ -134,7 +139,6 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId }) {
       <label className="lp-inline">
         <span className="lp-inline-label">{t('livery_aircraft')}</span>
         <select value={planeId} onChange={(e) => setPlaneId(e.target.value)}>
-          <option value="">—</option>
           {PLANE_IDS.map(id => (
             <option key={id} value={id}>{id}</option>
           ))}
@@ -181,14 +185,16 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   }, [prefill]);
   const isReference = origin && origin.pack === 'reference';
 
-  const [airline, setAirline] = useState(origin?.airline || prefill?.airline || '');
-  const [planeId, setPlaneId] = useState(origin?.planeId || prefill?.targetPlaneId || '');
+  const [airline, setAirline] = useState(origin?.airline || prefill?.airline || DEFAULT_AIRLINE);
+  const [planeId, setPlaneId] = useState(origin?.planeId || prefill?.targetPlaneId || DEFAULT_PLANE_ID);
   const airlineValid = /^[A-Z]{3}$/.test(airline);
   const folderPreview = planeId && airline ? folderFor(planeId, airline) : '';
   const formValid = Boolean(folderPreview && airlineValid && PLANE_ID_TO_SHORT_CODE[planeId]);
 
-  // Paint state — primed with the clicked picture when available. The canvas
-  // background is always transparent (no base fill).
+  // Paint state — primed with the clicked picture when available. For a new
+  // livery the canvas is primed with the aircraft type's built-in default
+  // livery (the game's own UV template) so the background is opaque and shows
+  // the real model shape; otherwise it falls back to a neutral fill.
   const [base, setBase] = useState(
     origin?.imageDataUrl ? { imageDataUrl: origin.imageDataUrl } : null,
   );
@@ -233,6 +239,33 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [origin?.folder, origin?.pack]);
+
+  // Aircraft type's built-in UV template (the game's own default livery).
+  // Fetched whenever a type is known — including when editing a saved livery —
+  // so the painter's Clear can always restore it. It only becomes the canvas
+  // base for a brand-new livery; a saved origin / imported image is never
+  // clobbered.
+  const [templateDataUrl, setTemplateDataUrl] = useState(null);
+  const baseRef = useRef(base);
+  useEffect(() => { baseRef.current = base; }, [base]);
+  useEffect(() => {
+    if (!planeId) { setTemplateDataUrl(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await electronAPI.getAircraftTemplate(planeId);
+        if (cancelled || !res || !res.success || !res.imageDataUrl) return;
+        setTemplateDataUrl(res.imageDataUrl);
+        const cur = baseRef.current;
+        if (!origin && (!cur || cur.isTemplate)) {
+          setBase({ imageDataUrl: res.imageDataUrl, isTemplate: true });
+          setCanvasKey(k => k + 1);
+        }
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planeId, origin]);
 
   const confirmDiscard = (proceed) => {
     if (!dirtyRef.current) { proceed(); return; }
@@ -285,7 +318,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
       setBusy(true);
       try {
         const raw = await fileToDataUrl(file);
-        const normalized = await normalizeToTexture(raw, 'transparent');
+        const normalized = await normalizeToTexture(raw);
         setBase({ imageDataUrl: normalized });
         setCanvasKey(k => k + 1);
       } catch (err) {
@@ -417,6 +450,40 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     });
   };
 
+  // True delete: only an existing custom livery can be removed (reference is
+  // read-only; a brand-new unsaved livery has no folder yet). Removes the
+  // folder entirely — the same action as the list page's Delete button.
+  const canDelete = Boolean(origin) && !isReference && !busy;
+  const handleDelete = () => {
+    if (!canDelete) return;
+    const folder = origin.folder;
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal(
+      () => t('livery_delete_confirm_title'),
+      () => <p>{t('livery_delete_confirm_body', { folder })}</p>,
+      () => (
+        <>
+          <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
+          <button className="btn-danger" onClick={async () => {
+            hideModal();
+            const { showToast } = useAppStore.getState();
+            try {
+              const res = await electronAPI.deleteLivery(folder);
+              if (!res || !res.success) { showToast(t(errKey(res && res.error)), 'error'); return; }
+              CreateTab.prefill = null;
+              dirtyRef.current = false;
+              showToast(t('livery_deleted'), 'success');
+              if (onCreated) onCreated();
+              else if (onCancel) onCancel();
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
+          }}>{t('livery_delete')}</button>
+        </>
+      )
+    );
+  };
+
   const handleLoadZip = async () => {
     setBusy(true);
     try {
@@ -427,7 +494,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         showToast(t(errKey(res.error)), 'error');
         return;
       }
-      const normalized = await normalizeToTexture(res.imageDataUrl, 'transparent');
+      const normalized = await normalizeToTexture(res.imageDataUrl);
       confirmDiscard(() => {
         setBase({ imageDataUrl: normalized });
         setCanvasKey(k => k + 1);
@@ -526,6 +593,9 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
             </button>
           </span>
           <span className="lp-sep" />
+          <span className="lp-tipwrap" {...bind(isReference ? t('livery_tip_readonly') : t('livery_tip_delete'))}>
+            <button className="lp-tool" aria-label={t('livery_delete')} disabled={!canDelete} onClick={handleDelete}><IoTrashOutline size={18} /></button>
+          </span>
           <span className="lp-tipwrap" {...bind(t('livery_tip_save_as'))}>
             <button className="lp-tool" aria-label={t('livery_save_as')} disabled={!formValid || busy} onClick={handleSaveAs}><MdSaveAs size={18} /></button>
           </span>
@@ -539,6 +609,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         key={canvasKey}
         ref={canvasRef}
         initialImageDataUrl={paintBaseUrl}
+        defaultLiveryDataUrl={templateDataUrl}
         onDirty={markDirty}
       />
       {TooltipPortal}
