@@ -156,7 +156,7 @@ describe('LiveryCanvas tools', () => {
       const draws = ctxs.flatMap(c => c.drawImage.mock.calls);
       expect(draws.some(call => call.length === 5)).toBe(true);
     });
-    // Export flattens it over a transparent background.
+    // Export flattens it over the (opaque) base.
     act(() => { ref.current.exportPNG(); });
     const exportCtx = ctxs[ctxs.length - 1];
     expect(exportCtx.drawImage.mock.calls.some(call => call.length === 5)).toBe(true);
@@ -314,6 +314,53 @@ describe('text object (selectable, flippable)', () => {
     await waitFor(() => {
       expect(ctxs.some(c => c.translate.mock.calls.some(([x]) => x > committedX + 10))).toBe(true);
     });
+  });
+
+  it('commits the draft when switching tools', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    await user.type(screen.getByPlaceholderText('Type text, Enter to commit…'), 'bye');
+    await user.click(screen.getByRole('button', { name: 'Brush' }));
+    // The draft became a live object and the tool switch went through.
+    expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+    expect(ctxs[0].fillText).not.toHaveBeenCalled();
+  });
+
+  it('commits the draft when clicking away on the canvas', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    await user.type(screen.getByPlaceholderText('Type text, Enter to commit…'), 'bye');
+    // Click elsewhere on the canvas while the Text tool is still active.
+    fireEvent.pointerDown(mainCanvas(), { clientX: 400, clientY: 400, button: 0, pointerId: 1 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false));
+    expect(screen.getByRole('button', { name: 'Duplicate Sticker' }).disabled).toBe(false);
+    // Handed over to Select and no empty box is left open.
+    expect(screen.getByRole('button', { name: 'Select' }).className).toContain('lp-active');
+    expect(screen.queryByPlaceholderText('Type text, Enter to commit…')).toBeNull();
+    expect(ctxs[0].fillText).not.toHaveBeenCalled();
+  });
+
+  it('commits the draft when the input loses focus', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    const input = screen.getByPlaceholderText('Type text, Enter to commit…');
+    await user.type(input, 'bye');
+    fireEvent.blur(input);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false));
+    expect(ctxs[0].fillText).not.toHaveBeenCalled();
   });
 
   it('flips horizontally then vertically', async () => {

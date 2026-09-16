@@ -157,11 +157,17 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const [zoom, setZoom] = useState('fit');
   const [fitScale, setFitScale] = useState(0.25);
   const [live, setLiveState] = useState(null);
-  const [textAnchor, setTextAnchor] = useState(null);
-  const [textDraft, setTextDraft] = useState('');
+  const [textAnchor, setTextAnchorState] = useState(null);
+  const [textDraft, setTextDraftState] = useState('');
   const [dirty, setDirtyState] = useState(false);
+  // Mirror the text-entry state in refs so commitText() can read the live
+  // values from blur / tool-switch / canvas handlers without stale closures.
+  const textAnchorRef = useRef(null);
+  const textDraftRef = useRef('');
 
   const setTool = (v) => { toolRef.current = v; setToolState(v); };
+  const setTextAnchor = (v) => { textAnchorRef.current = v; setTextAnchorState(v); };
+  const setTextDraft = (v) => { textDraftRef.current = v; setTextDraftState(v); };
   const setBrush = (v) => { brushRef.current = v; setBrushState(v); };
   const setShapeOpts = (v) => { shapeOptsRef.current = v; setShapeOptsState(v); };
   const setTextOpts = (v) => { textOptsRef.current = v; setTextOptsState(v); };
@@ -482,7 +488,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       const k = e.key.toLowerCase();
       const map = { v: 'select', b: 'brush', e: 'eraser', i: 'eyedropper', g: 'fill', l: 'line', r: 'rect', o: 'ellipse', t: 'text' };
-      if (map[k] && TOOLS.includes(map[k])) setTool(map[k]);
+      if (map[k] && TOOLS.includes(map[k])) { commitText(); setTool(map[k]); }
     };
     const onKeyUp = (e) => { if (e.key === ' ') spaceRef.current = false; };
     window.addEventListener('keydown', onKey);
@@ -592,8 +598,15 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       shapeRef.current = { tool: t, start: p, current: p };
       capture();
     } else if (t === 'text') {
-      setTextAnchor(p);
-      setTextDraft('');
+      // Clicking away from a pending box commits it (treated as Enter) and
+      // hands over to Select; a click with no pending draft starts a new box.
+      if (textAnchorRef.current && String(textDraftRef.current || '').trim()) {
+        commitText();
+        setTool('select');
+      } else {
+        setTextAnchor(p);
+        setTextDraft('');
+      }
     }
   };
 
@@ -664,9 +677,14 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   }
 
   // ── Text commit — becomes a selectable live object (not rasterised) ──
+  // Reads the ref-mirrored draft so pressing Enter, clicking away (blur) and
+  // switching tools all funnel through the same commit. Does NOT change the
+  // active tool; callers decide (Enter/deselect → select, tool switch → the
+  // picked tool, canvas click → stays on text for a fresh box).
   const commitText = () => {
-    const raw = String(textDraft || '').trim();
-    if (!textAnchor || !raw) { setTextAnchor(null); setTextDraft(''); return; }
+    const anchor = textAnchorRef.current;
+    const raw = String(textDraftRef.current || '').trim();
+    if (!anchor || !raw) { setTextAnchor(null); setTextDraft(''); return; }
     const o = textOptsRef.current;
     const { w, h } = measureLiveText(ctxRef.current, raw, o);
     flattenLive();
@@ -674,12 +692,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     setLive({
       kind: 'text', text: raw, font: o.font, size: o.size, bold: o.bold, italic: o.italic,
       color: brushRef.current.color, w, h,
-      x: textAnchor.x + w / 2, y: textAnchor.y + h / 2,
+      x: anchor.x + w / 2, y: anchor.y + h / 2,
       rot: 0, flipX: false, flipY: false, selected: true,
     });
     setTextAnchor(null);
     setTextDraft('');
-    setTool('select');
     setDirty(true);
     scheduleOverlay();
   };
@@ -841,7 +858,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                   {...bind(tip)}
                   aria-label={t('livery_paint_' + name)}
                   aria-pressed={tool === name}
-                  onClick={() => setTool(name)}
+                  onClick={() => { commitText(); setTool(name); }}
                 >
                   {Icon ? <Icon size={18} /> : t('livery_paint_' + name)}
                 </button>
@@ -915,10 +932,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                 placeholder={t('livery_paint_text_placeholder')}
                 onChange={(e) => setTextDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitText();
+                  if (e.key === 'Enter') { commitText(); setTool('select'); }
                   if (e.key === 'Escape') { setTextAnchor(null); setTextDraft(''); }
                   e.stopPropagation();
                 }}
+                onBlur={() => commitText()}
                 style={{
                   position: 'absolute',
                   left: textAnchor.x * effZoom,
