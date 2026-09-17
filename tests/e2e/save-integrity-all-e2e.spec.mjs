@@ -161,8 +161,23 @@ test.setTimeout(900000); // 15 min for the full production set
 test('E2E save integrity — all prod+demo levels', async () => {
   // Wait for the browser's level list to finish rendering (the airport scan
   // runs async after startup — rows.count() does not auto-wait).
+  await expect(window.locator('.level-row').first()).toBeVisible({ timeout: 120000 });
+
+  // The browser's one-shot auto-collapse fit pass collapses trailing airport
+  // cards on load, and a collapsed card renders NO `.level-row` elements
+  // (BrowserScreen conditionally renders them, not CSS-hides them). Expand
+  // every card before counting so the whole whitelist is exercised — otherwise
+  // only the first airport's rows render and the coverage guard fails on the
+  // rest. Collapse state is session-persisted, so this only happens once.
+  const collapsedHeaders = window.locator('.airport-card[data-expanded="false"] .airport-card-header');
+  while ((await collapsedHeaders.count()) > 0) {
+    await collapsedHeaders.first().click();
+    await window.waitForTimeout(200);
+  }
+
   const rows = window.locator('.level-row');
-  await expect(rows.first()).toBeVisible({ timeout: 120000 });
+  // Let the expanded cards finish re-rendering their rows.
+  await expect.poll(() => rows.count(), { timeout: 30000 }).toBeGreaterThan(0);
   const totalRows = await rows.count();
   console.log(`\nFound ${totalRows} level rows`);
   expect(totalRows).toBeGreaterThanOrEqual(1);

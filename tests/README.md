@@ -173,7 +173,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 
 All 1858 Vitest tests pass (103 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
 
-1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document).
+1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document). The dispatch + assertion now also run inside `waitFor`, because the `Escape` listener is attached by an effect that depends on `error` and under full parallel load the passive effect could land a tick after the error text rendered — the old single synchronous dispatch was a flake that only failed in the complete suite (verified stable across repeated full runs).
 
 2. **AirMapWindow — renders route polylines when paths are provided**: Fixed by adding `_runwayList: ['19']` to the mock data so the component's runway filter doesn't suppress all STAR variants.
 
@@ -248,7 +248,7 @@ $env:E2E_GAME_ROOT = "<game-root>"
 npx playwright test --config=playwright.config.mjs tests/e2e/save-integrity-all-e2e.spec.mjs
 ```
 
-Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~6 minutes for 24 files. The list is derived directly from `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` (global-setup stages exactly those files, so it can never drift; a coverage guard fails the run if any staged prod file is not exercised). The spec excludes `.demo.acl` files from the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead:
+Iterates every level row in the browser: open → disable time validation → Ctrl+S → confirm → run checker → go back → repeat. Takes ~6 minutes for 24 files. The list is derived directly from `PROD_VISIBLE_BASES` in `src/utils/constants/ui.js` (global-setup stages exactly those files, so it can never drift; a coverage guard fails the run if any staged prod file is not exercised). **Before counting rows the spec expands every collapsed airport card** (`.airport-card[data-expanded="false"] .airport-card-header`) — the browser's one-shot auto-collapse collapses trailing airports on load and a collapsed card conditionally renders no `.level-row`, so without the expansion only the first airport is exercised and the coverage guard reports the rest as `notAttempted`. The spec excludes `.demo.acl` files from the browser list — demo coverage lives in the Node save-integrity and jetway-rebuild layers instead:
 
 | File | Status | Note |
 |------|--------|------|

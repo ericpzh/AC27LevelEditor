@@ -79,8 +79,14 @@ describe('BepInExInstallOverlay', () => {
     await waitFor(() => {
       expect(screen.getByText('fail')).toBeInTheDocument();
     }, { timeout: 3000 });
-    fireEvent.keyDown(document.body, { key: 'Escape' });
-    expect(onClose).toHaveBeenCalledWith(false);
+    // The Escape listener is attached by an effect that depends on `error`, so
+    // retry the dispatch inside waitFor: under parallel load the passive effect
+    // can land a tick after the error text renders (the old single synchronous
+    // dispatch was a well-known flake that only failed in the full suite).
+    await waitFor(() => {
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(onClose).toHaveBeenCalledWith(false);
+    }, { timeout: 3000 });
   });
 
   it('close button in error state works', async () => {
