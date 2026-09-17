@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LiveryCanvas from '../../../src/components/LiveryScreen/LiveryCanvas';
+import LiveryCanvas, { reorderObjects } from '../../../src/components/LiveryScreen/LiveryCanvas';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
@@ -916,5 +916,231 @@ describe('paint save payload', () => {
     });
     const payload = mockIpcInvoke.mock.calls.find(c => c[0] === 'create-livery')[1];
     expect(payload.imageDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+  });
+});
+
+describe('reorderObjects (pure layer-order helper)', () => {
+  const objs = () => [{ id: 1 }, { id: 2 }, { id: 3 }];
+
+  it('front moves an object to the top end', () => {
+    expect(reorderObjects(objs(), 1, 'front').map(o => o.id)).toEqual([2, 3, 1]);
+    expect(reorderObjects(objs(), 2, 'front').map(o => o.id)).toEqual([1, 3, 2]);
+  });
+
+  it('back moves an object to the bottom start', () => {
+    expect(reorderObjects(objs(), 3, 'back').map(o => o.id)).toEqual([3, 1, 2]);
+    expect(reorderObjects(objs(), 2, 'back').map(o => o.id)).toEqual([2, 1, 3]);
+  });
+
+  it('forward / backward swap exactly one step', () => {
+    expect(reorderObjects(objs(), 1, 'forward').map(o => o.id)).toEqual([2, 1, 3]);
+    expect(reorderObjects(objs(), 2, 'backward').map(o => o.id)).toEqual([2, 1, 3]);
+    expect(reorderObjects(objs(), 3, 'backward').map(o => o.id)).toEqual([1, 3, 2]);
+    expect(reorderObjects(objs(), 2, 'forward').map(o => o.id)).toEqual([1, 3, 2]);
+  });
+
+  it('moves past the ends are no-ops returning the same array', () => {
+    const top = objs();
+    expect(reorderObjects(top, 3, 'front')).toBe(top);
+    expect(reorderObjects(top, 3, 'forward')).toBe(top);
+    expect(reorderObjects(top, 1, 'back')).toBe(top);
+    expect(reorderObjects(top, 1, 'backward')).toBe(top);
+  });
+
+  it('an unknown id returns the input untouched', () => {
+    const input = objs();
+    expect(reorderObjects(input, 99, 'front')).toBe(input);
+  });
+
+  it('an unknown direction returns the input untouched', () => {
+    const input = objs();
+    expect(reorderObjects(input, 2, 'sideways')).toBe(input);
+  });
+
+  it('does not mutate the input array', () => {
+    const input = objs();
+    reorderObjects(input, 1, 'front');
+    expect(input.map(o => o.id)).toEqual([1, 2, 3]);
+  });
+});
+
+describe('layer-order menu (right-click)', () => {
+  // Two non-overlapping rects: A at client (100,100)-(200,200), B at
+  // (400,400)-(500,500). Bottom→top stack is [A, B]; A-centre = (150,150).
+  async function drawTwoRects(user, ref) {
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    const draw = async (a, b) => {
+      await user.click(screen.getByRole('button', { name: 'Rect' }));
+      fireEvent.pointerDown(cv, { clientX: a[0], clientY: a[1], button: 0, pointerId: 1 });
+      fireEvent.pointerMove(cv, { clientX: b[0], clientY: b[1], button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+    };
+    await draw([100, 100], [200, 200]);
+    await draw([400, 400], [500, 500]);
+    expect(ref.current.getObjectCount()).toBe(2);
+    return ref.current.getObjectIds();
+  }
+
+  it('right-click on a shape opens the menu; Send to top reorders and closes it', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const [idA, idB] = await drawTwoRects(user, ref);
+    fireEvent.contextMenu(mainCanvas(), { clientX: 150, clientY: 150, button: 2 });
+    await screen.findByRole('menu');
+    // A is the bottom object: upward moves enabled, downward moves disabled.
+    expect(screen.getByRole('menuitem', { name: 'Send to top' }).disabled).toBe(false);
+    expect(screen.getByRole('menuitem', { name: 'Bring forward' }).disabled).toBe(false);
+    expect(screen.getByRole('menuitem', { name: 'Send backward' }).disabled).toBe(true);
+    expect(screen.getByRole('menuitem', { name: 'Send to bottom' }).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Send to top' }));
+    expect(ref.current.getObjectIds()).toEqual([idB, idA]);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('a topmost target disables the upward moves; a lone object disables all four', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await drawTwoRects(user, ref);
+    // B-centre (450,450): B is topmost.
+    fireEvent.contextMenu(mainCanvas(), { clientX: 450, clientY: 450, button: 2 });
+    await screen.findByRole('menu');
+    expect(screen.getByRole('menuitem', { name: 'Send to top' }).disabled).toBe(true);
+    expect(screen.getByRole('menuitem', { name: 'Bring forward' }).disabled).toBe(true);
+    expect(screen.getByRole('menuitem', { name: 'Send backward' }).disabled).toBe(false);
+    expect(screen.getByRole('menuitem', { name: 'Send to bottom' }).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Send to bottom' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    // Back down to a single object: every move is a no-op, all disabled.
+    // (The survivor is B at 450,450 — Delete took the reordered tail A.)
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(ref.current.getObjectCount()).toBe(1);
+    fireEvent.contextMenu(mainCanvas(), { clientX: 450, clientY: 450, button: 2 });
+    await screen.findByRole('menu');
+    for (const name of ['Send to top', 'Bring forward', 'Send backward', 'Send to bottom']) {
+      expect(screen.getByRole('menuitem', { name }).disabled).toBe(true);
+    }
+  });
+
+  it('Escape dismisses the menu without touching the stack', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const before = await drawTwoRects(user, ref);
+    fireEvent.contextMenu(mainCanvas(), { clientX: 150, clientY: 150, button: 2 });
+    await screen.findByRole('menu');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(ref.current.getObjectIds()).toEqual(before);
+  });
+
+  it('backdrop pointerdown dismisses the menu', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await drawTwoRects(user, ref);
+    fireEvent.contextMenu(mainCanvas(), { clientX: 150, clientY: 150, button: 2 });
+    await screen.findByRole('menu');
+    fireEvent.pointerDown(document.querySelector('.lp-order-backdrop'), { button: 0 });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(ref.current.getObjectCount()).toBe(2);
+  });
+
+  it('right-click on empty canvas dismisses the menu (and keeps the colour pick)', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await drawTwoRects(user, ref);
+    const cv = mainCanvas();
+    fireEvent.contextMenu(cv, { clientX: 150, clientY: 150, button: 2 });
+    await screen.findByRole('menu');
+    // A full right-click is pointerdown (colour pick on empty canvas) +
+    // contextmenu (menu dismissal when nothing is hit).
+    fireEvent.pointerDown(cv, { clientX: 10, clientY: 10, button: 2, pointerId: 1 });
+    fireEvent.contextMenu(cv, { clientX: 10, clientY: 10, button: 2 });
+    expect(screen.queryByRole('menu')).toBeNull();
+    // Empty-canvas right-click still picks the pixel colour (transparent black).
+    expect(screen.getByLabelText('Color').value).toBe('#000000');
+  });
+
+  it('left-click dismisses an open menu', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await drawTwoRects(user, ref);
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    const cv = mainCanvas();
+    fireEvent.contextMenu(cv, { clientX: 150, clientY: 150, button: 2 });
+    await screen.findByRole('menu');
+    fireEvent.pointerDown(cv, { clientX: 10, clientY: 10, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('right pointer press selects the object under the cursor without opening the menu', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const [, idB] = await drawTwoRects(user, ref);
+    const cv = mainCanvas();
+    fireEvent.keyDown(window, { key: 'Escape' }); // deselect (B was selected)
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 2, pointerId: 1 });
+    expect(screen.queryByRole('menu')).toBeNull();
+    // The bottom object (not the topmost) is now selected: Delete takes it.
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(ref.current.getObjectIds()).toEqual([idB]);
+  });
+
+  it('Delete with no selection removes the topmost object', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const [idA] = await drawTwoRects(user, ref);
+    fireEvent.keyDown(window, { key: 'Escape' }); // deselect
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(ref.current.getObjectCount()).toBe(1);
+    expect(ref.current.getObjectIds()).toEqual([idA]);
+  });
+
+  it('a keyboard tool shortcut dismisses the menu and switches tool', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await drawTwoRects(user, ref);
+    fireEvent.contextMenu(mainCanvas(), { clientX: 150, clientY: 150, button: 2 });
+    await screen.findByRole('menu');
+    fireEvent.keyDown(window, { key: 'b' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+  });
+
+  it('reorderObject via ref moves the named object without a menu', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const [idA, idB] = await drawTwoRects(user, ref);
+    act(() => { ref.current.reorderObject('backward', idB); });
+    expect(ref.current.getObjectIds()).toEqual([idB, idA]);
+    act(() => { ref.current.reorderObject('forward', idB); });
+    expect(ref.current.getObjectIds()).toEqual([idA, idB]);
+  });
+
+  it('undo restores the order after a reorder', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const [idA, idB] = await drawTwoRects(user, ref);
+    act(() => { ref.current.reorderObject('front', idA); });
+    expect(ref.current.getObjectIds()).toEqual([idB, idA]);
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(ref.current.getObjectIds()).toEqual([idA, idB]);
+  });
+
+  it('a keyboard tool shortcut commits an in-progress shape drag', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(0); // still a preview
+    fireEvent.keyDown(window, { key: 'b' });
+    expect(ref.current.getObjectCount()).toBe(1);
+    expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
   });
 });

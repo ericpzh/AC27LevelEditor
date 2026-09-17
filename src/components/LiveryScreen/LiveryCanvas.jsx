@@ -35,7 +35,7 @@ import {
 } from 'react-icons/io5';
 import { AiOutlineClear } from 'react-icons/ai';
 import { FaEraser, FaRegHandPaper } from 'react-icons/fa';
-import { FaArrowPointer } from 'react-icons/fa6';
+import { FaArrowPointer, FaAnglesUp, FaAngleUp, FaAngleDown, FaAnglesDown } from 'react-icons/fa6';
 import { TbSticker2 } from 'react-icons/tb';
 import { HiDocumentDuplicate } from 'react-icons/hi';
 import { CiBookmarkRemove } from 'react-icons/ci';
@@ -122,6 +122,42 @@ const ZOOM_STEPS = [0.125, 0.25, 0.5, 0.75, 1, 1.5, 2];
 // bounding box; lines use `w` = length, `h` = thickness, `rot` = angle.
 const SHAPE_KINDS = ['line', 'rect', 'ellipse'];
 const liveFont = (o) => `${o.italic ? 'italic ' : ''}${o.bold ? 'bold ' : ''}${o.size}px ${o.font}`;
+
+// Reorder a live object inside the bottom→top stack. Pure (no refs) so it is
+// unit-testable: 'front' moves to the top end, 'forward' swaps one step up,
+// 'backward' swaps one step down, 'back' moves to the bottom start.
+// Out-of-range ids and no-op moves return the input array untouched.
+export function reorderObjects(objs, id, dir) {
+  const idx = objs.findIndex(o => o && o.id === id);
+  if (idx < 0) return objs;
+  if (dir === 'front') {
+    if (idx === objs.length - 1) return objs;
+    const next = objs.slice();
+    const [o] = next.splice(idx, 1);
+    next.push(o);
+    return next;
+  }
+  if (dir === 'back') {
+    if (idx === 0) return objs;
+    const next = objs.slice();
+    const [o] = next.splice(idx, 1);
+    next.unshift(o);
+    return next;
+  }
+  if (dir === 'forward') {
+    if (idx >= objs.length - 1) return objs;
+    const next = objs.slice();
+    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+    return next;
+  }
+  if (dir === 'backward') {
+    if (idx <= 0) return objs;
+    const next = objs.slice();
+    [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
+    return next;
+  }
+  return objs;
+}
 
 // True when a live object has a drawable/exportable payload.
 function hasLiveVisual(o) {
@@ -263,10 +299,14 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const [textAnchor, setTextAnchorState] = useState(null);
   const [textDraft, setTextDraftState] = useState('');
   const [dirty, setDirtyState] = useState(false);
+  // Right-click layer-order menu anchor: { x, y, id } in client coords, or null.
+  const [orderMenu, setOrderMenu] = useState(null);
   // Mirror the text-entry state in refs so commitText() can read the live
   // values from blur / tool-switch / canvas handlers without stale closures.
   const textAnchorRef = useRef(null);
   const textDraftRef = useRef('');
+  const orderMenuRef = useRef(null);
+  const setOrderMenuTracked = (v) => { orderMenuRef.current = v; setOrderMenu(v); };
 
   const setTool = (v) => { toolRef.current = v; setToolState(v); };
   const setTextAnchor = (v) => { textAnchorRef.current = v; setTextAnchorState(v); };
@@ -301,6 +341,33 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   const effZoom = zoom === 'fit' ? fitScale : zoom;
+
+  // Topmost live object under a texture point (same hit rule as Select).
+  const hitObjectAt = (p) => {
+    const z = effZoom || 1;
+    const objs = objectsRef.current;
+    for (let i = objs.length - 1; i >= 0; i--) {
+      const o = objs[i];
+      if (!hasLiveVisual(o)) continue;
+      const lp = stickerLocal(o, p);
+      const hitY = o.kind === 'line' ? Math.max(o.h / 2, 14 / z) : o.h / 2;
+      if (Math.abs(lp.x) <= o.w / 2 && Math.abs(lp.y) <= hitY) return o;
+    }
+    return null;
+  };
+
+  // Move the menu-target (or selected) object one step / to an end.
+  const reorderObject = (dir, id) => {
+    const targetId = id ?? orderMenuRef.current?.id ?? selIdRef.current;
+    if (targetId == null) return;
+    const next = reorderObjects(objectsRef.current, targetId, dir);
+    if (next === objectsRef.current) return;
+    pushSnapshot();
+    syncObjects(next, targetId);
+    setDirty(true);
+    setOrderMenuTracked(null);
+    scheduleOverlay();
+  };
 
   const zoomIn = () => {
     const cur = zoom === 'fit' ? fitScale : zoom;
@@ -404,6 +471,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   const doUndo = useCallback(() => {
+    settleGesture();
     const ctx = ctxRef.current;
     if (!ctx) return;
     const prev = undoStep(undoRef.current, snapshotState());
@@ -416,6 +484,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   }, []);
 
   const doRedo = useCallback(() => {
+    settleGesture();
     const ctx = ctxRef.current;
     if (!ctx) return;
     const next = redoStep(undoRef.current, snapshotState());
@@ -511,6 +580,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     pushSnapshot();
     removeObject(st.id);
     setDirty(true);
+    if (orderMenuRef.current) setOrderMenuTracked(null);
     scheduleOverlay();
   };
 
@@ -555,7 +625,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     importSticker,
     removeSticker,
     duplicateSticker,
+    reorderObject,
     getObjectCount: () => objectsRef.current.length,
+    getObjectIds: () => objectsRef.current.map(o => o.id),
     isDirty: () => dirty,
   }), [dirty]);
 
@@ -575,12 +647,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); return; }
       if (e.key === 'Escape') {
+        if (orderMenuRef.current) { setOrderMenuTracked(null); return; }
         if (selIdRef.current != null) { syncObjects(objectsRef.current, null); scheduleOverlay(); }
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        const st = getSelected();
-        if (st) { pushSnapshot(); removeObject(st.id); setDirty(true); scheduleOverlay(); }
+        // Same action as the Remove toolbar button (selection, else topmost).
+        removeSticker();
         return;
       }
       if (e.key === 'Enter') {
@@ -589,7 +662,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       const k = e.key.toLowerCase();
       const map = { a: 'select', b: 'brush', e: 'eraser', i: 'eyedropper', g: 'fill', l: 'line', r: 'rect', o: 'ellipse', t: 'text' };
-      if (map[k] && TOOLS.includes(map[k])) { commitText(); setTool(map[k]); }
+      if (map[k] && TOOLS.includes(map[k])) { activateTool(map[k]); }
     };
     const onKeyUp = (e) => { if (e.key === ' ') { spaceRef.current = false; setSpaceHeld(false); } };
     window.addEventListener('keydown', onKey);
@@ -661,8 +734,22 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const ctx = ctxRef.current;
     if (!ctx) return;
     const p = toTexture(e.clientX, e.clientY);
-    // Right-click = pick the pixel colour (keeps the active tool).
-    if (e.button === 2) { pickColorAt(p); return; }
+    // Right-button press only selects the object under the cursor (any tool);
+    // the layer-order menu itself opens on contextmenu (a full right-click,
+    // press + release) so it stays open without holding the button.
+    // Right-click on empty canvas keeps the old pick-pixel-colour shortcut.
+    if (e.button === 2) {
+      const hit = hitObjectAt(p);
+      if (hit) {
+        if (selIdRef.current !== hit.id) syncObjects(objectsRef.current, hit.id);
+        scheduleOverlay();
+        return;
+      }
+      setOrderMenuTracked(null);
+      pickColorAt(p);
+      return;
+    }
+    if (orderMenuRef.current) setOrderMenuTracked(null);
     const t = toolRef.current;
     const capture = () => { canvasRef.current.setPointerCapture && e.target.setPointerCapture(e.pointerId); };
 
@@ -729,6 +816,23 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         setTextDraft('');
       }
     }
+  };
+
+  // Full right-click (press + release, any tool): a movable object under the
+  // cursor gets selected and pinned with the layer-order menu; empty canvas
+  // just dismisses the menu (the colour pick already ran on pointerdown).
+  const onCanvasContextMenu = (e) => {
+    e.preventDefault();
+    if (!ctxRef.current || typeof e.clientX !== 'number') return;
+    const p = toTexture(e.clientX, e.clientY);
+    const hit = hitObjectAt(p);
+    if (hit) {
+      if (selIdRef.current !== hit.id) syncObjects(objectsRef.current, hit.id);
+      setOrderMenuTracked({ x: e.clientX, y: e.clientY, id: hit.id });
+      scheduleOverlay();
+      return;
+    }
+    if (orderMenuRef.current) setOrderMenuTracked(null);
   };
 
   const onCanvasMove = (e) => {
@@ -893,6 +997,32 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     updateObject(sel.id, { ...patch, w, h });
     setDirty(true);
     scheduleOverlay();
+  };
+
+  // ── Gesture settling (keyboard parity) ───────────────────
+  // A mouse click on a toolbar button can never land mid-gesture (pointer
+  // capture forces a release first), but a keyboard shortcut can. Settle any
+  // in-progress gesture exactly as releasing the pointer would — end the
+  // stroke, commit the shape preview, end the object drag, commit the text
+  // draft — and dismiss the order menu, so shortcuts act on a stable canvas
+  // identically to clicking the matching button. Everything touched is a ref
+  // or a stable setter, so early-captured closures stay valid.
+  const settleGesture = () => {
+    if (strokeRef.current) strokeRef.current = null;
+    if (shapeRef.current) {
+      const sh = shapeRef.current;
+      shapeRef.current = null;
+      commitShape(sh);
+    }
+    if (dragRef.current) dragRef.current = null;
+    commitText();
+    if (orderMenuRef.current) setOrderMenuTracked(null);
+  };
+
+  // Shared tool activation for the rail buttons and the letter shortcuts.
+  const activateTool = (name) => {
+    settleGesture();
+    setTool(name);
   };
 
   // ── Clear / reset (confirm modal) ──────────────────────────
@@ -1064,7 +1194,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                   {...bind(tip)}
                   aria-label={t('livery_paint_' + name)}
                   aria-pressed={tool === name}
-                  onClick={() => { commitText(); setTool(name); }}
+                  onClick={() => activateTool(name)}
                 >
                   {Icon ? <Icon size={18} /> : t('livery_paint_' + name)}
                 </button>
@@ -1123,7 +1253,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               // text box is mounted+focused on pointerdown, and the mousedown
               // default (focus on .livery-canvas-wrap) would blur it instantly.
               onMouseDown={(e) => e.preventDefault()}
-              onContextMenu={(e) => e.preventDefault()}
+              onContextMenu={onCanvasContextMenu}
             />
             <canvas
               ref={overlayRef}
@@ -1174,6 +1304,49 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           <button className={zoom === 'fit' ? 'lp-active' : ''} {...bind(t('livery_paint_fit'))} aria-label={t('livery_paint_fit')} onClick={() => setZoom('fit')}><IoScanOutline size={16} /></button>
         </div>
       </div>
+      {/* ── Right-click layer-order menu for movable objects ── */}
+      {orderMenu && (() => {
+        const idx = objects.findIndex(o => o && o.id === orderMenu.id);
+        const atTop = idx < 0 || idx >= objects.length - 1;
+        const atBottom = idx <= 0;
+        const items = [
+          { dir: 'front', label: t('livery_paint_to_front'), Icon: FaAnglesUp, disabled: atTop },
+          { dir: 'forward', label: t('livery_paint_forward'), Icon: FaAngleUp, disabled: atTop },
+          { dir: 'backward', label: t('livery_paint_backward'), Icon: FaAngleDown, disabled: atBottom },
+          { dir: 'back', label: t('livery_paint_to_back'), Icon: FaAnglesDown, disabled: atBottom },
+        ];
+        return (
+          <>
+            <div
+              className="lp-order-backdrop"
+              onPointerDown={() => setOrderMenuTracked(null)}
+              onContextMenu={(e) => { e.preventDefault(); setOrderMenuTracked(null); }}
+            />
+            <div
+              className="lp-order-menu"
+              role="menu"
+              style={{ left: orderMenu.x, top: orderMenu.y }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              {items.map(({ dir, label, Icon, disabled }) => (
+                <button
+                  key={dir}
+                  role="menuitem"
+                  className="lp-order-btn"
+                  aria-label={label}
+                  title={label}
+                  disabled={disabled}
+                  onClick={(e) => { e.stopPropagation(); reorderObject(dir); }}
+                >
+                  <Icon size={16} />
+                  <span className="lp-order-label">{label}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        );
+      })()}
       {TooltipPortal}
     </div>
   );

@@ -196,12 +196,19 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   contextual options bar + bottom zoom status bar. Shared `clearBase`/
   `fillBase`/`drawBase(ctx, dataUrl, onDone)` helpers paint the base on mount
   and on **Clear**.
-  - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
-    eyedropper (I), fill (G), line (L), rect (R), ellipse (O), text (T).
-    `TOOL_META` advertises the shortcut; the keyboard map mirrors it.
-    **Right-click** on the canvas picks the pixel colour under the cursor via
-    the shared `pickColorAt` (same as the Eyedropper, but it keeps the active
-    tool); the canvas `onContextMenu` is suppressed.
+   - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
+     eyedropper (I), fill (G), line (L), rect (R), ellipse (O), text (T).
+     `TOOL_META` advertises the shortcut; rail buttons and letter shortcuts
+     both go through `activateTool`, which settles any in-progress gesture
+     first (see "Gesture settling" below).
+     **Right-click** (any tool) is two-stage: right-button *press*
+     (`onCanvasDown` button 2) selects the topmost live object under the
+     cursor via `hitObjectAt` (same hit rule as Select — lines get a taller
+     band), or — on empty canvas — picks the pixel colour via the shared
+     `pickColorAt` (same as the Eyedropper, keeps the active tool); the full
+     right-click (*press + release*, `onCanvasContextMenu`) then pins the
+     **layer-order menu** on a hit object, or just dismisses the menu on
+     empty canvas.
   - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none of their own
     — but Select **does** render the text options while a text object is
     selected): brush/eraser size + (brush only) opacity + hard/soft; fill
@@ -255,11 +262,34 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     selected (else last) object; every overlay/duplicate/export path funnels
     through `paintLiveObject` (`ctx.save(); translate; rotate;
     scale(flipX ? -1 : 1, flipY ? -1 : 1); drawImage|fillText; restore`). Ref
-    methods `importSticker`/`removeSticker`/`duplicateSticker` (+
-    `getObjectCount` for tests); duplicate stamps the target object onto the
-    base (transform included) and leaves a nudged copy selected, while the other
-    objects stay live. Only `exportPNG()` returns the flattened texture (base +
-    every live object).
+     methods `importSticker`/`removeSticker`/`duplicateSticker` (+
+     `getObjectCount` for tests); duplicate stamps the target object onto the
+     base (transform included) and leaves a nudged copy selected, while the other
+     objects stay live. Only `exportPNG()` returns the flattened texture (base +
+     every live object).
+   - **Layer order** (`orderMenu` state + `orderMenuRef`, `hitObjectAt`,
+     `reorderObject`, pure `reorderObjects(objs, id, dir)`): right-clicking a
+     movable object pins a 4-item menu at the cursor (`lp-order-menu` +
+     transparent `lp-order-backdrop`; `FaAnglesUp`/`FaAngleUp`/`FaAngleDown`/
+     `FaAnglesDown`, i18n `livery_paint_to_front`/`_forward`/`_backward`/
+     `_to_back` = 置顶/上移一层/下移一层/置底) with the at-an-end moves
+     disabled (a lone object disables all four). `reorderObjects` moves inside
+     the bottom→top stack (`front` = to the top end, `forward`/`backward` =
+     one step, `back` = to the bottom start; out-of-range ids and no-op moves
+     return the input array untouched). `reorderObject` snapshots for undo,
+     keeps the moved object selected and closes the menu. Ref methods
+     `reorderObject` + `getObjectIds` (for tests). The menu closes on: picking
+     a move, left-click, right-click on empty canvas, backdrop pointerdown,
+     `Escape` (handled before deselect), `removeSticker`, or any tool/undo/
+     redo shortcut (via settling). `Delete`/`Backspace` = `removeSticker()`
+     (selected object, else the topmost — no selection required).
+   - **Gesture settling (keyboard parity):** a toolbar click can never land
+     mid-gesture (pointer capture forces release first) but a shortcut can, so
+     `settleGesture()` ends a stroke, commits a shape preview (`commitShape`),
+     ends an object drag, commits the text draft and dismisses the order menu
+     exactly as releasing the pointer would — and `activateTool` (rail buttons
+     + letter shortcuts) / `doUndo` / `doRedo` all call it first, so shortcuts
+     act on a stable canvas identically to clicking the matching button.
   - Undo/redo via `createUndoStack`/`pushSnapshot` (cap `MAX_UNDO = 20`
     `{img, objects, selId}` snapshots — the base raster **and** the live-object
     layer, so undo also removes/re-instates objects). **Clear**
@@ -391,7 +421,11 @@ manifest for a free-form zip folder).
   prompt, Overwrite saves, Cancel aborts, fresh name + own-folder re-save skip
   it), post-save mod-enable hint (flag read/write, checkbox persistence,
   hidden once dismissed), free-form folder name, load-from-ZIP,
-  import image, cancel, mine vs reference origin save rules, canvas
-  tools/stroke/text/sticker/save payload with stubbed 2d context).
+   import image, cancel, mine vs reference origin save rules, canvas
+   tools/stroke/text/sticker/save payload with stubbed 2d context,
+   right-click layer-order menu (`reorderObjects` pure moves + menu open/
+   reorder/close/dismiss paths + disabled end states + right-press select +
+   selection-less Delete + shortcut settling) and keyboard-parity gesture
+   settling (shortcut commits a mid-drag shape).
 - In-game acceptance (manual): create via UI → launch game → livery on model
   (validates the own-pack-dir assumption).

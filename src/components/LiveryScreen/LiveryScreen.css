@@ -738,3 +738,53 @@
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
+/* ── Right-click layer-order menu (movable objects) ── */
+.lp-order-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: transparent;
+}
+.lp-order-menu {
+  position: fixed;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 148px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.lp-order-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lp-order-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lp-order-btn:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+.lp-order-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
