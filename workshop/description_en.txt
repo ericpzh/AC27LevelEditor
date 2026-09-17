@@ -25,12 +25,15 @@ Please follow these steps:
 [code]...\SteamLibrary\steamapps\common\Airport Control 27[/code]
 [/list]
 
+[hr]
 [h1]Emergency Restoring Game Files[/h1]
+[b]WARNING — Using the level editor may damage your game's level and save files. Back up your files before editing.[/b]
 If a runtime error occurs while using the editor, or if levels are accidentally corrupted, you can use Steam to verify and repair your game installation:
 [list]
 [*] Click the "Restore" button on the main interface, or manually delete specific modified layout directories in your local files, such as:
-[code]...\Airport Control 27\Airports\ZSJN\Levels*[/code]
+[code]...\Airport Control 27\Airports\ZSJN\Levels\*[/code]
 [*] Open your desktop [b]Steam Library[/b], right-click [b]Airport Control 27[/b], and open [b]Properties[/b].
 [*] Navigate to the [b]Installed Files[/b] submenu.
 [*] Click [b]Verify integrity of game files[/b]. Steam will automatically re-download the original level files.
 [/list]
+[hr]

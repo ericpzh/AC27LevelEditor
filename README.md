@@ -6,6 +6,7 @@ Cross-platform desktop level editor for **Airport Control 27** `.acl` flight sch
 
 <img src="public\Screen.png" alt="Screenshot" width="100%"/>
 <img src="public\Radar.png" alt="Screenshot" width="100%"/>
+<img src="public\Main.png" alt="Screenshot" width="100%"/>
 
 <img src="public\Livery1.png" alt="Livery" width="49%"/> <img src="public\Livery2.png" alt="Livery" width="49%"/>
 <img src="public\Painter1.png" alt="Ground Painter" width="49%"/> <img src="public\Painter2.png" alt="Ground Painter" width="49%"/>

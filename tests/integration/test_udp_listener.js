@@ -619,6 +619,33 @@ async function runTests() {
     assert(status.connected, 'should be connected after fresh packet');
   });
 
+  // Test 20: getUdpAircraftState exposes the connected flag
+  await test('getUdpAircraftState reports connected after receiving packets', async () => {
+    resetAircraftState();
+    const datagram = buildDatagram('ZSJN', 100, 1718400000000, [
+      { callSign: 'CONN01', position: { x: 0, y: 0, z: 0 } },
+    ]);
+    await sendDatagram(datagram);
+    await sleep(50);
+
+    const state = getUdpAircraftState();
+    assertEq(state.connected, true, 'state.connected should be true right after a packet');
+    assertEq(state.aircraft.length, 1, 'should still carry the parsed aircraft');
+  });
+
+  // Test 21: connected goes false when the listener socket is down
+  await test('getUdpAircraftState reports disconnected once the listener stops', async () => {
+    stop();
+    await sleep(50);
+
+    const state = getUdpAircraftState();
+    assertEq(state.connected, false, 'state.connected should be false with no live socket');
+
+    // Re-bind so the cleanup stop() and any later sends behave as before.
+    start();
+    await sleep(200);
+  });
+
   // ── Cleanup ───────────────────────────────────────────────────
 
   stop();

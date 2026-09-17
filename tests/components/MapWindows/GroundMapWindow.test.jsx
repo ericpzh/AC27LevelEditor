@@ -540,4 +540,41 @@ describe('GroundMapWindow', () => {
       expect(polygons.length).toBeGreaterThanOrEqual(1);
     });
   });
+
+  // ── No live session overlay ─────────────────────────────────
+
+  it('shows the no-session blur overlay when UDP is disconnected', async () => {
+    setupDefaultMocks();
+    useUdpAircraftState.mockReturnValue({
+      aircraft: [],
+      currentAirport: null,
+      simTimeUnixMs: 0,
+      udpConnected: false,
+    });
+
+    const { container } = renderGroundMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.live-session-overlay')).toBeTruthy();
+    });
+    expect(container.querySelector('.live-session-overlay-text').textContent)
+      .toBe('Live game level session not detected.');
+  });
+
+  it('hides the no-session overlay while a session is active', async () => {
+    setupDefaultMocks();
+    useUdpAircraftState.mockReturnValue({
+      aircraft: [],
+      currentAirport: 'ZSJN',
+      simTimeUnixMs: 1718400000000,
+      udpConnected: true,
+    });
+
+    const { container } = renderGroundMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.ground-map-svg')).toBeTruthy();
+    });
+    expect(container.querySelector('.live-session-overlay')).toBeNull();
+  });
 });

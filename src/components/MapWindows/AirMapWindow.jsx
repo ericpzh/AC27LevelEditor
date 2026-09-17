@@ -12,10 +12,11 @@ import RunwaySidebar from './RunwaySidebar';
 import SpinKnob from './SpinKnob';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
+import LiveSessionOverlay from './LiveSessionOverlay';
 import { IoHelpCircleOutline } from 'react-icons/io5';
 import {
   MAP_PAD_RATIO, MAP_TARGET_RATIO, MAP_PLANE_VB, MAP_ICON_PATH,
-  RAD_TO_DEG, AIR_MAP_BG_OFFSETS, WITCH_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
+  RAD_TO_DEG, WITCH_MAP_BG_OFFSETS, AIR_MAP_DEFAULT_ZOOM, NM_TO_GU,
 } from '../../utils/constants';
 import { witchDirection, getSpriteViewBox, getSpriteCell, getSpriteSheet, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import { dedupeStarPathsForDisplay, filterDedupedStarPathsByRunway } from '../../utils/starDisplay';
@@ -70,7 +71,6 @@ export default function AirMapWindow({ airportIcao }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedCallSign, setSelectedCallSign] = useState(null);
-  const [showBgImage, setShowBgImage] = useState(false);
   const [speedToggle, setSpeedToggle] = useState(true);
   const [showRunwayExt, setShowRunwayExt] = useState(false);
   const [rangeRingLevel, setRangeRingLevel] = useState(3); // 0=gap10, ..., 3=gap40 (default)
@@ -97,7 +97,7 @@ export default function AirMapWindow({ airportIcao }) {
   const airMapRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
-  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, udpAirportChanged } = useUdpAircraftState();
+  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, udpConnected, udpAirportChanged } = useUdpAircraftState();
 
   // ── Sync selected aircraft across ground + air map windows ──
   useCrossWindowSelection(airportIcao, electronAPI, setSelectedCallSign);
@@ -120,14 +120,12 @@ export default function AirMapWindow({ airportIcao }) {
   }, [udpAirportChanged, udpAirport, airportIcao, electronAPI]);
 
   // ── Dynamic background via CSS custom property (avoids inline style) ──
-  const bgCfg = AIR_MAP_BG_OFFSETS[airportIcao] || { dx: 0, dy: 0 };
   const witchBgCfg = WITCH_MAP_BG_OFFSETS[airportIcao] || { dx: 0, dy: 0, w: 0 };
   useEffect(() => {
     if (airMapRef.current) {
-      airMapRef.current.style.setProperty('--air-map-bg',
-        witchMode ? '#160900' : (showBgImage && bgCfg.bg ? bgCfg.bg : '#000000'));
+      airMapRef.current.style.setProperty('--air-map-bg', witchMode ? '#160900' : '#000000');
     }
-  }, [showBgImage, bgCfg.bg, witchMode]);
+  }, [witchMode]);
 
   // ── Track container pixel size for border tick scaling ──────
   useEffect(() => {
@@ -517,9 +515,9 @@ export default function AirMapWindow({ airportIcao }) {
     ));
   }
 
-  // ── Background image geometry ────────────────────────────
+  // ── Witch-mode background image geometry ─────────────────
   const imgY = dataBounds.z - dataBounds.h;
-  const imgW = bgCfg.w != null ? bgCfg.w : dataBounds.w;
+  const imgW = dataBounds.w;
   const imgH = dataBounds.h;
 
   // ── Range rings center (geometric mean of all runway thresholds) ──
@@ -719,21 +717,16 @@ export default function AirMapWindow({ airportIcao }) {
               onMouseLeave={handleMouseUp}
               onClick={handleBgClick}
             >
-              {/* Color behind the map image (shows through 20% opacity) */}
-              {!witchMode && showBgImage && bgCfg.bgUnder && (
-                <rect x={dataBounds.x + bgCfg.dx} y={imgY + bgCfg.dy} width={imgW} height={imgH}
-                  fill={bgCfg.bgUnder} opacity={1} />
-              )}
-              {/* Map image — witch mode uses witch/ folder variant with own offsets */}
-              {(showBgImage || witchMode) && (
+              {/* Witch-mode background image */}
+              {witchMode && (
               <image
-                href={witchMode ? `witch/${airportIcao}.png` : `${airportIcao}.png`}
-                x={dataBounds.x + (witchMode ? witchBgCfg.dx : bgCfg.dx)}
-                y={imgY + (witchMode ? witchBgCfg.dy : bgCfg.dy)}
-                width={witchMode && witchBgCfg.w ? witchBgCfg.w : imgW}
+                href={`witch/${airportIcao}.png`}
+                x={dataBounds.x + witchBgCfg.dx}
+                y={imgY + witchBgCfg.dy}
+                width={witchBgCfg.w ? witchBgCfg.w : imgW}
                 height={imgH}
                 preserveAspectRatio="xMidYMid slice"
-                opacity={witchMode ? 1 : 0.2}
+                opacity={1}
                 onError={(e) => { e.target.style.display = 'none'; }}
               />
               )}
@@ -975,12 +968,6 @@ export default function AirMapWindow({ airportIcao }) {
               <div className="air-map-toggle-knob" />
               <span className="air-map-toggle-label">{t('air_map_runway_ext')}</span>
             </div>
-            <div className={'air-map-toggle' + (showBgImage ? ' active' : '')}
-              onClick={() => setShowBgImage(v => !v)}
-              {...tipBind(helpTip('map_help_air_map'))}>
-              <div className="air-map-toggle-knob" />
-              <span className="air-map-toggle-label">{t('air_map_bg')}</span>
-            </div>
             <div className="air-map-toggle"
               onClick={() => {
                 if (refreshTimerRef.current) {
@@ -1031,6 +1018,7 @@ export default function AirMapWindow({ airportIcao }) {
           </ControlSidebar>
         </>
       )}
+      <LiveSessionOverlay visible={udpConnected === false && !helpOpen} />
       {helpOpen && <MapHelpOverlay type="air" onClose={() => setHelpOpen(false)} runwayList={runwayList} />}
       {MAP_TOOLTIPS_ENABLED && TooltipPortal}
     </div>

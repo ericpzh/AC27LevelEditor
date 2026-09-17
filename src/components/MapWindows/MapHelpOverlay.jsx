@@ -11,7 +11,6 @@ const MAP_BUTTONS = {
   appr:    { labelKey: 'air_map_appr',       type: 'toggle' },
   labels:  { labelKey: 'air_map_labels',     type: 'toggle' },
   ils:     { labelKey: 'air_map_runway_ext', type: 'toggle' },
-  mapbg:   { labelKey: 'air_map_bg',         type: 'toggle' },
   waypoints:{ labelKey: 'air_map_waypoints', type: 'toggle' },
   refresh: { labelKey: 'map_refresh',        type: 'action', icon: IoRefreshOutline },
   // Flight-strips bar: PTT mic + Load DLL. Icons are the real react-icons
@@ -90,7 +89,6 @@ const AIR_SECTIONS = [
       'map_help_air_appr',
       'map_help_air_labels',
       'map_help_air_ils',
-      'map_help_air_map',
       'map_help_air_waypoints',
       'map_help_air_arr',
       'map_help_air_dep',

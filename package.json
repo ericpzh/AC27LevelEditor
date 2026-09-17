@@ -1,6 +1,6 @@
 {
   "name": "ac27-editor",
-  "version": "1.3.8",
+  "version": "1.3.9",
   "description": "Cross-platform Level Editor for Airport Control 27 .acl flight schedules",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -12,6 +12,7 @@
     "test:fuzz": "node tests/e2e/fuzz-cli.mjs",
     "test:fuzz:ground": "node tests/e2e/fuzz-ground-cli.mjs",
     "test:all": "node tests/run-all.mjs",
+    "workshop:create": "node scripts/create-workshop-item.mjs",
     "build": "vite build",
     "build:win": "vite build && node build.js --win",
     "build:win:voice": "vite build && node build.js --win --voice",

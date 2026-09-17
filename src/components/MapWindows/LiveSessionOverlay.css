@@ -1,0 +1,40 @@
+/* ─── No live-session blur overlay ────────────────────────── */
+/* Sits above map content (max z-index 30) but below the help /
+   install modals (#map-help-overlay = 100, #livery-overlay = 20010). */
+.live-session-overlay {
+  position: fixed; inset: 0;
+  z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--overlay);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: liveSessionFadeIn 160ms ease-out;
+}
+
+@keyframes liveSessionFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.live-session-overlay-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 80vw;
+  padding: 18px 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-align: center;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+  user-select: none;
+}
+
+.live-session-overlay-icon {
+  color: var(--text-secondary);
+}

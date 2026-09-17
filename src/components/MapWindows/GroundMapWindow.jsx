@@ -10,6 +10,7 @@ import { useWitchAnimation } from '../../hooks/map/useWitchAnimation';
 import ControlSidebar from './ControlSidebar';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
+import LiveSessionOverlay from './LiveSessionOverlay';
 import { IoHelpCircleOutline } from 'react-icons/io5';
 import { RAD_TO_DEG, MAP_ICON_PATH, GROUND_MAP_DEFAULT_ZOOM, GROUND_MAP_CENTER_OFFSET, GROUND_RADAR_STAND_PROXIMITY, GROUND_MAP_TAXIWAY_LABEL_SPACING, GROUND_MAP_STAND_ACCESS_WIDTH_MULT } from '../../utils/constants';
 import { witchDirection, isParked, getSpriteViewBox, getSpriteCell, getSpriteSheet, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
@@ -81,7 +82,7 @@ export default function GroundMapWindow({ airportIcao }) {
   const [witchMode, setWitchMode] = useState(false);
   const labelTimerRef = useRef(null);
 
-  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, udpAirportChanged } = useUdpAircraftState();
+  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, udpConnected, udpAirportChanged } = useUdpAircraftState();
 
   // ── Sync selected aircraft across ground + air map windows ──
   useCrossWindowSelection(airportIcao, electronAPI, setSelectedCallSign);
@@ -584,6 +585,7 @@ export default function GroundMapWindow({ airportIcao }) {
           </ControlSidebar>
         </>
       )}
+      <LiveSessionOverlay visible={udpConnected === false && !helpOpen} />
       {helpOpen && <MapHelpOverlay type="ground" onClose={() => setHelpOpen(false)} />}
       {MAP_TOOLTIPS_ENABLED && TooltipPortal}
     </div>

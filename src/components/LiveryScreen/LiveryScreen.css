@@ -483,8 +483,7 @@
 .lp-options-tool {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-width: 84px;
+  gap: 4px;
   font-size: 12px;
   font-weight: 700;
   color: var(--text);
@@ -568,6 +567,8 @@
   cursor: pointer;
 }
 .lp-seg button + button { border-left: 1px solid var(--border); }
+/* Icon-only seg buttons (select modes, mask ops, hard/soft) stay compact. */
+.lp-seg button:has(> svg:only-child) { min-width: 26px; padding: 0 5px; }
 .lp-seg button:hover { color: var(--text); background: var(--bg-elevated); }
 .lp-seg button.lp-on { background: var(--accent); color: #fff; }
 
@@ -609,18 +610,110 @@
   flex: none;
 }
 .lp-rail-color:hover { border-color: var(--accent); }
-.lp-rail-color input[type="color"] {
-  position: absolute;
-  inset: -6px;
-  width: calc(100% + 12px);
-  height: calc(100% + 12px);
+
+/* RGBA colour well: a checkerboard behind the swatch so a translucent colour
+   reads as transparency; clicking it opens the custom RGBA picker popover. */
+.lp-rail-color-group { align-items: center; }
+.lp-rail-color {
   padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
+  background: repeating-conic-gradient(#2a2d38 0 25%, #23262f 0 50%) 0 0 / 12px 12px;
 }
-.lp-rail-color input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-.lp-rail-color input[type="color"]::-webkit-color-swatch { border: none; }
+.lp-rail-color-fill {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+/* ── Custom RGBA picker popover (portal) ── */
+.lp-color-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.lp-color-pop {
+  position: fixed;
+  z-index: 61;
+  width: 216px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.lp-color-sv {
+  position: relative;
+  width: 100%;
+  height: 120px;
+  border-radius: 4px;
+  cursor: crosshair;
+  touch-action: none;
+}
+.lp-color-sv-knob {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  border: 1px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.lp-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lp-color-rail {
+  flex: 1;
+  height: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  background: none;
+}
+.lp-color-rail::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.lp-color-hue {
+  background: linear-gradient(to right,
+    #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+.lp-color-alpha { background-color: #23262f; }
+.lp-color-alpha-val {
+  min-width: 4ch;
+  text-align: right;
+  font-size: 11px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.lp-color-preview {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  /* Checkerboard shows through the translucent fill on top. */
+  background: repeating-conic-gradient(#2a2d38 0 25%, #23262f 0 50%) 0 0 / 12px 12px;
+}
+.lp-color-preview > span {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
 
 .lp-workspace {
   flex: 1;

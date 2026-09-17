@@ -15,7 +15,7 @@ npm start # Launch Electron in dev mode (Vite dev server + Electron)
 
 ## Running Tests
 
-### Component tests (1479 tests, ~10s)
+### Component tests (1858 tests, 103 files, ~27s)
 
 ```bash
 npm test # Run all Vitest component + store + utility + electron + MapWindow + updater tests
@@ -238,6 +238,17 @@ git push -f origin v<version>
 ```
 
 The force-push re-triggers the CI workflow, which rebuilds both platforms and updates the GitHub Release with fresh artifacts. **The tag must be force-pushed** — simply pushing a new commit without moving the tag will NOT trigger a new release.
+
+### Bootstrap a Workshop item for a different app id
+
+The release flow only ever *updates* the existing item (app `4004140`, publishedfileid `3793213548`). A brand-new item in another app's Workshop (e.g. the full game, app `3328490`) is created by handing steamcmd a VDF that sets `appid` and **no** `publishedfileid`:
+
+```bash
+node scripts/create-workshop-item.mjs --appid 3328490 --content ./steam-workshop-content
+# or: npm run workshop:create -- --appid 3328490 --content ./steam-workshop-content
+```
+
+It is a dry run by default: it writes `workshop/create-item.<appid>.vdf` (appid set, no `publishedfileid`) and prints the exact steamcmd command. Add `--run` — with `STEAM_USERNAME` set and a cached steamcmd login (`steamcmd +login <user> +quit` once) — to create the item; steamcmd writes the new `publishedfileid` back into the VDF and the script prints it plus the item/managepreviews URLs. Visibility defaults to `2` (private) — switch to `0` once verified (`--visibility 0`). Other flags: `--preview`, `--title`, `--description-file`, `--changenote`, `--out`. After creation, commit the VDF and repoint `release.yml` + `scripts/update-workshop-i18n.mjs` at the new app id + publishedfileid. The additional-preview gallery still has no steamcmd/Web API path, so it stays a manual `managepreviews` step.
 
 ### Important notes
 

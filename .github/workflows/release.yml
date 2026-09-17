@@ -290,24 +290,28 @@ jobs:
           which steamcmd || which steamcmd.sh || (ls -lh "$HOME/steamcmd/" && echo "PATH=$PATH")
           steamcmd +quit 2>&1 | head -n 5 || "$HOME/steamcmd/steamcmd.sh" +quit 2>&1 | head -n 5 || true
 
-      - name: Generate Workshop VDF (content-only — title/description/preview handled separately)
+      - name: Generate Workshop VDF (content + primary preview — title/description handled separately)
         run: |
           WS_CONTENT="${{ github.workspace }}/steam-workshop-content"
           WS_CHANGELOG="Release ${{ steps.version.outputs.version }} — automated Workshop update via GitHub Actions."
           # NOTE: title/description intentionally OMITTED — set per-language via i18n step
-          # (ISteamUGC::SetItemUpdateLanguage). previewfile OMITTED — preserves existing
-          # Workshop thumbnail (per user request: don't touch images). Only content+changenote.
+          # (ISteamUGC::SetItemUpdateLanguage). previewfile IS set to the app icon so the
+          # Workshop list-view thumbnail is always the icon. This only touches the PRIMARY
+          # preview; the additional-preview gallery (the 7 README screenshots) has no
+          # steamcmd/Web API upload path and is managed by hand at
+          # https://steamcommunity.com/sharedfiles/managepreviews/?id=3793213548
           cat > "${{ github.workspace }}/.github/workflows/upload_mod.vdf" <<VDF
           "workshopitem"
           {
               "appid"           "4004140"
               "publishedfileid" "3793213548"
               "contentfolder"   "$WS_CONTENT"
+              "previewfile"     "${{ github.workspace }}/icon.png"
               "visibility"      "0"
               "changenote"      "$WS_CHANGELOG"
           }
           VDF
-          echo "--- Generated VDF (content-only, no image) ---"
+          echo "--- Generated VDF (content + primary preview) ---"
           cat "${{ github.workspace }}/.github/workflows/upload_mod.vdf"
           test -d "$WS_CONTENT" || (echo "::error::contentfolder not found: $WS_CONTENT" && exit 1)
           test -n "$(ls -A "$WS_CONTENT")" || (echo "::error::contentfolder empty" && exit 1)

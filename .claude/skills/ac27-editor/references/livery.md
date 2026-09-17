@@ -208,13 +208,53 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      `pickColorAt` (same as the Eyedropper, keeps the active tool); the full
      right-click (*press + release*, `onCanvasContextMenu`) then pins the
      **layer-order menu** on a hit object, or just dismisses the menu on
-     empty canvas.
+     empty canvas. Two tools consume the right-button *press* themselves:
+     the **Line tool in Curve mode** with a draft pops the last control point
+     (a lone point cancels the draft outright), and the **Text tool** with an
+     open box commits it exactly like Enter. Both swallow the matching
+     `contextmenu` release (`consumeRightRef`) so no order menu / colour pick
+     follows.
+     **The Line tool has Straight/Curve sub-modes** (`lineMode` state +
+     `lineModeRef`, default `straight`): Straight drags out a line (as
+     before); Curve appends a control point per click (`curveRef.pts`, hover
+     rubber-band from the second point on) and **Enter / double-click commits
+     a smooth `makeCurveObject` live object**, keeping the line tool in curve
+     mode so several curves can be drawn in a row. Escape cancels the draft;
+     a degenerate draft (<2 points) is discarded silently.
   - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none of their own
     — but Select **does** render the text options while a text object is
-    selected): brush/eraser size + (brush only) opacity + hard/soft; fill
-    tolerance; line/rect/ellipse width + fill toggle; text font (`FONT_OPTIONS`)
+    selected): brush/eraser size + (brush only) hard/soft; fill
+    tolerance; line/rect/ellipse width + fill toggle (Line also gets a
+    Straight/Curve `lp-seg` toggle, `livery_paint_line_mode`/`_straight`/
+    `_curve`); text font (`FONT_OPTIONS`)
     + size + bold/italic (bound to `shownText`, applying to the selected text
     object in Select mode). Colour lives on the rail (`lp-rail-color`).
+  - **RGBA colour picker** (`LiveryColorPicker.jsx`, portal popover anchored to
+    the rail swatch's client rect via `openColorPicker` — the rail scrolls and
+    would clip an in-flow popover). The native `<input type="color">` dialog is
+    opaque to the app and has no alpha channel, so the painter ships its own:
+    a saturation/value square (HSV, hue kept in local state so dragging down the
+    black edge doesn't reset the hue), a hue rail, an **alpha rail** (current
+    colour fading to transparent over a checkerboard) and a hex field
+    (`livery_paint_hue`/`_color_area`/`_hex`). The rail swatch is a button
+    (`data-color`/`data-alpha` + `aria-expanded`) that toggles the popover;
+    backdrop pointerdown, Escape and a second click all close it. Pure colour
+    math (`hexToRgb`/`rgbToHex`/`rgbToHsv`/`hsvToRgb`) lives in
+    `utils/liveryPaint.js`.
+    `brush.opacity` is the single alpha the whole painter reads — `brushRgba(brush)`
+    bakes it into the curve/shape previews, the flood fill colour and text
+    objects (`opacity` on the live object, applied by `paintLiveObject`).
+    **Brush strokes composite through a per-stroke layer** (`strokeLayerRef` +
+    pristine `strokeBaseRef`): `beginStroke` clears the layer and copies the
+    base, every dab is stroked into the layer **opaque**, and `flushStroke`
+    (per pointermove event + at stroke end/settle) restores the dirty rect
+    (`strokeBoundsRef`, grown by brush size + shadow spread) from the base copy
+    and re-draws the layer with `globalAlpha = brush.opacity`. Drawing dabs
+    straight onto the base with `globalAlpha` made consecutive round caps
+    overlap (alpha = 1−(1−a)ⁿ), so a translucent brush went nearly opaque on
+    any slow drag — the alpha appeared to do nothing. Per-rect flushes are
+    idempotent (the base copy is never modified), `putImageData` stays reserved
+    for fills/mask clips, and the eraser still paints the base directly.
   - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit. Mouse-wheel
     steps the ladder **anchored to the cursor**: the wheel handler records the
     content point under the pointer (`cx/cy` = `scrollLeft + viewport offset`,
@@ -283,13 +323,55 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      `Escape` (handled before deselect), `removeSticker`, or any tool/undo/
      redo shortcut (via settling). `Delete`/`Backspace` = `removeSticker()`
      (selected object, else the topmost — no selection required).
-   - **Gesture settling (keyboard parity):** a toolbar click can never land
-     mid-gesture (pointer capture forces release first) but a shortcut can, so
-     `settleGesture()` ends a stroke, commits a shape preview (`commitShape`),
-     ends an object drag, commits the text draft and dismisses the order menu
-     exactly as releasing the pointer would — and `activateTool` (rail buttons
-     + letter shortcuts) / `doUndo` / `doRedo` all call it first, so shortcuts
-     act on a stable canvas identically to clicking the matching button.
+    - **Gesture settling (keyboard parity):** a toolbar click can never land
+      mid-gesture (pointer capture forces release first) but a shortcut can, so
+      `settleGesture()` ends a stroke (clipped to the selection first),
+      commits a shape preview (`commitShape`), ends an object drag, commits
+      the text draft, commits an in-progress lasso (`commitLasso`) and
+      dismisses the order menu exactly as releasing the pointer would — and
+      `activateTool` (rail buttons + letter shortcuts) / `doUndo` / `doRedo`
+      all call it first, so shortcuts act on a stable canvas identically to
+      clicking the matching button.
+    - **Selection mask** (Select-tool sub-modes `selMode` state + `selModeRef`,
+      default `'object'`): the options bar gains an icon-only `lp-seg` mode row
+      (`FaArrowPointer`/`TbCircleDotted`/`BsMagic` with tooltips + aria-labels
+      `livery_paint_select_object`/`_pen`/`_wand` = 对象/选择画笔/魔棒,
+      `livery_paint_select_mode`) plus, outside object mode, an icon-only
+      combine row (`TbLayersUnion`/`TbLayersDifference`/`TbLayersSelected`,
+      `livery_paint_mask_combine`/`_erase`/`_replace` = 合并/擦除/替换,
+      `livery_paint_mask_mode`, default combine), a Tolerance slider reusing
+      `fillTol` in wand mode, and a Deselect button (`livery_paint_deselect`)
+      while a selection exists. The mask is a lazily-created 2048² canvas
+      (white-opaque = selected; `getMaskCtx`/`maskCanvasRef`) with a
+      dotted-line outline (`maskOutlineRef`: pen → closed path, wand → region
+      bounds = the latest region; live lasso draft from `lassoRef`), drawn
+      dashed (`setLineDash([10/z, 8/z])`, `#6aa0ff`) at the end of
+      `drawOverlay`. Pen: down/move/up collects `lassoRef.pts`, release closes
+      the path into the mask (`commitLasso` ignores <3 pts / <2px span, same
+      rule as curve commits); `Escape` cancels the draft. Wand: `applyWandAt`
+      floods the contiguous base region (`wandRegion` spans, fill tolerance)
+      via white `fillRect` runs on a scratch canvas composited with
+      `maskPaintOp(mode)` (`combine` = source-over, `erase` = destination-out,
+      `replace` = clear first); erasing to empty clears the mask
+      (`isMaskEmpty` → `clearMask`). Raster paints clip through
+      `constrainBaseToMask(before)` (stroke end incl. settle, fill via a
+      pre-fill copy, duplicate stamp via the just-pushed snapshot) using pure
+      `constrainImageToMask` (mask alpha < 128 reverts to `before`); live
+      objects clip presentationally (`paintObjectMasked`: scratch +
+      `destination-in` mask) in `drawOverlay` and `exportPNG` — the objects
+      stay whole, Deselect restores full-canvas painting. The mask is NOT in
+      undo snapshots, the save payload or dirty tracking; Clear drops it.
+      The visible dashed outline is re-traced from the already-unioned mask
+      pixels by `traceMaskBorder(img)` → edge segments, chained into
+      continuous loops by `chainBorderSegments(segs)`; each loop renders as
+      one subpath so the canvas dash runs along it and reads **dotted** (an
+      unchained dash restarts per 1px `moveTo`, rendering solid). The traced
+      border is preferred and the vector outline is only a
+      readback-unavailable fallback.
+      Pure core in `utils/liveryPaint.js` (`SELECT_MODES`, `MASK_OPS`,
+      `maskPaintOp`, `lassoBounds`, `wandRegion`, `constrainImageToMask`,
+      `isMaskEmpty`, `traceMaskBorder`, `chainBorderSegments`); help
+      `livery_help_d_select` documents modes/ops/clip.
   - Undo/redo via `createUndoStack`/`pushSnapshot` (cap `MAX_UNDO = 20`
     `{img, objects, selId}` snapshots — the base raster **and** the live-object
     layer, so undo also removes/re-instates objects). **Clear**
@@ -401,7 +483,12 @@ manifest for a free-form zip folder).
 - `tests/utils/livery.test.js` (short-code table, `LIVERY_FOLDER_SAFE_RE`
   accept/reject + free-form id sanitization, manifest), `tests/utils/airlines.test.js`
   (`airlineDisplayName` en/zh + unknown fallback, `AIRLINE_CODE_TO_NAMES`
-  dedup), `tests/utils/liveryPaint.test.js` (undo depth ≥20, flood fill),
+   dedup), `tests/utils/liveryPaint.test.js` (undo depth ≥20, flood fill,
+   hex/rgb/hsv colour conversions, selection-mask ops: `maskPaintOp`/
+   `lassoBounds`/`wandRegion`/`constrainImageToMask`/`isMaskEmpty` plus the
+   border tracing `traceMaskBorder` (lone-pixel perimeter, adjacent-pixel
+   interior suppression) and `chainBorderSegments` (closed-loop chaining,
+   one loop per disjoint region, open/empty inputs)),
   `tests/electron/livery-ipc.test.js` (temp-gameRoot list/create/delete/export/
   load, free-form folder accepted verbatim, unsafe folder rejected, traversal,
   IHDR, reference read-only, manifest-derived shortCode, `mod_info.json`
@@ -426,6 +513,14 @@ manifest for a free-form zip folder).
    right-click layer-order menu (`reorderObjects` pure moves + menu open/
    reorder/close/dismiss paths + disabled end states + right-press select +
    selection-less Delete + shortcut settling) and keyboard-parity gesture
-   settling (shortcut commits a mid-drag shape).
+   settling (shortcut commits a mid-drag shape) plus the selection mask
+   (Object/Pen/Wand modes + Combine default/Erase/Replace + wand tolerance,
+    lasso → mask + dotted outline + Deselect, tap/Escape cancel, wand region
+    spans, masked stroke triggers the `putImageData` clip vs never unmasked,
+    new keys resolve in zh+en).
+- `tests/components/LiveryScreen/LiveryColorPicker.test.jsx` (portal
+  anchoring, SV-square drag emits colour + keeps opacity, hue/alpha rails,
+  hex commit on blur/Enter + malformed-input rejection, window/Escape/
+  backdrop/right-click dismissal, hue retained across achromatic colours).
 - In-game acceptance (manual): create via UI → launch game → livery on model
   (validates the own-pack-dir assumption).

@@ -262,8 +262,13 @@ function stop() {
 
 // ─── Public API ───────────────────────────────────────────────────
 
+/** True while the listener socket is alive and a packet arrived <2s ago. */
+function isConnected() {
+  return socket !== null && (Date.now() - lastPacketTime) < 2000;
+}
+
 function getUdpStatus() {
-  const connected = socket !== null && (Date.now() - lastPacketTime) < 2000;
+  const connected = isConnected();
   return {
     connected,
     lastPacketTime,
@@ -295,7 +300,7 @@ function getUdpAircraftState() {
     }
     return { ...a, trail };
   });
-  return { aircraft, currentAirport, recordCount: aircraftMap.size, simTimeUnixMs: lastSimTimeUnixMs, simFlags: lastSimFlags, timeScale: lastTimeScale };
+  return { aircraft, currentAirport, recordCount: aircraftMap.size, simTimeUnixMs: lastSimTimeUnixMs, simFlags: lastSimFlags, timeScale: lastTimeScale, connected: isConnected() };
 }
 
 /**

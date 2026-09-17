@@ -9,6 +9,7 @@ import { useCrossWindowSelection, useCrossWindowEmergency } from '../../hooks/ma
 import { useWitchAnimation } from '../../hooks/map/useWitchAnimation';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
+import LiveSessionOverlay from './LiveSessionOverlay';
 import { IoHelpCircleOutline, IoRefreshOutline, IoFileTrayOutline, IoClose } from 'react-icons/io5';
 import { witchDirection, isParked, getSpriteSheet, getSpriteCell, getSpriteViewBox, SPRITE_CELL, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import FlightStripCommandBar from './FlightStripCommandBar';
@@ -270,7 +271,7 @@ export default function FlightStripsWindow({ airportIcao }) {
 
   const sp = new URLSearchParams(window.location.search);
   const rootPath = decodeURIComponent(sp.get('root') || '');
-  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, timeScale, udpAirportChanged } = useUdpAircraftState();
+  const { aircraft: udpAircraft, currentAirport: udpAirport, simTimeUnixMs, timeScale, udpConnected, udpAirportChanged } = useUdpAircraftState();
   const [helpOpen, setHelpOpen] = useState(false);
   const [flightData, setFlightData] = useState({});
   const [runwaySidMap, setRunwaySidMap] = useState({});
@@ -1131,6 +1132,9 @@ export default function FlightStripsWindow({ airportIcao }) {
           </div>
         </div>
       </div>
+      <LiveSessionOverlay
+        visible={udpConnected === false && !helpOpen && !dllInstallOpen && !dllNoticeOpen && !modPromptOpen}
+      />
       {helpOpen && <MapHelpOverlay type="strips" titleKey="map_help_strips_title" onClose={() => setHelpOpen(false)} commandCapable={commandCapable} />}
 
       {/* R2 download overlay while fetching AC27Approach.dll — on failure the

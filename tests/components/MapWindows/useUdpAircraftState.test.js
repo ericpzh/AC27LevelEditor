@@ -32,6 +32,7 @@ describe('useUdpAircraftState', () => {
       simTimeUnixMs: 0,
       simFlags: 0,
       timeScale: 0,
+      udpConnected: null,
       udpAirportChanged: false,
     });
   });
@@ -121,7 +122,29 @@ describe('useUdpAircraftState', () => {
       simTimeUnixMs: 0,
       simFlags: 0,
       timeScale: 0,
+      udpConnected: null,
       udpAirportChanged: false,
     });
+  });
+
+  it('exposes udpConnected from the pushed payload', () => {
+    const api = {
+      onUdpAircraftState: vi.fn(),
+      offUdpAircraftState: vi.fn(),
+    };
+    const { result } = renderHook(() => useUdpAircraftState(), {
+      wrapper: makeWrapper(api),
+    });
+    const handler = api.onUdpAircraftState.mock.calls[0][0];
+
+    act(() => { handler({ aircraft: [], connected: true }); });
+    expect(result.current.udpConnected).toBe(true);
+
+    act(() => { handler({ aircraft: [], connected: false }); });
+    expect(result.current.udpConnected).toBe(false);
+
+    // Payload without the field leaves it unknown (null), not disconnected.
+    act(() => { handler({ aircraft: [] }); });
+    expect(result.current.udpConnected).toBeNull();
   });
 });

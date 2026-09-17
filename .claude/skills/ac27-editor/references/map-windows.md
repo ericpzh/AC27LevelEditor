@@ -101,7 +101,7 @@ offCacheBuildProgress(cb) // unsubscribe (must be SAME function reference)
 - `_runwayData` — runway rectangles (threshold pairs + width) computed in `collect-values` IPC
 - `_standPositions` — stand midpoints from approach cache (via `electronAPI.collectValues()`)
 - `_areaData` — area polygons by AreaType (0=airport boundary, 1=stand/apron, 2=building) from approach cache
-- `useUdpAircraftState()` — live aircraft positions + `simTimeUnixMs` from UDP telemetry
+- `useUdpAircraftState()` — live aircraft positions + `simTimeUnixMs` + `udpConnected` from UDP telemetry
 - `GROUND_MAP_CENTER_OFFSET` — per-airport viewBox center offset (game units)
 
 **Rendering layers:**
@@ -129,7 +129,7 @@ offCacheBuildProgress(cb) // unsubscribe (must be SAME function reference)
 
 **Purpose:** SVG approach radar for tracking airborne aircraft and visualizing STAR/SID/APPR/missed-approach routes with range rings, runway extensions, and border overlay.
 
-**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan, airspace with gauge indicators), push-button toggles (STAR, SID, APPR, Labels, ILS, Map, Refresh), and a **help button** (`?` icon). All controls (except the help/witch button) have on-hover portal tooltips sourced from the map help page i18n content, gated by `MAP_TOOLTIPS_ENABLED`. The left `RunwaySidebar` (Waypoints above ARR, DEP, per-runway toggles) also has tooltips. Sim-time clock in top-left corner.
+**Layout:** Flex row with a `ControlSidebar` on the right containing spin knobs (zoom, E-W pan, S-N pan, airspace with gauge indicators), push-button toggles (STAR, SID, APPR, Labels, ILS, Refresh), and a **help button** (`?` icon). The old **Map** background-image toggle was removed — the approach radar no longer renders an airport background image (witch mode's `witch/{ICAO}.png` layer is unaffected). All controls (except the help/witch button) have on-hover portal tooltips sourced from the map help page i18n content, gated by `MAP_TOOLTIPS_ENABLED`. The left `RunwaySidebar` (Waypoints above ARR, DEP, per-runway toggles) also has tooltips. Sim-time clock in top-left corner.
 
 **Data sources:**
 - `_starPaths` (STAR routes, Type=0) — rendered in grey; trimmed at APPR overlap points
@@ -138,13 +138,12 @@ offCacheBuildProgress(cb) // unsubscribe (must be SAME function reference)
 - `_apprPaths` (RNAV approach routes, Type=1) — rendered in grey; points used to trim STAR display
 - `_runwayThresholds` from approach cache — for threshold lines and runway extensions
 - `_airwayNodes` from approach cache (`airwayNodes` in `buildApproachCache`: `{pk, name, osmId, x, z}` per `airway-node` PK entity) — fixes/waypoints layer. **Only ICAO-style fixes survive extraction**: the node's `Name` must match `FIX_NAME_RE` (`/^[A-Z]{3,5}$/` — all-uppercase 3-5 letters, the shared constant in `src/utils/constants/aviation.js`). Turn points (`TurnPoint19`, `TP19W1`), numbered nodes (`JN210`), and unnamed nodes are filtered out at the source — the cache never contains them. The SAME constant filters the patch composer's "Fly Waypoint" picker, so the picker only offers names the radar actually displays.
-- `useUdpAircraftState()` — live aircraft positions + `simTimeUnixMs`
-- `AIR_MAP_BG_OFFSETS` from `src/utils/constants.js` — per-airport background image config
+- `useUdpAircraftState()` — live aircraft positions + `simTimeUnixMs` + `udpConnected` (drives `LiveSessionOverlay`)
 - `AIR_MAP_DEFAULT_ZOOM` from `src/utils/constants.js` — per-airport initial zoom scale
 - `NM_TO_GU` from `src/utils/constants.js` — nautical mile to game-units conversion (18.52)
 
 **Rendering layers (bottom to top):**
-1. Background map image (toggleable): `/{ICAO}.png` positioned via `bgCfg`, opacity 20%. Background color via CSS custom property `--air-map-bg`. Witch mode (see below) uses `witch/{ICAO}.png` at full opacity with independent `WITCH_MAP_BG_OFFSETS` positioning.
+1. Witch-mode background image only: `witch/{ICAO}.png` at full opacity positioned via `WITCH_MAP_BG_OFFSETS`. Otherwise the background color comes from the CSS custom property `--air-map-bg` (black, or `#160900` in witch mode). The normal-mode `/{ICAO}.png` layer + its `Map` toggle, its `AIR_MAP_BG_OFFSETS` offsets and the `bgUnder` fill were removed.
 2. Range rings (airspace knob, 12 levels from 10–120 NM gap): centered on geometric mean of all runway thresholds, radius labels when route labels enabled.
 3. SID / STAR / APPR routes — each independently toggleable, grey (`#888888`) at 50% opacity. Additionally filtered by the active runway set from the left `RunwaySidebar`: only paths whose procedure-runway mapping includes at least one active runway are rendered. STAR paths are trimmed at APPR overlap points so each category shows its unique portion. **Display-level STAR/SID dedup (`src/utils/starDisplay.js`):** ZGSZ-style airports name each runway variant separately (e.g. `SAREX4.34L`/`.34R`/`.33`/`.16L` all the same STAR base). `dedupeStarPathsForDisplay` merges suffixed variants under the base route name for rendering + labels only — the representative (longest) path renders and all served runways are collected — then `filterDedupedStarPathsByRunway` filters merged groups (and preserved non-suffixed per-runway variants like `ABTU6W`) by the active runway set. Underlying per-runway cache keys (`starPaths`/`sidPaths`) stay intact for aircraft lookup / game save.
 4. Route name labels (toggleable + per-category): positioned with vertical spreading to avoid overlaps. STAR/APPR labels at path **start** (arrival entry points); SID labels at path **end** (departure fixes) to keep them clustered near the map edges rather than fanning out from the runway. **Clamped to the default window bounds:** after spreading, `renderRouteLabels` clamps each label into `dataBounds` with a margin of `max(fontSize * 1.2, ringDepthGu * 1.2)` — `ringDepthGu` converts the border overlay's degree-label ring (010–360, outer ~30px at the 800px baseline, `3.8 * 800/100` px) into game units via the main SVG display scale (`containerSize`/`dataBounds`), so far-out STAR entry points never push a label under the number ring at the screen edge. The `textAnchor` also flips `start`↔`end` when a clamped label's estimated width (`name.length * fontSize * 0.6`) would overrun the edge.
@@ -182,7 +181,7 @@ offCacheBuildProgress(cb) // unsubscribe (must be SAME function reference)
 **Layout:** Horizontal row of columns with a bottom bar: sim clock + game speed multiplier (×1/×2 from UDP `timeScale`), refresh (portal tooltip from map help i18n, gated by `MAP_TOOLTIPS_ENABLED`), help (no tooltip — doubles as witch-mode toggle). Runway separator bars have solid black (`#000`) background. i18n: strips use hardcoded English only (seat labels, headers, runway separators never translated); help overlay has full i18n.
 
 **Data sources:**
-- `useUdpAircraftState()` — live aircraft + `simTimeUnixMs` + `timeScale` + `udpAirportChanged` from UDP
+- `useUdpAircraftState()` — live aircraft + `simTimeUnixMs` + `timeScale` + `udpConnected` + `udpAirportChanged` from UDP
 - `electronAPI.getFlightStripData()` — registration/airport/airway/squawk from ACL files
 - `electronAPI.onAircraftSelectedInMap()` — cross-window selection sync (broadcast now includes strips)
 
@@ -414,11 +413,18 @@ A second `useEffect` (on `modPromptState`) opens the overlay only when the exact
 ### `useUdpAircraftState.js`
 
 - Subscribes to `electronAPI.onUdpAircraftState` on mount, unsubscribes on unmount
-- Returns `{ aircraft: Array, currentAirport: string|null, simTimeUnixMs: number, simFlags: number, timeScale: number, udpAirportChanged: boolean }` updated at ~200ms (5 Hz push interval)
+- Returns `{ aircraft: Array, currentAirport: string|null, simTimeUnixMs: number, simFlags: number, timeScale: number, udpConnected: boolean|null, udpAirportChanged: boolean }` updated at ~200ms (5 Hz push interval)
 - Each aircraft object includes `spriteIdx` (0–14) injected by the main process during the push interval — used by witch mode for cross-window consistent character assignment
 - `simFlags` bit field: bit 0=isPaused, bit 1=isStarted, bit 2=hasLevel; `timeScale` = game speed multiplier (0=unknown)
+- `udpConnected`: the listener's health from the pushed payload (`state.connected`, i.e. socket alive + a packet within 2 s). `null` until the first push, so windows treat only `false` as disconnected. Drives `LiveSessionOverlay`.
 - `udpAirportChanged`: true for exactly one render when the UDP airport code transitions from one valid code to a different one. Uses `useRef` to track `prevAirportRef` across renders. Map windows use this to auto-reset aircraft state + reload data when the user switches airports in-game.
 - Used by GroundMapWindow, AirMapWindow, and FlightStripsWindow (simTimeUnixMs drives the SimClock component)
+
+### `LiveSessionOverlay.jsx`
+
+- Full-window blur notice rendered by all three map windows while the UDP listener reports disconnected (`visible = udpConnected === false && !helpOpen …`, also suppressed while a DLL-install/mod-prompt modal is open in the strips window), with the `BsWindowX` icon and the `map_no_session` string (`Live game level session not detected.` / `未检测到进行中的关卡。`).
+- `visible` is the only prop; a local `dismissed` state is reset by an effect whenever `visible` goes truthy, so dismissing hides it until the next reconnect→disconnect transition. Clicking the notice box (`stopPropagation`) keeps it; clicking the backdrop dismisses it.
+- CSS `LiveSessionOverlay.css` — fixed inset, `z-index: 90` (above map content, below the help/install modals at 100+/`#livery-overlay` 20010), `backdrop-filter: blur(4px)`, fade-in animation.
 
 ### `hooks/map/useCrossWindowSelection.js`
 
@@ -486,7 +492,6 @@ setUdpStatus(connected, currentAirport) // Update UDP health state
 | `toolbar_surface_radar` | åœºé¢é›·è¾¾ | Surface Radar |
 | `toolbar_approach_radar` | è¿›è¿‘é›·è¾¾ | Approach Radar |
 | `toolbar_flight_strips` | è¿›ç¨‹å• | Flight Strips |
-| `air_map_bg` | Map | Map |
 | `air_map_waypoints` | Waypoints | Waypoints |
 | `air_map_airspace` | Airspace | Airspace |
 | `air_map_runway_ext` | ILS | ILS |
@@ -571,7 +576,7 @@ const tipBind = useCallback((text) => MAP_TOOLTIPS_ENABLED ? bind(text) : {}, [b
 ## New Constants
 
 - **`MAP_TOOLTIPS_ENABLED`** (`src/utils/constants.js`): Feature flag controlling on-hover portal tooltips on all radar/strip buttons. Default `false` (OFF). When `true`, tooltips appear on mouse hover for all toggle buttons, spin knobs, refresh buttons, and runway sidebar buttons. Tooltip text is extracted from map help i18n strings (the description portion after the `{{btn:...}}` token). The help/witch-mode toggle button is always excluded. Setting this to `false` disables all map-window tooltips with zero runtime overhead (the `tipBind()` wrapper returns `{}` and `TooltipPortal` renders `null`).
-- **`AIR_MAP_BG_OFFSETS`** (`src/utils/constants.js`): Per-airport config for approach radar background image (renamed from `STAR_BG_OFFSETS`). Fields: `dx`/`dy` (fine-tune position offset), `w` (image width in viewBox units when height=3000), `bg` (color outside map image), `bgUnder` (color behind semi-transparent image). Entries for ZSJN and KJFK. Witch mode uses separate `WITCH_MAP_BG_OFFSETS`.
+- **`AIR_MAP_BG_OFFSETS`** (in `src/utils/constants/map-config.js`): The old per-airport approach-radar background-image config (`dx`/`dy`/`w`/`bg`/`bgUnder`, `STAR_BG_OFFSETS` renamed). **No longer consumed** — the AirMapWindow background-image toggle was removed; the export remains for reference only. Witch mode still uses `WITCH_MAP_BG_OFFSETS`.
 - **`NM_TO_GU`** (`src/utils/constants.js`): Nautical mile to game-units conversion (18.52 = 1852m ÷ 100 m/unit). Used by AirMapWindow for runway extension lines, tick marks, and range rings.
 - **`AIR_MAP_DEFAULT_ZOOM`** / **`GROUND_MAP_DEFAULT_ZOOM`** (`src/utils/constants.js`): Per-airport default zoom scale. 1.0 = full dataBounds, <1 = tighter initial view. Entries for ZSJN (0.75 ground) and KJFK (1.0 both).
 - **`GROUND_RADAR_STAND_PROXIMITY`** (`src/utils/constants.js`): Max distance (0.5 GU ≈ 50m) from aircraft position to its assigned stand midpoint to consider it "parked at stand." Used by GroundMapWindow to hide inactive aircraft.

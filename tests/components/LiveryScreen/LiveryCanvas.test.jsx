@@ -2,14 +2,14 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LiveryCanvas, { reorderObjects } from '../../../src/components/LiveryScreen/LiveryCanvas';
+import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleFrame, flipOffset, flipLocal, worldFromLocal, localFromWorld, isTextEntry } from '../../../src/components/LiveryScreen/LiveryCanvas';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
 import { useAppStore } from '../../../src/store/appStore';
 import { mockIpcInvoke } from '../../setup';
 import { I18nProvider } from '../../../src/hooks/useTranslation';
-import { setLang } from '../../../src/utils/i18n';
+import { setLang, T } from '../../../src/utils/i18n';
 
 // ── Canvas stubs (jsdom has no 2d context) ───────────────────
 let ctxs = [];
@@ -19,6 +19,7 @@ function makeCtx() {
     save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(),
     fillRect: vi.fn(), clearRect: vi.fn(), drawImage: vi.fn(),
     beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
+    closePath: vi.fn(),
     fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(),
     strokeRect: vi.fn(), setLineDash: vi.fn(),
     fillText: vi.fn(), putImageData: vi.fn(), translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
@@ -85,8 +86,53 @@ function renderCanvas(props = {}) {
   );
 }
 
-function mainCanvas() {
-  return document.querySelector('.livery-canvas-wrap canvas');
+function mainCanvas() {  return document.querySelector('.livery-canvas-wrap canvas');
+}
+
+// Give every canvas context a synthetic readback for the OBJECT MEASUREMENT
+// reads (`getImageData` over a sub-texture box), which the eraser uses to decide
+// what is left of an object: alternate calls are the clean render (always fully
+// visible) and the holed render (whatever `paintHoled` fills in). Full-texture
+// reads (base / mask / undo) keep the default transparent stub.
+function stubEraseReadback(paintHoled) {
+  // Shared across contexts: the scratch canvas hands out a fresh stub context
+  // per getContext call, so the clean/holed alternation cannot live per-context.
+  let measureCalls = 0;
+  getCtxSpy.mockImplementation(() => {
+    const c = makeCtx();
+    const fallback = c.getImageData.getMockImplementation();
+    c.getImageData.mockImplementation((x, y, w, h) => {
+      if (w < 1024 && h < 1024) {
+        const clean = (measureCalls++ % 2) === 0;
+        const data = new Uint8ClampedArray(Math.max(4, w * h * 4));
+        if (clean) {
+          for (let i = 3; i < data.length; i += 4) data[i] = 255;
+        } else {
+          paintHoled(data, w, h);
+        }
+        return { data, width: w, height: h };
+      }
+      return fallback
+        ? fallback(x, y, w, h)
+        : { data: new Uint8ClampedArray(Math.max(4, w * h * 4)), width: w, height: h };
+    });
+    ctxs.push(c);
+    return c;
+  });
+}
+
+// The rail RGBA colour well (its hex + alpha live in data attributes).
+// Queried by role: the picker dialog itself also carries the "Color" label.
+function swatch() {
+  return screen.getByRole('button', { name: 'Color' });
+}
+
+// Open the custom RGBA picker from the swatch, drag the alpha rail, close it.
+async function setAlphaViaPicker(user, value) {
+  await user.click(swatch());
+  const alpha = screen.getByRole('slider', { name: /Opacity/ });
+  fireEvent.change(alpha, { target: { value } });
+  fireEvent.keyDown(window, { key: 'Escape' });
 }
 
 describe('LiveryCanvas tools', () => {
@@ -110,8 +156,11 @@ describe('LiveryCanvas tools', () => {
     fireEvent.pointerUp(cv, { pointerId: 1 });
     const main = ctxs[0];
     expect(main.getImageData).toHaveBeenCalled(); // undo snapshot
-    expect(main.stroke).toHaveBeenCalled();
-    expect(main.lineTo).toHaveBeenCalled();
+    // Dabs land on the per-stroke layer...
+    expect(ctxs.some(c => c.stroke.mock.calls.length > 0)).toBe(true);
+    expect(ctxs.some(c => c.lineTo.mock.calls.length > 0)).toBe(true);
+    // ...and the stroke is composited back onto the base (9-arg drawImage).
+    expect(main.drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
   });
 
   it('text commit creates a selectable live object, not rasterised', async () => {
@@ -461,7 +510,7 @@ describe('LiveryCanvas tools — paint operations', () => {
     await user.click(screen.getByRole('button', { name: 'Picker' }));
     fireEvent.pointerDown(mainCanvas(), { clientX: 10, clientY: 10, button: 0, pointerId: 1 });
     // Mock pixel is transparent black → #000000.
-    expect(screen.getByLabelText('Color').value).toBe('#000000');
+    expect(swatch().dataset.color).toBe('#000000');
     expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
   });
 
@@ -469,7 +518,7 @@ describe('LiveryCanvas tools — paint operations', () => {
     const user = userEvent.setup();
     renderCanvas();
     await user.click(screen.getByRole('button', { name: 'Select' }));
-    const color = () => screen.getByLabelText('Color').value;
+    const color = () => swatch().dataset.color;
     expect(color()).toBe('#ff0000');
     fireEvent.pointerDown(mainCanvas(), { clientX: 10, clientY: 10, button: 2, pointerId: 1 });
     // Mock pixel is transparent black → #000000, and Select stays active.
@@ -542,23 +591,57 @@ describe('LiveryCanvas tools — paint operations', () => {
     const width = screen.getByRole('slider', { name: /Width/ });
     fireEvent.change(width, { target: { value: '50' } });
     expect(document.querySelector('.lp-optionsbar').textContent).toContain('50');
-    const fillToggle = screen.getByRole('checkbox');
-    expect(fillToggle.checked).toBe(true);
-    fireEvent.click(fillToggle);
-    expect(fillToggle.checked).toBe(false);
+    // Icon-only fill toggle (scoped: the rail Fill tool shares the name).
+    const bar = within(document.querySelector('.lp-optionsbar'));
+    const fillToggle = bar.getByRole('button', { name: 'Fill' });
+    expect(fillToggle.getAttribute('aria-pressed')).toBe('true');
+    await user.click(fillToggle);
+    expect(fillToggle.getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('brush opacity slider and hard/soft toggle work', async () => {
+  it('brush hard/soft toggle sets a shadow blur on the next stroke', async () => {
     const user = userEvent.setup();
     renderCanvas();
-    const opacity = screen.getByRole('slider', { name: /Opacity/ });
-    fireEvent.change(opacity, { target: { value: '0.5' } });
-    expect(document.querySelector('.lp-optionsbar').textContent).toContain('50%');
+    expect(document.querySelector('.lp-optionsbar').textContent).not.toContain('%');
     // Soft edge sets a shadow blur on the next stroke.
     await user.click(screen.getByRole('button', { name: 'Soft' }));
     fireEvent.pointerDown(mainCanvas(), { clientX: 60, clientY: 60, button: 0, pointerId: 1 });
     fireEvent.pointerMove(mainCanvas(), { clientX: 80, clientY: 80, button: 0, pointerId: 1 });
-    expect(ctxs[0].shadowBlur).toBeGreaterThan(0);
+    // The blur lands on the stroke-layer context the dabs are painted into.
+    expect(ctxs.some(c => c.shadowBlur > 0)).toBe(true);
+  });
+
+  it('brush strokes paint opaque into the layer, then composite once with the picker alpha', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await setAlphaViaPicker(user, '0.5');
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 120, clientY: 120, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const main = ctxs[0];
+    // Dabs are opaque (#ff0000) so overlapping round caps cannot pile up...
+    expect(ctxs.some(c => c.strokeStyle === '#ff0000')).toBe(true);
+    // ...and the composite applies the 50% alpha exactly once per flush.
+    expect(main.globalAlpha).toBe(0.5);
+    expect(main.drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
+  });
+
+  it('text commits carry the picker alpha and export translucent', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await setAlphaViaPicker(user, '0.5');
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    const input = screen.getByPlaceholderText('Type text, Enter to commit…');
+    await user.type(input, 'hi');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    act(() => { ref.current.exportPNG(); });
+    const exportCtx = ctxs[ctxs.length - 1];
+    expect(exportCtx.fillText).toHaveBeenCalledWith('hi', 0, 0);
+    expect(exportCtx.globalAlpha).toBe(0.5);
   });
 
   it('text options expose font, size, bold and italic', async () => {
@@ -678,6 +761,99 @@ describe('shape objects (selectable, movable)', () => {
   });
 });
 
+describe('line curve mode', () => {
+  async function selectCurve(user) {
+    await user.click(screen.getByRole('button', { name: 'Line' }));
+    await user.click(screen.getByRole('button', { name: 'Curve' }));
+  }
+  const clickPoint = (cv, x, y) => {
+    fireEvent.pointerDown(cv, { clientX: x, clientY: y, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+  };
+
+  it('offers a Straight/Curve toggle only for the Line tool', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    expect(screen.queryByRole('button', { name: 'Curve' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Line' }));
+    expect(screen.getByRole('button', { name: 'Straight' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Curve' })).toBeInTheDocument();
+    // Straight is the default sub-mode.
+    expect(screen.getByRole('button', { name: 'Straight' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('commits clicked control points as a selectable curve object on Enter', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await selectCurve(user);
+    clickPoint(cv, 100, 100);
+    clickPoint(cv, 200, 200);
+    clickPoint(cv, 300, 120);
+    expect(ref.current.getObjectCount()).toBe(0); // still a draft
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(ref.current.getObjectCount()).toBe(1);
+    // The line tool stays in curve mode for the next curve.
+    expect(screen.getByRole('button', { name: 'Line' }).className).toContain('lp-active');
+    expect(screen.getByRole('button', { name: 'Curve' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('commits a curve on double-click too', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await selectCurve(user);
+    clickPoint(cv, 100, 100);
+    clickPoint(cv, 200, 200);
+    fireEvent.doubleClick(cv, { clientX: 250, clientY: 150 });
+    expect(ref.current.getObjectCount()).toBe(1);
+  });
+
+  it('Escape cancels the draft and a degenerate draft never commits', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await selectCurve(user);
+    clickPoint(cv, 100, 100);
+    clickPoint(cv, 200, 200);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(ref.current.getObjectCount()).toBe(0);
+    // A single control point is not enough to commit.
+    clickPoint(cv, 120, 120);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(ref.current.getObjectCount()).toBe(0);
+  });
+
+  it('right-click pops the last control point, then cancels a lone one', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await selectCurve(user);
+    clickPoint(cv, 100, 100);
+    clickPoint(cv, 200, 200);
+    // First right-press drops the second point; the draft still has one and
+    // Enter is a no-op.
+    fireEvent.pointerDown(cv, { clientX: 200, clientY: 200, button: 2, pointerId: 1 });
+    fireEvent.contextMenu(cv, { clientX: 200, clientY: 200, button: 2 });
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(ref.current.getObjectCount()).toBe(0);
+    // Second right-press cancels the lone point outright.
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 2, pointerId: 1 });
+    fireEvent.contextMenu(cv, { clientX: 100, clientY: 100, button: 2 });
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(ref.current.getObjectCount()).toBe(0);
+  });
+});
+
 describe('LiveryCanvas undo/redo + clear', () => {
   it('undo/redo buttons replay snapshots after a stroke', async () => {
     const user = userEvent.setup();
@@ -789,6 +965,19 @@ describe('LiveryCanvas undo/redo + clear', () => {
     const before = ctxs[0].putImageData.mock.calls.length;
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
     expect(ctxs[0].putImageData.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it('tool shortcuts still fire while the size slider has focus', () => {
+    renderCanvas();
+    fireEvent.keyDown(window, { key: 'e' });
+    expect(screen.getByRole('button', { name: 'Eraser' }).className).toContain('lp-active');
+    // The eraser size is a range input, so its focus is where it lands after a
+    // drag — every shortcut used to be swallowed there, including A→Select.
+    const slider = document.querySelector('.lp-optionsbar input[type="range"]');
+    expect(slider).toBeTruthy();
+    slider.focus();
+    fireEvent.keyDown(slider, { key: 'a', bubbles: true });
+    expect(screen.getByRole('button', { name: 'Select' }).className).toContain('lp-active');
   });
 });
 
@@ -916,6 +1105,91 @@ describe('paint save payload', () => {
     });
     const payload = mockIpcInvoke.mock.calls.find(c => c[0] === 'create-livery')[1];
     expect(payload.imageDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+  });
+});
+
+describe('custom RGBA colour picker', () => {
+  it('opens from the swatch with hue, alpha and hex controls', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    expect(screen.queryByRole('dialog', { name: 'Color' })).toBeNull();
+    await user.click(swatch());
+    const dialog = screen.getByRole('dialog', { name: 'Color' });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByRole('slider', { name: 'Hue' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('slider', { name: 'Opacity' })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Hex colour').value).toBe('#ff0000');
+    expect(swatch().getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('updates the swatch hex, alpha and the stroke from the popover', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(swatch());
+    const dialog = screen.getByRole('dialog', { name: 'Color' });
+    fireEvent.change(within(dialog).getByLabelText('Hex colour'), { target: { value: '#00ff00' } });
+    fireEvent.blur(within(dialog).getByLabelText('Hex colour'));
+    fireEvent.change(within(dialog).getByRole('slider', { name: 'Opacity' }), { target: { value: '0.5' } });
+    expect(swatch().dataset.color).toBe('#00ff00');
+    expect(within(dialog).getByText('50%')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Color' })).toBeNull();
+    // The next stroke uses the picked colour + alpha.
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 120, clientY: 120, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ctxs.some(c => c.strokeStyle === '#00ff00')).toBe(true);
+    expect(ctxs[0].globalAlpha).toBe(0.5);
+  });
+
+  it('dragging the saturation/value square picks a dimmed colour', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(swatch());
+    const dialog = screen.getByRole('dialog', { name: 'Color' });
+    const sv = within(dialog).getByRole('slider', { name: 'Colour area' });
+    // The jsdom rect is 512×512, so the centre is s=0.5, v=0.5 → half-red grey.
+    fireEvent.pointerDown(sv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(sv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(sv, { pointerId: 1 });
+    expect(swatch().dataset.color).toBe('#804040');
+  });
+
+  it('a saturation/value pick changes the hue-derived colour', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(swatch());
+    const dialog = screen.getByRole('dialog', { name: 'Color' });
+    // Hue rail at 240° → blue (the SV square keeps its own s/v).
+    fireEvent.change(within(dialog).getByRole('slider', { name: 'Hue' }), { target: { value: '240' } });
+    expect(swatch().dataset.color).toBe('#0000ff');
+  });
+
+  it('clicking the backdrop closes the picker without changing the colour', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(swatch());
+    fireEvent.pointerDown(document.querySelector('.lp-color-backdrop'), { button: 0 });
+    expect(screen.queryByRole('dialog', { name: 'Color' })).toBeNull();
+    expect(swatch().dataset.color).toBe('#ff0000');
+  });
+
+  it('toggling the swatch again closes the picker', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(swatch());
+    expect(screen.getByRole('dialog', { name: 'Color' })).toBeInTheDocument();
+    await user.click(swatch());
+    expect(screen.queryByRole('dialog', { name: 'Color' })).toBeNull();
+  });
+});
+
+describe('brushRgba (rail RGBA colour helper)', () => {
+  it('bakes the rail alpha into an rgba() style', () => {
+    expect(brushRgba({ color: '#ff0000', opacity: 1 })).toBe('rgba(255,0,0,1)');
+    expect(brushRgba({ color: '#00ff00', opacity: 0.5 })).toBe('rgba(0,255,0,0.5)');
+    expect(brushRgba({ color: '#0000ff' })).toBe('rgba(0,0,255,1)');
   });
 });
 
@@ -1059,7 +1333,7 @@ describe('layer-order menu (right-click)', () => {
     fireEvent.contextMenu(cv, { clientX: 10, clientY: 10, button: 2 });
     expect(screen.queryByRole('menu')).toBeNull();
     // Empty-canvas right-click still picks the pixel colour (transparent black).
-    expect(screen.getByLabelText('Color').value).toBe('#000000');
+    expect(swatch().dataset.color).toBe('#000000');
   });
 
   it('left-click dismisses an open menu', async () => {
@@ -1142,5 +1416,460 @@ describe('layer-order menu (right-click)', () => {
     fireEvent.keyDown(window, { key: 'b' });
     expect(ref.current.getObjectCount()).toBe(1);
     expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+  });
+});
+
+describe('selection mask', () => {
+  // Draw a pen lasso triangle (down + two moves + up) with Select active.
+  async function selectPen(user) {
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Selection Pen' }));
+  }
+  function lassoTriangle() {
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 150, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: 150, clientY: 200, button: 0, pointerId: 1 });
+  }
+  // The main canvas is mounted first, so its context leads ctxs; double-check
+  // via the opaque base fill no other canvas performs.
+  function mainCtx() {
+    const found = ctxs.find(c => c.fillRect.mock.calls.some(a => a[2] === 2048 && a[3] === 2048));
+    expect(found).toBeTruthy();
+    return found;
+  }
+
+  it('selection keys resolve in zh + en', () => {
+    const keys = [
+      'livery_paint_select_mode', 'livery_paint_select_object', 'livery_paint_select_pen',
+      'livery_paint_select_wand', 'livery_paint_mask_mode', 'livery_paint_mask_combine',
+      'livery_paint_mask_erase', 'livery_paint_mask_replace', 'livery_paint_deselect',
+      'livery_help_d_select',
+    ];
+    setLang('en');
+    for (const k of keys) expect(T(k)).not.toBe(k);
+    setLang('zh');
+    for (const k of keys) expect(T(k)).not.toBe(k);
+    setLang('en');
+  });
+
+  it('offers Object/Pen/Wand modes defaulting to Object + Combine', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    expect(screen.getByRole('button', { name: 'Object' }).getAttribute('aria-pressed')).toBe('true');
+    // No combine row in object mode.
+    expect(screen.queryByRole('button', { name: 'Combine' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Selection Pen' }));
+    expect(screen.getByRole('button', { name: 'Selection Pen' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Object' }).getAttribute('aria-pressed')).toBe('false');
+    // Combine row appears, defaulting to Combine.
+    expect(screen.getByRole('button', { name: 'Combine' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Erase' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Replace' }).getAttribute('aria-pressed')).toBe('false');
+    // Erase / Replace switch the op.
+    await user.click(screen.getByRole('button', { name: 'Erase' }));
+    expect(screen.getByRole('button', { name: 'Erase' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Combine' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('wand mode shows the tolerance slider', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
+    // The wand reuses the fill tolerance control (label carries the value).
+    const slider = screen.getByRole('slider', { name: /Tolerance/ });
+    expect(slider.value).toBe('32');
+    expect(slider.parentElement.textContent).toContain('Tolerance');
+  });
+
+  it('pen lasso creates a selection with a dotted outline + Deselect', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await selectPen(user);
+    // Deselect is always visible, disabled until a selection exists.
+    expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+    lassoTriangle();
+    // Region painted into the mask (closed path fill — closePath is only
+    // used by the selection overlay paths).
+    expect(ctxs.some(c => c.closePath.mock.calls.length > 0)).toBe(true);
+    // Dotted outline: a dashed (non-empty) setLineDash on the overlay (rAF).
+    await waitFor(() => expect(
+      ctxs.some(c => c.setLineDash.mock.calls.some(a => Array.isArray(a[0]) && a[0].length > 0))
+    ).toBe(true));
+    // Deselect appears once a selection exists.
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+  });
+
+  it('Deselect drops the selection', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await selectPen(user);
+    lassoTriangle();
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Deselect' }));
+    expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+  });
+
+  it('a tap lasso selects nothing', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await selectPen(user);
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    expect(ctxs.every(c => c.closePath.mock.calls.length === 0)).toBe(true);
+    expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+  });
+
+  it('Escape cancels an in-progress lasso', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await selectPen(user);
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.pointerUp(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    expect(ctxs.every(c => c.closePath.mock.calls.length === 0)).toBe(true);
+    expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+  });
+
+  it('wand click floods the connected base region into the mask', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    // 5x5 white base: the seed floods everything (5 one-pixel-high spans).
+    const white = new Uint8ClampedArray(5 * 5 * 4).fill(255);
+    mainCtx().getImageData.mockReturnValue({ data: white, width: 5, height: 5 });
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
+    // Near-origin click: texture (4,4) lands inside the 5x5 stub.
+    fireEvent.pointerDown(mainCanvas(), { clientX: 1, clientY: 1, button: 0, pointerId: 1 });
+    // Region runs painted (height-1 fillRects — the base fill is 2048 high).
+    expect(ctxs.some(c => c.fillRect.mock.calls.some(a => a[3] === 1))).toBe(true);
+    // Composited into the mask.
+    expect(ctxs.some(c => c.drawImage.mock.calls.length > 0)).toBe(true);
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeNull();
+  });
+
+  it('a brush stroke with an active selection is clipped (putImageData)', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await selectPen(user);
+    lassoTriangle();
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeNull();
+    const main = mainCtx();
+    const zeros = () => ({ data: new Uint8ClampedArray(2048 * 2048 * 4), width: 2048, height: 2048 });
+    const red = () => {
+      const d = new Uint8ClampedArray(2048 * 2048 * 4);
+      d[0] = 255; d[3] = 255; // painted pixel the empty (mock) mask rejects
+      return { data: d, width: 2048, height: 2048 };
+    };
+    // Snapshot (pre-stroke) then post-stroke pixels for the clip check.
+    main.getImageData.mockReturnValueOnce(zeros()).mockReturnValueOnce(red());
+    await user.click(screen.getByRole('button', { name: 'Brush' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
+    expect(main.putImageData.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it('a brush stroke without a selection never constrains', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    expect(screen.queryByRole('button', { name: 'Deselect' })).toBeNull();
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
+    // Strokes draw directly; putImageData only serves fill + mask clipping.
+    expect(ctxs.every(c => c.putImageData.mock.calls.length === 0)).toBe(true);
+  });
+});
+
+describe('eraser', () => {
+  // The main canvas context is the one that performed the opaque 2048 base fill.
+  function baseCtx() {
+    const found = ctxs.find(c => c.fillRect.mock.calls.some(a => a[2] === 2048 && a[3] === 2048));
+    expect(found).toBeTruthy();
+    return found;
+  }
+
+  it('restores the default background, never punches transparent holes', async () => {
+    const user = userEvent.setup();
+    renderCanvas({ defaultLiveryDataUrl: 'data:image/png;base64,BG' });
+    await waitFor(() => expect(mainCanvas()).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    const main = baseCtx();
+    const before = main.stroke.mock.calls.length;
+    fireEvent.pointerDown(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(main.stroke.mock.calls.length).toBeGreaterThan(before);
+    // Background restore (source-over pattern/white), never destination-out.
+    expect(main.globalCompositeOperation).not.toBe('destination-out');
+    expect(main.globalCompositeOperation).toBe('source-over');
+  });
+
+  it('erases a sticker but keeps it selectable and movable', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    // Erase across the sticker centre (texture 1024 = client 256 on the 512 stage).
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 276, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // The object survives with its frame/border: still counted + removable.
+    expect(ref.current.getObjectCount()).toBe(1);
+    expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false);
+    // The erased object moves as before (holes ride along, no node updates).
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.pointerDown(cv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(1);
+    act(() => { ref.current.exportPNG(); });
+    const exportCtx = ctxs[ctxs.length - 1];
+    expect(exportCtx.drawImage.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it('defers the erase — a long drag only previews and the base is written once on release', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    // The base context is the one that performed the opaque 2048 fill; the drag
+    // must never write through it (that per-frame restore was the drag cost).
+    const base = ctxs.find(c => c.fillRect.mock.calls.some(a => a[2] === 2048 && a[3] === 2048));
+    const baseStrokes = () => base.stroke.mock.calls.length;
+    const atDown = baseStrokes();
+    fireEvent.pointerDown(cv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    // ~40 moves of +2 client px (8 texture px) each, letting each frame land.
+    for (let i = 1; i <= 40; i++) {
+      fireEvent.pointerMove(cv, { clientX: 256 + i * 2, clientY: 256, button: 0, pointerId: 1 });
+      await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    }
+    // Mid-drag: nothing on the base yet — the trail is only a dark preview.
+    expect(baseStrokes()).toBe(atDown);
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // Release commits the whole trail as ONE base stroke, not one per frame.
+    expect(baseStrokes()).toBe(atDown + 1);
+  });
+
+  it('blits an erased object 1:1 — the scratch is never rescaled into the frame', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 276, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // The per-object scratch is a canvas sized in 256px steps, so its width and
+    // height are normally LARGER than the object frame (sw/sh). A 5-arg blit
+    // would map the whole scratch into the frame: the shape shrinks, shifts and
+    // re-filters a multi-megapixel canvas every overlay frame. Only images (the
+    // sticker payload, the base template) may be drawn scaled, never a canvas.
+    const scaledCanvasBlits = ctxs
+      .flatMap(c => c.drawImage.mock.calls)
+      .filter(a => a.length === 5 && a[0] && a[0].tagName === 'CANVAS');
+    expect(scaledCanvasBlits).toHaveLength(0);
+  });
+
+  it('deletes a movable object the eraser consumed entirely', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    // The object renders TWICE per release (clean, then with holes). Report the
+    // clean render as fully visible and the holed one as fully transparent —
+    // i.e. the eraser wiped it out.
+    stubEraseReadback(() => {});
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 250, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 262, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // Gone, not left as an invisible-but-selectable frame.
+    expect(ref.current.getObjectCount()).toBe(0);
+    expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(true);
+  });
+
+  it('re-frames a part-erased object to what is left, and scales it on resize', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    // Clean render fully visible; holed render keeps only the bottom-right
+    // quadrant of the 100x50 sticker (local 0,0 -> 50,25).
+    stubEraseReadback((data, w, h) => {
+      const pad = 8;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const inside = x >= pad + 50 && x < pad + 100 && y >= pad + 25 && y < pad + 50;
+          if (inside) data[(y * w + x) * 4 + 3] = 255;
+        }
+      }
+    });
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 250, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 262, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // The object survives, but its Select boundary is the remainder.
+    expect(ref.current.getObjectCount()).toBe(1);
+    const afterErase = ref.current.getObjectInfo();
+    expect(afterErase.frame.x0).toBeCloseTo(0, 0);
+    expect(afterErase.frame.y0).toBeCloseTo(0, 0);
+    expect(afterErase.frame.x1).toBeCloseTo(50, 0);
+    expect(afterErase.frame.y1).toBeCloseTo(25, 0);
+    // Resize by grabbing the boundary's bottom-right handle (local 50,25 ->
+    // client 268.5,262.25) and dragging to double the distance from the object
+    // centre, i.e. local 100,50 -> client 281,268.5.
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    const holes = afterErase.erase[0].pts.map(q => ({ x: q.x, y: q.y }));
+    fireEvent.pointerDown(cv, { clientX: 268.5, clientY: 262.25, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 281, clientY: 268.5, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const resized = ref.current.getObjectInfo();
+    expect(resized.w).toBeCloseTo(200, 0);
+    expect(resized.h).toBeCloseTo(100, 0);
+    // Boundary and holes scaled with the frame, so the remaining quadrant still
+    // looks like the same quadrant (a half circle would stay a half circle).
+    expect(resized.frame.x1 - resized.frame.x0).toBeCloseTo(100, 0);
+    expect(resized.frame.y1 - resized.frame.y0).toBeCloseTo(50, 0);
+    expect(resized.erase[0].pts.map(q => ({ x: q.x, y: q.y }))).toEqual(holes.map(q => ({ x: q.x * 2, y: q.y * 2 })));
+  });
+
+  it('keeps a part-erased boundary when flipping', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    stubEraseReadback((data, w, h) => {
+      const pad = 8;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const inside = x >= pad + 50 && x < pad + 100 && y >= pad + 25 && y < pad + 50;
+          if (inside) data[(y * w + x) * 4 + 3] = 255;
+        }
+      }
+    });
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 250, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 262, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const before = ref.current.getObjectInfo();
+    await user.click(screen.getByRole('button', { name: 'Flip Horizontal' }));
+    const after = ref.current.getObjectInfo();
+    expect(after.flipX).toBe(true);
+    // The boundary centre is the pivot, so the box and the object stay put.
+    expect(after.frame).toEqual(before.frame);
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+    expect(ref.current.getObjectCount()).toBe(1);
+  });
+});
+
+describe('part-erase boundary helpers', () => {
+  it('frameOf falls back to the geometry box and prefers an explicit frame', () => {
+    expect(frameOf({ w: 100, h: 50 })).toEqual({ x0: -50, y0: -25, x1: 50, y1: 25 });
+    const frame = { x0: -50, y0: 0, x1: 0, y1: 25 };
+    expect(frameOf({ w: 100, h: 50, frame })).toBe(frame);
+  });
+
+  it('scales holes and the boundary together so a part shape keeps its shape', () => {
+    expect(scaleErase(2, [{ size: 10, pts: [{ x: 3, y: -4 }] }]))
+      .toEqual([{ size: 20, pts: [{ x: 6, y: -8 }] }]);
+    expect(scaleFrame(0.5, { x0: -10, y0: -6, x1: 10, y1: 6 }))
+      .toEqual({ x0: -5, y0: -3, x1: 5, y1: 3 });
+    expect(scaleErase(2, undefined)).toBeUndefined();
+    expect(scaleFrame(2, null)).toBeUndefined();
+  });
+
+  it('flips a part-erased object about its boundary centre, not the origin', () => {    // Remainder occupies local x 0..50, y 0..25 (boundary centre 25, 12.5).
+    const part = { x: 0, y: 0, rot: 0, w: 100, h: 50, flipX: true, frame: { x0: 0, y0: 0, x1: 50, y1: 25 } };
+    // Mirror axis is x = 25, so the remainder mirrors IN PLACE: the boundary
+    // maps onto itself instead of jumping to -50..0.
+    expect(flipOffset(part)).toEqual({ x: 50, y: 0 });
+    expect(worldFromLocal(part, { x: 0, y: 0 })).toEqual({ x: 50, y: 0 });
+    expect(worldFromLocal(part, { x: 50, y: 25 })).toEqual({ x: 0, y: 25 });
+    // The handles stay grabbable where they are drawn (unflipped box corner).
+    expect(flipLocal(part, { x: 50, y: 25 })).toEqual({ x: 0, y: 25 });
+    // World ⇄ local still round-trips through the pivot.
+    const q = { x: 12, y: -7 };
+    const back = localFromWorld(part, worldFromLocal(part, q));
+    expect(back.x).toBeCloseTo(q.x, 6);
+    expect(back.y).toBeCloseTo(q.y, 6);
+    // A whole object is centred on the origin, so nothing changes for it.
+    expect(flipOffset({ x: 0, y: 0, w: 100, h: 50, flipX: true, flipY: true })).toEqual({ x: 0, y: 0 });
+    expect(flipLocal({ x: 0, y: 0, w: 100, h: 50, flipX: true }, { x: 10, y: 20 })).toEqual({ x: -10, y: 20 });
+  });
+});
+
+describe('keyboard target filtering', () => {
+  it('treats only real text fields as text entry', () => {
+    expect(isTextEntry({ tagName: 'INPUT', type: 'range' })).toBe(false);
+    expect(isTextEntry({ tagName: 'INPUT', type: 'checkbox' })).toBe(false);
+    expect(isTextEntry({ tagName: 'INPUT' })).toBe(true);
+    expect(isTextEntry({ tagName: 'INPUT', type: 'text' })).toBe(true);
+    expect(isTextEntry({ tagName: 'TEXTAREA' })).toBe(true);
+    expect(isTextEntry({ tagName: 'SELECT' })).toBe(true);
+    expect(isTextEntry({ tagName: 'BUTTON' })).toBe(false);
+    expect(isTextEntry({ tagName: 'DIV', isContentEditable: true })).toBe(true);
+    expect(isTextEntry(null)).toBe(false);
   });
 });

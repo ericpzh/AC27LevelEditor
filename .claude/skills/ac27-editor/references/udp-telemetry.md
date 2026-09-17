@@ -12,7 +12,7 @@
 
 ## Architecture
 
-`electron/udp_listener.js` (271 lines) is the UDP telemetry engine that bridges the running game's live aircraft data into the Level Editor.
+`electron/udp_listener.js` (291 lines) is the UDP telemetry engine that bridges the running game's live aircraft data into the Level Editor.
 
 ```
 ┌──────────────────────┐ 10 Hz UDP port 20266 ┌──────────────────────┐
@@ -106,6 +106,7 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 - `setInterval` at 200ms reads `getUdpAircraftState()` and sends `udp-aircraft-state` IPC event to all open map windows (`groundMapWindows` + `airMapWindows` + `flightStripsWindows`)
 - On `will-quit`, `stopUdpListener()` cleans up: closes socket, clears all intervals/timeouts, resets `aircraftMap`, `trailSnapshots`, etc.
 - Auto-reconnect on socket errors with 2-second delay and logging
+- **No-session overlay:** `useUdpAircraftState` surfaces `udpConnected` (`null` until the first push, otherwise the pushed boolean). The Ground / Air / Flight Strips windows render `LiveSessionOverlay` (`src/components/MapWindows/LiveSessionOverlay.jsx`) when `udpConnected === false`, blurring the map with "Live game level session not detected." / 未检测到进行中的关卡。 It is suppressed while a help / DLL-install / mod-prompt / installer modal is open, and clicking the backdrop dismisses it until the next reconnect→disconnect transition (the effect re-arms on each fresh disconnect).
 
 **Sprite index augmentation:** Before pushing, each aircraft is augmented with a centralized `spriteIdx` (0–14) from `witchSpriteMap` (Map<callSign, index>). New callsigns get the next round-robin index (`witchSpriteNext % 15`). This guarantees all map windows (ground, air, flight strips) show the same witch-mode character for the same callsign. The `spriteIdx` field is merged into each aircraft object via `Object.assign({}, ac, { spriteIdx })` — the original state is not mutated.
 
@@ -122,13 +123,13 @@ The listener also sends fire-and-forget UDP commands to the game on `127.0.0.1:2
 | `start()` | void | Bind socket, begin parsing packets |
 | `stop()` | void | Close socket, clear intervals, reset state |
 | `getUdpStatus()` | `{ connected, lastPacketTime, currentAirport, lastAirport, simFlags, heartbeatSeq }` | Current health status + v2 header fields; `lastAirport` tracks previous packet's ICAO for transition detection |
-| `getUdpAircraftState()` | `{ aircraft: [], currentAirport, recordCount, simTimeUnixMs, simFlags, timeScale }` | Latest aircraft positions + trails + sim time + v2 header flags |
+| `getUdpAircraftState()` | `{ aircraft: [], currentAirport, recordCount, simTimeUnixMs, simFlags, timeScale, connected }` | Latest aircraft positions + trails + sim time + v2 header flags + the listener health (`connected` = socket alive AND a packet arrived <2 s ago, same predicate as `getUdpStatus().connected`, shared via the private `isConnected()` helper). The map windows read this so the no-session overlay can react without a second IPC round-trip |
 | `resetAircraftState()` | void | Clear all aircraft state (`aircraftMap` + `trailSnapshots` + `lastHasLevel`) — used by map window refresh button |
 | `sendCommand(cmdId, payloadBuf)` | `Promise<{ success, error? }>` | Fire-and-forget command to game |
 
 ## IPC Exposure
 
 - `get-udp-status` handler → `getUdpStatus()` — now also returns `simFlags` and `heartbeatSeq` from v2 header
-- `get-udp-aircraft-state` handler → `getUdpAircraftState()` — now also returns `simFlags` and `timeScale`; auto-clears aircraft if >5s since last packet
+- `get-udp-aircraft-state` handler → `getUdpAircraftState()` — now also returns `simFlags`, `timeScale` and `connected`; auto-clears aircraft if >5s since last packet
 - `reset-udp-aircraft` handler → `resetAircraftState()` — clears stale aircraft after game level restart; also resets `lastHasLevel` so next `hasLevel` 0→1 transition triggers again
 - `send-udp-command` handler → base64-decodes `payloadB64` → `sendCommand(commandId, buf)`

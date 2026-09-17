@@ -230,32 +230,6 @@ describe('AirMapWindow', () => {
     expect(selectSpy).toHaveBeenCalledWith('ZSJN', 'CES1234');
   });
 
-  // ── Background image toggle ─────────────────────────────────
-
-  it('shows background image when toggle is on', async () => {
-    setupDefaultMocks();
-    const { container } = renderAirMap();
-
-    await waitFor(() => {
-      expect(container.querySelector('.air-map-svg')).toBeTruthy();
-    });
-
-    // Initially no background image
-    let images = container.querySelectorAll('.air-map-svg image');
-    expect(images.length).toBe(0);
-
-    // Find and click the bg toggle (last toggle button before refresh)
-    const toggles = container.querySelectorAll('.air-map-toggle');
-    const bgToggle = toggles[5]; // 6th toggle: STAR, SID, APPR, labels, runway ext, bg, refresh
-    fireEvent.click(bgToggle);
-
-    // After click, background image should appear
-    await waitFor(() => {
-      images = container.querySelectorAll('.air-map-svg image');
-      expect(images.length).toBe(1);
-    });
-  });
-
   // ── Toggle buttons ──────────────────────────────────────────
 
   it('renders STAR toggle active by default', async () => {
@@ -559,5 +533,66 @@ describe('AirMapWindow', () => {
       // Fixes render regardless of the active-runway filter
       expect(container.querySelectorAll('.air-map-fix').length).toBe(2);
     });
+  });
+
+  // ── No live session overlay ─────────────────────────────────
+
+  it('shows the no-session blur overlay when UDP is disconnected', async () => {
+    setupDefaultMocks();
+    useUdpAircraftState.mockReturnValue({
+      aircraft: [],
+      currentAirport: null,
+      simTimeUnixMs: 0,
+      udpConnected: false,
+    });
+
+    const { container } = renderAirMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.live-session-overlay')).toBeTruthy();
+    });
+    expect(container.querySelector('.live-session-overlay-text').textContent)
+      .toBe('Live game level session not detected.');
+  });
+
+  it('hides the no-session overlay while a session is active', async () => {
+    setupDefaultMocks();
+    useUdpAircraftState.mockReturnValue({
+      aircraft: [],
+      currentAirport: 'ZSJN',
+      simTimeUnixMs: 1718400000000,
+      udpConnected: true,
+    });
+
+    const { container } = renderAirMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.air-map-svg')).toBeTruthy();
+    });
+    expect(container.querySelector('.live-session-overlay')).toBeNull();
+  });
+
+  it('dismisses the no-session overlay when clicking outside the notice', async () => {
+    setupDefaultMocks();
+    useUdpAircraftState.mockReturnValue({
+      aircraft: [],
+      currentAirport: null,
+      simTimeUnixMs: 0,
+      udpConnected: false,
+    });
+
+    const { container } = renderAirMap();
+
+    await waitFor(() => {
+      expect(container.querySelector('.live-session-overlay')).toBeTruthy();
+    });
+
+    // Clicking inside the notice keeps it visible.
+    fireEvent.click(container.querySelector('.live-session-overlay-text'));
+    expect(container.querySelector('.live-session-overlay')).toBeTruthy();
+
+    // Clicking the backdrop dismisses it.
+    fireEvent.click(container.querySelector('.live-session-overlay'));
+    expect(container.querySelector('.live-session-overlay')).toBeNull();
   });
 });
