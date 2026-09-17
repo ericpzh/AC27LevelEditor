@@ -529,3 +529,48 @@ describe('readAircraftTemplate', () => {
   });
 });
 
+describe('listAircraftTypes', () => {
+  it('returns NO_GAME_ROOT without gameRoot', () => {
+    expect(livery.listAircraftTypes(null)).toEqual({ success: false, error: 'NO_GAME_ROOT' });
+  });
+
+  it('returns an empty list when the built-in dir is missing', () => {
+    expect(livery.listAircraftTypes(gameRoot)).toEqual({ success: true, types: [] });
+  });
+
+  it('collects every built-in default livery folder with its short code', () => {
+    writeTemplate('BOMBARDIER CRJ700');
+    writeTemplate('AIRBUS A-320neo');
+    // A directory without a manifest is not an aircraft type.
+    fs.mkdirSync(path.join(gameRoot, TEMPLATE_DIR, 'NOT A PLANE'), { recursive: true });
+    // A stray file is skipped too.
+    fs.writeFileSync(path.join(gameRoot, TEMPLATE_DIR, 'mod_info.json'), '{}');
+
+    const res = livery.listAircraftTypes(gameRoot);
+    expect(res.success).toBe(true);
+    expect(res.types).toEqual([
+      { planeId: 'AIRBUS A-320neo', shortCode: 'A20N' },
+      { planeId: 'BOMBARDIER CRJ700', shortCode: 'CRJ7' },
+    ]);
+  });
+
+  it('createLivery accepts a scanned type and derives its short code', () => {
+    writeTemplate('CESSNA CITATION X');
+    const created = livery.createLivery(gameRoot, {
+      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'CESSNA CITATION X', folder: 'C750_CCA',
+    });
+    expect(created).toEqual({ success: true, folder: 'C750_CCA' });
+    const manifest = JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'C750_CCA', 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(manifest.name).toBe('C750 CCA Default Livery');
+    expect(manifest.targetPlaneId).toBe('CESSNA CITATION X');
+  });
+
+  it('still rejects a type with neither a table entry nor a built-in folder', () => {
+    expect(livery.readAircraftTemplate(gameRoot, 'NOPE').error).toBe('BAD_PLANE');
+    expect(livery.createLivery(gameRoot, {
+      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'NOPE', folder: 'NOPE_CCA',
+    }).error).toBe('BAD_PLANE');
+  });
+});
+

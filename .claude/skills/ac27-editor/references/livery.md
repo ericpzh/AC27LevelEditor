@@ -40,18 +40,34 @@ documents only its own buttons.
   to `_` (so a conventional `A20N_CCA` still yields `a20n_cca_default`, and a
   free-form `My First Livery 01` yields `my_first_livery_01_default`).
 
-## Short-code table (hardcoded, 14 rows — no scan, no cache)
+## Short-code table (hardcoded, 20 rows — no scan, no cache)
 
 `SHORT_CODE_TO_PLANE_ID` (+ reverse `PLANE_ID_TO_SHORT_CODE`): `A19N→AIRBUS A-319neo`, `A20N→AIRBUS A-320neo`,
 `A21N→AIRBUS A-321neo`, `A319→AIRBUS A-319ceo`, `A320→AIRBUS A-320ceo`,
 `A333→AIRBUS A-330-300`, `A359→AIRBUS A-350-900`, `A388→AIRBUS A-380-800`,
 `B38M→BOEING 737 MAX 8`, `B738→BOEING 737-800`, `B748→BOEING 747-8I`,
-`B77W→BOEING 777-300ER`, `B789→BOEING 787-9`, `C919→COMAC C-919`.
+`B77W→BOEING 777-300ER`, `B789→BOEING 787-9`, `CRJ7→BOMBARDIER CRJ700`,
+`CRJ9→BOMBARDIER CRJ900`, `C750→CESSNA CITATION X`, `C919→COMAC C-919`,
+`E170→EMBRAER E-JET 170`, `E190→EMBRAER E-JET 190`, `GLF6→GULFSTREAM 650`.
 The short code is **only a display/default-name convenience derived from
 `targetPlaneId`** — never parsed from a folder name. `TEXTURE_SIZE = 2048`;
 `folderFor(planeId, airline)` maps the plane id back to its short code and
 builds the conventional `{SHORT}_{AIRLINE}` default shown as the Save As
 prefill (unknown plane ids fall back to the raw id).
+
+## Aircraft-type dropdown (scanned, not the table)
+
+The painter's aircraft `<select>` is compiled from the game's **built-in
+default liveries** — `list-aircraft-types` → `livery.listAircraftTypes(gameRoot)`
+scans `<gameRoot>/GroundATC_Data/StreamingAssets/BuiltInAircraftLivery/AircraftDefaultLivery/`
+and returns `{ types: [{ planeId, shortCode }] }` for every subdirectory that
+carries an `aircraft_livery_manifest.json` (the folder name IS the game's plane
+id; `shortCode` comes from the table, `''` for an unknown type). A type is
+accepted by `createLivery`/`readAircraftTemplate` when it is in the table **or**
+has a built-in folder, so game updates that add aircraft show up without an
+editor change; the hardcoded table keys are the renderer fallback when the scan
+is unavailable, and an unknown-but-installed type falls back to an
+alphanumeric code derived from its plane id for the manifest name.
 
 Folder names are free-form, filesystem-safe only (`LIVERY_FOLDER_SAFE_RE` —
 no `\ / : * ? " < > |`, no leading/trailing dot/space, max 64 chars), used
@@ -426,6 +442,8 @@ never abort; also creates the own pack dir + repairs `mod_info.json`);
 `read-livery-image(folder, pack)` → PNG data-URL;
 `get-aircraft-template(planeId)` → the built-in default BaseMap as a PNG
 data-URL (`readAircraftTemplate`, see "Aircraft template" above);
+`list-aircraft-types()` → the aircraft-type dropdown source (see
+"Aircraft-type dropdown" above);
 `create-livery({imageDataUrl, airline, targetPlaneId, folder})` → validates
 (airline `/^[A-Z]{3}$/`, plane id resolves through `PLANE_ID_TO_SHORT_CODE`,
 PNG data-URL, IHDR = 2048², folder matches `LIVERY_FOLDER_SAFE_RE` +
@@ -448,7 +466,7 @@ derived from `manifest.targetPlaneId` (temp cleaned). Errors: `NO_GAME_ROOT` /
 containment via `path.relative`. ZIP via `src/utils/zipUtils.js` (no new deps);
 image normalize in renderer canvas (`src/utils/liveryImage.js`, zero new deps);
 DDS decode + PNG encode in `electron/dds.js` (zero new deps).
-Preload exposes `exportLiveryToDir(folder)`/`getAircraftTemplate(planeId)`
+Preload exposes `exportLiveryToDir(folder)`/`getAircraftTemplate(planeId)`/`listAircraftTypes()`
 alongside the others; `tests/setup.js` stubs them.
 
 ## Image rules (locked)

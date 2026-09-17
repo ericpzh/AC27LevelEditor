@@ -128,6 +128,34 @@ describe('CreateTab painter validation', () => {
     expect(codes.some(t => t.includes('CES'))).toBe(true);
   });
 
+  it('compiles the aircraft list from the scanned built-in liveries', async () => {
+    setupMocks({
+      'list-aircraft-types': Promise.resolve({
+        success: true,
+        types: [
+          { planeId: 'BOMBARDIER CRJ700', shortCode: 'CRJ7' },
+          { planeId: 'AIRBUS A-320neo', shortCode: 'A20N' },
+        ],
+      }),
+    });
+    const user = userEvent.setup();
+    renderCreate();
+
+    const select = document.querySelector('.lp-root select');
+    await waitFor(() => expect([...select.options].some(o => o.value === 'BOMBARDIER CRJ700')).toBe(true));
+    // The current value is kept even when the scan does not include it.
+    expect([...select.options].some(o => o.value === 'AIRBUS A-319neo')).toBe(true);
+
+    await user.selectOptions(select, 'BOMBARDIER CRJ700');
+    expect(select.value).toBe('BOMBARDIER CRJ700');
+    // A scanned type that is not in the table is still form-valid; the Save As
+    // prefill uses the table short code for it.
+    await waitFor(() => expect(saveAsBtn().disabled).toBe(false));
+    await user.click(saveAsBtn());
+    const input = await screen.findByLabelText('Folder name');
+    expect(input.value).toBe(`CRJ7_${DEFAULT_AIRLINE}`);
+  });
+
   it('rejects short airline codes', async () => {
     setupMocks();
     const user = userEvent.setup();

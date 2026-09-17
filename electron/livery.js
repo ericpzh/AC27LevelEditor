@@ -33,7 +33,9 @@ const SHORT_CODE_TO_PLANE_ID = {
   A319: 'AIRBUS A-319ceo', A320: 'AIRBUS A-320ceo', A333: 'AIRBUS A-330-300',
   A359: 'AIRBUS A-350-900', A388: 'AIRBUS A-380-800', B38M: 'BOEING 737 MAX 8',
   B738: 'BOEING 737-800', B748: 'BOEING 747-8I', B77W: 'BOEING 777-300ER',
-  B789: 'BOEING 787-9', C919: 'COMAC C-919',
+  B789: 'BOEING 787-9', CRJ7: 'BOMBARDIER CRJ700', CRJ9: 'BOMBARDIER CRJ900',
+  C750: 'CESSNA CITATION X', C919: 'COMAC C-919', E170: 'EMBRAER E-JET 170',
+  E190: 'EMBRAER E-JET 190', GLF6: 'GULFSTREAM 650',
 };
 // The manifest's targetPlaneId is the source of truth; the short code is only
 // a display convenience derived from it — never from the folder name.
@@ -46,6 +48,19 @@ const TEXTURE_SIZE = 2048;
 
 function ownPackDir(gameRoot) { return path.join(gameRoot, 'Mods', OWN_PACK); }
 function referencePackDir(gameRoot) { return path.join(gameRoot, 'Mods', REFERENCE_PACK); }
+
+// Does the game ship a built-in default livery for this plane id? The folder
+// name IS the plane id, and its manifest confirms it is a real livery.
+function hasBuiltInTemplate(gameRoot, planeId) {
+  if (!gameRoot || !planeId) return false;
+  try {
+    return fs.existsSync(path.join(
+      gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, String(planeId), 'aircraft_livery_manifest.json',
+    ));
+  } catch (_) {
+    return false;
+  }
+}
 
 // Writes our mod_info.json when it is missing, unreadable or still carries a
 // foreign modName (the reference pack's). Best-effort: never throws, so a
@@ -144,6 +159,26 @@ function listLiveries(gameRoot) {
   }
 }
 
+// Every aircraft the game ships a built-in default livery for — the source of
+// truth for the painter's aircraft-type dropdown. The folder name IS the game's
+// plane id; the short code is a display/naming convenience derived from it.
+function listAircraftTypes(gameRoot) {
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+  const dir = path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR);
+  const types = [];
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (!hasBuiltInTemplate(gameRoot, entry.name)) continue;
+      types.push({ planeId: entry.name, shortCode: PLANE_ID_TO_SHORT_CODE[entry.name] || '' });
+    }
+  } catch (_) {
+    return { success: true, types: [] };
+  }
+  types.sort((a, b) => a.planeId.localeCompare(b.planeId));
+  return { success: true, types };
+}
+
 function readLiveryImage(gameRoot, folder, pack = 'mine') {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   const packDir = pack === 'reference' ? referencePackDir(gameRoot) : ownPackDir(gameRoot);
@@ -175,7 +210,9 @@ const _templateCache = new Map();
 function readAircraftTemplate(gameRoot, planeId) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   const id = String(planeId || '');
-  if (!PLANE_ID_TO_SHORT_CODE[id]) return { success: false, error: 'BAD_PLANE' };
+  if (!id || (!PLANE_ID_TO_SHORT_CODE[id] && !hasBuiltInTemplate(gameRoot, id))) {
+    return { success: false, error: 'BAD_PLANE' };
+  }
   if (_templateCache.has(id)) return _templateCache.get(id);
   const dir = path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, id);
   let result;
@@ -219,8 +256,13 @@ function readAircraftTemplate(gameRoot, planeId) {
 function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, folder }) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   if (!AIRLINE_RE.test(String(airline || ''))) return { success: false, error: 'BAD_AIRLINE' };
-  const shortCode = PLANE_ID_TO_SHORT_CODE[targetPlaneId];
-  if (!shortCode) return { success: false, error: 'BAD_PLANE' };
+  const planeId = String(targetPlaneId || '');
+  if (!planeId || (!PLANE_ID_TO_SHORT_CODE[planeId] && !hasBuiltInTemplate(gameRoot, planeId))) {
+    return { success: false, error: 'BAD_PLANE' };
+  }
+  // Known types use the table code; an unknown-but-installed type falls back to
+  // a compact alphanumeric code derived from its plane id.
+  const shortCode = PLANE_ID_TO_SHORT_CODE[planeId] || planeId.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
   const rawFolder = String(folder == null ? '' : folder).trim();
   if (!LIVERY_FOLDER_SAFE_RE.test(rawFolder)) return { success: false, error: 'BAD_FOLDER' };
   const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(imageDataUrl || ''));
@@ -390,6 +432,7 @@ module.exports = {
   buildManifest,
   listPackDir,
   listLiveries,
+  listAircraftTypes,
   readLiveryImage,
   readAircraftTemplate,
   createLivery,

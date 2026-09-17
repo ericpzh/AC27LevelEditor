@@ -3438,6 +3438,17 @@ ipcMain.handle('get-aircraft-template', async (_event, planeId) => {
   }
 });
 
+// Aircraft-type dropdown source: every built-in default livery the game ships
+// (the folder name is the plane id).
+ipcMain.handle('list-aircraft-types', async () => {
+  try {
+    return livery.listAircraftTypes(_liveryGameRoot());
+  } catch (err) {
+    console.error('[Livery] list types failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('create-livery', async (_event, payload) => {
   try {
     return livery.createLivery(_liveryGameRoot(), payload || {});

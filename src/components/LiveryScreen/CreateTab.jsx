@@ -22,6 +22,8 @@ function errKey(code) {
   return 'livery_err_' + String(code || 'unknown');
 }
 
+// Fallback aircraft list used until (or if) the game's built-in default
+// liveries are scanned — see `list-aircraft-types`.
 const PLANE_IDS = Object.keys(PLANE_ID_TO_SHORT_CODE);
 // Sensible form defaults for a brand-new livery: the first airline (alphabetical
 // code) and the A-319neo, so the painter is usable without touching the form.
@@ -67,12 +69,19 @@ function SaveNameDialog({ initial, isSaveAs, onConfirm }) {
   );
 }
 
-function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locked }) {
+function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locked, planeIds }) {
   const { t, lang } = useTranslation();
   const airlineOptions = useMemo(() => {
     const set = new Set(Object.values(AIRLINE_CODE_MAP));
     return [...set].sort();
   }, []);
+  // Scanned built-in types, plus the current value if it is not in the scan
+  // (e.g. an imported zip / reference row for a type added after the scan).
+  const aircraftOptions = useMemo(() => {
+    const list = Array.isArray(planeIds) ? [...planeIds] : [];
+    if (planeId && !list.includes(planeId)) list.unshift(planeId);
+    return list;
+  }, [planeIds, planeId]);
   // Custom dropdown: always renders the FULL airline list when open —
   // never filtered by the typed text (native <datalist> filters options
   // by the input value, hiding non-matching airlines).
@@ -147,7 +156,7 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
       <label className={'lp-inline' + (locked ? ' lp-locked' : '')}>
         <span className="lp-inline-label">{t('livery_aircraft')}</span>
         <select value={planeId} disabled={locked} onChange={(e) => setPlaneId(e.target.value)}>
-          {PLANE_IDS.map(id => (
+          {aircraftOptions.map(id => (
             <option key={id} value={id}>{id}</option>
           ))}
         </select>
@@ -195,9 +204,36 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
 
   const [airline, setAirline] = useState(origin?.airline || prefill?.airline || DEFAULT_AIRLINE);
   const [planeId, setPlaneId] = useState(origin?.planeId || prefill?.targetPlaneId || DEFAULT_PLANE_ID);
+
+  // Aircraft types are collected from the game's built-in default liveries;
+  // the hardcoded table is the fallback if the scan is unavailable.
+  const [planeOptions, setPlaneOptions] = useState(PLANE_IDS);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await electronAPI.listAircraftTypes();
+        if (cancelled || !res || !res.success || !Array.isArray(res.types)) return;
+        const ids = res.types.map(x => x && x.planeId).filter(Boolean);
+        if (ids.length) setPlaneOptions(ids);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A type is valid when the table knows it, the game ships a built-in livery
+  // for it, or it is the origin/import of the livery currently open.
+  const knownPlanes = useMemo(() => {
+    const set = new Set(PLANE_IDS);
+    for (const id of planeOptions) set.add(id);
+    if (origin?.planeId) set.add(origin.planeId);
+    return set;
+  }, [planeOptions, origin]);
+
   const airlineValid = /^[A-Z]{3}$/.test(airline);
   const folderPreview = planeId && airline ? folderFor(planeId, airline) : '';
-  const formValid = Boolean(folderPreview && airlineValid && PLANE_ID_TO_SHORT_CODE[planeId]);
+  const formValid = Boolean(folderPreview && airlineValid && knownPlanes.has(planeId));
 
   // Paint state — primed with the clicked picture when available. For a new
   // livery the canvas is primed with the aircraft type's built-in default
@@ -219,9 +255,9 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   const canSaveAs = formValid && !busy;
   const canSave = isReference
     ? false
-    : origin
-      ? Boolean(origin.planeId && origin.airline && PLANE_ID_TO_SHORT_CODE[origin.planeId]) && !busy
-      : formValid && !busy;
+      : origin
+        ? Boolean(origin.planeId && origin.airline && knownPlanes.has(origin.planeId)) && !busy
+        : formValid && !busy;
 
   // Unsaved-changes guard consulted by LiveryScreen tab-leave/back.
   useEffect(() => {
@@ -380,7 +416,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   // free-form folder name; the backend derives everything else.
   const submitCreate = async (imageDataUrl, targetAirline, targetPlaneId, targetFolder) => {
     const folder = String(targetFolder || '').trim();
-    if (!imageDataUrl || !/^[A-Z]{3}$/.test(targetAirline) || !PLANE_ID_TO_SHORT_CODE[targetPlaneId] || !LIVERY_FOLDER_SAFE_RE.test(folder) || busy) return false;
+    if (!imageDataUrl || !/^[A-Z]{3}$/.test(targetAirline) || !knownPlanes.has(targetPlaneId) || !LIVERY_FOLDER_SAFE_RE.test(folder) || busy) return false;
     setBusy(true);
     try {
       const res = await electronAPI.createLivery({
@@ -509,7 +545,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         setCanvasKey(k => k + 1);
       });
       if (res.manifest && res.manifest.airline) setAirline(String(res.manifest.airline).toUpperCase());
-      if (res.manifest && PLANE_ID_TO_SHORT_CODE[res.manifest.targetPlaneId]) setPlaneId(res.manifest.targetPlaneId);
+      if (res.manifest && knownPlanes.has(res.manifest.targetPlaneId)) setPlaneId(res.manifest.targetPlaneId);
       showToast(t('livery_loadzip_loaded', { folder: res.folder || '' }), 'success');
     } catch (err) {
       useAppStore.getState().showToast(t(errKey(err && err.message)), 'error');
@@ -527,7 +563,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     const targetAirline = useOrigin ? origin.airline : airline;
     const targetPlaneId = useOrigin ? origin.planeId : planeId;
     const targetFolder = useOrigin ? origin.folder : folderPreview;
-    if (!/^[A-Z]{3}$/.test(targetAirline) || !PLANE_ID_TO_SHORT_CODE[targetPlaneId] || !targetFolder) return;
+    if (!/^[A-Z]{3}$/.test(targetAirline) || !knownPlanes.has(targetPlaneId) || !targetFolder) return;
     setExporting(true);
     const { showToast } = useAppStore.getState();
     try {
@@ -575,7 +611,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
             </span>
           )}
           <span className="lp-sep" />
-          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReference} />
+          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReference} planeIds={planeOptions} />
         </div>
 
         <div className="lp-group lp-group-end">
