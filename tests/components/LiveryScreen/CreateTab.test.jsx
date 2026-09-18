@@ -25,7 +25,7 @@ function makeCtx() {
     save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(),
     fillRect: vi.fn(), clearRect: vi.fn(), drawImage: vi.fn(),
     beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
-    fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(),
+    fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(), clip: vi.fn(),
     strokeRect: vi.fn(), setLineDash: vi.fn(),
     fillText: vi.fn(), putImageData: vi.fn(), translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
     getImageData: vi.fn((x, y, w, h) => ({
@@ -207,7 +207,8 @@ describe('CreateTab painter validation', () => {
       'create-livery',
       { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
     ));
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
     expect(screen.getByText('Livery created')).toBeInTheDocument();
   });
 
@@ -236,7 +237,105 @@ describe('CreateTab painter validation', () => {
       'create-livery',
       { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'My First CCA Livery' },
     ));
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
+  });
+
+  it('H/V shortcuts keep the active panel (no reset on flip)', async () => {
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, width: 512, height: 512, right: 512, bottom: 512, x: 0, y: 0, toJSON() {},
+    });
+    try {
+      setupMocks({ 'get-aircraft-template': Promise.resolve({ success: true, parts: [{ partName: 'Fuselage' }, { partName: 'Wing' }] }) });
+      renderCreate();
+      const stage = () => document.querySelector('.lp-canvas-stage');
+      await waitFor(() => expect(document.querySelector('.livery-canvas-wrap canvas').width).toBe(4224));
+      await waitFor(() => expect(stage().dataset.activePanel).toBe('0'));
+      // Click panel 1 (texture centre x=3200 over the 512px stub rect).
+      const cv = document.querySelector('.livery-canvas-wrap canvas');
+      fireEvent.pointerDown(cv, { clientX: 3200 * (512 / 4224), clientY: 1024 * (512 / 2048), button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+      await waitFor(() => expect(stage().dataset.activePanel).toBe('1'));
+      fireEvent.keyDown(window, { key: 'h' });
+      fireEvent.keyDown(window, { key: 'v' });
+      expect(stage().dataset.activePanel).toBe('1');
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it('Ctrl+S opens Save; Ctrl+Shift+S opens Save As', async () => {
+    setupMocks();
+    renderCreate();
+    // Ctrl+S → the Save dialog (its confirm button is exactly "Save").
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    await screen.findByLabelText('Folder name');
+    const modal = document.querySelector('#modal-box');
+    expect(within(modal).getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    // Close it, then Ctrl+Shift+S → the Save As dialog.
+    const user = userEvent.setup();
+    await user.click(within(modal).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.querySelector('#modal-box')).toBeNull());
+    fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
+    await screen.findByLabelText('Folder name');
+    const modal2 = document.querySelector('#modal-box');
+    expect(within(modal2).getByRole('button', { name: 'Save As' })).toBeInTheDocument();
+  });
+
+  it('Ctrl+S is ignored while typing in a field or while a dialog is open', async () => {
+    setupMocks();
+    renderCreate();
+    // Typing in the airline field: the shortcut must not hijack the key.
+    const airlineInput = screen.getByPlaceholderText('CCA');
+    fireEvent.keyDown(airlineInput, { key: 's', ctrlKey: true });
+    expect(document.querySelector('#modal-box')).toBeNull();
+    // With the Save dialog already open, Ctrl+Shift+S must not swap it for As.
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    await screen.findByLabelText('Folder name');
+    const modal = document.querySelector('#modal-box');
+    expect(within(modal).getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'S', ctrlKey: true, shiftKey: true });
+    const still = document.querySelector('#modal-box');
+    expect(within(still).getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(within(still).queryByRole('button', { name: 'Save As' })).toBeNull();
+  });
+
+  it('Save As adopts the saved folder so a later Save overwrites it in place', async () => {
+    setupMocks({
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+      'list-liveries': Promise.resolve({ success: true, mine: [], reference: [] }),
+    });
+    const user = userEvent.setup();
+    renderCreate();
+    await fillForm(user);
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    await confirmNameDialog(user, 'Save As');
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
+      'create-livery',
+      expect.objectContaining({ folder: 'A20N_CCA' }),
+    ));
+    // The painter stayed open and adopted the saved folder as its origin.
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
+    expect(CreateTab.prefill).toMatchObject({
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', pack: 'mine',
+    });
+
+    // A following Save rewrites that same folder in place (no overwrite prompt).
+    mockIpcInvoke.mockClear();
+    const save = saveBtn();
+    await waitFor(() => expect(save.disabled).toBe(false));
+    await user.click(save);
+    const input = await screen.findByLabelText('Folder name');
+    expect(input.value).toBe('A20N_CCA');
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
+      'create-livery',
+      expect.objectContaining({ folder: 'A20N_CCA' }),
+    ));
+    expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
   });
 
   it('save dialog blocks filesystem-unsafe folder names only', async () => {
@@ -395,10 +494,12 @@ describe('CreateTab aircraft template', () => {
     renderCreate();
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-319neo'));
 
-    // Switching to the A380 (multi-image built-in) reveals both panel tabs.
+    // Switching to the A380 (multi-image built-in) makes the canvas a
+    // 2-panel store (2×2048 + 128 gutter) — there is no tab strip anymore.
     await user.selectOptions(document.querySelector('.lp-root select'), 'AIRBUS A-380-800');
-    const tabs = await screen.findAllByRole('tab');
-    expect(tabs.map(t => t.textContent)).toEqual(['Fuselage', 'Wing']);
+    await waitFor(() => {
+      expect(document.querySelector('.livery-canvas-wrap canvas').width).toBe(4224);
+    });
 
     const btn = saveAsBtn();
     await waitFor(() => expect(btn.disabled).toBe(false));
@@ -517,7 +618,8 @@ describe('CreateTab edit origins (mine vs reference)', () => {
         folder: 'A20N_CCA',
       }));
     });
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
   });
 
   it('mine origin with a free-form folder still Saves with the origin parts', async () => {
@@ -546,7 +648,8 @@ describe('CreateTab edit origins (mine vs reference)', () => {
         folder: 'My Custom Livery',
       }));
     });
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
   });
 
   it('changing airline + aircraft updates the Save default name and the manifest', async () => {
@@ -577,7 +680,8 @@ describe('CreateTab edit origins (mine vs reference)', () => {
         folder: 'B738_AAL',
       }));
     });
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
   });
 
   it('changing only the airline re-derives the default name from the form', async () => {
@@ -725,7 +829,8 @@ describe('CreateTab overwrite confirm (Save As onto an existing folder)', () => 
       'create-livery',
       { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
     ));
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
   });
 
   it('cancel on the overwrite pop-up aborts the save', async () => {
@@ -822,7 +927,8 @@ describe('CreateTab overwrite confirm (Save As onto an existing folder)', () => 
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.anything()));
     expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
   });
 
   it('Save re-writing the current livery’s own folder is exempt', async () => {
@@ -867,7 +973,8 @@ describe('CreateTab overwrite confirm (Save As onto an existing folder)', () => 
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.anything()));
     expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
   });
 
   it('a failed list result falls through to the save', async () => {
@@ -887,7 +994,8 @@ describe('CreateTab overwrite confirm (Save As onto an existing folder)', () => 
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.anything()));
     expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
-    expect(onCreated).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
   });
 });
 
@@ -1219,8 +1327,10 @@ describe('CreateTab lazy origin + chrome', () => {
     });
     // The per-panel channel wins; the single-image fallback is not needed.
     expect(mockIpcInvoke).not.toHaveBeenCalledWith('read-livery-image', 'A388_SIA', 'mine');
-    const tabs = await screen.findAllByRole('tab');
-    expect(tabs.map(t => t.textContent)).toEqual(['Fuselage', 'Wing']);
+    // Both parts render as one wide 2-panel store (no tab strip).
+    await waitFor(() => {
+      expect(document.querySelector('.livery-canvas-wrap canvas').width).toBe(4224);
+    });
   });
 
   it('help button invokes onHelp', async () => {

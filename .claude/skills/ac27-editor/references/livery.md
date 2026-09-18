@@ -239,6 +239,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     user can retype the origin folder to update that livery in place.
   - **Save As** (`MdSaveAs`) → naming dialog prefilled with the conventional
     form folder, uses the live form airline/aircraft.
+  **Keyboard**: `Ctrl+S` = Save, `Ctrl+Shift+S` = Save As (a `CreateTab`
+  keydown listener; ignored while typing or while any modal is open).
   Save/Save As share `SaveNameDialog` (typed name = folder verbatim,
   `LIVERY_FOLDER_SAFE_RE` gated, buttons inside the modal body). On confirm,
   `confirmOverride(folder, isSaveAs, proceed)` checks `listLiveries()` for a
@@ -249,9 +251,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   when its prefill equals the origin folder; fresh names save straight through
   and an unreadable list falls through. Both then
   funnel through `submitCreate(canvasRef.current.exportParts(), airline,
-  planeId, folder)` → `createLivery({images})` → toast + `onCreated`
-  (`exportParts()` returns one `{partName, imageDataUrl}` per panel; a
-  single-panel type yields a one-entry `Body` list → `base.png`). On success it also fires
+  planeId, folder)` → `createLivery({images})` → toast. **Save / Save As stay in
+  the painter** — success does **not** call `onCreated` (no navigation); instead
+  `CreateTab.prefill` is set to the saved `{folder, airline, targetPlaneId,
+  pack:'mine'}` so the saved livery becomes the current origin (a later Save
+  overwrites it in place) and the origin-images effect reloads the saved panels.
+  `exportParts()` returns one `{partName, imageDataUrl}` per panel; a
+  single-panel type yields a one-entry `Body` list → `base.png`. On success it also fires
   `showModHint()`: unless the `liveryModHintDismissed` cache flag is set
   (`get-cache-flag`), it opens the **Enable the Mod in Game** prompt
   (`livery_mod_hint_title`/`_body`, OK = `modal_btn_ok`) telling the user to
@@ -284,21 +290,50 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `N*2048 + (N-1)*128` × 2048 (`panelLayout(n)`), **opaque** base (each
   panel's image, or `DEFAULT_BASE_COLOR = '#ffffff'` when there is none),
   CSS-scaled view. Layout: Photoshop-style **left icon rail** + contextual
-  options bar + a **panel strip** (`.lp-panels`, one `.lp-panel-tab` per
-  part, `role="tab"`; only shown with >1 panel) + bottom zoom status bar. The
-  active panel is highlighted on the overlay (blue outline; dividers around
-  every panel). Shared `fillPanelBases(ctx, layout)`/`drawBase(ctx, layout,
-  parts, onDone)` helpers paint every panel on mount and on **Clear** (all
-  panels reset to `defaultParts`). `exportParts()` returns one 2048² PNG
-  `{partName, imageDataUrl}` per panel (the `CreateTab` save payload);
-  `exportPNG()` still returns the whole wide flattened texture. The mask,
-  scratch, stroke, undo and eraser-background canvases are all `W×H` (the wide
-  store), and pointer→texture mapping divides by `W`/`H`.
+  options bar + bottom zoom status bar (**no panel tab strip** — see "Active
+  panel by click" below). The active panel is highlighted on the overlay (blue
+  outline; dividers around every panel). Shared `fillPanelBases(ctx,
+  layout)`/`drawBase(ctx, layout, parts, onDone)` helpers paint every panel on
+  mount and on **Clear** (all panels reset to `defaultParts`). `exportParts()`
+  returns one 2048² PNG `{partName, imageDataUrl}` per panel (the `CreateTab`
+  save payload); `exportPNG()` still returns the whole wide flattened texture.
+  The mask, scratch, stroke, undo and eraser-background canvases are all `W×H`
+  (the wide store), and pointer→texture mapping divides by `W`/`H`.
+  - **Padded overlay + interaction surface (`OVERLAY_PAD = 256`)**: the overlay
+    canvas is `(W+2·PAD)×(H+2·PAD)`, absolutely positioned at `-PAD*zoom` so it
+    spills around the base bitmap, and `drawOverlay` clears the padded bitmap
+    then draws with `setTransform(1,0,0,1,PAD,PAD)` (panel dividers use the same
+    offset; `paintErasePreview` takes `ox/oy`). The overlay is the **pointer
+    interaction surface** (same handlers as the base canvas), so a live object's
+    **selection box + scale/rotate knobs stay grabbable and a scale/rotate drag
+    keeps registering outside the 2048 square** (pointer capture stays on the
+    overlay) while the object's own pixels are clipped to the base.
+  - **Active panel by click**: there is no tab strip. A **left click anywhere in
+    a panel** (`panelIndexAt(p.x)`; nearest panel in the gutter) makes it the
+    active panel for every tool — and **keyboard shortcuts never change it**.
+    `onActivePanel(idx)` is only called from the canvas pointerdown path.
+  - **Per-object panel clip (multi-image only, overlay AND export)**: each live
+    object renders/saves clipped to the panel its **centre** falls in —
+    `layout.x(panelIndexAt(o.x))` — in `drawOverlay` and `flattenToCanvas`. So an
+    **unselected movable on another panel is still visible** and a sticker always
+    saves into its own panel; a save can never move/lose it by active-panel
+    state. Overflow past the object's own panel is not displayed. The active
+    panel only governs **placement** (sticker drop, import target), the blue
+    outline, and where a newly committed object lands — not what is shown.
+    Movement is **not bounded**: an object can be dragged across panels.
+    Single-panel types have no clip (the base bitmap clips the pixels).
+  - **Export uses the same per-object clip** (`flattenToCanvas`, used by Save /
+    Save As / `exportPNG`): never the active panel. (Regression: `exportParts()`
+    must clip to panel 1's rect, `x=2176`, while the active panel is 0.) The
+    imperative handle deps include `active`/`panelCount` so its closures are
+    never stale.
    - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
-     eyedropper (I), fill (G), line (L), rect (R), ellipse (O), text (T).
-     `TOOL_META` advertises the shortcut; rail buttons and letter shortcuts
-     both go through `activateTool`, which settles any in-progress gesture
-     first (see "Gesture settling" below).
+     eyedropper (no shortcut — right-click picks), fill (G), line (L), rect (R),
+     ellipse (O), text (T). `TOOL_META` advertises the shortcut; rail buttons and
+     letter shortcuts both go through `activateTool`, which settles any
+     in-progress gesture first (see "Gesture settling" below). The rail **Import
+     Sticker** button is `I` (`ACTION_KEYS.importSticker`); the Selection Pen
+     sub-mode uses `LuLasso`.
      **Right-click** is two-stage and tool-gated: right-button *press*
      (`onCanvasDown` button 2) arms the movable's layer-order target **only in
      the Select tool's object sub-mode** — it selects the topmost live object
@@ -361,6 +396,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     any slow drag — the alpha appeared to do nothing. Per-rect flushes are
     idempotent (the base copy is never modified), `putImageData` stays reserved
     for fills/mask clips, and the eraser still paints the base directly.
+    **Shift-click straight lines (brush + eraser)**: a plain click drops a
+    `lineAnchorRef` anchor; each **Shift+click** paints a straight segment from
+    the previous anchor to the click (brush: one `beginStroke`/`flushStroke`
+    pass at the brush alpha; eraser: `applyEraseGesture` with a two-point
+    trail) and re-anchors there, so repeated Shift+clicks chain a polyline.
+    Each segment is one undo snapshot (`commitSegment`). **`[` / `]`** step the
+    shared brush/eraser size by ∓5 (clamped 1–200) while either tool is active.
   - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit. Mouse-wheel
     steps the ladder **anchored to the cursor**: the wheel handler records the
     content point under the pointer (`cx/cy` = `scrollLeft + viewport offset`,
@@ -426,7 +468,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     an Opacity slider on the options bar** (`livery_paint_opacity`, 0–100% with
     a `%` readout) that writes the object's own `opacity`; `paintLiveObjectContent`'s
     image branch sets `globalAlpha` from it, so the overlay, the **export
-    flatten** and a duplicate stamp all carry the same alpha (the eraser scratch
+    flatten** and a duplicate copy all carry the same alpha (the eraser scratch
     cache signature already includes `opacity`, so holes stay in sync), and 0%
     still keeps the object selectable so the slider can bring it back.
     Regression: "sticker opacity slider" (stores the value, redraws at that
@@ -434,20 +476,25 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     sticker). **Selecting a text box
     re-exposes the text options** (font/size/bold/italic) and edits that object
     in place via `applyTextOpt` (box re-measured, no new object); **double-click
-    or Enter re-opens the inline editor prefilled** (`startTextEdit` sets
+    re-opens the inline editor prefilled** (`startTextEdit` sets
     `editingIdRef`; `commitText` then updates that object's content instead of
-    adding a new one). The rail also has
+    adding a new one). **`Enter` clears the current selection** (like committing
+    a text box) instead of re-opening the editor — the object stays in the stack
+    and double-click still re-opens it. The rail also has
     **Flip Horizontal / Flip Vertical** buttons (`livery_paint_flip_h`/`_v`,
-    `LuFlipHorizontal`/`LuFlipVertical`, disabled without any object) →
+    `LuFlipHorizontal`/`LuFlipVertical`, disabled without any object; **`H` / `V`
+    are the keyboard shortcuts**, mirrored in the canvas keydown handler; **the
+    Duplicate Sticker button is `Ctrl+C`**) →
     `flipSticker('flipX'|'flipY')` toggles the `flipX`/`flipY` flags on the
     selected (else last) object; every overlay/duplicate/export path funnels
-    through `paintLiveObject` (`ctx.save(); translate; rotate;
-    scale(flipX ? -1 : 1, flipY ? -1 : 1); drawImage|fillText; restore`). Ref
+     through `paintLiveObject` (`ctx.save(); translate; rotate;
+     scale(flipX ? -1 : 1, flipY ? -1 : 1); drawImage|fillText; restore`). Ref
      methods `importSticker`/`removeSticker`/`duplicateSticker` (+
-     `getObjectCount` for tests); duplicate stamps the target object onto the
-     base (transform included) and leaves a nudged copy selected, while the other
-     objects stay live. Only `exportPNG()` returns the flattened texture (base +
-     every live object).
+     `getObjectCount` for tests); **`duplicateSticker` is a true copy** — it adds a
+     nudged copy (deep-copied `pts`/`erase`) and **keeps the original live and
+     selectable**, with nothing stamped onto the (wide) base, so a multi-image
+     copy can never bleed into the other panel. Only `exportPNG()` returns the
+     flattened texture (base + every live object).
    - **Layer order** (`orderMenu` state + `orderMenuRef`, `hitObjectAt`,
      `reorderObject`, pure `reorderObjects(objs, id, dir)`): right-clicking a
      movable object pins a 4-item menu at the cursor (`lp-order-menu` +
@@ -482,7 +529,9 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       `livery_paint_mask_combine`/`_erase`/`_replace` = 合并/擦除/替换,
       `livery_paint_mask_mode`, default combine), a Tolerance slider reusing
       `fillTol` in wand mode, and a Deselect button (`livery_paint_deselect`)
-      while a selection exists. **Ctrl+D** is the Deselect shortcut in the
+      while a selection exists — its tooltip sits on a wrapper with the disabled
+      button set to `pointer-events: none`, so it shows even before a selection.
+      **Ctrl+D** is the Deselect shortcut in the
       canvas keydown handler (drops the mask first, else clears the selected
       object) — the same action as the button. The mask is a lazily-created `W×H` (whole-store) canvas
       (white-opaque = selected; `getMaskCtx`/`maskCanvasRef`) with a
@@ -498,10 +547,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       `replace` = clear first); erasing to empty clears the mask
       (`isMaskEmpty` → `clearMask`). Raster paints clip through
       `constrainBaseToMask(before)` (stroke end incl. settle, fill via a
-      pre-fill copy, duplicate stamp via the just-pushed snapshot) using pure
-      `constrainImageToMask` (mask alpha < 128 reverts to `before`); live
-      objects clip presentationally (`paintObjectMasked`: scratch +
-      `destination-in` mask) in `drawOverlay` and `exportPNG` — the objects
+      pre-fill copy) using pure
+      `constrainImageToMask` (mask alpha < 128 reverts to `before`); ONLY the
+      active movable (the selected object carrying selection chrome) clips
+      presentationally to the mask (`paintObjectMasked`: scratch +
+      `destination-in` mask) in `drawOverlay`, `flattenToCanvas` and
+      `pickColorAt` — every other movable previews/saves in full, so a
+      selection never hides non-active movables outside its area. The objects
       stay whole, Deselect restores full-canvas painting. The mask is NOT in
       undo snapshots, the save payload or dirty tracking; Clear drops it.
       The visible dashed outline is re-traced from the already-unioned mask
@@ -517,7 +569,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       `livery_help_d_select` documents modes/ops/clip.
   - Undo/redo via `createUndoStack`/`pushSnapshot` (cap `MAX_UNDO = 20`
     `{img, objects, selId}` snapshots — the base raster **and** the live-object
-    layer, so undo also removes/re-instates objects). **Clear**
+    layer, so undo also removes/re-instates objects). **A direct-manipulation
+    gesture (move / resize / rotate / vertex drag) is one undo step**:
+    `ensureDragSnapshot()` pushes the pre-drag snapshot on the first
+    `onCanvasMove` of the drag (guarded by `dragRef.snapshotted`), so Ctrl+Z
+    reverts the whole transform — scaling included — in one step. **Clear**
     (`AiOutlineClear`, `react-icons/ai`) opens a
     confirm modal and re-paints **every** panel via `drawBase(ctx,
     layout, clearParts, scheduleOverlay)` where `clearParts` is
@@ -711,13 +767,36 @@ manifest for a free-form zip folder).
    right-click layer-order menu (`reorderObjects` pure moves + menu open/
    reorder/close/dismiss paths + disabled end states + right-press select +
    selection-less Delete + shortcut settling; the menu is gated to Select
-   object mode — a pen-tool right-click picks the colour instead) and keyboard-parity gesture
+   object mode — a pen-tool right-click picks the colour instead; H / V flip the
+   selected object; Enter clears the selection instead of re-opening text; a
+   scaling drag is one Ctrl+Z undo step (and keeps registering past the 2048
+   canvas edge); Ctrl+C duplicates (true copy — original stays live, no base
+   stamp); I imports a sticker; H/V flip; rail tooltips
+   advertise the shortcuts and the Eyedropper has none) and keyboard-parity gesture
    settling (shortcut commits a mid-drag shape) plus the selection mask
    (Object/Pen/Wand modes + Combine default/Erase/Replace + wand tolerance,
     lasso → mask + dotted outline + Deselect, Ctrl+D deselects, tap/Escape cancel, wand region
     spans, masked stroke triggers the `putImageData` clip vs never unmasked,
     eyedropper composites live objects (sticker colour picked, not the base),
+    a live selection masks ONLY the active movable while the others flatten
+    unmasked (counts `destination-in` on export),
+    `[` / `]` step the brush/eraser size by 5 with clamping and are inert for a
+    tool without a size (e.g. Rect), and a click +
+    Shift-click chains straight brush and eraser segments,
     new keys resolve in zh+en).
+- `tests/components/LiveryScreen/LiveryCanvas.test.jsx` multi-image coverage
+  also pins: the padded overlay canvas size (`W+2·OVERLAY_PAD`), click-to-activate
+  (`onActivePanel(1)`), a click in the gutter activating the nearest panel,
+  keyboard shortcuts never changing the active panel, and
+  that an object can move outside the active panel (overflow clipped, not
+  clamped). `tests/components/LiveryScreen/CreateTab.test.jsx` asserts the
+  2-panel store width instead of the removed tab strip, that H/V keep the active
+  panel, that Ctrl+S / Ctrl+Shift+S open the Save / Save As dialogs (and are
+  ignored while typing or while a dialog is open), and that a save adopts the
+  saved folder so the next Save overwrites it in place.
+  `tests/components/LiveryScreen/MyLiveriesTab.test.jsx` pins the in-place
+  delete: a successful delete drops only its row (no full re-list, `scrollTop`
+  capped to the shrunken content) and a partial batch leaves the failed rows.
 - `tests/components/LiveryScreen/LiveryColorPicker.test.jsx` (portal
   anchoring, SV-square drag emits colour + keeps opacity, hue/alpha rails,
   hex commit on blur/Enter + malformed-input rejection, window/Escape/

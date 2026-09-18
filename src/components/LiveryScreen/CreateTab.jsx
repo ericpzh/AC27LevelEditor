@@ -477,10 +477,12 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
       });
       const { showToast } = useAppStore.getState();
       if (res && res.success) {
-        CreateTab.prefill = null;
+        // Stay in the painter after Save / Save As: adopt the saved folder as
+        // the current livery (so a later Save overwrites it in place) and do
+        // NOT call onCreated (which navigates back to the list).
+        CreateTab.prefill = { folder, airline: targetAirline, targetPlaneId, pack: 'mine' };
         dirtyRef.current = false;
         showToast(t('livery_created'), 'success');
-        if (onCreated) onCreated();
         showModHint();
         return true;
       }
@@ -539,6 +541,23 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     if (!formValid) return;
     openSaveDialog(folderPreview, true, airline, planeId);
   };
+
+  // Ctrl+S = Save, Ctrl+Shift+S = Save As (the toolbar buttons). Ignored while
+  // typing or while a modal (e.g. the naming dialog) is open.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
+      const el = e.target;
+      const tag = (el && el.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (el && el.isContentEditable)) return;
+      if (useAppStore.getState().modal && useAppStore.getState().modal.open) return;
+      e.preventDefault();
+      if (e.shiftKey) { if (canSaveAs) handleSaveAs(); }
+      else if (canSave) handleSave();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canSave, canSaveAs, handleSave, handleSaveAs]);
 
   const handleCancel = () => {
     confirmDiscard(() => {

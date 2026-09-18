@@ -655,9 +655,43 @@ describe('MyLiveriesTab error + edge paths', () => {
     expect(screen.queryByText(/scan failed/)).toBeNull();
   });
 
+  it('delete removes the row in place, skips the full refresh and caps scroll', async () => {
+    let listCalls = 0;
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'list-liveries') {
+        listCalls++;
+        return Promise.resolve({ success: true, mine: [ROW], reference: [] });
+      }
+      if (channel === 'delete-livery') return Promise.resolve({ success: true });
+      return Promise.resolve({});
+    });
+    // Fake scroll container: in range before the delete, out of range after.
+    const el = { scrollTop: 500, scrollHeight: 1000, clientHeight: 100 };
+    const scrollRef = { current: el };
+    const user = userEvent.setup();
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef, scrollRef });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    expect(listCalls).toBe(1);
+    await user.click(document.querySelector('.livery-select'));
+    el.scrollHeight = 400; // the list shrinks once the row is gone
+    act(() => { cmdRef.current.deleteSelected(); });
+    await waitFor(() => expect(screen.getByText('Confirm Delete')).toBeInTheDocument());
+    await user.click(screen.getByText('Delete', { selector: '.btn-danger' }).closest('button'));
+    await waitFor(() => expect(screen.queryByText('Air China')).toBeNull());
+    // No re-list: the list stayed mounted instead of flashing the placeholder.
+    expect(listCalls).toBe(1);
+    // scrollTop was capped to the new content maximum, not reset to 0.
+    await waitFor(() => expect(el.scrollTop).toBe(300));
+  });
+
   it('batch delete reports partial success', async () => {
+    let listCalls = 0;
     mockIpcInvoke.mockImplementation((channel, folder) => {
-      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] });
+      if (channel === 'list-liveries') {
+        listCalls++;
+        return Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] });
+      }
       if (channel === 'delete-livery') return Promise.resolve(folder === 'A20N_CCA' ? { success: true } : { success: false, error: 'BAD_FOLDER' });
       return Promise.resolve({});
     });
@@ -680,5 +714,10 @@ describe('MyLiveriesTab error + edge paths', () => {
     // Both folders were attempted; the success toast is the last one shown.
     expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'A20N_CCA');
     expect(mockIpcInvoke).toHaveBeenCalledWith('delete-livery', 'B738_AAL');
+    // Only the successful row is dropped in place; the failed one survives and
+    // the list is never re-fetched (no loading-placeholder flash).
+    expect(screen.queryByText('Air China')).toBeNull();
+    expect(screen.getByText('American Airlines')).toBeInTheDocument();
+    expect(listCalls).toBe(1);
   });
 });

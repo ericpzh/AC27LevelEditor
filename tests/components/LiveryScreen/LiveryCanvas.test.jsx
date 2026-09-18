@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, panelLayout, isTextEntry } from '../../../src/components/LiveryScreen/LiveryCanvas';
+import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, panelLayout, isTextEntry, TEXTURE, OVERLAY_PAD } from '../../../src/components/LiveryScreen/LiveryCanvas';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
@@ -14,19 +14,25 @@ import { setLang, T } from '../../../src/utils/i18n';
 // ── Canvas stubs (jsdom has no 2d context) ───────────────────
 let ctxs = [];
 let imageSrcs = [];
+// Every `globalCompositeOperation` assignment, in order. `destination-in` is
+// set only by `paintObjectMasked`, so a count of it counts masked object draws.
+let gcoSets = [];
 function makeCtx() {
   return {
     save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(),
     fillRect: vi.fn(), clearRect: vi.fn(), drawImage: vi.fn(),
     beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
     closePath: vi.fn(),
-    fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(),
+    fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(), clip: vi.fn(),
     strokeRect: vi.fn(), setLineDash: vi.fn(),
     fillText: vi.fn(), putImageData: vi.fn(), translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
     getImageData: vi.fn((x, y, w, h) => ({
       data: new Uint8ClampedArray(Math.max(4, w * h * 4)),
       width: w, height: h,
     })),
+    _gco: 'source-over',
+    get globalCompositeOperation() { return this._gco; },
+    set globalCompositeOperation(v) { this._gco = v; gcoSets.push(v); },
   };
 }
 
@@ -56,6 +62,7 @@ beforeEach(() => {
   CreateTab.prefill = null;
   ctxs = [];
   imageSrcs = [];
+  gcoSets = [];
   getCtxSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => {
     const c = makeCtx();
     ctxs.push(c);
@@ -270,8 +277,81 @@ describe('brush cursor ring', () => {
   });
 });
 
+describe('brush size shortcuts + Shift-click straight lines', () => {
+  it('[ / ] shrink and grow the brush/eraser size by 5 (clamped 1–200)', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    const slider = () => screen.getByRole('slider', { name: /Size/ });
+    expect(slider().value).toBe('12');
+    fireEvent.keyDown(window, { key: ']' });
+    expect(slider().value).toBe('17');
+    fireEvent.keyDown(window, { key: ']' });
+    expect(slider().value).toBe('22');
+    fireEvent.keyDown(window, { key: '[' });
+    expect(slider().value).toBe('17');
+    // Applies to the eraser too (same shared size).
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    fireEvent.keyDown(window, { key: '[' });
+    expect(slider().value).toBe('12');
+    // Clamps at the slider minimum.
+    for (let i = 0; i < 10; i++) fireEvent.keyDown(window, { key: '[' });
+    expect(slider().value).toBe('1');
+    for (let i = 0; i < 50; i++) fireEvent.keyDown(window, { key: ']' });
+    expect(slider().value).toBe('200');
+  });
+
+  it('[ / ] leave the size alone for a tool without a brush size', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    const slider = () => screen.getByRole('slider', { name: /Size/ });
+    expect(slider().value).toBe('12');
+    // Records / shapes have no brush size — the keys must be inert.
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.keyDown(window, { key: ']' });
+    fireEvent.keyDown(window, { key: ']' });
+    fireEvent.keyDown(window, { key: '[' });
+    await user.click(screen.getByRole('button', { name: 'Brush' }));
+    expect(slider().value).toBe('12');
+  });
+
+  it('a click then Shift-click draws a straight brush line, chaining further points', () => {
+    renderCanvas();
+    const cv = mainCanvas();
+    // Plain click drops the anchor and draws nothing (no segment, no dab).
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ctxs.every(c => c.stroke.mock.calls.length === 0)).toBe(true);
+    // Shift-click: one straight segment (400,400) → (800,800) in texture space.
+    fireEvent.pointerDown(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1, shiftKey: true });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ctxs.some(c => c.moveTo.mock.calls.some(a => a[0] === 400 && a[1] === 400)
+      && c.lineTo.mock.calls.some(a => a[0] === 800 && a[1] === 800))).toBe(true);
+    // A third Shift-click chains from the 2nd point → (1200,1200).
+    fireEvent.pointerDown(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1, shiftKey: true });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ctxs.some(c => c.moveTo.mock.calls.some(a => a[0] === 800 && a[1] === 800)
+      && c.lineTo.mock.calls.some(a => a[0] === 1200 && a[1] === 1200))).toBe(true);
+  });
+
+  it('a click then Shift-click erases a straight line', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    fireEvent.pointerDown(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1, shiftKey: true });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const base = ctxs.find(c => c.fillRect.mock.calls.some(a => a[2] === 2048 && a[3] === 2048));
+    expect(base).toBeTruthy();
+    // The restored-background stroke runs the Shift-click segment.
+    expect(base.moveTo.mock.calls.some(a => a[0] === 400 && a[1] === 400)).toBe(true);
+    expect(base.lineTo.mock.calls.some(a => a[0] === 800 && a[1] === 800)).toBe(true);
+  });
+});
+
 describe('sticker duplicate', () => {
-  it('stamps the sticker onto the base and keeps a live copy', async () => {
+  it('duplicates the sticker and keeps the original selectable', async () => {
     mockIpcInvoke.mockImplementation((channel) => {
       if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
       if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
@@ -292,15 +372,48 @@ describe('sticker duplicate', () => {
     expect(dupBtn().disabled).toBe(true);
     await act(async () => { await ref.current.importSticker(); });
     await waitFor(() => expect(dupBtn().disabled).toBe(false));
-    // Duplicate via the real button: stamps 5-arg drawImage onto the base
-    // canvas and retains a live (still removable) copy.
+    const before = ref.current.getObjectIds();
     await user.click(dupBtn());
-    const baseCtx = ctxs[0];
-    expect(baseCtx.drawImage).toHaveBeenCalledWith(
-      expect.anything(), expect.any(Number), expect.any(Number), expect.any(Number), expect.any(Number),
-    );
+    const after = ref.current.getObjectIds();
+    // A true copy: original + copy both live, nothing stamped onto the base.
+    expect(after).toHaveLength(2);
+    expect(after).toContain(before[0]);
+    expect(ctxs[0].drawImage).not.toHaveBeenCalled();
     expect(dupBtn().disabled).toBe(false);
     expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false);
+  });
+
+  it('I imports a sticker (Import Sticker shortcut)', async () => {
+    let called = false;
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') { called = true; return Promise.resolve({ canceled: true }); }
+      return Promise.resolve({});
+    });
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    fireEvent.keyDown(window, { key: 'i' });
+    await waitFor(() => expect(called).toBe(true));
+  });
+
+  it('Ctrl+C duplicates the selected object like the rail button', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    const before = ref.current.getObjectIds();
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+    const after = ref.current.getObjectIds();
+    // A true copy: the original stays plus the duplicated copy.
+    expect(after).toHaveLength(2);
+    expect(after).toContain(before[0]);
+    expect(ctxs[0].drawImage).not.toHaveBeenCalled();
   });
 });
 
@@ -332,6 +445,58 @@ describe('sticker flip', () => {
     await waitFor(() => {
       expect(ctxs.some(c => c.scale.mock.calls.some(([x, y]) => x === -1 && y === 1))).toBe(true);
     });
+  });
+
+  it('H / V keyboard shortcuts flip the selected object horizontally / vertically', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    fireEvent.keyDown(window, { key: 'h' });
+    expect(ref.current.getObjectInfo().flipX).toBe(true);
+    expect(ref.current.getObjectInfo().flipY).toBe(false);
+    fireEvent.keyDown(window, { key: 'v' });
+    expect(ref.current.getObjectInfo().flipY).toBe(true);
+    // A second press toggles the axis back off.
+    fireEvent.keyDown(window, { key: 'h' });
+    expect(ref.current.getObjectInfo().flipX).toBe(false);
+  });
+
+  it('rail tooltips advertise the keyboard shortcuts', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    const tipFor = (name) => {
+      const btn = screen.getByRole('button', { name });
+      fireEvent.mouseEnter(btn);
+      const tip = document.body.querySelector('.tooltip-popup');
+      const text = tip ? tip.textContent : '';
+      fireEvent.mouseLeave(btn);
+      return text;
+    };
+    expect(tipFor('Import Sticker')).toContain('(I)');
+    expect(tipFor('Duplicate Sticker')).toContain('(Ctrl+C)');
+    expect(tipFor('Flip Horizontal')).toContain('(H)');
+    expect(tipFor('Flip Vertical')).toContain('(V)');
+    expect(tipFor('Undo')).toContain('(Ctrl+Z)');
+    // Redo is disabled with an empty future (disabled buttons don't hover), so
+    // assert the enabled Delete button instead.
+    expect(tipFor('Remove Sticker')).toContain('(Del)');
+    // The Eyedropper has no shortcut (right-click picks); I is Import Sticker.
+    expect(tipFor('Picker')).not.toContain('(I)');
   });
 });
 
@@ -385,6 +550,33 @@ describe('live-object handles survive a flip', () => {
     // Scaling, NOT a body drag to the pointer.
     expect(after.x).toBe(before.x);
     expect(after.y).toBe(before.y);
+  });
+
+  it('a scale drag keeps registering past the 2048 canvas edge', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const before = await importSticker(user, ref);
+    const o = ref.current.getObjectInfo();
+    // Drag the bottom-right handle far outside the canvas (2800, 2600).
+    drag(toClient(o, o.frame.x1, o.frame.y1), { clientX: 2800 / 4, clientY: 2600 / 4 });
+    const after = ref.current.getObjectInfo();
+    // No canvas-edge clamp: the object can grow past 2048.
+    expect(after.w).toBeGreaterThan(2048);
+    expect(after.h).toBeGreaterThan(2048);
+  });
+
+  it('Ctrl+Z reverts a scaling drag', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const before = await importSticker(user, ref);
+    const o = ref.current.getObjectInfo();
+    drag(toClient(o, o.frame.x1, o.frame.y1), toClient(o, o.frame.x1 * 2, o.frame.y1 * 2));
+    const scaled = ref.current.getObjectInfo();
+    expect(scaled.w).toBeGreaterThan(before.w);
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    const after = ref.current.getObjectInfo();
+    expect(after.w).toBeCloseTo(before.w, 5);
+    expect(after.h).toBeCloseTo(before.h, 5);
   });
 
   it('scales a shape by the drawn bottom-right dot after flipping both axes', async () => {
@@ -779,24 +971,28 @@ describe('text object re-editing (Select tool)', () => {
     expect(ref.current.getObjectCount()).toBe(1);
   });
 
-  it('Enter opens the editor and Escape cancels, leaving the text unchanged', async () => {
+  it('Enter exits the selection instead of re-opening the text editor', async () => {
     const user = userEvent.setup();
     const ref = React.createRef();
     renderCanvas({ ref });
     await makeText(user, ref, 'hi');
-    // Enter with the text selected re-opens the inline editor.
+    const [textId] = ref.current.getObjectIds();
+    // Add a second (topmost) object so Delete can prove the text was deselected.
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 400, clientY: 400, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 500, clientY: 500, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // Re-select the text, then press Enter.
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.pointerDown(cv, { clientX: 318, clientY: 318, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
     fireEvent.keyDown(window, { key: 'Enter' });
-    const input = await screen.findByPlaceholderText('Type text, Enter to commit…');
-    expect(input.value).toBe('hi');
-    await user.clear(input);
-    await user.type(input, 'bye');
-    fireEvent.keyDown(input, { key: 'Escape' });
+    // No editor opens; the selection is cleared, so Delete takes the topmost
+    // rect and the text survives.
     expect(screen.queryByPlaceholderText('Type text, Enter to commit…')).toBeNull();
-    // The original content survives the cancelled edit.
-    act(() => { ref.current.exportPNG(); });
-    const exportCtx = ctxs[ctxs.length - 1];
-    expect(exportCtx.fillText).toHaveBeenCalledWith('hi', 0, 0);
-    expect(ref.current.getObjectCount()).toBe(1);
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(ref.current.getObjectIds()).toEqual([textId]);
   });
 });
 
@@ -1059,7 +1255,7 @@ describe('shape objects (selectable, movable)', () => {
     expect(ref.current.getObjectCount()).toBe(1);
   });
 
-  it('duplicate stamps the selected shape but keeps the other objects live', async () => {
+  it('duplicate copies the selected shape without stamping the base', async () => {
     const user = userEvent.setup();
     const ref = React.createRef();
     renderCanvas({ ref });
@@ -1073,16 +1269,16 @@ describe('shape objects (selectable, movable)', () => {
     };
     await draw('Rect', [100, 100], [200, 200]);
     await draw('Ellipse', [400, 400], [500, 500]);
-    // Select the rect, then duplicate it (stamps the rect, leaves a copy).
+    // Select the rect, then duplicate it.
     await user.click(screen.getByRole('button', { name: 'Select' }));
     fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { pointerId: 1 });
     const baseCtx = ctxs[0];
     const stamped = baseCtx.fill.mock.calls.length;
     await user.click(screen.getByRole('button', { name: 'Duplicate Sticker' }));
-    // Rect replaced by its copy; the ellipse is untouched.
-    expect(ref.current.getObjectCount()).toBe(2);
-    expect(baseCtx.fill.mock.calls.length).toBeGreaterThan(stamped);
+    // Rect + ellipse + the copy all remain live; nothing is stamped on the base.
+    expect(ref.current.getObjectCount()).toBe(3);
+    expect(baseCtx.fill.mock.calls.length).toBe(stamped);
   });
 });
 
@@ -1527,18 +1723,49 @@ describe('multi-image panels (A388/B38M)', () => {
     { partName: 'Wing', imageDataUrl: 'data:image/png;base64,WING' },
   ];
 
-  it('lays out two 2048 squares with a 128px gap and shows part tabs', async () => {
+  it('lays out two 2048 squares with a 128px gap', async () => {
     const onActivePanel = vi.fn();
     renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel });
     const cv = mainCanvas();
     // 2 × 2048 + a 128px gutter.
     expect(cv.width).toBe(4224);
     expect(cv.height).toBe(2048);
-    const tabs = screen.getAllByRole('tab');
-    expect(tabs.map(t => t.textContent)).toEqual(['Fuselage', 'Wing']);
-    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
-    fireEvent.click(tabs[1]);
+    // No tab strip — the active panel is chosen by clicking on the canvas.
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+  });
+
+  it('clicking inside a panel makes it the active one (all tools)', async () => {
+    const onActivePanel = vi.fn();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel });
+    const cv = mainCanvas();
+    // Panel 1 centre: texture x = 2176 + 1024 → client /4.
+    fireEvent.pointerDown(cv, { clientX: (2176 + 1024) / 4, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
     expect(onActivePanel).toHaveBeenCalledWith(1);
+    expect(onActivePanel).not.toHaveBeenCalledWith(0);
+  });
+
+  it('a click in the gutter activates the nearest panel', () => {
+    const onActivePanel = vi.fn();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel });
+    const cv = mainCanvas();
+    // Gutter spans x=2048..2176; x=2140 is nearer panel 1 (origin 2176).
+    fireEvent.pointerDown(cv, { clientX: 2140 / 4, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(onActivePanel).toHaveBeenCalledWith(1);
+  });
+
+  it('keyboard shortcuts never change the active panel', async () => {
+    const onActivePanel = vi.fn();
+    const ref = React.createRef();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel, ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    // Flips (H/V), tool switches (A/B/E/G/L/R/O/T) and import (I) must not
+    // touch the active panel — only a canvas click does.
+    for (const key of ['h', 'v', 'b', 'a', 'e', 'g', 'l', 'r', 'o', 't']) {
+      fireEvent.keyDown(window, { key });
+    }
+    expect(onActivePanel).not.toHaveBeenCalled();
   });
 
   it('exports one 2048 PNG per panel, in order', async () => {
@@ -1578,6 +1805,70 @@ describe('multi-image panels (A388/B38M)', () => {
     // centres on that panel, not on the whole wide store.
     expect(info.x).toBe(2176 + 1024);
     expect(info.y).toBe(1024);
+  });
+
+  it('lets an object move outside the active panel (overflow is not clamped)', async () => {
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    // A big rect on panel 0 (its centre is well clear of the corner handles).
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    const cv = mainCanvas();
+    // Multi-panel store is 4224×2048 over the stubbed 512×512 rect.
+    const cx = (tx) => tx * (512 / 4224);
+    const cy = (ty) => ty * (512 / 2048);
+    fireEvent.pointerDown(cv, { clientX: cx(400), clientY: cy(400), button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: cx(1200), clientY: cy(1200), button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const before = ref.current.getObjectInfo();
+    expect(before.x).toBe(800);
+    // Select it and drag its centre over panel 1 (texture x=3000).
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.pointerDown(cv, { clientX: cx(before.x), clientY: cy(before.y), button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: cx(3000), clientY: cy(before.y), button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const after = ref.current.getObjectInfo();
+    // Movement is NOT bounded: the centre follows the pointer past the panel.
+    expect(after.x).toBeGreaterThan(2048);
+    // The object renders in ITS panel (panel 1 → x=2176) even though the active
+    // panel is still 0 — unselected movables show on every panel they occupy.
+    await waitFor(() => {
+      expect(ctxs.some(c => c.rect.mock.calls.some(a => a[0] === 2176 && a[2] === 2048))).toBe(true);
+    });
+    // The overflow is clipped (not rendered) to that panel.
+    await waitFor(() => expect(ctxs.some(c => c.clip.mock.calls.length > 0)).toBe(true));
+    // SAVING must clip the object to ITS panel (panel 1 → x=2176), NOT the
+    // active one (0) — otherwise a save would move/lose a sticker.
+    const seen = new Set(ctxs);
+    act(() => { ref.current.exportParts(); });
+    const fresh = ctxs.filter(c => !seen.has(c));
+    expect(fresh.some(c => c.rect.mock.calls.some(a => a[0] === 2176 && a[2] === 2048))).toBe(true);
+    expect(fresh.some(c => c.rect.mock.calls.some(a => a[0] === 0 && a[2] === 2048))).toBe(false);
+  });
+});
+
+describe('overlay padding (selection chrome outside the canvas)', () => {
+  it('sizes the overlay canvas past the store so an off-canvas selection box shows', () => {
+    renderCanvas();
+    const stage = document.querySelector('.lp-canvas-stage');
+    const canvases = stage.querySelectorAll('canvas');
+    expect(canvases.length).toBeGreaterThanOrEqual(2);
+    const overlay = canvases[1];
+    expect(overlay.width).toBe(TEXTURE + OVERLAY_PAD * 2);
+    expect(overlay.height).toBe(TEXTURE + OVERLAY_PAD * 2);
+    // Negative offset parks the padded area around the base bitmap.
+    expect(parseFloat(overlay.style.left)).toBeLessThan(0);
+    expect(parseFloat(overlay.style.top)).toBeLessThan(0);
+  });
+
+  it('pads the overlay for a multi-image canvas too', () => {
+    const panels = [{ partName: 'Fuselage' }, { partName: 'Wing' }];
+    renderCanvas({ panels });
+    const stage = document.querySelector('.lp-canvas-stage');
+    const overlay = stage.querySelectorAll('canvas')[1];
+    // 2 × 2048 + a 128px gutter, plus the pad on both sides.
+    expect(overlay.width).toBe(4224 + OVERLAY_PAD * 2);
   });
 });
 
@@ -1782,7 +2073,7 @@ describe('layer-order menu (right-click)', () => {
     const user = userEvent.setup();
     const ref = React.createRef();
     await drawTwoRects(user, ref);
-    await user.click(screen.getByRole('button', { name: 'Selection Pen' }));
+    await user.click(screen.getByRole('button', { name: 'Lasso' }));
     const cv = mainCanvas();
     fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 2, pointerId: 1 });
     fireEvent.contextMenu(cv, { clientX: 150, clientY: 150, button: 2 });
@@ -1856,7 +2147,7 @@ describe('selection mask', () => {
   // Draw a pen lasso triangle (down + two moves + up) with Select active.
   async function selectPen(user) {
     await user.click(screen.getByRole('button', { name: 'Select' }));
-    await user.click(screen.getByRole('button', { name: 'Selection Pen' }));
+    await user.click(screen.getByRole('button', { name: 'Lasso' }));
   }
   function lassoTriangle() {
     const cv = mainCanvas();
@@ -1894,8 +2185,8 @@ describe('selection mask', () => {
     expect(screen.getByRole('button', { name: 'Object' }).getAttribute('aria-pressed')).toBe('true');
     // No combine row in object mode.
     expect(screen.queryByRole('button', { name: 'Combine' })).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Selection Pen' }));
-    expect(screen.getByRole('button', { name: 'Selection Pen' }).getAttribute('aria-pressed')).toBe('true');
+    await user.click(screen.getByRole('button', { name: 'Lasso' }));
+    expect(screen.getByRole('button', { name: 'Lasso' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Object' }).getAttribute('aria-pressed')).toBe('false');
     // Combine row appears, defaulting to Combine.
     expect(screen.getByRole('button', { name: 'Combine' }).getAttribute('aria-pressed')).toBe('true');
@@ -2030,6 +2321,41 @@ describe('selection mask', () => {
     fireEvent.pointerUp(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
     // Strokes draw directly; putImageData only serves fill + mask clipping.
     expect(ctxs.every(c => c.putImageData.mock.calls.length === 0)).toBe(true);
+  });
+
+  it('a live selection masks only the active movable, not the others', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    const draw = async (a, b) => {
+      await user.click(screen.getByRole('button', { name: 'Rect' }));
+      fireEvent.pointerDown(cv, { clientX: a[0], clientY: a[1], button: 0, pointerId: 1 });
+      fireEvent.pointerMove(cv, { clientX: b[0], clientY: b[1], button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+    };
+    await draw([100, 100], [200, 200]);
+    await draw([400, 400], [500, 500]);
+    expect(ref.current.getObjectCount()).toBe(2);
+    // Select the bottom object A at (150,150): it becomes the active movable.
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
+    // Lasso a selection; still the Select tool, so A stays active.
+    await user.click(screen.getByRole('button', { name: 'Lasso' }));
+    lassoTriangle();
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+    // Flatten synchronously and count mask clips (`destination-in` is unique to
+    // paintObjectMasked): only the active movable is clipped — B previews whole.
+    gcoSets = [];
+    act(() => { ref.current.exportParts(); });
+    expect(gcoSets.filter(v => v === 'destination-in')).toHaveLength(1);
+    // Deselect releases the mask: now neither object is clipped.
+    await user.click(screen.getByRole('button', { name: 'Deselect' }));
+    gcoSets = [];
+    act(() => { ref.current.exportParts(); });
+    expect(gcoSets.filter(v => v === 'destination-in')).toHaveLength(0);
   });
 });
 

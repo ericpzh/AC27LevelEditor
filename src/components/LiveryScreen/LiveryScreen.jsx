@@ -27,6 +27,9 @@ export default function LiveryScreen() {
   const { bind, TooltipPortal } = useTooltip();
   // Mine-list commands + bar state, published by MyLiveriesTab.
   const mineCmdRef = useRef({});
+  // The list's scroll container — MyLiveriesTab clamps scrollTop here after
+  // an in-place delete shrinks the content (no full-list refresh).
+  const contentRef = useRef(null);
   const [barState, setBarState] = useState({ mineCount: 0, selectedCount: 0, allSelected: false, oneSelected: false });
 
   // Unsaved painter guard: CreateTab paint mode registers
@@ -147,11 +150,12 @@ export default function LiveryScreen() {
           </div>
         </header>
       )}
-      <main className={'livery-content' + (isCreate ? ' livery-content--painter' : '')}>
+      <main ref={contentRef} className={'livery-content' + (isCreate ? ' livery-content--painter' : '')}>
         {isMine && (
           <MyLiveriesTab
             search={search}
             cmdRef={mineCmdRef}
+            scrollRef={contentRef}
             onBarState={setBarState}
             onEdit={(row) => { CreateTab.prefill = row; setTab('create'); }}
             onCreate={(planeId) => { CreateTab.prefill = { targetPlaneId: planeId }; setTab('create'); }}

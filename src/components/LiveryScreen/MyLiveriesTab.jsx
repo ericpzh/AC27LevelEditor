@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
@@ -11,7 +11,7 @@ function errKey(code) {
   return 'livery_err_' + String(code || 'unknown');
 }
 
-export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, onBarState }) {
+export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, scrollRef, onBarState }) {
   const { t, lang } = useTranslation();
   const electronAPI = useElectronAPI();
   const [mine, setMine] = useState([]);
@@ -125,6 +125,16 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, o
     return () => { cancelled = true; };
   }, [filteredRows, collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // After an in-place delete shrinks the list, keep the current scroll offset
+  // but cap it to the new content maximum (deleting too much would otherwise
+  // leave scrollTop past the end). Runs before paint so there is no jump.
+  useLayoutEffect(() => {
+    const el = scrollRef && scrollRef.current;
+    if (!el) return;
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (el.scrollTop > max) el.scrollTop = max;
+  }, [mine, scrollRef]);
+
   const toggleGroup = (planeId) => {
     setCollapsed(prev => {
       const next = new Set(prev);
@@ -151,11 +161,11 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, o
           <button className="btn-danger" onClick={async () => {
             hideModal();
             const { showToast } = useAppStore.getState();
-            let ok = 0;
+            const deleted = [];
             for (const folder of folders) {
               try {
                 const res = await electronAPI.deleteLivery(folder);
-                if (res && res.success) ok++;
+                if (res && res.success) deleted.push(folder);
                 else showToast(t(errKey(res && res.error)), 'error');
               } catch (err) {
                 showToast(err.message, 'error');
@@ -166,8 +176,15 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, o
               folders.forEach(f => next.delete(f));
               return next;
             });
-            if (ok > 0) showToast(single ? t('livery_deleted') : t('livery_deleted_multi', { n: ok }), 'success');
-            refresh();
+            // Drop only the deleted rows in place: a full list refresh would
+            // toggle the loading placeholder, unmounting the list and losing
+            // the scroll position. Removing rows shrinks the content and the
+            // layout effect below caps scrollTop to the new maximum.
+            if (deleted.length > 0) {
+              const gone = new Set(deleted);
+              setMine(prev => prev.filter(r => !gone.has(r.folder)));
+              showToast(single ? t('livery_deleted') : t('livery_deleted_multi', { n: deleted.length }), 'success');
+            }
           }}>{t('livery_delete')}</button>
         </>
       )
