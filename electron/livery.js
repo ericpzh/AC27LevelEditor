@@ -110,7 +110,19 @@ function pngSize(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
-function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, targetModelVer }) {
+// The on-disk BaseMap file name for a part. Single-part liveries keep the
+// legacy `base.png`; multi-part types (A388/B38M) use the game's own
+// `base_<Part>.png` convention (base_Fuselage.png + base_Wing.png).
+function baseFileName(partName, totalParts) {
+  if (!totalParts || totalParts <= 1) return 'base.png';
+  const safe = String(partName || '').replace(/[^A-Za-z0-9]/g, '');
+  return safe ? `base_${safe}.png` : 'base.png';
+}
+
+// Build the game's livery manifest. `parts` (when given) is an ordered list of
+// `{partName, fileName}` BaseMap bindings — one per painted panel; otherwise a
+// single part from `partName`/`base.png` is emitted (legacy/single-part types).
+function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, parts, targetModelVer }) {
   // Free-form folders can contain spaces/symbols — sanitize for the id.
   // No-op for conventional SHORT_AIRLINE folders (a20n_cca_default as before).
   const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
@@ -122,6 +134,12 @@ function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, ta
   // other type is still 1. The caller (createLivery) resolves it from the
   // built-in manifest; default '1' keeps this pure helper backward compatible.
   const ver = targetModelVer == null || targetModelVer === '' ? '1' : String(targetModelVer);
+  const manifestParts = Array.isArray(parts) && parts.length
+    ? parts.map(p => ({
+      partName: (p && p.partName) || 'Body',
+      textures: [{ property: 'BaseMap', fileName: (p && p.fileName) || 'base.png' }],
+    }))
+    : [{ partName: body, textures: [{ property: 'BaseMap', fileName: 'base.png' }] }];
   return {
     id: `${safeId}_default`,
     name: `${shortCode} ${airline} Default Livery`,
@@ -130,7 +148,7 @@ function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, ta
     liveryType: 'airline',
     liverySource: 'user',
     targetModelVer: ver,
-    parts: [{ partName: body, textures: [{ property: 'BaseMap', fileName: 'base.png' }] }],
+    parts: manifestParts,
   };
 }
 
@@ -221,6 +239,41 @@ function _builtInMainPartName(gameRoot, planeId) {
     if (part && part.partName) return part.partName;
   } catch (_) {}
   return 'Body';
+}
+
+// Ordered list of every paintable BaseMap binding in a manifest:
+// `[{partName, fileName}]` (A388 → Fuselage + Wing, B38M → Fuselage + Wingtip,
+// everything else → a single part). Parts without a BaseMap file are skipped.
+function _basePartsFromManifest(manifest) {
+  const out = [];
+  if (manifest && Array.isArray(manifest.parts)) {
+    for (const part of manifest.parts) {
+      const tex = part && Array.isArray(part.textures)
+        ? part.textures.find(t => t && t.property === 'BaseMap' && t.fileName)
+        : null;
+      if (tex) out.push({ partName: (part && part.partName) || 'Body', fileName: tex.fileName });
+    }
+  }
+  return out;
+}
+
+// The built-in default's BaseMap bindings for this aircraft (source of truth
+// for how many painter panels a type needs).
+function _builtInBaseParts(gameRoot, planeId) {
+  return _basePartsFromManifest(_readBuiltInManifest(gameRoot, planeId));
+}
+
+// Decode a texture file to a data-URL: DDS through the DXT decoder (Y-flipped
+// to the engine orientation), PNG/JPEG verbatim. Returns null on failure.
+function _decodeTextureFile(file) {
+  try {
+    const buf = fs.readFileSync(file);
+    if (/\.dds$/i.test(file)) return ddsToPngDataUrl(buf);
+    const mime = /\.png$/i.test(file) ? 'image/png' : 'image/jpeg';
+    return `data:${mime};base64,` + buf.toString('base64');
+  } catch (_) {
+    return null;
+  }
 }
 
 function readLiveryRow(packDir, folder) {
@@ -372,9 +425,10 @@ function readLiveryThumbnail(gameRoot, folder, pack = 'mine', size = THUMBNAIL_S
   }
 }
 
-// Picks the part to seed the single painter canvas with: the body/fuselage is
-// the large paintable surface. Multi-part aircraft (A388/B38M) also ship
-// Wing/Wingtip maps the painter cannot address yet — ignored here.
+// Picks the "main" part of a decoded part list: the body/fuselage is the
+// large paintable surface shown by single-image callers. Multi-image aircraft
+// (A388/B38M) also ship Wing/Wingtip maps; those are returned in the full
+// `parts` list, this only chooses the legacy single `imageDataUrl`.
 function _pickMainPart(parts) {
   if (!Array.isArray(parts)) return null;
   return parts.find(p => p && p.partName === 'Body')
@@ -384,9 +438,12 @@ function _pickMainPart(parts) {
 
 const _templateCache = new Map();
 
-// Returns the built-in default livery's BaseMap for `planeId` as a PNG
-// data-URL — the exact UV atlas the model uses, used as the painter's
-// per-aircraft template background. Cached per plane id; never throws.
+// Returns the built-in default livery's BaseMaps for `planeId` as PNG
+// data-URLs — the exact UV atlases the model uses, used as the painter's
+// per-aircraft template background. `parts` carries every paintable panel in
+// manifest order (A388 → Fuselage + Wing, B38M → Fuselage + Wingtip); the
+// legacy `imageDataUrl`/`partName` mirror the main part. Cached per plane id;
+// never throws.
 function readAircraftTemplate(gameRoot, planeId) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   const id = String(planeId || '');
@@ -398,26 +455,29 @@ function readAircraftTemplate(gameRoot, planeId) {
   let result;
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8'));
-    const part = _pickMainPart(manifest.parts);
-    const tex = part && Array.isArray(part.textures)
-      ? part.textures.find(t => t && t.property === 'BaseMap' && t.fileName)
-      : null;
-    if (!tex) {
+    const baseParts = _basePartsFromManifest(manifest);
+    if (baseParts.length === 0) {
       result = { success: false, error: 'IMAGE_MISSING' };
     } else {
-      const file = path.join(dir, path.basename(tex.fileName));
-      const buf = fs.readFileSync(file);
-      if (/\.dds$/i.test(file)) {
-        const png = ddsToPngDataUrl(buf);
-        result = png
-          ? { success: true, imageDataUrl: png, partName: part.partName }
-          : { success: false, error: 'BAD_TEMPLATE' };
+      const decoded = [];
+      let anyBaseMap = false;
+      let decodeFailed = false;
+      for (const bp of baseParts) {
+        anyBaseMap = true;
+        const file = path.join(dir, path.basename(bp.fileName));
+        const imageDataUrl = _decodeTextureFile(file);
+        if (imageDataUrl) decoded.push({ partName: bp.partName, fileName: bp.fileName, imageDataUrl });
+        else decodeFailed = true;
+      }
+      if (decoded.length === 0) {
+        result = { success: false, error: anyBaseMap && decodeFailed ? 'BAD_TEMPLATE' : 'IMAGE_MISSING' };
       } else {
-        const mime = /\.png$/i.test(file) ? 'image/png' : 'image/jpeg';
+        const main = _pickMainPart(decoded);
         result = {
           success: true,
-          imageDataUrl: `data:${mime};base64,` + buf.toString('base64'),
-          partName: part.partName,
+          imageDataUrl: main.imageDataUrl,
+          partName: main.partName,
+          parts: decoded,
         };
       }
     }
@@ -429,11 +489,40 @@ function readAircraftTemplate(gameRoot, planeId) {
   return result;
 }
 
+// Every paintable BaseMap in a stored livery (own or reference pack) as full
+// data-URLs — the painter loads all panels so a multi-part livery round-trips.
+// `imageDataUrl` mirrors the main part for single-image callers. Never throws.
+function readLiveryImages(gameRoot, folder, pack = 'mine') {
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+  const packDir = pack === 'reference' ? referencePackDir(gameRoot) : ownPackDir(gameRoot);
+  const resolved = containmentCheck(packDir, folder || '');
+  if (!resolved) return { success: false, error: 'BAD_FOLDER' };
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(resolved, 'aircraft_livery_manifest.json'), 'utf-8'));
+    let baseParts = _basePartsFromManifest(manifest);
+    // Legacy folder with no manifest BaseMap but a stray base.png.
+    if (baseParts.length === 0 && fs.existsSync(path.join(resolved, 'base.png'))) {
+      baseParts = [{ partName: _pickMainPartRef(manifest && manifest.parts)?.partName || 'Body', fileName: 'base.png' }];
+    }
+    const parts = [];
+    for (const bp of baseParts) {
+      const p = path.join(resolved, path.basename(bp.fileName));
+      const imageDataUrl = _decodeTextureFile(p);
+      if (imageDataUrl) parts.push({ partName: bp.partName, fileName: bp.fileName, imageDataUrl });
+    }
+    if (parts.length === 0) return { success: false, error: 'IMAGE_MISSING' };
+    return { success: true, imageDataUrl: _pickMainPart(parts).imageDataUrl, parts };
+  } catch (_) {
+    return { success: false, error: 'IMAGE_MISSING' };
+  }
+}
+
 // The caller supplies only manifest-truth fields (airline + targetPlaneId)
 // plus a free-form, filesystem-safe folder name used verbatim as the storage
-// key. The short code and the manifest id are derived — never parsed from
-// the folder name, which carries no meaning to this app.
-function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, folder }) {
+// key. `images` is an ordered list of `{partName, imageDataUrl}` paintable
+// panels (single entry for legacy callers passing `imageDataUrl`). The short
+// code, file names and manifest id are derived — never parsed from the folder.
+function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, folder }) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   if (!AIRLINE_RE.test(String(airline || ''))) return { success: false, error: 'BAD_AIRLINE' };
   const planeId = String(targetPlaneId || '');
@@ -445,7 +534,8 @@ function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, folder }
   const shortCode = PLANE_ID_TO_SHORT_CODE[planeId] || planeId.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
   // The manifest part must match the aircraft's built-in main part (Fuselage
   // for multi-part A388/B38M) or the game ignores the painted texture.
-  const partName = _builtInMainPartName(gameRoot, planeId);
+  const builtInBaseParts = _builtInBaseParts(gameRoot, planeId);
+  const mainPartName = _builtInMainPartName(gameRoot, planeId);
   // The manifest version must match the aircraft's built-in model version or
   // the game flags the livery as broken (C919 bumped 1→2; the rest are 1).
   // Deliberately NOT copying `variant`: no built-in manifest carries one, so
@@ -453,26 +543,55 @@ function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, folder }
   const targetModelVer = _builtInTargetModelVer(gameRoot, planeId);
   const rawFolder = String(folder == null ? '' : folder).trim();
   if (!LIVERY_FOLDER_SAFE_RE.test(rawFolder)) return { success: false, error: 'BAD_FOLDER' };
-  const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(imageDataUrl || ''));
-  if (!m) return { success: false, error: 'BAD_IMAGE' };
-  let buf;
-  try { buf = Buffer.from(m[1], 'base64'); }
-  catch (_) { return { success: false, error: 'BAD_IMAGE' }; }
-  const size = pngSize(buf);
-  if (!size || size.width !== TEXTURE_SIZE || size.height !== TEXTURE_SIZE) {
-    return { success: false, error: 'BAD_IMAGE_DIMENSIONS' };
+
+  // Normalize to an ordered `[{partName, buf}]` list.
+  const list = Array.isArray(images) && images.length
+    ? images.map(im => ({ partName: im && im.partName ? String(im.partName) : '', imageDataUrl: im && im.imageDataUrl }))
+    : [{ partName: '', imageDataUrl }];
+  const total = list.length;
+  const manifestParts = [];
+  for (let i = 0; i < total; i++) {
+    const item = list[i];
+    const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(item.imageDataUrl || ''));
+    if (!m) return { success: false, error: 'BAD_IMAGE' };
+    let buf;
+    try { buf = Buffer.from(m[1], 'base64'); }
+    catch (_) { return { success: false, error: 'BAD_IMAGE' }; }
+    const size = pngSize(buf);
+    if (!size || size.width !== TEXTURE_SIZE || size.height !== TEXTURE_SIZE) {
+      return { success: false, error: 'BAD_IMAGE_DIMENSIONS' };
+    }
+    // Prefer the caller's part name (from the built-in template); fall back to
+    // the built-in binding at the same index, then the main part / Body.
+    let partName = item.partName;
+    if (!partName && builtInBaseParts[i]) partName = builtInBaseParts[i].partName;
+    if (!partName && total === 1) partName = mainPartName;
+    if (!partName) partName = 'Body';
+    manifestParts.push({ partName, fileName: baseFileName(partName, total), buf });
   }
+
   try {
     const packDir = ensureOwnPackDir(gameRoot);
     const resolved = containmentCheck(packDir, rawFolder);
     if (!resolved) return { success: false, error: 'BAD_FOLDER' };
     if (!fs.existsSync(resolved)) fs.mkdirSync(resolved, { recursive: true });
     // Silent overwrite — no .bak (locked decision §0.4). The renderer's Save
-    // As flow confirms first when a foreign folder would be clobbered.
-    fs.writeFileSync(path.join(resolved, 'base.png'), buf);
+    // As flow confirms first when a foreign folder would be clobbered. Stale
+    // images from a previous save (e.g. base.png after a multi-part save) are
+    // removed so the folder never carries orphan textures.
+    const wanted = new Set(manifestParts.map(p => p.fileName.toLowerCase()));
+    for (const entry of fs.readdirSync(resolved)) {
+      if ((/\.png$/i.test(entry) || /\.jpe?g$/i.test(entry)) && !wanted.has(entry.toLowerCase())) {
+        try { fs.rmSync(path.join(resolved, entry), { force: true }); } catch (_) {}
+      }
+    }
+    for (const p of manifestParts) fs.writeFileSync(path.join(resolved, p.fileName), p.buf);
     fs.writeFileSync(
       path.join(resolved, 'aircraft_livery_manifest.json'),
-      JSON.stringify(buildManifest({ folder: rawFolder, shortCode, airline, targetPlaneId, partName, targetModelVer }), null, 2),
+      JSON.stringify(buildManifest({
+        folder: rawFolder, shortCode, airline, targetPlaneId, targetModelVer,
+        parts: manifestParts.map(p => ({ partName: p.partName, fileName: p.fileName })),
+      }), null, 2),
       'utf-8',
     );
     return { success: true, folder: rawFolder };
@@ -605,12 +724,22 @@ function loadLiveryZip(zipPath) {
     }
     const texExt = path.extname(String(texName)).toLowerCase();
     const texMime = texExt === '.jpg' || texExt === '.jpeg' ? 'image/jpeg' : 'image/png';
+    const imageDataUrl = `data:${texMime};base64,` + texBuf.toString('base64');
+    // Every paintable BaseMap in the shared manifest, so the painter can load
+    // all panels of a multi-part (A388/B38M) livery.
+    const parts = [];
+    for (const bp of _basePartsFromManifest(manifest)) {
+      const p = path.join(absDir, path.basename(bp.fileName));
+      const url = _decodeTextureFile(p);
+      if (url) parts.push({ partName: bp.partName, fileName: bp.fileName, imageDataUrl: url });
+    }
     return {
       success: true,
       folder,
       shortCode,
       manifest,
-      imageDataUrl: `data:${texMime};base64,` + texBuf.toString('base64'),
+      imageDataUrl,
+      parts: parts.length ? parts : [{ partName: (main && main.partName) || 'Body', fileName: texName, imageDataUrl }],
     };
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
@@ -635,10 +764,12 @@ module.exports = {
   containmentCheck,
   pngSize,
   buildManifest,
+  baseFileName,
   listPackDir,
   listLiveries,
   listAircraftTypes,
   readLiveryImage,
+  readLiveryImages,
   readLiveryThumbnail,
   readAircraftTemplate,
   createLivery,

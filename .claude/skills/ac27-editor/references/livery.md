@@ -27,11 +27,16 @@ documents only its own buttons.
   and never part of a share ZIP.
 - One livery = one folder under the pack dir containing
   `aircraft_livery_manifest.json` + one or more BaseMap images. Single-part
-  types ship `base.png` (2048×2048); **multi-part types (A388/B38M) ship
-  `base_Fuselage.png`** (+ `base_Wing.png`, …) and the paintable base must bind
-  to the part name the aircraft's built-in default uses (`Fuselage`, not
-  `Body`) or the game ignores the texture. The **folder name is an opaque
-  storage key** — the app never parses meaning out of it (it is free-form,
+  types ship `base.png` (2048×2048); **multi-image types (A388/B38M) ship one
+  file per painted panel** — `base_Fuselage.png` + `base_Wing.png` (A380) /
+  `base_Wingtip.png` (737 MAX) — and each paintable base must bind to the part
+  name the aircraft's built-in default uses (`Fuselage`, not `Body`) or the
+  game ignores the texture. The editor derives the file names from the built-in
+  part names (`baseFileName(partName, total)` — `base.png` when there is one
+  panel) and writes a `parts` entry per panel; a stale `base.png` left by an
+  older single-image save is removed on the next multi-panel save. The **folder
+  name is an opaque storage key** — the app never parses meaning out of it (it
+  is free-form,
   filesystem-safe only) and the game reads the manifest instead.
   `readLiveryImage`/`listLiveries` resolve the image through the manifest
   (`_resolveLiveryImagePath`: the main part's BaseMap first, then any other
@@ -182,19 +187,23 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `targetPlaneId`** (the add-card) leaves `origin` null and initialises the
   brand-new form with that type pre-selected — `knownPlanes` also accepts
   `prefill.targetPlaneId`, so the form is valid even when the built-in scan
-  misses the type. The canvas starts primed with the origin
-  picture (the list passes **no pixels** now, so it lazy-loads the full
-  `readLiveryImage` whenever `prefill.imageDataUrl` is null). The
-  selected aircraft type's **built-in UV template** (see "Aircraft template"
-  below) is fetched whenever a type is known — **including when editing a saved
-  livery** — and held in `templateDataUrl`, passed to the canvas as
-  `defaultLiveryDataUrl`. For a **new** livery it also becomes the canvas base
-  (opaque background showing the real model shape); for a saved origin /
-  imported image it never clobbers the base, but it is what **Clear** restores.
-  A brand-new canvas is re-primed only while **untouched** — the template
-  effect checks `dirtyRef.current` (and `base.isTemplate`) before swapping the
-  base, so picking another Airline/Aircraft just updates the form and closes
-  the dropdown and never discards in-progress painting. The airline combobox is
+  misses the type. The painter is **panel-based**: `panels` is derived from the
+  selected type's built-in BaseMap parts (A388 → Fuselage + Wing, B38M →
+  Fuselage + Wingtip, everything else one `Body` panel), and the canvas receives
+  `panels`/`initialParts`/`defaultParts`/`activePanel`/`onActivePanel`. The
+  canvas starts primed with the origin'**s own `parts` (the list passes no
+  pixels, so it lazy-loads `readLiveryImages` — falling back to the single
+  `readLiveryImage`); each panel falls back to the built-in UV template. A
+  prefill that does carry pixels (`imageDataUrl`) seeds the primary panel. The
+  selected type's **built-in UV template** (see "Aircraft template" below) is
+  fetched whenever a type is known — **including when editing a saved livery**
+  — held in `templates` and passed as `defaultParts` (what **Clear** restores).
+  The canvas is only remounted (`canvasKey` + `panelSig` in the `key`) when the
+  panel layout changes or the canvas is still **untouched** (`dirtyRef`); a
+  painted canvas keeps its pixels when only the form's Airline/Aircraft changes.
+  **Import image** targets the **active panel** (`overrides[panels[activeIdx]]`),
+  so a square import replaces one part and a wide canvas can still be split per
+  panel. The airline combobox is
   wrapped in a **`<span>`, not a `<label>`** (a `<button>` inside a `<label>`
   makes Chromium refocus the labelled input, which re-fired `onFocus` and
   reopened the list right after a pick); each option also calls
@@ -211,9 +220,9 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   type `<select>` are `disabled` and greyed (`.lp-locked`) — the pair is
   display-only, and Save As reuses it. Actions:
   - **Import image** (`IoImageOutline`) → `fileToDataUrl` + `normalizeToTexture`
-    (default white fill) → new canvas base.
-  - **Import livery** (`FaFileImport`) → `loadLiveryZip` → normalize + prime
-    airline/planeId from the manifest.
+    (default white fill) → replaces the **active panel**'s base only.
+  - **Import livery** (`FaFileImport`) → `loadLiveryZip` → normalize **each**
+    BaseMap part (`parts`) + prime airline/planeId from the manifest.
   - **Export livery** (`FaFileExport`) → writes the canvas via `createLivery`
     then `exportLiveryToDir` (directory picker; cancel leaves the saved
     livery, success `livery_exported` with `<folder>.zip`).
@@ -239,8 +248,10 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   livery's own origin folder is exempt — **Save As always asks**, including
   when its prefill equals the origin folder; fresh names save straight through
   and an unreadable list falls through. Both then
-  funnel through `submitCreate(imageDataUrl, airline, planeId, folder)` →
-  `createLivery` → toast + `onCreated`. On success it also fires
+  funnel through `submitCreate(canvasRef.current.exportParts(), airline,
+  planeId, folder)` → `createLivery({images})` → toast + `onCreated`
+  (`exportParts()` returns one `{partName, imageDataUrl}` per panel; a
+  single-panel type yields a one-entry `Body` list → `base.png`). On success it also fires
   `showModHint()`: unless the `liveryModHintDismissed` cache flag is set
   (`get-cache-flag`), it opens the **Enable the Mod in Game** prompt
   (`livery_mod_hint_title`/`_body`, OK = `modal_btn_ok`) telling the user to
@@ -267,12 +278,22 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   description"; the self-referential Help chip, and the undo/redo/zoom/fit and
   duplicate/remove-sticker chips, are not listed. Escape/backdrop/X close; i18n
   `livery_help_*` (zh + en).
-- `LiveryCanvas.jsx` — fixed 2048² backing store, **opaque** base (the
-  per-aircraft template image, or `DEFAULT_BASE_COLOR = '#ffffff'` when there
-  is none), CSS-scaled view. Layout: Photoshop-style **left icon rail** +
-  contextual options bar + bottom zoom status bar. Shared `clearBase`/
-  `fillBase`/`drawBase(ctx, dataUrl, onDone)` helpers paint the base on mount
-  and on **Clear**.
+- `LiveryCanvas.jsx` — **N-panel** backing store: one 2048² panel per
+  `panels` entry (multi-image A388/B38M → 2 panels), laid out horizontally
+  with a `PANEL_GAP` (128px) `GAP_FILL` gutter, so the store is
+  `N*2048 + (N-1)*128` × 2048 (`panelLayout(n)`), **opaque** base (each
+  panel's image, or `DEFAULT_BASE_COLOR = '#ffffff'` when there is none),
+  CSS-scaled view. Layout: Photoshop-style **left icon rail** + contextual
+  options bar + a **panel strip** (`.lp-panels`, one `.lp-panel-tab` per
+  part, `role="tab"`; only shown with >1 panel) + bottom zoom status bar. The
+  active panel is highlighted on the overlay (blue outline; dividers around
+  every panel). Shared `fillPanelBases(ctx, layout)`/`drawBase(ctx, layout,
+  parts, onDone)` helpers paint every panel on mount and on **Clear** (all
+  panels reset to `defaultParts`). `exportParts()` returns one 2048² PNG
+  `{partName, imageDataUrl}` per panel (the `CreateTab` save payload);
+  `exportPNG()` still returns the whole wide flattened texture. The mask,
+  scratch, stroke, undo and eraser-background canvases are all `W×H` (the wide
+  store), and pointer→texture mapping divides by `W`/`H`.
    - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
      eyedropper (I), fill (G), line (L), rect (R), ellipse (O), text (T).
      `TOOL_META` advertises the shortcut; rail buttons and letter shortcuts
@@ -354,8 +375,9 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     live object (`commitShape`, ignores a zero-drag click) and keeps the shape
     tool active so several can be drawn in a row — no rasterisation, and the
     previously drawn shapes are **not** flattened (the topmost object under the
-    cursor wins a Select-tool hit test). Import a sticker via
-    `selectLiveryImage`/`readDiskImage` from the rail or `importSticker()`;
+     cursor wins a Select-tool hit test). Import a sticker via
+     `selectLiveryImage`/`readDiskImage` from the rail or `importSticker()`;
+     it drops at the **active panel's** centre (`layout.x(active) + TEXTURE/2`);
     commit text by clicking with the Text tool and typing — the draft is
     committed (announced same as Enter) on **Enter, the input losing focus
     (clicking away), switching tools (rail or keyboard), or clicking elsewhere
@@ -365,12 +387,26 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     (`textDraftRef`/`textAnchorRef`) so those handlers read fresh values;
     `commitText()` itself never changes the active tool (Enter/blur → Select,
     tool switch → the picked tool, canvas click → stays on Text). With the Select
-    tool: click an object to select/move it, drag handles to scale/rotate (a
-    text box scales its `size` with the frame), Escape / click-away to deselect,
-    `Delete`/`Backspace` to remove the selected object. **The Select box +
+     tool: click an object to select/move it, drag handles to scale/rotate.
+     A corner drag is **free stretch by default** (each axis follows the pointer
+     so `w`/`h` move independently) and **aspect-locked while Shift is held**
+     (one factor for both axes — the original behaviour). Both scale about the
+     object's centre through the pure helpers `objectLocal(o, p)` (translate +
+     rotate only, no flip) and `resizeFactors(o, startP, p, shift)` (positive
+     factors with a 0.02 floor, so dragging through the centre shrinks instead
+     of mirroring). For a **text box** a Shift resize changes its `size` (glyphs
+     follow the frame), while a free resize keeps the font and stores a
+     per-axis `stretch` (`{sx, sy}`) that `paintLiveObjectContent` applies with
+     `ctx.scale` and `measureLiveText(ctx, text, o, stretch)` folds into the
+     measured w/h — so the box keeps hugging the glyphs and a later
+     font/size/bold change preserves the stretch. Eraser holes and the
+     part-erase boundary follow both axes (`scaleErase(k, erase, ky)` /
+     `scaleFrame(k, frame, ky)`, the single brush width taking the geometric
+     mean). Escape / click-away to deselect,
+     `Delete`/`Backspace` to remove the selected object. **The Select box +
     handles are always drawn in the UNFLIPPED frame** (`drawOverlay` does
     `translate(x,y) · rotate(rot)` only), and the pointer→frame mapping
-    (`stickerLocal` = `R(-rot) · (p − o)`) lands in that same frame — so the
+    (`stickerLocal` = `objectLocal` = `R(-rot) · (p − o)`) lands in that same frame — so the
     grab zones are exactly the drawn corner (`frame.x1, frame.y1`) and the
     rotate dot (`frame centre, frame.y0 − 40/z`) **regardless of `flipX`/
     `flipY`**. Mirroring those grab points through the flip (the removed
@@ -438,7 +474,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       `livery_paint_mask_combine`/`_erase`/`_replace` = 合并/擦除/替换,
       `livery_paint_mask_mode`, default combine), a Tolerance slider reusing
       `fillTol` in wand mode, and a Deselect button (`livery_paint_deselect`)
-      while a selection exists. The mask is a lazily-created 2048² canvas
+      while a selection exists. The mask is a lazily-created `W×H` (whole-store) canvas
       (white-opaque = selected; `getMaskCtx`/`maskCanvasRef`) with a
       dotted-line outline (`maskOutlineRef`: pen → closed path, wand → region
       bounds = the latest region; live lasso draft from `lassoRef`), drawn
@@ -473,12 +509,14 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     `{img, objects, selId}` snapshots — the base raster **and** the live-object
     layer, so undo also removes/re-instates objects). **Clear**
     (`AiOutlineClear`, `react-icons/ai`) opens a
-    confirm modal and re-paints the base via
-    `drawBase(ctx, defaultLiveryRef.current || initialImageDataUrl)` — always
-    the **selected aircraft type's built-in default livery**, even when editing
-    a saved livery / reference / imported image; falls back to the neutral fill
-    only when the type template is unavailable. The `defaultLiveryDataUrl` prop
-    is mirrored into `defaultLiveryRef` so the modal closure reads the latest
+    confirm modal and re-paints **every** panel via `drawBase(ctx,
+    layout, clearParts, scheduleOverlay)` where `clearParts` is
+    `defaultPartsRef.current` when any panel carries pixels, else
+    `initialPartsRef.current` — always the **selected aircraft type's built-in
+    default livery**, even when editing a saved livery / reference / imported
+    image; falls back to the neutral fill only when the type template is
+    unavailable. The `defaultParts`/`initialParts` props are mirrored into
+    `defaultPartsRef`/`initialPartsRef` so the modal closure reads the latest
     value. Unsaved flag via
     `onDirty`.
 - Display names: `airlineDisplayName(code, lang)` +
@@ -505,13 +543,15 @@ matching built-in `base.dds`), so the painter using the raw decode painted the
 atlas upside down. `ddsToPngDataUrl` therefore flips Y; `decodeDds` itself
 stays a raw decoder. `electron/dds.js` (pure, no deps) decodes the BaseMap
 (`decodeDds` DXT1/DXT5/DXT3 → RGBA, `encodePng` minimal RGBA8 encoder) and
-`electron/livery.js:readAircraftTemplate(gameRoot, planeId)` picks the
-`Body`→`Fuselage`→first part, returns a PNG data-URL (`{success, imageDataUrl,
-partName}`), caches successes per plane id, and reports `NO_TEMPLATE` when the
-type has no built-in folder. A PNG base file is returned verbatim (no flip —
-packs already ship the engine orientation). Multi-part aircraft only seed the
-main (Fuselage/Body) canvas — Wing/Wingtip maps are not separately addressable
-yet.
+`electron/livery.js:readAircraftTemplate(gameRoot, planeId)` now returns **every**
+paintable BaseMap part in manifest order as `parts: [{partName, fileName,
+imageDataUrl}]` (plus the legacy main-part `imageDataUrl`/`partName`, the
+`Body`→`Fuselage`→first pick), caches successes per plane id, and reports
+`NO_TEMPLATE` when the type has no built-in folder. A PNG base file is returned
+verbatim (no flip — packs already ship the engine orientation). The painter
+lays out **one 2048² panel per part** (A388 → Fuselage + Wing, B38M → Fuselage
++ Wingtip, everything else one panel), side by side with a 128px gutter
+(`PANEL_GAP`), so the secondary map is now separately addressable.
 
 ## IPC (`electron/livery.js` ← `electron/main.js` handlers ← `electron/preload.js`)
 
@@ -531,18 +571,26 @@ Electron's `nativeImage` (`resize` + `toJPEG(72)`), memoized in an in-memory
 `thumbnail: true` flag marks the real resize; when `nativeImage` is
 unavailable/unproductive (plain-Node unit tests, empty decode) it degrades to
 the full image verbatim with `thumbnail: false` so the list still renders;
-`get-aircraft-template(planeId)` → the built-in default BaseMap as a PNG
-data-URL (`readAircraftTemplate`, see "Aircraft template" above);
+`read-livery-images(folder, pack)` → **all** BaseMap parts of a stored livery
+(`{success, imageDataUrl (main), parts:[{partName, fileName, imageDataUrl}]}`)
+— the painter loads every panel; the list keeps using the single main-part
+`read-livery-image`/`read-livery-thumbnail`, so its preview is unchanged;
+`get-aircraft-template(planeId)` → the built-in default BaseMaps
+(`readAircraftTemplate`, now a `parts` array — see "Aircraft template" above);
 `list-aircraft-types()` → the aircraft-type dropdown source (see
 "Aircraft-type dropdown" above);
-`create-livery({imageDataUrl, airline, targetPlaneId, folder})` → validates
-(airline `/^[A-Z]{3}$/`, plane id resolves through `PLANE_ID_TO_SHORT_CODE`,
-PNG data-URL, IHDR = 2048², folder matches `LIVERY_FOLDER_SAFE_RE` +
-containment) and derives the short code + manifest id → writes `base.png` +
-manifest (**silent overwrite, no `.bak`** — the renderer's Save As override
-prompt is the guard, see `CreateTab`), returns `{success, folder}`. The
-written manifest carries the built-in `partName` (**Fuselage** for multi-part
-A388/B38M) and the built-in `targetModelVer` (C919 `2`, rest `1`);
+`create-livery({images, imageDataUrl, airline, targetPlaneId, folder})` →
+`images` is an ordered `[{partName, imageDataUrl}]` list (one entry per panel;
+legacy callers may send a single `imageDataUrl`). Validates each image (airline
+`/^[A-Z]{3}$/`, plane id resolves through `PLANE_ID_TO_SHORT_CODE`, PNG
+data-URL, IHDR = 2048², folder matches `LIVERY_FOLDER_SAFE_RE` + containment)
+and derives the short code + manifest id → writes `base.png` for a single panel
+or `base_Fuselage.png`/`base_Wing.png`/`base_Wingtip.png` per panel (removing a
+stale `base.png` from an older save) + a `parts` manifest (**silent overwrite,
+no `.bak`** — the renderer's Save As override prompt is the guard, see
+`CreateTab`), returns `{success, folder}`. The written manifest carries the
+built-in `partName` per panel (**Fuselage + Wing/Wingtip** for A388/B38M) and
+the built-in `targetModelVer` (C919 `2`, rest `1`);
 `delete-livery(folder)` (own-pack only, containment-checked `rm -rf`);
 `select-livery-image` (png/jpg dialog) + `read-disk-image(filePath)`;
 `export-livery(folder)` → `createZip` to temp `<folder>.zip` with
@@ -552,9 +600,11 @@ folder carries no image); `export-livery-to-dir(folder)` → `exportLivery`
 then a **directory** picker, copies to `<dir>/<folder>.zip` (cancel/failure
 calls `cleanExportTemp`); `save-livery-dialog({sourcePath, suggestedName})` →
 save dialog + copy + temp cleanup; `load-livery-zip()` → open dialog → temp
-extract → `{folder, shortCode, manifest, imageDataUrl}` where `shortCode` is
-derived from `manifest.targetPlaneId` and `imageDataUrl` is the **main-part**
-BaseMap (not `parts[0]`), MIME by extension (temp cleaned). Errors: `NO_GAME_ROOT` /
+extract → `{folder, shortCode, manifest, imageDataUrl, parts}` where
+`shortCode` is derived from `manifest.targetPlaneId`, `imageDataUrl` is the
+**main-part** BaseMap (not `parts[0]`), and `parts` carries every BaseMap file
+so the painter can prime both panels of a multi-image livery, MIME by
+extension (temp cleaned). Errors: `NO_GAME_ROOT` /
 `BAD_AIRLINE` / `BAD_PLANE` / `BAD_IMAGE` / `BAD_IMAGE_DIMENSIONS` /
 `BAD_FOLDER` / `BAD_MANIFEST` / `IMAGE_MISSING` / `BAD_ZIP` / `ZIP_MISSING` /
 `NO_TEMPLATE` / `BAD_TEMPLATE`
@@ -571,8 +621,8 @@ Base texture is **opaque** — the painter seeds a new canvas with the
 per-aircraft built-in template (or a neutral `#ffffff` fill), so a saved
 `base.png` never has transparent holes (a BaseMap replaces the model's own
 texture). `LiveryCanvas` **Clear** always restores the selected aircraft type's
-built-in default livery (`defaultLiveryDataUrl`), falling back to the opened
-base image / `DEFAULT_BASE_COLOR` only when that template is unavailable; and
+built-in default livery (`defaultParts`), falling back to the opened
+base panels / `DEFAULT_BASE_COLOR` only when that template is unavailable; and
 `normalizeToTexture(dataUrl)` fills white by default. Shrink-to-fit inside
 2048², aspect preserved, centered; smaller images as-is (never upscale). Main
 only writes bytes + checks IHDR.

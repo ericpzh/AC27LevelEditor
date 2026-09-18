@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleFrame, flipOffset, worldFromLocal, localFromWorld, isTextEntry } from '../../../src/components/LiveryScreen/LiveryCanvas';
+import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, panelLayout, isTextEntry } from '../../../src/components/LiveryScreen/LiveryCanvas';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
@@ -504,6 +504,134 @@ describe('sticker opacity slider', () => {
   });
 });
 
+describe('free stretch vs Shift aspect-locked resize', () => {
+  // jsdom canvas rect is stubbed 512×512 → client = texture / 4.
+  const CX = 1024, CY = 1024;
+  const toClient = (o, lx, ly) => ({
+    clientX: (o.x + lx) / 4,
+    clientY: (o.y + ly) / 4,
+  });
+  const drag = (from, to, opts = {}) => {
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { ...from, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { ...to, button: 0, pointerId: 1, ...opts });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+  };
+  const importSticker = async (ref) => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+  };
+  async function makeText(user, ref, text = 'hi') {
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    const input = screen.getByPlaceholderText('Type text, Enter to commit…');
+    await user.type(input, text);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(ctxs.some(c => c.translate.mock.calls.length > 0)).toBe(true));
+  }
+
+  it('stretches a sticker without Shift: w and h follow the pointer independently', async () => {
+    const ref = React.createRef();
+    await importSticker(ref);
+    const before = ref.current.getObjectInfo();
+    expect([before.w, before.h]).toEqual([100, 50]);
+    // Bottom-right handle out to twice the width and half the height.
+    drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w, before.h / 4));
+    const after = ref.current.getObjectInfo();
+    expect(after.w).toBeCloseTo(200, 3);
+    expect(after.h).toBeCloseTo(25, 3);
+    // Scaling about the centre, not a body drag.
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+  });
+
+  it('keeps the aspect ratio when Shift is held', async () => {
+    const ref = React.createRef();
+    await importSticker(ref);
+    const before = ref.current.getObjectInfo();
+    drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w, before.h / 4), { shiftKey: true });
+    const after = ref.current.getObjectInfo();
+    // One factor for both axes: the 2:1 box stays 2:1 (and is NOT the free
+    // stretch above, which would have quartered h).
+    expect(after.w / after.h).toBeCloseTo(before.w / before.h, 6);
+    const k = after.w / before.w;
+    expect(after.h).toBeCloseTo(before.h * k, 6);
+    expect(k).toBeCloseTo(Math.hypot(100, 12.5) / Math.hypot(50, 25), 6);
+    expect(after.h).not.toBeCloseTo(25, 0);
+  });
+
+  it('stretches a shape object the same way', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    drag(
+      { clientX: (CX - 120) / 4, clientY: (CY - 80) / 4 },
+      { clientX: (CX + 120) / 4, clientY: (CY + 80) / 4 },
+    );
+    const before = ref.current.getObjectInfo();
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w * 1.5, before.h / 4));
+    const after = ref.current.getObjectInfo();
+    expect(ref.current.getObjectCount()).toBe(1);
+    expect(after.w).toBeCloseTo(720, 3);
+    expect(after.h).toBeCloseTo(80, 3);
+  });
+
+  it('stretches a text box and its glyphs while keeping the font size', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await makeText(user, ref, 'hi');
+    const before = ref.current.getObjectInfo();
+    expect(before.kind).toBe('text');
+    ctxs.length = 0;
+    // Corner out to 3x the width, half the height.
+    drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w * 1.5, before.h / 4));
+    const after = ref.current.getObjectInfo();
+    expect(after.w).toBeCloseTo(before.w * 3, 3);
+    expect(after.h).toBeCloseTo(before.h * 0.5, 3);
+    // The font is untouched; the glyphs are scaled to fill the stretched box.
+    expect(after.size).toBe(before.size);
+    expect(after.stretch.sx).toBeCloseTo(3, 6);
+    expect(after.stretch.sy).toBeCloseTo(0.5, 6);
+    await waitFor(() => {
+      expect(ctxs.some(c => c.scale.mock.calls.some(([x, y]) =>
+        Math.abs(x - 3) < 1e-6 && Math.abs(y - 0.5) < 1e-6))).toBe(true);
+    });
+    // A later font/size change keeps the stretch (box re-measured, still stretched).
+    fireEvent.change(screen.getByRole('slider', { name: /Size/ }), { target: { value: String(before.size * 2) } });
+    const resized = ref.current.getObjectInfo();
+    expect(resized.size).toBe(before.size * 2);
+    expect(resized.stretch.sx).toBeCloseTo(3, 6);
+    expect(resized.stretch.sy).toBeCloseTo(0.5, 6);
+    expect(resized.w / resized.h).toBeCloseTo(6, 6);
+  });
+
+  it('keeps a text box aspect-locked when Shift is held', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await makeText(user, ref, 'hi');
+    const before = ref.current.getObjectInfo();
+    drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w, before.h / 4), { shiftKey: true });
+    const after = ref.current.getObjectInfo();
+    expect(after.stretch).toBeNull();
+    expect(after.w / after.h).toBeCloseTo(1, 6);
+    const k = after.w / before.w;
+    expect(after.size).toBeCloseTo(before.size * k, 6);
+  });
+});
+
 describe('text object (selectable, flippable)', () => {
   async function commitText(user, ref, text = 'hi') {
     await waitFor(() => expect(ref.current).toBeTruthy());
@@ -681,6 +809,34 @@ describe('LiveryCanvas tools — paint operations', () => {
     // Mock pixel is transparent black → #000000.
     expect(swatch().dataset.color).toBe('#000000');
     expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+  });
+
+  it('eyedropper picks a live object (sticker) colour, not just the base', async () => {
+    const user = userEvent.setup();
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    expect(ref.current.getObjectCount()).toBe(1);
+    // The 1×1 eyedropper composite returns the object's pixel.
+    getCtxSpy.mockImplementation(() => {
+      const c = makeCtx();
+      c.getImageData.mockImplementation((x, y, w, h) => {
+        const data = new Uint8ClampedArray(Math.max(4, w * h * 4));
+        if (w === 1 && h === 1) { data[0] = 0x12; data[1] = 0x34; data[2] = 0x56; data[3] = 255; }
+        return { data, width: w, height: h };
+      });
+      ctxs.push(c);
+      return c;
+    });
+    await user.click(screen.getByRole('button', { name: 'Picker' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    expect(swatch().dataset.color).toBe('#123456');
   });
 
   it('right-click picks the pixel colour without switching tools', async () => {
@@ -1273,7 +1429,9 @@ describe('paint save payload', () => {
       }));
     });
     const payload = mockIpcInvoke.mock.calls.find(c => c[0] === 'create-livery')[1];
-    expect(payload.imageDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    expect(Array.isArray(payload.images)).toBe(true);
+    expect(payload.images).toHaveLength(1);
+    expect(payload.images[0].imageDataUrl.startsWith('data:image/png;base64,')).toBe(true);
   });
 });
 
@@ -1359,6 +1517,83 @@ describe('brushRgba (rail RGBA colour helper)', () => {
     expect(brushRgba({ color: '#ff0000', opacity: 1 })).toBe('rgba(255,0,0,1)');
     expect(brushRgba({ color: '#00ff00', opacity: 0.5 })).toBe('rgba(0,255,0,0.5)');
     expect(brushRgba({ color: '#0000ff' })).toBe('rgba(0,0,255,1)');
+  });
+});
+
+describe('multi-image panels (A388/B38M)', () => {
+  const panels = [{ partName: 'Fuselage' }, { partName: 'Wing' }];
+  const initialParts = [
+    { partName: 'Fuselage', imageDataUrl: 'data:image/png;base64,FUSE' },
+    { partName: 'Wing', imageDataUrl: 'data:image/png;base64,WING' },
+  ];
+
+  it('lays out two 2048 squares with a 128px gap and shows part tabs', async () => {
+    const onActivePanel = vi.fn();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel });
+    const cv = mainCanvas();
+    // 2 × 2048 + a 128px gutter.
+    expect(cv.width).toBe(4224);
+    expect(cv.height).toBe(2048);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map(t => t.textContent)).toEqual(['Fuselage', 'Wing']);
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(tabs[1]);
+    expect(onActivePanel).toHaveBeenCalledWith(1);
+  });
+
+  it('exports one 2048 PNG per panel, in order', async () => {
+    const ref = React.createRef();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const parts = ref.current.exportParts();
+    expect(parts.map(p => p.partName)).toEqual(['Fuselage', 'Wing']);
+    expect(parts[0].imageDataUrl).toBe(FAKE_SAVE);
+    expect(parts[1].imageDataUrl).toBe(FAKE_SAVE);
+    // exportPNG still returns the whole flattened (wide) texture.
+    expect(ref.current.exportPNG()).toBe(FAKE_SAVE);
+  });
+
+  it('a single-panel canvas exports a one-entry Body list', async () => {
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const parts = ref.current.exportParts();
+    expect(parts).toHaveLength(1);
+    expect(parts[0].partName).toBe('Body');
+  });
+
+  it('imports a sticker onto the active panel', async () => {
+    const ref = React.createRef();
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 1, ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    const info = ref.current.getObjectInfo();
+    // The second panel starts after 2048 + the 128px gutter; the sticker
+    // centres on that panel, not on the whole wide store.
+    expect(info.x).toBe(2176 + 1024);
+    expect(info.y).toBe(1024);
+  });
+});
+
+describe('panelLayout (pure multi-image helper)', () => {
+  it('lays out one full-width panel and adds a gutter for more', () => {
+    const one = panelLayout(1);
+    expect(one).toMatchObject({ count: 1, gap: 0, width: 2048, height: 2048 });
+    expect(one.x(0)).toBe(0);
+    const two = panelLayout(2);
+    expect(two).toMatchObject({ count: 2, gap: 128, width: 4224, height: 2048 });
+    expect(two.x(0)).toBe(0);
+    expect(two.x(1)).toBe(2176);
+    expect(two.x(2)).toBe(4352);
+    // Never fewer than one panel (0/undefined/negative).
+    expect(panelLayout(0).count).toBe(1);
+    expect(panelLayout(undefined).count).toBe(1);
   });
 });
 
@@ -1679,6 +1914,16 @@ describe('selection mask', () => {
     lassoTriangle();
     expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Deselect' }));
+    expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+  });
+
+  it('Ctrl+D drops the selection (Deselect shortcut)', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await selectPen(user);
+    lassoTriangle();
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+    fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
     expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
   });
 
@@ -2007,6 +2252,41 @@ describe('part-erase boundary helpers', () => {
       .toEqual({ x0: -5, y0: -3, x1: 5, y1: 3 });
     expect(scaleErase(2, undefined)).toBeUndefined();
     expect(scaleFrame(2, null)).toBeUndefined();
+    // A free stretch takes both axes: the hole points follow x/y, while the
+    // single brush width keeps the geometric mean (2 x 0.5 -> 1).
+    expect(scaleErase(2, [{ size: 10, pts: [{ x: 3, y: -4 }] }], 0.5))
+      .toEqual([{ size: 10, pts: [{ x: 6, y: -2 }] }]);
+    expect(scaleFrame(2, { x0: -10, y0: -6, x1: 10, y1: 6 }, 0.5))
+      .toEqual({ x0: -20, y0: -3, x1: 20, y1: 3 });
+  });
+
+  it('maps a pointer into the drawn local frame and derives stretch factors', () => {
+    const o = { x: 100, y: 200, rot: 0, w: 100, h: 50 };
+    expect(objectLocal(o, { x: 150, y: 225 })).toEqual({ x: 50, y: 25 });
+    const rot = { x: 0, y: 0, rot: Math.PI / 2, w: 100, h: 50 };
+    const L = objectLocal(rot, { x: -25, y: 50 });
+    expect(L.x).toBeCloseTo(50, 6);
+    expect(L.y).toBeCloseTo(25, 6);
+    // Shift: one factor for both axes, measured from the object's centre.
+    const shifted = resizeFactors(o, { x: 150, y: 225 }, { x: 200, y: 212.5 }, true);
+    expect(shifted.kx).toBe(shifted.ky);
+    expect(shifted.kx).toBeCloseTo(Math.hypot(100, 12.5) / Math.hypot(50, 25), 6);
+    // Free: each axis follows the pointer, so the box stretches.
+    const free = resizeFactors(o, { x: 150, y: 225 }, { x: 200, y: 212.5 }, false);
+    expect(free.kx).toBeCloseTo(2, 6);
+    expect(free.ky).toBeCloseTo(0.5, 6);
+    // Dragging through the centre never yields a negative factor: the box
+    // shrinks (floor 0.02) instead of mirroring through the centre.
+    const shrunk = resizeFactors(o, { x: 150, y: 225 }, { x: 90, y: 195 }, false);
+    expect(shrunk.kx).toBeCloseTo(0.2, 6);
+    expect(shrunk.ky).toBeCloseTo(0.2, 6);
+    const centred = resizeFactors(o, { x: 150, y: 225 }, { x: 100, y: 200 }, false);
+    expect(centred.kx).toBe(0.02);
+    expect(centred.ky).toBe(0.02);
+    // A degenerate axis (grabbed on the centre line) is left alone.
+    const thin = resizeFactors(o, { x: 100, y: 225 }, { x: 100, y: 250 }, false);
+    expect(thin.kx).toBe(1);
+    expect(thin.ky).toBeCloseTo(2, 6);
   });
 
   it('flips a part-erased object about its boundary centre, not the origin', () => {    // Remainder occupies local x 0..50, y 0..25 (boundary centre 25, 12.5).

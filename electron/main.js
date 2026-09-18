@@ -3434,6 +3434,17 @@ ipcMain.handle('read-livery-image', async (_event, folder, pack = 'mine') => {
   return livery.readLiveryImage(_liveryGameRoot(), folder, pack);
 });
 
+// Every paintable BaseMap of a stored livery (full pixels) — the painter loads
+// all panels of a multi-image type (A388/B38M); the list keeps using the
+// single main-part image above.
+ipcMain.handle('read-livery-images', async (_event, folder, pack = 'mine') => {
+  try {
+    return livery.readLiveryImages(_liveryGameRoot(), folder, pack);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // Low-resolution list preview (≈256px JPEG) — the livery list must never
 // pull full 2048×2048 textures over IPC. The painter keeps using
 // read-livery-image for the full paintable pixels.

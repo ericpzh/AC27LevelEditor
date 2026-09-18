@@ -616,6 +616,32 @@
 .lp-seg button:hover { color: var(--text); background: var(--bg-elevated); }
 .lp-seg button.lp-on { background: var(--accent); color: #fff; }
 
+/* ── Panel strip (multi-image aircraft: pick the active part) ── */
+.lp-panels {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.lp-panel-tab {
+  height: 26px;
+  padding: 0 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lp-panel-tab:hover { color: var(--text); background: var(--bg-elevated); }
+.lp-panel-tab.lp-on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 /* ── Main area: rail + canvas ── */
 .lp-main { flex: 1; min-height: 0; display: flex; }
 .lp-rail {

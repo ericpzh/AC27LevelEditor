@@ -39,6 +39,21 @@ export const LIVERY_FOLDER_SAFE_RE = /^(?![.\s])(?!.*[.\s]$)(?!.*[<>:"/\\|?*\x00
 
 export const TEXTURE_SIZE = 2048;
 
+// Horizontal space (texture px) between the panels of a multi-image aircraft
+// (A388/B38M). Only applied when a type's built-in default livery carries more
+// than one paintable BaseMap. Mirrors the gap used by LiveryCanvas.
+export const PANEL_GAP = 128;
+
+// On-disk BaseMap file name for a painted panel. Single-part liveries keep the
+// legacy `base.png`; multi-image types use the game's own `base_<Part>.png`
+// convention (base_Fuselage.png + base_Wing.png / base_Wingtip.png).
+// Mirrors electron/livery.js:baseFileName.
+export function baseFileName(partName, totalParts) {
+  if (!totalParts || totalParts <= 1) return 'base.png';
+  const safe = String(partName || '').replace(/[^A-Za-z0-9]/g, '');
+  return safe ? `base_${safe}.png` : 'base.png';
+}
+
 // Conventional default name suggested in the Save As dialog (the layout the
 // game's own reference pack uses). Purely a label — nothing is ever parsed
 // back out of a folder name.
@@ -47,7 +62,10 @@ export function folderFor(planeId, airline) {
   return `${shortCode}_${airline}`;
 }
 
-export function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, targetModelVer }) {
+// Build the game's livery manifest. `parts` (when given) is an ordered list of
+// `{partName, fileName}` BaseMap bindings — one per painted panel; otherwise a
+// single part from `partName`/`base.png` is emitted. Mirrors electron/livery.js.
+export function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, parts, targetModelVer }) {
   // Mirrors electron/livery.js: sanitize free-form folders for the id.
   const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
   // Must match the aircraft's built-in model version (C919 is 2, the rest 1)
@@ -55,6 +73,12 @@ export function buildManifest({ folder, shortCode, airline, targetPlaneId, partN
   // so the main process resolves this from the built-in manifest and the
   // renderer copy just carries an explicit value through; default '1'.
   const ver = targetModelVer == null || targetModelVer === '' ? '1' : String(targetModelVer);
+  const manifestParts = Array.isArray(parts) && parts.length
+    ? parts.map(p => ({
+      partName: (p && p.partName) || 'Body',
+      textures: [{ property: 'BaseMap', fileName: (p && p.fileName) || 'base.png' }],
+    }))
+    : [{ partName: partName || 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }];
   return {
     id: `${safeId}_default`,
     name: `${shortCode} ${airline} Default Livery`,
@@ -63,8 +87,6 @@ export function buildManifest({ folder, shortCode, airline, targetPlaneId, partN
     liveryType: 'airline',
     liverySource: 'user',
     targetModelVer: ver,
-    parts: [
-      { partName: partName || 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] },
-    ],
+    parts: manifestParts,
   };
 }

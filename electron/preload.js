@@ -308,6 +308,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Custom Liveries (own pack) ─────────────────────────
   listLiveries: () => ipcRenderer.invoke('list-liveries'),
   readLiveryImage: (folder, pack) => ipcRenderer.invoke('read-livery-image', folder, pack),
+  readLiveryImages: (folder, pack) => ipcRenderer.invoke('read-livery-images', folder, pack),
   readLiveryThumbnail: (folder, pack) => ipcRenderer.invoke('read-livery-thumbnail', folder, pack),
   getAircraftTemplate: (planeId) => ipcRenderer.invoke('get-aircraft-template', planeId),
   listAircraftTypes: () => ipcRenderer.invoke('list-aircraft-types'),

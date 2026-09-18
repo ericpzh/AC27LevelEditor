@@ -238,13 +238,14 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   const folderPreview = planeId && airline ? folderFor(planeId, airline) : '';
   const formValid = Boolean(folderPreview && airlineValid && knownPlanes.has(planeId));
 
-  // Paint state — primed with the clicked picture when available. For a new
-  // livery the canvas is primed with the aircraft type's built-in default
-  // livery (the game's own UV template) so the background is opaque and shows
-  // the real model shape; otherwise it falls back to a neutral fill.
-  const [base, setBase] = useState(
-    origin?.imageDataUrl ? { imageDataUrl: origin.imageDataUrl } : null,
-  );
+  // Paint state. The canvas is split into one 2048² panel per BaseMap part the
+  // aircraft type ships (A388 → Fuselage + Wing, B38M → Fuselage + Wingtip,
+  // everything else a single panel). Panels are primed, in priority order:
+  // a user import → the saved livery's own part → the built-in UV template.
+  const [templates, setTemplates] = useState([]);       // built-in parts (Clear + defaults)
+  const [originImages, setOriginImages] = useState([]); // the opened livery's own parts
+  const [overrides, setOverrides] = useState({});        // partName -> imported base
+  const [activePanel, setActivePanel] = useState(0);
   const [canvasKey, setCanvasKey] = useState(0);
   const canvasRef = useRef(null);
   const dirtyRef = useRef(false);
@@ -252,6 +253,40 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   const [exporting, setExporting] = useState(false);
   const fileRef = useRef(null);
   const { bind, TooltipPortal } = useTooltip();
+
+  // Panel layout: the built-in parts are the source of truth; an opened livery
+  // (or a zip that had no built-in scan) falls back to its own parts.
+  const panels = useMemo(() => {
+    const base = templates.length
+      ? templates
+      : (originImages.length ? originImages : [{ partName: 'Body' }]);
+    return base.map(p => (p && p.partName) || 'Body');
+  }, [templates, originImages]);
+  const panelSig = panels.join('\u0001');
+  const activeIdx = Math.min(Math.max(0, activePanel), panels.length - 1);
+
+  const panelSigRef = useRef('');
+  useEffect(() => { panelSigRef.current = panelSig; });
+  const initialParts = useMemo(() => panels.map((partName, i) => {
+    if (overrides[partName]) return { partName, imageDataUrl: overrides[partName] };
+    // A prefill that already carries pixels (tests / direct callers) seeds the
+    // primary panel without waiting on the async read.
+    if (i === 0 && origin && origin.imageDataUrl) return { partName, imageDataUrl: origin.imageDataUrl };
+    const own = originImages.find(p => ((p && p.partName) || 'Body') === partName);
+    if (own && own.imageDataUrl) return { partName, imageDataUrl: own.imageDataUrl };
+    // Legacy single-image origin (no per-part match) seeds the primary panel.
+    if (i === 0 && originImages.length === 1 && originImages[0].imageDataUrl) {
+      return { partName, imageDataUrl: originImages[0].imageDataUrl };
+    }
+    const tmpl = templates.find(p => ((p && p.partName) || 'Body') === partName);
+    if (tmpl && tmpl.imageDataUrl) return { partName, imageDataUrl: tmpl.imageDataUrl };
+    return { partName, imageDataUrl: null };
+  }), [panelSig, overrides, originImages, templates]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const defaultParts = useMemo(() => panels.map(partName => {
+    const tmpl = templates.find(p => ((p && p.partName) || 'Body') === partName);
+    return { partName, imageDataUrl: tmpl ? tmpl.imageDataUrl : null };
+  }), [panelSig, templates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save targets the live form (its Airline/Aircraft are the livery's identity,
   // and it prefills the new conventional folder when they changed); Save As
@@ -267,17 +302,29 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   }, []);
   const markDirty = (v) => { dirtyRef.current = v; };
 
-  // Lazy-load the origin picture when the thumbnail was not ready yet
-  // (e.g. clicked before thumbnails finished loading).
+  // Load the opened livery's own paintable parts (all panels for a multi-image
+  // A388/B38M; a single part otherwise), falling back to the single main-part
+  // image for an older main process.
   useEffect(() => {
-    if (!origin || origin.imageDataUrl || base) return;
+    if (!origin || !origin.folder) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await electronAPI.readLiveryImage(origin.folder, origin.pack);
-        if (!cancelled && res && res.success && res.imageDataUrl) {
-          setBase({ imageDataUrl: res.imageDataUrl });
-          setCanvasKey(k => k + 1);
+        let parts = null;
+        try {
+          const res = await electronAPI.readLiveryImages(origin.folder, origin.pack);
+          if (res && res.success && Array.isArray(res.parts) && res.parts.length) {
+            parts = res.parts.map(p => ({ partName: (p && p.partName) || 'Body', imageDataUrl: p && p.imageDataUrl }));
+          }
+        } catch (_) {}
+        if (!parts) {
+          const res = await electronAPI.readLiveryImage(origin.folder, origin.pack);
+          if (res && res.success && res.imageDataUrl) parts = [{ partName: 'Body', imageDataUrl: res.imageDataUrl }];
+        }
+        if (!cancelled && parts) {
+          setOriginImages(parts);
+          // Never clobber a canvas the user has already painted on.
+          if (!dirtyRef.current) setCanvasKey(k => k + 1);
         }
       } catch (_) {}
     })();
@@ -285,33 +332,34 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [origin?.folder, origin?.pack]);
 
-  // Aircraft type's built-in UV template (the game's own default livery).
+  // Aircraft type's built-in UV template parts (the game's own default livery).
   // Fetched whenever a type is known — including when editing a saved livery —
-  // so the painter's Clear can always restore it. It only becomes the canvas
-  // base for a brand-new, untouched livery; a saved origin / imported image /
-  // in-progress painting is never clobbered — picking a different Airline or
-  // Aircraft just updates the form and closes the dropdown.
-  const [templateDataUrl, setTemplateDataUrl] = useState(null);
-  const baseRef = useRef(base);
-  useEffect(() => { baseRef.current = base; }, [base]);
+  // so the painter can lay out the right number of panels and Clear can always
+  // restore the type default. The template only seeds panels the opened livery
+  // (or an import) does not already fill.
   useEffect(() => {
-    if (!planeId) { setTemplateDataUrl(null); return; }
+    if (!planeId) { setTemplates([]); return; }
     let cancelled = false;
     (async () => {
       try {
         const res = await electronAPI.getAircraftTemplate(planeId);
-        if (cancelled || !res || !res.success || !res.imageDataUrl) return;
-        setTemplateDataUrl(res.imageDataUrl);
-        const cur = baseRef.current;
-        if (!origin && !dirtyRef.current && (!cur || cur.isTemplate)) {
-          setBase({ imageDataUrl: res.imageDataUrl, isTemplate: true });
-          setCanvasKey(k => k + 1);
-        }
+        if (cancelled || !res || !res.success) return;
+        const parts = Array.isArray(res.parts) && res.parts.length
+          ? res.parts.map(p => ({ partName: (p && p.partName) || 'Body', imageDataUrl: p && p.imageDataUrl }))
+          : (res.imageDataUrl ? [{ partName: res.partName || 'Body', imageDataUrl: res.imageDataUrl }] : []);
+        if (!parts.length) return;
+        const nextSig = parts.map(p => p.partName || 'Body').join('\u0001');
+        const layoutChanged = nextSig !== panelSigRef.current;
+        setTemplates(parts);
+        // Re-seed the canvas only when the panel layout changed (single ↔
+        // multi-image type) or the canvas is still untouched (new livery).
+        // A painted canvas keeps its pixels when only the form type changes.
+        if (layoutChanged || (!origin && !dirtyRef.current)) setCanvasKey(k => k + 1);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planeId, origin]);
+  }, [planeId]);
 
   const confirmDiscard = (proceed) => {
     if (!dirtyRef.current) { proceed(); return; }
@@ -358,6 +406,8 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     );
   };
 
+  // Import an image into the ACTIVE panel only (multi-image aircraft); for a
+  // single-panel type that is the whole canvas, exactly as before.
   const loadBaseUrl = (file) => {
     confirmDiscard(async () => {
       if (!file) return;
@@ -365,7 +415,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
       try {
         const raw = await fileToDataUrl(file);
         const normalized = await normalizeToTexture(raw);
-        setBase({ imageDataUrl: normalized });
+        setOverrides(prev => ({ ...prev, [panels[activeIdx] || 'Body']: normalized }));
         setCanvasKey(k => k + 1);
       } catch (err) {
         useAppStore.getState().showToast(t(errKey(err && err.message)), 'error');
@@ -374,8 +424,6 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
       }
     });
   };
-
-  const paintBaseUrl = base ? base.imageDataUrl || null : null;
 
   // Post-save nudge: a saved livery only shows up in-game once its mod is
   // enabled on the in-game "More Liveries" page. Shown after every successful
@@ -414,14 +462,15 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   };
 
   // Only manifest-truth fields are sent (airline + targetPlaneId) plus the
-  // free-form folder name; the backend derives everything else.
-  const submitCreate = async (imageDataUrl, targetAirline, targetPlaneId, targetFolder) => {
+  // free-form folder name and the per-panel images; the backend derives the
+  // file names, part bindings and manifest id.
+  const submitCreate = async (images, targetAirline, targetPlaneId, targetFolder) => {
     const folder = String(targetFolder || '').trim();
-    if (!imageDataUrl || !/^[A-Z]{3}$/.test(targetAirline) || !knownPlanes.has(targetPlaneId) || !LIVERY_FOLDER_SAFE_RE.test(folder) || busy) return false;
+    if (!Array.isArray(images) || images.length === 0 || !/^[A-Z]{3}$/.test(targetAirline) || !knownPlanes.has(targetPlaneId) || !LIVERY_FOLDER_SAFE_RE.test(folder) || busy) return false;
     setBusy(true);
     try {
       const res = await electronAPI.createLivery({
-        imageDataUrl,
+        images,
         airline: targetAirline,
         targetPlaneId,
         folder,
@@ -458,9 +507,9 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         initial={initialFolder}
         isSaveAs={isSaveAs}
         onConfirm={(folder) => {
-          const imageDataUrl = canvasRef.current.exportPNG();
+          const images = canvasRef.current.exportParts();
           hideModal();
-          confirmOverride(folder, isSaveAs, () => submitCreate(imageDataUrl, targetAirline, targetPlaneId, folder));
+          confirmOverride(folder, isSaveAs, () => submitCreate(images, targetAirline, targetPlaneId, folder));
         }}
       />,
     );
@@ -544,9 +593,17 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         showToast(t(errKey(res.error)), 'error');
         return;
       }
-      const normalized = await normalizeToTexture(res.imageDataUrl);
+      const srcParts = (Array.isArray(res.parts) && res.parts.length)
+        ? res.parts
+        : [{ partName: 'Body', imageDataUrl: res.imageDataUrl }];
+      const parts = [];
+      for (const p of srcParts) {
+        const normalized = await normalizeToTexture(p.imageDataUrl);
+        parts.push({ partName: (p && p.partName) || 'Body', imageDataUrl: normalized });
+      }
       confirmDiscard(() => {
-        setBase({ imageDataUrl: normalized });
+        setOriginImages(parts);
+        setOverrides({});
         setCanvasKey(k => k + 1);
       });
       if (res.manifest && res.manifest.airline) setAirline(String(res.manifest.airline).toUpperCase());
@@ -573,7 +630,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     const { showToast } = useAppStore.getState();
     try {
       const res = await electronAPI.createLivery({
-        imageDataUrl: canvasRef.current.exportPNG(),
+        images: canvasRef.current.exportParts(),
         airline: targetAirline,
         targetPlaneId,
         folder: targetFolder,
@@ -656,10 +713,13 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
       </div>
 
       <LiveryCanvas
-        key={canvasKey}
+        key={`${canvasKey}:${panelSig}`}
         ref={canvasRef}
-        initialImageDataUrl={paintBaseUrl}
-        defaultLiveryDataUrl={templateDataUrl}
+        panels={panels}
+        initialParts={initialParts}
+        defaultParts={defaultParts}
+        activePanel={activeIdx}
+        onActivePanel={setActivePanel}
         onDirty={markDirty}
       />
       {TooltipPortal}

@@ -5,6 +5,8 @@ import {
   PLANE_ID_TO_SHORT_CODE,
   LIVERY_FOLDER_SAFE_RE,
   TEXTURE_SIZE,
+  PANEL_GAP,
+  baseFileName,
   buildManifest,
   folderFor,
 } from '../../src/utils/constants/livery';
@@ -146,7 +148,37 @@ describe('livery constants', () => {
     }
   });
 
-  it('texture size is 2048', () => {
+  it('texture size is 2048 and the panel gap is 128', () => {
     expect(TEXTURE_SIZE).toBe(2048);
+    expect(PANEL_GAP).toBe(128);
+  });
+
+  it('baseFileName keeps base.png for single-part and suffixes multi-part', () => {
+    expect(baseFileName('Body', 1)).toBe('base.png');
+    expect(baseFileName('Fuselage', undefined)).toBe('base.png');
+    expect(baseFileName('Fuselage', 2)).toBe('base_Fuselage.png');
+    expect(baseFileName('Wing', 2)).toBe('base_Wing.png');
+    expect(baseFileName('Wingtip', 2)).toBe('base_Wingtip.png');
+    // Filesystem-unsafe part names collapse to a safe token; an empty one
+    // falls back to the legacy name.
+    expect(baseFileName('A B', 2)).toBe('base_AB.png');
+    expect(baseFileName('', 2)).toBe('base.png');
+  });
+
+  it('buildManifest emits one part per painted panel', () => {
+    const m = buildManifest({
+      folder: 'A388_SIA',
+      shortCode: 'A388',
+      airline: 'SIA',
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [
+        { partName: 'Fuselage', fileName: 'base_Fuselage.png' },
+        { partName: 'Wing', fileName: 'base_Wing.png' },
+      ],
+    });
+    expect(m.parts).toEqual([
+      { partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.png' }] },
+      { partName: 'Wing', textures: [{ property: 'BaseMap', fileName: 'base_Wing.png' }] },
+    ]);
   });
 });

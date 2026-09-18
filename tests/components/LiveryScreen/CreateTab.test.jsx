@@ -205,7 +205,7 @@ describe('CreateTab painter validation', () => {
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { imageDataUrl: FAKE_PNG, airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
     ));
     expect(onCreated).toHaveBeenCalled();
     expect(screen.getByText('Livery created')).toBeInTheDocument();
@@ -234,7 +234,7 @@ describe('CreateTab painter validation', () => {
     // Airline/aircraft come from the form — never parsed out of the folder.
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { imageDataUrl: FAKE_PNG, airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'My First CCA Livery' },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'My First CCA Livery' },
     ));
     expect(onCreated).toHaveBeenCalled();
   });
@@ -318,7 +318,7 @@ describe('CreateTab painter validation', () => {
     await confirmNameDialog(user, 'Save As');
     await waitFor(() => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', {
-        imageDataUrl: FAKE_PNG,
+        images: expect.any(Array),
         airline: 'AAL',
         targetPlaneId: 'BOEING 737-800',
         folder: 'B738_AAL',
@@ -380,6 +380,40 @@ describe('CreateTab aircraft template', () => {
     // Template is fetched for the origin's aircraft type (used by Clear), but
     // the canvas base is still the saved livery image.
     expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-320neo');
+  });
+
+  it('lays out both panels for a multi-image type and saves both', async () => {
+    const TWO_PARTS = [
+      { partName: 'Fuselage', imageDataUrl: FAKE_PNG },
+      { partName: 'Wing', imageDataUrl: FAKE_PNG },
+    ];
+    setupMocks({
+      'get-aircraft-template': Promise.resolve({ success: true, parts: TWO_PARTS }),
+      'create-livery': Promise.resolve({ success: true, folder: 'A388_CCA' }),
+    });
+    const user = userEvent.setup();
+    renderCreate();
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('get-aircraft-template', 'AIRBUS A-319neo'));
+
+    // Switching to the A380 (multi-image built-in) reveals both panel tabs.
+    await user.selectOptions(document.querySelector('.lp-root select'), 'AIRBUS A-380-800');
+    const tabs = await screen.findAllByRole('tab');
+    expect(tabs.map(t => t.textContent)).toEqual(['Fuselage', 'Wing']);
+
+    const btn = saveAsBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    const input = await screen.findByLabelText('Folder name');
+    // Default airline (first alphabetically) + the A380 short code.
+    expect(input.value).toBe(`A388_${DEFAULT_AIRLINE}`);
+    await confirmNameDialog(user, 'Save As');
+
+    await waitFor(() => {
+      const call = mockIpcInvoke.mock.calls.find(c => c[0] === 'create-livery');
+      expect(call).toBeTruthy();
+      expect(call[1].images).toHaveLength(2);
+      expect(call[1].images.map(i => i.partName)).toEqual(['Fuselage', 'Wing']);
+    });
   });
 });
 
@@ -689,7 +723,7 @@ describe('CreateTab overwrite confirm (Save As onto an existing folder)', () => 
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { imageDataUrl: FAKE_PNG, airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
     ));
     expect(onCreated).toHaveBeenCalled();
   });
@@ -1166,6 +1200,27 @@ describe('CreateTab lazy origin + chrome', () => {
     await waitFor(() => {
       expect(mockIpcInvoke).toHaveBeenCalledWith('read-livery-image', 'A20N_CCA', 'mine');
     });
+  });
+
+  it('lazy-loads every origin panel through read-livery-images', async () => {
+    CreateTab.prefill = {
+      folder: 'A388_SIA', airline: 'SIA', targetPlaneId: 'AIRBUS A-380-800', pack: 'mine',
+      // no imageDataUrl - clicked before the thumbnail finished loading
+    };
+    setupMocks({
+      'read-livery-images': Promise.resolve({ success: true, parts: [
+        { partName: 'Fuselage', imageDataUrl: 'data:image/png;base64,FUSE' },
+        { partName: 'Wing', imageDataUrl: 'data:image/png;base64,WING' },
+      ] }),
+    });
+    renderCreate();
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('read-livery-images', 'A388_SIA', 'mine');
+    });
+    // The per-panel channel wins; the single-image fallback is not needed.
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('read-livery-image', 'A388_SIA', 'mine');
+    const tabs = await screen.findAllByRole('tab');
+    expect(tabs.map(t => t.textContent)).toEqual(['Fuselage', 'Wing']);
   });
 
   it('help button invokes onHelp', async () => {

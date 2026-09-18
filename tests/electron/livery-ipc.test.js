@@ -486,6 +486,212 @@ describe('multi-part liveries (A388/B38M Fuselage layout)', () => {
     expect(loaded.success).toBe(true);
     expect(loaded.imageDataUrl).toBe('data:image/jpeg;base64,' + jpeg.toString('base64'));
   });
+
+  it('readAircraftTemplate returns every built-in BaseMap part', () => {
+    // A dedicated plane id — readAircraftTemplate memoizes per type, and the
+    // later "falls back to the first part" case reads the A380.
+    const planeId = 'EMBRAER E-JET 190';
+    const dir = path.join(gameRoot, TEMPLATE_DIR, planeId);
+    fs.mkdirSync(dir, { recursive: true });
+    const fuselage = pngBuffer(2048, 2048);
+    const wing = pngBuffer(2048, 2048);
+    fs.writeFileSync(path.join(dir, 'base_Fuselage.png'), fuselage);
+    fs.writeFileSync(path.join(dir, 'base_Wing.png'), wing);
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: planeId,
+      parts: [
+        { partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.png' }] },
+        { partName: 'Wing', textures: [{ property: 'BaseMap', fileName: 'base_Wing.png' }] },
+      ],
+    }));
+    const res = livery.readAircraftTemplate(gameRoot, planeId);
+    expect(res.success).toBe(true);
+    expect(res.partName).toBe('Fuselage');
+    expect(res.imageDataUrl).toBe('data:image/png;base64,' + fuselage.toString('base64'));
+    expect(res.parts.map(p => p.partName)).toEqual(['Fuselage', 'Wing']);
+    expect(res.parts[1].imageDataUrl).toBe('data:image/png;base64,' + wing.toString('base64'));
+  });
+
+  it('createLivery writes one file per panel and a multi-part manifest', () => {
+    const dir = path.join(gameRoot, TEMPLATE_DIR, 'AIRBUS A-380-800');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'base_Fuselage.dds'), dds4x4());
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [
+        { partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.dds' }] },
+        { partName: 'Wing', textures: [{ property: 'BaseMap', fileName: 'base_Wing.dds' }] },
+      ],
+    }));
+    const created = livery.createLivery(gameRoot, {
+      images: [
+        { partName: 'Fuselage', imageDataUrl: png2048() },
+        { partName: 'Wing', imageDataUrl: png2048() },
+      ],
+      airline: 'SIA', targetPlaneId: 'AIRBUS A-380-800', folder: 'A388_SIA',
+    });
+    expect(created).toEqual({ success: true, folder: 'A388_SIA' });
+    const outDir = path.join(livery.ownPackDir(gameRoot), 'A388_SIA');
+    expect(fs.existsSync(path.join(outDir, 'base_Fuselage.png'))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'base_Wing.png'))).toBe(true);
+    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(manifest.parts.map(p => p.partName)).toEqual(['Fuselage', 'Wing']);
+    expect(manifest.parts.map(p => p.textures[0].fileName)).toEqual(['base_Fuselage.png', 'base_Wing.png']);
+  });
+
+  it('readLiveryImages returns every panel of a stored multi-part livery', () => {
+    const dir = path.join(livery.ownPackDir(gameRoot), 'A388_SIA');
+    fs.mkdirSync(dir, { recursive: true });
+    const fuselage = pngBuffer(2048, 2048);
+    const wing = pngBuffer(2048, 2048);
+    fs.writeFileSync(path.join(dir, 'base_Fuselage.png'), fuselage);
+    fs.writeFileSync(path.join(dir, 'base_Wing.png'), wing);
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [
+        { partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.png' }] },
+        { partName: 'Wing', textures: [{ property: 'BaseMap', fileName: 'base_Wing.png' }] },
+      ],
+    }));
+    const res = livery.readLiveryImages(gameRoot, 'A388_SIA', 'mine');
+    expect(res.success).toBe(true);
+    expect(res.parts.map(p => p.partName)).toEqual(['Fuselage', 'Wing']);
+    expect(res.parts[0].imageDataUrl).toBe('data:image/png;base64,' + fuselage.toString('base64'));
+    expect(res.parts[1].imageDataUrl).toBe('data:image/png;base64,' + wing.toString('base64'));
+    // The single-image preview stays the main (Fuselage) part.
+    expect(res.imageDataUrl).toBe(res.parts[0].imageDataUrl);
+  });
+
+  it('createLivery drops a stale single-image base.png when writing panels', () => {
+    const tdir = path.join(gameRoot, TEMPLATE_DIR, 'AIRBUS A-380-800');
+    fs.mkdirSync(tdir, { recursive: true });
+    fs.writeFileSync(path.join(tdir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [{ partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.dds' }] }],
+    }));
+    const dir = path.join(livery.ownPackDir(gameRoot), 'A388_SIA');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'base.png'), pngBuffer(8, 8));
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [{ partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }],
+    }));
+    livery.createLivery(gameRoot, {
+      images: [
+        { partName: 'Fuselage', imageDataUrl: png2048() },
+        { partName: 'Wing', imageDataUrl: png2048() },
+      ],
+      airline: 'SIA', targetPlaneId: 'AIRBUS A-380-800', folder: 'A388_SIA',
+    });
+    expect(fs.existsSync(path.join(dir, 'base.png'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'base_Fuselage.png'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'base_Wing.png'))).toBe(true);
+  });
+
+  it('loadLiveryZip returns every BaseMap part', () => {
+    const { createZip } = require('../../src/utils/zipUtils');
+    const fuselage = pngBuffer(10, 10);
+    const wing = pngBuffer(10, 10);
+    const zipPath = path.join(gameRoot, 'a388parts.zip');
+    createZip([
+      { name: 'A388_SIA/aircraft_livery_manifest.json', data: Buffer.from(JSON.stringify({
+        id: 'a388_sia_default', airline: 'SIA', targetPlaneId: 'AIRBUS A-380-800',
+        parts: [
+          { partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.png' }] },
+          { partName: 'Wing', textures: [{ property: 'BaseMap', fileName: 'base_Wing.png' }] },
+        ],
+      })) },
+      { name: 'A388_SIA/base_Fuselage.png', data: fuselage },
+      { name: 'A388_SIA/base_Wing.png', data: wing },
+    ], zipPath);
+    const loaded = livery.loadLiveryZip(zipPath);
+    expect(loaded.success).toBe(true);
+    expect(loaded.parts.map(p => p.partName)).toEqual(['Fuselage', 'Wing']);
+    expect(loaded.parts[1].imageDataUrl).toBe('data:image/png;base64,' + wing.toString('base64'));
+  });
+
+  it('createLivery resolves an omitted part name from the built-in binding at the same index', () => {
+    const dir = path.join(gameRoot, TEMPLATE_DIR, 'AIRBUS A-380-800');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [
+        { partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.dds' }] },
+        { partName: 'Wing', textures: [{ property: 'BaseMap', fileName: 'base_Wing.dds' }] },
+      ],
+    }));
+    const created = livery.createLivery(gameRoot, {
+      // The renderer always sends part names, but a legacy caller may omit them.
+      images: [{ imageDataUrl: png2048() }, { imageDataUrl: png2048() }],
+      airline: 'SIA', targetPlaneId: 'AIRBUS A-380-800', folder: 'A388_SIA',
+    });
+    expect(created).toEqual({ success: true, folder: 'A388_SIA' });
+    const outDir = path.join(livery.ownPackDir(gameRoot), 'A388_SIA');
+    expect(fs.existsSync(path.join(outDir, 'base_Fuselage.png'))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'base_Wing.png'))).toBe(true);
+    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(manifest.parts.map(p => p.partName)).toEqual(['Fuselage', 'Wing']);
+    expect(manifest.parts.map(p => p.textures[0].fileName)).toEqual(['base_Fuselage.png', 'base_Wing.png']);
+  });
+
+  it('createLivery rejects a bad panel in a multi-image list and writes nothing', () => {
+    const dir = path.join(gameRoot, TEMPLATE_DIR, 'AIRBUS A-380-800');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [
+        { partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.dds' }] },
+        { partName: 'Wing', textures: [{ property: 'BaseMap', fileName: 'base_Wing.dds' }] },
+      ],
+    }));
+    const res = livery.createLivery(gameRoot, {
+      images: [
+        { partName: 'Fuselage', imageDataUrl: png2048() },
+        { partName: 'Wing', imageDataUrl: 'data:image/png;base64,' + pngBuffer(1024, 1024).toString('base64') },
+      ],
+      airline: 'SIA', targetPlaneId: 'AIRBUS A-380-800', folder: 'A388_SIA',
+    });
+    expect(res).toEqual({ success: false, error: 'BAD_IMAGE_DIMENSIONS' });
+    // Validation runs before the pack folder is created.
+    expect(fs.existsSync(path.join(livery.ownPackDir(gameRoot), 'A388_SIA'))).toBe(false);
+  });
+
+  it('readLiveryImages guards, falls back to a legacy base.png, and reads the reference pack', () => {
+    expect(livery.readLiveryImages(null, 'X').error).toBe('NO_GAME_ROOT');
+    expect(livery.readLiveryImages(gameRoot, '../evil').error).toBe('BAD_FOLDER');
+    // Contained but missing folder → the manifest read fails.
+    expect(livery.readLiveryImages(gameRoot, 'MISSING').error).toBe('IMAGE_MISSING');
+
+    // No BaseMap in the manifest, but a legacy base.png is present.
+    const legacyDir = path.join(livery.ownPackDir(gameRoot), 'LEGACY');
+    fs.mkdirSync(legacyDir, { recursive: true });
+    const legacy = pngBuffer(10, 10);
+    fs.writeFileSync(path.join(legacyDir, 'base.png'), legacy);
+    fs.writeFileSync(path.join(legacyDir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [{ partName: 'Fuselage', textures: [] }],
+    }));
+    const legacyRes = livery.readLiveryImages(gameRoot, 'LEGACY', 'mine');
+    expect(legacyRes.success).toBe(true);
+    expect(legacyRes.parts).toEqual([
+      { partName: 'Fuselage', fileName: 'base.png', imageDataUrl: 'data:image/png;base64,' + legacy.toString('base64') },
+    ]);
+    expect(legacyRes.imageDataUrl).toBe(legacyRes.parts[0].imageDataUrl);
+
+    // The reference pack is read through the same path.
+    const refDir = path.join(livery.referencePackDir(gameRoot), 'A388_REF');
+    fs.mkdirSync(refDir, { recursive: true });
+    const wing = pngBuffer(10, 10);
+    fs.writeFileSync(path.join(refDir, 'base_Wing.png'), wing);
+    fs.writeFileSync(path.join(refDir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [{ partName: 'Wing', textures: [{ property: 'BaseMap', fileName: 'base_Wing.png' }] }],
+    }));
+    const refRes = livery.readLiveryImages(gameRoot, 'A388_REF', 'reference');
+    expect(refRes.success).toBe(true);
+    expect(refRes.parts.map(p => p.partName)).toEqual(['Wing']);
+    expect(refRes.parts[0].imageDataUrl).toBe('data:image/png;base64,' + wing.toString('base64'));
+  });
 });
 
 describe('traversal rejection', () => {
