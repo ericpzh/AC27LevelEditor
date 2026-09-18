@@ -2084,10 +2084,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const ctx = ctxRef.current;
     if (!ctx) return;
     const p = toTexture(e.clientX, e.clientY);
-    // Right-button press only selects the object under the cursor (any tool);
-    // the layer-order menu itself opens on contextmenu (a full right-click,
-    // press + release) so it stays open without holding the button.
-    // Right-click on empty canvas keeps the old pick-pixel-colour shortcut.
+    // Right-button press arms the movable's layer-order target only in the
+    // Select tool's object sub-mode; every other tool (pen/wand/shapes/...) and
+    // empty canvas picks the pixel colour instead. The layer-order menu itself
+    // opens on contextmenu (a full right-click, press + release) so it stays
+    // open without holding the button.
     // Two tools consume the press as an editing gesture instead:
     // - line tool (curve mode) with a draft: pop the last control point
     //   (a lone point cancels the draft outright);
@@ -2109,11 +2110,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         consumeRightRef.current = true;
         return;
       }
-      const hit = hitObjectAt(p);
-      if (hit) {
-        if (selIdRef.current !== hit.id) syncObjects(objectsRef.current, hit.id);
-        scheduleOverlay();
-        return;
+      if (toolRef.current === 'select' && selModeRef.current === 'object') {
+        const hit = hitObjectAt(p);
+        if (hit) {
+          if (selIdRef.current !== hit.id) syncObjects(objectsRef.current, hit.id);
+          scheduleOverlay();
+          return;
+        }
       }
       setOrderMenuTracked(null);
       pickColorAt(p);
@@ -2285,6 +2288,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // swallows its release too — no order menu, no colour pick.
     if (consumeRightRef.current) { consumeRightRef.current = false; return; }
     if (!ctxRef.current || typeof e.clientX !== 'number') return;
+    // The movable layer-order menu is a Select-tool (object sub-mode) affordance
+    // only — every other tool's right-click is a colour pick (handled on the
+    // press), so never open the menu here.
+    if (toolRef.current !== 'select' || selModeRef.current !== 'object') {
+      if (orderMenuRef.current) setOrderMenuTracked(null);
+      return;
+    }
     const p = toTexture(e.clientX, e.clientY);
     const hit = hitObjectAt(p);
     if (hit) {

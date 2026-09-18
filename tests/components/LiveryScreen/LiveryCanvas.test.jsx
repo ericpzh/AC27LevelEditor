@@ -822,7 +822,7 @@ describe('LiveryCanvas tools — paint operations', () => {
     renderCanvas({ ref });
     await waitFor(() => expect(ref.current).toBeTruthy());
     await act(async () => { await ref.current.importSticker(); });
-    expect(ref.current.getObjectCount()).toBe(1);
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
     // The 1×1 eyedropper composite returns the object's pixel.
     getCtxSpy.mockImplementation(() => {
       const c = makeCtx();
@@ -1658,6 +1658,8 @@ describe('layer-order menu (right-click)', () => {
     await draw([100, 100], [200, 200]);
     await draw([400, 400], [500, 500]);
     expect(ref.current.getObjectCount()).toBe(2);
+    // The order menu is a Select-tool (object sub-mode) affordance now.
+    await user.click(screen.getByRole('button', { name: 'Select' }));
     return ref.current.getObjectIds();
   }
 
@@ -1773,6 +1775,33 @@ describe('layer-order menu (right-click)', () => {
     fireEvent.keyDown(window, { key: 'Escape' }); // deselect
     fireEvent.keyDown(window, { key: 'Delete' });
     expect(ref.current.getObjectCount()).toBe(1);
+    expect(ref.current.getObjectIds()).toEqual([idA]);
+  });
+
+  it('right-click outside Select mode picks the colour, never the movable menu', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await drawTwoRects(user, ref);
+    await user.click(screen.getByRole('button', { name: 'Selection Pen' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 2, pointerId: 1 });
+    fireEvent.contextMenu(cv, { clientX: 150, clientY: 150, button: 2 });
+    expect(screen.queryByRole('menu')).toBeNull();
+    // The pen tool's right-click is a colour pick (transparent base → black).
+    expect(swatch().dataset.color).toBe('#000000');
+  });
+
+  it('Ctrl+D with no selection mask clears the selected object', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const [idA] = await drawTwoRects(user, ref);
+    const cv = mainCanvas();
+    // Select the bottom object A explicitly (B is selected after drawing).
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
+    // Ctrl+D dropped the selection, so Delete takes the topmost B — not A.
+    fireEvent.keyDown(window, { key: 'Delete' });
     expect(ref.current.getObjectIds()).toEqual([idA]);
   });
 

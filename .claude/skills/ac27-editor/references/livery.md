@@ -299,19 +299,27 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      `TOOL_META` advertises the shortcut; rail buttons and letter shortcuts
      both go through `activateTool`, which settles any in-progress gesture
      first (see "Gesture settling" below).
-     **Right-click** (any tool) is two-stage: right-button *press*
-     (`onCanvasDown` button 2) selects the topmost live object under the
-     cursor via `hitObjectAt` (same hit rule as Select — lines get a taller
-     band), or — on empty canvas — picks the pixel colour via the shared
-     `pickColorAt` (same as the Eyedropper, keeps the active tool); the full
-     right-click (*press + release*, `onCanvasContextMenu`) then pins the
-     **layer-order menu** on a hit object, or just dismisses the menu on
-     empty canvas. Two tools consume the right-button *press* themselves:
-     the **Line tool in Curve mode** with a draft pops the last control point
-     (a lone point cancels the draft outright), and the **Text tool** with an
-     open box commits it exactly like Enter. Both swallow the matching
-     `contextmenu` release (`consumeRightRef`) so no order menu / colour pick
-     follows.
+     **Right-click** is two-stage and tool-gated: right-button *press*
+     (`onCanvasDown` button 2) arms the movable's layer-order target **only in
+     the Select tool's object sub-mode** — it selects the topmost live object
+     under the cursor via `hitObjectAt` (same hit rule as Select, lines get a
+     taller band) and the matching `onCanvasContextMenu` press+release pins the
+     **layer-order menu**. In **every other tool/sub-mode (pen, wand, brush,
+     shapes, …)** the right-click instead calls the shared `pickColorAt` (same
+     as the Eyedropper, keeps the active tool) and never opens the movable
+     menu — so the pen tool's right-click is a colour pick. The
+     eyedropper composites the base raster with every live object through a
+     lazily-created 1×1 scratch (`pickCanvasRef`/`getPickCanvas`) before reading
+     the pixel, so a colour can be picked off **movables** (stickers / shapes /
+     text) and not just the base — mirroring the overlay's masking
+     (`paintObjectMasked` inside a selection, `paintObjectWithErase` otherwise);
+     it falls back to the raw base pixel when the composite is empty/transparent
+     or there are no objects. Two tools consume the right-button *press*
+     themselves: the **Line tool in Curve mode** with a draft pops the last
+     control point (a lone point cancels the draft outright), and the **Text
+     tool** with an open box commits it exactly like Enter. Both swallow the
+     matching `contextmenu` release (`consumeRightRef`) so no order menu /
+     colour pick follows.
      **The Line tool has Straight/Curve sub-modes** (`lineMode` state +
      `lineModeRef`, default `straight`): Straight drags out a line (as
      before); Curve appends a control point per click (`curveRef.pts`, hover
@@ -474,7 +482,9 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       `livery_paint_mask_combine`/`_erase`/`_replace` = 合并/擦除/替换,
       `livery_paint_mask_mode`, default combine), a Tolerance slider reusing
       `fillTol` in wand mode, and a Deselect button (`livery_paint_deselect`)
-      while a selection exists. The mask is a lazily-created `W×H` (whole-store) canvas
+      while a selection exists. **Ctrl+D** is the Deselect shortcut in the
+      canvas keydown handler (drops the mask first, else clears the selected
+      object) — the same action as the button. The mask is a lazily-created `W×H` (whole-store) canvas
       (white-opaque = selected; `getMaskCtx`/`maskCanvasRef`) with a
       dotted-line outline (`maskOutlineRef`: pen → closed path, wand → region
       bounds = the latest region; live lasso draft from `lassoRef`), drawn
@@ -700,11 +710,13 @@ manifest for a free-form zip folder).
    tools/stroke/text/sticker/save payload with stubbed 2d context,
    right-click layer-order menu (`reorderObjects` pure moves + menu open/
    reorder/close/dismiss paths + disabled end states + right-press select +
-   selection-less Delete + shortcut settling) and keyboard-parity gesture
+   selection-less Delete + shortcut settling; the menu is gated to Select
+   object mode — a pen-tool right-click picks the colour instead) and keyboard-parity gesture
    settling (shortcut commits a mid-drag shape) plus the selection mask
    (Object/Pen/Wand modes + Combine default/Erase/Replace + wand tolerance,
-    lasso → mask + dotted outline + Deselect, tap/Escape cancel, wand region
+    lasso → mask + dotted outline + Deselect, Ctrl+D deselects, tap/Escape cancel, wand region
     spans, masked stroke triggers the `putImageData` clip vs never unmasked,
+    eyedropper composites live objects (sticker colour picked, not the base),
     new keys resolve in zh+en).
 - `tests/components/LiveryScreen/LiveryColorPicker.test.jsx` (portal
   anchoring, SV-square drag emits colour + keeps opacity, hue/alpha rails,
