@@ -225,7 +225,10 @@ async function saveViaGroundUI(window) {
 
   let saveRan = false;
   let blockedBy = null;
-  for (let pass = 0; pass < 8; pass++) {
+  let confirmClicks = 0;
+  // Up to ~20 passes: large levels (e.g. ZGSZ, 10k nodes) can keep the save
+  // running for well over a minute after confirm is clicked.
+  for (let pass = 0; pass < 20; pass++) {
     const modal = window.locator('#modal-overlay');
     if (!(await modal.isVisible().catch(() => false))) break;
     const title = await window.locator('#modal-title').textContent().catch(() => '');
@@ -263,12 +266,28 @@ async function saveViaGroundUI(window) {
     }
     const btn = window.locator('#modal-actions .btn-confirm').first();
     if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await btn.click();
-      console.log(`    → Clicked confirm`);
+      if (confirmClicks >= 3) {
+        // Confirm was already clicked but the save is still running (large
+        // level — the renderer can stay unresponsive for a while). Keep
+        // waiting for the modal to transition instead of piling up clicks.
+        await window.waitForTimeout(5000);
+        continue;
+      }
+      try {
+        // Large levels keep the renderer unresponsive for a while once the
+        // save starts — allow a long dispatch window. A timeout here does NOT
+        // mean the click was lost: the save may already be running, so keep
+        // observing instead of throwing.
+        await btn.click({ timeout: 120000 });
+        console.log(`    → Clicked confirm`);
+      } catch (e) {
+        console.log(`    → Confirm click timed out (save may still be running): ${String(e.message || e).split('\n')[0]}`);
+      }
+      confirmClicks++;
     } else break;
-    await window.waitForTimeout(900);
+    await window.waitForTimeout(1500);
   }
-  await window.waitForTimeout(1200);
+  await window.waitForTimeout(3000);
   return { saved: saveRan, blockedBy };
 }
 
@@ -343,7 +362,21 @@ async function goBackToBrowser(window) {
     if (!(await saveBtn.isVisible({ timeout: 2000 }).catch(() => false))) return;
     const backBtn = window.locator('button:has-text("Back"), button:has-text("返回")').first();
     if (!(await backBtn.isVisible().catch(() => false))) return;
-    await backBtn.click();
+    try {
+      await backBtn.click({ timeout: 15000 });
+    } catch (e) {
+      // A late modal overlay (e.g. a slow save's success modal resolving after
+      // the pre-back sweep) can intercept the click — sweep once more and retry
+      // instead of failing the whole run on navigation.
+      console.log(`    Back click intercepted, re-sweeping modals: ${String(e.message || e).split('\n')[0]}`);
+      const modal = window.locator('#modal-overlay');
+      if (await modal.isVisible({ timeout: 1500 }).catch(() => false)) {
+        const btn = window.locator('#modal-actions .btn-confirm, #modal-actions .btn-cancel').first();
+        if (await btn.isVisible().catch(() => false)) await btn.click({ timeout: 15000 }).catch(() => {});
+        await window.waitForTimeout(800);
+      }
+      await backBtn.click({ timeout: 15000 });
+    }
     await window.waitForTimeout(800);
     for (let p = 0; p < 3; p++) {
       const modal = window.locator('#modal-overlay');
@@ -390,6 +423,14 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
 
   try {
     // ── 1. Open the level (browser row click) ──
+    // Expand auto-collapsed airport cards first: a collapsed card renders NO
+    // `.level-row` elements (same pattern as save-integrity-all-e2e.spec.mjs).
+    // Collapse state is session-persisted so this is a no-op after the first call.
+    const collapsedHeaders = window.locator('.airport-card[data-expanded="false"] .airport-card-header');
+    while ((await collapsedHeaders.count()) > 0) {
+      await collapsedHeaders.first().click();
+      await window.waitForTimeout(200);
+    }
     const displayName = base.replace(/_/g, ' ');
     const nameLoc = window.locator('.level-name', { hasText: new RegExp('^' + displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$') });
     const row = window.locator('.level-row', { has: nameLoc });
@@ -1811,6 +1852,13 @@ test('Fuzz ground+air save — ground phase, air-mode swap, air phase, save', as
   test.skip(!FUZZ_RUN, 'Skipped — set FUZZ_RUN=1 (or FUZZ_GROUND_RUN=1) to run the ground fuzz save test');
   const rows = window.locator('.level-row');
   await rows.first().waitFor({ state: 'visible', timeout: 90000 }).catch(() => {});
+  // Expand auto-collapsed airport cards so the row count covers all airports
+  // (a collapsed card renders no rows; FuzzGroundTest re-expands per level anyway).
+  const collapsedHeaders = window.locator('.airport-card[data-expanded="false"] .airport-card-header');
+  while ((await collapsedHeaders.count()) > 0) {
+    await collapsedHeaders.first().click();
+    await window.waitForTimeout(200);
+  }
   const totalRows = await rows.count();
   console.log(`\nFound ${totalRows} level rows in browser`);
   expect(totalRows).toBeGreaterThanOrEqual(1);

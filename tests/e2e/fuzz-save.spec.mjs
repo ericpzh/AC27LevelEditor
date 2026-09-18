@@ -339,6 +339,16 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
 
   try {
     // ── 1. Open the level (browser row click) ──
+    // The browser's one-shot auto-collapse fit pass collapses trailing airport
+    // cards on load, and a collapsed card renders NO `.level-row` elements
+    // (BrowserScreen conditionally renders them — same pattern as
+    // save-integrity-all-e2e.spec.mjs). Expand every card before lookup;
+    // collapse state is session-persisted so this is a no-op after the first call.
+    const collapsedHeaders = window.locator('.airport-card[data-expanded="false"] .airport-card-header');
+    while ((await collapsedHeaders.count()) > 0) {
+      await collapsedHeaders.first().click();
+      await window.waitForTimeout(200);
+    }
     const displayName = base.replace(/_/g, ' ');
     const nameLoc = window.locator('.level-name', { hasText: new RegExp('^' + displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$') });
     const row = window.locator('.level-row', { has: nameLoc });
@@ -1206,6 +1216,13 @@ test('Fuzz save — randomized edit storm on production levels', async () => {
   test.skip(!FUZZ_RUN, 'Skipped — set FUZZ_RUN=1 to run the fuzz save test');
   const rows = window.locator('.level-row');
   await rows.first().waitFor({ state: 'visible', timeout: 90000 }).catch(() => {});
+  // Expand auto-collapsed airport cards so the row count covers all airports
+  // (a collapsed card renders no rows; FuzzTest re-expands per level anyway).
+  const collapsedHeaders = window.locator('.airport-card[data-expanded="false"] .airport-card-header');
+  while ((await collapsedHeaders.count()) > 0) {
+    await collapsedHeaders.first().click();
+    await window.waitForTimeout(200);
+  }
   const totalRows = await rows.count();
   console.log(`\nFound ${totalRows} level rows in browser`);
   expect(totalRows).toBeGreaterThanOrEqual(1);
