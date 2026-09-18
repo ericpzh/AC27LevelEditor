@@ -677,6 +677,18 @@ function _buildCollectValuesBase(airportIcao, rootPath) {
   const aclValues = cached?.dropdownValues ? { ...cached.dropdownValues } : {};
   // Ensure live keys never come from the persisted cache
   delete aclValues.Stand; delete aclValues.Runway; delete aclValues.Airway;
+  // Aircraft types are NOT bound to any airline: the flight-schedule dropdown
+  // offers every type the game ships a profile for (the designatorMap keys that
+  // are full AircraftType names — same world-wide set the livery page scans),
+  // unioned with any types already used in this airport's schedules.
+  const designatorMap = cached?.approachData?.designatorMap;
+  if (designatorMap && designatorMap.size > 0) {
+    const set = new Set(aclValues.AircraftType || []);
+    for (const [key, designator] of designatorMap) {
+      if (key !== designator) set.add(key); // full names map to a different designator
+    }
+    aclValues.AircraftType = [...set].sort((a, b) => a.localeCompare(b));
+  }
   return { cached, aclValues };
 }
 
@@ -695,13 +707,8 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
     aclValues.Language = availableLanguages.sort();
   }
 
-  // Filter AircraftType to only show types with known Designator mappings
-  // (ensures every selectable type can generate approach AircraftState entries)
-  const designatorMap = cached?.approachData?.designatorMap;
-  if (designatorMap && designatorMap.size > 0 && aclValues.AircraftType) {
-    const knownTypes = new Set(designatorMap.keys());
-    aclValues.AircraftType = aclValues.AircraftType.filter(t => knownTypes.has(t));
-  }
+  // AircraftType is expanded in _buildCollectValuesBase (all profiled types,
+  // airline-independent) — no per-airline filtering here.
 
   // Live-only fields: Stand / Runway / Airway (and derived maps) come from in-memory liveSceneryCache, never cache.json.
   // If no live entry yet (user hasn't opened a level this session), return empty (not stale).

@@ -3,7 +3,8 @@
  *
  * When a field changes, related fields may need automatic updates:
  *   1. FlightNum or AirlineCode change → rebuild CallSign
- *   2. AirlineCode change → cascade AircraftType + Registration to first valid
+ *   2. AirlineCode change → cascade Registration to first valid (aircraft type
+ *      is independent of the airline and never changes)
  *   3. Runway change → cascade Airway to first valid STAR
  *   4. Registration edit → clear internal _Registration bookkeeping field
  *
@@ -37,31 +38,22 @@ export function rebuildCallSign(oldFlight, updates, airportValues) {
 }
 
 /**
- * When AirlineCode changes, cascade to AircraftType, Registration, and
- * AirlineName (the game stores the 3-letter code there).
+ * When AirlineCode changes, cascade to Registration and AirlineName (the game
+ * stores the 3-letter code there). AircraftType is deliberately NOT changed —
+ * it is independent of the airline.
  * Returns the fields that should be updated on the flight.
  *
  * @param {string} newCode - the new airline code
  * @param {object} flight - the flight AFTER preliminary updates (CallSign rebuilt)
  * @param {object} airportValues - airportValues[currentAirport]
- * @returns {{ AircraftType?: string, Registration?: string, AirlineName?: string, _Registration?: undefined }}
+ * @returns {{ Registration?: string, AirlineName?: string, _Registration?: undefined }}
  */
 export function cascadeAirlineChange(newCode, flight, airportValues) {
   const result = {};
   result.AirlineName = newCode;
-  const compat = (airportValues || {})._compat || {};
 
-  // AircraftType: reset to first valid type for the new airline
-  const validTypes = compat.airlineToAircraft?.[newCode];
-  if (validTypes && validTypes.length > 0) {
-    const curType = flight.AircraftType || '';
-    if (!curType || !validTypes.includes(curType)) {
-      result.AircraftType = validTypes[0];
-    }
-  }
-
-  // Registration: reset to first valid reg for airline + aircraft type
-  const acType = result.AircraftType || flight.AircraftType || '';
+  // Registration: reset to first valid reg for airline + the (unchanged) aircraft type
+  const acType = flight.AircraftType || '';
   const regKey = newCode + '|' + acType;
   const validRegs = (airportValues || {})._registrationMap?.[regKey];
   if (validRegs && validRegs.length > 0) {

@@ -165,3 +165,43 @@ describe('FlightTable — row selection via click vs drag', () => {
     expect(useAppStore.getState().selectedIndices.size).toBe(0);
   });
 });
+
+describe('FlightTable — aircraft type dropdown is airline-independent', () => {
+  it('lists every type from vals.AircraftType, ignoring _compat.airlineToAircraft', () => {
+    useAppStore.getState().initializeEditor({
+      currentPath: '/test/file.acl',
+      airportIcao: 'KJFK',
+      flights: TEST_FLIGHTS,
+      before: '', after: '', arrayContent: '', originalBlocks: [],
+      configStartTime: '06:00', configEndTime: '18:00',
+      _saveSec: 36000,
+    });
+    useAppStore.getState().setAuxData(
+      {
+        KJFK: {
+          AircraftType: ['B738', 'A320', 'B77W'],
+          Stand: ['G1', 'G2', 'G3'],
+          // CES "only flies" B738 per the old compat map — it must not constrain.
+          _compat: { airlineToAircraft: { CES: ['B738'] } },
+        },
+      },
+      { byAirline: { CES: ['1234'] }, allCallsigns: [], allAirlines: ['CES'] },
+      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+      [],
+    );
+    renderTable();
+
+    const cell = getCell('AircraftType', 0);
+    expect(cell).not.toBeNull();
+    act(() => {
+      cell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    act(() => {
+      cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const select = cell.querySelector('select.cell-widget');
+    expect(select).not.toBeNull();
+    expect([...select.options].map(o => o.value)).toEqual(['B738', 'A320', 'B77W']);
+  });
+});

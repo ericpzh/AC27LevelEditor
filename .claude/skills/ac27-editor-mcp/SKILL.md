@@ -132,7 +132,7 @@ When a user uses Chinese field names, translate to the API field key:
 - **AirlineName stores the 3-letter airline code, NOT a display name** — the game format uses codes (e.g. `"CCA"`, `"UAL"`). `create_flights` fills it from the callsign prefix when left empty, so it can be omitted safely.
 - **Departure/arrival is derived server-side**: `create_flights` sets an internal `isDeparture` flag from `OffBlockTime` presence; the saved ACL leg (`InitialArrival` vs `InitialDeparture`) follows it. `get_flights` rows include this `isDeparture` boolean.
 - **Time format**: HH:MM:SS (or HH:MM shorthand). Times are wall-clock times within the scenario config range.
-- **Cascade rules** (applied server-side on modify): Changing AirlineCode rebuilds CallSign, resets AircraftType/Registration to first valid, and syncs AirlineName to the new code. Changing FlightNum rebuilds CallSign. Changing Runway resets Airway to first valid STAR.
+- **Cascade rules** (applied server-side on modify): Changing AirlineCode rebuilds CallSign, resets Registration to first valid (the aircraft type is independent and preserved), and syncs AirlineName to the new code. Changing FlightNum rebuilds CallSign. Changing Runway resets Airway to first valid STAR.
 - **Registration format**: Country prefix + hyphen + alphanumeric (e.g., `B-1234`, `N123AB`).
 
 ## 5. Validation Rules — How to Create Valid Flights
@@ -143,7 +143,7 @@ The server WILL reject invalid requests with a 422 error containing `error.detai
 
 **Rule 2: Flight number must be canonical (if known).** Check `constraints.flightNumbers[airlineCode]`. If the airline has a list, use a number from it. If no list, any numeric string is accepted.
 
-**Rule 3: Aircraft type must be compatible with airline.** Check `constraints.airlineAircraftCompat[airlineCode]`. If the airline has a compat list, the aircraft MUST be from it. This is the most important nested constraint.
+**Rule 3: Aircraft type is independent of the airline.** Choose any type from `constraints.aircraftTypes` (the game's full profiled type pool) regardless of the callsign's airline. `constraints.airlineAircraftCompat` is informational only.
 
 **Rule 4: Airway/STAR must be compatible with runway (arrivals only).** Check `constraints.runwayStarCompat[runway]`. If the runway has a list, the airway MUST be from it.
 
@@ -157,7 +157,7 @@ The server WILL reject invalid requests with a 422 error containing `error.detai
 1. Call `get_airport_info`. Check `cacheReady` — if false, warn user.
 2. Choose an airline code from `constraints.airlineCode`.
 3. Choose a flight number from `constraints.flightNumbers[airlineCode]`. Combine into `CallSign = airlineCode + flightNumber`.
-4. Choose an aircraft type from `constraints.airlineAircraftCompat[airlineCode]`.
+4. Choose any aircraft type from `constraints.aircraftTypes` (airline-independent).
 5. Choose a runway from `constraints.flatLists.Runway`.
 6. Choose a stand from `constraints.flatLists.Stand`.
 7. For arrivals: choose an airway from `constraints.runwayStarCompat[runway]`. For departures: leave Airway empty.
@@ -214,14 +214,14 @@ No parameters. Returns `{success, issues, duplicateCallsigns, standConflicts, du
 **Example A: "Create 10 AAL departures, 1 min apart, randomize aircraft"**
 ```
 1. get_editor_status → confirm level loaded, note currentAirport
-2. get_airport_info → get constraint map (compat lists, flight numbers, registrations)
+2. get_airport_info → get constraint map (aircraft type pool, flight numbers, registrations)
 3. Construct 10 flight objects (LLM internally):
  Flight 1: { CallSign:"AAL1001", DepartureAirport:"", ArrivalAirport:"KJFK",
  Stand:"G1", Runway:"04L", OffBlockTime:"10:00:00", TakeoffTime:"10:05:00",
  LandingTime:"", InBlockTime:"", AirlineName:"AAL",
  AircraftType:"A320", Airway:"", Registration:"N123AB",
  Voice:"en-US-1", Language:"en" }
- ... (10 flights, incrementing times, varying aircraft/reg from compat lists)
+ ... (10 flights, incrementing times, aircraft from the type pool, reg from registrationsByPair)
 4. create_flights({flights: [f1, f2, ..., f10]})
  → If 422: read error.details, fix, retry
 5. get_flights({airline:"AAL", type:"departure", limit:20}) → show user

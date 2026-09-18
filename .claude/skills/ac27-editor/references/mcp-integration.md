@@ -80,22 +80,23 @@ Claude Code (LLM) AC27 Editor (Electron)
 | `get_validation_issues` | Run 13-point validation on current flights. Returns structured issues. |
 | `send_voice_command` | Parse a spoken sentence against the LIVE aircraft list (same pipeline as the PTT mic) and dispatch patch frames to the game. Needs game + BepInEx plugin running. Prints `[VOICE-PARSE]` to the main-process log. |
 
-## Validation (14 checks)
+## Validation (13 checks)
 
 1. All 15 fields present
 2. Airline code known (from audio callsigns + dropdown values)
 3. Flight number canonical (if airline has a list)
 4. Stand in valid set
 5. Runway in valid set
-6. Aircraft compatible with airline (`_compat.airlineToAircraft`)
-7. Arrival legs must carry a STAR (`missing_star` — the game's `FlightPlan.Init()` drops a STAR-less arrival leg at level load: "Flight plan '...' has neither an arrival nor a departure leg"; game-authored arrivals ALWAYS carry a STAR such as `"SIE.CAMRM5"`). The renderer's `runTripleValidation` mirrors this as `val_star_required` (gated on `_starRunwayMap` being non-empty; see `src/utils/i18n.js` for the EN/ZH strings)
-8. Airway/STAR compatible with runway (`_runwayStarMap`, arrivals only)
-9. Registration valid for (airline, aircraft) pair (`_registrationMap`)
-10. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` — the strict upper bound is `end + 30 min`, not `end` (game allows events up to 30 min past scenario end; `time_after_range` only fires past the grace)
-11. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
-12. Duplicate callsigns
-13. Stand conflicts + duplicate registrations
-14. Runway inactive at landing — arrival `Runway` must be in active set at `LandingTime` (`initialRunways` + `timeline` sweep sorted chronologically; `<= landingTime` applies, unsorted input handled, departures ignored, exact-time landing uses post-change set; `val_runway_inactive` / `runway_inactive_at_landing`; **skipped when the level has no active-runway source — empty `initialRunways` + empty `timeline` — so arrivals are not all false-flagged**)
+6. Arrival legs must carry a STAR (`missing_star` — the game's `FlightPlan.Init()` drops a STAR-less arrival leg at level load: "Flight plan '...' has neither an arrival nor a departure leg"; game-authored arrivals ALWAYS carry a STAR such as `"SIE.CAMRM5"`). The renderer's `runTripleValidation` mirrors this as `val_star_required` (gated on `_starRunwayMap` being non-empty; see `src/utils/i18n.js` for the EN/ZH strings)
+7. Airway/STAR compatible with runway (`_runwayStarMap`, arrivals only)
+8. Registration valid for (airline, aircraft) pair (`_registrationMap`)
+9. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` — the strict upper bound is `end + 30 min`, not `end` (game allows events up to 30 min past scenario end; `time_after_range` only fires past the grace)
+10. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
+11. Duplicate callsigns
+12. Stand conflicts + duplicate registrations
+13. Runway inactive at landing — arrival `Runway` must be in active set at `LandingTime` (`initialRunways` + `timeline` sweep sorted chronologically; `<= landingTime` applies, unsorted input handled, departures ignored, exact-time landing uses post-change set; `val_runway_inactive` / `runway_inactive_at_landing`; **skipped when the level has no active-runway source — empty `initialRunways` + empty `timeline` — so arrivals are not all false-flagged**)
+
+**Aircraft type is NOT bound to the airline** — any profiled type (`constraints.aircraftTypes`, the same world-wide pool the livery page scans, minus types with no game profile) is accepted regardless of the callsign's airline. An airline change preserves the aircraft type and only cascades the registration.
 
 ## Testing
 

@@ -160,8 +160,8 @@ function firstOrEmpty(arr) {
  * Build a fully-populated default flight object (arrival or departure).
  *
  * Uses random selection for airline, flight number, aircraft type,
- * registration, and stand — with proper field cascading so that
- * aircraft type and registration are compatible with the chosen airline.
+ * registration, and stand. The aircraft type is independent of the airline;
+ * the registration is picked for the chosen (airline, aircraft) pair.
  *
  * @param {'arrival'|'departure'} type
  * @param {object} values - airportValues[currentAirport]
@@ -176,12 +176,11 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
   const airlineCode = pickRandomAirlineCode(audioData, values);
   const flightNum = pickRandomFlightNumber(airportValuesForNum, airlineCode);
 
-  // Pick aircraft type valid for this airline (cascade: airline → aircraft)
-  const compat = (airportValuesForNum || {})._compat || {};
-  const validTypes = compat.airlineToAircraft?.[airlineCode] || values.AircraftType || [];
-  const aircraftType = randomPick(validTypes) || firstOrEmpty(values.AircraftType);
+  // Aircraft type is independent of the airline — pick from the airport's
+  // full type pool.
+  const aircraftType = randomPick(values.AircraftType) || firstOrEmpty(values.AircraftType);
 
-  // Pick registration valid for this airline + aircraft combo (cascade: aircraft → reg)
+  // Pick registration valid for this airline + aircraft combo (cascade: airline+type → reg)
   const regKey = airlineCode + '|' + aircraftType;
   const regMap = (airportValuesForNum || {})._registrationMap || {};
   const validRegs = regMap[regKey] || values.Registration || [];

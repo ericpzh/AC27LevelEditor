@@ -288,11 +288,8 @@ export default function FlightTable({ type, flights, columns }) {
                       const isTime = TIME_FIELDS.has(col);
                       const isDropdown = DROPDOWN_FIELDS.has(col);
                       let opts = (isDropdown ? vals[col] : null);
-                      // AircraftType: filter by airline (only show types this airline operates)
-                      if (col === 'AircraftType' && airlineCode) {
-                        const airlineTypes = vals._compat?.airlineToAircraft?.[airlineCode];
-                        if (airlineTypes && airlineTypes.length > 0) opts = airlineTypes;
-                      }
+                      // AircraftType is airline-independent — the full type list
+                      // comes straight from vals.AircraftType.
                       // Registration: filter by airline + aircraft type
                       if (col === 'Registration') {
                         const acType = (fl.AircraftType || '').trim();

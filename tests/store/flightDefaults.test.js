@@ -441,14 +441,14 @@ describe('createDefaultFlight', () => {
     }
   });
 
-  it('picks AircraftType valid for the chosen airline from _compat', () => {
+  it('picks AircraftType from the airport pool regardless of the airline (_compat)', () => {
     const audioData = { allAirlines: ['CCA'] };
-    const vals = makeVals({ AirlineCode: ['CCA'] });
-    const apv = makeAirportValues('CCA');
-    // Run multiple times since airline is random (and aircraft cascades from it)
+    // CCA's compat list says only B738, but the type pool is airline-independent.
+    const vals = makeVals({ AirlineCode: ['CCA'], AircraftType: ['B77W'] });
+    const apv = makeAirportValues('CCA', { _compat: { airlineToAircraft: { CCA: ['B738'] } } });
     for (let i = 0; i < 20; i++) {
       const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
-      expect(['B738', 'A320']).toContain(flight.AircraftType);
+      expect(flight.AircraftType).toBe('B77W');
     }
   });
 
@@ -559,7 +559,7 @@ describe('createDefaultFlight', () => {
     expect(flight.Voice).toBe('');
   });
 
-  it('uses values.AircraftType fallback when _compat has no airline', () => {
+  it('picks AircraftType from values.AircraftType (airline-independent)', () => {
     const audioData = { allAirlines: ['CCA'] };
     const vals = makeVals({ AirlineCode: ['CCA'], AircraftType: ['B77W'] });
     const apv = {};  // no _compat

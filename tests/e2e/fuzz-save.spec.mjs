@@ -390,8 +390,8 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     const C = info.constraints || {};
     const icao = info.currentAirport || '';
     // Authoritative value pools: the RENDERER's airportValues[icao] — the exact
-    // object the app's save-time validation runs against (designator-filtered
-    // AircraftType, Voice/Language availability, _starRunwayMap, _compat,
+    // object the app's save-time validation runs against (airline-independent
+    // AircraftType pool, Voice/Language availability, _starRunwayMap, _compat,
     // _registrationMap, _flightNums). The MCP constraints (C) are the API
     // server's supersets; everything the fuzz generates must come from the
     // renderer set so the save can never be blocked by the UI.
@@ -488,9 +488,9 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       }
       return syntheticReg(pool[0], avoid);
     };
-    // Valid AircraftType for an airline = airline's compat list ∩ the renderer's
-    // (designator-filtered) global dropdown list — the exact set the app's
-    // save-time validation accepts.
+    // AircraftType is airline-independent: prefer the airline's compat list (so
+    // generated flights look realistic and registrations resolve) but fall back
+    // to the full profiled pool. The save-time validation accepts any type.
     const typePoolFor = (code) => {
       const compat = SU.compat?.[code];
       const pool = (Array.isArray(compat) && compat.length ? compat : Object.values(SU.compat || {}).flat())
@@ -657,13 +657,13 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
           else if (r < 97) {
             // Changing the airline also changes the callsign prefix: the new
             // flight number must come from the NEW airline's canonical list.
+            // The aircraft type is airline-independent and is preserved by the
+            // server cascade, so it is deliberately NOT touched here.
             const code = rpick(airlines);
             const nums = SU.flightNums?.[code];
             if (Array.isArray(nums) && nums.length) {
               updates.AirlineCode = code;
               updates.FlightNum = rpick(nums);
-              const tp = typePoolFor(code);
-              if (tp.length && f.AircraftType && !tp.includes(f.AircraftType)) updates.AircraftType = rpick(tp);
             } else continue;
           }
           else {

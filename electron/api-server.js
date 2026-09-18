@@ -295,6 +295,21 @@ function primaryTime(flight) {
 
 // ── Constraint Map Builder ──────────────────────────────────────
 
+// The full airline-independent aircraft-type pool: every profiled type
+// (designatorMap keys that are full AircraftType names), unioned with any types
+// already used in this airport's schedules. Mirrors main.js's expansion for the
+// renderer's dropdown.
+function allAircraftTypes(dv, ad) {
+  const set = new Set(dv.AircraftType || []);
+  const dm = ad.designatorMap;
+  if (dm && typeof dm.forEach === 'function') {
+    for (const [key, designator] of dm) {
+      if (key !== designator) set.add(key); // full names map to a different designator
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
 function buildConstraints(state, cache) {
   const icao = state.currentAirport;
   const entry = cache && icao ? cache[icao] : null;
@@ -313,7 +328,7 @@ function buildConstraints(state, cache) {
     flightNumbers: dv._flightNums || {},
     stands: dv.Stand || [],
     runways: dv.Runway || [],
-    aircraftTypes: dv.AircraftType || [],
+    aircraftTypes: allAircraftTypes(dv, ad),
     voices: dv.Voice || [],
     languages: dv.Language || [],
     airlineNames: dv.AirlineName || [],
@@ -395,16 +410,8 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
       });
     }
 
-    // 6. Aircraft type compatible with airline
-    const compatAircraft = constraints.airlineAircraftCompat[airlineCode];
-    if (f.AircraftType && compatAircraft && compatAircraft.length > 0 && !compatAircraft.includes(f.AircraftType)) {
-      details.push({
-        index: idx, field: 'AircraftType', value: f.AircraftType,
-        issue: 'incompatible_aircraft',
-        message: `Aircraft '${f.AircraftType}' is not valid for airline ${airlineCode}.`,
-        valid: compatAircraft,
-      });
-    }
+    // 6. (removed) Aircraft type is independent of the airline — any profiled
+    //    type is allowed regardless of the callsign's airline.
 
     // 7. Arrival legs must carry a STAR — the game's FlightPlan.Init() drops
     //    a STAR-less arrival leg at level load ("Flight plan '...' has
@@ -620,7 +627,8 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
 
 /**
  * Apply cascade logic when updating flights (mirrors updateFlight in appStore.js:276-348).
- * - AirlineCode change → rebuild CallSign, cascade AircraftType, cascade Registration
+ * - AirlineCode change → rebuild CallSign, cascade Registration (aircraft type
+ *   is independent of the airline)
  * - FlightNum change → rebuild CallSign
  * - Runway change → cascade Airway from _runwayStarMap
  */
@@ -635,12 +643,7 @@ function applyCascades(flight, updates, constraints) {
     newCode = updates.AirlineCode.toUpperCase();
     // AirlineName stores the 3-letter code (game format)
     result.AirlineName = newCode;
-    // Cascade AircraftType to first valid for new airline
-    const compat = constraints.airlineAircraftCompat[newCode];
-    if (compat && compat.length > 0 && !compat.includes(result.AircraftType)) {
-      result.AircraftType = compat[0];
-    }
-    // Cascade Registration to first valid for (airline, aircraft)
+    // Cascade Registration to first valid for (airline, unchanged aircraft type)
     const pairKey = `${newCode}|${result.AircraftType}`;
     const validRegs = constraints.registrationsByPair[pairKey];
     if (validRegs && validRegs.length > 0 && !validRegs.includes(result.Registration)) {
@@ -711,7 +714,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'modify_flights',
-    description: 'Update fields on matching flights. Cascade: AirlineCode change rebuilds CallSign + resets AircraftType/Registration. Runway change resets Airway to first valid STAR.',
+    description: 'Update fields on matching flights. Cascade: AirlineCode change rebuilds CallSign + resets Registration (aircraft type is independent of the airline). Runway change resets Airway to first valid STAR.',
     inputSchema: {
       type: 'object',
       properties: {

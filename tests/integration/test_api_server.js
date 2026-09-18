@@ -90,6 +90,10 @@ const MOCK_AIRPORT_CACHE = {
       },
     },
     approachData: {
+      designatorMap: new Map([
+        ['AIRBUS A-320neo', 'A20N'],
+        ['A20N', 'A20N'],
+      ]),
       runwayStarMap: {
         '04L': ['ABCD1A', 'EFGH2B'],
         '04R': ['ABCD2B', 'EFGH3C'],
@@ -150,6 +154,10 @@ assert(c.knownCodes.has('AAL'), 'constraints has AAL');
 assert(c.knownCodes.has('CCA'), 'constraints has CCA');
 assertEqual(c.stands, ['G1', 'G2', 'G3', 'G4', 'G5', 'G10'], 'constraints stands');
 assertEqual(c.airlineAircraftCompat['AAL'], ['A320', 'B738', 'B772'], 'constraints AAL compat');
+// Aircraft types are airline-independent: every profiled full name is offered,
+// bare designators are not.
+assert(c.aircraftTypes.includes('AIRBUS A-320neo'), 'constraints aircraftTypes include profiled full names');
+assert(!c.aircraftTypes.includes('A20N'), 'constraints aircraftTypes exclude bare designators');
 assertEqual(c.runwayStarCompat['04L'], ['ABCD1A', 'EFGH2B'], 'constraints runway→STAR');
 assertEqual(c.registrationsByPair['AAL|A320'], ['N123AB', 'N456CD'], 'constraints registrations');
 
@@ -175,10 +183,10 @@ const badStand = { ...validFlight, Stand: 'G99' };
 const issues3 = validateFlightObjects([badStand], MOCK_FLIGHTS, c);
 assert(issues3 !== null && issues3.some(i => i.issue === 'invalid_stand'), 'invalid stand rejected');
 
-// validateFlightObjects — incompatible aircraft
-const badAircraft = { ...validFlight, AircraftType: 'B77W' }; // B77W not in AAL compat
-const issues4 = validateFlightObjects([badAircraft], MOCK_FLIGHTS, c);
-assert(issues4 !== null && issues4.some(i => i.issue === 'incompatible_aircraft'), 'incompatible aircraft rejected');
+// validateFlightObjects — aircraft type is independent of the airline
+const otherAircraft = { ...validFlight, AircraftType: 'B77W' }; // not in AAL compat — still allowed
+const issues4 = validateFlightObjects([otherAircraft], MOCK_FLIGHTS, c);
+assert(issues4 === null, 'aircraft type independent of airline accepted');
 
 // validateFlightObjects — invalid registration
 const badReg = { ...validFlight, Registration: 'B-9999' }; // not in AAL|A320 list
@@ -225,15 +233,24 @@ const starArr = { ...noStarArr, Airway: 'ABCD2B' };
 const issues10b = validateFlightObjects([starArr], MOCK_FLIGHTS, c);
 assert(issues10b === null, 'arrival with valid STAR accepted');
 
-// applyCascades — AirlineCode change
+// applyCascades — AirlineCode change (AircraftType is airline-independent)
 const cascaded1 = applyCascades(
-  { ...MOCK_FLIGHTS[0] },
+  { ...MOCK_FLIGHTS[0], AircraftType: 'B77W', Registration: 'N123AB' },
   { AirlineCode: 'DAL' },
   c
 );
 assertEqual(cascaded1.CallSign, 'DAL1001', 'cascade AirlineCode: CallSign rebuilt');
-assertEqual(cascaded1.AircraftType, 'A320', 'cascade AirlineCode: AircraftType to first DAL compat');
-assertEqual(cascaded1.Registration, 'N111DL', 'cascade AirlineCode: Registration to first DAL A320 reg');
+assertEqual(cascaded1.AircraftType, 'B77W', 'cascade AirlineCode: AircraftType preserved');
+assertEqual(cascaded1.Registration, 'N123AB', 'cascade AirlineCode: no reg map for pair leaves Registration');
+
+// applyCascades — AirlineCode change with a known (airline, aircraft) reg pair
+const cascaded1b = applyCascades(
+  { ...MOCK_FLIGHTS[0], AircraftType: 'A320', Registration: 'N123AB' },
+  { AirlineCode: 'DAL' },
+  c
+);
+assertEqual(cascaded1b.AircraftType, 'A320', 'cascade AirlineCode: AircraftType preserved (known pair)');
+assertEqual(cascaded1b.Registration, 'N111DL', 'cascade AirlineCode: Registration to first DAL A320 reg');
 
 // applyCascades — FlightNum change
 const cascaded2 = applyCascades(

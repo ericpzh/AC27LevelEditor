@@ -313,7 +313,8 @@ export const useAppStore = create((set, get) => ({
     if ('FlightNum' in updates || 'AirlineCode' in updates) {
       flight.CallSign = rebuildCallSign(oldFlight, updates, airportValues);
 
-      // Cascade 2: AirlineCode change → aircraft type + registration
+      // Cascade 2: AirlineCode change → registration (aircraft type is
+      // independent of the airline and never changes)
       if ('AirlineCode' in updates) {
         const acUpdates = cascadeAirlineChange(updates.AirlineCode, flight, airportValues);
         Object.assign(flight, acUpdates);

@@ -244,6 +244,46 @@ describe('appStore — addArrivalFlight', () => {
 	});
 });
 
+describe('appStore — updateFlight airline change (aircraft type independent)', () => {
+  function setupAirlineChange() {
+    useAppStore.getState().initializeEditor({
+      currentPath: '/test/file.acl',
+      airportIcao: 'ZSJN',
+      flights: [{
+        CallSign: 'CES1234', ArrivalAirport: 'ZSJN', LandingTime: '10:00:00',
+        AircraftType: 'B738', Registration: 'B-1111', AirlineName: 'CES',
+      }],
+      before: '', after: '', arrayContent: '', originalBlocks: [],
+      configStartTime: '06:00', configEndTime: '18:00',
+      _saveSec: 36000,
+    });
+    useAppStore.getState().setAuxData(
+      {
+        ZSJN: {
+          AirlineCode: ['CES', 'CCA'],
+          AircraftType: ['B738', 'A320'],
+          _flightNums: { CCA: ['1234'] },
+          _registrationMap: { 'CCA|B738': ['B-9999'] },
+        },
+      },
+      { byAirline: {}, allCallsigns: [], allAirlines: ['CES', 'CCA'] },
+      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+      [],
+    );
+  }
+
+  it('keeps AircraftType and cascades Registration to the new airline pair', () => {
+    setupAirlineChange();
+    // 'B738' is not in any compat map for CCA — the old cascade would have reset it.
+    useAppStore.getState().updateFlight(0, { AirlineCode: 'CCA' });
+    const f = useAppStore.getState().flights[0];
+    expect(f.AircraftType).toBe('B738');
+    expect(f.AirlineName).toBe('CCA');
+    expect(f.Registration).toBe('B-9999');
+    expect(f.CallSign.startsWith('CCA')).toBe(true);
+  });
+});
+
 describe('appStore — selection', () => {
   it('selectedIndices defaults to empty', () => {
     expect(useAppStore.getState().selectedIndices.size).toBe(0);
