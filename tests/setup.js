@@ -116,6 +116,7 @@ vi.stubGlobal('electronAPI', {
   // ─── Custom Liveries (own pack) ─────────────────────────
   listLiveries: () => mockIpcInvoke('list-liveries'),
   readLiveryImage: (folder, pack) => mockIpcInvoke('read-livery-image', folder, pack),
+  readLiveryThumbnail: (folder, pack) => mockIpcInvoke('read-livery-thumbnail', folder, pack),
   getAircraftTemplate: (planeId) => mockIpcInvoke('get-aircraft-template', planeId),
   listAircraftTypes: () => mockIpcInvoke('list-aircraft-types'),
   createLivery: (payload) => mockIpcInvoke('create-livery', payload),

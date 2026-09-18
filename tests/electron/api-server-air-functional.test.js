@@ -387,3 +387,41 @@ describe('api-server — runway rename cascades to air/route references', () => 
     expect(ng.runways[0].exits[0].runwayName).toBe('3C');
   });
 });
+
+describe('api-server — rename_ground_object(segment) spans the whole OSM way', () => {
+  it('renames every segment sharing the target OsmId and leaves other ways alone', async () => {
+    // KDCA_leisure_2 air-map fuzz: renaming ONE piece of a multi-segment OSM way
+    // left the way visually inconsistent, so Unity aborted level load with
+    // "Taxiway segments '...:0' and '...:2' for OSM way '...' have inconsistent
+    // visual properties". `Name` is a property of the whole way.
+    const g = {
+      nodes: [{ x: 0, z: 0 }, { x: 1, z: 0 }, { x: 2, z: 0 }, { x: 3, z: 0 }],
+      segments: [
+        { aIdx: 0, bIdx: 1, nodeIdxs: [0, 1], flags: 2, directed: false, name: '' },
+        { aIdx: 1, bIdx: 2, nodeIdxs: [1, 2], flags: 2, directed: false, name: '' },
+        { aIdx: 2, bIdx: 3, nodeIdxs: [2, 3], flags: 2, directed: false, name: '' },
+      ],
+      runways: [], areas: [], stands: [], airwayNodes: [], procedures: [],
+    };
+    const m = {
+      nodeOrigPk: [10, 11, 12, 13],
+      segOrigPk: ['taxiway-segment:-100:0', 'taxiway-segment:-100:1', 'taxiway-segment:-99:0'],
+      runwayOrigPk: [], runwayPavement: [], runwayOrigInfo: [], areaOrigId: [], standOrigPk: [],
+      deletedPks: [], deletedAreaIds: [], airwayNodeOrigPk: [], airwaySegOrigPk: [], deletedAirwayPks: [],
+    };
+    makeState({ groundPainterGraph: g, groundPainterMeta: m });
+
+    const r = await callTool('rename_ground_object', { kind: 'segment', idx: 0, name: 'T7' });
+    expect(r.success).toBe(true);
+    expect(r.renamed.segments).toBe(2);
+
+    const segs = fakeState.groundPainterGraph.segments;
+    expect(segs[0].name).toBe('T7');
+    expect(segs[1].name).toBe('T7'); // same OSM way -100
+    expect(segs[2].name).toBe('');   // different way -99 untouched
+    expect(segs[0].nameEdited).toBe(true);
+    expect(segs[1].nameEdited).toBe(true);
+    expect(segs[2].nameEdited).toBeUndefined();
+  });
+});
+

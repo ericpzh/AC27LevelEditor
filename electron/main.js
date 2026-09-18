@@ -3434,6 +3434,17 @@ ipcMain.handle('read-livery-image', async (_event, folder, pack = 'mine') => {
   return livery.readLiveryImage(_liveryGameRoot(), folder, pack);
 });
 
+// Low-resolution list preview (≈256px JPEG) — the livery list must never
+// pull full 2048×2048 textures over IPC. The painter keeps using
+// read-livery-image for the full paintable pixels.
+ipcMain.handle('read-livery-thumbnail', async (_event, folder, pack = 'mine') => {
+  try {
+    return livery.readLiveryThumbnail(_liveryGameRoot(), folder, pack);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // Per-aircraft UV template: the game's built-in default livery BaseMap
 // (decoded DDS → PNG data-URL) used as the painter's background for a type.
 ipcMain.handle('get-aircraft-template', async (_event, planeId) => {

@@ -404,9 +404,7 @@ export default function BrowserScreen() {
       </header>
 
       <main className="browser-content" ref={contentRef}>
-        {loading ? (
-          <div className="loading-state"><div className="spinner" /><p>{t('browser_loading')}</p></div>
-        ) : totalFileCount === 0 ? (
+        {loading ? null : totalFileCount === 0 ? (
           <div className="browser-empty">{t('browser_no_files')}</div>
         ) : (
           allAirportsWithFiles.map(airport => {
@@ -504,6 +502,12 @@ export default function BrowserScreen() {
           })
         )}
       </main>
+
+      {loading && (
+        <div className="browser-scan-overlay">
+          <div className="loading-state browser-scan-notice"><div className="spinner" /><p>{t('browser_loading')}</p></div>
+        </div>
+      )}
 
       {appVersion && <div className="browser-version">v{appVersion}</div>}
 

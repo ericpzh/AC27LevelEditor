@@ -739,3 +739,175 @@ describe('listAircraftTypes', () => {
   });
 });
 
+describe('readLiveryThumbnail', () => {
+  const seed = (folder = 'A20N_CCA') => {
+    const created = livery.createLivery(gameRoot, {
+      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder,
+    });
+    expect(created).toEqual({ success: true, folder });
+  };
+
+  it('exposes a 256px list size', () => {
+    expect(livery.THUMBNAIL_SIZE).toBe(256);
+  });
+
+  it('returns NO_GAME_ROOT / BAD_FOLDER / IMAGE_MISSING guards', () => {
+    expect(livery.readLiveryThumbnail(null, 'A20N_CCA').error).toBe('NO_GAME_ROOT');
+    seed();
+    expect(livery.readLiveryThumbnail(gameRoot, '../evil', 'mine').error).toBe('BAD_FOLDER');
+    expect(livery.readLiveryThumbnail(gameRoot, '', 'mine').error).toBe('BAD_FOLDER');
+    // Contained but missing subpath → passes containment, fails the read.
+    expect(livery.readLiveryThumbnail(gameRoot, 'a/b', 'mine').error).toBe('IMAGE_MISSING');
+    const emptyDir = path.join(livery.ownPackDir(gameRoot), 'EMPTY_XXX');
+    fs.mkdirSync(emptyDir, { recursive: true });
+    fs.writeFileSync(path.join(emptyDir, 'aircraft_livery_manifest.json'), JSON.stringify({ parts: [] }));
+    expect(livery.readLiveryThumbnail(gameRoot, 'EMPTY_XXX', 'mine').error).toBe('IMAGE_MISSING');
+  });
+
+  it('falls back to the full image verbatim when nativeImage is unavailable', () => {
+    // Plain node has no Electron — thumbnail:false marks the degraded path.
+    seed();
+    const full = livery.readLiveryImage(gameRoot, 'A20N_CCA', 'mine');
+    const thumb = livery.readLiveryThumbnail(gameRoot, 'A20N_CCA', 'mine');
+    expect(thumb).toEqual({ success: true, imageDataUrl: full.imageDataUrl, thumbnail: false });
+  });
+
+  it('keeps the JPEG MIME on the fallback path', () => {
+    const dir = path.join(livery.referencePackDir(gameRoot), 'A388_JPG');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      targetPlaneId: 'AIRBUS A-380-800',
+      parts: [{ partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base_Fuselage.jpg' }] }],
+    }));
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+    fs.writeFileSync(path.join(dir, 'base_Fuselage.jpg'), jpeg);
+    const thumb = livery.readLiveryThumbnail(gameRoot, 'A388_JPG', 'reference');
+    expect(thumb.success).toBe(true);
+    expect(thumb.thumbnail).toBe(false);
+    expect(thumb.imageDataUrl).toBe('data:image/jpeg;base64,' + jpeg.toString('base64'));
+  });
+
+  it('clamps odd sizes instead of throwing', () => {
+    seed();
+    for (const size of [0, 64, 128, 512, 10000, 'abc', null]) {
+      const res = livery.readLiveryThumbnail(gameRoot, 'A20N_CCA', 'mine', size);
+      expect(res.success).toBe(true);
+      expect(res.imageDataUrl.startsWith('data:image/')).toBe(true);
+    }
+  });
+
+  describe('with a fake nativeImage (Electron main process)', () => {
+    const LIVERY_PATH = require.resolve('../../electron/livery');
+    const ELECTRON_PATH = require.resolve('electron');
+    let savedLivery;
+    let savedElectron;
+    let hadElectronCache;
+    let liveryThumb;
+
+    // Fake nativeImage: records inputs, returns a fixed JPEG buffer.
+    // Mirrors the subset of the Electron API used by _nativeThumbnail.
+    function makeFakeNative(calls, { empty = false, jpeg = Buffer.from('FAKEJPEGDATA') } = {}) {
+      return {
+        createFromBuffer: (buf) => {
+          calls.buffers.push(buf);
+          return {
+            isEmpty: () => empty,
+            resize: (opts) => {
+              calls.resizeOpts.push(opts);
+              return {
+                isEmpty: () => false,
+                toJPEG: (q) => { calls.jpegQ.push(q); return jpeg; },
+              };
+            },
+          };
+        },
+      };
+    }
+
+    function loadWithFakeNative(fakeNativeImage) {
+      savedLivery = require.cache[LIVERY_PATH];
+      hadElectronCache = Object.prototype.hasOwnProperty.call(require.cache, ELECTRON_PATH);
+      savedElectron = require.cache[ELECTRON_PATH];
+      delete require.cache[LIVERY_PATH];
+      require.cache[ELECTRON_PATH] = {
+        id: ELECTRON_PATH, filename: ELECTRON_PATH, loaded: true,
+        exports: { nativeImage: fakeNativeImage },
+      };
+      liveryThumb = require('../../electron/livery');
+    }
+
+    afterEach(() => {
+      delete require.cache[LIVERY_PATH];
+      if (hadElectronCache) require.cache[ELECTRON_PATH] = savedElectron;
+      else delete require.cache[ELECTRON_PATH];
+      if (savedLivery) require.cache[LIVERY_PATH] = savedLivery;
+      liveryThumb = null;
+    });
+
+    it('serves a 256px JPEG data-URL with thumbnail:true', () => {
+      const calls = { buffers: [], resizeOpts: [], jpegQ: [] };
+      loadWithFakeNative(makeFakeNative(calls));
+      seed();
+      const res = liveryThumb.readLiveryThumbnail(gameRoot, 'A20N_CCA', 'mine');
+      expect(res.success).toBe(true);
+      expect(res.thumbnail).toBe(true);
+      expect(res.imageDataUrl).toBe('data:image/jpeg;base64,' + Buffer.from('FAKEJPEGDATA').toString('base64'));
+      expect(calls.buffers).toHaveLength(1);
+      expect(calls.resizeOpts).toEqual([{ width: 256, height: 256, quality: 'good' }]);
+      expect(calls.jpegQ).toEqual([72]);
+    });
+
+    it('honours a custom size and serves repeats from the in-memory cache', () => {
+      const calls = { buffers: [], resizeOpts: [], jpegQ: [] };
+      loadWithFakeNative(makeFakeNative(calls));
+      seed();
+      const first = liveryThumb.readLiveryThumbnail(gameRoot, 'A20N_CCA', 'mine', 128);
+      expect(first.thumbnail).toBe(true);
+      expect(calls.resizeOpts).toEqual([{ width: 128, height: 128, quality: 'good' }]);
+      const second = liveryThumb.readLiveryThumbnail(gameRoot, 'A20N_CCA', 'mine', 128);
+      expect(second).toEqual(first);
+      // Decode + resize ran once — the repeat was a cache hit.
+      expect(calls.buffers).toHaveLength(1);
+      expect(calls.resizeOpts).toHaveLength(1);
+    });
+
+    it('falls back to the full image when nativeImage decodes nothing', () => {
+      const calls = { buffers: [], resizeOpts: [], jpegQ: [] };
+      loadWithFakeNative(makeFakeNative(calls, { empty: true }));
+      seed();
+      const res = liveryThumb.readLiveryThumbnail(gameRoot, 'A20N_CCA', 'mine');
+      expect(res.success).toBe(true);
+      expect(res.thumbnail).toBe(false);
+      expect(res.imageDataUrl).toBe(
+        livery.readLiveryImage(gameRoot, 'A20N_CCA', 'mine').imageDataUrl,
+      );
+    });
+
+    it('falls back when the native decoder or encoder returns nothing', () => {
+      seed();
+      const full = livery.readLiveryImage(gameRoot, 'A20N_CCA', 'mine').imageDataUrl;
+      // createFromBuffer yields null.
+      loadWithFakeNative({ createFromBuffer: () => null });
+      expect(liveryThumb.readLiveryThumbnail(gameRoot, 'A20N_CCA', 'mine'))
+        .toEqual({ success: true, imageDataUrl: full, thumbnail: false });
+      // Encoder yields an empty buffer.
+      loadWithFakeNative({
+        createFromBuffer: () => ({
+          isEmpty: () => false,
+          resize: () => ({ isEmpty: () => false, toJPEG: () => Buffer.alloc(0) }),
+        }),
+      });
+      expect(liveryThumb.readLiveryThumbnail(gameRoot, 'A20N_CCA', 'mine'))
+        .toEqual({ success: true, imageDataUrl: full, thumbnail: false });
+    });
+
+    it('still enforces containment with nativeImage present', () => {
+      const calls = { buffers: [], resizeOpts: [], jpegQ: [] };
+      loadWithFakeNative(makeFakeNative(calls));
+      seed();
+      expect(liveryThumb.readLiveryThumbnail(gameRoot, '../evil', 'mine').error).toBe('BAD_FOLDER');
+      expect(calls.buffers).toHaveLength(0);
+    });
+  });
+});
+

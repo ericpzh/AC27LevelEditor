@@ -229,3 +229,75 @@ describe('GroundPainter — fillet (rounding) tool', () => {
     expect(s.groundPainterMeta.segOrigPk).toHaveLength(s.groundPainterGraph.segments.length);
   });
 });
+
+describe('GroundPainter — segment rename spans the OSM way', () => {
+  // seg0 + seg1 are pieces of OSM way -77; seg2 belongs to a different way -88.
+  // Renaming one piece must rename the whole way or Unity aborts the level load:
+  //   InvalidOperationException: Taxiway segments '...:0' and '...:1' for OSM way
+  //   '...' have inconsistent visual properties.
+  function mkWayGraph() {
+    return {
+      nodes: [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 20, z: 0 }, { x: 30, z: 30 }],
+      segments: [
+        { aIdx: 0, bIdx: 1, nodeIdxs: [0, 1], flags: 2, directed: false, name: '' },
+        { aIdx: 1, bIdx: 2, nodeIdxs: [1, 2], flags: 2, directed: false, name: '' },
+        { aIdx: 2, bIdx: 3, nodeIdxs: [2, 3], flags: 2, directed: false, name: '' },
+      ],
+      runways: [], areas: [], stands: [],
+    };
+  }
+
+  it('renames every segment sharing the target OsmId and leaves other ways alone', async () => {
+    const g = mkWayGraph();
+    const m = {
+      nodeOrigPk: [100, 101, 102, 103],
+      segOrigPk: ['taxiway-segment:-77:0', 'taxiway-segment:-77:1', 'taxiway-segment:-88:0'],
+      deletedPks: [],
+    };
+    window.electronAPI.loadGroundPainterData = vi.fn(async () => ({ graph: g, meta: m, text: '<acl/>' }));
+    seedStore();
+    await renderPainter();
+    const svg = document.querySelector('.ground-painter svg');
+    // World (5,0) lies on seg0 → the Select tool picks it.
+    fireEvent.click(svg, { clientX: 5, clientY: 0 });
+    const input = await waitFor(() => {
+      const el = document.querySelector('.gp-overlays input[type="text"]');
+      if (!el) throw new Error('segment rename box not rendered');
+      return el;
+    }, { timeout: 5000 });
+    fireEvent.change(input, { target: { value: 'T7' } });
+
+    const segs = useAppStore.getState().groundPainterGraph.segments;
+    expect(segs[0].name).toBe('T7');
+    expect(segs[1].name).toBe('T7'); // same OSM way -77
+    expect(segs[2].name).toBe('');   // different way -88 untouched
+    expect(segs[0].nameEdited).toBe(true);
+    expect(segs[1].nameEdited).toBe(true);
+    expect(segs[2].nameEdited).toBeUndefined();
+  });
+
+  it('renames only the segment itself when it has no known OsmId', async () => {
+    const g = mkWayGraph();
+    const m = {
+      nodeOrigPk: [100, 101, 102, 103],
+      segOrigPk: [null, null, null],
+      deletedPks: [],
+    };
+    window.electronAPI.loadGroundPainterData = vi.fn(async () => ({ graph: g, meta: m, text: '<acl/>' }));
+    seedStore();
+    await renderPainter();
+    const svg = document.querySelector('.ground-painter svg');
+    fireEvent.click(svg, { clientX: 5, clientY: 0 });
+    const input = await waitFor(() => {
+      const el = document.querySelector('.gp-overlays input[type="text"]');
+      if (!el) throw new Error('segment rename box not rendered');
+      return el;
+    }, { timeout: 5000 });
+    fireEvent.change(input, { target: { value: 'T9' } });
+
+    const segs = useAppStore.getState().groundPainterGraph.segments;
+    expect(segs[0].name).toBe('T9');
+    expect(segs[1].name).toBe('');
+    expect(segs[2].name).toBe('');
+  });
+});

@@ -45,6 +45,14 @@ const PLANE_ID_TO_SHORT_CODE = Object.fromEntries(
 const LIVERY_FOLDER_SAFE_RE = /^(?![.\s])(?!.*[.\s]$)(?!.*[<>:"/\\|?*\x00-\x1f]).{1,64}$/;
 const AIRLINE_RE = /^[A-Z]{3}$/;
 const TEXTURE_SIZE = 2048;
+// List-view preview size: the cards render at ~220px wide (2:1 box,
+// object-fit contain), so a 256px thumbnail is visually identical to the
+// full 2048px texture at a fraction of the IPC + GPU decode cost.
+const THUMBNAIL_SIZE = 256;
+// In-memory thumbnail cache: key `${imagePath}:${mtimeMs}` → data-URL.
+// Bounded (FIFO evict past 300) — a full reference-pack scan is ~100 rows.
+const _thumbCache = new Map();
+const _THUMB_CACHE_MAX = 300;
 
 function ownPackDir(gameRoot) { return path.join(gameRoot, 'Mods', OWN_PACK); }
 function referencePackDir(gameRoot) { return path.join(gameRoot, 'Mods', REFERENCE_PACK); }
@@ -256,6 +264,76 @@ function readLiveryImage(gameRoot, folder, pack = 'mine') {
     const ext = path.extname(found.path).toLowerCase();
     const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
     return { success: true, imageDataUrl: `data:${mime};base64,` + buf.toString('base64') };
+  } catch (_) {
+    return { success: false, error: 'IMAGE_MISSING' };
+  }
+}
+
+// Lazy require: electron is available in the packaged/main process but NOT
+// in vitest (pure CommonJS tests) — never throw at module load.
+function _getNativeImage() {
+  try {
+    // eslint-disable-next-line global-require
+    const { nativeImage } = require('electron');
+    return nativeImage || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Downscale a decoded image buffer to a small JPEG data-URL via
+// Electron's nativeImage (zero extra deps — sharp is dev-only and not
+// shipped in the packaged app). Returns null when unavailable/empty.
+function _nativeThumbnail(buf, size) {
+  try {
+    const nativeImage = _getNativeImage();
+    if (!nativeImage) return null;
+    const img = nativeImage.createFromBuffer(buf);
+    if (!img || img.isEmpty()) return null;
+    const resized = img.resize({ width: size, height: size, quality: 'good' });
+    if (!resized || resized.isEmpty()) return null;
+    const jpeg = resized.toJPEG(72);
+    if (!jpeg || !jpeg.length) return null;
+    return `data:image/jpeg;base64,` + jpeg.toString('base64');
+  } catch (_) {
+    return null;
+  }
+}
+
+// Low-resolution preview for the livery list. Same resolution + containment
+// as readLiveryImage, but the payload is a ~256px JPEG (≈20KB) instead of
+// the full 2048×2048 PNG (several MB) — the list never needs paintable
+// pixels. The painter keeps using readLiveryImage for the full texture.
+// Falls back to the full image when nativeImage is unavailable (unit tests)
+// so callers always get a renderable data-URL; `thumbnail:false` marks it.
+function readLiveryThumbnail(gameRoot, folder, pack = 'mine', size = THUMBNAIL_SIZE) {
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+  const target = Math.max(64, Math.min(512, Number(size) || THUMBNAIL_SIZE));
+  const packDir = pack === 'reference' ? referencePackDir(gameRoot) : ownPackDir(gameRoot);
+  const resolved = containmentCheck(packDir, folder || '');
+  if (!resolved) return { success: false, error: 'BAD_FOLDER' };
+  try {
+    const found = _resolveLiveryImagePath(resolved);
+    if (!found) return { success: false, error: 'IMAGE_MISSING' };
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(found.path).mtimeMs; } catch (_) {}
+    const cacheKey = `${found.path}:${mtimeMs}:${target}`;
+    const cached = _thumbCache.get(cacheKey);
+    if (cached) return { success: true, imageDataUrl: cached, thumbnail: true };
+    const buf = fs.readFileSync(found.path);
+    const thumb = _nativeThumbnail(buf, target);
+    if (thumb) {
+      _thumbCache.set(cacheKey, thumb);
+      if (_thumbCache.size > _THUMB_CACHE_MAX) {
+        const oldest = _thumbCache.keys().next().value;
+        _thumbCache.delete(oldest);
+      }
+      return { success: true, imageDataUrl: thumb, thumbnail: true };
+    }
+    // Fallback (no Electron — unit tests): serve the full image verbatim.
+    const ext = path.extname(found.path).toLowerCase();
+    const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+    return { success: true, imageDataUrl: `data:${mime};base64,` + buf.toString('base64'), thumbnail: false };
   } catch (_) {
     return { success: false, error: 'IMAGE_MISSING' };
   }
@@ -510,6 +588,8 @@ module.exports = {
   LIVERY_FOLDER_SAFE_RE,
   AIRLINE_RE,
   TEXTURE_SIZE,
+  THUMBNAIL_SIZE,
+  _thumbCache,
   ownPackDir,
   referencePackDir,
   ensureOwnPackDir,
@@ -521,6 +601,7 @@ module.exports = {
   listLiveries,
   listAircraftTypes,
   readLiveryImage,
+  readLiveryThumbnail,
   readAircraftTemplate,
   createLivery,
   deleteLivery,

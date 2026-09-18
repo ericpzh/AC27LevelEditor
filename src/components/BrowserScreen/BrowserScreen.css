@@ -290,6 +290,22 @@
 .tag-timerange { background: rgba(var(--border-rgb), 0.10); color: var(--accent); }
 .tag-error     { background: rgba(var(--border-rgb), 0.15); color: var(--red); }
 
+/* Level-scan overlay — global blur (incl. header) with centered message */
+.browser-scan-overlay {
+  position: fixed; inset: 0;
+  z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--overlay);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.browser-scan-overlay .browser-scan-notice {
+  height: auto;
+  padding: 24px 32px;
+  font-size: 14px;
+}
+
 /* Version display — lower right corner */
 .browser-version {
   position: fixed;

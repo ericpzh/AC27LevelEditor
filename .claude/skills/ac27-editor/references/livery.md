@@ -141,11 +141,20 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `deleteLivery` per folder → `livery_deleted` / `livery_deleted_multi`). The
   header Find filters rows by folder / airline code+name / aircraft / manifest
   name (empty result shows `livery_search_empty`; empty pack shows
-  `livery_empty_mine`). Thumbnails load lazily (sequential `readLiveryImage`
-  over mine+reference) into a `thumbs[pack:folder]` map; `.livery-thumb`
-  reserves a 2:1 box with a **solid `#222` placeholder** up front (`aspect-ratio`
-  + `background`), so cards never reflow while the images trickle in and the
-  `<img>` fades in on load. It also calls `listAircraftTypes()` (best-effort) to
+  `livery_empty_mine`). Thumbnails load lazily from the **low-res
+  `read-livery-thumbnail` channel** (a ~256px JPEG, ≈20KB vs several MB) — never
+  the full 2048×2048 texture — for the currently-expanded, search-filtered rows
+  only, 4 at a time; a `fetchedRef` Set tracks keys (never a mirror of the
+  state object, which would mutate state in place and swallow the functional
+  updater). If the channel is missing/rejects (main/preload predating it — Vite
+  HMR only swaps the renderer) it falls back to `readLiveryImage`, and the whole
+  run is discarded on search change (`cancelled`). `.livery-thumb` reserves a
+  2:1 box up front with a **shimmer skeleton** (`:not(:has(img))` gradient,
+  `livery-thumb-shimmer`) so a loading card never reads as a broken black box,
+  then the `<img>` fades in on load. Cards open the painter with
+  `imageDataUrl: null` — the 256px preview is never paintable, so `CreateTab`
+  lazy-loads the full texture itself. It also calls `listAircraftTypes()`
+  (best-effort) to
   build the **full folder set**: the union of every scanned aircraft type and
   every type present in the rows, so a type with **zero liveries** still gets a
   collapsible group (count `0 liveries`). Each group's grid ends with an
@@ -164,7 +173,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   brand-new form with that type pre-selected — `knownPlanes` also accepts
   `prefill.targetPlaneId`, so the form is valid even when the built-in scan
   misses the type. The canvas starts primed with the origin
-  picture (lazy `readLiveryImage` when the thumbnail was not ready). The
+  picture (the list passes **no pixels** now, so it lazy-loads the full
+  `readLiveryImage` whenever `prefill.imageDataUrl` is null). The
   selected aircraft type's **built-in UV template** (see "Aircraft template"
   below) is fetched whenever a type is known — **including when editing a saved
   livery** — and held in `templateDataUrl`, passed to the canvas as
@@ -476,6 +486,14 @@ never abort; also creates the own pack dir + repairs `mod_info.json`);
 `read-livery-image(folder, pack)` → data-URL (`_resolveLiveryImagePath`: the
 manifest's main-part BaseMap, else any part's BaseMap, else a legacy
 `base.png`; MIME PNG/JPEG by extension, `IMAGE_MISSING` when none);
+`read-livery-thumbnail(folder, pack, size?)` → the **list preview**: same
+resolution/containment as `read-livery-image` but downscaled to a
+`THUMBNAIL_SIZE` (256, clamped 64..512) JPEG `data:image/jpeg;base64,…` via
+Electron's `nativeImage` (`resize` + `toJPEG(72)`), memoized in an in-memory
+`_thumbCache` keyed `${path}:${mtimeMs}:${size}` (FIFO-evicted past 300). A
+`thumbnail: true` flag marks the real resize; when `nativeImage` is
+unavailable/unproductive (plain-Node unit tests, empty decode) it degrades to
+the full image verbatim with `thumbnail: false` so the list still renders;
 `get-aircraft-template(planeId)` → the built-in default BaseMap as a PNG
 data-URL (`readAircraftTemplate`, see "Aircraft template" above);
 `list-aircraft-types()` → the aircraft-type dropdown source (see
@@ -558,7 +576,12 @@ manifest for a free-form zip folder).
   default, `exportLivery` zips every texture image, `loadLiveryZip` previews
   the main part,
   `readAircraftTemplate` guards + DXT1→PNG decode + part preference + PNG/JPEG
-  base passthrough + `parts[0]` fallback + no-parts/parse-error paths + cache),
+  base passthrough + `parts[0]` fallback + no-parts/parse-error paths + cache,
+  `readLiveryThumbnail` guards (`NO_GAME_ROOT`/`BAD_FOLDER`/`IMAGE_MISSING`) +
+  verbatim full-image fallback (`thumbnail:false`, JPEG MIME) + odd-size
+  clamping + a fake-`nativeImage` resize to a 256px JPEG (`thumbnail:true`),
+  custom size, in-memory cache hits, empty-decode fallback, containment still
+  enforced),
   `tests/electron/dds.test.js` (`decodeDds` DXT1 block / DXT5 alpha + colour /
   DXT3 4-bit alpha / 1/3+2/3 blend when c0>c1 / transparent-black mode when
   c0<=c1 / bad magic / unsupported fourCC / truncated payload / dimension
@@ -567,6 +590,9 @@ manifest for a free-form zip folder).
 - `tests/components/LiveryScreen/` (header actions/back/install overlay/search,
   in-card checkbox select driving the header Export/Delete commands + their
   disabled-until-selected states, single vs batch delete confirms,
+  **list thumbnails** (previews come from `read-livery-thumbnail` and never pull
+  the full image, a rejecting channel falls back to `readLiveryImage`, and
+  search narrowing discards stale in-flight thumbnails),
   **per-aircraft add-livery card + empty scanned folders** (add card per group,
   `onCreate(planeId)` / `onEdit({targetPlaneId})` fallback, empty folders from
   `listAircraftTypes`, no card on the unknown type, add-card → painter with the

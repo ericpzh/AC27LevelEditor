@@ -207,6 +207,7 @@ module.exports = { publicFn, _privateFn };
 - CSS class naming: BEM-like flat naming (`.modal-issues-body`, `.callsign-link`)
 - CSS custom properties (`--bg`, `--accent`, `--radius`, etc.) for theming
 - **⚠️ CSS `url()` for public assets MUST use absolute paths (`/witch/foo.png`)** — Vite needs the leading `/` to correctly rewrite paths in production builds. Without it, assets break in the packaged EXE because the CSS file lives in `dist/assets/` while public files are in `dist/`. JSX `<img src>` uses page-relative paths (e.g., `witch/help.png` or `./witch/help.png`).
+- Full-screen loading states inside a `.screen` column auto-stretch: `src/style.css` `.screen > .loading-state { flex: 1; height: auto; min-height: 0 }` centers the spinner vertically (e.g. entering a level). True modal overlays (level scan, install/download) use their own `position: fixed; inset: 0` layer instead (e.g. `.browser-scan-overlay` with a blurred backdrop).
 
 **State management (zustand):**
 - Single store in `src/store/appStore.js`

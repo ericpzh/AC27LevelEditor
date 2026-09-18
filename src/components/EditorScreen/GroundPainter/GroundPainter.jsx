@@ -810,12 +810,26 @@ export default function GroundPainter({ vals }) {
   }, []);
 
   const updateSegmentName = useCallback((idx, newName) => {
-    const g = useAppStore.getState().groundPainterGraph;
+    const st = useAppStore.getState();
+    const g = st.groundPainterGraph;
     if (!g || !g.segments[idx]) return;
-    const segments = [...g.segments];
-    segments[idx] = { ...segments[idx], name: String(newName ?? ''), nameEdited: true };
-    const s = useAppStore.getState();
-    useAppStore.setState({ groundPainterHistory: s.groundPainterGraph, groundPainterGraph: { ...g, segments }, groundPainterHasEdited: true });
+    const name = String(newName ?? '');
+    const meta = st.groundPainterMeta || {};
+    // `Name` describes the whole OSM way, not one ordinal piece: a rename must
+    // span every segment sharing this segment's OsmId, otherwise Unity aborts
+    // the level load ("Taxiway segments '...:0' and '...:2' for OSM way '...'
+    // have inconsistent visual properties").
+    const segOsm = (sg, i) => {
+      const pk = meta.segOrigPk ? meta.segOrigPk[i] : null;
+      const osm = pk != null ? osmFromSegPk(pk) : (sg && sg.parentOsm != null ? sg.parentOsm : null);
+      return osm != null ? String(osm) : null;
+    };
+    const targetOsm = segOsm(g.segments[idx], idx);
+    const segments = g.segments.map((sg, i) => {
+      if (i !== idx && !(targetOsm != null && segOsm(sg, i) === targetOsm)) return sg;
+      return { ...sg, name, nameEdited: true };
+    });
+    useAppStore.setState({ groundPainterHistory: g, groundPainterGraph: { ...g, segments }, groundPainterHasEdited: true });
   }, []);
 
   // ── Runway entrance/exit helpers ──

@@ -2083,18 +2083,7 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings,
   // A split pavement piece is re-emitted under the parent's OsmId, so it must
   // inherit the parent survivor's Flags/IsHidden/IsUnselectable instead of the
   // hardcoded false defaults.
-  const segVisualByOsm = new Map();
-  for (const e of pkEntries) {
-    if (_entryTypePrefix(e) !== 'taxiway-segment') continue;
-    const osmM = e.match(/"OsmId"\s*:\s*(-?\d+)/);
-    if (!osmM || segVisualByOsm.has(osmM[1])) continue;
-    const fm = e.match(/"Flags"\s*:\s*(\d+)/);
-    segVisualByOsm.set(osmM[1], {
-      flags: fm ? parseInt(fm[1], 10) : null,
-      isHidden: /"IsHidden"\s*:\s*true/.test(e),
-      isUnselectable: /"IsUnselectable"\s*:\s*true/.test(e),
-    });
-  }
+  const segVisualByOsm = _canonicalSegVisualMap(pkEntries);
   // survivor node $id by original pk
   const survivorNodeId = new Map();
   for (const e of pkEntries) {
@@ -2201,8 +2190,9 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings,
       const pv = segVisualByOsm.get(String(seg.parentOsm));
       if (pv) {
         segEff = Object.assign({}, seg, {
-          isHidden: pv.isHidden,
-          isUnselectable: pv.isUnselectable,
+          name: pv.name,
+          isHidden: pv.isHidden === true,
+          isUnselectable: pv.isUnselectable === true,
           flags: pv.flags != null ? pv.flags : seg.flags,
         });
       }
@@ -3260,6 +3250,107 @@ function _patchEntryName(entry, newName) {
   return _insertBeforeField(entry, insertKey, '"Name": ' + lit);
 }
 
+// Patch a boolean property of a managed entry in place.
+function _patchBoolField(entry, key, val) {
+  const t = createTokenizer(entry);
+  const sec = t.findSection(key);
+  if (!sec) return entry;
+  return entry.slice(0, sec.valueStart) + (val === true ? 'true' : 'false') + entry.slice(sec.valueEnd);
+}
+
+// ─── Taxiway-segment visual signature ───────────────────────────
+// Unity requires every taxiway-segment of one OSM way (same OsmId) to carry the
+// SAME visual properties; a mismatch aborts level load with:
+//   InvalidOperationException: Taxiway segments '...:0' and '...:2' for OSM way
+//   '...' have inconsistent visual properties.
+// `Name` is part of that set — renaming a single piece of a multi-piece way (the
+// KDCA_leisure_2 fuzz bug, OSM way -378884) breaks it — as are
+// Flags/Directed/IsHidden/IsUnselectable. `Head` is deliberately NOT compared: a
+// directed way legitimately stores a different head node per piece (shipped
+// levels do, e.g. KDCA OSM -378622), so including it would false-positive.
+function _segVisualOf(entry) {
+  const bool = (re) => { const m = entry.match(re); return m ? m[1] === 'true' : null; };
+  const flagsM = entry.match(/"Flags"\s*:\s*(-?\d+)/);
+  return {
+    name: _entryNameValue(entry),
+    flags: flagsM ? parseInt(flagsM[1], 10) : null,
+    directed: bool(/"Directed"\s*:\s*(true|false)/),
+    isHidden: bool(/"IsHidden"\s*:\s*(true|false)/),
+    isUnselectable: bool(/"IsUnselectable"\s*:\s*(true|false)/),
+  };
+}
+
+// Most common value, first-seen wins ties. When `preferNonEmpty` is set an empty
+// string is ignored unless every value is empty — so a half-applied rename heals
+// to the renamed value rather than reverting to the unnamed default.
+function _modeValue(values, preferNonEmpty) {
+  const counts = new Map();
+  for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
+  let best = values.length ? values[0] : undefined, bestCount = -1;
+  for (const [v, c] of counts) {
+    if (preferNonEmpty && v === '') continue;
+    if (c > bestCount) { best = v; bestCount = c; }
+  }
+  return bestCount === -1 && values.length ? values[0] : best;
+}
+
+// Canonical visual signature for a group of entries sharing one OsmId.
+function _canonicalSegVisual(entries) {
+  const vis = entries.map(_segVisualOf);
+  return {
+    name: _modeValue(vis.map((v) => v.name), true),
+    flags: _modeValue(vis.map((v) => v.flags), false),
+    directed: _modeValue(vis.map((v) => v.directed), false),
+    isHidden: _modeValue(vis.map((v) => v.isHidden), false),
+    isUnselectable: _modeValue(vis.map((v) => v.isUnselectable), false),
+  };
+}
+
+// Map String(OsmId) -> canonical visual signature for every taxiway-segment group.
+function _canonicalSegVisualMap(pkEntries) {
+  const groupByOsm = new Map();
+  for (const e of pkEntries) {
+    if (_entryTypePrefix(e) !== 'taxiway-segment') continue;
+    const osm = _entryOsm(e);
+    if (osm == null) continue;
+    const k = String(osm);
+    if (!groupByOsm.has(k)) groupByOsm.set(k, []);
+    groupByOsm.get(k).push(e);
+  }
+  const map = new Map();
+  for (const [k, list] of groupByOsm) map.set(k, _canonicalSegVisual(list));
+  return map;
+}
+
+// True when a taxiway-segment group already has inconsistent visual properties
+// (a file produced before this invariant was enforced). Used to defeat the
+// lossless no-op so the rebuild path can heal it.
+function _hasInconsistentSegVisual(entries) {
+  const seen = new Map();
+  for (const e of entries) {
+    if (_entryTypePrefix(e) !== 'taxiway-segment') continue;
+    const osm = _entryOsm(e);
+    if (osm == null) continue;
+    const k = String(osm);
+    const sig = JSON.stringify(_segVisualOf(e));
+    if (!seen.has(k)) seen.set(k, sig);
+    else if (seen.get(k) !== sig) return true;
+  }
+  return false;
+}
+
+// Patch an entry's visual fields to a group's canonical signature.
+function _patchSegVisual(entry, vis) {
+  let out = entry;
+  if (_entryNameValue(out) !== vis.name) out = _patchEntryName(out, vis.name);
+  const cur = _segVisualOf(out);
+  if (vis.flags != null && cur.flags !== vis.flags) out = _patchIntField(out, 'Flags', vis.flags);
+  if (vis.directed != null && cur.directed !== vis.directed) out = _patchBoolField(out, 'Directed', vis.directed);
+  if (vis.isHidden != null && cur.isHidden !== vis.isHidden) out = _patchBoolField(out, 'IsHidden', vis.isHidden);
+  if (vis.isUnselectable != null && cur.isUnselectable !== vis.isUnselectable) out = _patchBoolField(out, 'IsUnselectable', vis.isUnselectable);
+  return out;
+}
+
 // ─── Taxiway-segment ordinal renumbering ────────────────────────
 // Unity requires each taxiway visual path (all taxiway-segment entries sharing
 // one OsmId) to have CONTIGUOUS ordinals starting at 0 in its
@@ -3365,6 +3456,10 @@ function _renumberTaxiwaySegmentOrdinals(entries) {
       if (irefs.length >= 2) return [irefs[0], irefs[irefs.length - 1]];
       return irefs.length === 1 ? [irefs[0], irefs[0]] : [null, null];
     });
+    // Unity requires every segment of one OSM way to share its visual
+    // properties (Name included). A rename of a single piece — or a file saved
+    // before this was enforced — heals here to the group's canonical signature.
+    const vis = _canonicalSegVisual(list.map((it) => it.entry));
     let chains;
     if (list.length <= 1) {
       chains = [list.map((it, i) => ({ i, reversed: false }))];
@@ -3380,9 +3475,15 @@ function _renumberTaxiwaySegmentOrdinals(entries) {
       for (let i = 0; i < chain.length; i++) {
         const it = list[chain[i].i];
         const newPk = 'taxiway-segment:' + chainOsm + ':' + i;
-        if (it.oldOrd !== i || chain[i].reversed || chainChanged) {
-          const entry = chain[i].reversed ? _reverseSegmentNodes(it.entry) : it.entry;
-          patchedByEntry.set(it.entry, { pk: newPk, entry, newOsmId: chainChanged ? chainOsm : null });
+        const ordChanged = it.oldOrd !== i || chain[i].reversed || chainChanged;
+        const oriented = chain[i].reversed ? _reverseSegmentNodes(it.entry) : it.entry;
+        const entry = _patchSegVisual(oriented, vis);
+        if (ordChanged || entry !== it.entry) {
+          patchedByEntry.set(it.entry, {
+            pk: ordChanged ? newPk : it.pk,
+            entry,
+            newOsmId: ordChanged && chainChanged ? chainOsm : null,
+          });
           changed = true;
         }
       }
@@ -3924,6 +4025,27 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
         const old = _entryNameValue(entry);
         if (cur !== old) segNamePatch.set(pk, cur);
       }
+      // Propagate every edited Name across its whole OSM way. `Name` is a
+      // property of the way, not one ordinal piece: renaming a single piece must
+      // rename all of them, or Unity aborts the level load ("Taxiway segments
+      // '...:0' and '...:2' for OSM way '...' have inconsistent visual
+      // properties" — the KDCA_leisure_2 fuzz bug, OSM way -378884).
+      const editedOsmNames = new Map(); // osm -> newName
+      for (const [pk, nm] of segNamePatch) {
+        const m = /^taxiway-segment:(-?\d+):\d+$/.exec(pk);
+        if (m) editedOsmNames.set(m[1], nm);
+      }
+      if (editedOsmNames.size) {
+        for (const e of pkEntries) {
+          if (_entryTypePrefix(e) !== 'taxiway-segment') continue;
+          const ePk = _entryPk(e);
+          const em = /^taxiway-segment:(-?\d+):\d+$/.exec(ePk || '');
+          if (!em) continue;
+          const nm = editedOsmNames.get(em[1]);
+          if (nm == null) continue;
+          if (_entryNameValue(e) !== nm) segNamePatch.set(ePk, nm);
+        }
+      }
     }
   }
   // Airway node name patch map (separate scope)
@@ -4107,6 +4229,12 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   for (const arr of [emittedPk, emittedNpk, siEntries]) for (const e of arr) _collectDeclaredIds(e, restIds);
   const crashDangleCount = _countCrashClassDangling(emittedPk, restIds);
 
+  // A file saved before the OSM-way visual invariant was enforced can carry a
+  // taxiway-segment group whose members disagree on Name/Flags/IsHidden/
+  // IsUnselectable (Unity: "have inconsistent visual properties"). Rebuild so
+  // _renumberTaxiwaySegmentOrdinals heals it instead of returning it verbatim.
+  const hasInconsistentSegVisual = _hasInconsistentSegVisual(emittedPk);
+
   // Corrupt-type check: if any PK/NPK entry already has bare "$type": 0, it
   // must go through the rebuild path so _repairPkEntryTypes can fix it. The
   // early return would otherwise return the corrupt snapshot verbatim.
@@ -4126,7 +4254,7 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // text unchanged (still reconcile the checkpoint frame so any PRE-EXISTING
   // stale physical-runway / jetway RuntimeEntities from an earlier corrupt save
   // are repaired on the next save).
-  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !hasMovedAirwayNodes && !airwayRoutesDirty && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && !standCompanionDirty && crashDangleCount === 0 && dropCounts.taxiNavigation === 0 && dropCounts.jetway === 0) {
+  if (!hasCorruptTypes && !hasNew && pkDelete.length === 0 && npkDelete.length === 0 && movedByPk.size === 0 && movedByCoord.size === 0 && !hasMovedAreas && !hasMovedAirwayNodes && !airwayRoutesDirty && !runwayDirty && !hasOrphanRunway && !hasOrphanSi && !siDirty && !namesChanged && !refGateDirty && !runwayEntriesDirty && !hasTypeChanges && !standCompanionDirty && crashDangleCount === 0 && !hasInconsistentSegVisual && dropCounts.taxiNavigation === 0 && dropCounts.jetway === 0) {
     // Self-heal the embedded RunwayTimeline even on a no-op save (a stale
     // InitialRunways / change frame can survive an earlier corrupt save).
     return _ensureInitialRunwaysContain(
@@ -4827,6 +4955,11 @@ module.exports = {
   _remapTaxiwaySegmentName,
   _patchEntryName,
   _entryNameValue,
+  _segVisualOf,
+  _canonicalSegVisual,
+  _canonicalSegVisualMap,
+  _hasInconsistentSegVisual,
+  _patchSegVisual,
   _typeId,
   _sampleRunwayInnerType,
   _sampleRunwayShapes,

@@ -1758,6 +1758,26 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
         .map((sg) => ({ name: sg.name, flags: sg.flags, aIdx: sg.aIdx, bIdx: sg.bIdx, nodeIdxs: sg.nodeIdxs }));
       throw new Error(`saved file has pavement strips without a runway: ${[...orphanStrips].join(',')} | runways=${[...physNames].join(',')} | strips=${JSON.stringify(detail)}`);
     }
+    // 4. Every taxiway visual path (one OsmId) must carry UNIFORM visual
+    //    properties — `Name` included. Renaming one piece of a multi-piece way
+    //    made Unity abort the level load:
+    //      InvalidOperationException: Taxiway segments '...:0' and '...:2' for
+    //      OSM way '...' have inconsistent visual properties
+    //    (KDCA_leisure_2 OSM -378884, air-map fuzz).
+    {
+      const { _segVisualOf } = require('../../src/acl/scenery_write');
+      const { buildPkIndex, getPkEntriesByType } = require('../../src/acl/v4_pk_index');
+      const sigByOsm = new Map();
+      for (const sg of getPkEntriesByType(buildPkIndex(readAclText(currentPath)), 'taxiway-segment')) {
+        const osmM = /"OsmId"\s*:\s*(-?\d+)/.exec(sg.block);
+        if (!osmM) continue;
+        const sig = JSON.stringify(_segVisualOf(sg.block));
+        if (sigByOsm.has(osmM[1]) && sigByOsm.get(osmM[1]) !== sig) {
+          throw new Error(`saved file has inconsistent visual properties within OSM way ${osmM[1]} (${sg.pk})`);
+        }
+        sigByOsm.set(osmM[1], sig);
+      }
+    }
 
     // Node/segment counts must at least parse (>=0) — exact equality not required
     // because the writer's survivor gate may drop degenerate dangling entities.

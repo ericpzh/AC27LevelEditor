@@ -123,11 +123,24 @@
   display: block;
   width: 100%;
   /* Reserve the 2:1 thumbnail box up-front so the card never reflows while
-     the (slow) image loads — the solid color is the loading placeholder. */
+     the image loads. Until the <img> is present a shimmer skeleton plays
+     (instead of a flat black box) so loading never reads as broken. */
   aspect-ratio: 2 / 1;
   border-radius: 4px;
   background: #222;
   overflow: hidden;
+}
+.livery-thumb:not(:has(img)) {
+  background: linear-gradient(100deg, #24242c 40%, #34343f 50%, #24242c 60%);
+  background-size: 200% 100%;
+  animation: livery-thumb-shimmer 1.2s linear infinite;
+}
+[data-theme="light"] .livery-thumb:not(:has(img)) {
+  background: linear-gradient(100deg, #d4d7dc 40%, #e9ebef 50%, #d4d7dc 60%);
+  background-size: 200% 100%;
+}
+@keyframes livery-thumb-shimmer {
+  to { background-position: -200% 0; }
 }
 /* Selection checkbox pinned inside the card, over the thumbnail. */
 .livery-check {

@@ -388,3 +388,83 @@ describe('LiveryScreen unsaved guard + wizard', () => {
     await waitFor(() => expect(document.querySelector('#modal-box')).toBeNull());
   });
 });
+
+describe('LiveryScreen thumbnails', () => {
+  it('renders list previews from the thumbnail channel without full-image loads', async () => {
+    mockIpcInvoke.mockClear();
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW], reference: [] });
+      if (channel === 'read-livery-thumbnail') {
+        return Promise.resolve({ success: true, imageDataUrl: 'data:image/jpeg;base64,THUMB', thumbnail: true });
+      }
+      return Promise.resolve({});
+    });
+    renderLivery();
+    await waitFor(() => {
+      const img = document.querySelector('.livery-thumb img');
+      expect(img).not.toBeNull();
+      expect(img.getAttribute('src')).toBe('data:image/jpeg;base64,THUMB');
+    });
+    expect(mockIpcInvoke.mock.calls.filter(c => c[0] === 'read-livery-thumbnail' && c[1] === 'A20N_CCA' && c[2] === 'mine')).toHaveLength(1);
+    // The list never pulls the full 2048 texture.
+    expect(mockIpcInvoke.mock.calls.filter(c => c[0] === 'read-livery-image')).toHaveLength(0);
+  });
+
+  it('falls back to the full image when the thumbnail channel rejects', async () => {
+    mockIpcInvoke.mockClear();
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW], reference: [] });
+      if (channel === 'read-livery-thumbnail') return Promise.reject(new Error('No handler'));
+      if (channel === 'read-livery-image') {
+        return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,FULL' });
+      }
+      return Promise.resolve({});
+    });
+    renderLivery();
+    await waitFor(() => {
+      const img = document.querySelector('.livery-thumb img');
+      expect(img && img.getAttribute('src')).toBe('data:image/png;base64,FULL');
+    });
+  });
+
+  it('only resolves thumbnails for the filtered rows', async () => {
+    mockIpcInvoke.mockClear();
+    const pending = [];
+    mockIpcInvoke.mockImplementation((channel, folder, pack) => {
+      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] });
+      if (channel === 'read-livery-thumbnail') {
+        return new Promise((resolve) => pending.push({ folder, pack, resolve }));
+      }
+      return Promise.resolve({});
+    });
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    // Both rows start fetching, both stay in flight.
+    await waitFor(() => expect(pending.map(p => p.folder).sort()).toEqual(['A20N_CCA', 'B738_AAL']));
+    // Narrow the search to CCA: run#1 is cancelled, run#2 fetches CCA only.
+    fireEvent.change(document.querySelector('.livery-search input'), { target: { value: 'CCA' } });
+    await waitFor(() => expect(pending).toHaveLength(3));
+    expect(pending[2].folder).toBe('A20N_CCA');
+    // Stale run#1 resolutions are discarded…
+    pending[0].resolve({ success: true, imageDataUrl: 'data:image/jpeg;base64,STALE', thumbnail: true });
+    pending[1].resolve({ success: true, imageDataUrl: 'data:image/jpeg;base64,STALE', thumbnail: true });
+    // …while the current run's CCA thumbnail renders.
+    pending[2].resolve({ success: true, imageDataUrl: 'data:image/jpeg;base64,CCA', thumbnail: true });
+    await waitFor(() => {
+      const imgs = document.querySelectorAll('.livery-thumb img');
+      expect(imgs).toHaveLength(1);
+      expect(imgs[0].getAttribute('src')).toBe('data:image/jpeg;base64,CCA');
+    });
+  });
+
+  it('passes no pixels to the painter so it loads the full texture itself', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(screen.getByText('Air China').closest('.livery-card'));
+    // The 256px list preview must never seed the painter canvas.
+    expect(CreateTab.prefill.imageDataUrl).toBeNull();
+    await waitFor(() => expect(document.querySelector('.lp-root')).toBeInTheDocument());
+  });
+});

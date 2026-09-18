@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
@@ -75,23 +75,55 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, o
 
   useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Lazy thumbnails (mine + reference).
+  // Lazy low-res thumbnails (mine + reference). The list never pulls the
+  // full 2048×2048 texture — `read-livery-thumbnail` serves a ~256px JPEG
+  // (≈20KB vs several MB). Only expanded, currently-filtered rows are
+  // fetched, 4 at a time, so opening the page with a big reference pack
+  // stays instant. The painter loads the full texture on demand (it
+  // lazy-loads via readLiveryImage when prefill carries no imageDataUrl).
+  // Keys already fetched. A dedicated Set — NEVER a mirror of the state
+  // object: writing into the mirrored object mutates state in place, which
+  // makes the setThumbs updater below see prev[key] set and bail out, so
+  // the list would never re-render (all cards stuck empty).
+  const fetchedRef = useRef(new Set());
   useEffect(() => {
     let cancelled = false;
-    const rows = [...mine.map(r => ({ ...r, pack: 'mine' })), ...reference.map(r => ({ ...r, pack: 'reference' }))];
-    (async () => {
-      for (const row of rows) {
-        if (thumbs[row.pack + ':' + row.folder]) continue;
+    const visible = filteredRows.filter(r => !collapsed.has(r.targetPlaneId || ''));
+    const missing = visible.filter(r => !fetchedRef.current.has(r.pack + ':' + r.folder));
+    if (missing.length === 0) return () => { cancelled = true; };
+    // Per-call fallback: if the thumbnail channel is missing (e.g. the
+    // running Electron main/preload predates it — Vite HMR only hot-swaps
+    // the renderer, main + preload need an app restart), `invoke` rejects.
+    // Fall back to the full image so cards never stay empty.
+    const readThumb = async (folder, pack) => {
+      if (electronAPI.readLiveryThumbnail) {
         try {
-          const res = await electronAPI.readLiveryImage(row.folder, row.pack);
-          if (!cancelled && res && res.success) {
-            setThumbs(prev => ({ ...prev, [row.pack + ':' + row.folder]: res.imageDataUrl }));
-          }
+          const res = await electronAPI.readLiveryThumbnail(folder, pack);
+          if (res && res.success && res.imageDataUrl) return res;
         } catch (_) {}
+      }
+      return electronAPI.readLiveryImage(folder, pack);
+    };
+    (async () => {
+      const CONCURRENCY = 4;
+      for (let i = 0; i < missing.length; i += CONCURRENCY) {
+        if (cancelled) return;
+        const batch = missing.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(async (row) => {
+          const key = row.pack + ':' + row.folder;
+          if (fetchedRef.current.has(key)) return;
+          try {
+            const res = await readThumb(row.folder, row.pack);
+            if (!cancelled && res && res.success && res.imageDataUrl) {
+              fetchedRef.current.add(key);
+              setThumbs(prev => (prev[key] ? prev : { ...prev, [key]: res.imageDataUrl }));
+            }
+          } catch (_) {}
+        }));
       }
     })();
     return () => { cancelled = true; };
-  }, [mine, reference]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filteredRows, collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleGroup = (planeId) => {
     setCollapsed(prev => {
@@ -169,12 +201,14 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, o
       key={'mine:' + row.folder}
       onClick={(e) => {
         if (e.target.closest('button, input, select, a, label')) return;
-        if (onEdit) onEdit({ ...row, pack: 'mine', imageDataUrl: thumbs['mine:' + row.folder] || null });
+        // Pass no pixels — the painter lazy-loads the full 2048 texture.
+        // (thumbs[] is only a 256px list preview, never paintable data.)
+        if (onEdit) onEdit({ ...row, pack: 'mine', imageDataUrl: null });
       }}
       onKeyDown={(e) => {
         if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button, input, select, a, label') && onEdit) {
           e.preventDefault();
-          onEdit({ ...row, pack: 'mine', imageDataUrl: thumbs['mine:' + row.folder] || null });
+          onEdit({ ...row, pack: 'mine', imageDataUrl: null });
         }
       }}
       tabIndex={0}
@@ -204,12 +238,13 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, o
       key={'ref:' + row.folder}
       onClick={(e) => {
         if (e.target.closest('button, input, select, a')) return;
-        if (onEdit) onEdit({ ...row, pack: 'reference', imageDataUrl: thumbs['reference:' + row.folder] || null });
+        // Pass no pixels — the painter lazy-loads the full 2048 texture.
+        if (onEdit) onEdit({ ...row, pack: 'reference', imageDataUrl: null });
       }}
       onKeyDown={(e) => {
         if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button, input, select, a') && onEdit) {
           e.preventDefault();
-          onEdit({ ...row, pack: 'reference', imageDataUrl: thumbs['reference:' + row.folder] || null });
+          onEdit({ ...row, pack: 'reference', imageDataUrl: null });
         }
       }}
       tabIndex={0}

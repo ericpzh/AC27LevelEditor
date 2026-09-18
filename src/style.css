@@ -145,6 +145,14 @@ body {
   color: var(--text-muted);
 }
 
+/* Full-screen loading (e.g. entering a level): fill the screen column so the
+   spinner + message are centered vertically instead of hugging the top. */
+.screen > .loading-state {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
 .spinner {
   width: 32px;
   height: 32px;

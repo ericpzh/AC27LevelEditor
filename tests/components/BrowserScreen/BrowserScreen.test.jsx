@@ -692,3 +692,44 @@ beforeEach(() => {
       expect(screen.queryByText('Relax Time')).toBeNull();
     });
   });
+
+  describe('Level-scan loading overlay', () => {
+    const zsjnFile = {
+      filename: 'ZSJN_leisure_1.acl',
+      path: 'D:\\Games\\Airport Control 27\\ZSJN\\ZSJN_leisure_1.acl',
+      isDemo: false,
+      isEmer: false,
+      startTime: '06:00',
+      endTime: '08:00',
+      arrivals: 10,
+      departures: 2,
+    };
+
+    it('covers the whole screen while the scan is in flight and clears once it resolves', async () => {
+      let resolveScan;
+      mockIpcInvoke.mockImplementation((channel) => {
+        if (channel === 'get-app-version') return Promise.resolve('1.0.10');
+        if (channel === 'check-bepinex') return Promise.resolve({ installed: false });
+        if (channel === 'get-airport-files-info') {
+          return new Promise((resolve) => { resolveScan = resolve; });
+        }
+        return Promise.resolve({});
+      });
+      renderBrowser();
+
+      // Scan in flight: global overlay + spinner + message, and the inline
+      // list loading state is gone (the overlay replaces it).
+      await waitFor(() => {
+        expect(document.querySelector('.browser-scan-overlay')).toBeTruthy();
+      });
+      expect(document.querySelector('.browser-scan-overlay .spinner')).toBeTruthy();
+      expect(screen.getByText('Scanning level files…')).toBeInTheDocument();
+      expect(document.querySelector('.browser-content > .loading-state')).toBeNull();
+
+      resolveScan([zsjnFile]);
+      await waitFor(() => {
+        expect(document.querySelector('.browser-scan-overlay')).toBeNull();
+        expect(screen.getByText('Relax Time')).toBeInTheDocument();
+      });
+    });
+  });

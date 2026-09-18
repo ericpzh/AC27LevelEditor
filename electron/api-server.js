@@ -120,6 +120,19 @@ function _pushPainterHistory(state) {
 function _groundPainterNotReady() {
   return { success: false, error: 'Ground Painter not yet initialized — open the Ground Painter UI once to seed the graph (it is null until first open).' };
 }
+
+// OsmId of a graph segment: from its survivor PK (`taxiway-segment:<osm>:<ord>`)
+// or, for a piece minted this session, its `parentOsm`. Null for a genuinely-new
+// standalone taxiway (its OsmId is allocated at write time). Two segments with
+// the same OsmId are pieces of ONE OSM way — Unity requires them to share all
+// visual properties, `Name` included, so a rename must span the whole group.
+function _segmentOsmId(seg, pk) {
+  if (pk != null) {
+    const m = /^taxiway-segment:(-?\d+):\d+$/.exec(String(pk));
+    if (m) return m[1];
+  }
+  return seg && seg.parentOsm != null ? String(seg.parentOsm) : null;
+}
 // Distance helpers for delete_ground_objects picking (mirrors GroundPainter pickForeground thresholds loosely)
 function _distToSeg(px, pz, ax, az, bx, bz) {
   const dx = bx - ax, dz = bz - az;
@@ -1589,8 +1602,19 @@ async function handleMcpMessage(msg) {
             const sg = g.segments[idx];
             const stripNames = new Set((g.runways || []).map((r) => r.physicalName));
             if (sg.name && stripNames.has(sg.name)) return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'segment is a runway pavement strip — rename the runway instead' }) }], isError: true });
-            renamed = { kind, idx, from: sg.name || null, to: name };
-            newGraph.segments[idx] = { ...sg, name };
+            // A `Name` is a property of the whole OSM way, not one piece: rename
+            // every segment sharing this segment's OsmId, otherwise Unity aborts
+            // the level load ("Taxiway segments '...:0' and '...:2' for OSM way
+            // '...' have inconsistent visual properties").
+            const targetOsm = _segmentOsmId(sg, newMeta.segOrigPk ? newMeta.segOrigPk[idx] : null);
+            let renamedCount = 0;
+            newGraph.segments = newGraph.segments.map((sgi, i) => {
+              const sameGroup = i === idx || (targetOsm != null && _segmentOsmId(sgi, newMeta.segOrigPk ? newMeta.segOrigPk[i] : null) === targetOsm);
+              if (!sameGroup) return sgi;
+              renamedCount++;
+              return { ...sgi, name, nameEdited: true };
+            });
+            renamed = { kind, idx, from: sg.name || null, to: name, segments: renamedCount };
           } else if (kind === 'runway') {
             const rw = g.runways[idx];
             let names = Array.isArray(args.names) && args.names.length >= 2 ? [String(args.names[0] ?? ''), String(args.names[1] ?? '')] : null;

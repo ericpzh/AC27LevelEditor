@@ -52,7 +52,9 @@ function setOsmUnselectable(t, osm, val) {
 }
 
 // Every taxiway-segment of one OsmId must carry identical visual properties
-// (Unity: "... have inconsistent visual properties").
+// (Unity: "... have inconsistent visual properties"). `Name` IS part of that
+// set; `Head` is NOT — a directed way legitimately stores a different head node
+// per piece (shipped KDCA levels do), so comparing it would false-positive.
 function osmVisualConsistency(aclText, osm) {
   const idx = buildPkIndex(aclText);
   const segs = getPkEntriesByType(idx, 'taxiway-segment')
@@ -60,15 +62,28 @@ function osmVisualConsistency(aclText, osm) {
   const sig = (b) => {
     const g = (re) => { const m = b.match(re); return m ? m[1] : '(none)'; };
     return [
+      g(/"Name":\s*"([^"]*)"/),
       g(/"Flags":\s*(-?\d+)/),
       g(/"Directed":\s*(true|false)/),
-      g(/"Head":\s*([^,}]+)/).trim(),
       g(/"IsHidden":\s*(true|false)/),
       g(/"IsUnselectable":\s*(true|false)/),
     ].join('|');
   };
   const sigs = new Set(segs.map((s) => sig(s.block)));
   return { ok: sigs.size <= 1, count: segs.length, sigs: [...sigs] };
+}
+
+// Rewrite one segment entry's top-level `Name` in the raw text (simulates the
+// file a pre-invariant save produced).
+function setSegName(t, pk, val) {
+  const at = t.indexOf('"' + pk + '"');
+  if (at < 0) return t;
+  const blockStart = t.lastIndexOf('{', at);
+  const ct = createTokenizer(t.substring(blockStart));
+  const end = ct.findObjectEnd(0);
+  const entry = t.substring(blockStart, blockStart + end);
+  const patched = entry.replace(/"Name":\s*"[^"]*"/, '"Name": ' + JSON.stringify(val));
+  return t.slice(0, blockStart) + patched + t.slice(blockStart + end);
 }
 
 // Walk one OsmId's taxiway-segment entries by ordinal and check each consecutive
@@ -219,5 +234,56 @@ describe('Ground Painter — taxiway auto-slice keeps pavement OsmId continuous'
       return osm && parseInt(osm[1], 10) === 50095 && /"IsUnselectable":\s*true/.test(s.block);
     });
     expect(inherited.length).toBeGreaterThan(0);
+  });
+
+  it('heals a pre-existing Name inconsistency within one OSM way (KDCA_leisure_2 OSM -378884 fuzz regression)', () => {
+    // The fuzz renamed ONE piece of a 22-segment way, so segment :2 carried a
+    // different `Name` from its siblings and Unity aborted the level load:
+    //   InvalidOperationException: Taxiway segments 'taxiway-segment:-378884:0'
+    //   and '...:-378884:2' for OSM way '-378884' have inconsistent visual
+    //   properties.
+    // ZSJN OSM 50079 is a 29-piece unnamed way — rename one piece in the raw
+    // text, then save with NO graph edits: the writer must still heal the group.
+    const idx0 = buildPkIndex(text);
+    const target = getPkEntriesByType(idx0, 'taxiway-segment')
+      .find((s) => /^taxiway-segment:50079:0$/.test(s.pk));
+    expect(target).toBeTruthy();
+
+    const corrupted = setSegName(text, target.pk, 'T42');
+    expect(osmVisualConsistency(corrupted, 50079).ok).toBe(false);
+
+    const { graph, meta } = buildSceneryGraph(corrupted);
+    const patched = patchSceneryBlob(corrupted, graph, null, meta);
+
+    const after = osmVisualConsistency(patched, 50079);
+    expect(after.ok, 'still inconsistent: ' + JSON.stringify(after.sigs)).toBe(true);
+    // The non-empty renamed value wins group-wide.
+    expect(after.sigs[0]).toContain('T42');
+  });
+
+  it('renaming one graph segment renames every piece of its OSM way', () => {
+    const { graph, meta } = buildSceneryGraph(text);
+    let segIdx = -1;
+    for (let i = 0; i < graph.segments.length; i++) {
+      const pk = meta.segOrigPk[i];
+      if (pk && /^taxiway-segment:1421:\d+$/.test(pk)) { segIdx = i; break; }
+    }
+    expect(segIdx).toBeGreaterThanOrEqual(0);
+
+    graph.segments[segIdx] = { ...graph.segments[segIdx], name: 'T99', nameEdited: true };
+    const patched = patchSceneryBlob(text, graph, null, meta);
+
+    const cons = osmVisualConsistency(patched, 1421);
+    expect(cons.ok, 'inconsistent visual signatures: ' + JSON.stringify(cons.sigs)).toBe(true);
+    expect(cons.sigs.length).toBe(1);
+    expect(cons.sigs[0]).toContain('T99');
+
+    // No sibling still carries the old name.
+    const idx2 = buildPkIndex(patched);
+    const stale = getPkEntriesByType(idx2, 'taxiway-segment').filter((s) => {
+      const osm = s.block.match(/"OsmId":\s*(-?\d+)/);
+      return osm && parseInt(osm[1], 10) === 1421 && /"Name":\s*"B"/.test(s.block);
+    });
+    expect(stale.length).toBe(0);
   });
 });
