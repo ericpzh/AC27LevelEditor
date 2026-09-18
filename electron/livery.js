@@ -110,13 +110,18 @@ function pngSize(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
-function buildManifest({ folder, shortCode, airline, targetPlaneId, partName }) {
+function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, targetModelVer }) {
   // Free-form folders can contain spaces/symbols — sanitize for the id.
   // No-op for conventional SHORT_AIRLINE folders (a20n_cca_default as before).
   const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
   // partName must match the aircraft's built-in main part (Body vs Fuselage)
   // or the game ignores the texture — A388/B38M use Fuselage.
   const body = partName || 'Body';
+  // targetModelVer must match the aircraft's built-in model version or the
+  // game flags the livery as broken — the C919 model bumped 1→2 while every
+  // other type is still 1. The caller (createLivery) resolves it from the
+  // built-in manifest; default '1' keeps this pure helper backward compatible.
+  const ver = targetModelVer == null || targetModelVer === '' ? '1' : String(targetModelVer);
   return {
     id: `${safeId}_default`,
     name: `${shortCode} ${airline} Default Livery`,
@@ -124,7 +129,7 @@ function buildManifest({ folder, shortCode, airline, targetPlaneId, partName }) 
     targetPlaneId,
     liveryType: 'airline',
     liverySource: 'user',
-    targetModelVer: '1',
+    targetModelVer: ver,
     parts: [{ partName: body, textures: [{ property: 'BaseMap', fileName: 'base.png' }] }],
   };
 }
@@ -175,15 +180,43 @@ function _resolveLiveryImagePath(dir) {
   return null;
 }
 
+// The game's built-in default livery manifest for this aircraft, or null.
+// Single reader behind _builtInMainPartName + _builtInTargetModelVer so a
+// model bump (e.g. C919 1→2) is picked up in exactly one place.
+function _readBuiltInManifest(gameRoot, planeId) {
+  try {
+    if (!gameRoot || !planeId) return null;
+    return JSON.parse(fs.readFileSync(
+      path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, String(planeId), 'aircraft_livery_manifest.json'),
+      'utf-8',
+    ));
+  } catch (_) {
+    return null;
+  }
+}
+
+// The built-in default livery's model version for this aircraft. Custom
+// liveries must carry the same value or the game flags them as broken.
+// Falls back to '1' when the built-in manifest is missing/unreadable (every
+// type but C919 is still 1, and old tests seed no built-in dir).
+function _builtInTargetModelVer(gameRoot, planeId) {
+  try {
+    const m = _readBuiltInManifest(gameRoot, planeId);
+    const v = m && m.targetModelVer;
+    if (v == null || v === '') return '1';
+    const s = String(v);
+    return s || '1';
+  } catch (_) {
+    return '1';
+  }
+}
+
 // The built-in default livery's main part name for this aircraft (Body for
 // most types, Fuselage for multi-part A388/B38M). Custom liveries must reuse
 // it or the game ignores the painted texture.
 function _builtInMainPartName(gameRoot, planeId) {
   try {
-    const manifest = JSON.parse(fs.readFileSync(
-      path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, String(planeId), 'aircraft_livery_manifest.json'),
-      'utf-8',
-    ));
+    const manifest = _readBuiltInManifest(gameRoot, planeId);
     const part = _pickMainPartRef(manifest && manifest.parts);
     if (part && part.partName) return part.partName;
   } catch (_) {}
@@ -413,6 +446,11 @@ function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, folder }
   // The manifest part must match the aircraft's built-in main part (Fuselage
   // for multi-part A388/B38M) or the game ignores the painted texture.
   const partName = _builtInMainPartName(gameRoot, planeId);
+  // The manifest version must match the aircraft's built-in model version or
+  // the game flags the livery as broken (C919 bumped 1→2; the rest are 1).
+  // Deliberately NOT copying `variant`: no built-in manifest carries one, so
+  // emitting it would diverge from the validated schema for no benefit.
+  const targetModelVer = _builtInTargetModelVer(gameRoot, planeId);
   const rawFolder = String(folder == null ? '' : folder).trim();
   if (!LIVERY_FOLDER_SAFE_RE.test(rawFolder)) return { success: false, error: 'BAD_FOLDER' };
   const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(imageDataUrl || ''));
@@ -434,7 +472,7 @@ function createLivery(gameRoot, { imageDataUrl, airline, targetPlaneId, folder }
     fs.writeFileSync(path.join(resolved, 'base.png'), buf);
     fs.writeFileSync(
       path.join(resolved, 'aircraft_livery_manifest.json'),
-      JSON.stringify(buildManifest({ folder: rawFolder, shortCode, airline, targetPlaneId, partName }), null, 2),
+      JSON.stringify(buildManifest({ folder: rawFolder, shortCode, airline, targetPlaneId, partName, targetModelVer }), null, 2),
       'utf-8',
     );
     return { success: true, folder: rawFolder };

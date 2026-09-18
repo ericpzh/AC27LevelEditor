@@ -109,6 +109,43 @@ describe('livery constants', () => {
     expect(multi.name).toBe('A388 SIA Default Livery');
   });
 
+  it('buildManifest carries an explicit targetModelVer (C919 model bump)', () => {
+    // The main process resolves this from the built-in manifest; the pure
+    // helper just carries the value through (numeric vers coerce to string).
+    const v2 = buildManifest({
+      folder: 'C919_CCA',
+      shortCode: 'C919',
+      airline: 'CCA',
+      targetPlaneId: 'COMAC C-919',
+      targetModelVer: '2',
+    });
+    expect(v2.targetModelVer).toBe('2');
+    expect('variant' in v2).toBe(false);
+    const numeric = buildManifest({
+      folder: 'C919_CCA',
+      shortCode: 'C919',
+      airline: 'CCA',
+      targetPlaneId: 'COMAC C-919',
+      targetModelVer: 2,
+    });
+    expect(numeric.targetModelVer).toBe('2');
+  });
+
+  it('buildManifest defaults targetModelVer to 1 when missing/empty', () => {
+    // Omitted, null and '' all mean "unknown" — the game treats every type
+    // but C919 as 1, so the helper must never emit undefined/''.
+    for (const targetModelVer of [undefined, null, '']) {
+      const m = buildManifest({
+        folder: 'A20N_CCA',
+        shortCode: 'A20N',
+        airline: 'CCA',
+        targetPlaneId: 'AIRBUS A-320neo',
+        targetModelVer,
+      });
+      expect(m.targetModelVer).toBe('1');
+    }
+  });
+
   it('texture size is 2048', () => {
     expect(TEXTURE_SIZE).toBe(2048);
   });

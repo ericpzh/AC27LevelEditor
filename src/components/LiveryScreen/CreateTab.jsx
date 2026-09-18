@@ -253,14 +253,12 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   const fileRef = useRef(null);
   const { bind, TooltipPortal } = useTooltip();
 
-  // Save targets the origin folder; Save As targets the live form folder.
-  // Reference (locked) origins can never Save — only Save As.
+  // Save targets the live form (its Airline/Aircraft are the livery's identity,
+  // and it prefills the new conventional folder when they changed); Save As
+  // targets the live form folder too. Reference (locked) origins can never
+  // Save — only Save As.
   const canSaveAs = formValid && !busy;
-  const canSave = isReference
-    ? false
-      : origin
-        ? Boolean(origin.planeId && origin.airline && knownPlanes.has(origin.planeId)) && !busy
-        : formValid && !busy;
+  const canSave = !isReference && formValid && !busy;
 
   // Unsaved-changes guard consulted by LiveryScreen tab-leave/back.
   useEffect(() => {
@@ -468,17 +466,21 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     );
   };
 
-  // Save: name prefilled with the origin folder (new liveries: current form).
-  // Keeps the origin's airline/aircraft — renaming the folder never reassigns
-  // the livery to a different plane.
+  // Save: the form's Airline/Aircraft ARE the livery's identity, so they always
+  // feed the manifest. The dialog's default name follows them: while they match
+  // the origin it stays the origin folder (preserving a free-form name and
+  // overwriting in place); once either changed it prefills the new conventional
+  // {TYPE}_{AIRLINE} folder so the config file's name/airline/targetPlaneId can
+  // be updated — the user still decides the final name (typing the origin folder
+  // back saves in place). New liveries prefill with the form folder.
   const handleSave = () => {
     if (isReference) return;
-    const useOrigin = Boolean(origin);
+    const formChanged = Boolean(origin) && (origin.airline !== airline || origin.planeId !== planeId);
     openSaveDialog(
-      origin ? origin.folder : folderPreview,
+      origin && !formChanged ? origin.folder : folderPreview,
       false,
-      useOrigin ? origin.airline : airline,
-      useOrigin ? origin.planeId : planeId,
+      airline,
+      planeId,
     );
   };
 

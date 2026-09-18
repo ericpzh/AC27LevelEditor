@@ -515,6 +515,112 @@ describe('CreateTab edit origins (mine vs reference)', () => {
     expect(onCreated).toHaveBeenCalled();
   });
 
+  it('changing airline + aircraft updates the Save default name and the manifest', async () => {
+    // Once saved, the form's Airline/Aircraft are the livery's identity — a
+    // change must re-derive the default name (and the manifest's airline/
+    // targetPlaneId/name), not stay pinned to the stale origin folder.
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({ 'create-livery': Promise.resolve({ success: true, folder: 'B738_AAL' }) });
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    renderCreate({ onCreated });
+
+    await fillForm(user, 'AAL', 'BOEING 737-800');
+    const btn = saveBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    // Default name follows the live form, not the origin folder.
+    const saveInput = await screen.findByLabelText('Folder name');
+    expect(saveInput.value).toBe('B738_AAL');
+    await confirmNameDialog(user, 'Save');
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.objectContaining({
+        airline: 'AAL',
+        targetPlaneId: 'BOEING 737-800',
+        folder: 'B738_AAL',
+      }));
+    });
+    expect(onCreated).toHaveBeenCalled();
+  });
+
+  it('changing only the airline re-derives the default name from the form', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({ 'create-livery': Promise.resolve({ success: true, folder: 'A20N_AAL' }) });
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+
+    await fillForm(user, 'AAL', 'AIRBUS A-320neo');
+    const btn = saveBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    const saveInput = await screen.findByLabelText('Folder name');
+    expect(saveInput.value).toBe('A20N_AAL');
+    await confirmNameDialog(user, 'Save');
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.objectContaining({
+        airline: 'AAL', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_AAL',
+      }));
+    });
+  });
+
+  it('changing only the aircraft re-derives the default name from the form', async () => {
+    // Symmetric to the airline-only case: the OR in the Save prefill covers
+    // either half of the identity changing.
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({ 'create-livery': Promise.resolve({ success: true, folder: 'B738_CCA' }) });
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+
+    await fillForm(user, 'CCA', 'BOEING 737-800');
+    const btn = saveBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    const saveInput = await screen.findByLabelText('Folder name');
+    expect(saveInput.value).toBe('B738_CCA');
+    await confirmNameDialog(user, 'Save');
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.objectContaining({
+        airline: 'CCA', targetPlaneId: 'BOEING 737-800', folder: 'B738_CCA',
+      }));
+    });
+  });
+
+  it('changing airline/aircraft then keeping the origin folder updates the manifest in place', async () => {
+    // The user decides the final name: typing the origin folder back rewrites
+    // that same livery with the new airline/type instead of creating a new one.
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({ 'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }) });
+    const user = userEvent.setup();
+    renderCreate({ onCreated: vi.fn() });
+
+    await fillForm(user, 'AAL', 'BOEING 737-800');
+    const btn = saveBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+    const saveInput = await screen.findByLabelText('Folder name');
+    expect(saveInput.value).toBe('B738_AAL');
+    await user.clear(saveInput);
+    await user.type(saveInput, 'A20N_CCA');
+    await confirmNameDialog(user, 'Save');
+    await waitFor(() => {
+      expect(mockIpcInvoke).toHaveBeenCalledWith('create-livery', expect.objectContaining({
+        airline: 'AAL', targetPlaneId: 'BOEING 737-800', folder: 'A20N_CCA',
+      }));
+    });
+  });
+
   it('reference (locked) origin disables Save but allows Save As', async () => {
     CreateTab.prefill = {
       folder: 'A20N_CES', airline: 'CES', targetPlaneId: 'AIRBUS A-320neo',
@@ -774,6 +880,7 @@ describe('CreateTab post-save mod hint', () => {
 
     expect(await screen.findByText('Enable the Mod in Game')).toBeInTheDocument();
     expect(screen.getByText(/More Liveries/)).toBeInTheDocument();
+    expect(screen.getByText(/Refresh list/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: "Don't show again" })).not.toBeChecked();
     expect(mockIpcInvoke).toHaveBeenCalledWith('get-cache-flag', 'liveryModHintDismissed');
   });

@@ -47,9 +47,14 @@ export function folderFor(planeId, airline) {
   return `${shortCode}_${airline}`;
 }
 
-export function buildManifest({ folder, shortCode, airline, targetPlaneId, partName }) {
+export function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, targetModelVer }) {
   // Mirrors electron/livery.js: sanitize free-form folders for the id.
   const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
+  // Must match the aircraft's built-in model version (C919 is 2, the rest 1)
+  // or the game flags the livery as broken. The renderer has no fs access,
+  // so the main process resolves this from the built-in manifest and the
+  // renderer copy just carries an explicit value through; default '1'.
+  const ver = targetModelVer == null || targetModelVer === '' ? '1' : String(targetModelVer);
   return {
     id: `${safeId}_default`,
     name: `${shortCode} ${airline} Default Livery`,
@@ -57,7 +62,7 @@ export function buildManifest({ folder, shortCode, airline, targetPlaneId, partN
     targetPlaneId,
     liveryType: 'airline',
     liverySource: 'user',
-    targetModelVer: '1',
+    targetModelVer: ver,
     parts: [
       { partName: partName || 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] },
     ],

@@ -42,11 +42,21 @@ documents only its own buttons.
 - Manifest template:
   `{id: "<sanitized-folder>_default", name: "<SHORT> <AIRLINE> Default Livery",
   airline, targetPlaneId, liveryType: "airline", liverySource: "user",
-  targetModelVer: "1",
+  targetModelVer: "<built-in ver>",
   parts: [{partName: "<main part>", textures: [{property: "BaseMap",
-  fileName: "base.png"}]}]}` — builder `buildManifest({..., partName})` in both
+  fileName: "base.png"}]}]}` — builder `buildManifest({..., partName,
+  targetModelVer})` in both
   `src/utils/constants/livery.js` (ESM) and `electron/livery.js` (CJS, keep in sync).
-  `createLivery` passes `_builtInMainPartName(gameRoot, planeId)` — the built-in
+  `targetModelVer` must match the aircraft's built-in default manifest or the
+  game flags the livery as broken — the C919 model bumped `1→2` while every
+  other type is still `1`. `createLivery` resolves it via
+  `_builtInTargetModelVer(gameRoot, planeId)` (single reader
+  `_readBuiltInManifest` shared with `_builtInMainPartName`; missing/
+  unreadable/corrupt manifest, missing/`''` version, or a numeric version all
+  normalize — fallback `'1'`, otherwise `String(v)`); the renderer copy just
+  carries the explicit value through (default `'1'`). Deliberately never copies
+  `variant` — no built-in manifest carries one. `createLivery` passes
+  `_builtInMainPartName(gameRoot, planeId)` — the built-in
   default's `Body`/`Fuselage` part (the `_pickMainPartRef` Body→Fuselage→first
   order, `Body` as the fallback when there is no built-in folder) — so a custom
   A388/B38M livery binds to the mesh the game actually reads; the stored file
@@ -211,8 +221,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     `livery_tip_readonly` for a reference) → confirm (`Confirm Delete` /
     `livery_delete_confirm_body`) then `delete-livery`; disabled without an
     origin folder (brand-new livery) and for a reference origin.
-  - **Save** (`IoSaveOutline`, disabled for reference) → naming dialog
-    prefilled with the origin folder, keeps the origin airline/aircraft.
+  - **Save** (`IoSaveOutline`, disabled for reference) → naming dialog whose
+    default name follows the live form: while Airline/Aircraft still match the
+    origin it stays the origin folder (in-place overwrite, free-form name
+    preserved); once either changed it prefills the new conventional
+    `{TYPE}_{AIRLINE}` folder, and the live form airline/aircraft always feed
+    the manifest (so a change updates `airline`/`targetPlaneId`/`name`). The
+    user can retype the origin folder to update that livery in place.
   - **Save As** (`MdSaveAs`) → naming dialog prefilled with the conventional
     form folder, uses the live form airline/aircraft.
   Save/Save As share `SaveNameDialog` (typed name = folder verbatim,
@@ -229,7 +244,9 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `showModHint()`: unless the `liveryModHintDismissed` cache flag is set
   (`get-cache-flag`), it opens the **Enable the Mod in Game** prompt
   (`livery_mod_hint_title`/`_body`, OK = `modal_btn_ok`) telling the user to
-  enable **AC27 Custom Liveries** on the in-game "More Liveries" page, with a
+  enable **AC27 Custom Liveries** on the in-game "More Liveries" page — plus,
+  when a new livery does not show, to bring its priority to the top on the
+  "Livery Mod" page and click "Refresh list" — with a
   *Don't show again* checkbox that persists via `set-cache-flag` (stored in the
   cache.json `flags` bag; `CACHE_VERSION` bumped for the new key). Cancel (back arrow) runs
   `confirmDiscard` then `onCancel`; the help button calls `onHelp`.
@@ -503,7 +520,9 @@ data-URL (`readAircraftTemplate`, see "Aircraft template" above);
 PNG data-URL, IHDR = 2048², folder matches `LIVERY_FOLDER_SAFE_RE` +
 containment) and derives the short code + manifest id → writes `base.png` +
 manifest (**silent overwrite, no `.bak`** — the renderer's Save As override
-prompt is the guard, see `CreateTab`), returns `{success, folder}`;
+prompt is the guard, see `CreateTab`), returns `{success, folder}`. The
+written manifest carries the built-in `partName` (**Fuselage** for multi-part
+A388/B38M) and the built-in `targetModelVer` (C919 `2`, rest `1`);
 `delete-livery(folder)` (own-pack only, containment-checked `rm -rf`);
 `select-livery-image` (png/jpg dialog) + `read-disk-image(filePath)`;
 `export-livery(folder)` → `createZip` to temp `<folder>.zip` with
@@ -557,7 +576,9 @@ manifest for a free-form zip folder).
 ## Tests
 
 - `tests/utils/livery.test.js` (short-code table, `LIVERY_FOLDER_SAFE_RE`
-  accept/reject + free-form id sanitization, manifest), `tests/utils/airlines.test.js`
+  accept/reject + free-form id sanitization, manifest + `partName` + explicit
+  `targetModelVer` carry-through incl. numeric→string coercion and
+  `''`/`null`/omitted→`'1'` defaults with no `variant` key), `tests/utils/airlines.test.js`
   (`airlineDisplayName` en/zh + unknown fallback, `AIRLINE_CODE_TO_NAMES`
    dedup), `tests/utils/liveryPaint.test.js` (undo depth ≥20, flood fill,
    hex/rgb/hsv colour conversions, selection-mask ops: `maskPaintOp`/
@@ -577,6 +598,8 @@ manifest for a free-form zip folder).
   the main part,
   `readAircraftTemplate` guards + DXT1→PNG decode + part preference + PNG/JPEG
   base passthrough + `parts[0]` fallback + no-parts/parse-error paths + cache,
+  `createLivery` `targetModelVer` copy (C919 `2` + no-`variant`, missing-version
+  →`1`, numeric/`''`/corrupt-manifest → normalized fallback),
   `readLiveryThumbnail` guards (`NO_GAME_ROOT`/`BAD_FOLDER`/`IMAGE_MISSING`) +
   verbatim full-image fallback (`thumbnail:false`, JPEG MIME) + odd-size
   clamping + a fake-`nativeImage` resize to a 256px JPEG (`thumbnail:true`),
@@ -599,8 +622,10 @@ manifest for a free-form zip folder).
   type pre-selected end-to-end), painter
   validation + save/save-as dialogs, Save As overwrite confirm (collision →
   prompt, Overwrite saves, Cancel aborts, fresh name + own-folder re-save skip
-  it), post-save mod-enable hint (flag read/write, checkbox persistence,
-  hidden once dismissed), free-form folder name, load-from-ZIP,
+  it), Save follows the live form (unchanged → origin folder in place;
+  airline/aircraft change → re-derived `{TYPE}_{AIRLINE}` default + manifest
+  rewrite, retyping the origin folder updates in place), post-save mod-enable hint (flag read/write, checkbox persistence,
+  hidden once dismissed, priority-to-top + Refresh-list guidance), free-form folder name, load-from-ZIP,
    import image, cancel, mine vs reference origin save rules, canvas
    tools/stroke/text/sticker/save payload with stubbed 2d context,
    right-click layer-order menu (`reorderObjects` pure moves + menu open/

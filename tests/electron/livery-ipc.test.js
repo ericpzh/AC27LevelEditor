@@ -219,6 +219,108 @@ describe('createLivery round-trip', () => {
     const junk = 'data:image/png;base64,' + Buffer.from('hello world, not a png').toString('base64');
     expect(livery.createLivery(gameRoot, { ...payload(), imageDataUrl: junk }).error).toBe('BAD_IMAGE_DIMENSIONS');
   });
+
+  it('copies targetModelVer from the built-in manifest (C919 model bump)', () => {
+    // The game bumped the C919 model 1→2; a new custom C919 must carry 2 or
+    // the game flags it as broken. Every other type is still 1.
+    const dir = path.join(gameRoot, TEMPLATE_DIR, 'COMAC C-919');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      id: 'c919_default',
+      targetPlaneId: 'COMAC C-919',
+      targetModelVer: '2',
+      parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.dds' }] }],
+    }));
+    const created = livery.createLivery(gameRoot, {
+      ...payload(),
+      targetPlaneId: 'COMAC C-919',
+      folder: 'C919_CCA',
+    });
+    expect(created).toEqual({ success: true, folder: 'C919_CCA' });
+    const manifest = JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'C919_CCA', 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(manifest.targetModelVer).toBe('2');
+    // No `variant`: no built-in manifest carries one, so we stay on schema.
+    expect('variant' in manifest).toBe(false);
+  });
+
+  it('falls back to 1 when the built-in manifest carries no version', () => {
+    const dir = path.join(gameRoot, TEMPLATE_DIR, 'COMAC C-919');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      id: 'c919_default',
+      targetPlaneId: 'COMAC C-919',
+      parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.dds' }] }],
+    }));
+    const created = livery.createLivery(gameRoot, {
+      ...payload(),
+      targetPlaneId: 'COMAC C-919',
+      folder: 'C919_CCA',
+    });
+    expect(created.success).toBe(true);
+    const manifest = JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'C919_CCA', 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(manifest.targetModelVer).toBe('1');
+  });
+
+  it('normalizes numeric / empty / corrupt built-in versions to strings', () => {
+    // A numeric 2 in the built-in manifest must still emit '2' (string).
+    const dir = path.join(gameRoot, TEMPLATE_DIR, 'COMAC C-919');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      id: 'c919_default',
+      targetPlaneId: 'COMAC C-919',
+      targetModelVer: 2,
+      parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.dds' }] }],
+    }));
+    const numeric = livery.createLivery(gameRoot, {
+      ...payload(), targetPlaneId: 'COMAC C-919', folder: 'C919_NUM',
+    });
+    expect(numeric.success).toBe(true);
+    expect(JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'C919_NUM', 'aircraft_livery_manifest.json'), 'utf-8'
+    )).targetModelVer).toBe('2');
+
+    // An empty-string version is "unknown" — fall back to '1', never emit ''.
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      id: 'c919_default',
+      targetPlaneId: 'COMAC C-919',
+      targetModelVer: '',
+      parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.dds' }] }],
+    }));
+    const empty = livery.createLivery(gameRoot, {
+      ...payload(), targetPlaneId: 'COMAC C-919', folder: 'C919_EMPTY',
+    });
+    expect(empty.success).toBe(true);
+    expect(JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'C919_EMPTY', 'aircraft_livery_manifest.json'), 'utf-8'
+    )).targetModelVer).toBe('1');
+
+    // A corrupt built-in manifest must not break the save — fall back to '1'.
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), '{not json');
+    const corrupt = livery.createLivery(gameRoot, {
+      ...payload(), targetPlaneId: 'COMAC C-919', folder: 'C919_CORRUPT',
+    });
+    expect(corrupt.success).toBe(true);
+    expect(JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'C919_CORRUPT', 'aircraft_livery_manifest.json'), 'utf-8'
+    )).targetModelVer).toBe('1');
+  });
+
+  it('buildManifest defaults targetModelVer to 1 when missing/empty', () => {
+    // Pure-helper pin: the createLivery path above covers the on-disk copy,
+    // this pins the defaulting rule itself (omitted/null/'' → '1').
+    for (const targetModelVer of [undefined, null, '']) {
+      expect(livery.buildManifest({
+        folder: 'A20N_CCA', shortCode: 'A20N', airline: 'CCA',
+        targetPlaneId: 'AIRBUS A-320neo', targetModelVer,
+      }).targetModelVer).toBe('1');
+    }
+    expect(livery.buildManifest({
+      folder: 'C919_CCA', shortCode: 'C919', airline: 'CCA',
+      targetPlaneId: 'COMAC C-919', targetModelVer: 2,
+    }).targetModelVer).toBe('2');
+  });
 });
 
 describe('multi-part liveries (A388/B38M Fuselage layout)', () => {
