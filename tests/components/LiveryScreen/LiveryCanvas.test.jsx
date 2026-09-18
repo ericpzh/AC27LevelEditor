@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleFrame, flipOffset, flipLocal, worldFromLocal, localFromWorld, isTextEntry } from '../../../src/components/LiveryScreen/LiveryCanvas';
+import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleFrame, flipOffset, worldFromLocal, localFromWorld, isTextEntry } from '../../../src/components/LiveryScreen/LiveryCanvas';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
@@ -332,6 +332,175 @@ describe('sticker flip', () => {
     await waitFor(() => {
       expect(ctxs.some(c => c.scale.mock.calls.some(([x, y]) => x === -1 && y === 1))).toBe(true);
     });
+  });
+});
+
+describe('live-object handles survive a flip', () => {
+  // The Select box + handles are always drawn in the UNFLIPPED frame
+  // (`drawOverlay`), so the grab zones must stay exactly where they are drawn
+  // after a flip. Regression: the grab points were mirrored through the object
+  // (`flipLocal`), which moved the bottom-right dot's hit zone to the opposite
+  // corner — so a flipped sticker/shape could not be scaled at all (dragging
+  // the visible dot just moved the object), and the rotate dot only worked on
+  // the far side of the box.
+  //
+  // jsdom canvas rect is stubbed 512×512 → client = texture / 4.
+  const CX = 1024, CY = 1024; // TEXTURE / 2
+  // texture → client: the jsdom canvas rect is stubbed 512×512 (2048 / 512 = 4).
+  const toClient = (o, lx, ly) => ({
+    clientX: (o.x + lx) / 4,
+    clientY: (o.y + ly) / 4,
+  });
+  const drag = (from, to) => {
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { ...from, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { ...to, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+  };
+  const importSticker = async (user, ref) => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    return ref.current.getObjectInfo();
+  };
+
+  it('scales a sticker by the drawn bottom-right dot after flipping both axes', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    const before = await importSticker(user, ref);
+    await user.click(screen.getByRole('button', { name: 'Flip Horizontal' }));
+    await user.click(screen.getByRole('button', { name: 'Flip Vertical' }));
+    const o = ref.current.getObjectInfo();
+    expect([o.flipX, o.flipY]).toEqual([true, true]);
+    drag(toClient(o, o.frame.x1, o.frame.y1), toClient(o, o.frame.x1 * 2, o.frame.y1 * 2));
+    const after = ref.current.getObjectInfo();
+    expect(after.w).toBeCloseTo(before.w * 2, 0);
+    expect(after.h).toBeCloseTo(before.h * 2, 0);
+    // Scaling, NOT a body drag to the pointer.
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+  });
+
+  it('scales a shape by the drawn bottom-right dot after flipping both axes', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    // Commit a 240×160 rect centred on the canvas.
+    drag(
+      { clientX: (CX - 120) / 4, clientY: (CY - 80) / 4 },
+      { clientX: (CX + 120) / 4, clientY: (CY + 80) / 4 },
+    );
+    const before = ref.current.getObjectInfo();
+    expect(before.kind).toBe('rect');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Flip Horizontal' }).disabled).toBe(false));
+    await user.click(screen.getByRole('button', { name: 'Flip Horizontal' }));
+    await user.click(screen.getByRole('button', { name: 'Flip Vertical' }));
+    const o = ref.current.getObjectInfo();
+    expect([o.flipX, o.flipY]).toEqual([true, true]);
+    // The shape tool stays active after a commit — select the object so the
+    // handles are actually drawn/grabbable.
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    drag(toClient(o, o.frame.x1, o.frame.y1), toClient(o, o.frame.x1 * 2, o.frame.y1 * 2));
+    const after = ref.current.getObjectInfo();
+    expect(ref.current.getObjectCount()).toBe(1);
+    expect(after.w).toBeCloseTo(before.w * 2, 0);
+    expect(after.h).toBeCloseTo(before.h * 2, 0);
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+  });
+
+  it('rotates a flipped sticker by the handle drawn above the box', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await importSticker(user, ref);
+    await user.click(screen.getByRole('button', { name: 'Flip Horizontal' }));
+    await user.click(screen.getByRole('button', { name: 'Flip Vertical' }));
+    const o = ref.current.getObjectInfo();
+    expect(o.rot).toBe(0);
+    // Fit scale from the 512px jsdom fallback: (512-24)/2048.
+    const gap = 40 / (488 / 2048);
+    const ly = o.frame.y0 - gap;
+    drag(toClient(o, 0, ly), toClient(o, 80, ly));
+    const after = ref.current.getObjectInfo();
+    expect(after.rot).toBeCloseTo(Math.atan2(ly, 80) + Math.PI / 2, 3);
+    expect(after.x).toBe(o.x);
+    expect(after.y).toBe(o.y);
+  });
+});
+
+describe('sticker opacity slider', () => {
+  const importSticker = async (user, ref) => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+  };
+  const opacitySlider = () => screen.getByRole('slider', { name: /Opacity/ });
+
+  it('exposes a 100% alpha slider for the selected sticker and stores the value', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await importSticker(user, ref);
+    expect(opacitySlider().value).toBe('100');
+    expect(document.querySelector('.lp-optionsbar').textContent).toContain('100%');
+
+    ctxs.length = 0;
+    fireEvent.change(opacitySlider(), { target: { value: '40' } });
+    expect(ref.current.getObjectInfo().opacity).toBeCloseTo(0.4, 6);
+    expect(opacitySlider().value).toBe('40');
+    expect(document.querySelector('.lp-optionsbar').textContent).toContain('40%');
+    // The overlay redraws the sticker with that alpha (overlay + base share the
+    // same paint path, so the export carries it too).
+    await waitFor(() => expect(ctxs.some(c => c.globalAlpha === 0.4)).toBe(true));
+
+    // Re-selecting keeps the stored value (it is the object's own alpha).
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('slider', { name: /Opacity/ })).toBeNull();
+    fireEvent.pointerDown(mainCanvas(), { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(mainCanvas(), { pointerId: 1 });
+    await waitFor(() => expect(opacitySlider().value).toBe('40'));
+  });
+
+  it('flattens the sticker with the chosen alpha on export', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await importSticker(user, ref);
+    fireEvent.change(opacitySlider(), { target: { value: '25' } });
+    ctxs.length = 0;
+    const url = ref.current.exportPNG();
+    expect(url).toBe(FAKE_SAVE);
+    // The sticker draw went out at 25% alpha.
+    expect(ctxs.some(c => c.globalAlpha === 0.25 && c.drawImage.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('is only offered for a selected sticker', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    // Nothing selected.
+    expect(screen.queryByRole('slider', { name: /Opacity/ })).toBeNull();
+    // A selected text object shows the text options, not the sticker alpha.
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    await user.type(screen.getByPlaceholderText('Type text, Enter to commit…'), 'hi');
+    fireEvent.keyDown(screen.getByPlaceholderText('Type text, Enter to commit…'), { key: 'Enter' });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    expect(screen.queryByRole('slider', { name: /Opacity/ })).toBeNull();
+    expect(screen.getByRole('slider', { name: /Size/ })).toBeInTheDocument();
   });
 });
 
@@ -1847,8 +2016,6 @@ describe('part-erase boundary helpers', () => {
     expect(flipOffset(part)).toEqual({ x: 50, y: 0 });
     expect(worldFromLocal(part, { x: 0, y: 0 })).toEqual({ x: 50, y: 0 });
     expect(worldFromLocal(part, { x: 50, y: 25 })).toEqual({ x: 0, y: 25 });
-    // The handles stay grabbable where they are drawn (unflipped box corner).
-    expect(flipLocal(part, { x: 50, y: 25 })).toEqual({ x: 0, y: 25 });
     // World ⇄ local still round-trips through the pivot.
     const q = { x: 12, y: -7 };
     const back = localFromWorld(part, worldFromLocal(part, q));
@@ -1856,7 +2023,6 @@ describe('part-erase boundary helpers', () => {
     expect(back.y).toBeCloseTo(q.y, 6);
     // A whole object is centred on the origin, so nothing changes for it.
     expect(flipOffset({ x: 0, y: 0, w: 100, h: 50, flipX: true, flipY: true })).toEqual({ x: 0, y: 0 });
-    expect(flipLocal({ x: 0, y: 0, w: 100, h: 50, flipX: true }, { x: 10, y: 20 })).toEqual({ x: -10, y: 20 });
   });
 });
 

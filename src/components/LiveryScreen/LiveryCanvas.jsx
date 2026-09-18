@@ -284,16 +284,6 @@ export function flipOffset(o) {
   };
 }
 
-// A local point mapped into the object's flipped space — the space the Select
-// hit tests work in (stickerLocal returns the post-flip local coords). Used to
-// keep the resize/rotate handles grabbable where they are drawn. Pure.
-export function flipLocal(o, q) {
-  const sx = o && o.flipX ? -1 : 1;
-  const sy = o && o.flipY ? -1 : 1;
-  const f = flipOffset(o);
-  return { x: q.x * sx + f.x, y: q.y * sy + f.y };
-}
-
 // Stable id per unique object image, so the eraser cache signature can detect a
 // content change without stringifying a (potentially huge) data URL.
 const IMAGE_IDS = new WeakMap();
@@ -389,6 +379,10 @@ function paintLiveObjectContent(ctx, o) {
     if (o.kind === 'line' || !o.filled) ctx.stroke();
     else { ctx.fill(); ctx.globalAlpha = 1; ctx.stroke(); }
   } else if (o.img) {
+    // Sticker alpha (Select-tool Opacity slider). Applied here so the overlay,
+    // the export flatten and the duplicate stamp all carry it.
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = o.opacity == null ? 1 : o.opacity;
     ctx.drawImage(o.img, -o.w / 2, -o.h / 2, o.w, o.h);
   }
 }
@@ -1680,6 +1674,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       return {
         id: o.id, kind: o.kind, x: o.x, y: o.y, w: o.w, h: o.h, rot: o.rot || 0,
         flipX: Boolean(o.flipX), flipY: Boolean(o.flipY),
+        opacity: o.opacity == null ? 1 : o.opacity,
         frame: frameOf(o), erase: o.erase || null,
       };
     },
@@ -1954,11 +1949,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         const lp = stickerLocal(sel, p);
         const fb = frameOf(sel);
         const fcx = (fb.x0 + fb.x1) / 2;
-        // The box + handles are drawn unflipped, but stickerLocal returns the
-        // POST-flip local coords, so the grab points must be mirrored too or a
-        // flipped part-erased object's handles cannot be grabbed where drawn.
-        const resizeAt = flipLocal(sel, { x: fb.x1, y: fb.y1 });
-        const rotateAt = flipLocal(sel, { x: fcx, y: fb.y0 - gap });
+        // The box + handles are drawn in the UNFLIPPED frame (see drawOverlay),
+        // and stickerLocal maps the pointer into that same frame — so the grab
+        // points are the drawn ones, mirror or not. Mirroring them (the old
+        // flipLocal) put the hit zones on the opposite corner, so a flipped
+        // sticker/shape could not be scaled and its rotate dot never grabbed.
+        const resizeAt = { x: fb.x1, y: fb.y1 };
+        const rotateAt = { x: fcx, y: fb.y0 - gap };
         // Lines/curves have no corner resize: their end vertices sit on (or
         // next to) the box corner, so the grab must reshape the stroke via
         // vertex mode instead of scaling the frame.
@@ -2533,6 +2530,24 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const shownText = selectedText
     ? { font: selectedText.font, size: selectedText.size, bold: !!selectedText.bold, italic: !!selectedText.italic }
     : textOpts;
+  // With Select, a selected sticker exposes an opacity (alpha) slider on the
+  // options bar. Stored on the object (`opacity`), so the overlay, the export
+  // flatten and a duplicate stamp all read the same value.
+  const selectedSticker = (() => {
+    if (tool !== 'select') return null;
+    const sel = getSelected();
+    return sel && sel.kind === 'sticker' ? sel : null;
+  })();
+  const stickerOpacityPct = selectedSticker
+    ? Math.round((selectedSticker.opacity == null ? 1 : selectedSticker.opacity) * 100)
+    : 100;
+  const setStickerOpacity = (pct) => {
+    const sel = getSelected();
+    if (!sel || sel.kind !== 'sticker') return;
+    updateObject(sel.id, { opacity: Math.max(0, Math.min(100, pct)) / 100 });
+    setDirty(true);
+    scheduleOverlay();
+  };
 
   return (
     <div className="lp-workspace">
@@ -2580,6 +2595,18 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               <span className="lp-seg">
                 <button {...bind(t('livery_paint_deselect'))} aria-label={t('livery_paint_deselect')} disabled={!hasMask} onClick={clearMask}><MdOutlineLayersClear size={15} /></button>
               </span>
+              {selectedSticker && (
+                <label className="lp-field">{t('livery_paint_opacity')}
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={stickerOpacityPct}
+                    onChange={(e) => setStickerOpacity(Number(e.target.value))}
+                  />
+                  <span className="lp-val">{stickerOpacityPct}%</span>
+                </label>
+              )}
             </>
           )}
           {tool === 'fill' && (

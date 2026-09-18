@@ -201,7 +201,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (105 test files, 1929 tests) + Playwright (E2E, 9 spec files) + Node.js (integration, 60 scripts; 173 MCP/API tests)
+- **Tests:** Vitest (105 test files, 1935 tests) + Playwright (E2E, 9 spec files) + Node.js (integration, 60 scripts; 173 MCP/API tests)
 
 ### Quick Start
 
@@ -391,7 +391,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │       ├── debugLog.js          # Gated debug logging (localStorage + URL param)
 │       └── logger.js            # Console → file redirect (dev mode)
 │
-├── tests/               # 105 Vitest files (1929 tests) + 9 Playwright E2E specs + 60 Node.js integration scripts
+├── tests/               # 105 Vitest files (1935 tests) + 9 Playwright E2E specs + 60 Node.js integration scripts
 └── dist/                # Build output (gitignored)
 ```
 
@@ -415,7 +415,7 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (16 files) + jetway rebuild (16 v4) + v4 runway pairs + build + Playwright E2E (~4.5 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 105 test files, 1929 tests):**
+**Component tests (Vitest — 105 test files, 1935 tests):**
 ```bash
 npm test              # Run all component + store + utility + MapWindow + updater tests (~8s)
 npm run test:watch    # Watch mode — re-runs on file changes

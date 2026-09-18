@@ -367,7 +367,27 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     tool switch → the picked tool, canvas click → stays on Text). With the Select
     tool: click an object to select/move it, drag handles to scale/rotate (a
     text box scales its `size` with the frame), Escape / click-away to deselect,
-    `Delete`/`Backspace` to remove the selected object. **Selecting a text box
+    `Delete`/`Backspace` to remove the selected object. **The Select box +
+    handles are always drawn in the UNFLIPPED frame** (`drawOverlay` does
+    `translate(x,y) · rotate(rot)` only), and the pointer→frame mapping
+    (`stickerLocal` = `R(-rot) · (p − o)`) lands in that same frame — so the
+    grab zones are exactly the drawn corner (`frame.x1, frame.y1`) and the
+    rotate dot (`frame centre, frame.y0 − 40/z`) **regardless of `flipX`/
+    `flipY`**. Mirroring those grab points through the flip (the removed
+    `flipLocal`) put the hit zones on the opposite corner, so a flipped
+    sticker/shape could not be scaled at all and its rotate dot never grabbed.
+    Regression: `tests/components/LiveryScreen/LiveryCanvas.test.jsx`
+    "live-object handles survive a flip" (sticker scale, shape scale, rotated
+    handle grab, all after flipping both axes). **A selected sticker also gets
+    an Opacity slider on the options bar** (`livery_paint_opacity`, 0–100% with
+    a `%` readout) that writes the object's own `opacity`; `paintLiveObjectContent`'s
+    image branch sets `globalAlpha` from it, so the overlay, the **export
+    flatten** and a duplicate stamp all carry the same alpha (the eraser scratch
+    cache signature already includes `opacity`, so holes stay in sync), and 0%
+    still keeps the object selectable so the slider can bring it back.
+    Regression: "sticker opacity slider" (stores the value, redraws at that
+    alpha, flattens at that alpha on export, and is offered only for a
+    sticker). **Selecting a text box
     re-exposes the text options** (font/size/bold/italic) and edits that object
     in place via `applyTextOpt` (box re-measured, no new object); **double-click
     or Enter re-opens the inline editor prefilled** (`startTextEdit` sets
