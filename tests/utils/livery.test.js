@@ -94,6 +94,21 @@ describe('livery constants', () => {
     expect(m.airline).toBe('CCA');
   });
 
+  it('buildManifest binds the partName the caller passes (multi-part types)', () => {
+    // Single-part types default to Body...
+    const body = buildManifest({
+      folder: 'A20N_CCA', shortCode: 'A20N', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+    });
+    expect(body.parts).toEqual([{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }]);
+    // ...while multi-part A388/B38M pass the built-in main part (Fuselage),
+    // since the game ignores a texture bound to the wrong mesh part.
+    const multi = buildManifest({
+      folder: 'A388_SIA', shortCode: 'A388', airline: 'SIA', targetPlaneId: 'AIRBUS A-380-800', partName: 'Fuselage',
+    });
+    expect(multi.parts).toEqual([{ partName: 'Fuselage', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }]);
+    expect(multi.name).toBe('A388 SIA Default Livery');
+  });
+
   it('texture size is 2048', () => {
     expect(TEXTURE_SIZE).toBe(2048);
   });

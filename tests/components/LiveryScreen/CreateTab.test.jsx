@@ -156,6 +156,25 @@ describe('CreateTab painter validation', () => {
     expect(input.value).toBe(`CRJ7_${DEFAULT_AIRLINE}`);
   });
 
+  it('pre-selects an explicitly requested aircraft type for a new livery', async () => {
+    // The list's add-card passes { targetPlaneId } with no folder. Even when
+    // the built-in scan is unavailable (list-aircraft-types returns nothing),
+    // the requested type is kept and the form is valid.
+    CreateTab.prefill = { targetPlaneId: 'AIRBUS A-220-300' };
+    setupMocks();
+    const user = userEvent.setup();
+    renderCreate();
+
+    const select = document.querySelector('.lp-root select');
+    await waitFor(() => expect(select.value).toBe('AIRBUS A-220-300'));
+    await waitFor(() => expect(saveAsBtn().disabled).toBe(false));
+
+    await user.click(saveAsBtn());
+    const input = await screen.findByLabelText('Folder name');
+    // Unknown to the table, so folderFor falls back to the raw plane id.
+    expect(input.value).toBe(`AIRBUS A-220-300_${DEFAULT_AIRLINE}`);
+  });
+
   it('rejects short airline codes', async () => {
     setupMocks();
     const user = userEvent.setup();

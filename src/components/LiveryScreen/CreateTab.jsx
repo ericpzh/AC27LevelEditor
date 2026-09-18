@@ -223,13 +223,16 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   }, []);
 
   // A type is valid when the table knows it, the game ships a built-in livery
-  // for it, or it is the origin/import of the livery currently open.
+  // for it, it is the origin/import of the livery currently open, or it was
+  // explicitly requested as the pre-selected type for a new livery
+  // (folder add-card passes { targetPlaneId } with no folder).
   const knownPlanes = useMemo(() => {
     const set = new Set(PLANE_IDS);
     for (const id of planeOptions) set.add(id);
     if (origin?.planeId) set.add(origin.planeId);
+    if (prefill?.targetPlaneId) set.add(prefill.targetPlaneId);
     return set;
-  }, [planeOptions, origin]);
+  }, [planeOptions, origin, prefill]);
 
   const airlineValid = /^[A-Z]{3}$/.test(airline);
   const folderPreview = planeId && airline ? folderFor(planeId, airline) : '';

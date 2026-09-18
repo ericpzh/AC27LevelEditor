@@ -4,32 +4,21 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airlineDisplayName } from '../../utils/constants/airlines';
 import { IoChevronForward, IoChevronDown, IoFolderOutline, IoLockClosed } from 'react-icons/io5';
+import { MdAdd } from 'react-icons/md';
 import useTooltip from '../BrowserScreen/useTooltip';
 
 function errKey(code) {
   return 'livery_err_' + String(code || 'unknown');
 }
 
-// Group rows by aircraft type, sorted by plane id (unknown last).
-function groupByAircraft(rows) {
-  const map = new Map();
-  for (const r of rows) {
-    const key = r.targetPlaneId || '';
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(r);
-  }
-  return [...map.entries()].sort((a, b) => {
-    if (!a[0]) return 1;
-    if (!b[0]) return -1;
-    return a[0].localeCompare(b[0]);
-  });
-}
-
-export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState }) {
+export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, onBarState }) {
   const { t, lang } = useTranslation();
   const electronAPI = useElectronAPI();
   const [mine, setMine] = useState([]);
   const [reference, setReference] = useState([]);
+  // Every aircraft type the game ships (source for empty folders). Rows whose
+  // type is missing from the scan are still shown (union below).
+  const [allTypes, setAllTypes] = useState([]);
   const [thumbs, setThumbs] = useState({});
   const [loading, setLoading] = useState(true);
   // Collapsed aircraft groups, keyed by targetPlaneId ('' = unknown).
@@ -74,6 +63,14 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
     } finally {
       setLoading(false);
     }
+    // Aircraft-type scan is best-effort: a failed scan just means empty
+    // folders are not shown (row-backed groups still render).
+    try {
+      const typeRes = await electronAPI.listAircraftTypes();
+      if (typeRes && typeRes.success && Array.isArray(typeRes.types)) {
+        setAllTypes(typeRes.types.map(x => x && x.planeId).filter(Boolean));
+      }
+    } catch (_) {}
   };
 
   useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -231,11 +228,41 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
     </div>
   );
 
+  // New-livery shortcut for one aircraft folder: prefers the explicit
+  // onCreate(planeId) prop, falls back to onEdit({ targetPlaneId }) which
+  // CreateTab treats as a brand-new livery with the type pre-selected
+  // (no folder => origin is null => form initialises from prefill).
+  const handleAdd = (planeId) => {
+    if (onCreate) { onCreate(planeId); return; }
+    if (onEdit) onEdit({ targetPlaneId: planeId });
+  };
+
+  const renderAddCard = (planeId) => {
+    if (!planeId) return null;
+    return (
+      <button
+        type="button"
+        key={'add:' + planeId}
+        className="livery-card livery-add-card"
+        onClick={() => handleAdd(planeId)}
+        title={t('livery_tip_add_for_type')}
+        aria-label={t('livery_tip_add_for_type')}
+      >
+        <span className="livery-add-icon" aria-hidden="true">
+          <MdAdd size={28} />
+        </span>
+        <span className="livery-add-text">{t('livery_add_livery')}</span>
+      </button>
+    );
+  };
+
   // Collapsible folder-like group per aircraft type. Mine + reference rows
   // share one folder set; reference cards carry a read-only lock mark.
-  const renderGroups = (rows) => (
+  // Every known aircraft type gets a folder — even with zero liveries — so
+  // the trailing add-card is always reachable for that type.
+  const renderGroups = (groups) => (
     <div className="livery-groups">
-      {groupByAircraft(rows).map(([planeId, items]) => {
+      {groups.map(([planeId, items]) => {
         const isCollapsed = collapsed.has(planeId);
         return (
           <div className="livery-group" key={planeId || 'unknown'}>
@@ -255,6 +282,7 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
             {!isCollapsed && (
               <div className="livery-grid">
                 {items.map(row => (row.pack === 'reference' ? renderRefCard(row) : renderMineCard(row)))}
+                {renderAddCard(planeId)}
               </div>
             )}
           </div>
@@ -262,6 +290,31 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
       })}
     </div>
   );
+
+  // Full folder set: union of the scanned aircraft types and every type
+  // present in the rows (covers types added after the scan). Empty folders
+  // are kept so their add-card stays reachable. Under an active search, an
+  // empty folder is kept only when its type name matches the query.
+  const groups = useMemo(() => {
+    const byPlane = new Map();
+    for (const r of filteredRows) {
+      const key = r.targetPlaneId || '';
+      if (!byPlane.has(key)) byPlane.set(key, []);
+      byPlane.get(key).push(r);
+    }
+    const typeSet = new Set(allTypes);
+    for (const r of allRows) {
+      if (r.targetPlaneId) typeSet.add(r.targetPlaneId);
+    }
+    const q = String(search || '').trim().toLowerCase();
+    let ids = [...typeSet].sort((a, b) => a.localeCompare(b));
+    if (q) {
+      ids = ids.filter(id => (byPlane.has(id) && byPlane.get(id).length > 0) || id.toLowerCase().includes(q));
+    }
+    const out = ids.map(id => [id, byPlane.get(id) || []]);
+    if (byPlane.has('')) out.push(['', byPlane.get('')]);
+    return out;
+  }, [filteredRows, allRows, allTypes, search]);
 
   const toggleSelect = (folder) => {
     setSelected(prev => {
@@ -306,8 +359,8 @@ export default function MyLiveriesTab({ onEdit, search = '', cmdRef, onBarState 
 
   return (
     <div className="livery-mine-wrap">
-      {filteredRows.length > 0
-        ? renderGroups(filteredRows)
+      {groups.length > 0
+        ? renderGroups(groups)
         : (!loading && (
           <div className="livery-placeholder">
             {String(search || '').trim() ? t('livery_search_empty') : t('livery_empty_mine')}

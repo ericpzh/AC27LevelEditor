@@ -363,6 +363,21 @@ describe('LiveryScreen unsaved guard + wizard', () => {
     expect(screen.getByPlaceholderText('CCA').value).toBe('CCA');
   });
 
+  it('the add-livery card opens the painter with that aircraft type pre-selected', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [], reference: [] }),
+      'list-aircraft-types': Promise.resolve({
+        success: true, types: [{ planeId: 'AIRBUS A-220-300', shortCode: '' }],
+      }),
+    });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('AIRBUS A-220-300')).toBeInTheDocument());
+    await user.click(document.querySelector('.livery-add-card'));
+    await waitFor(() => expect(document.querySelector('.lp-root')).toBeInTheDocument());
+    expect(document.querySelector('.lp-root select').value).toBe('AIRBUS A-220-300');
+  });
+
   it('the install modal Close button dismisses it', async () => {
     setupMocks();
     const user = userEvent.setup();

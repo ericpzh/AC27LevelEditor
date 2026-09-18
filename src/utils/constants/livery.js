@@ -47,7 +47,7 @@ export function folderFor(planeId, airline) {
   return `${shortCode}_${airline}`;
 }
 
-export function buildManifest({ folder, shortCode, airline, targetPlaneId }) {
+export function buildManifest({ folder, shortCode, airline, targetPlaneId, partName }) {
   // Mirrors electron/livery.js: sanitize free-form folders for the id.
   const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
   return {
@@ -59,7 +59,7 @@ export function buildManifest({ folder, shortCode, airline, targetPlaneId }) {
     liverySource: 'user',
     targetModelVer: '1',
     parts: [
-      { partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] },
+      { partName: partName || 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] },
     ],
   };
 }

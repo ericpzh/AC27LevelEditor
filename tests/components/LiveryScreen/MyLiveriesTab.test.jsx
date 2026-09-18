@@ -478,6 +478,107 @@ describe('MyLiveriesTab error + edge paths', () => {
     expect(onEdit).toHaveBeenCalledTimes(2);
   });
 
+  it('renders an add card in each aircraft folder and calls onCreate with its type', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const onCreate = vi.fn();
+    const user = userEvent.setup();
+    renderMine({ onCreate });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    const addCard = document.querySelector('.livery-add-card');
+    expect(addCard).toBeInTheDocument();
+    expect(addCard.textContent).toContain('Add livery');
+    expect(addCard.getAttribute('title')).toContain('aircraft type');
+    await user.click(addCard);
+    expect(onCreate).toHaveBeenCalledWith('AIRBUS A-320neo');
+  });
+
+  it('add card falls back to onEdit({ targetPlaneId }) when no onCreate is passed', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const onEdit = vi.fn();
+    const user = userEvent.setup();
+    renderMine({ onEdit });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(document.querySelector('.livery-add-card'));
+    expect(onEdit).toHaveBeenCalledWith({ targetPlaneId: 'AIRBUS A-320neo' });
+  });
+
+  it('renders a folder (and add card) for every scanned type, even with zero liveries', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [], reference: [] }),
+      'list-aircraft-types': Promise.resolve({
+        success: true,
+        types: [{ planeId: 'AIRBUS A-320neo', shortCode: 'A20N' }, { planeId: 'BOMBARDIER CRJ700', shortCode: 'CRJ7' }],
+      }),
+    });
+    renderMine();
+    await waitFor(() => expect(screen.getByText('BOMBARDIER CRJ700')).toBeInTheDocument());
+    expect(screen.getByText('AIRBUS A-320neo')).toBeInTheDocument();
+    expect(screen.getAllByText('0 liveries')).toHaveLength(2);
+    expect(document.querySelectorAll('.livery-add-card')).toHaveLength(2);
+    // No empty-pack placeholder while types are known.
+    expect(screen.queryByText('No custom liveries yet — create one.')).toBeNull();
+  });
+
+  it('merges scanned types with row-backed types without duplicating a folder', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
+      'list-aircraft-types': Promise.resolve({
+        success: true,
+        types: [{ planeId: 'AIRBUS A-320neo', shortCode: 'A20N' }, { planeId: 'BOMBARDIER CRJ700', shortCode: 'CRJ7' }],
+      }),
+    });
+    renderMine();
+    await waitFor(() => expect(screen.getByText('BOMBARDIER CRJ700')).toBeInTheDocument());
+    expect(screen.getAllByText('AIRBUS A-320neo')).toHaveLength(1);
+    expect(screen.getByText('1 liveries')).toBeInTheDocument();
+    expect(screen.getByText('0 liveries')).toBeInTheDocument();
+  });
+
+  it('keeps an empty folder only when its type matches the search', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
+      'list-aircraft-types': Promise.resolve({
+        success: true,
+        types: [{ planeId: 'AIRBUS A-320neo', shortCode: 'A20N' }, { planeId: 'BOMBARDIER CRJ700', shortCode: 'CRJ7' }],
+      }),
+    });
+    renderMine({ search: 'crj' });
+    await waitFor(() => expect(screen.getByText('BOMBARDIER CRJ700')).toBeInTheDocument());
+    // The non-matching (and now row-filtered) A320neo folder is gone.
+    expect(screen.queryByText('AIRBUS A-320neo')).toBeNull();
+    expect(screen.getByText('0 liveries')).toBeInTheDocument();
+    expect(document.querySelectorAll('.livery-add-card')).toHaveLength(1);
+  });
+
+  it('shows the no-match placeholder when the search matches no row or type', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
+      'list-aircraft-types': Promise.resolve({ success: true, types: [{ planeId: 'BOMBARDIER CRJ700', shortCode: 'CRJ7' }] }),
+    });
+    renderMine({ search: 'zzz-nope' });
+    await waitFor(() => expect(screen.getByText('No matching liveries')).toBeInTheDocument());
+    expect(document.querySelectorAll('.livery-add-card')).toHaveLength(0);
+  });
+
+  it('omits the add card for rows with an unknown aircraft type', async () => {
+    const unknown = { folder: 'MYSTERY', id: '', name: '', airline: 'CCA', targetPlaneId: '', hasBasePng: true, mtime: 0 };
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [unknown], reference: [] }) });
+    renderMine();
+    await waitFor(() => expect(screen.getByText('Unknown aircraft')).toBeInTheDocument());
+    expect(document.querySelector('.livery-add-card')).toBeNull();
+  });
+
+  it('a failed aircraft-type scan still renders row-backed folders', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }),
+      'list-aircraft-types': Promise.reject(new Error('scan failed')),
+    });
+    renderMine();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    expect(document.querySelector('.livery-add-card')).toBeInTheDocument();
+    expect(screen.queryByText(/scan failed/)).toBeNull();
+  });
+
   it('batch delete reports partial success', async () => {
     mockIpcInvoke.mockImplementation((channel, folder) => {
       if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] });

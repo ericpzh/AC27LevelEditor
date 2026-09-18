@@ -154,11 +154,12 @@ export default function LiveryScreen() {
             cmdRef={mineCmdRef}
             onBarState={setBarState}
             onEdit={(row) => { CreateTab.prefill = row; setTab('create'); }}
+            onCreate={(planeId) => { CreateTab.prefill = { targetPlaneId: planeId }; setTab('create'); }}
           />
         )}
         {isCreate && (
           <CreateTab
-            key={tab + JSON.stringify(CreateTab.prefill && { folder: CreateTab.prefill.folder, pack: CreateTab.prefill.pack })}
+            key={tab + JSON.stringify(CreateTab.prefill && { folder: CreateTab.prefill.folder, pack: CreateTab.prefill.pack, targetPlaneId: CreateTab.prefill.targetPlaneId })}
             onCreated={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
             onCancel={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
             onHelp={() => setHelpOpen(true)}

@@ -1,6 +1,6 @@
 # Livery Editor — subskill reference
 
-Custom aircraft livery page (`Body`/`BaseMap`/`base.png` only) plus the legacy
+Custom aircraft livery page (`Body`/`Fuselage`/`BaseMap`/`base.png`) plus the legacy
 realistic-pack installer. Screens: browser header **Livery** button →
 `screen === 'livery'` (`src/App.jsx` `ScreenRouter` + `UpdateOverlay` wrapper).
 Two views (`mine` list / `create` painter, local `useState`, **no tab bar**):
@@ -25,17 +25,34 @@ documents only its own buttons.
   `modNameEn`/`modNameZhHans`/`modDescriptionEn`/`modDescriptionZhHans`
   (`OWN_PACK_MOD_INFO`); the file is pack-level, never inside a livery folder
   and never part of a share ZIP.
-- One livery = one folder under the pack dir containing exactly
-  `aircraft_livery_manifest.json` + `base.png` (2048×2048). The **folder name
-  is an opaque storage key** — the app never parses meaning out of it (it is
-  free-form, filesystem-safe only) and the game reads the manifest instead.
+- One livery = one folder under the pack dir containing
+  `aircraft_livery_manifest.json` + one or more BaseMap images. Single-part
+  types ship `base.png` (2048×2048); **multi-part types (A388/B38M) ship
+  `base_Fuselage.png`** (+ `base_Wing.png`, …) and the paintable base must bind
+  to the part name the aircraft's built-in default uses (`Fuselage`, not
+  `Body`) or the game ignores the texture. The **folder name is an opaque
+  storage key** — the app never parses meaning out of it (it is free-form,
+  filesystem-safe only) and the game reads the manifest instead.
+  `readLiveryImage`/`listLiveries` resolve the image through the manifest
+  (`_resolveLiveryImagePath`: the main part's BaseMap first, then any other
+  part's BaseMap, then a legacy `base.png`), so a folder with no fixed
+  `base.png` still previews; the data-URL MIME follows the file extension
+  (PNG/JPEG). `exportLivery` includes **every** image in the folder, so a
+  multi-part livery shares/round-trips as a whole.
 - Manifest template:
   `{id: "<sanitized-folder>_default", name: "<SHORT> <AIRLINE> Default Livery",
   airline, targetPlaneId, liveryType: "airline", liverySource: "user",
   targetModelVer: "1",
-  parts: [{partName: "Body", textures: [{property: "BaseMap",
-  fileName: "base.png"}]}]}` — builder `buildManifest()` in both
+  parts: [{partName: "<main part>", textures: [{property: "BaseMap",
+  fileName: "base.png"}]}]}` — builder `buildManifest({..., partName})` in both
   `src/utils/constants/livery.js` (ESM) and `electron/livery.js` (CJS, keep in sync).
+  `createLivery` passes `_builtInMainPartName(gameRoot, planeId)` — the built-in
+  default's `Body`/`Fuselage` part (the `_pickMainPartRef` Body→Fuselage→first
+  order, `Body` as the fallback when there is no built-in folder) — so a custom
+  A388/B38M livery binds to the mesh the game actually reads; the stored file
+  name stays `base.png` (the editor's own container), only `partName` must match.
+  `loadLiveryZip` previews the same main-part BaseMap file (not `parts[0]`) and
+  derives the `shortCode` from `manifest.targetPlaneId`.
   `id` is derived by lowercasing the folder and collapsing non-alphanumerics
   to `_` (so a conventional `A20N_CCA` still yields `a20n_cca_default`, and a
   free-form `My First Livery 01` yields `my_first_livery_01_default`).
@@ -99,8 +116,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   (`toggleSelectAll`/`exportSelected`/`deleteSelected`). Unsaved-painter guard: `CreateTab`
   registers `window.__liveryPaintGuard = { isDirty() }`; Back/Create call
   `guardLeave` and prompt via `useAppStore.showModal`. `CreateTab.prefill`
-  holds the clicked row (or null); the create `key` includes
-  `{folder, pack}` so switching origins remounts the painter.
+  holds the clicked row (or null) — `onEdit(row)` for a card; `onCreate(planeId)`
+  (the per-aircraft **add-livery card**) sets `prefill = { targetPlaneId }` with
+  no folder, i.e. a brand-new livery with that type pre-selected. The create
+  `key` includes `{folder, pack, targetPlaneId}` so switching origins (or types)
+  remounts the painter.
 - `MyLiveriesTab.jsx` — `listLiveries` on mount; own + reference merged into
   one folder set grouped by aircraft type (collapsible sections; header =
   plane id + count badge; unknown `targetPlaneId` sorts last). Reference rows
@@ -125,11 +145,25 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   over mine+reference) into a `thumbs[pack:folder]` map; `.livery-thumb`
   reserves a 2:1 box with a **solid `#222` placeholder** up front (`aspect-ratio`
   + `background`), so cards never reflow while the images trickle in and the
-  `<img>` fades in on load. Renders `TooltipPortal`.
+  `<img>` fades in on load. It also calls `listAircraftTypes()` (best-effort) to
+  build the **full folder set**: the union of every scanned aircraft type and
+  every type present in the rows, so a type with **zero liveries** still gets a
+  collapsible group (count `0 liveries`). Each group's grid ends with an
+  **add-livery card** (`MdAdd`, `.livery-add-card`; i18n `livery_add_livery` /
+  `livery_tip_add_for_type`) wired to `onCreate(planeId)`, falling back to
+  `onEdit({ targetPlaneId })` when no `onCreate` is passed — opening a new-livery
+  painter with that type pre-selected (see `LiveryScreen`/`CreateTab`). The
+  unknown `''` type gets no add card. Under an active search an otherwise-empty
+  folder is kept only when its type name matches the query (so the placeholder
+  still shows for a no-match search). Renders `TooltipPortal`.
 - `CreateTab.jsx` — the **painter page** (upload mode is gone; default export
   takes `{ onCreated, onCancel, onHelp }`). Given `CreateTab.prefill` it
   snapshots an `origin` `{folder, airline, planeId, pack, imageDataUrl}` with
-  `pack` `'mine'` / `'reference'`; the canvas starts primed with the origin
+  `pack` `'mine'` / `'reference'`; a `prefill` with **no folder but a
+  `targetPlaneId`** (the add-card) leaves `origin` null and initialises the
+  brand-new form with that type pre-selected — `knownPlanes` also accepts
+  `prefill.targetPlaneId`, so the form is valid even when the built-in scan
+  misses the type. The canvas starts primed with the origin
   picture (lazy `readLiveryImage` when the thumbnail was not ready). The
   selected aircraft type's **built-in UV template** (see "Aircraft template"
   below) is fetched whenever a type is known — **including when editing a saved
@@ -439,7 +473,9 @@ gameRoot/dialog/cleanup and delegates. Channels: `list-liveries` →
 `{mine, reference}` rows `{folder, id, name, airline, targetPlaneId,
 hasBasePng, mtime}` (skip non-dirs; corrupt manifest → row with `error`,
 never abort; also creates the own pack dir + repairs `mod_info.json`);
-`read-livery-image(folder, pack)` → PNG data-URL;
+`read-livery-image(folder, pack)` → data-URL (`_resolveLiveryImagePath`: the
+manifest's main-part BaseMap, else any part's BaseMap, else a legacy
+`base.png`; MIME PNG/JPEG by extension, `IMAGE_MISSING` when none);
 `get-aircraft-template(planeId)` → the built-in default BaseMap as a PNG
 data-URL (`readAircraftTemplate`, see "Aircraft template" above);
 `list-aircraft-types()` → the aircraft-type dropdown source (see
@@ -453,12 +489,15 @@ prompt is the guard, see `CreateTab`), returns `{success, folder}`;
 `delete-livery(folder)` (own-pack only, containment-checked `rm -rf`);
 `select-livery-image` (png/jpg dialog) + `read-disk-image(filePath)`;
 `export-livery(folder)` → `createZip` to temp `<folder>.zip` with
-**folder-prefixed entries**; `export-livery-to-dir(folder)` → `exportLivery`
+**folder-prefixed entries** (the manifest + **every** `.png`/`.jpg` image in
+the folder, so multi-part liveries share whole; `IMAGE_MISSING` when the
+folder carries no image); `export-livery-to-dir(folder)` → `exportLivery`
 then a **directory** picker, copies to `<dir>/<folder>.zip` (cancel/failure
 calls `cleanExportTemp`); `save-livery-dialog({sourcePath, suggestedName})` →
 save dialog + copy + temp cleanup; `load-livery-zip()` → open dialog → temp
 extract → `{folder, shortCode, manifest, imageDataUrl}` where `shortCode` is
-derived from `manifest.targetPlaneId` (temp cleaned). Errors: `NO_GAME_ROOT` /
+derived from `manifest.targetPlaneId` and `imageDataUrl` is the **main-part**
+BaseMap (not `parts[0]`), MIME by extension (temp cleaned). Errors: `NO_GAME_ROOT` /
 `BAD_AIRLINE` / `BAD_PLANE` / `BAD_IMAGE` / `BAD_IMAGE_DIMENSIONS` /
 `BAD_FOLDER` / `BAD_MANIFEST` / `IMAGE_MISSING` / `BAD_ZIP` / `ZIP_MISSING` /
 `NO_TEMPLATE` / `BAD_TEMPLATE`
@@ -489,8 +528,9 @@ without a prompt.
 ## Share contract
 
 Export ZIP = `<FOLDER>.zip` with `<FOLDER>/aircraft_livery_manifest.json` +
-`<FOLDER>/base.png` (folder name free-form, so `exportLiveryToDir` writes
-`<dir>/<FOLDER>.zip`). Recipient: Create → Import livery, or unzip straight
+**every** `.png`/`.jpg` image in the folder (`base.png` for single-part,
+`base_Fuselage.png` (+ `base_Wing.png`) for multi-part; folder name free-form,
+so `exportLiveryToDir` writes `<dir>/<FOLDER>.zip`). Recipient: Create → Import livery, or unzip straight
 into `<gameRoot>/Mods/AC27 Custom Liveries/`. Round-trip test:
 `tests/electron/livery-ipc.test.js` "share round-trip" (byte-identical
 `base.png` + manifest deep-equal, and `shortCode` re-derived from the
@@ -512,6 +552,11 @@ manifest for a free-form zip folder).
   IHDR, reference read-only, manifest-derived shortCode, `mod_info.json`
   created on load/create at the pack root, reference-name + corrupt-JSON
   repair, existing own file untouched, UTF-8 zh name round-trip,
+  **multi-part A388/B38M** — `hasBasePng`/`readLiveryImage` resolve
+  `base_Fuselage.png` via the manifest (any-part + legacy `base.png` fallback,
+  JPEG MIME), `createLivery` writes `partName: "Fuselage"` from the built-in
+  default, `exportLivery` zips every texture image, `loadLiveryZip` previews
+  the main part,
   `readAircraftTemplate` guards + DXT1→PNG decode + part preference + PNG/JPEG
   base passthrough + `parts[0]` fallback + no-parts/parse-error paths + cache),
   `tests/electron/dds.test.js` (`decodeDds` DXT1 block / DXT5 alpha + colour /
@@ -521,7 +566,11 @@ manifest for a free-form zip folder).
   pixel round-trip + the Y-flip that matches the in-game BaseMap orientation).
 - `tests/components/LiveryScreen/` (header actions/back/install overlay/search,
   in-card checkbox select driving the header Export/Delete commands + their
-  disabled-until-selected states, single vs batch delete confirms, painter
+  disabled-until-selected states, single vs batch delete confirms,
+  **per-aircraft add-livery card + empty scanned folders** (add card per group,
+  `onCreate(planeId)` / `onEdit({targetPlaneId})` fallback, empty folders from
+  `listAircraftTypes`, no card on the unknown type, add-card → painter with the
+  type pre-selected end-to-end), painter
   validation + save/save-as dialogs, Save As overwrite confirm (collision →
   prompt, Overwrite saves, Cancel aborts, fresh name + own-folder re-save skip
   it), post-save mod-enable hint (flag read/write, checkbox persistence,
