@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { TOAST_DURATION_MS, TOAST_ERROR_DURATION_MS, STORAGE_KEY_THEME } from '../utils/constants';
 import { createArrivalFlight, createDepartureFlight } from './flightDefaults.js';
-import { rebuildCallSign, cascadeAirlineChange, cascadeRunwayChange, clearInternalRegistration } from './flightCascade.js';
+import { rebuildCallSign, cascadeAirlineChange, cascadeRunwayChange, cascadeLanguageChange, clearInternalRegistration } from './flightCascade.js';
 
 export const useAppStore = create((set, get) => ({
   // ─── Screen ───
@@ -325,6 +325,14 @@ export const useAppStore = create((set, get) => ({
     if ('Runway' in updates) {
       const rwyUpdates = cascadeRunwayChange(updates.Runway, flight, airportValues);
       Object.assign(flight, rwyUpdates);
+    }
+
+    // Cascade 4: Language change → Voice to the first option valid for the new
+    // language (the FlightTable Voice dropdown is filtered by Language; the
+    // game's VoiceCatalog rejects a mismatch at level load).
+    if ('Language' in updates && !('Voice' in updates)) {
+      const langUpdates = cascadeLanguageChange(updates.Language, airportValues);
+      Object.assign(flight, langUpdates);
     }
 
     // Cleanup: explicit Registration edit clears internal _Registration

@@ -52,6 +52,25 @@ let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns
 // Keyed by absolute aclPath (per-level truth). Invalidated on save or mtime change.
 const liveSceneryCache = new Map(); // aclPath -> { icao, mtimeMs, vals, computedAt }
 
+// Voice catalog (name -> language), keyed by game root. The game asserts a
+// flight's captain voice language equals its Language at level load, so the
+// renderer needs this map to pick/validate region-appropriate voices.
+let _voiceCatalogCache = { root: null, map: {} };
+function _loadVoiceCatalog(rootPath) {
+  if (!rootPath) return {};
+  if (_voiceCatalogCache.root === rootPath) return _voiceCatalogCache.map;
+  const map = {};
+  try {
+    const catalogPath = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Voices', 'voice_catalog.json');
+    const json = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+    for (const v of (json.voices || [])) {
+      if (v && v.name) map[v.name] = v.language || '';
+    }
+  } catch (_) { /* catalog absent — leave empty */ }
+  _voiceCatalogCache = { root: rootPath, map };
+  return map;
+}
+
 function _liveCacheKey(aclPath) { return path.resolve(aclPath); }
 function _isLiveCacheFresh(entry, aclPath) {
   try { return entry && fs.existsSync(aclPath) && fs.statSync(aclPath).mtimeMs === entry.mtimeMs; }
@@ -689,6 +708,10 @@ function _buildCollectValuesBase(airportIcao, rootPath) {
     }
     aclValues.AircraftType = [...set].sort((a, b) => a.localeCompare(b));
   }
+  // Voice -> language catalog (global to the install). Consumed by the
+  // renderer's new-flight defaults + save validation so Voice always matches
+  // the flight's Language (the game's VoiceCatalog rejects mismatches at load).
+  aclValues._voiceLanguages = _loadVoiceCatalog(rootPath);
   return { cached, aclValues };
 }
 

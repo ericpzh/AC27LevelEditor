@@ -81,6 +81,24 @@ const WEATHER_PRESETS = ['Sunny', 'FewCloudy', 'MidCloudy', 'PartlyCloudy', 'Ove
 
 const SCENARIO_END_GRACE_SEC = 30 * 60;
 
+// Voice catalog (name -> language) from the staged game root. Mirrors the
+// renderer's `airportValues._voiceLanguages`; used to keep fuzz-generated
+// Voice/Language pairs consistent and to assert them in the game-compat gate.
+let _voiceCatalogMemo = null;
+function _catalogVoiceLanguages() {
+  if (_voiceCatalogMemo) return _voiceCatalogMemo;
+  _voiceCatalogMemo = {};
+  try {
+    const root = process.env.E2E_GAME_ROOT;
+    if (root) {
+      const p = path.join(root, 'GroundATC_Data', 'StreamingAssets', 'Voices', 'voice_catalog.json');
+      const json = JSON.parse(fs.readFileSync(p, 'utf8'));
+      for (const v of (json.voices || [])) if (v && v.name) _voiceCatalogMemo[v.name] = v.language || '';
+    }
+  } catch (_) { /* catalog absent — no consistency data */ }
+  return _voiceCatalogMemo;
+}
+
 // Default target: the 24 production levels staged by global-setup.mjs
 // (PROD_VISIBLE_BASES minus demo files).
 const DEFAULT_PROD_FILES = [
@@ -414,6 +432,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       stands: SV.Stand || C.flatLists?.Stand || [],
       voices: SV.Voice || C.flatLists?.Voice || [],
       languages: SV.Language || C.flatLists?.Language || [],
+      voiceLanguages: (SV._voiceLanguages && Object.keys(SV._voiceLanguages).length ? SV._voiceLanguages : _catalogVoiceLanguages()),
       aircraftTypes: SV.AircraftType || C.aircraftTypes || [],
       flightNums: SV._flightNums || C.flightNumbers || {},
       compat: SV._compat?.airlineToAircraft || C.airlineAircraftCompat || {},
@@ -425,6 +444,19 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     const stands = SU.stands;
     const voices = SU.voices;
     const languages = SU.languages;
+    const voiceLanguages = SU.voiceLanguages || {};
+    // Voice must match the flight's Language: the game's VoiceCatalog throws
+    // InvalidOperationException at level load when a captain voice declares a
+    // different language (fuzz-discovered at ZGSZ). Pick a voice whose catalog
+    // language matches; `unknown` voices are used only as a fallback.
+    const pickVoice = (lang) => {
+      if (!voices.length) return '';
+      const known = lang ? voices.filter((v) => voiceLanguages[v] === lang) : [];
+      if (known.length) return rpick(known);
+      const unknown = voices.filter((v) => !voiceLanguages[v]);
+      if (unknown.length) return rpick(unknown);
+      return rpick(voices) || '';
+    };
     const aircraftTypes = SU.aircraftTypes;
     log(`range ${info.configTimeRange.start}–${info.configTimeRange.end}  airlines=${airlines.length} runways=${runways.length} stands=${stands.length}`);
     if (!airlines.length || !runways.length || !stands.length) throw new Error('empty constraint lists — cannot build valid flights');
@@ -553,6 +585,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       const t1 = rint(startSec, maxFlightSec - 60);
       const t2 = Math.min(t1 + rint(60, 15 * 60), maxFlightSec);
       const group = isArr ? 'arr' : 'dep';
+      const language = rpick(languages) || (icao.startsWith('Z') ? 'zh' : 'en');
       const flight = {
         CallSign: airline + num,
         DepartureAirport: isArr ? icao : '',
@@ -567,8 +600,8 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
         AircraftType: aircraft,
         Airway: isArr ? (starFor(runway) || '') : '',
         Registration: regAvoiding(airline, aircraft, avoidRegs[group]),
-        Voice: rpick(voices) || '',
-        Language: rpick(languages) || (icao.startsWith('Z') ? 'zh' : 'en'),
+        Voice: pickVoice(language),
+        Language: language,
       };
       return flight;
     };
@@ -657,8 +690,14 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
             updates.Registration = regAvoiding((f.CallSign || '').substring(0, 3), f.AircraftType || '', avoid[group]);
           }
           else if (r < 70 && f.Runway && isArr) Object.assign(updates, starUpdateFor(f.Runway) || { Airway: starFor(f.Runway) });
-          else if (r < 78) updates.Voice = rpick(voices) || '';
-          else if (r < 86) updates.Language = rpick(languages) || (icao.startsWith('Z') ? 'zh' : 'en');
+          else if (r < 78) updates.Voice = pickVoice(f.Language) || f.Voice || '';
+          else if (r < 86) {
+            // Language changes must carry a matching voice, or the save would
+            // ship a voice/language mismatch the game rejects at load.
+            const nl = rpick(languages) || (icao.startsWith('Z') ? 'zh' : 'en');
+            updates.Language = nl;
+            updates.Voice = pickVoice(nl) || f.Voice || '';
+          }
           else if (r < 92) {
             const nums = SU.flightNums?.[(f.CallSign || '').substring(0, 3)];
             if (Array.isArray(nums) && nums.length) updates.FlightNum = rpick(nums);
@@ -1104,7 +1143,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     // a stale build without the save-time normalization passes them and
     // still produces broken levels. Assert the saved file is game-clean.
     const gcA = analyze(readAclText(currentPath));
-    const gc = runChecks(gcA);
+    const gc = runChecks(gcA, { voiceLanguages });
     // Filter out the one game-compat code the save pipeline does not yet
     // guarantee: docked-stand-before-offblock (arrival lands before a docked
     // departure's off-block) is correctly detected but not auto-repaired by

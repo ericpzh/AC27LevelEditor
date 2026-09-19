@@ -220,6 +220,16 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
         issues.push(T('val_field_not_in_options', { cs: fl.CallSign || '?', field: T('field_' + col) || FIELD_LABELS[col] || col, val: val }));
       }
     }
+    // Voice/Language consistency — the game's VoiceCatalog throws
+    // InvalidOperationException at level load when a flight's captain voice
+    // declares a different language than the flight (e.g. a `...-EN` voice on
+    // a `zh` flight). Only checkable when the catalog map reached the renderer.
+    const voiceLanguage = (values._voiceLanguages || {})[fl.Voice];
+    if (voiceLanguage && fl.Language && voiceLanguage !== fl.Language) {
+      issues.push(T('val_voice_language_mismatch', {
+        cs: fl.CallSign || '?', voice: fl.Voice, vlang: voiceLanguage, lang: fl.Language,
+      }));
+    }
   });
 
   // Arrival legs must carry a STAR — the game's FlightPlan.Init() drops a

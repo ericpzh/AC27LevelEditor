@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   randomPick,
   defaultLanguageForAirport,
+  pickVoiceForLanguage,
   pickRandomAirlineCode,
   pickRandomFlightNumber,
   pickRandomUnusedStand,
@@ -71,6 +72,64 @@ describe('defaultLanguageForAirport', () => {
     expect(defaultLanguageForAirport('')).toBe('en');
     expect(defaultLanguageForAirport(undefined)).toBe('en');
     expect(defaultLanguageForAirport(null)).toBe('en');
+  });
+});
+
+// ─── pickVoiceForLanguage ────────────────────────────────────────
+
+describe('pickVoiceForLanguage', () => {
+  const voices = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN', 'CN-Captain-Middle-Aged-EN'];
+  const _voiceLanguages = {
+    'CN-Captain-Young': 'zh',
+    'CN-Captain-Middle-Aged': 'zh',
+    'CN-Captain-Young-EN': 'en',
+    'CN-Captain-Middle-Aged-EN': 'en',
+  };
+
+  it('only picks voices whose catalog language matches', () => {
+    const values = { Voice: voices, _voiceLanguages };
+    for (let i = 0; i < 50; i++) {
+      const v = pickVoiceForLanguage(values, 'zh');
+      expect(_voiceLanguages[v]).toBe('zh');
+    }
+    for (let i = 0; i < 50; i++) {
+      const v = pickVoiceForLanguage(values, 'en');
+      expect(_voiceLanguages[v]).toBe('en');
+    }
+  });
+
+  it('eventually returns every matching voice', () => {
+    const values = { Voice: voices, _voiceLanguages };
+    const seen = new Set();
+    for (let i = 0; i < 80; i++) {
+      seen.add(pickVoiceForLanguage(values, 'zh'));
+      if (seen.size === 2) break;
+    }
+    expect(seen.has('CN-Captain-Young')).toBe(true);
+    expect(seen.has('CN-Captain-Middle-Aged')).toBe(true);
+  });
+
+  it('prefers voices unknown to the catalog when no exact match exists', () => {
+    const values = { Voice: ['Custom-A', 'CN-Captain-Young-EN'], _voiceLanguages: { 'CN-Captain-Young-EN': 'en' } };
+    for (let i = 0; i < 20; i++) {
+      expect(pickVoiceForLanguage(values, 'ja')).toBe('Custom-A');
+    }
+  });
+
+  it('falls back to the full pool when no catalog map is available', () => {
+    const values = { Voice: ['CN-Captain-Young', 'CN-Captain-Young-EN'] };
+    const seen = new Set();
+    for (let i = 0; i < 50; i++) {
+      seen.add(pickVoiceForLanguage(values, 'zh'));
+      if (seen.size === 2) break;
+    }
+    expect(seen.size).toBe(2);
+  });
+
+  it('returns empty string for an empty pool', () => {
+    expect(pickVoiceForLanguage({ Voice: [] }, 'zh')).toBe('');
+    expect(pickVoiceForLanguage({}, 'zh')).toBe('');
+    expect(pickVoiceForLanguage(null, 'zh')).toBe('');
   });
 });
 
@@ -536,7 +595,7 @@ describe('createDefaultFlight', () => {
     expect(flight.Language).toBe('en');
   });
 
-  it('randomizes Voice from the airport dropdown pool', () => {
+  it('randomizes Voice from the airport dropdown pool when no catalog map is present', () => {
     const audioData = { allAirlines: ['CCA'] };
     const voices = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN'];
     const vals = makeVals({ AirlineCode: ['CCA'], Voice: voices });
@@ -549,6 +608,34 @@ describe('createDefaultFlight', () => {
       if (seen.size === 3) break;
     }
     expect(seen.size).toBe(3);
+  });
+
+  it('never pairs a new ZSJN flight with a non-zh voice (catalog map present)', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const voices = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN', 'CN-Captain-Middle-Aged-EN'];
+    const _voiceLanguages = {
+      'CN-Captain-Young': 'zh', 'CN-Captain-Middle-Aged': 'zh',
+      'CN-Captain-Young-EN': 'en', 'CN-Captain-Middle-Aged-EN': 'en',
+    };
+    const vals = makeVals({ AirlineCode: ['CCA'], Voice: voices, _voiceLanguages });
+    const apv = makeAirportValues('CCA');
+    for (let i = 0; i < 50; i++) {
+      const flight = createDefaultFlight('arrival', vals, audioData, 'ZSJN', apv, []);
+      expect(flight.Language).toBe('zh');
+      expect(_voiceLanguages[flight.Voice]).toBe('zh');
+    }
+  });
+
+  it('never pairs a new KJFK flight with a zh voice (catalog map present)', () => {
+    const audioData = { allAirlines: ['AAL'] };
+    const voices = ['Yeager', 'CN-Captain-Young'];
+    const vals = makeVals({ AirlineCode: ['AAL'], Voice: voices, _voiceLanguages: { Yeager: 'en', 'CN-Captain-Young': 'zh' } });
+    const apv = makeAirportValues('AAL');
+    for (let i = 0; i < 20; i++) {
+      const flight = createDefaultFlight('arrival', vals, audioData, 'KJFK', apv, []);
+      expect(flight.Language).toBe('en');
+      expect(flight.Voice).toBe('Yeager');
+    }
   });
 
   it('leaves Voice empty when the airport has no voice pool', () => {

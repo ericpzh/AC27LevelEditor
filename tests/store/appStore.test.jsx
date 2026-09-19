@@ -284,6 +284,56 @@ describe('appStore — updateFlight airline change (aircraft type independent)',
   });
 });
 
+describe('appStore — updateFlight language change cascades Voice', () => {
+  const VOICE_POOL = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN', 'CN-Captain-Middle-Aged-EN'];
+  const VOICE_LANGS = {
+    'CN-Captain-Young': 'zh', 'CN-Captain-Middle-Aged': 'zh',
+    'CN-Captain-Young-EN': 'en', 'CN-Captain-Middle-Aged-EN': 'en',
+  };
+
+  function setupLanguageChange() {
+    useAppStore.getState().initializeEditor({
+      currentPath: '/test/file.acl',
+      airportIcao: 'ZSJN',
+      flights: [{
+        CallSign: 'CES1234', ArrivalAirport: 'ZSJN', LandingTime: '10:00:00',
+        AircraftType: 'B738', Voice: 'CN-Captain-Young', Language: 'zh',
+      }],
+      before: '', after: '', arrayContent: '', originalBlocks: [],
+      configStartTime: '06:00', configEndTime: '18:00',
+      _saveSec: 36000,
+    });
+    useAppStore.getState().setAuxData(
+      {
+        ZSJN: {
+          AircraftType: ['B738'],
+          Voice: VOICE_POOL,
+          _voiceLanguages: VOICE_LANGS,
+        },
+      },
+      { byAirline: {}, allCallsigns: [], allAirlines: ['CES'] },
+      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+      [],
+    );
+  }
+
+  it('sets Voice to the first option valid for the new language', () => {
+    setupLanguageChange();
+    useAppStore.getState().updateFlight(0, { Language: 'en' });
+    const f = useAppStore.getState().flights[0];
+    expect(f.Language).toBe('en');
+    expect(f.Voice).toBe('CN-Captain-Young-EN'); // first en voice in pool order
+  });
+
+  it('does not override an explicit Voice supplied with the Language', () => {
+    setupLanguageChange();
+    useAppStore.getState().updateFlight(0, { Language: 'en', Voice: 'CN-Captain-Middle-Aged-EN' });
+    const f = useAppStore.getState().flights[0];
+    expect(f.Language).toBe('en');
+    expect(f.Voice).toBe('CN-Captain-Middle-Aged-EN');
+  });
+});
+
 describe('appStore — selection', () => {
   it('selectedIndices defaults to empty', () => {
     expect(useAppStore.getState().selectedIndices.size).toBe(0);

@@ -1,0 +1,49 @@
+{
+  "voices": [
+    {
+      "name": "Hanser",
+      "role": "atc",
+      "language": "zh"
+    },
+    {
+      "name": "Hanser-EN",
+      "role": "atc",
+      "language": "en"
+    },
+    {
+      "name": "ZGSZ-Female-ATC",
+      "role": "atc",
+      "language": "zh"
+    },
+    {
+      "name": "American-Female-ATC",
+      "role": "atc",
+      "language": "en"
+    },
+    {
+      "name": "CN-Captain-Young",
+      "role": "captain",
+      "language": "zh"
+    },
+    {
+      "name": "CN-Captain-Young-EN",
+      "role": "captain",
+      "language": "en"
+    },
+    {
+      "name": "CN-Captain-Middle-Aged",
+      "role": "captain",
+      "language": "zh"
+    },
+    {
+      "name": "CN-Captain-Middle-Aged-EN",
+      "role": "captain",
+      "language": "en"
+    },
+    {
+      "name": "Yeager",
+      "role": "captain",
+      "language": "en"
+    }
+  ]
+}

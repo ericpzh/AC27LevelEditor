@@ -155,6 +155,8 @@ function analyze(text) {
               arrCs: arr ? getVal(arr, 'CallSign') : null,
               depCs: dep ? getVal(dep, 'CallSign') : null,
               star: arr ? getVal(arr, 'STAR') : null,
+              voice: arr ? getVal(arr, 'Voice') : (dep ? getVal(dep, 'Voice') : null),
+              language: arr ? getVal(arr, 'Language') : (dep ? getVal(dep, 'Language') : null),
             });
           }
         }
@@ -237,9 +239,14 @@ function analyze(text) {
  *     'dup-plan-key', 'docked-missing-entity', 'docked-entity-wrong-target',
  *     'arr-dep-cross-reg', 'docked-stand-blocked',
  *     'docked-stand-before-offblock', 'arr-arr-close',
- *     'arrival-no-star', 'resolution-missing-leg'
+ *     'arrival-no-star', 'resolution-missing-leg', 'voice-language-mismatch'
+ *
+ *   `voiceLanguages` (optional) is the install's voice_catalog map
+ *   (name -> language); when supplied, flights whose captain voice declares a
+ *   different language than the flight are reported — the game's VoiceCatalog
+ *   throws InvalidOperationException on that at level load.
  */
-function runChecks(a, { minGapSec = STAND_MIN_GAP } = {}) {
+function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null } = {}) {
   const issues = [];
 
   // 1. unique flight-plan keys
@@ -355,6 +362,21 @@ function runChecks(a, { minGapSec = STAND_MIN_GAP } = {}) {
       const ok = plans.some(p => dir === 'A' ? !!p.arrCs : !!p.depCs);
       if (!ok) {
         issues.push({ code: 'resolution-missing-leg', msg: `frame aircraft ${reg} (direction ${dir}) has no plan leg with a CallSign` });
+      }
+    }
+  }
+
+  // 5. voice/language consistency (only when the catalog map is supplied).
+  //    The game's VoiceCatalog throws InvalidOperationException at level load
+  //    when an aircraft's captain voice language != the flight's Language.
+  if (voiceLanguages && typeof voiceLanguages === 'object') {
+    for (const p of a.doc0Plans) {
+      const declared = p.voice ? voiceLanguages[p.voice] : null;
+      if (p.voice && p.language && declared && declared !== p.language) {
+        issues.push({
+          code: 'voice-language-mismatch',
+          msg: `${p.leg === 'A' ? 'arrival' : 'departure'} ${p.reg}: voice "${p.voice}" (catalog ${declared}) does not match language "${p.language}"`,
+        });
       }
     }
   }

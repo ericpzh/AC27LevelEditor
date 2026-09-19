@@ -1,5 +1,34 @@
 import { describe, it, expect } from 'vitest';
-import { cascadeAirlineChange } from '../../src/store/flightCascade';
+import { cascadeAirlineChange, cascadeLanguageChange } from '../../src/store/flightCascade';
+
+describe('cascadeLanguageChange', () => {
+  const POOL = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN', 'CN-Captain-Middle-Aged-EN'];
+  const LANGS = {
+    'CN-Captain-Young': 'zh', 'CN-Captain-Middle-Aged': 'zh',
+    'CN-Captain-Young-EN': 'en', 'CN-Captain-Middle-Aged-EN': 'en',
+  };
+
+  it('returns the first pool voice whose language matches', () => {
+    expect(cascadeLanguageChange('zh', { Voice: POOL, _voiceLanguages: LANGS })).toEqual({ Voice: 'CN-Captain-Young' });
+    expect(cascadeLanguageChange('en', { Voice: POOL, _voiceLanguages: LANGS })).toEqual({ Voice: 'CN-Captain-Young-EN' });
+  });
+
+  it('prefers catalog-unknown voices when nothing matches the new language', () => {
+    const vals = { Voice: ['Custom-A', ...POOL], _voiceLanguages: LANGS };
+    expect(cascadeLanguageChange('ja', vals)).toEqual({ Voice: 'Custom-A' });
+  });
+
+  it('falls back to the first pool voice when every known voice mismatches', () => {
+    const vals = { Voice: ['CN-Captain-Young', 'CN-Captain-Middle-Aged'], _voiceLanguages: LANGS };
+    expect(cascadeLanguageChange('ja', vals)).toEqual({ Voice: 'CN-Captain-Young' });
+  });
+
+  it('returns {} without a catalog map or a voice pool', () => {
+    expect(cascadeLanguageChange('zh', { Voice: POOL })).toEqual({});
+    expect(cascadeLanguageChange('zh', { _voiceLanguages: LANGS })).toEqual({});
+    expect(cascadeLanguageChange('zh', {})).toEqual({});
+  });
+});
 
 describe('cascadeAirlineChange', () => {
   const airportValues = {

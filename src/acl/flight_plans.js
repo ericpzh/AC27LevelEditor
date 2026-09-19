@@ -1517,6 +1517,25 @@ function _scanFrameDockedState(frameText) {
 }
 
 /**
+ * Load the install's voice_catalog.json for the level at `aclPath`.
+ * Layout: <gameRoot>/GroundATC_Data/StreamingAssets/Airports/<ICAO>/Levels/x.acl
+ *         <gameRoot>/GroundATC_Data/StreamingAssets/Voices/voice_catalog.json
+ * @returns {Object<string,{language:string,role:string}>|null}
+ */
+function _loadVoiceCatalogForLevel(aclPath) {
+  try {
+    const fs = require('fs');
+    const catalogPath = path.join(path.dirname(aclPath), '..', '..', '..', 'Voices', 'voice_catalog.json');
+    const json = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+    const map = {};
+    for (const v of (json.voices || [])) {
+      if (v && v.name) map[v.name] = { language: v.language || '', role: v.role || '' };
+    }
+    return map;
+  } catch (_) { return null; }
+}
+
+/**
  * GAME-COMPAT NORMALIZATION (v4) — repair the three fuzz-discovered classes
  * of saves the game rejects on level init (see tests/integration/
  * save_gamecompat.test.js and gamecompat-utils.cjs for the empirical rules):
@@ -1549,6 +1568,14 @@ function _scanFrameDockedState(frameText) {
  *     with no STAR data (departure-only runways) are moved to the first
  *     arrival-capable runway.
  *
+ *  5. VOICE / LANGUAGE — the game's VoiceCatalog throws
+ *     InvalidOperationException at level load when an aircraft's captain voice
+ *     declares a language different from the flight's Language (fuzz-discovered
+ *     at ZGSZ: `CN-Captain-Middle-Aged-EN` on a `zh` flight). When the install's
+ *     voice_catalog.json is available, every flight whose Voice is unknown to
+ *     the catalog or whose catalog language disagrees with Language is switched
+ *     to a same-language captain voice (preferring one already used in the level).
+ *
  * Violating arrival(s) are moved to a safe stand drawn from the level's own
  * stand set (plus the complete stand pool when the caller provides it).
  * Mutates `flights` in place so the StaticItems header rebuild, the
@@ -1564,10 +1591,13 @@ function _scanFrameDockedState(frameText) {
  *                 STAR repair — optional; without it STAR-less arrivals are
  *                 left untouched (callers without the cache still get the
  *                 registration/stand repairs).
- * @returns {{ renamed: number, moved: number, starred: number }}
+ * @param {Object<string,{language:string,role:string}>|null} voiceCatalog
+ *                 optional voice_catalog.json map (name -> {language, role})
+ *                 for Voice/Language repair — see _loadVoiceCatalogForLevel.
+ * @returns {{ renamed: number, moved: number, starred: number, voiced: number }}
  */
-function _normalizeFlightsForGameCompat(flights, fullText, log, standPool, approachCache) {
-  const result = { renamed: 0, moved: 0, starred: 0 };
+function _normalizeFlightsForGameCompat(flights, fullText, log, standPool, approachCache, voiceCatalog) {
+  const result = { renamed: 0, moved: 0, starred: 0, voiced: 0 };
   if (!flights || !flights.length) return result;
   if (!fullText) return result;
 
@@ -1821,6 +1851,55 @@ function _normalizeFlightsForGameCompat(flights, fullText, log, standPool, appro
           log('[GAME-COMPAT] WARN: arrival ' + reg + ' has no STAR and no arrival-capable runway found — leaving empty');
         }
       }
+    }
+  }
+
+  // ── 5. voice / language consistency ──────────────────────────────
+  // The game's VoiceCatalog throws InvalidOperationException at level load
+  // when an aircraft's captain voice declares a language other than the
+  // flight's Language. Only runnable when the install's catalog is available;
+  // without it, callers keep whatever voices they were given.
+  if (voiceCatalog && typeof voiceCatalog === 'object') {
+    const langOf = new Map();
+    const captainByLang = new Map();
+    for (const [name, meta] of Object.entries(voiceCatalog)) {
+      const lang = meta && meta.language;
+      if (!lang) continue;
+      langOf.set(name, lang);
+      if (meta.role === 'captain') {
+        if (!captainByLang.has(lang)) captainByLang.set(lang, []);
+        captainByLang.get(lang).push(name);
+      }
+    }
+    for (const arr of captainByLang.values()) arr.sort();
+    // Prefer a voice already used in this level for the target language, so the
+    // repaired flight keeps the level's own voice palette.
+    const usedByLang = new Map();
+    for (const fl of flights) {
+      const v = String(fl.Voice || '').trim();
+      const l = String(fl.Language || '').trim();
+      if (v && l && langOf.get(v) === l) {
+        if (!usedByLang.has(l)) usedByLang.set(l, new Set());
+        usedByLang.get(l).add(v);
+      }
+    }
+    for (const fl of flights) {
+      const v = String(fl.Voice || '').trim();
+      const l = String(fl.Language || '').trim();
+      if (!v || !l) continue;
+      const declared = langOf.get(v);
+      if (declared === l) continue;
+      const pool = captainByLang.get(l);
+      if (!pool || pool.length === 0) continue;
+      const usedSet = usedByLang.get(l) || null;
+      let replacement = null;
+      if (usedSet) { for (const cand of pool) { if (usedSet.has(cand)) { replacement = cand; break; } } }
+      if (!replacement) replacement = pool[0];
+      fl.Voice = replacement;
+      result.voiced++;
+      log('[GAME-COMPAT] ' + (regOf(fl) || fl.CallSign || '?') + ': voice "' + v + '" (' + (declared || 'unknown') + ') -> "' + replacement + '" for language "' + l + '"');
+      if (usedSet) usedSet.add(replacement);
+      else usedByLang.set(l, new Set([replacement]));
     }
   }
 
@@ -5072,9 +5151,10 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   // stand assignments the game rejects at level init. Runs BEFORE any
   // section rebuild so the StaticItems header rebuild, the checkpoint-frame
   // rebuild, and the CSV export all see the repaired flight state. ──
-  const gameCompat = _normalizeFlightsForGameCompat(flights, text, log, standPool, approachCache);
-  if (gameCompat.renamed > 0 || gameCompat.moved > 0 || gameCompat.starred > 0) {
-    log('game-compat normalization: renamed=' + gameCompat.renamed + ' moved=' + gameCompat.moved + ' starred=' + gameCompat.starred);
+  const voiceCatalog = _loadVoiceCatalogForLevel(aclPath);
+  const gameCompat = _normalizeFlightsForGameCompat(flights, text, log, standPool, approachCache, voiceCatalog);
+  if (gameCompat.renamed > 0 || gameCompat.moved > 0 || gameCompat.starred > 0 || gameCompat.voiced > 0) {
+    log('game-compat normalization: renamed=' + gameCompat.renamed + ' moved=' + gameCompat.moved + ' starred=' + gameCompat.starred + ' voiced=' + gameCompat.voiced);
   }
 
   const t = createTokenizer(text);
@@ -5830,6 +5910,7 @@ module.exports = {
   _rebuildStaticDataSections,
   _validateStandConflicts,
   _normalizeFlightsForGameCompat,
+  _loadVoiceCatalogForLevel,
   _scanFrameDockedState,
   GAME_STAND_MIN_GAP_SEC,
   _rebuildTimelineSections,

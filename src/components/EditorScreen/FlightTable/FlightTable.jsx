@@ -78,6 +78,9 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
         const validStars = runwayStarMap[flightRunway] || [];
         filteredOpts = opts.filter(o => validStars.includes(o));
       }
+      // Keep the current value selectable when filtering removed it (legacy
+      // mismatched Voice, stale Airway) so the dropdown never renders blank.
+      if (editVal && !filteredOpts.includes(editVal)) filteredOpts = [editVal, ...filteredOpts];
 
       return (
         <td className={cls} data-col={col} data-idx={globalIdx} ref={cellRef}>
@@ -296,6 +299,19 @@ export default function FlightTable({ type, flights, columns }) {
                         const regKey = airlineCode + '|' + acType;
                         const filtered = vals._registrationMap?.[regKey];
                         if (filtered && filtered.length > 0) opts = filtered;
+                      }
+                      // Voice options are constrained to the flight's Language —
+                      // the game's VoiceCatalog throws at level load when the
+                      // captain voice language differs from the flight's.
+                      if (col === 'Voice' && opts && opts.length > 0) {
+                        const lang = (fl.Language || '').trim();
+                        const langOf = vals._voiceLanguages || {};
+                        if (lang && Object.keys(langOf).length > 0) {
+                          const matching = opts.filter(v => langOf[v] === lang);
+                          const unknown = opts.filter(v => !langOf[v]);
+                          if (matching.length > 0) opts = matching;
+                          else if (unknown.length > 0) opts = unknown;
+                        }
                       }
                       const flightNums = (col === 'FlightNum' ? validFlightNums[airlineCode] : null);
                       return <EditableCell key={col} value={val} col={col} globalIdx={gi} isTime={isTime} options={opts} flightNums={flightNums} />;

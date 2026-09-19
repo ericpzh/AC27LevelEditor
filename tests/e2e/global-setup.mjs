@@ -84,6 +84,14 @@ export default async function () {
       const cfgDst = path.join(dstAirports, icao, 'airport_config.json');
       if (existsSync(cfgSrc) && !existsSync(cfgDst)) cpSync(cfgSrc, cfgDst);
     }
+
+    // Stage the voice catalog so the editor's renderer-side Voice/Language
+    // validation and the save-pipeline voice repair run against the real map
+    // (the game throws InvalidOperationException on a voice/language mismatch).
+    const voicesSrc = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Voices');
+    const voicesDst = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'Voices');
+    if (existsSync(voicesSrc)) cpSync(voicesSrc, voicesDst, { recursive: true });
+
     console.log(`[E2E setup] Staged ${staged} files to ${TMP_DIR}`);
   } else {
     // Fall back to committed fixture (ZSJN_leisure_1.acl); copy it to

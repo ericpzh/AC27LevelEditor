@@ -166,6 +166,59 @@ describe('FlightTable — row selection via click vs drag', () => {
   });
 });
 
+describe('FlightTable — Voice dropdown is constrained to the flight Language', () => {
+  const VOICES = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN'];
+  const VOICE_LANGS = {
+    'CN-Captain-Young': 'zh', 'CN-Captain-Middle-Aged': 'zh', 'CN-Captain-Young-EN': 'en',
+  };
+  const VOICE_FLIGHTS = [
+    { CallSign: 'CES1234', ArrivalAirport: 'KJFK', LandingTime: '08:00', AircraftType: 'B738', Stand: 'G1', Voice: 'CN-Captain-Young', Language: 'zh' },
+    { CallSign: 'CES5678', ArrivalAirport: 'KJFK', LandingTime: '09:00', AircraftType: 'A320', Stand: 'G2', Voice: 'CN-Captain-Young-EN', Language: 'zh' },
+  ];
+
+  function setupVoiceStore() {
+    useAppStore.getState().initializeEditor({
+      currentPath: '/test/file.acl',
+      airportIcao: 'KJFK',
+      flights: VOICE_FLIGHTS,
+      before: '', after: '', arrayContent: '', originalBlocks: [],
+      configStartTime: '06:00', configEndTime: '18:00',
+      _saveSec: 36000,
+    });
+    useAppStore.getState().setAuxData(
+      { KJFK: { AircraftType: ['B738', 'A320'], Stand: ['G1', 'G2'], Voice: VOICES, _voiceLanguages: VOICE_LANGS } },
+      { byAirline: { CES: ['1234', '5678'] }, allCallsigns: [], allAirlines: ['CES'] },
+      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+      [],
+    );
+  }
+
+  function openVoiceDropdown(gi) {
+    const cell = getCell('Voice', gi);
+    expect(cell).not.toBeNull();
+    act(() => { cell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
+    act(() => { cell.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const select = cell.querySelector('select.cell-widget');
+    expect(select).not.toBeNull();
+    return [...select.options].map(o => o.value);
+  }
+
+  it('lists only voices whose catalog language matches the flight Language', () => {
+    setupVoiceStore();
+    renderTable({ flights: VOICE_FLIGHTS });
+    expect(openVoiceDropdown(0)).toEqual(['CN-Captain-Young', 'CN-Captain-Middle-Aged']);
+  });
+
+  it('keeps a legacy mismatched current voice selectable (never blank)', () => {
+    setupVoiceStore();
+    renderTable({ flights: VOICE_FLIGHTS });
+    const values = openVoiceDropdown(1);
+    expect(values).toContain('CN-Captain-Young-EN');
+    expect(values).toContain('CN-Captain-Young');
+    expect(values).toContain('CN-Captain-Middle-Aged');
+  });
+});
+
 describe('FlightTable — aircraft type dropdown is airline-independent', () => {
   it('lists every type from vals.AircraftType, ignoring _compat.airlineToAircraft', () => {
     useAppStore.getState().initializeEditor({

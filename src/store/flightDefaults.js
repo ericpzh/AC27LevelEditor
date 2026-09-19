@@ -25,6 +25,33 @@ export function defaultLanguageForAirport(icao) {
 }
 
 /**
+ * Pick a Voice from the airport pool whose catalog language matches `language`.
+ * The game's VoiceCatalog throws at level load when a flight's captain voice
+ * language differs from the flight's Language, so a new flight must never pair
+ * (e.g.) a `...-EN` voice with a `zh` flight.
+ *
+ * Falls back gracefully when the catalog map is missing/incomplete:
+ *   1. exact catalog-language match
+ *   2. voices unknown to the catalog (best effort — treated as neutral)
+ *   3. any pool voice
+ * @param {object} values - airportValues[currentAirport]
+ * @param {string} language - the flight's Language
+ * @returns {string} a voice name, or '' when the pool is empty
+ */
+export function pickVoiceForLanguage(values, language) {
+  const pool = (values && values.Voice) || [];
+  if (pool.length === 0) return '';
+  const langOf = (values && values._voiceLanguages) || null;
+  if (langOf && language) {
+    const matching = pool.filter((v) => langOf[v] === language);
+    if (matching.length > 0) return randomPick(matching);
+    const unknown = pool.filter((v) => !langOf[v]);
+    if (unknown.length > 0) return randomPick(unknown);
+  }
+  return randomPick(pool) || '';
+}
+
+/**
  * Compute a default base time (in minutes from midnight) for new flights.
  * Uses configEndTime minus DEFAULT_TIME_OFFSET_MIN, clamped to >= 0,
  * falling back to FALLBACK_BASE_MINUTES (06:00).
@@ -206,10 +233,11 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
     airway = '';
   }
 
+  const language = defaultLanguageForAirport(currentAirport);
   const flight = {
     ...makeEmptyFlight(),
     CallSign: airlineCode + flightNum,
-    Language: defaultLanguageForAirport(currentAirport),
+    Language: language,
     AircraftType: aircraftType,
     AirlineName: airlineCode,
     isDeparture: type === 'departure',
@@ -217,7 +245,7 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
     Runway: runway,
     Airway: airway,
     Registration: registration,
-    Voice: randomPick(values.Voice) || '',
+    Voice: pickVoiceForLanguage(values, language),
   };
 
   if (type === 'arrival') {

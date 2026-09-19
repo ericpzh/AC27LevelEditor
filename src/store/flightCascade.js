@@ -6,7 +6,9 @@
  *   2. AirlineCode change → cascade Registration to first valid (aircraft type
  *      is independent of the airline and never changes)
  *   3. Runway change → cascade Airway to first valid STAR
- *   4. Registration edit → clear internal _Registration bookkeeping field
+ *   4. Language change → cascade Voice to the first option valid for the new
+ *      language (the game's VoiceCatalog rejects a voice/language mismatch)
+ *   5. Registration edit → clear internal _Registration bookkeeping field
  *
  * All functions are pure: they take inputs and return computed updates.
  * The caller (appStore.updateFlight) merges them into the flight object.
@@ -89,6 +91,29 @@ export function cascadeRunwayChange(newRunway, flight, airportValues) {
   }
   // No STAR is valid for this runway — clear the stale value
   return { Airway: '' };
+}
+
+/**
+ * When Language changes, cascade Voice to the FIRST option the FlightTable
+ * Voice dropdown would offer for the new language (the dropdown filters to
+ * voices whose catalog language matches; catalog-unknown voices are the
+ * fallback, then the full pool). Always returns the first option so the cell
+ * never keeps a stale voice from the previous language.
+ *
+ * Returns {} when there is no catalog map or no voice pool (nothing to pick).
+ *
+ * @param {string} newLanguage - the new Language value
+ * @param {object} airportValues - airportValues[currentAirport]
+ * @returns {{ Voice: string } | {}}
+ */
+export function cascadeLanguageChange(newLanguage, airportValues) {
+  const langOf = (airportValues || {})._voiceLanguages || {};
+  const pool = (airportValues || {}).Voice || [];
+  if (!newLanguage || pool.length === 0 || Object.keys(langOf).length === 0) return {};
+  const matching = pool.filter((v) => langOf[v] === newLanguage);
+  const unknown = pool.filter((v) => !langOf[v]);
+  const next = matching.length > 0 ? matching : (unknown.length > 0 ? unknown : pool);
+  return next.length > 0 ? { Voice: next[0] } : {};
 }
 
 /**

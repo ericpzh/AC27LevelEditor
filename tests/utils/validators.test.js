@@ -281,6 +281,32 @@ describe('runTripleValidation (v4 semantics)', () => {
     ];
     expect(run(flights)).toEqual([]);
   });
+
+  it('flags a voice whose catalog language differs from the flight Language', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'zh' },
+    ];
+    const vals = { ZSJN: { Stand: [], _voiceLanguages: { 'CN-Captain-Middle-Aged-EN': 'en', 'CN-Captain-Middle-Aged': 'zh' } } };
+    const issues = run(flights, vals);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CES1234');
+    expect(issues[0]).toContain('CN-Captain-Middle-Aged-EN');
+  });
+
+  it('allows a voice whose catalog language matches the flight Language', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'en' },
+    ];
+    const vals = { ZSJN: { _voiceLanguages: { 'CN-Captain-Middle-Aged-EN': 'en' } } };
+    expect(run(flights, vals)).toEqual([]);
+  });
+
+  it('skips the voice/language check when no catalog map is available', () => {
+    const flights = [
+      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'zh' },
+    ];
+    expect(run(flights, { ZSJN: {} })).toEqual([]);
+  });
 });
 
 describe('runTripleValidation time range (end + 30min grace)', () => {

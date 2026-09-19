@@ -7,8 +7,8 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (2018) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
-npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2018 tests, 105 files, ~39s)
+npm run test:all      # Full suite: Vitest (2047) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
+npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2047 tests, 106 files, ~39s)
 npm run test:e2e      # 18 Playwright E2E tests (requires npm run build first, ~8 min; 16 pass, 2 skipped — both fuzz specs gated on FUZZ_RUN)
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
@@ -29,20 +29,35 @@ node tests/integration/test_gatcarc_roundtrip.js
 node --require ./tests/integration/preload.cjs tests/integration/test_type_number_integrity.js
 ```
 
-**Last full verification (2026-09-18):** Vitest 2018/2018 (105 files); integration scripts all green
+**Last full verification (2026-09-18):** Vitest 2047/2047 (106 files); integration scripts all green
 (api-server 133, api-e2e-examples 44, gatcarc round-trip 120, type-number 6, save-integrity 27/27,
-jetway-rebuild 27/27, v4 runway-pairs 5, UDP listener 21); Playwright E2E 16 passed + 2 skipped
-(the two `FUZZ_RUN`-gated specs); flight fuzz **4/4 `leisure_1` levels passed without `--replace`**
-(ZSJN/KJFK/KDCA/ZGSZ) and **4/4 `leisure_2` levels passed with `--replace`** (results propagated into
-the real game install).
+jetway-rebuild 27/27, v4 runway-pairs 5, UDP listener 21, tokenizer 18, acl-json 25, acl-document 13,
+sid-goaround 19, taxiway 10, save-roundtrip-diff 24, demo-filter 8, real-KJFK 8); Playwright E2E 16
+passed + 2 skipped (the two `FUZZ_RUN`-gated specs); flight fuzz **4/4 `leisure_1` levels passed
+without `--replace`** (ZSJN/KJFK/KDCA/ZGSZ) and **4/4 `leisure_2` levels passed with `--replace`**
+(results propagated into the real game install).
+
+**Voice/language invariant fix (2026-09-18):** the fuzz surfaced a real game-load error at ZGSZ —
+the game's `VoiceCatalog` throws `InvalidOperationException` when an aircraft's captain voice
+declares a language other than the flight's `Language`. The `ZGSZ_leisure_2` `--replace` output had
+23/40 mismatched flights (e.g. `CN-Captain-Middle-Aged-EN` on a `zh` flight). Fixed by exposing
+`voice_catalog.json` to the renderer as `airportValues._voiceLanguages`, picking a language-matched
+voice for new flights (`pickVoiceForLanguage`), limiting the FlightTable Voice dropdown to the row's
+`Language` (the current value stays selectable so a legacy mismatch never renders blank) and cascading
+Voice to that dropdown's first valid option when Language changes (`cascadeLanguageChange`), flagging
+mismatches in `runTripleValidation` (`val_voice_language_mismatch`), auto-repairing them in the save pipeline's
+`_normalizeFlightsForGameCompat`, and adding a `voice-language-mismatch` game-compat check (so the
+fuzz gate traps regressions). Covered by `tests/integration/voice_language_normalization.test.js` +
+`tests/store/flightDefaults.test.js` + `tests/utils/validators.test.js`. Re-fuzzing `ZGSZ_leisure_2`
+with `--replace` produced clean schedules (65 then 80 flights) with 0 mismatches.
 
 ---
 
-## Layer 1 — Vitest Component Tests (2018 tests, 105 files)
+## Layer 1 — Vitest Component Tests (2047 tests, 106 files)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
-### `npm test` — 2018 pass (105 test files; includes the Ground Painter scenery suite + airway roundtrip + the full Livery page suite)
+### `npm test` — 2047 pass (106 test files; includes the Ground Painter scenery suite + airway roundtrip + the full Livery page suite)
 
 Coverage (`npx vitest run --coverage`, provider `@vitest/coverage-v8`, config in `vitest.config.js`) is
 scoped to the core logic trees — `src/acl/**` + `src/components/EditorScreen/GroundPainter/**` — with
@@ -95,6 +110,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 | `integration/new_departure_save.test.js` | 3 | **New-departure save regression** — clones a fixture departure/arrival with `isDeparture` and `AirlineName` stripped, appends them to a temp copy of the v4 fixture, saves via the real 9-arg `generateFullAcl` (real `buildApproachCache`), asserts the departure writes `InitialDeparture` (arrival leg `null`) with `"AirlineName": "CSC"` and the arrival writes `InitialArrival` with `"AirlineName": "CCA"`, then reloads and checks the `isDeparture` flags + codes roundtrip. |
 | `integration/jetway_id_collision.test.js` | 11 | **Duplicate-$id collision regression** (from fails.acl: jetway:09 `id(15) = 190 + 15 = 205` collided with jetway:12 `id(3) = 202 + 3 = 205` — a first-wins `$iref` bind made the game skip past an array boundary). Rebuilt jetway sub-objects now allocate from the segment's **dynamic allocator** (≥1000, past every static/flight-plan/canonical id) with old→new `IdMapper` remap (collided `$iref:205` resolves to the Aircraft id, last registration wins). **DockingDoorIndex `$type` (4):** resolved per-file scope (R3.ReactiveProperty<Int32> at its scope id, never hardcoded 6), fresh id above segment max when undeclared, canonical id-6 emission byte-identical on ZSJN-Morning-style scopes, one shared fresh-id counter per resolver. **Kept-id remap exclusion (3):** `_collectKeptRuntimeEntityIds` picks up `$id`s from kept (non-rebuilt) jetway/radio-channel/singleton/other entries and skips rebuilt flight-plan/aircraft/animator; the remap step does not rewrite `$iref` to a kept id but still remaps a rebuilt id; `_collectAllIdsInText` is string-aware (ignores `"$id"` inside a string value). |
 | `integration/save_gamecompat.test.js` | 8 | **Game-compat save invariants** — saves via the real pipeline on a copy of the `ZSJN_leisure_1.acl` fixture and asserts the fuzz-discovered game-load invariants from `gamecompat-utils.cjs`: control (unmodified level stays clean), dup-reg ARR+DEP pair (unique plan keys + runtime entity for the docked aircraft via `_normalizeFlightsForGameCompat` rename), arrival at a stand whose docked dep takes off after scenario end (stand not double-booked — arrival moved), two arrivals on one stand within the 20-min gap (stands separated), **STAR-less arrival: `Airway` filled from the runway map**, **arrival on a runway with no STAR data: moved to an arrival-capable runway with a STAR**, every frame aircraft resolves its plan leg with a callsign. |
+| `integration/voice_language_normalization.test.js` | 11 | **Voice/language invariant regression** — the game's `VoiceCatalog` throws `InvalidOperationException` when a captain voice's language differs from the flight's `Language`. `_normalizeFlightsForGameCompat` repairs an `-EN` voice on a `zh` flight (and vice versa), a voice unknown to the catalog, never picks an `atc`-role voice, prefers a same-language voice already used in the level, leaves a consistent voice untouched, no-ops without a catalog, and repairs every mismatch in a mixed batch (8). `runChecks` reports `voice-language-mismatch` when the catalog is supplied, stays silent when voice/language agree, and skips the check with no catalog (3). |
 | `integration/id_renumber.test.js` | 6 | **Strictly-ascending `$id` regression** — pins `id_renumber.js`: the ZSJN_peakdeparture `jetway:02` DockedAircraft crash pattern (wrapper $id 1123 declared before inline Aircraft 1120/shared String[] 1117) renumbers to ascending order; `$blobdoc` contents renumber as fresh documents with cross-scope `$iref` remap (external ids handled); non-id tokens byte-preserved; idempotent (second pass changes nothing); propagates through the GATCARC4 binary encode/decode pipeline via `writeAcl`; a dangling/forward `$iref` (target not yet declared) is preserved verbatim + its value reserved (no longer throws — the Ground Painter path requires saving files with deleted targets; the game reads a dangling `$iref` as null). |
 | `integration/animator_lean_scope.test.js` | 3 | **Lean checkpoint-frame animator fix** — `_rebuildFlightRuntimeEntities` on a 16-type `CheckpointFrame` scope that omits `ContextCross.Models.AircraftAnimator` does NOT `[TYPE-ASSERT]`; rebuilt aircraft-animator entries carry a self-declaring full-form `$type` with one consistent id allocated above the scope's max; the default strict resolver still asserts on genuinely-unknown names and never fallback-mints `STRICT_JETWAY_TYPES`. |
 | `integration/zeroflight_save.test.js` | 3 | **0-flight ACL save/load/re-save** — saving with an empty flight array clears all flight-plan/aircraft/animator runtime entities while preserving jetways/radio channels and re-encodes (no throw); `loadFlights` reloads it as an empty schedule (previously threw "No flight data found in ACL"); re-saving the flight-less file succeeds (the `DateTime`/`FlightPlanDepartureLeg`/`FlightPlanStaticItem` blobdoc type resolves are gated behind `hasFlights`). |
@@ -180,7 +196,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 
 ### Known Vitest failures (none)
 
-All 2018 Vitest tests pass (105 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
+All 2047 Vitest tests pass (106 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document). The dispatch + assertion now also run inside `waitFor`, because the `Escape` listener is attached by an effect that depends on `error` and under full parallel load the passive effect could land a tick after the error text rendered — the old single synchronous dispatch was a flake that only failed in the complete suite (verified stable across repeated full runs).
 
