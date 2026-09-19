@@ -666,6 +666,16 @@
 }
 .lp-rail .lp-tool { width: 34px; height: 34px; }
 
+/* Select rail icon: mouse / magic wand, split by a slash. */
+.lp-select-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1;
+}
+.lp-select-icon-sep { font-size: 11px; opacity: 0.85; }
+
 /* Standalone foreground-colour well at the foot of the tool rail. */
 .lp-rail-color {
   position: relative;

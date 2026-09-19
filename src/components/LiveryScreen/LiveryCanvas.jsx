@@ -181,16 +181,26 @@ export { drawBase };
 
 const TOOLS = ['select', 'brush', 'eraser', 'eyedropper', 'fill', 'line', 'rect', 'ellipse', 'text'];
 
+// The Select rail icon advertises both top-level modes it owns — object select
+// (mouse) and the magic wand — separated by a slash.
+const SelectToolIcon = ({ size = 18 }) => (
+  <span className="lp-select-icon" aria-hidden="true">
+    <FaArrowPointer size={Math.max(8, size - 7)} />
+    <span className="lp-select-icon-sep">/</span>
+    <BsMagic size={Math.max(8, size - 7)} />
+  </span>
+);
+
 // Photoshop-style left-rail tool icons + advertised keyboard shortcuts.
 const TOOL_META = {
-  select: { Icon: FaArrowPointer, key: 'A' },
+  select: { Icon: SelectToolIcon, key: 'A' },
   brush: { Icon: IoBrushOutline, key: 'B' },
   eraser: { Icon: FaEraser, key: 'E' },
   eyedropper: { Icon: IoEyedropOutline },
   fill: { Icon: IoColorFillOutline, key: 'G' },
-  line: { Icon: IoRemoveOutline, key: 'L' },
+  line: { Icon: IoRemoveOutline, key: 'U' },
   rect: { Icon: IoSquareOutline, key: 'R' },
-  ellipse: { Icon: IoEllipseOutline, key: 'O' },
+  ellipse: { Icon: IoEllipseOutline, key: 'M' },
   text: { Icon: IoTextOutline, key: 'T' },
 };
 
@@ -327,6 +337,15 @@ export function scaleFrame(k, frame, ky) {
   const ey = ky == null ? k : ky;
   return { x0: frame.x0 * k, y0: frame.y0 * ey, x1: frame.x1 * k, y1: frame.y1 * ey };
 }
+// Scale selection-hole polygons (local frame) about the object origin, the same
+// way `scaleErase` scales eraser strokes, so a rectangular-selection hole keeps
+// its shape when the object is resized. Pure — exported for tests.
+export function scaleErasePolys(k, polys, ky) {
+  if (!polys) return undefined;
+  const kx = k;
+  const ey = ky == null ? k : ky;
+  return polys.map(loop => (loop || []).map(q => ({ x: q.x * kx, y: q.y * ey })));
+}
 
 // Translation applied BEFORE the mirror scale, so a flip pivots on the CENTRE
 // OF THE VISIBLE BOUNDARY instead of the object origin. For a whole object the
@@ -364,11 +383,18 @@ function eraseCacheSig(o) {
   if (o.pts && o.pts.length) {
     for (let i = 0; i < o.pts.length; i++) pts += (i ? ';' : '') + o.pts[i].x + ',' + o.pts[i].y;
   }
+  let polys = '';
+  if (o.erasePolys && o.erasePolys.length) {
+    for (const loop of o.erasePolys) {
+      polys += '|';
+      for (const q of loop || []) polys += q.x + ',' + q.y + ';';
+    }
+  }
   return [
     o.kind, o.x, o.y, o.rot, o.flipX ? 1 : 0, o.flipY ? 1 : 0, o.w, o.h,
     o.color || '', o.width || '', o.opacity == null ? 1 : o.opacity,
     o.filled ? 1 : 0, o.size || '', o.font || '', o.bold ? 1 : 0, o.italic ? 1 : 0,
-    o.text || '', imageId(o.img), pts,
+    o.text || '', imageId(o.img), pts, polys,
   ].join('|');
 }
 
@@ -639,10 +665,20 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ? defaultParts
     : [{ partName: panelNames[0], imageDataUrl: defaultLiveryDataUrl || null }];
   const { bind, TooltipPortal } = useTooltip();
+  // Layer stack (bottom → top): base aircraft image (locked) → live movables
+  // (`objectCanvasRef`) → raster paint/brushes (`canvasRef`, `ctxRef`) → chrome
+  // (`overlayRef`: selection outline, handles, previews, interaction surface).
+  // Paint therefore always renders above movables while they stay live.
+  const baseCanvasRef = useRef(null);
+  const baseCtxRef = useRef(null);
+  const objectCanvasRef = useRef(null);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const wrapRef = useRef(null);
   const ctxRef = useRef(null);
+  // Last captured base-image pixels, shared by undo snapshots so a snapshot
+  // never copies the (static) base per step.
+  const basePixelsRef = useRef(null);
   const undoRef = useRef(createUndoStack());
   const spaceRef = useRef(false);
   const panRef = useRef(null);
@@ -687,10 +723,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // The mask is a working selection only — never in undo snapshots, the save
   // payload or the export; paints are clipped through it at commit time.
   const maskCanvasRef = useRef(null);
+  // Immutable copy of the current selection mask, captured when a movable is
+  // created under a selection and stored on the object (`clipMask`) so the shape
+  // is stamped into that movable permanently — Ctrl+D / a later selection never
+  // un-clips or re-clips it. Invalidated whenever the live mask changes.
+  const maskCopyRef = useRef(null);
   const maskOutlineRef = useRef([]);
   const maskBorderRef = useRef([]);
   const lassoRef = useRef(null);
   const scratchRef = useRef(null);
+  const wandCanvasRef = useRef(null);
   // 1×1 scratch used by the eyedropper to composite the visible pixel (base
   // raster + live objects) so movables like stickers can be picked.
   const pickCanvasRef = useRef(null);
@@ -828,7 +870,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const setLineMode = (v) => { lineModeRef.current = v; setLineModeState(v); };
   const setTextOpts = (v) => { textOptsRef.current = v; setTextOptsState(v); };
   // Select-mode mirrors (refs so canvas handlers never read stale closures).
-  const setSelMode = (v) => { selModeRef.current = v; setSelModeState(v); };
+  // Leaving the single-select (object) mode drops the selected movable; the
+  // pen/wand mask selection is deliberately kept when leaving either of them.
+  const setSelMode = (v) => {
+    if (v !== 'object' && selModeRef.current === 'object' && selIdRef.current != null) {
+      syncObjects(objectsRef.current, null);
+    }
+    selModeRef.current = v;
+    setSelModeState(v);
+    scheduleOverlay();
+  };
   const setMaskOp = (v) => { maskOpRef.current = v; setMaskOpState(v); };
   const setHasMask = (v) => { hasMaskRef.current = v; setHasMaskState(v); };
   // Object layer helpers — refs mirror the state so canvas handlers read the
@@ -842,7 +893,14 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const getSelected = () => objectsRef.current.find(o => o.id === selIdRef.current) || null;
   const targetObject = () => getSelected() || objectsRef.current[objectsRef.current.length - 1] || null;
   const addObject = (o) => {
-    const obj = { ...o, id: nextIdRef.current++ };
+    // A movable ADDED while a selection exists is clipped to that selection for
+    // good: the mask is copied onto the object (`clipMask`) at creation, so
+    // Ctrl+D / a later selection never un-clips or re-clips it. A movable placed
+    // before any selection stays whole.
+    const obj = {
+      ...o, id: nextIdRef.current++,
+      clipMask: hasMaskRef.current ? getMaskCopy() : null,
+    };
     syncObjects([...objectsRef.current, obj], obj.id);
     return obj;
   };
@@ -951,15 +1009,28 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
   // ── Base init (mount only — parent remounts via key on base change) ─
   useEffect(() => {
-    const canvas = canvasRef.current;
+    const canvas = canvasRef.current; // paint layer
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    ctxRef.current = ctx;
+    ctxRef.current = canvas.getContext('2d');
+    const baseCanvas = baseCanvasRef.current;
+    const baseCtx = baseCanvas && baseCanvas.getContext('2d');
+    baseCtxRef.current = baseCtx;
+    const onBaseDone = () => {
+      try {
+        if (baseCtx) basePixelsRef.current = baseCtx.getImageData(0, 0, W, H);
+      } catch (_) { /* stub context */ }
+      scheduleOverlay();
+    };
     undoRef.current = createUndoStack();
     setDirty(false);
     syncObjects([], null);
     setTextAnchor(null);
-    drawBase(ctx, layout, initialPartsArr, scheduleOverlay);
+    // Paint layer starts transparent; the base image lives on its own layer.
+    if (ctxRef.current) {
+      ctxRef.current.setTransform(1, 0, 0, 1, 0, 0);
+      ctxRef.current.clearRect(0, 0, W, H);
+    }
+    if (baseCtx) drawBase(baseCtx, layout, initialPartsArr, onBaseDone);
     scheduleOverlay();
     // Mount-only: the parent remounts (key) whenever the base changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1021,16 +1092,29 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     el.scrollTop = a.cy * a.k - a.vy;
   }, [zoom, fitScale]);
 
-  // A snapshot captures the base raster *and* the live-object layer, so undo
-  // restores (or removes) objects added since the previous snapshot.
+  // A snapshot captures the PAINT raster *and* the live-object layer, so undo
+  // restores (or removes) objects added since the previous snapshot. The base
+  // image is stored by shared reference (it only changes on Clear/import), so a
+  // snapshot never copies the static base.
   const snapshotState = () => {
     const ctx = ctxRef.current;
     if (!ctx) return null;
     return {
       img: ctx.getImageData(0, 0, W, H),
+      base: basePixelsRef.current,
       objects: objectsRef.current,
       selId: selIdRef.current,
     };
+  };
+  // Restore the base layer only when the snapshot's base differs from the live
+  // one (Clear/import), avoiding a full-canvas putImageData on every undo.
+  const restoreBase = (base) => {
+    if (!base || base === basePixelsRef.current) return;
+    const baseCtx = baseCtxRef.current;
+    if (baseCtx) {
+      try { baseCtx.putImageData(base, 0, 0); } catch (_) {}
+    }
+    basePixelsRef.current = base;
   };
 
   const pushSnapshot = () => {
@@ -1059,6 +1143,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const prev = undoStep(undoRef.current, snapshotState());
     if (prev) {
       ctx.putImageData(prev.img, 0, 0);
+      restoreBase(prev.base);
       syncObjects(prev.objects || [], prev.selId == null ? null : prev.selId);
       setDirty(true);
       scheduleOverlay();
@@ -1072,6 +1157,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const next = redoStep(undoRef.current, snapshotState());
     if (next) {
       ctx.putImageData(next.img, 0, 0);
+      restoreBase(next.base);
       syncObjects(next.objects || [], next.selId == null ? null : next.selId);
       setDirty(true);
       scheduleOverlay();
@@ -1087,6 +1173,22 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
     return maskCanvasRef.current.getContext('2d');
   };
+  // Lazily copy the live mask once per mask version; every movable created
+  // under that version shares the same immutable clip canvas.
+  const getMaskCopy = () => {
+    if (maskCopyRef.current) return maskCopyRef.current;
+    const mask = maskCanvasRef.current;
+    if (!mask) return null;
+    try {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const cctx = c.getContext('2d');
+      if (!cctx) return null;
+      cctx.drawImage(mask, 0, 0);
+      maskCopyRef.current = c;
+      return c;
+    } catch (_) { return null; }
+  };
   const getScratch = () => {
     if (!scratchRef.current) {
       const c = document.createElement('canvas');
@@ -1094,6 +1196,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       scratchRef.current = c;
     }
     return scratchRef.current;
+  };
+  // Dedicated buffer for the wand's visible-colour sample, so it is independent
+  // of the shared scratch (which `paintObjectMasked` also uses internally).
+  const getWandCanvas = () => {
+    if (!wandCanvasRef.current) {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      wandCanvasRef.current = c;
+    }
+    return wandCanvasRef.current;
   };
   const getPickCanvas = () => {
     if (!pickCanvasRef.current) {
@@ -1116,6 +1228,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
     maskOutlineRef.current = [];
     maskBorderRef.current = [];
+    maskCopyRef.current = null;
     setHasMask(false);
     scheduleOverlay();
   };
@@ -1153,6 +1266,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const { clear, composite } = maskPaintOp(maskOpRef.current);
     mctx.save();
     if (clear) { mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.clearRect(0, 0, W, H); }
+    // Multi-panel: a lasso is confined to the ACTIVE panel — it can never bleed
+    // across the gutter into the neighbouring panel.
+    clipActivePanel(mctx);
     mctx.globalCompositeOperation = composite;
     mctx.globalAlpha = 1;
     mctx.fillStyle = '#ffffff';
@@ -1165,6 +1281,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const outline = { kind: 'pen', pts: pts.map(p => ({ x: p.x, y: p.y })), bounds: lassoBounds(pts) };
     if (clear) maskOutlineRef.current = [outline];
     else if (maskOpRef.current !== 'erase') maskOutlineRef.current = [...(maskOutlineRef.current || []), outline];
+    maskCopyRef.current = null; // mask changed: next movable captures a fresh copy
     setHasMask(true);
     rebuildUnionBorder();
     scheduleOverlay();
@@ -1177,21 +1294,48 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (!b || pts.length < 3 || (b.maxX - b.minX < 2 && b.maxY - b.minY < 2)) { scheduleOverlay(); return; }
     applyLassoToMask(pts);
   };
-  // Magic wand: flood the contiguous base region under `p` (fill tolerance)
-  // into the mask under the active combine op. The wand samples the base
-  // raster (live objects are clipped separately at paint time).
+  // Magic wand: flood the contiguous VISIBLE-colour region under `p` (fill
+  // tolerance) into the mask under the active combine op. It samples exactly
+  // what the screen shows — invisible geometry never contributes: selection-
+  // stamped movables are clipped to their `clipMask`, eraser holes are punched,
+  // and the paint layer paints over. Built in a dedicated buffer; the region
+  // spans then go through the shared scratch into the mask.
   const applyWandAt = (p) => {
-    const ctx = ctxRef.current;
     const mctx = getMaskCtx();
-    if (!ctx || !mctx) return;
+    if (!mctx) return;
     const x = Math.max(0, Math.min(W - 1, p.x | 0));
     const y = Math.max(0, Math.min(H - 1, p.y | 0));
-    const region = wandRegion(ctx.getImageData(0, 0, W, H), x, y, fillTolRef.current);
+    // Sample ONLY what is visible: base image → movables in their VISIBLE form
+    // (a selection-stamped `clipMask` clips them exactly like the screen) → the
+    // paint layer on top. Built in its own buffer because `paintObjectForDisplay`
+    // internally uses the shared scratch.
+    const scene = getWandCanvas();
+    const sceneCtx = scene && scene.getContext('2d');
+    if (!sceneCtx) return;
+    sceneCtx.save();
+    sceneCtx.setTransform(1, 0, 0, 1, 0, 0);
+    sceneCtx.globalCompositeOperation = 'source-over';
+    sceneCtx.globalAlpha = 1;
+    sceneCtx.clearRect(0, 0, W, H);
+    if (baseCanvasRef.current) sceneCtx.drawImage(baseCanvasRef.current, 0, 0);
+    for (const o of objectsRef.current) {
+      if (hasLiveVisual(o)) paintObjectForDisplay(sceneCtx, o);
+    }
+    if (canvasRef.current) sceneCtx.drawImage(canvasRef.current, 0, 0);
+    // Multi-panel: the flood is confined to the ACTIVE panel, so it can never
+    // leak across the gutter into the neighbouring panel.
+    const panelRegion = panelCount > 1
+      ? { x0: layout.x(active), y0: 0, x1: layout.x(active) + TEXTURE - 1, y1: H - 1 }
+      : null;
+    let region = null;
+    try { region = wandRegion(sceneCtx.getImageData(0, 0, W, H), x, y, fillTolRef.current, panelRegion); }
+    catch (_) { region = null; }
+    sceneCtx.restore();
     if (!region || region.count === 0) return;
+    // Region spans as white runs in the shared scratch, composited into the mask.
     const sc = getScratch();
     const sctx = sc.getContext('2d');
     if (!sctx) return;
-    // Region spans as white runs, then composited into the mask in one shot.
     sctx.save();
     sctx.setTransform(1, 0, 0, 1, 0, 0);
     sctx.globalCompositeOperation = 'source-over';
@@ -1203,6 +1347,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const { clear, composite } = maskPaintOp(maskOpRef.current);
     mctx.save();
     if (clear) { mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.clearRect(0, 0, W, H); }
+    // Confine the region to the active panel (belt-and-braces with the flood
+    // bounds above).
+    clipActivePanel(mctx);
     mctx.globalCompositeOperation = composite;
     mctx.globalAlpha = 1;
     mctx.drawImage(sc, 0, 0);
@@ -1215,6 +1362,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const outline = { kind: 'wand', bounds: region.bounds };
     if (clear) maskOutlineRef.current = [outline];
     else if (maskOpRef.current !== 'erase') maskOutlineRef.current = [...(maskOutlineRef.current || []), outline];
+    maskCopyRef.current = null; // mask changed: next movable captures a fresh copy
     setHasMask(true);
     rebuildUnionBorder();
     scheduleOverlay();
@@ -1233,10 +1381,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const m = mctx.getImageData(0, 0, W, H);
     if (constrainImageToMask(cur, before, m)) ctx.putImageData(cur, 0, 0);
   };
-  // Paint one live object through the mask onto `target` (overlay + export).
-  const paintObjectMasked = (target, o) => {
-    const mask = maskCanvasRef.current;
-    if (!mask) { paintObjectWithErase(target, o); return; }
+  // Paint one live object through `mask` onto `target` (objects layer + export).
+  // Used only for movables that carry a stamped `clipMask`; an object placed
+  // before any selection has none and is never clipped.
+  const paintObjectMasked = (target, o, mask) => {
+    const m = mask || maskCanvasRef.current;
+    if (!m) { paintObjectWithErase(target, o); return; }
     const sc = getScratch();
     const sctx = sc.getContext('2d');
     if (!sctx) { paintObjectWithErase(target, o); return; }
@@ -1247,9 +1397,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     sctx.clearRect(0, 0, W, H);
     paintObjectWithErase(sctx, o);
     sctx.globalCompositeOperation = 'destination-in';
-    sctx.drawImage(mask, 0, 0);
+    sctx.drawImage(m, 0, 0);
     sctx.restore();
     target.drawImage(sc, 0, 0);
+  };
+  // Display/export path for a movable: clip it to its own stamped selection
+  // shape (`clipMask`, captured at creation) so it stays partial forever;
+  // movables without one show whole.
+  const paintObjectForDisplay = (target, o) => {
+    if (o && o.clipMask) paintObjectMasked(target, o, o.clipMask);
+    else paintObjectWithErase(target, o);
   };
   // Paint one live object with its eraser holes punched. The object is rendered
   // into a per-object scratch (content + holes, sized to the object frame — not
@@ -1262,12 +1419,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // is untouched — an erased object keeps its nodes and moves as before.
   const ERASE_SCRATCH_STEP = 256;
   const paintObjectWithErase = (target, o) => {
-    if (!o || !o.erase || o.erase.length === 0) { paintLiveObject(target, o); return; }
+    if (!o || ((!o.erase || o.erase.length === 0) && (!o.erasePolys || o.erasePolys.length === 0))) {
+      paintLiveObject(target, o);
+      return;
+    }
     // Tight local rect: the object frame padded by the widest erase brush. The
     // hit test only records points inside frame + brush radius, so this covers
     // every point without folding the whole trail into the bounds each frame.
+    const erase = o.erase || [];
     let maxESize = 0;
-    for (const stroke of o.erase) {
+    for (const stroke of erase) {
       if (stroke && stroke.size > maxESize) maxESize = stroke.size;
     }
     const pad = Math.max(maxESize / 2, (o.width || 0) / 2) + 2;
@@ -1285,10 +1446,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // transform edit, undo restoring fewer points) forces a full rebuild.
     let rebuild = !entry || entry.sig !== eraseCacheSig(o) || resized;
     if (!rebuild) {
-      if (o.erase.length < entry.applied.length) rebuild = true;
+      if (erase.length < entry.applied.length) rebuild = true;
       else {
         for (let i = 0; i < entry.applied.length; i++) {
-          const pts = (o.erase[i] && o.erase[i].pts) || [];
+          const pts = (erase[i] && erase[i].pts) || [];
           if (pts.length < entry.applied[i]) { rebuild = true; break; }
         }
       }
@@ -1318,7 +1479,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       sctx.restore();
       entry = {
         canvas: c, ctx: sctx, lx0, ly0, sw, sh,
-        sig: eraseCacheSig(o), applied: new Array(o.erase.length).fill(0),
+        sig: eraseCacheSig(o), applied: new Array(erase.length).fill(0),
       };
       cache.set(o.id, entry);
     }
@@ -1326,7 +1487,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // round caps/joins unions to the same shape as one full-path stroke.
     const sctx = entry.ctx;
     const applied = entry.applied;
-    while (applied.length < o.erase.length) applied.push(0);
+    while (applied.length < erase.length) applied.push(0);
     sctx.save();
     sctx.setTransform(1, 0, 0, 1, 0, 0);
     sctx.translate(-entry.lx0, -entry.ly0);
@@ -1335,8 +1496,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     sctx.lineCap = 'round';
     sctx.lineJoin = 'round';
     sctx.strokeStyle = '#000';
-    for (let i = 0; i < o.erase.length; i++) {
-      const stroke = o.erase[i];
+    for (let i = 0; i < erase.length; i++) {
+      const stroke = erase[i];
       const pts = (stroke && stroke.pts) || [];
       const from = applied[i] || 0;
       if (pts.length <= from) continue;
@@ -1353,6 +1514,20 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       sctx.stroke();
       applied[i] = pts.length;
+    }
+    // Selection-hole polygons (Delete-on-selection): punch every loop as one
+    // even-odd path so a ring-shaped selection leaves its middle intact. Idempotent,
+    // so it is safe to re-punch on each overlay frame.
+    if (o.erasePolys && o.erasePolys.length) {
+      sctx.fillStyle = '#000';
+      sctx.beginPath();
+      for (const loop of o.erasePolys) {
+        if (!loop || loop.length < 3) continue;
+        sctx.moveTo(loop[0].x, loop[0].y);
+        for (let j = 1; j < loop.length; j++) sctx.lineTo(loop[j].x, loop[j].y);
+        sctx.closePath();
+      }
+      sctx.fill('evenodd');
     }
     sctx.restore();
     target.save();
@@ -1408,6 +1583,17 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         for (let j = 1; j < pts.length; j++) sctx.lineTo(pts[j].x, pts[j].y);
         sctx.stroke();
       }
+      if (o.erasePolys && o.erasePolys.length) {
+        sctx.fillStyle = '#000';
+        sctx.beginPath();
+        for (const loop of o.erasePolys) {
+          if (!loop || loop.length < 3) continue;
+          sctx.moveTo(loop[0].x, loop[0].y);
+          for (let j = 1; j < loop.length; j++) sctx.lineTo(loop[j].x, loop[j].y);
+          sctx.closePath();
+        }
+        sctx.fill('evenodd');
+      }
     }
     sctx.restore();
     let data;
@@ -1444,7 +1630,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // rasterizer — is detected and ignored rather than reported as "nothing left"
   // (which would delete every object on first touch).
   const measureErasedObject = (o) => {
-    if (!o || !o.erase || o.erase.length === 0) return null;
+    const hasHoles = o && ((o.erase && o.erase.length) || (o.erasePolys && o.erasePolys.length));
+    if (!hasHoles) return null;
     const clean = measureObjectPixels(o, false);
     if (!clean || clean.empty) return null;
     const left = measureObjectPixels(o, true);
@@ -1593,25 +1780,120 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     setDirty(true);
   };
 
+  // Delete-with-a-selection: the marquee equivalent of the eraser tool. Fills
+  // the selected region with the eraser's background (template/base image, else
+  // flat white) and punches the same region out of every live movable it
+  // touches. Returns true when a selection was erased, so Delete can fall back
+  // to removing the selected object when there is no selection.
+  const eraseSelectionToBackground = () => {
+    const ctx = ctxRef.current;
+    const mask = maskCanvasRef.current;
+    const mctx = mask && mask.getContext('2d');
+    if (!ctx || !mask || !mctx || !hasMaskRef.current) return false;
+    pushSnapshot();
+
+    // 1) Restore the background over the selected region: composite the
+    //    background source, keep only the masked pixels, and lay them back on
+    //    the base. `destination-in` never punches transparency (transparent
+    //    BaseMap = holes in-game).
+    const sc = getScratch();
+    const sctx = sc && sc.getContext('2d');
+    if (sctx) {
+      sctx.save();
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+      sctx.globalCompositeOperation = 'source-over';
+      sctx.globalAlpha = 1;
+      sctx.clearRect(0, 0, W, H);
+      const bgC = bgCanvasRef.current;
+      if (bgC) sctx.drawImage(bgC, 0, 0);
+      else {
+        const bg = bgImgRef.current;
+        if (bg && bg.complete !== false && (bg.naturalWidth || bg.width)) sctx.drawImage(bg, 0, 0, W, H);
+        else { sctx.fillStyle = DEFAULT_BASE_COLOR; sctx.fillRect(0, 0, W, H); }
+      }
+      sctx.globalCompositeOperation = 'destination-in';
+      sctx.drawImage(mask, 0, 0);
+      sctx.restore();
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.drawImage(sc, 0, 0);
+      ctx.restore();
+    }
+
+    // 2) Punch the selected region out of every live movable it touches. The
+    //    mask border is traced to loops and mapped into each object's LOCAL
+    //    frame (so the hole moves/scales with the object), stored as
+    //    `erasePolys` and filled even-odd so holes inside the selection survive.
+    //    A fully-consumed object is dropped; a part-erased rect/ellipse/sticker
+    //    re-frames its boundary — exactly like the eraser tool.
+    let loops = [];
+    let mb = null;
+    try {
+      const mimg = mctx.getImageData(0, 0, W, H);
+      loops = chainBorderSegments(traceMaskBorder(mimg));
+      for (const loop of loops) {
+        for (const q of loop || []) {
+          if (!mb) mb = { x0: q[0], y0: q[1], x1: q[0], y1: q[1] };
+          else {
+            if (q[0] < mb.x0) mb.x0 = q[0];
+            if (q[1] < mb.y0) mb.y0 = q[1];
+            if (q[0] > mb.x1) mb.x1 = q[0];
+            if (q[1] > mb.y1) mb.y1 = q[1];
+          }
+        }
+      }
+    } catch (_) { loops = []; mb = null; }
+
+    let arr = objectsRef.current;
+    let changed = false;
+    if (loops.length && mb) {
+      for (let i = 0; i < arr.length; i++) {
+        const o = arr[i];
+        if (!hasLiveVisual(o)) continue;
+        // Skip objects whose world AABB does not meet the selection bounds.
+        const f = frameOf(o);
+        const corners = [
+          worldFromLocal(o, { x: f.x0, y: f.y0 }),
+          worldFromLocal(o, { x: f.x1, y: f.y0 }),
+          worldFromLocal(o, { x: f.x0, y: f.y1 }),
+          worldFromLocal(o, { x: f.x1, y: f.y1 }),
+        ];
+        const ox0 = Math.min(corners[0].x, corners[1].x, corners[2].x, corners[3].x);
+        const ox1 = Math.max(corners[0].x, corners[1].x, corners[2].x, corners[3].x);
+        const oy0 = Math.min(corners[0].y, corners[1].y, corners[2].y, corners[3].y);
+        const oy1 = Math.max(corners[0].y, corners[1].y, corners[2].y, corners[3].y);
+        if (ox1 < mb.x0 || ox0 > mb.x1 || oy1 < mb.y0 || oy0 > mb.y1) continue;
+        const localLoops = loops.map(loop => (loop || []).map(q => localFromWorld(o, { x: q[0], y: q[1] })));
+        let copy = { ...o, erasePolys: [...(o.erasePolys || []), ...localLoops] };
+        const m = measureErasedObject(copy);
+        if (m && m.empty) {
+          if (arr === objectsRef.current) arr = objectsRef.current.slice();
+          arr[i] = null;
+          eraseCacheRef.current.delete(o.id);
+          if (selIdRef.current === o.id) selIdRef.current = null;
+        } else {
+          if (m && m.frame && (o.kind === 'rect' || o.kind === 'ellipse' || o.img)) {
+            copy = { ...copy, frame: m.frame };
+          }
+          if (arr === objectsRef.current) arr = objectsRef.current.slice();
+          arr[i] = copy;
+        }
+        changed = true;
+      }
+    }
+    if (changed) objectsRef.current = arr.filter(Boolean);
+    syncObjects(objectsRef.current, selIdRef.current);
+    setDirty(true);
+    scheduleOverlay();
+    return true;
+  };
+
   // ── Overlay (sticker + shape preview), rAF-throttled ───────
   const drawOverlay = useCallback(() => {
     rafRef.current = 0;
-    const ov = overlayRef.current;
-    if (!ov) return;
-    const ctx = ov.getContext('2d');
-    // Clear the whole padded bitmap, then draw in world/texture coordinates
-    // shifted by the pad so selection chrome can spill past the store edges.
-    const OW = W + OVERLAY_PAD * 2;
-    const OH = H + OVERLAY_PAD * 2;
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, OW, OH);
-    ctx.restore();
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, OVERLAY_PAD, OVERLAY_PAD);
     const z = effZoom || 1;
-    const gap = 40 / z;
-    const hr = 7 / z;
     const selIdNow = selIdRef.current;
     // Drop eraser caches for objects that no longer exist.
     const eraseCache = eraseCacheRef.current;
@@ -1620,36 +1902,57 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       for (const st of objectsRef.current) live.add(st.id);
       for (const id of [...eraseCache.keys()]) if (!live.has(id)) eraseCache.delete(id);
     }
-    // Object visuals render in THEIR OWN panel (each clipped to the panel its
-    // centre falls in), regardless of which panel is active — so an unselected
-    // movable on another panel is still visible. Overflow past its own panel is
-    // not displayed. The selection chrome below is NOT clipped (a box/handle may
-    // sit outside the panel).
-    // Only the ACTIVE movable (the selected one with chrome) is clipped to a
-    // live selection — every other movable previews in full, so a selection
-    // never hides non-active movables outside its area. Deselect restores the
-    // active one (clipping is presentational; the object itself stays whole).
-    const maskThis = (st) => hasMaskRef.current && toolRef.current === 'select' && st.id === selIdNow;
-    for (const st of objectsRef.current) {
-      if (!hasLiveVisual(st)) continue;
-      if (panelCount > 1) {
-        const x0 = layout.x(panelIndexAt(st.x));
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(x0, 0, TEXTURE, TEXTURE);
-        ctx.clip();
-        if (maskThis(st)) paintObjectMasked(ctx, st);
-        else paintObjectWithErase(ctx, st);
-        ctx.restore();
-      } else if (maskThis(st)) {
-        paintObjectMasked(ctx, st);
-      } else {
-        paintObjectWithErase(ctx, st);
+    // ── Layer 2: movables on their own canvas, BELOW the paint layer. Each
+    // renders in the panel its centre falls in (so an unselected movable on
+    // another panel is still visible; overflow past its panel is clipped). A
+    // movable placed BEFORE any selection previews in full; one ADDED while a
+    // selection exists is clipped to that selection's stamped `clipMask`.
+    const objCanvas = objectCanvasRef.current;
+    if (objCanvas) {
+      const octx = objCanvas.getContext('2d');
+      if (octx) {
+        octx.save();
+        octx.setTransform(1, 0, 0, 1, 0, 0);
+        octx.clearRect(0, 0, W, H);
+        for (const st of objectsRef.current) {
+          if (!hasLiveVisual(st)) continue;
+          if (panelCount > 1) {
+            const x0 = layout.x(panelIndexAt(st.x));
+            octx.save();
+            octx.beginPath();
+            octx.rect(x0, 0, TEXTURE, TEXTURE);
+            octx.clip();
+            paintObjectForDisplay(octx, st);
+            octx.restore();
+          } else {
+            paintObjectForDisplay(octx, st);
+          }
+        }
+        octx.restore();
       }
     }
+    // ── Layer 4: chrome (selection box/handles, previews, selection outline)
+    // on the padded overlay, which is also the pointer interaction surface.
+    const ov = overlayRef.current;
+    if (!ov) return;
+    const ctx = ov.getContext('2d');
+    const OW = W + OVERLAY_PAD * 2;
+    const OH = H + OVERLAY_PAD * 2;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, OW, OH);
+    ctx.restore();
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, OVERLAY_PAD, OVERLAY_PAD);
+    const gap = 40 / z;
+    const hr = 7 / z;
+    // The movable chrome (blue box + rotate/scale handles + vertices) belongs
+    // to the single-select (object) sub-mode only — pen/wand show just their
+    // selection outline, drawn after every movable so it stays on top.
     for (const st of objectsRef.current) {
       if (!hasLiveVisual(st)) continue;
-      const activeSel = st.id === selIdNow && toolRef.current === 'select';
+      const activeSel = st.id === selIdNow && toolRef.current === 'select'
+        && selModeRef.current === 'object';
       if (!activeSel) continue;
       ctx.save();
       ctx.translate(st.x, st.y);
@@ -1725,15 +2028,42 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       ctx.restore();
     }
-    // Selection mask: ONE merged border traced from the unioned mask pixels
-    // (no interior overlap), plus the live lasso draft while the pen is down.
-    // Vector outlines draw only when mask readback is unavailable (tests).
-    // Overlay only — the base raster is never touched here.
+    // Multi-image layout: a divider around each panel + a blue outline on the
+    // active panel so per-panel import (and where the gap is) is unambiguous.
+    if (panelCount > 1) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, OVERLAY_PAD, OVERLAY_PAD);
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 2 / z;
+      for (let i = 0; i < panelCount; i++) ctx.strokeRect(layout.x(i), 0, TEXTURE, TEXTURE);
+      ctx.strokeStyle = '#6aa0ff';
+      ctx.lineWidth = Math.max(2, 4 / z);
+      ctx.strokeRect(layout.x(active) + 1, 1, TEXTURE - 2, H - 2);
+      ctx.restore();
+    }
+    // Re-draw the in-progress eraser preview (full replay). Normally the drag
+    // paints it incrementally and never redraws the overlay, but a redraw can
+    // still land mid-gesture (e.g. a zoom change) and must not lose it.
+    paintErasePreview(ctx, erasePreviewRef.current && erasePreviewRef.current.strokes, false, OVERLAY_PAD, OVERLAY_PAD);
+    // Selection mask LAST so the pen/wand region always overdraws every movable
+    // and every other overlay layer: ONE merged border traced from the unioned
+    // mask pixels (no interior overlap), plus the live lasso draft while the
+    // pen is down. Vector outlines draw only when mask readback is unavailable
+    // (tests). Overlay only — the base raster is never touched here.
     const drawDashed = (trace) => {
       ctx.save();
-      ctx.strokeStyle = '#6aa0ff';
-      ctx.lineWidth = 2 / z;
-      ctx.setLineDash([10 / z, 8 / z]);
+      ctx.lineCap = 'round';
+      // Marching-ants as tiny, dense round dots: a zero-length dash with a
+      // round cap draws one dot per gap. Stroking a slightly wider black pass
+      // under a white pass gives every dot a hairline black border.
+      ctx.setLineDash([0, 3 / z]);
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = Math.max(1, 2 / z);
+      ctx.beginPath();
+      trace();
+      ctx.stroke();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(0.5, 1 / z);
       ctx.beginPath();
       trace();
       ctx.stroke();
@@ -1780,23 +2110,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       });
     }
-    // Multi-image layout: a divider around each panel + a blue outline on the
-    // active panel so per-panel import (and where the gap is) is unambiguous.
-    if (panelCount > 1) {
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, OVERLAY_PAD, OVERLAY_PAD);
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-      ctx.lineWidth = 2 / z;
-      for (let i = 0; i < panelCount; i++) ctx.strokeRect(layout.x(i), 0, TEXTURE, TEXTURE);
-      ctx.strokeStyle = '#6aa0ff';
-      ctx.lineWidth = Math.max(2, 4 / z);
-      ctx.strokeRect(layout.x(active) + 1, 1, TEXTURE - 2, H - 2);
-      ctx.restore();
-    }
-    // Re-draw the in-progress eraser preview (full replay). Normally the drag
-    // paints it incrementally and never redraws the overlay, but a redraw can
-    // still land mid-gesture (e.g. a zoom change) and must not lose it.
-    paintErasePreview(ctx, erasePreviewRef.current && erasePreviewRef.current.strokes, false, OVERLAY_PAD, OVERLAY_PAD);
     ctx.restore();
   }, [effZoom, active, panelCount]);
 
@@ -1861,48 +2174,51 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (!st) return;
     pushSnapshot();
     const nudge = Math.max(st.w, st.h) * 0.15 + 20;
-    const copy = { ...st, id: nextIdRef.current++, x: st.x + nudge, y: st.y + nudge };
+    const copy = {
+      ...st, id: nextIdRef.current++, x: st.x + nudge, y: st.y + nudge,
+      // Under a selection a duplicate is clipped to it; otherwise it inherits
+      // the source's clip shape.
+      clipMask: hasMaskRef.current ? getMaskCopy() : (st.clipMask || null),
+    };
     // Curves own a control-point array — deep-copy it so the two objects can
     // be resized independently. Same for eraser holes.
     if (st.pts) copy.pts = st.pts.map(q => ({ x: q.x, y: q.y }));
     if (st.erase) copy.erase = st.erase.map(s => ({ size: s.size, pts: (s.pts || []).map(q => ({ x: q.x, y: q.y })) }));
+    if (st.erasePolys) copy.erasePolys = st.erasePolys.map(loop => (loop || []).map(q => ({ x: q.x, y: q.y })));
     syncObjects([...objectsRef.current, copy], copy.id);
     setTool('select');
     setDirty(true);
     scheduleOverlay();
   };
 
-  // ── Export (opaque base + every live object flattened) ─────
-  // Flatten the base raster and the live-object layer into one canvas the size
-  // of the whole backing store (with the gutter between panels).
+  // ── Export: base image → movables → paint, flattened ─────
+  // The layer order must match the on-screen stack (paint on top of movables).
   const flattenToCanvas = () => {
     const out = document.createElement('canvas');
     out.width = W; out.height = H;
     const ctx = out.getContext('2d');
-    ctx.drawImage(canvasRef.current, 0, 0);
+    ctx.drawImage(baseCanvasRef.current, 0, 0);
     // Live objects are flattened at their actual coordinates, each clipped to
     // the panel its CENTRE falls in (not the currently-active panel — export
     // must never depend on which panel is active, and an object on another
     // panel must still be saved). Overlap into a neighbouring panel is clipped.
-    // A live selection masks ONLY the active movable, matching the overlay.
-    const activeId = toolRef.current === 'select' ? selIdRef.current : null;
+    // Only movables with a stamped `clipMask` are clipped; every other movable
+    // flattens in full.
     for (const o of objectsRef.current) {
-      const maskThis = hasMaskRef.current && o.id === activeId;
       if (panelCount > 1) {
         const x0 = layout.x(panelIndexAt(o.x));
         ctx.save();
         ctx.beginPath();
         ctx.rect(x0, 0, TEXTURE, TEXTURE);
         ctx.clip();
-        if (maskThis) paintObjectMasked(ctx, o);
-        else paintObjectWithErase(ctx, o);
+        paintObjectForDisplay(ctx, o);
         ctx.restore();
-      } else if (maskThis) {
-        paintObjectMasked(ctx, o);
       } else {
-        paintObjectWithErase(ctx, o);
+        paintObjectForDisplay(ctx, o);
       }
     }
+    // Paint layer last, so brush/eraser/fill strokes sit above the movables.
+    if (canvasRef.current) ctx.drawImage(canvasRef.current, 0, 0);
     return out;
   };
   useImperativeHandle(ref, () => ({
@@ -1938,7 +2254,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         opacity: o.opacity == null ? 1 : o.opacity,
         size: o.size,
         stretch: o.stretch || null,
-        frame: frameOf(o), erase: o.erase || null,
+        frame: frameOf(o), erase: o.erase || null, erasePolys: o.erasePolys || null,
+        clipMask: !!o.clipMask,
       };
     },
     isDirty: () => dirty,
@@ -1994,6 +2311,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        // With a selection mask, Del clears the selected region to the
+        // background (the marquee eraser) instead of removing the object.
+        if (hasMaskRef.current) { e.preventDefault(); eraseSelectionToBackground(); return; }
         // Same action as the Remove toolbar button (selection, else topmost).
         removeSticker();
         return;
@@ -2013,7 +2333,15 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       if (k === 'v') { flipSticker('flipY'); return; }
       // I = Import Sticker (the Eyedropper has no shortcut — right-click picks).
       if (k === 'i') { importSticker(); return; }
-      const map = { a: 'select', b: 'brush', e: 'eraser', g: 'fill', l: 'line', r: 'rect', o: 'ellipse', t: 'text' };
+      // Select sub-modes are reachable from ANY tool: A=Object, L=Lasso,
+      // W=Magic Wand. Pressing one switches to the Select tool first (e.g. from
+      // the brush, L jumps straight to Lasso). The Line tool moved to U.
+      if (k === 'a' || k === 'l' || k === 'w') {
+        if (toolRef.current !== 'select') activateTool('select');
+        setSelMode(k === 'a' ? 'object' : (k === 'l' ? 'pen' : 'wand'));
+        return;
+      }
+      const map = { b: 'brush', e: 'eraser', g: 'fill', u: 'line', r: 'rect', m: 'ellipse', o: 'ellipse', t: 'text' };
       if (map[k] && TOOLS.includes(map[k])) { activateTool(map[k]); }
     };
     const onKeyUp = (e) => { if (e.key === ' ') { spaceRef.current = false; setSpaceHeld(false); } };
@@ -2125,6 +2453,27 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       ? { x0: Math.min(b.x0, x0), y0: Math.min(b.y0, y0), x1: Math.max(b.x1, x1), y1: Math.max(b.y1, y1) }
       : { x0, y0, x1, y1 };
   };
+  // Deposit ONE brush dab at `p` on the stroke layer. A zero-length round-cap
+  // segment paints a dot, which is what a click without any pointermove would
+  // otherwise miss — so the click that switches the active panel also paints on
+  // the panel it lands in (no second click needed).
+  const paintBrushDab = (target, p) => {
+    const b = brushRef.current;
+    target.save();
+    target.globalCompositeOperation = 'source-over';
+    target.globalAlpha = 1;
+    target.lineWidth = b.size;
+    target.lineCap = 'round';
+    target.lineJoin = 'round';
+    target.strokeStyle = b.color;
+    if (!b.hard) { target.shadowColor = b.color; target.shadowBlur = b.size / 2; }
+    target.beginPath();
+    target.moveTo(p.x, p.y);
+    target.lineTo(p.x, p.y);
+    target.stroke();
+    target.restore();
+    growStrokeBounds(p, p);
+  };
   // Composite the stroke layer over the pristine pre-stroke base inside the
   // dirty rect, then apply the brush alpha to the layer. Every flush is
   // idempotent per rect (the base copy is never modified), so re-covering an
@@ -2207,39 +2556,32 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const stickerLocal = objectLocal;
 
   // Eyedropper shared by the Eyedropper tool and the right-click shortcut:
-  // read the visible pixel under `p` and make it the current brush colour.
-  // The base raster is composited with every live object first, so the pick
-  // works on movables (stickers / shapes / text) — not just the base.
+  // read the VISIBLE pixel under `p` (base image → movables → paint) and make
+  // it the current brush colour, so a colour can be picked off movables/paint.
   const pickColorAt = (p) => {
-    const ctx = ctxRef.current;
-    if (!ctx) return;
     const x = Math.max(0, Math.min(W - 1, p.x | 0));
     const y = Math.max(0, Math.min(H - 1, p.y | 0));
-    const objs = objectsRef.current;
     let picked = null;
-    if (objs.length > 0) {
-      const sctx = getPickCanvas().getContext('2d');
-      if (sctx) {
-        sctx.save();
-        sctx.setTransform(1, 0, 0, 1, 0, 0);
-        sctx.globalCompositeOperation = 'source-over';
-        sctx.globalAlpha = 1;
-        sctx.clearRect(0, 0, 1, 1);
-        sctx.translate(-x, -y);
-        sctx.drawImage(ctx.canvas, 0, 0);
-        for (const o of objs) {
-          if (!hasLiveVisual(o)) continue;
-          // Mirror the overlay presentation: only the active movable is
-          // clipped to a live selection; eraser holes punch the rest.
-          if (hasMaskRef.current && toolRef.current === 'select' && o.id === selIdRef.current) paintObjectMasked(sctx, o);
-          else paintObjectWithErase(sctx, o);
-        }
-        sctx.restore();
-        const d = sctx.getImageData(0, 0, 1, 1).data;
-        if (d[3] > 0) picked = rgbaToHex(d[0], d[1], d[2]);
+    const sctx = getPickCanvas().getContext('2d');
+    if (sctx) {
+      sctx.save();
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+      sctx.globalCompositeOperation = 'source-over';
+      sctx.globalAlpha = 1;
+      sctx.clearRect(0, 0, 1, 1);
+      sctx.translate(-x, -y);
+      if (baseCanvasRef.current) sctx.drawImage(baseCanvasRef.current, 0, 0);
+      for (const o of objectsRef.current) {
+        if (hasLiveVisual(o)) paintObjectForDisplay(sctx, o);
       }
+      if (canvasRef.current) sctx.drawImage(canvasRef.current, 0, 0);
+      sctx.restore();
+      const d = sctx.getImageData(0, 0, 1, 1).data;
+      if (d[3] > 0) picked = rgbaToHex(d[0], d[1], d[2]);
     }
     if (picked == null) {
+      const ctx = baseCtxRef.current || ctxRef.current;
+      if (!ctx) return;
       const d = ctx.getImageData(x, y, 1, 1).data;
       picked = rgbaToHex(d[0], d[1], d[2]);
     }
@@ -2300,7 +2642,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
     if (orderMenuRef.current) setOrderMenuTracked(null);
     const t = toolRef.current;
-    const capture = () => { canvasRef.current.setPointerCapture && e.target.setPointerCapture(e.pointerId); };
+    // Capture on the element that received the event (the chrome interaction
+    // surface) so subsequent pointermove/up keep reaching the tool handlers.
+    const capture = () => {
+      const el = e.target || overlayRef.current;
+      if (el && el.setPointerCapture) el.setPointerCapture(e.pointerId);
+    };
 
     // Live-object interactions (Select tool): click to select / move, drag the
     // handles to scale / rotate, click away to deselect. Lines and curves get
@@ -2347,6 +2694,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             // Holes + boundary scale with the frame, so a part-erased object
             // keeps its shape while being resized.
             startErase: scaleErase(1, sel.erase), startFrame: sel.frame || null,
+            startErasePolys: scaleErasePolys(1, sel.erasePolys),
           };
           capture(); return;
         }
@@ -2594,6 +2942,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           // holes stayed put while the content grew, so a half circle turned
           // into a lopsided blob instead of staying a half circle.
           if (d.startErase) patch.erase = scaleErase(kx, d.startErase, ky);
+          if (d.startErasePolys) patch.erasePolys = scaleErasePolys(kx, d.startErasePolys, ky);
           if (d.startFrame) patch.frame = scaleFrame(kx, d.startFrame, ky);
           updateObject(st.id, patch);
         } else if (mode === 'rotate') {
@@ -2656,9 +3005,15 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (strokeRef.current) {
       const wasErase = strokeRef.current.erase;
       const last = strokeRef.current.last;
+      const layer = strokeRef.current.layer;
       strokeRef.current = null;
       if (wasErase) applyEraseGesture();
-      else flushStroke();
+      else {
+        // A click with no drag still deposits one dab, so the same click that
+        // activates a panel paints on it instead of needing a second click.
+        if (last && layer && !strokeBoundsRef.current) paintBrushDab(layer, last);
+        flushStroke();
+      }
       endStroke();
       // Re-anchor at the stroke end so a following Shift+click continues from
       // where this stroke finished (a plain click continues from the click).
@@ -2832,9 +3187,14 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // An interrupted stroke still clips to the selection before it settles.
     if (strokeRef.current) {
       const wasErase = strokeRef.current.erase;
+      const last = strokeRef.current.last;
+      const layer = strokeRef.current.layer;
       strokeRef.current = null;
       if (wasErase) applyEraseGesture();
-      else flushStroke();
+      else {
+        if (last && layer && !strokeBoundsRef.current) paintBrushDab(layer, last);
+        flushStroke();
+      }
       endStroke();
       constrainBaseToMask(undoRef.current.past.length > 0
         ? undoRef.current.past[undoRef.current.past.length - 1].img
@@ -2860,6 +3220,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // Shared tool activation for the rail buttons and the letter shortcuts.
   const activateTool = (name) => {
     settleGesture();
+    // Leaving the Select tool while in single-select (object) mode drops the
+    // selected movable; a pen/wand mask selection survives the switch.
+    if (name !== 'select' && toolRef.current === 'select'
+      && selModeRef.current === 'object' && selIdRef.current != null) {
+      syncObjects(objectsRef.current, null);
+    }
     setTool(name);
   };
 
@@ -2883,7 +3249,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             const clearParts = defaultPartsRef.current.some(p => p && p.imageDataUrl)
               ? defaultPartsRef.current
               : initialPartsRef.current;
-            drawBase(ctxRef.current, layout, clearParts, scheduleOverlay);
+            // Reset the base layer, wipe the paint layer, drop the movables.
+            const pctx = ctxRef.current;
+            if (pctx) { pctx.setTransform(1, 0, 0, 1, 0, 0); pctx.clearRect(0, 0, W, H); }
+            const baseCtx = baseCtxRef.current;
+            if (baseCtx) {
+              drawBase(baseCtx, layout, clearParts, () => {
+                try { basePixelsRef.current = baseCtx.getImageData(0, 0, W, H); } catch (_) {}
+                scheduleOverlay();
+              });
+            }
             syncObjects([], null);
             setTextAnchor(null);
             // A cleared canvas carries no selection either.
@@ -2992,9 +3367,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           {tool === 'select' && (
             <>
               <span className="lp-seg" role="group" aria-label={t('livery_paint_select_mode')}>
-                <button className={selMode === 'object' ? 'lp-on' : ''} {...bind(t('livery_paint_select_object'))} aria-label={t('livery_paint_select_object')} aria-pressed={selMode === 'object'} onClick={() => setSelMode('object')}><FaArrowPointer size={15} /></button>
-                <button className={selMode === 'pen' ? 'lp-on' : ''} {...bind(t('livery_paint_select_pen'))} aria-label={t('livery_paint_select_pen')} aria-pressed={selMode === 'pen'} onClick={() => setSelMode('pen')}><LuLasso size={15} /></button>
-                <button className={selMode === 'wand' ? 'lp-on' : ''} {...bind(t('livery_paint_select_wand'))} aria-label={t('livery_paint_select_wand')} aria-pressed={selMode === 'wand'} onClick={() => setSelMode('wand')}><BsMagic size={15} /></button>
+                {/* Tooltips advertise the sub-mode shortcuts (A / L / W). */}
+                <button className={selMode === 'object' ? 'lp-on' : ''} {...bind(withKey(t('livery_paint_select_object'), 'A'))} aria-label={t('livery_paint_select_object')} aria-pressed={selMode === 'object'} onClick={() => setSelMode('object')}><FaArrowPointer size={15} /></button>
+                <button className={selMode === 'pen' ? 'lp-on' : ''} {...bind(withKey(t('livery_paint_select_pen'), 'L'))} aria-label={t('livery_paint_select_pen')} aria-pressed={selMode === 'pen'} onClick={() => setSelMode('pen')}><LuLasso size={15} /></button>
+                <button className={selMode === 'wand' ? 'lp-on' : ''} {...bind(withKey(t('livery_paint_select_wand'), 'W'))} aria-label={t('livery_paint_select_wand')} aria-pressed={selMode === 'wand'} onClick={() => setSelMode('wand')}><BsMagic size={15} /></button>
               </span>
               {selMode !== 'object' && (
                 <span className="lp-seg" role="group" aria-label={t('livery_paint_mask_mode')}>
@@ -3012,7 +3388,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               <span className="lp-seg">
                 {/* Tooltip lives on the wrapper with the disabled button made
                     pointer-events:none, so it still shows before a selection. */}
-                <span {...bind(t('livery_paint_deselect'))} style={{ display: 'inline-flex' }}>
+                <span {...bind(withKey(t('livery_paint_deselect'), 'Ctrl+D'))} style={{ display: 'inline-flex' }}>
                   <button aria-label={t('livery_paint_deselect')} disabled={!hasMask} onClick={clearMask} style={!hasMask ? { pointerEvents: 'none' } : undefined}><MdOutlineLayersClear size={15} /></button>
                 </span>
               </span>
@@ -3155,29 +3531,42 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             <FaRegHandPaper size={22} />
           </div>
           <div className="lp-canvas-stage" data-active-panel={active} style={{ width: W * effZoom, height: H * effZoom }} onPointerMove={showBrushRing ? moveCursorRing : undefined} onPointerDown={showBrushRing ? moveCursorRing : undefined} onPointerLeave={showBrushRing ? hideCursorRing : undefined}>
+            {/* Layer 1 — locked base aircraft image. */}
             <canvas
-              ref={canvasRef}
+              ref={baseCanvasRef}
+              data-layer="base"
               width={W}
               height={H}
-              style={{ width: W * effZoom, height: H * effZoom, cursor: spaceHeld ? 'none' : (tool === 'text' ? 'text' : (tool === 'select' ? (selMode === 'object' ? 'default' : 'crosshair') : (showBrushRing ? 'none' : 'crosshair'))), touchAction: 'none' }}
-              onPointerDown={onCanvasDown}
-              onPointerMove={onCanvasMove}
-              onPointerUp={onCanvasUp}
-              onDoubleClick={onCanvasDoubleClick}
-              // Keep clicks from moving focus to the focusable wrapper: the
-              // text box is mounted+focused on pointerdown, and the mousedown
-              // default (focus on .livery-canvas-wrap) would blur it instantly.
-              onMouseDown={(e) => e.preventDefault()}
-              onContextMenu={onCanvasContextMenu}
+              style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
+              aria-hidden="true"
             />
+            {/* Layer 2 — live movables (stickers/shapes/text). */}
+            <canvas
+              ref={objectCanvasRef}
+              data-layer="objects"
+              width={W}
+              height={H}
+              style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
+              aria-hidden="true"
+            />
+            {/* Layer 3 — raster paint (brushes/eraser/fill), above movables. */}
+            <canvas
+              ref={canvasRef}
+              data-layer="paint"
+              width={W}
+              height={H}
+              style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
+              aria-hidden="true"
+            />
+            {/* Layer 4 — chrome + interaction surface. Extends OVERLAY_PAD past
+                the bitmap so a scale/rotate knob drawn outside the 2048 square
+                can still be grabbed and the drag keeps registering out there
+                (pointer capture stays on this element). */}
             <canvas
               ref={overlayRef}
+              data-layer="chrome"
               width={W + OVERLAY_PAD * 2}
               height={H + OVERLAY_PAD * 2}
-              // The overlay is the interaction surface: it extends OVERLAY_PAD
-              // past the base bitmap, so a scale/rotate knob drawn outside the
-              // 2048 square can still be grabbed and the drag keeps registering
-              // out there (pointer capture stays on this element).
               style={{
                 position: 'absolute',
                 left: -OVERLAY_PAD * effZoom,
@@ -3191,6 +3580,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               onPointerMove={onCanvasMove}
               onPointerUp={onCanvasUp}
               onDoubleClick={onCanvasDoubleClick}
+              // Keep clicks from moving focus to the focusable wrapper: the
+              // text box is mounted+focused on pointerdown, and the mousedown
+              // default (focus on .livery-canvas-wrap) would blur it instantly.
               onMouseDown={(e) => e.preventDefault()}
               onContextMenu={onCanvasContextMenu}
             />

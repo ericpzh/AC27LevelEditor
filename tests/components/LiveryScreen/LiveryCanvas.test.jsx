@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, panelLayout, isTextEntry, TEXTURE, OVERLAY_PAD } from '../../../src/components/LiveryScreen/LiveryCanvas';
+import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleErasePolys, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, panelLayout, isTextEntry, TEXTURE, OVERLAY_PAD } from '../../../src/components/LiveryScreen/LiveryCanvas';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
@@ -15,7 +15,9 @@ import { setLang, T } from '../../../src/utils/i18n';
 let ctxs = [];
 let imageSrcs = [];
 // Every `globalCompositeOperation` assignment, in order. `destination-in` is
-// set only by `paintObjectMasked`, so a count of it counts masked object draws.
+// set by the stamped-movable clip (`paintObjectMasked`) and by the
+// Delete-with-selection background restore, so a count of it tracks those
+// clip/erase paths — never a plain object draw.
 let gcoSets = [];
 function makeCtx() {
   return {
@@ -63,8 +65,11 @@ beforeEach(() => {
   ctxs = [];
   imageSrcs = [];
   gcoSets = [];
-  getCtxSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => {
+  getCtxSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function () {
     const c = makeCtx();
+    // Tag the context with the owning layer (data-layer on the canvas) so tests
+    // can target the paint / base / objects / chrome layer unambiguously.
+    c._layer = this && this.dataset ? this.dataset.layer : undefined;
     ctxs.push(c);
     return c;
   });
@@ -93,8 +98,21 @@ function renderCanvas(props = {}) {
   );
 }
 
-function mainCanvas() {  return document.querySelector('.livery-canvas-wrap canvas');
+// The chrome canvas is the pointer interaction surface (topmost layer); all
+// other layers are pointer-events:none. Firing events here drives the tool
+// handlers like a real click on the stage.
+function mainCanvas() {
+  return document.querySelector('.livery-canvas-wrap canvas[data-layer="chrome"]');
 }
+// The layered canvas elements (base image / movables / paint / chrome).
+function layerCanvas(layer) {
+  return document.querySelector(`.livery-canvas-wrap canvas[data-layer="${layer}"]`);
+}
+// Layer contexts, matched by the owning canvas's data-layer attribute.
+function layerCtx(layer) {
+  return ctxs.find(c => c._layer === layer);
+}
+function paintCtx() { return layerCtx('paint'); }
 
 // Give every canvas context a synthetic readback for the OBJECT MEASUREMENT
 // reads (`getImageData` over a sub-texture box), which the eraser uses to decide
@@ -117,6 +135,42 @@ function stubEraseReadback(paintHoled) {
         } else {
           paintHoled(data, w, h);
         }
+        return { data, width: w, height: h };
+      }
+      return fallback
+        ? fallback(x, y, w, h)
+        : { data: new Uint8ClampedArray(Math.max(4, w * h * 4)), width: w, height: h };
+    });
+    ctxs.push(c);
+    return c;
+  });
+}
+
+// Full-texture mask readback for the marquee eraser. jsdom has no rasterizer,
+// so the real mask is always transparent and `traceMaskBorder` yields no loops;
+// return an opaque block for every 2048² read instead. Sub-texture reads
+// (object measurement) stay transparent, unless `dropObjects` makes the holed
+// render vanish so a touched movable is "fully consumed".
+function stubMaskBlock(x0, y0, x1, y1, dropObjects = false) {
+  let measureCalls = 0;
+  getCtxSpy.mockImplementation(function () {
+    const c = makeCtx();
+    c._layer = this && this.dataset ? this.dataset.layer : undefined;
+    const fallback = c.getImageData.getMockImplementation();
+    c.getImageData.mockImplementation((x, y, w, h) => {
+      if (w >= 1024 && h >= 1024) {
+        const data = new Uint8ClampedArray(w * h * 4);
+        const xa = Math.max(0, x0), xb = Math.min(w, x1);
+        const ya = Math.max(0, y0), yb = Math.min(h, y1);
+        for (let yy = ya; yy < yb; yy++) {
+          for (let xx = xa; xx < xb; xx++) data[(yy * w + xx) * 4 + 3] = 255;
+        }
+        return { data, width: w, height: h };
+      }
+      if (dropObjects && w < 1024 && h < 1024) {
+        const clean = (measureCalls++ % 2) === 0;
+        const data = new Uint8ClampedArray(Math.max(4, w * h * 4));
+        if (clean) for (let i = 3; i < data.length; i += 4) data[i] = 255;
         return { data, width: w, height: h };
       }
       return fallback
@@ -167,6 +221,21 @@ describe('LiveryCanvas tools', () => {
     expect(ctxs.some(c => c.stroke.mock.calls.length > 0)).toBe(true);
     expect(ctxs.some(c => c.lineTo.mock.calls.length > 0)).toBe(true);
     // ...and the stroke is composited back onto the base (9-arg drawImage).
+    expect(main.drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
+  });
+
+  it('a click without a drag deposits one brush dab', async () => {
+    renderCanvas();
+    const cv = mainCanvas();
+    // pointerdown + pointerup only — no pointermove at all.
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const main = ctxs[0];
+    expect(main.getImageData).toHaveBeenCalled(); // undo snapshot
+    // The zero-length round-cap dab was stroked...
+    expect(ctxs.some(c => c.stroke.mock.calls.length > 0)).toBe(true);
+    expect(ctxs.some(c => c.lineTo.mock.calls.length > 0)).toBe(true);
+    // ...and composited back to the base.
     expect(main.drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
   });
 
@@ -317,10 +386,10 @@ describe('brush size shortcuts + Shift-click straight lines', () => {
   it('a click then Shift-click draws a straight brush line, chaining further points', () => {
     renderCanvas();
     const cv = mainCanvas();
-    // Plain click drops the anchor and draws nothing (no segment, no dab).
+    // Plain click drops the anchor and deposits one dab.
     fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { pointerId: 1 });
-    expect(ctxs.every(c => c.stroke.mock.calls.length === 0)).toBe(true);
+    expect(ctxs.some(c => c.stroke.mock.calls.length > 0)).toBe(true);
     // Shift-click: one straight segment (400,400) → (800,800) in texture space.
     fireEvent.pointerDown(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1, shiftKey: true });
     fireEvent.pointerUp(cv, { pointerId: 1 });
@@ -342,9 +411,9 @@ describe('brush size shortcuts + Shift-click straight lines', () => {
     fireEvent.pointerUp(cv, { pointerId: 1 });
     fireEvent.pointerDown(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1, shiftKey: true });
     fireEvent.pointerUp(cv, { pointerId: 1 });
-    const base = ctxs.find(c => c.fillRect.mock.calls.some(a => a[2] === 2048 && a[3] === 2048));
+    const base = paintCtx();
     expect(base).toBeTruthy();
-    // The restored-background stroke runs the Shift-click segment.
+    // The restored-background stroke runs the Shift-click segment (paint layer).
     expect(base.moveTo.mock.calls.some(a => a[0] === 400 && a[1] === 400)).toBe(true);
     expect(base.lineTo.mock.calls.some(a => a[0] === 800 && a[1] === 800)).toBe(true);
   });
@@ -1419,7 +1488,8 @@ describe('LiveryCanvas undo/redo + clear', () => {
   it('clear asks for confirmation and resets the canvas to the default base', async () => {
     const user = userEvent.setup();
     renderCanvas();
-    const fillRect = ctxs[0].fillRect;
+    // The default base is painted on the base layer.
+    const fillRect = layerCtx('base').fillRect;
     const before = fillRect.mock.calls.length;
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(screen.getByText('Confirm Clear')).toBeInTheDocument());
@@ -1430,16 +1500,16 @@ describe('LiveryCanvas undo/redo + clear', () => {
   it('clear re-draws the aircraft default-livery base image when one is primed', async () => {
     const user = userEvent.setup();
     renderCanvas({ initialImageDataUrl: 'data:image/png;base64,TEMPLATE' });
-    // Mount primed the base from the template (async image load).
+    // Mount primed the base image on the base layer (async image load).
     await waitFor(() => {
-      expect(ctxs[0].drawImage.mock.calls.some(c => c.length === 5)).toBe(true);
+      expect(layerCtx('base').drawImage.mock.calls.some(c => c.length === 5)).toBe(true);
     });
-    const before = ctxs[0].drawImage.mock.calls.filter(c => c.length === 5).length;
+    const before = layerCtx('base').drawImage.mock.calls.filter(c => c.length === 5).length;
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(screen.getByText('Confirm Clear')).toBeInTheDocument());
     await user.click(screen.getByText('Clear', { selector: '.btn-danger' }).closest('button'));
     await waitFor(() => {
-      const after = ctxs[0].drawImage.mock.calls.filter(c => c.length === 5).length;
+      const after = layerCtx('base').drawImage.mock.calls.filter(c => c.length === 5).length;
       expect(after).toBeGreaterThan(before);
     });
   });
@@ -1726,7 +1796,7 @@ describe('multi-image panels (A388/B38M)', () => {
   it('lays out two 2048 squares with a 128px gap', async () => {
     const onActivePanel = vi.fn();
     renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel });
-    const cv = mainCanvas();
+    const cv = layerCanvas('base');
     // 2 × 2048 + a 128px gutter.
     expect(cv.width).toBe(4224);
     expect(cv.height).toBe(2048);
@@ -1745,6 +1815,19 @@ describe('multi-image panels (A388/B38M)', () => {
     expect(onActivePanel).not.toHaveBeenCalledWith(0);
   });
 
+  it('one click on another panel both activates it and paints the brush dab', async () => {
+    const onActivePanel = vi.fn();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel });
+    const cv = mainCanvas();
+    // A single pointerdown/up on panel 1 — no drag, no second click.
+    fireEvent.pointerDown(cv, { clientX: (2176 + 1024) / 4, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(onActivePanel).toHaveBeenCalledWith(1);
+    // The same click deposited the brush dab (zero-length round-cap stroke).
+    expect(ctxs.some(c => c.stroke.mock.calls.length > 0)).toBe(true);
+    expect(ctxs[0].drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
+  });
+
   it('a click in the gutter activates the nearest panel', () => {
     const onActivePanel = vi.fn();
     renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel });
@@ -1753,6 +1836,23 @@ describe('multi-image panels (A388/B38M)', () => {
     fireEvent.pointerDown(cv, { clientX: 2140 / 4, clientY: 256, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { pointerId: 1 });
     expect(onActivePanel).toHaveBeenCalledWith(1);
+  });
+
+  it('confines a lasso selection to the active panel', async () => {
+    const user = userEvent.setup();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 1 });
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Lasso' }));
+    const cv = mainCanvas();
+    // Lasso a triangle inside panel 1 (texture 2176..4224).
+    fireEvent.pointerDown(cv, { clientX: (2176 + 400) / 4, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: (2176 + 800) / 4, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: (2176 + 600) / 4, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: (2176 + 600) / 4, clientY: 200, button: 0, pointerId: 1 });
+    // The mask fill is clipped to the ACTIVE panel's 2048² rect (x=2176), so the
+    // selection can never bleed across the gutter into panel 0.
+    expect(ctxs.some(c => c.rect.mock.calls.some(a => a[0] === 2176 && a[2] === TEXTURE && a[3] === TEXTURE))).toBe(true);
+    expect(ctxs.some(c => c.clip.mock.calls.length > 0)).toBe(true);
   });
 
   it('keyboard shortcuts never change the active panel', async () => {
@@ -1854,7 +1954,7 @@ describe('overlay padding (selection chrome outside the canvas)', () => {
     const stage = document.querySelector('.lp-canvas-stage');
     const canvases = stage.querySelectorAll('canvas');
     expect(canvases.length).toBeGreaterThanOrEqual(2);
-    const overlay = canvases[1];
+    const overlay = layerCanvas('chrome');
     expect(overlay.width).toBe(TEXTURE + OVERLAY_PAD * 2);
     expect(overlay.height).toBe(TEXTURE + OVERLAY_PAD * 2);
     // Negative offset parks the padded area around the base bitmap.
@@ -1865,8 +1965,7 @@ describe('overlay padding (selection chrome outside the canvas)', () => {
   it('pads the overlay for a multi-image canvas too', () => {
     const panels = [{ partName: 'Fuselage' }, { partName: 'Wing' }];
     renderCanvas({ panels });
-    const stage = document.querySelector('.lp-canvas-stage');
-    const overlay = stage.querySelectorAll('canvas')[1];
+    const overlay = layerCanvas('chrome');
     // 2 × 2048 + a 128px gutter, plus the pad on both sides.
     expect(overlay.width).toBe(4224 + OVERLAY_PAD * 2);
   });
@@ -2159,7 +2258,8 @@ describe('selection mask', () => {
   // The main canvas is mounted first, so its context leads ctxs; double-check
   // via the opaque base fill no other canvas performs.
   function mainCtx() {
-    const found = ctxs.find(c => c.fillRect.mock.calls.some(a => a[2] === 2048 && a[3] === 2048));
+    // The paint layer is where raster paints and the mask clip read/write.
+    const found = paintCtx();
     expect(found).toBeTruthy();
     return found;
   }
@@ -2207,6 +2307,40 @@ describe('selection mask', () => {
     const slider = screen.getByRole('slider', { name: /Tolerance/ });
     expect(slider.value).toBe('32');
     expect(slider.parentElement.textContent).toContain('Tolerance');
+  });
+
+  it('sub-mode shortcuts A / L / W work and show in the tooltips', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    const tipFor = (name) => {
+      const btn = screen.getByRole('button', { name });
+      fireEvent.mouseEnter(btn);
+      const tip = document.body.querySelector('.tooltip-popup');
+      const text = tip ? tip.textContent : '';
+      fireEvent.mouseLeave(btn);
+      return text;
+    };
+    expect(tipFor('Object')).toContain('(A)');
+    expect(tipFor('Lasso')).toContain('(L)');
+    expect(tipFor('Magic Wand')).toContain('(W)');
+    // Shortcuts switch the sub-mode while Select is active.
+    fireEvent.keyDown(window, { key: 'l' });
+    expect(screen.getByRole('button', { name: 'Lasso' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.keyDown(window, { key: 'w' });
+    expect(screen.getByRole('button', { name: 'Magic Wand' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.keyDown(window, { key: 'a' });
+    expect(screen.getByRole('button', { name: 'Object' }).getAttribute('aria-pressed')).toBe('true');
+    // Reachable from another tool: from Brush, L jumps to Select + Lasso.
+    fireEvent.keyDown(window, { key: 'b' });
+    fireEvent.keyDown(window, { key: 'l' });
+    expect(screen.getByRole('button', { name: 'Lasso' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Select' }).className).toContain('lp-active');
+    // Line moved to U, circle (ellipse) to M.
+    expect(tipFor('Line')).toContain('(U)');
+    expect(tipFor('Ellipse')).toContain('(M)');
+    fireEvent.keyDown(window, { key: 'u' });
+    expect(screen.getByRole('button', { name: 'Line' }).className).toContain('lp-active');
   });
 
   it('pen lasso creates a selection with a dotted outline + Deselect', async () => {
@@ -2288,6 +2422,131 @@ describe('selection mask', () => {
     expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeNull();
   });
 
+  it('wand samples the composited movable layer, not just the base', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
+    // Clear the histories after the last render, then flood: the wand must
+    // render the live rectangle into its sample buffer before reading it
+    // (rect/fill are the object draw; the region spans only use fillRect).
+    ctxs.forEach((c) => { c.rect.mockClear(); c.fill.mockClear(); c.stroke.mockClear(); });
+    fireEvent.pointerDown(cv, { clientX: 1, clientY: 1, button: 0, pointerId: 1 });
+    expect(ctxs.some(c => c.rect.mock.calls.length > 0 || c.fill.mock.calls.length > 0)).toBe(true);
+    expect(ctxs.some(c => c.fillRect.mock.calls.some(a => a[3] === 1))).toBe(true);
+  });
+
+  it('draws the selection outline as white dots with a black border', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await selectPen(user);
+    lassoTriangle();
+    const dotted = () => ctxs.find(c => c.setLineDash.mock.calls
+      .some(a => Array.isArray(a[0]) && a[0][0] === 0 && a[0][1] > 0));
+    await waitFor(() => expect(dotted()).toBeTruthy());
+    // Zero-length dash + round cap = dots; the white pass is drawn last, over
+    // the black underlay that borders each dot.
+    expect(dotted().strokeStyle).toBe('#ffffff');
+    expect(dotted().lineCap).toBe('round');
+  });
+
+  it('Delete with a selection clears the region instead of removing the object', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(1);
+    await selectPen(user);
+    lassoTriangle();
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+    const before = mainCtx().drawImage.mock.calls.length;
+    fireEvent.keyDown(window, { key: 'Delete' });
+    // The marquee-eraser path blits the restored background and keeps the
+    // object (the no-selection branch would have removed it).
+    expect(mainCtx().drawImage.mock.calls.length).toBeGreaterThan(before);
+    expect(ref.current.getObjectCount()).toBe(1);
+  });
+
+  it('Delete with a selection punches the region out of a touched movable', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    // The mask readback needs real selected pixels for the border trace; the
+    // object measurement stays transparent, so the movable survives.
+    stubMaskBlock(400, 400, 800, 800);
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(1);
+    await selectPen(user);
+    lassoTriangle();
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+    fireEvent.keyDown(window, { key: 'Delete' });
+    // The selection border was mapped into the object's local frame and stored
+    // as a hole, so the object keeps a clipped shape instead of being removed.
+    expect(ref.current.getObjectCount()).toBe(1);
+    const info = ref.current.getObjectInfo();
+    expect(Array.isArray(info.erasePolys)).toBe(true);
+    expect(info.erasePolys.length).toBeGreaterThan(0);
+    expect(info.erasePolys[0].length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('Delete with a selection drops a fully-consumed movable', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    // Selected mask region + a holed render that is fully transparent: the
+    // marquee eraser wipes the object out entirely.
+    stubMaskBlock(400, 400, 800, 800, true);
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(1);
+    await selectPen(user);
+    lassoTriangle();
+    fireEvent.keyDown(window, { key: 'Delete' });
+    // Nothing visible remains -> the object is gone, not an invisible frame.
+    expect(ref.current.getObjectCount()).toBe(0);
+  });
+
+  it('a duplicate of a selection-stamped movable inherits the clip shape', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await selectPen(user);
+    lassoTriangle(); // the live selection
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 400, clientY: 400, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectInfo().clipMask).toBe(true);
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+    expect(ref.current.getObjectCount()).toBe(2);
+    // The copy carries the same stamped shape (not re-clipped to nothing).
+    expect(ref.current.getObjectInfo().clipMask).toBe(true);
+  });
+
   it('a brush stroke with an active selection is clipped (putImageData)', async () => {
     const user = userEvent.setup();
     renderCanvas();
@@ -2323,7 +2582,7 @@ describe('selection mask', () => {
     expect(ctxs.every(c => c.putImageData.mock.calls.length === 0)).toBe(true);
   });
 
-  it('a live selection masks only the active movable, not the others', async () => {
+  it('a live selection never masks movables (full objects render and export)', async () => {
     const user = userEvent.setup();
     const ref = React.createRef();
     renderCanvas({ ref });
@@ -2342,27 +2601,163 @@ describe('selection mask', () => {
     await user.click(screen.getByRole('button', { name: 'Select' }));
     fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
-    // Lasso a selection; still the Select tool, so A stays active.
+    // Lasso a selection overlapping A (switching to Lasso drops the movable
+    // selection, per the single-select cancel rule).
     await user.click(screen.getByRole('button', { name: 'Lasso' }));
     lassoTriangle();
     expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
-    // Flatten synchronously and count mask clips (`destination-in` is unique to
-    // paintObjectMasked): only the active movable is clipped — B previews whole.
+    // A selection is treated as already-placed background: every movable
+    // flattens in full, with no presentation mask clip (`destination-in`).
     gcoSets = [];
     act(() => { ref.current.exportParts(); });
-    expect(gcoSets.filter(v => v === 'destination-in')).toHaveLength(1);
-    // Deselect releases the mask: now neither object is clipped.
+    expect(gcoSets.filter(v => v === 'destination-in')).toHaveLength(0);
+    // Still no mask clip after deselecting.
     await user.click(screen.getByRole('button', { name: 'Deselect' }));
     gcoSets = [];
     act(() => { ref.current.exportParts(); });
     expect(gcoSets.filter(v => v === 'destination-in')).toHaveLength(0);
   });
+
+  it('shows movable chrome only in Object mode, and drops it entering pen/wand', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    // Object mode: the blue box (strokeRect) is drawn for the selected movable.
+    await waitFor(() => expect(ctxs.some(c => c.strokeRect.mock.calls.length > 0)).toBe(true));
+    // Entering wand mode drops the movable selection, so no box is drawn.
+    ctxs.forEach(c => c.strokeRect.mockClear());
+    await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
+    await waitFor(() => expect(ctxs.every(c => c.strokeRect.mock.calls.length === 0)).toBe(true));
+  });
+
+  it('keeps the pen/wand mask when switching back to Object mode', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await selectPen(user);
+    lassoTriangle();
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+    // Leaving the wand/pen does NOT cancel the selection mask.
+    await user.click(screen.getByRole('button', { name: 'Object' }));
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+  });
+
+  it('leaving the Select tool in Object mode drops the movable selection', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await waitFor(() => expect(ctxs.some(c => c.strokeRect.mock.calls.length > 0)).toBe(true));
+    // Brush then back to Select: the selection was cancelled on leaving.
+    await user.click(screen.getByRole('button', { name: 'Brush' }));
+    ctxs.forEach(c => c.strokeRect.mockClear());
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await waitFor(() => expect(ctxs.every(c => c.strokeRect.mock.calls.length === 0)).toBe(true));
+  });
+
+  it('bounds only movables added AFTER the selection, not before', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    const drawRect = async (a, b) => {
+      await user.click(screen.getByRole('button', { name: 'Rect' }));
+      fireEvent.pointerDown(cv, { clientX: a[0], clientY: a[1], button: 0, pointerId: 1 });
+      fireEvent.pointerMove(cv, { clientX: b[0], clientY: b[1], button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+    };
+    await drawRect([100, 100], [200, 200]); // BEFORE the selection
+    await selectPen(user);
+    lassoTriangle();                         // selection exists
+    await drawRect([300, 300], [400, 400]); // AFTER the selection
+    expect(ref.current.getObjectCount()).toBe(2);
+    // The newest (last) object captured the selection shape at creation.
+    expect(ref.current.getObjectInfo().clipMask).toBe(true);
+    // Export: exactly ONE mask clip - the clipped object. The pre-selection one
+    // flattens in full.
+    gcoSets = [];
+    act(() => { ref.current.exportParts(); });
+    expect(gcoSets.filter(v => v === 'destination-in')).toHaveLength(1);
+    // Ctrl+D clears the live selection, but the object keeps its stamped shape.
+    fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
+    gcoSets = [];
+    act(() => { ref.current.exportParts(); });
+    expect(gcoSets.filter(v => v === 'destination-in')).toHaveLength(1);
+  });
+
+  it('wand samples only visible colour — a clipped movable is clipped while sampling', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    const drawRect = async (a, b) => {
+      await user.click(screen.getByRole('button', { name: 'Rect' }));
+      fireEvent.pointerDown(cv, { clientX: a[0], clientY: a[1], button: 0, pointerId: 1 });
+      fireEvent.pointerMove(cv, { clientX: b[0], clientY: b[1], button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+    };
+    await drawRect([100, 100], [200, 200]);
+    await selectPen(user);
+    lassoTriangle();
+    await drawRect([300, 300], [400, 400]); // stamped with the selection
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
+    // Flushing the sample must draw the stamped movable through destination-in,
+    // i.e. only its visible pixels are considered.
+    gcoSets = [];
+    fireEvent.pointerDown(cv, { clientX: 1, clientY: 1, button: 0, pointerId: 1 });
+    expect(gcoSets.filter(v => v === 'destination-in').length).toBeGreaterThan(0);
+  });
+});
+
+describe('layer order (paint above movables)', () => {
+  it('stacks base < objects < paint < chrome', () => {
+    renderCanvas({ panels: [{ partName: 'Fuselage' }, { partName: 'Wing' }] });
+    const layers = [...document.querySelectorAll('.lp-canvas-stage canvas')].map(c => c.dataset.layer);
+    expect(layers).toEqual(['base', 'objects', 'paint', 'chrome']);
+  });
+
+  it('keeps movables live when brushed over; the stroke lands on the paint layer', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Brush' }));
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 160, clientY: 160, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // The movable is NOT baked away — it stays live and movable.
+    expect(ref.current.getObjectCount()).toBe(1);
+    // The stroke composited onto the paint layer; the locked base never stroked.
+    expect(paintCtx().drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
+    expect(layerCtx('base').stroke).not.toHaveBeenCalled();
+  });
 });
 
 describe('eraser', () => {
-  // The main canvas context is the one that performed the opaque 2048 base fill.
   function baseCtx() {
-    const found = ctxs.find(c => c.fillRect.mock.calls.some(a => a[2] === 2048 && a[3] === 2048));
+    // The eraser paints the background into the PAINT layer (above movables).
+    const found = paintCtx();
     expect(found).toBeTruthy();
     return found;
   }
@@ -2430,9 +2825,9 @@ describe('eraser', () => {
     await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
     await user.click(screen.getByRole('button', { name: 'Eraser' }));
     const cv = mainCanvas();
-    // The base context is the one that performed the opaque 2048 fill; the drag
-    // must never write through it (that per-frame restore was the drag cost).
-    const base = ctxs.find(c => c.fillRect.mock.calls.some(a => a[2] === 2048 && a[3] === 2048));
+    // The eraser writes the PAINT layer; the drag must never write through it
+    // (that per-frame restore was the drag cost).
+    const base = paintCtx();
     const baseStrokes = () => base.stroke.mock.calls.length;
     const atDown = baseStrokes();
     fireEvent.pointerDown(cv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
@@ -2541,6 +2936,10 @@ describe('eraser', () => {
     // client 268.5,262.25) and dragging to double the distance from the object
     // centre, i.e. local 100,50 -> client 281,268.5.
     await user.click(screen.getByRole('button', { name: 'Select' }));
+    // Switching tools dropped the movable selection (object sub-mode); click
+    // the object's centre to re-select it before grabbing its handle.
+    fireEvent.pointerDown(cv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
     const holes = afterErase.erase[0].pts.map(q => ({ x: q.x, y: q.y }));
     fireEvent.pointerDown(cv, { clientX: 268.5, clientY: 262.25, button: 0, pointerId: 1 });
     fireEvent.pointerMove(cv, { clientX: 281, clientY: 268.5, button: 0, pointerId: 1 });
@@ -2607,6 +3006,12 @@ describe('part-erase boundary helpers', () => {
       .toEqual({ x0: -5, y0: -3, x1: 5, y1: 3 });
     expect(scaleErase(2, undefined)).toBeUndefined();
     expect(scaleFrame(2, null)).toBeUndefined();
+    // Selection-hole polygons scale per axis too (free stretch of a hole).
+    expect(scaleErasePolys(2, [[{ x: 3, y: -4 }]]))
+      .toEqual([[{ x: 6, y: -8 }]]);
+    expect(scaleErasePolys(2, [[{ x: 3, y: -4 }]], 0.5))
+      .toEqual([[{ x: 6, y: -2 }]]);
+    expect(scaleErasePolys(2, undefined)).toBeUndefined();
     // A free stretch takes both axes: the hole points follow x/y, while the
     // single brush width keeps the geometric mean (2 x 0.5 -> 1).
     expect(scaleErase(2, [{ size: 10, pts: [{ x: 3, y: -4 }] }], 0.5))

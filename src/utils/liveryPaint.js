@@ -177,10 +177,17 @@ export function lassoBounds(pts) {
 // Returns scanline spans ({spans: [{y, x0, x1}…], count, bounds}) so the
 // caller can paint the region with fillRect runs — no ImageData needed — or
 // null when the seed is outside the image. Never mutates the input.
-export function wandRegion(img, sx, sy, tolerance = 32) {
+export function wandRegion(img, sx, sy, tolerance = 32, region = null) {
   const { data, width, height } = img;
   sx |= 0; sy |= 0;
+  // Optional inclusive rectangle (e.g. the active panel) the flood is confined
+  // to, so a multi-panel wand can never leak across the gutter/other panels.
+  const rx0 = region && Number.isFinite(region.x0) ? Math.max(0, region.x0 | 0) : 0;
+  const ry0 = region && Number.isFinite(region.y0) ? Math.max(0, region.y0 | 0) : 0;
+  const rx1 = region && Number.isFinite(region.x1) ? Math.min(width - 1, region.x1 | 0) : width - 1;
+  const ry1 = region && Number.isFinite(region.y1) ? Math.min(height - 1, region.y1 | 0) : height - 1;
   if (sx < 0 || sy < 0 || sx >= width || sy >= height) return null;
+  if (sx < rx0 || sy < ry0 || sx > rx1 || sy > ry1) return null;
   const start = (sy * width + sx) * 4;
   const sr = data[start], sg = data[start + 1], sb = data[start + 2], sa = data[start + 3];
   const same = (i) =>
@@ -197,15 +204,15 @@ export function wandRegion(img, sx, sy, tolerance = 32) {
   while (stack.length) {
     const y = stack.pop();
     const x = stack.pop();
-    if (x < 0 || y < 0 || x >= width || y >= height) continue;
+    if (x < rx0 || y < ry0 || x > rx1 || y > ry1) continue;
     const vi = y * width + x;
     if (visited[vi]) continue;
     visited[vi] = 1;
     if (!same(vi * 4)) continue;
-    // Expand the horizontal span.
+    // Expand the horizontal span (bounded by the region).
     let x0 = x, x1 = x;
-    while (x0 - 1 >= 0 && !visited[y * width + x0 - 1] && same((y * width + x0 - 1) * 4)) { x0--; }
-    while (x1 + 1 < width && !visited[y * width + x1 + 1] && same((y * width + x1 + 1) * 4)) { x1++; }
+    while (x0 - 1 >= rx0 && !visited[y * width + x0 - 1] && same((y * width + x0 - 1) * 4)) { x0--; }
+    while (x1 + 1 <= rx1 && !visited[y * width + x1 + 1] && same((y * width + x1 + 1) * 4)) { x1++; }
     for (let xx = x0; xx <= x1; xx++) visited[y * width + xx] = 1;
     spans.push({ y, x0, x1 });
     count += x1 - x0 + 1;
@@ -214,8 +221,8 @@ export function wandRegion(img, sx, sy, tolerance = 32) {
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
     // Enqueue rows above/below as single seeds (visited[] dedups).
-    if (y - 1 >= 0) { for (let xx = x0; xx <= x1; xx++) { stack.push(xx, y - 1); } }
-    if (y + 1 < height) { for (let xx = x0; xx <= x1; xx++) { stack.push(xx, y + 1); } }
+    if (y - 1 >= ry0) { for (let xx = x0; xx <= x1; xx++) { stack.push(xx, y - 1); } }
+    if (y + 1 <= ry1) { for (let xx = x0; xx <= x1; xx++) { stack.push(xx, y + 1); } }
   }
   if (count === 0) return { spans: [], count: 0, bounds: { minX: sx, minY: sy, maxX: sx, maxY: sy } };
   return { spans, count, bounds: { minX, minY, maxX, maxY } };

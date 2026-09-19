@@ -299,19 +299,31 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   save payload); `exportPNG()` still returns the whole wide flattened texture.
   The mask, scratch, stroke, undo and eraser-background canvases are all `W×H`
   (the wide store), and pointer→texture mapping divides by `W`/`H`.
-  - **Padded overlay + interaction surface (`OVERLAY_PAD = 256`)**: the overlay
-    canvas is `(W+2·PAD)×(H+2·PAD)`, absolutely positioned at `-PAD*zoom` so it
-    spills around the base bitmap, and `drawOverlay` clears the padded bitmap
-    then draws with `setTransform(1,0,0,1,PAD,PAD)` (panel dividers use the same
-    offset; `paintErasePreview` takes `ox/oy`). The overlay is the **pointer
-    interaction surface** (same handlers as the base canvas), so a live object's
-    **selection box + scale/rotate knobs stay grabbable and a scale/rotate drag
-    keeps registering outside the 2048 square** (pointer capture stays on the
-    overlay) while the object's own pixels are clipped to the base.
+  - **Four stacked layers (`data-layer`)**: `base` (locked aircraft image,
+    `baseCanvasRef`, opaque, painted only by `drawBase`) → `objects` (live
+    movables, `objectCanvasRef`) → `paint` (`canvasRef`/`ctxRef`, all raster
+    brush/eraser/fill) → `chrome` (`overlayRef`, padded, selection outline +
+    handles + previews). The paint layer draws ABOVE the movables but is
+    `pointer-events:none`; the chrome layer is the pointer surface. This is what
+    makes the pen "always on top" of movables while they stay live and movable —
+    no baking. Export/`pickColorAt`/`applyWandAt` composite base → objects →
+    paint.
+  - **Padded chrome overlay + interaction surface (`OVERLAY_PAD = 256`)**: the
+    chrome canvas is `(W+2·PAD)×(H+2·PAD)`, absolutely positioned at `-PAD*zoom`
+    so it spills around the base bitmap, and `drawOverlay` clears the padded
+    bitmap then draws with `setTransform(1,0,0,1,PAD,PAD)` (panel dividers use the
+    same offset; `paintErasePreview` takes `ox/oy`). The chrome layer is the
+    **pointer interaction surface**, so a live object's **selection box +
+    scale/rotate knobs stay grabbable and a scale/rotate drag keeps registering
+    outside the 2048 square** (pointer capture stays on the chrome canvas).
   - **Active panel by click**: there is no tab strip. A **left click anywhere in
     a panel** (`panelIndexAt(p.x)`; nearest panel in the gutter) makes it the
     active panel for every tool — and **keyboard shortcuts never change it**.
-    `onActivePanel(idx)` is only called from the canvas pointerdown path.
+    `onActivePanel(idx)` is only called from the canvas pointerdown path, and
+    the same click **also performs the active tool** on the panel it lands in
+    (the handler does not return after switching), so painting a second panel is
+    one click, not switch-then-paint. A no-drag brush release deposits one dab
+    (see "Brush strokes" below) so the panel-switch click paints too.
   - **Per-object panel clip (multi-image only, overlay AND export)**: each live
     object renders/saves clipped to the panel its **centre** falls in —
     `layout.x(panelIndexAt(o.x))` — in `drawOverlay` and `flattenToCanvas`. So an
@@ -328,10 +340,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     imperative handle deps include `active`/`panelCount` so its closures are
     never stale.
    - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
-     eyedropper (no shortcut — right-click picks), fill (G), line (L), rect (R),
-     ellipse (O), text (T). `TOOL_META` advertises the shortcut; rail buttons and
+     eyedropper (no shortcut — right-click picks), fill (G), line (U), rect (R),
+     ellipse (M), text (T). `TOOL_META` advertises the shortcut; rail buttons and
      letter shortcuts both go through `activateTool`, which settles any
-     in-progress gesture first (see "Gesture settling" below). The rail **Import
+     in-progress gesture first (see "Gesture settling" below). **A / L / W are
+     global Select sub-mode keys** (Object / Lasso / Magic Wand): pressed from
+     any tool they switch to Select first (e.g. from the brush, `L` jumps to
+     Lasso) — which is why Line moved to `U`. The rail **Import
      Sticker** button is `I` (`ACTION_KEYS.importSticker`); the Selection Pen
      sub-mode uses `LuLasso`.
      **Right-click** is two-stage and tool-gated: right-button *press*
@@ -346,8 +361,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      eyedropper composites the base raster with every live object through a
      lazily-created 1×1 scratch (`pickCanvasRef`/`getPickCanvas`) before reading
      the pixel, so a colour can be picked off **movables** (stickers / shapes /
-     text) and not just the base — mirroring the overlay's masking
-     (`paintObjectMasked` inside a selection, `paintObjectWithErase` otherwise);
+     text) and not just the base — mirroring the overlay's `paintObjectWithErase`
+     (a selection never clips a movable);
      it falls back to the raw base pixel when the composite is empty/transparent
      or there are no objects. Two tools consume the right-button *press*
      themselves: the **Line tool in Curve mode** with a draft pops the last
@@ -396,13 +411,32 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     any slow drag — the alpha appeared to do nothing. Per-rect flushes are
     idempotent (the base copy is never modified), `putImageData` stays reserved
     for fills/mask clips, and the eraser still paints the base directly.
-    **Shift-click straight lines (brush + eraser)**: a plain click drops a
-    `lineAnchorRef` anchor; each **Shift+click** paints a straight segment from
+    **A brush click with no drag deposits one dab** (`paintBrushDab` on release
+    when `strokeBoundsRef` is still null — a zero-length round-cap stroke, the
+    same trick the eraser's single-point trail already used), so a click paints
+    a dot instead of needing a micro-drag; `settleGesture` does the same for an
+    interrupted stroke.
+    **Shift-click straight lines (brush + eraser)**: a plain click deposits its
+    dab and drops a `lineAnchorRef` anchor; each **Shift+click** paints a straight segment from
     the previous anchor to the click (brush: one `beginStroke`/`flushStroke`
     pass at the brush alpha; eraser: `applyEraseGesture` with a two-point
     trail) and re-anchors there, so repeated Shift+clicks chain a polyline.
     Each segment is one undo snapshot (`commitSegment`). **`[` / `]`** step the
     shared brush/eraser size by ∓5 (clamped 1–200) while either tool is active.
+    **Layers: the pen is always on top — without baking.** Four stacked
+    `<canvas>` layers inside `.lp-canvas-stage` (bottom → top):
+    `base` (locked aircraft image, `baseCanvasRef`, opaque, `drawBase` only — the
+    eraser's background source is separate in `bgCanvasRef`), `objects` (live
+    movables, `objectCanvasRef`), `paint` (`canvasRef`/`ctxRef`, all raster
+    brush/eraser/fill), `chrome` (`overlayRef`, padded, selection outline +
+    handles + previews + the pointer surface). The paint layer is `pointer-
+    events:none` but draws ABOVE the movables, so a stroke always covers them
+    while they stay live and movable. UI order is pinned by `data-layer` on each
+    canvas (tests target `[data-layer="paint"|"base"|"objects"|"chrome"]`).
+    Export/`pickColorAt`/`applyWandAt` composite the same order (base → objects →
+    paint). Snapshots carry the paint layer plus a **shared reference** to the
+    last base pixels (`basePixelsRef`, refreshed when `drawBase` lands), so undo
+    restores Clear/import bases without copying the static base per step.
   - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit. Mouse-wheel
     steps the ladder **anchored to the cursor**: the wheel handler records the
     content point under the pointer (`cx/cy` = `scrollLeft + viewport offset`,
@@ -453,7 +487,14 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      part-erase boundary follow both axes (`scaleErase(k, erase, ky)` /
      `scaleFrame(k, frame, ky)`, the single brush width taking the geometric
      mean). Escape / click-away to deselect,
-     `Delete`/`Backspace` to remove the selected object. **The Select box +
+     `Delete`/`Backspace` to remove the selected object. **The movable chrome
+     (blue box + rotate/scale handles + line/curve vertices) draws only in the
+     Select tool's Object sub-mode** (`tool==='select' && selMode==='object'`) —
+     pen/wand show just their selection outline, which is drawn after every
+     movable so it stays on top. **Leaving Object mode cancels the movable
+     selection** (`setSelMode` when `v!=='object'`, and `activateTool` when
+     switching the tool away from Select while in Object mode), but a pen/wand
+     mask selection is deliberately kept. **The Select box +
     handles are always drawn in the UNFLIPPED frame** (`drawOverlay` does
     `translate(x,y) · rotate(rot)` only), and the pointer→frame mapping
     (`stickerLocal` = `objectLocal` = `R(-rot) · (p − o)`) lands in that same frame — so the
@@ -524,7 +565,10 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       default `'object'`): the options bar gains an icon-only `lp-seg` mode row
       (`FaArrowPointer`/`TbCircleDotted`/`BsMagic` with tooltips + aria-labels
       `livery_paint_select_object`/`_pen`/`_wand` = 对象/选择画笔/魔棒,
-      `livery_paint_select_mode`) plus, outside object mode, an icon-only
+      `livery_paint_select_mode`). The tooltips advertise the sub-mode shortcuts
+      via `withKey` (`Object (A)`, `Lasso (L)`, `Magic Wand (W)`); the canvas
+      keydown handler maps **A/L/W globally to the sub-modes, switching to the
+      Select tool from any other tool** (Line therefore uses `U`). Plus, outside object mode, an icon-only
       combine row (`TbLayersUnion`/`TbLayersDifference`/`TbLayersSelected`,
       `livery_paint_mask_combine`/`_erase`/`_replace` = 合并/擦除/替换,
       `livery_paint_mask_mode`, default combine), a Tolerance slider reusing
@@ -537,32 +581,69 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       (white-opaque = selected; `getMaskCtx`/`maskCanvasRef`) with a
       dotted-line outline (`maskOutlineRef`: pen → closed path, wand → region
       bounds = the latest region; live lasso draft from `lassoRef`), drawn
-      dashed (`setLineDash([10/z, 8/z])`, `#6aa0ff`) at the end of
-      `drawOverlay`. Pen: down/move/up collects `lassoRef.pts`, release closes
+      as **tiny, dense round white dots with a hairline black border** at the end
+      of `drawOverlay`: `drawDashed` strokes the same path twice with
+      `lineCap='round'` and `setLineDash([0, 3/z])` (a zero-length dash + round
+      cap = one dot per gap) — a wider black pass (`2/z`) under a narrower white
+      pass (`1/z`).
+      Pen: down/move/up collects `lassoRef.pts`, release closes
       the path into the mask (`commitLasso` ignores <3 pts / <2px span, same
       rule as curve commits); `Escape` cancels the draft. Wand: `applyWandAt`
-      floods the contiguous base region (`wandRegion` spans, fill tolerance)
-      via white `fillRect` runs on a scratch canvas composited with
+      floods the contiguous **visible-colour** region (`wandRegion` spans, fill
+      tolerance) sampled from the exact on-screen stack in a dedicated
+      `wandCanvasRef` buffer: base image → each movable through
+      `paintObjectForDisplay` (so a stamped `clipMask` clips invisible geometry
+      out of the sample) → the paint layer on top. So a sticker/shape colour is
+      selectable, but **invisible geometry never is**. **Multi-panel confinement:**
+      for a multi-image type (`panelCount > 1`) both the lasso fill and the wand
+      flood are restricted to the **active panel** — `applyLassoToMask`/
+      `applyWandAt` `clipActivePanel(mctx)` before compositing, and
+      `wandRegion` takes an inclusive `region` (the active panel rect) that stops
+      the flood at the gutter, so a selection can never cross into the
+      neighbouring panel. The spans are painted as white `fillRect` runs on a scratch canvas composited with
       `maskPaintOp(mode)` (`combine` = source-over, `erase` = destination-out,
       `replace` = clear first); erasing to empty clears the mask
       (`isMaskEmpty` → `clearMask`). Raster paints clip through
       `constrainBaseToMask(before)` (stroke end incl. settle, fill via a
       pre-fill copy) using pure
-      `constrainImageToMask` (mask alpha < 128 reverts to `before`); ONLY the
-      active movable (the selected object carrying selection chrome) clips
-      presentationally to the mask (`paintObjectMasked`: scratch +
-      `destination-in` mask) in `drawOverlay`, `flattenToCanvas` and
-      `pickColorAt` — every other movable previews/saves in full, so a
-      selection never hides non-active movables outside its area. The objects
-      stay whole, Deselect restores full-canvas painting. The mask is NOT in
-      undo snapshots, the save payload or dirty tracking; Clear drops it.
+      `constrainImageToMask` (mask alpha < 128 reverts to `before`).
+      **Selection-stamped movables (`clipMask`)**: `addObject` (and
+      `duplicateSticker`) copies the live mask onto a movable created while
+      `hasMaskRef.current` is true (`getMaskCopy` — one shared immutable W×H copy
+      per mask version, invalidated whenever the mask changes). The object is
+      clipped to that **stamped** shape for good (`paintObjectForDisplay` →
+      `paintObjectMasked(target, o, o.clipMask)`: object → full-store scratch →
+      `destination-in` clip → blit) in the objects layer, `flattenToCanvas` and
+      `pickColorAt`. Ctrl+D (or making a new selection) never un-clips or
+      re-clips it — a movable added under a selection stays that partial shape
+      permanently. A movable placed **before** any selection has no `clipMask`
+      and always renders/exports whole (its own eraser holes only). The live mask
+      itself is NOT in undo snapshots, the save payload or dirty tracking; Clear
+      drops it. The Deselect tooltip advertises its **Ctrl+D** shortcut like the
+      rail buttons.
       The visible dashed outline is re-traced from the already-unioned mask
       pixels by `traceMaskBorder(img)` → edge segments, chained into
       continuous loops by `chainBorderSegments(segs)`; each loop renders as
-      one subpath so the canvas dash runs along it and reads **dotted** (an
-      unchained dash restarts per 1px `moveTo`, rendering solid). The traced
-      border is preferred and the vector outline is only a
-      readback-unavailable fallback.
+      one subpath so the dot dash runs continuously along it (an unchained dash
+      restarts per 1px `moveTo`, which would clump the dots at every segment).
+      The traced border is preferred and the vector outline is only a
+      readback-unavailable fallback. The whole outline block (border + vector
+      fallback + live lasso draft) is drawn **last** in `drawOverlay`, after the
+      movables, panel dividers and eraser preview, so the pen/wand region always
+      overdraws every other layer.
+      **Del with a selection = the marquee eraser** (`eraseSelectionToBackground`):
+      when a mask exists, Delete/Backspace restores the eraser's background
+      (template/base image, else flat white) over the selected region
+      (`destination-in` the mask onto a background copy, then blit onto the
+      base — never transparent, which would be holes in-game) and punches the
+      same region out of every live movable it touches. The mask border is
+      traced to loops and mapped into each object's **local** frame, stored as
+      `erasePolys` (polygon holes filled `evenodd`, so a ring selection keeps
+      its middle; scaled by `scaleErasePolys` on resize, deep-copied on
+      duplicate). A fully-consumed object is dropped and a part-erased
+      rect/ellipse/sticker re-frames, exactly like the eraser tool. With **no**
+      selection Delete keeps the old action (remove the selected, else topmost,
+      object).
       Pure core in `utils/liveryPaint.js` (`SELECT_MODES`, `MASK_OPS`,
       `maskPaintOp`, `lassoBounds`, `wandRegion`, `constrainImageToMask`,
       `isMaskEmpty`, `traceMaskBorder`, `chainBorderSegments`); help
@@ -775,19 +856,27 @@ manifest for a free-form zip folder).
    advertise the shortcuts and the Eyedropper has none) and keyboard-parity gesture
    settling (shortcut commits a mid-drag shape) plus the selection mask
    (Object/Pen/Wand modes + Combine default/Erase/Replace + wand tolerance,
-    lasso → mask + dotted outline + Deselect, Ctrl+D deselects, tap/Escape cancel, wand region
-    spans, masked stroke triggers the `putImageData` clip vs never unmasked,
+    lasso → mask + white-dot/black-border outline + Deselect, Ctrl+D deselects,
+    tap/Escape cancel, wand region
+    spans, the wand composites the live movable layer before sampling
+    (a rect is drawn during the flood), Del with a selection clears the region
+    (background blit) instead of removing the object while Del without one still
+    removes it, and the marquee maps the traced selection into each touched
+    movable as `erasePolys` holes (a fully-consumed object is dropped), a
+    duplicate inherits the stamped `clipMask`, a lasso is clipped to the active
+    panel (multi-image), masked stroke triggers the `putImageData` clip vs never unmasked,
     eyedropper composites live objects (sticker colour picked, not the base),
-    a live selection masks ONLY the active movable while the others flatten
-    unmasked (counts `destination-in` on export),
+    a live selection never masks a movable (export counts zero `destination-in`
+    clips for movables),
     `[` / `]` step the brush/eraser size by 5 with clamping and are inert for a
-    tool without a size (e.g. Rect), and a click +
-    Shift-click chains straight brush and eraser segments,
+    tool without a size (e.g. Rect), a click with no drag deposits one brush dab,
+    and a click + Shift-click chains straight brush and eraser segments,
     new keys resolve in zh+en).
 - `tests/components/LiveryScreen/LiveryCanvas.test.jsx` multi-image coverage
   also pins: the padded overlay canvas size (`W+2·OVERLAY_PAD`), click-to-activate
-  (`onActivePanel(1)`), a click in the gutter activating the nearest panel,
-  keyboard shortcuts never changing the active panel, and
+  (`onActivePanel(1)`), that the panel-switch click also paints the brush dab in
+  the same gesture (no second click), a click in the gutter activating the
+  nearest panel, keyboard shortcuts never changing the active panel, and
   that an object can move outside the active panel (overflow clipped, not
   clamped). `tests/components/LiveryScreen/CreateTab.test.jsx` asserts the
   2-panel store width instead of the removed tab strip, that H/V keep the active

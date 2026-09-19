@@ -222,6 +222,18 @@ describe('wandRegion', () => {
     expect(wandRegion(img, -1, 0, 0)).toBeNull();
     expect(wandRegion(img, 3, 3, 0)).toBeNull();
   });
+
+  it('confines the flood to the given region (active panel)', () => {
+    // A solid 4×1 strip; a region covering only x=2..3 must stop at x=2 even
+    // though the neighbouring pixels are the same colour.
+    const img = blank(4, 1, 200, 200, 200, 255);
+    const region = { x0: 2, y0: 0, x1: 3, y1: 0 };
+    const r = wandRegion(img, 3, 0, 0, region);
+    expect(r.count).toBe(2);
+    expect(r.spans).toEqual([{ y: 0, x0: 2, x1: 3 }]);
+    // A seed outside the region selects nothing.
+    expect(wandRegion(img, 1, 0, 0, region)).toBeNull();
+  });
 });
 
 describe('constrainImageToMask / isMaskEmpty', () => {

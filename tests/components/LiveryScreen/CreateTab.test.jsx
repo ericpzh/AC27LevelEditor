@@ -251,8 +251,9 @@ describe('CreateTab painter validation', () => {
       const stage = () => document.querySelector('.lp-canvas-stage');
       await waitFor(() => expect(document.querySelector('.livery-canvas-wrap canvas').width).toBe(4224));
       await waitFor(() => expect(stage().dataset.activePanel).toBe('0'));
-      // Click panel 1 (texture centre x=3200 over the 512px stub rect).
-      const cv = document.querySelector('.livery-canvas-wrap canvas');
+      // Click panel 1 (texture centre x=3200 over the 512px stub rect). Events
+      // go to the chrome canvas (the pointer interaction surface).
+      const cv = document.querySelector('.livery-canvas-wrap canvas[data-layer="chrome"]');
       fireEvent.pointerDown(cv, { clientX: 3200 * (512 / 4224), clientY: 1024 * (512 / 2048), button: 0, pointerId: 1 });
       fireEvent.pointerUp(cv, { pointerId: 1 });
       await waitFor(() => expect(stage().dataset.activePanel).toBe('1'));
@@ -522,7 +523,7 @@ describe('CreateTab airline/aircraft dropdowns just close', () => {
   beforeEach(() => { mockIpcInvoke.mockClear(); });
 
   function dirtyCanvas() {
-    const cv = document.querySelector('.livery-canvas-wrap canvas');
+    const cv = document.querySelector('.livery-canvas-wrap canvas[data-layer="chrome"]');
     fireEvent.pointerDown(cv, { clientX: 30, clientY: 30, button: 0, pointerId: 1 });
     fireEvent.pointerMove(cv, { clientX: 50, clientY: 50, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { pointerId: 1 });
@@ -1168,7 +1169,7 @@ describe('CreateTab export + load ZIP flows', () => {
 
 describe('CreateTab unsaved-changes guard', () => {
   function dirtyCanvas() {
-    const cv = document.querySelector('.livery-canvas-wrap canvas');
+    const cv = document.querySelector('.livery-canvas-wrap canvas[data-layer="chrome"]');
     fireEvent.pointerDown(cv, { clientX: 30, clientY: 30, button: 0, pointerId: 1 });
     fireEvent.pointerMove(cv, { clientX: 50, clientY: 50, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { pointerId: 1 });
