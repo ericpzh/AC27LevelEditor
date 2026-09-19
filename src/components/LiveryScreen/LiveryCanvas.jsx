@@ -703,12 +703,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ? defaultParts
     : [{ partName: panelNames[0], imageDataUrl: defaultLiveryDataUrl || null }];
   const { bind, TooltipPortal } = useTooltip();
-  // Layer stack (bottom → top): base aircraft image (locked) → live movables
-  // (`objectCanvasRef`) → raster paint/brushes (`canvasRef`, `ctxRef`) → chrome
-  // (`overlayRef`: selection outline, handles, previews, interaction surface).
-  // Paint therefore always renders above movables while they stay live.
+  // Layer stack (bottom → top): base aircraft image (locked) → raster fill
+  // (`fillCanvasRef`, under every movable) → live movables (`objectCanvasRef`)
+  // → raster pen/eraser (`canvasRef`, `ctxRef`) → chrome (`overlayRef`:
+  // selection outline, handles, previews, interaction surface). The fill is a
+  // background/underlay; the pen always renders above movables while they stay
+  // live.
   const baseCanvasRef = useRef(null);
   const baseCtxRef = useRef(null);
+  const fillCanvasRef = useRef(null);
+  const fillCtxRef = useRef(null);
   const objectCanvasRef = useRef(null);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
@@ -987,9 +991,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
   // ── Base init (mount only — parent remounts via key on base change) ─
   useEffect(() => {
-    const canvas = canvasRef.current; // paint layer
+    const canvas = canvasRef.current; // pen layer (brush/eraser)
+    const fillCanvas = fillCanvasRef.current; // fill layer (under movables)
     if (!canvas) return;
     ctxRef.current = canvas.getContext('2d');
+    if (fillCanvas) fillCtxRef.current = fillCanvas.getContext('2d');
     const baseCanvas = baseCanvasRef.current;
     const baseCtx = baseCanvas && baseCanvas.getContext('2d');
     baseCtxRef.current = baseCtx;
@@ -1000,13 +1006,15 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       scheduleOverlay();
     };
     undoRef.current = createUndoStack();
+    fillPixelsRef.current = null;
     setDirty(false);
     syncObjects([], null);
     setTextAnchor(null);
-    // Paint layer starts transparent; the base image lives on its own layer.
-    if (ctxRef.current) {
-      ctxRef.current.setTransform(1, 0, 0, 1, 0, 0);
-      ctxRef.current.clearRect(0, 0, W, H);
+    // Both raster layers start transparent; the base image lives on its own.
+    for (const c of [ctxRef.current, fillCtxRef.current]) {
+      if (!c) continue;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, W, H);
     }
     if (baseCtx) drawBase(baseCtx, layout, initialPartsArr, onBaseDone);
     scheduleOverlay();
@@ -1070,15 +1078,34 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     el.scrollTop = a.cy * a.k - a.vy;
   }, [zoom, fitScale]);
 
-  // A snapshot captures the PAINT raster *and* the live-object layer, so undo
-  // restores (or removes) objects added since the previous snapshot. The base
-  // image is stored by shared reference (it only changes on Clear/import), so a
-  // snapshot never copies the static base.
+  // The fill underlay changes far less often than the pen. Cache its pixels and
+  // invalidate the cache on every fill-layer mutation, so a snapshot reuses the
+  // SAME ImageData object while the fill is untouched — otherwise every
+  // snapshot would carry a second full-store raster (twice the undo memory).
+  const fillPixelsRef = useRef(null);
+  const invalidateFillPixels = () => { fillPixelsRef.current = null; };
+  const captureFillPixels = () => {
+    if (fillPixelsRef.current) return fillPixelsRef.current;
+    const fillCtx = fillCtxRef.current;
+    if (!fillCtx) return null;
+    try { fillPixelsRef.current = fillCtx.getImageData(0, 0, W, H); } catch (_) { fillPixelsRef.current = null; }
+    return fillPixelsRef.current;
+  };
+
+  // A snapshot captures BOTH raster layers (fill underlay + pen) *and* the
+  // live-object layer, so undo restores (or removes) objects added since the
+  // previous snapshot. The base image is stored by shared reference (it only
+  // changes on Clear/import) and so is the fill (cached above), so a snapshot
+  // never copies a static layer.
   const snapshotState = () => {
     const ctx = ctxRef.current;
-    if (!ctx) return null;
+    const fillCtx = fillCtxRef.current;
+    if (!ctx && !fillCtx) return null;
+    let img = null;
+    try { if (ctx) img = ctx.getImageData(0, 0, W, H); } catch (_) {}
     return {
-      img: ctx.getImageData(0, 0, W, H),
+      img,
+      fillImg: fillCtx ? captureFillPixels() : null,
       base: basePixelsRef.current,
       objects: objectsRef.current,
       selId: selIdRef.current,
@@ -1114,13 +1141,24 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
   };
 
+  // Put a snapshot's raster layers back (both, so undo restores a fill and a
+  // pen stroke together), plus the base when it changed.
+  const restoreRasters = (snap) => {
+    if (!snap) return;
+    try { if (ctxRef.current && snap.img) ctxRef.current.putImageData(snap.img, 0, 0); } catch (_) {}
+    try {
+      if (fillCtxRef.current && snap.fillImg) fillCtxRef.current.putImageData(snap.fillImg, 0, 0);
+      // The live fill now equals the snapshot's — cache it by reference.
+      fillPixelsRef.current = snap.fillImg || null;
+    } catch (_) { fillPixelsRef.current = null; }
+  };
+
   const doUndo = useCallback(() => {
     settleGesture();
-    const ctx = ctxRef.current;
-    if (!ctx) return;
+    if (!ctxRef.current && !fillCtxRef.current) return;
     const prev = undoStep(undoRef.current, snapshotState());
     if (prev) {
-      ctx.putImageData(prev.img, 0, 0);
+      restoreRasters(prev);
       restoreBase(prev.base);
       syncObjects(prev.objects || [], prev.selId == null ? null : prev.selId);
       setDirty(true);
@@ -1130,11 +1168,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
   const doRedo = useCallback(() => {
     settleGesture();
-    const ctx = ctxRef.current;
-    if (!ctx) return;
+    if (!ctxRef.current && !fillCtxRef.current) return;
     const next = redoStep(undoRef.current, snapshotState());
     if (next) {
-      ctx.putImageData(next.img, 0, 0);
+      restoreRasters(next);
       restoreBase(next.base);
       syncObjects(next.objects || [], next.selId == null ? null : next.selId);
       setDirty(true);
@@ -1283,10 +1320,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (!mctx) return;
     const x = Math.max(0, Math.min(W - 1, p.x | 0));
     const y = Math.max(0, Math.min(H - 1, p.y | 0));
-    // Sample ONLY what is visible: base image → movables in their VISIBLE form
-    // (a selection-stamped `clipMask` clips them exactly like the screen) → the
-    // paint layer on top. Built in its own buffer because `paintObjectForDisplay`
-    // internally uses the shared scratch.
+    // Sample ONLY what is visible: base image → fill underlay → movables in
+    // their VISIBLE form (a selection-stamped `clipMask` clips them exactly
+    // like the screen) → the pen layer on top. Built in its own buffer because
+    // `paintObjectForDisplay` internally uses the shared scratch.
     const scene = getWandCanvas();
     const sceneCtx = scene && scene.getContext('2d');
     if (!sceneCtx) return;
@@ -1296,6 +1333,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     sceneCtx.globalAlpha = 1;
     sceneCtx.clearRect(0, 0, W, H);
     if (baseCanvasRef.current) sceneCtx.drawImage(baseCanvasRef.current, 0, 0);
+    if (fillCanvasRef.current) sceneCtx.drawImage(fillCanvasRef.current, 0, 0);
     for (const o of objectsRef.current) {
       if (hasLiveVisual(o)) paintObjectForDisplay(sceneCtx, o);
     }
@@ -1345,19 +1383,33 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     rebuildUnionBorder();
     scheduleOverlay();
   };
-  // Revert every base pixel outside the mask to the pre-gesture `before`
-  // pixels. All direct-to-base paints funnel here so a selection clips brush,
-  // eraser, fill and duplicate stamps uniformly.
-  const constrainBaseToMask = (before) => {
-    if (!hasMaskRef.current || !before) return;
-    const ctx = ctxRef.current;
+  // Revert every raster pixel outside the mask to the pre-gesture `before`
+  // pixels on ONE layer. A raster selection clips brush, eraser and fill
+  // uniformly, each layer against its own pre-gesture image.
+  const constrainLayerToMask = (layerCtx, before) => {
+    if (!hasMaskRef.current || !before || !layerCtx) return;
     const mask = maskCanvasRef.current;
-    if (!ctx || !mask) return;
+    if (!mask) return;
     const mctx = mask.getContext('2d');
     if (!mctx) return;
-    const cur = ctx.getImageData(0, 0, W, H);
+    const cur = layerCtx.getImageData(0, 0, W, H);
     const m = mctx.getImageData(0, 0, W, H);
-    if (constrainImageToMask(cur, before, m)) ctx.putImageData(cur, 0, 0);
+    if (constrainImageToMask(cur, before, m)) {
+      layerCtx.putImageData(cur, 0, 0);
+      if (layerCtx === fillCtxRef.current) invalidateFillPixels();
+    }
+  };
+  // Clip BOTH raster layers to the live selection, using the pre-gesture images
+  // from the snapshot pushed at gesture start (`pushSnapshot` runs before every
+  // raster mutation). Called once at the end of a brush stroke, an eraser
+  // gesture, a Shift-click segment or a fill.
+  const constrainRastersToMask = () => {
+    if (!hasMaskRef.current) return;
+    const past = undoRef.current.past;
+    const snap = past.length ? past[past.length - 1] : null;
+    if (!snap) return;
+    constrainLayerToMask(ctxRef.current, snap.img);
+    constrainLayerToMask(fillCtxRef.current, snap.fillImg);
   };
   // Paint one live object through `mask` onto `target` (objects layer + export).
   // Used only for movables that carry a stamped `clipMask`; an object placed
@@ -1690,31 +1742,35 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const prev = erasePreviewRef.current;
     erasePreviewRef.current = null;
     if (!prev || !prev.strokes || prev.strokes.length === 0) return;
-    const ctx = ctxRef.current;
-    if (ctx) {
-      // Punch transparency — the eraser is not a pen: it only removes. The
-      // locked base is always opaque (`drawBase` fills every panel first), so
-      // it shows through exactly where a background-restore would have
-      // painted, without ever baking background-coloured pixels into the
-      // paint layer.
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.globalAlpha = 1;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = '#000';
-      for (const st of prev.strokes) {
-        const pts = st.pts || [];
-        if (pts.length === 0) continue;
-        ctx.lineWidth = Math.max(1, st.size || 1);
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        if (pts.length === 1) ctx.lineTo(pts[0].x + 0.01, pts[0].y + 0.01);
-        for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
-        ctx.stroke();
+    // Punch transparency out of BOTH raster layers — the eraser is not a pen:
+    // it only removes. Cutting the top pen layer alone would leave the fill
+    // underlay visible, so the same trail is cut from the fill layer too. The
+    // locked base is always opaque (`drawBase` fills every panel first), so it
+    // shows through exactly where a background-restore would have painted,
+    // without ever baking background-coloured pixels.
+    {
+      for (const target of [ctxRef.current, fillCtxRef.current]) {
+        if (!target) continue;
+        target.save();
+        target.setTransform(1, 0, 0, 1, 0, 0);
+        target.globalCompositeOperation = 'destination-out';
+        target.globalAlpha = 1;
+        target.lineCap = 'round';
+        target.lineJoin = 'round';
+        target.strokeStyle = '#000';
+        for (const st of prev.strokes) {
+          const pts = st.pts || [];
+          if (pts.length === 0) continue;
+          target.lineWidth = Math.max(1, st.size || 1);
+          target.beginPath();
+          target.moveTo(pts[0].x, pts[0].y);
+          if (pts.length === 1) target.lineTo(pts[0].x + 0.01, pts[0].y + 0.01);
+          for (let j = 1; j < pts.length; j++) target.lineTo(pts[j].x, pts[j].y);
+          target.stroke();
+        }
+        target.restore();
       }
-      ctx.restore();
+      invalidateFillPixels();
       // Holes: build each touched object's erase strokes from the same trail.
       eraseActiveRef.current = new Map();
       for (const st of prev.strokes) {
@@ -1756,37 +1812,40 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       if (changed) objectsRef.current = arr.filter(Boolean);
     }
     finalizeEraseGesture();
-    // The paint layer is always rewritten, even when no live object was under
-    // the trail, so the gesture is always dirty.
+    // Both raster layers are always rewritten, even when no live object was
+    // under the trail, so the gesture is always dirty.
     setDirty(true);
   };
 
   // Delete-with-a-selection: the marquee equivalent of the eraser tool. Cuts
-  // the selected region out of the paint layer (transparency, so the locked
+  // the selected region out of BOTH raster layers (transparency, so the locked
   // base shows through naturally) and punches the same region out of every
   // live movable it touches. Returns true when a selection was erased, so
   // Delete can fall back to removing the selected object when there is no
   // selection.
   const eraseSelectionToTransparent = () => {
-    const ctx = ctxRef.current;
     const mask = maskCanvasRef.current;
     const mctx = mask && mask.getContext('2d');
-    if (!ctx || !mask || !mctx || !hasMaskRef.current) return false;
+    if ((!ctxRef.current && !fillCtxRef.current) || !mask || !mctx || !hasMaskRef.current) return false;
     pushSnapshot();
 
-    // 1) Cut the selected region out of the paint layer (punch transparency).
-    //    The paint layer sits ABOVE the live movables, so opaque pixels here
-    //    would bury the sticker holes punched below and bake a fake-background
-    //    ghost into the paint that stays behind when the sticker moves — Del
+    // 1) Cut the selected region out of both raster layers (punch
+    //    transparency). The pen layer sits ABOVE the live movables, so opaque
+    //    pixels there would bury the sticker holes punched below and bake a
+    //    fake-background ghost that stays behind when the sticker moves — Del
     //    trims the sticker transparent in its own layer, with the (always
-    //    opaque) base showing through. No fallback is needed: `drawBase`
-    //    fills every panel, so punched paint can never expose transparency.
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.globalAlpha = 1;
-    ctx.drawImage(mask, 0, 0);
-    ctx.restore();
+    //    opaque) base showing through. The fill layer is cut too, so a fill
+    //    under the selection is removed as well.
+    for (const layerCtx of [ctxRef.current, fillCtxRef.current]) {
+      if (!layerCtx) continue;
+      layerCtx.save();
+      layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+      layerCtx.globalCompositeOperation = 'destination-out';
+      layerCtx.globalAlpha = 1;
+      layerCtx.drawImage(mask, 0, 0);
+      layerCtx.restore();
+    }
+    invalidateFillPixels();
 
     // 2) Punch the selected region out of every live movable it touches. The
     //    mask border is traced to loops and mapped into each object's LOCAL
@@ -2157,13 +2216,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     scheduleOverlay();
   };
 
-  // ── Export: base image → movables → paint, flattened ─────
-  // The layer order must match the on-screen stack (paint on top of movables).
+  // ── Export: base image → fill → movables → pen, flattened ─
+  // The layer order must match the on-screen stack (fill under the movables,
+  // pen above them).
   const flattenToCanvas = () => {
     const out = document.createElement('canvas');
     out.width = W; out.height = H;
     const ctx = out.getContext('2d');
     ctx.drawImage(baseCanvasRef.current, 0, 0);
+    // The fill underlay goes below every movable.
+    if (fillCanvasRef.current) ctx.drawImage(fillCanvasRef.current, 0, 0);
     // Live objects are flattened at their actual coordinates, each clipped to
     // the panel its CENTRE falls in (not the currently-active panel — export
     // must never depend on which panel is active, and an object on another
@@ -2183,7 +2245,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         paintObjectForDisplay(ctx, o);
       }
     }
-    // Paint layer last, so brush/eraser/fill strokes sit above the movables.
+    // Pen layer last, so brush/eraser strokes sit above the movables.
     if (canvasRef.current) ctx.drawImage(canvasRef.current, 0, 0);
     return out;
   };
@@ -2488,9 +2550,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     pushSnapshot();
     if (isErase) drawEraserSegment(from, to);
     else drawBrushSegment(from, to);
-    constrainBaseToMask(undoRef.current.past.length > 0
-      ? undoRef.current.past[undoRef.current.past.length - 1].img
-      : null);
+    constrainRastersToMask();
     scheduleOverlay();
   };
 
@@ -2515,6 +2575,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       sctx.clearRect(0, 0, 1, 1);
       sctx.translate(-x, -y);
       if (baseCanvasRef.current) sctx.drawImage(baseCanvasRef.current, 0, 0);
+      if (fillCanvasRef.current) sctx.drawImage(fillCanvasRef.current, 0, 0);
       for (const o of objectsRef.current) {
         if (hasLiveVisual(o)) paintObjectForDisplay(sctx, o);
       }
@@ -2718,18 +2779,18 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       pickColorAt(p);
       setTool('brush');
     } else if (t === 'fill') {
+      // The fill lives on its OWN layer UNDER every movable, so a flood fill
+      // never lands on top of a sticker/shape/text — a later pen stroke still
+      // covers the fill, and movables sit above it.
+      const fillCtx = fillCtxRef.current;
+      if (!fillCtx) return;
       pushSnapshot();
-      const img = ctx.getImageData(0, 0, W, H);
-      // Keep a pre-fill copy: the fill paints the whole connected region and
-      // is clipped back to the selection afterwards.
-      const before = hasMaskRef.current
-        ? { width: img.width, height: img.height, data: img.data.slice() }
-        : null;
+      const img = fillCtx.getImageData(0, 0, W, H);
       const bc = brushRef.current;
       const rgb = hexToRgba(bc.color);
       const fillCol = [rgb[0], rgb[1], rgb[2], Math.round((bc.opacity ?? 1) * 255)];
       const changed = floodFill(img, p.x | 0, p.y | 0, fillCol, fillTolRef.current);
-      if (changed) { ctx.putImageData(img, 0, 0); constrainBaseToMask(before); }
+      if (changed) { fillCtx.putImageData(img, 0, 0); invalidateFillPixels(); constrainRastersToMask(); }
       else { undoRef.current.past.pop(); }
     } else if (t === 'line' || t === 'rect' || t === 'ellipse') {
       // Curve mode appends a control point per click (the smooth preview
@@ -2962,9 +3023,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       // Re-anchor at the stroke end so a following Shift+click continues from
       // where this stroke finished (a plain click continues from the click).
       if (last) lineAnchorRef.current = last;
-      constrainBaseToMask(undoRef.current.past.length > 0
-        ? undoRef.current.past[undoRef.current.past.length - 1].img
-        : null);
+      constrainRastersToMask();
       scheduleOverlay();
       return;
     }
@@ -3140,9 +3199,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         flushStroke();
       }
       endStroke();
-      constrainBaseToMask(undoRef.current.past.length > 0
-        ? undoRef.current.past[undoRef.current.past.length - 1].img
-        : null);
+      constrainRastersToMask();
     }
     // An interrupted lasso commits like a pointer release would.
     if (lassoRef.current) {
@@ -3193,9 +3250,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             const clearParts = defaultPartsRef.current.some(p => p && p.imageDataUrl)
               ? defaultPartsRef.current
               : initialPartsRef.current;
-            // Reset the base layer, wipe the paint layer, drop the movables.
-            const pctx = ctxRef.current;
-            if (pctx) { pctx.setTransform(1, 0, 0, 1, 0, 0); pctx.clearRect(0, 0, W, H); }
+            // Reset the base layer, wipe both raster layers, drop the movables.
+            for (const layerCtx of [ctxRef.current, fillCtxRef.current]) {
+              if (!layerCtx) continue;
+              layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+              layerCtx.clearRect(0, 0, W, H);
+            }
+            invalidateFillPixels();
             const baseCtx = baseCtxRef.current;
             if (baseCtx) {
               drawBase(baseCtx, layout, clearParts, () => {
@@ -3484,7 +3545,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
               aria-hidden="true"
             />
-            {/* Layer 2 — live movables (stickers/shapes/text). */}
+            {/* Layer 2 — raster fill underlay, below every movable. */}
+            <canvas
+              ref={fillCanvasRef}
+              data-layer="fill"
+              width={W}
+              height={H}
+              style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
+              aria-hidden="true"
+            />
+            {/* Layer 3 — live movables (stickers/shapes/text). */}
             <canvas
               ref={objectCanvasRef}
               data-layer="objects"
@@ -3493,7 +3563,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
               aria-hidden="true"
             />
-            {/* Layer 3 — raster paint (brushes/eraser/fill), above movables. */}
+            {/* Layer 4 — raster pen (brush/eraser), above movables. */}
             <canvas
               ref={canvasRef}
               data-layer="paint"
@@ -3502,7 +3572,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
               aria-hidden="true"
             />
-            {/* Layer 4 — chrome + interaction surface. Extends OVERLAY_PAD past
+            {/* Layer 5 — chrome + interaction surface. Extends OVERLAY_PAD past
                 the bitmap so a scale/rotate knob drawn outside the 2048 square
                 can still be grabbed and the drag keeps registering out there
                 (pointer capture stays on this element). */}

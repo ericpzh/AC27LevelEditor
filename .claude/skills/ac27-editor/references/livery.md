@@ -306,15 +306,18 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   save payload); `exportPNG()` still returns the whole wide flattened texture.
   The mask, scratch, stroke and undo canvases are all `W×H`
   (the wide store), and pointer→texture mapping divides by `W`/`H`.
-  - **Four stacked layers (`data-layer`)**: `base` (locked aircraft image,
-    `baseCanvasRef`, opaque, painted only by `drawBase`) → `objects` (live
-    movables, `objectCanvasRef`) → `paint` (`canvasRef`/`ctxRef`, all raster
-    brush/eraser/fill) → `chrome` (`overlayRef`, padded, selection outline +
-    handles + previews). The paint layer draws ABOVE the movables but is
-    `pointer-events:none`; the chrome layer is the pointer surface. This is what
+  - **Five stacked layers (`data-layer`)**: `base` (locked aircraft image,
+    `baseCanvasRef`, opaque, painted only by `drawBase`) → `fill`
+    (`fillCanvasRef`/`fillCtxRef`, the flood-fill underlay, BELOW every
+    movable) → `objects` (live
+    movables, `objectCanvasRef`) → `paint` (`canvasRef`/`ctxRef`, the pen:
+    brush/eraser) → `chrome` (`overlayRef`, padded, selection outline +
+    handles + previews). The pen layer draws ABOVE the movables while the fill
+    sits UNDER them, both `pointer-events:none`; the chrome layer is the pointer
+    surface. This is what
     makes the pen "always on top" of movables while they stay live and movable —
-    no baking. Export/`pickColorAt`/`applyWandAt` composite base → objects →
-    paint.
+    no baking. Export/`pickColorAt`/`applyWandAt` composite base → fill →
+    objects → paint.
   - **Padded chrome overlay + interaction surface (`OVERLAY_PAD = 256`)**: the
     chrome canvas is `(W+2·PAD)×(H+2·PAD)`, absolutely positioned at `-PAD*zoom`
     so it spills around the base bitmap, and `drawOverlay` clears the padded
@@ -422,10 +425,17 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     overlap (alpha = 1−(1−a)ⁿ), so a translucent brush went nearly opaque on
     any slow drag — the alpha appeared to do nothing. Per-rect flushes are
     idempotent (the base copy is never modified), and `putImageData` stays reserved
-    for fills/mask clips. **The eraser is not a pen: it only removes.** It
-    strokes the paint layer with `globalCompositeOperation = 'destination-out'`
+    for fills/mask clips. **The fill tool paints the bottom `fill` layer, under
+    every movable** (`fillCtxRef`): a flood fill samples and writes that layer
+    only, so a fill never lands on top of a sticker/shape/text and a later pen
+    stroke still covers it. `constrainRastersToMask` clips the fill layer
+    against the pre-fill snapshot. **The eraser is not a pen: it only removes.**
+    It
+    strokes BOTH raster layers (fill underlay + pen) with
+    `globalCompositeOperation = 'destination-out'`
     (transparent), so the locked opaque base shows through wherever paint is
-    removed — it never paints background-coloured pixels. `applyEraseGesture`
+    removed — it never paints background-coloured pixels; cutting the pen layer
+    alone would leave the fill underlay visible. `applyEraseGesture`
     makes one `destination-out` pass per gesture (deferred to release, only a
     dark preview during the drag) and routes the same trail into every live
     movable's `erase` holes, trimming stickers/shapes transparent in their own
@@ -442,20 +452,27 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     trail) and re-anchors there, so repeated Shift+clicks chain a polyline.
     Each segment is one undo snapshot (`commitSegment`). **`[` / `]`** step the
     shared brush/eraser size by ∓5 (clamped 1–200) while either tool is active.
-    **Layers: the pen is always on top — without baking.** Four stacked
+    **Layers: the pen is always on top, the fill always at the bottom —
+    without baking.** Five stacked
     `<canvas>` layers inside `.lp-canvas-stage` (bottom → top):
     `base` (locked aircraft image, `baseCanvasRef`, opaque, `drawBase` only),
+    `fill` (`fillCanvasRef`, the flood-fill underlay),
     `objects` (live
-    movables, `objectCanvasRef`), `paint` (`canvasRef`/`ctxRef`, all raster
-    brush/eraser/fill), `chrome` (`overlayRef`, padded, selection outline +
-    handles + previews + the pointer surface). The paint layer is `pointer-
-    events:none` but draws ABOVE the movables, so a stroke always covers them
-    while they stay live and movable. UI order is pinned by `data-layer` on each
-    canvas (tests target `[data-layer="paint"|"base"|"objects"|"chrome"]`).
-    Export/`pickColorAt`/`applyWandAt` composite the same order (base → objects →
-    paint). Snapshots carry the paint layer plus a **shared reference** to the
+    movables, `objectCanvasRef`), `paint` (`canvasRef`/`ctxRef`, the pen:
+    brush/eraser), `chrome` (`overlayRef`, padded, selection outline +
+    handles + previews + the pointer surface). Both raster layers are `pointer-
+    events:none`; the fill draws UNDER the movables and the pen draws ABOVE
+    them, so a stroke always covers them while they stay live and movable. UI
+    order is pinned by `data-layer` on each
+    canvas (tests target
+    `[data-layer="fill"|"paint"|"base"|"objects"|"chrome"]`).
+    Export/`pickColorAt`/`applyWandAt` composite the same order (base → fill →
+    objects → paint). Snapshots carry the pen layer plus a **shared reference**
+    to the fill pixels (cached `fillPixelsRef`, invalidated on every fill-layer
+    mutation) and to the
     last base pixels (`basePixelsRef`, refreshed when `drawBase` lands), so undo
-    restores Clear/import bases without copying the static base per step.
+    restores Clear/import bases and fills without copying a static layer per
+    step.
   - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit. Mouse-wheel
     steps the ladder **anchored to the cursor**: the wheel handler records the
     content point under the pointer (`cx/cy` = `scrollLeft + viewport offset`,
@@ -654,11 +671,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       fallback + live lasso draft) is drawn **last** in `drawOverlay`, after the
       movables, panel dividers and eraser preview, so the pen/wand region always
       overdraws every other layer.
-      **Del with a selection = the marquee eraser** (`eraseSelectionToBackground`):
-      when a mask exists, Delete/Backspace cuts the region out of the paint
-      layer (`destination-out` punch, so the locked base shows through —
+      **Del with a selection = the marquee eraser** (`eraseSelectionToTransparent`):
+      when a mask exists, Delete/Backspace cuts the region out of BOTH raster
+      layers (`destination-out` punch, so the locked base shows through —
       nothing is painted over it) and punches the
-      same region out of every live movable it touches. The paint layer sits
+      same region out of every live movable it touches. The pen layer sits
       above the movables, so opaque restore pixels would bury the sticker holes
       and bake a fake-background ghost that stays behind when the sticker
       moves, so the punch is purely transparent (no fallback — `drawBase`
@@ -886,9 +903,10 @@ manifest for a free-form zip folder).
     tap/Escape cancel, wand region
     spans, the wand composites the live movable layer before sampling
     (a rect is drawn during the flood), Del with a selection trims transparent
-    (paint layer punched via `destination-out` with the base showing through —
+    (BOTH raster layers punched via `destination-out` with the base showing
+    through —
     never painted over — while touched movables keep `erasePolys` holes in
-    their own layer; flat-white fallback only with no base image) instead of
+    their own layer) instead of
     removing the object while Del without one still
     removes it, and the marquee maps the traced selection into each touched
     movable as `erasePolys` holes (a fully-consumed object is dropped), a

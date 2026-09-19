@@ -1175,15 +1175,17 @@ describe('LiveryCanvas tools — paint operations', () => {
     expect(input.value).toBe('hi');
   });
 
-  it('fill floods the region and commits pixels', async () => {
+  it('fill floods the region and commits pixels to the fill layer', async () => {
     const user = userEvent.setup();
     renderCanvas();
-    const main = ctxs[0];
+    // The fill lives on its own layer (data-layer="fill"), under all movables.
+    const fill = layerCtx('fill');
+    expect(fill).toBeTruthy();
     // Small synthetic surface so the real flood fill stays cheap.
-    main.getImageData.mockReturnValue({ data: new Uint8ClampedArray(4 * 4 * 4), width: 4, height: 4 });
+    fill.getImageData.mockReturnValue({ data: new Uint8ClampedArray(4 * 4 * 4), width: 4, height: 4 });
     await user.click(screen.getByRole('button', { name: 'Fill' }));
     fireEvent.pointerDown(mainCanvas(), { clientX: 0, clientY: 0, button: 0, pointerId: 1 });
-    expect(main.putImageData).toHaveBeenCalled();
+    expect(fill.putImageData).toHaveBeenCalled();
   });
 
   it('fill tolerance slider readout updates', async () => {
@@ -2903,11 +2905,11 @@ describe('selection mask', () => {
   });
 });
 
-describe('layer order (paint above movables)', () => {
-  it('stacks base < objects < paint < chrome', () => {
+describe('layer order (fill under movables, pen above)', () => {
+  it('stacks base < fill < objects < paint < chrome', () => {
     renderCanvas({ panels: [{ partName: 'Fuselage' }, { partName: 'Wing' }] });
     const layers = [...document.querySelectorAll('.lp-canvas-stage canvas')].map(c => c.dataset.layer);
-    expect(layers).toEqual(['base', 'objects', 'paint', 'chrome']);
+    expect(layers).toEqual(['base', 'fill', 'objects', 'paint', 'chrome']);
   });
 
   it('keeps movables live when brushed over; the stroke lands on the paint layer', async () => {
@@ -2930,6 +2932,49 @@ describe('layer order (paint above movables)', () => {
     // The stroke composited onto the paint layer; the locked base never stroked.
     expect(paintCtx().drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
     expect(layerCtx('base').stroke).not.toHaveBeenCalled();
+  });
+
+  it('export composites base → fill → movables → pen', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const cv = mainCanvas();
+    // Paint a movable, then run a fill — both must appear in the export.
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    await user.click(within(document.querySelector('.lp-rail')).getByRole('button', { name: 'Fill' }));
+    fireEvent.pointerDown(cv, { clientX: 0, clientY: 0, button: 0, pointerId: 1 });
+    ctxs.length = 0;
+    act(() => { ref.current.exportParts(); });
+    // `flattenToCanvas` allocates its output canvas first, so its context leads
+    // the newly-created ones; the per-panel canvases follow.
+    const exportCtx = ctxs[0];
+    const tags = exportCtx.drawImage.mock.calls
+      .map(a => (a[0] && a[0].dataset ? a[0].dataset.layer : null))
+      .filter(Boolean);
+    // The fill underlay is drawn before the pen layer, both over the base.
+    expect(tags[0]).toBe('base');
+    expect(tags[1]).toBe('fill');
+    expect(tags[tags.length - 1]).toBe('paint');
+  });
+
+  it('undo restores the fill layer alongside the pen', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const fill = layerCtx('fill');
+    fill.getImageData.mockReturnValue({ data: new Uint8ClampedArray(4 * 4 * 4), width: 4, height: 4 });
+    await user.click(within(document.querySelector('.lp-rail')).getByRole('button', { name: 'Fill' }));
+    fireEvent.pointerDown(mainCanvas(), { clientX: 0, clientY: 0, button: 0, pointerId: 1 });
+    expect(fill.putImageData).toHaveBeenCalled();
+    // Ctrl+Z puts the pre-fill fill image back (raster snapshots carry both).
+    fill.putImageData.mockClear();
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(fill.putImageData).toHaveBeenCalled();
   });
 });
 
@@ -2955,9 +3000,11 @@ describe('eraser', () => {
     fireEvent.pointerUp(cv, { pointerId: 1 });
     expect(main.stroke.mock.calls.length).toBeGreaterThan(before);
     // The eraser is not a pen: it removes paint via destination-out, never
-    // paints background-coloured pixels over the region.
+    // paints background-coloured pixels over the region. It cuts BOTH raster
+    // layers, so a fill under the trail is removed too.
     expect(gcoSets).toContain('destination-out');
     expect(main.globalCompositeOperation).toBe('destination-out');
+    expect(layerCtx('fill').globalCompositeOperation).toBe('destination-out');
   });
 
   it('erases a sticker but keeps it selectable and movable', async () => {
