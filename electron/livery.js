@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const { createZip, listZipFiles, extractZip } = require('../src/utils/zipUtils');
 const { ddsToPngDataUrl } = require('./dds');
+const { STEAM_WORKSHOP_SEGMENT, STEAM_WORKSHOP_CONTENT_SEGMENT } = require('../src/utils/constants/steam.js');
 
 const OWN_PACK = 'AC27 Custom Liveries';
 const REFERENCE_PACK = 'AC27 Realistic Aircraft Livery';
@@ -68,7 +69,10 @@ function workshopContentDir(gameRoot) {
   let dir;
   try { dir = path.resolve(String(gameRoot)); } catch (_) { return null; }
   for (let i = 0; i < 6; i++) {
-    try { if (fs.existsSync(path.join(dir, 'workshop', 'content'))) return path.join(dir, 'workshop', 'content'); } catch (_) {}
+    try {
+      const content = path.join(dir, STEAM_WORKSHOP_SEGMENT, STEAM_WORKSHOP_CONTENT_SEGMENT);
+      if (fs.existsSync(content)) return content;
+    } catch (_) {}
     const parent = path.dirname(dir);
     if (!parent || parent === dir) break;
     dir = parent;

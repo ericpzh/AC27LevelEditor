@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { IoLanguage, IoFolderOpenOutline } from 'react-icons/io5';
+import React, { useState, useEffect } from 'react';
+import { IoLanguage, IoFolderOpenOutline, IoCheckmarkCircleOutline } from 'react-icons/io5';
 import './SetupScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
@@ -15,6 +15,43 @@ export default function SetupScreen() {
   const setCacheBuildProgress = useAppStore(s => s.setCacheBuildProgress);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [detected, setDetected] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await electronAPI.detectGameRoot();
+        if (!cancelled && res && res.found) setDetected(res);
+      } catch (err) { console.error(err); }
+    })();
+    return () => { cancelled = true; };
+  }, [electronAPI]);
+
+  const proceedWithRoot = async (rootPath, airports) => {
+    setRootPath(rootPath, airports || []);
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal(
+      t => t('browser_scanning_title'),
+      () => <CacheProgressBody />,
+      null,
+      false,
+    );
+    try {
+      await electronAPI.initAirportCache(rootPath);
+    } catch (err) { console.error(err); }
+    hideModal();
+    setScreen('browser');
+  };
+
+  const handleUseDetected = async () => {
+    if (!detected) return;
+    setLoading(true); setError(null);
+    try {
+      await proceedWithRoot(detected.rootPath, detected.airports);
+    } catch (err) { setError(err.message); useAppStore.getState().hideModal(); }
+    setLoading(false);
+  };
 
   const handleSelectRoot = async () => {
     setLoading(true); setError(null);
@@ -22,19 +59,7 @@ export default function SetupScreen() {
       const result = await electronAPI.selectGameRoot();
       if (result.canceled) { setLoading(false); return; }
       if (result.errorCode) { setError(t(result.errorCode, { path: result.errorPath })); setLoading(false); return; }
-      setRootPath(result.rootPath, result.airports || []);
-      const { showModal, hideModal } = useAppStore.getState();
-      showModal(
-        t => t('browser_scanning_title'),
-        () => <CacheProgressBody />,
-        null,
-        false,
-      );
-      try {
-        await electronAPI.initAirportCache(result.rootPath);
-      } catch (err) { console.error(err); }
-      hideModal();
-      setScreen('browser');
+      await proceedWithRoot(result.rootPath, result.airports);
     } catch (err) { setError(err.message); useAppStore.getState().hideModal(); }
     setLoading(false);
   };
@@ -54,7 +79,19 @@ export default function SetupScreen() {
           </ol>
           <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>C:\Program Files (x86)\Steam\steamapps\common\Airport Control 25 Playtest</code> {t('setup_steam_path_or')} <code>D:\SteamLibrary\steamapps\common\Airport Control 27 Demo</code></p>
         </div>
-<button className="btn-big" onClick={handleSelectRoot} disabled={loading}>
+        {detected && (
+          <div className="setup-detected">
+            <div className="setup-detected-title">
+              {t(detected.steam ? 'setup_detected_title_steam' : 'setup_detected_title')}
+            </div>
+            <code className="setup-detected-path">{detected.rootPath}</code>
+            <button className="btn-big setup-detected-btn" onClick={handleUseDetected} disabled={loading}>
+              {loading ? '...' : <><IoCheckmarkCircleOutline size={16} className="btn-icon" />{t('setup_detected_confirm')}</>}
+            </button>
+            <p className="setup-detected-hint">{t('setup_detected_hint')}</p>
+          </div>
+        )}
+        <button className="btn-big" onClick={handleSelectRoot} disabled={loading}>
           {loading ? '...' : <><IoFolderOpenOutline size={16} className="btn-icon" />{t('setup_select_root')}</>}
         </button>
         {error && <p className="setup-error">{error}</p>}

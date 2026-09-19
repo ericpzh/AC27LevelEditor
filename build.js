@@ -20,6 +20,11 @@
 const builder = require('electron-builder');
 const fs = require('fs');
 const path = require('path');
+const {
+  STEAM_WORKSHOP_MARKER,
+  STEAM_WORKSHOP_SOURCE_MARKER,
+  STEAM_WORKSHOP_ARTIFACT,
+} = require('./src/utils/constants/steam.js');
 
 const args = process.argv.slice(2);
 const isWin = args.includes('--win') || args.includes('--windows');
@@ -92,9 +97,9 @@ if (isVoice) {
 if (isWorkshop) {
   if (isVoice) fail('workshop + voice combo not supported — workshop is non-voice only (Voice stays GitHub/R2)');
   // Marker file baked into resources — updater checks for it even after exe is moved
-  const markerPath = path.join(__dirname, '.workshop-marker.json');
+  const markerPath = path.join(__dirname, STEAM_WORKSHOP_SOURCE_MARKER);
   fs.writeFileSync(markerPath, JSON.stringify({ workshop: true, disableAutoUpdate: true }), 'utf-8');
-  const workshopResources = [{ from: '.workshop-marker.json', to: 'workshop.json' }];
+  const workshopResources = [{ from: STEAM_WORKSHOP_SOURCE_MARKER, to: STEAM_WORKSHOP_MARKER }];
   // Optionally bundle the plugin DLL inside resources/ so the exe is self-
   // contained even if the sibling copy in the Workshop folder is moved. The
   // release workflow also copies the DLL as a sibling alongside the exe in
@@ -115,7 +120,7 @@ if (isWorkshop) {
     console.log('[build] workshop variant — no plugin DLL found to bundle (release workflow will copy sibling AC27Approach.dll alongside exe)');
   }
   win.extraResources = [...(win.extraResources || []), ...workshopResources];
-  win.artifactName = 'AC27EditorWorkshop.${ext}';
+  win.artifactName = STEAM_WORKSHOP_ARTIFACT + '.${ext}';
   console.log('[build] workshop variant — auto-update DISABLED (Steam Workshop handles updates), plugin via bundled/sibling DLL');
 }
 

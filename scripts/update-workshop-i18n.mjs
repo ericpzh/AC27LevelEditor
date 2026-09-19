@@ -23,9 +23,13 @@
 
 import fs from 'fs';
 import path from 'path';
-
-const APPID = '4004140';
-const PUBLISHED_FILE_ID = '3793213548';
+import {
+  STEAM_APP_ID as APPID,
+  STEAM_PUBLISHED_FILE_ID as PUBLISHED_FILE_ID,
+  STEAM_WORKSHOP_TITLE,
+  STEAM_ENV,
+  STEAM_UPDATE_PUBLISHED_FILE_ENDPOINTS,
+} from '../src/utils/constants/steam.js';
 
 const TITLE_PATH = 'workshop/title.txt';
 const EN_PATH = 'workshop/description_en.txt';
@@ -50,7 +54,7 @@ async function post(endpoint, params) {
 
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
-  const key = process.env.STEAM_PUBLISHER_KEY || process.env.STEAM_API_KEY || '';
+  const key = process.env[STEAM_ENV.PUBLISHER_KEY] || process.env[STEAM_ENV.API_KEY] || '';
 
   if (!key) {
     console.log('[i18n] STEAM_PUBLISHER_KEY not set — skipping description push (content upload still handles Workshop).');
@@ -66,8 +70,8 @@ async function main() {
   console.log(`[i18n] EN: ${en.length} chars, ZH: ${zh.length} chars`);
   console.log(`[i18n] fileId=${PUBLISHED_FILE_ID} appId=${APPID}`);
 
-  if (title !== 'AC27Editor') {
-    console.error(`[i18n] title.txt must be "AC27Editor" (constant) — got "${title}"`);
+  if (title !== STEAM_WORKSHOP_TITLE) {
+    console.error(`[i18n] title.txt must be "${STEAM_WORKSHOP_TITLE}" (constant) — got "${title}"`);
     process.exit(1);
   }
 
@@ -94,10 +98,7 @@ async function main() {
       language,
     };
     // Primary: partner API (requires publisher key)
-    const endpoints = [
-      'https://partner.steam-api.com/IPublishedFileService/UpdatePublishedFile/v1/',
-      'https://api.steampowered.com/ISteamRemoteStorage/UpdatePublishedFile/v1/',
-    ];
+    const endpoints = STEAM_UPDATE_PUBLISHED_FILE_ENDPOINTS;
     let lastErr = null;
     for (const ep of endpoints) {
       console.log(`[i18n] POST ${ep} language=${language} ...`);
@@ -120,7 +121,7 @@ async function main() {
     }
     if (lastErr) {
       console.error(`[i18n] FAILED to push ${language}. Last error: ${lastErr.slice(0, 500)}`);
-      console.error('[i18n] Hint: ensure STEAM_PUBLISHER_KEY is a publisher key with Workshop permission for app 4004140, not a regular Web API key.');
+      console.error(`[i18n] Hint: ensure ${STEAM_ENV.PUBLISHER_KEY} is a publisher key with Workshop permission for app ${APPID}, not a regular Web API key.`);
       process.exit(1);
     }
   }

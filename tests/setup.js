@@ -18,6 +18,7 @@ const mockIpcOn = vi.fn((channel, cb) => {
 vi.stubGlobal('electronAPI', {
   // Setup screen
   selectGameRoot: () => mockIpcInvoke('select-game-root'),
+  detectGameRoot: () => mockIpcInvoke('detect-game-root'),
   getCacheState: () => mockIpcInvoke('get-cache-state'),
   initAirportCache: (rootPath) => mockIpcInvoke('init-airport-cache', rootPath),
 

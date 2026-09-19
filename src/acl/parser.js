@@ -21,7 +21,7 @@ const {
   collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, getFileInfo,
   loadAudioCallsigns, mergeAudioCallsigns,
 } = require('./utils');
-const { scanGameRoot } = require('./scanner');
+const { scanGameRoot, findGameRoot } = require('./scanner');
 const {
   extractSpecificationDB, extractApproachData, extractState5Data, extractTypeMap,
   buildAppPointMap, buildState5ParamsMap, buildFlyFractionMap,
@@ -206,7 +206,7 @@ module.exports = {
   collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns,
   getFileInfo, loadAudioCallsigns,
   sortFlightsChronologically,
-  scanGameRoot,
+  scanGameRoot, findGameRoot,
   extractSpecificationDB, extractApproachData, extractState5Data, extractTypeMap,
   buildAppPointMap, buildState5ParamsMap, buildFlyFractionMap,
   resolveFlyApproachPoints,

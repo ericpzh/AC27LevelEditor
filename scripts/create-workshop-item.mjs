@@ -44,6 +44,11 @@ import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
+import {
+  STEAM_WORKSHOP_TITLE,
+  STEAM_VISIBILITY,
+  STEAM_ENV,
+} from '../src/utils/constants/steam.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -134,7 +139,7 @@ function main() {
     console.error('error: --appid <numeric app id> is required');
     process.exit(1);
   }
-  if (!['0', '1', '2', '3'].includes(String(args.visibility))) {
+  if (!Object.values(STEAM_VISIBILITY).includes(String(args.visibility))) {
     console.error('error: --visibility must be 0 (public), 1 (friends), 2 (private) or 3 (unlisted)');
     process.exit(1);
   }
@@ -145,7 +150,7 @@ function main() {
     process.exit(1);
   }
   const previewfile = resolveExisting(args.preview || 'icon.png');
-  const title = args.title || readIfExists(path.join(ROOT, 'workshop', 'title.txt')) || 'AC27Editor';
+  const title = args.title || readIfExists(path.join(ROOT, 'workshop', 'title.txt')) || STEAM_WORKSHOP_TITLE;
   const description = args['description-file']
     ? readIfExists(resolveExisting(args['description-file']))
     : readIfExists(path.join(ROOT, 'workshop', 'description_en.txt'));
@@ -167,8 +172,8 @@ function main() {
   console.log(`[create-item] appid=${fields.appid} visibility=${fields.visibility} (0=public 1=friends 2=private 3=unlisted)`);
   if (!fields.contentfolder) console.log('[create-item] no --content: item is created without content');
 
-  const username = process.env.STEAM_USERNAME || '';
-  const steamcmd = process.env.STEAMCMD || 'steamcmd';
+  const username = process.env[STEAM_ENV.USERNAME] || '';
+  const steamcmd = process.env[STEAM_ENV.STEAMCMD] || 'steamcmd';
   const cmdArgs = buildSteamCmdArgs({ username: username || '<username>', vdfPath: outPath });
   console.log(`[create-item] command: ${steamcmd} ${cmdArgs.join(' ')}`);
 

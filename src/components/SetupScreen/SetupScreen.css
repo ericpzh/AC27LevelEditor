@@ -74,6 +74,44 @@
   color: var(--accent);
 }
 
+.setup-detected {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.setup-detected-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.setup-detected-path {
+  display: block;
+  background: var(--bg-elevated);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  color: var(--accent);
+  word-break: break-all;
+  margin-bottom: 12px;
+}
+
+.setup-detected-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.setup-detected-hint {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
 .btn-big {
   display: inline-flex;
   align-items: center;

@@ -14,7 +14,7 @@ const { readCacheFlag, writeCacheFlag } = require('./cache-flags');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, findGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, PROD_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { readAclText } = require('../src/acl/gatcarc');
@@ -564,6 +564,42 @@ function closeFlightStripsWindow(airportIcao) {
   if (win && !win.isDestroyed()) { win.close(); }
   flightStripsWindows.delete(key);
 }
+
+// ─── IPC: Auto-detect game root from the running exe location ───
+
+// Candidate starting directories for game-root auto-detection, derived from
+// wherever this editor is running from. Walking up from these finds the game
+// when the editor is installed inside the game folder (or a subfolder of it),
+// and the Steam `common/*` sibling scan finds it when the editor is a separate
+// app in the same Steam library.
+function _candidateExeDirs() {
+  const dirs = [];
+  const add = (p) => { try { if (p) dirs.push(path.dirname(p)); } catch (_) {} };
+  const addDir = (p) => { try { if (p) dirs.push(p); } catch (_) {} };
+  try { add(process.env.PORTABLE_EXECUTABLE_FILE); } catch (_) {}
+  try { add(app.getPath('exe')); } catch (_) {}
+  try { add(process.execPath); } catch (_) {}
+  try { if (!app.isPackaged) addDir(app.getAppPath()); } catch (_) {}
+  try { addDir(process.cwd()); } catch (_) {}
+  return [...new Set(dirs.filter(Boolean))];
+}
+
+ipcMain.handle('detect-game-root', async () => {
+  const dirs = _candidateExeDirs();
+  const found = findGameRoot(dirs);
+  if (!found) {
+    console.log('[IPC] detect-game-root: none (candidates: ' + dirs.join(', ') + ')');
+    return { found: false };
+  }
+  console.log('[IPC] detect-game-root: found', found.gameRoot, '(steam=' + found.steam + ', airports=' + found.airports.length + ')');
+  return {
+    found: true,
+    rootPath: found.gameRoot,
+    airports: found.airports,
+    totalFiles: found.totalFiles,
+    steam: found.steam,
+  };
+});
 
 // ─── IPC: Select game root ───────────────────────────────
 

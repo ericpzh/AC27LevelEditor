@@ -3,6 +3,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { STEAMAPPS_SEGMENT, STEAM_COMMON_SEGMENT } = require('../utils/constants/steam.js');
 
 /**
  * Scan the game root directory for all .acl files.
@@ -49,4 +50,85 @@ function scanGameRoot(gameRoot) {
   return { airports, totalFiles };
 }
 
-module.exports = { scanGameRoot };
+const FIND_ROOT_MAX_UP = 8;
+
+/**
+ * Deepest ancestor (including `dir` itself) whose path segment is `steamapps`,
+ * or null when the path is not inside a Steam library. Case-insensitive.
+ * @param {string} dir
+ * @returns {string|null}
+ */
+function steamappsRoot(dir) {
+  let resolved;
+  try { resolved = path.resolve(String(dir)); } catch (_) { return null; }
+  const parts = resolved.split(/[\\/]+/);
+  let idx = -1;
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i].toLowerCase() === STEAMAPPS_SEGMENT) idx = i;
+  }
+  if (idx < 0) return null;
+  return parts.slice(0, idx + 1).join(path.sep) || null;
+}
+
+/**
+ * Best-effort auto-detection of the game root from one or more starting
+ * directories (typically the running editor's exe directory).
+ *
+ * Passes:
+ *  1. Walk up from each start dir (bounded by FIND_ROOT_MAX_UP) and return
+ *     the nearest ancestor that scans as a valid game root. This covers an
+ *     editor placed inside (or beside a subfolder of) the game root.
+ *  2. If a start dir lies under a Steam library, probe `<steamapps>/common/*`
+ *     siblings for a valid game root. This covers a standalone editor app
+ *     installed side-by-side with the game in the same Steam library.
+ *
+ * @param {string|string[]} startDirs
+ * @returns {{ gameRoot: string, airports: Array, totalFiles: number, steam: boolean }|null}
+ */
+function findGameRoot(startDirs) {
+  const raw = Array.isArray(startDirs) ? startDirs : [startDirs];
+  const starts = raw
+    .filter(Boolean)
+    .map(d => { try { return path.resolve(String(d)); } catch (_) { return null; } })
+    .filter(Boolean);
+  if (!starts.length) return null;
+
+  const seen = new Set();
+  const tryRoot = (dir) => {
+    if (!dir || seen.has(dir)) return null;
+    seen.add(dir);
+    const scan = scanGameRoot(dir);
+    if (scan.errorCode || !scan.airports.length) return null;
+    return { gameRoot: dir, airports: scan.airports, totalFiles: scan.totalFiles };
+  };
+
+  // Pass 1: ancestor walk (nearest game root wins).
+  for (const start of starts) {
+    let dir = start;
+    for (let i = 0; i <= FIND_ROOT_MAX_UP; i++) {
+      const hit = tryRoot(dir);
+      if (hit) return { ...hit, steam: !!steamappsRoot(dir) };
+      const parent = path.dirname(dir);
+      if (!parent || parent === dir) break;
+      dir = parent;
+    }
+  }
+
+  // Pass 2: Steam library sibling scan.
+  for (const start of starts) {
+    const steamapps = steamappsRoot(start);
+    if (!steamapps) continue;
+    const common = path.join(steamapps, STEAM_COMMON_SEGMENT);
+    let entries;
+    try { entries = fs.readdirSync(common, { withFileTypes: true }); } catch (_) { continue; }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const hit = tryRoot(path.join(common, entry.name));
+      if (hit) return { ...hit, steam: true };
+    }
+  }
+
+  return null;
+}
+
+module.exports = { scanGameRoot, findGameRoot, steamappsRoot };

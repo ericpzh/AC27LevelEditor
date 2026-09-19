@@ -38,6 +38,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { app } = require('electron');
+const { STEAM_WORKSHOP_MARKER } = require('../src/utils/constants/steam.js');
 
 // ─── Logger ────────────────────────────────────────────────
 // Packaged portable exes have no visible console, so every decision is also
@@ -75,7 +76,7 @@ const api = module.exports;
 function isWorkshopBuild() {
   if (!app.isPackaged) return false;
   if (typeof process.resourcesPath !== 'string') return false;
-  try { return fs.existsSync(path.join(process.resourcesPath, 'workshop.json')); }
+  try { return fs.existsSync(path.join(process.resourcesPath, STEAM_WORKSHOP_MARKER)); }
   catch { return false; }
 }
 

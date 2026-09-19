@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // Setup screen
   selectGameRoot: () => ipcRenderer.invoke('select-game-root'),
+  detectGameRoot: () => ipcRenderer.invoke('detect-game-root'),
   getCacheState: () => ipcRenderer.invoke('get-cache-state'),
   initAirportCache: (rootPath) => ipcRenderer.invoke('init-airport-cache', rootPath),
 
