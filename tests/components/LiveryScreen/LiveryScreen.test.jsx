@@ -203,6 +203,15 @@ describe('LiveryScreen', () => {
     expect(screen.getByText('American Airlines')).toBeInTheDocument();
   });
 
+  it('Ctrl+F focuses the list search box', async () => {
+    setupMocks();
+    renderLivery();
+    const input = document.querySelector('.livery-search input');
+    expect(document.activeElement).not.toBe(input);
+    fireEvent.keyDown(document.body, { key: 'f', ctrlKey: true });
+    expect(document.activeElement).toBe(input);
+  });
+
   it('header Pack button opens the install modal + overlay', async () => {
     setupMocks({
       'download-livery': new Promise(() => {}),

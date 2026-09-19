@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './LiveryScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useAppStore } from '../../store/appStore';
@@ -24,6 +24,7 @@ export default function LiveryScreen() {
   const [tab, setTab] = useState('mine');
   const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const searchRef = useRef(null);
   const { bind, TooltipPortal } = useTooltip();
   // Mine-list commands + bar state, published by MyLiveriesTab.
   const mineCmdRef = useRef({});
@@ -86,6 +87,23 @@ export default function LiveryScreen() {
   const isMine = tab === 'mine';
   const isCreate = tab === 'create';
 
+  // Ctrl+F / Cmd+F focuses the list search box. Ignored while typing, while a
+  // modal is open, or on the painter page (no search box there).
+  useEffect(() => {
+    if (!isMine) return;
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'f') return;
+      const el = e.target;
+      const tag = (el && el.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (el && el.isContentEditable)) return;
+      if (useAppStore.getState().modal && useAppStore.getState().modal.open) return;
+      e.preventDefault();
+      if (searchRef.current) searchRef.current.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isMine]);
+
   return (
     <div id="screen-livery" className={'screen' + (isCreate ? ' livery-screen--painter' : '')}>
       {!isCreate && (
@@ -139,6 +157,7 @@ export default function LiveryScreen() {
                 <span className="livery-search">
                   <IoSearchOutline size={14} className="livery-search-icon" />
                   <input
+                    ref={searchRef}
                     type="text"
                     value={search}
                     placeholder={t('livery_search')}
