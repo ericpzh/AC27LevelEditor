@@ -7,7 +7,10 @@ Two views (`mine` list / `create` painter, local `useState`, **no tab bar**):
 the list view has a single header bar (LHS: Back, Help `?`, Pack; RHS: New,
 Select All / Deselect All, Export, Delete, Find); the painter view hides the
 header and has its own top bar. The help overlay is **page-scoped** — each view
-documents only its own buttons.
+documents only its own buttons — and both pages end with the post-save
+mod-enable warning as a highlighted tip (`#livery-help-tip`). `Ctrl+F` focuses
+the list Find input (ignored while typing, with a modal open, or on the
+painter page).
 
 ## On-disk format
 
@@ -123,9 +126,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `LiveryHelpOverlay`, Pack (`handleInstallPack` → `InstallPackTab` in an app
   modal); (RHS group): New, Select All/Deselect All, **Export**
   (`FaFileExport`, enabled with exactly one selected) and Delete Selected (both
-  icon + label, greyed via `.btn-sm:disabled`), Find input
-  (`IoSearchOutline`). `LiveryHelpOverlay` gets
-  `page={isCreate ? 'painter' : 'list'}`. Header bar state
+   icon + label, greyed via `.btn-sm:disabled`), Find input
+   (`IoSearchOutline`, `searchRef`; a list-page `Ctrl+F`/`Cmd+F` keydown
+   listener focuses it unless typing, a modal is open, or the painter tab is
+   active). `LiveryHelpOverlay` gets
+   `page={isCreate ? 'painter' : 'list'}`. Header bar state
   (`{mineCount, selectedCount, allSelected, oneSelected}`) + commands are
   published by `MyLiveriesTab` through `onBarState` / `mineCmdRef`
   (`toggleSelectAll`/`exportSelected`/`deleteSelected`). Unsaved-painter guard: `CreateTab`
@@ -280,10 +285,12 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   (`back`/`importImage`/`importZip`/`exportZip`/`deleteThis`/`saveAs`/`save`) +
   Paint tools
   (`color`/`brush`/`eraser`/`eyedropper`/`fill`/`line`/`rect`/`ellipse`/`text`/
-  `sticker`/`select`/`clear`). Each item renders as "icon + label —
-  description"; the self-referential Help chip, and the undo/redo/zoom/fit and
-  duplicate/remove-sticker chips, are not listed. Escape/backdrop/X close; i18n
-  `livery_help_*` (zh + en).
+   `sticker`/`select`/`clear`). Each item renders as "icon + label —
+   description"; the self-referential Help chip, and the undo/redo/zoom/fit and
+   duplicate/remove-sticker chips, are not listed. Both pages end with the
+   post-save mod-enable warning as a highlighted tip (`#livery-help-tip`,
+   `livery_mod_hint_title`/`_body`). Escape/backdrop/X close; i18n
+   `livery_help_*` (zh + en).
 - `LiveryCanvas.jsx` — **N-panel** backing store: one 2048² panel per
   `panels` entry (multi-image A388/B38M → 2 panels), laid out horizontally
   with a `PANEL_GAP` (128px) `GAP_FILL` gutter, so the store is
@@ -377,14 +384,19 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      a smooth `makeCurveObject` live object**, keeping the line tool in curve
      mode so several curves can be drawn in a row. Escape cancels the draft;
      a degenerate draft (<2 points) is discarded silently.
-  - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none of their own
-    — but Select **does** render the text options while a text object is
-    selected): brush/eraser size + (brush only) hard/soft; fill
-    tolerance; line/rect/ellipse width + fill toggle (Line also gets a
-    Straight/Curve `lp-seg` toggle, `livery_paint_line_mode`/`_straight`/
-    `_curve`); text font (`FONT_OPTIONS`)
-    + size + bold/italic (bound to `shownText`, applying to the selected text
-    object in Select mode). Colour lives on the rail (`lp-rail-color`).
+   - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none of their own
+     — but Select **does** render the text options while a text object is
+     selected): brush/eraser size + (brush only) hard/soft; fill
+     tolerance; line/rect/ellipse width + fill toggle (Line also gets a
+     Straight/Curve `lp-seg` toggle, `livery_paint_line_mode`/`_straight`/
+     `_curve`); text font (`FONT_OPTIONS`)
+     + size + bold/italic (bound to `shownText`, applying to the selected text
+     object in Select mode). Every slider value is also a typable numeric field
+     (`NumberInput` beside the slider, sharing the same clamped state:
+     brush/eraser size 1–200, fill/wand tolerance 0–255, shape width 1–200,
+     font size 8–400, sticker opacity 0–100 with a `%` suffix; text draft, blur/
+     Enter commits, out-of-range clamps, empty/garbage reverts, Escape discards
+     the draft, slider follows). Colour lives on the rail (`lp-rail-color`).
   - **RGBA colour picker** (`LiveryColorPicker.jsx`, portal popover anchored to
     the rail swatch's client rect via `openColorPicker` — the rail scrolls and
     would clip an in-flow popover). The native `<input type="color">` dialog is
@@ -505,9 +517,9 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     sticker/shape could not be scaled at all and its rotate dot never grabbed.
     Regression: `tests/components/LiveryScreen/LiveryCanvas.test.jsx`
     "live-object handles survive a flip" (sticker scale, shape scale, rotated
-    handle grab, all after flipping both axes). **A selected sticker also gets
-    an Opacity slider on the options bar** (`livery_paint_opacity`, 0–100% with
-    a `%` readout) that writes the object's own `opacity`; `paintLiveObjectContent`'s
+     handle grab, all after flipping both axes). **A selected sticker also gets
+     an Opacity slider + numeric field on the options bar** (`livery_paint_opacity`, 0–100 with
+     a `%` suffix) that writes the object's own `opacity`; `paintLiveObjectContent`'s
     image branch sets `globalAlpha` from it, so the overlay, the **export
     flatten** and a duplicate copy all carry the same alpha (the eraser scratch
     cache signature already includes `opacity`, so holes stay in sync), and 0%
@@ -551,7 +563,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      a move, left-click, right-click on empty canvas, backdrop pointerdown,
      `Escape` (handled before deselect), `removeSticker`, or any tool/undo/
      redo shortcut (via settling). `Delete`/`Backspace` = `removeSticker()`
-     (selected object, else the topmost — no selection required).
+     (selected object, else the topmost — no selection required). **All canvas
+     shortcuts stay inert while any app modal is open** (save naming /
+     overwrite / post-save mod hint): the window keydown handler returns early
+     on `modal.open`, so keypresses behind a save popup never deselect, remove
+     or mutate the live movable — the selection survives the save.
     - **Gesture settling (keyboard parity):** a toolbar click can never land
       mid-gesture (pointer capture forces release first) but a shortcut can, so
       `settleGesture()` ends a stroke (clipped to the selection first),
@@ -571,8 +587,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       Select tool from any other tool** (Line therefore uses `U`). Plus, outside object mode, an icon-only
       combine row (`TbLayersUnion`/`TbLayersDifference`/`TbLayersSelected`,
       `livery_paint_mask_combine`/`_erase`/`_replace` = 合并/擦除/替换,
-      `livery_paint_mask_mode`, default combine), a Tolerance slider reusing
-      `fillTol` in wand mode, and a Deselect button (`livery_paint_deselect`)
+       `livery_paint_mask_mode`, default combine), a Tolerance slider + numeric
+       field reusing `fillTol` in wand mode, and a Deselect button (`livery_paint_deselect`)
       while a selection exists — its tooltip sits on a wrapper with the disabled
       button set to `pointer-events: none`, so it shows even before a selection.
       **Ctrl+D** is the Deselect shortcut in the
@@ -632,11 +648,14 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       movables, panel dividers and eraser preview, so the pen/wand region always
       overdraws every other layer.
       **Del with a selection = the marquee eraser** (`eraseSelectionToBackground`):
-      when a mask exists, Delete/Backspace restores the eraser's background
-      (template/base image, else flat white) over the selected region
-      (`destination-in` the mask onto a background copy, then blit onto the
-      base — never transparent, which would be holes in-game) and punches the
-      same region out of every live movable it touches. The mask border is
+      when a mask exists, Delete/Backspace cuts the region out of the paint
+      layer (`destination-out` punch, so the locked base shows through —
+      nothing is painted over it) and punches the
+      same region out of every live movable it touches. The paint layer sits
+      above the movables, so opaque restore pixels would bury the sticker holes
+      and bake a fake-background ghost that stays behind when the sticker
+      moves; only with no base image at all does the region get the flat-white
+      fallback (transparent BaseMap = holes in-game). The mask border is
       traced to loops and mapped into each object's **local** frame, stored as
       `erasePolys` (polygon holes filled `evenodd`, so a ring selection keeps
       its middle; scaled by `scaleErasePolys` on resize, deep-copied on
@@ -854,13 +873,16 @@ manifest for a free-form zip folder).
    canvas edge); Ctrl+C duplicates (true copy — original stays live, no base
    stamp); I imports a sticker; H/V flip; rail tooltips
    advertise the shortcuts and the Eyedropper has none) and keyboard-parity gesture
-   settling (shortcut commits a mid-drag shape) plus the selection mask
-   (Object/Pen/Wand modes + Combine default/Erase/Replace + wand tolerance,
-    lasso → mask + white-dot/black-border outline + Deselect, Ctrl+D deselects,
+    settling (shortcut commits a mid-drag shape) plus the selection mask
+    (Object/Pen/Wand modes + Combine default/Erase/Replace + wand tolerance
+    slider + numeric field, lasso → mask + white-dot/black-border outline + Deselect, Ctrl+D deselects,
     tap/Escape cancel, wand region
     spans, the wand composites the live movable layer before sampling
-    (a rect is drawn during the flood), Del with a selection clears the region
-    (background blit) instead of removing the object while Del without one still
+    (a rect is drawn during the flood), Del with a selection trims transparent
+    (paint layer punched via `destination-out` with the base showing through —
+    never painted over — while touched movables keep `erasePolys` holes in
+    their own layer; flat-white fallback only with no base image) instead of
+    removing the object while Del without one still
     removes it, and the marquee maps the traced selection into each touched
     movable as `erasePolys` holes (a fully-consumed object is dropped), a
     duplicate inherits the stamped `clipMask`, a lasso is clipped to the active
@@ -869,9 +891,16 @@ manifest for a free-form zip folder).
     a live selection never masks a movable (export counts zero `destination-in`
     clips for movables),
     `[` / `]` step the brush/eraser size by 5 with clamping and are inert for a
-    tool without a size (e.g. Rect), a click with no drag deposits one brush dab,
+    tool without a size (e.g. Rect), every options-bar slider value takes a
+    typed number (brush/eraser size, shape width, font size, sticker opacity:
+    blur/Enter commits, out-of-range clamps, empty reverts, Escape discards the
+    draft, slider follows), canvas shortcuts stay inert while an app modal is
+    open (save popups keep the movable selection), a click with no drag deposits one brush dab,
     and a click + Shift-click chains straight brush and eraser segments,
-    new keys resolve in zh+en).
+    new keys resolve in zh+en). List help + painter help both end with the
+    post-save mod-enable warning as a highlighted tip (`#livery-help-tip`), and
+    Ctrl+F focuses the list Find input (ignored while typing, with a modal
+    open, or on the painter page).
 - `tests/components/LiveryScreen/LiveryCanvas.test.jsx` multi-image coverage
   also pins: the padded overlay canvas size (`W+2·OVERLAY_PAD`), click-to-activate
   (`onActivePanel(1)`), that the panel-switch click also paints the brush dab in

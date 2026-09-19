@@ -212,6 +212,29 @@ describe('LiveryScreen', () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it('Ctrl+F is ignored while typing, with a modal open, or on the painter page', async () => {
+    setupMocks();
+    renderLivery();
+    const input = document.querySelector('.livery-search input');
+    // Typing in the box itself: focus stays, nothing steals it.
+    input.focus();
+    fireEvent.keyDown(input, { key: 'f', ctrlKey: true });
+    expect(document.activeElement).toBe(input);
+    // An open modal owns the keyboard.
+    input.blur();
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal('t', 'b');
+    fireEvent.keyDown(document.body, { key: 'f', ctrlKey: true });
+    expect(document.activeElement).not.toBe(input);
+    hideModal();
+    // Painter page has no search box: the shortcut is inert, not a crash.
+    await userEvent.click(screen.getByText(T('livery_tab_create')));
+    await waitFor(() => expect(document.querySelector('.lp-root')).toBeInTheDocument());
+    expect(document.querySelector('.livery-search')).toBeNull();
+    fireEvent.keyDown(document.body, { key: 'f', ctrlKey: true });
+    expect(document.querySelector('.livery-search')).toBeNull();
+  });
+
   it('header Pack button opens the install modal + overlay', async () => {
     setupMocks({
       'download-livery': new Promise(() => {}),

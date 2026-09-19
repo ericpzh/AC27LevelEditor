@@ -667,10 +667,12 @@ function NumberInput({ value, min, max, onCommit, ariaLabel, suffix }) {
         onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
         onFocus={() => setFocused(true)}
         onBlur={() => { setFocused(false); commit(); }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.target.blur();
-          else if (e.key === 'Escape') { setDraft(String(value)); e.target.blur(); }
-        }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.target.blur();
+        // Revert only: no blur here, or the blur commit would re-apply the
+        // pre-keydown draft from its stale closure.
+        else if (e.key === 'Escape') setDraft(String(value));
+      }}
       />
       {suffix && <span className="lp-val-suffix">{suffix}</span>}
     </>

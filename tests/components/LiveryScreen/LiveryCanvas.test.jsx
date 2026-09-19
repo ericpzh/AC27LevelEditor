@@ -434,6 +434,11 @@ describe('brush size shortcuts + Shift-click straight lines', () => {
     fireEvent.blur(field());
     expect(slider().value).toBe('200');
     expect(field().value).toBe('200');
+    // Minimum clamps to 1.
+    fireEvent.change(field(), { target: { value: '0' } });
+    fireEvent.blur(field());
+    expect(slider().value).toBe('1');
+    expect(field().value).toBe('1');
   });
 });
 
@@ -1213,6 +1218,20 @@ describe('LiveryCanvas tools — paint operations', () => {
     fireEvent.blur(field);
     expect(slider.value).toBe('255');
     expect(field.value).toBe('255');
+  });
+
+  it('tolerance Escape discards the draft without touching the value', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Fill' }));
+    const field = screen.getByRole('textbox', { name: /Tolerance/ });
+    const slider = screen.getByRole('slider', { name: /Tolerance/ });
+    field.focus();
+    fireEvent.change(field, { target: { value: '99' } });
+    expect(field.value).toBe('99');
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(field.value).toBe('32');
+    expect(slider.value).toBe('32');
   });
 
   it('line / rect / ellipse tools draw the matching shape on pointer up', async () => {
