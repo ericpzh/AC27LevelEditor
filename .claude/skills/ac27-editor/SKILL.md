@@ -134,7 +134,10 @@ white dots with a hairline black border** (zero-length round-cap dash `[0, 3/z]`
 white `1/z`) chained by pure
 `traceMaskBorder`/`chainBorderSegments`; on a multi-panel type a lasso/wand selection is confined to the ACTIVE panel
 (`clipActivePanel` + `wandRegion` region bounds) so it can never cross the gutter, and an `activeRef` mirror makes a
-single press into another panel run the wand/fill/lasso there (the `active` state update is async); the wand samples ONLY the visible
+single press into another panel run the wand/fill/lasso there (the `active` state update is async); each movable carries a
+persisted **`panel`** chosen by the POINTER while it is dragged (`paintObjectInPanel`/`objectPanel` clip render, export,
+wand and eyedropper), so a sticker grabbed by its edge follows the cursor across the gutter before its centre crosses and
+exports into the panel it was dropped in; the wand samples ONLY the visible
 colours (base → fill → movables in their visible `clipMask`-clipped form → paint, in a dedicated buffer) so a sticker/shape
 colour is selectable but invisible geometry never is; **the fill tool reuses that same composite sample to pick its region**
 (then writes only the matched spans into the bottom fill layer — flooding the transparent fill layer itself ignored tolerance

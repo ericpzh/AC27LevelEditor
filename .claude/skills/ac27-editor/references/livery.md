@@ -341,18 +341,30 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     the previous one (regression: wand must clip to `x=2176` on the first press
     into panel 1).
   - **Per-object panel clip (multi-image only, overlay AND export)**: each live
-    object renders/saves clipped to the panel its **centre** falls in —
-    `layout.x(panelIndexAt(o.x))` — in `drawOverlay` and `flattenToCanvas`. So an
-    **unselected movable on another panel is still visible** and a sticker always
-    saves into its own panel; a save can never move/lose it by active-panel
-    state. Overflow past the object's own panel is not displayed. The active
-    panel only governs **placement** (sticker drop, import target), the blue
-    outline, and where a newly committed object lands — not what is shown.
-    Movement is **not bounded**: an object can be dragged across panels.
-    Single-panel types have no clip (the base bitmap clips the pixels).
+    object carries a persisted **`panel`** and renders/saves clipped to it via
+    `paintObjectInPanel` → `layout.x(objectPanel(o))` in `drawOverlay`,
+    `flattenToCanvas`, the wand sample and the eyedropper sample. The panel is
+    **chosen by the pointer while dragging**: `onCanvasMove` writes
+    `panel: panelIndexAt(p.x)` on every move of a `move` drag, so a big sticker
+    grabbed by its edge follows the cursor into the next panel **before its own
+    centre crosses the gutter** (the old centre-only rule left it clipped to the
+    old panel and it vanished at the edge until the centre caught up). The panel
+    is stored on the object at drop, so it is also the one it exports in (an
+    object created without one falls back to the panel its centre is in —
+    `objectPanel` clamps to the current panel count, so a later layout change
+    cannot strand it). So an **unselected movable on another panel is still
+    visible** and a sticker always saves into its own panel; a save can never
+    move/lose it by active-panel state. Overflow past the object's own panel is
+    not displayed (nor sampled by wand/eyedropper). The active panel only governs
+    **placement** (sticker drop, import target), the blue outline, and where a
+    newly committed object lands — not what is shown. Movement is **not
+    bounded**: an object can be dragged across panels. Single-panel types have no
+    clip (the base bitmap clips the pixels).
   - **Export uses the same per-object clip** (`flattenToCanvas`, used by Save /
     Save As / `exportPNG`): never the active panel. (Regression: `exportParts()`
-    must clip to panel 1's rect, `x=2176`, while the active panel is 0.) The
+    must clip to panel 1's rect, `x=2176`, while the active panel is 0 — and a
+    movable dropped into panel 1 by the pointer must export there even when its
+    centre is still in panel 0.) The
     imperative handle deps include `active`/`panelCount` so its closures are
     never stale.
    - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
@@ -485,8 +497,10 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     last base pixels (`basePixelsRef`, refreshed when `drawBase` lands), so undo
     restores Clear/import bases and fills without copying a static layer per
     step.
-  - Zoom ladder `ZOOM_STEPS` (0.125…2) with +/- buttons + Fit. Mouse-wheel
-    steps the ladder **anchored to the cursor**: the wheel handler records the
+  - Continuous zoom (0.05×…10×, `MIN_ZOOM`/`MAX_ZOOM`) with +/- buttons
+    stepping ×1.25 (`ZOOM_STEP`) + Fit. Mouse-wheel zooms smoothly
+    (exponential in `deltaY`, `WHEEL_ZOOM_SENSITIVITY`) **anchored to the
+    cursor**: the wheel handler records the
     content point under the pointer (`cx/cy` = `scrollLeft + viewport offset`,
     `k` = next/cur) into `zoomAnchorRef`, and a `useLayoutEffect` on `[zoom]`
     re-applies `scrollLeft = cx*k - vx` after the new size is rendered (a plain
@@ -958,9 +972,12 @@ manifest for a free-form zip folder).
   the same gesture (no second click) and that a single press into another panel
   applies the wand there (mask clipped to `x=2176`, not the previous panel),
   a click in the gutter activating the
-  nearest panel, keyboard shortcuts never changing the active panel, and
+  nearest panel, keyboard shortcuts never changing the active panel,
   that an object can move outside the active panel (overflow clipped, not
-  clamped). `tests/components/LiveryScreen/CreateTab.test.jsx` asserts the
+  clamped), and that a movable dragged by its edge is assigned to the panel
+  under the **pointer** (`panel: 1`) even though its centre never crossed the
+  gutter (`x < 2048`) — it renders AND exports clipped to panel 1's `x=2176`.
+  `tests/components/LiveryScreen/CreateTab.test.jsx` asserts the
   2-panel store width instead of the removed tab strip, that H/V keep the active
   panel, that Ctrl+S / Ctrl+Shift+S open the Save / Save As dialogs (and are
   ignored while typing or while a dialog is open), and that a save adopts the

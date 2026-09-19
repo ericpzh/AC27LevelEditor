@@ -1707,11 +1707,11 @@ describe('LiveryCanvas zoom + stickers', () => {
     const pct = () => document.querySelector('.lp-zoom-pct').textContent;
     expect(pct()).toBe('24%'); // fit scale from the 512px jsdom fallback
     await user.click(screen.getByRole('button', { name: 'Zoom In' }));
-    expect(pct()).toBe('25%');
+    expect(pct()).toBe('30%'); // continuous ×1.25 per click
     await user.click(screen.getByRole('button', { name: 'Zoom In' }));
-    expect(pct()).toBe('50%');
+    expect(pct()).toBe('37%');
     await user.click(screen.getByRole('button', { name: 'Zoom Out' }));
-    expect(pct()).toBe('25%');
+    expect(pct()).toBe('30%');
     await user.click(screen.getByRole('button', { name: 'Fit' }));
     expect(pct()).toBe('24%');
   });
@@ -1722,9 +1722,9 @@ describe('LiveryCanvas zoom + stickers', () => {
     const pct = () => document.querySelector('.lp-zoom-pct').textContent;
     expect(pct()).toBe('24%'); // fit
     fireEvent.wheel(wrap, { deltaY: -120, clientX: 120, clientY: 120 });
-    await waitFor(() => expect(pct()).toBe('25%'));
+    await waitFor(() => expect(pct()).toBe('29%'));
     fireEvent.wheel(wrap, { deltaY: 120, clientX: 120, clientY: 120 });
-    await waitFor(() => expect(pct()).toBe('13%'));
+    await waitFor(() => expect(pct()).toBe('24%'));
   });
 
   it('shows a hand icon following the pointer while Space is held', async () => {
@@ -2112,6 +2112,41 @@ describe('multi-image panels (A388/B38M)', () => {
     await waitFor(() => expect(ctxs.some(c => c.clip.mock.calls.length > 0)).toBe(true));
     // SAVING must clip the object to ITS panel (panel 1 → x=2176), NOT the
     // active one (0) — otherwise a save would move/lose a sticker.
+    const seen = new Set(ctxs);
+    act(() => { ref.current.exportParts(); });
+    const fresh = ctxs.filter(c => !seen.has(c));
+    expect(fresh.some(c => c.rect.mock.calls.some(a => a[0] === 2176 && a[2] === 2048))).toBe(true);
+    expect(fresh.some(c => c.rect.mock.calls.some(a => a[0] === 0 && a[2] === 2048))).toBe(false);
+  });
+
+  it('assigns a dragged movable to the panel under the POINTER, not its centre', async () => {
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    const cv = mainCanvas();
+    const cx = (tx) => tx * (512 / 4224);
+    const cy = (ty) => ty * (512 / 2048);
+    // A wide rect centred in panel 0: x=1024, w=1648 (spans 200..1848), h=448.
+    fireEvent.pointerDown(cv, { clientX: cx(200), clientY: cy(800), button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: cx(1848), clientY: cy(1248), button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectInfo().panel).toBe(0);
+    // Grab its right edge (x=1820) and drag so the POINTER lands in panel 1
+    // (x=2200) while the object's centre stays in panel 0 (2200 − 796 = 1404).
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.pointerDown(cv, { clientX: cx(1820), clientY: cy(1024), button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: cx(2200), clientY: cy(1024), button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const after = ref.current.getObjectInfo();
+    expect(after.x).toBeLessThan(2048); // the centre never crossed the gutter
+    expect(after.panel).toBe(1);        // the pointer did
+    // It renders clipped to panel 1's 2048² rect (x=2176)...
+    await waitFor(() => {
+      expect(ctxs.some(c => c.rect.mock.calls.some(a => a[0] === 2176 && a[2] === 2048))).toBe(true);
+    });
+    // ...and export bakes it into panel 1, not the centre's panel 0.
     const seen = new Set(ctxs);
     act(() => { ref.current.exportParts(); });
     const fresh = ctxs.filter(c => !seen.has(c));

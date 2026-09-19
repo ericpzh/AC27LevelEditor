@@ -238,8 +238,12 @@ const FONT_OPTIONS = [
   'Comic Sans MS', 'Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi',
 ];
 
-// Zoom ladder for the +/- buttons.
-const ZOOM_STEPS = [0.125, 0.25, 0.5, 0.75, 1, 1.5, 2];
+// Continuous zoom bounds + multiplicative step (per +/- click and wheel notch).
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 10;
+const ZOOM_STEP = 1.25;
+const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+const clampZoom = (z) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
 
 // ── Live objects ───────────────────────────────────────────
 // Non-destructive, moveable overlay elements flattened onto the texture only
@@ -887,6 +891,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // before any selection stays whole.
     const obj = {
       ...o, id: nextIdRef.current++,
+      panel: o.panel != null ? o.panel : panelIndexAt(o.x),
       clipMask: hasMaskRef.current ? getMaskCopy() : null,
     };
     syncObjects([...objectsRef.current, obj], obj.id);
@@ -954,6 +959,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
     return best;
   };
+  // Which panel a movable belongs to. The object carries a persisted `panel`
+  // chosen while dragging (the pointer position is the source of truth — see
+  // `onCanvasMove`), so the panel it was dropped into is also the one it renders
+  // and exports in. Objects created without one fall back to the panel their
+  // centre is in. Single-panel types are always panel 0.
+  const objectPanel = (o) => {
+    if (panelCount <= 1) return 0;
+    const p = o && o.panel != null ? o.panel : panelIndexAt(o ? o.x : 0);
+    return Math.min(Math.max(0, p | 0), panelCount - 1);
+  };
 
   // Move the menu-target (or selected) object one step / to an end.
   const reorderObject = (dir, id) => {
@@ -986,13 +1001,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
   const zoomIn = () => {
     const cur = zoom === 'fit' ? fitScale : zoom;
-    const next = ZOOM_STEPS.find(z => z > cur + 1e-4);
-    setZoom(next != null ? next : ZOOM_STEPS[ZOOM_STEPS.length - 1]);
+    setZoom(clampZoom(cur * ZOOM_STEP));
   };
   const zoomOut = () => {
     const cur = zoom === 'fit' ? fitScale : zoom;
-    const next = [...ZOOM_STEPS].reverse().find(z => z < cur - 1e-4);
-    setZoom(next != null ? next : ZOOM_STEPS[0]);
+    setZoom(clampZoom(cur / ZOOM_STEP));
   };
 
   // ── Base init (mount only — parent remounts via key on base change) ─
@@ -1054,10 +1067,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const onWheel = (e) => {
       e.preventDefault();
       const cur = zoom === 'fit' ? fitScale : zoom;
-      const dir = e.deltaY < 0 ? 1 : -1;
-      const next = dir > 0
-        ? (ZOOM_STEPS.find(z => z > cur + 1e-4) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1])
-        : ([...ZOOM_STEPS].reverse().find(z => z < cur - 1e-4) ?? ZOOM_STEPS[0]);
+      const next = clampZoom(cur * Math.exp(-e.deltaY * WHEEL_ZOOM_SENSITIVITY));
       if (Math.abs(next - cur) < 1e-6) return;
       const rect = el.getBoundingClientRect();
       const vx = e.clientX - rect.left;
@@ -1342,7 +1352,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (baseCanvasRef.current) sceneCtx.drawImage(baseCanvasRef.current, 0, 0);
     if (fillCanvasRef.current) sceneCtx.drawImage(fillCanvasRef.current, 0, 0);
     for (const o of objectsRef.current) {
-      if (hasLiveVisual(o)) paintObjectForDisplay(sceneCtx, o);
+      if (hasLiveVisual(o)) paintObjectInPanel(sceneCtx, o);
     }
     if (canvasRef.current) sceneCtx.drawImage(canvasRef.current, 0, 0);
     // Multi-panel: the flood is confined to the ACTIVE panel, so it can never
@@ -1446,6 +1456,20 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const paintObjectForDisplay = (target, o) => {
     if (o && o.clipMask) paintObjectMasked(target, o, o.clipMask);
     else paintObjectWithErase(target, o);
+  };
+  // Paint a movable clipped to the panel it BELONGS to (`objectPanel`, persisted
+  // from the drag). Used everywhere the visible object layer is reproduced —
+  // the objects canvas, export, the wand/eyedropper sample — so a movable
+  // dragged into another panel shows there and its overflow past the gutter is
+  // clipped identically on screen, on export and when sampled.
+  const paintObjectInPanel = (target, o) => {
+    if (panelCount <= 1) { paintObjectForDisplay(target, o); return; }
+    target.save();
+    target.beginPath();
+    target.rect(layout.x(objectPanel(o)), 0, TEXTURE, TEXTURE);
+    target.clip();
+    paintObjectForDisplay(target, o);
+    target.restore();
   };
   // Paint one live object with its eraser holes punched. The object is rendered
   // into a per-object scratch (content + holes, sized to the object frame — not
@@ -1950,17 +1974,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         octx.clearRect(0, 0, W, H);
         for (const st of objectsRef.current) {
           if (!hasLiveVisual(st)) continue;
-          if (panelCount > 1) {
-            const x0 = layout.x(panelIndexAt(st.x));
-            octx.save();
-            octx.beginPath();
-            octx.rect(x0, 0, TEXTURE, TEXTURE);
-            octx.clip();
-            paintObjectForDisplay(octx, st);
-            octx.restore();
-          } else {
-            paintObjectForDisplay(octx, st);
-          }
+          paintObjectInPanel(octx, st);
         }
         octx.restore();
       }
@@ -2240,23 +2254,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // The fill underlay goes below every movable.
     if (fillCanvasRef.current) ctx.drawImage(fillCanvasRef.current, 0, 0);
     // Live objects are flattened at their actual coordinates, each clipped to
-    // the panel its CENTRE falls in (not the currently-active panel — export
-    // must never depend on which panel is active, and an object on another
-    // panel must still be saved). Overlap into a neighbouring panel is clipped.
-    // Only movables with a stamped `clipMask` are clipped; every other movable
-    // flattens in full.
+    // the panel it BELONGS to (`objectPanel` — the panel it was dropped into,
+    // not the currently-active panel — so export never depends on which panel is
+    // active and a movable on another panel is still saved). Overflow into a
+    // neighbouring panel is clipped. Only movables with a stamped `clipMask` are
+    // clipped to that shape; every other movable flattens in full within its panel.
     for (const o of objectsRef.current) {
-      if (panelCount > 1) {
-        const x0 = layout.x(panelIndexAt(o.x));
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(x0, 0, TEXTURE, TEXTURE);
-        ctx.clip();
-        paintObjectForDisplay(ctx, o);
-        ctx.restore();
-      } else {
-        paintObjectForDisplay(ctx, o);
-      }
+      paintObjectInPanel(ctx, o);
     }
     // Pen layer last, so brush/eraser strokes sit above the movables.
     if (canvasRef.current) ctx.drawImage(canvasRef.current, 0, 0);
@@ -2298,6 +2302,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         stretch: o.stretch || null,
         frame: frameOf(o), erase: o.erase || null, erasePolys: o.erasePolys || null,
         clipMask: !!o.clipMask,
+        panel: objectPanel(o),
       };
     },
     isDirty: () => dirty,
@@ -2590,7 +2595,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       if (baseCanvasRef.current) sctx.drawImage(baseCanvasRef.current, 0, 0);
       if (fillCanvasRef.current) sctx.drawImage(fillCanvasRef.current, 0, 0);
       for (const o of objectsRef.current) {
-        if (hasLiveVisual(o)) paintObjectForDisplay(sctx, o);
+        if (hasLiveVisual(o)) paintObjectInPanel(sctx, o);
       }
       if (canvasRef.current) sctx.drawImage(canvasRef.current, 0, 0);
       sctx.restore();
@@ -2982,7 +2987,19 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         const p = toTexture(e.clientX, e.clientY);
         ensureDragSnapshot();
         const mode = dragRef.current.mode;
-        if (mode === 'move') updateObject(st.id, { x: p.x + dragRef.current.dx, y: p.y + dragRef.current.dy });
+        if (mode === 'move') {
+          // The panel the movable belongs to follows the POINTER, not the
+          // object's own centre: a big sticker grabbed by its edge would
+          // otherwise keep rendering in the old panel (and vanish at the gutter)
+          // until its centre crossed. The chosen panel is persisted on the
+          // object, so the panel it is dropped into is also the one it renders
+          // and exports in.
+          updateObject(st.id, {
+            x: p.x + dragRef.current.dx,
+            y: p.y + dragRef.current.dy,
+            panel: panelIndexAt(p.x),
+          });
+        }
         else if (mode === 'resize') {
           const d = dragRef.current;
           // Shift keeps the aspect ratio (one factor); free, each axis follows
