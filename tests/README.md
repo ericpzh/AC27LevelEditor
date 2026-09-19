@@ -7,8 +7,8 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (2002) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
-npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2002 tests, 105 files, ~32s)
+npm run test:all      # Full suite: Vitest (2018) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
+npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2018 tests, 105 files, ~39s)
 npm run test:e2e      # 18 Playwright E2E tests (requires npm run build first, ~8 min; 16 pass, 2 skipped — both fuzz specs gated on FUZZ_RUN)
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
@@ -29,9 +29,16 @@ node tests/integration/test_gatcarc_roundtrip.js
 node --require ./tests/integration/preload.cjs tests/integration/test_type_number_integrity.js
 ```
 
+**Last full verification (2026-09-18):** Vitest 2018/2018 (105 files); integration scripts all green
+(api-server 133, api-e2e-examples 44, gatcarc round-trip 120, type-number 6, save-integrity 27/27,
+jetway-rebuild 27/27, v4 runway-pairs 5, UDP listener 21); Playwright E2E 16 passed + 2 skipped
+(the two `FUZZ_RUN`-gated specs); flight fuzz **4/4 `leisure_1` levels passed without `--replace`**
+(ZSJN/KJFK/KDCA/ZGSZ) and **4/4 `leisure_2` levels passed with `--replace`** (results propagated into
+the real game install).
+
 ---
 
-## Layer 1 — Vitest Component Tests (2002 tests, 105 files)
+## Layer 1 — Vitest Component Tests (2018 tests, 105 files)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
 
@@ -173,7 +180,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 
 ### Known Vitest failures (none)
 
-All 2002 Vitest tests pass (105 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
+All 2018 Vitest tests pass (105 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document). The dispatch + assertion now also run inside `waitFor`, because the `Escape` listener is attached by an effect that depends on `error` and under full parallel load the passive effect could land a tick after the error text rendered — the old single synchronous dispatch was a flake that only failed in the complete suite (verified stable across repeated full runs).
 
@@ -422,7 +429,7 @@ node --require ./tests/integration/preload.cjs tests/integration/test_type_numbe
 
 | File | Tests | What it validates | Expected |
 |------|-------|-------------------|----------|
-| `test_gatcarc_roundtrip.js` | varies × all .acl files | GATCArc4 binary round-trip: `parseArchive` validates magic/SHA-256/commit markers; `decodeArchive(bin)` → `encodeArchive(text)` → `decodeArchive` is byte-identical. For text files: `encodeTextToPayload`/`decodePayloadToText` round-trip reproduces game-written text. Type reference form (full `"N\|Name"` vs bare `N`) is normalized before comparison. Runs against every .acl in the game airports directory (KDCA 7, KJFK 10, ZGSZ 2, ZSJN 12). | 93/93 pass (31 files × 3 checks each) |
+| `test_gatcarc_roundtrip.js` | varies × all .acl files | GATCArc4 binary round-trip: `parseArchive` validates magic/SHA-256/commit markers; `decodeArchive(bin)` → `encodeArchive(text)` → `decodeArchive` is byte-identical. For text files: `encodeTextToPayload`/`decodePayloadToText` round-trip reproduces game-written text. Type reference form (full `"N\|Name"` vs bare `N`) is normalized before comparison. Runs against every .acl in the game airports directory (KDCA 9, KJFK 10, ZGSZ 8, ZSJN 13). | 120/120 pass (40 files × 3 checks each) |
 | `test_real_kjfk_jfk5.js` | 8 per-runway STAR resolution | End-to-end JFK5.JFK STAR/SID resolution against real KJFK data: `extractStarRunwayMappings` (SIE.CAMRM5 → 3 runways), `resolveFlyApproachPoints` (6 nodes per runway), `extractSidRunwayMappings` (JFK5.JFK is in SID), `buildSidPaths`, `buildStarPaths`, verifies JFK5.JFK is NOT in APPR data. | 8/8 pass |
 
 ```bash
