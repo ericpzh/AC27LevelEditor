@@ -645,7 +645,7 @@ export function makeCurveObject(absPts, brush, opts) {
 // Numeric field with a text draft, so typing never clamps mid-keystroke: blur
 // or Enter commits (parsed, rounded, clamped to [min, max]; empty/garbage
 // reverts to the live value), Escape discards the draft.
-function ToleranceNumberInput({ value, min, max, onCommit, ariaLabel }) {
+function NumberInput({ value, min, max, onCommit, ariaLabel, suffix }) {
   const [draft, setDraft] = useState(String(value));
   const [focused, setFocused] = useState(false);
   useEffect(() => { if (!focused) setDraft(String(value)); }, [value, focused]);
@@ -657,20 +657,23 @@ function ToleranceNumberInput({ value, min, max, onCommit, ariaLabel }) {
     onCommit(clamped);
   };
   return (
-    <input
-      type="text"
-      inputMode="numeric"
-      className="lp-val-input"
-      aria-label={ariaLabel}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
-      onFocus={() => setFocused(true)}
-      onBlur={() => { setFocused(false); commit(); }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.target.blur();
-        else if (e.key === 'Escape') { setDraft(String(value)); e.target.blur(); }
-      }}
-    />
+    <>
+      <input
+        type="text"
+        inputMode="numeric"
+        className="lp-val-input"
+        aria-label={ariaLabel}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
+        onFocus={() => setFocused(true)}
+        onBlur={() => { setFocused(false); commit(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.target.blur();
+          else if (e.key === 'Escape') { setDraft(String(value)); e.target.blur(); }
+        }}
+      />
+      {suffix && <span className="lp-val-suffix">{suffix}</span>}
+    </>
   );
 }
 
@@ -3412,7 +3415,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           {(tool === 'brush' || tool === 'eraser') && (
             <label className="lp-field">{t('livery_paint_size')}
               <input type="range" min={1} max={200} value={brush.size} onChange={(e) => setBrush({ ...brush, size: Number(e.target.value) })} />
-              <span className="lp-val">{brush.size}</span>
+              <NumberInput value={brush.size} min={1} max={200} onCommit={(v) => setBrush({ ...brush, size: v })} ariaLabel={t('livery_paint_size')} />
             </label>
           )}
           {tool === 'brush' && (
@@ -3439,7 +3442,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               {selMode === 'wand' && (
                 <label className="lp-field">{t('livery_paint_tolerance')}
                   <input type="range" min={0} max={255} value={fillTol} onChange={(e) => setFillTol(Number(e.target.value))} />
-                  <ToleranceNumberInput value={fillTol} min={0} max={255} onCommit={setFillTol} ariaLabel={t('livery_paint_tolerance')} />
+                  <NumberInput value={fillTol} min={0} max={255} onCommit={setFillTol} ariaLabel={t('livery_paint_tolerance')} />
                 </label>
               )}
               <span className="lp-seg">
@@ -3458,7 +3461,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                     value={stickerOpacityPct}
                     onChange={(e) => setStickerOpacity(Number(e.target.value))}
                   />
-                  <span className="lp-val">{stickerOpacityPct}%</span>
+                  <NumberInput value={stickerOpacityPct} min={0} max={100} onCommit={setStickerOpacity} ariaLabel={t('livery_paint_opacity')} suffix="%" />
                 </label>
               )}
             </>
@@ -3467,7 +3470,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             <>
               <label className="lp-field">{t('livery_paint_tolerance')}
                 <input type="range" min={0} max={255} value={fillTol} onChange={(e) => setFillTol(Number(e.target.value))} />
-                <ToleranceNumberInput value={fillTol} min={0} max={255} onCommit={setFillTol} ariaLabel={t('livery_paint_tolerance')} />
+                <NumberInput value={fillTol} min={0} max={255} onCommit={setFillTol} ariaLabel={t('livery_paint_tolerance')} />
               </label>
             </>
           )}
@@ -3481,7 +3484,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               )}
               <label className="lp-field">{t('livery_paint_width')}
                 <input type="range" min={1} max={200} value={shapeOpts.width} onChange={(e) => setShapeOpts({ ...shapeOpts, width: Number(e.target.value) })} />
-                <span className="lp-val">{shapeOpts.width}</span>
+                <NumberInput value={shapeOpts.width} min={1} max={200} onCommit={(v) => setShapeOpts({ ...shapeOpts, width: v })} ariaLabel={t('livery_paint_width')} />
               </label>
               {tool !== 'line' && (
                 <span className="lp-seg">
@@ -3505,7 +3508,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               </label>
               <label className="lp-field">{t('livery_paint_size')}
                 <input type="range" min={8} max={400} value={shownText.size} onChange={(e) => applyTextOpt({ size: Number(e.target.value) })} />
-                <span className="lp-val">{shownText.size}</span>
+                <NumberInput value={shownText.size} min={8} max={400} onCommit={(v) => applyTextOpt({ size: v })} ariaLabel={t('livery_paint_size')} />
               </label>
               <span className="lp-seg">
                 <button className={shownText.bold ? 'lp-on' : ''} {...bind(t('livery_paint_bold'))} aria-label={t('livery_paint_bold')} aria-pressed={shownText.bold} onClick={() => applyTextOpt({ bold: !shownText.bold })}><strong>B</strong></button>

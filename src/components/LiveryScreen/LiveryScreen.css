@@ -574,6 +574,10 @@
   outline: none;
   border-color: var(--accent);
 }
+.lp-val-suffix {
+  color: var(--accent);
+  margin-left: -4px;
+}
 .lp-hex {
   width: 78px;
   background: var(--bg);

@@ -417,6 +417,24 @@ describe('brush size shortcuts + Shift-click straight lines', () => {
     expect(base.moveTo.mock.calls.some(a => a[0] === 400 && a[1] === 400)).toBe(true);
     expect(base.lineTo.mock.calls.some(a => a[0] === 800 && a[1] === 800)).toBe(true);
   });
+
+  it('brush size accepts a typed number (slider follows, clamped)', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    const slider = () => screen.getByRole('slider', { name: /Size/ });
+    const field = () => screen.getByRole('textbox', { name: /Size/ });
+    expect(slider().value).toBe('12');
+    await user.clear(field());
+    await user.type(field(), '87');
+    fireEvent.blur(field());
+    expect(slider().value).toBe('87');
+    expect(field().value).toBe('87');
+    // Out-of-range clamps to the slider maximum.
+    fireEvent.change(field(), { target: { value: '500' } });
+    fireEvent.blur(field());
+    expect(slider().value).toBe('200');
+    expect(field().value).toBe('200');
+  });
 });
 
 describe('sticker duplicate', () => {
@@ -716,13 +734,13 @@ describe('sticker opacity slider', () => {
     const ref = React.createRef();
     await importSticker(user, ref);
     expect(opacitySlider().value).toBe('100');
-    expect(document.querySelector('.lp-optionsbar').textContent).toContain('100%');
+    expect(screen.getByRole('textbox', { name: /Opacity/ }).value).toBe('100');
 
     ctxs.length = 0;
     fireEvent.change(opacitySlider(), { target: { value: '40' } });
     expect(ref.current.getObjectInfo().opacity).toBeCloseTo(0.4, 6);
     expect(opacitySlider().value).toBe('40');
-    expect(document.querySelector('.lp-optionsbar').textContent).toContain('40%');
+    expect(screen.getByRole('textbox', { name: /Opacity/ }).value).toBe('40');
     // The overlay redraws the sticker with that alpha (overlay + base share the
     // same paint path, so the export carries it too).
     await waitFor(() => expect(ctxs.some(c => c.globalAlpha === 0.4)).toBe(true));
@@ -745,6 +763,19 @@ describe('sticker opacity slider', () => {
     expect(url).toBe(FAKE_SAVE);
     // The sticker draw went out at 25% alpha.
     expect(ctxs.some(c => c.globalAlpha === 0.25 && c.drawImage.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('sticker opacity accepts a typed number (slider follows)', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await importSticker(user, ref);
+    const field = screen.getByRole('textbox', { name: /Opacity/ });
+    await user.clear(field);
+    await user.type(field, '60');
+    fireEvent.blur(field);
+    expect(opacitySlider().value).toBe('60');
+    expect(field.value).toBe('60');
+    expect(ref.current.getObjectInfo().opacity).toBeCloseTo(0.6, 6);
   });
 
   it('is only offered for a selected sticker', async () => {
@@ -1204,13 +1235,26 @@ describe('LiveryCanvas tools — paint operations', () => {
     await user.click(screen.getByRole('button', { name: 'Rect' }));
     const width = screen.getByRole('slider', { name: /Width/ });
     fireEvent.change(width, { target: { value: '50' } });
-    expect(document.querySelector('.lp-optionsbar').textContent).toContain('50');
+    expect(screen.getByRole('textbox', { name: /Width/ }).value).toBe('50');
     // Icon-only fill toggle (scoped: the rail Fill tool shares the name).
     const bar = within(document.querySelector('.lp-optionsbar'));
     const fillToggle = bar.getByRole('button', { name: 'Fill' });
     expect(fillToggle.getAttribute('aria-pressed')).toBe('true');
     await user.click(fillToggle);
     expect(fillToggle.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('shape width accepts a typed number (slider follows)', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    const width = screen.getByRole('slider', { name: /Width/ });
+    const field = screen.getByRole('textbox', { name: /Width/ });
+    await user.clear(field);
+    await user.type(field, '33');
+    fireEvent.blur(field);
+    expect(width.value).toBe('33');
+    expect(field.value).toBe('33');
   });
 
   it('brush hard/soft toggle sets a shadow blur on the next stroke', async () => {
@@ -1269,6 +1313,19 @@ describe('LiveryCanvas tools — paint operations', () => {
     await user.click(italic);
     expect(bold.getAttribute('aria-pressed')).toBe('true');
     expect(italic.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('font size accepts a typed number (slider follows)', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Text' }));
+    const slider = screen.getByRole('slider', { name: /Size/ });
+    const field = screen.getByRole('textbox', { name: /Size/ });
+    await user.clear(field);
+    await user.type(field, '150');
+    fireEvent.blur(field);
+    expect(slider.value).toBe('150');
+    expect(field.value).toBe('150');
   });
 });
 
