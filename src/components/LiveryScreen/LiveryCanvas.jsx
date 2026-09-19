@@ -641,6 +641,39 @@ export function makeCurveObject(absPts, brush, opts) {
  * overlay (select / move / scale / rotate) and flattened only on export. Every
  * object stays selectable until it is removed or the canvas is cleared.
  */
+
+// Numeric field with a text draft, so typing never clamps mid-keystroke: blur
+// or Enter commits (parsed, rounded, clamped to [min, max]; empty/garbage
+// reverts to the live value), Escape discards the draft.
+function ToleranceNumberInput({ value, min, max, onCommit, ariaLabel }) {
+  const [draft, setDraft] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { if (!focused) setDraft(String(value)); }, [value, focused]);
+  const commit = () => {
+    const n = Math.round(Number(draft));
+    if (draft.trim() === '' || !isFinite(n)) { setDraft(String(value)); return; }
+    const clamped = Math.max(min, Math.min(max, n));
+    setDraft(String(clamped));
+    onCommit(clamped);
+  };
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      className="lp-val-input"
+      aria-label={ariaLabel}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.target.blur();
+        else if (e.key === 'Escape') { setDraft(String(value)); e.target.blur(); }
+      }}
+    />
+  );
+}
+
 const LiveryCanvas = forwardRef(function LiveryCanvas(
   { panels, initialParts, defaultParts, activePanel, onActivePanel, initialImageDataUrl, defaultLiveryDataUrl, onDirty },
   ref,
@@ -882,6 +915,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
   const setMaskOp = (v) => { maskOpRef.current = v; setMaskOpState(v); };
   const setHasMask = (v) => { hasMaskRef.current = v; setHasMaskState(v); };
+  const setFillTol = (v) => { fillTolRef.current = v; setFillTolState(v); };
   // Object layer helpers — refs mirror the state so canvas handlers read the
   // latest objects without stale closures.
   const syncObjects = (objs, sid) => {
@@ -3404,8 +3438,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               )}
               {selMode === 'wand' && (
                 <label className="lp-field">{t('livery_paint_tolerance')}
-                  <input type="range" min={0} max={255} value={fillTol} onChange={(e) => { fillTolRef.current = Number(e.target.value); setFillTolState(fillTolRef.current); }} />
-                  <span className="lp-val">{fillTol}</span>
+                  <input type="range" min={0} max={255} value={fillTol} onChange={(e) => setFillTol(Number(e.target.value))} />
+                  <ToleranceNumberInput value={fillTol} min={0} max={255} onCommit={setFillTol} ariaLabel={t('livery_paint_tolerance')} />
                 </label>
               )}
               <span className="lp-seg">
@@ -3432,8 +3466,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           {tool === 'fill' && (
             <>
               <label className="lp-field">{t('livery_paint_tolerance')}
-                <input type="range" min={0} max={255} value={fillTol} onChange={(e) => { fillTolRef.current = Number(e.target.value); setFillTolState(fillTolRef.current); }} />
-                <span className="lp-val">{fillTol}</span>
+                <input type="range" min={0} max={255} value={fillTol} onChange={(e) => setFillTol(Number(e.target.value))} />
+                <ToleranceNumberInput value={fillTol} min={0} max={255} onCommit={setFillTol} ariaLabel={t('livery_paint_tolerance')} />
               </label>
             </>
           )}

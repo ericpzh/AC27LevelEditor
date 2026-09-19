@@ -1157,7 +1157,31 @@ describe('LiveryCanvas tools — paint operations', () => {
     const slider = screen.getByRole('slider', { name: /Tolerance/ });
     fireEvent.change(slider, { target: { value: '128' } });
     expect(slider.value).toBe('128');
-    expect(document.querySelector('.lp-optionsbar').textContent).toContain('128');
+    expect(screen.getByRole('textbox', { name: /Tolerance/ }).value).toBe('128');
+  });
+
+  it('fill tolerance accepts a typed number (commit on blur, clamped, invalid reverts)', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Fill' }));
+    const field = screen.getByRole('textbox', { name: /Tolerance/ });
+    const slider = screen.getByRole('slider', { name: /Tolerance/ });
+    // Type an exact value: the slider follows on commit.
+    await user.clear(field);
+    await user.type(field, '200');
+    fireEvent.blur(field);
+    expect(slider.value).toBe('200');
+    expect(field.value).toBe('200');
+    // Out-of-range clamps to 255.
+    fireEvent.change(field, { target: { value: '999' } });
+    fireEvent.blur(field);
+    expect(slider.value).toBe('255');
+    expect(field.value).toBe('255');
+    // Empty reverts to the live value.
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.blur(field);
+    expect(slider.value).toBe('255');
+    expect(field.value).toBe('255');
   });
 
   it('line / rect / ellipse tools draw the matching shape on pointer up', async () => {
@@ -2334,6 +2358,20 @@ describe('selection mask', () => {
     const slider = screen.getByRole('slider', { name: /Tolerance/ });
     expect(slider.value).toBe('32');
     expect(slider.parentElement.textContent).toContain('Tolerance');
+  });
+
+  it('wand tolerance accepts a typed number via Enter', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
+    const field = screen.getByRole('textbox', { name: /Tolerance/ });
+    const slider = screen.getByRole('slider', { name: /Tolerance/ });
+    field.focus();
+    fireEvent.change(field, { target: { value: '64' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(slider.value).toBe('64');
+    expect(field.value).toBe('64');
   });
 
   it('sub-mode shortcuts A / L / W work and show in the tooltips', async () => {

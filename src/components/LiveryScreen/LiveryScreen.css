@@ -559,6 +559,21 @@
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
+.lp-val-input {
+  width: 5ch;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.lp-val-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .lp-hex {
   width: 78px;
   background: var(--bg);
