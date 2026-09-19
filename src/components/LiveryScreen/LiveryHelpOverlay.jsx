@@ -117,6 +117,10 @@ export default function LiveryHelpOverlay({ onClose, page = 'list' }) {
               })}
             </section>
           ))}
+          <div id="livery-help-tip" className="livery-help-tip">
+            <strong className="livery-help-tip-title">{t('livery_mod_hint_title')}</strong>
+            <span className="livery-help-tip-body">{t('livery_mod_hint_body')}</span>
+          </div>
         </div>
       </div>
     </div>

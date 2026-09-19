@@ -95,3 +95,16 @@
   background: var(--bg-surface); border-color: var(--accent);
   color: var(--accent);
 }
+
+/* ─── Highlighted tip (post-save mod-enable warning) ─── */
+.livery-help-tip {
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.45);
+  border-left: 4px solid #ffb300;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px; line-height: 1.6; color: var(--text);
+}
+.livery-help-tip-title { font-weight: 700; }
+.livery-help-tip-body { color: var(--text-secondary); }
