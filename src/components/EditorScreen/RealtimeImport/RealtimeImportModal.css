@@ -1,0 +1,153 @@
+#rt-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 260;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#rt-panel {
+  width: min(920px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary, #1e1e24);
+  color: var(--text-primary, #e8e8ea);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+#rt-header {
+  position: relative;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--border-color, #333);
+}
+
+#rt-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+#rt-subtitle {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-secondary, #9aa0a6);
+}
+
+#rt-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: var(--text-secondary, #9aa0a6);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+#rt-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary, #e8e8ea); }
+
+#rt-body { padding: 14px 18px; }
+
+/* Base button chrome — mirrors Modal.css #modal-actions button so .btn-confirm /
+   .btn-cancel render as proper app buttons outside the shared modal. */
+#rt-panel .btn-confirm,
+#rt-panel .btn-cancel {
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: all var(--transition);
+}
+#rt-panel .btn-confirm:disabled,
+#rt-panel .btn-cancel:disabled { opacity: 0.5; cursor: default; }
+
+.rt-key-step { display: flex; flex-direction: column; gap: 10px; }
+
+.rt-key-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
+.rt-hint { margin: 0; font-size: 12px; color: var(--text-secondary, #9aa0a6); }
+
+.rt-key-row { display: flex; gap: 8px; }
+
+.rt-input {
+  flex: 1;
+  padding: 8px 10px;
+  background: var(--bg-primary, #141418);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 6px;
+  color: inherit;
+  font-size: 13px;
+}
+.rt-input:focus { outline: none; border-color: var(--accent, #4a90d9); }
+
+.rt-config-path { font-size: 11px; color: var(--text-secondary, #9aa0a6); word-break: break-all; }
+
+.rt-controls { display: flex; flex-direction: column; gap: 12px; }
+
+.rt-key-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #9aa0a6);
+}
+.rt-ok { color: #4caf50; }
+.rt-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--accent, #4a90d9);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.rt-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(220, 60, 60, 0.12);
+  color: #ff8a8a;
+  font-size: 12px;
+}
+
+#rt-results { flex: 1; overflow: auto; padding: 0 18px; }
+.rt-empty { padding: 40px 0; text-align: center; color: var(--text-secondary, #9aa0a6); font-size: 13px; }
+
+.rt-summary { padding: 8px 0; font-size: 12px; color: var(--text-secondary, #9aa0a6); }
+
+.rt-skipped {
+  padding: 0 0 8px;
+  font-size: 11px;
+  color: #d9a441;
+  line-height: 1.5;
+}
+
+.rt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.rt-table th, .rt-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border-color, #2a2a30); vertical-align: top; }
+.rt-table th { position: sticky; top: 0; background: var(--bg-secondary, #1e1e24); font-weight: 600; color: var(--text-secondary, #9aa0a6); }
+.rt-col-keep { width: 32px; text-align: center; }
+.rt-mono { font-family: var(--font-mono, monospace); }
+.rt-row-skip { opacity: 0.55; }
+.rt-note { font-size: 11px; color: #d9a441; max-width: 200px; }
+
+#rt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color, #333);
+}

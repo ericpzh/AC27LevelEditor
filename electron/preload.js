@@ -157,6 +157,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveConfig: (updates) => ipcRenderer.invoke('save-config', updates),
   cloudChat: ({ messages }) => ipcRenderer.invoke('cloud-chat', { messages }),
 
+  // ─── Realtime flight import (aviationstack) ───────────────
+  aviationstackFetch: (args) => ipcRenderer.invoke('aviationstack-fetch', args),
+  validateFlights: (flights, snapshot) => ipcRenderer.invoke('validate-flights', flights, snapshot),
+
   // Event: cloud chat (tool calls + done)
   _cloudChatEventHandlers: new Map(),
   onCloudChatEvent: function (cb) {

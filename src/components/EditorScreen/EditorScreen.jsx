@@ -7,7 +7,7 @@ import { useEditorShell } from '../../hooks/useEditorShell';
 import { useEditorSaveActions } from '../../hooks/useEditorSaveActions';
 import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES, TIME_FIELDS, DROPDOWN_FIELDS, getActiveColumns, MPS_TO_KNOTS, WIND_UNITS } from '../../utils/constants';
 import { stripSuffixes } from '../../utils/htmlUtils';
-import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoMapOutline, IoNavigateOutline, IoSparkles, IoPencil } from 'react-icons/io5';
+import { IoArrowBack, IoAirplane, IoCopyOutline, IoTrashOutline, IoCheckmarkDone, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoSave, IoLanguage, IoHelpCircleOutline, IoSearchOutline, IoMapOutline, IoNavigateOutline, IoSparkles, IoPencil, IoGlobeOutline } from 'react-icons/io5';
 
 function convertWindSpeed(entries, fromUnit, toUnit) {
   if (!entries || !entries.length) return entries;
@@ -33,8 +33,16 @@ import StandMap from './StandMap/StandMap';
 import GroundPainter from './GroundPainter/GroundPainter';
 import StarMap from './StarMap/StarMap';
 import ChatPanel from '../ChatPanel/ChatPanel';
+import RealtimeImportModal from './RealtimeImport/RealtimeImportModal';
 
 // ─── Sub-components ────────────────────────────────────────
+
+const EMPTY_VALS = {};
+
+// aviationstack realtime import is disabled in the UI: the free plan can't filter
+// by time and caps at 100 records/page, so it can't reliably build a schedule.
+// Flip to true to re-enable the toolbar button + import modal.
+const REALTIME_IMPORT_ENABLED = false;
 
 function timeToMinutes(timeStr) {
   if (!timeStr) return null;
@@ -314,6 +322,12 @@ export default function EditorScreen() {
   const chatPanelOpen = useAppStore(s => s.chatPanelOpen);
   const toggleChatPanel = useAppStore(s => s.toggleChatPanel);
 
+  // ── Realtime flight import (aviationstack) ──
+  const [realtimeOpen, setRealtimeOpen] = useState(false);
+  const airportValues = useAppStore(s => s.airportValues);
+  const currentAirport = useAppStore(s => s.currentAirport);
+  const realtimeVals = (currentAirport && airportValues[currentAirport]) || EMPTY_VALS;
+
   // ── Tooltips ──
   const { bind, TooltipPortal } = useTooltip();
 
@@ -442,6 +456,9 @@ export default function EditorScreen() {
         </div>
         <div className="toolbar-spacer" />
         <div className="toolbar-group">
+          {REALTIME_IMPORT_ENABLED && (
+            <button {...bind(t(BUTTONS.realtime.descKey))} onClick={() => setRealtimeOpen(true)} className={realtimeOpen ? 'btn-map-active' : ''}><IoGlobeOutline size={14} className="btn-icon btn-icon-accent" /> {t('realtime_title')}</button>
+          )}
           <button ref={chatBtnRef} {...bind(t(BUTTONS.chat.descKey))} onClick={toggleChatPanel} className={chatPanelOpen ? 'btn-map-active' : ''}><IoSparkles size={14} className="btn-icon btn-icon-accent" /> {t('chat_title')}</button>
           <button {...bind(t(BUTTONS.backup.descKey))} onClick={handleBackup}><IoCloudUploadOutline size={14} className="btn-icon" /> {t('toolbar_backup')}</button>
           <button {...bind(t(BUTTONS.restore.descKey))} onClick={handleRestore}><IoCloudDownloadOutline size={14} className="btn-icon" /> {t('toolbar_restore')}</button>
@@ -483,6 +500,15 @@ export default function EditorScreen() {
         <ChatPanel
           onShrink={() => toggleChatPanel()}
           buttonRef={chatBtnRef}
+        />
+      )}
+      {REALTIME_IMPORT_ENABLED && realtimeOpen && (
+        <RealtimeImportModal
+          onClose={() => setRealtimeOpen(false)}
+          airportIcao={currentAirport}
+          vals={realtimeVals}
+          configStartTime={_configStartTime}
+          configEndTime={_configEndTime}
         />
       )}
       <StatusBar />

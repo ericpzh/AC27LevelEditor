@@ -7,8 +7,8 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (2047) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
-npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2047 tests, 106 files, ~39s)
+npm run test:all      # Full suite: Vitest (2086) + save integrity (27) + jetway rebuild (27) + runway pairs (5) + E2E (18, ~8 min)
+npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2086 tests, 109 files, ~32s)
 npm run test:e2e      # 18 Playwright E2E tests (requires npm run build first, ~8 min; 16 pass, 2 skipped — both fuzz specs gated on FUZZ_RUN)
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
@@ -29,7 +29,7 @@ node tests/integration/test_gatcarc_roundtrip.js
 node --require ./tests/integration/preload.cjs tests/integration/test_type_number_integrity.js
 ```
 
-**Last full verification (2026-09-18):** Vitest 2047/2047 (106 files); integration scripts all green
+**Last full verification (2026-09-19):** Vitest 2086/2086 (109 files); integration scripts all green
 (api-server 133, api-e2e-examples 44, gatcarc round-trip 120, type-number 6, save-integrity 27/27,
 jetway-rebuild 27/27, v4 runway-pairs 5, UDP listener 21, tokenizer 18, acl-json 25, acl-document 13,
 sid-goaround 19, taxiway 10, save-roundtrip-diff 24, demo-filter 8, real-KJFK 8); Playwright E2E 16
@@ -53,11 +53,11 @@ with `--replace` produced clean schedules (65 then 80 flights) with 0 mismatches
 
 ---
 
-## Layer 1 — Vitest Component Tests (2047 tests, 106 files)
+## Layer 1 — Vitest Component Tests (2086 tests, 109 files)
 
-Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`).
+Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`, `aviationstack.test.js`).
 
-### `npm test` — 2047 pass (106 test files; includes the Ground Painter scenery suite + airway roundtrip + the full Livery page suite)
+### `npm test` — 2086 pass (109 test files; includes the Ground Painter scenery suite + airway roundtrip + the full Livery page suite + the aviationstack realtime-import suite)
 
 Coverage (`npx vitest run --coverage`, provider `@vitest/coverage-v8`, config in `vitest.config.js`) is
 scoped to the core logic trees — `src/acl/**` + `src/components/EditorScreen/GroundPainter/**` — with
@@ -100,6 +100,9 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 | `electron/bepinex.test.js` | 28 | checkStatus (null, partial, full, empty); findDownloadUrl (URL extraction, artifact not found, HTTP error); downloadZip (happy path — file content + progress 0→100%, incremental multi-chunk progress, HTTP 404 rejects + file cleanup, network error rejects + cleanup, timeout rejects + cleanup); extractZip (non-Windows guard); installFiles (subdirectory, missing items, flat structure); removeFiles (all items, partial, non-existent); installLatest (full pipeline incl. downloadZip, error cleanup, download progress normalization) |
 | `unit/live-scenery.test.js` | 11 | **Live scenery / geo_osm transform** — `fitTransform`/`syncGeoData` internals: linear lat/lon↔x/z fitting from shared graph nodes (≥3), lat/lon bounds, node/way sync, `.bak` sidecar handling |
 | `unit/create-workshop-item.test.js` | 10 | **Workshop item bootstrap script** (`scripts/create-workshop-item.mjs`) — `buildWorkshopVdf` emits a creation VDF (appid, no `publishedfileid`) or an update VDF (with it), skips empty optional fields, and escapes backslashes/quotes/newlines/tabs so a multi-line description stays a single VDF line; `parsePublishedFileId` reads the id steamcmd writes back (null when absent); `buildSteamCmdArgs` builds the `+login <user> +workshop_build_item <vdf> +quit` list; `parseArgs` defaults visibility private + run false, accepts multi-word values + `--run`, and rejects a missing value / unknown positional. |
+| `unit/realtime-aviationstack.test.js` | 22 | **aviationstack → flight mapper (pure, no network)** — `isoToLocalHHMM` reads the API's **local wall-clock** (no timezone double-conversion), `fitTimeToWindow` (inside / midnight-crossing / outside), per-field mapping (arrival vs departure, direction from airport ICAO, airline + flight-number extraction from ICAO/IATA fields, canonical flight-number substitution, aircraft-type + registration defaults), codeshares kept, and batch semantics: **first-valid-wins** dedupe (physical-flight key + kept callsigns), existing flights ignored (import replaces the schedule), per-reason skip counts, and **retiming** out-of-window flights into the level window. |
+| `unit/realtime-kjfk-fixture.test.js` | 4 | **Saved aviationstack KJFK response replayed offline** — loads `tests/fixtures/aviationstack-kjfk.json` (100 arrivals + 100 departures): asserts local wall-clock reading (ETD1 `08:35`, not the UTC-converted `04:35`), retimes the whole batch into the reported 10:15–11:00 window (matched > 0, every kept time in-window, no `time_out_of_range`), and leaves times untouched when the batch already fits. |
+| `electron/aviationstack.test.js` | 7 | **aviationstack HTTP client** (`@vitest-environment node`, Node `http` replaced by a `vi.fn` mock — **never hits the real API**) — missing key rejected without a request, plain-HTTP host/path/params captured, in-band `https_access_restricted` mapping, non-200 → `http_NNN`, transport error → `network_error`, invalid JSON → `invalid_response`, `buildQuery` omits empty values. |
 | `acl/geo_osm.test.js` | 12 | **geo_data.osm sync helpers** — `buildTaxiwayModel` / `parseGeoOsm` / `fitTransform` / `syncGeoDataForLevel` / `deriveGeoDataPath` against synthetic OSM XML and empty fixtures |
 | `acl/scenery_graph_approach_edge.test.js` | 13 | **Scenery graph — approach-edge cases** — `buildSceneryGraph` with missing/degenerate PKStaticEntities, empty `taxiway-node`/`runway`/`stand` blocks, stray `PhysicalRunwayStaticItem` fallback, area `30\|31` / name-check branches |
 | `integration/stand_positions.test.js` | 12 | `_parseStandPositions` unit tests: ZSJN v4 fixture parsing (57 stands), known stands (300/1/22) with finite coordinates, coordinate bounds, non-ACL text → `{}`. **PKStaticEntities path (5):** v4 fixture parsing (auto-detected schema), per-stand x/y/heading finite, tail/nose positions, coordinate bounds, empty input → `{}` |
@@ -196,7 +199,7 @@ fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level fil
 
 ### Known Vitest failures (none)
 
-All 2047 Vitest tests pass (106 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
+All 2086 Vitest tests pass (109 files; verified). The former `scenery_delete_cascade.test.js` timeout flake (~3.4s of repeated full re-tokenization vs the 5s default vitest timeout) is resolved by the global `testTimeout: 30000` in `vitest.config.js` — the suite now passes under parallel workers AND under coverage instrumentation. The previously failing/todo items have been fixed:
 
 1. **BepInExInstallOverlay — escape key closes error overlay**: Fixed by dispatching `keyDown` on `document.body` instead of `document` (capture-phase listener was never triggered when dispatching directly on document). The dispatch + assertion now also run inside `waitFor`, because the `Escape` listener is attached by an effect that depends on `error` and under full parallel load the passive effect could land a tick after the error text rendered — the old single synchronous dispatch was a flake that only failed in the complete suite (verified stable across repeated full runs).
 

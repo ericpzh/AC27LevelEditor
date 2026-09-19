@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('e
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const http = require('http');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const { initLogger, closeLogger } = require('../src/utils/logger');
@@ -18,8 +19,9 @@ const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, PROD_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
-const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS } = require('./api-server');
+const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS, validateFlightObjects, buildConstraints } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
+const aviationstack = require('./aviationstack');
 const { buildPatchPayload } = require('./patchFrame');
 const voiceStt = require('./voiceSttWorker');
 
@@ -708,6 +710,16 @@ function _buildCollectValuesBase(airportIcao, rootPath) {
     }
     aclValues.AircraftType = [...set].sort((a, b) => a.localeCompare(b));
   }
+  // ICAO designator (e.g. "A320") → full AircraftType ("AIRBUS A320"). Used by
+  // the realtime flight importer to map aviationstack `aircraft.icao` onto the
+  // game's aircraft-type dropdown.
+  const designatorToType = {};
+  if (designatorMap && designatorMap.size > 0) {
+    for (const [key, designator] of designatorMap) {
+      if (key !== designator && !designatorToType[designator]) designatorToType[designator] = key;
+    }
+  }
+  aclValues._designatorToType = designatorToType;
   // Voice -> language catalog (global to the install). Consumed by the
   // renderer's new-flight defaults + save validation so Voice always matches
   // the flight's Language (the game's VoiceCatalog rejects mismatches at load).
@@ -3109,6 +3121,7 @@ ipcMain.handle('get-config', async () => {
         geminiKey: config.geminiKey || '',
         claudeKey: config.claudeKey || '',
         codexKey: config.codexKey || '',
+        aviationstackKey: config.aviationstackKey || '',
         selectedModel: config.selectedModel || '',
       },
       configPath: CONFIG_PATH,
@@ -3128,6 +3141,101 @@ ipcMain.handle('save-config', async (_event, updates) => {
     return { success: false, error: e.message };
   }
 });
+
+// ─── IPC: Realtime flight import (aviationstack) ─────────────
+// Fetch is done in the main process so the free-plan HTTP call is not blocked
+// by renderer CORS/HTTPS-upgrade rules and the API key stays out of the renderer
+// network layer. Results are cached briefly (the free plan allows very few
+// requests per month).
+
+const REALTIME_CACHE_TTL_MS = 5 * 60 * 1000;
+const realtimeCache = new Map(); // `${icao}|${direction}|${status}|${limit}` -> { at, payload }
+
+ipcMain.handle('aviationstack-fetch', async (_event, args = {}) => {
+  try {
+    const config = loadConfig();
+    const key = config.aviationstackKey || '';
+    if (!key) return { success: false, error: { code: 'missing_access_key', message: 'No aviationstack API key configured.' } };
+
+    const icao = String(args.icao || '').trim().toUpperCase();
+    const direction = args.direction === 'departures' || args.direction === 'both' ? args.direction : 'arrivals';
+    const status = String(args.status || '').trim();
+    const limit = Math.min(Math.max(parseInt(args.limit, 10) || 50, 1), 100);
+
+    if (!/^[A-Z0-9]{4}$/.test(icao)) {
+      return { success: false, error: { code: 'invalid_icao', message: 'Invalid airport ICAO code.' } };
+    }
+
+    const directions = direction === 'both' ? ['arrivals', 'departures'] : [direction];
+    const result = { success: true, arrivals: [], departures: [], errors: [], cached: false };
+    for (const dir of directions) {
+      const cacheKey = `${icao}|${dir}|${status}|${limit}`;
+      const hit = realtimeCache.get(cacheKey);
+      if (hit && Date.now() - hit.at < REALTIME_CACHE_TTL_MS) {
+        result[dir] = hit.payload;
+        result.cached = true;
+        continue;
+      }
+      const params = { limit, [dir === 'arrivals' ? 'arr_icao' : 'dep_icao']: icao };
+      if (status) params.flight_status = status;
+      const res = await aviationstack.fetchFlights({ key, params });
+      if (!res.ok) {
+        result.errors.push({ direction: dir, ...res.error });
+        continue;
+      }
+      realtimeCache.set(cacheKey, { at: Date.now(), payload: res.data });
+      result[dir] = res.data;
+    }
+    if (result.errors.length === directions.length) {
+      return { success: false, error: result.errors[0], errors: result.errors };
+    }
+    return result;
+  } catch (e) {
+    return { success: false, error: { code: 'internal_error', message: e.message } };
+  }
+});
+
+// Validate generated flights against the airport's in-game constraints using the
+// exact same validator the MCP create_flights tool uses. The renderer passes the
+// live per-file values (`vals`) so Stand/Runway/Airway (which are never persisted
+// to cache.json) are validated against what is actually open in the editor.
+ipcMain.handle('validate-flights', async (_event, flights, snapshot = {}) => {
+  try {
+    const state = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    const syntheticState = {
+      currentAirport: state.currentAirport || null,
+      _configStartTime: state.configStartTime || null,
+      _configEndTime: state.configEndTime || null,
+      runwayTimeline: state.runwayTimeline || { initialRunways: [], timeline: [] },
+    };
+    const cache = airportCache || {};
+    const constraints = buildConstraints(syntheticState, cache);
+
+    // Overlay live per-file values (authoritative for the open level).
+    const vals = state.vals && typeof state.vals === 'object' ? state.vals : null;
+    if (vals) {
+      if (Array.isArray(vals.Stand)) constraints.stands = vals.Stand;
+      if (Array.isArray(vals.Runway)) constraints.runways = vals.Runway;
+      if (Array.isArray(vals.Voice)) constraints.voices = vals.Voice;
+      if (Array.isArray(vals.Language)) constraints.languages = vals.Language;
+      if (Array.isArray(vals.AirlineCode)) {
+        for (const c of vals.AirlineCode) constraints.knownCodes.add(c);
+      }
+      if (vals._compat && vals._compat.airlineToAircraft) {
+        for (const c of Object.keys(vals._compat.airlineToAircraft)) constraints.knownCodes.add(c);
+      }
+      if (vals._flightNums) constraints.flightNumbers = vals._flightNums;
+      if (vals._runwayStarMap) constraints.runwayStarCompat = vals._runwayStarMap;
+      if (vals._registrationMap) constraints.registrationsByPair = vals._registrationMap;
+    }
+
+    const issues = validateFlightObjects(Array.isArray(flights) ? flights : [], [], constraints);
+    return { success: true, issues: issues || [] };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 
 // One-shot system info (RAM)
 ipcMain.handle('get-system-info', async () => {
