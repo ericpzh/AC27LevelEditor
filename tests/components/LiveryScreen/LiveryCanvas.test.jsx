@@ -15,8 +15,8 @@ import { setLang, T } from '../../../src/utils/i18n';
 let ctxs = [];
 let imageSrcs = [];
 // Every `globalCompositeOperation` assignment, in order. `destination-in` is
-// set by the stamped-movable clip (`paintObjectMasked`) and by the
-// Delete-with-selection background restore, so a count of it tracks those
+// set by the stamped-movable clip (`paintObjectMasked`), so a count of it
+// tracks those
 // clip/erase paths — never a plain object draw.
 let gcoSets = [];
 function makeCtx() {
@@ -413,7 +413,7 @@ describe('brush size shortcuts + Shift-click straight lines', () => {
     fireEvent.pointerUp(cv, { pointerId: 1 });
     const base = paintCtx();
     expect(base).toBeTruthy();
-    // The restored-background stroke runs the Shift-click segment (paint layer).
+    // The eraser stroke (destination-out) runs the Shift-click segment (paint layer).
     expect(base.moveTo.mock.calls.some(a => a[0] === 400 && a[1] === 400)).toBe(true);
     expect(base.lineTo.mock.calls.some(a => a[0] === 800 && a[1] === 800)).toBe(true);
   });
@@ -2615,7 +2615,7 @@ describe('selection mask', () => {
     expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
     const before = mainCtx().drawImage.mock.calls.length;
     fireEvent.keyDown(window, { key: 'Delete' });
-    // The marquee-eraser path blits the restored background and keeps the
+    // The marquee-eraser path punches the paint layer and keeps the
     // object (the no-selection branch would have removed it).
     expect(mainCtx().drawImage.mock.calls.length).toBeGreaterThan(before);
     expect(ref.current.getObjectCount()).toBe(1);
@@ -2935,13 +2935,13 @@ describe('layer order (paint above movables)', () => {
 
 describe('eraser', () => {
   function baseCtx() {
-    // The eraser paints the background into the PAINT layer (above movables).
+    // The eraser punches the PAINT layer (above movables).
     const found = paintCtx();
     expect(found).toBeTruthy();
     return found;
   }
 
-  it('restores the default background, never punches transparent holes', async () => {
+  it('punches transparency (destination-out) so the opaque base shows through', async () => {
     const user = userEvent.setup();
     renderCanvas({ defaultLiveryDataUrl: 'data:image/png;base64,BG' });
     await waitFor(() => expect(mainCanvas()).toBeTruthy());
@@ -2949,13 +2949,15 @@ describe('eraser', () => {
     const cv = mainCanvas();
     const main = baseCtx();
     const before = main.stroke.mock.calls.length;
+    gcoSets = [];
     fireEvent.pointerDown(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
     fireEvent.pointerMove(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { pointerId: 1 });
     expect(main.stroke.mock.calls.length).toBeGreaterThan(before);
-    // Background restore (source-over pattern/white), never destination-out.
-    expect(main.globalCompositeOperation).not.toBe('destination-out');
-    expect(main.globalCompositeOperation).toBe('source-over');
+    // The eraser is not a pen: it removes paint via destination-out, never
+    // paints background-coloured pixels over the region.
+    expect(gcoSets).toContain('destination-out');
+    expect(main.globalCompositeOperation).toBe('destination-out');
   });
 
   it('erases a sticker but keeps it selectable and movable', async () => {
@@ -3004,8 +3006,8 @@ describe('eraser', () => {
     await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
     await user.click(screen.getByRole('button', { name: 'Eraser' }));
     const cv = mainCanvas();
-    // The eraser writes the PAINT layer; the drag must never write through it
-    // (that per-frame restore was the drag cost).
+    // The eraser punches the PAINT layer; the drag must never write through it
+    // (that per-frame pass was the drag cost).
     const base = paintCtx();
     const baseStrokes = () => base.stroke.mock.calls.length;
     const atDown = baseStrokes();

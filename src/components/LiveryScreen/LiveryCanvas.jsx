@@ -774,13 +774,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // 1×1 scratch used by the eyedropper to composite the visible pixel (base
   // raster + live objects) so movables like stickers can be picked.
   const pickCanvasRef = useRef(null);
-  // Default-background image for the eraser (aircraft template, else the
-  // opened base). Erasing restores these pixels — never transparent, because
-  // the BaseMap replaces the model's texture (transparent = holes in-game).
-  // Normalized onto a TEXTURE-sized canvas so the restore pattern aligns 1:1
-  // even when the source image isn't 2048².
-  const bgImgRef = useRef(null);
-  const bgCanvasRef = useRef(null);
   // Per-stroke layer for the brush: every dab lands here at FULL opacity and the
   // whole stroke is composited onto the base once per flush with the brush
   // alpha. Drawing each segment straight onto the base with `globalAlpha` makes
@@ -796,15 +789,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const eraseActiveRef = useRef(null);
   // Recorded eraser trail for the in-progress drag: { strokes: [{ size, pts,
   // drawn }] } in texture space. Painted 50% black on the overlay as a preview;
-  // replayed onto the base + into the objects in ONE pass on release.
+  // punched out of the paint + into the objects in ONE pass on release.
   const erasePreviewRef = useRef(null);
   // Per-object eraser scratch cache: id -> { canvas, ctx, lx0, ly0, sw, sh,
   // sig, applied }. `applied[i]` is how many points of erase stroke i have
   // already been punched into the canvas.
   const eraseCacheRef = useRef(new Map());
-  // Cached background-restore pattern (creating a pattern per stroke segment
-  // is a major erase-drag cost; the pattern is reused while ctx+canvas match).
-  const bgPatternRef = useRef({ ctx: null, canvas: null, pattern: null });
   const hasMaskRef = useRef(false);
   const textOptsRef = useRef({ font: 'sans-serif', size: 120, bold: false, italic: false, color: '#000000' });
   // Clear target — the aircraft type's built-in default livery panels. Kept in
@@ -814,57 +804,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const initialPartsRef = useRef(initialPartsArr);
   useEffect(() => { defaultPartsRef.current = defaultPartsArr; });
   useEffect(() => { initialPartsRef.current = initialPartsArr; });
-
-  // Keep the eraser's background source loaded (template preferred, else the
-  // opened base — same priority as Clear). Composed onto a canvas the size of
-  // the whole multi-panel backing store so the restore pattern aligns 1:1 with
-  // each panel. Defensive for stubbed Image/canvas (tests).
-  useEffect(() => {
-    const src = defaultPartsArr.some(p => p && p.imageDataUrl) ? defaultPartsArr : initialPartsArr;
-    if (!src.some(p => p && p.imageDataUrl)) { bgImgRef.current = null; bgCanvasRef.current = null; return; }
-    let cancelled = false;
-    // The background canvas is created lazily on the first image load (not up
-    // front) so it is not the first 2d context created — the main canvas owns
-    // the base fill and callers may assume that ordering.
-    let bgCanvas = null;
-    const ensureCanvas = () => {
-      if (bgCanvas) return bgCanvas;
-      try {
-        bgCanvas = document.createElement('canvas');
-        bgCanvas.width = W; bgCanvas.height = H;
-        const cctx = bgCanvas.getContext('2d');
-        if (!cctx) { bgCanvas = null; return null; }
-        fillPanelBases(cctx, layout);
-        bgCanvasRef.current = bgCanvas;
-      } catch (_) { bgCanvas = null; bgCanvasRef.current = null; }
-      return bgCanvas;
-    };
-    for (let i = 0; i < panelCount; i++) {
-      const url = src[i] && src[i].imageDataUrl;
-      if (!url) continue;
-      const idx = i;
-      const img = new Image();
-      img.onload = () => {
-        if (cancelled) return;
-        const c = ensureCanvas();
-        if (!c) return;
-        try {
-          const cctx = c.getContext('2d');
-          cctx.save();
-          cctx.setTransform(1, 0, 0, 1, 0, 0);
-          cctx.globalCompositeOperation = 'source-over';
-          cctx.globalAlpha = 1;
-          cctx.drawImage(img, layout.x(idx), 0, TEXTURE, TEXTURE);
-          cctx.restore();
-        } catch (_) {}
-      };
-      img.onerror = () => {};
-      img.src = url;
-    }
-    return () => { cancelled = true; };
-    // Mount-only: the parent remounts (key) whenever the base panels change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [W, H, panelCount]);
 
   const [tool, setToolState] = useState('brush');
   const [brush, setBrushState] = useState(brushRef.current);
@@ -1742,26 +1681,29 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
     eraseActiveRef.current = null;
   };
-  // Commit a finished eraser drag in ONE pass: restore the background along the
-  // recorded trail, then route that same trail into every live object's holes.
-  // The drag itself never touches the base or the objects — it only draws the
-  // dark preview — so this is the only place that does O(area) work, and it
-  // runs once per gesture instead of once per frame.
+  // Commit a finished eraser drag in ONE pass: punch the recorded trail out
+  // of the paint layer, then route that same trail into every live object's
+  // holes. The drag itself never touches the paint or the objects — it only
+  // draws the dark preview — so this is the only place that does O(area)
+  // work, and it runs once per gesture instead of once per frame.
   const applyEraseGesture = () => {
     const prev = erasePreviewRef.current;
     erasePreviewRef.current = null;
     if (!prev || !prev.strokes || prev.strokes.length === 0) return;
     const ctx = ctxRef.current;
     if (ctx) {
-      // Restore the background (default livery / white) rather than punching
-      // transparent holes — a transparent BaseMap renders as holes in-game.
+      // Punch transparency — the eraser is not a pen: it only removes. The
+      // locked base is always opaque (`drawBase` fills every panel first), so
+      // it shows through exactly where a background-restore would have
+      // painted, without ever baking background-coloured pixels into the
+      // paint layer.
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalCompositeOperation = 'destination-out';
       ctx.globalAlpha = 1;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.strokeStyle = eraserStrokeStyle(ctx);
+      ctx.strokeStyle = '#000';
       for (const st of prev.strokes) {
         const pts = st.pts || [];
         if (pts.length === 0) continue;
@@ -1814,8 +1756,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       if (changed) objectsRef.current = arr.filter(Boolean);
     }
     finalizeEraseGesture();
-    // The base is always rewritten, even when no live object was under the
-    // trail, so the gesture is always dirty.
+    // The paint layer is always rewritten, even when no live object was under
+    // the trail, so the gesture is always dirty.
     setDirty(true);
   };
 
@@ -1825,55 +1767,26 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // live movable it touches. Returns true when a selection was erased, so
   // Delete can fall back to removing the selected object when there is no
   // selection.
-  const eraseSelectionToBackground = () => {
+  const eraseSelectionToTransparent = () => {
     const ctx = ctxRef.current;
     const mask = maskCanvasRef.current;
     const mctx = mask && mask.getContext('2d');
     if (!ctx || !mask || !mctx || !hasMaskRef.current) return false;
     pushSnapshot();
 
-    // 1) Cut the selected region out of the paint layer (punch transparency)
-    //    instead of painting background-coloured pixels over it. The paint
-    //    layer sits ABOVE the live movables, so opaque restore pixels would
-    //    bury the sticker holes punched below and bake a fake-background ghost
-    //    into the paint that stays behind when the sticker moves — Del must
-    //    trim the sticker transparent in its own layer, with the base showing
-    //    through (identical pixels on screen and on export, where the base is
-    //    drawn first). Only when there is no base image at all does the region
-    //    get the flat white fallback (transparent BaseMap = holes in-game).
-    const bgC = bgCanvasRef.current;
-    const bg = bgImgRef.current;
-    const hasBase = Boolean(bgC)
-      || Boolean(bg && bg.complete !== false && (bg.naturalWidth || bg.width));
-    if (hasBase) {
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.globalAlpha = 1;
-      ctx.drawImage(mask, 0, 0);
-      ctx.restore();
-    } else {
-      const sc = getScratch();
-      const sctx = sc && sc.getContext('2d');
-      if (sctx) {
-        sctx.save();
-        sctx.setTransform(1, 0, 0, 1, 0, 0);
-        sctx.globalCompositeOperation = 'source-over';
-        sctx.globalAlpha = 1;
-        sctx.clearRect(0, 0, W, H);
-        sctx.fillStyle = DEFAULT_BASE_COLOR;
-        sctx.fillRect(0, 0, W, H);
-        sctx.globalCompositeOperation = 'destination-in';
-        sctx.drawImage(mask, 0, 0);
-        sctx.restore();
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1;
-        ctx.drawImage(sc, 0, 0);
-        ctx.restore();
-      }
-    }
+    // 1) Cut the selected region out of the paint layer (punch transparency).
+    //    The paint layer sits ABOVE the live movables, so opaque pixels here
+    //    would bury the sticker holes punched below and bake a fake-background
+    //    ghost into the paint that stays behind when the sticker moves — Del
+    //    trims the sticker transparent in its own layer, with the (always
+    //    opaque) base showing through. No fallback is needed: `drawBase`
+    //    fills every panel, so punched paint can never expose transparency.
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.globalAlpha = 1;
+    ctx.drawImage(mask, 0, 0);
+    ctx.restore();
 
     // 2) Punch the selected region out of every live movable it touches. The
     //    mask border is traced to loops and mapped into each object's LOCAL
@@ -2375,7 +2288,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       if (e.key === 'Delete' || e.key === 'Backspace') {
         // With a selection mask, Del clears the selected region to the
         // background (the marquee eraser) instead of removing the object.
-        if (hasMaskRef.current) { e.preventDefault(); eraseSelectionToBackground(); return; }
+        if (hasMaskRef.current) { e.preventDefault(); eraseSelectionToTransparent(); return; }
         // Same action as the Remove toolbar button (selection, else topmost).
         removeSticker();
         return;
@@ -2435,37 +2348,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       return out;
     }
     return [map(n.clientX, n.clientY)];
-  };
-
-  // ── Brush strokes ──────────────────────────────────────────
-  // Erasing restores the default background (template/base image, else opaque
-  // white) via a no-repeat pattern aligned to the texture origin — never
-  // destination-out, because a transparent BaseMap renders as holes in-game.
-  // The pattern is cached and resolved once per pointer event, not per
-  // coalesced point: rebuilding/assigning it per segment was the erase cost.
-  const eraserStrokeStyle = (ctx) => {
-    const bgC = bgCanvasRef.current;
-    try {
-      if (typeof ctx.createPattern === 'function') {
-        if (bgC) {
-          const cached = bgPatternRef.current;
-          if (cached.ctx !== ctx || cached.canvas !== bgC || !cached.pattern) {
-            cached.ctx = ctx;
-            cached.canvas = bgC;
-            try { cached.pattern = ctx.createPattern(bgC, 'no-repeat'); }
-            catch (_) { cached.pattern = null; }
-          }
-          if (cached.pattern) return cached.pattern;
-        } else {
-          const bg = bgImgRef.current;
-          if (bg && bg.complete !== false && (bg.naturalWidth || bg.width)) {
-            const p = ctx.createPattern(bg, 'no-repeat');
-            if (p) return p;
-          }
-        }
-      }
-    } catch (_) { /* fall through to the flat default */ }
-    return DEFAULT_BASE_COLOR;
   };
 
   // ── Per-stroke layer (uniform brush alpha) ─────────────────

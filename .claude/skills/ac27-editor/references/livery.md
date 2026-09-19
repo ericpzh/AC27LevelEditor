@@ -304,7 +304,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   mount and on **Clear** (all panels reset to `defaultParts`). `exportParts()`
   returns one 2048² PNG `{partName, imageDataUrl}` per panel (the `CreateTab`
   save payload); `exportPNG()` still returns the whole wide flattened texture.
-  The mask, scratch, stroke, undo and eraser-background canvases are all `W×H`
+  The mask, scratch, stroke and undo canvases are all `W×H`
   (the wide store), and pointer→texture mapping divides by `W`/`H`.
   - **Four stacked layers (`data-layer`)**: `base` (locked aircraft image,
     `baseCanvasRef`, opaque, painted only by `drawBase`) → `objects` (live
@@ -421,8 +421,15 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     straight onto the base with `globalAlpha` made consecutive round caps
     overlap (alpha = 1−(1−a)ⁿ), so a translucent brush went nearly opaque on
     any slow drag — the alpha appeared to do nothing. Per-rect flushes are
-    idempotent (the base copy is never modified), `putImageData` stays reserved
-    for fills/mask clips, and the eraser still paints the base directly.
+    idempotent (the base copy is never modified), and `putImageData` stays reserved
+    for fills/mask clips. **The eraser is not a pen: it only removes.** It
+    strokes the paint layer with `globalCompositeOperation = 'destination-out'`
+    (transparent), so the locked opaque base shows through wherever paint is
+    removed — it never paints background-coloured pixels. `applyEraseGesture`
+    makes one `destination-out` pass per gesture (deferred to release, only a
+    dark preview during the drag) and routes the same trail into every live
+    movable's `erase` holes, trimming stickers/shapes transparent in their own
+    layer; a Shift-click segment (`drawEraserSegment`) reuses the same pass.
     **A brush click with no drag deposits one dab** (`paintBrushDab` on release
     when `strokeBoundsRef` is still null — a zero-length round-cap stroke, the
     same trick the eraser's single-point trail already used), so a click paints
@@ -437,8 +444,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     shared brush/eraser size by ∓5 (clamped 1–200) while either tool is active.
     **Layers: the pen is always on top — without baking.** Four stacked
     `<canvas>` layers inside `.lp-canvas-stage` (bottom → top):
-    `base` (locked aircraft image, `baseCanvasRef`, opaque, `drawBase` only — the
-    eraser's background source is separate in `bgCanvasRef`), `objects` (live
+    `base` (locked aircraft image, `baseCanvasRef`, opaque, `drawBase` only),
+    `objects` (live
     movables, `objectCanvasRef`), `paint` (`canvasRef`/`ctxRef`, all raster
     brush/eraser/fill), `chrome` (`overlayRef`, padded, selection outline +
     handles + previews + the pointer surface). The paint layer is `pointer-
@@ -654,8 +661,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       same region out of every live movable it touches. The paint layer sits
       above the movables, so opaque restore pixels would bury the sticker holes
       and bake a fake-background ghost that stays behind when the sticker
-      moves; only with no base image at all does the region get the flat-white
-      fallback (transparent BaseMap = holes in-game). The mask border is
+      moves, so the punch is purely transparent (no fallback — `drawBase`
+      always fills every panel opaque). The mask border is
       traced to loops and mapped into each object's **local** frame, stored as
       `erasePolys` (polygon holes filled `evenodd`, so a ring selection keeps
       its middle; scaled by `scaleErasePolys` on resize, deep-copied on
