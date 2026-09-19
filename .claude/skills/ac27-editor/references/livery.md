@@ -334,6 +334,12 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     (the handler does not return after switching), so painting a second panel is
     one click, not switch-then-paint. A no-drag brush release deposits one dab
     (see "Brush strokes" below) so the panel-switch click paints too.
+    `activeRef` mirrors `active` and is written **synchronously** in that
+    pointerdown, because the React `active` state update is async: the wand,
+    fill and lasso read `activeRef.current` (their panel bound + `clipActivePanel`)
+    so a single press in another panel targets the panel just clicked instead of
+    the previous one (regression: wand must clip to `x=2176` on the first press
+    into panel 1).
   - **Per-object panel clip (multi-image only, overlay AND export)**: each live
     object renders/saves clipped to the panel its **centre** falls in —
     `layout.x(panelIndexAt(o.x))` — in `drawOverlay` and `flattenToCanvas`. So an
@@ -426,9 +432,15 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     any slow drag — the alpha appeared to do nothing. Per-rect flushes are
     idempotent (the base copy is never modified), and `putImageData` stays reserved
     for fills/mask clips. **The fill tool paints the bottom `fill` layer, under
-    every movable** (`fillCtxRef`): a flood fill samples and writes that layer
-    only, so a fill never lands on top of a sticker/shape/text and a later pen
-    stroke still covers it. `constrainRastersToMask` clips the fill layer
+    every movable** (`fillCtxRef`), but the flood region is computed from the
+    VISIBLE composite (base → fill → movables → pen), exactly like the wand —
+    the fill layer itself is mostly transparent, so flooding it directly always
+    saw one uniform colour and filled the whole panel regardless of tolerance.
+    `wandRegion` returns scanline spans (tolerance + active-panel bound) and the
+    fill layer is rewritten with those spans (a `destination-out` cut then a
+    `source-over` paint at the brush alpha), so a fill never lands on top of a
+    sticker/shape/text and a later pen stroke still covers it.
+    `constrainRastersToMask` clips the fill layer
     against the pre-fill snapshot. **The eraser is not a pen: it only removes.**
     It
     strokes BOTH raster layers (fill underlay + pen) with
@@ -497,7 +509,10 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     previously drawn shapes are **not** flattened (the topmost object under the
      cursor wins a Select-tool hit test). Import a sticker via
      `selectLiveryImage`/`readDiskImage` from the rail or `importSticker()`;
-     it drops at the **active panel's** centre (`layout.x(active) + TEXTURE/2`);
+     it drops at the **active panel's** centre (`layout.x(active) + TEXTURE/2`)
+     and the tool **hands over to single-select (`setSelMode('object')` +
+     `setTool('select')`)**, so the fresh sticker is selected and immediately
+     moveable/scalable no matter which selection sub-mode was active before;
     commit text by clicking with the Text tool and typing — the draft is
     committed (announced same as Enter) on **Enter, the input losing focus
     (clicking away), switching tools (rail or keyboard), or clicking elsewhere
@@ -631,21 +646,29 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       rule as curve commits); `Escape` cancels the draft. Wand: `applyWandAt`
       floods the contiguous **visible-colour** region (`wandRegion` spans, fill
       tolerance) sampled from the exact on-screen stack in a dedicated
-      `wandCanvasRef` buffer: base image → each movable through
+      `wandCanvasRef` buffer: base image → fill underlay → each movable through
       `paintObjectForDisplay` (so a stamped `clipMask` clips invisible geometry
-      out of the sample) → the paint layer on top. So a sticker/shape colour is
-      selectable, but **invisible geometry never is**. **Multi-panel confinement:**
+      out of the sample) → the pen layer on top. So a sticker/shape colour is
+      selectable, but **invisible geometry never is**. **The fill tool reuses
+      this exact sample** (base → fill → movables → pen) to pick its region, then
+      writes only the matched spans into the fill layer — never flooding the
+      transparent fill layer itself, which would ignore tolerance and fill the
+      whole panel. **Multi-panel confinement:**
       for a multi-image type (`panelCount > 1`) both the lasso fill and the wand
       flood are restricted to the **active panel** — `applyLassoToMask`/
-      `applyWandAt` `clipActivePanel(mctx)` before compositing, and
+      `applyWandAt` `clipActivePanel(mctx, activeRef.current)` before compositing,
+      and
       `wandRegion` takes an inclusive `region` (the active panel rect) that stops
       the flood at the gutter, so a selection can never cross into the
-      neighbouring panel. The spans are painted as white `fillRect` runs on a scratch canvas composited with
+      neighbouring panel. `activeRef` carries the panel just clicked, so a
+      single press into another panel runs the wand/fill/lasso there (the
+      `active` state update is async). The spans are painted as white `fillRect` runs on a scratch canvas composited with
       `maskPaintOp(mode)` (`combine` = source-over, `erase` = destination-out,
       `replace` = clear first); erasing to empty clears the mask
       (`isMaskEmpty` → `clearMask`). Raster paints clip through
-      `constrainBaseToMask(before)` (stroke end incl. settle, fill via a
-      pre-fill copy) using pure
+      `constrainRastersToMask()` (stroke end incl. settle, Shift segment, fill),
+      which clips BOTH raster layers against the pre-gesture snapshot via
+      `constrainLayerToMask`, using pure
       `constrainImageToMask` (mask alpha < 128 reverts to `before`).
       **Selection-stamped movables (`clipMask`)**: `addObject` (and
       `duplicateSticker`) copies the live mask onto a movable created while
@@ -902,7 +925,10 @@ manifest for a free-form zip folder).
     slider + numeric field, lasso → mask + white-dot/black-border outline + Deselect, Ctrl+D deselects,
     tap/Escape cancel, wand region
     spans, the wand composites the live movable layer before sampling
-    (a rect is drawn during the flood), Del with a selection trims transparent
+    (a rect is drawn during the flood), the fill samples the same composite and
+    paints spans into the fill layer (never `putImageData` on the fill layer,
+    which would ignore tolerance), an imported sticker hands over to single-select
+    (Object mode) rather than staying in wand/lasso, Del with a selection trims transparent
     (BOTH raster layers punched via `destination-out` with the base showing
     through —
     never painted over — while touched movables keep `erasePolys` holes in
@@ -929,7 +955,9 @@ manifest for a free-form zip folder).
 - `tests/components/LiveryScreen/LiveryCanvas.test.jsx` multi-image coverage
   also pins: the padded overlay canvas size (`W+2·OVERLAY_PAD`), click-to-activate
   (`onActivePanel(1)`), that the panel-switch click also paints the brush dab in
-  the same gesture (no second click), a click in the gutter activating the
+  the same gesture (no second click) and that a single press into another panel
+  applies the wand there (mask clipped to `x=2176`, not the previous panel),
+  a click in the gutter activating the
   nearest panel, keyboard shortcuts never changing the active panel, and
   that an object can move outside the active panel (overflow clipped, not
   clamped). `tests/components/LiveryScreen/CreateTab.test.jsx` asserts the

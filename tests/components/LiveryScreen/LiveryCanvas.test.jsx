@@ -507,6 +507,29 @@ describe('sticker duplicate', () => {
     expect(after).toContain(before[0]);
     expect(ctxs[0].drawImage).not.toHaveBeenCalled();
   });
+
+  it('importing a sticker hands over to single-select (A), not the last mask mode', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    // Enter a mask sub-mode first: importing must not leave the tool in wand /
+    // lasso mode — it returns to Object so the fresh sticker is moveable.
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
+    expect(screen.getByRole('button', { name: 'Magic Wand' }).getAttribute('aria-pressed')).toBe('true');
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    expect(screen.getByRole('button', { name: 'Object' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Magic Wand' }).getAttribute('aria-pressed')).toBe('false');
+    // The new sticker is the live selection.
+    expect(ref.current.getSelectedId()).toBe(ref.current.getObjectIds()[0]);
+  });
 });
 
 describe('sticker flip', () => {
@@ -1175,17 +1198,20 @@ describe('LiveryCanvas tools — paint operations', () => {
     expect(input.value).toBe('hi');
   });
 
-  it('fill floods the region and commits pixels to the fill layer', async () => {
+  it('fill floods the VISIBLE composite and commits spans to the fill layer', async () => {
     const user = userEvent.setup();
     renderCanvas();
     // The fill lives on its own layer (data-layer="fill"), under all movables.
     const fill = layerCtx('fill');
     expect(fill).toBeTruthy();
-    // Small synthetic surface so the real flood fill stays cheap.
-    fill.getImageData.mockReturnValue({ data: new Uint8ClampedArray(4 * 4 * 4), width: 4, height: 4 });
     await user.click(screen.getByRole('button', { name: 'Fill' }));
     fireEvent.pointerDown(mainCanvas(), { clientX: 0, clientY: 0, button: 0, pointerId: 1 });
-    expect(fill.putImageData).toHaveBeenCalled();
+    // The region is computed from the composite sample (base → fill → movables
+    // → pen), never by flooding the transparent fill layer itself — that used
+    // to fill the whole 2048² square regardless of tolerance. The region is
+    // painted into the fill layer as scanline runs.
+    expect(fill.fillRect).toHaveBeenCalled();
+    expect(fill.putImageData).not.toHaveBeenCalled();
   });
 
   it('fill tolerance slider readout updates', async () => {
@@ -1955,6 +1981,23 @@ describe('multi-image panels (A388/B38M)', () => {
     // The same click deposited the brush dab (zero-length round-cap stroke).
     expect(ctxs.some(c => c.stroke.mock.calls.length > 0)).toBe(true);
     expect(ctxs[0].drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
+  });
+
+  it('one click on another panel both activates it and applies the wand there', async () => {
+    const user = userEvent.setup();
+    const onActivePanel = vi.fn();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, onActivePanel });
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
+    const cv = mainCanvas();
+    // Single press inside panel 1: switches active AND floods there in the same
+    // event (the mask must not be clipped to the previously-active panel).
+    fireEvent.pointerDown(cv, { clientX: (2176 + 1024) / 4, clientY: 256, button: 0, pointerId: 1 });
+    expect(onActivePanel).toHaveBeenCalledWith(1);
+    // The mask fill is clipped to panel 1's rect (x=2176), proving the wand ran
+    // against the panel just clicked rather than the previous one.
+    expect(ctxs.some(c => c.rect.mock.calls.some(a => a[0] === 2176 && a[2] === TEXTURE && a[3] === TEXTURE))).toBe(true);
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeNull();
   });
 
   it('a click in the gutter activates the nearest panel', () => {
@@ -2970,7 +3013,7 @@ describe('layer order (fill under movables, pen above)', () => {
     fill.getImageData.mockReturnValue({ data: new Uint8ClampedArray(4 * 4 * 4), width: 4, height: 4 });
     await user.click(within(document.querySelector('.lp-rail')).getByRole('button', { name: 'Fill' }));
     fireEvent.pointerDown(mainCanvas(), { clientX: 0, clientY: 0, button: 0, pointerId: 1 });
-    expect(fill.putImageData).toHaveBeenCalled();
+    expect(fill.fillRect).toHaveBeenCalled();
     // Ctrl+Z puts the pre-fill fill image back (raster snapshots carry both).
     fill.putImageData.mockClear();
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true });

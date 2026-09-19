@@ -15,7 +15,6 @@ import {
   pushUndo,
   undoStep,
   redoStep,
-  floodFill,
   hexToRgba,
   rgbaToHex,
   maskPaintOp,
@@ -696,6 +695,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const W = layout.width;
   const H = layout.height;
   const active = Math.min(Math.max(0, activePanel | 0), panelCount - 1);
+  // Latest active panel, readable SYNCHRONOUSLY by canvas handlers: a left click
+  // in another panel both switches the active panel and runs the tool there in
+  // ONE event, but the `active` state update is async — handlers use this mirror
+  // so the wand / fill / lasso target the panel just clicked, not the previous
+  // one. Kept in sync every render (handlers set it before calling onActivePanel).
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const initialPartsArr = (Array.isArray(initialParts) && initialParts.length)
     ? initialParts
     : [{ partName: panelNames[0], imageDataUrl: initialImageDataUrl || null }];
@@ -928,9 +934,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // panel is overflow and is simply NOT rendered, on the overlay and on export.
   // Single-panel types have no clip: the object's pixels are clipped by the
   // base bitmap and its selection box still shows outside (see OVERLAY_PAD).
-  const clipActivePanel = (ctx) => {
+  const clipActivePanel = (ctx, idx = active) => {
     if (panelCount <= 1) return;
-    const x0 = layout.x(active);
+    const x0 = layout.x(idx);
     ctx.beginPath();
     ctx.rect(x0, 0, TEXTURE, TEXTURE);
     ctx.clip();
@@ -1282,8 +1288,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     mctx.save();
     if (clear) { mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.clearRect(0, 0, W, H); }
     // Multi-panel: a lasso is confined to the ACTIVE panel — it can never bleed
-    // across the gutter into the neighbouring panel.
-    clipActivePanel(mctx);
+    // across the gutter into the neighbouring panel. `activeRef` carries the
+    // panel the lasso started in, even when that press also switched panels.
+    clipActivePanel(mctx, activeRef.current);
     mctx.globalCompositeOperation = composite;
     mctx.globalAlpha = 1;
     mctx.fillStyle = '#ffffff';
@@ -1339,9 +1346,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
     if (canvasRef.current) sceneCtx.drawImage(canvasRef.current, 0, 0);
     // Multi-panel: the flood is confined to the ACTIVE panel, so it can never
-    // leak across the gutter into the neighbouring panel.
+    // leak across the gutter into the neighbouring panel. `activeRef` carries
+    // the panel just clicked, so a click into another panel works on the first
+    // press instead of the second.
     const panelRegion = panelCount > 1
-      ? { x0: layout.x(active), y0: 0, x1: layout.x(active) + TEXTURE - 1, y1: H - 1 }
+      ? { x0: layout.x(activeRef.current), y0: 0, x1: layout.x(activeRef.current) + TEXTURE - 1, y1: H - 1 }
       : null;
     let region = null;
     try { region = wandRegion(sceneCtx.getImageData(0, 0, W, H), x, y, fillTolRef.current, panelRegion); }
@@ -1365,7 +1374,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (clear) { mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.clearRect(0, 0, W, H); }
     // Confine the region to the active panel (belt-and-braces with the flood
     // bounds above).
-    clipActivePanel(mctx);
+    clipActivePanel(mctx, activeRef.current);
     mctx.globalCompositeOperation = composite;
     mctx.globalAlpha = 1;
     mctx.drawImage(sc, 0, 0);
@@ -2161,6 +2170,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         const k = Math.min(1, 1024 / Math.max(w, h));
         pushSnapshot();
         addObject({ kind: 'sticker', img, w: w * k, h: h * k, x: layout.x(active) + TEXTURE / 2, y: TEXTURE / 2, rot: 0, flipX: false, flipY: false });
+        // Hand straight back to single-select (A) so the fresh sticker is
+        // selected and immediately moveable/scalable, regardless of the
+        // selection sub-mode that was active before the import.
+        setSelMode('object');
         setTool('select');
         setDirty(true);
         scheduleOverlay();
@@ -2605,7 +2618,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // only place a live object is rendered).
     if (e.button === 0 && panelCount > 1) {
       const idx = panelIndexAt(p.x);
-      if (idx !== active && onActivePanel) onActivePanel(idx);
+      if (idx !== active && onActivePanel) {
+        // Mirror the switch synchronously so THIS press already targets the new
+        // panel (wand / fill / lasso read `activeRef`), matching the pen which
+        // paints where it is clicked.
+        activeRef.current = idx;
+        onActivePanel(idx);
+      }
     }
     // Right-button press arms the movable's layer-order target only in the
     // Select tool's object sub-mode; every other tool (pen/wand/shapes/...) and
@@ -2782,16 +2801,58 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       // The fill lives on its OWN layer UNDER every movable, so a flood fill
       // never lands on top of a sticker/shape/text — a later pen stroke still
       // covers the fill, and movables sit above it.
+      //
+      // The fill LAYER itself is mostly transparent, so flooding it directly
+      // would always see one uniform colour and fill the whole panel (tolerance
+      // did nothing). Instead the region is computed from the VISIBLE composite
+      // (base → fill → movables → pen), exactly like the wand, and only the
+      // resulting spans are written into the fill layer. Tolerance and the
+      // active-panel bound therefore behave the same for fill and wand.
       const fillCtx = fillCtxRef.current;
       if (!fillCtx) return;
+      const scene = getWandCanvas();
+      const sceneCtx = scene && scene.getContext('2d');
+      if (!sceneCtx) return;
+      sceneCtx.save();
+      sceneCtx.setTransform(1, 0, 0, 1, 0, 0);
+      sceneCtx.globalCompositeOperation = 'source-over';
+      sceneCtx.globalAlpha = 1;
+      sceneCtx.clearRect(0, 0, W, H);
+      if (baseCanvasRef.current) sceneCtx.drawImage(baseCanvasRef.current, 0, 0);
+      if (fillCanvasRef.current) sceneCtx.drawImage(fillCanvasRef.current, 0, 0);
+      for (const o of objectsRef.current) {
+        if (hasLiveVisual(o)) paintObjectForDisplay(sceneCtx, o);
+      }
+      if (canvasRef.current) sceneCtx.drawImage(canvasRef.current, 0, 0);
+      // Confine the flood to the panel just clicked (a press into another panel
+      // switches panels AND fills there in one go — see `activeRef`).
+      const panelRegion = panelCount > 1
+        ? { x0: layout.x(activeRef.current), y0: 0, x1: layout.x(activeRef.current) + TEXTURE - 1, y1: H - 1 }
+        : null;
+      let region = null;
+      try { region = wandRegion(sceneCtx.getImageData(0, 0, W, H), p.x | 0, p.y | 0, fillTolRef.current, panelRegion); }
+      catch (_) { region = null; }
+      sceneCtx.restore();
+      if (!region || region.count === 0) return;
       pushSnapshot();
-      const img = fillCtx.getImageData(0, 0, W, H);
       const bc = brushRef.current;
       const rgb = hexToRgba(bc.color);
-      const fillCol = [rgb[0], rgb[1], rgb[2], Math.round((bc.opacity ?? 1) * 255)];
-      const changed = floodFill(img, p.x | 0, p.y | 0, fillCol, fillTolRef.current);
-      if (changed) { fillCtx.putImageData(img, 0, 0); invalidateFillPixels(); constrainRastersToMask(); }
-      else { undoRef.current.past.pop(); }
+      const alpha = Math.round((bc.opacity ?? 1) * 255);
+      // Replace the region: cut the old fill out, then paint the new colour at
+      // the brush alpha — matching the per-pixel write the old flood fill did.
+      fillCtx.save();
+      fillCtx.setTransform(1, 0, 0, 1, 0, 0);
+      fillCtx.globalAlpha = 1;
+      fillCtx.globalCompositeOperation = 'destination-out';
+      fillCtx.fillStyle = '#000';
+      for (const s of region.spans) fillCtx.fillRect(s.x0, s.y, s.x1 - s.x0 + 1, 1);
+      fillCtx.globalCompositeOperation = 'source-over';
+      fillCtx.globalAlpha = alpha / 255;
+      fillCtx.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+      for (const s of region.spans) fillCtx.fillRect(s.x0, s.y, s.x1 - s.x0 + 1, 1);
+      fillCtx.restore();
+      invalidateFillPixels();
+      constrainRastersToMask();
     } else if (t === 'line' || t === 'rect' || t === 'ellipse') {
       // Curve mode appends a control point per click (the smooth preview
       // appears from the second point on); every other shape drags.
