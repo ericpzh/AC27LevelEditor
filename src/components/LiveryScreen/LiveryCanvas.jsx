@@ -1780,11 +1780,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     setDirty(true);
   };
 
-  // Delete-with-a-selection: the marquee equivalent of the eraser tool. Fills
-  // the selected region with the eraser's background (template/base image, else
-  // flat white) and punches the same region out of every live movable it
-  // touches. Returns true when a selection was erased, so Delete can fall back
-  // to removing the selected object when there is no selection.
+  // Delete-with-a-selection: the marquee equivalent of the eraser tool. Cuts
+  // the selected region out of the paint layer (transparency, so the locked
+  // base shows through naturally) and punches the same region out of every
+  // live movable it touches. Returns true when a selection was erased, so
+  // Delete can fall back to removing the selected object when there is no
+  // selection.
   const eraseSelectionToBackground = () => {
     const ctx = ctxRef.current;
     const mask = maskCanvasRef.current;
@@ -1792,34 +1793,47 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (!ctx || !mask || !mctx || !hasMaskRef.current) return false;
     pushSnapshot();
 
-    // 1) Restore the background over the selected region: composite the
-    //    background source, keep only the masked pixels, and lay them back on
-    //    the base. `destination-in` never punches transparency (transparent
-    //    BaseMap = holes in-game).
-    const sc = getScratch();
-    const sctx = sc && sc.getContext('2d');
-    if (sctx) {
-      sctx.save();
-      sctx.setTransform(1, 0, 0, 1, 0, 0);
-      sctx.globalCompositeOperation = 'source-over';
-      sctx.globalAlpha = 1;
-      sctx.clearRect(0, 0, W, H);
-      const bgC = bgCanvasRef.current;
-      if (bgC) sctx.drawImage(bgC, 0, 0);
-      else {
-        const bg = bgImgRef.current;
-        if (bg && bg.complete !== false && (bg.naturalWidth || bg.width)) sctx.drawImage(bg, 0, 0, W, H);
-        else { sctx.fillStyle = DEFAULT_BASE_COLOR; sctx.fillRect(0, 0, W, H); }
-      }
-      sctx.globalCompositeOperation = 'destination-in';
-      sctx.drawImage(mask, 0, 0);
-      sctx.restore();
+    // 1) Cut the selected region out of the paint layer (punch transparency)
+    //    instead of painting background-coloured pixels over it. The paint
+    //    layer sits ABOVE the live movables, so opaque restore pixels would
+    //    bury the sticker holes punched below and bake a fake-background ghost
+    //    into the paint that stays behind when the sticker moves — Del must
+    //    trim the sticker transparent in its own layer, with the base showing
+    //    through (identical pixels on screen and on export, where the base is
+    //    drawn first). Only when there is no base image at all does the region
+    //    get the flat white fallback (transparent BaseMap = holes in-game).
+    const bgC = bgCanvasRef.current;
+    const bg = bgImgRef.current;
+    const hasBase = Boolean(bgC)
+      || Boolean(bg && bg.complete !== false && (bg.naturalWidth || bg.width));
+    if (hasBase) {
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalCompositeOperation = 'destination-out';
       ctx.globalAlpha = 1;
-      ctx.drawImage(sc, 0, 0);
+      ctx.drawImage(mask, 0, 0);
       ctx.restore();
+    } else {
+      const sc = getScratch();
+      const sctx = sc && sc.getContext('2d');
+      if (sctx) {
+        sctx.save();
+        sctx.setTransform(1, 0, 0, 1, 0, 0);
+        sctx.globalCompositeOperation = 'source-over';
+        sctx.globalAlpha = 1;
+        sctx.clearRect(0, 0, W, H);
+        sctx.fillStyle = DEFAULT_BASE_COLOR;
+        sctx.fillRect(0, 0, W, H);
+        sctx.globalCompositeOperation = 'destination-in';
+        sctx.drawImage(mask, 0, 0);
+        sctx.restore();
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+        ctx.drawImage(sc, 0, 0);
+        ctx.restore();
+      }
     }
 
     // 2) Punch the selected region out of every live movable it touches. The

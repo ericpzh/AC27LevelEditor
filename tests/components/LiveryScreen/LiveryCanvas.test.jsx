@@ -2555,6 +2555,44 @@ describe('selection mask', () => {
     expect(ref.current.getObjectCount()).toBe(0);
   });
 
+  it('Delete with a selection trims the sticker transparent instead of baking background paint', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    // Mask readback: an opaque block overlapping the sticker (imported at the
+    // panel centre), so the border trace yields hole loops; the object
+    // measurement stays visible, so the sticker survives trimmed.
+    stubMaskBlock(900, 900, 1200, 1200);
+    const ref = React.createRef();
+    renderCanvas({ ref, initialParts: [{ partName: 'Body', imageDataUrl: 'data:image/png;base64,BASE' }] });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    // The template background resolves async (MockImage); Del must take the
+    // transparency-punch branch, not the no-base white fallback.
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    const user = userEvent.setup();
+    await selectPen(user);
+    lassoTriangle();
+    expect(screen.getByRole('button', { name: 'Deselect' })).not.toBeDisabled();
+    gcoSets = [];
+    const paintBefore = mainCtx().drawImage.mock.calls.length;
+    fireEvent.keyDown(window, { key: 'Delete' });
+    // The sticker survives with a transparent hole in its own layer...
+    expect(ref.current.getObjectCount()).toBe(1);
+    const info = ref.current.getObjectInfo();
+    expect(Array.isArray(info.erasePolys)).toBe(true);
+    expect(info.erasePolys.length).toBeGreaterThan(0);
+    // ...and the paint layer was punched (destination-out), never painted with
+    // background pixels (no destination-in restore blit to bury the hole or
+    // bake a ghost that stays behind when the sticker moves).
+    expect(mainCtx().drawImage.mock.calls.length).toBeGreaterThan(paintBefore);
+    expect(gcoSets).toContain('destination-out');
+    expect(gcoSets).not.toContain('destination-in');
+  });
+
   it('a duplicate of a selection-stamped movable inherits the clip shape', async () => {
     const user = userEvent.setup();
     const ref = React.createRef();
