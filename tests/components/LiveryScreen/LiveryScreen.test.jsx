@@ -255,6 +255,11 @@ describe('LiveryScreen', () => {
     // Painter-only chips are absent.
     expect(screen.queryByText('Import image')).toBeNull();
     expect(screen.queryByText('Import livery')).toBeNull();
+    // The post-save mod-enable warning repeats as a highlighted tip.
+    const tip = document.querySelector('#livery-help-tip');
+    expect(tip).toBeInTheDocument();
+    expect(tip.textContent).toContain(T('livery_mod_hint_title'));
+    expect(tip.textContent).toContain(T('livery_mod_hint_body'));
   });
 
   it('painter help shows only the painter sections', async () => {
@@ -282,6 +287,11 @@ describe('LiveryScreen', () => {
     expect(
       barItems.some(el => el.textContent.includes('Delete this livery folder entirely')),
     ).toBe(true);
+    // The post-save mod-enable warning repeats as a highlighted tip.
+    const tip = document.querySelector('#livery-help-tip');
+    expect(tip).toBeInTheDocument();
+    expect(tip.textContent).toContain(T('livery_mod_hint_title'));
+    expect(tip.textContent).toContain(T('livery_mod_hint_body'));
   });
 
   it('Escape closes the help overlay', async () => {

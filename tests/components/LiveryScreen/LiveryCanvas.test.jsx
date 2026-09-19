@@ -1646,6 +1646,33 @@ describe('LiveryCanvas zoom + stickers', () => {
     expect(screen.getByRole('button', { name: 'Remove Sticker' }).disabled).toBe(false);
   });
 
+  it('keys pressed while a save popup is open keep the movable selected', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getSelectedId()).not.toBeNull());
+    // Simulate the post-save popup (save naming / overwrite / mod hint).
+    await act(async () => { useAppStore.getState().showModal('title', 'body'); });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(window, { key: 'Enter' });
+    fireEvent.keyDown(window, { key: 'Delete' });
+    fireEvent.keyDown(window, { key: 'e' });
+    // Selection survived and nothing was removed or mutated behind the popup.
+    expect(ref.current.getSelectedId()).not.toBeNull();
+    expect(ref.current.getObjectCount()).toBe(1);
+    // After the popup closes the shortcuts work again.
+    await act(async () => { useAppStore.getState().hideModal(); });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(ref.current.getSelectedId()).toBeNull();
+    expect(ref.current.getObjectCount()).toBe(1);
+  });
+
   it('a failed sticker read toasts the backend error', async () => {
     mockIpcInvoke.mockImplementation((channel) => {
       if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });

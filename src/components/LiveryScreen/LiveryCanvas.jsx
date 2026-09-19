@@ -2245,6 +2245,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     reorderObject,
     getObjectCount: () => objectsRef.current.length,
     getObjectIds: () => objectsRef.current.map(o => o.id),
+    getSelectedId: () => selIdRef.current,
     getObjectInfo: () => {
       const o = targetObject();
       if (!o) return null;
@@ -2268,6 +2269,14 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         if (e.key === 'Escape' && textAnchor) { editingIdRef.current = null; setTextAnchor(null); setTextDraft(''); }
         return;
       }
+      // A modal (save naming, overwrite confirm, post-save mod hint, …) owns
+      // the keyboard while open: canvas shortcuts must not fire behind it.
+      // Without this, Escape/Enter pressed to dismiss a save popup deselected
+      // the live movable, and Delete/letter keys could even remove or mutate
+      // it — so the selection was lost right after saving.
+      try {
+        if (useAppStore.getState().modal && useAppStore.getState().modal.open) return;
+      } catch (_) {}
       if (e.key === ' ') { spaceRef.current = true; setSpaceHeld(true); e.preventDefault(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
