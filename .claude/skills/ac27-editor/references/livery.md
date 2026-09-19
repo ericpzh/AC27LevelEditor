@@ -17,7 +17,28 @@ painter page).
 - Own pack: `<gameRoot>/Mods/AC27 Custom Liveries/` (created if missing;
   constant `OWN_PACK` in `electron/livery.js`, `OWN_PACK_NAME` in
   `src/utils/constants/livery.js`). Never write into
-  `AC27 Realistic Aircraft Livery` (read-only reference).
+  `AC27 Realistic Aircraft Livery` (read-only reference). The list exposes
+  **three sources** — `mine` (own pack), `reference` (the realistic pack) and
+  `workshop` (Steam Workshop, read-only); every `read-livery-*` channel takes a
+  `pack` argument (`'mine'` default / `'reference'` / `'workshop'`) resolved by
+  `_packDir(gameRoot, pack)`.
+- **Steam Workshop liveries (best-effort discovery):**
+  `workshopContentDir(gameRoot)` walks up ≤6 ancestors of the game root looking
+  for a sibling `workshop/content` (the
+  `<SteamLibrary>/steamapps/workshop/content` layout — `../../workshop` from
+  `<steamapps>/common/<game>`), returning `null` on a non-Steam install
+  (dev/portable/other stores). `listWorkshopLiveries(gameRoot)` scans
+  `<content>/<appid>/<publishedfileid>/` for any directory holding an
+  `aircraft_livery_manifest.json` (depth-bounded 4, `AircraftDefaultLivery`
+  skipped; the item root may itself be a livery or a pack wrapper
+  `Mods/<pack>/<livery>`), returning the same row shape as `listPackDir` but
+  with `folder` as the '/'-joined path **relative to the content root**
+  (e.g. `3328490/123456789/A20N_CCA`) so the containment-checked read helpers
+  resolve it directly. A 10s `_workshopListCache` (keyed by content dir) keeps
+  the whole-tree walk off repeated list refreshes. Workshop rows are
+  **read-only** in the UI — `CreateTab` treats `pack:'workshop'` like reference
+  (`isReadOnly`; Save/Delete disabled, Save As only) with a Steam badge
+  (`FaSteam`) and `livery_tip_readonly_workshop`.
 - The pack root carries a `mod_info.json` — the game only treats a folder
   under `Mods/` as a mod when it has one. `ensureModInfo()` (called by
   `ensureOwnPackDir`, i.e. on create, and by `listLiveries`, i.e. on load)
@@ -141,12 +162,16 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   no folder, i.e. a brand-new livery with that type pre-selected. The create
   `key` includes `{folder, pack, targetPlaneId}` so switching origins (or types)
   remounts the painter.
-- `MyLiveriesTab.jsx` — `listLiveries` on mount; own + reference merged into
-  one folder set grouped by aircraft type (collapsible sections; header =
-  plane id + count badge; unknown `targetPlaneId` sorts last). Reference rows
-  share the folders with a lock read-only mark (`IoLockClosed`,
-  `livery_tip_readonly`). Cards are **clickable to open the painter** for both
-  packs (`onEdit({...row, pack, imageDataUrl})`, also Enter/Space; clicks on
+- `MyLiveriesTab.jsx` — `listLiveries` on mount; own + reference + **workshop**
+  merged into one folder set grouped by aircraft type (collapsible sections;
+  header = plane id + count badge; unknown `targetPlaneId` sorts last).
+  Reference rows share the folders with a lock read-only mark (`IoLockClosed`,
+  `livery_tip_readonly`) and **workshop rows** with a Steam badge
+  (`FaSteam` + `livery_workshop_badge`, tooltip `livery_tip_readonly_workshop`);
+  thumbnail keys are `pack + ':' + folder`, so a workshop folder's
+  '/'-joined relative path is the key verbatim. Cards are **clickable to open
+  the painter** for all three packs (`onEdit({...row, pack, imageDataUrl})`,
+  also Enter/Space; clicks on
   buttons/inputs/selects/anchors/labels are ignored). Own cards carry no
   per-card action buttons — only a selection checkbox **inside the card,
   pinned over the thumbnail** (`.livery-thumb .livery-check`). Cards show only
@@ -188,7 +213,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
 - `CreateTab.jsx` — the **painter page** (upload mode is gone; default export
   takes `{ onCreated, onCancel, onHelp }`). Given `CreateTab.prefill` it
   snapshots an `origin` `{folder, airline, planeId, pack, imageDataUrl}` with
-  `pack` `'mine'` / `'reference'`; a `prefill` with **no folder but a
+  `pack` `'mine'` / `'reference'` / `'workshop'`; a `prefill` with **no folder but a
   `targetPlaneId`** (the add-card) leaves `origin` null and initialises the
   brand-new form with that type pre-selected — `knownPlanes` also accepts
   `prefill.targetPlaneId`, so the form is valid even when the built-in scan
@@ -221,9 +246,16 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   first airline code + `AIRBUS A-319neo`** (`DEFAULT_AIRLINE`/`DEFAULT_PLANE_ID`)
   so the form is valid out of the box, and the type `<select>` has **no blank
   placeholder option** (an origin/zip still supplies its own pair). For a
-  **reference (locked) origin** both the airline input (+ its toggle) and the
+  **read-only origin** (reference **or workshop**, `isReadOnly =
+  isReference || isWorkshop`) both the airline input (+ its toggle) and the
   type `<select>` are `disabled` and greyed (`.lp-locked`) — the pair is
   display-only, and Save As reuses it. Actions:
+  - **Open folder** (`FaRegFolderOpen`, first in the RHS group, left of Import
+    image) → `reveal-livery-folder(origin.folder, origin.pack)` opens the
+    livery folder in the OS file explorer. A saved livery (mine/reference/
+    workshop) reveals its own folder; a brand-new unsaved livery passes `null`
+    and the backend falls back to the own pack dir. Failure toasts the mapped
+    `livery_err_*` (or `livery_open_folder_failed` for an OS error string).
   - **Import image** (`IoImageOutline`) → `fileToDataUrl` + `normalizeToTexture`
     (default white fill) → replaces the **active panel**'s base only.
   - **Import livery** (`FaFileImport`) → `loadLiveryZip` → normalize **each**
@@ -232,10 +264,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     then `exportLiveryToDir` (directory picker; cancel leaves the saved
     livery, success `livery_exported` with `<folder>.zip`).
   - **Delete** (`IoTrashOutline`, tooltip `livery_tip_delete` — or
-    `livery_tip_readonly` for a reference) → confirm (`Confirm Delete` /
+    `livery_tip_readonly`/`livery_tip_readonly_workshop` for a read-only
+    origin) → confirm (`Confirm Delete` /
     `livery_delete_confirm_body`) then `delete-livery`; disabled without an
-    origin folder (brand-new livery) and for a reference origin.
-  - **Save** (`IoSaveOutline`, disabled for reference) → naming dialog whose
+    origin folder (brand-new livery) and for a reference/workshop origin.
+  - **Save** (`IoSaveOutline`, disabled for a read-only origin) → naming dialog whose
     default name follows the live form: while Airline/Aircraft still match the
     origin it stays the origin folder (in-place overwrite, free-form name
     preserved); once either changed it prefills the new conventional
@@ -784,9 +817,13 @@ lays out **one 2048² panel per part** (A388 → Fuselage + Wing, B38M → Fusel
 
 Pure logic in `electron/livery.js` (unit-tested); `main.js` only resolves
 gameRoot/dialog/cleanup and delegates. Channels: `list-liveries` →
-`{mine, reference}` rows `{folder, id, name, airline, targetPlaneId,
+`{mine, reference, workshop}` rows `{folder, id, name, airline, targetPlaneId,
 hasBasePng, mtime}` (skip non-dirs; corrupt manifest → row with `error`,
-never abort; also creates the own pack dir + repairs `mod_info.json`);
+never abort; also creates the own pack dir + repairs `mod_info.json`). The
+`workshop` rows come from `listWorkshopLiveries` — a non-Steam install yields
+`[]` (see "Steam Workshop liveries" above). Every `read-livery-*` channel
+resolves its base dir through `_packDir` (`'mine'` / `'reference'` /
+`'workshop'`);
 `read-livery-image(folder, pack)` → data-URL (`_resolveLiveryImagePath`: the
 manifest's main-part BaseMap, else any part's BaseMap, else a legacy
 `base.png`; MIME PNG/JPEG by extension, `IMAGE_MISSING` when none);
@@ -820,6 +857,11 @@ built-in `partName` per panel (**Fuselage + Wing/Wingtip** for A388/B38M) and
 the built-in `targetModelVer` (C919 `2`, rest `1`);
 `delete-livery(folder)` (own-pack only, containment-checked `rm -rf`);
 `select-livery-image` (png/jpg dialog) + `read-disk-image(filePath)`;
+`reveal-livery-folder(folder, pack)` → resolve the folder via
+`resolvePackFolder` (containment-checked; `FOLDER_MISSING` when absent) and
+`shell.openPath` it; a missing/`null` folder falls back to the own pack dir
+(`ensureOwnPackDir`) so the painter's Open-folder button always opens
+something. Returns `{success, path}`; `NO_GAME_ROOT` guard.
 `export-livery(folder)` → `createZip` to temp `<folder>.zip` with
 **folder-prefixed entries** (the manifest + **every** `.png`/`.jpg` image in
 the folder, so multi-part liveries share whole; `IMAGE_MISSING` when the
@@ -840,6 +882,7 @@ containment via `path.relative`. ZIP via `src/utils/zipUtils.js` (no new deps);
 image normalize in renderer canvas (`src/utils/liveryImage.js`, zero new deps);
 DDS decode + PNG encode in `electron/dds.js` (zero new deps).
 Preload exposes `exportLiveryToDir(folder)`/`getAircraftTemplate(planeId)`/`listAircraftTypes()`
+/`revealLiveryFolder(folder, pack)`
 alongside the others; `tests/setup.js` stubs them.
 
 ## Image rules (locked)
@@ -901,7 +944,14 @@ manifest for a free-form zip folder).
   verbatim full-image fallback (`thumbnail:false`, JPEG MIME) + odd-size
   clamping + a fake-`nativeImage` resize to a 256px JPEG (`thumbnail:true`),
   custom size, in-memory cache hits, empty-decode fallback, containment still
-  enforced),
+  enforced,
+  **Steam Workshop** — `workshopContentDir` resolves the sibling
+  `steamapps/workshop/content` and returns `null` off-Steam; `listWorkshopLiveries`
+  finds liveries nested in a pack and at the item root (relative folders,
+  non-livery items skipped) and `listLiveries` surfaces them; `readLiveryImage`
+  with `pack:'workshop'` resolves the relative folder (traversal → `BAD_FOLDER`);
+  `resolvePackFolder` resolves a contained folder per pack and rejects
+  traversal/missing/no-gameRoot),
   `tests/electron/dds.test.js` (`decodeDds` DXT1 block / DXT5 alpha + colour /
   DXT3 4-bit alpha / 1/3+2/3 blend when c0>c1 / transparent-black mode when
   c0<=c1 / bad magic / unsupported fourCC / truncated payload / dimension
@@ -923,7 +973,8 @@ manifest for a free-form zip folder).
   airline/aircraft change → re-derived `{TYPE}_{AIRLINE}` default + manifest
   rewrite, retyping the origin folder updates in place), post-save mod-enable hint (flag read/write, checkbox persistence,
   hidden once dismissed, priority-to-top + Refresh-list guidance), free-form folder name, load-from-ZIP,
-   import image, cancel, mine vs reference origin save rules, canvas
+   **open folder** (reveals `origin.folder`+`pack`, and passes `null`/`'mine'`
+   for a brand-new livery), import image, cancel, mine vs reference origin save rules, canvas
    tools/stroke/text/sticker/save payload with stubbed 2d context,
    right-click layer-order menu (`reorderObjects` pure moves + menu open/
    reorder/close/dismiss paths + disabled end states + right-press select +

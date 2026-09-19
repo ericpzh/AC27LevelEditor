@@ -4,6 +4,7 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airlineDisplayName } from '../../utils/constants/airlines';
 import { IoChevronForward, IoChevronDown, IoFolderOutline, IoLockClosed } from 'react-icons/io5';
+import { FaSteam } from 'react-icons/fa6';
 import { MdAdd } from 'react-icons/md';
 import useTooltip from '../BrowserScreen/useTooltip';
 
@@ -16,6 +17,9 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, s
   const electronAPI = useElectronAPI();
   const [mine, setMine] = useState([]);
   const [reference, setReference] = useState([]);
+  // Steam Workshop liveries (read-only, discovered on disk). Empty on a
+  // non-Steam install (the backend resolver is best-effort).
+  const [workshop, setWorkshop] = useState([]);
   // Every aircraft type the game ships (source for empty folders). Rows whose
   // type is missing from the scan are still shown (union below).
   const [allTypes, setAllTypes] = useState([]);
@@ -29,12 +33,13 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, s
   const [selected, setSelected] = useState(new Set());
   const { bind, TooltipPortal } = useTooltip();
 
-  // One folder set across both packs (mine rows carry pack:'mine' for
-  // thumbnails/actions, reference rows pack:'reference' + lock mark).
+  // One folder set across all packs (mine rows carry pack:'mine' for
+  // thumbnails/actions, reference + workshop rows are read-only).
   const allRows = useMemo(() => [
     ...mine.map(r => ({ ...r, pack: 'mine' })),
     ...reference.map(r => ({ ...r, pack: 'reference' })),
-  ], [mine, reference]);
+    ...workshop.map(r => ({ ...r, pack: 'workshop' })),
+  ], [mine, reference, workshop]);
 
   // Header search filter: folder, airline code/name, aircraft, manifest name.
   const filteredRows = useMemo(() => {
@@ -53,6 +58,7 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, s
       if (res && res.success) {
         setMine(res.mine || []);
         setReference(res.reference || []);
+        setWorkshop(res.workshop || []);
       } else {
         const { showToast } = useAppStore.getState();
         showToast(t(errKey(res && res.error)), 'error');
@@ -280,6 +286,38 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, s
     </div>
   );
 
+  // Steam Workshop livery: read-only, click to open in the painter (Save As
+  // only). `folder` is the path relative to the Workshop content root.
+  const renderWorkshopCard = (row) => (
+    <div
+      className="livery-card clickable"
+      key={'ws:' + row.folder}
+      onClick={(e) => {
+        if (e.target.closest('button, input, select, a')) return;
+        if (onEdit) onEdit({ ...row, pack: 'workshop', imageDataUrl: null });
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('button, input, select, a') && onEdit) {
+          e.preventDefault();
+          onEdit({ ...row, pack: 'workshop', imageDataUrl: null });
+        }
+      }}
+      tabIndex={0}
+      title={t('livery_tip_readonly_workshop')}
+    >
+      <div className="livery-thumb">
+        {thumbs['workshop:' + row.folder] && <img src={thumbs['workshop:' + row.folder]} alt={row.folder} />}
+      </div>
+      <div className="livery-meta">
+        <strong>{airlineDisplayName(row.airline, lang)}</strong>
+        {' '}
+        <span className="livery-readonly livery-workshop" {...bind(t('livery_tip_readonly_workshop'))}>
+          <IoLockClosed size={12} />
+        </span>
+      </div>
+    </div>
+  );
+
   // New-livery shortcut for one aircraft folder: prefers the explicit
   // onCreate(planeId) prop, falls back to onEdit({ targetPlaneId }) which
   // CreateTab treats as a brand-new livery with the type pre-selected
@@ -308,8 +346,9 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, s
     );
   };
 
-  // Collapsible folder-like group per aircraft type. Mine + reference rows
-  // share one folder set; reference cards carry a read-only lock mark.
+  // Collapsible folder-like group per aircraft type. Mine + reference +
+  // workshop rows share one folder set; reference/workshop cards are
+  // read-only (lock / Steam badge).
   // Every known aircraft type gets a folder — even with zero liveries — so
   // the trailing add-card is always reachable for that type.
   const renderGroups = (groups) => (
@@ -333,7 +372,11 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, s
             </div>
             {!isCollapsed && (
               <div className="livery-grid">
-                {items.map(row => (row.pack === 'reference' ? renderRefCard(row) : renderMineCard(row)))}
+                {items.map(row => (
+                  row.pack === 'reference' ? renderRefCard(row)
+                    : row.pack === 'workshop' ? renderWorkshopCard(row)
+                      : renderMineCard(row)
+                ))}
                 {renderAddCard(planeId)}
               </div>
             )}

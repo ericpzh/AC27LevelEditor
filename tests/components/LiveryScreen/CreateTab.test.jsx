@@ -438,6 +438,23 @@ describe('CreateTab painter validation', () => {
     await waitFor(() => expect(vi.mocked(normalizeToTexture)).toHaveBeenCalled());
   });
 
+  it('open folder reveals the origin folder, or the own pack for a new livery', async () => {
+    setupMocks({ 'reveal-livery-folder': Promise.resolve({ success: true, path: 'X' }) });
+    const user = userEvent.setup();
+    const first = renderCreate();
+    await user.click(screen.getByRole('button', { name: 'Open folder' }));
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('reveal-livery-folder', null, 'mine'));
+    first.unmount();
+
+    // A saved origin reveals its own folder + pack (workshop/reference/mine).
+    CreateTab.prefill = { folder: '3328490/111/A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', pack: 'workshop' };
+    mockIpcInvoke.mockClear();
+    setupMocks({ 'reveal-livery-folder': Promise.resolve({ success: true, path: 'X' }) });
+    renderCreate();
+    await user.click(screen.getByRole('button', { name: 'Open folder' }));
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith('reveal-livery-folder', '3328490/111/A20N_CCA', 'workshop'));
+  });
+
   it('cancel returns to the list via onCancel', async () => {
     setupMocks();
     const user = userEvent.setup();

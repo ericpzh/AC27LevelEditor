@@ -108,6 +108,15 @@
   color: var(--text-muted);
   cursor: default;
 }
+/* Steam Workshop badge (read-only row) */
+.livery-workshop {
+  align-items: center;
+  gap: 3px;
+}
+.livery-workshop-label {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
 /* ── Mine tab list ── */
 .livery-mine-wrap {
   display: flex;

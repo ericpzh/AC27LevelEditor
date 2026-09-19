@@ -46,7 +46,7 @@ afterEach(() => {
 
 describe('listLiveries', () => {
   it('returns empty lists when pack dirs are missing', () => {
-    expect(livery.listLiveries(gameRoot)).toEqual({ success: true, mine: [], reference: [] });
+    expect(livery.listLiveries(gameRoot)).toEqual({ success: true, mine: [], reference: [], workshop: [] });
   });
 
   it('returns NO_GAME_ROOT without gameRoot', () => {
@@ -1216,6 +1216,86 @@ describe('readLiveryThumbnail', () => {
       expect(liveryThumb.readLiveryThumbnail(gameRoot, '../evil', 'mine').error).toBe('BAD_FOLDER');
       expect(calls.buffers).toHaveLength(0);
     });
+  });
+});
+
+describe('resolvePackFolder', () => {
+  it('resolves a contained livery folder and rejects traversal / missing', () => {
+    livery.createLivery(gameRoot, {
+      imageDataUrl: png2048(), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA',
+    });
+    expect(livery.resolvePackFolder(gameRoot, 'A20N_CCA', 'mine'))
+      .toBe(path.join(livery.ownPackDir(gameRoot), 'A20N_CCA'));
+    expect(livery.resolvePackFolder(gameRoot, '../evil', 'mine')).toBeNull();
+    expect(livery.resolvePackFolder(gameRoot, 'missing', 'mine')).toBeNull();
+    expect(livery.resolvePackFolder(null, 'A20N_CCA', 'mine')).toBeNull();
+  });
+});
+
+describe('Steam Workshop discovery', () => {
+  // Builds a fake Steam library layout:
+  //   <root>/steamapps/common/Game   ← gameRoot passed to livery.js
+  //   <root>/steamapps/workshop/content/<appid>/<item>/...
+  function steamLayout() {
+    const lib = tmpGameRoot();
+    const root = path.join(lib, 'steamapps', 'common', 'Game');
+    fs.mkdirSync(root, { recursive: true });
+    const workshop = path.join(lib, 'steamapps', 'workshop', 'content');
+    fs.mkdirSync(workshop, { recursive: true });
+    return { root, workshop };
+  }
+
+  function seedLivery(dir, airline = 'CCA', planeId = 'AIRBUS A-320neo') {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'base.png'), pngBuffer(2048, 2048));
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      id: 'x_default', name: 'X', airline, targetPlaneId: planeId,
+      parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }],
+    }), 'utf-8');
+  }
+
+  it('resolves the workshop content dir by walking up from the game root', () => {
+    const { root, workshop } = steamLayout();
+    expect(livery.workshopContentDir(root)).toBe(workshop);
+  });
+
+  it('returns null on a non-Steam layout', () => {
+    expect(livery.workshopContentDir(gameRoot)).toBeNull();
+    expect(livery.listWorkshopLiveries(gameRoot)).toEqual([]);
+  });
+
+  it('lists liveries nested in a pack and at the item root, with relative folders', () => {
+    const { root, workshop } = steamLayout();
+    seedLivery(path.join(workshop, '3328490', '111', 'A20N_CCA'));
+    seedLivery(path.join(workshop, '3328490', '222'), 'SIA', 'AIRBUS A-330-300');
+    // A non-livery item (e.g. the editor tool) is ignored.
+    fs.mkdirSync(path.join(workshop, '4004140', '3793213548'), { recursive: true });
+    fs.writeFileSync(path.join(workshop, '4004140', '3793213548', 'AC27Approach.dll'), 'x');
+
+    const rows = livery.listWorkshopLiveries(root);
+    expect(rows.map(r => r.folder).sort()).toEqual([
+      '3328490/111/A20N_CCA',
+      '3328490/222',
+    ]);
+    expect(rows.find(r => r.folder === '3328490/111/A20N_CCA')).toMatchObject({
+      airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', hasBasePng: true,
+    });
+  });
+
+  it('includes workshop rows in listLiveries and reads their image by pack', () => {
+    const { root, workshop } = steamLayout();
+    seedLivery(path.join(workshop, '3328490', '111', 'A20N_CCA'));
+    const listed = livery.listLiveries(root);
+    expect(listed.success).toBe(true);
+    expect(listed.workshop).toHaveLength(1);
+    expect(listed.workshop[0].folder).toBe('3328490/111/A20N_CCA');
+
+    const read = livery.readLiveryImage(root, '3328490/111/A20N_CCA', 'workshop');
+    expect(read.success).toBe(true);
+    expect(read.imageDataUrl).toBe(png2048());
+
+    // Containment still applies — a traversal folder is rejected.
+    expect(livery.readLiveryImage(root, '../../evil', 'workshop').error).toBe('BAD_FOLDER');
   });
 });
 

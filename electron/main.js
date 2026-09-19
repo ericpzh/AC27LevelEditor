@@ -3536,6 +3536,27 @@ ipcMain.handle('read-disk-image', async (_event, filePath) => {
   return livery.readDiskImage(filePath);
 });
 
+// Open a livery folder in the OS file explorer (painter toolbar). A saved
+// livery (mine/reference/workshop) resolves to its own folder; a brand-new
+// unsaved livery has no folder yet, so the own pack dir is shown instead.
+ipcMain.handle('reveal-livery-folder', async (_event, folder, pack = 'mine') => {
+  const gameRoot = _liveryGameRoot();
+  if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
+  try {
+    let target = folder ? livery.resolvePackFolder(gameRoot, folder, pack) : null;
+    if (!target) {
+      try { target = livery.ensureOwnPackDir(gameRoot); } catch (_) { target = null; }
+    }
+    if (!target || !fs.existsSync(target)) return { success: false, error: 'FOLDER_MISSING' };
+    const openErr = await shell.openPath(target);
+    if (openErr) return { success: false, error: openErr };
+    return { success: true, path: target };
+  } catch (err) {
+    console.error('[Livery] reveal folder failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
 // ─── IPC: Livery share / load (P3) ─────────────────────────
 
 ipcMain.handle('export-livery', async (_event, folder) => {

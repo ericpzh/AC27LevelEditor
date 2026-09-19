@@ -57,6 +57,110 @@ const _THUMB_CACHE_MAX = 300;
 function ownPackDir(gameRoot) { return path.join(gameRoot, 'Mods', OWN_PACK); }
 function referencePackDir(gameRoot) { return path.join(gameRoot, 'Mods', REFERENCE_PACK); }
 
+// ─── Steam Workshop discovery (best-effort) ─────────────────
+// Workshop content lives at <SteamLibrary>/steamapps/workshop/content/<appid>/
+// <publishedfileid>/. The game root is <SteamLibrary>/steamapps/common/<game>,
+// so we walk up from it looking for a sibling `workshop/content` directory.
+// Returns null on a non-Steam layout (dev/portable installs, other stores) —
+// callers degrade to an empty workshop list.
+function workshopContentDir(gameRoot) {
+  if (!gameRoot) return null;
+  let dir;
+  try { dir = path.resolve(String(gameRoot)); } catch (_) { return null; }
+  for (let i = 0; i < 6; i++) {
+    try { if (fs.existsSync(path.join(dir, 'workshop', 'content'))) return path.join(dir, 'workshop', 'content'); } catch (_) {}
+    const parent = path.dirname(dir);
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+function _hasLiveryManifest(dir) {
+  try { return fs.existsSync(path.join(dir, 'aircraft_livery_manifest.json')); } catch (_) { return false; }
+}
+
+// Depth-bounded scan for livery folders (any directory holding an
+// aircraft_livery_manifest.json) under a workshop item. A found livery folder
+// is not descended into (liveries never nest). `relPrefix` is the '/'-joined
+// path relative to the item root.
+function _collectWorkshopLiveryDirs(rootDir, relPrefix, out, depth) {
+  if (depth > 4) return;
+  let entries;
+  try { entries = fs.readdirSync(rootDir, { withFileTypes: true }); } catch (_) { return; }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (entry.name === 'AircraftDefaultLivery') continue;
+    const abs = path.join(rootDir, entry.name);
+    const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+    if (_hasLiveryManifest(abs)) { out.push(rel); continue; }
+    _collectWorkshopLiveryDirs(abs, rel, out, depth + 1);
+  }
+}
+
+// Every livery found anywhere under the Steam Workshop content tree, as rows
+// whose `folder` is the '/'-joined path relative to workshop/content (e.g.
+// "3328490/123456789/A20N_CCA") — resolved back to disk by the read helpers
+// via the same base directory. Best-effort: any I/O failure yields [].
+// A short-TTL cache keyed by the content dir keeps the whole-tree walk off
+// every list refresh (the renderer refetches on each livery-page open).
+let _workshopListCache = { key: '', at: 0, rows: null };
+const _WORKSHOP_LIST_TTL_MS = 10000;
+function listWorkshopLiveries(gameRoot) {
+  const contentDir = workshopContentDir(gameRoot);
+  if (!contentDir) return [];
+  const now = Date.now();
+  if (_workshopListCache.key === contentDir && now - _workshopListCache.at < _WORKSHOP_LIST_TTL_MS) {
+    return _workshopListCache.rows;
+  }
+  const rows = [];
+  let appDirs;
+  try { appDirs = fs.readdirSync(contentDir, { withFileTypes: true }); } catch (_) { return []; }
+  for (const app of appDirs) {
+    if (!app.isDirectory() || app.name.startsWith('.')) continue;
+    const appDir = path.join(contentDir, app.name);
+    let items;
+    try { items = fs.readdirSync(appDir, { withFileTypes: true }); } catch (_) { continue; }
+    for (const item of items) {
+      if (!item.isDirectory() || item.name.startsWith('.')) continue;
+      const itemDir = path.join(appDir, item.name);
+      const rels = [];
+      // The item root may itself be a livery folder, a pack of liveries, or a
+      // mod wrapper (Mods/<pack>/<livery>).
+      if (_hasLiveryManifest(itemDir)) rels.push('');
+      else _collectWorkshopLiveryDirs(itemDir, '', rels, 0);
+      for (const rel of rels) {
+        const folder = rel ? `${app.name}/${item.name}/${rel}` : `${app.name}/${item.name}`;
+        try { rows.push(readLiveryRow(contentDir, folder)); } catch (_) {
+          rows.push({ folder, id: '', name: '', airline: '', targetPlaneId: '', hasBasePng: false, mtime: 0, error: 'BAD_MANIFEST' });
+        }
+      }
+    }
+  }
+  rows.sort((a, b) => a.folder.localeCompare(b.folder));
+  _workshopListCache = { key: contentDir, at: now, rows };
+  return rows;
+}
+
+// Resolve the on-disk base directory for a pack id. 'workshop' rows carry a
+// path-relative folder under the Steam Workshop content root.
+function _packDir(gameRoot, pack) {
+  if (pack === 'reference') return referencePackDir(gameRoot);
+  if (pack === 'workshop') return workshopContentDir(gameRoot);
+  return ownPackDir(gameRoot);
+}
+
+// Absolute path of a stored livery folder for "open in file explorer", or
+// null when the pack/base dir or the folder itself is missing/out of bounds.
+function resolvePackFolder(gameRoot, folder, pack = 'mine') {
+  if (!gameRoot || !folder) return null;
+  const packDir = _packDir(gameRoot, pack);
+  if (!packDir) return null;
+  const resolved = containmentCheck(packDir, folder);
+  if (!resolved) return null;
+  try { return fs.existsSync(resolved) ? resolved : null; } catch (_) { return null; }
+}
+
 // Does the game ship a built-in default livery for this plane id? The folder
 // name IS the plane id, and its manifest confirms it is a real livery.
 function hasBuiltInTemplate(gameRoot, planeId) {
@@ -310,6 +414,7 @@ function listLiveries(gameRoot) {
       success: true,
       mine: listPackDir(ownPackDir(gameRoot)),
       reference: listPackDir(referencePackDir(gameRoot)),
+      workshop: listWorkshopLiveries(gameRoot),
     };
   } catch (err) {
     return { success: false, error: err.message };
@@ -338,8 +443,8 @@ function listAircraftTypes(gameRoot) {
 
 function readLiveryImage(gameRoot, folder, pack = 'mine') {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
-  const packDir = pack === 'reference' ? referencePackDir(gameRoot) : ownPackDir(gameRoot);
-  const resolved = containmentCheck(packDir, folder || '');
+  const packDir = _packDir(gameRoot, pack);
+  const resolved = packDir ? containmentCheck(packDir, folder || '') : null;
   if (!resolved) return { success: false, error: 'BAD_FOLDER' };
   try {
     // Multi-part liveries (A388/B38M) store the paintable texture as
@@ -395,8 +500,8 @@ function _nativeThumbnail(buf, size) {
 function readLiveryThumbnail(gameRoot, folder, pack = 'mine', size = THUMBNAIL_SIZE) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   const target = Math.max(64, Math.min(512, Number(size) || THUMBNAIL_SIZE));
-  const packDir = pack === 'reference' ? referencePackDir(gameRoot) : ownPackDir(gameRoot);
-  const resolved = containmentCheck(packDir, folder || '');
+  const packDir = _packDir(gameRoot, pack);
+  const resolved = packDir ? containmentCheck(packDir, folder || '') : null;
   if (!resolved) return { success: false, error: 'BAD_FOLDER' };
   try {
     const found = _resolveLiveryImagePath(resolved);
@@ -494,8 +599,8 @@ function readAircraftTemplate(gameRoot, planeId) {
 // `imageDataUrl` mirrors the main part for single-image callers. Never throws.
 function readLiveryImages(gameRoot, folder, pack = 'mine') {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
-  const packDir = pack === 'reference' ? referencePackDir(gameRoot) : ownPackDir(gameRoot);
-  const resolved = containmentCheck(packDir, folder || '');
+  const packDir = _packDir(gameRoot, pack);
+  const resolved = packDir ? containmentCheck(packDir, folder || '') : null;
   if (!resolved) return { success: false, error: 'BAD_FOLDER' };
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(resolved, 'aircraft_livery_manifest.json'), 'utf-8'));
@@ -759,6 +864,8 @@ module.exports = {
   _thumbCache,
   ownPackDir,
   referencePackDir,
+  workshopContentDir,
+  resolvePackFolder,
   ensureOwnPackDir,
   ensureModInfo,
   containmentCheck,
@@ -767,6 +874,7 @@ module.exports = {
   baseFileName,
   listPackDir,
   listLiveries,
+  listWorkshopLiveries,
   listAircraftTypes,
   readLiveryImage,
   readLiveryImages,

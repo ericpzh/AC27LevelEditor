@@ -16,6 +16,7 @@ import {
 } from 'react-icons/io5';
 import { MdSaveAs } from 'react-icons/md';
 import { FaFileImport, FaFileExport } from 'react-icons/fa6';
+import { FaRegFolderOpen } from 'react-icons/fa';
 import LiveryCanvas from './LiveryCanvas';
 
 function errKey(code) {
@@ -201,6 +202,12 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     };
   }, [prefill]);
   const isReference = origin && origin.pack === 'reference';
+  // Steam Workshop liveries are also read-only (Save/Delete disabled; use
+  // Save As). Their folder lives in the Workshop content directory, which
+  // must never be overwritten in place.
+  const isWorkshop = origin && origin.pack === 'workshop';
+  const isReadOnly = Boolean(isReference || isWorkshop);
+  const readOnlyTip = isWorkshop ? t('livery_tip_readonly_workshop') : t('livery_tip_readonly');
 
   const [airline, setAirline] = useState(origin?.airline || prefill?.airline || DEFAULT_AIRLINE);
   const [planeId, setPlaneId] = useState(origin?.planeId || prefill?.targetPlaneId || DEFAULT_PLANE_ID);
@@ -293,7 +300,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   // targets the live form folder too. Reference (locked) origins can never
   // Save — only Save As.
   const canSaveAs = formValid && !busy;
-  const canSave = !isReference && formValid && !busy;
+  const canSave = !isReadOnly && formValid && !busy;
 
   // Unsaved-changes guard consulted by LiveryScreen tab-leave/back.
   useEffect(() => {
@@ -384,7 +391,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   const confirmOverride = async (folder, isSaveAs, proceed) => {
     // Windows paths are case-insensitive — a case-only rename is the same folder.
     const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
-    const ownFolder = !isSaveAs && origin && origin.pack !== 'reference' ? origin.folder : null;
+    const ownFolder = !isSaveAs && origin && origin.pack !== 'reference' && origin.pack !== 'workshop' ? origin.folder : null;
     if (ownFolder && same(folder, ownFolder)) { await proceed(); return; }
     let exists = false;
     try {
@@ -525,7 +532,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   // be updated — the user still decides the final name (typing the origin folder
   // back saves in place). New liveries prefill with the form folder.
   const handleSave = () => {
-    if (isReference) return;
+    if (isReadOnly) return;
     const formChanged = Boolean(origin) && (origin.airline !== airline || origin.planeId !== planeId);
     openSaveDialog(
       origin && !formChanged ? origin.folder : folderPreview,
@@ -568,10 +575,10 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
     });
   };
 
-  // True delete: only an existing custom livery can be removed (reference is
-  // read-only; a brand-new unsaved livery has no folder yet). Removes the
-  // folder entirely — the same action as the list page's Delete button.
-  const canDelete = Boolean(origin) && !isReference && !busy;
+  // True delete: only an existing custom livery can be removed (reference +
+  // workshop are read-only; a brand-new unsaved livery has no folder yet).
+  // Removes the folder entirely — the same action as the list page's Delete.
+  const canDelete = Boolean(origin) && !isReadOnly && !busy;
   const handleDelete = () => {
     if (!canDelete) return;
     const folder = origin.folder;
@@ -600,6 +607,22 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         </>
       )
     );
+  };
+
+  // Open the livery's folder in the OS file explorer. A saved livery opens its
+  // own folder (mine/reference/workshop); a brand-new unsaved livery opens the
+  // own pack dir — the backend resolves that fallback.
+  const handleOpenFolder = async () => {
+    try {
+      const res = await electronAPI.revealLiveryFolder(origin?.folder || null, origin?.pack || 'mine');
+      if (!res || !res.success) {
+        const code = res && res.error;
+        const known = typeof code === 'string' && /^[A-Z_]+$/.test(code);
+        useAppStore.getState().showToast(t(known ? errKey(code) : 'livery_open_folder_failed'), 'error');
+      }
+    } catch (err) {
+      useAppStore.getState().showToast(err.message, 'error');
+    }
   };
 
   const handleLoadZip = async () => {
@@ -640,7 +663,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   // folder; new ones use the conventional default.
   const handleExport = async () => {
     if (!canvasRef.current || exporting || busy) return;
-    const useOrigin = Boolean(origin) && !isReference;
+    const useOrigin = Boolean(origin) && !isReadOnly;
     const targetAirline = useOrigin ? origin.airline : airline;
     const targetPlaneId = useOrigin ? origin.planeId : planeId;
     const targetFolder = useOrigin ? origin.folder : folderPreview;
@@ -686,16 +709,21 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
           {onHelp && (
             <button className="lp-tool" onClick={onHelp}><IoHelpCircleOutline size={18} /></button>
           )}
-          {isReference && (
-            <span className="lp-lock" {...bind(t('livery_tip_readonly'))}>
+          {isReadOnly && (
+            <span className="lp-lock" {...bind(readOnlyTip)}>
               <IoLockClosed size={13} />
             </span>
           )}
           <span className="lp-sep" />
-          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReference} planeIds={planeOptions} />
+          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReadOnly} planeIds={planeOptions} />
         </div>
 
         <div className="lp-group lp-group-end">
+          <span className="lp-tipwrap" {...bind(t('livery_open_folder'))}>
+            <button className="lp-tool" aria-label={t('livery_open_folder')} disabled={busy} onClick={handleOpenFolder}>
+              <FaRegFolderOpen size={18} />
+            </button>
+          </span>
           <span className="lp-tipwrap" {...bind(t('livery_import_image'))}>
             <button className="lp-tool" aria-label={t('livery_import_image')} disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}>
               <IoImageOutline size={18} />
@@ -719,13 +747,13 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
             </button>
           </span>
           <span className="lp-sep" />
-          <span className="lp-tipwrap" {...bind(isReference ? t('livery_tip_readonly') : t('livery_tip_delete'))}>
+          <span className="lp-tipwrap" {...bind(isReadOnly ? readOnlyTip : t('livery_tip_delete'))}>
             <button className="lp-tool" aria-label={t('livery_delete')} disabled={!canDelete} onClick={handleDelete}><IoTrashOutline size={18} /></button>
           </span>
           <span className="lp-tipwrap" {...bind(t('livery_tip_save_as'))}>
             <button className="lp-tool" aria-label={t('livery_save_as')} disabled={!formValid || busy} onClick={handleSaveAs}><MdSaveAs size={18} /></button>
           </span>
-          <span className="lp-tipwrap" {...bind(isReference ? t('livery_tip_readonly') : t('livery_tip_save'))}>
+          <span className="lp-tipwrap" {...bind(isReadOnly ? readOnlyTip : t('livery_tip_save'))}>
             <button className="lp-tool lp-primary" aria-label={t('livery_save')} disabled={!canSave || busy} onClick={handleSave}><IoSaveOutline size={18} /></button>
           </span>
         </div>
