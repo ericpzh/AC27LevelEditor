@@ -18,8 +18,8 @@
 ```
 AC27Editor/
 ├── electron/
-│ ├── main.js # Electron main process + 77 IPC handlers (incl. load-ground-painter-data / save-ground-painter-data for the Ground Painter)
-│ ├── preload.js # contextBridge (window.electronAPI, ~95 methods; + loadGroundPainterData / saveGroundPainterData)
+│ ├── main.js # Electron main process + IPC handlers (incl. load-ground-painter-data / save-ground-painter-data for the Ground Painter)
+│ ├── preload.js # contextBridge (window.electronAPI methods; + loadGroundPainterData / saveGroundPainterData)
 │ ├── updater.js # Auto-update: HEAD check (R2 ETag), MD5 comparison, exe download, batch script generator
 │ ├── api-server.js # HTTP API + MCP server (port 31415, auto-starts with app) — + get_ground_painter_state / create_taxiway_lines / create_area / create_stands / delete_ground_objects / undo_ground_painter
 │ ├── cloud-llm.js # Multi-vendor cloud LLM chat (DeepSeek/Gemini/Claude/Codex)
@@ -27,7 +27,7 @@ AC27Editor/
 ├── mcp/
 │ └── bridge.js # MCP stdio↔HTTP bridge (launched by Claude Code)
 ├── index.html # Vite HTML entry (<div id="root">)
-├── vite.config.js # Vite 8 + @vitejs/plugin-react + vite-plugin-electron
+├── vite.config.js # Vite + @vitejs/plugin-react + vite-plugin-electron
 ├── package.json # scripts, electron-builder config
 ├── build.js # RECOMMENDED build script (programmatic)
 ├── set_icon.js # Post-build icon embedding
@@ -112,7 +112,7 @@ AC27Editor/
 │ │ ├── flightDefaults.js # Pure helpers for new flight creation (random airline, cascaded aircraft/reg, non-conflicting stand, airport-aware Language Z*→zh, random Voice from dropdown, runway-constrained STAR for arrivals, Airway always cleared for departures)
 │ │ └── flightCascade.js # Pure helpers for cascading field updates
 │ │
-│ ├── acl/ # Backend modules (16 files + odin/; CommonJS + some ESM)
+│ ├── acl/ # Backend modules (19 files + odin/; CommonJS + some ESM)
 │ │ ├── parser.js # FACADE — re-exports all backend modules
 │ │ ├── tokenizer.js # String-aware section boundary scanner (no more brace-counting)
 │ │ ├── acl_json.js # Pre-processor (Unity JSON→valid JSON) + serializer + Odin recursive-descent parser
@@ -134,7 +134,7 @@ AC27Editor/
 │ │ └── utils.js # Enrichment, sorting, audio, runway pairs (extractV4RunwayPairs), import utils
 │ │
 │ └── utils/ # Shared utilities (ESM + some CJS for backend)
-│ ├── constants/ # 7 domain sub-modules (was single constants.js)
+│ ├── constants/ # 7 domain sub-modules
 │ │ ├── index.js # Barrel — re-exports all sub-modules
 │ │ ├── timing.js # Ticks, CACHE_VERSION, game timing, stand occupancy
 │ │ ├── fields.js # FIELDS, FIELD_LABELS, COL_CLASSES
@@ -153,10 +153,10 @@ AC27Editor/
 │ ├── zipUtils.js # Pure Node.js ZIP (zlib, no deps)
 │ └── logger.js # Console → file redirect (dev mode)
 │
-├──   tests/               # 1858 Vitest + 18 Playwright E2E + 29 Node.js integration scripts
+├──   tests/               # Vitest + Playwright E2E + Node.js integration scripts
 │ ├── electron/cloud-llm.test.js # cloud-llm backend tests (49 tests, node env)
-│ ├── electron/updater.test.js # updater backend tests (25 tests, node env)
-│ ├── components/MapWindows/ # MapWindow component & hook tests (19 files, 712 tests)
+│ ├── electron/updater.test.js # updater backend tests (35 tests, node env)
+│ ├── components/MapWindows/ # MapWindow component & hook tests (21 files, 738 tests)
 └── dist/ # Build output (gitignored)
 ```
 
@@ -287,7 +287,7 @@ window.electronAPI ipcRenderer.invoke() ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 1200 tests (component + store + utility + electron + MapWindow + updater, ~9s)
+- `npm test` or `npm run test:watch` — 2170 tests (component + store + utility + electron + integration + MapWindow + updater, ~45s)
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - Electron backend tests use `@vitest-environment node` + `require.cache` priming to stub ESM SDK packages (see `tests/electron/cloud-llm.test.js`)
 - zustand stores are tested with the real store using `setState()` — never mock stores

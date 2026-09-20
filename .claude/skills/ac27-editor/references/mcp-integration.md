@@ -18,7 +18,7 @@ Claude Code (LLM) AC27 Editor (Electron)
 ┌──────────────┐ stdio ┌──────────────┐ HTTP ┌──────────────────┐
 │ MCP Client │───────────→│ mcp/bridge.js│─────────→│ electron/ │
 │ (built-in) │←───────────│ (child proc) │←─────────│ api-server.js │
-└──────────────┘ JSON-RPC └──────────────┘ :31415 │ 7 tools, 14-pt │
+└──────────────┘ JSON-RPC └──────────────┘ :31415 │ MCP tools   │
  │ validation │
  └────────┬─────────┘
  │ IPC
@@ -31,7 +31,7 @@ Claude Code (LLM) AC27 Editor (Electron)
 
 ## Components
 
-### `electron/api-server.js` (~800 lines)
+### `electron/api-server.js`
 - HTTP server on `127.0.0.1:31415` (auto-starts with app, stops on quit)
 - 7 REST endpoints: `GET/POST/PATCH /api/*`
 - `GET/POST /mcp` — MCP SSE endpoint + JSON-RPC handler
@@ -39,7 +39,7 @@ Claude Code (LLM) AC27 Editor (Electron)
 - 14-point validation suite (`validateFlightObjects`) on every mutating call
 - Exports for testing: `validateFlightObjects`, `buildConstraints`, `applyCascades`, `handleMcpMessage`, `MCP_TOOLS`
 
-### `mcp/bridge.js` (~40 lines)
+### `mcp/bridge.js`
 - Launched by Claude Code via `node mcp/bridge.js`
 - Reads JSON-RPC from stdin, POSTs to `http://127.0.0.1:31415/mcp`
 - Writes JSON-RPC responses to stdout
@@ -67,20 +67,22 @@ Claude Code (LLM) AC27 Editor (Electron)
 }
 ```
 
-## 8 MCP Tools
+## MCP Tools
+
+The flight-schedule tools are listed below; the Ground/Air Painter tool set (scenery + airway graph editing) is documented in the `ac27-editor-mcp` skill §10.
 
 | Tool | Purpose |
 |------|---------|
-| `create_flights` | Insert complete flight objects (15 fields each). Server validates all 14 constraints. |
+| `create_flights` | Insert complete flight objects (15 fields each). Server validates all constraints. |
 | `get_flights` | Read flights with optional filters (type, airline, callsign, stand, runway, time range). |
 | `modify_flights` | Update fields on matching flights. Cascade: AirlineCode → CallSign+AircraftType+Registration; Runway → Airway. |
 | `delete_flights` | Delete matching flights by callsign, airline, type, stand, runway, or aircraft type. |
 | `get_editor_status` | Current file, airport, flight counts, dirty flag, timeline status. |
 | `get_airport_info` | Full constraint map: flatLists, airline codes, flight numbers, compat maps (airline→aircraft, runway→STAR, airline+aircraft→registration), time bounds. |
-| `get_validation_issues` | Run 13-point validation on current flights. Returns structured issues. |
+| `get_validation_issues` | Run the full validation suite (14 checks) on current flights. Returns structured issues. |
 | `send_voice_command` | Parse a spoken sentence against the LIVE aircraft list (same pipeline as the PTT mic) and dispatch patch frames to the game. Needs game + BepInEx plugin running. Prints `[VOICE-PARSE]` to the main-process log. |
 
-## Validation (13 checks)
+## Validation (14 checks)
 
 1. All 15 fields present
 2. Airline code known (from audio callsigns + dropdown values)
@@ -93,15 +95,16 @@ Claude Code (LLM) AC27 Editor (Electron)
 9. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` — the strict upper bound is `end + 30 min`, not `end` (game allows events up to 30 min past scenario end; `time_after_range` only fires past the grace)
 10. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
 11. Duplicate callsigns
-12. Stand conflicts + duplicate registrations
-13. Runway inactive at landing — arrival `Runway` must be in active set at `LandingTime` (`initialRunways` + `timeline` sweep sorted chronologically; `<= landingTime` applies, unsorted input handled, departures ignored, exact-time landing uses post-change set; `val_runway_inactive` / `runway_inactive_at_landing`; **skipped when the level has no active-runway source — empty `initialRunways` + empty `timeline` — so arrivals are not all false-flagged**)
+12. Stand conflicts
+13. Duplicate registrations
+14. Runway inactive at landing — arrival `Runway` must be in active set at `LandingTime` (`initialRunways` + `timeline` sweep sorted chronologically; `<= landingTime` applies, unsorted input handled, departures ignored, exact-time landing uses post-change set; `val_runway_inactive` / `runway_inactive_at_landing`; **skipped when the level has no active-runway source — empty `initialRunways` + empty `timeline` — so arrivals are not all false-flagged**)
 
 **Aircraft type is NOT bound to the airline** — any profiled type (`constraints.aircraftTypes`, the same world-wide pool the livery page scans, minus types with no game profile) is accepted regardless of the callsign's airline. An airline change preserves the aircraft type and only cascades the registration.
 
 ## Testing
 
 ```bash
-# API server unit + HTTP integration + MCP protocol (109 tests)
+# API server unit + HTTP integration + MCP protocol (133 tests)
 node tests/integration/test_api_server.js
 
 # E2E composition examples from skill (44 tests)
@@ -145,7 +148,7 @@ ChatPanel (React) electron/main.js Cloud APIs
 │ Thinking view │ done) │ └─ claudeChat() │
 └──────────────────┘ │ ↓ │
  │ onToolCall → │
- │ handleMcpMessage() │────→ MCP tools (same 7)
+ │ handleMcpMessage() │────→ MCP tools
  └─────────────────────┘
 ```
 
@@ -154,8 +157,8 @@ ChatPanel (React) electron/main.js Cloud APIs
 | File | Purpose |
 |------|---------|
 | `electron/cloud-llm.js` | Multi-vendor LLM module. `chat()` entry, `openaiChat()` for DeepSeek/Gemini/Codex, `claudeChat()` for Anthropic. Tool calling loop, dedup guard, thinking accumulation, Gemini JSON Schema sanitization. |
-| `electron/main.js:2049-2110` | `cloud-chat` IPC handler. Loads config, wires `onToolCall` → `handleMcpMessage()`, emits `cloud-chat-event` to renderer (thinking, toolCall, toolResult, done). |
-| `electron/preload.js:149-162` | `cloudChat()`, `onCloudChatEvent()`, `offCloudChatEvent()` bridge methods. |
+| `electron/main.js` | `cloud-chat` IPC handler. Loads config, wires `onToolCall` → `handleMcpMessage()`, emits `cloud-chat-event` to renderer (thinking, toolCall, toolResult, done). |
+| `electron/preload.js` | `cloudChat()`, `onCloudChatEvent()`, `offCloudChatEvent()` bridge methods. |
 | `src/components/ChatPanel/ChatPanel.jsx` | Floating chat UI. Vendor key setup, model selector, message list with thinking disclosure, send/stream handling. |
 | `src/components/ChatPanel/ChatPanel.css` | Panel styling — positioned bottom-right, draggable, 380×500px. |
 | `src/store/appStore.js` | Chat state: `chatPanelOpen`, `chatMessages`, `chatSending`, `chatSetupStep`, `chatError`, `chatConfig`, `chatAvailableModels`. |
@@ -171,7 +174,7 @@ ChatPanel (React) electron/main.js Cloud APIs
 
 ### Tool Calling
 
-The chat reuses the same 8 MCP tools. When the model calls a tool:
+The chat reuses the same MCP tools. When the model calls a tool:
 1. Cloud LLM sends tool call → `onToolCall` callback
 2. Callback forwards to `handleMcpMessage()` (same as MCP path)
 3. Tool result sent back to model for next turn

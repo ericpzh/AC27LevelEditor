@@ -217,7 +217,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   unknown `''` type gets no add card. Under an active search an otherwise-empty
   folder is kept only when its type name matches the query (so the placeholder
   still shows for a no-match search). Renders `TooltipPortal`.
-- `CreateTab.jsx` — the **painter page** (upload mode is gone; default export
+- `CreateTab.jsx` — the **painter page** (default export
   takes `{ onCreated, onCancel, onHelp }`). Given `CreateTab.prefill` it
   snapshots an `origin` `{folder, airline, planeId, pack, imageDataUrl}` with
   `pack` `'mine'` / `'reference'` / `'workshop'`; a `prefill` with **no folder but a
@@ -387,8 +387,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     **chosen by the pointer while dragging**: `onCanvasMove` writes
     `panel: panelIndexAt(p.x)` on every move of a `move` drag, so a big sticker
     grabbed by its edge follows the cursor into the next panel **before its own
-    centre crosses the gutter** (the old centre-only rule left it clipped to the
-    old panel and it vanished at the edge until the centre caught up). The panel
+    centre crosses the gutter** (so it never vanishes at the edge waiting for the
+    centre to catch up). The panel
     is stored on the object at drop, so it is also the one it exports in (an
     object created without one falls back to the panel its centre is in —
     `objectPanel` clamps to the current panel count, so a later layout change
@@ -762,8 +762,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       its middle; scaled by `scaleErasePolys` on resize, deep-copied on
       duplicate). A fully-consumed object is dropped and a part-erased
       rect/ellipse/sticker re-frames, exactly like the eraser tool. With **no**
-      selection Delete keeps the old action (remove the selected, else topmost,
-      object).
+      selection Delete removes the selected object, else the topmost object).
       Pure core in `utils/liveryPaint.js` (`SELECT_MODES`, `MASK_OPS`,
       `maskPaintOp`, `lassoBounds`, `wandRegion`, `constrainImageToMask`,
       `isMaskEmpty`, `traceMaskBorder`, `chainBorderSegments`); help

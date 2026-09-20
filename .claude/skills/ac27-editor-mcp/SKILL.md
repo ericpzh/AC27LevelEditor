@@ -15,7 +15,7 @@ Control the AC27 Editor from Claude Code. Create, read, modify, and delete fligh
 - A level must be open in the editor (user loads it manually via the UI).
 - **This skill file** must be installed so Claude Code understands the domain. Download from [GitHub](https://github.com/ericpzh/AC27LevelEditor/blob/master/.claude/skills/ac27-editor-mcp/SKILL.md) and place at `~/.claude/skills/ac27-editor-mcp/SKILL.md`.
 - **`mcp/bridge.js`** must be accessible on disk. Clone the repo or download from [GitHub](https://github.com/ericpzh/AC27LevelEditor/blob/master/mcp/bridge.js).
-- **Node.js 18+** required to run the bridge.
+- **Node.js** required to run the bridge.
 - Claude Code configured (see below).
 
 **Dev setup** (`.mcp.json` at project root — auto-detected):

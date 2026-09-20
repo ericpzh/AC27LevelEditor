@@ -15,7 +15,7 @@ npm start # Launch Electron in dev mode (Vite dev server + Electron)
 
 ## Running Tests
 
-### Component tests (1858 tests, 103 files, ~27s)
+### Component tests (2170 tests, 115 files, ~45s)
 
 ```bash
 npm test # Run all Vitest component + store + utility + electron + MapWindow + updater tests
@@ -27,7 +27,7 @@ npx vitest run tests/electron/updater.test.js
 
 ### Coverage (scoped, threshold-gated)
 
-`vitest.config.js` runs coverage through the **v8** provider (`@vitest/coverage-v8` devDependency) scoped to the two trees that hold the real logic — `src/acl/**` and `src/components/EditorScreen/GroundPainter/**` — and **fails the run** below the thresholds (`statements 55 / branches 40 / functions 48 / lines 55`, a few points of slack under the measured 59.8/44.8/53.7/62.4 baseline). Screens and entry points are deliberately out of scope.
+`vitest.config.js` runs coverage through the **v8** provider (`@vitest/coverage-v8` devDependency) scoped to the two trees that hold the real logic — `src/acl/**` and `src/components/EditorScreen/GroundPainter/**` — and **fails the run** below the thresholds (`statements 55 / branches 40 / functions 48 / lines 55`). Screens and entry points are deliberately out of scope.
 
 ```bash
 npx vitest run --coverage # full suite + coverage/ report + coverage-summary.json
@@ -95,18 +95,18 @@ New parser module tests (no game root needed):
 node tests/integration/test_tokenizer.js # String-aware scanner (18 tests)
 node tests/integration/test_acl_json.js # Pre-processor + serializer round-trips (25 tests)
 node tests/integration/test_acl_document.js # Document model integration (13 tests)
-node tests/integration/test_sid_goaround.js # SID + missed approach route parsers (17 tests)
-node tests/integration/test_taxiway.js # Taxiway centerline parser (11 tests)
+node tests/integration/test_sid_goaround.js # SID + missed approach route parsers (19 tests)
+node tests/integration/test_taxiway.js # Taxiway centerline parser (10 tests)
 ```
 
 UDP telemetry test (mock loopback server, requires port 20266 free):
 ```bash
-node tests/integration/test_udp_listener.js # Binary protocol parsing + trail buffer (13 tests)
+node tests/integration/test_udp_listener.js # Binary protocol parsing + trail buffer (21 tests)
 ```
 
 MCP / API server tests (mock Electron window, no game root needed):
 ```bash
-node tests/integration/test_api_server.js # API endpoints + MCP protocol + validation (109 tests)
+node tests/integration/test_api_server.js # API endpoints + MCP protocol + validation (133 tests)
 node tests/integration/test_api_e2e_examples.js # Composition examples from MCP skill (44 tests)
 ```
 
@@ -171,13 +171,13 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ## Auto-Update Testing
 
-### Summary of changes in this diff (auto-update refactor)
+### Updater behavior
 
-- **`log()` function added** — every decision step writes to both console and `<userData>/updater.log`
+- **`log()`** — every decision step writes to both console and `<userData>/updater.log`
 - **`resolveTargetExe()`** — resolves the exe to compare: `PORTABLE_EXECUTABLE_FILE` (packaged portable), `process.execPath` (packaged non-portable), `AC27_UPDATE_TARGET` (dev mode explicit path), or auto-discovered build artifact (`release/AC27Editor.exe`, `dist/AC27 Editor.exe`, etc.) in dev mode
 - **Dev mode gating** — `npm start` skips the check by default. Opt in with `AC27_UPDATE_DEV_CHECK=1` (auto-discover) or `AC27_UPDATE_TARGET=<path>` (explicit)
-- **`skip-update` IPC removed** — no more `skipped-update.json`. The "Later" button is ephemeral (next restart re-prompts)
-- **Voice build auto-updates through the shared `/editor` route** — `AC27EditorVoice.exe` is no longer skipped. `isVoiceBuild()` (resources/`voice-stt-vosk.js` present) now sends an **`X-AC27-Variant: voice` header** (`variantHeader()`/`variantName()`) on the SAME `/editor` URL as the normal build — the Worker picks the R2 objects per header, so the voice exe's MD5 is compared/verified/downloaded against its own `AC27EditorVoice.exe.md5` sidecar — never the normal build's objects. The check is gated inside `checkForUpdate()` and covers both the main-process push and the renderer fallback. Dev-mode detection of the voice build is impossible (`!app.isPackaged`), so to test the voice branch locally set `AC27_UPDATE_SERVER` to a TLS server that honors the header (the updater refuses plain http) or drive it from the packaged voice exe.
+- **"Later" is ephemeral** — no `skipped-update.json`; the next restart re-prompts
+- **Voice build auto-updates through the shared `/editor` route** — `AC27EditorVoice.exe` is supported. `isVoiceBuild()` (resources/`voice-stt-vosk.js` present) sends an **`X-AC27-Variant: voice` header** (`variantHeader()`/`variantName()`) on the SAME `/editor` URL as the normal build — the Worker picks the R2 objects per header, so the voice exe's MD5 is compared/verified/downloaded against its own `AC27EditorVoice.exe.md5` sidecar — never the normal build's objects. The check is gated inside `checkForUpdate()` and covers both the main-process push and the renderer fallback. Dev-mode detection of the voice build is impossible (`!app.isPackaged`), so to test the voice branch locally set `AC27_UPDATE_SERVER` to a TLS server that honors the header (the updater refuses plain http) or drive it from the packaged voice exe.
 - **DRY_RUN defaults** differ by context: `false` for packaged (real install), `true` for dev (safe). Override with `AC27_UPDATE_DRY_RUN=0` / `=1`
 - **Renderer fallback** — `App.jsx` actively invokes `checkForUpdate()` as fallback if the main-process push arrives before the renderer is ready (race condition guarded by `useRef(false)`)
 
