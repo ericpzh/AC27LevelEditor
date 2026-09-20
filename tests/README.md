@@ -37,6 +37,17 @@ passed + 2 skipped (the two `FUZZ_RUN`-gated specs); flight fuzz **4/4 `leisure_
 without `--replace`** (ZSJN/KJFK/KDCA/ZGSZ) and **4/4 `leisure_2` levels passed with `--replace`**
 (results propagated into the real game install).
 
+**i18n key audit (2026-09-19):** removed 140 unreferenced keys from `src/utils/i18n.js` (131 with zero
+references anywhere + 9 `livery_paint_*` strings unreachable through the `TOOLS` list); 139 removed from
+each dictionary, leaving **732 zh / 733 en** keys (the only language-exclusive key left is the used
+`dismiss`). Dynamic key builders (`field_` + column, `airport_` + ICAO, `level_name_` + filename,
+`livery_err_` + backend error code, `livery_paint_` + tool name) were preserved after verifying their
+reachable value sets. Full suite re-run green after the cleanup: Vitest **2170/2170** (115 files),
+`npm run test:all` (save-integrity 27, jetway-rebuild 27, v4 runway-pairs 5, Playwright E2E 16 passed),
+and the standalone integration scripts (api-server 133, api-e2e-examples 44, gatcarc round-trip 120,
+type-number 6, tokenizer 18, acl-json 25, acl-document 13, sid-goaround 19, taxiway 10,
+save-roundtrip-diff 24, demo-filter 8, real-KJFK 8; UDP listener skipped — port 20266 in use).
+
 **Voice/language invariant fix (2026-09-18):** the fuzz surfaced a real game-load error at ZGSZ —
 the game's `VoiceCatalog` throws `InvalidOperationException` when an aircraft's captain voice
 declares a language other than the flight's `Language`. The `ZGSZ_leisure_2` `--replace` output had
