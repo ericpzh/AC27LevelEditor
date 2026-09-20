@@ -3,7 +3,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { PLANE_ID_TO_SHORT_CODE, LIVERY_FOLDER_SAFE_RE, folderFor } from '../../utils/constants/livery';
-import { AIRLINE_CODE_MAP, airlineDisplayName } from '../../utils/constants/airlines';
+import { CURATED_AIRLINE_CODES, airlineDisplayName } from '../../utils/constants/airlines';
 import { fileToDataUrl, normalizeToTexture } from '../../utils/liveryImage';
 import useTooltip from '../BrowserScreen/useTooltip';
 import {
@@ -28,7 +28,7 @@ function errKey(code) {
 const PLANE_IDS = Object.keys(PLANE_ID_TO_SHORT_CODE);
 // Sensible form defaults for a brand-new livery: the first airline (alphabetical
 // code) and the A-319neo, so the painter is usable without touching the form.
-const DEFAULT_AIRLINE = [...new Set(Object.values(AIRLINE_CODE_MAP))].sort()[0];
+const DEFAULT_AIRLINE = CURATED_AIRLINE_CODES[0];
 const DEFAULT_PLANE_ID = 'AIRBUS A-319neo';
 
 // Naming dialog shared by Save / Save As: the typed name is used verbatim
@@ -73,8 +73,7 @@ function SaveNameDialog({ initial, isSaveAs, onConfirm }) {
 function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locked, planeIds }) {
   const { t, lang } = useTranslation();
   const airlineOptions = useMemo(() => {
-    const set = new Set(Object.values(AIRLINE_CODE_MAP));
-    return [...set].sort();
+    return [...CURATED_AIRLINE_CODES];
   }, []);
   // Scanned built-in types, plus the current value if it is not in the scan
   // (e.g. an imported zip / reference row for a type added after the scan).

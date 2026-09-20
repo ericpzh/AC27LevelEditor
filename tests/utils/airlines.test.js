@@ -13,9 +13,18 @@ describe('airlineDisplayName', () => {
   });
 
   it('falls back to the raw code when unknown', () => {
-    expect(airlineDisplayName('XYZ', 'en')).toBe('XYZ');
-    expect(airlineDisplayName('XYZ', 'zh')).toBe('XYZ');
+    expect(airlineDisplayName('ZZZ', 'en')).toBe('ZZZ');
+    expect(airlineDisplayName('ZZZ', 'zh')).toBe('ZZZ');
     expect(airlineDisplayName('', 'en')).toBe('');
+  });
+
+  it('resolves airlines outside the curated set from the generated table', () => {
+    expect(airlineDisplayName('GCR', 'en')).toBe('Tianjin Airlines');
+    expect(airlineDisplayName('GCR', 'zh')).toBe('天津航空');
+    expect(airlineDisplayName('AXM', 'en')).toBe('AirAsia');
+    // English-only generated entry: zh falls back to the English name.
+    expect(airlineDisplayName('ASH', 'en')).toBe('Mesa Airlines');
+    expect(airlineDisplayName('ASH', 'zh')).toBe('Mesa Airlines');
   });
 
   it('maps Tibet Airlines to its ICAO code TBA (not UEA)', () => {
@@ -33,6 +42,9 @@ describe('airlineDisplayName', () => {
     expect(airlineDisplayName('SWA', 'en')).toBe('Southwest Airlines');
     expect(airlineDisplayName('FFT', 'en')).toBe('Frontier Airlines');
     expect(airlineDisplayName('HAL', 'en')).toBe('Hawaiian Airlines');
+    expect(airlineDisplayName('AAY', 'en')).toBe('Allegiant Air');
+    expect(airlineDisplayName('BDJ', 'en')).toBe('Deer Jet');
+    expect(airlineDisplayName('BDJ', 'zh')).toBe('金鹿公务');
   });
 
   it('collects every name per code without duplicates', () => {

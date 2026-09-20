@@ -10,9 +10,9 @@ import { mockIpcInvoke } from '../../setup';
 import { I18nProvider } from '../../../src/hooks/useTranslation';
 import { setLang } from '../../../src/utils/i18n';
 import { fileToDataUrl, normalizeToTexture } from '../../../src/utils/liveryImage';
-import { AIRLINE_CODE_MAP } from '../../../src/utils/constants/airlines';
+import { CURATED_AIRLINE_CODES } from '../../../src/utils/constants/airlines';
 
-const DEFAULT_AIRLINE = [...new Set(Object.values(AIRLINE_CODE_MAP))].sort()[0];
+const DEFAULT_AIRLINE = CURATED_AIRLINE_CODES[0];
 
 vi.mock('../../../src/utils/liveryImage', () => ({
   fileToDataUrl: vi.fn(),

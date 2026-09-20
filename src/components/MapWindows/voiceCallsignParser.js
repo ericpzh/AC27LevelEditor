@@ -7,7 +7,7 @@
  *   2. parseCallsign(transcript, lang, aircraftList) → ParseResult | null
  */
 
-import { AIRLINE_CODE_MAP, getAirlineCode } from '../../utils/constants/index.js';
+import { CURATED_AIRLINE_CODE_MAP, getAirlineCode } from '../../utils/constants/index.js';
 import { parseEnglishFlightNumber, parseChineseFlightNumber } from './voiceNumberParser.js';
 import { fuzzyMatch, NON_FUZZY_WORDS, isFuzzyEligible, skeletonMatch, damerauLevenshtein } from './voiceFuzzy.js';
 
@@ -47,7 +47,7 @@ export function detectLanguage(transcript) {
  * Build a lookup from lowercase spoken airline names to ICAO codes.
  *
  * Includes:
- *   - Full names from AIRLINE_CODE_MAP (e.g., "united airlines" → "UAL")
+ *   - Full names from CURATED_AIRLINE_CODE_MAP (e.g., "united airlines" → "UAL")
  *   - Short forms (first word, e.g., "united" → "UAL")
  *   - Multi-word short forms (e.g., "air china" → "CCA", "air france" → "AFR")
  *   - Common spoken variants (e.g., "delta" for "Delta Air Lines")
@@ -62,7 +62,7 @@ export function getSpokenToCode() {
 
   const entries = [];
 
-  for (const [name, code] of Object.entries(AIRLINE_CODE_MAP)) {
+  for (const [name, code] of Object.entries(CURATED_AIRLINE_CODE_MAP)) {
     const lower = name.toLowerCase();
     // Full name
     entries.push([lower, code]);
@@ -113,7 +113,7 @@ export function getSpokenToCode() {
  *  and used by matchPrefixFuzzy. */
 export function getSpokenNameWords() {
   const out = new Set();
-  for (const [name] of Object.entries(AIRLINE_CODE_MAP)) {
+  for (const [name] of Object.entries(CURATED_AIRLINE_CODE_MAP)) {
     const lower = name.toLowerCase();
     if (!/^[a-z]/.test(lower)) continue;   // CJK names are spoken-word only
     out.add(lower);                        // full name
@@ -426,7 +426,7 @@ export function matchPrefix(transcript, spoken) {
 /** 3-letter ICAO codes — exact-only fuzzy targets (any random 3-letter
  *  word is within distance 1 of a code: 'deal' → dal). Name words like
  *  'eva'/'klm' stay fuzzy-eligible — they are not in this set. */
-const CODE_WORDS = new Set(Object.values(AIRLINE_CODE_MAP).map((c) => c.toLowerCase()));
+const CODE_WORDS = new Set(Object.values(CURATED_AIRLINE_CODE_MAP).map((c) => c.toLowerCase()));
 
 export function matchPrefixFuzzy(transcript, spoken) {
   const spokenWords = spoken.split(/\s+/);
