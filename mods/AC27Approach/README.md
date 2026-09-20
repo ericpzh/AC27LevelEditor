@@ -14,7 +14,7 @@ BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches airc
 
 - Airport Control 25 Playtest with BepInEx 6 IL2CPP installed (the editor's "BepInEx Debug Mode" tab can install it)
 - The game must be running (the UDP server binds `127.0.0.1:20267` only while the game is up)
-- Optional: the AC27 Level Editor for the `send-patch-command` bridge
+- Optional: the AC27 Editor for the `send-patch-command` bridge
 
 ## Install
 

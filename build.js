@@ -39,6 +39,11 @@ const BASE = {
   productName: 'AC27 Editor',
   directories: { output: 'release' },
   files: ['dist/**', 'dist-electron/**'],
+  // steamworks.js is a prebuilt N-API native module — it cannot live inside
+  // the asar (native .node binaries must be real files on disk for dlopen).
+  // Unpacking keeps the require path working from the main process while the
+  // steam_api64.dll redistributable ships alongside it.
+  asarUnpack: ['node_modules/steamworks.js/**/*'],
   extraResources: [
     { from: 'node_modules/ffmpeg-static', to: 'ffmpeg-static', filter: ['*.exe', 'ffmpeg', '*.dylib*', '*.so*'] },
   ],

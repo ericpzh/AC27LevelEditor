@@ -327,6 +327,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveLiveryDialog: (opts) => ipcRenderer.invoke('save-livery-dialog', opts),
   loadLiveryZip: () => ipcRenderer.invoke('load-livery-zip'),
 
+  // ─── Workshop publish (standalone uploader) ──────────
+  getWorkshopPublishInfo: (folder) => ipcRenderer.invoke('get-workshop-publish-info', folder),
+  selectLiveryPreview: () => ipcRenderer.invoke('select-livery-preview'),
+  publishLivery: (payload) => ipcRenderer.invoke('publish-livery', payload),
+  openWorkshopLog: () => ipcRenderer.invoke('open-workshop-log'),
+  getWorkshopDebugInfo: () => ipcRenderer.invoke('workshop-debug-info'),
+
+  _workshopUploadHandlers: new Map(),
+  onWorkshopUploadProgress: function (cb) {
+    const handler = (_e, data) => cb(data);
+    this._workshopUploadHandlers.set(cb, handler);
+    ipcRenderer.on('workshop-upload-progress', handler);
+  },
+  offWorkshopUploadProgress: function (cb) {
+    const handler = this._workshopUploadHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('workshop-upload-progress', handler);
+      this._workshopUploadHandlers.delete(cb);
+    }
+  },
+
   _liveryProgressHandlers: new Map(),
   onLiveryDownloadProgress: function (cb) {
     const handler = (_e, data) => cb(data);

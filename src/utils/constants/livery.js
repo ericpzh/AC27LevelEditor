@@ -30,6 +30,22 @@ export const PLANE_ID_TO_SHORT_CODE = Object.fromEntries(
   Object.entries(SHORT_CODE_TO_PLANE_ID).map(([k, v]) => [v, k]),
 );
 
+// Manufacturer words prefixed to the game's aircraft type ids.
+const AIRCRAFT_MANUFACTURERS = ['AIRBUS', 'BOEING', 'BOMBARDIER', 'EMBRAER', 'CESSNA', 'GULFSTREAM', 'COMAC'];
+
+// Compact display label for an aircraft type: drops the manufacturer word
+// ("AIRBUS A-320neo" → "A-320neo"). A remainder that is only digits
+// ("GULFSTREAM 650" → "650") is left whole; anything unrecognized passes through.
+export function shortAircraftType(planeId) {
+  const s = String(planeId == null ? '' : planeId).trim();
+  const m = /^([A-Z]+)\s+(.+)$/.exec(s);
+  if (m && AIRCRAFT_MANUFACTURERS.includes(m[1])) {
+    const rest = m[2].trim();
+    if (rest && !/^\d+$/.test(rest)) return rest;
+  }
+  return s;
+}
+
 // Free-form folder names: anything filesystem-safe. Excludes Windows-reserved
 // characters (< > : " / \ | ? *) + control chars, rejects leading/trailing
 // dots/spaces (Windows mangles those), caps at 64 chars. Path traversal is

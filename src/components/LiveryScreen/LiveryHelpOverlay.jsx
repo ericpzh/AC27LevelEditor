@@ -21,7 +21,7 @@ import {
 } from 'react-icons/io5';
 import { FaFileImport, FaFileExport, FaArrowPointer } from 'react-icons/fa6';
 import { AiOutlineClear } from 'react-icons/ai';
-import { FaEraser } from 'react-icons/fa';
+import { FaEraser, FaSteam } from 'react-icons/fa';
 import { MdAdd, MdSaveAs } from 'react-icons/md';
 import { TbSticker2 } from 'react-icons/tb';
 
@@ -32,6 +32,7 @@ const BUTTONS = {
   create: { icon: MdAdd, labelKey: 'livery_tab_create', descKey: 'livery_help_d_create' },
   selectAll: { icon: IoCheckmarkDone, labelKey: 'toolbar_select_all', descKey: 'livery_help_d_select_all' },
   exportSelected: { icon: FaFileExport, labelKey: 'livery_export', descKey: 'livery_help_d_export_selected' },
+  upload: { icon: FaSteam, labelKey: 'livery_upload', descKey: 'livery_help_d_upload' },
   delete: { icon: IoTrashOutline, labelKey: 'toolbar_delete_selected', descKey: 'livery_help_d_delete' },
   deleteThis: { icon: IoTrashOutline, labelKey: 'livery_delete', descKey: 'livery_help_d_delete_this' },
   search: { icon: IoSearchOutline, labelKey: 'livery_search', descKey: 'livery_help_d_search' },
@@ -57,10 +58,10 @@ const BUTTONS = {
 // ─── Section definitions — one button per line, "button — description" ──
 // The list page and the painter page each document ONLY their own buttons.
 const LIST_SECTIONS = [
-  { id: 'bar', items: ['back', 'pack', 'create', 'selectAll', 'exportSelected', 'delete', 'search'] },
+  { id: 'bar', items: ['back', 'pack', 'create', 'selectAll', 'exportSelected', 'upload', 'delete', 'search'] },
 ];
 const PAINTER_SECTIONS = [
-  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'deleteThis', 'saveAs', 'save'] },
+  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'upload', 'deleteThis', 'saveAs', 'save'] },
   {
     id: 'paint',
     items: [

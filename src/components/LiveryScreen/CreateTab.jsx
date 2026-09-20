@@ -14,6 +14,7 @@ import {
   IoHelpCircleOutline,
   IoTrashOutline,
 } from 'react-icons/io5';
+import { FaSteam } from 'react-icons/fa';
 import { MdSaveAs } from 'react-icons/md';
 import { FaFileImport, FaFileExport } from 'react-icons/fa6';
 import { FaRegFolderOpen } from 'react-icons/fa';
@@ -181,7 +182,7 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
  *   with the live form's airline/aircraft.
  * - Cancel discards (with an unsaved-changes guard) and returns to the list.
  */
-export default function CreateTab({ onCreated, onCancel, onHelp }) {
+export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploadOpen = false }) {
   const { t, lang } = useTranslation();
   const electronAPI = useElectronAPI();
   const prefill = CreateTab.prefill || null;
@@ -549,10 +550,13 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
   };
 
   // Ctrl+S = Save, Ctrl+Shift+S = Save As (the toolbar buttons). Ignored while
-  // typing or while a modal (e.g. the naming dialog) is open.
+  // typing, while a modal (e.g. the naming dialog) is open, or while the
+  // Workshop upload dialog overlays the painter (it owns the keyboard —
+  // popping a save prompt over it would strand both dialogs).
   useEffect(() => {
     const onKey = (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
+      try { if (document.getElementById('livery-upload-overlay')) return; } catch (_) {}
       const el = e.target;
       const tag = (el && el.tagName) || '';
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (el && el.isContentEditable)) return;
@@ -698,6 +702,24 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
 
   const canExport = formValid && !busy && !exporting;
 
+  // Workshop upload: saved `mine` liveries only (not reference/workshop, not
+  // a brand-new unsaved livery). A dirty canvas is silently saved in place
+  // first, then the upload dialog opens for the folder.
+  const canUpload = Boolean(origin) && !isReadOnly && origin.pack === 'mine' && formValid && !busy;
+  // Grayed-out (and not read-only) means there is nothing saved to upload
+  // yet — the hover tip says so.
+  const uploadTip = isReadOnly
+    ? readOnlyTip
+    : (canUpload ? t('livery_upload_tip') : `${t('livery_upload_tip')} ${t('livery_upload_tip_save_first')}`);
+  const handleUpload = async () => {
+    if (!canUpload || !canvasRef.current) return;
+    if (dirtyRef.current) {
+      const ok = await submitCreate(canvasRef.current.exportParts(), origin.airline, origin.planeId, origin.folder);
+      if (!ok) return;
+    }
+    if (onUpload) onUpload(origin.folder);
+  };
+
   return (
     <div className="lp-root">
       <div className="lp-topbar">
@@ -745,6 +767,11 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
               <FaFileExport size={18} />
             </button>
           </span>
+          <span className="lp-tipwrap" {...bind(uploadTip)}>
+            <button className="lp-tool" aria-label={t('livery_upload')} disabled={!canUpload} onClick={handleUpload}>
+              <FaSteam size={18} />
+            </button>
+          </span>
           <span className="lp-sep" />
           <span className="lp-tipwrap" {...bind(isReadOnly ? readOnlyTip : t('livery_tip_delete'))}>
             <button className="lp-tool" aria-label={t('livery_delete')} disabled={!canDelete} onClick={handleDelete}><IoTrashOutline size={18} /></button>
@@ -767,6 +794,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp }) {
         activePanel={activeIdx}
         onActivePanel={setActivePanel}
         onDirty={markDirty}
+        inputDisabled={uploadOpen}
       />
       {TooltipPortal}
     </div>

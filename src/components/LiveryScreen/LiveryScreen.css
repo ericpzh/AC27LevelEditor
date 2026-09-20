@@ -857,6 +857,11 @@
 [data-theme="light"] .livery-canvas-wrap {
   background: #dfe2e7;
 }
+/* The Workshop upload dialog owns the screen while open: the painter must
+   accept NO input at all (pointer, wheel, keyboard) behind it. */
+.livery-canvas-wrap.lp-input-locked {
+  pointer-events: none;
+}
 .lp-canvas-stage {
   position: relative;
   margin: auto;

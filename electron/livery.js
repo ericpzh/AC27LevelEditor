@@ -26,7 +26,7 @@ const OWN_PACK_MOD_INFO = {
   modName: 'AC27_Custom_Liveries',
   modNameEn: 'AC27 Custom Liveries',
   modNameZhHans: 'AC27 自定义涂装',
-  modDescriptionEn: 'Custom aircraft liveries created with the AC27 Level Editor.',
+  modDescriptionEn: 'Custom aircraft liveries created with the AC27 Editor.',
   modDescriptionZhHans: '使用 AC27 关卡编辑器创建的自定义飞机涂装。',
 };
 const SHORT_CODE_TO_PLANE_ID = {
@@ -466,7 +466,18 @@ function readLiveryImage(gameRoot, folder, pack = 'mine') {
 
 // Lazy require: electron is available in the packaged/main process but NOT
 // in vitest (pure CommonJS tests) — never throw at module load.
+let _injectedNativeImage;
+let _hasInjectedNativeImage = false;
+function _setNativeImageForTests(img) {
+  _injectedNativeImage = img;
+  _hasInjectedNativeImage = true;
+}
+function _resetNativeImageForTests() {
+  _injectedNativeImage = undefined;
+  _hasInjectedNativeImage = false;
+}
 function _getNativeImage() {
+  if (_hasInjectedNativeImage) return _injectedNativeImage || null;
   try {
     // eslint-disable-next-line global-require
     const { nativeImage } = require('electron');
@@ -690,6 +701,7 @@ function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, 
     // removed so the folder never carries orphan textures.
     const wanted = new Set(manifestParts.map(p => p.fileName.toLowerCase()));
     for (const entry of fs.readdirSync(resolved)) {
+      if (entry.startsWith('.')) continue; // keep .workshop.json / .workshop-preview.*
       if ((/\.png$/i.test(entry) || /\.jpe?g$/i.test(entry)) && !wanted.has(entry.toLowerCase())) {
         try { fs.rmSync(path.join(resolved, entry), { force: true }); } catch (_) {}
       }
@@ -750,6 +762,7 @@ function exportLivery(gameRoot, folder) {
     const manifestRaw = fs.readFileSync(path.join(resolved, 'aircraft_livery_manifest.json'));
     const entries = [{ name: `${folder}/aircraft_livery_manifest.json`, data: manifestRaw }];
     for (const entry of fs.readdirSync(resolved)) {
+      if (entry.startsWith('.')) continue; // skip .workshop.json / .workshop-preview.*
       if (/\.png$/i.test(entry) || /\.jpe?g$/i.test(entry)) {
         entries.push({
           name: `${folder}/${entry}`,
@@ -855,6 +868,210 @@ function loadLiveryZip(zipPath) {
   }
 }
 
+// ─── Workshop publish packaging ───────────────────────────
+// Standalone-mod layout for Steam Workshop uploads (see plan.md §4): the
+// item root IS the mod root and the mod root IS the livery — mod_info.json
+// + aircraft_livery_manifest.json + texture files, verbatim. The game's
+// LiveryScanner reads mod_info.json; the editor's own
+// _collectWorkshopLiveryDirs already accepts an item root that is a livery.
+//
+// Both builders below throw coded errors (err.code ∈ NO_GAME_ROOT,
+// BAD_FOLDER, NO_MANIFEST, IMAGE_MISSING, NO_PREVIEW) instead of returning
+// result objects — publishLivery maps them to i18n keys.
+
+// Sidecar + saved-preview file names inside the livery folder. Neither is part
+// of the mod content: the sidecar records the Workshop item id, the saved
+// preview remembers the image used for the item (so the uploader reuses it).
+// Both are dot-files, skipped by the share ZIP, the createLivery image cleanup
+// and the Workshop content packer.
+const WORKSHOP_SIDECAR = '.workshop.json';
+const WORKSHOP_PREVIEW_BASENAME = '.workshop-preview';
+
+// True for the editor's own Workshop bookkeeping files inside a livery folder.
+function isWorkshopMetaFile(name) {
+  const n = String(name || '');
+  return n === WORKSHOP_SIDECAR || n.startsWith(`${WORKSHOP_PREVIEW_BASENAME}.`);
+}
+
+// Stable, unique modName derived from the livery folder.
+function workshopModName(folder) {
+  const safe = String(folder || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
+  return `AC27_${safe}`;
+}
+
+// Resolve an own-pack livery folder to its absolute dir, or null.
+function _resolveOwnLiveryDir(gameRoot, folder) {
+  if (!gameRoot || folder == null) return null;
+  try {
+    const resolved = containmentCheck(ownPackDir(gameRoot), String(folder));
+    if (!resolved || !fs.existsSync(resolved)) return null;
+    return resolved;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _codedError(code, message) {
+  const err = new Error(message || code);
+  err.code = code;
+  return err;
+}
+
+// Remove a workshop temp dir (guarded: only our own mkdtemp prefixes).
+function cleanWorkshopTemp(tempPath) {
+  try {
+    const parent = fs.existsSync(String(tempPath)) && fs.statSync(String(tempPath)).isDirectory()
+      ? String(tempPath)
+      : path.dirname(String(tempPath));
+    if (path.basename(parent).includes('ac27-livery-ws')) {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  } catch (_) {}
+}
+
+// Copy the livery into a temp dir shaped as a game mod:
+//   <temp>/mod_info.json, aircraft_livery_manifest.json, base*.png ...
+// The ENTIRE livery folder is copied verbatim (every file + subdirectory), so
+// any extra assets travel with the item; only the editor's local Workshop
+// bookkeeping files (`.workshop.json`, `.workshop-preview.*`) are excluded.
+// Returns { dir, cleanup }. Throws coded errors.
+function buildWorkshopContent(gameRoot, folder) {
+  if (!gameRoot) throw _codedError('NO_GAME_ROOT');
+  const srcDir = _resolveOwnLiveryDir(gameRoot, folder);
+  if (!srcDir) throw _codedError('BAD_FOLDER');
+  try {
+    JSON.parse(fs.readFileSync(path.join(srcDir, 'aircraft_livery_manifest.json'), 'utf-8'));
+  } catch (_) {
+    throw _codedError('NO_MANIFEST');
+  }
+  // An image-less mod is ignored by the game — require at least one texture
+  // (the editor's saved preview is bookkeeping, not a texture).
+  let hasTexture = false;
+  try {
+    hasTexture = fs.readdirSync(srcDir, { withFileTypes: true })
+      .some(e => e.isFile() && !isWorkshopMetaFile(e.name)
+        && (/\.png$/i.test(e.name) || /\.jpe?g$/i.test(e.name) || /\.dds$/i.test(e.name)));
+  } catch (_) {
+    hasTexture = false;
+  }
+  if (!hasTexture) throw _codedError('IMAGE_MISSING');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-livery-ws-'));
+  const cleanup = () => cleanWorkshopTemp(dir);
+  try {
+    // The item root IS the mod root: copy the whole folder, then synthesize the
+    // mod_info.json the game's LiveryScanner requires.
+    for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+      if (isWorkshopMetaFile(entry.name)) continue;
+      fs.cpSync(path.join(srcDir, entry.name), path.join(dir, entry.name), { recursive: true });
+    }
+    const modName = workshopModName(folder);
+    fs.writeFileSync(path.join(dir, 'mod_info.json'), JSON.stringify({
+      modName,
+      modNameEn: String(folder),
+      modNameZhHans: String(folder),
+      modDescriptionEn: 'Aircraft livery created with the AC27 Editor.',
+      modDescriptionZhHans: '使用 AC27 关卡编辑器创建的飞机涂装。',
+    }, null, 2) + '\n', 'utf-8');
+  } catch (err) {
+    cleanup();
+    throw _codedError(err.code || 'IMAGE_MISSING', err.message);
+  }
+  return { dir, cleanup };
+}
+
+// Render the livery's main BaseMap to a small JPG file for the Steam item
+// preview (Steam needs a file path, not a data URL). Target ≤1 MiB via a
+// 1024px-wide JPEG; falls back to the raw texture bytes when Electron's
+// nativeImage is unavailable (unit tests). Returns { path, cleanup }.
+// Throws coded errors (NO_GAME_ROOT, BAD_FOLDER, NO_PREVIEW).
+function buildWorkshopPreview(gameRoot, folder, targetWidth = 1024) {
+  if (!gameRoot) throw _codedError('NO_GAME_ROOT');
+  const srcDir = _resolveOwnLiveryDir(gameRoot, folder);
+  if (!srcDir) throw _codedError('BAD_FOLDER');
+  const found = _resolveLiveryImagePath(srcDir);
+  if (!found) throw _codedError('NO_PREVIEW');
+  let buf;
+  try {
+    buf = fs.readFileSync(found.path);
+  } catch (_) {
+    throw _codedError('NO_PREVIEW');
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-livery-ws-preview-'));
+  const cleanup = () => cleanWorkshopTemp(dir);
+  try {
+    const nativeImage = _getNativeImage();
+    if (nativeImage) {
+      const img = nativeImage.createFromBuffer(buf);
+      if (img && !img.isEmpty()) {
+        const size = img.getSize();
+        const width = Math.max(64, Math.min(targetWidth, size.width || targetWidth));
+        const resized = width < (size.width || width + 1)
+          ? img.resize({ width, quality: 'best' })
+          : img;
+        const jpeg = (!resized.isEmpty() ? resized : img).toJPEG(85);
+        if (jpeg && jpeg.length) {
+          const outPath = path.join(dir, 'preview.jpg');
+          fs.writeFileSync(outPath, jpeg);
+          return { path: outPath, cleanup };
+        }
+      }
+    }
+    // Fallback (no Electron): ship the raw texture bytes verbatim.
+    const ext = path.extname(found.path).toLowerCase() === '.png' ? '.png' : '.jpg';
+    const outPath = path.join(dir, 'preview' + ext);
+    fs.writeFileSync(outPath, buf);
+    return { path: outPath, cleanup };
+  } catch (err) {
+    cleanup();
+    throw _codedError(err.code || 'NO_PREVIEW', err.message);
+  }
+}
+
+// Steam rejects a Workshop item preview image ≥ 1 MiB with
+// `k_EResultLimitExceeded` ("limit exceeded"). Guarantee the file handed to
+// Steam is under the cap: an already-small file is returned untouched,
+// otherwise it is re-encoded (downscaled + JPEG quality steps) into a temp
+// file. Returns { path, cleanup } (cleanup null when nothing was created).
+// Without Electron's nativeImage (unit tests) the original path is returned.
+const WORKSHOP_PREVIEW_MAX_BYTES = 1024 * 1024;
+
+function ensurePreviewUnderLimit(srcPath, maxBytes = WORKSHOP_PREVIEW_MAX_BYTES) {
+  if (!srcPath || !fs.existsSync(srcPath)) return { path: srcPath, cleanup: null };
+  let size = 0;
+  try { size = fs.statSync(srcPath).size; } catch (_) { return { path: srcPath, cleanup: null }; }
+  if (size < maxBytes) return { path: srcPath, cleanup: null };
+  const nativeImage = _getNativeImage();
+  if (!nativeImage) return { path: srcPath, cleanup: null };
+  let buf;
+  try { buf = fs.readFileSync(srcPath); } catch (_) { return { path: srcPath, cleanup: null }; }
+  const img = nativeImage.createFromBuffer(buf);
+  if (!img || img.isEmpty()) return { path: srcPath, cleanup: null };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-livery-ws-preview-'));
+  const cleanup = () => cleanWorkshopTemp(dir);
+  const outPath = path.join(dir, 'preview.jpg');
+  const orig = img.getSize();
+  let best = null;
+  let width = Math.max(256, Math.min(1024, orig.width || 1024));
+  outer:
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const resized = width < (orig.width || width + 1) ? img.resize({ width, quality: 'best' }) : img;
+    const base = (resized && !resized.isEmpty()) ? resized : img;
+    for (const quality of [85, 70, 55, 40]) {
+      const jpeg = base.toJPEG(quality);
+      if (!jpeg || !jpeg.length) continue;
+      if (!best || jpeg.length < best.length) best = jpeg;
+      if (best.length < maxBytes) break outer;
+    }
+    width = Math.max(256, Math.floor(width / 2));
+  }
+  if (best) {
+    fs.writeFileSync(outPath, best);
+    return { path: outPath, cleanup };
+  }
+  cleanup();
+  return { path: srcPath, cleanup: null };
+}
+
 module.exports = {
   OWN_PACK,
   REFERENCE_PACK,
@@ -891,4 +1108,15 @@ module.exports = {
   copyExportedZip,
   cleanExportTemp: _cleanExportTemp,
   loadLiveryZip,
+  WORKSHOP_SIDECAR,
+  WORKSHOP_PREVIEW_BASENAME,
+  WORKSHOP_PREVIEW_MAX_BYTES,
+  isWorkshopMetaFile,
+  ensurePreviewUnderLimit,
+  _setNativeImageForTests,
+  _resetNativeImageForTests,
+  workshopModName,
+  buildWorkshopContent,
+  buildWorkshopPreview,
+  cleanWorkshopTemp,
 };

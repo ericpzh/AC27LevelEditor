@@ -1411,3 +1411,85 @@ describe('CreateTab lazy origin + chrome', () => {
     await waitFor(() => expect(screen.getByText(/Invalid image/)).toBeInTheDocument());
   });
 });
+
+describe('CreateTab workshop upload button', () => {
+  function uploadBtn() {
+    return screen.getByRole('button', { name: 'Upload' });
+  }
+
+  it('is disabled for a brand-new unsaved livery', async () => {
+    setupMocks();
+    renderCreate({ onUpload: vi.fn() });
+    await waitFor(() => expect(saveAsBtn().disabled).toBe(false));
+    expect(uploadBtn().disabled).toBe(true);
+  });
+
+  it('is disabled for read-only reference/workshop origins', async () => {
+    for (const pack of ['reference', 'workshop']) {
+      CreateTab.prefill = { folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', pack };
+      setupMocks();
+      const { unmount } = renderCreate({ onUpload: vi.fn() });
+      await waitFor(() => expect(uploadBtn().disabled).toBe(true));
+      unmount();
+      CreateTab.prefill = null;
+    }
+  });
+
+  it('opens the upload dialog for a clean saved mine livery without re-saving', async () => {
+    CreateTab.prefill = { folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', pack: 'mine' };
+    setupMocks();
+    const onUpload = vi.fn();
+    const user = userEvent.setup();
+    renderCreate({ onUpload });
+    await waitFor(() => expect(uploadBtn().disabled).toBe(false));
+    await user.click(uploadBtn());
+    expect(onUpload).toHaveBeenCalledTimes(1);
+    expect(onUpload).toHaveBeenCalledWith('A20N_CCA');
+    // Untouched canvas: no silent save before the dialog.
+    expect(mockIpcInvoke).not.toHaveBeenCalledWith('create-livery', expect.anything());
+  });
+
+  it('grayed-out upload button tooltip appends Save first; enabled does not', async () => {
+    setupMocks();
+    renderCreate({ onUpload: vi.fn() });
+    const uploadWrap = screen.getByRole('button', { name: 'Upload' }).closest('.lp-tipwrap');
+    // Brand-new livery: grayed out, hover explains why.
+    await waitFor(() => expect(uploadBtn().disabled).toBe(true));
+    fireEvent.mouseEnter(uploadWrap);
+    expect(document.body.querySelector('.tooltip-popup').textContent)
+      .toBe('Upload to the Steam Workshop. Save first.');
+    fireEvent.mouseLeave(uploadWrap);
+    expect(document.body.querySelector('.tooltip-popup')).toBeNull();
+  });
+
+  it('saved mine livery upload tooltip has no Save-first suffix', async () => {
+    CreateTab.prefill = { folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', pack: 'mine' };
+    setupMocks();
+    renderCreate({ onUpload: vi.fn() });
+    const uploadWrap = screen.getByRole('button', { name: 'Upload' }).closest('.lp-tipwrap');
+    await waitFor(() => expect(uploadBtn().disabled).toBe(false));
+    fireEvent.mouseEnter(uploadWrap);
+    expect(document.body.querySelector('.tooltip-popup').textContent)
+      .toBe('Upload to the Steam Workshop.');
+    fireEvent.mouseLeave(uploadWrap);
+  });
+
+  it('Ctrl+S is ignored while the workshop upload dialog overlays the painter', async () => {
+    CreateTab.prefill = { folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', pack: 'mine' };
+    setupMocks();
+    renderCreate({ onUpload: vi.fn() });
+    await waitFor(() => expect(saveBtn().disabled).toBe(false));
+    const overlay = document.createElement('div');
+    overlay.id = 'livery-upload-overlay';
+    document.body.appendChild(overlay);
+    try {
+      fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+      expect(screen.queryByLabelText('Folder name')).toBeNull();
+    } finally {
+      overlay.remove();
+    }
+    // Guard gone: the shortcut works again.
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    expect(await screen.findByLabelText('Folder name')).toBeInTheDocument();
+  });
+});

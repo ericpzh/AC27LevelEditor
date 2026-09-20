@@ -1072,6 +1072,57 @@ ipcMain.handle('invalidate-live-values', async (_event, aclPath) => {
 // ─── IPC: Renderer-side logging (so renderer console.log goes to file too) ──
 ipcMain.handle('renderer-log', async (_event, ...args) => {
   console.log('[RENDERER]', ...args);
+  // Workshop dialog events live in the workshop log file too, so the whole
+  // upload story (renderer + main) is diagnosable from a packaged build
+  // with no visible console.
+  try {
+    if (args.length && String(args[0]).startsWith('[WorkshopDialog]')) {
+      steamWorkshop.appendLogLine(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    }
+  } catch (_) {}
+});
+
+ipcMain.handle('open-workshop-log', async () => {
+  try {
+    const logPath = steamWorkshop.getLogPath();
+    if (!logPath) return { success: false, error: 'LOG_UNAVAILABLE' };
+    // Touch the file so there is always something to reveal, even if no
+    // workshop step has logged yet in this session.
+    try { fs.appendFileSync(logPath, `[${new Date().toISOString()}] [Workshop] log opened\n`, 'utf-8'); } catch (_) {}
+    shell.showItemInFolder(logPath);
+    return { success: true, path: logPath };
+  } catch (err) {
+    return { success: false, error: (err && err.message) || 'LOG_UNAVAILABLE' };
+  }
+});
+
+// Debug handshake: proves WHICH main process serves the workshop page —
+// source dir vs bundled dist, and the exact steam-workshop.js build (mtime).
+// The renderer logs this on dialog open; a missing handler (invoke rejects)
+// means the main process predates the workshop feature entirely.
+ipcMain.handle('workshop-debug-info', async () => {
+  try {
+    let steamworksPresent = false;
+    try { require.resolve('steamworks.js'); steamworksPresent = true; } catch (_) {}
+    let mainFile = null;
+    try {
+      const st = fs.statSync(path.join(__dirname, 'steam-workshop.js'));
+      mainFile = { dir: __dirname, mtime: st.mtime.toISOString(), size: st.size };
+    } catch (_) {}
+    const info = {
+      success: true,
+      host: steamWorkshop._resolveAppId(),
+      logPath: steamWorkshop.getLogPath(),
+      steamworksPresent,
+      mainFile,
+      execPath: process.execPath,
+      appVersion: app.getVersion(),
+    };
+    console.log('[Workshop] IPC workshop-debug-info', JSON.stringify(mainFile));
+    return info;
+  } catch (err) {
+    return { success: false, error: (err && err.message) || 'DEBUG_FAILED' };
+  }
 });
 
 // ─── Durable approach cache file path ─────────────────────
@@ -3775,6 +3826,64 @@ ipcMain.handle('load-livery-zip', async (_event) => {
   } catch (err) {
     console.error('[Livery] load zip failed:', err.message);
     return { canceled: false, success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Workshop publish (standalone uploader) ──────
+// Logic lives in electron/steam-workshop.js (lazy native require +
+// injectable fake client, unit-tested); handlers only resolve gameRoot /
+// dialog / progress events and delegate.
+const steamWorkshop = require('./steam-workshop');
+
+ipcMain.handle('get-workshop-publish-info', async (_event, folder) => {
+  console.log('[Workshop] IPC get-workshop-publish-info folder=', folder);
+  try {
+    return await steamWorkshop.readPublishInfo(_liveryGameRoot(), folder);
+  } catch (err) {
+    console.error('[Workshop] publish info failed:', (err && err.code) || '', (err && err.message) || err);
+    return { success: false, ...steamWorkshop.toPublicError(err, 'STEAM_UNAVAILABLE') };
+  }
+});
+
+ipcMain.handle('select-livery-preview', async (_event) => {
+  const parent = _event.sender && !_event.sender.isDestroyed()
+    ? BrowserWindow.fromWebContents(_event.sender)
+    : mainWindow;
+  try {
+    const picked = await dialog.showOpenDialog(parent, {
+      title: 'Select Workshop Preview Image',
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }],
+      properties: ['openFile'],
+    });
+    if (picked.canceled || !picked.filePaths.length) return { canceled: true };
+    const img = livery.readDiskImage(picked.filePaths[0]);
+    if (!img.success) return { canceled: false, success: false, error: img.error };
+    return { canceled: false, success: true, filePath: picked.filePaths[0], imageDataUrl: img.imageDataUrl };
+  } catch (err) {
+    console.error('[Workshop] select preview failed:', (err && err.code) || '', (err && err.message) || err);
+    return { canceled: false, success: false, ...steamWorkshop.toPublicError(err, 'BAD_IMAGE') };
+  }
+});
+
+ipcMain.handle('publish-livery', async (_event, payload) => {
+  try {
+    const p = payload || {};
+    console.log('[Workshop] IPC publish-livery folder=', p.folder, 'title=', String(p.title || '').slice(0, 80));
+    const result = await steamWorkshop.publishLivery(_liveryGameRoot(), p.folder, p, (prog) => {
+      try {
+        if (_event.sender && !_event.sender.isDestroyed()) {
+          _event.sender.send('workshop-upload-progress', {
+            status: prog.status || 0,
+            progress: Number(prog.progress) || 0,
+            total: Number(prog.total) || 0,
+          });
+        }
+      } catch (_) {}
+    });
+    return { success: true, ...result };
+  } catch (err) {
+    console.error('[Workshop] publish failed:', (err && err.code) || '', (err && err.message) || err);
+    return { success: false, ...steamWorkshop.toPublicError(err, 'UPLOAD_FAILED') };
   }
 });
 

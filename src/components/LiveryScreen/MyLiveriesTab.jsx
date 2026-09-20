@@ -12,7 +12,7 @@ function errKey(code) {
   return 'livery_err_' + String(code || 'unknown');
 }
 
-export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, scrollRef, onBarState }) {
+export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '', cmdRef, scrollRef, onBarState }) {
   const { t, lang } = useTranslation();
   const electronAPI = useElectronAPI();
   const [mine, setMine] = useState([]);
@@ -433,7 +433,7 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, s
     });
   }, [mine, selected, allSelected]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (cmdRef) cmdRef.current = { toggleSelectAll, deleteSelected, exportSelected };
+    if (cmdRef) cmdRef.current = { toggleSelectAll, deleteSelected, exportSelected, uploadSelected };
   }); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSelectAll = () => {
@@ -448,6 +448,14 @@ export default function MyLiveriesTab({ onEdit, onCreate, search = '', cmdRef, s
   const exportSelected = () => {
     const folder = singleSelected();
     if (folder) handleExport(folder);
+  };
+
+  // Header Upload button: opens the Workshop dialog for the single selected
+  // `mine` folder (reference/workshop rows are never selectable, so they can
+  // never reach here).
+  const uploadSelected = () => {
+    const folder = singleSelected();
+    if (folder && onUpload) onUpload(folder);
   };
 
   if (loading) return <div className="livery-placeholder">{t('editor_loading')}</div>;

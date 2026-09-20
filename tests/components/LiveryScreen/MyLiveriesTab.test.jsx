@@ -720,4 +720,32 @@ describe('MyLiveriesTab error + edge paths', () => {
     expect(screen.getByText('American Airlines')).toBeInTheDocument();
     expect(listCalls).toBe(1);
   });
+
+  it('upload command opens the dialog only with exactly one mine selection', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }) });
+    const user = userEvent.setup();
+    const cmdRef = { current: {} };
+    const onUpload = vi.fn();
+    renderMine({ cmdRef, onUpload });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+
+    // Nothing selected: no dialog.
+    act(() => { cmdRef.current.uploadSelected(); });
+    expect(onUpload).not.toHaveBeenCalled();
+
+    // One selected: the single mine folder is passed up.
+    await user.click(document.querySelector('.livery-select'));
+    act(() => { cmdRef.current.uploadSelected(); });
+    expect(onUpload).toHaveBeenCalledTimes(1);
+    expect(onUpload).toHaveBeenCalledWith('A20N_CCA');
+
+    // Two selected: back to no dialog (single-target gate, like export).
+    onUpload.mockClear();
+    act(() => { cmdRef.current.toggleSelectAll(); });
+    await waitFor(() => {
+      expect(document.querySelectorAll('.livery-select:checked').length).toBe(2);
+    });
+    act(() => { cmdRef.current.uploadSelected(); });
+    expect(onUpload).not.toHaveBeenCalled();
+  });
 });

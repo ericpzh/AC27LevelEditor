@@ -5,7 +5,7 @@ realistic-pack installer. Screens: browser header **Livery** button →
 `screen === 'livery'` (`src/App.jsx` `ScreenRouter` + `UpdateOverlay` wrapper).
 Two views (`mine` list / `create` painter, local `useState`, **no tab bar**):
 the list view has a single header bar (LHS: Back, Help `?`, Pack; RHS: New,
-Select All / Deselect All, Export, Delete, Find); the painter view hides the
+Select All / Deselect All, Export, Upload, Delete, Find); the painter view hides the
 header and has its own top bar. The help overlay is **page-scoped** — each view
 documents only its own buttons — and both pages end with the post-save
 mod-enable warning as a highlighted tip (`#livery-help-tip`). `Ctrl+F` focuses
@@ -95,6 +95,13 @@ painter page).
   `id` is derived by lowercasing the folder and collapsing non-alphanumerics
   to `_` (so a conventional `A20N_CCA` still yields `a20n_cca_default`, and a
   free-form `My First Livery 01` yields `my_first_livery_01_default`).
+- **Workshop bookkeeping files (dot-files, never mod content):** an uploaded
+  livery's folder also carries `.workshop.json` (the sidecar — records
+  `publishedFileId`, `url`, title/description/visibility/tags, the saved
+  preview file name, `lastUploadedAt`) and `.workshop-preview.<png|jpg>` (the
+  exact image the Workshop item was published with, so repeat uploads reuse
+  it). Both are skipped by the share ZIP, the `createLivery` image cleanup and
+  the Workshop content packer; neither is counted as a texture.
 
 ## Short-code table (hardcoded, 20 rows — no scan, no cache)
 
@@ -783,6 +790,17 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `AIRLINE_CODE_TO_NAMES` live in `src/utils/constants/airlines.js`
   (derived from `AIRLINE_CODE_MAP`; CJK name picked for `zh`, otherwise the
   English name; unknown codes return the raw code).
+- `UploadLiveryDialog.jsx` — the Workshop publish modal (`#livery-upload-overlay`,
+  rendered by `LiveryScreen` for the single selected `mine` folder). Loads
+  `get-workshop-publish-info`, prefills title (localized default when the sidecar
+  has none), description, visibility (private default), tags, preview; subscribes
+  to `workshop-upload-progress` for the bar; success view links the item URL.
+  Submit stays labelled **Upload** (no rename-to-publish), no change-note field,
+  no link-ID field; unknown error codes fall back to generic text with the raw
+  code + detail beneath; a failed `workshop-debug-info` handshake shows the
+  "restart the editor" stale-main banner. Built with `shortAircraftType`
+  (`src/utils/constants/livery.js` — drops the manufacturer word, e.g.
+  `AIRBUS A-320neo` → `A-320neo`).
 
 ## Aircraft template (per-type painter background)
 
@@ -884,6 +902,66 @@ DDS decode + PNG encode in `electron/dds.js` (zero new deps).
 Preload exposes `exportLiveryToDir(folder)`/`getAircraftTemplate(planeId)`/`listAircraftTypes()`
 /`revealLiveryFolder(folder, pack)`
 alongside the others; `tests/setup.js` stubs them.
+
+## Workshop publish (upload)
+
+Main-process module `electron/steam-workshop.js` (lazy `require('steamworks.js')`,
+so unit tests and machines without Steam never crash at load; injectable fake via
+`_setSteamworksForTests`/`_resetSteamworksForTests`). Always publishes to the
+single constant host **Playtest app `4004140`** (`STEAM_WORKSHOP_APP_ID`, literal
+fallback when the ESM `src/utils/constants/steam.js` can't be `require`d),
+initialised **exactly once per process** (re-init hangs) — deliberately no
+cross-app / Spacewar (`480`) fallback probe, so the editor never accrues playtime
+on a game the user did not launch. `isAvailable()` distinguishes
+`STEAM_UNAVAILABLE` (no module / init throw) from `NO_LICENSE`
+(`apps.isSubscribedApp(4004140)` false — Family Sharing / free weekends / playtest
+keys cannot publish).
+
+Identity is a `.workshop.json` sidecar inside the livery folder (travels with the
+livery, survives cache resets). Precedence for the dialog prefill is **live Steam
+metadata → sidecar → manifest defaults** (`readPublishInfo`); the default title is
+composed in the renderer (localized airline display name + compact aircraft type +
+"Livery"/"涂装"), not in main. `publishLivery(gameRoot, folder, meta, onProgress)`:
+
+1. `buildWorkshopContent(gameRoot, folder)` (`electron/livery.js`) copies the
+   **entire** livery folder verbatim into a temp dir (only `.workshop.json` /
+   `.workshop-preview.*` excluded) and synthesizes the `mod_info.json` the game's
+   LiveryScanner needs; requires a manifest and ≥1 real texture
+   (`NO_MANIFEST`/`IMAGE_MISSING`).
+2. Preview precedence: caller `previewPath` → saved `.workshop-preview.*` → fresh
+   `buildWorkshopPreview` render. `ensurePreviewUnderLimit` re-encodes/downscales
+   anything ≥ 1 MiB (Steam's `k_EResultLimitExceeded`) before submit.
+3. `createItem` on first upload; on repeat, the recorded id is **existence-checked
+   first** (`getItem`) — a deleted item republishes fresh, and an update failing
+   because the item vanished creates one replacement. `updateItemWithCallback`
+   drives progress; `needsToAcceptAgreement` → `STEAM_AGREEMENT`.
+4. On success: save the preview into the folder, write/refresh the sidecar, return
+   `{publishedFileId, url}`. Temp dirs (content, generated preview, shrink) are
+   cleaned in a `finally`.
+
+IPC channels (handlers in `main.js` resolve `_liveryGameRoot()` and delegate;
+`preload.js` + `tests/setup.js` expose them): `get-workshop-publish-info(folder)`,
+`select-livery-preview()` (image dialog → `readDiskImage`), `publish-livery(payload)`
+(emits `workshop-upload-progress` events `{status, progress, total}`),
+`open-workshop-log` (`shell.showItemInFolder` on `<userData>/workshop-upload.log`),
+`workshop-debug-info` (debug handshake proving which main build serves the page —
+a rejected invoke means a stale main process predating the feature). All errors
+are clamped to the IPC contract by `toPublicError` (foreign napi codes such as
+`GenericFailure` never leak as `error`; kept as a `detail` prefix) and mapped by
+the renderer to `livery_err_*` keys. Codes: `STEAM_UNAVAILABLE` / `NO_LICENSE` /
+`NO_GAME_ROOT` / `BAD_FOLDER` / `NO_MANIFEST` / `BAD_TITLE` / `BAD_IMAGE` /
+`NO_PREVIEW` / `IMAGE_MISSING` / `CREATE_FAILED` / `UPLOAD_FAILED` /
+`STEAM_AGREEMENT` / `PREVIEW_LIMIT`.
+
+UI: `src/components/LiveryScreen/UploadLiveryDialog.jsx` (overlay id
+`livery-upload-overlay`) — title/description/visibility (0 public / 1 friends /
+2 private default / 3 unlisted) / tags / preview picker, progress bar, success view
+with the clickable item URL. There is **no link-ID field** — association is
+automatic from the sidecar (`linkItemId` is ignored). The list header's **Upload**
+button (single `mine` selection) and the painter toolbar's Steam button (silently
+saves a dirty canvas in place first) open it; while it is open the painter is
+input-locked (`LiveryCanvas` `inputDisabled` → pointer/keyboard inert, wrap gets
+`lp-input-locked`, `aria-disabled`) so e.g. Ctrl+C reaches the browser as copy.
 
 ## Image rules (locked)
 
@@ -1040,5 +1118,24 @@ manifest for a free-form zip folder).
   anchoring, SV-square drag emits colour + keeps opacity, hue/alpha rails,
   hex commit on blur/Enter + malformed-input rejection, window/Escape/
   backdrop/right-click dismissal, hue retained across achromatic colours).
+- `tests/unit/steam-workshop.test.js` — the uploader against an **injected fake
+  `steamworks` client** (both `init()→client` and modern module-namespace shapes;
+  no Steam, no native module). Covers `isAvailable` gating (module missing / init
+  throw → `STEAM_UNAVAILABLE`; not-subscribed → `NO_LICENSE`; single app inited
+  once, no cross-app probe), foreign-code sanitization + `toPublicError`,
+  sidecar round-trip/tolerance, `parseWorkshopId`, `readPublishInfo` precedence +
+  deleted-item forgetting, and `publishLivery` create/update/replacement, preview
+  save+reuse, `ensurePreviewUnderLimit` integration (oversized preview is shrunk
+  and the shrunk path is what reaches `updateItem`), `PREVIEW_LIMIT` mapping,
+  progress forwarding and temp cleanup.
+- `tests/unit/livery-workshop-packaging.test.js` — `workshopModName`,
+  `buildWorkshopContent` (verbatim copy, dot-file exclusion, `mod_info.json`
+  synthesis, coded errors, multi-part, cleanup), `buildWorkshopPreview` (coded
+  errors, file output, raw-bytes fallback, **fake-`nativeImage` resize→JPEG
+  branch**) and `ensurePreviewUnderLimit`.
+- `tests/components/LiveryScreen/UploadLiveryDialog.test.jsx` — dialog prefill,
+  localized default title (en/zh), upload-only button label, unavailable reason,
+  progress + success URL, error-keeps-input, generic fallback for unknown codes +
+  `View log`, stale-main banner, no `linkItemId` sent, preview picker.
 - In-game acceptance (manual): create via UI → launch game → livery on model
-  (validates the own-pack-dir assumption).
+  (validates the own-pack-dir assumption); upload via UI with Steam running.

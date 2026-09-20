@@ -12,7 +12,7 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron', 'ffmpeg-static'],
+              external: ['electron', 'ffmpeg-static', 'steamworks.js'],
               // Main process is a single CJS entry: inline dynamic imports so
               // Rollup never code-splits (a shared module hoisted into a chunk
               // leaves unbound __esmMin init calls like init_timing() behind —

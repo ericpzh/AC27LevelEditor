@@ -2889,11 +2889,12 @@ describe('selection mask', () => {
     fireEvent.pointerUp(cv, { pointerId: 1 });
     await user.click(screen.getByRole('button', { name: 'Select' }));
     // Object mode: the blue box (strokeRect) is drawn for the selected movable.
-    await waitFor(() => expect(ctxs.some(c => c.strokeRect.mock.calls.length > 0)).toBe(true));
+    // The overlay is rAF-scheduled, so give it room under a loaded full-suite run.
+    await waitFor(() => expect(ctxs.some(c => c.strokeRect.mock.calls.length > 0)).toBe(true), { timeout: 5000 });
     // Entering wand mode drops the movable selection, so no box is drawn.
     ctxs.forEach(c => c.strokeRect.mockClear());
     await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
-    await waitFor(() => expect(ctxs.every(c => c.strokeRect.mock.calls.length === 0)).toBe(true));
+    await waitFor(() => expect(ctxs.every(c => c.strokeRect.mock.calls.length === 0)).toBe(true), { timeout: 5000 });
   });
 
   it('keeps the pen/wand mask when switching back to Object mode', async () => {
@@ -3383,5 +3384,62 @@ describe('keyboard target filtering', () => {
     expect(isTextEntry({ tagName: 'BUTTON' })).toBe(false);
     expect(isTextEntry({ tagName: 'DIV', isContentEditable: true })).toBe(true);
     expect(isTextEntry(null)).toBe(false);
+  });
+
+  it('ignores all shortcuts while the workshop upload dialog overlays the painter', () => {
+    renderCanvas();
+    expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+    const overlay = document.createElement('div');
+    overlay.id = 'livery-upload-overlay';
+    document.body.appendChild(overlay);
+    try {
+      // Single-key tool switch and Ctrl+C duplicate must not fire — Ctrl+C
+      // has to reach the browser as copy (e.g. the item URL in the dialog).
+      fireEvent.keyDown(window, { key: 'e' });
+      expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+      fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+      expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+    } finally {
+      overlay.remove();
+    }
+    // Guard gone: shortcuts work again.
+    fireEvent.keyDown(window, { key: 'e' });
+    expect(screen.getByRole('button', { name: 'Eraser' }).className).toContain('lp-active');
+  });
+});
+
+describe('input lock (workshop upload dialog)', () => {
+  it('disables ALL pointer + keyboard input to the painter while locked', async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    // Unlocked baseline: a drag commits a shape onto a context.
+    const cv = mainCanvas();
+    const rectCalls = () => ctxs.reduce((n, c) => n + c.rect.mock.calls.length, 0);
+    fireEvent.pointerDown(cv, { clientX: 40, clientY: 40, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 160, clientY: 120, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    await waitFor(() => expect(rectCalls()).toBeGreaterThan(0));
+    const drawn = rectCalls();
+
+    // Locked: no new pointer gesture may reach a tool, and keyboard shortcuts
+    // are inert — the wrap is made pointer-transparent for good measure.
+    rerender(
+      <I18nProvider>
+        <LiveryCanvas inputDisabled />
+        <Modal />
+        <Toast />
+      </I18nProvider>
+    );
+    const wrap = document.querySelector('.livery-canvas-wrap');
+    expect(wrap.className).toContain('lp-input-locked');
+    expect(wrap.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.pointerDown(mainCanvas(), { clientX: 10, clientY: 10, button: 0, pointerId: 2 });
+    fireEvent.pointerMove(mainCanvas(), { clientX: 300, clientY: 300, button: 0, pointerId: 2 });
+    fireEvent.pointerUp(mainCanvas(), { pointerId: 2 });
+    expect(rectCalls()).toBe(drawn);
+    // Tool stays on Rect, so the single-key shortcut definitely did not run.
+    fireEvent.keyDown(window, { key: 'e' });
+    expect(screen.getByRole('button', { name: 'Rect' }).className).toContain('lp-active');
   });
 });

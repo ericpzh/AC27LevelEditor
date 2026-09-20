@@ -74,10 +74,12 @@ Create and share your own `Body`/`BaseMap` aircraft liveries. The Livery page (b
 - **Back** — returns to the browser (from the painter, back returns to the list first).
 - **Pack** — the original realistic-livery download/install flow in a dialog.
 - **New** — opens the full-page painter: a 2048×2048 **transparent** canvas (brush/eraser/picker/fill/shapes/text/sticker — text and stickers remain selectable floating objects you can move, rotate and flip horizontally/vertically, undo depth 20, no 3D preview). The top bar holds the airline/aircraft plus **Open folder** (reveals the current livery's folder in your OS file explorer; a brand-new livery opens the custom-liveries pack folder) / **Import image** / **Import livery** (ZIP) / **Export livery** / **Save** / **Save As**; the left rail holds the tools; the bottom bar holds zoom. Saving a livery over its own folder via **Save** overwrites silently (no `.bak`); **Save As** — and any Save that is renamed onto another livery's folder — pops a confirm/cancel prompt before overwriting. After a successful save a prompt reminds you to enable the **AC27 Custom Liveries** mod on the in-game "More Liveries" page; tick **Don't show again** to silence it (stored in `cache.json`). Reference and **Steam Workshop** liveries are read-only and only offer Save As.
-- **Select All**/**Deselect All**, **Export** (single selection), batch **Delete**, and **Find** (filters the list by airline, folder or aircraft).
+- **Select All**/**Deselect All**, **Export** (single selection), **Upload** (single selection — publishes to the Steam Workshop, see below), batch **Delete**, and **Find** (filters the list by airline, folder or aircraft).
 - The list groups every livery in `<gameRoot>/Mods/AC27 Custom Liveries/` by aircraft type into collapsible folders; reference-pack liveries share the same folders with a lock read-only mark, and **Steam Workshop liveries** subscribed to the game are discovered automatically (best-effort, read-only, marked with a Steam badge). **Click a card to open it in the painter**. Each card carries a selection checkbox pinned over its thumbnail; the header-bar **Export** (needs exactly one selected; saves a shareable ZIP) and **Delete** (one or many, with confirm) act on the selection. Folder names are free-form (filesystem-safe only) and never parsed — the manifest carries the airline/aircraft. The pack root's `mod_info.json` is maintained automatically: it is written on load/create with the **AC27 Custom Liveries** mod name, repairing the copy the official pack ZIP ships (which still names the reference pack).
 
 **Share contract:** Export produces `<FOLDER>.zip` containing `<FOLDER>/aircraft_livery_manifest.json` + `<FOLDER>/base.png`. Send it to a friend — they install it via **Import livery** in the painter, or by unzipping straight into `<gameRoot>/Mods/AC27 Custom Liveries/`.
+
+**Workshop publish:** the header-bar **Upload** button (and the painter toolbar's upload button, which silently saves a dirty canvas first) publishes a custom livery as a standalone Workshop mod for the Playtest app (appid `4004140`), or a new version of the same item on repeat uploads. The dialog collects title/description/visibility/tags/change-note/preview, pre-filled from the previous version (live Steam metadata → local `.workshop.json` sidecar inside the livery folder → manifest defaults), and shows progress plus the item URL on success. The published item id is recorded automatically in the livery folder's `.workshop.json` after the first upload, so repeat uploads update the same item with no user input (the whole livery folder is uploaded verbatim). The preview image used for the item is also saved in the livery folder (`.workshop-preview.*`) and reused on later uploads unless a new one is chosen; an oversized preview is automatically downscaled/re-encoded below Steam's 1 MiB limit before upload. Before updating, the recorded id is verified against Steam — if the item was deleted on the Workshop, a fresh item is published and the new id is recorded instead of failing. Requires the Steam client running with an account that owns the Playtest app (temporary licenses such as Family Sharing / free weekends cannot publish). Deleting the livery locally does not remove the Steam item.
 
 ### Auto-Update (Windows)
 
@@ -169,10 +171,12 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 - **返回** —— 回到浏览器（在绘制器中则先返回列表）。
 - **涂装包** —— 原有的真实涂装下载/安装流程，以弹窗打开。
 - **新建** —— 打开整页绘制器：2048×2048 **透明**画布（画笔/橡皮/取色/填充/图形/文字/贴花，文字与贴花均为可移动、可旋转、可水平/垂直翻转的浮动对象，20 步撤销，无 3D 预览）。顶栏放置航司/机型以及**导入图片** / **导入涂装**（ZIP）/ **导出涂装** / **保存** / **另存为**，左侧竖排工具栏，底部为缩放。**保存**到自身文件夹时直接覆盖（无 `.bak`）；**另存为**（或保存时改用其他已存在的文件夹名）会先弹出确认/取消提示再覆盖。保存成功后还会提示前往游戏内“更多涂装”页面启用 **AC27 自定义涂装** Mod，勾选**不再提示**即可关闭（记录在 `cache.json`）。参考涂装只读，仅可另存为。
-- **全选**/**取消全选**、**导出**（需单选）、批量**删除**与**查找**（按航司、文件夹名或机型过滤）。
+- **全选**/**取消全选**、**导出**（需单选）、**上传**（需单选——发布到创意工坊，见下）、批量**删除**与**查找**（按航司、文件夹名或机型过滤）。
 - 列表将 `<游戏根目录>/Mods/AC27 Custom Liveries/` 下的所有涂装按机型分组为可折叠文件夹（真实涂装包中的参考涂装在同一分组内，带锁形只读标记）；**点击卡片即可在绘制器中打开**。每张卡片缩略图上带选择框；顶部栏的**导出**（需单选，保存为可分享的 ZIP）与**删除**（可单选或多选，需确认）作用于所选涂装。文件夹名可自由命名（仅需文件系统安全），编辑器不会解析其含义，航司/机型由清单文件决定。包根目录的 `mod_info.json` 会自动维护：在加载/创建时写入 **AC27 Custom Liveries** 模组名，并修正官方涂装包 ZIP 附带的那份仍使用参考涂装包名称的文件。
 
 **分享约定：** 导出的 `<文件夹名>.zip` 内含 `<文件夹名>/aircraft_livery_manifest.json` + `<文件夹名>/base.png`。发给朋友后，对方在绘制器中使用**导入涂装**即可安装，或直接解压到 `<游戏根目录>/Mods/AC27 Custom Liveries/`。
+
+**创意工坊发布：** 顶栏**上传**按钮（绘制器顶栏也有上传按钮，画布有未保存更改时会先静默保存）可将自制涂装发布为测试版应用（appid `4004140`）的独立创意工坊 Mod，重复上传即为同一物品的新版本。弹窗收集标题/描述/可见性/标签/更新说明/预览图，并以上一版本预填（Steam 实时元数据 → 涂装文件夹内的 `.workshop.json` 本地记录 → 清单默认值），上传时显示进度，成功后给出物品链接。需要 Steam 客户端运行且账号拥有测试版应用（家庭共享 / 免费周末等临时许可不能发布）。本地删除涂装不会删除 Steam 上的物品。
 
 ### 清理编辑器本地缓存
 
@@ -213,8 +217,8 @@ npm start          # Launch in dev mode (no build step needed)
 ### Architecture (High-Level)
 
 ```
-electron/main.js     →  Electron main process, 89 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install, auto-update check & install
-electron/preload.js  →  contextBridge: exposes ~133 methods on window.electronAPI
+electron/main.js     →  Electron main process, 92 IPC handlers, file I/O, map window management, video background replacer, BepInEx debug mode, livery download & install + Workshop publish, auto-update check & install
+electron/preload.js  →  contextBridge: exposes ~137 methods on window.electronAPI
 electron/updater.js  →  Auto-update: HEAD check (R2 ETag), MD5 comparison, file-based logging to updater.log, resolveTargetExe (dev-mode support), exe download, batch script generation
 electron/api-server.js →  HTTP API + MCP server (port 31415, auto-starts with app, 27 tools)
 electron/bepinex.js     →  BepInEx debug mode — download, install, uninstall (IL2CPP bleeding edge)
@@ -295,7 +299,8 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   ├── updater.js           # Auto-update: HEAD check, MD5, file logging, resolveTargetExe, download, batch script
 │   ├── api-server.js        # HTTP API + MCP server (port 31415, 27 tools)
 │   ├── cloud-llm.js         # Multi-vendor cloud LLM chat (DeepSeek/Gemini/Claude/Codex)
-│   ├── livery.js            # Custom livery pack logic (list/create/delete/export/load)
+│   ├── livery.js            # Custom livery pack logic (list/create/delete/export/load + Workshop content/preview packaging)
+│   ├── steam-workshop.js    # Steam Workshop livery publish via steamworks.js (lazy native require, sidecar identity, create/update)
 │   ├── bepinex.js           # BepInEx debug mode — one-click install/uninstall
 │   └── udp_listener.js      # UDP telemetry — 10 Hz aircraft state + commands
 ├── index.html               # Vite HTML entry
@@ -311,7 +316,7 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   ├── components/
 │   │   ├── SetupScreen/         # Game root directory picker
 │   │   ├── BrowserScreen/       # Airport & level browser
-│   │   ├── LiveryScreen/        # Custom livery list + painter (canvas, stickers, ZIP share)
+│   │   ├── LiveryScreen/        # Custom livery list + painter (canvas, stickers, ZIP share, Workshop upload dialog)
 │   │   ├── EditorScreen/        # Main editor: table + timelines
 │   │   │   ├── FlightTable/     # Sortable flight table with inline editing
 │   │   │   ├── CellEditor/      # SVG clock & compass popovers

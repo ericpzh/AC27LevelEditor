@@ -509,4 +509,33 @@ describe('LiveryScreen thumbnails', () => {
     expect(CreateTab.prefill.imageDataUrl).toBeNull();
     await waitFor(() => expect(document.querySelector('.lp-root')).toBeInTheDocument());
   });
+
+  it('header Upload button gates on single selection and opens the dialog', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }),
+      'get-workshop-publish-info': Promise.resolve({
+        success: true, available: true, appId: '3328490', folder: 'A20N_CCA',
+        title: 'A20N CCA', description: 'D', visibility: 2, tags: ['Livery'],
+      }),
+    });
+    const user = userEvent.setup();
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    const uploadBtn = screen.getByRole('button', { name: 'Upload' });
+    // Same oneSelected gate as Export.
+    expect(uploadBtn).toBeDisabled();
+    await user.click(document.querySelector('.livery-select'));
+    await waitFor(() => expect(uploadBtn).not.toBeDisabled());
+    await user.click(screen.getByText('Select All'));
+    await waitFor(() => expect(uploadBtn).toBeDisabled());
+    // Back to one: opens the workshop dialog for that folder.
+    await user.click(screen.getByText('Deselect All'));
+    await user.click(document.querySelectorAll('.livery-select')[1]);
+    await waitFor(() => expect(uploadBtn).not.toBeDisabled());
+    await user.click(uploadBtn);
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Upload to Workshop' })).toBeInTheDocument();
+    });
+    expect(mockIpcInvoke).toHaveBeenCalledWith('get-workshop-publish-info', 'B738_AAL');
+  });
 });

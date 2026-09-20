@@ -683,7 +683,7 @@ function NumberInput({ value, min, max, onCommit, ariaLabel, suffix }) {
 }
 
 const LiveryCanvas = forwardRef(function LiveryCanvas(
-  { panels, initialParts, defaultParts, activePanel, onActivePanel, initialImageDataUrl, defaultLiveryDataUrl, onDirty },
+  { panels, initialParts, defaultParts, activePanel, onActivePanel, initialImageDataUrl, defaultLiveryDataUrl, onDirty, inputDisabled = false },
   ref,
 ) {
   const { t } = useTranslation();
@@ -734,6 +734,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const undoRef = useRef(createUndoStack());
   const spaceRef = useRef(false);
   const panRef = useRef(null);
+  // Mirrors `inputDisabled` for handlers/effects captured before a re-render.
+  // While the Workshop upload dialog owns the screen NOTHING the painter owns
+  // may react — pointer, wheel or keyboard.
+  const inputDisabledRef = useRef(inputDisabled);
+  inputDisabledRef.current = inputDisabled;
   const handRef = useRef(null);
   const zoomAnchorRef = useRef(null);
   const strokeRef = useRef(null);
@@ -1065,6 +1070,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const el = wrapRef.current;
     if (!el) return;
     const onWheel = (e) => {
+      if (inputDisabledRef.current) return;
       e.preventDefault();
       const cur = zoom === 'fit' ? fitScale : zoom;
       const next = clampZoom(cur * Math.exp(-e.deltaY * WHEEL_ZOOM_SENSITIVITY));
@@ -2311,6 +2317,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // ── Keyboard: shortcuts + undo/redo + Del ──────────────────
   useEffect(() => {
     const onKey = (e) => {
+      // The Workshop upload dialog owns the keyboard while open (it overlays
+      // the painter): no canvas shortcut may fire behind it — notably Ctrl+C,
+      // which must reach the browser as copy (e.g. the item URL on the
+      // dialog's success view), not the Duplicate-Sticker action.
+      if (inputDisabledRef.current) return;
+      try { if (document.getElementById('livery-upload-overlay')) return; } catch (_) {}
       if (isTextEntry(e.target)) {
         if (e.key === 'Escape' && textAnchor) { editingIdRef.current = null; setTextAnchor(null); setTextDraft(''); }
         return;
@@ -2404,6 +2416,22 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
   }, [doUndo, doRedo, textAnchor]);
+
+  // Locked mode (the Workshop upload dialog owns the screen) drops every
+  // transient gesture so nothing the pointer was mid-way through can finish
+  // later, and clears the held-Space pan state / brush ring. The CSS
+  // `lp-input-locked` class on the wrap also makes it pointer-transparent.
+  useEffect(() => {
+    if (!inputDisabled) return;
+    lassoRef.current = null;
+    curveRef.current = null;
+    shapeRef.current = null;
+    dragRef.current = null;
+    panRef.current = null;
+    if (spaceRef.current) { spaceRef.current = false; setSpaceHeld(false); }
+    if (cursorRingRef.current) cursorRingRef.current.style.display = 'none';
+    scheduleOverlay();
+  }, [inputDisabled]);
 
   // ── Coord mapping ──────────────────────────────────────────
   const toTexture = (clientX, clientY) => {
@@ -2613,6 +2641,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
   // ── Canvas pointer handlers ────────────────────────────────
   const onCanvasDown = (e) => {
+    if (inputDisabledRef.current) return;
     if (e.button === 1 || spaceRef.current) return; // pan handled by wrapper
     if (e.button !== 2) consumeRightRef.current = false;
     const ctx = ctxRef.current;
@@ -2911,6 +2940,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   const onCanvasMove = (e) => {
+    if (inputDisabledRef.current) return;
     const ctx = ctxRef.current;
     if (!ctx) return;
     if (strokeRef.current) {
@@ -3076,6 +3106,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   const onCanvasUp = () => {
+    if (inputDisabledRef.current) return;
     // Releasing the pen closes the lasso into the mask under the combine op.
     if (lassoRef.current) {
       const l = lassoRef.current;
@@ -3356,6 +3387,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
   // ── Brush/eraser true-size cursor ring (ref-driven, no re-render) ─
   const moveCursorRing = (e) => {
+    if (inputDisabledRef.current) { if (cursorRingRef.current) cursorRingRef.current.style.display = 'none'; return; }
     const ring = cursorRingRef.current;
     if (!ring) return;
     if (e.target && e.target.tagName === 'INPUT') { ring.style.display = 'none'; return; }
@@ -3381,6 +3413,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     el.style.transform = `translate(${clientX}px, ${clientY}px) translate(-50%, -50%)`;
   };
   const onWrapDown = (e) => {
+    if (inputDisabledRef.current) return;
     if (e.button === 1 || spaceRef.current) {
       e.preventDefault();
       panRef.current = { sx: e.clientX, sy: e.clientY, sl: wrapRef.current.scrollLeft, st: wrapRef.current.scrollTop };
@@ -3388,6 +3421,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
   };
   const onWrapMove = (e) => {
+    if (inputDisabledRef.current) return;
     if (spaceRef.current) moveHand(e.clientX, e.clientY);
     if (!panRef.current) return;
     wrapRef.current.scrollLeft = panRef.current.sl - (e.clientX - panRef.current.sx);
@@ -3604,8 +3638,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
         <div
           ref={wrapRef}
-          className="livery-canvas-wrap"
+          className={'livery-canvas-wrap' + (inputDisabled ? ' lp-input-locked' : '')}
           tabIndex={0}
+          aria-disabled={inputDisabled || undefined}
           onPointerDown={onWrapDown}
           onPointerMove={onWrapMove}
           onPointerUp={onWrapUp}

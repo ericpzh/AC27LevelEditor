@@ -10,12 +10,14 @@ import {
   IoTrashOutline,
   IoSearchOutline,
 } from 'react-icons/io5';
+import { FaSteam } from 'react-icons/fa';
 import { MdAdd } from 'react-icons/md';
 import { FaFileExport } from 'react-icons/fa6';
 import useTooltip from '../BrowserScreen/useTooltip';
 import MyLiveriesTab from './MyLiveriesTab';
 import CreateTab from './CreateTab';
 import InstallPackTab from './InstallPackTab';
+import UploadLiveryDialog from './UploadLiveryDialog';
 import LiveryHelpOverlay from './LiveryHelpOverlay';
 
 export default function LiveryScreen() {
@@ -24,6 +26,8 @@ export default function LiveryScreen() {
   const [tab, setTab] = useState('mine');
   const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState('');
+  // Workshop upload dialog target: the single selected `mine` folder.
+  const [uploadFolder, setUploadFolder] = useState(null);
   const searchRef = useRef(null);
   const { bind, TooltipPortal } = useTooltip();
   // Mine-list commands + bar state, published by MyLiveriesTab.
@@ -148,6 +152,14 @@ export default function LiveryScreen() {
                 </button>
                 <button
                   className="btn-sm"
+                  {...bind(t('livery_upload_tip'))}
+                  onClick={() => mineCmdRef.current.uploadSelected && mineCmdRef.current.uploadSelected()}
+                  disabled={!barState.oneSelected}
+                >
+                  <FaSteam size={14} className="btn-icon" />{t('livery_upload')}
+                </button>
+                <button
+                  className="btn-sm"
                   {...bind(t('livery_tip_delete_selected'))}
                   onClick={() => mineCmdRef.current.deleteSelected && mineCmdRef.current.deleteSelected()}
                   disabled={barState.selectedCount === 0}
@@ -178,6 +190,7 @@ export default function LiveryScreen() {
             onBarState={setBarState}
             onEdit={(row) => { CreateTab.prefill = row; setTab('create'); }}
             onCreate={(planeId) => { CreateTab.prefill = { targetPlaneId: planeId }; setTab('create'); }}
+            onUpload={(folder) => setUploadFolder(folder)}
           />
         )}
         {isCreate && (
@@ -186,9 +199,12 @@ export default function LiveryScreen() {
             onCreated={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
             onCancel={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
             onHelp={() => setHelpOpen(true)}
+            onUpload={(folder) => setUploadFolder(folder)}
+            uploadOpen={Boolean(uploadFolder)}
           />
         )}
       </main>
+      {uploadFolder && <UploadLiveryDialog folder={uploadFolder} onClose={() => setUploadFolder(null)} />}
       {helpOpen && <LiveryHelpOverlay page={isCreate ? 'painter' : 'list'} onClose={() => setHelpOpen(false)} />}
       {TooltipPortal}
     </div>

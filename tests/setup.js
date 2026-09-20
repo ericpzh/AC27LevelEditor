@@ -1,5 +1,12 @@
 ﻿import '@testing-library/jest-dom';
+import { configure } from '@testing-library/dom';
 import { vi } from 'vitest';
+
+// The suite runs many heavy jsdom files in parallel; Testing Library's default
+// 1000 ms async timeout is too tight under that load and produced intermittent
+// `waitFor`/`findBy*` flakes (the jsdom rAF/effect work can exceed 1 s). Raise
+// the default globally rather than chasing individual tests.
+configure({ asyncUtilTimeout: 5000 });
 
 // ── Mock window.electronAPI ──────────────────────────────────────────
 // All renderer code accesses Electron via window.electronAPI (exposed by
@@ -130,6 +137,15 @@ vi.stubGlobal('electronAPI', {
   exportLiveryToDir: (folder) => mockIpcInvoke('export-livery-to-dir', folder),
   saveLiveryDialog: (opts) => mockIpcInvoke('save-livery-dialog', opts),
   loadLiveryZip: () => mockIpcInvoke('load-livery-zip'),
+
+  // ─── Workshop publish (standalone uploader) ──────────
+  getWorkshopPublishInfo: (folder) => mockIpcInvoke('get-workshop-publish-info', folder),
+  selectLiveryPreview: () => mockIpcInvoke('select-livery-preview'),
+  publishLivery: (payload) => mockIpcInvoke('publish-livery', payload),
+  openWorkshopLog: () => mockIpcInvoke('open-workshop-log'),
+  getWorkshopDebugInfo: () => mockIpcInvoke('workshop-debug-info'),
+  onWorkshopUploadProgress: (cb) => mockIpcOn('workshop-upload-progress', cb),
+  offWorkshopUploadProgress: (cb) => { /* unsubscribe */ },
 
   // ─── UDP telemetry ───────────────────────────────────────
   getUdpStatus: () => mockIpcInvoke('get-udp-status'),
