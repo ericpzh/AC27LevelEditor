@@ -3,6 +3,7 @@ import { I18nProvider, useTranslation } from './hooks/useTranslation';
 import { useAppStore } from './store/appStore';
 import { useElectronAPI } from './hooks/useElectronAPI';
 import SetupScreen from './components/SetupScreen/SetupScreen';
+import LanguagePicker from './components/LanguagePicker/LanguagePicker';
 import BrowserScreen from './components/BrowserScreen/BrowserScreen';
 import EditorScreen from './components/EditorScreen/EditorScreen';
 import LiveryScreen from './components/LiveryScreen/LiveryScreen';
@@ -21,7 +22,7 @@ let didInit = false; // Survives Strict Mode double-mount (AGENTS rule 8.2)
 function ScreenRouter() {
   const screen = useAppStore(s => s.screen);
   const electronAPI = useElectronAPI();
-  const { t } = useTranslation();
+  const { t, langStatus } = useTranslation();
   const [booting, setBooting] = useState(true);
 
   // Detect map window query params (separate Electron BrowserWindow instances)
@@ -272,7 +273,11 @@ setUpdateState('idle');
 
   // ── End auto-update state machine ──────────────────────
 
-  if (booting) return <div className="screen"><div className="loading-state"><div className="spinner" /></div></div>;
+  if (booting || langStatus === 'loading') return <div className="screen"><div className="loading-state"><div className="spinner" /></div></div>;
+
+  // First launch (no language stored in localStorage or cache.json) — pick one
+  // before showing anything else.
+  if (langStatus === 'unset') return <LanguagePicker />;
 
   switch (screen) {
     case 'setup':   return <><SetupScreen />{updateState === 'downloading' && <UpdateOverlay onComplete={(result) => { setDownloadResult(result); setUpdateState('installing'); }} onError={(errorMsg) => { setUpdateState('error'); useAppStore.getState().showToast(errorMsg, 'error'); }} />}</>;

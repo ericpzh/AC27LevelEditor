@@ -149,6 +149,7 @@ Cache validity is determined by a standalone **`CACHE_VERSION`** constant (integ
 **Language persistence:**
 - `lang` field in `cache.json` provides durable backup for language preference
 - `useTranslation` reads from cache JSON when `localStorage` is empty, and writes to both on toggle
+- `langStatus` drives the boot gate: `loading` (resolving cache) → spinner, `unset` (no language anywhere) → `LanguagePicker` before any other UI, `chosen` → normal screens
 - IPC handlers: `get-cached-lang`, `save-cached-lang`
 
 **Cache flags:** `get-cache-flag(key)` / `set-cache-flag(key, value)` read/write booleans in the `flags` bag. The whitelist (`CACHE_FLAG_KEYS`), read coercion and merge logic live in the pure `electron/cache-flags.js` (`readCacheFlag`/`writeCacheFlag`, node-env test `tests/electron/cache-flags.test.js`); `main.js` only reads/writes cache.json and delegates. Unknown keys → `BAD_FLAG`; a flag write on a missing cache → `NO_CACHE` (a flag write must never create cache.json, or boot would treat a version-matching but empty record as ready). Used by the livery post-save mod-enable hint.

@@ -27,12 +27,6 @@
   color: var(--text);
 }
 
-.setup-sub {
-  color: var(--text-secondary);
-  font-size: 14px;
-  margin-bottom: 28px;
-}
-
 .steam-hint {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -106,10 +100,38 @@
   justify-content: center;
 }
 
-.setup-detected-hint {
-  margin-top: 10px;
-  font-size: 11.5px;
-  color: var(--text-muted);
+.setup-detected-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.setup-detected-actions .btn-big {
+  flex: 1 1 0;
+  justify-content: center;
+  padding: 14px 16px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+/* The detected folder is the primary action — give it more room than the
+   manual picker fallback. */
+.setup-detected-actions .setup-detected-btn {
+  flex: 2 1 0;
+  width: auto;
+}
+
+/* Manual picker is the fallback next to the detected folder — keep it quiet.
+   Inset outline (not border) so both buttons stay exactly the same height. */
+.setup-detected-actions .setup-detected-secondary {
+  background: transparent;
+  color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.setup-detected-actions .setup-detected-secondary:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .btn-big {

@@ -4,7 +4,10 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoMapOutline, IoNavigateOutline, IoListOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline, IoRefreshOutline, IoChevronDown } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline, IoRefreshOutline, IoChevronDown } from 'react-icons/io5';
+import { GiRadarSweep } from "react-icons/gi";
+import { TbMapRoute } from "react-icons/tb";
+import { FaTableList } from "react-icons/fa6";
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { DEMO_VISIBLE_BASES, DEMO_VISIBLE_ORDER, PROD_VISIBLE_BASES } from '../../utils/constants';
@@ -453,21 +456,21 @@ export default function BrowserScreen() {
                       {...bind(t(BUTTONS.surfaceRadar.descKey))}
                       onClick={(e) => { e.stopPropagation(); handleToggleSurfaceRadar(airport.icao); }}
                     >
-                      <IoMapOutline size={13} /> {t('toolbar_surface_radar')}
+                      <TbMapRoute size={13} /> {t('toolbar_surface_radar')}
                     </button>
                     <button
                       className={'btn-radar-toggle' + (openAirRadarAirports.has(airport.icao) ? ' active' : '')}
                       {...bind(t(BUTTONS.approachRadar.descKey))}
                       onClick={(e) => { e.stopPropagation(); handleToggleApproachRadar(airport.icao); }}
                     >
-                      <IoNavigateOutline size={13} /> {t('toolbar_approach_radar')}
+                      <GiRadarSweep size={13} /> {t('toolbar_approach_radar')}
                     </button>
                     <button
                       className={'btn-radar-toggle' + (openFlightStripAirports.has(airport.icao) ? ' active' : '')}
                       {...bind(t(BUTTONS.flightStrips.descKey))}
                       onClick={(e) => { e.stopPropagation(); handleToggleFlightStrips(airport.icao); }}
                     >
-                      <IoListOutline size={13} /> {t('toolbar_flight_strips')}
+                      <FaTableList size={13} /> {t('toolbar_flight_strips')}
                     </button>
                     </>
                     )}

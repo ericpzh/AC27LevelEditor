@@ -512,6 +512,37 @@ describe('publishLivery', () => {
     expect(fs.existsSync(savedPath)).toBe(true);
   });
 
+  it('ships the preview image inside the uploaded content', async () => {
+    const { lib, client } = makeFakeLib();
+    steamWorkshop._setSteamworksForTests(lib);
+    const dir = seedLivery(gameRoot);
+    // First upload with a caller-picked image that is NOT in the folder yet:
+    // the content packed from the folder cannot carry it, so publishLivery
+    // syncs the final preview into the content dir before submit.
+    const custom = path.join(gameRoot, 'custom.png');
+    fs.writeFileSync(custom, pngBuffer(64, 64));
+    let contentEntries = null;
+    let contentPreviewBytes = null;
+    const origUpdate = client.workshop.updateItemWithCallback;
+    client.workshop.updateItemWithCallback = (itemId, details, appId, onSuccess, onError, onProgress) => {
+      contentEntries = fs.readdirSync(details.contentPath).sort();
+      const previewName = contentEntries.find((n) => n.startsWith('.workshop-preview.'));
+      if (previewName) contentPreviewBytes = fs.readFileSync(path.join(details.contentPath, previewName));
+      origUpdate(itemId, details, appId, onSuccess, onError, onProgress);
+    };
+    await steamWorkshop.publishLivery(gameRoot, 'A20N_CCA', { title: 't', previewPath: custom });
+    expect(contentEntries).toContain('.workshop-preview.png');
+    expect(contentEntries).not.toContain('.workshop.json');
+    expect(contentPreviewBytes).toEqual(fs.readFileSync(custom));
+
+    // Repeat upload reuses the saved preview: still shipped, byte-identical.
+    contentEntries = null;
+    contentPreviewBytes = null;
+    await steamWorkshop.publishLivery(gameRoot, 'A20N_CCA', { title: 't2' });
+    expect(contentEntries).toContain('.workshop-preview.png');
+    expect(contentPreviewBytes).toEqual(fs.readFileSync(path.join(dir, '.workshop-preview.png')));
+  });
+
   it('shrinks an over-limit preview before submit and remembers the shrunk image', async () => {
     const { lib, calls } = makeFakeLib();
     steamWorkshop._setSteamworksForTests(lib);

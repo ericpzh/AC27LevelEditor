@@ -40,8 +40,10 @@ AC27Editor/
 │ ├── style.css # Global dark theme CSS variables + reset
 │ │
 │ ├── components/
-│ │ ├── SetupScreen/ # Game root directory selection
+│ │ ├── SetupScreen/ # Game root directory selection (Workshop build auto-detects; normal build manual-only)
 │ │ │ ├── SetupScreen.jsx + .css
+│ │ ├── LanguagePicker/ # First-launch language chooser (langStatus === 'unset')
+│ │ │ ├── LanguagePicker.jsx + .css
 │ │ ├── BrowserScreen/ # Airport card listing, file browsing (collapsible cards + session auto-collapse)
 │ │ │ ├── BrowserScreen.jsx + .css
 │ │ │ ├── AirportCardMap.jsx + .css # Mini ground-radar SVG per card
@@ -287,7 +289,7 @@ window.electronAPI ipcRenderer.invoke() ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 2170 tests (component + store + utility + electron + integration + MapWindow + updater, ~45s)
+- `npm test` or `npm run test:watch` — 2181 tests (component + store + utility + electron + integration + MapWindow + updater, ~35s)
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - Electron backend tests use `@vitest-environment node` + `require.cache` priming to stub ESM SDK packages (see `tests/electron/cloud-llm.test.js`)
 - zustand stores are tested with the real store using `setState()` — never mock stores

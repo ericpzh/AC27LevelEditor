@@ -16,10 +16,20 @@ export default function SetupScreen() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [detected, setDetected] = useState(null);
+  const [workshop, setWorkshop] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      let isWorkshop = false;
+      try {
+        isWorkshop = (await electronAPI.isWorkshopBuild()) === true;
+      } catch (err) { console.error(err); }
+      if (cancelled) return;
+      setWorkshop(isWorkshop);
+      // Auto-detection is Steam/Workshop-only — the normal build never runs a
+      // search; the user selects the game folder manually.
+      if (!isWorkshop) return;
       try {
         const res = await electronAPI.detectGameRoot();
         if (!cancelled && res && res.found) setDetected(res);
@@ -64,36 +74,61 @@ export default function SetupScreen() {
     setLoading(false);
   };
 
+  const steamHint = (
+    <div className="steam-hint">
+      <div className="steam-hint-title">{t('setup_steam_title')}</div>
+      <ol>
+        <li>{safeHtml(t('setup_steam_step1'))}</li>
+        <li>{safeHtml(t('setup_steam_step2'))}</li>
+        <li>{t('setup_steam_step3')}</li>
+      </ol>
+      <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>C:\Program Files (x86)\Steam\steamapps\common\Airport Control 27</code> {t('setup_steam_path_or')} <code>D:\SteamLibrary\steamapps\common\Airport Control 27 Demo</code></p>
+    </div>
+  );
+
+  const useDetectedButton = (
+    <button className="btn-big setup-detected-btn" onClick={handleUseDetected} disabled={loading}>
+      {loading ? '...' : <><IoCheckmarkCircleOutline size={16} className="btn-icon" />{t('setup_detected_confirm')}</>}
+    </button>
+  );
+
+  const renderSelectRootButton = (className) => (
+    <button className={className} onClick={handleSelectRoot} disabled={loading}>
+      {loading ? '...' : <><IoFolderOpenOutline size={16} className="btn-icon" />{t('setup_select_root')}</>}
+    </button>
+  );
+
+  const selectRootButton = renderSelectRootButton('btn-big');
+  // Side-by-side with "Use this folder", the manual picker is the fallback —
+  // render it as a secondary/ghost button so the detected folder stays primary.
+  const selectRootButtonSecondary = renderSelectRootButton('btn-big setup-detected-secondary');
+
   return (
     <div id="screen-setup" className="screen">
       <div className="setup-card">
         <h1>{t('setup_title')}</h1>
-        <p className="setup-sub">{t('setup_sub')}</p>
         <button className="btn-lang-toggle-top" onClick={toggleLang}><IoLanguage size={14} className="btn-icon" /> {t('lang_switch_to')}</button>
-        <div className="steam-hint">
-          <div className="steam-hint-title">{t('setup_steam_title')}</div>
-          <ol>
-            <li>{safeHtml(t('setup_steam_step1'))}</li>
-            <li>{safeHtml(t('setup_steam_step2'))}</li>
-            <li>{t('setup_steam_step3')}</li>
-          </ol>
-          <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>C:\Program Files (x86)\Steam\steamapps\common\Airport Control 25 Playtest</code> {t('setup_steam_path_or')} <code>D:\SteamLibrary\steamapps\common\Airport Control 27 Demo</code></p>
-        </div>
-        {detected && (
-          <div className="setup-detected">
-            <div className="setup-detected-title">
-              {t(detected.steam ? 'setup_detected_title_steam' : 'setup_detected_title')}
-            </div>
-            <code className="setup-detected-path">{detected.rootPath}</code>
-            <button className="btn-big setup-detected-btn" onClick={handleUseDetected} disabled={loading}>
-              {loading ? '...' : <><IoCheckmarkCircleOutline size={16} className="btn-icon" />{t('setup_detected_confirm')}</>}
-            </button>
-            <p className="setup-detected-hint">{t('setup_detected_hint')}</p>
-          </div>
+        {workshop ? (
+          <>
+            {detected && (
+              <div className="setup-detected">
+                <div className="setup-detected-title">{t('setup_detected_title_steam')}</div>
+                <code className="setup-detected-path">{detected.rootPath}</code>
+                <div className="setup-detected-actions">
+                  {useDetectedButton}
+                  {selectRootButtonSecondary}
+                </div>
+              </div>
+            )}
+            {steamHint}
+            {!detected && selectRootButton}
+          </>
+        ) : (
+          <>
+            {steamHint}
+            {selectRootButton}
+          </>
         )}
-        <button className="btn-big" onClick={handleSelectRoot} disabled={loading}>
-          {loading ? '...' : <><IoFolderOpenOutline size={16} className="btn-icon" />{t('setup_select_root')}</>}
-        </button>
         {error && <p className="setup-error">{error}</p>}
       </div>
     </div>

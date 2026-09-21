@@ -1,11 +1,13 @@
 {
   "name": "ac27-editor",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Cross-platform Level Editor for Airport Control 27 .acl flight schedules",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "start": "node scripts/dev-start.mjs",
+    "start:steam": "node scripts/dev-start.mjs steam",
+    "start:workshop": "node scripts/start-workshop.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

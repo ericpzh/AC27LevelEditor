@@ -71,10 +71,14 @@ const api = module.exports;
 /**
  * Workshop build ships with resources/workshop.json marker (see build.js --workshop).
  * It moves freely — marker travels inside the portable bundle, so path does NOT matter.
+ *
+ * In dev there is no packaged resources/ marker, so `npm start steam [path]` sets
+ * AC27_WORKSHOP=1 (see scripts/dev-start.mjs) to exercise the Workshop code path
+ * from source — AC27_WORKSHOP_DIR then points at the Workshop content dir/exe.
  * @returns {boolean}
  */
 function isWorkshopBuild() {
-  if (!app.isPackaged) return false;
+  if (!app.isPackaged) return process.env.AC27_WORKSHOP === '1';
   if (typeof process.resourcesPath !== 'string') return false;
   try { return fs.existsSync(path.join(process.resourcesPath, STEAM_WORKSHOP_MARKER)); }
   catch { return false; }

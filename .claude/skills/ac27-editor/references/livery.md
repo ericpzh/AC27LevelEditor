@@ -923,10 +923,14 @@ composed in the renderer (localized airline display name + compact aircraft type
 "Livery"/"涂装"), not in main. `publishLivery(gameRoot, folder, meta, onProgress)`:
 
 1. `buildWorkshopContent(gameRoot, folder)` (`electron/livery.js`) copies the
-   **entire** livery folder verbatim into a temp dir (only `.workshop.json` /
-   `.workshop-preview.*` excluded) and synthesizes the `mod_info.json` the game's
+   **entire** livery folder verbatim into a temp dir (only the private
+   `.workshop.json` sidecar is excluded — the saved `.workshop-preview.*`
+   ships with the item) and synthesizes the `mod_info.json` the game's
    LiveryScanner needs; requires a manifest and ≥1 real texture
-   (`NO_MANIFEST`/`IMAGE_MISSING`).
+   (`NO_MANIFEST`/`IMAGE_MISSING`). `publishLivery` additionally syncs the
+   current upload's final preview into the content dir before submit, so a
+   newly picked/generated/shrunk image travels even though it is only
+   remembered locally after a successful upload.
 2. Preview precedence: caller `previewPath` → saved `.workshop-preview.*` → fresh
    `buildWorkshopPreview` render. `ensurePreviewUnderLimit` re-encodes/downscales
    anything ≥ 1 MiB (Steam's `k_EResultLimitExceeded`) before submit.

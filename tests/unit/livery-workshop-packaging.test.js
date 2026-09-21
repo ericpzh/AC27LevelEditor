@@ -73,8 +73,9 @@ describe('buildWorkshopContent', () => {
 
   it('ships the ENTIRE livery folder verbatim (only the sidecar excluded) + mod_info', () => {
     const srcDir = seedLivery(gameRoot);
-    // The editor's local bookkeeping is never mod content. Everything else in
-    // the folder — extra files and subdirectories — travels as-is.
+    // The private `.workshop.json` sidecar is never mod content. Everything
+    // else in the folder — the saved preview image, extra files and
+    // subdirectories — travels as-is.
     fs.writeFileSync(path.join(srcDir, '.workshop.json'), JSON.stringify({ publishedFileId: '1' }));
     fs.writeFileSync(path.join(srcDir, '.workshop-preview.png'), pngBuffer(64, 64));
     fs.writeFileSync(path.join(srcDir, 'notes.txt'), 'hello');
@@ -82,14 +83,15 @@ describe('buildWorkshopContent', () => {
     fs.writeFileSync(path.join(srcDir, 'extras', 'readme.md'), 'extra asset');
     const srcManifest = fs.readFileSync(path.join(srcDir, 'aircraft_livery_manifest.json'));
     const srcBase = fs.readFileSync(path.join(srcDir, 'base.png'));
+    const srcPreview = fs.readFileSync(path.join(srcDir, '.workshop-preview.png'));
 
     const { dir, cleanup } = livery.buildWorkshopContent(gameRoot, 'A20N_CCA');
     try {
       expect(fs.existsSync(dir)).toBe(true);
       const entries = fs.readdirSync(dir).sort();
-      expect(entries).toEqual(['aircraft_livery_manifest.json', 'base.png', 'extras', 'mod_info.json', 'notes.txt']);
+      expect(entries).toEqual(['.workshop-preview.png', 'aircraft_livery_manifest.json', 'base.png', 'extras', 'mod_info.json', 'notes.txt']);
       expect(fs.existsSync(path.join(dir, '.workshop.json'))).toBe(false);
-      expect(fs.existsSync(path.join(dir, '.workshop-preview.png'))).toBe(false);
+      expect(fs.readFileSync(path.join(dir, '.workshop-preview.png'))).toEqual(srcPreview);
       expect(fs.readFileSync(path.join(dir, 'notes.txt'), 'utf-8')).toBe('hello');
       expect(fs.readFileSync(path.join(dir, 'extras', 'readme.md'), 'utf-8')).toBe('extra asset');
       expect(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'))).toEqual(srcManifest);

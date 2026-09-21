@@ -879,11 +879,14 @@ function loadLiveryZip(zipPath) {
 // BAD_FOLDER, NO_MANIFEST, IMAGE_MISSING, NO_PREVIEW) instead of returning
 // result objects — publishLivery maps them to i18n keys.
 
-// Sidecar + saved-preview file names inside the livery folder. Neither is part
-// of the mod content: the sidecar records the Workshop item id, the saved
-// preview remembers the image used for the item (so the uploader reuses it).
-// Both are dot-files, skipped by the share ZIP, the createLivery image cleanup
-// and the Workshop content packer.
+// Sidecar + saved-preview file names inside the livery folder. The sidecar
+// (Workshop item id, remembered title/description) is private bookkeeping and
+// never mod content; the saved preview ships verbatim inside the uploaded mod
+// so subscribers see it in the item folder (publishLivery additionally syncs
+// the current upload's preview into the content dir, covering a newly picked
+// image that is not saved locally until the upload succeeds).
+// Both are dot-files, skipped by the share ZIP and the createLivery image
+// cleanup.
 const WORKSHOP_SIDECAR = '.workshop.json';
 const WORKSHOP_PREVIEW_BASENAME = '.workshop-preview';
 
@@ -932,8 +935,10 @@ function cleanWorkshopTemp(tempPath) {
 // Copy the livery into a temp dir shaped as a game mod:
 //   <temp>/mod_info.json, aircraft_livery_manifest.json, base*.png ...
 // The ENTIRE livery folder is copied verbatim (every file + subdirectory), so
-// any extra assets travel with the item; only the editor's local Workshop
-// bookkeeping files (`.workshop.json`, `.workshop-preview.*`) are excluded.
+// any extra assets travel with the item; only the private `.workshop.json`
+// sidecar (the publisher's item id) is excluded. The saved
+// `.workshop-preview.*` image ships verbatim so the mod folder carries a
+// preview.
 // Returns { dir, cleanup }. Throws coded errors.
 function buildWorkshopContent(gameRoot, folder) {
   if (!gameRoot) throw _codedError('NO_GAME_ROOT');
@@ -945,7 +950,8 @@ function buildWorkshopContent(gameRoot, folder) {
     throw _codedError('NO_MANIFEST');
   }
   // An image-less mod is ignored by the game — require at least one texture
-  // (the editor's saved preview is bookkeeping, not a texture).
+  // (the sidecar is private bookkeeping and the saved preview is just the
+  // item image, neither is a game texture).
   let hasTexture = false;
   try {
     hasTexture = fs.readdirSync(srcDir, { withFileTypes: true })
@@ -959,9 +965,11 @@ function buildWorkshopContent(gameRoot, folder) {
   const cleanup = () => cleanWorkshopTemp(dir);
   try {
     // The item root IS the mod root: copy the whole folder, then synthesize the
-    // mod_info.json the game's LiveryScanner requires.
+    // mod_info.json the game's LiveryScanner requires. Only the private
+    // `.workshop.json` sidecar stays behind — everything else, including the
+    // saved `.workshop-preview.*` image, travels with the item.
     for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
-      if (isWorkshopMetaFile(entry.name)) continue;
+      if (entry.name === WORKSHOP_SIDECAR) continue;
       fs.cpSync(path.join(srcDir, entry.name), path.join(dir, entry.name), { recursive: true });
     }
     const modName = workshopModName(folder);
@@ -1111,7 +1119,6 @@ module.exports = {
   WORKSHOP_SIDECAR,
   WORKSHOP_PREVIEW_BASENAME,
   WORKSHOP_PREVIEW_MAX_BYTES,
-  isWorkshopMetaFile,
   ensurePreviewUnderLimit,
   _setNativeImageForTests,
   _resetNativeImageForTests,

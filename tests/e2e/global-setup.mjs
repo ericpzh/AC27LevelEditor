@@ -113,6 +113,15 @@ export default async function () {
     'utf-8'
   );
 
+  // Pre-write cache.json with a chosen language so the first-launch language
+  // picker never blocks the E2E specs (cacheVersion 0 → get-cache-state reports
+  // 'mismatch', which boot still treats as usable; the scan rebuilds it).
+  writeFileSync(
+    path.join(USERDATA_DIR, 'cache.json'),
+    JSON.stringify({ cacheVersion: 0, gameRoot: TMP_DIR, lang: 'en', flags: {}, airports: {} }),
+    'utf-8'
+  );
+
   // 4. Expose paths to tests via env
   process.env.E2E_TMP_DIR = TMP_DIR;
   process.env.E2E_USERDATA_DIR = USERDATA_DIR;

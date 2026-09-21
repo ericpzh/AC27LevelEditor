@@ -620,6 +620,29 @@ async function publishLivery(gameRoot, folder, meta, onProgress) {
       _wlog(`preview shrunk ${beforeBytes} -> ${afterBytes} bytes`);
     }
 
+    // The preview image ships inside the mod content too, so the item folder
+    // subscribers download carries it. The content dir was packed before the
+    // current preview was resolved (a newly picked/generated/shrunk image
+    // lives in a temp file and is only remembered locally after a successful
+    // upload), so sync the final file in now under the same
+    // `.workshop-preview.<ext>` name the livery folder uses — replacing any
+    // stale verbatim copy the folder pack brought in.
+    try {
+      if (content && content.dir && previewPath && fs.existsSync(previewPath)) {
+        const ext = path.extname(previewPath).toLowerCase();
+        const safeExt = (ext === '.png' || ext === '.jpg' || ext === '.jpeg') ? ext : '.jpg';
+        for (const entry of fs.readdirSync(content.dir)) {
+          if (entry.startsWith(`${PREVIEW_BASENAME}.`)) {
+            try { fs.rmSync(path.join(content.dir, entry), { force: true }); } catch (_) {}
+          }
+        }
+        fs.copyFileSync(previewPath, path.join(content.dir, `${PREVIEW_BASENAME}${safeExt}`));
+        _wlog(`preview synced into content as ${PREVIEW_BASENAME}${safeExt}`);
+      }
+    } catch (err) {
+      _wlog(`preview sync into content failed: ${_short(_describeNativeError(err, ''), 120)}`);
+    }
+
     if (!publishedFileId) {
       let created;
       try {

@@ -62,6 +62,8 @@ afterEach(() => {
   delete process.env.AC27_UPDATE_DRY_RUN;
   delete process.env.AC27_UPDATE_TARGET;
   delete process.env.AC27_UPDATE_DEV_CHECK;
+  delete process.env.AC27_WORKSHOP;
+  delete process.env.AC27_WORKSHOP_DIR;
   delete process.env.PORTABLE_EXECUTABLE_FILE;
   if (Object.prototype.hasOwnProperty.call(process, 'resourcesPath')) {
     delete process.resourcesPath;
@@ -153,6 +155,31 @@ describe('isUpdateSupported', () => {
     expect(updater.isUpdateSupported()).toBe(true);
     delete process.resourcesPath;
     fs.rmSync(fakeResources, { recursive: true, force: true });
+  });
+});
+
+// ── isWorkshopBuild (dev override) ─────────────────────────────
+
+describe('isWorkshopBuild', () => {
+  it('is false in dev mode without AC27_WORKSHOP', () => {
+    mockApp.isPackaged = false;
+    delete process.env.AC27_WORKSHOP;
+    const updater = getUpdater();
+    expect(updater.isWorkshopBuild()).toBe(false);
+  });
+
+  it('is true in dev mode when AC27_WORKSHOP=1 (npm start steam)', () => {
+    mockApp.isPackaged = false;
+    process.env.AC27_WORKSHOP = '1';
+    const updater = getUpdater();
+    expect(updater.isWorkshopBuild()).toBe(true);
+  });
+
+  it('ignores AC27_WORKSHOP when packaged (marker governs)', () => {
+    process.env.AC27_WORKSHOP = '1';
+    delete process.resourcesPath;
+    const updater = getUpdater();
+    expect(updater.isWorkshopBuild()).toBe(false);
   });
 });
 

@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App version
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  // Whether this build is the Steam Workshop variant (see build.js --workshop)
+  isWorkshopBuild: () => ipcRenderer.invoke('is-workshop-build'),
+
   // Cache
   getCachedLang: () => ipcRenderer.invoke('get-cached-lang'),
   saveCachedLang: (lang) => ipcRenderer.invoke('save-cached-lang', lang),

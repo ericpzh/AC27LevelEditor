@@ -10,12 +10,16 @@
 ## Running the App
 
 ```bash
-npm start # Launch Electron in dev mode (Vite dev server + Electron)
+npm start                          # Launch Electron in dev mode (Vite dev server + Electron), normal variant
+npm start steam [<workshop-path>]  # Same, forced to the Workshop variant (no exe built)
+npm run dev                        # Vite dev server only
 ```
+
+Both `npm start` forms compile and launch from JS (vite-plugin-electron) — **no exe is packaged**. `npm start steam` exports `AC27_WORKSHOP=1` (the packaged build detects Workshop via a `resources/workshop.json` marker instead — `isWorkshopBuild()`), so the Workshop code paths run from source: the SetupScreen Workshop layout, game-root auto-detection (Workshop-only — the normal build **never** searches, it requires manual folder selection; `detect-game-root` returns `{found:false}` early and the renderer skips the call), `resolveWorkshopBundledDllPath()`, `download-approach-dll` (bundled DLL instead of R2), and the Flight Strips install prompt. The optional path is the Workshop content dir (or the exe inside it); it is exported as `AC27_WORKSHOP_DIR` so `<path>/AC27Approach.dll` is used as the bundled plugin. Alias: `npm run start:steam`. The packaged Workshop exe flow stays available via `npm run start:workshop` (`scripts/start-workshop.mjs`, which builds + launches `release/AC27EditorWorkshop.exe`).
 
 ## Running Tests
 
-### Component tests (2170 tests, 115 files, ~45s)
+### Component tests (2181 tests, 116 files, ~35s)
 
 ```bash
 npm test # Run all Vitest component + store + utility + electron + MapWindow + updater tests

@@ -585,6 +585,14 @@ function _candidateExeDirs() {
 }
 
 ipcMain.handle('detect-game-root', async () => {
+  // Auto-detection is a Steam/Workshop-only feature. Only the Steam-distributed
+  // Workshop build searches for the game root; the normal build NEVER probes the
+  // filesystem (no ancestor walk, no Steam sibling scan) — the user picks the
+  // folder manually.
+  if (!updater.isWorkshopBuild()) {
+    console.log('[IPC] detect-game-root: skipped (non-Workshop build — manual selection only)');
+    return { found: false };
+  }
   const dirs = _candidateExeDirs();
   const found = findGameRoot(dirs);
   if (!found) {
@@ -596,8 +604,6 @@ ipcMain.handle('detect-game-root', async () => {
     found: true,
     rootPath: found.gameRoot,
     airports: found.airports,
-    totalFiles: found.totalFiles,
-    steam: found.steam,
   };
 });
 
@@ -2976,6 +2982,11 @@ ipcMain.handle('reload-acl', async (_event, filePath) => {
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 
+// Whether this build is the Steam Workshop variant (resources/workshop.json
+// marker — see build.js --workshop). The SetupScreen uses it to lay out the
+// detected-folder panel and its buttons differently from the normal build.
+ipcMain.handle('is-workshop-build', () => updater.isWorkshopBuild());
+
 // ─── IPC: Map window launchers ──────────────────────────────
 
 ipcMain.handle('open-ground-map', async (_e, airportIcao, gameRoot) => { openGroundMapWindow(airportIcao, gameRoot); });
@@ -3482,6 +3493,17 @@ function resolveWorkshopBundledDllPath() {
       candidates.push(path.join(process.resourcesPath, 'AC27Approach.dll'));
     }
   } catch (_) {}
+  // Dev override: `npm start steam <workshop-path>` sets AC27_WORKSHOP_DIR to
+  // the Workshop content dir (or the exe inside it) so the bundled DLL resolves
+  // without a packaged exe (scripts/dev-start.mjs).
+  try {
+    const dir = process.env.AC27_WORKSHOP_DIR;
+    if (dir) {
+      let d = dir;
+      try { if (fs.statSync(d).isFile()) d = path.dirname(d); } catch (_) {}
+      candidates.push(path.join(d, 'AC27Approach.dll'));
+    }
+  } catch (_) {}
   // <exe-dir> candidates: the user may have moved/copied the exe. Portable
   // remembers the launch location in PORTABLE_EXECUTABLE_FILE; otherwise
   // process.execPath or app.getPath('exe') is the best guess.
@@ -3539,7 +3561,10 @@ ipcMain.handle('check-command-capability', async () => {
   // mutates the DLL locally and the game must be restarted to pick it up;
   // a forced HEAD → outdated nag would block PTT/composer while developing.
   // Matches updater.js dev gating (isUpdateSupported/checkForUpdate skip).
-  if (!app.isPackaged) {
+  // Exception: `npm start steam <path>` forces the Workshop variant, which
+  // resolves the bundled DLL instead of hitting R2 — that path is exercised
+  // below even in dev.
+  if (!app.isPackaged && !updater.isWorkshopBuild()) {
     console.log('[Capability] dev mode (npm start) — skipping remote plugin version check');
     pluginUpToDate = null;
   } else if (updater.isWorkshopBuild()) {

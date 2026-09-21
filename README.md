@@ -79,7 +79,7 @@ Create and share your own `Body`/`BaseMap` aircraft liveries. The Livery page (b
 
 **Share contract:** Export produces `<FOLDER>.zip` containing `<FOLDER>/aircraft_livery_manifest.json` + `<FOLDER>/base.png`. Send it to a friend — they install it via **Import livery** in the painter, or by unzipping straight into `<gameRoot>/Mods/AC27 Custom Liveries/`.
 
-**Workshop publish:** the header-bar **Upload** button (and the painter toolbar's upload button, which silently saves a dirty canvas first) publishes a custom livery as a standalone Workshop mod for the Playtest app (appid `4004140`), or a new version of the same item on repeat uploads. The dialog collects title/description/visibility/tags/change-note/preview, pre-filled from the previous version (live Steam metadata → local `.workshop.json` sidecar inside the livery folder → manifest defaults), and shows progress plus the item URL on success. The published item id is recorded automatically in the livery folder's `.workshop.json` after the first upload, so repeat uploads update the same item with no user input (the whole livery folder is uploaded verbatim). The preview image used for the item is also saved in the livery folder (`.workshop-preview.*`) and reused on later uploads unless a new one is chosen; an oversized preview is automatically downscaled/re-encoded below Steam's 1 MiB limit before upload. Before updating, the recorded id is verified against Steam — if the item was deleted on the Workshop, a fresh item is published and the new id is recorded instead of failing. Requires the Steam client running with an account that owns the Playtest app (temporary licenses such as Family Sharing / free weekends cannot publish). Deleting the livery locally does not remove the Steam item.
+**Workshop publish:** the header-bar **Upload** button (and the painter toolbar's upload button, which silently saves a dirty canvas first) publishes a custom livery as a standalone Workshop mod for the Playtest app (appid `4004140`), or a new version of the same item on repeat uploads. The dialog collects title/description/visibility/tags/change-note/preview, pre-filled from the previous version (live Steam metadata → local `.workshop.json` sidecar inside the livery folder → manifest defaults), and shows progress plus the item URL on success. The published item id is recorded automatically in the livery folder's `.workshop.json` after the first upload, so repeat uploads update the same item with no user input (the whole livery folder is uploaded verbatim, except the private `.workshop.json` sidecar). The preview image used for the item is also saved in the livery folder (`.workshop-preview.*`) and reused on later uploads unless a new one is chosen, and it ships inside the uploaded mod content as well; an oversized preview is automatically downscaled/re-encoded below Steam's 1 MiB limit before upload. Before updating, the recorded id is verified against Steam — if the item was deleted on the Workshop, a fresh item is published and the new id is recorded instead of failing. Requires the Steam client running with an account that owns the Playtest app (temporary licenses such as Family Sharing / free weekends cannot publish). Deleting the livery locally does not remove the Steam item.
 
 ### Auto-Update (Windows)
 
@@ -200,7 +200,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 ### Tech Stack
 
-- **Version:** v1.4.1
+- **Version:** v1.4.2
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
@@ -212,6 +212,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 ```bash
 npm install
 npm start          # Launch in dev mode (no build step needed)
+npm start steam    # Launch in dev mode as the Steam Workshop variant (optional workshop path arg)
 ```
 
 ### Architecture (High-Level)

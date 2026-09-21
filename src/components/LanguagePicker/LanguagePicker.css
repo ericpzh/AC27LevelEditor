@@ -1,0 +1,44 @@
+#screen-language {
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0f1117 0%, #1a1d27 50%, #0f1117 100%);
+}
+
+[data-theme="light"] #screen-language {
+  background: linear-gradient(135deg, #e8eaed 0%, #f2f4f7 50%, #e8eaed 100%);
+}
+
+.language-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 48px 56px;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+.language-card h1 {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.language-sub {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 28px;
+}
+
+.language-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.language-actions .language-btn {
+  flex: 1;
+  justify-content: center;
+}

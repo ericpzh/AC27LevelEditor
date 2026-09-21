@@ -64,6 +64,7 @@ vi.stubGlobal('electronAPI', {
 
   // App version
   getAppVersion: () => mockIpcInvoke('get-app-version'),
+  isWorkshopBuild: () => mockIpcInvoke('is-workshop-build'),
 
   // Cache
   getCachedLang: () => mockIpcInvoke('get-cached-lang'),
