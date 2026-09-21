@@ -4482,6 +4482,7 @@ app.on('will-quit', () => {
   stopUdpListener();
   stopApiServer();
   voiceStt.dispose();
+  steamWorkshop.dispose();
 });
 
 app.on('window-all-closed', () => {

@@ -904,17 +904,32 @@ alongside the others; `tests/setup.js` stubs them.
 
 ## Workshop publish (upload)
 
-Main-process module `electron/steam-workshop.js` (lazy `require('steamworks.js')`,
-so unit tests and machines without Steam never crash at load; injectable fake via
-`_setSteamworksForTests`/`_resetSteamworksForTests`). Always publishes to the
-single constant host **Playtest app `4004140`** (`STEAM_WORKSHOP_APP_ID`, literal
-fallback when the ESM `src/utils/constants/steam.js` can't be `require`d),
-initialised **exactly once per process** (re-init hangs) — deliberately no
-cross-app / Spacewar (`480`) fallback probe, so the editor never accrues playtime
-on a game the user did not launch. `isAvailable()` distinguishes
-`STEAM_UNAVAILABLE` (no module / init throw) from `NO_LICENSE`
-(`apps.isSubscribedApp(4004140)` false — Family Sharing / free weekends / playtest
-keys cannot publish).
+Main-process module `electron/steam-workshop.js` orchestrates the upload (sidecar
+identity, content pack, preview handling, sidecar write) but **never calls
+`SteamAPI_Init` itself in production**. Every Steam SDK call goes through
+`electron/steam-workshop-bridge.js`, which lazily spawns
+`electron/steam-workshop-worker.js` as a **short-lived plain-node child**
+(`process.execPath` + `ELECTRON_RUN_AS_NODE=1`; shipped as extraResources beside
+`steam-workshop-core.js`, and the native `steamworks.js` is required from its
+asar-unpacked path). Steam reports the host app as "running" for the entire
+lifetime of the process that called `SteamAPI_Init`, so the worker is torn down
+promptly — `release()` after each dialog prefill and each publish (300 ms grace),
+an 8 s idle safety net, and `dispose()` from `main.js` `will-quit` — and Steam
+clears the status as soon as the child exits. The pure Steam logic lives in
+`electron/steam-workshop-core.js` (no `electron`/`fs` imports) so it runs
+identically in the worker and in-process. Unit tests inject a fake steamworks lib
+via `_setSteamworksForTests`/`_resetSteamworksForTests`, which selects the
+**in-process** transport (`_inProcessOps` in `steam-workshop.js`) and spawns no
+child.
+
+Always publishes to the single constant host **Playtest app `4004140`**
+(`STEAM_WORKSHOP_APP_ID`, literal fallback when the ESM
+`src/utils/constants/steam.js` can't be `require`d), initialised **exactly once
+per worker process** (re-init hangs) — deliberately no cross-app / Spacewar (`480`)
+fallback probe, so the editor never accrues playtime on a game the user did not
+launch. The `availability` op distinguishes `STEAM_UNAVAILABLE` (no module / init
+throw) from `NO_LICENSE` (`apps.isSubscribedApp(4004140)` false — Family Sharing /
+free weekends / playtest keys cannot publish).
 
 Identity is a `.workshop.json` sidecar inside the livery folder (travels with the
 livery, survives cache resets). Precedence for the dialog prefill is **live Steam
@@ -1131,6 +1146,14 @@ manifest for a free-form zip folder).
   save+reuse, `ensurePreviewUnderLimit` integration (oversized preview is shrunk
   and the shrunk path is what reaches `updateItem`), `PREVIEW_LIMIT` mapping,
   progress forwarding and temp cleanup.
+- `tests/unit/steam-workshop-worker.test.js` — the worker transport:
+  `steam-workshop-core` against a fake lib (init failure / `NO_LICENSE` /
+  `createItem` id stringify / `PREVIEW_LIMIT` mapping / BigInt-safe
+  `normalizeItem`), and `steam-workshop-bridge` driving the **real**
+  `steam-workshop-worker.js` child over stdio with a temp fake steamworks module
+  (availability author, missing/create/update + progress, `NO_LICENSE`,
+  coded-error frames, and **child exit on `release()`** — the Steam
+  "running"-status teardown).
 - `tests/unit/livery-workshop-packaging.test.js` — `workshopModName`,
   `buildWorkshopContent` (verbatim copy, dot-file exclusion, `mod_info.json`
   synthesis, coded errors, multi-part, cleanup), `buildWorkshopPreview` (coded

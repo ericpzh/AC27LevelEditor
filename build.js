@@ -49,6 +49,15 @@ const BASE = {
   ],
 };
 
+// The livery Workshop uploader runs SteamAPI in a short-lived plain-node child
+// (electron/steam-workshop-worker.js) so Steam stops reporting the game as
+// running once the upload finishes. Plain-node children cannot read inside the
+// asar, so the worker + its shared core ship as real files in resources/.
+const WORKSHOP_WORKER_RESOURCES = [
+  { from: 'electron/steam-workshop-worker.js', to: 'steam-workshop-worker.js' },
+  { from: 'electron/steam-workshop-core.js', to: 'steam-workshop-core.js' },
+];
+
 /** Voice-only extraResources — everything the vosk worker child needs at
  *  runtime (it runs as plain node via ELECTRON_RUN_AS_NODE, which has no
  *  asar support, so these land beside the app in resources/).
@@ -80,7 +89,7 @@ const win = {
   target: 'portable',
   icon: 'icon.ico',
   artifactName: 'AC27Editor.${ext}',
-  extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg.exe', to: 'ffmpeg.exe' }],
+  extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg.exe', to: 'ffmpeg.exe' }, ...WORKSHOP_WORKER_RESOURCES],
 };
 
 if (isVoice) {
@@ -135,7 +144,7 @@ if (isMac) config.mac = {
   icon: 'icon.png',
   category: 'public.app-category.utilities',
   artifactName: 'AC27Editor.${ext}',
-  extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg', to: 'ffmpeg' }],
+  extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg', to: 'ffmpeg' }, ...WORKSHOP_WORKER_RESOURCES],
 };
 if (isLinux) config.linux = {
   target: ['AppImage', 'deb'],
@@ -143,7 +152,7 @@ if (isLinux) config.linux = {
   category: 'Utility',
   maintainer: 'AC27 Editor contributors',
   artifactName: 'AC27Editor.${ext}',
-  extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg', to: 'ffmpeg' }],
+  extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg', to: 'ffmpeg' }, ...WORKSHOP_WORKER_RESOURCES],
 };
 
 builder.build({ config, publish }).then((result) => {

@@ -14,6 +14,8 @@
 const fs = require('fs');
 const path = require('path');
 const livery = require('./livery');
+const core = require('./steam-workshop-core');
+const bridge = require('./steam-workshop-bridge');
 
 // Single source of truth lives in src/utils/constants/steam.js (ESM). The
 // main process is CommonJS and require(esm) is not portable, so keep literal
@@ -29,6 +31,9 @@ try {
   const steamConsts = require('../src/utils/constants/steam.js');
   if (steamConsts && steamConsts.STEAM_APP_ID) STEAM_WORKSHOP_APP_ID = String(steamConsts.STEAM_APP_ID);
 } catch (_) {}
+
+// The short-lived worker owns SteamAPI_Init; it needs the host app id.
+bridge.appId = STEAM_WORKSHOP_APP_ID;
 
 const SIDECAR_NAME = (livery && livery.WORKSHOP_SIDECAR) || '.workshop.json';
 // Saved preview image inside the livery folder (`.workshop-preview.<ext>`):
@@ -104,11 +109,7 @@ function _short(s, max = 120) {
 
 // Full native-side error text for the log/detail (napi errors carry the
 // Steam reason split across .code/.message, e.g. code='GenericFailure').
-function _describeNativeError(err, fallback) {
-  const code = err && err.code;
-  const msg = (err && err.message) || String(err == null ? fallback : err);
-  return code && code !== msg ? `${code}: ${msg}` : msg;
-}
+const _describeNativeError = core.describeNativeError;
 
 // Module-load marker: proves the main process runs the current build.
 // Renderer code hot-reloads without restart while main does not, so a log
@@ -147,27 +148,13 @@ function _requireSteamworks() {
   }
 }
 
-// ─── Client singleton ───────────────────────────────────
+// ─── Client singleton (in-process / tests) ──────────────
 // steamworks.js 0.4.0 returns a client object from init(appId) carrying the
 // workshop/localplayer/apps namespaces. (Newer typings expose them on the
-// module itself — support both shapes.)
+// module itself — support both shapes.) In production SteamAPI_Init runs in
+// the worker, never here — see _inProcessOps / _getOps below.
 let _client = null;
 let _clientAppId = null;
-
-function _initLibClient(lib, appIdNum) {
-  const maybe = lib.init(appIdNum); // throws when Steam is not running
-  if (maybe && maybe.workshop) return maybe;
-  if (lib && lib.workshop) return lib;
-  throw _codedError('STEAM_UNAVAILABLE', 'steamworks init returned no workshop namespace');
-}
-
-function _isSubscribed(client, appIdNum) {
-  try {
-    return Boolean(client.apps.isSubscribedApp(appIdNum));
-  } catch (_) {
-    return false;
-  }
-}
 
 // Resolve the single Workshop host client, initialising SteamAPI once per
 // process (re-init hangs). A failed target init surfaces as STEAM_UNAVAILABLE —
@@ -183,27 +170,16 @@ function _resolveClient() {
     );
   }
   const target = Number(STEAM_WORKSHOP_APP_ID);
-  let shaped = null;
-  let initError = null;
   try {
-    const raw = lib.init(target); // throws when Steam is down or the app is not owned
-    shaped = (raw && raw.workshop) ? raw : (lib && lib.workshop ? lib : null);
-  } catch (err) {
-    initError = err;
-    shaped = null;
-  }
-  if (shaped) {
-    if (!_isSubscribed(shaped, target)) {
-      _wlog(`init app ${target} ok, not subscribed -> NO_LICENSE`);
-      throw _codedError('NO_LICENSE', `not subscribed to app ${target}`);
-    }
+    const client = core.initClient(lib, target);
     _wlog(`init app ${target} ok, subscribed`);
-    _client = { client: shaped, appId: String(target) };
+    _client = { client, appId: String(target) };
     _clientAppId = target;
     return _client;
+  } catch (err) {
+    _wlog(`init app ${target} failed:`, (err && err.code) || (err && err.message) || err);
+    throw _codedError(_asCode(err, 'STEAM_UNAVAILABLE'), _describeNativeError(err, 'STEAM_UNAVAILABLE'));
   }
-  _wlog(`init app ${target} failed:`, (initError && (initError.code || initError.message)) || initError);
-  throw _codedError('STEAM_UNAVAILABLE', 'steamworks init failed: Steam client not running');
 }
 
 function _getClient(appId) {
@@ -217,10 +193,66 @@ function _getClient(appId) {
   const lib = _requireSteamworks();
   if (!lib) throw _codedError('STEAM_UNAVAILABLE');
   try {
-    return _initLibClient(lib, Number(appId));
+    return core.initClient(lib, Number(appId));
   } catch (err) {
     throw _codedError(_asCode(err, 'STEAM_UNAVAILABLE'), _describeNativeError(err, 'STEAM_UNAVAILABLE'));
   }
+}
+
+// ─── Steam operation transport ──────────────────────────
+// Tests inject a fake steamworks lib (`_setSteamworksForTests`) and run fully
+// in-process. Production routes every SteamAPI call through the short-lived
+// worker (electron/steam-workshop-worker.js) so SteamAPI_Init never runs in
+// the long-lived Electron main process — otherwise Steam reports the game as
+// running until the editor quits.
+
+function _inProcessOps() {
+  const appId = Number(STEAM_WORKSHOP_APP_ID);
+  return {
+    // The in-process client is a test/tooling concern; nothing to tear down.
+    release() {},
+    async availability() {
+      const lib = _requireSteamworks();
+      if (!lib) {
+        return { available: false, appId: _resolveAppId(), reason: 'STEAM_UNAVAILABLE', author: '' };
+      }
+      try {
+        const { client, appId: gateAppId } = _resolveClient();
+        return { available: true, appId: gateAppId, author: core.getAuthor(client) };
+      } catch (err) {
+        return {
+          available: false,
+          appId: _resolveAppId(),
+          reason: (err && err.code) || 'STEAM_UNAVAILABLE',
+          author: '',
+        };
+      }
+    },
+    getItem(publishedFileId) {
+      return core.readLiveItem(_getClient(_resolveAppId()), publishedFileId);
+    },
+    missing(publishedFileId) {
+      return core.itemMissing(_getClient(_resolveAppId()), publishedFileId);
+    },
+    createItem() {
+      return core.createItem(_getClient(_resolveAppId()), appId);
+    },
+    updateItem(publishedFileId, details, onProgress) {
+      return core.submitUpdate(_getClient(_resolveAppId()), publishedFileId, details, appId, onProgress);
+    },
+  };
+}
+
+function _getOps() {
+  return _hasInjectedLib ? _inProcessOps() : bridge;
+}
+
+// Best-effort teardown after a high-level operation so Steam stops reporting
+// the app as running promptly (worker only; no-op for the in-process ops).
+function _releaseOps(ops) {
+  try {
+    if (ops && typeof ops.release === 'function') ops.release();
+  } catch (_) {}
 }
 
 function _resolveAppId() {
@@ -258,6 +290,11 @@ function toPublicError(err, fallback = 'UPLOAD_FAILED') {
   return { error: fallback, detail: `${rawCode}: ${msg}` };
 }
 
+// Synchronous, in-process availability probe. Production must NOT call this:
+// it would run SteamAPI_Init in the long-lived main process (the exact thing
+// the worker exists to avoid). It is used by tests via `_setSteamworksForTests`
+// and by `_inProcessOps().availability` for tooling; production goes through
+// the worker's async `availability` op.
 function isAvailable() {
   const lib = _requireSteamworks();
   if (!lib) return { available: false, appId: _resolveAppId(), reason: 'STEAM_UNAVAILABLE' };
@@ -348,19 +385,7 @@ function parseWorkshopId(input) {
   return m ? m[1] : null;
 }
 
-function workshopItemUrl(publishedFileId) {
-  return `https://steamcommunity.com/sharedfiles/filedetails/?id=${publishedFileId}`;
-}
-
-function _toBigItemId(id) {
-  try {
-    return BigInt(String(id));
-  } catch (_) {
-    const n = Number(id);
-    if (Number.isFinite(n)) return n;
-    return id;
-  }
-}
+const workshopItemUrl = core.workshopItemUrl;
 
 function _resolveOwnLiveryDir(gameRoot, folder) {
   if (!gameRoot || folder == null) return null;
@@ -392,109 +417,97 @@ async function readPublishInfo(gameRoot, folder) {
   if (!manifest) return { success: false, error: 'NO_MANIFEST' };
 
   const sidecar = readSidecar(dir);
-  const gate = isAvailable();
-
-  let author = '';
-  if (gate.available) {
-    try {
-      author = _getClient(gate.appId).localplayer.getName() || '';
-    } catch (_) {
-      author = '';
-    }
-  }
-  // No title line: the default title is composed in the renderer so it can be
-  // localized (airline display name + aircraft type + "Livery"/"涂装").
-  const defaultDescription = [
-    manifest.targetPlaneId ? `Aircraft: ${manifest.targetPlaneId}` : '',
-    manifest.airline ? `Airline: ${manifest.airline}` : '',
-    author ? `Author: ${author}` : '',
-    '',
-    'Created with the AC27 Editor.',
-  ].filter((line, i, arr) => line !== '' || arr[i - 1] !== '').join('\n').trim();
-
-  const publishedFileId = sidecar && sidecar.publishedFileId ? String(sidecar.publishedFileId) : null;
-
-  // Prefer the preview saved from the previous upload (the exact image the
-  // Workshop item uses), falling back to the livery texture thumbnail.
-  let previewDataUrl = null;
+  const ops = _getOps();
+  const gate = await ops.availability();
+  const author = gate.author || '';
   try {
-    const saved = _savedPreviewPath(dir);
-    if (saved) {
-      const img = livery.readDiskImage(saved);
-      if (img && img.success) previewDataUrl = img.imageDataUrl;
-    }
-  } catch (_) {}
-  if (!previewDataUrl) {
-    try {
-      const thumb = livery.readLiveryThumbnail(gameRoot, folder, 'mine');
-      if (thumb && thumb.success) previewDataUrl = thumb.imageDataUrl;
-    } catch (_) {}
-  }
+    // No title line: the default title is composed in the renderer so it can be
+    // localized (airline display name + aircraft type + "Livery"/"涂装").
+    const defaultDescription = [
+      manifest.targetPlaneId ? `Aircraft: ${manifest.targetPlaneId}` : '',
+      manifest.airline ? `Airline: ${manifest.airline}` : '',
+      author ? `Author: ${author}` : '',
+      '',
+      'Created with the AC27 Editor.',
+    ].filter((line, i, arr) => line !== '' || arr[i - 1] !== '').join('\n').trim();
 
-  const info = {
-    success: true,
-    available: gate.available,
-    appId: gate.appId,
-    reason: gate.reason,
-    folder: String(folder),
-    publishedFileId,
-    url: publishedFileId ? workshopItemUrl(publishedFileId) : (sidecar && sidecar.url) || null,
-    title: (sidecar && sidecar.title) || '',
-    description: (sidecar && sidecar.description) || defaultDescription,
-    airline: manifest.airline || '',
-    targetPlaneId: manifest.targetPlaneId || '',
-    visibility: (sidecar && Number.isFinite(Number(sidecar.visibility)))
-      ? Number(sidecar.visibility)
-      : DEFAULT_VISIBILITY,
-    tags: (sidecar && Array.isArray(sidecar.tags) && sidecar.tags.length)
-      ? sidecar.tags.slice()
-      : DEFAULT_TAGS.slice(),
-    previewDataUrl,
-    author,
-  };
+    const publishedFileId = sidecar && sidecar.publishedFileId ? String(sidecar.publishedFileId) : null;
 
-  // Overlay live Steam metadata when the item exists (best-effort — a
-  // failed lookup keeps the sidecar values so the dialog still opens).
-  if (gate.available && publishedFileId) {
+    // Prefer the preview saved from the previous upload (the exact image the
+    // Workshop item uses), falling back to the livery texture thumbnail.
+    let previewDataUrl = null;
     try {
-      const liveItem = await readLiveItem(gate.appId, publishedFileId);
-      if (liveItem) {
-        if (liveItem.title) info.title = liveItem.title;
-        if (liveItem.description) info.description = liveItem.description;
-        if (liveItem.visibility != null) info.visibility = liveItem.visibility;
-        if (liveItem.tags.length) info.tags = liveItem.tags;
-        if (liveItem.url) info.url = liveItem.url;
-        _wlog(`prefill folder=${folder} live metadata applied`);
-      } else {
-        // Confirmed gone (deleted on the Workshop): forget the stale
-        // association so the dialog shows a fresh publish, not a dead URL.
-        info.publishedFileId = null;
-        info.url = null;
-        _wlog(`prefill folder=${folder} recorded item ${publishedFileId} no longer exists`);
+      const saved = _savedPreviewPath(dir);
+      if (saved) {
+        const img = livery.readDiskImage(saved);
+        if (img && img.success) previewDataUrl = img.imageDataUrl;
       }
-    } catch (err) {
-      _wlog(`prefill folder=${folder} live lookup failed: ${_short(_describeNativeError(err, ''), 160)}`);
+    } catch (_) {}
+    if (!previewDataUrl) {
+      try {
+        const thumb = livery.readLiveryThumbnail(gameRoot, folder, 'mine');
+        if (thumb && thumb.success) previewDataUrl = thumb.imageDataUrl;
+      } catch (_) {}
     }
-  } else {
-    _wlog(`prefill folder=${folder} available=${gate.available} sidecar=${Boolean(publishedFileId)}`);
+
+    const info = {
+      success: true,
+      available: gate.available,
+      appId: gate.appId,
+      reason: gate.reason,
+      folder: String(folder),
+      publishedFileId,
+      url: publishedFileId ? workshopItemUrl(publishedFileId) : (sidecar && sidecar.url) || null,
+      title: (sidecar && sidecar.title) || '',
+      description: (sidecar && sidecar.description) || defaultDescription,
+      airline: manifest.airline || '',
+      targetPlaneId: manifest.targetPlaneId || '',
+      visibility: (sidecar && Number.isFinite(Number(sidecar.visibility)))
+        ? Number(sidecar.visibility)
+        : DEFAULT_VISIBILITY,
+      tags: (sidecar && Array.isArray(sidecar.tags) && sidecar.tags.length)
+        ? sidecar.tags.slice()
+        : DEFAULT_TAGS.slice(),
+      previewDataUrl,
+      author,
+    };
+
+    // Overlay live Steam metadata when the item exists (best-effort — a
+    // failed lookup keeps the sidecar values so the dialog still opens).
+    if (gate.available && publishedFileId) {
+      try {
+        const liveItem = await ops.getItem(publishedFileId);
+        if (liveItem) {
+          if (liveItem.title) info.title = liveItem.title;
+          if (liveItem.description) info.description = liveItem.description;
+          if (liveItem.visibility != null) info.visibility = liveItem.visibility;
+          if (liveItem.tags.length) info.tags = liveItem.tags;
+          if (liveItem.url) info.url = liveItem.url;
+          _wlog(`prefill folder=${folder} live metadata applied`);
+        } else {
+          // Confirmed gone (deleted on the Workshop): forget the stale
+          // association so the dialog shows a fresh publish, not a dead URL.
+          info.publishedFileId = null;
+          info.url = null;
+          _wlog(`prefill folder=${folder} recorded item ${publishedFileId} no longer exists`);
+        }
+      } catch (err) {
+        _wlog(`prefill folder=${folder} live lookup failed: ${_short(_describeNativeError(err, ''), 160)}`);
+      }
+    } else {
+      _wlog(`prefill folder=${folder} available=${gate.available} sidecar=${Boolean(publishedFileId)}`);
+    }
+    return info;
+  } finally {
+    // No Steam client should outlive the dialog prefill.
+    _releaseOps(ops);
   }
-  return info;
 }
 
 // Async half of the merge: overlay live Steam metadata when the item exists.
-// Split out so the sync IPC path stays total; publish flows await this.
+// Kept for tooling/tests; publish flows use the ops transport directly.
 async function readLiveItem(appId, publishedFileId) {
-  const client = _getClient(appId);
-  const item = await client.workshop.getItem(_toBigItemId(publishedFileId), { includeLongDescription: true });
-  if (!item) return null;
-  return {
-    title: item.title || '',
-    description: item.description || '',
-    visibility: Number.isFinite(Number(item.visibility)) ? Number(item.visibility) : null,
-    tags: Array.isArray(item.tags) ? item.tags.slice() : [],
-    url: item.url || workshopItemUrl(publishedFileId),
-    previewUrl: item.previewUrl || null,
-  };
+  return core.readLiveItem(_getClient(appId), publishedFileId);
 }
 
 // ─── Publish ────────────────────────────────────────────
@@ -502,50 +515,6 @@ async function readLiveItem(appId, publishedFileId) {
 function _asTags(input) {
   if (Array.isArray(input)) return input.map(t => String(t).trim()).filter(Boolean);
   return String(input == null ? '' : input).split(',').map(t => t.trim()).filter(Boolean);
-}
-
-// True when the item is gone (deleted remotely or otherwise inaccessible). A
-// failed lookup is treated as "still exists" so a transient API error never
-// silently forks a fresh item.
-async function _itemMissing(client, publishedFileId) {
-  try {
-    const item = await client.workshop.getItem(_toBigItemId(publishedFileId));
-    return !item;
-  } catch (_) {
-    return false;
-  }
-}
-
-// Steam's `k_EResultLimitExceeded` (surfaced as `GenericFailure: limit
-// exceeded`) means the preview image is too large (must be < 1 MiB) or the
-// user's Steam Cloud quota is full — not an update rate limit. Give it its own
-// code so the dialog explains the real cause.
-function _uploadError(err) {
-  const detail = _describeNativeError(err, 'UPLOAD_FAILED');
-  const code = /limit exceeded/i.test(detail) ? 'PREVIEW_LIMIT' : 'UPLOAD_FAILED';
-  return _codedError(code, detail);
-}
-
-// Promisified `updateItemWithCallback` (Steam hands back progress + result).
-function _submitUpdate(client, publishedFileId, details, appId, progressCb) {
-  return new Promise((resolve, reject) => {
-    try {
-      client.workshop.updateItemWithCallback(
-        _toBigItemId(publishedFileId),
-        details,
-        Number(appId),
-        (data) => {
-          if (data && data.needsToAcceptAgreement) reject(_codedError('STEAM_AGREEMENT'));
-          else resolve(data);
-        },
-        (err) => reject(_uploadError(err)),
-        progressCb,
-        500,
-      );
-    } catch (err) {
-      reject(_uploadError(err));
-    }
-  });
 }
 
 async function publishLivery(gameRoot, folder, meta, onProgress) {
@@ -557,12 +526,15 @@ async function publishLivery(gameRoot, folder, meta, onProgress) {
   const title = String(m.title || '').trim();
   if (!title) throw _codedError('BAD_TITLE');
 
-  const gate = isAvailable();
-  if (!gate.available) throw _codedError(gate.reason || 'STEAM_UNAVAILABLE');
+  const ops = _getOps();
+  const gate = await ops.availability();
+  if (!gate.available) {
+    _releaseOps(ops);
+    throw _codedError(gate.reason || 'STEAM_UNAVAILABLE');
+  }
   // Single constant host — a stale sidecar appId from another setup never
   // diverts the upload elsewhere.
   const appId = gate.appId;
-  const client = _getClient(appId);
 
   // The Workshop item id is remembered locally in the livery folder's
   // `.workshop.json` sidecar, written on every successful publish. A livery
@@ -575,7 +547,7 @@ async function publishLivery(gameRoot, folder, meta, onProgress) {
   // between uploads (Steam answers such an update with "a file was not
   // found"). Verify it still exists; a confirmed-missing item republishes as
   // a fresh item instead of failing.
-  if (publishedFileId && await _itemMissing(client, publishedFileId)) {
+  if (publishedFileId && await ops.missing(publishedFileId)) {
     _wlog(`recorded item ${publishedFileId} no longer exists — publishing a new item`);
     publishedFileId = null;
   }
@@ -644,16 +616,9 @@ async function publishLivery(gameRoot, folder, meta, onProgress) {
     }
 
     if (!publishedFileId) {
-      let created;
-      try {
-        _wlog(`createItem app=${appId}`);
-        created = await client.workshop.createItem(Number(appId));
-      } catch (err) {
-        throw _codedError('CREATE_FAILED', _describeNativeError(err, 'CREATE_FAILED'));
-      }
-      if (!created || created.itemId == null) throw _codedError('CREATE_FAILED');
-      if (created.needsToAcceptAgreement) throw _codedError('STEAM_AGREEMENT');
-      publishedFileId = String(created.itemId);
+      _wlog(`createItem app=${appId}`);
+      const created = await ops.createItem();
+      publishedFileId = created.itemId;
       _wlog(`createItem ok id=${publishedFileId}`);
     } else {
       _wlog(`update existing id=${publishedFileId}`);
@@ -691,23 +656,16 @@ async function publishLivery(gameRoot, folder, meta, onProgress) {
 
     _wlog(`updateItem id=${publishedFileId} title=${_short(title, 80)}`);
     try {
-      await _submitUpdate(client, publishedFileId, details, appId, progressCb);
+      await ops.updateItem(publishedFileId, details, progressCb);
     } catch (err) {
       // The item may have been deleted after the existence check (or while the
       // upload ran). Create a replacement once instead of surfacing a failure.
-      if (await _itemMissing(client, publishedFileId)) {
+      if (await ops.missing(publishedFileId)) {
         _wlog(`update FAILED and item ${publishedFileId} is gone — creating a replacement`);
-        let created;
-        try {
-          created = await client.workshop.createItem(Number(appId));
-        } catch (createErr) {
-          throw _codedError('CREATE_FAILED', _describeNativeError(createErr, 'CREATE_FAILED'));
-        }
-        if (!created || created.itemId == null) throw _codedError('CREATE_FAILED');
-        if (created.needsToAcceptAgreement) throw _codedError('STEAM_AGREEMENT');
-        publishedFileId = String(created.itemId);
+        const created = await ops.createItem();
+        publishedFileId = created.itemId;
         _wlog(`createItem ok id=${publishedFileId}`);
-        await _submitUpdate(client, publishedFileId, details, appId, progressCb);
+        await ops.updateItem(publishedFileId, details, progressCb);
       } else {
         throw err;
       }
@@ -744,7 +702,15 @@ async function publishLivery(gameRoot, folder, meta, onProgress) {
     try {
       if (typeof previewShrinkCleanup === 'function') previewShrinkCleanup();
     } catch (_) {}
+    // Tear the Steam worker down right after the upload so Steam stops
+    // reporting the app as running.
+    _releaseOps(ops);
   }
+}
+
+// App-level teardown (main.js will-quit): make sure no worker survives.
+function dispose() {
+  try { bridge.dispose(); } catch (_) {}
 }
 
 module.exports = {
@@ -762,6 +728,7 @@ module.exports = {
   toPublicError,
   getLogPath,
   appendLogLine,
+  dispose,
   _setSteamworksForTests,
   _resetSteamworksForTests,
   _getClient,
