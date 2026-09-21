@@ -12,6 +12,11 @@ import {
   queryWorkshopTotal,
 } from '../../scripts/create-workshop-item.mjs';
 
+// Stand-in for "any app that isn't the target". The guard only distinguishes
+// the target app from everything else, so the fixture must not reuse a real
+// (now retired) app id.
+const OTHER_APP_ID = '999999';
+
 describe('create-workshop-item — VDF', () => {
   it('creates a VDF with appid and no publishedfileid', () => {
     const vdf = buildWorkshopVdf({
@@ -31,7 +36,7 @@ describe('create-workshop-item — VDF', () => {
   });
 
   it('includes publishedfileid when given (update form)', () => {
-    const vdf = buildWorkshopVdf({ appid: '4004140', publishedfileid: '3793213548' });
+    const vdf = buildWorkshopVdf({ appid: '3328490', publishedfileid: '3793213548' });
     expect(vdf).toContain('"publishedfileid"');
     expect(vdf).toContain('"3793213548"');
   });
@@ -110,10 +115,10 @@ describe('create-workshop-item — existence guard', () => {
 
   it('reads the real API shape (consumer_app_id with underscore)', () => {
     const json = { response: { publishedfiledetails: [
-      { publishedfileid: '3793213548', result: 1, creator_app_id: 4004140, consumer_app_id: 4004140 },
+      { publishedfileid: '3793213548', result: 1, creator_app_id: OTHER_APP_ID, consumer_app_id: OTHER_APP_ID },
     ] } };
     const out = interpretPublishedFileDetails(json, { targetAppId: '3328490', fileId: '3793213548' });
-    expect(out).toMatchObject({ status: 'exists-other-app', itemAppId: '4004140' });
+    expect(out).toMatchObject({ status: 'exists-other-app', itemAppId: OTHER_APP_ID });
   });
 
   it('falls back to creator_appid when consumer_appid is absent', () => {
@@ -126,7 +131,7 @@ describe('create-workshop-item — existence guard', () => {
 
   it('reports exists-other-app for a live item under another app', () => {
     const json = { response: { publishedfiledetails: [
-      { publishedfileid: '3793213548', result: 1, consumer_appid: 4004140 },
+      { publishedfileid: '3793213548', result: 1, consumer_appid: OTHER_APP_ID },
     ] } };
     const out = interpretPublishedFileDetails(json, { targetAppId: '3328490', fileId: '3793213548' });
     expect(out.status).toBe('exists-other-app');

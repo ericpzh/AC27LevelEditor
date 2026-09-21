@@ -23,7 +23,7 @@ afterEach(() => {
 
 describe('findGameRoot', () => {
   it('walks up from a subfolder inside the game root', () => {
-    const gameRoot = makeGameRoot(path.join(tmp, 'Airport Control 25 Playtest'));
+    const gameRoot = makeGameRoot(path.join(tmp, 'Airport Control 27'));
     const exeDir = path.join(gameRoot, 'AC27LevelEditor');
     fs.mkdirSync(exeDir, { recursive: true });
 
@@ -45,7 +45,7 @@ describe('findGameRoot', () => {
   });
 
   it('detects a Steam game root via ancestor walk', () => {
-    const gameRoot = makeGameRoot(path.join(tmp, 'steamapps', 'common', 'Airport Control 25 Playtest'));
+    const gameRoot = makeGameRoot(path.join(tmp, 'steamapps', 'common', 'Airport Control 27'));
     const exeDir = path.join(gameRoot, 'AC27LevelEditor');
     fs.mkdirSync(exeDir, { recursive: true });
 
@@ -55,13 +55,13 @@ describe('findGameRoot', () => {
   });
 
   it('finds a game root sibling in the Steam library from a workshop folder', () => {
-    makeGameRoot(path.join(tmp, 'steamapps', 'common', 'Airport Control 25 Playtest'));
+    makeGameRoot(path.join(tmp, 'steamapps', 'common', 'Airport Control 27'));
     const workshop = path.join(tmp, 'steamapps', 'workshop', 'content', '123', '456');
     fs.mkdirSync(workshop, { recursive: true });
 
     const found = findGameRoot([workshop]);
     expect(found).not.toBeNull();
-    expect(found.gameRoot).toBe(path.resolve(tmp, 'steamapps', 'common', 'Airport Control 25 Playtest'));
+    expect(found.gameRoot).toBe(path.resolve(tmp, 'steamapps', 'common', 'Airport Control 27'));
     expect(found.steam).toBe(true);
   });
 

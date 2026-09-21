@@ -29,7 +29,7 @@ describe('SetupScreen — game root auto-detection', () => {
       if (channel === 'detect-game-root') {
         return Promise.resolve({
           found: true,
-          rootPath: 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 25 Playtest',
+          rootPath: 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 27',
           airports: [{ icao: 'ZSJN', name: 'Jinan' }],
           totalFiles: 3,
           steam: true,
@@ -44,15 +44,15 @@ describe('SetupScreen — game root auto-detection', () => {
     await waitFor(() => {
       expect(screen.getByText(/Game folder detected via Steam/)).toBeInTheDocument();
     });
-    expect(screen.getByText('D:\\SteamLibrary\\steamapps\\common\\Airport Control 25 Playtest')).toBeInTheDocument();
+    expect(screen.getByText('D:\\SteamLibrary\\steamapps\\common\\Airport Control 27')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Use this folder/ }));
 
     await waitFor(() => {
-      expect(mockIpcInvoke).toHaveBeenCalledWith('init-airport-cache', 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 25 Playtest');
+      expect(mockIpcInvoke).toHaveBeenCalledWith('init-airport-cache', 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 27');
     });
     expect(useAppStore.getState().screen).toBe('browser');
-    expect(useAppStore.getState().rootPath).toBe('D:\\SteamLibrary\\steamapps\\common\\Airport Control 25 Playtest');
+    expect(useAppStore.getState().rootPath).toBe('D:\\SteamLibrary\\steamapps\\common\\Airport Control 27');
   });
 
   it('never auto-detects on the normal (non-Workshop) build', async () => {
@@ -126,7 +126,7 @@ describe('SetupScreen — Steam Workshop build layout', () => {
       if (channel === 'detect-game-root') {
         return Promise.resolve({
           found: true,
-          rootPath: 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 25 Playtest',
+          rootPath: 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 27',
           airports: [{ icao: 'ZSJN', name: 'Jinan' }],
           totalFiles: 3,
           steam: true,
