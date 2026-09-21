@@ -27,14 +27,16 @@ painter page).
   for a sibling `workshop/content` (the
   `<SteamLibrary>/steamapps/workshop/content` layout — `../../workshop` from
   `<steamapps>/common/<game>`), returning `null` on a non-Steam install
-  (dev/portable/other stores). `listWorkshopLiveries(gameRoot)` scans
-  `<content>/<appid>/<publishedfileid>/` for any directory holding an
+  (dev/portable/other stores). `listWorkshopLiveries(gameRoot)` scans only the
+  configured app's tree, `<content>/<STEAM_APP_ID>/<publishedfileid>/` — an
+  appid folder for another app (e.g. the retired Playtest app) is not owned by
+  the user and is treated as nonexistent — for any directory holding an
   `aircraft_livery_manifest.json` (depth-bounded 4, `AircraftDefaultLivery`
   skipped; the item root may itself be a livery or a pack wrapper
   `Mods/<pack>/<livery>`), returning the same row shape as `listPackDir` but
   with `folder` as the '/'-joined path **relative to the content root**
   (e.g. `3328490/123456789/A20N_CCA`) so the containment-checked read helpers
-  resolve it directly. A 10s `_workshopListCache` (keyed by content dir) keeps
+  resolve it directly. A 10s `_workshopListCache` (keyed by content dir + app id) keeps
   the whole-tree walk off repeated list refreshes. Workshop rows are
   **read-only** in the UI — `CreateTab` treats `pack:'workshop'` like reference
   (`isReadOnly`; Save/Delete disabled, Save As only) with a Steam badge
@@ -1044,7 +1046,7 @@ manifest for a free-form zip folder).
   **Steam Workshop** — `workshopContentDir` resolves the sibling
   `steamapps/workshop/content` and returns `null` off-Steam; `listWorkshopLiveries`
   finds liveries nested in a pack and at the item root (relative folders,
-  non-livery items skipped) and `listLiveries` surfaces them; `readLiveryImage`
+  non-livery items skipped, other apps' appid trees ignored) and `listLiveries` surfaces them; `readLiveryImage`
   with `pack:'workshop'` resolves the relative folder (traversal → `BAD_FOLDER`);
   `resolvePackFolder` resolves a contained folder per pack and rejects
   traversal/missing/no-gameRoot),

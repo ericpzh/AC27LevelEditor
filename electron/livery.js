@@ -8,7 +8,7 @@ const path = require('path');
 const os = require('os');
 const { createZip, listZipFiles, extractZip } = require('../src/utils/zipUtils');
 const { ddsToPngDataUrl } = require('./dds');
-const { STEAM_WORKSHOP_SEGMENT, STEAM_WORKSHOP_CONTENT_SEGMENT } = require('../src/utils/constants/steam.js');
+const { STEAM_WORKSHOP_SEGMENT, STEAM_WORKSHOP_CONTENT_SEGMENT, STEAM_APP_ID } = require('../src/utils/constants/steam.js');
 
 const OWN_PACK = 'AC27 Custom Liveries';
 const REFERENCE_PACK = 'AC27 Realistic Aircraft Livery';
@@ -102,47 +102,49 @@ function _collectWorkshopLiveryDirs(rootDir, relPrefix, out, depth) {
   }
 }
 
-// Every livery found anywhere under the Steam Workshop content tree, as rows
+// Every livery found under the configured app's Steam Workshop content, as rows
 // whose `folder` is the '/'-joined path relative to workshop/content (e.g.
 // "3328490/123456789/A20N_CCA") — resolved back to disk by the read helpers
-// via the same base directory. Best-effort: any I/O failure yields [].
-// A short-TTL cache keyed by the content dir keeps the whole-tree walk off
-// every list refresh (the renderer refetches on each livery-page open).
+// via the same base directory. Only the app we publish under (STEAM_APP_ID) is
+// scanned: an appid folder for another app (e.g. the retired Playtest app) is
+// not content the user owns, so it is treated as nonexistent. Best-effort: any
+// I/O failure yields [].
+// A short-TTL cache keyed by the content dir + app id keeps the walk off every
+// list refresh (the renderer refetches on each livery-page open).
 let _workshopListCache = { key: '', at: 0, rows: null };
 const _WORKSHOP_LIST_TTL_MS = 10000;
 function listWorkshopLiveries(gameRoot) {
   const contentDir = workshopContentDir(gameRoot);
   if (!contentDir) return [];
+  const cacheKey = `${contentDir}\n${STEAM_APP_ID}`;
   const now = Date.now();
-  if (_workshopListCache.key === contentDir && now - _workshopListCache.at < _WORKSHOP_LIST_TTL_MS) {
+  if (_workshopListCache.key === cacheKey && now - _workshopListCache.at < _WORKSHOP_LIST_TTL_MS) {
     return _workshopListCache.rows;
   }
   const rows = [];
-  let appDirs;
-  try { appDirs = fs.readdirSync(contentDir, { withFileTypes: true }); } catch (_) { return []; }
-  for (const app of appDirs) {
-    if (!app.isDirectory() || app.name.startsWith('.')) continue;
-    const appDir = path.join(contentDir, app.name);
-    let items;
-    try { items = fs.readdirSync(appDir, { withFileTypes: true }); } catch (_) { continue; }
-    for (const item of items) {
-      if (!item.isDirectory() || item.name.startsWith('.')) continue;
-      const itemDir = path.join(appDir, item.name);
-      const rels = [];
-      // The item root may itself be a livery folder, a pack of liveries, or a
-      // mod wrapper (Mods/<pack>/<livery>).
-      if (_hasLiveryManifest(itemDir)) rels.push('');
-      else _collectWorkshopLiveryDirs(itemDir, '', rels, 0);
-      for (const rel of rels) {
-        const folder = rel ? `${app.name}/${item.name}/${rel}` : `${app.name}/${item.name}`;
-        try { rows.push(readLiveryRow(contentDir, folder)); } catch (_) {
-          rows.push({ folder, id: '', name: '', airline: '', targetPlaneId: '', hasBasePng: false, mtime: 0, error: 'BAD_MANIFEST' });
-        }
+  const appDir = path.join(contentDir, STEAM_APP_ID);
+  let items;
+  try { items = fs.readdirSync(appDir, { withFileTypes: true }); } catch (_) {
+    _workshopListCache = { key: cacheKey, at: now, rows };
+    return rows;
+  }
+  for (const item of items) {
+    if (!item.isDirectory() || item.name.startsWith('.')) continue;
+    const itemDir = path.join(appDir, item.name);
+    const rels = [];
+    // The item root may itself be a livery folder, a pack of liveries, or a
+    // mod wrapper (Mods/<pack>/<livery>).
+    if (_hasLiveryManifest(itemDir)) rels.push('');
+    else _collectWorkshopLiveryDirs(itemDir, '', rels, 0);
+    for (const rel of rels) {
+      const folder = rel ? `${STEAM_APP_ID}/${item.name}/${rel}` : `${STEAM_APP_ID}/${item.name}`;
+      try { rows.push(readLiveryRow(contentDir, folder)); } catch (_) {
+        rows.push({ folder, id: '', name: '', airline: '', targetPlaneId: '', hasBasePng: false, mtime: 0, error: 'BAD_MANIFEST' });
       }
     }
   }
   rows.sort((a, b) => a.folder.localeCompare(b.folder));
-  _workshopListCache = { key: contentDir, at: now, rows };
+  _workshopListCache = { key: cacheKey, at: now, rows };
   return rows;
 }
 
