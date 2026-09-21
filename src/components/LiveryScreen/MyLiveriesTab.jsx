@@ -33,6 +33,18 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
   const [selected, setSelected] = useState(new Set());
   const { bind, TooltipPortal } = useTooltip();
 
+  // Live mirrors for the imperative cmdRef commands (published below in a
+  // passive effect). Those handles are invoked from outside React's render /
+  // event cycle — the header bar, keyboard shortcuts, and tests calling
+  // cmdRef.current right after a commit — so a handle captured by an earlier
+  // render's closure could still see the pre-load list (mine=[]) and silently
+  // act on nothing. Updated during render, the refs make every published
+  // handle operate on the latest state regardless of which render it came from.
+  const mineRef = useRef(mine);
+  const selectedRef = useRef(selected);
+  mineRef.current = mine;
+  selectedRef.current = selected;
+
   // One folder set across all packs (mine rows carry pack:'mine' for
   // thumbnails/actions, reference + workshop rows are read-only).
   const allRows = useMemo(() => [
@@ -437,13 +449,16 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
   }); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSelectAll = () => {
-    if (allSelected) setSelected(new Set());
-    else setSelected(new Set(mine.map(r => r.folder)));
+    setSelected(prev => {
+      const rows = mineRef.current;
+      const all = rows.length > 0 && rows.every(r => prev.has(r.folder));
+      return all ? new Set() : new Set(rows.map(r => r.folder));
+    });
   };
 
-  const singleSelected = () => (selected.size === 1 ? [...selected][0] : null);
+  const singleSelected = () => (selectedRef.current.size === 1 ? [...selectedRef.current][0] : null);
 
-  const deleteSelected = () => confirmDelete([...selected]);
+  const deleteSelected = () => confirmDelete([...selectedRef.current]);
 
   const exportSelected = () => {
     const folder = singleSelected();

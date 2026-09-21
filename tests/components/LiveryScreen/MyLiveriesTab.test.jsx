@@ -289,6 +289,22 @@ describe('MyLiveriesTab', () => {
     });
   });
 
+  it('a command handle captured before the list loads still acts on the loaded rows', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }) });
+    const cmdRef = { current: {} };
+    renderMine({ cmdRef });
+    // Grab the handle the first (loading) render published — the exact stale
+    // closure the header/test can hold across the async list load. Calling it
+    // after the rows resolve must select the loaded rows, not the empty
+    // pre-load list (which would leave every checkbox unchecked).
+    const staleHandle = cmdRef.current;
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    act(() => { staleHandle.toggleSelectAll(); });
+    await waitFor(() => {
+      expect([...document.querySelectorAll('.livery-select')].every(b => b.checked)).toBe(true);
+    });
+  });
+
   it('delete-selected command confirms and batch-deletes', async () => {
     setupMocks({
       'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }),
