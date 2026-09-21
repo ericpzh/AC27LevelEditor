@@ -5,9 +5,10 @@
 const fs = require('fs');
 const path = require('path');
 const { readAclText } = require('../../src/acl/gatcarc');
+const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
 
 const levelsDir = process.argv[2] ||
-  'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels';
+  path.join(GAME_ROOT, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
 
 const aclFiles = fs.readdirSync(levelsDir)
   .filter(f => f.endsWith('.acl'))

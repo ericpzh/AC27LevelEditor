@@ -79,8 +79,10 @@ Coverage (`npx vitest run --coverage`, provider `@vitest/coverage-v8`, config in
 scoped to the core logic trees — `src/acl/**` + `src/components/EditorScreen/GroundPainter/**` — with
 global thresholds (55/40/48/55 stmt/branch/func/line) that fail the run on regression. The Ground
 Painter save-path integration suites read real game levels from the AC27 install; set
-`AC27_GAME_ROOT=/path/to/Airport Control 25 Playtest` to point at a non-default install — the
-fixture-gated suites skip cleanly (instead of ENOENT-failing) when the level files are absent.
+`AC27_GAME_ROOT=/path/to/game/root` to point at a non-default install — the default
+lives in `tests/helpers/gameRoot.cjs` (change `GAME_DIR_NAME` there once, and every
+suite/dev script follows). The fixture-gated suites skip cleanly (instead of ENOENT-failing)
+when the level files are absent.
 
 | File | Tests | What it validates |
 |------|-------|-------------------|
@@ -588,7 +590,7 @@ Both `tests/integration/_tmp/` and `tests/_reports_/` are gitignored.
 npm run test:all      # or: node tests/run-all.mjs [--game-root <path>]
 ```
 
-Runs all three layers sequentially (Vitest → save integrity 27 files → jetway rebuild 27 v4 files → v4 runway pair extraction → build → Playwright E2E) and reports a pass/fail summary. Default game root: `D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest`.
+Runs all three layers sequentially (Vitest → save integrity 27 files → jetway rebuild 27 v4 files → v4 runway pair extraction → build → Playwright E2E) and reports a pass/fail summary. Default game root: `tests/helpers/gameRoot.cjs` (`GAME_ROOT`), overridable with `--game-root <path>` or `AC27_GAME_ROOT`.
 
 ---
 

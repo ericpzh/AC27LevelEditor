@@ -11,7 +11,7 @@
  *   node tests/integration/test_extract_v4_runway_pairs.js [--root <game-root>]
  *
  * The ZSJN fixture case runs offline; KJFK/KDCA cases require the game root
- * (default: the Airport Control 25 Playtest dir next to this repo) and are
+ * (default: tests/helpers/gameRoot.cjs) and are
  * skipped gracefully when the files are missing.
  */
 

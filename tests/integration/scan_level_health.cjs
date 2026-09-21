@@ -3,8 +3,9 @@
 const fs = require('fs');
 const path = require('path');
 const { parseArchive, decodePayloadToText } = require('../../src/acl/gatcarc');
+const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
 
-const dir = 'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels';
+const dir = path.join(GAME_ROOT, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
 
 const files = fs.readdirSync(dir).sort();
 console.log('FILE'.padEnd(40) + 'BYTES'.padStart(9) + '  PK  NODES  SEGS   IDS  DANGLING  FRAMES');

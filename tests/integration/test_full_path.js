@@ -6,8 +6,9 @@ const fs = require('fs');
 const path = require('path');
 const approach = require('../../src/acl/approach');
 const { readAclText } = require('../../src/acl/gatcarc');
+const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
 
-const BASE = 'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports';
+const BASE = path.join(GAME_ROOT, 'GroundATC_Data', 'StreamingAssets', 'Airports');
 const SPEED = 240 * 0.514444;
 
 const THRESHOLD_GAME = {

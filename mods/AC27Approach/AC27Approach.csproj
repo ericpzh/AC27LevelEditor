@@ -6,7 +6,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>AC27Approach</AssemblyName>
     <RootNamespace>AC27Approach</RootNamespace>
-    <GameDir>D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest</GameDir>
+    <!-- Game install path. Override with the AC27_GAME_ROOT env var (the same
+         single source used by tests/helpers/gameRoot.cjs) or -p:GameDir=... . -->
+    <GameDir Condition="'$(GameDir)' == ''">$(AC27_GAME_ROOT)</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest</GameDir>
   </PropertyGroup>
   <ItemGroup>
     <!-- BepInEx 6 IL2CPP runtime -->

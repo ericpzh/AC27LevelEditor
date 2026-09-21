@@ -80,7 +80,7 @@ npx vitest run tests/integration/flightplan_ref_integrity.test.js # Ground Paint
 npx vitest run tests/components/EditorScreen/GroundPainter/ # Ground Painter pure-math + component suites: snap.js (angle-snap cascade), fillet-connected.test.js (truncation semantics), fillet-virtual.test.js (additive virtual fillet), metrics.test.js (length/path helpers), GroundPainter.test.jsx (mounted component: line tool, fillet tool, Cancel)
 ```
 
-**Game-root suites** — read a real level through `tests/helpers/gameRoot.js` and **skip cleanly** when the game is not installed (override with `AC27_GAME_ROOT=/path/to/Airport Control 25 Playtest`):
+**Game-root suites** — read a real level through `tests/helpers/gameRoot.cjs` (ESM facade `gameRoot.js`; the single machine-path constant) and **skip cleanly** when the game is not installed (override with `AC27_GAME_ROOT=/path/to/game/root`):
 ```bash
 npx vitest run tests/integration/survivor_ref_gate.test.js # Ground Painter §8.5/8.6: a deleted taxiway-node must not leave a survivor taxiway-segment/stand holding a dangling $iref (TaxiwaySegment2DFactory NullReferenceException) — rewire to a live coordinate twin / excise from $rcontent / drop the entry, + the last-resort validation pass, + self-heal of a file already corrupt on disk
 npx vitest run tests/integration/ghost_ref_invariant.test.js # Ground Painter ghost-node invariant: a NEW entity referencing a node that will not be written would serialize "$iref:null" and abort the save — repairGhostRefs re-points it onto a live co-located twin or drops it; survivor entities are never touched

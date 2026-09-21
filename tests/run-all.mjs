@@ -11,12 +11,13 @@
  *   3. Playwright E2E                — 17 tests (~4 min; 15 pass, 2 skipped — E12a overlay timing + fuzz gated on FUZZ_RUN)
  *
  * Covers v4 GATCArc4 binary-format .acl files.
- * Default game root: D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest
+ * Default game root: tests/helpers/gameRoot.cjs (GAME_ROOT) — no literal here.
  */
 
 import { execSync, spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import gameRoot from './helpers/gameRoot.cjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -24,7 +25,7 @@ const ROOT = path.resolve(__dirname, '..');
 // ── Config ────────────────────────────────────────────────────────
 const GAME_ROOT = process.argv.includes('--game-root')
   ? process.argv[process.argv.indexOf('--game-root') + 1]
-  : 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 25 Playtest';
+  : gameRoot.GAME_ROOT;
 
 const PRELOAD = path.join(__dirname, 'integration', 'preload.cjs');
 const SAVE_INTEGRITY = path.join(__dirname, 'integration', 'test_save_integrity_all.js');

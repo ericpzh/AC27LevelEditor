@@ -19,8 +19,10 @@ const {
   buildApprPaths,
 } = require('../../src/acl/sid_goaround');
 const { readAclText } = require('../../src/acl/gatcarc');
+const path = require('path');
+const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
 
-const KJFK_FILE = 'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest/GroundATC_Data/StreamingAssets/Airports/KJFK/Levels/KJFK_leisure_1.demo.acl';
+const KJFK_FILE = path.join(GAME_ROOT, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'KJFK', 'Levels', 'KJFK_leisure_1.demo.acl');
 
 let passed = 0;
 let failed = 0;

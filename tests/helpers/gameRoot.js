@@ -1,15 +1,13 @@
-import { existsSync } from 'fs';
-
 /**
- * AC27 game install root used by integration suites that read real .acl
- * levels from the live game layout. Override in CI / other machines:
- *   AC27_GAME_ROOT=/path/to/Airport Control 25 Playtest
- * Suites that need a level file skip cleanly (with a reason) when it is absent.
+ * ESM facade over `gameRoot.cjs`, the single source of the machine-specific
+ * game-root constant. Exists so vitest suites can `import { levelPath } ...`
+ * while CommonJS dev scripts `require('./gameRoot.cjs')`. Change the path in
+ * `gameRoot.cjs`, never here.
  */
-export const GAME_ROOT = process.env.AC27_GAME_ROOT
-  || 'D:/SteamLibrary/steamapps/common/Airport Control 25 Playtest';
+import gameRoot from './gameRoot.cjs';
 
-export const levelPath = (icao, fileName) =>
-  `${GAME_ROOT}/GroundATC_Data/StreamingAssets/Airports/${icao}/Levels/${fileName}`;
-
-export const gameLevelExists = (icao, fileName) => existsSync(levelPath(icao, fileName));
+export const GAME_ROOT = gameRoot.GAME_ROOT;
+export const GAME_DIR_NAME = gameRoot.GAME_DIR_NAME;
+export const STEAM_COMMON = gameRoot.STEAM_COMMON;
+export const levelPath = gameRoot.levelPath;
+export const gameLevelExists = gameRoot.gameLevelExists;
