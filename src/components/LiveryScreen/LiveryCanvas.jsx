@@ -2290,6 +2290,32 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       return out;
     },
+    // Replace ONE panel's base image in place (the "Import image" action for
+    // the active panel). Only the base layer under that panel changes — the
+    // pen/fill rasters, live objects and every other panel are untouched, so an
+    // import never discards work and needs no unsaved-changes guard. The
+    // previous base is snapshotted first, so Ctrl+Z reverts the import.
+    setPanelBase(index, dataUrl) {
+      const baseCtx = baseCtxRef.current;
+      if (!baseCtx || !dataUrl) return false;
+      const i = Math.min(Math.max(0, index | 0), panelCount - 1);
+      pushSnapshot();
+      baseCtx.save();
+      baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+      baseCtx.globalCompositeOperation = 'source-over';
+      baseCtx.globalAlpha = 1;
+      // Opaque fill under the image: a normalized import is 2048², but the
+      // fill keeps the panel opaque even for a legacy smaller/transparent one.
+      baseCtx.fillStyle = DEFAULT_BASE_COLOR;
+      baseCtx.fillRect(layout.x(i), 0, TEXTURE, TEXTURE);
+      baseCtx.restore();
+      paintBaseImage(baseCtx, layout, i, dataUrl, () => {
+        try { basePixelsRef.current = baseCtx.getImageData(0, 0, W, H); } catch (_) {}
+        scheduleOverlay();
+      });
+      setDirty(true);
+      return true;
+    },
     importSticker,
     removeSticker,
     duplicateSticker,

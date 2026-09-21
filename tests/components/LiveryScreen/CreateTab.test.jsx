@@ -1192,20 +1192,23 @@ describe('CreateTab unsaved-changes guard', () => {
     fireEvent.pointerUp(cv, { pointerId: 1 });
   }
 
-  it('importing over a dirty canvas prompts, then loads on Discard', async () => {
+  it('importing over a dirty canvas loads in place without an unsaved prompt', async () => {
     setupMocks();
     const user = userEvent.setup();
     renderCreate();
     dirtyCanvas();
+    const wrapBefore = document.querySelector('.livery-canvas-wrap');
 
     vi.mocked(fileToDataUrl).mockResolvedValue('data:image/png;base64,RAW');
     const file = new File(['x'], 'paint.png', { type: 'image/png' });
     await user.upload(document.querySelector('.lp-root input[type="file"]'), file);
 
-    await waitFor(() => expect(screen.getByText('Unsaved Changes')).toBeInTheDocument());
-    expect(vi.mocked(fileToDataUrl)).not.toHaveBeenCalled();
-    await user.click(screen.getByText('Discard').closest('button'));
     await waitFor(() => expect(vi.mocked(fileToDataUrl)).toHaveBeenCalled());
+    // The import swaps only the active panel's base IN PLACE — nothing is
+    // discarded, so the unsaved-changes guard must not fire and the painter
+    // must not remount (which would wipe the rest of the work).
+    expect(screen.queryByText('Unsaved Changes')).toBeNull();
+    expect(document.querySelector('.livery-canvas-wrap')).toBe(wrapBefore);
   });
 
   it('Cancel on a dirty canvas prompts, then discards', async () => {

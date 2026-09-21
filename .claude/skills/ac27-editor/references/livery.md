@@ -240,9 +240,15 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   The canvas is only remounted (`canvasKey` + `panelSig` in the `key`) when the
   panel layout changes or the canvas is still **untouched** (`dirtyRef`); a
   painted canvas keeps its pixels when only the form's Airline/Aircraft changes.
-  **Import image** targets the **active panel** (`overrides[panels[activeIdx]]`),
-  so a square import replaces one part and a wide canvas can still be split per
-  panel. The airline combobox is
+  **Import image** targets the **active panel** (`overrides[panels[activeIdx]]`
+  + `LiveryCanvas.setPanelBase(activeIdx, dataUrl)`), so a square import
+  replaces one part and a wide canvas can still be split per panel. The swap is
+  **in place**: only that panel's base layer is repainted (opaque fill + the new
+  image), snapshotted first so Ctrl+Z reverts it; the pen/fill rasters, live
+  objects and every other panel survive, the canvas is **not remounted**, and
+  no unsaved-changes guard fires (nothing is discarded). The `overrides` entry
+  is still recorded so a later remount (e.g. an aircraft-type change) re-primes
+  that panel with the imported base. The airline combobox is
   wrapped in a **`<span>`, not a `<label>`** (a `<button>` inside a `<label>`
   makes Chromium refocus the labelled input, which re-fired `onFocus` and
   reopened the list right after a pick); each option also calls
@@ -1125,12 +1131,17 @@ manifest for a free-form zip folder).
   that an object can move outside the active panel (overflow clipped, not
   clamped), and that a movable dragged by its edge is assigned to the panel
   under the **pointer** (`panel: 1`) even though its centre never crossed the
-  gutter (`x < 2048`) — it renders AND exports clipped to panel 1's `x=2176`.
+  gutter (`x < 2048`) — it renders AND exports clipped to panel 1's `x=2176`,
+  and that `setPanelBase` swaps ONE panel's base **in place** (same canvas
+  element — no remount that would wipe the other panels' paint/objects — with
+  the import snapshotted so Ctrl+Z reverts it).
   `tests/components/LiveryScreen/CreateTab.test.jsx` asserts the
   2-panel store width instead of the removed tab strip, that H/V keep the active
   panel, that Ctrl+S / Ctrl+Shift+S open the Save / Save As dialogs (and are
-  ignored while typing or while a dialog is open), and that a save adopts the
-  saved folder so the next Save overwrites it in place.
+  ignored while typing or while a dialog is open), that a save adopts the
+  saved folder so the next Save overwrites it in place, and that importing an
+  image over a dirty canvas loads into the active panel **without** the
+  unsaved-changes prompt or a canvas remount.
   `tests/components/LiveryScreen/MyLiveriesTab.test.jsx` pins the in-place
   delete: a successful delete drops only its row (no full re-list, `scrollTop`
   capped to the shrunken content) and a partial batch leaves the failed rows.

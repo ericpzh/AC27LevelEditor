@@ -414,22 +414,33 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   };
 
   // Import an image into the ACTIVE panel only (multi-image aircraft); for a
-  // single-panel type that is the whole canvas, exactly as before.
+  // single-panel type that is the whole canvas, exactly as before. The base is
+  // swapped IN PLACE (no canvas remount) so the pen/fill rasters, live objects
+  // and every other panel survive — the import replaces only this panel's base.
+  // It therefore never needs the unsaved-changes guard: nothing is discarded.
   const loadBaseUrl = (file) => {
-    confirmDiscard(async () => {
-      if (!file) return;
+    if (!file) return;
+    (async () => {
       setBusy(true);
       try {
         const raw = await fileToDataUrl(file);
         const normalized = await normalizeToTexture(raw);
+        // Keep the override map current so a later remount (e.g. an aircraft
+        // type change) still re-primes this panel with the imported base.
         setOverrides(prev => ({ ...prev, [panels[activeIdx] || 'Body']: normalized }));
-        setCanvasKey(k => k + 1);
+        const canvas = canvasRef.current;
+        if (canvas && typeof canvas.setPanelBase === 'function') {
+          canvas.setPanelBase(activeIdx, normalized);
+        } else {
+          // Fallback for a canvas without the in-place API (should not happen).
+          setCanvasKey(k => k + 1);
+        }
       } catch (err) {
         useAppStore.getState().showToast(t(errKey(err && err.message)), 'error');
       } finally {
         setBusy(false);
       }
-    });
+    })();
   };
 
   // Post-save nudge: a saved livery only shows up in-game once its mod is

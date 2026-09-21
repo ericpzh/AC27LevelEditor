@@ -1983,6 +1983,36 @@ describe('multi-image panels (A388/B38M)', () => {
     expect(ctxs[0].drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
   });
 
+  it('setPanelBase replaces one panel base in place without remounting or clearing work', async () => {
+    const ref = React.createRef();
+    const onDirty = vi.fn();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, ref, onDirty });
+    // Paint a dab so there is unsaved work on the canvas.
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 256, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(onDirty).toHaveBeenCalledWith(true);
+    const wrapBefore = document.querySelector('.livery-canvas-wrap');
+
+    // Import targets panel 1 (the non-main panel by default).
+    const ok = ref.current.setPanelBase(1, 'data:image/png;base64,IMPORT');
+    expect(ok).toBe(true);
+    // Same canvas element: the import did NOT remount (which would discard the
+    // other panels' paint and every live object) and showed no guard.
+    expect(document.querySelector('.livery-canvas-wrap')).toBe(wrapBefore);
+    await waitFor(() => expect(imageSrcs).toContain('data:image/png;base64,IMPORT'));
+    expect(screen.queryByText('Unsaved Changes')).toBeNull();
+  });
+
+  it('setPanelBase snapshots so the import is undoable', async () => {
+    const ref = React.createRef();
+    renderCanvas({ panels, initialParts, defaultParts: initialParts, activePanel: 0, ref });
+    ref.current.setPanelBase(0, 'data:image/png;base64,IMPORT');
+    // Ctrl+Z reverts the base swap (does not throw and leaves the canvas live).
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
+  });
+
   it('one click on another panel both activates it and applies the wand there', async () => {
     const user = userEvent.setup();
     const onActivePanel = vi.fn();
