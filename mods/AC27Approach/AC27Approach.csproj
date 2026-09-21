@@ -7,9 +7,12 @@
     <AssemblyName>AC27Approach</AssemblyName>
     <RootNamespace>AC27Approach</RootNamespace>
     <!-- Game install path. Override with the AC27_GAME_ROOT env var (the same
-         single source used by tests/helpers/gameRoot.cjs) or -p:GameDir=... . -->
+         single source used by tests/helpers/gameRoot.cjs) or -p:GameDir=... .
+         Canonical shipping install (app 3328490) first, legacy Playtest folder
+         as a fallback while the shipping game is not installed yet. -->
     <GameDir Condition="'$(GameDir)' == ''">$(AC27_GAME_ROOT)</GameDir>
-    <GameDir Condition="'$(GameDir)' == ''">D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">D:\SteamLibrary\steamapps\common\Airport Control 27</GameDir>
+    <GameDir Condition="!Exists('$(GameDir)') AND Exists('D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest')">D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest</GameDir>
   </PropertyGroup>
   <ItemGroup>
     <!-- BepInEx 6 IL2CPP runtime -->

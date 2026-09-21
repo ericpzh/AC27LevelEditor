@@ -17,7 +17,7 @@ A BepInEx 6 IL2CPP plugin (`com.ac27.approach`) that live-patches aircraft in Ai
 | `update_speed` | **Fly-speed** override (the speed sibling of the heading override): re-points the game's own per-step speed write, never fights from a distance. The game's own acceleration constants ramp the aircraft between speeds; per tick the AVC drive re-asserts the commanded knots (`DriveAvcSpeed`). The lift to the commanded speed is a constant-ACCELERATION ramp (`accel=N`, default 1.5 kt/s of GAME time) seeded from the aircraft's actual speed. Orthogonal to heading/altitude; ends via `clear_for_appr`, a radio-slot flip to tower, a level switch, or a state guard. See the payload-table row and README's `update_speed` note for the full semantics |
 | `track` | **Diagnostics:** dumps the aircraft's full params every 1 s (`track|CS`; send again to stop). Not a patch — no behavior change, just the tracer |
 
-Design document: `mods/docs/bepinex-aircraft-override-report.md` (API design §4, input surfaces §5, verification checklist §8). Class dumps: `mods/docs/aircraft-classes-report.md` + `aircraft-classes-inventory.md` (Cpp2IL dumps of GameAssembly.dll). **Read the plugin's `mods/AC27Approach/README.md` before making changes — it records every runtime-verified fact and every failed attempt.**
+**Read the plugin's `mods/AC27Approach/README.md` before making changes — it records every runtime-verified fact and every failed attempt.** (Class inventory dump: `mods/docs/aircraft-classes-inventory.md`.)
 
 ## Layout
 

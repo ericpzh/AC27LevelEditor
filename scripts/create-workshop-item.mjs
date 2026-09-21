@@ -6,8 +6,8 @@
  * The release flow (`.github/workflows/release.yml`) only ever UPDATES the
  * existing item (appid + publishedfileid from `src/utils/constants/steam.js`).
  * This script exists to bootstrap a brand-new item when moving to an app
- * that does not have one yet (e.g. the migration from Playtest app 4004140
- * to the Airport Control 27 full game, app 3328490): a Workshop item is
+ * that does not have one yet (e.g. bootstrapping the item for the Airport
+ * Control 27 shipping game, app 3328490): a Workshop item is
  * CREATED by handing steamcmd a VDF that sets `appid` and NO
  * `publishedfileid`; on success steamcmd writes the new `publishedfileid`
  * back into the same VDF, which this script then reads out and prints.

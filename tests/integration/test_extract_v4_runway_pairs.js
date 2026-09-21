@@ -11,7 +11,8 @@
  *   node tests/integration/test_extract_v4_runway_pairs.js [--root <game-root>]
  *
  * The ZSJN fixture case runs offline; KJFK/KDCA cases require the game root
- * (default: tests/helpers/gameRoot.cjs) and are
+ * (default: `tests/helpers/gameRoot.cjs` — the canonical shipping install, or
+ * the legacy Playtest folder when the shipping game is not installed) and are
  * skipped gracefully when the files are missing.
  */
 
@@ -19,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
 const { readAclText } = require('../../src/acl/gatcarc');
+const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
 
 const { extractV4RunwayPairs } = parser;
 
@@ -33,7 +35,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 
 const FIXTURE_DIR = path.resolve(__dirname, '..', 'fixtures', 'game-root', 'GroundATC_Data', 'StreamingAssets', 'Airports');
-const gameRoot = args.root || path.resolve(__dirname, '..', '..', '..');
+const gameRoot = args.root || GAME_ROOT;
 const gameAirportsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
 
 // ── Helpers ──────────────────────────────────────────────────────

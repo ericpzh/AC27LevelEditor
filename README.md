@@ -79,7 +79,7 @@ Create and share your own `Body`/`BaseMap` aircraft liveries. The Livery page (b
 
 **Share contract:** Export produces `<FOLDER>.zip` containing `<FOLDER>/aircraft_livery_manifest.json` + `<FOLDER>/base.png`. Send it to a friend — they install it via **Import livery** in the painter, or by unzipping straight into `<gameRoot>/Mods/AC27 Custom Liveries/`.
 
-**Workshop publish:** the header-bar **Upload** button (and the painter toolbar's upload button, which silently saves a dirty canvas first) publishes a custom livery as a standalone Workshop mod for the Playtest app (appid `4004140`), or a new version of the same item on repeat uploads. The dialog collects title/description/visibility/tags/change-note/preview, pre-filled from the previous version (live Steam metadata → local `.workshop.json` sidecar inside the livery folder → manifest defaults), and shows progress plus the item URL on success. The published item id is recorded automatically in the livery folder's `.workshop.json` after the first upload, so repeat uploads update the same item with no user input (the whole livery folder is uploaded verbatim, except the private `.workshop.json` sidecar). The preview image used for the item is also saved in the livery folder (`.workshop-preview.*`) and reused on later uploads unless a new one is chosen, and it ships inside the uploaded mod content as well; an oversized preview is automatically downscaled/re-encoded below Steam's 1 MiB limit before upload. Before updating, the recorded id is verified against Steam — if the item was deleted on the Workshop, a fresh item is published and the new id is recorded instead of failing. Requires the Steam client running with an account that owns the Playtest app (temporary licenses such as Family Sharing / free weekends cannot publish). Deleting the livery locally does not remove the Steam item.
+**Workshop publish:** the header-bar **Upload** button (and the painter toolbar's upload button, which silently saves a dirty canvas first) publishes a custom livery as a standalone Workshop mod for the shipping game (appid `3328490`), or a new version of the same item on repeat uploads. The dialog collects title/description/visibility/tags/change-note/preview, pre-filled from the previous version (live Steam metadata → local `.workshop.json` sidecar inside the livery folder → manifest defaults), and shows progress plus the item URL on success. The published item id is recorded automatically in the livery folder's `.workshop.json` after the first upload, so repeat uploads update the same item with no user input (the whole livery folder is uploaded verbatim, except the private `.workshop.json` sidecar). The preview image used for the item is also saved in the livery folder (`.workshop-preview.*`) and reused on later uploads unless a new one is chosen, and it ships inside the uploaded mod content as well; an oversized preview is automatically downscaled/re-encoded below Steam's 1 MiB limit before upload. Before updating, the recorded id is verified against Steam — if the item was deleted on the Workshop, a fresh item is published and the new id is recorded instead of failing. Requires the Steam client running with an account that owns the game (appid `3328490`; temporary licenses such as Family Sharing / free weekends cannot publish). Deleting the livery locally does not remove the Steam item.
 
 ### Auto-Update (Windows)
 
@@ -126,7 +126,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 ### [下载](https://github.com/ericpzh/AC27LevelEditor/releases)
 
 首次运行时 [Windows Defender](#windowsdefinderzh) 大概率会拦截（正常现象 — EXE 未做代码签名）。允许运行后选择游戏根目录：
-- Playtest 默认路径：`...\SteamLibrary\steamapps\common\Airport Control 27 Playtest`
+- 正式版默认路径：`...\SteamLibrary\steamapps\common\Airport Control 27`
 - Demo 默认路径：`...\SteamLibrary\steamapps\common\Airport Control 27 Demo`
 
 ### 恢复游戏文件（Steam 验证完整性）
@@ -134,8 +134,8 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 如果编辑器保存出错导致游戏关卡文件损坏，可通过 Steam 恢复原始文件：
 
 1. **先删除**你所编辑关卡对应的 `Levels\` 文件夹下的所有文件，例如：
-   `…\Airport Control 27 Playtest\Airports\ZSJN\Levels\*`
-2. Steam 库中右键 **Airport Control 27 Playtest** 或 **Airport Control 27 Demo** → **属性**
+   `…\Airport Control 27\Airports\ZSJN\Levels\*`
+2. Steam 库中右键 **Airport Control 27** 或 **Airport Control 27 Demo** → **属性**
 3. **已安装文件** → **验证游戏文件的完整性**
 4. Steam 会重新下载原始关卡文件
 
@@ -176,7 +176,7 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 
 **分享约定：** 导出的 `<文件夹名>.zip` 内含 `<文件夹名>/aircraft_livery_manifest.json` + `<文件夹名>/base.png`。发给朋友后，对方在绘制器中使用**导入涂装**即可安装，或直接解压到 `<游戏根目录>/Mods/AC27 Custom Liveries/`。
 
-**创意工坊发布：** 顶栏**上传**按钮（绘制器顶栏也有上传按钮，画布有未保存更改时会先静默保存）可将自制涂装发布为测试版应用（appid `4004140`）的独立创意工坊 Mod，重复上传即为同一物品的新版本。弹窗收集标题/描述/可见性/标签/更新说明/预览图，并以上一版本预填（Steam 实时元数据 → 涂装文件夹内的 `.workshop.json` 本地记录 → 清单默认值），上传时显示进度，成功后给出物品链接。需要 Steam 客户端运行且账号拥有测试版应用（家庭共享 / 免费周末等临时许可不能发布）。本地删除涂装不会删除 Steam 上的物品。
+**创意工坊发布：** 顶栏**上传**按钮（绘制器顶栏也有上传按钮，画布有未保存更改时会先静默保存）可将自制涂装发布为正式版游戏（appid `3328490`）的独立创意工坊 Mod，重复上传即为同一物品的新版本。弹窗收集标题/描述/可见性/标签/更新说明/预览图，并以上一版本预填（Steam 实时元数据 → 涂装文件夹内的 `.workshop.json` 本地记录 → 清单默认值），上传时显示进度，成功后给出物品链接。需要 Steam 客户端运行且账号拥有该游戏（家庭共享 / 免费周末等临时许可不能发布）。本地删除涂装不会删除 Steam 上的物品。
 
 ### 清理编辑器本地缓存
 
@@ -535,4 +535,4 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ### CI/CD
 
-The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags (or a manual `workflow_dispatch`) and builds **Windows** (normal + voice + workshop portable `.exe`), **macOS** (`.dmg`), **Linux** (`.AppImage` + `.deb`), and the **AC27Approach plugin DLL** in parallel. The normal + voice Windows builds are uploaded to Cloudflare R2 for auto-update delivery, and the plugin DLL is uploaded to the dedicated `ac27approach` R2 bucket (`s3://ac27approach/AC27Approach.dll`) — served via the `https://ericpzh.rest/ac27approach*` Worker route that the Flight Strips window's Load DLL button downloads from. The workshop exe auto-deploys to Steam Workshop (appid 4004140). All normal + voice + plugin artifacts are attached to a GitHub Release with auto-generated release notes. See `mods/docs/cloudflare-worker-routes.md` for the Worker/R2 infrastructure.
+The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags (or a manual `workflow_dispatch`) and builds **Windows** (normal + voice + workshop portable `.exe`), **macOS** (`.dmg`), **Linux** (`.AppImage` + `.deb`), and the **AC27Approach plugin DLL** in parallel. The normal + voice Windows builds are uploaded to Cloudflare R2 for auto-update delivery, and the plugin DLL is uploaded to the dedicated `ac27approach` R2 bucket (`s3://ac27approach/AC27Approach.dll`) — served via the `https://ericpzh.rest/ac27approach*` Worker route that the Flight Strips window's Load DLL button downloads from. The workshop exe auto-deploys to Steam Workshop (appid 3328490). All normal + voice + plugin artifacts are attached to a GitHub Release with auto-generated release notes. See `mods/docs/cloudflare-worker-routes.md` for the Worker/R2 infrastructure.

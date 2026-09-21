@@ -7,11 +7,19 @@
 # change with each playtest patch; run this after the game updates and commit the
 # refreshed files.
 #
-# Usage:  powershell -File sync-refs.ps1 [GameDir]   (default: $env:AC27_GAME_ROOT, else the standard install path)
+# Usage:  powershell -File sync-refs.ps1 [GameDir]   (default: $env:AC27_GAME_ROOT, else the canonical shipping install, else the legacy Playtest folder)
 
 param(
-    [string]$GameDir = $(if ($env:AC27_GAME_ROOT) { $env:AC27_GAME_ROOT } else { 'D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest' })
+    [string]$GameDir = ''
 )
+
+if (-not $GameDir) {
+    $canonical = 'D:\SteamLibrary\steamapps\common\Airport Control 27'
+    $legacy = 'D:\SteamLibrary\steamapps\common\Airport Control 25 Playtest'
+    $GameDir = if ($env:AC27_GAME_ROOT) { $env:AC27_GAME_ROOT }
+        elseif (Test-Path -LiteralPath $canonical) { $canonical }
+        else { $legacy }
+}
 
 $ErrorActionPreference = 'Stop'
 $lib = Join-Path $PSScriptRoot 'lib\BepInEx'

@@ -87,7 +87,7 @@ if (!gameRoot) {
 const dataDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
 if (!fs.existsSync(dataDir)) {
   console.error('Airports directory not found:', dataDir);
-  console.error('Use --root <game-root> to specify the Airport Control 25 game directory.');
+  console.error('Use --root <game-root> to specify the Airport Control 27 game directory.');
   process.exit(1);
 }
 

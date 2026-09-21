@@ -1,6 +1,6 @@
 # AC27Approach
 
-BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches aircraft in-game, driven entirely through the game's **native UDP command channel** (no overlay, no hotkeys). Implements the design in `docs/bepinex-aircraft-override-report.md` (sections 4–5.4, 6, 8).
+BepInEx 6 IL2CPP plugin for Airport Control 27 that live-patches aircraft in-game, driven entirely through the game's **native UDP command channel** (no overlay, no hotkeys). Implements the aircraft-override design (heading, altitude, speed, clear-for-approach) over that channel.
 
 - **Plugin ID**: `com.ac27.approach` v1.0.2
 - **Input**: UDP only — the game's own `AircraftUdpCommandService` on `127.0.0.1:20267`
@@ -12,7 +12,7 @@ BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches airc
 
 ## Requirements
 
-- Airport Control 25 Playtest with BepInEx 6 IL2CPP installed (the editor's "BepInEx Debug Mode" tab can install it)
+- Airport Control 27 with BepInEx 6 IL2CPP installed (the editor's "BepInEx Debug Mode" tab can install it)
 - The game must be running (the UDP server binds `127.0.0.1:20267` only while the game is up)
 - Optional: the AC27 Editor for the `send-patch-command` bridge
 
@@ -167,6 +167,5 @@ Delete `BepInEx\plugins\AC27Approach.dll` and restart the game. Without the plug
 
 ## Build
 
-- SDK: net6.0 (built with SDK 7.0.410+), `LangVersion 10`, references pinned to `<GameDir>\BepInEx\core\` and `BepInEx\interop\` (see `AC27Approach.csproj` — `GameDir` property points at the Playtest install).
-- Interop gotchas fixed at build time are documented in `docs/bepinex-aircraft-override-report.md` §6.4 ("Build-verified deltas").
-- Design: `docs/bepinex-aircraft-override-report.md` (input surfaces §5, API design §4, verification checklist §8).
+- SDK: net6.0 (built with SDK 7.0.410+), `LangVersion 10`, references pinned to `<GameDir>\BepInEx\core\` and `BepInEx\interop\` (see `AC27Approach.csproj` — `GameDir` defaults to the canonical shipping install and falls back to the legacy Playtest folder; `AC27_GAME_ROOT` / `-p:GameDir` override).
+- Interop gotchas fixed at build time, the input surfaces and the API/verification design are recorded in this README and the plugin history.

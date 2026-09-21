@@ -3,9 +3,9 @@
  * real .acl levels from the live game layout.
  *
  * ── Single source of truth for the machine-specific game path ──
- * The game folder is still the Playtest install; once the game leaves Playtest
- * and the install directory is renamed, flip GAME_DIR_NAME to 'Airport Control 27'
- * (this is the one line to change).
+ * GAME_DIR_NAME is the canonical shipping install name (app 3328490); the
+ * legacy Playtest folder (app 4004140) is only a fallback so local suites keep
+ * running on machines where the shipping game has not replaced it yet.
  *
  * Overrides for other machines / CI:
  *   AC27_GAME_ROOT      full install path (skips STEAM_COMMON + GAME_DIR_NAME)
@@ -19,15 +19,24 @@ const fs = require('fs');
 const STEAM_COMMON = process.env.AC27_STEAM_COMMON
   || 'D:/SteamLibrary/steamapps/common';
 
-// ← the one line to bump when the game install is renamed.
-const GAME_DIR_NAME = 'Airport Control 25 Playtest';
+// Canonical shipping install folder, then the legacy Playtest folder.
+const GAME_DIR_NAME = 'Airport Control 27';
+const LEGACY_GAME_DIR_NAME = 'Airport Control 25 Playtest';
 
-const GAME_ROOT = process.env.AC27_GAME_ROOT
-  || `${STEAM_COMMON}/${GAME_DIR_NAME}`;
+function resolveGameRoot() {
+  if (process.env.AC27_GAME_ROOT) return process.env.AC27_GAME_ROOT;
+  const canonical = `${STEAM_COMMON}/${GAME_DIR_NAME}`;
+  if (fs.existsSync(canonical)) return canonical;
+  const legacy = `${STEAM_COMMON}/${LEGACY_GAME_DIR_NAME}`;
+  if (fs.existsSync(legacy)) return legacy;
+  return canonical; // nothing installed — export canonical; suites skip cleanly
+}
+
+const GAME_ROOT = resolveGameRoot();
 
 const levelPath = (icao, fileName) =>
   `${GAME_ROOT}/GroundATC_Data/StreamingAssets/Airports/${icao}/Levels/${fileName}`;
 
 const gameLevelExists = (icao, fileName) => fs.existsSync(levelPath(icao, fileName));
 
-module.exports = { GAME_ROOT, GAME_DIR_NAME, STEAM_COMMON, levelPath, gameLevelExists };
+module.exports = { GAME_ROOT, GAME_DIR_NAME, LEGACY_GAME_DIR_NAME, STEAM_COMMON, levelPath, gameLevelExists };
