@@ -182,6 +182,7 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 - **Dev mode gating** — `npm start` skips the check by default. Opt in with `AC27_UPDATE_DEV_CHECK=1` (auto-discover) or `AC27_UPDATE_TARGET=<path>` (explicit)
 - **"Later" is ephemeral** — no `skipped-update.json`; the next restart re-prompts
 - **Voice build auto-updates through the shared `/editor` route** — `AC27EditorVoice.exe` is supported. `isVoiceBuild()` (resources/`voice-stt-vosk.js` present) sends an **`X-AC27-Variant: voice` header** (`variantHeader()`/`variantName()`) on the SAME `/editor` URL as the normal build — the Worker picks the R2 objects per header, so the voice exe's MD5 is compared/verified/downloaded against its own `AC27EditorVoice.exe.md5` sidecar — never the normal build's objects. The check is gated inside `checkForUpdate()` and covers both the main-process push and the renderer fallback. Dev-mode detection of the voice build is impossible (`!app.isPackaged`), so to test the voice branch locally set `AC27_UPDATE_SERVER` to a TLS server that honors the header (the updater refuses plain http) or drive it from the packaged voice exe.
+- **Download verification (the `X-AC27-MD5` scheme)** — `downloadUpdate()` returns `{ filePath, download }` (the GET response's `etag`/`lastModified`/`ac27Md5`/`contentLength`/`received` + `startedAt`/`receivedAt`). The `download-update` handler compares the written file's MD5 against the Worker's `X-AC27-MD5` response header (**preferred** — read from the SAME GET that streamed the bytes, so a release published mid-download can't cause a false mismatch) and **falls back** to a post-download `HEAD` of the `.md5` sidecar (`etag`) for an older Worker that omits the header. On mismatch it logs `[Updater] verify — source … downloaded MD5 … remote MD5 … GET/HEAD last-modified … GET/HEAD receivedAt …` plus a `diagnostics` JSON to `<userData>/updater.log`, and returns `{ success:false, error, diagnostics }` to the renderer; on success it returns `hashSource` + both hashes. The Worker side (emits `X-AC27-MD5` on `GET /editor`, 300 s `HEAD` cache, download cache keyed on the exe's R2 ETag) is documented in `mods/docs/cloudflare-worker-routes.md`.
 - **DRY_RUN defaults** differ by context: `false` for packaged (real install), `true` for dev (safe). Override with `AC27_UPDATE_DRY_RUN=0` / `=1`
 - **Renderer fallback** — `App.jsx` actively invokes `checkForUpdate()` as fallback if the main-process push arrives before the renderer is ready (race condition guarded by `useRef(false)`)
 
@@ -203,7 +204,8 @@ npm start
 The mock is variant-aware — it selects its per-variant dummy exe/MD5 from the
 `X-AC27-Variant` request header (`normal` → `AC27Editor.exe`, `voice` →
 `AC27EditorVoice.exe`), mirroring the Worker. It returns a random ETag that
-never matches any local exe, so the update prompt always appears.
+never matches any local exe, so the update prompt always appears. It does **not**
+send `X-AC27-MD5`, so it exercises the older-Worker HEAD-fallback verify path.
 
 ⚠️ The updater only speaks **https** (`ERR_INVALID_PROTOCOL` on plain http), so
 this plain-http mock can't drive the packaged update flow end-to-end — it's for

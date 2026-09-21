@@ -12,6 +12,8 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import https from 'https';
+import { PassThrough } from 'stream';
 
 // ── Patch process.platform (read-only by default) ──────────────
 function setPlatform(platform) {
@@ -111,6 +113,92 @@ describe('computeFileMd5', () => {
   it('rejects for non-existent file', async () => {
     const updater = getUpdater();
     await expect(updater.computeFileMd5('/nonexistent/path.exe')).rejects.toThrow();
+  });
+});
+
+// ── downloadUpdate ─────────────────────────────────────────────
+
+describe('downloadUpdate', () => {
+  let httpsGetSpy;
+
+  afterEach(() => {
+    httpsGetSpy?.mockRestore();
+    httpsGetSpy = null;
+  });
+
+  /** Mock https.get to simulate a download response stream (bepinex.test.js pattern). */
+  function mockDownload(statusCode, headers, chunks) {
+    const response = new PassThrough();
+    response.statusCode = statusCode;
+    response.headers = { ...headers };
+    const mockReq = { on: vi.fn().mockReturnThis(), destroy: vi.fn() };
+    httpsGetSpy = vi.spyOn(https, 'get').mockImplementation((url, opts, cb) => {
+      if (typeof opts === 'function') { cb = opts; opts = undefined; }
+      cb(response); // synchronous — lets downloadUpdate register data/end listeners
+      for (const chunk of chunks || []) response.write(chunk);
+      response.end();
+      return mockReq;
+    });
+    return { response, mockReq };
+  }
+
+  it('resolves { filePath, download } carrying the response identity + timestamps', async () => {
+    const updater = getUpdater();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-dl-'));
+    const content = Buffer.from('new-exe-bytes');
+    const md5 = crypto.createHash('md5').update(content).digest('hex');
+    mockDownload(200, {
+      'content-length': String(content.length),
+      'etag': '"' + md5 + '"',
+      'last-modified': 'Mon, 21 Sep 2026 00:00:00 GMT',
+      'x-ac27-md5': '  ' + md5 + '  ', // Worker's new-scheme header (trimmed on read)
+    }, [content]);
+
+    const event = { sender: { isDestroyed: () => false, send: vi.fn() } };
+    const before = Date.now();
+    const result = await updater.downloadUpdate(event, dir);
+
+    expect(result.filePath).toBe(path.join(dir, 'AC27Editor_new.exe'));
+    expect(fs.existsSync(result.filePath)).toBe(true);
+    expect(fs.readFileSync(result.filePath).equals(content)).toBe(true);
+    // Quoted ETag is stripped; the rest of the metadata is passed through verbatim
+    expect(result.download.etag).toBe(md5);
+    expect(result.download.lastModified).toBe('Mon, 21 Sep 2026 00:00:00 GMT');
+    expect(result.download.ac27Md5).toBe(md5);
+    expect(result.download.statusCode).toBe(200);
+    expect(result.download.contentLength).toBe(content.length);
+    expect(result.download.received).toBe(content.length);
+    expect(result.download.startedAt).toBeGreaterThanOrEqual(before);
+    expect(result.download.receivedAt).toBeGreaterThanOrEqual(result.download.startedAt);
+    // Progress events still fire through the event sender
+    expect(event.sender.send).toHaveBeenCalled();
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('leaves download.ac27Md5 null when the Worker omits X-AC27-MD5 (old Worker → HEAD fallback)', async () => {
+    const updater = getUpdater();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-dl-'));
+    const content = Buffer.from('legacy-exe-bytes');
+    mockDownload(200, { 'content-length': String(content.length) }, [content]);
+
+    const event = { sender: { isDestroyed: () => false, send: vi.fn() } };
+    const result = await updater.downloadUpdate(event, dir);
+
+    expect(result.download.ac27Md5).toBe(null);
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rejects UPDATE_DOWNLOAD_INCOMPLETE when fewer bytes than content-length arrive', async () => {
+    const updater = getUpdater();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-dl-'));
+    mockDownload(200, { 'content-length': '999' }, [Buffer.alloc(10)]);
+
+    const event = { sender: { isDestroyed: () => false, send: vi.fn() } };
+    await expect(updater.downloadUpdate(event, dir)).rejects.toThrow('UPDATE_DOWNLOAD_INCOMPLETE');
+
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 

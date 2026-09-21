@@ -4097,29 +4097,111 @@ ipcMain.handle('download-update', async (_event) => {
   const updateDir = path.join(app.getPath('temp'), 'ac27-update-' + Date.now());
   try {
     fs.mkdirSync(updateDir, { recursive: true });
-    const newExePath = await updater.downloadUpdate(_event, updateDir);
+    const { filePath: newExePath, download } = await updater.downloadUpdate(_event, updateDir);
 
-    // Verify the downloaded file's MD5 matches the remote ETag before installing
-    // (the remote ETag was captured during the check-for-update call)
-    // We re-HEAD to get the current remote ETag for verification
+    updater.log('[Updater] download complete — bytes:', `${download.received}/${download.contentLength}`,
+      '| GET etag:', download.etag || '(none)',
+      '| GET last-modified:', download.lastModified || '(none)',
+      '| GET receivedAt:', new Date(download.receivedAt).toISOString());
+
+    // Verify the downloaded file's MD5 before installing. The preferred source
+    // is the Worker's `X-AC27-MD5` header from the SAME GET that streamed the
+    // file (no re-HEAD race). An older Worker that lacks it falls back to a
+    // post-download HEAD of the sidecar MD5 (etag) — which can mismatch if the
+    // remote changed between the GET and the HEAD (non-atomic publish / cache
+    // skew). Both hashes and both response timestamps are logged and returned
+    // so a report like UPDATE_MD5_MISMATCH is diagnosable.
     let remoteMd5 = null;
+    let remoteMeta = null;
+    let downloadedMd5 = null;
+    let hashSource = null;
     try {
-      const remote = await updater.headRemoteExe();
-      remoteMd5 = remote.etag;
-      const downloadedMd5 = await updater.computeFileMd5(newExePath);
+      // Preferred (new scheme): the Worker returned X-AC27-MD5 on the SAME
+      // response that streamed the exe, so verify against exactly those bytes —
+      // no post-download request that could race a release publish.
+      if (download.ac27Md5) {
+        remoteMd5 = download.ac27Md5;
+        hashSource = 'GET x-ac27-md5';
+      } else {
+        // Backward compat: older Worker (no X-AC27-MD5) — fall back to the
+        // historical post-download HEAD of the sidecar MD5 (etag).
+        const remote = await updater.headRemoteExe();
+        remoteMd5 = remote.etag;
+        remoteMeta = remote;
+        hashSource = 'HEAD etag';
+      }
+      downloadedMd5 = await updater.computeFileMd5(newExePath);
+      updater.log('[Updater] verify — source:', hashSource,
+        '| downloaded MD5:', downloadedMd5,
+        '| remote MD5:', remoteMd5,
+        '| match:', downloadedMd5 === remoteMd5,
+        '| GET last-modified:', download.lastModified || '(none)',
+        '| HEAD last-modified:', remoteMeta ? (remoteMeta.lastModified || '(none)') : '(n/a)',
+        '| GET receivedAt:', new Date(download.receivedAt).toISOString(),
+        '| HEAD receivedAt:', remoteMeta ? new Date(remoteMeta.receivedAt).toISOString() : '(n/a)');
       if (downloadedMd5 !== remoteMd5) {
         throw new Error('UPDATE_MD5_MISMATCH');
       }
     } catch (verifyErr) {
-      console.error('[Updater] MD5 verification failed:', verifyErr.message);
+      // Enrich diagnostics with a HEAD when the new-scheme path skipped it
+      // (best-effort — the verification itself is already done).
+      if (!remoteMeta) {
+        try { remoteMeta = await updater.headRemoteExe(); } catch (_) {}
+      }
+      const diagnostics = {
+        error: verifyErr.message,
+        hashSource,
+        downloadedMd5,
+        remoteMd5,
+        match: downloadedMd5 != null && downloadedMd5 === remoteMd5,
+        // The GET response (the downloaded exe's own identity).
+        download: {
+          url: download.url,
+          statusCode: download.statusCode,
+          etag: download.etag,
+          lastModified: download.lastModified,
+          contentLength: download.contentLength,
+          received: download.received,
+          startedAt: download.startedAt,
+          startedAtIso: new Date(download.startedAt).toISOString(),
+          receivedAt: download.receivedAt,
+          receivedAtIso: new Date(download.receivedAt).toISOString(),
+        },
+        // The verify HEAD response (the sidecar MD5's identity).
+        verifyHead: remoteMeta ? {
+          etag: remoteMeta.etag,
+          lastModified: remoteMeta.lastModified,
+          contentLength: remoteMeta.contentLength,
+          receivedAt: remoteMeta.receivedAt,
+          receivedAtIso: new Date(remoteMeta.receivedAt).toISOString(),
+        } : null,
+        exePath: newExePath,
+      };
+      updater.log('[Updater] MD5 verification failed:', verifyErr.message,
+        '| diagnostics:', JSON.stringify(diagnostics));
       try { if (fs.existsSync(updateDir)) fs.rmSync(updateDir, { recursive: true, force: true }); } catch (_) {}
-      return { success: false, error: verifyErr.message };
+      return { success: false, error: verifyErr.message, diagnostics };
     }
 
     return {
       success: true, updateDir, newExePath,
       currentExePath: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
       remoteMd5,
+      downloadedMd5,
+      hashSource,
+      download: {
+        etag: download.etag,
+        lastModified: download.lastModified,
+        ac27Md5: download.ac27Md5,
+        receivedAt: download.receivedAt,
+        receivedAtIso: new Date(download.receivedAt).toISOString(),
+      },
+      verifyHead: remoteMeta ? {
+        etag: remoteMeta.etag,
+        lastModified: remoteMeta.lastModified,
+        receivedAt: remoteMeta.receivedAt,
+        receivedAtIso: new Date(remoteMeta.receivedAt).toISOString(),
+      } : null,
     };
   } catch (err) {
     console.error('[Updater] download failed:', err.message);

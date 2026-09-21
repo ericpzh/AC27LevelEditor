@@ -95,6 +95,33 @@ remember: if you swap the layout later, a worker route that can't reach one
 exe returns no ETag → the updater treats that as "server unavailable", not
 "update available".
 
+### Diagnosing `UPDATE_MD5_MISMATCH`
+
+`download-update` (`electron/main.js`) re-HEADs the server after the download and
+compares the written file's MD5 against that HEAD's ETag (the `.md5` sidecar).
+Because the download (`GET`) and the verify (`HEAD`) are two separate requests
+against mutable objects, a mismatch can mean either a corrupted download **or** a
+remote that changed between the two — a non-atomic publish (`release.yml` uploads
+the exe *before* its `.md5`) or edge-cache skew between the exe and the sidecar.
+
+The handler logs and returns both hashes plus both responses' identities.
+`updater.log` gets a `[Updater] verify — …` line (downloaded vs remote MD5, GET
+vs HEAD `last-modified`, GET vs HEAD `receivedAt`), and on failure the IPC result
+carries a `diagnostics` object. Read it as: **differing `last-modified` between
+the GET and HEAD** → the exe object changed mid-download (publish race); **same
+`last-modified` but a mismatch** → the sidecar doesn't match the exe (stale or
+corrupt sidecar, or a genuinely corrupted download).
+
+The `GET /editor` response now also carries `X-AC27-MD5` — the sidecar hash read
+in the same handler that streams the exe — so a client that understands it can
+verify the bytes it actually received instead of re-HEADing. This is additive and
+backward compatible: existing clients ignore the header and keep using the `etag`
+from `HEAD` exactly as before. The download cache is keyed on the exe's own R2
+ETag and the `HEAD` cache TTL is 5 minutes, so a release is picked up without a
+manual edge purge (previously a 1-year TTL on `HEAD` froze the update decision,
+and out-of-step exe/sidecar expiry could produce exactly the `UPDATE_MD5_MISMATCH`
+report above).
+
 Deploy the `/editor` block with the rest of the Worker (below). The
 `AC27EditorVoice.exe` + `.md5` objects are uploaded by the release workflow
 alongside the normal exe (see "Publishing the exes").
@@ -114,45 +141,94 @@ const R2 = 'https://pub-e010b52dac3747868ec310113e11ca1a.r2.dev';
 function variantObjects(request) {
   const isVoice = (request.headers.get('x-ac27-variant') || '').toLowerCase() === 'voice';
   return isVoice
-    ? { exe: 'AC27EditorVoice.exe', md5: 'AC27EditorVoice.exe.md5' }
-    : { exe: 'AC27Editor.exe', md5: 'AC27Editor.exe.md5' };
+    ? { exe: 'AC27EditorVoice.exe', md5: 'AC27EditorVoice.exe.md5', variant: 'voice' }
+    : { exe: 'AC27Editor.exe', md5: 'AC27Editor.exe.md5', variant: 'normal' };
 }
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const cache = caches.default;
+    const obj = variantObjects(request);
+
+    // Internal cache key: the client URL never changes (it always asks for
+    // `/editor`); the variant lives here and, for downloads, the exe revision
+    // (`version`) so a new release gets a fresh entry instead of being hidden
+    // behind a year-long cache entry from the previous release.
+    // `__ns` namespaces the keys: bumping it makes every pre-existing entry
+    // (e.g. the old 1-year HEAD entries) unreachable without a manual purge.
+    const CACHE_KEY_NS = 'v2';
+    const cacheKeyFor = (version) => {
+      const u = new URL(request.url);
+      u.searchParams.set('__ns', CACHE_KEY_NS);
+      u.searchParams.set('__variant', obj.variant);
+      if (version) u.searchParams.set('__v', version);
+      return new Request(u.toString(), { method: request.method, headers: request.headers });
+    };
 
     // ── HEAD /editor → proxy to R2, augment ETag with real MD5 ──
-    // Serves whichever variant the X-AC27-Variant header asks for.
+    // CONTRACT (unchanged — every shipped client relies on it):
+    //   etag === the `.md5` sidecar, last-modified/content-length from the exe.
     if (url.pathname === '/editor' && request.method === 'HEAD') {
-      const obj = variantObjects(request);
+      const cacheKey = cacheKeyFor();
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
+
       const [head, md5Resp] = await Promise.all([
         fetch(`${R2}/${obj.exe}`, { method: 'HEAD' }),
         fetch(`${R2}/${obj.md5}`),
       ]);
       if (!head.ok) return new Response('Not Found', { status: 404 });
+
       const realMd5 = md5Resp.ok ? (await md5Resp.text()).trim() : null;
-      return new Response(null, {
+      const headResponse = new Response(null, {
         status: 200,
         headers: {
           'etag': realMd5 || head.headers.get('etag') || '',
           'last-modified': head.headers.get('last-modified') || '',
           'content-length': head.headers.get('content-length') || '0',
           'accept-ranges': 'bytes',
-          'access-control-expose-headers': 'etag, last-modified, content-length',
+          'access-control-expose-headers': 'etag, last-modified, content-length, x-ac27-md5',
+          // SHORT-LIVED on purpose. The update *decision* must not be frozen:
+          // a 1-year TTL here meant a release wasn't seen until the edge entry
+          // expired or was purged (and, if the exe and sidecar entries expired
+          // out of step, produced spurious UPDATE_MD5_MISMATCH reports).
+          'Cache-Control': 'public, max-age=300, s-maxage=300',
         },
       });
+      ctx.waitUntil(cache.put(cacheKey, headResponse.clone()));
+      return headResponse;
     }
 
-    // ── GET /editor → proxy the download (variant per header) ──
-    if (url.pathname === '/editor') {
-      const obj = variantObjects(request);
-      const resp = await fetch(`${R2}/${obj.exe}`);
+    // ── GET /editor → proxy the download (+ X-AC27-MD5 for the new scheme) ──
+    if (url.pathname === '/editor' && request.method === 'GET') {
+      // Cache-bust on the exe's R2 ETag (which changes on every upload, even
+      // multipart) so a release gets its own entry. The exe's own bytes decide
+      // the key — NOT the sidecar, which can lag the exe during a publish.
+      const exeHead = await fetch(`${R2}/${obj.exe}`, { method: 'HEAD' });
+      if (!exeHead.ok) return new Response('Not Found', { status: 404 });
+      const version = exeHead.headers.get('etag') || exeHead.headers.get('last-modified') || '0';
+
+      const cacheKey = cacheKeyFor(version);
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
+
+      // Read the exe AND its sidecar together, so X-AC27-MD5 always describes
+      // the bytes in THIS response. Old clients ignore the header; new clients
+      // verify the download against it (no post-download re-HEAD race).
+      const [resp, md5Resp] = await Promise.all([
+        fetch(`${R2}/${obj.exe}`),
+        fetch(`${R2}/${obj.md5}`),
+      ]);
       if (!resp.ok) return new Response('Not Found', { status: 404 });
+      const realMd5 = md5Resp.ok ? (await md5Resp.text()).trim() : null;
+
       const headers = new Headers();
       headers.set('Content-Disposition', `attachment; filename="${obj.exe}"`);
-      headers.set('ETag', resp.headers.get('etag') || '');
+      headers.set('ETag', resp.headers.get('etag') || ''); // unchanged (R2's etag)
       headers.set('Content-Type', 'application/vnd.microsoft.portable-executable');
+      if (realMd5) headers.set('X-AC27-MD5', realMd5); // NEW — additive, old clients ignore it
+      headers.set('Access-Control-Expose-Headers', 'etag, x-ac27-md5, content-length');
       // PASS Content-Length THROUGH. Without it Cloudflare streams the body
       // chunked, and large (multi-hundred-MB) chunked Worker streams sometimes
       // terminate early — the editor would get a silently truncated exe.
@@ -160,7 +236,11 @@ export default {
       // also re-verifies received === content-length before accepting).
       const cl = resp.headers.get('content-length');
       if (cl) headers.set('Content-Length', cl);
-      return new Response(resp.body, { headers });
+      headers.set('Cache-Control', 'public, max-age=31536000');
+
+      const finalResponse = new Response(resp.body, { headers });
+      ctx.waitUntil(cache.put(cacheKey, finalResponse.clone()));
+      return finalResponse;
     }
 
     // ── All other requests → your normal site ──

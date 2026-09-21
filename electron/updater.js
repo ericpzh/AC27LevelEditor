@@ -164,7 +164,10 @@ function computeFileMd5(filePath) {
  * The Worker fetches the real MD5 from the companion .md5 file and returns it
  * as the `etag` header, alongside last-modified and content-length from R2.
  * The X-AC27-Variant header tells the Worker which exe's objects to use.
- * @returns {Promise<{ etag: string, lastModified: string|null, contentLength: number }>}
+ * `receivedAt` is the epoch-ms the response landed — logged alongside the
+ * download timestamp so a post-download MD5 mismatch can be placed on a
+ * timeline (did the remote change between the GET and the verify HEAD?).
+ * @returns {Promise<{ etag: string, lastModified: string|null, contentLength: number, receivedAt: number }>}
  */
 function headRemoteExe() {
   const serverUrl = UPDATE_BASE;
@@ -191,6 +194,7 @@ function headRemoteExe() {
         etag: (res.headers.etag || '').replace(/^"|"$/g, ''),  // strip surrounding quotes
         lastModified: res.headers['last-modified'] || null,
         contentLength: parseInt(res.headers['content-length'] || '0', 10),
+        receivedAt: Date.now(),
       });
     });
 
@@ -203,7 +207,7 @@ function headRemoteExe() {
 /**
  * HEAD request to a specific URL (used for redirect targets).
  * @param {string} url
- * @returns {Promise<{ etag: string, lastModified: string|null, contentLength: number }>}
+ * @returns {Promise<{ etag: string, lastModified: string|null, contentLength: number, receivedAt: number }>}
  */
 function headRemoteExeWithUrl(url, timeoutMs = HEAD_TIMEOUT) {
   return new Promise((resolve, reject) => {
@@ -225,6 +229,7 @@ function headRemoteExeWithUrl(url, timeoutMs = HEAD_TIMEOUT) {
         etag: (res.headers.etag || '').replace(/^"|"$/g, ''),
         lastModified: res.headers['last-modified'] || null,
         contentLength: parseInt(res.headers['content-length'] || '0', 10),
+        receivedAt: Date.now(),
       });
     });
     req.on('error', reject);
@@ -313,7 +318,8 @@ async function checkForUpdate() {
     const remote = await headRemoteExe();
     log('[Updater] HEAD ok — etag:', remote.etag,
       '| lastModified:', remote.lastModified,
-      '| contentLength:', remote.contentLength);
+      '| contentLength:', remote.contentLength,
+      '| receivedAt:', new Date(remote.receivedAt).toISOString());
 
     const localMd5 = await computeFileMd5(targetPath);
     log('[Updater] local MD5:', localMd5, '| remote MD5:', remote.etag, '| match:', localMd5 === remote.etag);
@@ -352,14 +358,19 @@ async function checkForUpdate() {
  *
  * @param {Electron.IpcMainEvent} event — the IPC event for progress pushes
  * @param {string} destDir — directory to write the new exe into
- * @returns {Promise<string>} path to the downloaded file
+ * @returns {Promise<{ filePath: string, download: { url: string, statusCode: number|null, etag: string|null, lastModified: string|null, ac27Md5: string|null, contentLength: number, received: number, startedAt: number, receivedAt: number } }>}
  */
 function downloadUpdate(event, destDir) {
   return new Promise((resolve, reject) => {
     const exePath = path.join(destDir, 'AC27Editor_new.exe');
     const file = fs.createWriteStream(exePath);
+    const startedAt = Date.now();
     let received = 0;
     let total = 0;
+    // Response metadata from the (final, post-redirect) GET — returned to the
+    // caller so a failed MD5 verification can be diagnosed (was the exe a
+    // different build than the sidecar the verify HEAD read?).
+    let meta = { url: UPDATE_BASE, statusCode: null, etag: null, lastModified: null };
 
     const notify = (percent) => {
       if (event.sender && !event.sender.isDestroyed()) {
@@ -386,6 +397,23 @@ function downloadUpdate(event, destDir) {
 
         const contentLength = res.headers['content-length'];
         if (contentLength) total = parseInt(contentLength, 10);
+
+        // Record this (final, post-redirect) response's identity. The exe's
+        // own ETag/last-modified let a later MD5 mismatch be attributed to a
+        // release that changed mid-download (R2's ETag is the multipart etag
+        // for the normal exe, NOT the file MD5 — the sidecar read by the verify
+        // HEAD is authoritative; here we only need "did the object change?").
+        // `ac27Md5` is the Worker's X-AC27-MD5: the `.md5` sidecar read in the
+        // SAME request that streamed these bytes. When present the caller
+        // verifies against it directly (no post-download HEAD race); when the
+        // Worker is older and omits it, the caller falls back to a HEAD.
+        meta = {
+          url: target,
+          statusCode: res.statusCode,
+          etag: (res.headers.etag || '').replace(/^"|"$/g, '') || null,
+          lastModified: res.headers['last-modified'] || null,
+          ac27Md5: (res.headers['x-ac27-md5'] || '').trim() || null,
+        };
 
         let settled = false;
         const haveLength = () => (total > 0 ? `${received}/${total}` : String(received));
@@ -422,7 +450,16 @@ function downloadUpdate(event, destDir) {
           // Resolve only after the write stream has FLUSHED to disk — otherwise
           // main.js's post-download MD5 check reads a partially-written file
           // (fs buffers writes internally; statSync/readFileSync can race it).
-          file.end(() => resolve(exePath));
+          file.end(() => resolve({
+            filePath: exePath,
+            download: {
+              ...meta,
+              contentLength: total,
+              received,
+              startedAt,
+              receivedAt: Date.now(),
+            },
+          }));
         });
 
         // Mid-stream socket kill: 'end' never fires. 'close' fires after a
