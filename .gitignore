@@ -11,7 +11,13 @@ out/
 release/
 steam-workshop-content/
 build_*.txt
+build-out.txt
+test-out.txt
 .workshop-marker.json
+
+# Generated Workshop item VDFs — carry machine-specific absolute content paths,
+# so they are per-machine artifacts and must never be committed.
+workshop/create-item.*.vdf
 
 # Python (legacy)
 __pycache__/
@@ -49,3 +55,6 @@ aircraft_times_report.tsv
 # OS
 Thumbs.db
 .DS_Store
+
+# Stray NVIDIA driver log dir written into whatever cwd a GPU process inherits
+NVIDIA Corporation/

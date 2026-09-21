@@ -435,7 +435,7 @@ async function main() {
   console.log(`[create-item] created publishedfileid: ${publishedFileId}`);
   console.log(`[create-item] page:  https://steamcommunity.com/sharedfiles/filedetails/?id=${publishedFileId}`);
   console.log(`[create-item] images: https://steamcommunity.com/sharedfiles/managepreviews/?id=${publishedFileId}`);
-  console.log('[create-item] commit the VDF, then set STEAM_PUBLISHED_FILE_ID in src/utils/constants/steam.js to the new id (release.yml + update-workshop-i18n.mjs read it from there).');
+  console.log('[create-item] the VDF holds machine-specific absolute paths and is gitignored — do NOT commit it. Set STEAM_PUBLISHED_FILE_ID in src/utils/constants/steam.js to the new id (release.yml + update-workshop-i18n.mjs read it from there), then delete this VDF.');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
