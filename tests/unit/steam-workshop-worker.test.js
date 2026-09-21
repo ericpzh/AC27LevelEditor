@@ -59,7 +59,7 @@ function useFakeLib(fakePath) {
   savedPaths = { script: bridge._scriptPath, lib: bridge._libPath };
   bridge._scriptPath = () => path.join(ROOT, 'electron', 'steam-workshop-worker.js');
   bridge._libPath = () => fakePath;
-  bridge.appId = '4004140';
+  bridge.appId = '3328490';
 }
 
 afterEach(() => {
@@ -93,7 +93,7 @@ describe('steam-workshop-core', () => {
   it('initClient folds init failures into STEAM_UNAVAILABLE', () => {
     const lib = { init: () => { throw new Error('no steam'); } };
     try {
-      core.initClient(lib, 4004140);
+      core.initClient(lib, 3328490);
       expect.unreachable();
     } catch (err) {
       expect(err.code).toBe('STEAM_UNAVAILABLE');
@@ -103,7 +103,7 @@ describe('steam-workshop-core', () => {
   it('initClient rejects an unowned app with NO_LICENSE', () => {
     const lib = { init: () => fakeClient({ subscribed: false }) };
     try {
-      core.initClient(lib, 4004140);
+      core.initClient(lib, 3328490);
       expect.unreachable();
     } catch (err) {
       expect(err.code).toBe('NO_LICENSE');
@@ -111,14 +111,14 @@ describe('steam-workshop-core', () => {
   });
 
   it('createItem stringifies the item id', async () => {
-    const res = await core.createItem(fakeClient(), 4004140);
+    const res = await core.createItem(fakeClient(), 3328490);
     expect(res).toEqual({ itemId: '7', needsToAcceptAgreement: false });
   });
 
   it('uploadError maps Steam preview-limit to PREVIEW_LIMIT', async () => {
     const err = await core.submitUpdate(
       fakeClient({ updateError: { code: 'GenericFailure', message: 'limit exceeded' } }),
-      '1', {}, 4004140, () => {},
+      '1', {}, 3328490, () => {},
     ).catch((e) => e);
     expect(err.code).toBe('PREVIEW_LIMIT');
   });
@@ -142,7 +142,7 @@ describe('steam-workshop-bridge (real child)', () => {
     useFakeLib(writeFakeLib(dir));
 
     expect(await bridge.availability()).toEqual({
-      available: true, appId: '4004140', author: 'Tester',
+      available: true, appId: '3328490', author: 'Tester',
     });
     expect(await bridge.missing('555')).toBe(false);
     expect(await bridge.createItem()).toEqual({ itemId: '42', needsToAcceptAgreement: false });

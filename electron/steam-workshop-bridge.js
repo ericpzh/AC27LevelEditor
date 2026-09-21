@@ -26,7 +26,7 @@ const EXIT_KILL_MS = 3000;
 
 class SteamWorkshopBridge {
   constructor() {
-    this.appId = '4004140';
+    this.appId = '3328490';
     this.child = null;
     this.pending = new Map();
     this.nextId = 1;

@@ -21,11 +21,9 @@ const bridge = require('./steam-workshop-bridge');
 // main process is CommonJS and require(esm) is not portable, so keep literal
 // fallbacks and prefer the module only when it loads.
 //
-// Workshop host is the Playtest/Editor app, plain and simple: the editor,
-// its own Workshop item, and the game it runs against are all Playtest
-// today (3328490 is where the editor "will migrate to" per steam.js —
-// a future step, not today's target).
-let STEAM_WORKSHOP_APP_ID = '4004140';
+// Workshop host is the shipping game app: the editor uploads to the game's
+// Workshop (STEAM_APP_ID in steam.js — kept in sync with STEAM_GAME_APP_ID).
+let STEAM_WORKSHOP_APP_ID = '3328490';
 try {
   // eslint-disable-next-line global-require
   const steamConsts = require('../src/utils/constants/steam.js');
@@ -256,7 +254,7 @@ function _releaseOps(ops) {
 }
 
 function _resolveAppId() {
-  return String(STEAM_WORKSHOP_APP_ID || '4004140');
+  return String(STEAM_WORKSHOP_APP_ID || '3328490');
 }
 
 // ─── Availability ───────────────────────────────────────

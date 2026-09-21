@@ -125,7 +125,7 @@ describe('isAvailable', () => {
   it('reports STEAM_UNAVAILABLE without the native module', () => {
     steamWorkshop._setSteamworksForTests(null);
     expect(steamWorkshop.isAvailable()).toEqual({
-      available: false, appId: '4004140', reason: 'STEAM_UNAVAILABLE',
+      available: false, appId: '3328490', reason: 'STEAM_UNAVAILABLE',
     });
   });
 
@@ -136,56 +136,56 @@ describe('isAvailable', () => {
     expect(res.reason).toBe('STEAM_UNAVAILABLE');
   });
 
-  it('reports NO_LICENSE when the account does not own the Playtest app', () => {
+  it('reports NO_LICENSE when the account does not own the game app', () => {
     steamWorkshop._setSteamworksForTests(makeFakeLib({ subscribed: false }).lib);
     expect(steamWorkshop.isAvailable()).toEqual({
-      available: false, appId: '4004140', reason: 'NO_LICENSE',
+      available: false, appId: '3328490', reason: 'NO_LICENSE',
     });
   });
 
-  it('targets the Playtest app constant for both client generations', () => {
+  it('targets the game app constant for both client generations', () => {
     for (const shape of ['legacy', 'modern']) {
       steamWorkshop._resetSteamworksForTests();
       steamWorkshop._setSteamworksForTests(makeFakeLib({ shape }).lib);
-      expect(steamWorkshop.isAvailable()).toEqual({ available: true, appId: '4004140' });
+      expect(steamWorkshop.isAvailable()).toEqual({ available: true, appId: '3328490' });
     }
   });
 
-  it('inits the Playtest app exactly once — never the shipping game app', () => {
+  it('inits the game app exactly once — single host, no cross-app probe', () => {
     const { lib, calls } = makeFakeLib();
     steamWorkshop._setSteamworksForTests(lib);
-    expect(steamWorkshop.isAvailable()).toEqual({ available: true, appId: '4004140' });
-    expect(calls.init).toEqual([4004140]);
+    expect(steamWorkshop.isAvailable()).toEqual({ available: true, appId: '3328490' });
+    expect(calls.init).toEqual([3328490]);
   });
 
-  it('publishes to the Playtest app', async () => {
+  it('publishes to the game app', async () => {
     const { lib, calls } = makeFakeLib();
     steamWorkshop._setSteamworksForTests(lib);
     seedLivery(gameRoot);
     const res = await steamWorkshop.publishLivery(gameRoot, 'A20N_CCA', { title: 't' });
     expect(res.publishedFileId).toBe('123456789');
-    expect(calls.createItem).toEqual([4004140]);
+    expect(calls.createItem).toEqual([3328490]);
     const sidecar = steamWorkshop.readSidecar(path.join(livery.ownPackDir(gameRoot), 'A20N_CCA'));
-    expect(sidecar.appId).toBe('4004140');
+    expect(sidecar.appId).toBe('3328490');
   });
 
   it('reports STEAM_UNAVAILABLE when target init throws (no cross-app probe)', () => {
     // Target init throws (app not owned / Steam down). No Spacewar/480
     // fallback is attempted — single init call only.
     const { lib, calls } = makeFakeLib({
-      initThrowsFor: [4004140],
+      initThrowsFor: [3328490],
     });
     steamWorkshop._setSteamworksForTests(lib);
     expect(steamWorkshop.isAvailable()).toEqual({
-      available: false, appId: '4004140', reason: 'STEAM_UNAVAILABLE',
+      available: false, appId: '3328490', reason: 'STEAM_UNAVAILABLE',
     });
-    expect(calls.init).toEqual([4004140]);
+    expect(calls.init).toEqual([3328490]);
   });
 
   it('reports STEAM_UNAVAILABLE when Steam itself is down', () => {
     steamWorkshop._setSteamworksForTests({ init: () => { throw new Error('no steam'); } });
     expect(steamWorkshop.isAvailable()).toEqual({
-      available: false, appId: '4004140', reason: 'STEAM_UNAVAILABLE',
+      available: false, appId: '3328490', reason: 'STEAM_UNAVAILABLE',
     });
   });
 
@@ -193,7 +193,7 @@ describe('isAvailable', () => {
     steamWorkshop._setSteamworksForTests(makeFakeLib({
       initThrowCodes: { 99999: { code: 'GenericFailure', message: 'ConnectToGlobalUser failed.' } },
     }).lib);
-    expect(steamWorkshop.isAvailable()).toEqual({ available: true, appId: '4004140' });
+    expect(steamWorkshop.isAvailable()).toEqual({ available: true, appId: '3328490' });
     try {
       steamWorkshop._getClient('99999');
       expect.unreachable();
@@ -342,11 +342,11 @@ describe('publishLivery', () => {
       publishedFileId: '123456789',
       url: 'https://steamcommunity.com/sharedfiles/filedetails/?id=123456789',
     });
-    expect(calls.createItem).toEqual([4004140]);
+    expect(calls.createItem).toEqual([3328490]);
     expect(calls.updateItem).toHaveLength(1);
     const up = calls.updateItem[0];
     expect(String(up.itemId)).toBe('123456789');
-    expect(up.appId).toBe(4004140);
+    expect(up.appId).toBe(3328490);
     expect(up.details.title).toBe('My livery');
     expect(up.details.tags).toEqual(['Livery', 'Airbus']);
     expect(up.details.visibility).toBe(0);
@@ -460,7 +460,7 @@ describe('publishLivery', () => {
     });
     steamWorkshop._setSteamworksForTests(lib);
     const dir = seedLivery(gameRoot);
-    steamWorkshop.writeSidecar(dir, { appId: '4004140', publishedFileId: '555' });
+    steamWorkshop.writeSidecar(dir, { appId: '3328490', publishedFileId: '555' });
     await expect(steamWorkshop.publishLivery(gameRoot, 'A20N_CCA', { title: 't' }))
       .rejects.toMatchObject({ code: 'PREVIEW_LIMIT' });
     // The item exists, so no replacement is created.

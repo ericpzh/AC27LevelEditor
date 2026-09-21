@@ -6,12 +6,17 @@
 // instead of re-declaring the literal.
 
 // Steam app ids.
-// - STEAM_GAME_APP_ID: the shipping Airport Control 27 game (the Workshop host
-//   the editor will migrate to; see scripts/create-workshop-item.mjs).
-// - STEAM_APP_ID: the AC27Editor app that currently hosts the Workshop item.
+// - STEAM_GAME_APP_ID: the shipping Airport Control 27 game (the Workshop host).
+// - STEAM_APP_ID: the app that hosts the Workshop item (now the shipping game).
 export const STEAM_GAME_APP_ID = '3328490';
-export const STEAM_APP_ID = '4004140';
+export const STEAM_APP_ID = '3328490';
 export const STEAM_PUBLISHED_FILE_ID = '3793213548';
+
+// Game install directory names under `<steamapps>/common`. Single source of
+// truth for the user-facing name (dialogs, default-path hints, demo detection);
+// rename here when the game is renamed.
+export const STEAM_GAME_DIR_NAME = 'Airport Control 27';
+export const STEAM_DEMO_DIR_NAME = 'Airport Control 27 Demo';
 
 // Workshop item identity / artifacts.
 export const STEAM_WORKSHOP_TITLE = 'AC27Editor';

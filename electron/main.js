@@ -17,6 +17,7 @@ if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, findGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
 const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, PROD_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
+const { STEAM_GAME_DIR_NAME } = require('../src/utils/constants/steam.js');
 const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS, validateFlightObjects, buildConstraints } = require('./api-server');
@@ -611,7 +612,7 @@ ipcMain.handle('detect-game-root', async () => {
 
 ipcMain.handle('select-game-root', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select Airport Control 27 Playtest Game Root',
+    title: `Select ${STEAM_GAME_DIR_NAME} Game Root`,
     properties: ['openDirectory'],
   });
   if (result.canceled || !result.filePaths.length) return { canceled: true };
@@ -3467,7 +3468,7 @@ ipcMain.handle('uninstall-bepinex', async () => {
 // Workshop: resolve the DLL that ships with the Workshop item itself.
 // The Workshop distribution contains AC27Approach.dll either (a) as a sibling
 // alongside AC27EditorWorkshop.exe in the Steam Workshop content folder
-// (.../workshop/content/4004140/3793213548/AC27Approach.dll — copied by the
+// (.../workshop/content/3328490/3793213548/AC27Approach.dll — copied by the
 // release workflow), or (b) as an extraResource bundled inside resources/
 // (resources/AC27Approach.dll) when built via `node build.js --workshop`
 // with the plugin artifact present. Both locations are checked.

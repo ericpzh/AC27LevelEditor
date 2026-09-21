@@ -10,7 +10,7 @@
 // Env:
 //   STEAM_WORKSHOP_LIB        absolute path to the steamworks.js entry (asar
 //                             unpacked path in packaged builds)
-//   STEAM_WORKSHOP_APP_ID     Workshop host app id (default 4004140)
+//   STEAM_WORKSHOP_APP_ID     Workshop host app id (default 3328490)
 //
 // Protocol: JSON lines on stdin, JSON lines on stdout.
 //   in : {id, op:'availability'|'getItem'|'missing'|'createItem'|'updateItem'|'shutdown', ...}
@@ -24,7 +24,7 @@
 const readline = require('readline');
 const core = require('./steam-workshop-core');
 
-const APP_ID = Number(process.env.STEAM_WORKSHOP_APP_ID || '4004140');
+const APP_ID = Number(process.env.STEAM_WORKSHOP_APP_ID || '3328490');
 const LIB_PATH = process.env.STEAM_WORKSHOP_LIB || '';
 
 let lib = null;

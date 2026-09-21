@@ -7,7 +7,7 @@ const { STEAMAPPS_SEGMENT, STEAM_COMMON_SEGMENT } = require('../utils/constants/
 
 /**
  * Scan the game root directory for all .acl files.
- * @param {string} gameRoot - path to "Airport Control 27 Playtest"
+ * @param {string} gameRoot - path to "Airport Control 27"
  * @returns {{ airports: Array, totalFiles: number, errorCode?: string, errorPath?: string }}
  */
 function scanGameRoot(gameRoot) {

@@ -22,7 +22,7 @@ const ROOT = path.join(__dirname, '..', '..');
 
 describe('steam constants', () => {
   it('exposes the editor + game app identity', () => {
-    expect(STEAM_APP_ID).toBe('4004140');
+    expect(STEAM_APP_ID).toBe('3328490');
     expect(STEAM_PUBLISHED_FILE_ID).toBe('3793213548');
     expect(STEAM_GAME_APP_ID).toBe('3328490');
     expect(STEAM_WORKSHOP_TITLE).toBe('AC27Editor');

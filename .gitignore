@@ -9,6 +9,7 @@ dist/
 dist-electron/
 out/
 release/
+steam-workshop-content/
 build_*.txt
 .workshop-marker.json
 

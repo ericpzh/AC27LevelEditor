@@ -14,6 +14,7 @@ import { FaTableList } from "react-icons/fa6";
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 import { stripSuffixes } from '../../utils/htmlUtils';
 import { DEMO_VISIBLE_BASES, DEMO_VISIBLE_ORDER, PROD_VISIBLE_BASES } from '../../utils/constants';
+import { STEAM_DEMO_DIR_NAME } from '../../utils/constants/steam';
 
 import AirportCardMap from './AirportCardMap';
 import BrowserHelpOverlay, { BUTTONS } from './BrowserHelpOverlay';
@@ -55,7 +56,7 @@ export default function BrowserScreen() {
   const setScreen = useAppStore(s => s.setScreen);
   const theme = useAppStore(s => s.theme);
   const toggleTheme = useAppStore(s => s.toggleTheme);
-  const isDemo = rootPath && rootPath.includes('Airport Control 27 Demo');
+  const isDemo = rootPath && rootPath.includes(STEAM_DEMO_DIR_NAME);
   const openGroundRadarAirports = useAppStore(s => s.openGroundRadarAirports);
   const openAirRadarAirports = useAppStore(s => s.openAirRadarAirports);
   const setGroundRadarOpen = useAppStore(s => s.setGroundRadarOpen);

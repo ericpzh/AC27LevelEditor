@@ -6,6 +6,7 @@ import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import CacheProgressBody from '../common/CacheProgressBody';
 import { safeHtml } from '../../utils/safeHtml';
+import { STEAM_GAME_DIR_NAME, STEAM_DEMO_DIR_NAME } from '../../utils/constants/steam';
 
 export default function SetupScreen() {
   const { t, toggleLang } = useTranslation();
@@ -82,7 +83,7 @@ export default function SetupScreen() {
         <li>{safeHtml(t('setup_steam_step2'))}</li>
         <li>{t('setup_steam_step3')}</li>
       </ol>
-      <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>C:\Program Files (x86)\Steam\steamapps\common\Airport Control 27</code> {t('setup_steam_path_or')} <code>D:\SteamLibrary\steamapps\common\Airport Control 27 Demo</code></p>
+      <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>{`C:\\Program Files (x86)\\Steam\\steamapps\\common\\${STEAM_GAME_DIR_NAME}`}</code> {t('setup_steam_path_or')} <code>{`D:\\SteamLibrary\\steamapps\\common\\${STEAM_DEMO_DIR_NAME}`}</code></p>
     </div>
   );
 
