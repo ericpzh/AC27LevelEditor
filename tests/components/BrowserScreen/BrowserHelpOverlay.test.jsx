@@ -26,8 +26,24 @@ describe('BrowserHelpOverlay', () => {
   it('renders all section headings', () => {
     renderOverlay();
     expect(screen.getByText('Header Buttons')).toBeInTheDocument();
+    expect(screen.getByText('Settings Menu')).toBeInTheDocument();
     expect(screen.getByText('Airport')).toBeInTheDocument();
     expect(screen.getByText('Levels')).toBeInTheDocument();
+  });
+
+  it('documents the settings menu in the header section', () => {
+    renderOverlay();
+    expect(screen.getByText(/holds the remaining options/)).toBeInTheDocument();
+    // Header section lists only the top-level buttons …
+    const headerSection = document.getElementById('browser-help-toolbar');
+    expect(headerSection.textContent).toMatch(/Livery/);
+    expect(headerSection.textContent).toMatch(/Restore All/);
+    expect(headerSection.textContent).toMatch(/Setting/);
+    // … while the collapsed items live under the Settings Menu section.
+    const settingsSection = document.getElementById('browser-help-settings');
+    expect(settingsSection.textContent).toMatch(/Change Folder/);
+    expect(settingsSection.textContent).toMatch(/Background Video/);
+    expect(settingsSection.textContent).toMatch(/Debug Mode/);
   });
 
   it('renders all button descriptions', () => {
@@ -82,6 +98,7 @@ describe('BrowserHelpOverlay', () => {
     renderOverlay();
     expect(screen.getByText('帮助')).toBeInTheDocument();
     expect(screen.getByText('顶部按钮')).toBeInTheDocument();
+    expect(screen.getByText('设置菜单')).toBeInTheDocument();
     expect(screen.getByText('机场')).toBeInTheDocument();
     expect(screen.getByText('关卡')).toBeInTheDocument();
   });

@@ -161,7 +161,15 @@ beforeEach(() => {
   });
 
   describe('Debug Mode Toggle', () => {
-    it('renders debug mode toggle button in the header', async () => {
+    // Debug Mode now lives inside the Settings (gear) dropdown menu.
+    async function openSettingsMenu() {
+      fireEvent.click(screen.getByText('Setting'));
+      await waitFor(() => {
+        expect(screen.getByText('Debug Mode')).toBeInTheDocument();
+      });
+    }
+
+    it('renders debug mode toggle button in the settings menu', async () => {
       setupDefaultMocks();
       renderBrowser();
 
@@ -169,6 +177,7 @@ beforeEach(() => {
         expect(screen.getByText('Levels')).toBeInTheDocument();
       });
 
+      await openSettingsMenu();
       expect(screen.getByText('Debug Mode')).toBeInTheDocument();
     });
 
@@ -179,11 +188,12 @@ beforeEach(() => {
       renderBrowser();
 
       await waitFor(() => {
-        expect(screen.getByText('Debug Mode')).toBeInTheDocument();
+        expect(screen.getByText('Levels')).toBeInTheDocument();
       });
 
+      await openSettingsMenu();
       const debugBtn = screen.getByText('Debug Mode').closest('button');
-      expect(debugBtn.className).toContain('btn-debug-active');
+      expect(debugBtn.className).toContain('active');
     });
 
     it('has tooltip text on hover', async () => {
@@ -194,6 +204,7 @@ beforeEach(() => {
         expect(screen.getByText('Levels')).toBeInTheDocument();
       });
 
+      await openSettingsMenu();
       const debugBtn = screen.getByText('Debug Mode').closest('button');
       fireEvent.mouseEnter(debugBtn);
 
@@ -210,6 +221,11 @@ beforeEach(() => {
       const user = userEvent.setup();
       renderBrowser();
 
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Setting'));
       await waitFor(() => {
         expect(screen.getByText('Debug Mode')).toBeInTheDocument();
       });
@@ -270,7 +286,7 @@ beforeEach(() => {
   });
 
   describe('Tooltips', () => {
-    it('shows tooltip on Change Folder button hover', async () => {
+    it('shows current directory instantly on the Change Folder menu item hover', async () => {
       setupDefaultMocks();
       renderBrowser();
 
@@ -278,14 +294,17 @@ beforeEach(() => {
         expect(screen.getByText('No level files found')).toBeInTheDocument();
       });
 
-      // Hover the Change Folder button (first .btn-sm)
-      const changeDirBtn = document.querySelector('.btn-sm');
-      expect(changeDirBtn).toBeInTheDocument();
-      fireEvent.mouseEnter(changeDirBtn);
+      // The full path is no longer displayed outright in the header …
+      expect(document.querySelector('.browser-root-path')).toBeNull();
+
+      // … it shows instantly on hover, fed by the cached store value.
+      fireEvent.click(screen.getByText('Setting'));
+      const changeDirBtn = await screen.findByText('Change Folder');
+      fireEvent.mouseEnter(changeDirBtn.closest('button'));
 
       const tip = document.body.querySelector('.tooltip-popup');
       expect(tip).not.toBeNull();
-      expect(tip.textContent).toBe('Select a different game installation path.');
+      expect(tip.textContent).toBe('Change Folder, current directory: D:\\Games\\Airport Control 27');
     });
 
     it('hides tooltip on mouse leave', async () => {
@@ -296,15 +315,15 @@ beforeEach(() => {
         expect(screen.getByText('No level files found')).toBeInTheDocument();
       });
 
-      const changeDirBtn = document.querySelector('.btn-sm');
-      fireEvent.mouseEnter(changeDirBtn);
+      const liveryBtn = screen.getByText('Livery').closest('button');
+      fireEvent.mouseEnter(liveryBtn);
       expect(document.body.querySelector('.tooltip-popup')).not.toBeNull();
 
-      fireEvent.mouseLeave(changeDirBtn);
+      fireEvent.mouseLeave(liveryBtn);
       expect(document.body.querySelector('.tooltip-popup')).toBeNull();
     });
 
-    it('shows tooltip on language toggle hover', async () => {
+    it('shows tooltip on language menu item hover', async () => {
       setupDefaultMocks();
       renderBrowser();
 
@@ -312,14 +331,15 @@ beforeEach(() => {
         expect(screen.getByText('No level files found')).toBeInTheDocument();
       });
 
-      // Language toggle button (now icon-only, but still has btn-lang-toggle-top)
-      const langBtn = document.querySelectorAll('.btn-lang-toggle-top')[1];
-      expect(langBtn).toBeInTheDocument();
-      fireEvent.mouseEnter(langBtn);
+      // Language toggle now lives inside the Settings menu; in en mode
+      // the item is labeled with the other language's name.
+      fireEvent.click(screen.getByText('Setting'));
+      const langItem = await screen.findByText('中文');
+      fireEvent.mouseEnter(langItem.closest('button'));
 
       const tip = document.body.querySelector('.tooltip-popup');
       expect(tip).not.toBeNull();
-      expect(tip.textContent).toBe('Switch the UI language.');
+      expect(tip.textContent).toBe("Switch the UI language (the button shows the other language's name).");
     });
 
     it('help button shows its own tooltip', async () => {
@@ -362,6 +382,102 @@ beforeEach(() => {
 
       // Each button should have different tooltip text
       expect(text1).not.toBe(text2);
+    });
+  });
+
+  describe('Settings Menu', () => {
+    it('shows only Livery, Restore All, Setting and help in the header', async () => {
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Livery')).toBeInTheDocument();
+      expect(screen.getByText('Restore All')).toBeInTheDocument();
+      expect(screen.getByText('Setting')).toBeInTheDocument();
+      // Collapsed items stay hidden until the menu opens
+      expect(screen.queryByText('Change Folder')).toBeNull();
+      expect(screen.queryByText('Background Video')).toBeNull();
+      expect(screen.queryByText('Debug Mode')).toBeNull();
+    });
+
+    it('opens a floating menu with named items', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Setting'));
+
+      expect(document.querySelector('.browser-settings-menu')).toBeInTheDocument();
+      expect(screen.getByText('Change Folder')).toBeInTheDocument();
+      expect(screen.getByText('Background Video')).toBeInTheDocument();
+      expect(screen.getByText('Debug Mode')).toBeInTheDocument();
+      expect(screen.getByText('Report Bug')).toBeInTheDocument();
+      // en mode → the language item offers 中文
+      expect(screen.getByText('中文')).toBeInTheDocument();
+    });
+
+    it('labels the language item with the other language name', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      // en mode offers 中文; switching flips the label to English.
+      await user.click(screen.getByText('Setting'));
+      await user.click(await screen.findByText('中文'));
+
+      await user.click(screen.getByText('设置'));
+      expect(screen.getByText('English')).toBeInTheDocument();
+    });
+
+    it('closes the menu when clicking outside of it', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Setting'));
+      await waitFor(() => {
+        expect(screen.getByText('Change Folder')).toBeInTheDocument();
+      });
+
+      fireEvent.mouseDown(document.body);
+      await waitFor(() => {
+        expect(screen.queryByText('Change Folder')).toBeNull();
+      });
+    });
+
+    it('closes the menu on Escape', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks();
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Setting'));
+      await waitFor(() => {
+        expect(screen.getByText('Change Folder')).toBeInTheDocument();
+      });
+
+      fireEvent.keyDown(document, { key: 'Escape' });
+      await waitFor(() => {
+        expect(screen.queryByText('Change Folder')).toBeNull();
+      });
     });
   });
 

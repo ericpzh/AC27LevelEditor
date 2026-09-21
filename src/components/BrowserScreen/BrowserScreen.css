@@ -25,6 +25,85 @@
 }
 .browser-actions { -webkit-app-region: no-drag; }
 
+/* Header buttons match the radar-toggle size below (6px 14px, semibold) */
+.browser-actions .btn-sm {
+  padding: 6px 14px;
+  font-weight: 600;
+}
+
+.browser-actions .btn-icon-only {
+  padding: 6px 12px;
+}
+
+/* Livery entry — subtle highlight like the radar toggles: transparent
+   fill, accent border + primary text, full accent only on hover */
+.browser-actions .btn-sm.btn-livery {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--text);
+}
+.browser-actions .btn-sm.btn-livery:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Settings (gear) dropdown — floating menu anchored under the gear button */
+.browser-settings-wrap {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.browser-settings-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  -webkit-app-region: no-drag;
+}
+
+.browser-settings-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition), color var(--transition);
+}
+
+.browser-settings-menu button:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.browser-settings-menu button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.browser-settings-menu button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .btn-toggle-hidden {
   opacity: 0.75;
   transition: opacity 0.15s;
@@ -41,14 +120,6 @@
   opacity: 1;
 }
 
-.browser-root-path {
-  color: var(--text-muted);
-  font-size: 11px;
-  max-width: 400px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* Re-scan guide path code — inline, matching SetupScreen .steam-path-hint code */
 .guide-path {
   display: inline;
@@ -147,7 +218,9 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: var(--accent-dim);
+  /* Subtle highlight: transparent fill, accent border + primary text.
+     Still above plain buttons, below the full-accent active state. */
+  background: transparent;
   border: 1px solid var(--accent);
   color: var(--text);
   padding: 6px 14px;
@@ -172,18 +245,6 @@
 .btn-radar-toggle.active:hover {
   background: var(--accent-hover, var(--accent));
   border-color: var(--accent-hover, var(--accent));
-}
-
-/* Debug mode toggle active state — overrides .btn-sm */
-.btn-sm.btn-debug-active {
-  background: var(--accent);
-  color: #fff;
-  border: 1px solid var(--accent);
-}
-.btn-sm.btn-debug-active:hover {
-  background: var(--accent-hover, var(--accent));
-  border-color: var(--accent-hover, var(--accent));
-  color: #fff;
 }
 
 /* Level rows */

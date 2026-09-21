@@ -4,7 +4,10 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airportDisplayName, airportSortOrder } from '../../utils/constants';
-import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoColorPaletteOutline, IoRefreshOutline, IoChevronDown } from 'react-icons/io5';
+import { IoClose, IoChevronForward, IoLanguage, IoFolderOpenOutline, IoBugOutline, IoHelpCircleOutline, IoVideocamOutline, IoCodeSlash, IoChevronDown } from 'react-icons/io5';
+import { AiFillSkin } from 'react-icons/ai';
+import { MdOutlineRestore } from 'react-icons/md';
+import { FaGear } from 'react-icons/fa6';
 import { GiRadarSweep } from "react-icons/gi";
 import { TbMapRoute } from "react-icons/tb";
 import { FaTableList } from "react-icons/fa6";
@@ -82,6 +85,8 @@ export default function BrowserScreen() {
   const [bepInExLoading, setBepInExLoading] = useState(false);
   const [bepInExInstallOpen, setBepInExInstallOpen] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef(null);
   const contentRef = useRef(null);
   const measuredRef = useRef({});
   const { bind, TooltipPortal } = useTooltip();
@@ -105,6 +110,24 @@ export default function BrowserScreen() {
       else if (type === 'flightStrips') setFlightStripOpen(icao, false);
     });
   }, []);
+
+  // Settings dropdown: floating menu that auto-closes when clicking
+  // anywhere outside of it, or on Escape.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onPointerDown = (e) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) setSettingsOpen(false);
+    };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setSettingsOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [settingsOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -377,29 +400,43 @@ export default function BrowserScreen() {
       <header className="browser-header">
         <div className="browser-title"><span>{t('browser_title')}</span></div>
         <div className="browser-actions">
-          <span className="browser-root-path">{rootPath || ''}</span>
-          <button className="btn-sm" {...bind(t(BUTTONS.changeDir.descKey))} onClick={() => setScreen('setup')}><IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}</button>
-          <button className="btn-sm" {...bind(t('browser_livery_desc'))} onClick={() => setScreen('livery')}>
-            <IoColorPaletteOutline size={14} className="btn-icon" />{t('browser_livery')}
-          </button>
-          <button className={`btn-sm ${debugMode ? 'btn-debug-active' : ''}`} {...bind(t('browser_debug_mode_desc'))} onClick={handleToggleDebugMode} disabled={bepInExLoading}>
-            <IoCodeSlash size={14} className="btn-icon" />{t('browser_debug_mode')}
-          </button>
-          <button className="btn-sm" {...bind(t('browser_replace_bg_desc'))} onClick={handleReplaceBackground}>
-            <IoVideocamOutline size={14} className="btn-icon" />{t('browser_replace_background')}
+          <button className="btn-sm btn-livery" {...bind(t('browser_livery_desc'))} onClick={() => setScreen('livery')}>
+            <AiFillSkin size={14} className="btn-icon" />{t('browser_livery')}
           </button>
           <button className="btn-sm" {...bind(t('browser_restore_all_desc'))} onClick={handleRestoreAllClick} disabled={restoreLoading}>
-            <IoRefreshOutline size={14} className="btn-icon" />{t('browser_restore_all')}
+            <MdOutlineRestore size={14} className="btn-icon" />{t('browser_restore_all')}
           </button>
-          <button className="btn-lang-toggle-top btn-icon-only" {...bind(t(BUTTONS.bugReport.descKey))} onClick={handleBugReport}>
-            <IoBugOutline size={14} />
-          </button>
-          <button className="btn-lang-toggle-top btn-icon-only" {...bind(t(BUTTONS.lang.descKey))} onClick={toggleLang}>
-            <IoLanguage size={14} />
-          </button>
-          <button className="btn-lang-toggle-top btn-icon-only" {...bind(t(BUTTONS.themeDark.descKey))} onClick={toggleTheme}>
-            {theme === 'dark' ? <IoSunnyOutline size={14} /> : <IoMoonOutline size={14} />}
-          </button>
+          <div className="browser-settings-wrap" ref={settingsRef}>
+            <button className="btn-sm" onClick={() => setSettingsOpen(o => !o)} aria-expanded={settingsOpen} aria-haspopup="menu">
+              <FaGear size={14} className="btn-icon" />{t('browser_settings')}
+            </button>
+            {settingsOpen && (
+              <div className="browser-settings-menu" role="menu">
+                {/* Instant portal tooltip (no native-title delay); rootPath is the
+                    already-cached store value, so nothing is fetched on hover. */}
+                <button role="menuitem" {...bind(t('browser_change_dir_hint', { path: rootPath || '' }))} onClick={() => { setSettingsOpen(false); setScreen('setup'); }}>
+                  <IoFolderOpenOutline size={14} className="btn-icon" />{t('browser_change_dir')}
+                </button>
+                <button role="menuitem" {...bind(t('browser_replace_bg_desc'))} onClick={() => { setSettingsOpen(false); handleReplaceBackground(); }}>
+                  <IoVideocamOutline size={14} className="btn-icon" />{t('browser_replace_background')}
+                </button>
+                <button role="menuitem" {...bind(t(BUTTONS.bugReport.descKey))} onClick={() => { setSettingsOpen(false); handleBugReport(); }}>
+                  <IoBugOutline size={14} className="btn-icon" />{t('browser_bug_report')}
+                </button>
+                {/* Label shows the *other* language's name: 中文 in en mode, English in zh mode */}
+                <button role="menuitem" {...bind(t(BUTTONS.lang.descKey))} onClick={() => { setSettingsOpen(false); toggleLang(); }}>
+                  <IoLanguage size={14} className="btn-icon" />{lang === 'zh' ? 'English' : '中文'}
+                </button>
+                <button role="menuitem" {...bind(t(BUTTONS.themeDark.descKey))} onClick={() => { setSettingsOpen(false); toggleTheme(); }}>
+                  {theme === 'dark' ? <IoSunnyOutline size={14} className="btn-icon" /> : <IoMoonOutline size={14} className="btn-icon" />}{t(theme === 'dark' ? 'browser_light_mode' : 'browser_dark_mode')}
+                </button>
+                {/* Debug stays open on toggle so its active/loading state remains visible */}
+                <button role="menuitem" className={debugMode ? 'active' : ''} {...bind(t('browser_debug_mode_desc'))} onClick={handleToggleDebugMode} disabled={bepInExLoading}>
+                  <IoCodeSlash size={14} className="btn-icon" />{t('browser_debug_mode')}
+                </button>
+              </div>
+            )}
+          </div>
           <button className="btn-lang-toggle-top btn-icon-only" {...bind(t('browser_help_help_btn'))} onClick={() => setHelpOpen(true)}>
             <IoHelpCircleOutline size={14} />
           </button>
