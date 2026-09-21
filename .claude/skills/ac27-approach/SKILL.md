@@ -1,13 +1,13 @@
 ---
 name: ac27-approach
-description: AC27Approach — the BepInEx 6 IL2CPP plugin for Airport Control 25 (Playtest) that live-patches in-game aircraft (heading + altitude override, STAR→final-approach handoff) through the game's native UDP command channel. Use this skill whenever working in mods/AC27Approach (building, editing the Harmony patches, debugging a patch that isn't sticking in-game), when the editor's FlightPatchCommandBar or send-patch-command bridge is involved, when handling clear_for_appr / update_heading / update_speed / altitude / track frames, or when diagnosing BepInEx/IL2CPP interop issues against the game's Aircraft/Dynamics classes. The plugin's deep documentation lives in its own README — read it before making changes.
+description: AC27Approach — the BepInEx 6 IL2CPP plugin for Airport Control 27 that live-patches in-game aircraft (heading + altitude override, STAR→final-approach handoff) through the game's native UDP command channel. Use this skill whenever working in mods/AC27Approach (building, editing the Harmony patches, debugging a patch that isn't sticking in-game), when the editor's FlightPatchCommandBar or send-patch-command bridge is involved, when handling clear_for_appr / update_heading / update_speed / altitude / track frames, or when diagnosing BepInEx/IL2CPP interop issues against the game's Aircraft/Dynamics classes. The plugin's deep documentation lives in its own README — read it before making changes.
 ---
 
 # AC27Approach — Plugin Skill
 
 ## What This Is
 
-A BepInEx 6 IL2CPP plugin (`com.ac27.approach`) that live-patches aircraft in Airport Control 25 (Playtest) **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Four patch commands (plus `track` diagnostics):
+A BepInEx 6 IL2CPP plugin (`com.ac27.approach`) that live-patches aircraft in Airport Control 27 **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Four patch commands (plus `track` diagnostics):
 
 | Command | What it does |
 |---|---|

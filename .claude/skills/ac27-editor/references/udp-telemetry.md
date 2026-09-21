@@ -16,7 +16,7 @@
 
 ```
 ┌──────────────────────┐ 10 Hz UDP port 20266 ┌──────────────────────┐
-│ AC27 Game (Playtest) │ ──────────────────────→ │ electron/udp_ │
+│ AC27 Game           │ ──────────────────────→ │ electron/udp_ │
 │ AircraftUdpTelemetry │ │ listener.js │
 │ Service │ ←────────────────────── │ │
 └──────────────────────┘ UDP commands port 20267 │ aircraftMap │

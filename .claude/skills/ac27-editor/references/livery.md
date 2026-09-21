@@ -922,13 +922,13 @@ via `_setSteamworksForTests`/`_resetSteamworksForTests`, which selects the
 **in-process** transport (`_inProcessOps` in `steam-workshop.js`) and spawns no
 child.
 
-Always publishes to the single constant host **Playtest app `4004140`**
+Always publishes to the single constant host **app `3328490`** (the shipping game)
 (`STEAM_WORKSHOP_APP_ID`, literal fallback when the ESM
 `src/utils/constants/steam.js` can't be `require`d), initialised **exactly once
 per worker process** (re-init hangs) — deliberately no cross-app / Spacewar (`480`)
 fallback probe, so the editor never accrues playtime on a game the user did not
 launch. The `availability` op distinguishes `STEAM_UNAVAILABLE` (no module / init
-throw) from `NO_LICENSE` (`apps.isSubscribedApp(4004140)` false — Family Sharing /
+throw) from `NO_LICENSE` (`apps.isSubscribedApp(3328490)` false — Family Sharing /
 free weekends / playtest keys cannot publish).
 
 Identity is a `.workshop.json` sidecar inside the livery folder (travels with the
