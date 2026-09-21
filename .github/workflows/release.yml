@@ -24,40 +24,37 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: npm ci
-      - name: Build Windows (portable — no voice, R2 auto-update variant)
+      - name: Build Windows (portable — normal, R2 auto-update variant)
         run: npm run build:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-      - name: Fetch vosk speech models (voice build)
-        run: node scripts/fetch-vosk-model.mjs
-      - name: Build Windows (portable — voice, vosk models + sox bundled)
-        run: npm run build:win:voice -- --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-      - name: Build Windows (workshop — no auto-update, Steam handles updates)
-        run: npm run build:win:workshop -- --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-      - name: Upload Windows artifacts (normal+voice → GitHub release + R2)
+      # =====================================================================
+      # TEMP: Voice build + release DISABLED.
+      # Re-enable by uncommenting the two steps below, then restoring the
+      # AC27EditorVoice.exe entries in:
+      #   * "Upload Windows artifacts" (path)
+      #   * "Upload to R2" (run block + header comment)
+      # =====================================================================
+      # - name: Fetch vosk speech models (voice build)
+      #   run: node scripts/fetch-vosk-model.mjs
+      # - name: Build Windows (portable — voice, vosk models + sox bundled)
+      #   run: npm run build:win:voice -- --publish never
+      #   env:
+      #     CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Upload Windows artifacts (normal → GitHub release + R2)
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Editor-Windows
-          path: |
-            release/AC27Editor.exe
-            release/AC27EditorVoice.exe
+          path: release/AC27Editor.exe
           if-no-files-found: error
-      - name: Upload Workshop artifact (workshop-only, no auto-update)
-        uses: actions/upload-artifact@v4
-        with:
-          name: AC27-Editor-Workshop
-          path: release/AC27EditorWorkshop.exe
-          if-no-files-found: error
-      - name: Upload to R2 (auto-update — both variants, same bucket)
-        # Both AC27Editor.exe and AC27EditorVoice.exe are auto-update sources.
-        # Each exe carries a companion .md5 sidecar: the Worker reads it and
-        # returns the real MD5 as the ETag header (the updater compares against
-        # that; multipart uploads of the large voice exe make R2's own ETag
-        # useless, so the sidecar is authoritative for both).
+      # R2 upload runs BEFORE the workshop build so a workshop failure can never
+      # block the auto-update publish (Cloudflare R2).
+      - name: Upload to R2 (auto-update — normal variant, same bucket)
+        # AC27Editor.exe is the auto-update source. It carries a companion
+        # .md5 sidecar: the Worker reads it and returns the real MD5 as the
+        # ETag header (the updater compares against that; multipart uploads
+        # of the large exe make R2's own ETag useless, so the sidecar is
+        # authoritative).
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -68,10 +65,21 @@ jobs:
           $hash = (Get-FileHash -Path release/AC27Editor.exe -Algorithm MD5).Hash.ToLower()
           $hash | Out-File -NoNewline -Encoding ASCII md5.txt
           aws s3 cp md5.txt s3://ac27editor/AC27Editor.exe.md5 --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto --content-type "text/plain"
-          aws s3 cp release/AC27EditorVoice.exe s3://ac27editor/AC27EditorVoice.exe --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto
-          $voiceHash = (Get-FileHash -Path release/AC27EditorVoice.exe -Algorithm MD5).Hash.ToLower()
-          $voiceHash | Out-File -NoNewline -Encoding ASCII voice-md5.txt
-          aws s3 cp voice-md5.txt s3://ac27editor/AC27EditorVoice.exe.md5 --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto --content-type "text/plain"
+      # Workshop build is best-effort: a failure here must NOT block the
+      # GitHub Release or the R2/Cloudflare publish above. continue-on-error
+      # keeps the job green so downstream jobs still run.
+      - name: Build Windows (workshop — no auto-update, Steam handles updates)
+        continue-on-error: true
+        run: npm run build:win:workshop -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Upload Workshop artifact (workshop-only, no auto-update)
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: AC27-Editor-Workshop
+          path: release/AC27EditorWorkshop.exe
+          if-no-files-found: warn
 
   build-macos:
     runs-on: macos-latest
@@ -166,7 +174,12 @@ jobs:
           name: AC27-Editor-Windows
           path: release-windows
 
+      # Workshop is best-effort: if its build/upload failed, download fails but
+      # must NOT block the GitHub Release (created below) or the R2/Cloudflare
+      # publish (already done in build-windows).
       - name: Download Workshop artifact
+        id: workshop_artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: AC27-Editor-Workshop
@@ -218,8 +231,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # --- STEAM WORKSHOP AUTO-DEPLOY (content + bilingual title/description) ---
-      # Workshop gets AC27EditorWorkshop.exe (no auto-update) — GitHub Release keeps normal+voice (auto-update).
+      # Workshop gets AC27EditorWorkshop.exe (no auto-update) — GitHub Release keeps normal (voice temporarily disabled).
+      # ALL workshop steps are best-effort (continue-on-error): a Workshop failure
+      # must never block the GitHub Release (created above) or the R2/Cloudflare
+      # publish. It also keeps the workflow green so the release is considered done.
       - name: Prepare Workshop content (workshop variant, no Voice)
+        # Only deploy when the workshop artifact actually downloaded — never
+        # publish empty content over the live Workshop item.
+        if: steps.workshop_artifact.outcome == 'success'
+        continue-on-error: true
         run: |
           echo "=== Workshop content (workshop build, no auto-update) ==="
           ls -lh release-windows/ release-workshop/ release-plugin/
@@ -250,9 +270,11 @@ jobs:
             exit 1
           fi
           ls -lh steam-workshop-content/
-          echo "Workshop content ready (workshop exe + bundled plugin DLL; GitHub still has normal+Voice)"
+          echo "Workshop content ready (workshop exe + bundled plugin DLL; GitHub still has the normal build)"
 
       - name: Validate Workshop content exists
+        if: steps.workshop_artifact.outcome == 'success'
+        continue-on-error: true
         run: |
           echo "=== Workshop preflight ==="
           ls -lh steam-workshop-content/ || (echo "::error::steam-workshop-content missing" && exit 1)
@@ -268,6 +290,8 @@ jobs:
           echo "content ready"
 
       - name: Install SteamCMD
+        if: steps.workshop_artifact.outcome == 'success'
+        continue-on-error: true
         run: |
           set -e
           # Try apt install (needs i386 + 32-bit libs) — but fallback tarball is more reliable on GH runners
@@ -292,6 +316,8 @@ jobs:
           steamcmd +quit 2>&1 | head -n 5 || "$HOME/steamcmd/steamcmd.sh" +quit 2>&1 | head -n 5 || true
 
       - name: Generate Workshop VDF (content + primary preview — title/description handled separately)
+        if: steps.workshop_artifact.outcome == 'success'
+        continue-on-error: true
         run: |
           WS_CONTENT="${{ github.workspace }}/steam-workshop-content"
           WS_CHANGELOG="Release ${{ steps.version.outputs.version }} — automated Workshop update via GitHub Actions."
@@ -321,6 +347,8 @@ jobs:
           test -n "$(ls -A "$WS_CONTENT")" || (echo "::error::contentfolder empty" && exit 1)
 
       - name: Publish Workshop content (steamcmd — configVdf only, no TOTP)
+        if: steps.workshop_artifact.outcome == 'success'
+        continue-on-error: true
         run: |
           set -e
           VDF="${{ github.workspace }}/.github/workflows/upload_mod.vdf"
@@ -398,6 +426,8 @@ jobs:
           exit "$RC"
 
       - name: Push bilingual title/description (Steam language switcher)
+        if: steps.workshop_artifact.outcome == 'success'
+        continue-on-error: true
         env:
           STEAM_PUBLISHER_KEY: ${{ secrets.STEAM_PUBLISHER_KEY }}
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
