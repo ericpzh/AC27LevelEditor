@@ -8,6 +8,7 @@ const ffmpegPath = require('ffmpeg-static');
 const { initLogger, closeLogger } = require('../src/utils/logger');
 const bepinex = require('./bepinex');
 const updater = require('./updater');
+const { resolveWorkshopBundledDllPath } = require('./workshop-dll');
 const { readCacheFlag, writeCacheFlag } = require('./cache-flags');
 
 // ── MUST be first: redirect ALL console.* to file (dev only) ──
@@ -3465,66 +3466,8 @@ ipcMain.handle('uninstall-bepinex', async () => {
   }
 });
 
-// Workshop: resolve the DLL that ships with the Workshop item itself.
-// The Workshop distribution contains AC27Approach.dll either (a) as a sibling
-// alongside AC27EditorWorkshop.exe in the Steam Workshop content folder
-// (.../workshop/content/3328490/3793213548/AC27Approach.dll — copied by the
-// release workflow), or (b) as an extraResource bundled inside resources/
-// (resources/AC27Approach.dll) when built via `node build.js --workshop`
-// with the plugin artifact present. Both locations are checked.
-//
-// <exe-dir> resolution — why this is fragile when the exe is moved:
-// - Portable builds (Workshop is portable) set PORTABLE_EXECUTABLE_FILE to the
-//   *real* exe location the user double-clicked (e.g. .../3793213548/AC27EditorWorkshop.exe).
-//   process.execPath and app.getPath('exe') can point to a temp unpack dir
-//   (electron-builder portable unpacks to %TEMP%). We therefore check ALL of
-//   them, in preference order: PORTABLE_EXECUTABLE_FILE → app.getPath('exe') →
-//   process.execPath. Any of those dirnames + AC27Approach.dll is tried.
-// - resources/ is checked first: if the DLL was bundled inside the exe at
-//   build time (build.js --workshop embeds it), moving the exe alone still
-//   works because the DLL is inside the exe. Without that bundle, moving the
-//   exe without its sibling DLL loses the source — we fall back to a manual
-//   file picker (download handler returns WORKSHOP_BUNDLED_MISSING → renderer
-//   opens load-approach-dll dialog).
-function resolveWorkshopBundledDllPath() {
-  if (!updater.isWorkshopBuild()) return null;
-  const candidates = [];
-  try {
-    if (typeof process.resourcesPath === 'string') {
-      candidates.push(path.join(process.resourcesPath, 'AC27Approach.dll'));
-    }
-  } catch (_) {}
-  // Dev override: `npm start steam <workshop-path>` sets AC27_WORKSHOP_DIR to
-  // the Workshop content dir (or the exe inside it) so the bundled DLL resolves
-  // without a packaged exe (scripts/dev-start.mjs).
-  try {
-    const dir = process.env.AC27_WORKSHOP_DIR;
-    if (dir) {
-      let d = dir;
-      try { if (fs.statSync(d).isFile()) d = path.dirname(d); } catch (_) {}
-      candidates.push(path.join(d, 'AC27Approach.dll'));
-    }
-  } catch (_) {}
-  // <exe-dir> candidates: the user may have moved/copied the exe. Portable
-  // remembers the launch location in PORTABLE_EXECUTABLE_FILE; otherwise
-  // process.execPath or app.getPath('exe') is the best guess.
-  const exeSet = new Set();
-  try { if (process.env.PORTABLE_EXECUTABLE_FILE) exeSet.add(process.env.PORTABLE_EXECUTABLE_FILE); } catch (_) {}
-  try {
-    if (typeof app !== 'undefined' && app && typeof app.getPath === 'function') {
-      const ap = app.getPath('exe');
-      if (ap) exeSet.add(ap);
-    }
-  } catch (_) {}
-  try { if (process.execPath) exeSet.add(process.execPath); } catch (_) {}
-  for (const exe of exeSet) {
-    try { if (exe) candidates.push(path.join(path.dirname(exe), 'AC27Approach.dll')); } catch (_) {}
-  }
-  for (const p of candidates) {
-    try { if (p && fs.existsSync(p)) return p; } catch (_) {}
-  }
-  return null;
-}
+// Workshop bundled-DLL resolution lives in ./workshop-dll
+// (resolveWorkshopBundledDllPath) so its candidate order is unit-testable.
 
 // Command window / PTT gate: Debug Mode AND the AC27Approach plugin DLL
 // deployed under BepInEx/plugins AND  the deployed DLL matching
@@ -3569,7 +3512,7 @@ ipcMain.handle('check-command-capability', async () => {
     console.log('[Capability] dev mode (npm start) — skipping remote plugin version check');
     pluginUpToDate = null;
   } else if (updater.isWorkshopBuild()) {
-    const bundledPath = resolveWorkshopBundledDllPath();
+    const bundledPath = resolveWorkshopBundledDllPath(gameRoot);
     if (bundledPath) {
       try { pluginRemoteVersion = await updater.computeFileMd5(bundledPath); } catch (_) {}
       console.log('[Capability][Workshop] bundled DLL:', bundledPath, 'md5:', pluginRemoteVersion, 'installed:', pluginVersion || '(missing)');
@@ -4005,7 +3948,8 @@ const APPROACH_DLL_DOWNLOAD_NAME = 'AC27Approach.dll';
 // Workshop folder (only ac27-approach- temp dirs are removed).
 ipcMain.handle('download-approach-dll', async (_event) => {
   if (updater.isWorkshopBuild()) {
-    const bundled = resolveWorkshopBundledDllPath();
+    const gameRoot = _readCache()?.data?.gameRoot;
+    const bundled = resolveWorkshopBundledDllPath(gameRoot);
     if (bundled && fs.existsSync(bundled)) {
       try {
         if (_event.sender && !_event.sender.isDestroyed()) {
