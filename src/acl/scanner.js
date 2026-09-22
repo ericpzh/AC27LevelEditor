@@ -3,7 +3,22 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { STEAMAPPS_SEGMENT, STEAM_COMMON_SEGMENT } = require('../utils/constants/steam.js');
+const {
+  STEAMAPPS_SEGMENT,
+  STEAM_COMMON_SEGMENT,
+  STEAM_GAME_DIR_NAME,
+  STEAM_DEMO_DIR_NAME,
+  STEAM_LEGACY_GAME_DIR_NAME,
+} = require('../utils/constants/steam.js');
+
+// Folders under <steamapps>/common that the name-agnostic sibling scan must
+// skip: the demo is a separate product, and the retired Playtest build sits in
+// the same library and sorts ahead of the shipping install, so it would
+// otherwise shadow it during auto-detection.
+const NON_TARGET_GAME_DIR_NAMES = new Set([
+  STEAM_DEMO_DIR_NAME.toLowerCase(),
+  STEAM_LEGACY_GAME_DIR_NAME.toLowerCase(),
+]);
 
 /**
  * Scan the game root directory for all .acl files.
@@ -81,6 +96,9 @@ function steamappsRoot(dir) {
  *  2. If a start dir lies under a Steam library, probe `<steamapps>/common/*`
  *     siblings for a valid game root. This covers a standalone editor app
  *     installed side-by-side with the game in the same Steam library.
+ *     The canonical install name is tried first and non-target products
+ *     (demo / retired Playtest) are skipped, so directory order can never
+ *     shadow the shipping install.
  *
  * @param {string|string[]} startDirs
  * @returns {{ gameRoot: string, airports: Array, totalFiles: number, steam: boolean }|null}
@@ -115,6 +133,18 @@ function findGameRoot(startDirs) {
   }
 
   // Pass 2: Steam library sibling scan.
+  // 2a. Canonical shipping install by name, across every candidate library
+  //     first — deterministic and order-independent, so a `common/*` entry that
+  //     sorts earlier (demo, retired Playtest) can never win.
+  for (const start of starts) {
+    const steamapps = steamappsRoot(start);
+    if (!steamapps) continue;
+    const hit = tryRoot(path.join(steamapps, STEAM_COMMON_SEGMENT, STEAM_GAME_DIR_NAME));
+    if (hit) return { ...hit, steam: true };
+  }
+
+  // 2b. Name-agnostic fallback for renamed/relocated installs, skipping the
+  //     demo and retired Playtest folders (never the shipping target).
   for (const start of starts) {
     const steamapps = steamappsRoot(start);
     if (!steamapps) continue;
@@ -123,6 +153,7 @@ function findGameRoot(startDirs) {
     try { entries = fs.readdirSync(common, { withFileTypes: true }); } catch (_) { continue; }
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      if (NON_TARGET_GAME_DIR_NAMES.has(entry.name.toLowerCase())) continue;
       const hit = tryRoot(path.join(common, entry.name));
       if (hit) return { ...hit, steam: true };
     }

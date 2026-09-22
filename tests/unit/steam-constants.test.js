@@ -5,6 +5,9 @@ import {
   STEAM_GAME_APP_ID,
   STEAM_APP_ID,
   STEAM_PUBLISHED_FILE_ID,
+  STEAM_GAME_DIR_NAME,
+  STEAM_DEMO_DIR_NAME,
+  STEAM_LEGACY_GAME_DIR_NAME,
   STEAM_WORKSHOP_TITLE,
   STEAM_WORKSHOP_ARTIFACT,
   STEAM_WORKSHOP_MARKER,
@@ -26,6 +29,12 @@ describe('steam constants', () => {
     expect(STEAM_PUBLISHED_FILE_ID).toBe('3806070599');
     expect(STEAM_GAME_APP_ID).toBe('3328490');
     expect(STEAM_WORKSHOP_TITLE).toBe('AC27Editor');
+  });
+
+  it('exposes the game install directory names', () => {
+    expect(STEAM_GAME_DIR_NAME).toBe('Airport Control 27');
+    expect(STEAM_DEMO_DIR_NAME).toBe('Airport Control 27 Demo');
+    expect(STEAM_LEGACY_GAME_DIR_NAME).toBe('Airport Control 25 Playtest');
   });
 
   it('exposes the Workshop artifact + marker names', () => {

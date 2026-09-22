@@ -17,6 +17,9 @@ export const STEAM_PUBLISHED_FILE_ID = '3806070599';
 // rename here when the game is renamed.
 export const STEAM_GAME_DIR_NAME = 'Airport Control 27';
 export const STEAM_DEMO_DIR_NAME = 'Airport Control 27 Demo';
+// Retired Playtest build (app 4004140). Can sit in the same Steam library as
+// the shipping game; game-root auto-detection must never prefer it.
+export const STEAM_LEGACY_GAME_DIR_NAME = 'Airport Control 25 Playtest';
 
 // Workshop item identity / artifacts.
 export const STEAM_WORKSHOP_TITLE = 'AC27Editor';

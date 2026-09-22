@@ -65,6 +65,37 @@ describe('findGameRoot', () => {
     expect(found.steam).toBe(true);
   });
 
+  it('prefers the canonical shipping install over the retired Playtest folder', () => {
+    // The Playtest folder sorts before the shipping install in readdir order,
+    // so a name-agnostic scan would otherwise return it first.
+    makeGameRoot(path.join(tmp, 'steamapps', 'common', 'Airport Control 25 Playtest'));
+    const canonical = makeGameRoot(path.join(tmp, 'steamapps', 'common', 'Airport Control 27'));
+    const workshop = path.join(tmp, 'steamapps', 'workshop', 'content', '3328490', '3806070599');
+    fs.mkdirSync(workshop, { recursive: true });
+
+    const found = findGameRoot([workshop]);
+    expect(found.gameRoot).toBe(path.resolve(canonical));
+    expect(found.steam).toBe(true);
+  });
+
+  it('ignores the demo folder in the Steam sibling scan', () => {
+    makeGameRoot(path.join(tmp, 'steamapps', 'common', 'Airport Control 27 Demo'));
+    const workshop = path.join(tmp, 'steamapps', 'workshop', 'content', '3328490', '3806070599');
+    fs.mkdirSync(workshop, { recursive: true });
+
+    expect(findGameRoot([workshop])).toBeNull();
+  });
+
+  it('falls back to a renamed install in the Steam sibling scan', () => {
+    const renamed = makeGameRoot(path.join(tmp, 'steamapps', 'common', 'AC27 Custom Install'));
+    const workshop = path.join(tmp, 'steamapps', 'workshop', 'content', '3328490', '3806070599');
+    fs.mkdirSync(workshop, { recursive: true });
+
+    const found = findGameRoot([workshop]);
+    expect(found.gameRoot).toBe(path.resolve(renamed));
+    expect(found.steam).toBe(true);
+  });
+
   it('returns null when nothing valid is nearby', () => {
     const lonely = path.join(tmp, 'Downloads', 'AC27Editor');
     fs.mkdirSync(lonely, { recursive: true });
