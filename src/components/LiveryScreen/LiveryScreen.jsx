@@ -29,6 +29,12 @@ export default function LiveryScreen() {
   // root-level detection as BrowserScreen). Full-game roots hide the button.
   const isDemo = rootPath && rootPath.includes(STEAM_DEMO_DIR_NAME);
   const [tab, setTab] = useState('mine');
+  // Bumped ONLY when the user explicitly opens a livery (card click / add card).
+  // The painter adopts the saved folder into `CreateTab.prefill` after a save;
+  // keying CreateTab off that prefill's content would remount the whole painter
+  // on that mutation (and on any unrelated LiveryScreen re-render), reloading the
+  // freshly written FLATTENED PNGs and baking every live movable into the base.
+  const [paintSession, setPaintSession] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState('');
   // Workshop upload dialog target: the single selected `mine` folder.
@@ -195,14 +201,16 @@ export default function LiveryScreen() {
             cmdRef={mineCmdRef}
             scrollRef={contentRef}
             onBarState={setBarState}
-            onEdit={(row) => { CreateTab.prefill = row; setTab('create'); }}
-            onCreate={(planeId) => { CreateTab.prefill = { targetPlaneId: planeId }; setTab('create'); }}
+            onEdit={(row) => { CreateTab.prefill = row; setPaintSession(s => s + 1); setTab('create'); }}
+            onCreate={(planeId) => { CreateTab.prefill = { targetPlaneId: planeId }; setPaintSession(s => s + 1); setTab('create'); }}
             onUpload={(folder) => setUploadFolder(folder)}
           />
         )}
         {isCreate && (
           <CreateTab
-            key={tab + JSON.stringify(CreateTab.prefill && { folder: CreateTab.prefill.folder, pack: CreateTab.prefill.pack, targetPlaneId: CreateTab.prefill.targetPlaneId })}
+            // Stable across the painter's post-save `CreateTab.prefill` adoption:
+            // only an explicit open bumps the session (see `paintSession`).
+            key={`create:${paintSession}`}
             onCreated={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
             onCancel={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
             onHelp={() => setHelpOpen(true)}

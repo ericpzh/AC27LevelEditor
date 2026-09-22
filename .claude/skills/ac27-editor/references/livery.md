@@ -172,9 +172,12 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `guardLeave` and prompt via `useAppStore.showModal`. `CreateTab.prefill`
   holds the clicked row (or null) — `onEdit(row)` for a card; `onCreate(planeId)`
   (the per-aircraft **add-livery card**) sets `prefill = { targetPlaneId }` with
-  no folder, i.e. a brand-new livery with that type pre-selected. The create
-  `key` includes `{folder, pack, targetPlaneId}` so switching origins (or types)
-  remounts the painter.
+  no folder, i.e. a brand-new livery with that type pre-selected. The painter's
+  `key` is a **`paintSession` counter** bumped only by an explicit open
+  (`onEdit`/`onCreate`), so switching origins remounts it, while the painter's
+  own post-save `CreateTab.prefill` adoption does **not** (keying off the prefill
+  content would remount the painter on that mutation — or on any unrelated
+  `LiveryScreen` re-render — and reload the flattened PNGs; see Save below).
 - `MyLiveriesTab.jsx` — `listLiveries` on mount; own + reference + **workshop**
   merged into one folder set grouped by aircraft type (collapsible sections;
   header = plane id + count badge; unknown `targetPlaneId` sorts last).
@@ -312,7 +315,16 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   the painter** — success does **not** call `onCreated` (no navigation); instead
   `CreateTab.prefill` is set to the saved `{folder, airline, targetPlaneId,
   pack:'mine'}` so the saved livery becomes the current origin (a later Save
-  overwrites it in place) and the origin-images effect reloads the saved panels.
+  overwrites it in place). This adoption must **not** reload the canvas: the PNGs
+  just written are the **flattened** composite, so re-reading them would bake
+  every live movable into the locked base (where the eraser can no longer remove
+  it). `submitCreate` therefore sets `skipOriginReloadRef` to the saved folder,
+  and the origin-images effect consumes that marker and **returns without
+  calling `readLiveryImages`/`readLiveryImage`** — the live canvas (base +
+  rasters + moveable objects) stays authoritative and is flattened only on
+  export. (Regression: `tests/components/LiveryScreen/CreateTab.test.jsx`
+  "keeps the live canvas after Save As instead of reloading the flattened
+  PNGs".)
   `exportParts()` returns one `{partName, imageDataUrl}` per panel; a
   single-panel type yields a one-entry `Body` list → `base.png`. On success it also fires
   `showModHint()`: unless the `liveryModHintDismissed` cache flag is set
@@ -1146,7 +1158,10 @@ manifest for a free-form zip folder).
   2-panel store width instead of the removed tab strip, that H/V keep the active
   panel, that Ctrl+S / Ctrl+Shift+S open the Save / Save As dialogs (and are
   ignored while typing or while a dialog is open), that a save adopts the
-  saved folder so the next Save overwrites it in place, and that importing an
+  saved folder so the next Save overwrites it in place **without reloading the
+  just-written flattened PNGs** (no `read-livery-images`/`read-livery-image`
+  call; the canvas DOM node is the same, so live movables are not baked into the
+  base and the eraser still removes them), and that importing an
   image over a dirty canvas loads into the active panel **without** the
   unsaved-changes prompt or a canvas remount.
   `tests/components/LiveryScreen/MyLiveriesTab.test.jsx` pins the in-place

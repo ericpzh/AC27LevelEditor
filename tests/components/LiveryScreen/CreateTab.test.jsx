@@ -339,6 +339,40 @@ describe('CreateTab painter validation', () => {
     expect(screen.queryByText('Overwrite Existing Livery')).toBeNull();
   });
 
+  it('keeps the live canvas after Save As instead of reloading the flattened PNGs', async () => {
+    // Regression: adopting the saved folder used to re-run the origin-loading
+    // effect, which re-read the just-written FLATTENED PNGs and remounted the
+    // canvas — baking every live movable into the locked base so the eraser
+    // could no longer remove them.
+    setupMocks({
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+      'list-liveries': Promise.resolve({ success: true, mine: [], reference: [] }),
+      // If the painter ever reads these back, the flattened image becomes the
+      // base (and the live objects are lost).
+      'read-livery-images': Promise.resolve({ success: true, parts: [{ partName: 'Body', imageDataUrl: FAKE_PNG }] }),
+      'read-livery-image': Promise.resolve({ success: true, imageDataUrl: FAKE_PNG }),
+    });
+    const user = userEvent.setup();
+    renderCreate();
+
+    await fillForm(user);
+    const canvasBefore = document.querySelector('.livery-canvas-wrap canvas');
+    expect(canvasBefore).toBeInTheDocument();
+
+    mockIpcInvoke.mockClear();
+    await user.click(saveAsBtn());
+    await confirmNameDialog(user, 'Save As');
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
+      'create-livery',
+      expect.objectContaining({ folder: 'A20N_CCA' }),
+    ));
+
+    // The save wrote the flattened PNGs but never read them back into the canvas.
+    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'read-livery-images' || c[0] === 'read-livery-image')).toBe(false);
+    // The canvas element is the SAME node — no remount, so live movables survive.
+    expect(document.querySelector('.livery-canvas-wrap canvas')).toBe(canvasBefore);
+  });
+
   it('save dialog blocks filesystem-unsafe folder names only', async () => {
     setupMocks({ 'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }) });
     mockIpcInvoke.mockClear();

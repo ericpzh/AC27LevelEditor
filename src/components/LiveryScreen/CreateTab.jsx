@@ -256,6 +256,13 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   const [canvasKey, setCanvasKey] = useState(0);
   const canvasRef = useRef(null);
   const dirtyRef = useRef(false);
+  // Folder we just saved to. Save/Save As adopt the saved folder as the origin
+  // (so a later Save overwrites in place), but the origin effect would then
+  // re-read the freshly written FLATTENED PNGs and remount the canvas, baking
+  // every live movable into the locked base — after which the eraser can no
+  // longer remove them. This ref lets that one origin change skip the reload:
+  // the live canvas is already the authoritative, unflattened state.
+  const skipOriginReloadRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const fileRef = useRef(null);
@@ -314,6 +321,15 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   // image for an older main process.
   useEffect(() => {
     if (!origin || !origin.folder) return;
+    // The origin just changed to a folder WE saved to: keep the live canvas
+    // (base + rasters + moveable objects) instead of reloading the flattened
+    // PNGs from disk. Consume the marker either way so a stale folder name can
+    // never suppress a genuine reload later.
+    if (skipOriginReloadRef.current !== null) {
+      const skip = skipOriginReloadRef.current === origin.folder;
+      skipOriginReloadRef.current = null;
+      if (skip) return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -498,6 +514,10 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         // Stay in the painter after Save / Save As: adopt the saved folder as
         // the current livery (so a later Save overwrites it in place) and do
         // NOT call onCreated (which navigates back to the list).
+        // Mark this origin change so the origin effect keeps the live canvas
+        // rather than reloading the flattened PNGs it just wrote (which would
+        // rasterise every movable into the locked base).
+        skipOriginReloadRef.current = folder;
         CreateTab.prefill = { folder, airline: targetAirline, targetPlaneId, pack: 'mine' };
         dirtyRef.current = false;
         showToast(t('livery_created'), 'success');
