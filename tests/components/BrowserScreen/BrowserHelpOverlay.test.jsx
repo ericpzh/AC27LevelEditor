@@ -27,8 +27,15 @@ describe('BrowserHelpOverlay', () => {
     renderOverlay();
     expect(screen.getByText('Header Buttons')).toBeInTheDocument();
     expect(screen.getByText('Settings Menu')).toBeInTheDocument();
-    expect(screen.getByText('Airport')).toBeInTheDocument();
     expect(screen.getByText('Levels')).toBeInTheDocument();
+  });
+
+  it('omits the radar/flight-strip toggles section (hidden from the browser)', () => {
+    renderOverlay();
+    expect(document.getElementById('browser-help-cards')).toBeNull();
+    expect(screen.queryByText(/ground\/surface radar view/)).toBeNull();
+    expect(screen.queryByText(/approach radar view/)).toBeNull();
+    expect(screen.queryByText(/flight strips window/)).toBeNull();
   });
 
   it('documents the settings menu in the header section', () => {
@@ -52,9 +59,6 @@ describe('BrowserHelpOverlay', () => {
     expect(screen.getByText(/Report a bug/)).toBeInTheDocument();
     expect(screen.getByText(/Switch the UI language/)).toBeInTheDocument();
     expect(screen.getByText(/Toggle dark.light mode/)).toBeInTheDocument();
-    expect(screen.getByText(/ground\/surface radar view/)).toBeInTheDocument();
-    expect(screen.getByText(/approach radar view/)).toBeInTheDocument();
-    expect(screen.getByText(/flight strips window/)).toBeInTheDocument();
     expect(screen.getByText(/Click any level row/)).toBeInTheDocument();
   });
 
@@ -99,7 +103,6 @@ describe('BrowserHelpOverlay', () => {
     expect(screen.getByText('帮助')).toBeInTheDocument();
     expect(screen.getByText('顶部按钮')).toBeInTheDocument();
     expect(screen.getByText('设置菜单')).toBeInTheDocument();
-    expect(screen.getByText('机场')).toBeInTheDocument();
     expect(screen.getByText('关卡')).toBeInTheDocument();
   });
 });

@@ -7,6 +7,10 @@ import { MdOutlineRestore } from 'react-icons/md';
 import { FaGear } from 'react-icons/fa6';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 
+// Radar / flight-strip toggles are hidden from the level browser (kept for
+// revival). When false, the header buttons AND their help section are omitted.
+export const BROWSER_RADAR_TOGGLES_ENABLED = false;
+
 // ─── Button registry (icon + label key + help description) ───
 export const BUTTONS = {
   changeDir:      { icon: IoFolderOpenOutline, labelKey: 'browser_change_dir',      descKey: 'browser_help_change_dir' },
@@ -60,14 +64,14 @@ const SECTIONS = [
       { text: '{{btn:debugMode}} — {desc}', descKey: 'browser_help_debug_mode' },
     ],
   },
-  {
+  ...(BROWSER_RADAR_TOGGLES_ENABLED ? [{
     id: 'cards', headingKey: 'browser_help_cards_heading',
     items: [
       { text: '{{btn:surfaceRadar}} — {desc}', descKey: 'browser_help_surface_radar' },
       { text: '{{btn:approachRadar}} — {desc}', descKey: 'browser_help_approach_radar' },
       { text: '{{btn:flightStrips}} — {desc}', descKey: 'browser_help_flight_strips' },
     ],
-  },
+  }] : []),
   {
     id: 'levels', headingKey: 'browser_help_levels_heading',
     items: [

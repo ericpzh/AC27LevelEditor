@@ -17,7 +17,7 @@ import { DEMO_VISIBLE_BASES, DEMO_VISIBLE_ORDER, PROD_VISIBLE_BASES } from '../.
 import { STEAM_DEMO_DIR_NAME } from '../../utils/constants/steam';
 
 import AirportCardMap from './AirportCardMap';
-import BrowserHelpOverlay, { BUTTONS } from './BrowserHelpOverlay';
+import BrowserHelpOverlay, { BUTTONS, BROWSER_RADAR_TOGGLES_ENABLED } from './BrowserHelpOverlay';
 import VideoReplaceOverlay from './VideoReplaceOverlay';
 import VideoBackgroundModal from './VideoBackgroundModal';
 import BepInExInstallOverlay from './BepInExInstallOverlay';
@@ -487,7 +487,7 @@ export default function BrowserScreen() {
                     <span className="airport-icao">{airportDisplayName(airport.icao, t)}</span>
                   </span>
                   <div className="airport-card-actions">
-                    {!isDemo && (
+                    {BROWSER_RADAR_TOGGLES_ENABLED && !isDemo && (
                     <>
                     <button
                       className={'btn-radar-toggle' + (openGroundRadarAirports.has(airport.icao) ? ' active' : '')}

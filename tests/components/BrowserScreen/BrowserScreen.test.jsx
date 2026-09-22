@@ -690,8 +690,7 @@ beforeEach(() => {
       expect(header.getAttribute('aria-expanded')).toBe('true');
     });
 
-    it('does not collapse when a header radar toggle button is clicked', async () => {
-      const user = userEvent.setup();
+    it('hides the radar/flight-strip toggle buttons (disabled in the level browser)', async () => {
       setupDefaultMocks({
         'get-airport-files-info': Promise.resolve([zsjnFile]),
       });
@@ -701,10 +700,11 @@ beforeEach(() => {
         expect(screen.getByText('Relax Time')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Surface Radar').closest('button'));
-
-      expect(screen.getByText('Relax Time')).toBeInTheDocument();
-      expect(document.querySelector('.airport-card-header').getAttribute('aria-expanded')).toBe('true');
+      expect(screen.queryByText('Surface Radar')).toBeNull();
+      expect(screen.queryByText('Approach Radar')).toBeNull();
+      expect(screen.queryByText('Flight Strips')).toBeNull();
+      // The action container stays, but renders no buttons.
+      expect(document.querySelector('.airport-card-actions button')).toBeNull();
     });
 
     it('auto-collapses trailing airports so every airport header stays visible', async () => {
