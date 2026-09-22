@@ -583,6 +583,13 @@ function _candidateExeDirs() {
   try { add(process.execPath); } catch (_) {}
   try { if (!app.isPackaged) addDir(app.getAppPath()); } catch (_) {}
   try { addDir(process.cwd()); } catch (_) {}
+  // Dev/testing overrides: `npm start steam <path>` exports AC27_WORKSHOP_DIR,
+  // and AC27_GAME_ROOT points straight at an install. A dev Workshop run starts
+  // from the repo (no steamapps ancestor), so without one of these the Steam
+  // sibling scan has nothing to work from; the packaged exe gets it for free by
+  // living inside <steamapps>/workshop/content/....
+  try { addDir(process.env.AC27_WORKSHOP_DIR); } catch (_) {}
+  try { addDir(process.env.AC27_GAME_ROOT); } catch (_) {}
   return [...new Set(dirs.filter(Boolean))];
 }
 

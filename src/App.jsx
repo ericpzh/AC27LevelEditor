@@ -72,7 +72,10 @@ function ScreenRouter() {
       } catch (_) {}
       try {
         const cacheState = await electronAPI.getCacheState();
-        if (cacheState.state === 'no-cache') { setBooting(false); return; }
+        // A language-only cache.json (written by save-cached-lang before any
+        // root is chosen) has no gameRoot — nothing to restore, so stay on the
+        // setup screen instead of scanning a null path.
+        if (cacheState.state === 'no-cache' || !cacheState.gameRoot) { setBooting(false); return; }
 
         // 'ready' or 'mismatch' — both have gameRoot
         const scan = await electronAPI.scanAcls(cacheState.gameRoot);
