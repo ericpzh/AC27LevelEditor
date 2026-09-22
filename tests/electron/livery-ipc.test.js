@@ -1269,8 +1269,8 @@ describe('Steam Workshop discovery', () => {
     seedLivery(path.join(workshop, '3328490', '111', 'A20N_CCA'));
     seedLivery(path.join(workshop, '3328490', '222'), 'SIA', 'AIRBUS A-330-300');
     // A non-livery item (e.g. the editor tool) is ignored.
-    fs.mkdirSync(path.join(workshop, '3328490', '3793213548'), { recursive: true });
-    fs.writeFileSync(path.join(workshop, '3328490', '3793213548', 'AC27Approach.dll'), 'x');
+    fs.mkdirSync(path.join(workshop, '3328490', '3806070599'), { recursive: true });
+    fs.writeFileSync(path.join(workshop, '3328490', '3806070599', 'AC27Approach.dll'), 'x');
     // The retired Playtest app's content tree is not ours — ignore it even when
     // it holds a valid livery (shipping-game users never own that appid).
     seedLivery(path.join(workshop, '4004140', '555', 'A20N_CCA'));

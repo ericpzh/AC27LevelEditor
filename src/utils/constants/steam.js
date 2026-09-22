@@ -10,7 +10,7 @@
 // - STEAM_APP_ID: the app that hosts the Workshop item (now the shipping game).
 export const STEAM_GAME_APP_ID = '3328490';
 export const STEAM_APP_ID = '3328490';
-export const STEAM_PUBLISHED_FILE_ID = '3793213548';
+export const STEAM_PUBLISHED_FILE_ID = '3806070599';
 
 // Game install directory names under `<steamapps>/common`. Single source of
 // truth for the user-facing name (dialogs, default-path hints, demo detection);

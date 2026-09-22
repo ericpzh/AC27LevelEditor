@@ -14,7 +14,7 @@ For source code, please visit [url=https://github.com]AC27LevelEditor GitHub[/ur
 Please follow these steps:
 [list]
 [*] After subscribing, open your local File Explorer and navigate to your current Steam Workshop folder:
-[code]<Your_Steam_Path>\SteamLibrary\steamapps\workshop\content\3328490\3793213548[/code]
+[code]<Your_Steam_Path>\SteamLibrary\steamapps\workshop\content\3328490\3806070599[/code]
 [*] Double-click [b]AC27EditorWorkshop.exe[/b] to launch the program.
 [/list]
 

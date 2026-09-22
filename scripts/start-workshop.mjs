@@ -47,7 +47,7 @@ function runStep(label, cmd, args) {
   }
 }
 
-// A Workshop content dir (e.g. .../workshop/content/3328490/3793213548) holds
+// A Workshop content dir (e.g. .../workshop/content/3328490/3806070599) holds
 // the exe — resolve it when given a directory.
 function resolveExe(p) {
   if (!p) return defaultExe;

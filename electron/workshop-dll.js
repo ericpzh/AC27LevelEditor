@@ -4,7 +4,7 @@
 //
 // The Workshop distribution contains AC27Approach.dll in up to four places:
 //   (a) as a sibling alongside AC27EditorWorkshop.exe inside the Steam Workshop
-//       content item (.../workshop/content/3328490/3793213548/AC27Approach.dll
+//       content item (.../workshop/content/3328490/3806070599/AC27Approach.dll
 //       — copied by the release workflow);
 //   (b) as an extraResource bundled inside resources/ (resources/AC27Approach.dll)
 //       when built via `node build.js --workshop` with the plugin artifact present;
