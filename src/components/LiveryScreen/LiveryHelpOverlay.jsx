@@ -72,9 +72,13 @@ const PAINTER_SECTIONS = [
 ];
 
 // ─── Component ────────────────────────────────────────────
-export default function LiveryHelpOverlay({ onClose, page = 'list' }) {
+export default function LiveryHelpOverlay({ onClose, page = 'list', isDemo = false }) {
   const { t } = useTranslation();
-  const sections = page === 'painter' ? PAINTER_SECTIONS : LIST_SECTIONS;
+  // The Pack chip documents a header button that only exists in the demo root.
+  const baseSections = page === 'painter' ? PAINTER_SECTIONS : LIST_SECTIONS;
+  const sections = isDemo
+    ? baseSections
+    : baseSections.map((s) => (s.id === 'bar' ? { ...s, items: s.items.filter((k) => k !== 'pack') } : s));
 
   useEffect(() => {
     const handler = (e) => {

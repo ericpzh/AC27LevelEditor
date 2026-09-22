@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './LiveryScreen.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useAppStore } from '../../store/appStore';
+import { STEAM_DEMO_DIR_NAME } from '../../utils/constants/steam';
 import {
   IoArrowBack,
   IoHelpCircleOutline,
@@ -23,6 +24,10 @@ import LiveryHelpOverlay from './LiveryHelpOverlay';
 export default function LiveryScreen() {
   const { t } = useTranslation();
   const setScreen = useAppStore(s => s.setScreen);
+  const rootPath = useAppStore(s => s.rootPath);
+  // The realistic livery pack is only offered in the demo game root (same
+  // root-level detection as BrowserScreen). Full-game roots hide the button.
+  const isDemo = rootPath && rootPath.includes(STEAM_DEMO_DIR_NAME);
   const [tab, setTab] = useState('mine');
   const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -124,9 +129,11 @@ export default function LiveryScreen() {
             >
               <IoHelpCircleOutline size={14} />
             </button>
-            <button className="btn-sm" {...bind(t('livery_tip_install'))} onClick={handleInstallPack}>
-              <IoCloudDownloadOutline size={14} className="btn-icon" />{t('livery_tab_install')}
-            </button>
+            {isDemo && (
+              <button className="btn-sm" {...bind(t('livery_tip_install'))} onClick={handleInstallPack}>
+                <IoCloudDownloadOutline size={14} className="btn-icon" />{t('livery_tab_install')}
+              </button>
+            )}
           </div>
           <div className="browser-actions">
             {isMine && (
@@ -205,7 +212,7 @@ export default function LiveryScreen() {
         )}
       </main>
       {uploadFolder && <UploadLiveryDialog folder={uploadFolder} onClose={() => setUploadFolder(null)} />}
-      {helpOpen && <LiveryHelpOverlay page={isCreate ? 'painter' : 'list'} onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <LiveryHelpOverlay page={isCreate ? 'painter' : 'list'} isDemo={isDemo} onClose={() => setHelpOpen(false)} />}
       {TooltipPortal}
     </div>
   );

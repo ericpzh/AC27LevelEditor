@@ -4,7 +4,8 @@ Custom aircraft livery page (`Body`/`Fuselage`/`BaseMap`/`base.png`) plus the le
 realistic-pack installer. Screens: browser header **Livery** button →
 `screen === 'livery'` (`src/App.jsx` `ScreenRouter` + `UpdateOverlay` wrapper).
 Two views (`mine` list / `create` painter, local `useState`, **no tab bar**):
-the list view has a single header bar (LHS: Back, Help `?`, Pack; RHS: New,
+the list view has a single header bar (LHS: Back, Help `?`, Pack — **demo root
+only**, hidden in the full game; RHS: New,
 Select All / Deselect All, Export, Upload, Delete, Find); the painter view hides the
 header and has its own top bar. The help overlay is **page-scoped** — each view
 documents only its own buttons — and both pages end with the post-save
@@ -154,7 +155,10 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   (`goBack`: create → mine, mine → browser), Help `?` (`#livery-help-btn`,
   icon-only, moved left of Pack to match the painter's top bar) → page-scoped
   `LiveryHelpOverlay`, Pack (`handleInstallPack` → `InstallPackTab` in an app
-  modal); (RHS group): New, Select All/Deselect All, **Export**
+  modal — rendered **only in the demo root**, `isDemo =
+  rootPath.includes(STEAM_DEMO_DIR_NAME)`, the same root-level check
+  `BrowserScreen` uses; the full game hides the button and its help chip);
+  (RHS group): New, Select All/Deselect All, **Export**
   (`FaFileExport`, enabled with exactly one selected) and Delete Selected (both
    icon + label, greyed via `.btn-sm:disabled`), Find input
    (`IoSearchOutline`, `searchRef`; a list-page `Ctrl+F`/`Cmd+F` keydown
@@ -321,15 +325,18 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   cache.json `flags` bag; `CACHE_VERSION` bumped for the new key). Cancel (back arrow) runs
   `confirmDiscard` then `onCancel`; the help button calls `onHelp`.
 - `InstallPackTab.jsx` — legacy download/install/fallback flow (NOT a tab:
-  opened from the header Pack button inside an app modal) with an explanatory
+  opened from the header Pack button inside an app modal — Pack is demo-root
+  only, so this is unreachable in the full game) with an explanatory
   panel, the `Mods/` target path (`livery-install-*` classes) and a Close
   (`modal_btn_close`); renders `../BrowserScreen/LiveryInstallOverlay`
   (z-index above the app modal).
 - `LiveryHelpOverlay.jsx` — help overlay driven by a `BUTTONS` registry
   (icon + label key + optional description key per button). Takes a `page`
-  prop (`'list'` default / `'painter'`) and renders **only that page's**
-  sections: `LIST_SECTIONS` = Header bar (`back`/`pack`/`create`/`selectAll`/
-  `exportSelected`/`delete`/`search`); `PAINTER_SECTIONS` = Painter
+  prop (`'list'` default / `'painter'`) and an `isDemo` prop, and renders
+  **only that page's** sections: `LIST_SECTIONS` = Header bar (`back`/`pack`/
+  `create`/`selectAll`/`exportSelected`/`delete`/`search`) — the `pack` chip is
+  filtered out unless `isDemo` (it documents the demo-only Pack button);
+  `PAINTER_SECTIONS` = Painter
   (`back`/`importImage`/`importZip`/`exportZip`/`deleteThis`/`saveAs`/`save`) +
   Paint tools
   (`color`/`brush`/`eraser`/`eyedropper`/`fill`/`line`/`rect`/`ellipse`/`text`/

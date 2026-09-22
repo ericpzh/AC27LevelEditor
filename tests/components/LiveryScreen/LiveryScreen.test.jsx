@@ -36,6 +36,10 @@ const ROW2 = {
   airline: 'AAL', targetPlaneId: 'BOEING 737-800', hasBasePng: true, mtime: 0,
 };
 
+// The Pack button is demo-root only (same root-level detection as BrowserScreen).
+const DEMO_ROOT = 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 27 Demo';
+const FULL_ROOT = 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 27';
+
 function setupMocks(overrides = {}) {
   mockIpcInvoke.mockImplementation((channel, ...args) => {
     if (overrides[channel] !== undefined) return overrides[channel];
@@ -77,6 +81,7 @@ afterEach(() => {
 describe('LiveryScreen', () => {
   it('header bar hosts all actions, no title/tabs/bottom bar', async () => {
     setupMocks();
+    useAppStore.setState({ rootPath: DEMO_ROOT });
     renderLivery();
     const header = document.querySelector('#screen-livery .browser-header');
     expect(header).toBeInTheDocument();
@@ -100,6 +105,27 @@ describe('LiveryScreen', () => {
     await waitFor(() => {
       expect(screen.getByText('No custom liveries yet — create one.')).toBeInTheDocument();
     });
+  });
+
+  it('Pack button + its help chip are demo-root only', async () => {
+    setupMocks();
+    // Full game root: the Pack button and its help chip are hidden.
+    useAppStore.setState({ rootPath: FULL_ROOT });
+    const { unmount } = renderLivery();
+    const lhs = document.querySelector('#screen-livery .browser-header > .browser-actions');
+    expect(lhs.textContent).toContain('Back');
+    expect(lhs.textContent).not.toContain('Pack');
+    fireEvent.click(document.getElementById('livery-help-btn'));
+    await waitFor(() => expect(screen.getByText('Livery Help')).toBeInTheDocument());
+    const barSection = document.querySelector('#livery-help-bar');
+    expect(barSection.textContent).toContain('Back');
+    expect(barSection.textContent).not.toContain('Pack');
+    unmount();
+
+    // Demo root: the button is offered again.
+    useAppStore.setState({ rootPath: DEMO_ROOT });
+    renderLivery();
+    expect(document.querySelector('#screen-livery .browser-header').textContent).toContain('Pack');
   });
 
   it('search box renders with its placeholder and carries no tooltip', async () => {
@@ -239,6 +265,7 @@ describe('LiveryScreen', () => {
     setupMocks({
       'download-livery': new Promise(() => {}),
     });
+    useAppStore.setState({ rootPath: DEMO_ROOT });
     const user = userEvent.setup();
     renderLivery();
     await user.click(screen.getByText('Pack'));
@@ -256,7 +283,7 @@ describe('LiveryScreen', () => {
 
   it('install modal explains the flow and shows the Mods target', async () => {
     setupMocks();
-    useAppStore.setState({ rootPath: 'D:\\Games\\Airport Control 27' });
+    useAppStore.setState({ rootPath: DEMO_ROOT });
     const user = userEvent.setup();
     renderLivery();
     await user.click(screen.getByText('Pack'));
@@ -356,6 +383,7 @@ describe('LiveryScreen', () => {
 
   it('header buttons show tooltips on hover, except Create', async () => {
     setupMocks();
+    useAppStore.setState({ rootPath: DEMO_ROOT });
     renderLivery();
     fireEvent.mouseEnter(screen.getByText('Pack'));
     const tip = document.body.querySelector('.tooltip-popup');
@@ -422,6 +450,7 @@ describe('LiveryScreen unsaved guard + wizard', () => {
 
   it('the install modal Close button dismisses it', async () => {
     setupMocks();
+    useAppStore.setState({ rootPath: DEMO_ROOT });
     const user = userEvent.setup();
     renderLivery();
     await user.click(screen.getByText('Pack'));
