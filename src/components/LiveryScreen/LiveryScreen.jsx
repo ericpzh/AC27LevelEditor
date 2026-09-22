@@ -36,7 +36,11 @@ export default function LiveryScreen() {
   // freshly written FLATTENED PNGs and baking every live movable into the base.
   const [paintSession, setPaintSession] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [search, setSearch] = useState('');
+  // Store-backed so the filter (and the matching list layout) survives leaving
+  // the page and returning — otherwise a restored scroll offset lands on a
+  // different row. Cleared on a game-root change (setRootPath).
+  const search = useAppStore(s => s.liverySearch);
+  const setSearch = useAppStore(s => s.setLiverySearch);
   // Workshop upload dialog target: the single selected `mine` folder.
   const [uploadFolder, setUploadFolder] = useState(null);
   const searchRef = useRef(null);
@@ -194,7 +198,13 @@ export default function LiveryScreen() {
           </div>
         </header>
       )}
-      <main ref={contentRef} className={'livery-content' + (isCreate ? ' livery-content--painter' : '')}>
+      <main
+        ref={contentRef}
+        className={'livery-content' + (isCreate ? ' livery-content--painter' : '')}
+        // Remember the list scroll offset for the session (only the list view
+        // scrolls here; the painter owns its own scroll).
+        onScroll={(e) => { if (isMine) useAppStore.getState().setLiveryScrollTop(e.currentTarget.scrollTop); }}
+      >
         {isMine && (
           <MyLiveriesTab
             search={search}

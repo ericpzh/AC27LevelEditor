@@ -220,6 +220,40 @@ describe('MyLiveriesTab', () => {
     });
   });
 
+  it('persists collapsed groups and re-applies them on the next mount', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    const user = userEvent.setup();
+    const first = renderMine();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await user.click(screen.getByText('AIRBUS A-320neo').closest('.livery-group-header'));
+    await waitFor(() => expect(useAppStore.getState().liveryCollapsedGroups['AIRBUS A-320neo']).toBe(true));
+    first.unmount();
+    // Re-entering the page seeds the collapse state back from the store.
+    renderMine();
+    await waitFor(() => expect(screen.getByText('AIRBUS A-320neo')).toBeInTheDocument());
+    expect(screen.queryByText('Air China')).toBeNull();
+  });
+
+  it('restores the saved scroll offset once the list has settled', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    useAppStore.setState({ liveryScrollTop: 250 });
+    const el = { scrollTop: 0, scrollHeight: 1000, clientHeight: 100 };
+    const scrollRef = { current: el };
+    renderMine({ scrollRef });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await waitFor(() => expect(el.scrollTop).toBe(250));
+  });
+
+  it('clamps the saved scroll offset to the content maximum', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
+    useAppStore.setState({ liveryScrollTop: 5000 });
+    const el = { scrollTop: 0, scrollHeight: 1000, clientHeight: 100 };
+    const scrollRef = { current: el };
+    renderMine({ scrollRef });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    await waitFor(() => expect(el.scrollTop).toBe(900));
+  });
+
   it('merges reference rows into the same aircraft folder with a lock mark', async () => {
     const refRow = {
       folder: 'A20N_CES',

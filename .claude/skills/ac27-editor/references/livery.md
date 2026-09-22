@@ -177,7 +177,14 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   (`onEdit`/`onCreate`), so switching origins remounts it, while the painter's
   own post-save `CreateTab.prefill` adoption does **not** (keying off the prefill
   content would remount the painter on that mutation — or on any unrelated
-  `LiveryScreen` re-render — and reload the flattened PNGs; see Save below).
+  `LiveryScreen` re-render — and reload the flattened PNGs; see Save below). The list view state is kept in
+  `appStore` for the session — `liveryScrollTop`, `liveryCollapsedGroups`,
+  `liverySearch` (actions `setLiveryScrollTop`/`setLiveryCollapsedGroups`/
+  `setLiverySearch`, all cleared by `setRootPath`) — so leaving the page (to the
+  browser or the painter, both of which unmount the list) and returning keeps
+  the scroll position, collapsed groups and search filter. The search input is
+  store-backed; `<main class="livery-content">` records `scrollTop` in an
+  `onScroll` handler (list view only).
 - `MyLiveriesTab.jsx` — `listLiveries` on mount; own + reference + **workshop**
   merged into one folder set grouped by aircraft type (collapsible sections;
   header = plane id + count badge; unknown `targetPlaneId` sorts last).
@@ -225,7 +232,14 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   painter with that type pre-selected (see `LiveryScreen`/`CreateTab`). The
   unknown `''` type gets no add card. Under an active search an otherwise-empty
   folder is kept only when its type name matches the query (so the placeholder
-  still shows for a no-match search). Renders `TooltipPortal`.
+  still shows for a no-match search). `collapsed` seeds from
+  `liveryCollapsedGroups` and is written back on every change (a remount keeps
+  the groups, and the list height matches the restored scroll); the saved
+  `liveryScrollTop` is restored **once** after `loading` is done AND the
+  best-effort type scan has settled (`typesLoaded` — restoring before the
+  scanned empty-type folders land would clamp to a shorter height), clamped to
+  the content maximum and guarded by `restoredRef`. The after-delete/after-
+  collapse clamp caps `scrollTop` on `[mine, collapsed]`. Renders `TooltipPortal`.
 - `CreateTab.jsx` — the **painter page** (default export
   takes `{ onCreated, onCancel, onHelp }`). Given `CreateTab.prefill` it
   snapshots an `origin` `{folder, airline, planeId, pack, imageDataUrl}` with

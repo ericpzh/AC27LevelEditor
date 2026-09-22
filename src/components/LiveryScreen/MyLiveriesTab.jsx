@@ -27,7 +27,15 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
   const [loading, setLoading] = useState(true);
   // Collapsed aircraft groups, keyed by targetPlaneId ('' = unknown).
   // Mine + reference share one folder set; reference rows are read-only.
-  const [collapsed, setCollapsed] = useState(new Set());
+  // Seeded from (and written back to) the store so the choice — which also
+  // determines the list height for scroll restore — survives leaving the page.
+  const [collapsed, setCollapsed] = useState(
+    () => new Set(Object.keys(useAppStore.getState().liveryCollapsedGroups || {})),
+  );
+  // True once the best-effort aircraft-type scan has settled. The scroll
+  // restore waits for it: the scan adds the empty-type folders, so restoring
+  // before it lands would clamp to a shorter height and misplace the view.
+  const [typesLoaded, setTypesLoaded] = useState(false);
   // Selected own-pack folders (reference never selectable). The card checkbox
   // drives export / delete in the header bar via cmdRef.
   const [selected, setSelected] = useState(new Set());
@@ -88,7 +96,9 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
       if (typeRes && typeRes.success && Array.isArray(typeRes.types)) {
         setAllTypes(typeRes.types.map(x => x && x.planeId).filter(Boolean));
       }
-    } catch (_) {}
+    } catch (_) {} finally {
+      setTypesLoaded(true);
+    }
   };
 
   useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -143,15 +153,42 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
     return () => { cancelled = true; };
   }, [filteredRows, collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // After an in-place delete shrinks the list, keep the current scroll offset
-  // but cap it to the new content maximum (deleting too much would otherwise
-  // leave scrollTop past the end). Runs before paint so there is no jump.
+  // After an in-place delete (or a group collapse) shrinks the list, keep the
+  // current scroll offset but cap it to the new content maximum (otherwise
+  // scrollTop would sit past the end). Runs before paint so there is no jump.
   useLayoutEffect(() => {
     const el = scrollRef && scrollRef.current;
     if (!el) return;
     const max = Math.max(0, el.scrollHeight - el.clientHeight);
     if (el.scrollTop > max) el.scrollTop = max;
-  }, [mine, scrollRef]);
+  }, [filteredRows, allTypes, collapsed, scrollRef]);
+
+  // Persist the collapsed groups so the height (and the restored view) match
+  // when the page is re-entered.
+  useEffect(() => {
+    const map = {};
+    for (const id of collapsed) map[id] = true;
+    useAppStore.getState().setLiveryCollapsedGroups(map);
+  }, [collapsed]);
+
+  // Restore the scroll offset once, after the list has fully laid out (the
+  // type scan has added its folders and loading is done). `restoredRef` makes
+  // it one-shot, so a later delete/collapse only ever clamps.
+  const restoredRef = useRef(false);
+  useLayoutEffect(() => {
+    if (loading || !typesLoaded) return;
+    const el = scrollRef && scrollRef.current;
+    if (!el || restoredRef.current) return;
+    restoredRef.current = true;
+    const top = useAppStore.getState().liveryScrollTop || 0;
+    // Only reposition when there is a saved offset; a fresh list is already at
+    // the top, and clobbering an offset the caller set up would fight the
+    // after-delete clamp above.
+    if (top > 0) {
+      const max = Math.max(0, el.scrollHeight - el.clientHeight);
+      el.scrollTop = Math.min(top, max);
+    }
+  }, [loading, typesLoaded, scrollRef]);
 
   const toggleGroup = (planeId) => {
     setCollapsed(prev => {

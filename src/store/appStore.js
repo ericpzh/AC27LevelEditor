@@ -79,6 +79,15 @@ export const useAppStore = create((set, get) => ({
   browserCollapsedAirports: {},
   browserAutoCollapsed: {},
 
+  // ─── Livery list view state (persisted across mounts) ───
+  // Leaving the livery page (to the browser or into the painter) unmounts the
+  // list, so its scroll offset, collapsed aircraft groups and search filter are
+  // kept here for the session to land the user back where they were. Cleared
+  // when the game root changes (see setRootPath).
+  liveryScrollTop: 0,
+  liveryCollapsedGroups: {},
+  liverySearch: '',
+
   // ─── Radar window tracking (ICAO codes of open windows) ───
   openGroundRadarAirports: new Set(),
   openAirRadarAirports: new Set(),
@@ -117,13 +126,18 @@ export const useAppStore = create((set, get) => ({
 
   // ─── Actions: Screen ───
   setScreen: (screen) => set({ screen, ...(screen !== 'editor' ? { showStandMap: false, showStarMap: false, showGroundPainter: false, activeMap: null } : {}) }),
-  setRootPath: (rootPath, airports) => set({ rootPath, airports, fileInfos: {}, geomCache: {}, browserDataLoaded: false, browserAutoCollapseDone: false, browserCollapsedAirports: {}, browserAutoCollapsed: {} }),
+  setRootPath: (rootPath, airports) => set({ rootPath, airports, fileInfos: {}, geomCache: {}, browserDataLoaded: false, browserAutoCollapseDone: false, browserCollapsedAirports: {}, browserAutoCollapsed: {}, liveryScrollTop: 0, liveryCollapsedGroups: {}, liverySearch: '' }),
 
   // ─── Actions: Browser Cache ───
   setBrowserCache: (fileInfos, geomCache) => set({ fileInfos, geomCache, browserDataLoaded: true }),
   markBrowserAutoCollapseDone: () => set({ browserAutoCollapseDone: true }),
   setBrowserCollapsedAirport: (icao, collapsed) => set((state) => ({ browserCollapsedAirports: { ...state.browserCollapsedAirports, [icao]: collapsed } })),
   setBrowserAutoCollapsed: (map) => set({ browserAutoCollapsed: map }),
+
+  // ─── Actions: Livery list view state ───
+  setLiveryScrollTop: (n) => set({ liveryScrollTop: Number(n) || 0 }),
+  setLiveryCollapsedGroups: (map) => set({ liveryCollapsedGroups: map || {} }),
+  setLiverySearch: (search) => set({ liverySearch: String(search || '') }),
   updateSingleFileInfo: (icao, filePath, newInfo) => set((state) => {
     const oldList = state.fileInfos[icao] || [];
     const newList = oldList.map(info =>

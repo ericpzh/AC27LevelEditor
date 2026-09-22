@@ -433,6 +433,33 @@ describe('LiveryScreen unsaved guard + wizard', () => {
     expect(screen.getByPlaceholderText('CCA').value).toBe('CCA');
   });
 
+  it('remembers the list search filter and scroll for the session', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }),
+    });
+    const user = userEvent.setup();
+    const first = renderLivery();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+
+    // The list scroll container records its offset for the session.
+    const main = document.querySelector('.livery-content');
+    Object.defineProperty(main, 'scrollTop', { configurable: true, writable: true, value: 321 });
+    fireEvent.scroll(main);
+    expect(useAppStore.getState().liveryScrollTop).toBe(321);
+
+    // Filter, then leave the page and come back.
+    const input = document.querySelector('.livery-search input');
+    await user.type(input, 'american');
+    await waitFor(() => expect(screen.queryByText('Air China')).toBeNull());
+    expect(useAppStore.getState().liverySearch).toBe('american');
+    first.unmount();
+
+    renderLivery();
+    await waitFor(() => expect(screen.getByText('American Airlines')).toBeInTheDocument());
+    expect(document.querySelector('.livery-search input').value).toBe('american');
+    expect(screen.queryByText('Air China')).toBeNull();
+  });
+
   it('the add-livery card opens the painter with that aircraft type pre-selected', async () => {
     setupMocks({
       'list-liveries': Promise.resolve({ success: true, mine: [], reference: [] }),
