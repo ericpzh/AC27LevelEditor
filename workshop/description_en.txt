@@ -5,9 +5,9 @@ For source code, please visit [url=https://github.com]AC27LevelEditor GitHub[/ur
 [h1]Core Features[/h1]
 [list]
 [*] [b]Level Editor:[/b] Fully edit flight schedules, weather, and runways.
-[*] [b]Advanced View:[/b] Standalone radar screen and flight progress strips.
+[*] [b]Livery Editor:[/b] Create livery and upload it to Steam Workshop.
 [*] [b]Visual Mods:[/b] Easily replace the default loading screen videos.
-[*] [b]Map Creator:[/b] Custom editing tools for airport ground maps.
+[*] [b]Map Editor:[/b] Custom editing tools for airport ground maps.
 [/list]
 
 [h1]How to Launch the Editor[/h1]
