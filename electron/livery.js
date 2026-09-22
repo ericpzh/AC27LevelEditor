@@ -186,7 +186,7 @@ function hasBuiltInTemplate(gameRoot, planeId) {
 function ensureModInfo(packDir) {
   const file = path.join(packDir, 'mod_info.json');
   try {
-    const current = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const current = _readJsonFile(file, 'utf-8');
     if (current && current.modName === OWN_PACK_MOD_INFO.modName) return true;
   } catch (_) {}
   try {
@@ -202,6 +202,16 @@ function ensureOwnPackDir(gameRoot) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   ensureModInfo(dir);
   return dir;
+}
+
+// Workshop/subscriber manifests are often saved with a UTF-8 BOM — strip it
+// before JSON.parse (a leading U+FEFF otherwise throws and the row degrades
+// to BAD_MANIFEST / unknown aircraft).
+function _parseJsonText(raw) {
+  return JSON.parse(String(raw == null ? '' : raw).replace(/^\uFEFF/, ''));
+}
+function _readJsonFile(file) {
+  return _parseJsonText(fs.readFileSync(file, 'utf-8'));
 }
 
 // Returns the absolute folder path if `folder` stays inside packDir, else null.
@@ -285,7 +295,7 @@ function _mainPartBaseFile(manifest) {
 // then any other part's BaseMap, then the legacy single-file base.png.
 function _resolveLiveryImagePath(dir) {
   try {
-    const m = JSON.parse(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    const m = _readJsonFile(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8');
     const main = _mainPartBaseFile(m);
     if (main) {
       const p = path.join(dir, path.basename(main.fileName));
@@ -314,10 +324,10 @@ function _resolveLiveryImagePath(dir) {
 function _readBuiltInManifest(gameRoot, planeId) {
   try {
     if (!gameRoot || !planeId) return null;
-    return JSON.parse(fs.readFileSync(
+    return _readJsonFile(
       path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, String(planeId), 'aircraft_livery_manifest.json'),
       'utf-8',
-    ));
+    );
   } catch (_) {
     return null;
   }
@@ -392,7 +402,7 @@ function readLiveryRow(packDir, folder) {
   try { mtime = fs.statSync(dir).mtimeMs; } catch (_) {}
   const hasBasePng = Boolean(_resolveLiveryImagePath(dir));
   try {
-    const m = JSON.parse(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    const m = _readJsonFile(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8');
     return { folder, id: m.id || '', name: m.name || '', airline: m.airline || '', targetPlaneId: m.targetPlaneId || '', hasBasePng, mtime };
   } catch (_) {
     return { folder, id: '', name: '', airline: '', targetPlaneId: '', hasBasePng, mtime, error: 'BAD_MANIFEST' };
@@ -576,7 +586,7 @@ function readAircraftTemplate(gameRoot, planeId) {
   const dir = path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, id);
   let result;
   try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    const manifest = _readJsonFile(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8');
     const baseParts = _basePartsFromManifest(manifest);
     if (baseParts.length === 0) {
       result = { success: false, error: 'IMAGE_MISSING' };
@@ -620,7 +630,7 @@ function readLiveryImages(gameRoot, folder, pack = 'mine') {
   const resolved = packDir ? containmentCheck(packDir, folder || '') : null;
   if (!resolved) return { success: false, error: 'BAD_FOLDER' };
   try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(resolved, 'aircraft_livery_manifest.json'), 'utf-8'));
+    const manifest = _readJsonFile(path.join(resolved, 'aircraft_livery_manifest.json'), 'utf-8');
     let baseParts = _basePartsFromManifest(manifest);
     // Legacy folder with no manifest BaseMap but a stray base.png.
     if (baseParts.length === 0 && fs.existsSync(path.join(resolved, 'base.png'))) {
@@ -827,7 +837,7 @@ function loadLiveryZip(zipPath) {
     const absDir = manifestDir === '.' ? tmpDir : path.join(tmpDir, manifestDir);
     let manifest;
     try {
-      manifest = JSON.parse(fs.readFileSync(path.join(absDir, 'aircraft_livery_manifest.json'), 'utf-8'));
+      manifest = _readJsonFile(path.join(absDir, 'aircraft_livery_manifest.json'), 'utf-8');
     } catch (_) {
       return { success: false, error: 'BAD_MANIFEST' };
     }
@@ -947,7 +957,7 @@ function buildWorkshopContent(gameRoot, folder) {
   const srcDir = _resolveOwnLiveryDir(gameRoot, folder);
   if (!srcDir) throw _codedError('BAD_FOLDER');
   try {
-    JSON.parse(fs.readFileSync(path.join(srcDir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    _readJsonFile(path.join(srcDir, 'aircraft_livery_manifest.json'), 'utf-8');
   } catch (_) {
     throw _codedError('NO_MANIFEST');
   }

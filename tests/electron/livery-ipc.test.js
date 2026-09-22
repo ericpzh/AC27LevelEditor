@@ -1285,6 +1285,24 @@ describe('Steam Workshop discovery', () => {
     });
   });
 
+  it('tolerates a UTF-8 BOM in workshop manifests (no BAD_MANIFEST / unknown aircraft)', () => {
+    const { root, workshop } = steamLayout();
+    const dir = path.join(workshop, '3328490', '3806076425', 'A20N_FFT');
+    seedLivery(dir, 'FFT', 'AIRBUS A-320neo');
+    // Third-party packs (e.g. item 3806076425) save the manifest with a BOM.
+    const manifestPath = path.join(dir, 'aircraft_livery_manifest.json');
+    const raw = fs.readFileSync(manifestPath);
+    fs.writeFileSync(manifestPath, Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), raw]));
+
+    const rows = livery.listWorkshopLiveries(root);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      folder: '3328490/3806076425/A20N_FFT',
+      airline: 'FFT', targetPlaneId: 'AIRBUS A-320neo', hasBasePng: true,
+    });
+    expect(rows[0].error).toBeUndefined();
+  });
+
   it('includes workshop rows in listLiveries and reads their image by pack', () => {
     const { root, workshop } = steamLayout();
     seedLivery(path.join(workshop, '3328490', '111', 'A20N_CCA'));

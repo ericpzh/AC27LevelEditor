@@ -412,7 +412,7 @@ function _resolveOwnLiveryDir(gameRoot, folder) {
 
 function _readManifest(liveryDir) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(liveryDir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    return JSON.parse(fs.readFileSync(path.join(liveryDir, 'aircraft_livery_manifest.json'), 'utf-8').replace(/^\uFEFF/, ''));
   } catch (_) {
     return null;
   }

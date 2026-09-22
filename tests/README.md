@@ -53,6 +53,15 @@ spurious mismatches from out-of-step cached exe/sidecar entries. New `downloadUp
 **2216/2216** (117 files). Live `/editor` probes + a full normal-exe download hash-verified against both
 `X-AC27-MD5` and the `HEAD` etag. Integration/E2E not re-run.
 
+**Livery BOM fix (2026-09-22):** third-party Workshop item `3806076425` saves every
+`aircraft_livery_manifest.json` with a UTF-8 BOM, which made `JSON.parse` throw and
+degraded all 19 rows to `BAD_MANIFEST` grouped under Unknown aircraft (`A20N_FFT` etc.).
+All manifest/mod-info reads in `electron/livery.js` now go through `_readJsonFile` /
+`_parseJsonText` (leading U+FEFF stripped; same strip in `steam-workshop.js:_readManifest`).
+Regression test in `tests/electron/livery-ipc.test.js` (BOM-prefixed workshop manifest lists
+with airline + `targetPlaneId`, no `error`). Full suite green: Vitest **2245/2245**
+(118 files).
+
 **i18n key audit (2026-09-19):** removed 140 unreferenced keys from `src/utils/i18n.js` (131 with zero
 references anywhere + 9 `livery_paint_*` strings unreachable through the `TOOLS` list); 139 removed from
 each dictionary, leaving **732 zh / 733 en** keys at that time (the only language-exclusive key is the

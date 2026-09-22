@@ -71,6 +71,16 @@ painter page).
   `base.png` still previews; the data-URL MIME follows the file extension
   (PNG/JPEG). `exportLivery` includes **every** image in the folder, so a
   multi-part livery shares/round-trips as a whole.
+
+- Manifest JSON is parsed **BOM-tolerantly**: every manifest/mod-info read goes
+  through `_readJsonFile`/`_parseJsonText` (`electron/livery.js`), which strips
+  a leading U+FEFF before `JSON.parse` (same strip in
+  `electron/steam-workshop.js:_readManifest`). Third-party Workshop packs may
+  save `aircraft_livery_manifest.json` with a UTF-8 BOM — e.g. item
+  `3806076425` (all 19 `A20N_*`/`A320_*` folders) — and a strict parse degrades
+  every such row to `BAD_MANIFEST` with an empty `targetPlaneId`, which the
+  list groups under Unknown aircraft (`livery_unknown_aircraft`).
+
 - Manifest template:
   `{id: "<sanitized-folder>_default", name: "<SHORT> <AIRLINE> Default Livery",
   airline, targetPlaneId, liveryType: "airline", liverySource: "user",
