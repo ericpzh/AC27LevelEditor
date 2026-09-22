@@ -7,7 +7,7 @@ description: AC27Approach — the BepInEx 6 IL2CPP plugin for Airport Control 27
 
 ## What This Is
 
-A BepInEx 6 IL2CPP plugin (`com.ac27.approach`) that live-patches aircraft in Airport Control 27 **while the game runs**. No overlay, no hotkeys — driven entirely through the game's own UDP command service (`127.0.0.1:20267`). Four patch commands (plus `track` diagnostics):
+A BepInEx 6 IL2CPP plugin (`com.ac27.approach`) that live-patches aircraft in Airport Control 27 **while the game runs**. No overlay, no hotkeys — driven through a UDP command channel the plugin owns on `127.0.0.1:20267` (the AC27 shipping build removed the game's `AircraftUdpCommandService`). Because that build also removed the telemetry service, the plugin **emits the editor's live telemetry stream itself** on `127.0.0.1:20266` (10 Hz `GATC` v2, all radar/strip fields) — see the README's "AC27 shipping build — plugin-owned transport". Four patch commands (plus `track` diagnostics):
 
 | Command | What it does |
 |---|---|
@@ -45,14 +45,15 @@ Verify load in `<GameDir>\BepInEx\LogOutput.log`:
 AC27Approach loaded
 [AC27Approach] Aircraft.Step (postfix): applied
 [AC27Approach] View hijack (Aircraft3D.SetWorldPosition): applied
-[AC27Approach] UDP Mechanism A (AircraftUdpCommandService.ExecuteSelectAircraft): applied
-[AC27Approach] UDP Mechanism B (AircraftUdpCommandService.FixedTick postfix): applied
-[AC27Approach] UDP Mechanism B (Socket.Receive capture, 4-arg): applied
-[AC27Approach] UDP Mechanism B (Socket.Receive capture, 1-arg): applied
-[AC27Approach] UDP log suppression (AircraftUdpCommandService.LogBadDatagramOnce): applied
+[AC27Approach] Channel lock (Aircraft.set_Direction): applied
 [AC27Approach] Dynamics.RestoreRuntimeData (trace): applied
 [AC27Approach] Dynamics.SetCurrentState (trace): applied
+[AC27Approach] telemetry: emitter ready — 10 Hz → 127.0.0.1:20266
+[AC27Approach] commands: receiver bound 127.0.0.1:20267
+[AC27Approach] telemetry: icao=ZSJN records=24 src=mgr24+seq9 total=24 clock=True x1 sends=…
 ```
+
+(The `UDP Mechanism A/B` and `LogBadDatagramOnce` lines are gone — the AC27 build has no `AircraftUdpCommandService` to hook; the plugin owns the sockets instead.)
 
 `AircraftDynamicsData.DynamicsParams` setter is deliberately NOT patched — IL2CPP field accessor, both Harmony backends refuse it, and native C++ writes bypass the managed stub. Re-plant detection is a per-step pointer diff instead (`params-replant: <CS> DynamicsParams ← <class>`).
 
@@ -132,5 +133,5 @@ These are the runtime-verified hooks. Two obvious candidates are deliberately NO
 - **Read `mods/AC27Approach/README.md` before changing the plugin** — it is the authoritative record of verified behavior and dead ends. Keep it in sync with any behavioral change (the editor skill's rule 21 applies here too).
 - **Never hardcode or mint type ids** in the plugin's dynamics work (same policy as the editor): everything is resolved from the game's runtime objects or the Cpp2IL dump — see `mods/docs/aircraft-classes-inventory.md`.
 - **Never commit `bin/` / `obj/`** (gitignored). Commit source + `docs/` only.
-- **The game must be running** for the UDP server to exist (binds `127.0.0.1:20267` only while the game is up).
+- **The game must be running**: the plugin binds the command socket (`127.0.0.1:20267`) and emits telemetry (`127.0.0.1:20266`) while a level is loaded. With no level loaded it emits one `hasLevel=0` STOP frame then goes silent, so the editor clears live aircraft (5 s stale timeout).
 - **Editor-side frame sends** must use `sendPatchCommand` / the documented frame contract — never craft raw datagrams in renderer code, and never route `!` frames through `select-aircraft-in-map`.

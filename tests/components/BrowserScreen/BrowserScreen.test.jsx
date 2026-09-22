@@ -31,6 +31,8 @@ function setupDefaultMocks(overrides = {}) {
         return Promise.resolve('1.0.10');
       case 'check-bepinex':
         return Promise.resolve({ installed: false });
+      case 'get-system-info':
+        return Promise.resolve({ success: true, platform: 'win32', isPackaged: false });
       case 'get-cache-state':
         return Promise.resolve({ state: 'ready', gameRoot: 'D:\\Games\\Airport Control 27', lang: null, airports: ['ZSJN'] });
       case 'get-airport-files-info':
@@ -690,7 +692,7 @@ beforeEach(() => {
       expect(header.getAttribute('aria-expanded')).toBe('true');
     });
 
-    it('hides the radar/flight-strip toggle buttons (disabled in the level browser)', async () => {
+    it('shows the radar/flight-strip toggle buttons', async () => {
       setupDefaultMocks({
         'get-airport-files-info': Promise.resolve([zsjnFile]),
       });
@@ -700,11 +702,90 @@ beforeEach(() => {
         expect(screen.getByText('Relax Time')).toBeInTheDocument();
       });
 
-      expect(screen.queryByText('Surface Radar')).toBeNull();
-      expect(screen.queryByText('Approach Radar')).toBeNull();
-      expect(screen.queryByText('Flight Strips')).toBeNull();
-      // The action container stays, but renders no buttons.
-      expect(document.querySelector('.airport-card-actions button')).toBeNull();
+      expect(screen.getByText('Surface Radar')).toBeInTheDocument();
+      expect(screen.getByText('Approach Radar')).toBeInTheDocument();
+      expect(screen.getByText('Flight Strips')).toBeInTheDocument();
+      expect(document.querySelector('.airport-card-actions button')).not.toBeNull();
+    });
+
+    // MD5 matches the release reference → open, never install.
+    it('opens the radar without installing when the DLL MD5 matches the release', async () => {
+      setupDefaultMocks({
+        'check-bepinex': Promise.resolve({ installed: true }),
+        'get-cache-flag': Promise.resolve({ success: true, value: true }),
+        'get-system-info': Promise.resolve({ success: true, platform: 'win32', isPackaged: true }),
+        'check-command-capability': Promise.resolve({ pluginInstalled: true, pluginUpToDate: true }),
+        'get-airport-files-info': Promise.resolve([zsjnFile]),
+      });
+      renderBrowser();
+      await waitFor(() => expect(screen.getByText('Relax Time')).toBeInTheDocument());
+      mockIpcInvoke.mockClear();
+
+      await userEvent.click(screen.getByText('Surface Radar'));
+
+      await waitFor(() => expect(mockIpcInvoke.mock.calls.map(c => c[0])).toContain('open-ground-map'));
+      const channels = mockIpcInvoke.mock.calls.map(c => c[0]);
+      expect(channels).not.toContain('download-approach-dll');
+      expect(channels).not.toContain('install-approach-dll');
+    });
+
+    // Packaged build + MD5 mismatch → update from the release reference
+    // (bundled Workshop DLL on Steam, R2 object on a normal build).
+    it('installs when the packaged DLL MD5 is out of date', async () => {
+      setupDefaultMocks({
+        'check-bepinex': Promise.resolve({ installed: true }),
+        'get-cache-flag': Promise.resolve({ success: true, value: true }),
+        'get-system-info': Promise.resolve({ success: true, platform: 'win32', isPackaged: true }),
+        'check-command-capability': Promise.resolve({ pluginInstalled: true, pluginUpToDate: false }),
+        'download-approach-dll': Promise.resolve({ success: true, filePath: 'C:/tmp/AC27Approach.dll' }),
+        'install-approach-dll': Promise.resolve({ success: true }),
+        'get-airport-files-info': Promise.resolve([zsjnFile]),
+      });
+      renderBrowser();
+      await waitFor(() => expect(screen.getByText('Relax Time')).toBeInTheDocument());
+      mockIpcInvoke.mockClear();
+
+      await userEvent.click(screen.getByText('Surface Radar'));
+
+      await waitFor(() => expect(mockIpcInvoke.mock.calls.map(c => c[0])).toContain('download-approach-dll'));
+    });
+
+    // Dev (unpackaged) never enforces the release MD5 — the dev loop mutates the DLL.
+    it('does not update in dev even when the DLL is out of date', async () => {
+      setupDefaultMocks({
+        'check-bepinex': Promise.resolve({ installed: true }),
+        'get-cache-flag': Promise.resolve({ success: true, value: true }),
+        'get-system-info': Promise.resolve({ success: true, platform: 'win32', isPackaged: false }),
+        'check-command-capability': Promise.resolve({ pluginInstalled: true, pluginUpToDate: false }),
+        'get-airport-files-info': Promise.resolve([zsjnFile]),
+      });
+      renderBrowser();
+      await waitFor(() => expect(screen.getByText('Relax Time')).toBeInTheDocument());
+      mockIpcInvoke.mockClear();
+
+      await userEvent.click(screen.getByText('Surface Radar'));
+
+      await waitFor(() => expect(mockIpcInvoke.mock.calls.map(c => c[0])).toContain('open-ground-map'));
+      expect(mockIpcInvoke.mock.calls.map(c => c[0])).not.toContain('download-approach-dll');
+    });
+
+    // Debug Mode off → instruct the user, never install, never open.
+    it('instructs enabling Debug Mode when it is off (no install, no window)', async () => {
+      setupDefaultMocks({
+        'check-bepinex': Promise.resolve({ installed: false }),
+        'get-cache-flag': Promise.resolve({ success: true, value: false }),
+        'get-airport-files-info': Promise.resolve([zsjnFile]),
+      });
+      renderBrowser();
+      await waitFor(() => expect(screen.getByText('Relax Time')).toBeInTheDocument());
+      mockIpcInvoke.mockClear();
+
+      await userEvent.click(screen.getByText('Surface Radar'));
+
+      await waitFor(() => expect(screen.getByText(/Shut down the game and enable debug mode in setting/)).toBeInTheDocument());
+      const channels = mockIpcInvoke.mock.calls.map(c => c[0]);
+      expect(channels).not.toContain('download-approach-dll');
+      expect(channels).not.toContain('open-ground-map');
     });
 
     it('auto-collapses trailing airports so every airport header stays visible', async () => {

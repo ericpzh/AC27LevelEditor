@@ -66,6 +66,9 @@ vi.stubGlobal('electronAPI', {
   getAppVersion: () => mockIpcInvoke('get-app-version'),
   isWorkshopBuild: () => mockIpcInvoke('is-workshop-build'),
 
+  // System info (radar/strip buttons are Windows-only in the UI)
+  getSystemInfo: () => mockIpcInvoke('get-system-info'),
+
   // Cache
   getCachedLang: () => mockIpcInvoke('get-cached-lang'),
   saveCachedLang: (lang) => mockIpcInvoke('save-cached-lang', lang),

@@ -4,10 +4,7 @@ using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using ContextCross.Aircrafts;
 using ContextCross.Dynamics;
-using ContextCross.Telemetry;
 using HarmonyLib;
-using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using Il2CppSystem.Net.Sockets;
 
 namespace AC27Approach;
 
@@ -59,63 +56,10 @@ public class Plugin : BasePlugin
             AccessTools.Method(typeof(Aircraft3D), "SetWorldPosition"),
             prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.Aircraft3DSetWorldPositionPrefix))));
 
-        // UDP Mechanism A (report §5.4): `!`-prefixed callsigns are patch frames.
-        // Runtime-verified hook: `ExecuteSelectAircraft(string)` —
-        // plain string param, always binds. (`Execute(in UdpCommand)` NREs at
-        // runtime in this IL2CPP context despite applying cleanly at load.)
-        TryPatch(harmony, "UDP Mechanism A (AircraftUdpCommandService.ExecuteSelectAircraft)",
-            AccessTools.Method(typeof(AircraftUdpCommandService), "ExecuteSelectAircraft"),
-            prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpExecuteSelectAircraftPrefix))));
-
-        // UDP Mechanism B (report §5.4): extended frames on command id 0x00E7.
-        // Runtime-verified hook: FixedTick() postfix reads the
-        // datagram back from the service's `_receiveBuffer` — via the stub's
-        // public `get__receiveBuffer()` accessor (the field is NOT exposed as
-        // FieldInfo; Traverse.Field resolves null and silently no-ops). A
-        // Socket.Receive postfix is applied as an alternative capture (in case
-        // the game's parse clears the buffer) — shared dedup makes the two
-        // paths mutually exclusive. (`TryParse` takes a ReadOnlySpan<byte> —
-        // ref-struct — the Harmony DMD is invalid IL and throws
-        // InvalidProgramException on every frame; it CANNOT be patched.)
-        TryPatch(harmony, "UDP Mechanism B (AircraftUdpCommandService.FixedTick postfix)",
-            AccessTools.Method(typeof(AircraftUdpCommandService), "FixedTick"),
-            postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpFixedTickPostfix))));
-
-        TryPatch(harmony, "UDP Mechanism B (Socket.Receive capture, 4-arg)",
-            AccessTools.Method(typeof(Socket), "Receive",
-                new[] { typeof(Il2CppStructArray<byte>), typeof(int), typeof(int), typeof(SocketFlags) }),
-            postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpSocketReceivePostfix))));
-
-        TryPatch(harmony, "UDP Mechanism B (Socket.Receive capture, 1-arg)",
-            AccessTools.Method(typeof(Socket), "Receive", new[] { typeof(Il2CppStructArray<byte>) }),
-            postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpSocketReceiveSimplePostfix))));
-
-        // Level restart: the game's AircraftUdpCommandService is
-        // a per-level VContainer service (same DI family as GameTime and
-        // AirwayRouteService) — Start() fires when the command channel
-        // (re)binds, Dispose() when it tears down: the exact moments per-level
-        // plugin state becomes invalid. The patches reset ALL per-level state
-        // (overrides, object-keyed caches, the route-service cache, the frame
-        // dedup) so an in-game level restart no longer leaves stale state
-        // behind — the "overrides stopped working after a restart" bug. If the
-        // service is session-scoped they fire only at game start (harmless
-        // no-op); the Dynamics.RestoreRuntimeData burst is the every-load
-        // backstop. Explicit Type.EmptyTypes guards overload ambiguity.
-        TryPatch(harmony, "Level reset (AircraftUdpCommandService.Start postfix)",
-            AccessTools.Method(typeof(AircraftUdpCommandService), "Start", Type.EmptyTypes),
-            postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpCommandServiceStartPostfix))));
-
-        TryPatch(harmony, "Level reset (AircraftUdpCommandService.Dispose prefix)",
-            AccessTools.Method(typeof(AircraftUdpCommandService), "Dispose", Type.EmptyTypes),
-            prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpCommandServiceDisposePrefix))));
-
-        // The game's own parse rejects id 0x00E7 with a one-line UnknownCommand
-        // warning (the postfix cannot stop the parse, only read the buffer after
-        // it) — suppress that specific reason; other bad-datagram reasons keep
-        // logging so real protocol mismatches stay visible.
-        TryPatch(harmony, "UDP log suppression (AircraftUdpCommandService.LogBadDatagramOnce)",
-            AccessTools.Method(typeof(AircraftUdpCommandService), "LogBadDatagramOnce"),
-            prefix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.UdpLogBadDatagramOncePrefix))));
+        // UDP input is now plugin-owned: the AC27 shipping build removed the
+        // game's AircraftUdpCommandService (and with it the Mechanism A/B hook
+        // points), so CommandReceiver binds 127.0.0.1:20267 itself and dispatches
+        // the same frames through Patches.DispatchDatagram. Registered below.
 
         // Diagnostics: Dynamics.RestoreRuntimeData — "Dynamics: restore runtime
         // data: FlyApproaching" fires right after the clear_for_appr patch
@@ -185,6 +129,30 @@ public class Plugin : BasePlugin
         catch (Exception ex)
         {
             Log.LogWarning($"[AC27Approach] Param tracer (1 s): FAILED ({ex.GetType().Name}: {ex.Message})");
+        }
+
+        // Telemetry emitter — the AC27 build has no AircraftUdpTelemetryService,
+        // so the plugin produces the editor's 10 Hz GATC stream itself.
+        try
+        {
+            AddComponent<TelemetryEmitter>();
+            Log.LogInfo("[AC27Approach] Telemetry emitter (10 Hz → 127.0.0.1:20266): applied");
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning($"[AC27Approach] Telemetry emitter: FAILED ({ex.GetType().Name}: {ex.Message})");
+        }
+
+        // Command receiver — binds 127.0.0.1:20267 and dispatches the editor's
+        // frames to OverrideController (self-disables when the native service exists).
+        try
+        {
+            AddComponent<CommandReceiver>();
+            Log.LogInfo("[AC27Approach] Command receiver (127.0.0.1:20267): applied");
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning($"[AC27Approach] Command receiver: FAILED ({ex.GetType().Name}: {ex.Message})");
         }
 
         Log.LogInfo("AC27Approach loaded");

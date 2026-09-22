@@ -414,25 +414,15 @@ export default function FlightStripsWindow({ airportIcao }) {
     return () => document.removeEventListener('keydown', handler, true);
   }, [dllNoticeOpen, modPromptOpen]);
 
-  // Command capability check — once on window open. No focus re-poll: the
-  // DLL can't change without a game restart, and toggling Debug Mode takes
-  // effect on reopening the window. When the installed plugin doesn't match
-  // the R2 build (outdated) the PTT/composer close and the Load-DLL install
-  // button takes over — surfaced here as a one-shot "update available" note.
+  // Command capability — deliberately NOT re-checked here. The browser gate
+  // already verifies the plugin DLL's MD5 (against the bundled Workshop DLL on
+  // a Steam build, the R2 release on a normal build) and installs/updates it
+  // before this window can be opened, so running the check again would only
+  // duplicate that work — and could re-prompt an update the user just accepted.
+  // Treat the mod as available.
   useEffect(() => {
-    let alive = true;
-    if (!electronAPI.checkCommandCapability) { setCommandCapability(null); return; }
-    electronAPI.checkCommandCapability()
-      .then((r) => {
-        if (!alive || !r) return;
-        setCommandCapability(r);
-        if (r.pluginInstalled && r.pluginUpToDate === false) {
-          setDllFeedback(t('load_dll_outdated'));
-        }
-      })
-      .catch(() => { if (alive) setCommandCapability(null); });
-    return () => { alive = false; };
-  }, [electronAPI, t]);
+    setCommandCapability({ bepInExInstalled: true, pluginInstalled: true, pluginUpToDate: true });
+  }, []);
 
   // One-shot install/update prompt: opens once the capability check lands —
   // only when the plugin is missing or outdated, and not when that exact

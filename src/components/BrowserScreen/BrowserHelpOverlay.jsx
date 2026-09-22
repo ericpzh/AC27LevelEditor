@@ -7,9 +7,9 @@ import { MdOutlineRestore } from 'react-icons/md';
 import { FaGear } from 'react-icons/fa6';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 
-// Radar / flight-strip toggles are hidden from the level browser (kept for
-// revival). When false, the header buttons AND their help section are omitted.
-export const BROWSER_RADAR_TOGGLES_ENABLED = false;
+// Radar / flight-strip toggles: surfaced in the level browser. When true the
+// header buttons AND their help section render (buttons hidden in demo mode).
+export const BROWSER_RADAR_TOGGLES_ENABLED = true;
 
 // ─── Button registry (icon + label key + help description) ───
 export const BUTTONS = {

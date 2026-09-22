@@ -30,12 +30,12 @@ describe('BrowserHelpOverlay', () => {
     expect(screen.getByText('Levels')).toBeInTheDocument();
   });
 
-  it('omits the radar/flight-strip toggles section (hidden from the browser)', () => {
+  it('renders the radar/flight-strip toggles section', () => {
     renderOverlay();
-    expect(document.getElementById('browser-help-cards')).toBeNull();
-    expect(screen.queryByText(/ground\/surface radar view/)).toBeNull();
-    expect(screen.queryByText(/approach radar view/)).toBeNull();
-    expect(screen.queryByText(/flight strips window/)).toBeNull();
+    expect(document.getElementById('browser-help-cards')).not.toBeNull();
+    expect(screen.getByText(/ground\/surface radar view/)).toBeInTheDocument();
+    expect(screen.getByText(/approach radar view/)).toBeInTheDocument();
+    expect(screen.getByText(/flight strips window/)).toBeInTheDocument();
   });
 
   it('documents the settings menu in the header section', () => {

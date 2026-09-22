@@ -3348,7 +3348,7 @@ ipcMain.handle('validate-flights', async (_event, flights, snapshot = {}) => {
 ipcMain.handle('get-system-info', async () => {
   const os = require('os');
   const totalRamGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
-  return { success: true, totalRamGB };
+  return { success: true, totalRamGB, platform: process.platform, isPackaged: app.isPackaged };
 });
 
 ipcMain.handle('cloud-chat', async (_event, { messages }) => {

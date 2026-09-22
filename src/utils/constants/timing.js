@@ -12,7 +12,7 @@ export const TICKS_PER_DAY_NUM = 864000000000;
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
 // 29: added the top-level `flags` bag (dismissed UI hints, e.g.
 //     flags.liveryModHintDismissed from the post-save mod-enable prompt).
-export const CACHE_VERSION = 29;
+export const CACHE_VERSION = 30;
 
 // ─── Game timing / scenario ────────────────────────────────
 // Flights are allowed up to SCENARIO_END_GRACE_MIN past scenario end.

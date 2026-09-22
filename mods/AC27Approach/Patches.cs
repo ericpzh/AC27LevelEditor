@@ -6,12 +6,10 @@ using System.Text;
 using ContextCross.Aircrafts;
 using ContextCross.Dynamics;
 using ContextCross.Dynamics.States;
-using ContextCross.Telemetry;
+using ContextCross.Services;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
-using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using Il2CppSystem.Net.Sockets;
 using UnityEngine;
 
 namespace AC27Approach;
@@ -104,149 +102,73 @@ public static class Patches
         }
     }
 
-    // ── UDP Mechanism B: extended frames on command id 0x00E7 (§5.4) ────
-    // Runtime-verified: `TryParse(ReadOnlySpan<byte>, out …)`
-    // CANNOT be patched — the Harmony DMD declares a ref-struct param and the
-    // CLR rejects the trampoline (InvalidProgramException on EVERY frame, even
-    // plain selects). `Execute(in UdpCommand)` NREs in its trampoline. Both
-    // "obvious" hook points are dead.
-    //
-    // The working capture: the service drains its socket into the byte[]
-    // `_receiveBuffer` inside `FixedTick()` — a postfix on FixedTick (no params
-    // — safe) reads the datagram back out of the buffer.
-    //
-    // INTEROP GOTCHA (live game): Il2CppInterop stubs do NOT expose
-    // private fields as FieldInfo — `Traverse.Field("_receiveBuffer")` returns
-    // null and silently yields nothing. The field surfaces as a PUBLIC property
-    // with the same name (`_receiveBuffer`) of type `Il2CppStructArray<byte>`,
-    // readable directly in C#.
-    //
-    // Frame contract: 8 B header (magic/version/0x00E7) + payload NUL-padded to
-    // exactly 64 bytes (72 B total). Because every datagram the game receives
-    // overwrites the header bytes, and only our frames carry id 0x00E7 at [6..8),
-    // the id check reliably identifies OUR frame as the last one drained — even
-    // if a foreign SelectAircraft frame was received after ours in the same tick
-    // (its id=1 overwrites the check bytes → we skip).
-    private const ushort PatchCommandId = 0x00E7;
-    private const int PayloadFieldSize = 64;
-
-    private static byte[] _lastHandledFrame;   // dedup: the FixedTick postfix fires every tick
-                                               // and the buffer still holds our frame when no
-                                               // new datagram arrived — skip re-dispatch. Only
-                                               // the FixedTick path consults it (the Socket.
-                                               // Receive path dispatches every real datagram,
-                                               // byte identity notwithstanding); updated at
-                                               // dispatch so only the first path to see a frame
-                                               // dispatches it. Cleared at level load
-                                               // (ResetDispatchState) so a re-sent identical
-                                               // frame after an in-game level restart dispatches.
-    private static bool _diagBuffer, _diagHeader, _diagSuppressed, _diagLegacyKts;
+    // ── Command dispatch (plugin-owned socket) ──────────────────────────
+    // The AC27 shipping build has no AircraftUdpCommandService, so the plugin
+    // binds 127.0.0.1:20267 itself (CommandReceiver) and hands each datagram
+    // here. Frame contract: 8 B header (magic u32 / version u16 / commandId u16)
+    // + payload; patch frames carry id 0x00E7 with a payload NUL-padded to
+    // exactly 64 bytes (72 B total). Layout lives in TelemetryProtocol.
+    private static bool _diagHeader, _diagLegacyKts, _diagFocus, _diagFocusSvc;
 
     private static void LogOnce(ref bool flag, string msg)
     {
         if (!flag) { flag = true; Plugin.LogMsg(msg); }
     }
 
-    public static void UdpFixedTickPostfix(AircraftUdpCommandService __instance)
+    /// <summary>Validate one datagram from the command socket and run its patch command.</summary>
+    public static void DispatchDatagram(byte[] buf)
     {
-        try
+        if (buf == null || buf.Length < TelemetryProtocol.CmdHeaderSize) return;
+
+        if (BinaryPrimitives.ReadUInt32LittleEndian(buf.AsSpan(TelemetryProtocol.CMagic, 4)) != TelemetryProtocol.Magic)
         {
-            var buf = ReadReceiveBuffer(__instance);
-            if (buf != null) TryDispatchFrame(buf);
-        }
-        catch { }   // never throw into the game's fixed tick
-    }
-
-    private static byte[] ReadReceiveBuffer(AircraftUdpCommandService svc)
-    {
-        try
-        {
-            var arr = svc._receiveBuffer;          // public stub property — see gotcha above
-            if (arr == null) return null;
-            var managed = new byte[arr.Length];
-            for (int i = 0; i < managed.Length; i++) managed[i] = arr[i];
-            return managed;
-        }
-        catch (Exception ex)
-        {
-            LogOnce(ref _diagBuffer, $"udp: _receiveBuffer read failed: {ex.GetType().Name}: {ex.Message}");
-            return null;
-        }
-    }
-
-    // ── Alternative capture: the datagram the moment it lands ────────────
-    // If the game's own parse clears/reuses `_receiveBuffer` before the FixedTick
-    // postfix runs, this path catches the frame at the socket instead. Only the
-    // game's UDP command socket produces frames with our magic — every other
-    // Socket.Receive in the game is filtered out by the header checks in
-    // DispatchDatagram (cheap first-4-bytes compare). A Receive return is a NEW
-    // datagram by definition, so this path dispatches WITHOUT the content dedup
-    // (a byte-identical re-send is still a real command — e.g. re-applying an
-    // override after a level restart); _lastHandledFrame is updated at dispatch
-    // so the FixedTick path skips the same frame afterwards.
-    public static void UdpSocketReceivePostfix(Il2CppStructArray<byte> buffer, int offset, int size,
-                                               SocketFlags socketFlags, int __result)
-        => HandleReceivedDatagram(buffer, offset, __result);
-
-    public static void UdpSocketReceiveSimplePostfix(Il2CppStructArray<byte> buffer, int __result)
-        => HandleReceivedDatagram(buffer, 0, __result);
-
-    private static void HandleReceivedDatagram(Il2CppStructArray<byte> buffer, int offset, int count)
-    {
-        try
-        {
-            if (buffer == null || count <= 0 || offset < 0 || offset + count > buffer.Length) return;
-            var managed = new byte[count];
-            for (int i = 0; i < count; i++) managed[i] = buffer[offset + i];
-            DispatchDatagram(managed);   // a Receive return is a NEW datagram — no content dedup
-        }
-        catch { }
-    }
-
-    // FixedTick-only entry: the game drains the socket inside FixedTick, so
-    // the buffer may still hold the previous frame when no new datagram
-    // arrived — the content dedup skips that stale re-read. The Socket.Receive
-    // path (HandleReceivedDatagram) bypasses this entirely.
-    private static void TryDispatchFrame(byte[] buf)
-    {
-        if (buf == null || buf.Length < UdpCommandParser.HeaderSize + PayloadFieldSize) return;
-        int fieldLen = UdpCommandParser.HeaderSize + PayloadFieldSize;
-        if (_lastHandledFrame != null && _lastHandledFrame.AsSpan().SequenceEqual(buf.AsSpan(0, fieldLen)))
-            return;                                              // no new datagram since the last handled frame
-
-        uint magic = BinaryPrimitives.ReadUInt32LittleEndian(buf.AsSpan(UdpCommandParser.MagicOffset, 4));
-        if (magic != UdpCommandParser.Magic)
-        {
-            // A zeroed head after the game's parse means the game cleared the
-            // buffer — the Socket.Receive capture is then the working path.
-            if (buf[0] == 0 && buf[1] == 0 && buf[2] == 0 && buf[3] == 0)
-                LogOnce(ref _diagHeader, $"udp: receive buffer all-zero after game parse (len {buf.Length}) — Socket.Receive capture is the working path");
-            return;                                              // foreign datagram — silent
-        }
-        DispatchDatagram(buf);
-    }
-
-    // Shared dispatch tail: header validation + payload parse + command
-    // switch. Called by the Socket.Receive path (unconditionally — a new
-    // datagram) and the FixedTick path (after its content dedup). Updates
-    // _lastHandledFrame at dispatch, so whichever path claims a frame first
-    // is the only one to dispatch it.
-    private static void DispatchDatagram(byte[] buf)
-    {
-        int fieldLen = UdpCommandParser.HeaderSize + PayloadFieldSize;
-        if (BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(UdpCommandParser.VersionOffset, 2)) != UdpCommandParser.Version)
-        {
-            LogOnce(ref _diagHeader, $"udp: version mismatch — head {BitConverter.ToString(buf, 0, 8)}");
+            LogOnce(ref _diagHeader, $"udp: bad magic — head {BitConverter.ToString(buf, 0, Math.Min(8, buf.Length))}");
             return;
         }
-        if (BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(UdpCommandParser.CommandIdOffset, 2)) != PatchCommandId)
-            return;                                              // the game's own SelectAircraft frames — expected, silent
+        if (BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(TelemetryProtocol.CVersion, 2)) != TelemetryProtocol.CmdVersion)
+        {
+            LogOnce(ref _diagHeader, $"udp: version mismatch — head {BitConverter.ToString(buf, 0, Math.Min(8, buf.Length))}");
+            return;
+        }
+        ushort commandId = BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(TelemetryProtocol.CCommandId, 2));
 
-        _lastHandledFrame = buf[..fieldLen];                     // our frame — mark handled
+        // SelectAircraft (id 1) from the editor. `!5:<CS>` is the legacy
+        // clear_for_appr frame; any other callsign is the click-to-focus frame
+        // (radar/strips selection) — focus the aircraft in-game via the game's
+        // own AircraftFocusService, since the native service that used to do it
+        // is gone from this build.
+        if (commandId == TelemetryProtocol.SelectAircraftCommandId)
+        {
+            int limit = Math.Min(buf.Length, TelemetryProtocol.CPayload + 64);
+            int e = Array.IndexOf(buf, (byte)0, TelemetryProtocol.CPayload, limit - TelemetryProtocol.CPayload);
+            if (e < 0) e = limit;
+            string cs = Encoding.ASCII.GetString(buf, TelemetryProtocol.CPayload, e - TelemetryProtocol.CPayload);
+            if (string.IsNullOrEmpty(cs)) return;                      // selection cleared — nothing to focus
+            if (cs.StartsWith("!5:", StringComparison.Ordinal))
+            {
+                var target = cs.Substring(3);
+                try
+                {
+                    bool ok = OverrideController.PatchAircraft("clear_for_appr", target);
+                    Plugin.LogMsg($"patch: clear_for_appr → {target}: {(ok ? "applied" : "NOT FOUND / not on STAR")} (SelectAircraft frame)");
+                }
+                catch (Exception ex) { Plugin.LogMsg($"patch: clear_for_appr → {target} FAILED: {ex.GetType().Name}: {ex.Message}"); }
+            }
+            else
+            {
+                FocusAircraft(cs);
+            }
+            return;
+        }
 
-        int end = Array.IndexOf(buf, (byte)0, UdpCommandParser.PayloadOffset, PayloadFieldSize);
-        if (end < 0) end = UdpCommandParser.PayloadOffset + PayloadFieldSize;
-        var parts = Encoding.ASCII.GetString(buf, UdpCommandParser.PayloadOffset, end - UdpCommandParser.PayloadOffset).Split('|');
+        if (commandId != TelemetryProtocol.PatchCommandId)
+            return;   // the game's own SelectAircraft frames — expected, silent
+
+        if (buf.Length < TelemetryProtocol.CmdHeaderSize + TelemetryProtocol.PatchPayloadFieldSize) return;
+        int plen = TelemetryProtocol.PatchPayloadFieldSize;
+        int end = Array.IndexOf(buf, (byte)0, TelemetryProtocol.CPayload, plen);
+        if (end < 0) end = TelemetryProtocol.CPayload + plen;
+        var parts = Encoding.ASCII.GetString(buf, TelemetryProtocol.CPayload, end - TelemetryProtocol.CPayload).Split('|');
         if (parts.Length < 2) return;
 
         switch (parts[0])
@@ -416,53 +338,38 @@ public static class Patches
         }
     }
 
+    /// <summary>
+    /// Click-to-focus: the editor's SelectAircraft frame names a callsign; focus
+    /// that aircraft in-game via the game's own AircraftFocusService (the native
+    /// command service that used to do this is gone from this build).
+    /// </summary>
+    private static void FocusAircraft(string callSign)
+    {
+        try
+        {
+            var ac = GameServices.FindAircraft(callSign);
+            if (ac == null) { LogOnce(ref _diagFocus, $"focus: {callSign} — no live aircraft with that callsign"); return; }
+
+            var svc = GameServices.Resolve<AircraftFocusService>();
+            if (svc == null) { LogOnce(ref _diagFocusSvc, "focus: AircraftFocusService not resolved — is a level loaded?"); return; }
+
+            bool ok = svc.TryFocus(ac);
+            Plugin.LogMsg($"focus: {callSign} → {(ok ? "focused" : "not focusable")}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogMsg($"focus: {callSign} FAILED: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     // ── Level-restart state reset  ───────────────────────────
     // The plugin is process-lifetime: an in-game level restart (game stays
-    // up) leaves static state stale. ResetDispatchState clears the frame
-    // dedup (a re-sent identical frame would otherwise be swallowed forever
-    // — the "overrides stopped after a level restart" bug) and the
-    // restore-log (so the level-load burst detector below re-arms on load
-    // N+1). Called from OverrideController.ResetForLevelLoad.
+    // up) leaves static state stale. ResetDispatchState clears the restore-log
+    // so the level-load burst detector below re-arms on load N+1. Called from
+    // OverrideController.ResetForLevelLoad.
     public static void ResetDispatchState()
     {
-        _lastHandledFrame = null;
         _restoreLogged.Clear();
-    }
-
-    // ── Level restart detection  ────────────────────────────
-    // The game's AircraftUdpCommandService is a per-level VContainer service
-    // (IStartable/IFixedTickable/IDisposable — same DI family as GameTime
-    // and AirwayRouteService): Start() fires when the command channel
-    // (re)binds, Dispose() when it tears down — the exact moments per-level
-    // plugin state becomes invalid. If the service turns out to be
-    // session-scoped, these fire only at game start (harmless no-op resets);
-    // the restore-burst detector in DynamicsRestoreRuntimeDataPostfix is the
-    // every-load backstop. Both are wrapped so a reset can never throw into
-    // the game.
-    public static void UdpCommandServiceStartPostfix(AircraftUdpCommandService __instance)
-    {
-        try { OverrideController.ResetForLevelLoad("AircraftUdpCommandService.Start — command channel (re)bound"); }
-        catch (Exception ex) { Plugin.LogMsg($"level reset: Start FAILED: {ex.GetType().Name}: {ex.Message}"); }
-    }
-
-    public static void UdpCommandServiceDisposePrefix(AircraftUdpCommandService __instance)
-    {
-        try { OverrideController.ResetForLevelLoad("AircraftUdpCommandService.Dispose — command channel torn down"); }
-        catch (Exception ex) { Plugin.LogMsg($"level reset: Dispose FAILED: {ex.GetType().Name}: {ex.Message}"); }
-    }
-
-    // ── UDP log suppression: the game's own parse rejects id 0x00E7 and warns
-    // "UnknownCommand" once per frame (the FixedTick postfix cannot stop the
-    // game's parse — it only reads the buffer afterwards). Skip that warning;
-    // other bad-datagram reasons (bad magic, bad version, …) still surface.
-    public static bool UdpLogBadDatagramOncePrefix(string reason)
-    {
-        if (!string.IsNullOrEmpty(reason) && reason.IndexOf("UnknownCommand", StringComparison.OrdinalIgnoreCase) >= 0)
-        {
-            LogOnce(ref _diagSuppressed, $"udp: game UnknownCommand warning suppressed (reason: \"{reason}\")");
-            return false;
-        }
-        return true;
     }
 
     // ── Diagnostics: Dynamics.RestoreRuntimeData — the revert suspect ─────

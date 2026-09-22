@@ -87,6 +87,12 @@ export default function BrowserScreen() {
   const [bepInExInstallOpen, setBepInExInstallOpen] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [platform, setPlatform] = useState('');
+  const [sysPackaged, setSysPackaged] = useState(false);
+  // Warning acknowledged permanently (cache flag) — the radar/strip buttons
+  // require a game mod, so the risk notice keeps popping until the user ticks
+  // "don't show again".
+  const [modWarnDismissed, setModWarnDismissed] = useState(false);
   const settingsRef = useRef(null);
   const contentRef = useRef(null);
   const measuredRef = useRef({});
@@ -100,6 +106,19 @@ export default function BrowserScreen() {
     electronAPI.checkBepInEx().then(result => {
       setDebugMode(result.installed);
     }).catch(() => {});
+  }, []);
+
+  // Platform (radar/strip buttons are Windows-only) + the persisted mod-warning
+  // acknowledgement flag.
+  useEffect(() => {
+    const p = electronAPI.getSystemInfo ? electronAPI.getSystemInfo() : null;
+    if (p && typeof p.then === 'function') {
+      p.then(r => { setPlatform(r?.platform || ''); setSysPackaged(Boolean(r?.isPackaged)); }).catch(() => {});
+    }
+    const f = electronAPI.getCacheFlag ? electronAPI.getCacheFlag('radarModWarnDismissed') : null;
+    if (f && typeof f.then === 'function') {
+      f.then(r => setModWarnDismissed(Boolean(r && r.success && r.value))).catch(() => {});
+    }
   }, []);
 
   // Listen for radar windows closed via X button (main process notifies us)
@@ -286,15 +305,113 @@ export default function BrowserScreen() {
     }
   };
 
+  // ── Mod-gated map windows ──────────────────────────────────────────────
+  // Closing an open window is always allowed. Opening requires the game mod
+  // (BepInEx Debug Mode + the AC27Approach plugin): warn first (unless the user
+  // ticked "don't show again"), then install the plugin — R2 download on normal
+  // builds, the bundled DLL on Steam/Workshop (download-approach-dll handles it).
+  const persistModWarnDismissed = (dontShow) => {
+    if (!dontShow) return;
+    setModWarnDismissed(true);
+    try { electronAPI.setCacheFlag?.('radarModWarnDismissed', true); } catch (_) {}
+  };
+
+  const installModThen = async (run) => {
+    const { showToast } = useAppStore.getState();
+    try {
+      // Verify the deployed DLL's MD5 against the release reference — the
+      // bundled Workshop DLL on a Steam build, the R2 object on a normal build —
+      // via the main-process check (checkCommandCapability.pluginUpToDate
+      // compares local MD5 vs the bundled/R2 MD5). Dev builds skip the
+      // enforcement (check-command-capability reports null, and the dev loop
+      // mutates the DLL locally), so `npm start` / `npm start steam` never nag.
+      const cap = await electronAPI.checkCommandCapability?.();
+      const installed = !!(cap && cap.pluginInstalled);
+      const outdated = installed && sysPackaged && cap.pluginUpToDate === false;
+      if (installed && !outdated) { run(); return; }
+
+      const dl = await electronAPI.downloadApproachDll?.();
+      if (!dl || !dl.success) {
+        // Steam/Workshop (incl. `npm start steam`) resolves the bundled DLL and
+        // never hits R2; if that bundled file can't be found — or the R2 fetch
+        // failed on a normal build — fall back to the manual file picker.
+        const picked = await electronAPI.loadApproachDll?.();
+        if (picked && picked.success) { showToast(t('radar_mod_install_ok'), 'success'); run(); return; }
+        showToast(t('radar_mod_install_fail'), 'error');
+        return;
+      }
+
+      const ins = await electronAPI.installApproachDll?.(dl.filePath);
+      if (!ins || !ins.success) {
+        const key = ins?.error === 'GAME_RUNNING' ? 'radar_mod_game_running'
+          : ins?.error === 'DEBUG_MODE_OFF' ? 'radar_mod_warn_enable'
+          : 'radar_mod_install_fail';
+        showToast(t(key), 'error');
+        return;
+      }
+      showToast(t('radar_mod_install_ok'), 'success');
+      run();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const withModGate = (run) => {
+    const { showModal, hideModal } = useAppStore.getState();
+    let dontShow = modWarnDismissed;
+    const body = (withEnable) => () => (
+      <div>
+        <p>{t('radar_mod_warn_body')}</p>
+        {withEnable ? <p>{t('radar_mod_warn_enable')}</p> : null}
+        <label className="modal-checkbox-row">
+          <input type="checkbox" className="modal-checkbox" defaultChecked={modWarnDismissed}
+            onChange={(e) => { dontShow = e.target.checked; }} />
+          <span>{t('radar_mod_warn_dont_show')}</span>
+        </label>
+      </div>
+    );
+
+    if (!debugMode) {
+      // Debug Mode (BepInEx) is off — instruct, never install.
+      showModal(
+        () => t('radar_mod_warn_title'),
+        body(true),
+        () => (
+          <>
+            <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
+            <button className="btn-confirm" onClick={() => { persistModWarnDismissed(dontShow); hideModal(); setSettingsOpen(true); }}>
+              {t('radar_mod_warn_enable_btn')}
+            </button>
+          </>
+        )
+      );
+      return;
+    }
+
+    if (modWarnDismissed) { installModThen(run); return; }
+
+    showModal(
+      () => t('radar_mod_warn_title'),
+      body(false),
+      () => (
+        <>
+          <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
+          <button className="btn-confirm" onClick={() => { persistModWarnDismissed(dontShow); hideModal(); installModThen(run); }}>
+            {t('modal_btn_ok')}
+          </button>
+        </>
+      )
+    );
+  };
+
   const handleToggleSurfaceRadar = (icao) => {
     const st = useAppStore.getState();
     if (st.openGroundRadarAirports.has(icao)) {
       electronAPI.closeGroundMap(icao);
       setGroundRadarOpen(icao, false);
-    } else {
-      electronAPI.openGroundMap(icao, rootPath);
-      setGroundRadarOpen(icao, true);
+      return;
     }
+    withModGate(() => { electronAPI.openGroundMap(icao, rootPath); setGroundRadarOpen(icao, true); });
   };
 
   const handleToggleApproachRadar = (icao) => {
@@ -302,10 +419,9 @@ export default function BrowserScreen() {
     if (st.openAirRadarAirports.has(icao)) {
       electronAPI.closeAirMap(icao);
       setAirRadarOpen(icao, false);
-    } else {
-      electronAPI.openAirMap(icao, rootPath);
-      setAirRadarOpen(icao, true);
+      return;
     }
+    withModGate(() => { electronAPI.openAirMap(icao, rootPath); setAirRadarOpen(icao, true); });
   };
 
   const handleToggleFlightStrips = (icao) => {
@@ -313,10 +429,9 @@ export default function BrowserScreen() {
     if (st.openFlightStripAirports.has(icao)) {
       electronAPI.closeFlightStrips(icao);
       setFlightStripOpen(icao, false);
-    } else {
-      electronAPI.openFlightStrips(icao, rootPath);
-      setFlightStripOpen(icao, true);
+      return;
     }
+    withModGate(() => { electronAPI.openFlightStrips(icao, rootPath); setFlightStripOpen(icao, true); });
   };
 
   const allAirportsWithFiles = [...airports]
@@ -487,7 +602,7 @@ export default function BrowserScreen() {
                     <span className="airport-icao">{airportDisplayName(airport.icao, t)}</span>
                   </span>
                   <div className="airport-card-actions">
-                    {BROWSER_RADAR_TOGGLES_ENABLED && !isDemo && (
+                    {BROWSER_RADAR_TOGGLES_ENABLED && !isDemo && platform === 'win32' && (
                     <>
                     <button
                       className={'btn-radar-toggle' + (openGroundRadarAirports.has(airport.icao) ? ' active' : '')}
