@@ -327,6 +327,27 @@ describe('readPublishInfo', () => {
     // Other sidecar values still prefill so the dialog opens normally.
     expect(info.title).toBe('Sidecar title');
   });
+
+  it('ignores a recorded id from a previous host app (legacy sidecar appId)', async () => {
+    // The item lives under the retired 4004140 Playtest app; the host is now
+    // 3328490, so it must be surfaced as a fresh publish, not an update target.
+    const { lib, calls } = makeFakeLib({ getItemResult: { title: 'Old live title' } });
+    steamWorkshop._setSteamworksForTests(lib);
+    const dir = seedLivery(gameRoot);
+    steamWorkshop.writeSidecar(dir, {
+      appId: '4004140',
+      publishedFileId: '3804811151',
+      url: 'https://steamcommunity.com/sharedfiles/filedetails/?id=3804811151',
+      title: 'Sidecar title',
+    });
+    const info = await steamWorkshop.readPublishInfo(gameRoot, 'A20N_CCA');
+    expect(info.success).toBe(true);
+    expect(info.publishedFileId).toBeNull();
+    expect(info.url).toBeNull(); // the foreign item URL is never surfaced
+    expect(calls.getItem).toHaveLength(0); // no cross-app live lookup
+    // Other sidecar values still prefill so the dialog opens normally.
+    expect(info.title).toBe('Sidecar title');
+  });
 });
 
 describe('publishLivery', () => {
@@ -367,6 +388,35 @@ describe('publishLivery', () => {
     expect(res.publishedFileId).toBe('555');
     expect(calls.createItem).toHaveLength(0);
     expect(String(calls.updateItem[0].itemId)).toBe('555');
+  });
+
+  it('still updates a legacy sidecar with no recorded appId', async () => {
+    const { lib, calls } = makeFakeLib({ getItemResult: { publishedFileId: BigInt(555) } });
+    steamWorkshop._setSteamworksForTests(lib);
+    const dir = seedLivery(gameRoot);
+    steamWorkshop.writeSidecar(dir, { publishedFileId: '555' });
+    const res = await steamWorkshop.publishLivery(gameRoot, 'A20N_CCA', { title: 'v2' });
+    expect(res.publishedFileId).toBe('555');
+    expect(calls.createItem).toHaveLength(0);
+  });
+
+  it('republishes as a NEW item when the sidecar belongs to a previous host app', async () => {
+    // The recorded item exists on Steam but under the retired 4004140 Playtest
+    // app: SubmitItemUpdate would fail with k_EResultInvalidParam, so the id is
+    // ignored outright and a fresh item is created under the current host.
+    const { lib, calls } = makeFakeLib({ getItemResult: { publishedFileId: BigInt(555) } });
+    steamWorkshop._setSteamworksForTests(lib);
+    const dir = seedLivery(gameRoot);
+    steamWorkshop.writeSidecar(dir, { appId: '4004140', publishedFileId: '555' });
+    const res = await steamWorkshop.publishLivery(gameRoot, 'A20N_CCA', { title: 'v2' });
+    expect(calls.getItem).toHaveLength(0); // never existence-checks a foreign-app item
+    expect(calls.createItem).toHaveLength(1);
+    expect(calls.updateItem).toHaveLength(1);
+    expect(String(calls.updateItem[0].itemId)).toBe('123456789');
+    expect(res.publishedFileId).toBe('123456789');
+    const sidecar = steamWorkshop.readSidecar(dir);
+    expect(sidecar.appId).toBe('3328490');
+    expect(sidecar.publishedFileId).toBe('123456789');
   });
 
   it('republishes as a NEW item when the recorded item was deleted on the Workshop', async () => {

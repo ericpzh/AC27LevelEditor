@@ -973,7 +973,17 @@ throw) from `NO_LICENSE` (`apps.isSubscribedApp(3328490)` false — Family Shari
 free weekends / playtest keys cannot publish).
 
 Identity is a `.workshop.json` sidecar inside the livery folder (travels with the
-livery, survives cache resets). Precedence for the dialog prefill is **live Steam
+livery, survives cache resets). The sidecar records the host `appId` the item was
+published under; **a sidecar whose `appId` differs from the current host is
+treated as no association** (`sidecarMatchesHostApp`) — the recorded id/url are
+ignored in `readPublishInfo` (no cross-app live lookup) and `publishLivery`
+creates a **fresh** item under the current host instead of updating the foreign
+one. This is the recovery path for the `4004140` Playtest → `3328490` shipping
+host migration: Steam answers `SubmitItemUpdate` for an item owned by another
+consumer app with `k_EResultInvalidParam` ("a parameter is invalid") while
+`getItem` still resolves it cross-app, so the existence check cannot catch it.
+Legacy sidecars with no `appId` are trusted. Precedence for the dialog prefill is
+**live Steam
 metadata → sidecar → manifest defaults** (`readPublishInfo`); the default title is
 composed in the renderer (localized airline display name + compact aircraft type +
 "Livery"/"涂装"), not in main. `publishLivery(gameRoot, folder, meta, onProgress)`:

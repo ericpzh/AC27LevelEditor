@@ -334,6 +334,20 @@ function writeSidecar(liveryDir, data) {
   }
 }
 
+// True when a sidecar's recorded item belongs to the current Workshop host app.
+// The sidecar stores the app the item was published under. After a host
+// migration (the retired 4004140 Playtest → the shipping 3328490 game) an old
+// sidecar points at an item owned by a different consumer app: Steam rejects
+// SubmitItemUpdate on it with k_EResultInvalidParam ("a parameter is invalid")
+// while getItem still resolves the item cross-app — so the existence check
+// cannot catch it. Treat a foreign-app sidecar as "not ours". Legacy sidecars
+// with no appId (pre-migration format) are trusted.
+function sidecarMatchesHostApp(sidecar, appId) {
+  if (!sidecar || !sidecar.publishedFileId) return false;
+  if (sidecar.appId == null || sidecar.appId === '') return true;
+  return String(sidecar.appId) === String(appId);
+}
+
 // Absolute path of the saved preview image inside the livery folder, or null.
 function _savedPreviewPath(liveryDir) {
   try {
@@ -429,7 +443,12 @@ async function readPublishInfo(gameRoot, folder) {
       'Created with the AC27 Editor.',
     ].filter((line, i, arr) => line !== '' || arr[i - 1] !== '').join('\n').trim();
 
-    const publishedFileId = sidecar && sidecar.publishedFileId ? String(sidecar.publishedFileId) : null;
+    const publishedFileId = sidecarMatchesHostApp(sidecar, gate.appId)
+      ? String(sidecar.publishedFileId)
+      : null;
+    if (sidecar && sidecar.publishedFileId && !publishedFileId) {
+      _wlog(`prefill folder=${folder} sidecar app ${sidecar.appId} != host ${gate.appId} — ignoring item ${sidecar.publishedFileId}`);
+    }
 
     // Prefer the preview saved from the previous upload (the exact image the
     // Workshop item uses), falling back to the livery texture thumbnail.
@@ -448,6 +467,9 @@ async function readPublishInfo(gameRoot, folder) {
       } catch (_) {}
     }
 
+    // Never surface the URL of a foreign-app sidecar (the item belongs to
+    // another app's Workshop and cannot be updated from here).
+    const sidecarMatches = sidecarMatchesHostApp(sidecar, gate.appId);
     const info = {
       success: true,
       available: gate.available,
@@ -455,7 +477,9 @@ async function readPublishInfo(gameRoot, folder) {
       reason: gate.reason,
       folder: String(folder),
       publishedFileId,
-      url: publishedFileId ? workshopItemUrl(publishedFileId) : (sidecar && sidecar.url) || null,
+      url: publishedFileId
+        ? workshopItemUrl(publishedFileId)
+        : (sidecarMatches && sidecar.url) || null,
       title: (sidecar && sidecar.title) || '',
       description: (sidecar && sidecar.description) || defaultDescription,
       airline: manifest.airline || '',
@@ -540,6 +564,16 @@ async function publishLivery(gameRoot, folder, meta, onProgress) {
   // subsequent uploads update the same item with no user input.
   const sidecar = readSidecar(dir);
   let publishedFileId = sidecar && sidecar.publishedFileId ? String(sidecar.publishedFileId) : null;
+
+  // A sidecar recorded under a different host app (e.g. the retired 4004140
+  // Playtest) points at an item owned by another consumer app: Steam rejects
+  // updating it with k_EResultInvalidParam even though getItem still resolves
+  // it, so ops.missing() below cannot catch it. Publish a fresh item under the
+  // current host instead of trying to update a foreign-app item.
+  if (publishedFileId && !sidecarMatchesHostApp(sidecar, appId)) {
+    _wlog(`sidecar app ${sidecar.appId} != host ${appId} — ignoring item ${publishedFileId}, publishing a new item`);
+    publishedFileId = null;
+  }
 
   // Never trust the recorded id — the item can be deleted on the Workshop
   // between uploads (Steam answers such an update with "a file was not
