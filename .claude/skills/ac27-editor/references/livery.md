@@ -632,7 +632,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     (`stickerLocal` = `objectLocal` = `R(-rot) · (p − o)`) lands in that same frame — so the
     grab zones are exactly the drawn corner (`frame.x1, frame.y1`) and the
     rotate dot (`frame centre, frame.y0 − 40/z`) **regardless of `flipX`/
-    `flipY`**. Mirroring those grab points through the flip (the removed
+    `flipY`**. The chrome reads the **live zoom from `effZoomRef`**, not the `drawOverlay` closure's `effZoom`: a frame scheduled around a fit-scale/zoom change used to paint `7/z`/`40/z` at the stale zoom while the canvas was already CSS-scaled, so a fresh/duplicated object's handle dots came out the wrong size until the next redraw (a re-select). (`active` is likewise read from `activeRef` for the preview clip + panel outline.) Regression: "sizes the handle dots from the LIVE zoom after a duplicate". Mirroring those grab points through the flip (the removed
     `flipLocal`) put the hit zones on the opposite corner, so a flipped
     sticker/shape could not be scaled at all and its rotate dot never grabbed.
     Regression: `tests/components/LiveryScreen/LiveryCanvas.test.jsx`
@@ -659,7 +659,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     are the keyboard shortcuts**, mirrored in the canvas keydown handler; **the
     Duplicate Sticker button is `Ctrl+C`**) →
     `flipSticker('flipX'|'flipY')` toggles the `flipX`/`flipY` flags on the
-    selected (else last) object; every overlay/duplicate/export path funnels
+    selected (else last) object and captures the live boundary centre as the **stored `flipPivot`** (a local point); `flipOffset` uses that pivot instead of re-reading `frameOf` every render, so a later erase (which re-frames the boundary) cannot move a flipped object's mirror axis — only `flipSticker` re-captures it. A resize scales the pivot with the frame, and `getObjectInfo` exposes `flipPivot`. Regression: "does not move a flipped sticker when it is later erased" + the `flipOffset` unit test. Every overlay/duplicate/export path funnels
      through `paintLiveObject` (`ctx.save(); translate; rotate;
      scale(flipX ? -1 : 1, flipY ? -1 : 1); drawImage|fillText; restore`). Ref
      methods `importSticker`/`removeSticker`/`duplicateSticker` (+

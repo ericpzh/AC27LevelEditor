@@ -358,13 +358,21 @@ export function scaleErasePolys(k, polys, ky) {
 // is unchanged by the flip and the boundary keeps matching what is visible.
 // Render order must therefore be: translate(o.x,o.y) · rotate · translate(off)
 // · scale(sx,sy). Pure — exported for tests.
+//
+// The pivot is captured on the object at flip time (`flipPivot`) rather than
+// read from the LIVE frame: erasing re-frames the boundary, so a flipped object
+// that is then erased would otherwise have its mirror axis move under it and
+// the visible remainder would jump (a small shift for a partial erase). Objects
+// flipped before the pivot was stored fall back to the live frame centre.
 export function flipOffset(o) {
   const f = frameOf(o);
   const sx = o && o.flipX ? -1 : 1;
   const sy = o && o.flipY ? -1 : 1;
+  const px = o && o.flipPivot ? o.flipPivot.x : (f.x0 + f.x1) / 2;
+  const py = o && o.flipPivot ? o.flipPivot.y : (f.y0 + f.y1) / 2;
   return {
-    x: ((f.x0 + f.x1) / 2) * (1 - sx),
-    y: ((f.y0 + f.y1) / 2) * (1 - sy),
+    x: px * (1 - sx),
+    y: py * (1 - sy),
   };
 }
 
@@ -914,6 +922,15 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   const effZoom = zoom === 'fit' ? fitScale : zoom;
+  // Live mirror of `effZoom`, read by `drawOverlay`. A rAF scheduled before a
+  // fit-scale/zoom change would otherwise run the previous `drawOverlay` closure
+  // and paint the chrome (handle-dot radius `7/z`, rotate gap `40/z`) at the old
+  // zoom while the canvas has already been CSS-scaled to the new one — the
+  // selection box still lands right but the handle dots come out the wrong size
+  // until the next redraw. Reading the ref makes any pending frame use the
+  // current zoom.
+  const effZoomRef = useRef(effZoom);
+  effZoomRef.current = effZoom;
 
   // Topmost live object under a texture point (same hit rule as Select).
   const hitObjectAt = (p) => {
@@ -1957,7 +1974,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // ── Overlay (sticker + shape preview), rAF-throttled ───────
   const drawOverlay = useCallback(() => {
     rafRef.current = 0;
-    const z = effZoom || 1;
+    // Live values, not the closure's: a frame scheduled before a zoom/layout
+    // change must still draw the chrome at the CURRENT scale (see effZoomRef).
+    const z = effZoomRef.current || 1;
+    const activeNow = activeRef.current;
     const selIdNow = selIdRef.current;
     // Drop eraser caches for objects that no longer exist.
     const eraseCache = eraseCacheRef.current;
@@ -2051,7 +2071,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const sh = shapeRef.current;
     if (sh && sh.current) {
       ctx.save();
-      clipActivePanel(ctx);
+      clipActivePanel(ctx, activeNow);
       drawShape(ctx, sh.tool, sh.start, sh.current, brushRef.current, shapeOptsRef.current, true);
       ctx.restore();
     }
@@ -2064,7 +2084,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         const b = brushRef.current;
         const s = shapeOptsRef.current;
         ctx.save();
-        clipActivePanel(ctx);
+        clipActivePanel(ctx, activeNow);
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1;
         ctx.strokeStyle = brushRgba(b);
@@ -2092,7 +2112,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       for (let i = 0; i < panelCount; i++) ctx.strokeRect(layout.x(i), 0, TEXTURE, TEXTURE);
       ctx.strokeStyle = '#6aa0ff';
       ctx.lineWidth = Math.max(2, 4 / z);
-      ctx.strokeRect(layout.x(active) + 1, 1, TEXTURE - 2, H - 2);
+      ctx.strokeRect(layout.x(activeNow) + 1, 1, TEXTURE - 2, H - 2);
       ctx.restore();
     }
     // Re-draw the in-progress eraser preview (full replay). Normally the drag
@@ -2218,7 +2238,14 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const flipSticker = (axis) => {
     const st = targetObject();
     if (!st) return;
-    updateObject(st.id, { [axis]: !st[axis] });
+    // Capture the CURRENT visible-boundary centre as the mirror pivot. Stored on
+    // the object so a later erase (which re-frames the boundary) can never move
+    // a flipped object, while a part-erased object still mirrors in place.
+    const f = frameOf(st);
+    updateObject(st.id, {
+      [axis]: !st[axis],
+      flipPivot: { x: (f.x0 + f.x1) / 2, y: (f.y0 + f.y1) / 2 },
+    });
     setDirty(true);
     scheduleOverlay();
   };
@@ -2243,7 +2270,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (st.pts) copy.pts = st.pts.map(q => ({ x: q.x, y: q.y }));
     if (st.erase) copy.erase = st.erase.map(s => ({ size: s.size, pts: (s.pts || []).map(q => ({ x: q.x, y: q.y })) }));
     if (st.erasePolys) copy.erasePolys = st.erasePolys.map(loop => (loop || []).map(q => ({ x: q.x, y: q.y })));
+    if (st.flipPivot) copy.flipPivot = { x: st.flipPivot.x, y: st.flipPivot.y };
     syncObjects([...objectsRef.current, copy], copy.id);
+    // Hand over to single-select (object) like Import Sticker, so the fresh
+    // copy's box + handles are drawn even if a mask sub-mode was active.
+    setSelMode('object');
     setTool('select');
     setDirty(true);
     scheduleOverlay();
@@ -2332,6 +2363,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         opacity: o.opacity == null ? 1 : o.opacity,
         size: o.size,
         stretch: o.stretch || null,
+        flipPivot: o.flipPivot ? { x: o.flipPivot.x, y: o.flipPivot.y } : null,
         frame: frameOf(o), erase: o.erase || null, erasePolys: o.erasePolys || null,
         clipMask: !!o.clipMask,
         panel: objectPanel(o),
@@ -2779,6 +2811,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             // keeps its shape while being resized.
             startErase: scaleErase(1, sel.erase), startFrame: sel.frame || null,
             startErasePolys: scaleErasePolys(1, sel.erasePolys),
+            // The flip pivot is a local point too, so it scales with the frame.
+            startFlipPivot: sel.flipPivot || null,
           };
           capture(); return;
         }
@@ -3083,6 +3117,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           if (d.startErase) patch.erase = scaleErase(kx, d.startErase, ky);
           if (d.startErasePolys) patch.erasePolys = scaleErasePolys(kx, d.startErasePolys, ky);
           if (d.startFrame) patch.frame = scaleFrame(kx, d.startFrame, ky);
+          if (d.startFlipPivot) patch.flipPivot = { x: d.startFlipPivot.x * kx, y: d.startFlipPivot.y * ky };
           updateObject(st.id, patch);
         } else if (mode === 'rotate') {
           updateObject(st.id, { rot: Math.atan2(p.y - st.y, p.x - st.x) + Math.PI / 2 });

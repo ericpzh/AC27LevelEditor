@@ -741,6 +741,28 @@ describe('live-object handles survive a flip', () => {
     expect(after.x).toBe(o.x);
     expect(after.y).toBe(o.y);
   });
+
+  it('sizes the handle dots from the LIVE zoom after a duplicate', async () => {
+    // Regression: `drawOverlay` captured `effZoom` in its closure, so a frame
+    // scheduled around a fit-scale change painted the handle dots (radius 7/z)
+    // at the stale zoom while the canvas had already been CSS-scaled — the dots
+    // came out the wrong size until the next redraw (a re-select). The chrome
+    // now reads the live zoom from a ref.
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await importSticker(user, ref);
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    // Duplicate: the handle dots drawn by that frame must match the zoom the
+    // canvas is actually displayed at (single panel → stage width = TEXTURE·z).
+    ctxs.forEach(c => c.arc.mockClear());
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    const stageZoom = parseFloat(document.querySelector('.lp-canvas-stage').style.width) / TEXTURE;
+    const chrome = ctxs.filter(c => c._layer === 'chrome');
+    const arcs = chrome.length ? chrome[chrome.length - 1].arc.mock.calls.map(a => a[2]) : [];
+    expect(arcs.length).toBeGreaterThan(0);
+    expect(arcs[0]).toBeCloseTo(7 / stageZoom, 3);
+  });
 });
 
 describe('sticker opacity slider', () => {
@@ -3148,6 +3170,52 @@ describe('eraser', () => {
     expect(exportCtx.drawImage.mock.calls.length).toBeGreaterThan(0);
   });
 
+  it('does not move a flipped sticker when it is later erased', async () => {
+    // Regression: the flip pivot used to be read from the LIVE frame, so
+    // erasing (which re-frames the boundary) moved the mirror axis and the
+    // visible remainder jumped. The pivot is now captured at flip time.
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    // Flip both axes while the object is whole → pivot is the object origin.
+    await user.click(screen.getByRole('button', { name: 'Flip Horizontal' }));
+    await user.click(screen.getByRole('button', { name: 'Flip Vertical' }));
+    const before = ref.current.getObjectInfo();
+    expect(before.flipPivot).toEqual({ x: 0, y: 0 });
+    // Erase all but the bottom-right quadrant (local 0,0 → 50,25).
+    stubEraseReadback((data, w, h) => {
+      const pad = 8;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const inside = x >= pad + 50 && x < pad + 100 && y >= pad + 25 && y < pad + 50;
+          if (inside) data[(y * w + x) * 4 + 3] = 255;
+        }
+      }
+    });
+    await user.click(screen.getByRole('button', { name: 'Eraser' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 250, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 262, clientY: 256, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    const after = ref.current.getObjectInfo();
+    // The boundary re-framed (part erased)…
+    expect(after.frame.x1 - after.frame.x0).toBeLessThan(before.w);
+    // …but the pivot and the render offset are unchanged, so nothing jumps.
+    expect(after.flipPivot).toEqual(before.flipPivot);
+    expect(flipOffset(after)).toEqual(flipOffset(before));
+    expect(flipOffset(after)).toEqual({ x: 0, y: 0 });
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+  });
+
   it('defers the erase — a long drag only previews and the base is written once on release', async () => {
     mockIpcInvoke.mockImplementation((channel) => {
       if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
@@ -3400,6 +3468,21 @@ describe('part-erase boundary helpers', () => {
     expect(back.y).toBeCloseTo(q.y, 6);
     // A whole object is centred on the origin, so nothing changes for it.
     expect(flipOffset({ x: 0, y: 0, w: 100, h: 50, flipX: true, flipY: true })).toEqual({ x: 0, y: 0 });
+  });
+
+  it('keeps a flipped object in place when a later erase re-frames the boundary', () => {
+    // Flipped while whole: the pivot is the object centre (origin).
+    const whole = { x: 0, y: 0, rot: 0, w: 100, h: 50, flipX: true, flipPivot: { x: 0, y: 0 } };
+    expect(flipOffset(whole)).toEqual({ x: 0, y: 0 });
+    // Erasing re-frames the boundary to the remainder (0..50 × 0..25), but the
+    // STORED pivot wins over the live frame centre, so the mirror axis — and the
+    // rendered remainder — do not move.
+    const erased = { ...whole, frame: { x0: 0, y0: 0, x1: 50, y1: 25 } };
+    expect(flipOffset(erased)).toEqual({ x: 0, y: 0 });
+    expect(worldFromLocal(erased, { x: 0, y: 0 })).toEqual({ x: 0, y: 0 });
+    // Without a stored pivot (erase-then-flip) the live frame centre is the axis.
+    const legacy = { x: 0, y: 0, rot: 0, w: 100, h: 50, flipX: true, frame: { x0: 0, y0: 0, x1: 50, y1: 25 } };
+    expect(flipOffset(legacy)).toEqual({ x: 50, y: 0 });
   });
 });
 
