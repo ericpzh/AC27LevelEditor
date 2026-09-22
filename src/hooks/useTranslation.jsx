@@ -8,20 +8,17 @@ function isValidLang(lang) {
   return lang === 'en' || lang === 'zh';
 }
 
-function readStoredLang() {
-  try {
-    const v = localStorage.getItem(STORAGE_KEY_LANG);
-    return isValidLang(v) ? v : null;
-  } catch (_) {
-    return null;
-  }
-}
-
 export function I18nProvider({ children }) {
   const [lang, setLangState] = useState(() => getLang());
-  // 'loading' — resolving the cached language; 'chosen' — a language is known;
-  // 'unset' — no language stored anywhere yet (first launch → show the picker).
-  const [langStatus, setLangStatus] = useState(() => (readStoredLang() ? 'chosen' : 'loading'));
+  // 'loading' — resolving the cached language; 'chosen' — a language is
+  // persisted in cache.json; 'unset' — cache.json has no language yet (first
+  // launch → show the picker before anything else).
+  //
+  // cache.json is the single source of truth for the gate, NOT localStorage:
+  // the packaged normal and workshop builds share one `file://` localStorage
+  // origin and one userData dir, so a language picked in the normal build would
+  // otherwise suppress the workshop build's first-run picker.
+  const [langStatus, setLangStatus] = useState('loading');
 
   const applyLang = useCallback((next) => {
     setLangState(next);
@@ -39,8 +36,8 @@ export function I18nProvider({ children }) {
     }
   }, [applyLang]);
 
-  // On mount, if localStorage has no lang, fall back to the cached lang in
-  // cache.json. When neither exists this is a first launch → 'unset', so the
+  // Resolve the persisted language from cache.json (the gate). A cached lang
+  // means 'chosen'; no lang anywhere means first launch → 'unset', so the
   // renderer shows the language picker before anything else.
   useEffect(() => {
     if (langStatus !== 'loading') return;

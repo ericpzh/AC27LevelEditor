@@ -53,11 +53,25 @@ describe('I18nProvider language status', () => {
     await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('chosen:en'));
   });
 
-  it('is chosen immediately when localStorage already has a language', () => {
+  it('ignores a localStorage-only language — cache.json is the gate', async () => {
     localStorage.setItem(STORAGE_KEY_LANG, 'en');
-    mockIpcInvoke.mockImplementation(() => Promise.resolve({}));
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'get-cached-lang') return Promise.resolve({ lang: null });
+      return Promise.resolve({});
+    });
     render(<I18nProvider><StatusProbe /></I18nProvider>);
-    expect(screen.getByTestId('status').textContent).toBe('chosen:en');
-    expect(mockIpcInvoke).not.toHaveBeenCalledWith('get-cached-lang');
+    await waitFor(() => expect(screen.getByTestId('status').textContent).toMatch(/^unset:/));
+    expect(mockIpcInvoke).toHaveBeenCalledWith('get-cached-lang');
+  });
+
+  it('adopts the cached language over a stale localStorage value', async () => {
+    localStorage.setItem(STORAGE_KEY_LANG, 'en');
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'get-cached-lang') return Promise.resolve({ lang: 'zh' });
+      return Promise.resolve({});
+    });
+    render(<I18nProvider><StatusProbe /></I18nProvider>);
+    await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('chosen:zh'));
+    expect(localStorage.getItem(STORAGE_KEY_LANG)).toBe('zh');
   });
 });
