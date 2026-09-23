@@ -295,16 +295,13 @@ no-update, which is easy to mistake for a working check.
 
 ## Publishing the exes (release workflow)
 
-`build-windows` in `.github/workflows/release.yml` uploads the portable normal
-build with its `.md5` companion to the shared `ac27editor` bucket — so every
-release carries a fresh auto-update source for the normal edition. **⚠ TEMP:**
-the voice build/upload (`AC27EditorVoice.exe` + `.md5`) is commented out in the
-workflow for now; re-enable it per the `TEMP` block in `release.yml` (the
-previous voice objects remain in the bucket, so existing voice clients simply
-see no update).
+`build-windows` in `.github/workflows/release.yml` builds **both** portable
+variants and uploads each with its `.md5` companion to the shared
+`ac27editor` bucket — so every release carries a fresh auto-update source for
+the normal and voice editions:
 
 ```yaml
-- name: Upload to R2 (auto-update — normal variant, same bucket)
+- name: Upload to R2 (auto-update — both variants, same bucket)
   env:
     AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
     AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -315,11 +312,15 @@ see no update).
     $hash = (Get-FileHash -Path release/AC27Editor.exe -Algorithm MD5).Hash.ToLower()
     $hash | Out-File -NoNewline -Encoding ASCII md5.txt
     aws s3 cp md5.txt s3://ac27editor/AC27Editor.exe.md5 --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto --content-type "text/plain"
+    aws s3 cp release/AC27EditorVoice.exe s3://ac27editor/AC27EditorVoice.exe --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto
+    $voiceHash = (Get-FileHash -Path release/AC27EditorVoice.exe -Algorithm MD5).Hash.ToLower()
+    $voiceHash | Out-File -NoNewline -Encoding ASCII voice-md5.txt
+    aws s3 cp voice-md5.txt s3://ac27editor/AC27EditorVoice.exe.md5 --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto --content-type "text/plain"
 ```
 
-The exe is also attached to the GitHub Release (the `release-windows/*.exe`
-upload step), and its `.md5` sidecar is written as raw lowercase hex with no
-trailing newline — the Worker returns it verbatim as the ETag. This upload runs
+Both exes are also attached to the GitHub Release (the `release-windows/*.exe`
+upload step), and both `.md5` sidecars are written as raw lowercase hex with no
+trailing newline — the Worker returns them verbatim as the ETag. This upload runs
 **before** the workshop build, so a Workshop failure can never block it.
 
 ## Publishing the DLL (release workflow)

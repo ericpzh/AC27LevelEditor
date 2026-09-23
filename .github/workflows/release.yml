@@ -28,33 +28,28 @@ jobs:
         run: npm run build:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-      # =====================================================================
-      # TEMP: Voice build + release DISABLED.
-      # Re-enable by uncommenting the two steps below, then restoring the
-      # AC27EditorVoice.exe entries in:
-      #   * "Upload Windows artifacts" (path)
-      #   * "Upload to R2" (run block + header comment)
-      # =====================================================================
-      # - name: Fetch vosk speech models (voice build)
-      #   run: node scripts/fetch-vosk-model.mjs
-      # - name: Build Windows (portable — voice, vosk models + sox bundled)
-      #   run: npm run build:win:voice -- --publish never
-      #   env:
-      #     CSC_IDENTITY_AUTO_DISCOVERY: false
-      - name: Upload Windows artifacts (normal → GitHub release + R2)
+      - name: Fetch vosk speech models (voice build)
+        run: node scripts/fetch-vosk-model.mjs
+      - name: Build Windows (portable — voice, vosk models + sox bundled)
+        run: npm run build:win:voice -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Upload Windows artifacts (normal+voice → GitHub release + R2)
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Editor-Windows
-          path: release/AC27Editor.exe
+          path: |
+            release/AC27Editor.exe
+            release/AC27EditorVoice.exe
           if-no-files-found: error
       # R2 upload runs BEFORE the workshop build so a workshop failure can never
       # block the auto-update publish (Cloudflare R2).
-      - name: Upload to R2 (auto-update — normal variant, same bucket)
-        # AC27Editor.exe is the auto-update source. It carries a companion
-        # .md5 sidecar: the Worker reads it and returns the real MD5 as the
-        # ETag header (the updater compares against that; multipart uploads
-        # of the large exe make R2's own ETag useless, so the sidecar is
-        # authoritative).
+      - name: Upload to R2 (auto-update — both variants, same bucket)
+        # Both AC27Editor.exe and AC27EditorVoice.exe are auto-update sources.
+        # Each exe carries a companion .md5 sidecar: the Worker reads it and
+        # returns the real MD5 as the ETag header (the updater compares against
+        # that; multipart uploads of the large voice exe make R2's own ETag
+        # useless, so the sidecar is authoritative for both).
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -65,6 +60,10 @@ jobs:
           $hash = (Get-FileHash -Path release/AC27Editor.exe -Algorithm MD5).Hash.ToLower()
           $hash | Out-File -NoNewline -Encoding ASCII md5.txt
           aws s3 cp md5.txt s3://ac27editor/AC27Editor.exe.md5 --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto --content-type "text/plain"
+          aws s3 cp release/AC27EditorVoice.exe s3://ac27editor/AC27EditorVoice.exe --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto
+          $voiceHash = (Get-FileHash -Path release/AC27EditorVoice.exe -Algorithm MD5).Hash.ToLower()
+          $voiceHash | Out-File -NoNewline -Encoding ASCII voice-md5.txt
+          aws s3 cp voice-md5.txt s3://ac27editor/AC27EditorVoice.exe.md5 --endpoint-url "$env:AWS_ENDPOINT_URL" --region auto --content-type "text/plain"
       # Workshop build is best-effort: a failure here must NOT block the
       # GitHub Release or the R2/Cloudflare publish above. continue-on-error
       # keeps the job green so downstream jobs still run.
@@ -231,7 +230,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # --- STEAM WORKSHOP AUTO-DEPLOY (content + bilingual title/description) ---
-      # Workshop gets AC27EditorWorkshop.exe (no auto-update) — GitHub Release keeps normal (voice temporarily disabled).
+      # Workshop gets AC27EditorWorkshop.exe (no auto-update) — GitHub Release keeps normal+voice (auto-update).
       # ALL workshop steps are best-effort (continue-on-error): a Workshop failure
       # must never block the GitHub Release (created above) or the R2/Cloudflare
       # publish. It also keeps the workflow green so the release is considered done.
@@ -270,7 +269,7 @@ jobs:
             exit 1
           fi
           ls -lh steam-workshop-content/
-          echo "Workshop content ready (workshop exe + bundled plugin DLL; GitHub still has the normal build)"
+          echo "Workshop content ready (workshop exe + bundled plugin DLL; GitHub still has normal+Voice)"
 
       - name: Validate Workshop content exists
         if: steps.workshop_artifact.outcome == 'success'

@@ -500,15 +500,14 @@ not edit the `build` key in package.json — there isn't one). Windows
 | `npm run build:mac` | `release/*.dmg` | macOS (voice is Windows-only). |
 | `npm run build:linux` | `release/*.AppImage` + `*.deb` | Linux (no auto-update). |
 
-The normal Windows variant goes to the GitHub release and reaches R2 for
-auto-update via the single `/editor` route, the Worker switching objects on the
-`X-AC27-Variant` header (`normal` → `AC27Editor.exe(.md5)`, `voice` →
-`AC27EditorVoice.exe(.md5)`). **⚠ TEMP:** the release workflow currently
-disables the voice build/upload (`AC27EditorVoice.exe(.md5)`) — the local
-`build:win:voice` command above still works; only the CI release is paused.
-The workshop exe is published to Steam Workshop only, and the Workshop
-build/deploy is best-effort in CI — a Workshop failure never blocks the GitHub
-release or the R2 (Cloudflare) auto-update publish.
+The normal + voice Windows variants go to the GitHub release and both reach R2
+for auto-update — both served via the single `/editor` route, the Worker
+switching objects on the `X-AC27-Variant` header (`normal` →
+`AC27Editor.exe(.md5)`, `voice` → `AC27EditorVoice.exe(.md5)`; the release
+workflow pins the exact filenames). The workshop exe is published to Steam
+Workshop only, and the Workshop build/deploy is best-effort in CI — a Workshop
+failure never blocks the GitHub release or the R2 (Cloudflare) auto-update
+publish.
 
 ```powershell
 # Normal build
