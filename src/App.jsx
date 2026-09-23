@@ -214,7 +214,7 @@ setUpdateState('idle');
           <button className="btn-danger" onClick={async () => {
             hideModal();
             try {
-              const result = await api.resetAllLevels();
+              const result = await api.resetAllLevels(useAppStore.getState().rootPath);
               if (result.success) {
                 setBrowserCache({}, {});
                 showModal(

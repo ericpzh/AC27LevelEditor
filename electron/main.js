@@ -4347,10 +4347,16 @@ ipcMain.handle('check-video-backup-exists', async () => {
 });
 
 /** Delete all level files and backups under Airports/XXXX/Levels -- for Steam Verify Integrity restore. */
-ipcMain.handle('reset-all-levels', async () => {
+ipcMain.handle('reset-all-levels', async (_event, rootPathArg) => {
   try {
+    // Prefer the explicitly passed game root (renderer store) so restore still
+    // works when cache.json is missing/lang-only. Fall back to the cached root.
+    // ACL deletion must happen BEFORE cache.json removal — gameRoot lives in
+    // the cache, so resolving it from cache first then deleting cache first
+    // would leave later retries with NO_GAME_ROOT and orphaned .acl files.
     const cr = _readCache();
-    const gameRoot = cr?.data?.gameRoot;
+    const argRoot = (typeof rootPathArg === 'string' && rootPathArg) ? rootPathArg : null;
+    const gameRoot = argRoot || cr?.data?.gameRoot;
     if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
 
     const airportsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');

@@ -207,7 +207,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   restoreVideoBackup: () => ipcRenderer.invoke('restore-video-backup'),
 
   // ─── Reset All Levels (Steam Verify Integrity restore) ────────
-  resetAllLevels: () => ipcRenderer.invoke('reset-all-levels'),
+  resetAllLevels: (rootPath) => ipcRenderer.invoke('reset-all-levels', rootPath),
   // Quit/close the editor (fire-and-forget)
   quitApp: () => ipcRenderer.send('app-quit'),
 

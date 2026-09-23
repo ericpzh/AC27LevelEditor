@@ -237,7 +237,7 @@ export default function BrowserScreen() {
     if (restoreLoading) return;
     setRestoreLoading(true);
     try {
-      const result = await electronAPI.resetAllLevels();
+      const result = await electronAPI.resetAllLevels(rootPath);
       if (result.success) {
         // Clear browser cache so the UI immediately shows empty state;
         // the next scan (triggered by refreshKey) will confirm 0 files.
