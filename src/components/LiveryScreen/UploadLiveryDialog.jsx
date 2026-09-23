@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './UploadLiveryDialog.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
@@ -135,6 +135,12 @@ export default function UploadLiveryDialog({ folder, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
+  // Backdrop press tracking: a text-selection drag that starts inside the
+  // dialog and ends on the backdrop must NOT close (the browser fires a
+  // click on the common ancestor). Only a true backdrop press+release does.
+  const pressStartedOnBackdrop = useRef(false);
+  const releaseOnBackdrop = useRef(false);
+
   // Escape closes (but never mid-upload); backdrop click too.
   useEffect(() => {
     const onKey = (e) => {
@@ -224,7 +230,17 @@ export default function UploadLiveryDialog({ folder, onClose }) {
     : null;
 
   return (
-    <div id="livery-upload-overlay" onClick={(e) => { if (e.target.id === 'livery-upload-overlay') close(); }}>
+    <div
+      id="livery-upload-overlay"
+      onMouseDown={(e) => { pressStartedOnBackdrop.current = e.target.id === 'livery-upload-overlay'; }}
+      onMouseUp={(e) => { releaseOnBackdrop.current = e.target.id === 'livery-upload-overlay'; }}
+      onClick={(e) => {
+        if (e.target.id !== 'livery-upload-overlay') return;
+        if (pressStartedOnBackdrop.current && releaseOnBackdrop.current) close();
+        pressStartedOnBackdrop.current = false;
+        releaseOnBackdrop.current = false;
+      }}
+    >
       <div id="livery-upload-box" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('livery_upload_title')}>
         <div id="livery-upload-header">
           <h2>
