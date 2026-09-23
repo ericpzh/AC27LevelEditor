@@ -2207,6 +2207,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       const img = new Image();
       img.onload = () => {
         const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+        // A 0×0 decode (e.g. an SVG with no resolvable size that slipped past
+        // the main-process normalizer) would poison the object stack — reject
+        // before pushing an undo snapshot.
+        if (!w || !h) {
+          useAppStore.getState().showToast('BAD_IMAGE', 'error');
+          return;
+        }
         const k = Math.min(1, 1024 / Math.max(w, h));
         pushSnapshot();
         addObject({ kind: 'sticker', img, w: w * k, h: h * k, x: layout.x(active) + TEXTURE / 2, y: TEXTURE / 2, rot: 0, flipX: false, flipY: false });

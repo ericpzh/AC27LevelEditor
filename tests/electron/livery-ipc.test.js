@@ -760,6 +760,37 @@ describe('readDiskImage', () => {
     expect(livery.readDiskImage(txtPath).error).toBe('BAD_IMAGE');
     expect(livery.readDiskImage(path.join(gameRoot, 'missing.png')).error).toBe('IMAGE_MISSING');
   });
+
+  it('accepts SVG stickers and normalizes intrinsic dimensions', () => {
+    const decode = (p) => Buffer.from(livery.readDiskImage(p).imageDataUrl.split(',')[1], 'base64').toString('utf-8');
+    // Explicit width/height pass through untouched.
+    const sized = path.join(gameRoot, 'sized.svg');
+    fs.writeFileSync(sized, '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect width="200" height="100"/></svg>');
+    const sizedRes = livery.readDiskImage(sized);
+    expect(sizedRes.success).toBe(true);
+    expect(sizedRes.imageDataUrl.startsWith('data:image/svg+xml;base64,')).toBe(true);
+    expect(decode(sized)).toContain('width="200" height="100"');
+    // viewBox-only gains injected dimensions.
+    const vbOnly = path.join(gameRoot, 'vbonly.svg');
+    fs.writeFileSync(vbOnly, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 150"><circle r="10"/></svg>');
+    expect(livery.readDiskImage(vbOnly).success).toBe(true);
+    expect(decode(vbOnly)).toContain('width="300" height="150"');
+    // Percentage sizes fall back to the viewBox.
+    const pct = path.join(gameRoot, 'pct.svg');
+    fs.writeFileSync(pct, '<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 40 20"></svg>');
+    expect(decode(pct)).toContain('width="40" height="20"');
+    // Oversized SVGs are capped at a 1024 long edge.
+    const huge = path.join(gameRoot, 'huge.svg');
+    fs.writeFileSync(huge, '<svg xmlns="http://www.w3.org/2000/svg" width="5000" height="2500"></svg>');
+    expect(decode(huge)).toContain('width="1024" height="512"');
+    // No resolvable size, or no <svg> root, is rejected.
+    const nosize = path.join(gameRoot, 'nosize.svg');
+    fs.writeFileSync(nosize, '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+    expect(livery.readDiskImage(nosize).error).toBe('BAD_IMAGE');
+    const notSvg = path.join(gameRoot, 'notsvg.svg');
+    fs.writeFileSync(notSvg, 'just text');
+    expect(livery.readDiskImage(notSvg).error).toBe('BAD_IMAGE');
+  });
 });
 
 describe('share round-trip (export → delete → load-zip)', () => {

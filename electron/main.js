@@ -3696,7 +3696,7 @@ ipcMain.handle('select-livery-image', async (_event) => {
     : mainWindow;
   const result = await dialog.showOpenDialog(parent, {
     title: 'Select Livery Image',
-    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg'] }],
     properties: ['openFile'],
   });
   if (result.canceled || !result.filePaths.length) return { canceled: true };

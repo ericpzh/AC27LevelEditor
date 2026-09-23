@@ -924,7 +924,7 @@ no `.bak`** — the renderer's Save As override prompt is the guard, see
 built-in `partName` per panel (**Fuselage + Wing/Wingtip** for A388/B38M) and
 the built-in `targetModelVer` (C919 `2`, rest `1`);
 `delete-livery(folder)` (own-pack only, containment-checked `rm -rf`);
-`select-livery-image` (png/jpg dialog) + `read-disk-image(filePath)`;
+`select-livery-image` (png/jpg/svg sticker dialog) + `read-disk-image(filePath)` (png/jpg/svg data-URL; SVG gains injected width/height so it rasterizes, `BAD_IMAGE` when no size resolves);
 `reveal-livery-folder(folder, pack)` → resolve the folder via
 `resolvePackFolder` (containment-checked; `FOLDER_MISSING` when absent) and
 `shell.openPath` it; a missing/`null` folder falls back to the own pack dir

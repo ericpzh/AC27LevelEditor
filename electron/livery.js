@@ -750,10 +750,72 @@ function readDiskImage(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath)) return { success: false, error: 'IMAGE_MISSING' };
     const ext = path.extname(String(filePath)).toLowerCase();
+    if (ext === '.svg') return readSvgImage(filePath);
     const mime = ext === '.png' ? 'image/png' : (ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : null);
     if (!mime) return { success: false, error: 'BAD_IMAGE' };
     const buf = fs.readFileSync(filePath);
     return { success: true, imageDataUrl: `data:${mime};base64,` + buf.toString('base64') };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// SVG stickers: Chromium only rasterizes an <img> SVG that carries intrinsic
+// dimensions. Files with width/height in % (or no size at all — viewBox only)
+// decode to 0×0, so normalize up front: resolve width×height from the
+// width/height attributes (unitless or px) falling back to the viewBox, cap
+// the long edge at SVG_RASTER_CAP (the painter scales stickers to ≤1024
+// anyway), and inject plain width/height attributes. Returns a BAD_IMAGE
+// result when no usable size can be resolved. Scripts never run in an <img>
+// context, so no sanitization is needed beyond sizing.
+const SVG_RASTER_CAP = 1024;
+
+function svgAttrSize(tag, name) {
+  const m = tag.match(new RegExp(name + '\\s*=\\s*["\']([^"\']*)["\']', 'i'));
+  if (!m) return null;
+  const v = m[1].trim().toLowerCase();
+  // Unitless or px only — %, em, pt etc. resolve against a viewport the
+  // <img> decode doesn't have, so treat them as missing.
+  const num = v.endsWith('px') ? v.slice(0, -2) : v;
+  if (!/^\d+(\.\d+)?$/.test(num)) return null;
+  const n = parseFloat(num);
+  return n > 0 && Number.isFinite(n) ? n : null;
+}
+
+function normalizeSvg(svgText) {
+  const tagMatch = svgText.match(/<svg[\s>]/i);
+  if (!tagMatch) return null;
+  const tagStart = tagMatch.index;
+  const tagEnd = svgText.indexOf('>', tagStart);
+  if (tagEnd === -1) return null;
+  const tag = svgText.slice(tagStart, tagEnd + 1);
+  let w = svgAttrSize(tag, 'width');
+  let h = svgAttrSize(tag, 'height');
+  if (w == null || h == null) {
+    const vb = tag.match(/viewBox\s*=\s*["']([^"']*)["']/i);
+    if (vb) {
+      const parts = vb[1].trim().split(/[\s,]+/).map(Number);
+      if (parts.length === 4 && parts.every(Number.isFinite) && parts[2] > 0 && parts[3] > 0) {
+        if (w == null) w = parts[2];
+        if (h == null) h = parts[3];
+      }
+    }
+  }
+  if (w == null || h == null) return null;
+  const k = Math.min(1, SVG_RASTER_CAP / Math.max(w, h));
+  const W = Math.max(1, Math.round(w * k));
+  const H = Math.max(1, Math.round(h * k));
+  const stripped = tag.replace(/\s+(width|height)\s*=\s*("[^"]*"|'[^']*')/gi, '');
+  const close = stripped.endsWith('/>') ? stripped.slice(0, -2) + ` width="${W}" height="${H}" />` : stripped.slice(0, -1) + ` width="${W}" height="${H}">`;
+  return svgText.slice(0, tagStart) + close + svgText.slice(tagEnd + 1);
+}
+
+function readSvgImage(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const normalized = normalizeSvg(raw);
+    if (!normalized) return { success: false, error: 'BAD_IMAGE' };
+    return { success: true, imageDataUrl: 'data:image/svg+xml;base64,' + Buffer.from(normalized, 'utf-8').toString('base64') };
   } catch (err) {
     return { success: false, error: err.message };
   }
