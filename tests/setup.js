@@ -2,6 +2,23 @@
 import { configure } from '@testing-library/dom';
 import { vi } from 'vitest';
 
+// ── Cross-platform parity switch ─────────────────────────────────────
+// CI/dev on macOS or Linux can run the whole suite as if it were another OS
+// (`AC27_TEST_PLATFORM=linux npm test`) to catch Windows-only assumptions.
+// Unset by default, so a normal run uses the host platform. Tests that mock
+// process.platform themselves (updater, bepinex) still override this.
+//
+// NOTE: this only changes `process.platform`; Node's `path` implementation is
+// fixed at startup by the real OS, so path-separator assertions should
+// normalize (e.g. via gamePaths.norm) rather than hardcode '/' or '\'.
+if (process.env.AC27_TEST_PLATFORM) {
+  Object.defineProperty(process, 'platform', {
+    value: process.env.AC27_TEST_PLATFORM,
+    writable: true,
+    configurable: true,
+  });
+}
+
 // The suite runs many heavy jsdom files in parallel; Testing Library's default
 // 1000 ms async timeout is too tight under that load and produced intermittent
 // `waitFor`/`findBy*` flakes (the jsdom rAF/effect work can exceed 1 s). Raise

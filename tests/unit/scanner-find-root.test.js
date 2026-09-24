@@ -122,11 +122,11 @@ describe('findGameRoot', () => {
 
 describe('steamappsRoot', () => {
   it('finds the deepest steamapps segment case-insensitively', () => {
-    const p = path.join('D:', 'SteamLibrary', 'SteamApps', 'common', 'Game');
-    expect(steamappsRoot(p)).toBe(path.join('D:', 'SteamLibrary', 'SteamApps'));
+    const p = path.join(tmp, 'SteamLibrary', 'SteamApps', 'common', 'Game');
+    expect(steamappsRoot(p)).toBe(path.join(tmp, 'SteamLibrary', 'SteamApps'));
   });
 
   it('returns null outside a Steam library', () => {
-    expect(steamappsRoot(path.join('C:', 'Program Files', 'AC27Editor'))).toBeNull();
+    expect(steamappsRoot(path.join(tmp, 'Program Files', 'AC27Editor'))).toBeNull();
   });
 });

@@ -190,7 +190,7 @@ describe('gameRootFromLevelPath', () => {
 
 describe('steamCommonDirs', () => {
   it('returns platform-appropriate library roots', () => {
-    const dirs = gp.steamCommonDirs();
+    const dirs = gp.steamCommonDirs().map(gp.norm);
     expect(dirs.length).toBeGreaterThan(0);
     if (process.platform === 'darwin') {
       expect(dirs.some(d => d.includes('Library/Application Support/Steam'))).toBe(true);

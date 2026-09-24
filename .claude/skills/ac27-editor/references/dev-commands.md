@@ -29,6 +29,21 @@ npm run test:watch # Watch mode — re-runs on file changes
 npx vitest run tests/electron/updater.test.js
 ```
 
+### Cross-platform parity (macOS / Linux)
+
+The suite is developed on Windows but platform-clean. Run it as another OS to
+catch Windows-only assumptions (drive letters, separators, platform gates):
+
+```bash
+AC27_TEST_PLATFORM=linux npm test   # simulate Linux process.platform
+AC27_TEST_PLATFORM=darwin npm test  # simulate macOS
+```
+
+`tests/setup.js` overrides `process.platform` when the env var is set (tests
+that mock it themselves — updater/bepinex — still take precedence). It does
+**not** swap Node's `path` implementation, so path-separator assertions must
+normalize (e.g. `gamePaths.norm`) rather than hardcode `/` or `\`.
+
 ### Coverage (scoped, threshold-gated)
 
 `vitest.config.js` runs coverage through the **v8** provider (`@vitest/coverage-v8` devDependency) scoped to the two trees that hold the real logic — `src/acl/**` and `src/components/EditorScreen/GroundPainter/**` — and **fails the run** below the thresholds (`statements 55 / branches 40 / functions 48 / lines 55`). Screens and entry points are deliberately out of scope.

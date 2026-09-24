@@ -14,10 +14,32 @@
  * Suites that need a level file skip cleanly (with a reason) when it is absent.
  */
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const gamePaths = require('../../src/utils/gamePaths');
+
+// Per-OS default Steam library roots, checked in order. Windows keeps the
+// historical D: location first (this project's dev machine), then the
+// canonical Program Files install; macOS/Linux use their standard roots so a
+// real install is found on those hosts too.
+function defaultSteamCommon() {
+  const home = os.homedir();
+  let candidates;
+  if (process.platform === 'darwin') {
+    candidates = [path.join(home, 'Library', 'Application Support', 'Steam', 'steamapps', 'common')];
+  } else if (process.platform === 'linux') {
+    candidates = [
+      path.join(home, '.steam', 'steam', 'steamapps', 'common'),
+      path.join(home, '.local', 'share', 'Steam', 'steamapps', 'common'),
+    ];
+  } else {
+    candidates = ['D:/SteamLibrary/steamapps/common', 'C:/Program Files (x86)/Steam/steamapps/common'];
+  }
+  return candidates.find((c) => { try { return fs.existsSync(c); } catch (_) { return false; } }) || candidates[0];
+}
 
 // Steam library holding the game install (other machine → override).
-const STEAM_COMMON = process.env.AC27_STEAM_COMMON
-  || 'D:/SteamLibrary/steamapps/common';
+const STEAM_COMMON = process.env.AC27_STEAM_COMMON || defaultSteamCommon();
 
 // Canonical shipping install folder, then the legacy Playtest folder.
 const GAME_DIR_NAME = 'Airport Control 27';
@@ -35,7 +57,7 @@ function resolveGameRoot() {
 const GAME_ROOT = resolveGameRoot();
 
 const levelPath = (icao, fileName) =>
-  `${GAME_ROOT}/GroundATC_Data/StreamingAssets/Airports/${icao}/Levels/${fileName}`;
+  path.join(gamePaths.levelsDir(GAME_ROOT, icao), fileName);
 
 const gameLevelExists = (icao, fileName) => fs.existsSync(levelPath(icao, fileName));
 
