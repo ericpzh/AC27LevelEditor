@@ -169,6 +169,23 @@ function _parseAreas(text) {
   const contentT = createTokenizer(contentText);
   let pos = 0;
 
+  // `$type` id → name for this $blobdoc scope. Odin registers a type inline on
+  // its FIRST occurrence (`"$type": "31|ContextCross.Models.Area, ..."`) and
+  // emits a bare `"$type": <id>` reference afterwards. A synthesized Area gets
+  // a fresh id above the scope max (e.g. 41) with its registration on the first
+  // entry only, so bare references to it carry no name — resolve them here or
+  // the freshly saved areas are invisible to the editor while the game reads
+  // them fine.
+  const blobTypeNames = new Map(); // id → canonical name (before the comma)
+  {
+    const re = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+    let m;
+    while ((m = re.exec(bdText)) !== null) {
+      const id = parseInt(m[1], 10);
+      if (!blobTypeNames.has(id)) blobTypeNames.set(id, m[2].split(',')[0].trim());
+    }
+  }
+
   while (pos < contentText.length) {
     // Skip whitespace and commas
     while (pos < contentText.length && ' \t\n\r,'.includes(contentText[pos])) pos++;
@@ -199,6 +216,10 @@ function _parseAreas(text) {
             while (numEnd < entryBlock.length && entryBlock[numEnd] >= '0' && entryBlock[numEnd] <= '9') numEnd++;
             const num = parseInt(entryBlock.substring(vs, numEnd), 10);
             if (num === 30 || num === 31) isAreaEntity = true;
+            else if (!isNaN(num)) {
+              const nm = blobTypeNames.get(num);
+              if (nm && nm.includes('ContextCross.Models.Area')) isAreaEntity = true;
+            }
           }
         }
       }

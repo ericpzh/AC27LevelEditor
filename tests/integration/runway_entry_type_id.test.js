@@ -9,8 +9,9 @@
  * (e.g. 15 for both) caused saves to abort with:
  *   Type id 15 claimed by both "Runway+Entry[]" and "Runway+Entry"
  *
- * No fallback is allowed: if a type cannot be determined from the file, the code
- * ASSERTS instead of emitting a guessed $type. These tests pin that behaviour.
+ * A type is resolved from the entry that carries it, else the file's own
+ * $blobdoc table, else a FRESH id minted above the scope max (carrying the
+ * canonical type name). Never a hardcoded id that could collide.
  */
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
@@ -25,6 +26,8 @@ const {
   _typeId,
   _sampleRunwayInnerType,
   _sampleRunwayShapes,
+  _staticEntitiesRanges,
+  _scopeMaxTypeId,
 } = require('../../src/acl/scenery_write');
 
 const ENTRY_ARR = '15|ContextCross.Models.Runway+Entry[], GroundATC.Core';
@@ -116,16 +119,28 @@ describe('Runway Entries/Exits type-id distinctness', () => {
     expect(() => encodeArchive(newText)).not.toThrow();
   });
 
-  it('ASSERTS (rather than falls back) when synthesizing a runway whose type cannot be sampled', () => {
-    // The test fixture has no PhysicalRunwayStaticItem type; synthesizing a NEW
-    // runway must fail loudly instead of guessing an id (the original collision).
+  it('mints a fresh, collision-free id (canonical name) when the type cannot be sampled', () => {
+    // The fixture declares no PhysicalRunwayStaticItem type. The writer must not
+    // guess a hardcoded id (the historic collision), but it must also not refuse
+    // the save: it resolves the canonical name to a fresh id ABOVE the scope max,
+    // which cannot collide, and emits the full "N|Name" form (the game resolves
+    // Odin types by name).
     const text = readFixture('ZSJN_leisure_1.acl');
+    const ranges = _staticEntitiesRanges(text);
+    const scopeMax = _scopeMaxTypeId(text.substring(ranges.bd.start, ranges.bd.end));
     const { graph, meta } = buildSceneryGraph(text);
     const g = structuredClone(graph);
     g.nodes = [...g.nodes, { x: 800, z: 0, type: 1, flags: 0 }, { x: 900, z: 0, type: 1, flags: 0 }];
     const na = g.nodes.length - 2, nb = g.nodes.length - 1;
     g.runways = [...g.runways, { thAIdx: na, thBIdx: nb, names: ['08', '26'], physicalName: '08/26', width: 0.5, entries: [{ name: 'NEWR', holdingIdx: na, lineUpIdx: nb, defineIdx: na, runwayName: '08' }], exits: [] }];
-    expect(() => patchSceneryBlob(text, g, null, structuredClone(meta), { warnings: [] })).toThrow(/no fallback allowed/);
+    let out;
+    expect(() => { out = patchSceneryBlob(text, g, null, structuredClone(meta), { warnings: [] }); }).not.toThrow();
+    // The new runway serialized with a fresh id (above the file's scope max).
+    const m = out.match(/"PhysicalRunwayStaticItem":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*"(\d+)\|ContextCross\.Models\.PhysicalRunwayStaticItem, GroundATC\.Core"/);
+    expect(m).toBeTruthy();
+    expect(parseInt(m[1], 10)).toBeGreaterThan(scopeMax);
+    // The real collision detector: the encoder must accept the document.
+    expect(() => encodeArchive(out)).not.toThrow();
   });
 });
 

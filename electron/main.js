@@ -2433,6 +2433,19 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   }
   const { patchSceneryBlob, _validateNoDegenerateEdges } = require('../src/acl/scenery_write');
   const { writeAcl } = require('../src/acl/gatcarc');
+  // Runway end-name guard: the two ends of the same physical runway cannot share
+  // the same name (e.g. 27/27). The renderer save() checks this first, but the
+  // MCP path bypasses it — reject here so a bad graph never reaches disk.
+  if (graph && Array.isArray(graph.runways)) {
+    for (const rw of graph.runways) {
+      const names = Array.isArray(rw.names) && rw.names.length >= 2
+        ? rw.names
+        : [rw.name || '', String(rw.physicalName || '').split('/')[1] || ''];
+      if (names.length >= 2 && String(names[0]) === String(names[1])) {
+        throw new Error('保存被拒绝：同一条跑道的两端不能使用相同的名称（' + String(names[0]) + '）。请修改其中一端的名称后重试。');
+      }
+    }
+  }
   // Non-fatal problems found while patching (e.g. an entity whose node refs no
   // longer resolve and was dropped) — reported back so the UI can surface them
   // instead of silently losing geometry.
@@ -2454,7 +2467,15 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   // runways must never reach disk.
   const runwayCount = (newText.match(/"\$k"\s*:\s*"runway:[^"]+"/g) || []).length;
   if (runwayCount === 0) {
-    throw new Error('保存被拒绝：关卡必须至少保留一条跑道（游戏要求 InitialRunways 非空）。请先绘制一条跑道再保存。');
+    const graphCount = (graph && Array.isArray(graph.runways)) ? graph.runways.length : 0;
+    const graphNames = (graph && Array.isArray(graph.runways))
+      ? graph.runways.map((rw) => (Array.isArray(rw.names) ? rw.names.join('/') : (rw.physicalName || rw.name || '?'))).join(', ')
+      : '';
+    const warnSummary = warnings.length
+      ? '写入警告：' + warnings.map((w) => (w && w.text) || String(w)).join('；')
+      : '写入无警告（跑道可能在发送前已被机构修复丢弃，请查看渲染进程控制台 [GP] save 日志）';
+    throw new Error('保存被拒绝：关卡必须至少保留一条跑道（游戏要求 InitialRunways 非空）。请先绘制一条跑道再保存。'
+      + '（诊断：画布跑道 ' + graphCount + ' 条[' + graphNames + ']，写入结果跑道 0 条。' + warnSummary + '）');
   }
   // Corrupt-type auto-repair: patchSceneryBlob already repairs bare "$type": 0
   // inside PK/NonPK entries (see _repairPkEntryTypes / _repairNpkEntryTypes).

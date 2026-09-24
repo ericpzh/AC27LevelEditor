@@ -4370,6 +4370,10 @@ export default function GroundPainter({ vals }) {
           setGpError(t('ground_painter_validation_runway_name') || '跑道端名须为 1 或 2 位数字，可后接单个大写字母（如 4、4R、27 或 27L）');
           return; // keep the window open so the user can fix the names
         }
+        if (String(names[0]) === String(names[1])) {
+          setGpError(t('ground_painter_validation_runway_same_name', { name: String(names[0]) }) || '同一条跑道的两端不能使用相同的名称');
+          return; // keep the window open so the user can fix the names
+        }
       }
     }
     // Invariant guard: an entity the writer re-synthesizes must not reference a
@@ -4381,6 +4385,18 @@ export default function GroundPainter({ vals }) {
     if (repair.remapped || repair.dropped) {
       console.error('[GP] save: graph referenced deleted/missing nodes and was repaired — ' +
         'the edit that produced this is a bug:', { ...repair, warnings: repair.warnings.map((w) => t(w) || w) });
+    }
+    // The ghost repair above can drop a runway whose thresholds no longer
+    // resolve (no live twin at the same coordinate). Re-check: sending a
+    // zero-runway graph to the writer would delete every survivor runway and
+    // trip the save-time guard — abort here with the actionable message so the
+    // user redraws the runway instead of seeing a confusing IPC rejection.
+    {
+      const gAfter = useAppStore.getState().groundPainterGraph;
+      if (!gAfter || !Array.isArray(gAfter.runways) || gAfter.runways.length === 0) {
+        setGpError(t('ground_painter_validation_runway_required') || 'Cannot save - at least one runway is required');
+        return; // keep the window open so the user can draw a runway
+      }
     }
     let res;
     try {

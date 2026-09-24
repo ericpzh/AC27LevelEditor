@@ -19,7 +19,7 @@
 
 const path = require('path');
 const { createTokenizer } = require('./tokenizer');
-const { extractVector3FromV4, extractIrefArray, extractIntFromV4 } = require('./v4_pk_index');
+const { extractVector3FromV4, extractIrefArray, extractIntFromV4, extractSingleIref } = require('./v4_pk_index');
 
 // ─── Taxiway OSM pool (finite reuse) ───────────────────────────────────
 // The game only knows a fixed set of OsmIds per level (those that existed in
@@ -592,13 +592,48 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings, dr
     //    refs remain. Refs that are bare properties (a stand's NosePosition /
     //    TailPosition) cannot be excised — _exciseIrefFromRcontent returns
     //    null for them and the entry falls through to the drop path.
-    //    Runways never excise: a ThresholdPoints list must keep both ends, an
+    //    Runways never excise ThresholdPoints: the list must keep both ends, an
     //    one-threshold runway is invalid — an unrepairable threshold drops the
-    //    runway entry instead.
+    //    runway entry instead. Entries/Exits sub-refs are different: they point
+    //    at the taxiways serving the runway, and deleting those taxiways must
+    //    drop the affected Entry/Exit ELEMENTS (the runway keeps working, just
+    //    with fewer entrances/exits — a freshly drawn runway ships with empty
+    //    Entries/Exits) rather than the whole runway.
     let excised = 0;
+    let prunedEntryExits = 0;
     const totalRefs = (entry.match(/\$iref:\s*\d+/g) || []).length;
     const remaining = [];
-    if (unrepairable.length > 0 && prefix !== 'runway' && totalRefs - unrepairable.length >= 2) {
+    if (unrepairable.length > 0 && prefix === 'runway') {
+      // Partition structural refs (runway geometry — must resolve) from
+      // Entries/Exits refs (serving taxiways — prunable per element).
+      const structIds = new Set([
+        ...extractIrefArray(entry, 'ThresholdPoints'),
+        ...extractIrefArray(entry, 'EdgePoints'),
+      ]);
+      const td = extractSingleIref(entry, 'TouchDownPoint');
+      if (td != null) structIds.add(td);
+      const lp = extractSingleIref(entry, 'LabelPositionNode');
+      if (lp != null) structIds.add(lp);
+      const entryDead = unrepairable.filter((id) => !structIds.has(id));
+      const structDead = unrepairable.filter((id) => structIds.has(id));
+      if (entryDead.length > 0) {
+        const res = _pruneRunwayEntryExitElements(entry, new Set(entryDead));
+        if (res.pruned > 0) {
+          entry = res.entry;
+          prunedEntryExits += res.pruned;
+          const still = new Set([...entry.matchAll(/\$iref:\s*(\d+)/g)].map((m) => parseInt(m[1], 10)));
+          const fixed = entryDead.filter((id) => !still.has(id));
+          if (fixed.length > 0) {
+            warn({ key: 'ground_painter_writer_gate_runway_entries_pruned', params: { pk, count: res.pruned }, text: 'pruned ' + res.pruned + ' runway entrances/exits from ' + pk + ' — their taxiways were deleted' });
+            dirty = true;
+          }
+          for (const id of entryDead) if (still.has(id)) structDead.push(id);
+        } else {
+          structDead.push(...entryDead);
+        }
+      }
+      remaining.push(...structDead);
+    } else if (unrepairable.length > 0 && totalRefs - unrepairable.length >= 2) {
       for (const d of unrepairable) {
         const out = _exciseIrefFromRcontent(entry, d);
         if (out != null) { entry = out; excised++; } else remaining.push(d);
@@ -686,7 +721,7 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings, dr
       dirty = true;
       continue;
     }
-    if (repaired > 0 || excised > 0) {
+    if (repaired > 0 || excised > 0 || prunedEntryExits > 0) {
       pkEntries[i] = entry;
       if (repaired) {
         if (prefix === 'taxi-navigation') console.warn('[scenery_write] repaired ' + pk + ' — rewired ' + repaired + ' deleted-node reference(s) to live node(s) at the same coordinate');
@@ -786,6 +821,46 @@ function _gateSurvivorDanglingRefs(pkEntries, pkDelete, deletedIds, warnings, dr
     }
   }
   return dirty;
+}
+
+/**
+ * Drop runway Entry/Exit ELEMENTS that reference deleted taxiway nodes.
+ *
+ * A runway's `Entries`/`Exits` wrappers list the taxiways serving it
+ * (HoldingPosition / LineUpPosition / DefinePoint / ExitPosition $irefs). When
+ * those taxiways are deleted, the whole runway must NOT go down with them —
+ * a runway with empty Entries/Exits is valid (a freshly drawn runway ships
+ * exactly like that). Only elements touching `deadIds` are removed; each
+ * wrapper's `$rlength` is recomputed via _setArrayRcontent.
+ *
+ * @returns {{ entry: string, pruned: number }} patched block + dropped count
+ */
+function _pruneRunwayEntryExitElements(entry, deadIds) {
+  let out = entry;
+  let pruned = 0;
+  for (const sec of ['Entries', 'Exits']) {
+    const wrapper = _extractSectionObjectText(out, sec);
+    if (!wrapper) continue;
+    const t = createTokenizer(wrapper);
+    const rcSec = t.findSection('$rcontent');
+    if (!rcSec) continue;
+    const elems = _splitArrayEntries(t.substring(rcSec.valueStart, rcSec.valueEnd));
+    if (!elems.length) continue;
+    const kept = elems.filter((el) => {
+      for (const m of el.matchAll(/\$iref:\s*(\d+)/g)) {
+        if (deadIds.has(parseInt(m[1], 10))) return false;
+      }
+      return true;
+    });
+    if (kept.length === elems.length) continue;
+    pruned += elems.length - kept.length;
+    const rebuilt = _setArrayRcontent(wrapper, kept, false);
+    const ot = createTokenizer(out);
+    const osec = ot.findSection(sec);
+    if (!osec) continue;
+    out = out.slice(0, osec.valueStart) + rebuilt + out.slice(osec.valueEnd);
+  }
+  return { entry: out, pruned };
 }
 
 /**
@@ -1282,20 +1357,20 @@ function _synthesizeSegment(seg, id, osm, segNodeIds, s) {
     ', "Head": ' + head + ', "IsHidden": ' + (isHidden ? 'true' : 'false') + ', "IsUnselectable": ' + (isUnselectable ? 'true' : 'false') + ' } }';
 }
 
-function _sampleStandShapes(pkEntries) {
+function _sampleStandShapes(pkEntries, docTypes, fresh) {
   const s = { standType: null, pbArrayType: null };
-  const st = pkEntries.find((e) => _entryTypePrefix(e) === 'stand');
+  const st = (pkEntries || []).find((e) => _entryTypePrefix(e) === 'stand');
   if (st) {
     const rawSt = _valueOf(st, '$type');
     s.standType = _isCorruptType(rawSt) ? null : rawSt;
-    if (!s.standType) s.standType = '"20|ContextCross.Models.Stand, GroundATC.Core"';
+    if (!s.standType) s.standType = _resolveTypeOrFresh(docTypes, _STAND_TYPE_NAMES.standType, fresh, '"20|ContextCross.Models.Stand, GroundATC.Core"');
     const m = st.match(/"PushbackLimitPositions":\s*\{[^{]*?"\$type":\s*("[^"]+"|\d+)/);
     const rawPb = m ? m[1] : null;
     s.pbArrayType = _isCorruptType(rawPb) ? null : rawPb;
-    if (!s.pbArrayType) s.pbArrayType = '"21|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib]], R3"';
+    if (!s.pbArrayType) s.pbArrayType = _resolveTypeOrFresh(docTypes, _STAND_TYPE_NAMES.pbArrayType, fresh, '"21|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib]], R3"');
   } else {
-    s.standType = '"20|ContextCross.Models.Stand, GroundATC.Core"';
-    s.pbArrayType = '"21|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib]], R3"';
+    s.standType = _resolveTypeOrFresh(docTypes, _STAND_TYPE_NAMES.standType, fresh, '"20|ContextCross.Models.Stand, GroundATC.Core"');
+    s.pbArrayType = _resolveTypeOrFresh(docTypes, _STAND_TYPE_NAMES.pbArrayType, fresh, '"21|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib]], R3"');
   }
   return s;
 }
@@ -1445,30 +1520,40 @@ function _synthesizeAirwaySegment(proc, id, osm, airwayNodeIds, s) {
     ', "Nodes": { "$id": ' + nodesId + ', "$type": ' + _fmtType(s.airwaySegListType) +
     ', { "$id": ' + innerId + ', "$type": ' + _fmtType(s.airwaySegInnerType) + ', "$rlength": ' + ids.length + ', "$rcontent": [ ' + irefStr + ' ] } } } }';
 }
-function _sampleRouteShapes(pkEntries) {
+const _ROUTE_TYPE_NAMES = {
+  routesType: ['ContextCross.Models.Runway+Route[], GroundATC.Core', 'ContextCross.Models.Route[], GroundATC.Core'],
+  routeType: ['ContextCross.Models.Runway+Route, GroundATC.Core', 'ContextCross.Models.Route, GroundATC.Core'],
+  airwayNodesType: ['ContextCross.Models.AirwayNode[], GroundATC.Core'],
+};
+
+function _sampleRouteShapes(pkEntries, docTypes, fresh) {
   const s = { routesType: null, routeType: null, airwayNodesType: null };
   const rw = pkEntries.find((e) => _entryTypePrefix(e) === 'runway');
   if (!rw) {
-    s.routesType = '"18|ContextCross.Models.Runway+Route[], GroundATC.Core"';
-    s.routeType = '"19|ContextCross.Models.Runway+Route, GroundATC.Core"';
-    s.airwayNodesType = '"20|ContextCross.Models.AirwayNode[], GroundATC.Core"';
+    // No runway to sample — canonical names resolved through the file table or
+    // a fresh id (never a hardcoded id that could collide in this scope).
+    s.routesType = _resolveTypeOrFresh(docTypes, _ROUTE_TYPE_NAMES.routesType, fresh, _CANONICAL_ROUTE_TYPES.routesType);
+    s.routeType = _resolveTypeOrFresh(docTypes, _ROUTE_TYPE_NAMES.routeType, fresh, _CANONICAL_ROUTE_TYPES.routeType);
+    s.airwayNodesType = _resolveTypeOrFresh(docTypes, _ROUTE_TYPE_NAMES.airwayNodesType, fresh, _CANONICAL_ROUTE_TYPES.airwayNodesType);
     return s;
   }
   const mRoutes = rw.match(/"Routes":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
   const rawRoutes = mRoutes ? mRoutes[1] : null;
   s.routesType = _isCorruptType(rawRoutes) ? null : rawRoutes;
-  if (!s.routesType) s.routesType = '"18|ContextCross.Models.Runway+Route[], GroundATC.Core"';
+  if (!s.routesType) s.routesType = _resolveTypeOrFresh(docTypes, _ROUTE_TYPE_NAMES.routesType, fresh, _CANONICAL_ROUTE_TYPES.routesType);
   // Inner Route type via same helper as Entries, but for Routes
   const runwayEntries = pkEntries.filter((e) => _entryTypePrefix(e) === 'runway');
   const inner = _sampleRunwayInnerType(runwayEntries, s.routesType, 'Routes', 'ContextCross.Models.Runway+Route, GroundATC.Core');
-  s.routeType = inner || '"19|ContextCross.Models.Runway+Route, GroundATC.Core"';
+  s.routeType = inner && !_isCorruptType(inner)
+    ? inner
+    : _resolveTypeOrFresh(docTypes, _ROUTE_TYPE_NAMES.routeType, fresh, _CANONICAL_ROUTE_TYPES.routeType);
   // AirwayNodes array type inside Route
   let airwayNodesType = null;
   for (const e of runwayEntries) {
     const m = e.match(/"AirwayNodes":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*("[^"]+"|\d+)/);
     if (m && !_isCorruptType(m[1])) { airwayNodesType = m[1]; break; }
   }
-  s.airwayNodesType = airwayNodesType || '"20|ContextCross.Models.AirwayNode[], GroundATC.Core"';
+  s.airwayNodesType = airwayNodesType || _resolveTypeOrFresh(docTypes, _ROUTE_TYPE_NAMES.airwayNodesType, fresh, _CANONICAL_ROUTE_TYPES.airwayNodesType);
   return s;
 }
 function _buildRoutesWrapperForPatch(newProcedures, origWrapperText, airwayNodeIds, s, nextIdRef) {
@@ -1604,7 +1689,88 @@ function _applyDocumentTypes(s, docTypes, force) {
   if (!s.thresholdPointsType) s.thresholdPointsType = s.edgePointsType;
 }
 
-function _sampleRunwayShapes(pkEntries, docTypes) {
+// ─── Scope-local type resolution with collision-free fresh ids ─────
+// Type ids restart per $blobdoc scope, so a hardcoded fallback id (31/32/33
+// for areas, 20/21 for stands) can collide with a DIFFERENT type in the
+// file's own table once every entry of that kind has been deleted and there
+// is nothing left to sample — the encoder then aborts with
+// `Type id N claimed by both "X" and "Y"`. Resolve each canonical name
+// against the file's table first; names the file never declares get a fresh
+// id above the scope max, which cannot collide with anything in the scope.
+function _scopeMaxTypeId(scopeText) {
+  let max = 0;
+  if (!scopeText) return max;
+  const re = /"\$type":\s*(?:"(\d+)\|[^"]*"|(\d+))(?=\s*[,\}\]])/g;
+  let m;
+  while ((m = re.exec(scopeText)) !== null) {
+    const n = parseInt(m[1] != null ? m[1] : m[2], 10);
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+function _resolveTypeOrFresh(docTypes, fullNames, fresh, legacy) {
+  if (docTypes) {
+    for (const full of fullNames) {
+      const v = docTypes.get(full);
+      if (v) return v;
+    }
+  }
+  if (fresh && Number.isFinite(fresh.next)) {
+    // One fresh id PER TYPE NAME for the whole patch: the same canonical name
+    // must never be minted twice (two ids for one name makes the encoder's
+    // type table ambiguous, and emitting the same type under two ids is at
+    // best redundant).
+    if (!fresh.byName) fresh.byName = new Map();
+    const key = fullNames[0];
+    if (fresh.byName.has(key)) return fresh.byName.get(key);
+    const v = '"' + fresh.next++ + '|' + key + '"';
+    fresh.byName.set(key, v);
+    return v;
+  }
+  // No scope info (only possible for out-of-band direct callers — the live
+  // patch path always threads `fresh`): keep the historical hardcoded id.
+  return legacy;
+}
+
+// Canonical (last-resort) `$type` ids for the runway sub-objects. Only used by
+// out-of-band direct callers with no scope info; the live patch path resolves
+// against the file's own table or mints a fresh, collision-free id.
+const _CANONICAL_RUNWAY_TYPES = {
+  runwayType: '"13|ContextCross.Models.Runway, GroundATC.Core"',
+  itemType: '"14|ContextCross.Models.PhysicalRunwayStaticItem, GroundATC.Core"',
+  entriesType: '"15|ContextCross.Models.Runway+Entry[], GroundATC.Core"',
+  entryInnerType: '"16|ContextCross.Models.Runway+Entry, GroundATC.Core"',
+  exitsType: '"17|ContextCross.Models.Runway+Exit[], GroundATC.Core"',
+  exitInnerType: '"18|ContextCross.Models.Runway+Exit, GroundATC.Core"',
+  routesType: '"19|ContextCross.Models.Route[], GroundATC.Core"',
+  edgePointsType: '"22|ContextCross.Models.TaxiwayNode[], GroundATC.Core"',
+  areaVerticesType: '"23|UnityEngine.Vector3[], UnityEngine.CoreModule"',
+  holdingAreasType: '"24|ContextCross.Models.Runway+HoldingAreaData[], GroundATC.Core"',
+  holdingInnerType: '"25|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"',
+  boolReactiveType: '"26|R3.ReactiveProperty`1[[System.Boolean, mscorlib]], R3"',
+  vec3Type: '"5|UnityEngine.Vector3, UnityEngine.CoreModule"',
+};
+
+const _CANONICAL_ROUTE_TYPES = {
+  routesType: '"18|ContextCross.Models.Runway+Route[], GroundATC.Core"',
+  routeType: '"19|ContextCross.Models.Runway+Route, GroundATC.Core"',
+  airwayNodesType: '"20|ContextCross.Models.AirwayNode[], GroundATC.Core"',
+};
+
+const _AREA_TYPE_NAMES = {
+  areaType: ['ContextCross.Models.Area, GroundATC.Core'],
+  rpType: ['R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib]], R3'],
+  listType: ['System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib'],
+  vecType: ['UnityEngine.Vector3, UnityEngine.CoreModule'],
+};
+
+const _STAND_TYPE_NAMES = {
+  standType: ['ContextCross.Models.Stand, GroundATC.Core'],
+  pbArrayType: ['R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib]], R3'],
+};
+
+function _sampleRunwayShapes(pkEntries, docTypes, fresh) {
   const s = {
     runwayType: null, itemType: null,
     entriesType: null, exitsType: null, entryInnerType: null, exitInnerType: null, routesType: null,
@@ -1612,26 +1778,28 @@ function _sampleRunwayShapes(pkEntries, docTypes) {
     areaVerticesType: null, holdingAreasType: null, holdingInnerType: null,
     boolReactiveType: null, vec3Type: null,
   };
+  // Resolve every type the synthesis needs. A type is taken from the entry it
+  // was sampled from (inline wins), else from the file's own $blobdoc table,
+  // else minted as a fresh collision-free id. `boolReactiveType` is OPTIONAL
+  // (shipped v5 files omit IsActive) so it is never minted — only filled when
+  // the file actually declares it.
+  const fillMissing = () => {
+    for (const [key, names] of Object.entries(_RUNWAY_TYPE_NAMES)) {
+      if (key === 'boolReactiveType') continue;
+      if (s[key] && !_isCorruptType(s[key])) continue;
+      s[key] = _resolveTypeOrFresh(docTypes, names, fresh, _CANONICAL_RUNWAY_TYPES[key]);
+    }
+    if (!s.thresholdPointsType || _isCorruptType(s.thresholdPointsType)) s.thresholdPointsType = s.edgePointsType;
+  };
   const rw = pkEntries.find((e) => _entryTypePrefix(e) === 'runway');
   const runwayEntries = pkEntries.filter((e) => _entryTypePrefix(e) === 'runway');
   if (!rw) {
-    // No runway to sample — return canonical fallbacks so synthesis never emits "$type": 0.
-    // Array and inner (element) types MUST use distinct ids or the GATCARC4 writer
-    // aborts with "Type id N claimed by both ...".
-    s.runwayType = '"13|ContextCross.Models.Runway, GroundATC.Core"';
-    s.itemType = '"14|ContextCross.Models.PhysicalRunwayStaticItem, GroundATC.Core"';
-    s.entriesType = '"15|ContextCross.Models.Runway+Entry[], GroundATC.Core"';
-    s.entryInnerType = '"16|ContextCross.Models.Runway+Entry, GroundATC.Core"';
-    s.exitsType = '"17|ContextCross.Models.Runway+Exit[], GroundATC.Core"';
-    s.exitInnerType = '"18|ContextCross.Models.Runway+Exit, GroundATC.Core"';
-    s.routesType = '"19|ContextCross.Models.Route[], GroundATC.Core"';
-    s.edgePointsType = '"22|ContextCross.Models.TaxiwayNode[], GroundATC.Core"';
+    // No runway to sample — start from the canonical map (never "$type": 0),
+    // then prefer the file's own table, then a fresh id. Array and inner
+    // (element) types MUST use distinct ids or the GATCARC4 writer aborts with
+    // "Type id N claimed by both ...".
+    Object.assign(s, _CANONICAL_RUNWAY_TYPES);
     s.thresholdPointsType = s.edgePointsType;
-    s.areaVerticesType = '"23|UnityEngine.Vector3[], UnityEngine.CoreModule"';
-    s.holdingAreasType = '"24|ContextCross.Models.Runway+HoldingAreaData[], GroundATC.Core"';
-    s.holdingInnerType = '"25|ContextCross.Models.Runway+HoldingAreaData, GroundATC.Core"';
-    s.boolReactiveType = '"26|R3.ReactiveProperty`1[[System.Boolean, mscorlib]], R3"';
-    s.vec3Type = '"5|UnityEngine.Vector3, UnityEngine.CoreModule"';
     // Prefer the file's own (per-file, version-specific) ids when it declares
     // them anywhere — the canonical numbers above are only a last resort.
     _applyDocumentTypes(s, docTypes, true);
@@ -1737,6 +1905,12 @@ function _sampleRunwayShapes(pkEntries, docTypes) {
   // declare their types once as shared singletons — sampling only runway blocks
   // misses them. This stays a real, file-sourced id (no guessed id).
   _applyDocumentTypes(s, docTypes);
+  // Anything still unresolved (e.g. every runway's Entries/Exits is empty, so
+  // the element type was never instantiated and never entered the type table)
+  // gets a fresh, collision-free id carrying the canonical type NAME — the game
+  // resolves Odin types by name, so this is valid and unblocks adding an
+  // entrance/exit to a runway whose list was emptied.
+  fillMissing();
   return s;
 }
 
@@ -2075,7 +2249,7 @@ function _synthesizeRunway(rw, idBase, thAId, thBId, s, graph, extra) {
 // no two declarations share the same old $id before renumber. Duplicate old
 // ids cause renumberAclIds (scope.map last-wins) to misbind $iref targets,
 // which previously produced the 09/01 -> Area 8930 corruption.
-function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings, docTypes) {
+function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings, docTypes, freshTypeIds) {
   const s = _sampleShapes(pkEntries);
   // Unity requires every segment of one OSM visual way (same OsmId) to share the
   // SAME visual properties; otherwise level load throws "Taxiway segments
@@ -2232,7 +2406,7 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings,
 
   // New stands: allocate a dense unique Identifier above the file's max, and
   // reference the newly-synthesized (or survivor) nose/tail/pushback node ids.
-  const ss = _sampleStandShapes(pkEntries);
+  const ss = _sampleStandShapes(pkEntries, docTypes, freshTypeIds);
   const taxiS = _sampleTaxiNavShapes(pkEntries);
   const jetS = _sampleJetwayShapes(siEntries);
   // Shared CrossTaxiwayNames id: reuse existing if present, else allocate fresh for first new nav point
@@ -2390,16 +2564,41 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings,
   // New runways: emit a full pair (both directions) sharing one PhysicalRunwayStaticItem.
   // Derived geometry: EdgePoints (~0.58 beyond threshold), TouchDownPoint (~4.8 inside),
   // and HoldingAreas (inferred from taxiway & runway input) are synthesized here.
-  const rs = _sampleRunwayShapes(pkEntries, docTypes);
+  const rs = _sampleRunwayShapes(pkEntries, docTypes, freshTypeIds);
   const newPhysEntries = []; // for StaticItems
   for (let k = 0; k < graph.runways.length; k++) {
     const pk = meta.runwayOrigPk ? meta.runwayOrigPk[k] : null;
     if (pk != null) continue; // survivor kept verbatim (patched later if names changed)
     const rw = graph.runways[k];
     const thAId = nodeIds[rw.thAIdx], thBId = nodeIds[rw.thBIdx];
-    if (thAId == null || thBId == null) continue;
+    if (thAId == null || thBId == null) {
+      // A new runway whose threshold nodes no longer resolve (ghost-deleted or
+      // stale index) cannot be written — emitting it would serialize as
+      // "$iref:null" and abort the whole save. Drop it loudly so the painter
+      // can surface the loss instead of silently losing the runway (which then
+      // trips the save-time "at least one runway" guard).
+      const rwLabel = (Array.isArray(rw.names) && rw.names.length >= 2)
+        ? rw.names.join('/')
+        : (rw.physicalName || rw.name || ('index ' + k));
+      const w = { key: 'ground_painter_writer_new_runway_dropped', params: { phys: String(rwLabel), index: (thAId == null ? rw.thAIdx : rw.thBIdx) },
+        text: 'dropped a new runway (' + rwLabel + '): its threshold node no longer exists (index ' +
+          (thAId == null ? rw.thAIdx : rw.thBIdx) + ')' };
+      console.warn('[scenery_write] ' + w.text);
+      if (warnings) warnings.push(w);
+      continue;
+    }
     const aCoord = graph.nodes[rw.thAIdx], bCoord = graph.nodes[rw.thBIdx];
-    if (!aCoord || !bCoord) continue;
+    if (!aCoord || !bCoord) {
+      const rwLabel2 = (Array.isArray(rw.names) && rw.names.length >= 2)
+        ? rw.names.join('/')
+        : (rw.physicalName || rw.name || ('index ' + k));
+      const w2 = { key: 'ground_painter_writer_new_runway_dropped', params: { phys: String(rwLabel2), index: (!aCoord ? rw.thAIdx : rw.thBIdx) },
+        text: 'dropped a new runway (' + rwLabel2 + '): its threshold coordinate no longer exists (index ' +
+          (!aCoord ? rw.thAIdx : rw.thBIdx) + ')' };
+      console.warn('[scenery_write] ' + w2.text);
+      if (warnings) warnings.push(w2);
+      continue;
+    }
     const dx = bCoord.x - aCoord.x, dz = bCoord.z - aCoord.z;
     const len = Math.hypot(dx, dz) || 1;
     const ux = dx / len, uz = dz / len;
@@ -2529,9 +2728,9 @@ function _synthesizeNew(graph, meta, pkEntries, npkEntries, siEntries, warnings,
  */
 // ─── New-area synthesis (NonPK) ───────────────────────────────────
 
-function _sampleAreaShapes(npkEntries) {
+function _sampleAreaShapes(npkEntries, docTypes, fresh) {
   const s = { areaType: null, rpType: null, listType: null, vecType: null };
-  const area = npkEntries.find((e) => e.includes('ContextCross.Models.Area'));
+  const area = (npkEntries || []).find((e) => e.includes('ContextCross.Models.Area'));
   if (area) {
     const rawArea = _valueOf(area, '$type');
     s.areaType = _isCorruptType(rawArea) ? null : rawArea;
@@ -2548,16 +2747,18 @@ function _sampleAreaShapes(npkEntries) {
     const v = area.match(/"\$type":\s*("[^"]+"|\d+),\s*-?[\d.eE+]+,\s*-?[\d.eE+]+/);
     const rawV = v ? v[1] : null;
     s.vecType = _isCorruptType(rawV) ? null : rawV;
-    if (!s.vecType) s.vecType = '5';
+    if (!s.vecType) s.vecType = _resolveTypeOrFresh(docTypes, _AREA_TYPE_NAMES.vecType, fresh, '5');
   }
   // Fallbacks so `_fmtType` never emits `$type: 0` (a bogus reference to the
   // ArchiveHeader type) — this is what makes Unity reject a new Area as an
-  // "Invalid Area static entity". Only used when there is no existing Area to
-  // sample (e.g. adding the first Area to a file with none).
-  if (!s.areaType || _isCorruptType(s.areaType)) s.areaType = '"31|ContextCross.Models.Area, GroundATC.Core"';
-  if (!s.rpType || _isCorruptType(s.rpType)) s.rpType = '"32|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib]], R3"';
-  if (!s.listType || _isCorruptType(s.listType)) s.listType = '"33|System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib"';
-  if (!s.vecType || _isCorruptType(s.vecType)) s.vecType = '5';
+  // "Invalid Area static entity". Each name resolves against the file's own
+  // type table first; names the file never declares (e.g. adding an Area to a
+  // file with none left) get a fresh id above the scope max so they can never
+  // collide with an unrelated type ("Type id 33 claimed by both ...").
+  if (!s.areaType || _isCorruptType(s.areaType)) s.areaType = _resolveTypeOrFresh(docTypes, _AREA_TYPE_NAMES.areaType, fresh, '"31|ContextCross.Models.Area, GroundATC.Core"');
+  if (!s.rpType || _isCorruptType(s.rpType)) s.rpType = _resolveTypeOrFresh(docTypes, _AREA_TYPE_NAMES.rpType, fresh, '"32|R3.ReactiveProperty`1[[System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib]], R3"');
+  if (!s.listType || _isCorruptType(s.listType)) s.listType = _resolveTypeOrFresh(docTypes, _AREA_TYPE_NAMES.listType, fresh, '"33|System.Collections.Generic.List`1[[UnityEngine.Vector3, UnityEngine.CoreModule]], mscorlib"');
+  if (!s.vecType || _isCorruptType(s.vecType)) s.vecType = _resolveTypeOrFresh(docTypes, _AREA_TYPE_NAMES.vecType, fresh, '5');
   return s;
 }
 
@@ -2741,6 +2942,29 @@ function _isMalformedRuntimeJetway(entryText) {
   if (!entryText.includes('"_latestDepartureRoll"')) return false; // only the fabricated PhysicalRunway-shaped template
   return !JETWAY_RUNTIME_FIELDS.some((f) => entryText.includes('"' + f + '"'));
 }
+
+// Resolve a RUNTIME entity `$type` inside the RuntimeEntities $blobdoc scope.
+// Type ids are per-scope, so a hardcoded id can collide with a DIFFERENT runtime
+// type already registered there — ZSJN's RuntimeEntities declares id 3 =
+// `ContextCross.Models.Jetway`, so the old hardcoded `3|…PhysicalRunway`
+// fallback made the encoder abort with `Type id 3 claimed by both ...` as soon
+// as a save had to synthesize a missing PhysicalRunway runtime entity. Prefer
+// the scope's own registration for the canonical name; otherwise mint a fresh id
+// above the scope's max type id and emit the full `N|Name` form (Odin resolves
+// types by name, so the id itself carries no meaning to the game).
+function _resolveRuntimeScopeType(scopeText, canonicalName) {
+  const re = /"\$type":\s*"(\d+)\|([^"]+)"/g;
+  let m;
+  let maxId = 0;
+  let found = null;
+  while ((m = re.exec(scopeText)) !== null) {
+    const id = parseInt(m[1], 10);
+    if (id > maxId) maxId = id;
+    if (!found && m[2] === canonicalName) found = '"' + m[1] + '|' + m[2] + '"';
+  }
+  if (found) return found;
+  return '"' + (maxId + 1) + '|' + canonicalName + '"';
+}
 function _reconcileRuntimeSegment(segText, reconciles) {
   const t = createTokenizer(segText);
   const reSec = t.findSection('RuntimeEntities');
@@ -2841,7 +3065,7 @@ function _reconcileRuntimeSegment(segText, reconciles) {
       const tm = e.text.match(/"\$v"\s*:\s*\{[^{}]*?"\$type"\s*:\s*("[^"]+"|\d+)/);
       if (tm) { sampleType = tm[1]; break; }
     }
-    if (!sampleType) sampleType = '"3|ContextCross.Models.PhysicalRunway, GroundATC.Core"';
+    if (!sampleType) sampleType = _resolveRuntimeScopeType(reText, 'ContextCross.Models.PhysicalRunway, GroundATC.Core');
     if (nextId === 0) {
       // Allocate fresh runtime ids above every id already declared in this
       // RuntimeEntities blobdoc (its own id space).
@@ -3566,7 +3790,14 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // resolve inline-optional sub-objects the shipped file declares only as shared
   // singletons. MUST be the blobdoc scope: type ids are per-scope, and the same
   // number can mean a different type in another `$blobdoc` / the checkpoint frame.
-  const docTypes = _documentTypesByName(snapshotText.substring(ranges.bd.start, ranges.bd.end));
+  const bdSpanText = snapshotText.substring(ranges.bd.start, ranges.bd.end);
+  const docTypes = _documentTypesByName(bdSpanText);
+  // Fresh type-id allocator for synthesized entities whose kind has no survivor
+  // left to sample (e.g. the first Area after deleting them all): ids start
+  // above the scope max so they can never collide with an unrelated declared
+  // type ("Type id 33 claimed by both ..."). Shared by every sampler in this
+  // patch so two kinds never claim the same fresh id.
+  const freshTypeIds = { next: _scopeMaxTypeId(bdSpanText) + 1 };
 
   const pkArrayValue = snapshotText.substring(ranges.pkRc.start, ranges.pkRc.end);
   const npkArrayValue = snapshotText.substring(ranges.npkRc.start, ranges.npkRc.end);
@@ -4438,10 +4669,10 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   // New-object synthesis: append synthesized entries for NEW nodes + segments.
   // Pass NPK+SI so allocation starts above the true blobdoc max and never collides
   // with Area ids (previously PK-only max caused 09/01 -> Area 8930).
-  const synth = _synthesizeNew(graph, mm, pkEntries, npkEntries, siEntries, warnings, docTypes);
+  const synth = _synthesizeNew(graph, mm, pkEntries, npkEntries, siEntries, warnings, docTypes, freshTypeIds);
   // ── Patch runway Entries/Exits for checkbox editing (after nodeIds are known) ──
   if (runwayEntriesDirty || runwayDirty) {
-    const sRunway = _sampleRunwayShapes(pkEntries, docTypes);
+    const sRunway = _sampleRunwayShapes(pkEntries, docTypes, freshTypeIds);
     const nextIdRef = { value: synth.nextId };
     const nodeIds = synth.nodeIds;
     const patchArray = (arr) => {
@@ -4495,7 +4726,7 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
   }
   // ── Patch runway Routes for airway procedures ──
   if (airwayRoutesDirty) {
-    const sRoute = _sampleRouteShapes(pkEntries);
+    const sRoute = _sampleRouteShapes(pkEntries, docTypes, freshTypeIds);
     const airwayNodeIds = synth.airwayNodeIds || [];
     const nextIdRef2 = { value: synth.nextId };
     const patchRoutes = (arr) => {
@@ -4609,7 +4840,7 @@ function patchSceneryBlob(snapshotText, graph, blobTypeMap, meta, opts) {
     }
   }
   if (newAreaIdxs.length > 0) {
-    const s = _sampleAreaShapes(npkEntries);
+    const s = _sampleAreaShapes(npkEntries, docTypes, freshTypeIds);
     let nextId = synth.nextId;
     // Defensive fallback if synth produced no entries (e.g. no new PK objects):
     // recompute overall max from NPK/SI + PK.
@@ -4963,6 +5194,12 @@ module.exports = {
   _typeId,
   _sampleRunwayInnerType,
   _sampleRunwayShapes,
+  _sampleAreaShapes,
+  _sampleStandShapes,
+  _sampleRouteShapes,
+  _resolveTypeOrFresh,
+  _scopeMaxTypeId,
+  _pruneRunwayEntryExitElements,
   _validateNoDegenerateEdges,
   _pkTypeOrder,
   _regroupPkByType,

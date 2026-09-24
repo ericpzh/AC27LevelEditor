@@ -154,7 +154,39 @@ describe('Ground Painter — physical-runway checkpoint-frame reconciliation', (
     const out = patchSceneryBlob(stripped, graph, null, meta);
     // A well-formed runtime PhysicalRunway entity is synthesized for 01/19.
     expect(checkpointPhysKeys(out)).toEqual(['physical-runway:01/19']);
-    expect(out).toMatch(/"\$k":\s*"physical-runway:01\/19"\s*,\s*"\$v":\s*\{\s*"\$id":\s*\d+,\s*"\$type":\s*"3\|ContextCross\.Models\.PhysicalRunway, GroundATC\.Core",\s*"_latestDepartureRoll":\s*null\s*\}/);
+    // The `$type` id is resolved within the RuntimeEntities scope (here a fresh
+    // id, since the removed entity took its registration with it) and always
+    // carries the canonical PhysicalRunway NAME.
+    expect(out).toMatch(/"\$k":\s*"physical-runway:01\/19"\s*,\s*"\$v":\s*\{\s*"\$id":\s*\d+,\s*"\$type":\s*"\d+\|ContextCross\.Models\.PhysicalRunway, GroundATC\.Core",\s*"_latestDepartureRoll":\s*null\s*\}/);
+  });
+
+  it('resolves a NON-colliding runtime type id when the scope already uses the hardcoded one', () => {
+    // Real ZSJN shape: RuntimeEntities declares id 3 = Jetway. The synthesized
+    // PhysicalRunway runtime entity must NOT re-claim id 3 (the encoder aborts
+    // with "Type id 3 claimed by both ...") and must still encode.
+    const base = makeText();
+    const stripped = base
+      .replace(
+        '{ "$k": "physical-runway:01/19", "$v": { "$id": 3, "$type": "3|ContextCross.Models.PhysicalRunway, GroundATC.Core", "_latestDepartureRoll": null } }',
+        '{ "$k": "jetway:99", "$v": { "$id": 90, "$type": "3|ContextCross.Models.Jetway, GroundATC.Core", "Status": 0 } }'
+      );
+    const { graph, meta } = buildSceneryGraph(stripped);
+    const out = patchSceneryBlob(stripped, graph, null, meta);
+    expect(checkpointPhysKeys(out)).toEqual(['physical-runway:01/19']);
+    const frame = out.split('$$$ GATCARC4 CHECKPOINT FRAME $$$')[1] || '';
+    const runtime = frame.slice(frame.indexOf('"RuntimeEntities"'));
+    // Invariant: within the RuntimeEntities scope, no type id maps to two
+    // different type names (the collision that aborts the encoder).
+    const byId = new Map();
+    for (const m of runtime.matchAll(/"\$type":\s*"(\d+)\|([^"]+)"/g)) {
+      if (!byId.has(m[1])) byId.set(m[1], new Set());
+      byId.get(m[1]).add(m[2]);
+    }
+    for (const [id, names] of byId) expect([...names]).toHaveLength(1);
+    // The synthesized entity carries the canonical PhysicalRunway NAME.
+    expect(runtime).toMatch(/"\$k":\s*"physical-runway:01\/19"\s*,\s*"\$v":\s*\{\s*"\$id":\s*\d+,\s*"\$type":\s*"\d+\|ContextCross\.Models\.PhysicalRunway, GroundATC\.Core"/);
+    // The real-fixture encoder check (this synthetic header is not a valid
+    // GATCARC4 document) lives in runway_entry_type_id.test.js.
   });
 });
 

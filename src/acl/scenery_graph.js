@@ -326,7 +326,7 @@ function buildSceneryGraph(text) {
   }
 
   // ── NonPK areas (Area 0/1/2) ──────────────────────────────────
-  graph.areas = _parseAreasIntoGraph(text);
+  graph.areas = _parseAreasIntoGraph(text, getBlobTypeMap(text));
   for (let i = 0; i < graph.areas.length; i++) {
     meta.areaOrigId.push(graph.areas[i]._origId ?? null);
   }
@@ -628,7 +628,7 @@ function _extractRunwayExitsFromBlock(block, idToNodeIdx, graph, meta, text, pkI
 
 // ─── NonPK areas → graph ──────────────────────────────────────────
 
-function _parseAreasIntoGraph(text) {
+function _parseAreasIntoGraph(text, blobTypeMap) {
   const t = createTokenizer(text);
   const sdSec = t.findSection('StaticData');
   if (!sdSec) return [];
@@ -661,7 +661,7 @@ function _parseAreasIntoGraph(text) {
     if (!entryEnd) break;
     const entryBlock = contentText.substring(pos, entryEnd);
 
-    if (!_isAreaEntity(entryBlock)) { pos = entryEnd; continue; }
+    if (!_isAreaEntity(entryBlock, blobTypeMap)) { pos = entryEnd; continue; }
 
     const origId = _extractRawInt(entryBlock, '$id');
     const areaType = _extractRawInt(entryBlock, 'AreaType');
@@ -674,7 +674,7 @@ function _parseAreasIntoGraph(text) {
   return areas;
 }
 
-function _isAreaEntity(block) {
+function _isAreaEntity(block, blobTypeMap) {
   if (block.includes('ContextCross.Models.Area')) return true;
   const t = createTokenizer(block);
   const sec = t.findSection('$type');
@@ -682,6 +682,19 @@ function _isAreaEntity(block) {
   const val = t.substring(sec.valueStart, sec.valueEnd).replace(/\s/g, '');
   if (val.startsWith('"30|') || val.startsWith('"31|')) return true;
   if (val === '30' || val === '31') return true;
+  // A bare numeric `$type` (Odin's reference form for every occurrence after
+  // the first registration) carries no name. Resolve it against the blobdoc
+  // type table: the writer allocates a fresh id for the first Area it
+  // synthesizes after the file had none (e.g. 41), and the sibling entries
+  // that follow serialize that same id bare. Without this the freshly saved
+  // areas are invisible to the editor even though the game reads them fine.
+  if (blobTypeMap && blobTypeMap.size) {
+    const m = val.match(/^"?(\d+)"?$/);
+    if (m) {
+      const name = blobTypeMap.get(parseInt(m[1], 10));
+      if (name && name.includes('ContextCross.Models.Area')) return true;
+    }
+  }
   return false;
 }
 
@@ -922,4 +935,5 @@ module.exports = {
   // exposed for tests
   _extractRunwayPhysicalName,
   _headingDeg,
+  _isAreaEntity,
 };
