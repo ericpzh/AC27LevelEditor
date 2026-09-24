@@ -352,14 +352,14 @@ for (const file of aclFiles) {
 
     // ── Text-level _departureTakeoffTime / _arrivalInBlockTime validation ──
     {
-      const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":[^,]+,\s*(-?\d+)\s*\}/g;
+      const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
       let dtZero = 0, dtTotal = 0;
       let dtMatch;
       while ((dtMatch = depTtRe.exec(savedText)) !== null) {
         dtTotal++;
         if (dtMatch[1] === '0') dtZero++;
       }
-      const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":[^,]+,\s*(-?\d+)\s*\}/g;
+      const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
       let aiZero = 0, aiTotal = 0;
       let aiMatch;
       while ((aiMatch = arrIbRe.exec(savedText)) !== null) {

@@ -217,7 +217,7 @@ if (isDemo) {
   // These appear in both arrival and departure flight-plan entries.
   // For arrivals: _departureTakeoffTime=0 is expected (departure side unused).
   // For departures: _departureTakeoffTime should be non-zero.
-  const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":[^,]+,\s*(-?\d+)\s*\}/g;
+  const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
   let dtZero = 0, dtTotal = 0;
   let dtMatch;
   while ((dtMatch = depTtRe.exec(savedText)) !== null) {
@@ -225,7 +225,7 @@ if (isDemo) {
     if (dtMatch[1] === '0') dtZero++;
   }
   // Count _arrivalInBlockTime zeros
-  const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":[^,]+,\s*(-?\d+)\s*\}/g;
+  const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
   let aiZero = 0, aiTotal = 0;
   let aiMatch;
   while ((aiMatch = arrIbRe.exec(savedText)) !== null) {
