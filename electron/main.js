@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -3198,6 +3198,22 @@ ipcMain.handle('voice-stt-stop', async () => {
   return { success: true };
 });
 
+// ─── IPC: Global PTT hotkey (works even when the window is not focused) ───
+// Logic lives in ./pttShortcut (CJS, unit-tested in tests/electron/);
+// main only wires it to globalShortcut + the strips windows + ac27-config.
+const { createPttShortcutManager } = require('./pttShortcut');
+const pttShortcutManager = createPttShortcutManager({
+  globalShortcut,
+  loadConfig,
+  saveConfig,
+  getStripsWindows: () => [...flightStripsWindows.values()],
+  onTrigger: (win) => win.webContents.send('global-ptt-toggle'),
+});
+
+ipcMain.handle('get-ptt-shortcut', async () => pttShortcutManager.get());
+
+ipcMain.handle('set-ptt-shortcut', async (_e, accelerator) => pttShortcutManager.set(accelerator));
+
 // ─── IPC: Debug log from renderer → main terminal ───
 
 ipcMain.handle('debug-log', async (_e, args) => {
@@ -4504,6 +4520,19 @@ app.whenReady().then(() => {
   // Start UDP telemetry listener
   startUdpListener();
 
+  // Register the saved global PTT hotkey (Shift+Space by default). A stale or
+  // taken accelerator logs and leaves PTT mouse-only until the user re-picks.
+  try {
+    const saved = pttShortcutManager.get().shortcut;
+    if (saved) {
+      const r = pttShortcutManager.register(saved);
+      if (!r.success) console.warn('[PTT] global hotkey registration failed:', saved, r.error);
+      else console.log('[PTT] global hotkey:', saved);
+    } else {
+      console.log('[PTT] global hotkey disabled');
+    }
+  } catch (err) { console.warn('[PTT] global hotkey setup failed:', err.message); }
+
   // Start HTTP API server — always on port 31415 for MCP / external tool access
   startApiServer(mainWindow, 31415, () => airportCache);
 
@@ -4537,6 +4566,7 @@ app.whenReady().then(() => {
 });
 
 app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch (_) { /* shutting down */ }
   stopUdpListener();
   stopApiServer();
   voiceStt.dispose();

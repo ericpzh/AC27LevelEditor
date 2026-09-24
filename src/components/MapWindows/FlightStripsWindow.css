@@ -1085,3 +1085,42 @@
   margin: 0;
   accent-color: var(--accent);
 }
+
+/* ─── PTT hotkey gear (right of the mic) — greyed while PTT unavailable ─── */
+.flight-strips-bar .strips-bar-btn.ptt-gear-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.flight-strips-bar .strips-bar-btn.ptt-gear-disabled:hover {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+/* ─── PTT shortcut capture modal ─── */
+.ptt-capture-box {
+  margin: 10px 0 6px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--accent);
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  cursor: text;
+}
+.ptt-capture-box:focus {
+  border-color: var(--accent);
+}
+.ptt-capture-box.ptt-capture-error {
+  border-color: #e5484d;
+  color: #e5484d;
+}
+.ptt-capture-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-muted);
+}

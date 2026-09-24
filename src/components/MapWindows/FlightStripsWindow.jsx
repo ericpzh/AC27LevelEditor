@@ -10,13 +10,14 @@ import { useWitchAnimation } from '../../hooks/map/useWitchAnimation';
 import SimClock from './SimClock';
 import MapHelpOverlay from './MapHelpOverlay';
 import LiveSessionOverlay from './LiveSessionOverlay';
-import { IoHelpCircleOutline, IoRefreshOutline, IoFileTrayOutline, IoClose } from 'react-icons/io5';
+import { IoHelpCircleOutline, IoRefreshOutline, IoFileTrayOutline, IoClose, IoSettingsOutline } from 'react-icons/io5';
 import { witchDirection, isParked, getSpriteSheet, getSpriteCell, getSpriteViewBox, SPRITE_CELL, SPRITE_SHEET_W, SPRITE_SHEET_H } from './witchMode';
 import FlightStripCommandBar from './FlightStripCommandBar';
 import FlightPatchCommandBar from './FlightPatchCommandBar';
 import { getCommandChildren, setTaxiways } from './commandTree';
 import useVoiceCommands from './useVoiceCommands';
 import VoicePTTButton from './VoicePTTButton';
+import PttShortcutModal from './PttShortcutModal';
 import ApproachPluginInstallOverlay from './ApproachPluginInstallOverlay';
 import './FlightStripsWindow.css';
 
@@ -315,6 +316,8 @@ export default function FlightStripsWindow({ airportIcao }) {
   const [modPromptDismissChecked, setModPromptDismissChecked] = useState(false);
   // Load DLL notice popup (Debug Mode off) + transient copy feedback
   const [dllNoticeOpen, setDllNoticeOpen] = useState(false);
+  // Global PTT hotkey remap modal (gear button next to the PTT mic)
+  const [pttShortcutOpen, setPttShortcutOpen] = useState(false);
   const [dllFeedback, setDllFeedback] = useState(null);
   const dllFeedbackTimerRef = useRef(null);
   // R2 download overlay while fetching AC27Approach.dll (mirrors the livery
@@ -346,6 +349,24 @@ export default function FlightStripsWindow({ airportIcao }) {
     handleVoicePress();
     voice.startListening();
   }, [handleVoicePress, voice.startListening]);
+
+  // Global PTT hotkey (OS-level toggle from main — works even when this
+  // window or the whole app is unfocused). Latest-callback refs so the
+  // single subscription never goes stale as voice state changes.
+  const voiceListeningRef = useRef(false);
+  voiceListeningRef.current = voice.listening;
+  const handleVoiceStartRef = useRef(handleVoiceStart);
+  handleVoiceStartRef.current = handleVoiceStart;
+  const voiceStopRef = useRef(voice.stopListening);
+  voiceStopRef.current = voice.stopListening;
+  useEffect(() => {
+    if (!electronAPI || !electronAPI.onGlobalPttToggle) return undefined;
+    const off = electronAPI.onGlobalPttToggle(() => {
+      if (voiceListeningRef.current) voiceStopRef.current?.();
+      else handleVoiceStartRef.current?.();
+    });
+    return () => { if (typeof off === 'function') off(); };
+  }, [electronAPI]);
 
   // When callsign matched via voice: select the aircraft
   useEffect(() => {
@@ -406,13 +427,14 @@ export default function FlightStripsWindow({ airportIcao }) {
     };
   }, [dllFeedback]);
 
-  // Load-DLL notice / mod prompt close on Escape (mirrors MapHelpOverlay)
+  // Load-DLL notice / mod prompt / PTT-shortcut modal close on Escape
+  // (mirrors MapHelpOverlay)
   useEffect(() => {
-    if (!dllNoticeOpen && !modPromptOpen) return;
-    const handler = (e) => { if (e.key === 'Escape') { setDllNoticeOpen(false); setModPromptOpen(false); } };
+    if (!dllNoticeOpen && !modPromptOpen && !pttShortcutOpen) return;
+    const handler = (e) => { if (e.key === 'Escape') { setDllNoticeOpen(false); setModPromptOpen(false); setPttShortcutOpen(false); } };
     document.addEventListener('keydown', handler, true);
     return () => document.removeEventListener('keydown', handler, true);
-  }, [dllNoticeOpen, modPromptOpen]);
+  }, [dllNoticeOpen, modPromptOpen, pttShortcutOpen]);
 
   // Command capability — deliberately NOT re-checked here. The browser gate
   // already verifies the plugin DLL's MD5 (against the bundled Workshop DLL on
@@ -1105,6 +1127,18 @@ export default function FlightStripsWindow({ airportIcao }) {
               onRelease={voice.stopListening}
             />
           )}
+          {/* Global PTT hotkey remap — gear immediately right of the PTT
+              mic. Enabled only while the PTT button itself is available;
+              greyed out otherwise. Opens the capture modal. */}
+          <div
+            className={'strips-bar-btn' + (commandCapable === true ? '' : ' ptt-gear-disabled')}
+            title={t('ptt_shortcut_update')}
+            aria-label={t('ptt_shortcut_update')}
+            aria-disabled={commandCapable !== true}
+            onClick={() => { if (commandCapable === true) setPttShortcutOpen(true); }}
+          >
+            <IoSettingsOutline size={16} />
+          </div>
           {/* Load DLL: pick AC27Approach.dll to copy into
               BepInEx/plugins. Shown while the DLL is missing — once present,
               the PTT button + command bar take over. With Debug Mode off the
@@ -1138,6 +1172,9 @@ export default function FlightStripsWindow({ airportIcao }) {
 
       {/* Load-DLL notice — Debug Mode must be on (and the game closed) before
           the plugin DLL can be copied in. Reuses the help overlay styling. */}
+      {pttShortcutOpen && (
+        <PttShortcutModal onClose={() => setPttShortcutOpen(false)} />
+      )}
       {dllNoticeOpen && (
         <div id="map-help-overlay" onClick={(e) => { if (e.target.id === 'map-help-overlay') setDllNoticeOpen(false); }}>
           <div id="map-help-box" onClick={(e) => e.stopPropagation()}>

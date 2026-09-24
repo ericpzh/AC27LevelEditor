@@ -310,6 +310,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
 
+  // ─── Global PTT hotkey (OS-level, works even when unfocused) ──────
+  // Toggle semantics: each press flips the strips window's voice session
+  // (globalShortcut has no key-up). Main picks the target window; the
+  // renderer owns start/stop so the airport waypoints stay in the grammar.
+  getPttShortcut: () => ipcRenderer.invoke('get-ptt-shortcut'),
+  setPttShortcut: (accelerator) => ipcRenderer.invoke('set-ptt-shortcut', accelerator),
+  onGlobalPttToggle: function (cb) {
+    const handler = () => cb();
+    ipcRenderer.on('global-ptt-toggle', handler);
+    return () => ipcRenderer.removeListener('global-ptt-toggle', handler);
+  },
   // ─── Livery Install ───────────────────────────────────
   selectLiveryZip: () => ipcRenderer.invoke('select-livery-zip'),
   installLivery: (zipPath) => ipcRenderer.invoke('install-livery', zipPath),

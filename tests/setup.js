@@ -118,6 +118,10 @@ vi.stubGlobal('electronAPI', {
   loadApproachDll: () => mockIpcInvoke('load-approach-dll'),
   downloadApproachDll: () => mockIpcInvoke('download-approach-dll'),
   installApproachDll: (dllPath) => mockIpcInvoke('install-approach-dll', dllPath),
+  // Global PTT hotkey (OS-level toggle, works unfocused)
+  getPttShortcut: () => mockIpcInvoke('get-ptt-shortcut'),
+  setPttShortcut: (accelerator) => mockIpcInvoke('set-ptt-shortcut', accelerator),
+  onGlobalPttToggle: (cb) => mockIpcOn('global-ptt-toggle', cb),
   onApproachDllDownloadProgress: (cb) => mockIpcOn('approach-dll-download-progress', cb),
   offApproachDllDownloadProgress: (cb) => { /* unsubscribe */ },
 
