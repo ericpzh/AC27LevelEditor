@@ -4,9 +4,10 @@
  * All functions run in the Electron main process. The module uses only Node.js
  * built-ins (https, fs, path, child_process) so it adds zero dependencies.
  *
- * The download URL is discovered by scraping the BepInEx Bleeding Edge builds
- * page. If the page format changes, _findDownloadUrl will throw and the error
- * is surfaced to the user — no silent failure.
+ * The download URL is resolved through a fallback chain: the BepInEx Bleeding
+ * Edge builds page first, then the Thunderstore `BepInExPack_IL2CPP` package
+ * (a stable CDN mirror) when the build server is unreachable. If every source
+ * fails, the error is surfaced to the user — no silent failure.
  */
 
 const https = require('https');
@@ -18,6 +19,10 @@ const { app } = require('electron');
 // ─── Constants ─────────────────────────────────────────────
 
 const BEPINEX_BUILDS_URL = 'https://builds.bepinex.dev/projects/bepinex_be';
+// Fallback source: Thunderstore's BepInEx-maintained IL2CPP pack. Hosted on a
+// stable CDN, so it stays reachable when the Bleeding Edge build server is
+// down. The API's `latest.download_url` redirects to the versioned ZIP.
+const THUNDERSTORE_API_URL = 'https://thunderstore.io/api/experimental/package/BepInEx/BepInExPack_IL2CPP/';
 const ARTIFACT_PATTERN = /BepInEx-Unity\.IL2CPP-win-x64/i;
 const REQUIRED_ITEMS = ['BepInEx', 'dotnet', 'doorstop_config.ini', 'winhttp.dll'];
 // Deployed as <gameRoot>/BepInEx/plugins/AC27Approach.dll — keep in sync
@@ -128,11 +133,11 @@ function approachPluginPath(gameRoot) {
 }
 
 /**
- * Find the latest BepInEx IL2CPP Windows x64 download URL.
- * Scrapes the BepInEx Bleeding Edge builds listing page.
- * @returns {Promise<{ url: string, version: string }>}
+ * Find the latest BepInEx IL2CPP Windows x64 download URL from the primary
+ * source: the BepInEx Bleeding Edge builds listing page.
+ * @returns {Promise<{ url: string, version: string, source: string }>}
  */
-async function findDownloadUrl() {
+async function findBleedingEdgeUrl() {
   const { body } = await api._httpsGet(BEPINEX_BUILDS_URL);
 
   // Look for an <a> tag whose href contains the artifact pattern
@@ -149,7 +154,53 @@ async function findDownloadUrl() {
   const versionMatch = match[1].match(/BepInEx-Unity\.IL2CPP-win-x64-([^/]+)\.zip/);
   const version = versionMatch ? versionMatch[1] : 'unknown';
 
-  return { url, version };
+  return { url, version, source: 'bleeding-edge' };
+}
+
+/**
+ * Find the latest BepInEx IL2CPP Windows x64 download URL from the fallback
+ * source: the Thunderstore `BepInExPack_IL2CPP` package API. The returned
+ * download URL redirects to the versioned ZIP on the Thunderstore CDN.
+ * @returns {Promise<{ url: string, version: string, source: string }>}
+ */
+async function findThunderstoreUrl() {
+  const { body } = await api._httpsGet(THUNDERSTORE_API_URL);
+
+  let data;
+  try {
+    data = JSON.parse(body);
+  } catch (_) {
+    throw new Error('BEPINEX_THUNDERSTORE_PARSE');
+  }
+
+  const latest = data && data.latest;
+  if (!latest || !latest.download_url || !latest.version_number) {
+    throw new Error('BEPINEX_THUNDERSTORE_NO_ARTIFACT');
+  }
+
+  return { url: latest.download_url, version: latest.version_number, source: 'thunderstore' };
+}
+
+/**
+ * Resolve the latest BepInEx IL2CPP Windows x64 ZIP download. Tries each
+ * source in order (Bleeding Edge build server, then Thunderstore) and returns
+ * the first success. Throws BEPINEX_ALL_SOURCES_FAILED when every source is
+ * unreachable — per-source errors are logged for diagnostics.
+ * @returns {Promise<{ url: string, version: string, source: string }>}
+ */
+async function findDownloadUrl() {
+  const errors = [];
+
+  for (const resolve of [api.findBleedingEdgeUrl, api.findThunderstoreUrl]) {
+    try {
+      return await resolve();
+    } catch (err) {
+      errors.push((err && err.message) || String(err));
+    }
+  }
+
+  console.error('[BepInEx] all download sources failed:', errors.join('; '));
+  throw new Error('BEPINEX_ALL_SOURCES_FAILED');
 }
 
 /**
@@ -380,6 +431,8 @@ Object.assign(api, {
   hasApproachPlugin,
   approachPluginPath,
   findDownloadUrl,
+  findBleedingEdgeUrl,
+  findThunderstoreUrl,
   downloadZip,
   extractZip,
   installFiles,

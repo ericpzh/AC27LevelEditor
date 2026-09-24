@@ -559,6 +559,7 @@ const STR = {
 		    bepinex_installed:'调试模式已开启',
 		    bepinex_uninstalled:'调试模式已关闭',
 		    bepinex_error_fetch:'下载失败，请检查网络连接。',
+		    bepinex_error_sources:'下载失败，BepInEx 下载服务器暂时无法连接，请稍后重试。',
 		    bepinex_error_game_root:'请先选择游戏目录。',
   },
   en: {
@@ -1120,6 +1121,7 @@ const STR = {
 		    bepinex_installed:'Debug mode enabled',
 		    bepinex_uninstalled:'Debug mode disabled',
 		    bepinex_error_fetch:'Download failed. Check your internet connection.',
+		    bepinex_error_sources:'Download failed. The BepInEx download servers are unreachable — please try again later.',
 		    bepinex_error_game_root:'Please select the game directory first.',
   },
 };

@@ -80,6 +80,12 @@ export default function BepInExInstallOverlay({ onClose }) {
 
   const isError = !!error;
 
+  const errorText = error === 'NO_GAME_ROOT'
+    ? t('bepinex_error_game_root')
+    : error === 'BEPINEX_ALL_SOURCES_FAILED'
+      ? t('bepinex_error_sources')
+      : error;
+
   return (
     <div id="bepinex-overlay" onClick={handleOverlayClick}>
       <div id="bepinex-box" onClick={(e) => e.stopPropagation()}>
@@ -109,7 +115,7 @@ export default function BepInExInstallOverlay({ onClose }) {
             <div className="bepinex-section bepinex-error-box">
               <IoAlertCircle size={48} className="bepinex-error-icon" />
               <p className="bepinex-error-msg">
-                {error === 'NO_GAME_ROOT' ? t('bepinex_error_game_root') : error}
+                {errorText}
               </p>
               <button className="btn-sm" onClick={() => onClose(false)}>{t('browser_help_close')}</button>
             </div>

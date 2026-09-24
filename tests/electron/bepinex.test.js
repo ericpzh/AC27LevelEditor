@@ -179,32 +179,116 @@ describe('hasApproachPlugin', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
-//  findDownloadUrl
+//  findBleedingEdgeUrl
 // ══════════════════════════════════════════════════════════════
 
-describe('findDownloadUrl', () => {
+describe('findBleedingEdgeUrl', () => {
   it('extracts URL and version from builds page HTML', async () => {
     const bep = getBepInEx();
     const mockBody = '<html><body><a href="/projects/bepinex_be/687/artifacts/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.725.zip">dl</a></body></html>';
     vi.spyOn(bep, '_httpsGet').mockResolvedValue({ statusCode: 200, headers: {}, body: mockBody });
 
-    const result = await bep.findDownloadUrl();
+    const result = await bep.findBleedingEdgeUrl();
     expect(result.url).toContain('BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.725.zip');
     expect(result.version).toBe('6.0.0-be.725');
+    expect(result.source).toBe('bleeding-edge');
   });
 
   it('throws BEPINEX_ARTIFACT_NOT_FOUND when no link matches', async () => {
     const bep = getBepInEx();
     vi.spyOn(bep, '_httpsGet').mockResolvedValue({ statusCode: 200, headers: {}, body: '<html>No artifacts</html>' });
 
-    await expect(bep.findDownloadUrl()).rejects.toThrow('BEPINEX_ARTIFACT_NOT_FOUND');
+    await expect(bep.findBleedingEdgeUrl()).rejects.toThrow('BEPINEX_ARTIFACT_NOT_FOUND');
   });
 
-  it('throws on HTTP error status', async () => {
+  it('propagates HTTP errors from the build server', async () => {
     const bep = getBepInEx();
     vi.spyOn(bep, '_httpsGet').mockRejectedValue(new Error('BEPINEX_HTTP_404'));
 
-    await expect(bep.findDownloadUrl()).rejects.toThrow('BEPINEX_HTTP_404');
+    await expect(bep.findBleedingEdgeUrl()).rejects.toThrow('BEPINEX_HTTP_404');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+//  findThunderstoreUrl (fallback source)
+// ══════════════════════════════════════════════════════════════
+
+describe('findThunderstoreUrl', () => {
+  const apiJson = JSON.stringify({
+    latest: {
+      version_number: '6.0.755',
+      download_url: 'https://thunderstore.io/package/download/BepInEx/BepInExPack_IL2CPP/6.0.755/',
+    },
+  });
+
+  it('reads the latest version + download URL from the package API', async () => {
+    const bep = getBepInEx();
+    vi.spyOn(bep, '_httpsGet').mockResolvedValue({ statusCode: 200, headers: {}, body: apiJson });
+
+    const result = await bep.findThunderstoreUrl();
+    expect(result.url).toBe('https://thunderstore.io/package/download/BepInEx/BepInExPack_IL2CPP/6.0.755/');
+    expect(result.version).toBe('6.0.755');
+    expect(result.source).toBe('thunderstore');
+  });
+
+  it('throws BEPINEX_THUNDERSTORE_PARSE on a non-JSON body', async () => {
+    const bep = getBepInEx();
+    vi.spyOn(bep, '_httpsGet').mockResolvedValue({ statusCode: 200, headers: {}, body: '<html>nope</html>' });
+
+    await expect(bep.findThunderstoreUrl()).rejects.toThrow('BEPINEX_THUNDERSTORE_PARSE');
+  });
+
+  it('throws BEPINEX_THUNDERSTORE_NO_ARTIFACT when latest is missing', async () => {
+    const bep = getBepInEx();
+    vi.spyOn(bep, '_httpsGet').mockResolvedValue({ statusCode: 200, headers: {}, body: JSON.stringify({}) });
+
+    await expect(bep.findThunderstoreUrl()).rejects.toThrow('BEPINEX_THUNDERSTORE_NO_ARTIFACT');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+//  findDownloadUrl (fallback chain)
+// ══════════════════════════════════════════════════════════════
+
+describe('findDownloadUrl', () => {
+  it('prefers the Bleeding Edge build when it is reachable', async () => {
+    const bep = getBepInEx();
+    const mockBody = '<a href="/projects/bepinex_be/687/artifacts/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.725.zip">dl</a>';
+    vi.spyOn(bep, '_httpsGet').mockResolvedValue({ statusCode: 200, headers: {}, body: mockBody });
+
+    const result = await bep.findDownloadUrl();
+    expect(result.source).toBe('bleeding-edge');
+    expect(result.version).toBe('6.0.0-be.725');
+  });
+
+  it('falls back to Thunderstore when the build server is unreachable', async () => {
+    const bep = getBepInEx();
+    const apiJson = JSON.stringify({
+      latest: {
+        version_number: '6.0.755',
+        download_url: 'https://thunderstore.io/package/download/BepInEx/BepInExPack_IL2CPP/6.0.755/',
+      },
+    });
+    vi.spyOn(bep, '_httpsGet').mockImplementation(async (url) => {
+      if (String(url).includes('thunderstore.io')) {
+        return { statusCode: 200, headers: {}, body: apiJson };
+      }
+      throw new Error('BEPINEX_TIMEOUT'); // builds.bepinex.dev hanging
+    });
+
+    const result = await bep.findDownloadUrl();
+    expect(result.source).toBe('thunderstore');
+    expect(result.url).toContain('BepInExPack_IL2CPP');
+    expect(result.version).toBe('6.0.755');
+  });
+
+  it('throws BEPINEX_ALL_SOURCES_FAILED when every source fails', async () => {
+    const bep = getBepInEx();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(bep, '_httpsGet').mockRejectedValue(new Error('BEPINEX_TIMEOUT'));
+
+    await expect(bep.findDownloadUrl()).rejects.toThrow('BEPINEX_ALL_SOURCES_FAILED');
+    errSpy.mockRestore();
   });
 });
 

@@ -112,6 +112,16 @@ describe('BepInExInstallOverlay', () => {
     }, { timeout: 3000 });
   });
 
+  it('shows localized error when all download sources fail', async () => {
+    setLang('en');
+    window.electronAPI.installBepInEx = vi.fn(() => Promise.resolve({ success: false, error: 'BEPINEX_ALL_SOURCES_FAILED' }));
+    renderOverlay();
+    await waitFor(() => {
+      const body = document.getElementById('bepinex-body');
+      expect(body.textContent).toContain('download servers are unreachable');
+    }, { timeout: 3000 });
+  });
+
   it('updates progress bar on progress events', async () => {
     renderOverlay();
     // Emit progress before the install resolves
