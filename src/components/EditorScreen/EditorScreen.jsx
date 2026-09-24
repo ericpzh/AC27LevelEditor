@@ -22,6 +22,7 @@ function convertWindSpeed(entries, fromUnit, toUnit) {
   return entries.map(e => ({ ...e, speed: Math.round(e.speed * factor) }));
 }
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
+import { TiWeatherPartlySunny } from 'react-icons/ti';
 import FlightTable from './FlightTable/FlightTable';
 import WeatherEditor from './TimelineEditors/WeatherEditor';
 import WindEditor from './TimelineEditors/WindEditor';
@@ -33,6 +34,7 @@ import StandMap from './StandMap/StandMap';
 import GroundPainter from './GroundPainter/GroundPainter';
 import StarMap from './StarMap/StarMap';
 import ChatPanel from '../ChatPanel/ChatPanel';
+import { useLiveWeatherImport } from '../../hooks/useLiveWeatherImport';
 import RealtimeImportModal from './RealtimeImport/RealtimeImportModal';
 
 // ─── Sub-components ────────────────────────────────────────
@@ -331,6 +333,9 @@ export default function EditorScreen() {
   // ── Tooltips ──
   const { bind, TooltipPortal } = useTooltip();
 
+  // ── Live 24h weather import (toolbar, right of the AI button) ──
+  const { importLiveWeather, liveWeatherLoading } = useLiveWeatherImport({ electronAPI, t, showToast });
+
   // Load data on mount
   useEffect(() => {
     const pending = window._pendingEditor;
@@ -460,6 +465,7 @@ export default function EditorScreen() {
             <button {...bind(t(BUTTONS.realtime.descKey))} onClick={() => setRealtimeOpen(true)} className={realtimeOpen ? 'btn-map-active' : ''}><IoGlobeOutline size={14} className="btn-icon btn-icon-accent" /> {t('realtime_title')}</button>
           )}
           <button ref={chatBtnRef} {...bind(t(BUTTONS.chat.descKey))} onClick={toggleChatPanel} className={chatPanelOpen ? 'btn-map-active' : ''}><IoSparkles size={14} className="btn-icon btn-icon-accent" /> {t('chat_title')}</button>
+          <button {...bind(t(BUTTONS.liveWeather.descKey))} onClick={importLiveWeather} disabled={liveWeatherLoading}><TiWeatherPartlySunny size={14} className="btn-icon" /> {liveWeatherLoading ? t('tl_live_loading') : t('live_weather_title')}</button>
           <button {...bind(t(BUTTONS.backup.descKey))} onClick={handleBackup}><IoCloudUploadOutline size={14} className="btn-icon" /> {t('toolbar_backup')}</button>
           <button {...bind(t(BUTTONS.restore.descKey))} onClick={handleRestore}><IoCloudDownloadOutline size={14} className="btn-icon" /> {t('toolbar_restore')}</button>
           <button {...bind(t(BUTTONS.import.descKey))} onClick={handleImport}><IoDownloadOutline size={14} className="btn-icon" /> {t('toolbar_import')}</button>

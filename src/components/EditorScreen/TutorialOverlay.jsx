@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import './TutorialOverlay.css';
 import { useTranslation } from '../../hooks/useTranslation';
 import { IoClose, IoAirplane, IoCopyOutline, IoTrashOutline, IoSearchOutline, IoArrowBack, IoSave, IoCloudUploadOutline, IoCloudDownloadOutline, IoDownloadOutline, IoShareOutline, IoCheckmarkDone, IoNavigateOutline, IoMapOutline, IoSparkles, IoLanguage, IoHelpCircleOutline, IoGlobeOutline } from 'react-icons/io5';
+import { TiWeatherPartlySunny } from 'react-icons/ti';
 
 // ─── Button registry (icon + label key + help description) ───
 export const BUTTONS = {
@@ -22,6 +23,7 @@ export const BUTTONS = {
   starMap:        { icon: IoNavigateOutline,labelKey: 'toolbar_star_map',       descKey: 'tooltip_starMap' },
   standMap:       { icon: IoMapOutline,     labelKey: 'toolbar_stand_map',      descKey: 'tooltip_standMap' },
   chat:           { icon: IoSparkles,       labelKey: 'chat_title',             descKey: 'tooltip_chat' },
+  liveWeather:    { icon: TiWeatherPartlySunny, labelKey: 'live_weather_title', descKey: 'tooltip_liveWeather' },
   realtime:       { icon: IoGlobeOutline,   labelKey: 'realtime_title',         descKey: 'tooltip_realtime' },
 };
 

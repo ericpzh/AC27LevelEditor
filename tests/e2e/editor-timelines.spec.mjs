@@ -77,8 +77,8 @@ test('E6c — weather add button creates new row', async () => {
   const list = window.locator('#weather-list');
   const beforeCount = await list.locator('.tl-row').count();
 
-  // Click add button
-  const addBtn = list.locator('.btn-sm').first();
+  // Click add button (explicit data-action — the live-import button shares .btn-sm)
+  const addBtn = list.locator('.btn-sm[data-action="add"]').first();
   if (!(await addBtn.isVisible().catch(() => false))) {
     test.skip(true, 'Weather add button not visible');
     return;

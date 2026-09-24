@@ -165,6 +165,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aviationstackFetch: (args) => ipcRenderer.invoke('aviationstack-fetch', args),
   validateFlights: (flights, snapshot) => ipcRenderer.invoke('validate-flights', flights, snapshot),
 
+  // ─── Live weather import (aviationweather.gov METAR history + TAF fallback)
+  fetchLiveMetar: (icao) => ipcRenderer.invoke('fetch-live-metar', icao),
+
   // Event: cloud chat (tool calls + done)
   _cloudChatEventHandlers: new Map(),
   onCloudChatEvent: function (cb) {

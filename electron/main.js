@@ -24,6 +24,7 @@ const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAirc
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS, validateFlightObjects, buildConstraints } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
 const aviationstack = require('./aviationstack');
+const liveMetar = require('./live-metar');
 const { buildPatchPayload } = require('./patchFrame');
 const voiceStt = require('./voiceSttWorker');
 
@@ -3297,6 +3298,23 @@ ipcMain.handle('aviationstack-fetch', async (_event, args = {}) => {
       return { success: false, error: result.errors[0], errors: result.errors };
     }
     return result;
+  } catch (e) {
+    return { success: false, error: { code: 'internal_error', message: e.message } };
+  }
+});
+
+// ─── Live weather import (aviationweather.gov METAR history + TAF fallback) ─
+// Returns past-24h reports for one station; the renderer maps them to weather
+// frames (full day) + wind frames (level window) via src/utils/realtime/metar.js.
+ipcMain.handle('fetch-live-metar', async (_event, icao) => {
+  try {
+    const res = await liveMetar.fetchLiveHistory({ icao });
+    if (!res.ok) return { success: false, error: res.error };
+    const out = { success: true, source: res.source, icao: res.icao };
+    if (res.cached) out.cached = true;
+    if (res.source === 'METAR') out.reports = res.reports;
+    else out.report = res.report;
+    return out;
   } catch (e) {
     return { success: false, error: { code: 'internal_error', message: e.message } };
   }

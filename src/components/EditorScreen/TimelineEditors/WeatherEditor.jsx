@@ -37,7 +37,7 @@ export default function WeatherEditor() {
             <span>{t('tl_time')}</span><span>{t('tl_preset')}</span>
             <span></span>
             <span className="tl-hdr-info">{range.validMinTime!=null?`${String(Math.floor(range.validMinTime/60)%24).padStart(2,'0')}:${String(range.validMinTime%60).padStart(2,'0')} ~ ${String(Math.floor(range.validMaxTime/60)%24).padStart(2,'0')}:${String(range.validMaxTime%60).padStart(2,'0')}`:''}</span>
-            <button className="btn-sm" onClick={add}><IoAdd size={14} className="btn-icon" />{t('tl_add')}</button>
+            <button className="btn-sm" data-action="add" onClick={add}><IoAdd size={14} className="btn-icon" />{t('tl_add')}</button>
           </div>
           {sorted.map(e => { const ri = weatherTimeline.indexOf(e);
             return <div key={ri} className="tl-row" data-idx={ri} {...(e._isNew ? { 'data-new': '' } : {})}>

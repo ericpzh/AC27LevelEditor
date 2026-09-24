@@ -50,6 +50,9 @@ vi.stubGlobal('electronAPI', {
   saveRunwayTimeline: (data) => mockIpcInvoke('save-runway-timeline', data),
   scanRunwayPairs: (rootPath, airportIcao) => mockIpcInvoke('scan-runway-pairs', rootPath, airportIcao),
 
+  // Live weather import (aviationweather.gov METAR history + TAF fallback)
+  fetchLiveMetar: (icao) => mockIpcInvoke('fetch-live-metar', icao),
+
   // Backup & Import
   manualBackup: (sourcePath) => mockIpcInvoke('manual-backup', sourcePath),
   importZip: (data) => mockIpcInvoke('import-zip', data),
