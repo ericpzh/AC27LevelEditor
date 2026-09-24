@@ -9,15 +9,15 @@ const os = require('os');
 const { createZip, listZipFiles, extractZip } = require('../src/utils/zipUtils');
 const { ddsToPngDataUrl } = require('./dds');
 const { STEAM_WORKSHOP_SEGMENT, STEAM_WORKSHOP_CONTENT_SEGMENT, STEAM_APP_ID } = require('../src/utils/constants/steam.js');
+const gamePaths = require('../src/utils/gamePaths');
 
 const OWN_PACK = 'AC27 Custom Liveries';
 const REFERENCE_PACK = 'AC27 Realistic Aircraft Livery';
 // The game ships one neutral default livery per aircraft type — the exact UV
 // atlas the model expects. The painter seeds new canvases with this so the
 // background is never transparent and each aircraft gets its real shape.
-const AIRCRAFT_DEFAULT_LIVERY_DIR = path.join(
-  'GroundATC_Data', 'StreamingAssets', 'BuiltInAircraftLivery', 'AircraftDefaultLivery',
-);
+// Located per-OS via gamePaths (Windows/Linux `<root>/GroundATC_Data/...`,
+// macOS inside `GroundATC.app/Contents/Resources/...`).
 // The game treats a folder under Mods/ as a mod only when it carries a
 // mod_info.json. The official pack zip ships one inside our own folder that
 // still names the *reference* pack, so we (re)write ours on every save/load.
@@ -55,8 +55,8 @@ const THUMBNAIL_SIZE = 256;
 const _thumbCache = new Map();
 const _THUMB_CACHE_MAX = 300;
 
-function ownPackDir(gameRoot) { return path.join(gameRoot, 'Mods', OWN_PACK); }
-function referencePackDir(gameRoot) { return path.join(gameRoot, 'Mods', REFERENCE_PACK); }
+function ownPackDir(gameRoot) { return path.join(gamePaths.modsDir(gameRoot), OWN_PACK); }
+function referencePackDir(gameRoot) { return path.join(gamePaths.modsDir(gameRoot), REFERENCE_PACK); }
 
 // ─── Steam Workshop discovery (best-effort) ─────────────────
 // Workshop content lives at <SteamLibrary>/steamapps/workshop/content/<appid>/
@@ -173,7 +173,7 @@ function hasBuiltInTemplate(gameRoot, planeId) {
   if (!gameRoot || !planeId) return false;
   try {
     return fs.existsSync(path.join(
-      gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, String(planeId), 'aircraft_livery_manifest.json',
+      gamePaths.builtinLiveryDir(gameRoot), String(planeId), 'aircraft_livery_manifest.json',
     ));
   } catch (_) {
     return false;
@@ -325,7 +325,7 @@ function _readBuiltInManifest(gameRoot, planeId) {
   try {
     if (!gameRoot || !planeId) return null;
     return _readJsonFile(
-      path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, String(planeId), 'aircraft_livery_manifest.json'),
+      path.join(gamePaths.builtinLiveryDir(gameRoot), String(planeId), 'aircraft_livery_manifest.json'),
       'utf-8',
     );
   } catch (_) {
@@ -442,7 +442,7 @@ function listLiveries(gameRoot) {
 // plane id; the short code is a display/naming convenience derived from it.
 function listAircraftTypes(gameRoot) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
-  const dir = path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR);
+  const dir = gamePaths.builtinLiveryDir(gameRoot);
   const types = [];
   try {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -583,7 +583,7 @@ function readAircraftTemplate(gameRoot, planeId) {
     return { success: false, error: 'BAD_PLANE' };
   }
   if (_templateCache.has(id)) return _templateCache.get(id);
-  const dir = path.join(gameRoot, AIRCRAFT_DEFAULT_LIVERY_DIR, id);
+  const dir = path.join(gamePaths.builtinLiveryDir(gameRoot), id);
   let result;
   try {
     const manifest = _readJsonFile(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8');

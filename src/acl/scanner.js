@@ -10,6 +10,7 @@ const {
   STEAM_DEMO_DIR_NAME,
   STEAM_LEGACY_GAME_DIR_NAME,
 } = require('../utils/constants/steam.js');
+const gamePaths = require('../utils/gamePaths');
 
 // Folders under <steamapps>/common that the name-agnostic sibling scan must
 // skip: the demo is a separate product, and the retired Playtest build sits in
@@ -26,7 +27,11 @@ const NON_TARGET_GAME_DIR_NAMES = new Set([
  * @returns {{ airports: Array, totalFiles: number, errorCode?: string, errorPath?: string }}
  */
 function scanGameRoot(gameRoot) {
-  const airportsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
+  // Resolve the data root for the OS (Windows/Linux <root>/GroundATC_Data,
+  // macOS <root>/GroundATC.app/Contents/Resources/Data, …). gamePaths falls
+  // back to the Windows/Linux layout so a missing install still reports a
+  // sensible errorPath.
+  const airportsDir = gamePaths.airportsDir(gameRoot);
   if (!fs.existsSync(airportsDir)) {
     return { airports: [], totalFiles: 0, errorCode: 'error_airports_dir_not_found', errorPath: airportsDir };
   }

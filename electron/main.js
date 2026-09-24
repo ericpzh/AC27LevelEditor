@@ -19,6 +19,7 @@ const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, e
 const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, PROD_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { STEAM_GAME_DIR_NAME } = require('../src/utils/constants/steam.js');
+const gamePaths = require('../src/utils/gamePaths');
 const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS, validateFlightObjects, buildConstraints } = require('./api-server');
@@ -66,7 +67,7 @@ function _loadVoiceCatalog(rootPath) {
   if (_voiceCatalogCache.root === rootPath) return _voiceCatalogCache.map;
   const map = {};
   try {
-    const catalogPath = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Voices', 'voice_catalog.json');
+    const catalogPath = gamePaths.voiceCatalogPath(rootPath);
     const json = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
     for (const v of (json.voices || [])) {
       if (v && v.name) map[v.name] = v.language || '';
@@ -591,6 +592,10 @@ function _candidateExeDirs() {
   // living inside <steamapps>/workshop/content/....
   try { addDir(process.env.AC27_WORKSHOP_DIR); } catch (_) {}
   try { addDir(process.env.AC27_GAME_ROOT); } catch (_) {}
+  // Platform-default Steam library roots. On macOS/Linux the editor lives in
+  // /Applications or /opt, so the ancestor walk never reaches the game; these
+  // give the Steam `common/*` sibling scan a starting point.
+  for (const d of gamePaths.steamCommonDirs()) addDir(d);
   return [...new Set(dirs.filter(Boolean))];
 }
 
@@ -784,7 +789,7 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
 
   // Language: derive from audio_clips_*.json existence
   const availableLanguages = [];
-  const levelsPath = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports', airportIcao, 'Levels');
+  const levelsPath = gamePaths.levelsDir(rootPath, airportIcao);
   if (fs.existsSync(path.join(levelsPath, 'audio_clips_en.json'))) availableLanguages.push('en');
   if (fs.existsSync(path.join(levelsPath, 'audio_clips_zh.json'))) availableLanguages.push('zh');
   for (const l of (aclValues.Language || [])) {
@@ -1030,12 +1035,8 @@ ipcMain.handle('get-live-values', async (_event, aclPath, icao) => {
   try {
     if (!aclPath || !fs.existsSync(aclPath)) return { success: false, error: 'file not found' };
     const rootPath = (() => {
-      try {
-        const m = String(aclPath).match(/^(.*)[\\/]GroundATC_Data[\\/]/i);
-        if (m) return m[1];
-        const st = useAppStore ? null : null;
-        return null;
-      } catch (_) { return null; }
+      try { return gamePaths.gameRootFromLevelPath(aclPath); }
+      catch (_) { return null; }
     })();
     // Derive rootPath from cachedScan or airportCache if not inferrable
     let effectiveRoot = rootPath;
@@ -1228,7 +1229,7 @@ function _collectAirportRunwayPairs(aclPaths) {
 
 ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
   console.log('══════════════ [INIT-CACHE] START ══════════════');
-  const airportsDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports');
+  const airportsDir = gamePaths.airportsDir(rootPath);
   if (!fs.existsSync(airportsDir)) return {};
 
   // ── Try loading approach data from disk cache ──
@@ -1613,7 +1614,7 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       console.log('[IPC] refresh-root-scan: deleted disk cache');
     }
     // Re-run init-airport-cache logic (same as the handler above but inline)
-    const airportsDir = path.join(rootPath, 'GroundATC_Data', 'StreamingAssets', 'Airports');
+    const airportsDir = gamePaths.airportsDir(rootPath);
     if (!fs.existsSync(airportsDir)) return { success: false, errorCode: 'error_airports_dir_not_found', errorPath: airportsDir };
 
     const cache = {};
@@ -3031,7 +3032,7 @@ ipcMain.handle('close-flight-strips', async (_e, airportIcao) => { closeFlightSt
 
 ipcMain.handle('get-flight-strip-data', async (_e, airportIcao, gameRoot) => {
   const { loadFlights } = require('../src/acl/parser.js');
-  const levelsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports', airportIcao, 'Levels');
+  const levelsDir = gamePaths.levelsDir(gameRoot, airportIcao);
   if (!fs.existsSync(levelsDir)) return { success: true, data: {} };
 
   const files = fs.readdirSync(levelsDir).filter(f => f.endsWith('.acl'));
@@ -3646,7 +3647,7 @@ ipcMain.handle('install-livery', async (_event, zipPath) => {
   const gameRoot = cr?.data?.gameRoot;
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
 
-  const targetDir = path.join(gameRoot, 'Mods');
+  const targetDir = gamePaths.modsDir(gameRoot);
   try {
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
@@ -4250,7 +4251,7 @@ ipcMain.handle('discover-menu-videos', async () => {
       return { error: 'NO_GAME_ROOT' };
     }
 
-    const videosDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'MainMenuVideos');
+    const videosDir = gamePaths.mainMenuVideosDir(gameRoot);
     console.log('[video-replacer] scanning videosDir:', videosDir);
     if (!fs.existsSync(videosDir)) {
       console.log('[video-replacer] videosDir not found');
@@ -4383,7 +4384,7 @@ ipcMain.handle('check-video-backup-exists', async () => {
     const gameRoot = cr?.data?.gameRoot;
     if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
 
-    const videosDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'MainMenuVideos');
+    const videosDir = gamePaths.mainMenuVideosDir(gameRoot);
     if (!fs.existsSync(videosDir)) return { success: true, exists: false };
 
     const entries = fs.readdirSync(videosDir, { withFileTypes: true });
@@ -4414,7 +4415,7 @@ ipcMain.handle('reset-all-levels', async (_event, rootPathArg) => {
     const gameRoot = argRoot || cr?.data?.gameRoot;
     if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
 
-    const airportsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
+    const airportsDir = gamePaths.airportsDir(gameRoot);
     if (!fs.existsSync(airportsDir)) return { success: false, error: 'AIRPORTS_DIR_NOT_FOUND' };
 
     let totalDeleted = 0;
@@ -4472,7 +4473,7 @@ ipcMain.handle('restore-video-backup', async () => {
     const gameRoot = cr?.data?.gameRoot;
     if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
 
-    const videosDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'MainMenuVideos');
+    const videosDir = gamePaths.mainMenuVideosDir(gameRoot);
     if (!fs.existsSync(videosDir)) return { success: true, restored: [] };
 
     const entries = fs.readdirSync(videosDir, { withFileTypes: true });

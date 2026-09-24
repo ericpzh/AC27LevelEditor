@@ -18,6 +18,7 @@ export default function SetupScreen() {
   const [loading, setLoading] = useState(false);
   const [detected, setDetected] = useState(null);
   const [workshop, setWorkshop] = useState(false);
+  const [platform, setPlatform] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,6 +29,10 @@ export default function SetupScreen() {
       } catch (err) { console.error(err); }
       if (cancelled) return;
       setWorkshop(isWorkshop);
+      try {
+        const info = await electronAPI.getSystemInfo();
+        if (!cancelled) setPlatform((info && info.platform) || null);
+      } catch (err) { /* non-fatal — hint falls back to the Windows example */ }
       // Auto-detection is Steam/Workshop-only — the normal build never runs a
       // search; the user selects the game folder manually.
       if (!isWorkshop) return;
@@ -75,6 +80,14 @@ export default function SetupScreen() {
     setLoading(false);
   };
 
+  // Steam install-path example for the current OS. macOS/Linux use a single
+  // canonical path; Windows keeps the historical C:/D: pair (the `or` label).
+  const steamPathHint = platform === 'darwin'
+    ? <code>{`~/Library/Application Support/Steam/steamapps/common/${STEAM_GAME_DIR_NAME}`}</code>
+    : platform === 'linux'
+      ? <code>{`~/.steam/steam/steamapps/common/${STEAM_GAME_DIR_NAME}`}</code>
+      : <><code>{`C:\\Program Files (x86)\\Steam\\steamapps\\common\\${STEAM_GAME_DIR_NAME}`}</code> {t('setup_steam_path_or')} <code>{`D:\\SteamLibrary\\steamapps\\common\\${STEAM_DEMO_DIR_NAME}`}</code></>;
+
   const steamHint = (
     <div className="steam-hint">
       <div className="steam-hint-title">{t('setup_steam_title')}</div>
@@ -83,7 +96,7 @@ export default function SetupScreen() {
         <li>{safeHtml(t('setup_steam_step2'))}</li>
         <li>{t('setup_steam_step3')}</li>
       </ol>
-      <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span><code>{`C:\\Program Files (x86)\\Steam\\steamapps\\common\\${STEAM_GAME_DIR_NAME}`}</code> {t('setup_steam_path_or')} <code>{`D:\\SteamLibrary\\steamapps\\common\\${STEAM_DEMO_DIR_NAME}`}</code></p>
+      <p className="steam-path-hint"><span>{t('setup_steam_path_label')}</span>{steamPathHint}</p>
     </div>
   );
 
