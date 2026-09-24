@@ -119,6 +119,28 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 2. Click **Run anyway**
 3. The warning won't appear on subsequent launches
 
+<a id="macosgatekeeper"></a>
+
+### macOS — "AC27 Editor.app is damaged and can't be opened"
+
+The macOS build is **not code-signed or notarized** (signing requires a paid Apple Developer account). macOS therefore tags the downloaded app with a *quarantine* attribute, and Gatekeeper refuses to launch it with:
+
+> **"AC27 Editor.app" is damaged and can't be opened. You should move it to the Trash.**
+
+This is **not** a corrupt download — it is Gatekeeper blocking the unsigned app. Pick either fix:
+
+**Option A — clear quarantine (recommended).** Drag `AC27 Editor.app` into `/Applications`, then run in Terminal:
+
+```bash
+xattr -cr "/Applications/AC27 Editor.app"
+```
+
+After that, launch it normally. (If you run it from the DMG instead of `/Applications`, point the command at the mounted path.)
+
+**Option B — right-click Open.** In Finder, right-click the app → **Open** → **Open** again. Note this only works if macOS shows the *"unidentified developer"* prompt; for the *"damaged"* prompt use Option A.
+
+The DMG is a **universal** build, so it runs natively on both Apple Silicon (arm64) and Intel (x64) Macs.
+
 ---
 
 <a id="chinese"></a>
@@ -191,6 +213,28 @@ The editor is an unsigned Electron app. On first run, Windows shows a **"Windows
 1. 点击 **更多信息**
 2. 点击 **仍要运行**
 3. 后续运行将不再提示
+
+<a id="macosgatekeeperzh"></a>
+
+### macOS —「AC27 Editor.app 已损坏，无法打开」
+
+macOS 版本**未做代码签名与公证**（签名需要付费的 Apple 开发者账号）。因此系统会给下载的 app 打上 *quarantine*（隔离）属性，Gatekeeper 会拒绝启动并提示：
+
+> **「AC27 Editor.app」已损坏，无法打开。你应该将它移到废纸篓。**
+
+这**不是**下载损坏，而是 Gatekeeper 拦截未签名 app。任选一种方式解决：
+
+**方式 A — 清除隔离属性（推荐）。** 先把 `AC27 Editor.app` 拖到 `/Applications`，然后在「终端」执行：
+
+```bash
+xattr -cr "/Applications/AC27 Editor.app"
+```
+
+之后即可正常启动。（若直接从 DMG 运行，请改成已挂载的路径。）
+
+**方式 B — 右键打开。** 在「访达」中右键 app → **打开** → 再点 **打开**。注意：该系统仅在弹出「无法验证开发者」时可用；如果弹的是「已损坏」，请用方式 A。
+
+DMG 为 **universal**（通用）版本，在 Apple Silicon（arm64）与 Intel（x64）Mac 上均可原生运行。
 
 ---
 
@@ -497,7 +541,7 @@ not edit the `build` key in package.json — there isn't one). Windows
 | `npm run build:win` | `release/AC27Editor.exe` | Normal build — **no voice assets**. This is the auto-update variant served from R2 (small). Voice UI shows "unavailable" (worker JS not shipped). |
 | `npm run build:win:voice` | `release/AC27EditorVoice.exe` | Voice build — bundles the offline vosk STT (large EN model `vosk-model-en-us-0.22` ~1.9 GB + small ZH `vosk-model-small-cn-0.22` ~42 MB, sox, vosk DLLs, koffi). Auto-updates through the R2 `/editor` route too — sends `X-AC27-Variant: voice` so the Worker serves its own objects. |
 | `npm run build:win:workshop` | `release/AC27EditorWorkshop.exe` | Steam Workshop build — bundles the AC27Approach plugin DLL offline (`resources/AC27Approach.dll`); **auto-update disabled** (Steam Workshop handles updates). Not attached to the GitHub release. |
-| `npm run build:mac` | `release/*.dmg` | macOS (voice is Windows-only). |
+| `npm run build:mac` | `release/AC27Editor.dmg` | macOS — **universal** (arm64 + x64), **unsigned** (users clear quarantine — see [macOS Gatekeeper](#macosgatekeeper); voice is Windows-only). |
 | `npm run build:linux` | `release/*.AppImage` + `*.deb` | Linux (no auto-update). |
 
 The normal + voice Windows variants go to the GitHub release and both reach R2
@@ -537,4 +581,4 @@ Copy-Item "$libDir\libssl.1.0.0.dylib" "$libDir\libssl.dylib" -Force
 
 ### CI/CD
 
-The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags (or a manual `workflow_dispatch`) and builds **Windows** (normal + voice + workshop portable `.exe`), **macOS** (`.dmg`), **Linux** (`.AppImage` + `.deb`), and the **AC27Approach plugin DLL** in parallel. The normal + voice Windows builds are uploaded to Cloudflare R2 for auto-update delivery, and the plugin DLL is uploaded to the dedicated `ac27approach` R2 bucket (`s3://ac27approach/AC27Approach.dll`) — served via the `https://ericpzh.rest/ac27approach*` Worker route that the Flight Strips window's Load DLL button downloads from. The workshop exe auto-deploys to Steam Workshop (appid 3328490). All normal + voice + plugin artifacts are attached to a GitHub Release with auto-generated release notes. See `mods/docs/cloudflare-worker-routes.md` for the Worker/R2 infrastructure.
+The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags (or a manual `workflow_dispatch`) and builds **Windows** (normal + voice + workshop portable `.exe`), **macOS** (`.dmg`), **Linux** (`.AppImage` + `.deb`), and the **AC27Approach plugin DLL** in parallel. The normal + voice Windows builds are uploaded to Cloudflare R2 for auto-update delivery, and the plugin DLL is uploaded to the dedicated `ac27approach` R2 bucket (`s3://ac27approach/AC27Approach.dll`) — served via the `https://ericpzh.rest/ac27approach*` Worker route that the Flight Strips window's Load DLL button downloads from. The workshop exe auto-deploys to Steam Workshop (appid 3328490). All normal + voice + plugin artifacts are attached to a GitHub Release with auto-generated release notes. The macOS DMG is built **universal but unsigned** — see [macOS Gatekeeper](#macosgatekeeper). See `mods/docs/cloudflare-worker-routes.md` for the Worker/R2 infrastructure.

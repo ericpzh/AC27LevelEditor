@@ -92,14 +92,29 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: npm ci
-      - name: Build macOS (dmg)
+      - name: Build macOS (universal dmg — unsigned)
+        # Best-effort, like the Workshop build: a macOS-only failure (unsigned
+        # or universal-merge quirks) must never block the Windows release, the
+        # R2 auto-update publish, or the Steam Workshop deploy. If it fails the
+        # upload finds no files and the release job degrades to a
+        # Windows + Linux + plugin release (see "Assemble release file list").
+        #
+        # Unsigned distribution: no Apple Developer ID cert is provided, and
+        # build.js pins identity: null. Disable identity auto-discovery so the
+        # build is deterministic (never half-signs), matching the Windows jobs.
+        # macOS quarantines the unsigned app on download, so users must clear
+        # it — see README "macOS Gatekeeper".
+        continue-on-error: true
         run: npm run build:mac -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
       - name: Upload macOS artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: AC27-Editor-macOS
           path: release/*.dmg
-          if-no-files-found: error
+          if-no-files-found: warn
 
   build-linux:
     runs-on: ubuntu-latest
@@ -185,6 +200,8 @@ jobs:
           path: release-workshop
 
       - name: Download macOS artifact
+        id: macos_artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: AC27-Editor-macOS
@@ -214,16 +231,37 @@ jobs:
           fi
           echo "Resolved version: $(cat $GITHUB_OUTPUT)"
 
+      - name: Assemble release file list
+        id: release_files
+        # macOS is best-effort — include the dmg only when its artifact actually
+        # downloaded, so an absent/failed mac build degrades to a
+        # Windows + Linux + plugin release instead of failing the whole job.
+        # Everything else stays required (fail_on_unmatched_files below).
+        run: |
+          FILES="release-windows/*.exe"
+          if [ "${{ steps.macos_artifact.outcome }}" = "success" ]; then
+            FILES="release-macos/*.dmg
+          $FILES"
+          else
+            echo "::warning::macOS artifact unavailable — releasing without a .dmg"
+          fi
+          FILES="$FILES
+          release-linux/*.AppImage
+          release-linux/*.deb
+          release-plugin/*.dll"
+          {
+            echo "files<<EOF"
+            echo "$FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "--- release files ---"
+          echo "$FILES"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          files: |
-            release-windows/*.exe
-            release-macos/*.dmg
-            release-linux/*.AppImage
-            release-linux/*.deb
-            release-plugin/*.dll
+          files: ${{ steps.release_files.outputs.files }}
           generate_release_notes: true
           fail_on_unmatched_files: true
         env:

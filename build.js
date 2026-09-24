@@ -140,10 +140,24 @@ if (isWorkshop) {
 
 if (isWin || (!isWin && !isMac && !isLinux)) config.win = win;
 if (isMac) config.mac = {
-  target: 'dmg',
+  // Universal DMG (x64 + arm64) — works on Intel and Apple Silicon. Both
+  // slices are merged by @electron/universal, which keeps byte-identical files
+  // as-is (SHA-checked) instead of lipo-ing them, so the per-host prebuilt
+  // native deps in node_modules do not break the merge. Caveat: the bundled
+  // ffmpeg-static binary is host-arch only, so the universal app still carries
+  // a single-arch ffmpeg — background-video conversion fails on the opposite
+  // architecture (an Intel Mac cannot run an arm64-only ffmpeg).
+  target: [{ target: 'dmg', arch: ['universal'] }],
   icon: 'icon.png',
   category: 'public.app-category.utilities',
   artifactName: 'AC27Editor.${ext}',
+  // Unsigned distribution — force electron-builder to skip code signing
+  // deterministically (no Apple Developer ID cert is provided in CI). The
+  // resulting app is unsigned, so macOS Gatekeeper quarantines it on download
+  // and reports "AC27 Editor.app is damaged and can't be opened". The fix is
+  // documented in the README (macOS Gatekeeper section): clear the quarantine
+  // attribute — `xattr -cr "/Applications/AC27 Editor.app"`.
+  identity: null,
   extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg', to: 'ffmpeg' }, ...WORKSHOP_WORKER_RESOURCES],
 };
 if (isLinux) config.linux = {
