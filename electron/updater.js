@@ -367,6 +367,7 @@ function downloadUpdate(event, destDir) {
     const startedAt = Date.now();
     let received = 0;
     let total = 0;
+    let settled = false;
     // Response metadata from the (final, post-redirect) GET — returned to the
     // caller so a failed MD5 verification can be diagnosed (was the exe a
     // different build than the sidecar the verify HEAD read?).
@@ -377,6 +378,22 @@ function downloadUpdate(event, destDir) {
         event.sender.send('update-download-progress', { percent });
       }
     };
+
+    const haveLength = () => (total > 0 ? `${received}/${total}` : String(received));
+    const cleanupPartial = () => {
+      try { file.close(); } catch (_) { /* ignore */ }
+      try { fs.unlinkSync(exePath); } catch (_) { /* ignore */ }
+    };
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanupPartial();
+      reject(err);
+    };
+    // A write-stream error (disk full, or the stream's open racing a caller
+    // that deleted destDir) must never surface as an unhandled 'error' event.
+    // Route it through fail() — a late error after settle() is a no-op.
+    file.on('error', (err) => fail(err));
 
     const doGet = (target, redirectsLeft) => {
       const req = https.get(target, { timeout: 60000, headers: variantHeader() }, (res) => {
@@ -389,9 +406,7 @@ function downloadUpdate(event, destDir) {
         }
 
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          file.close();
-          try { fs.unlinkSync(exePath); } catch (_) { /* ignore */ }
-          reject(new Error('UPDATE_DOWNLOAD_HTTP_' + res.statusCode));
+          fail(new Error('UPDATE_DOWNLOAD_HTTP_' + res.statusCode));
           return;
         }
 
@@ -413,19 +428,6 @@ function downloadUpdate(event, destDir) {
           etag: (res.headers.etag || '').replace(/^"|"$/g, '') || null,
           lastModified: res.headers['last-modified'] || null,
           ac27Md5: (res.headers['x-ac27-md5'] || '').trim() || null,
-        };
-
-        let settled = false;
-        const haveLength = () => (total > 0 ? `${received}/${total}` : String(received));
-        const cleanupPartial = () => {
-          file.close();
-          try { fs.unlinkSync(exePath); } catch (_) { /* ignore */ }
-        };
-        const fail = (err) => {
-          if (settled) return;
-          settled = true;
-          cleanupPartial();
-          reject(err);
         };
 
         res.on('data', (chunk) => {
@@ -473,15 +475,11 @@ function downloadUpdate(event, destDir) {
       });
 
       req.on('error', (err) => {
-        file.close();
-        try { fs.unlinkSync(exePath); } catch (_) { /* ignore */ }
-        reject(err);
+        fail(err);
       });
       req.on('timeout', () => {
         req.destroy();
-        file.close();
-        try { fs.unlinkSync(exePath); } catch (_) { /* ignore */ }
-        reject(new Error('UPDATE_DOWNLOAD_TIMEOUT'));
+        fail(new Error('UPDATE_DOWNLOAD_TIMEOUT'));
       });
     };
 
