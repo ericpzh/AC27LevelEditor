@@ -240,6 +240,22 @@ beforeEach(() => {
         expect(debugBtn.disabled).toBe(true);
       });
     });
+
+    it('hides the debug mode toggle on non-Windows platforms', async () => {
+      setupDefaultMocks({
+        'get-system-info': Promise.resolve({ success: true, platform: 'darwin', isPackaged: true }),
+      });
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Setting'));
+      expect(document.querySelector('.browser-settings-menu')).not.toBeNull();
+      // BepInEx is Windows-only → no Debug Mode item on mac/linux.
+      expect(screen.queryByText('Debug Mode')).toBeNull();
+    });
   });
 
   describe('Livery Button', () => {
@@ -706,6 +722,24 @@ beforeEach(() => {
       expect(screen.getByText('Approach Radar')).toBeInTheDocument();
       expect(screen.getByText('Flight Strips')).toBeInTheDocument();
       expect(document.querySelector('.airport-card-actions button')).not.toBeNull();
+    });
+
+    it('hides the radar/flight-strip toggles on non-Windows platforms', async () => {
+      setupDefaultMocks({
+        'get-system-info': Promise.resolve({ success: true, platform: 'darwin', isPackaged: true }),
+        'get-airport-files-info': Promise.resolve([zsjnFile]),
+      });
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Relax Time')).toBeInTheDocument();
+      });
+
+      // The toggles depend on BepInEx (Windows-only) → hidden on mac/linux.
+      expect(screen.queryByText('Surface Radar')).toBeNull();
+      expect(screen.queryByText('Approach Radar')).toBeNull();
+      expect(screen.queryByText('Flight Strips')).toBeNull();
+      expect(document.querySelector('.airport-card-actions button')).toBeNull();
     });
 
     // MD5 matches the release reference → open, never install.

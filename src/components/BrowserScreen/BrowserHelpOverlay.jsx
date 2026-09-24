@@ -8,7 +8,8 @@ import { FaGear } from 'react-icons/fa6';
 import { IoSunnyOutline, IoMoonOutline } from 'react-icons/io5';
 
 // Radar / flight-strip toggles: surfaced in the level browser. When true the
-// header buttons AND their help section render (buttons hidden in demo mode).
+// header buttons AND their help section render (buttons hidden in demo mode and
+// on non-Windows builds, where BepInEx — the backing mod — cannot run).
 export const BROWSER_RADAR_TOGGLES_ENABLED = true;
 
 // ─── Button registry (icon + label key + help description) ───
@@ -61,17 +62,17 @@ const SECTIONS = [
       { text: '{{btn:bugReport}} — {desc}', descKey: 'browser_help_bug_report' },
       { text: '{{btn:lang}} — {desc}', descKey: 'browser_help_lang' },
       { text: '{{btn:themeDark}} / {{btn:themeLight}} — {desc}', descKey: 'browser_help_theme' },
-      { text: '{{btn:debugMode}} — {desc}', descKey: 'browser_help_debug_mode' },
+      { text: '{{btn:debugMode}} — {desc}', descKey: 'browser_help_debug_mode', modOnly: true },
     ],
   },
-  ...(BROWSER_RADAR_TOGGLES_ENABLED ? [{
-    id: 'cards', headingKey: 'browser_help_cards_heading',
+  {
+    id: 'cards', headingKey: 'browser_help_cards_heading', modOnly: true,
     items: [
       { text: '{{btn:surfaceRadar}} — {desc}', descKey: 'browser_help_surface_radar' },
       { text: '{{btn:approachRadar}} — {desc}', descKey: 'browser_help_approach_radar' },
       { text: '{{btn:flightStrips}} — {desc}', descKey: 'browser_help_flight_strips' },
     ],
-  }] : []),
+  },
   {
     id: 'levels', headingKey: 'browser_help_levels_heading',
     items: [
@@ -81,8 +82,15 @@ const SECTIONS = [
 ];
 
 // ─── Component ────────────────────────────────────────────
-export default function BrowserHelpOverlay({ onClose }) {
+export default function BrowserHelpOverlay({ onClose, isWindows = true }) {
   const { t } = useTranslation();
+
+  // BepInEx-backed entries (Debug Mode + radar/strip toggles) describe buttons
+  // that only exist on Windows builds — hide the matching help rows elsewhere.
+  const showModFeatures = BROWSER_RADAR_TOGGLES_ENABLED && isWindows;
+  const sections = SECTIONS
+    .filter((s) => showModFeatures || !s.modOnly)
+    .map((s) => (showModFeatures ? s : { ...s, items: s.items.filter((item) => !item.modOnly) }));
 
   useEffect(() => {
     const handler = (e) => {
@@ -107,7 +115,7 @@ export default function BrowserHelpOverlay({ onClose }) {
         </div>
 
         <div id="browser-help-body">
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <section key={s.id} id={'browser-help-' + s.id} className="browser-help-section">
               <h2>{t(s.headingKey)}</h2>
               {s.items.map((item, i) => (

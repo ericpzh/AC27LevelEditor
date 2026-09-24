@@ -8,7 +8,7 @@ import { setLang } from '../../../src/utils/i18n';
 function renderOverlay(props = {}) {
   return render(
     <I18nProvider>
-      <BrowserHelpOverlay onClose={props.onClose || (() => {})} />
+      <BrowserHelpOverlay onClose={props.onClose || (() => {})} isWindows={props.isWindows ?? true} />
     </I18nProvider>
   );
 }
@@ -36,6 +36,16 @@ describe('BrowserHelpOverlay', () => {
     expect(screen.getByText(/ground\/surface radar view/)).toBeInTheDocument();
     expect(screen.getByText(/approach radar view/)).toBeInTheDocument();
     expect(screen.getByText(/flight strips window/)).toBeInTheDocument();
+  });
+
+  it('hides the BepInEx-backed entries on non-Windows platforms', () => {
+    renderOverlay({ isWindows: false });
+    // Radar/strip section is Windows-only …
+    expect(document.getElementById('browser-help-cards')).toBeNull();
+    // … as is the Debug Mode row inside the Settings Menu section.
+    const settingsSection = document.getElementById('browser-help-settings');
+    expect(settingsSection.textContent).not.toMatch(/Debug Mode/);
+    expect(settingsSection.textContent).toMatch(/Change Folder/);
   });
 
   it('documents the settings menu in the header section', () => {

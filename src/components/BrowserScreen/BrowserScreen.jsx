@@ -440,6 +440,11 @@ export default function BrowserScreen() {
 
   const totalFileCount = Object.values(fileInfos).flat().length;
 
+  // Mod-backed features (BepInEx Debug Mode and the radar/strip windows) are
+  // Windows-only — BepInEx ships an IL2CPP win-x64 runtime (winhttp.dll), so on
+  // mac/linux the toggle buttons and their help entries are hidden entirely.
+  const isWindows = platform === 'win32';
+
   const isAirportCollapsed = (icao) =>
     icao in collapsedAirports ? collapsedAirports[icao] : !!autoCollapsed[icao];
 
@@ -546,10 +551,13 @@ export default function BrowserScreen() {
                 <button role="menuitem" {...bind(t(BUTTONS.themeDark.descKey))} onClick={() => { setSettingsOpen(false); toggleTheme(); }}>
                   {theme === 'dark' ? <IoSunnyOutline size={14} className="btn-icon" /> : <IoMoonOutline size={14} className="btn-icon" />}{t(theme === 'dark' ? 'browser_light_mode' : 'browser_dark_mode')}
                 </button>
-                {/* Debug stays open on toggle so its active/loading state remains visible */}
-                <button role="menuitem" className={debugMode ? 'active' : ''} {...bind(t('browser_debug_mode_desc'))} onClick={handleToggleDebugMode} disabled={bepInExLoading}>
-                  <IoCodeSlash size={14} className="btn-icon" />{t('browser_debug_mode')}
-                </button>
+                {/* Debug stays open on toggle so its active/loading state remains visible.
+                    Hidden on non-Windows builds — BepInEx is Windows-only. */}
+                {isWindows && (
+                  <button role="menuitem" className={debugMode ? 'active' : ''} {...bind(t('browser_debug_mode_desc'))} onClick={handleToggleDebugMode} disabled={bepInExLoading}>
+                    <IoCodeSlash size={14} className="btn-icon" />{t('browser_debug_mode')}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -602,7 +610,7 @@ export default function BrowserScreen() {
                     <span className="airport-icao">{airportDisplayName(airport.icao, t)}</span>
                   </span>
                   <div className="airport-card-actions">
-                    {BROWSER_RADAR_TOGGLES_ENABLED && !isDemo && platform === 'win32' && (
+                    {BROWSER_RADAR_TOGGLES_ENABLED && !isDemo && isWindows && (
                     <>
                     <button
                       className={'btn-radar-toggle' + (openGroundRadarAirports.has(airport.icao) ? ' active' : '')}
@@ -667,7 +675,7 @@ export default function BrowserScreen() {
 
       {appVersion && <div className="browser-version">v{appVersion}</div>}
 
-      {helpOpen && <BrowserHelpOverlay onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <BrowserHelpOverlay onClose={() => setHelpOpen(false)} isWindows={isWindows} />}
       {showBackgroundModal && (
         <VideoBackgroundModal
           onClose={() => setShowBackgroundModal(false)}
