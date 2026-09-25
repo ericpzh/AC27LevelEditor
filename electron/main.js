@@ -4429,7 +4429,12 @@ ipcMain.handle('check-video-backup-exists', async () => {
   }
 });
 
-/** Delete all level files and backups under Airports/XXXX/Levels -- for Steam Verify Integrity restore. */
+/**
+ * Delete all level files and backups under Airports/XXXX/Levels, plus the
+ * airport scenery files the Ground Painter can rewrite (Config.geoDataFile
+ * `.osm`), so a Steam Verify Integrity re-downloads pristine copies of all of
+ * them.
+ */
 ipcMain.handle('reset-all-levels', async (_event, rootPathArg) => {
   try {
     // Prefer the explicitly passed game root (renderer store) so restore still
@@ -4447,29 +4452,15 @@ ipcMain.handle('reset-all-levels', async (_event, rootPathArg) => {
 
     let totalDeleted = 0;
     let airportsProcessed = 0;
-    const entries = fs.readdirSync(airportsDir, { withFileTypes: true });
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const levelsDir = path.join(airportsDir, e.name, 'Levels');
-      if (!fs.existsSync(levelsDir)) continue;
-      airportsProcessed++;
-      const levelEntries = fs.readdirSync(levelsDir, { withFileTypes: true });
-      for (const le of levelEntries) {
-        const fullPath = path.join(levelsDir, le.name);
-        try {
-          if (le.isFile() || le.isSymbolicLink()) {
-            fs.rmSync(fullPath, { force: true });
-            totalDeleted++;
-          } else if (le.isDirectory()) {
-            fs.rmSync(fullPath, { recursive: true, force: true });
-            totalDeleted++;
-          }
-        } catch (err) {
-          console.error('[reset-all-levels] failed to delete', fullPath, err.message);
-        }
+    try {
+      const { resetAllLevels } = require('./reset-levels');
+      ({ deletedCount: totalDeleted, airports: airportsProcessed } = resetAllLevels(airportsDir, console));
+    } catch (err) {
+      if (err && err.code === 'AIRPORTS_DIR_NOT_FOUND') {
+        return { success: false, error: 'AIRPORTS_DIR_NOT_FOUND' };
       }
+      throw err;
     }
-    console.log(`[reset-all-levels] deleted ${totalDeleted} entries across ${airportsProcessed} airports`);
     // Also clean up cache.json — it holds stale per-level data (STAR/SID/approach caches,
     // ground anchors, file lists) that is now invalid after all .acl files were removed.
     try {
