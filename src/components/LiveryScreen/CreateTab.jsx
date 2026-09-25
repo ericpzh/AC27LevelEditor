@@ -197,6 +197,10 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
       folder: String(prefill.folder),
       airline: String(prefill.airline || '').toUpperCase(),
       planeId: prefill.targetPlaneId || '',
+      // Manifest variant ("default" for every livery written so far). Carried
+      // through so a future non-default variant survives Save As / export; a
+      // blank value lets the main process read it off the folder's manifest.
+      variant: String(prefill.variant || ''),
       pack: prefill.pack || 'mine',
       imageDataUrl: prefill.imageDataUrl || null,
     };
@@ -211,6 +215,9 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
 
   const [airline, setAirline] = useState(origin?.airline || prefill?.airline || DEFAULT_AIRLINE);
   const [planeId, setPlaneId] = useState(origin?.planeId || prefill?.targetPlaneId || DEFAULT_PLANE_ID);
+  // Manifest variant (no UI yet — it flows through from a loaded zip/origin;
+  // blank means "let the backend resolve it from the folder's manifest").
+  const [variant, setVariant] = useState(origin?.variant || '');
 
   // Aircraft types are collected from the game's built-in default liveries;
   // the hardcoded table is the fallback if the scan is unavailable.
@@ -498,16 +505,20 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   // Only manifest-truth fields are sent (airline + targetPlaneId) plus the
   // free-form folder name and the per-panel images; the backend derives the
   // file names, part bindings and manifest id.
-  const submitCreate = async (images, targetAirline, targetPlaneId, targetFolder) => {
+  const submitCreate = async (images, targetAirline, targetPlaneId, targetFolder, targetVariant) => {
     const folder = String(targetFolder || '').trim();
     if (!Array.isArray(images) || images.length === 0 || !/^[A-Z]{3}$/.test(targetAirline) || !knownPlanes.has(targetPlaneId) || !LIVERY_FOLDER_SAFE_RE.test(folder) || busy) return false;
     setBusy(true);
     try {
+      // The variant is omitted when blank: the backend then keeps the folder's
+      // existing variant (or defaults it), which is the common path.
+      const reqVariant = String(targetVariant || '').trim();
       const res = await electronAPI.createLivery({
         images,
         airline: targetAirline,
         targetPlaneId,
         folder,
+        ...(reqVariant ? { variant: reqVariant } : {}),
       });
       const { showToast } = useAppStore.getState();
       if (res && res.success) {
@@ -518,7 +529,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         // rather than reloading the flattened PNGs it just wrote (which would
         // rasterise every movable into the locked base).
         skipOriginReloadRef.current = folder;
-        CreateTab.prefill = { folder, airline: targetAirline, targetPlaneId, pack: 'mine' };
+        CreateTab.prefill = { folder, airline: targetAirline, targetPlaneId, variant: reqVariant || '', pack: 'mine' };
         dirtyRef.current = false;
         showToast(t('livery_created'), 'success');
         showModHint();
@@ -538,7 +549,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   // livery folder name verbatim (free-form). Airline + aircraft come from the
   // caller (origin snapshot for Save, live form for Save As) and only feed
   // the manifest.
-  const openSaveDialog = (initialFolder, isSaveAs, targetAirline, targetPlaneId) => {
+  const openSaveDialog = (initialFolder, isSaveAs, targetAirline, targetPlaneId, targetVariant) => {
     if (!canvasRef.current || busy || !initialFolder) return;
     const { showModal, hideModal } = useAppStore.getState();
     showModal(
@@ -549,7 +560,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         onConfirm={(folder) => {
           const images = canvasRef.current.exportParts();
           hideModal();
-          confirmOverride(folder, isSaveAs, () => submitCreate(images, targetAirline, targetPlaneId, folder));
+          confirmOverride(folder, isSaveAs, () => submitCreate(images, targetAirline, targetPlaneId, folder, targetVariant));
         }}
       />,
     );
@@ -570,6 +581,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
       false,
       airline,
       planeId,
+      variant,
     );
   };
 
@@ -577,7 +589,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   // aircraft come from the live form.
   const handleSaveAs = () => {
     if (!formValid) return;
-    openSaveDialog(folderPreview, true, airline, planeId);
+    openSaveDialog(folderPreview, true, airline, planeId, variant);
   };
 
   // Ctrl+S = Save, Ctrl+Shift+S = Save As (the toolbar buttons). Ignored while
@@ -684,6 +696,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
       });
       if (res.manifest && res.manifest.airline) setAirline(String(res.manifest.airline).toUpperCase());
       if (res.manifest && knownPlanes.has(res.manifest.targetPlaneId)) setPlaneId(res.manifest.targetPlaneId);
+      if (res.manifest) setVariant(res.manifest.variant != null ? String(res.manifest.variant) : '');
       showToast(t('livery_loadzip_loaded', { folder: res.folder || '' }), 'success');
     } catch (err) {
       useAppStore.getState().showToast(t(errKey(err && err.message)), 'error');
@@ -701,15 +714,18 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
     const targetAirline = useOrigin ? origin.airline : airline;
     const targetPlaneId = useOrigin ? origin.planeId : planeId;
     const targetFolder = useOrigin ? origin.folder : folderPreview;
+    const targetVariant = useOrigin ? origin.variant : variant;
     if (!/^[A-Z]{3}$/.test(targetAirline) || !knownPlanes.has(targetPlaneId) || !targetFolder) return;
     setExporting(true);
     const { showToast } = useAppStore.getState();
     try {
+      const reqVariant = String(targetVariant || '').trim();
       const res = await electronAPI.createLivery({
         images: canvasRef.current.exportParts(),
         airline: targetAirline,
         targetPlaneId,
         folder: targetFolder,
+        ...(reqVariant ? { variant: reqVariant } : {}),
       });
       if (!res || !res.success) {
         showToast(t(errKey(res && res.error)), 'error');

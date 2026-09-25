@@ -82,12 +82,12 @@ painter page).
   list groups under Unknown aircraft (`livery_unknown_aircraft`).
 
 - Manifest template:
-  `{id: "<sanitized-folder>_default", name: "<SHORT> <AIRLINE> Default Livery",
-  airline, targetPlaneId, liveryType: "airline", liverySource: "user",
-  targetModelVer: "<built-in ver>",
+  `{id: "<sanitized-folder>_<variant>", name: "<SHORT> <AIRLINE> Default Livery",
+  airline, variant: "default", targetPlaneId, liveryType: "airline",
+  liverySource: "user", targetModelVer: "<built-in ver>",
   parts: [{partName: "<main part>", textures: [{property: "BaseMap",
   fileName: "base.png"}]}]}` — builder `buildManifest({..., partName,
-  targetModelVer})` in both
+  targetModelVer, variant})` in both
   `src/utils/constants/livery.js` (ESM) and `electron/livery.js` (CJS, keep in sync).
   `targetModelVer` must match the aircraft's built-in default manifest or the
   game flags the livery as broken — the C919 model bumped `1→2` while every
@@ -96,8 +96,18 @@ painter page).
   `_readBuiltInManifest` shared with `_builtInMainPartName`; missing/
   unreadable/corrupt manifest, missing/`''` version, or a numeric version all
   normalize — fallback `'1'`, otherwise `String(v)`); the renderer copy just
-  carries the explicit value through (default `'1'`). Deliberately never copies
-  `variant` — no built-in manifest carries one. `createLivery` passes
+  carries the explicit value through (default `'1'`).
+  The `variant` discriminator (mirrors the game's built-in airline manifests,
+  which all carry `variant: "default"`) is normalized to a `[a-z0-9_]` token by
+  `normalizeLiveryVariant` and folded into the id
+  (`<sanitized-folder>_<variant>`); missing/empty/fully-unsafe falls back to
+  `"default"` (never an empty id). `createLivery` resolves the variant as:
+  explicit payload `variant` → else the target folder's existing manifest value
+  → else `"default"` (`resolveLiveryVariant`). Re-saving a manifest that predates
+  the field therefore backfills `variant: "default"` with an unchanged id, and a
+  future non-default variant is preserved across saves. The renderer threads the
+  value from a list row (`readLiveryRow.variant`) / loaded ZIP manifest through
+  Save / Save As / Export (`CreateTab` `variant` state). `createLivery` passes
   `_builtInMainPartName(gameRoot, planeId)` — the built-in
   default's `Body`/`Fuselage` part (the `_pickMainPartRef` Body→Fuselage→first
   order, `Body` as the fallback when there is no built-in folder) — so a custom
@@ -105,9 +115,11 @@ painter page).
   name stays `base.png` (the editor's own container), only `partName` must match.
   `loadLiveryZip` previews the same main-part BaseMap file (not `parts[0]`) and
   derives the `shortCode` from `manifest.targetPlaneId`.
-  `id` is derived by lowercasing the folder and collapsing non-alphanumerics
-  to `_` (so a conventional `A20N_CCA` still yields `a20n_cca_default`, and a
-  free-form `My First Livery 01` yields `my_first_livery_01_default`).
+  `id` is derived by lowercasing the folder, collapsing non-alphanumerics to
+  `_`, then appending the normalized `variant` (so a conventional `A20N_CCA`
+  still yields `a20n_cca_default`, a free-form `My First Livery 01` yields
+  `my_first_livery_01_default`, and a `retro` variant yields
+  `a20n_cca_retro`).
 - **Workshop bookkeeping files (dot-files, never mod content):** an uploaded
   livery's folder also carries `.workshop.json` (the sidecar — records
   `publishedFileId`, `url`, title/description/visibility/tags, the saved

@@ -45,6 +45,17 @@ const PLANE_ID_TO_SHORT_CODE = Object.fromEntries(
 );
 const LIVERY_FOLDER_SAFE_RE = /^(?![.\s])(?!.*[.\s]$)(?!.*[<>:"/\\|?*\x00-\x1f]).{1,64}$/;
 const AIRLINE_RE = /^[A-Z]{3}$/;
+// Livery variant discriminator (mirrors src/utils/constants/livery.js). The
+// game's built-in airline manifests all carry `variant: "default"`; the variant
+// is folded into the manifest id so several liveries can share a folder/airline
+// (future: "retro", "special"…). Missing/empty ⇒ the default, so a manifest
+// written before this field existed round-trips unchanged.
+const DEFAULT_LIVERY_VARIANT = 'default';
+function normalizeLiveryVariant(variant) {
+  const v = String(variant == null ? '' : variant).trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return v || DEFAULT_LIVERY_VARIANT;
+}
 const TEXTURE_SIZE = 2048;
 // List-view preview size: the cards render at ~220px wide (2:1 box,
 // object-fit contain), so a 256px thumbnail is visually identical to the
@@ -139,7 +150,7 @@ function listWorkshopLiveries(gameRoot) {
     for (const rel of rels) {
       const folder = rel ? `${STEAM_APP_ID}/${item.name}/${rel}` : `${STEAM_APP_ID}/${item.name}`;
       try { rows.push(readLiveryRow(contentDir, folder)); } catch (_) {
-        rows.push({ folder, id: '', name: '', airline: '', targetPlaneId: '', hasBasePng: false, mtime: 0, error: 'BAD_MANIFEST' });
+        rows.push({ folder, id: '', name: '', airline: '', variant: '', targetPlaneId: '', hasBasePng: false, mtime: 0, error: 'BAD_MANIFEST' });
       }
     }
   }
@@ -242,13 +253,17 @@ function baseFileName(partName, totalParts) {
 // Build the game's livery manifest. `parts` (when given) is an ordered list of
 // `{partName, fileName}` BaseMap bindings — one per painted panel; otherwise a
 // single part from `partName`/`base.png` is emitted (legacy/single-part types).
-function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, parts, targetModelVer }) {
+function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, parts, targetModelVer, variant }) {
   // Free-form folders can contain spaces/symbols — sanitize for the id.
   // No-op for conventional SHORT_AIRLINE folders (a20n_cca_default as before).
   const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
   // partName must match the aircraft's built-in main part (Body vs Fuselage)
   // or the game ignores the texture — A388/B38M use Fuselage.
   const body = partName || 'Body';
+  // The variant discriminates liveries that share a folder/airline and is part
+  // of the id (`<folder>_<variant>`); the reference pack always writes
+  // `"default"`, and missing/empty maps to it too.
+  const v = normalizeLiveryVariant(variant);
   // targetModelVer must match the aircraft's built-in model version or the
   // game flags the livery as broken — the C919 model bumped 1→2 while every
   // other type is still 1. The caller (createLivery) resolves it from the
@@ -261,15 +276,39 @@ function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, pa
     }))
     : [{ partName: body, textures: [{ property: 'BaseMap', fileName: 'base.png' }] }];
   return {
-    id: `${safeId}_default`,
+    id: `${safeId}_${v}`,
     name: `${shortCode} ${airline} Default Livery`,
     airline,
+    variant: v,
     targetPlaneId,
     liveryType: 'airline',
     liverySource: 'user',
     targetModelVer: ver,
     parts: manifestParts,
   };
+}
+
+// The `variant` recorded in an existing livery manifest, or '' when the folder
+// has no manifest or predates the field. Lets a re-save preserve a livery's
+// variant, and backfills `"default"` for a manifest that never carried one.
+function _existingLiveryVariant(dir) {
+  try {
+    const m = _readJsonFile(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8');
+    return m && m.variant != null ? String(m.variant).trim() : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+// Resolution order for the manifest variant: an explicit caller value wins
+// (future multi-variant UI), then whatever the target folder already carries
+// (preserves the variant across re-saves), else the default. Always normalized,
+// so it is safe to fold into the id.
+function resolveLiveryVariant(requested, dir) {
+  const explicit = String(requested == null ? '' : requested).trim();
+  if (explicit) return normalizeLiveryVariant(explicit);
+  const existing = _existingLiveryVariant(dir);
+  return existing ? normalizeLiveryVariant(existing) : DEFAULT_LIVERY_VARIANT;
 }
 
 // The manifest's targetPlaneId is the source of truth; the short code is only
@@ -403,9 +442,9 @@ function readLiveryRow(packDir, folder) {
   const hasBasePng = Boolean(_resolveLiveryImagePath(dir));
   try {
     const m = _readJsonFile(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8');
-    return { folder, id: m.id || '', name: m.name || '', airline: m.airline || '', targetPlaneId: m.targetPlaneId || '', hasBasePng, mtime };
+    return { folder, id: m.id || '', name: m.name || '', airline: m.airline || '', variant: m.variant || '', targetPlaneId: m.targetPlaneId || '', hasBasePng, mtime };
   } catch (_) {
-    return { folder, id: '', name: '', airline: '', targetPlaneId: '', hasBasePng, mtime, error: 'BAD_MANIFEST' };
+    return { folder, id: '', name: '', airline: '', variant: '', targetPlaneId: '', hasBasePng, mtime, error: 'BAD_MANIFEST' };
   }
 }
 
@@ -416,7 +455,7 @@ function listPackDir(packDir) {
   for (const entry of fs.readdirSync(packDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     try { rows.push(readLiveryRow(packDir, entry.name)); }
-    catch (_) { rows.push({ folder: entry.name, id: '', name: '', airline: '', targetPlaneId: '', hasBasePng: false, mtime: 0, error: 'BAD_MANIFEST' }); }
+    catch (_) { rows.push({ folder: entry.name, id: '', name: '', airline: '', variant: '', targetPlaneId: '', hasBasePng: false, mtime: 0, error: 'BAD_MANIFEST' }); }
   }
   rows.sort((a, b) => a.folder.localeCompare(b.folder));
   return rows;
@@ -654,7 +693,7 @@ function readLiveryImages(gameRoot, folder, pack = 'mine') {
 // key. `images` is an ordered list of `{partName, imageDataUrl}` paintable
 // panels (single entry for legacy callers passing `imageDataUrl`). The short
 // code, file names and manifest id are derived — never parsed from the folder.
-function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, folder }) {
+function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, folder, variant }) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   if (!AIRLINE_RE.test(String(airline || ''))) return { success: false, error: 'BAD_AIRLINE' };
   const planeId = String(targetPlaneId || '');
@@ -670,8 +709,6 @@ function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, 
   const mainPartName = _builtInMainPartName(gameRoot, planeId);
   // The manifest version must match the aircraft's built-in model version or
   // the game flags the livery as broken (C919 bumped 1→2; the rest are 1).
-  // Deliberately NOT copying `variant`: no built-in manifest carries one, so
-  // emitting it would diverge from the validated schema for no benefit.
   const targetModelVer = _builtInTargetModelVer(gameRoot, planeId);
   const rawFolder = String(folder == null ? '' : folder).trim();
   if (!LIVERY_FOLDER_SAFE_RE.test(rawFolder)) return { success: false, error: 'BAD_FOLDER' };
@@ -706,6 +743,11 @@ function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, 
     const packDir = ensureOwnPackDir(gameRoot);
     const resolved = containmentCheck(packDir, rawFolder);
     if (!resolved) return { success: false, error: 'BAD_FOLDER' };
+    // Resolve the variant against the target folder BEFORE writing anything:
+    // an explicit caller value wins, else the folder's existing manifest keeps
+    // its variant across a re-save, else the default. A manifest that predates
+    // `variant` therefore gets `"default"` (and its matching id) written back.
+    const resolvedVariant = resolveLiveryVariant(variant, resolved);
     if (!fs.existsSync(resolved)) fs.mkdirSync(resolved, { recursive: true });
     // Silent overwrite — no .bak (locked decision §0.4). The renderer's Save
     // As flow confirms first when a foreign folder would be clobbered. Stale
@@ -723,6 +765,7 @@ function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, 
       path.join(resolved, 'aircraft_livery_manifest.json'),
       JSON.stringify(buildManifest({
         folder: rawFolder, shortCode, airline, targetPlaneId, targetModelVer,
+        variant: resolvedVariant,
         parts: manifestParts.map(p => ({ partName: p.partName, fileName: p.fileName })),
       }), null, 2),
       'utf-8',
@@ -1173,6 +1216,9 @@ module.exports = {
   ensureModInfo,
   containmentCheck,
   pngSize,
+  DEFAULT_LIVERY_VARIANT,
+  normalizeLiveryVariant,
+  resolveLiveryVariant,
   buildManifest,
   baseFileName,
   listPackDir,

@@ -146,6 +146,7 @@ describe('createLivery round-trip', () => {
       id: 'a20n_cca_default',
       name: 'A20N CCA Default Livery',
       airline: 'CCA',
+      variant: 'default',
       targetPlaneId: 'AIRBUS A-320neo',
       liveryType: 'airline',
       liverySource: 'user',
@@ -240,8 +241,69 @@ describe('createLivery round-trip', () => {
     const manifest = JSON.parse(fs.readFileSync(
       path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'C919_CCA', 'aircraft_livery_manifest.json'), 'utf-8'));
     expect(manifest.targetModelVer).toBe('2');
-    // No `variant`: no built-in manifest carries one, so we stay on schema.
-    expect('variant' in manifest).toBe(false);
+    // The variant is always emitted now (the reference airline manifests all
+    // carry `variant: "default"`), and folded into the id.
+    expect(manifest.variant).toBe('default');
+    expect(manifest.id).toBe('c919_cca_default');
+  });
+
+  it('backfills variant on a manifest written before the field existed', () => {
+    // Seed a pre-variant livery folder (id already `_default`, no `variant`).
+    const dir = path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'A20N_CCA');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'base.png'), pngBuffer(2048, 2048));
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      id: 'a20n_cca_default',
+      name: 'A20N CCA Default Livery',
+      airline: 'CCA',
+      targetPlaneId: 'AIRBUS A-320neo',
+      liveryType: 'airline',
+      liverySource: 'user',
+      targetModelVer: '1',
+      parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }],
+    }));
+
+    // A plain re-save (no explicit variant) adds the key + keeps the id stable.
+    expect(livery.createLivery(gameRoot, payload()).success).toBe(true);
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(manifest.variant).toBe('default');
+    expect(manifest.id).toBe('a20n_cca_default');
+  });
+
+  it('preserves an existing non-default variant across a re-save', () => {
+    const dir = path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'A20N_CCA');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'base.png'), pngBuffer(2048, 2048));
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'), JSON.stringify({
+      id: 'a20n_cca_retro', name: 'A20N CCA Default Livery', airline: 'CCA',
+      variant: 'retro', targetPlaneId: 'AIRBUS A-320neo', liveryType: 'airline',
+      liverySource: 'user', targetModelVer: '1',
+      parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }],
+    }));
+    // No explicit variant: the folder's own value wins.
+    expect(livery.createLivery(gameRoot, payload()).success).toBe(true);
+    let m = JSON.parse(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(m.variant).toBe('retro');
+    expect(m.id).toBe('a20n_cca_retro');
+    // An explicit caller value overrides it (future multi-variant UI).
+    expect(livery.createLivery(gameRoot, payload({ variant: 'special' })).success).toBe(true);
+    m = JSON.parse(fs.readFileSync(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(m.variant).toBe('special');
+    expect(m.id).toBe('a20n_cca_special');
+  });
+
+  it('normalizes the variant token in the id', () => {
+    expect(livery.createLivery(gameRoot, payload({ variant: 'Retro Edition' })).success).toBe(true);
+    const m = JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'A20N_CCA', 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(m.variant).toBe('retro_edition');
+    expect(m.id).toBe('a20n_cca_retro_edition');
+    // A fully-unsafe variant falls back to the default (never an empty id).
+    expect(livery.createLivery(gameRoot, payload({ variant: '***', folder: 'A20N_BAD' })).success).toBe(true);
+    const fallback = JSON.parse(fs.readFileSync(
+      path.join(gameRoot, 'Mods', 'AC27 Custom Liveries', 'A20N_BAD', 'aircraft_livery_manifest.json'), 'utf-8'));
+    expect(fallback.variant).toBe('default');
+    expect(fallback.id).toBe('a20n_bad_default');
   });
 
   it('falls back to 1 when the built-in manifest carries no version', () => {

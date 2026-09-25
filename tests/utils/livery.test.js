@@ -75,12 +75,34 @@ describe('livery constants', () => {
       id: 'a20n_cca_default',
       name: 'A20N CCA Default Livery',
       airline: 'CCA',
+      variant: 'default',
       targetPlaneId: 'AIRBUS A-320neo',
       liveryType: 'airline',
       liverySource: 'user',
       targetModelVer: '1',
       parts: [{ partName: 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }],
     });
+  });
+
+  it('buildManifest folds the variant into the id (defaulted when missing)', () => {
+    const base = {
+      folder: 'A20N_CCA', shortCode: 'A20N', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+    };
+    // Missing / empty / explicitly default all resolve to "default".
+    for (const variant of [undefined, null, '', 'default']) {
+      const m = buildManifest({ ...base, variant });
+      expect(m.variant).toBe('default');
+      expect(m.id).toBe('a20n_cca_default');
+    }
+    // A future variant is normalized and becomes the id suffix.
+    expect(buildManifest({ ...base, variant: 'Retro' })).toMatchObject({
+      id: 'a20n_cca_retro', variant: 'retro',
+    });
+    // Unsafe characters collapse to a token; a fully-unsafe value is default.
+    expect(buildManifest({ ...base, variant: 'special edition' })).toMatchObject({
+      id: 'a20n_cca_special_edition', variant: 'special_edition',
+    });
+    expect(buildManifest({ ...base, variant: '***' }).variant).toBe('default');
   });
 
   it('buildManifest sanitizes free-form folders into the id', () => {
@@ -122,7 +144,7 @@ describe('livery constants', () => {
       targetModelVer: '2',
     });
     expect(v2.targetModelVer).toBe('2');
-    expect('variant' in v2).toBe(false);
+    expect(v2.variant).toBe('default');
     const numeric = buildManifest({
       folder: 'C919_CCA',
       shortCode: 'C919',

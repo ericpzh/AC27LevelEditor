@@ -78,10 +78,26 @@ export function folderFor(planeId, airline) {
   return `${shortCode}_${airline}`;
 }
 
+// Livery variant discriminator. The game's built-in airline manifests all
+// carry `variant: "default"`; a variant is folded into the manifest id so
+// several liveries can share one folder/airline (future: "retro", "special"…).
+// Missing/empty ⇒ the default, so a manifest written before this field existed
+// round-trips unchanged (only gaining the explicit key).
+export const DEFAULT_LIVERY_VARIANT = 'default';
+
+// Normalize a variant to a safe manifest token: lowercase [a-z0-9_]. Empty,
+// missing or fully-unsafe input falls back to the default — the id must never
+// end up empty or carry path-unsafe characters.
+export function normalizeLiveryVariant(variant) {
+  const v = String(variant == null ? '' : variant).trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return v || DEFAULT_LIVERY_VARIANT;
+}
+
 // Build the game's livery manifest. `parts` (when given) is an ordered list of
 // `{partName, fileName}` BaseMap bindings — one per painted panel; otherwise a
 // single part from `partName`/`base.png` is emitted. Mirrors electron/livery.js.
-export function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, parts, targetModelVer }) {
+export function buildManifest({ folder, shortCode, airline, targetPlaneId, partName, parts, targetModelVer, variant }) {
   // Mirrors electron/livery.js: sanitize free-form folders for the id.
   const safeId = String(folder).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'livery';
   // Must match the aircraft's built-in model version (C919 is 2, the rest 1)
@@ -89,6 +105,9 @@ export function buildManifest({ folder, shortCode, airline, targetPlaneId, partN
   // so the main process resolves this from the built-in manifest and the
   // renderer copy just carries an explicit value through; default '1'.
   const ver = targetModelVer == null || targetModelVer === '' ? '1' : String(targetModelVer);
+  // Variant is part of the id (folder + variant), so distinct variants of the
+  // same folder never collide. Mirrors electron/livery.js.
+  const v = normalizeLiveryVariant(variant);
   const manifestParts = Array.isArray(parts) && parts.length
     ? parts.map(p => ({
       partName: (p && p.partName) || 'Body',
@@ -96,9 +115,10 @@ export function buildManifest({ folder, shortCode, airline, targetPlaneId, partN
     }))
     : [{ partName: partName || 'Body', textures: [{ property: 'BaseMap', fileName: 'base.png' }] }];
   return {
-    id: `${safeId}_default`,
+    id: `${safeId}_${v}`,
     name: `${shortCode} ${airline} Default Livery`,
     airline,
+    variant: v,
     targetPlaneId,
     liveryType: 'airline',
     liverySource: 'user',
