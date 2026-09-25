@@ -5,6 +5,9 @@ import { IoMicOutline, IoMic } from 'react-icons/io5';
  * Push-to-talk microphone button for the Flight Strips bottom bar.
  *
  * Hold-to-talk: press and hold to start listening, release to stop.
+ * The press uses pointer capture so a hold survives the cursor drifting off
+ * the (tiny, 26px) button or the bar re-rendering — releasing is driven by
+ * the pointer-up edge, never by mouseleave.
  * Visual states:
  *   - idle:       gray mic outline
  *   - listening:  solid mic with red pulsing ring
@@ -23,8 +26,8 @@ import { IoMicOutline, IoMic } from 'react-icons/io5';
  *   feedback        — string or null, the transient result line (shown as
  *                     tooltip when not listening)
  *   witchMode       — boolean, use witch-themed sprite
- *   onPress()       — called on mousedown/touchstart
- *   onRelease()     — called on mouseup/touchend/mouseleave
+ *   onPress()       — called once on pointer/key press
+ *   onRelease()     — called once on pointer/key release
  */
 export default function VoicePTTButton({
   listening,
@@ -40,6 +43,7 @@ export default function VoicePTTButton({
 }) {
   const [flash, setFlash] = useState(false);
   const prevMatchedRef = useRef(null);
+  const pressedRef = useRef(false);
 
   // Green flash when a command is matched
   useEffect(() => {
@@ -51,17 +55,49 @@ export default function VoicePTTButton({
     }
   }, [matchedCommand]);
 
+  // A window blur / pointer cancel mid-hold must still release the mic.
+  useEffect(() => {
+    const release = () => {
+      if (!pressedRef.current) return;
+      pressedRef.current = false;
+      if (onRelease) onRelease();
+    };
+    window.addEventListener('blur', release);
+    return () => window.removeEventListener('blur', release);
+  }, [onRelease]);
+
   // ── Event handlers ────────────────────────────────────────────────
 
   const handlePress = useCallback((e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
+    if (pressedRef.current) return;     // ignore key auto-repeat / double events
+    pressedRef.current = true;
+    // Capture the pointer so the release lands on this element even if the
+    // cursor leaves the button while held. jsdom lacks the API — guard it.
+    const el = e && e.currentTarget;
+    if (el && typeof el.setPointerCapture === 'function' && e.pointerId != null) {
+      try { el.setPointerCapture(e.pointerId); } catch (_) { /* not supported */ }
+    }
     if (onPress) onPress();
   }, [onPress]);
 
   const handleRelease = useCallback((e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
+    if (!pressedRef.current) return;
+    pressedRef.current = false;
     if (onRelease) onRelease();
   }, [onRelease]);
+
+  // Keyboard hold (Space / Enter) while the button itself is focused.
+  const handleKeyDown = useCallback((e) => {
+    if (e.key !== ' ' && e.key !== 'Spacebar' && e.key !== 'Enter') return;
+    handlePress(e);
+  }, [handlePress]);
+
+  const handleKeyUp = useCallback((e) => {
+    if (e.key !== ' ' && e.key !== 'Spacebar' && e.key !== 'Enter') return;
+    handleRelease(e);
+  }, [handleRelease]);
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -97,11 +133,12 @@ export default function VoicePTTButton({
     <div
       className={className}
       title={title}
-      onMouseDown={handlePress}
-      onMouseUp={handleRelease}
-      onMouseLeave={handleRelease}
-      onTouchStart={handlePress}
-      onTouchEnd={handleRelease}
+      onPointerDown={handlePress}
+      onPointerUp={handleRelease}
+      onPointerCancel={handleRelease}
+      onLostPointerCapture={handleRelease}
+      onKeyDown={handleKeyDown}
+      onKeyUp={handleKeyUp}
       role="button"
       tabIndex={0}
       aria-label={title}

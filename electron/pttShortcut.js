@@ -3,15 +3,25 @@
  *
  * Renderer keydown only fires while a window is focused. For PTT while the
  * game is focused we use the OS-level globalShortcut (main process).
- * NOTE: globalShortcut reports press only (no key-up), so the global hotkey
- * is TOGGLE semantics (press = start, press again = stop), unlike the mouse
- * hold-to-talk button. The renderer owns the mic session (it supplies the
- * airport waypoints), so this manager only broadcasts a toggle to the
- * target strips window, which flips its useVoiceCommands hook.
+ *
+ * globalShortcut reports press only (no key-up), so when a `keyWatch` is
+ * available we turn the press into a true HOLD-to-talk: broadcast
+ * `onPress` (global-ptt-down), arm the watcher for the hotkey's virtual key,
+ * and broadcast `onRelease` (global-ptt-up) on the down→up transition. This
+ * also absorbs Windows' RegisterHotKey auto-repeat, which would otherwise
+ * flip a plain toggle handler rapidly while the combo is held.
+ *
+ * Without a keyWatch (non-Windows / koffi unavailable / tests) it degrades to
+ * the legacy TOGGLE semantics via `onTrigger`.
+ *
+ * The renderer owns the mic session (it supplies the airport waypoints), so
+ * this manager only broadcasts edges to the target strips window.
  *
  * CJS with all Electron/FS access injected as deps (never requires
  * 'electron' itself) so unit tests can require it directly in plain node.
  */
+
+const { acceleratorToVk } = require('./pttKeyWatch');
 
 const PTT_SHORTCUT_DEFAULT = 'Shift+Space';
 
@@ -25,8 +35,10 @@ function getPttShortcutSetting(loadConfig) {
   } catch (_) { return PTT_SHORTCUT_DEFAULT; }
 }
 
-function createPttShortcutManager({ globalShortcut, loadConfig, saveConfig, getStripsWindows, onTrigger }) {
+function createPttShortcutManager({ globalShortcut, loadConfig, saveConfig, getStripsWindows, onTrigger, onPress, onRelease, keyWatch }) {
   let current = null;
+  let holding = false;      // a press is active and awaiting key-up
+  let holdTarget = null;    // window that received the press (release goes to it)
 
   function pickTargetWindow() {
     let wins = [];
@@ -40,18 +52,47 @@ function createPttShortcutManager({ globalShortcut, loadConfig, saveConfig, getS
     }) || alive[0];
   }
 
+  function releaseHold() {
+    if (!holding) return;
+    holding = false;
+    const target = holdTarget;
+    holdTarget = null;
+    if (keyWatch && typeof keyWatch.cancel === 'function') {
+      try { keyWatch.cancel(); } catch (_) { /* watcher gone */ }
+    }
+    try { if (onRelease) onRelease(target); } catch (_) { /* window gone */ }
+  }
+
+  function triggerPress(accelerator, target) {
+    const vk = acceleratorToVk(accelerator);
+    const canHold = vk && keyWatch && typeof keyWatch.watch === 'function'
+      && typeof keyWatch.isAvailable === 'function' && keyWatch.isAvailable()
+      && typeof onPress === 'function' && typeof onRelease === 'function';
+    if (!canHold) {
+      if (onTrigger) { try { onTrigger(target); } catch (_) { /* window gone */ } }
+      return;
+    }
+    // Auto-repeat (Windows RegisterHotKey) re-fires while held — absorb it:
+    // only the first edge broadcasts the press, every edge re-arms the watch.
+    if (!holding) {
+      holding = true;
+      holdTarget = target;
+      try { onPress(target); } catch (_) { /* window gone */ }
+    }
+    keyWatch.watch(vk, releaseHold);
+  }
+
   function register(accelerator) {
     try {
       if (current) {
         try { globalShortcut.unregister(current); } catch (_) { /* gone */ }
         current = null;
       }
+      releaseHold(); // a remap while held must not leave a stuck mic
       if (!accelerator) return { success: true, shortcut: '' }; // empty = disabled
       globalShortcut.register(accelerator, () => {
         const target = pickTargetWindow();
-        if (target) {
-          try { onTrigger(target); } catch (_) { /* window gone */ }
-        }
+        if (target) triggerPress(accelerator, target);
       });
       if (!globalShortcut.isRegistered(accelerator)) return { success: false, error: 'REGISTER_FAILED' };
       current = accelerator;
@@ -60,6 +101,7 @@ function createPttShortcutManager({ globalShortcut, loadConfig, saveConfig, getS
   }
 
   function dispose() {
+    releaseHold();
     if (current) {
       try { globalShortcut.unregister(current); } catch (_) { /* shutting down */ }
       current = null;

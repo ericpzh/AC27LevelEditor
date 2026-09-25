@@ -311,15 +311,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // ─── Global PTT hotkey (OS-level, works even when unfocused) ──────
-  // Toggle semantics: each press flips the strips window's voice session
-  // (globalShortcut has no key-up). Main picks the target window; the
-  // renderer owns start/stop so the airport waypoints stay in the grammar.
+  // Hold-to-talk: main broadcasts global-ptt-down on the hotkey press and
+  // global-ptt-up when the key is released (Windows key-state watcher);
+  // global-ptt-toggle is the legacy fallback for hosts without key-up.
+  // Main picks the target window; the renderer owns start/stop so the airport
+  // waypoints stay in the grammar.
   getPttShortcut: () => ipcRenderer.invoke('get-ptt-shortcut'),
   setPttShortcut: (accelerator) => ipcRenderer.invoke('set-ptt-shortcut', accelerator),
   onGlobalPttToggle: function (cb) {
     const handler = () => cb();
     ipcRenderer.on('global-ptt-toggle', handler);
     return () => ipcRenderer.removeListener('global-ptt-toggle', handler);
+  },
+  onGlobalPttDown: function (cb) {
+    const handler = () => cb();
+    ipcRenderer.on('global-ptt-down', handler);
+    return () => ipcRenderer.removeListener('global-ptt-down', handler);
+  },
+  onGlobalPttUp: function (cb) {
+    const handler = () => cb();
+    ipcRenderer.on('global-ptt-up', handler);
+    return () => ipcRenderer.removeListener('global-ptt-up', handler);
   },
   // ─── Livery Install ───────────────────────────────────
   selectLiveryZip: () => ipcRenderer.invoke('select-livery-zip'),

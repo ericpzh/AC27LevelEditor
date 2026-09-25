@@ -45,6 +45,8 @@ class VoiceSttWorker extends EventEmitter {
     this.statusCache = null;      // {available, culture, recognizers} once ready
     this.statusProbes = [];       // pending getStatus() resolvers
     this.outBuf = '';
+    this.startPending = false;    // a 'start' was sent, 'started' not yet seen
+    this.stopPending = false;     // stop requested while the start was in flight
   }
 
   getActiveSender() {
@@ -143,6 +145,8 @@ class VoiceSttWorker extends EventEmitter {
 
   _onExit(code) {
     this.child = null;
+    this.startPending = false;
+    this.stopPending = false;
     if (this.stopTimer) {
       clearTimeout(this.stopTimer);
       this.stopTimer = null;
@@ -186,15 +190,29 @@ class VoiceSttWorker extends EventEmitter {
         }
         break;
       case 'started':
+        // A stop that raced the start (quick hold-to-talk tap) is applied now
+        // that the engine is actually recognizing — otherwise the mic would
+        // stay hot until the next press.
+        this.startPending = false;
         this.state = 'recognizing';
+        if (this.stopPending) {
+          this.stopPending = false;
+          this.stop();
+        }
         break;
       case 'stopped':
+        this.startPending = false;
+        this.stopPending = false;
         this.state = 'ready';
         break;
       case 'rejected':
         // Informational (busy) — the renderer's cooldown masks most cases.
+        this.startPending = false;
+        this.stopPending = false;
         break;
       case 'error':
+        this.startPending = false;
+        this.stopPending = false;
         this.state = 'idle';
         this._failProbes(obj.code || 'ENGINE');
         break;
@@ -245,12 +263,17 @@ class VoiceSttWorker extends EventEmitter {
       // Forward 'start' — the ps1 decides the outcome: continues a finalizing
       // session (re-press after the drain expired), rejects a busy one, or
       // begins a new one.
+      this.startPending = true;
       this._send({ cmd: 'start', extraWords: Array.isArray(extraWords) ? extraWords : [] });
     }
     return { success: true };
   }
 
   stop() {
+    // A stop that lands before the child reports 'started' is remembered and
+    // applied on the 'started' event (see _onLine) — a quick hold-to-talk tap
+    // must not leave the mic recording.
+    if (this.startPending) { this.stopPending = true; return; }
     if (this.state !== 'recognizing' || this.stopTimer) return;
     // Delayed stop (release-drain): lets the ps1 finalize the phrase in
     // flight before the stop lands; a fast re-press cancels it entirely.
@@ -288,3 +311,5 @@ class VoiceSttWorker extends EventEmitter {
 }
 
 module.exports = new VoiceSttWorker();
+// Exposed for unit tests (the singleton above is the runtime instance).
+module.exports.VoiceSttWorker = VoiceSttWorker;

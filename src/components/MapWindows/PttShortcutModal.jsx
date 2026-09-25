@@ -14,8 +14,8 @@ function modsEcho(e) {
 }
 
 /**
- * Modal to remap the global PTT hotkey (OS-level toggle — works even when
- * the strips window or the whole app is unfocused).
+ * Modal to remap the global PTT hotkey (OS-level hold-to-talk — works even
+ * when the strips window or the whole app is unfocused).
  *
  * Minimal by design: title + the key only. The capture box is focused on
  * open and echoes every keystroke live (Escape closes, Backspace disables);

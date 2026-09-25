@@ -43,7 +43,14 @@ const BASE = {
   // the asar (native .node binaries must be real files on disk for dlopen).
   // Unpacking keeps the require path working from the main process while the
   // steam_api64.dll redistributable ships alongside it.
-  asarUnpack: ['node_modules/steamworks.js/**/*'],
+  // koffi is likewise native and is now also required by the MAIN process
+  // (electron/pttKeyWatch.js → user32!GetAsyncKeyState for PTT hold-to-talk),
+  // not just the vosk worker child, so its binaries must be on disk too.
+  asarUnpack: [
+    'node_modules/steamworks.js/**/*',
+    'node_modules/koffi/**/*',
+    'node_modules/@koromix/**/*',
+  ],
   extraResources: [
     { from: 'node_modules/ffmpeg-static', to: 'ffmpeg-static', filter: ['*.exe', 'ffmpeg', '*.dylib*', '*.so*'] },
   ],

@@ -344,28 +344,50 @@ export default function FlightStripsWindow({ airportIcao }) {
     }
   }, [airportIcao, electronAPI]);
 
+  // Press/release is edge-driven and idempotent: a hold (mouse or hotkey)
+  // starts exactly once and only an actual release stops it. This is what
+  // keeps the hotkey behaving as hold-to-talk rather than a toggle, and it
+  // absorbs Windows' hotkey auto-repeat (repeated down edges).
+  const pttDownRef = useRef(false);
+
   // Wrap startListening to include selection clear
   const handleVoiceStart = useCallback(() => {
+    if (pttDownRef.current) return;
+    pttDownRef.current = true;
     handleVoicePress();
     voice.startListening();
   }, [handleVoicePress, voice.startListening]);
 
-  // Global PTT hotkey (OS-level toggle from main — works even when this
-  // window or the whole app is unfocused). Latest-callback refs so the
-  // single subscription never goes stale as voice state changes.
-  const voiceListeningRef = useRef(false);
-  voiceListeningRef.current = voice.listening;
+  const handleVoiceStop = useCallback(() => {
+    if (!pttDownRef.current) return;
+    pttDownRef.current = false;
+    voice.stopListening();
+  }, [voice.stopListening]);
+
+  // Global PTT hotkey (OS-level, works even when this window or the whole app
+  // is unfocused). Latest-callback refs so the single subscription never goes
+  // stale as voice state changes. Main sends down/up edges on a normal
+  // Windows host (true hold); global-ptt-toggle is the legacy fallback.
   const handleVoiceStartRef = useRef(handleVoiceStart);
   handleVoiceStartRef.current = handleVoiceStart;
-  const voiceStopRef = useRef(voice.stopListening);
-  voiceStopRef.current = voice.stopListening;
+  const handleVoiceStopRef = useRef(handleVoiceStop);
+  handleVoiceStopRef.current = handleVoiceStop;
   useEffect(() => {
-    if (!electronAPI || !electronAPI.onGlobalPttToggle) return undefined;
-    const off = electronAPI.onGlobalPttToggle(() => {
-      if (voiceListeningRef.current) voiceStopRef.current?.();
-      else handleVoiceStartRef.current?.();
-    });
-    return () => { if (typeof off === 'function') off(); };
+    if (!electronAPI) return undefined;
+    const offs = [];
+    if (electronAPI.onGlobalPttDown) {
+      offs.push(electronAPI.onGlobalPttDown(() => handleVoiceStartRef.current?.()));
+    }
+    if (electronAPI.onGlobalPttUp) {
+      offs.push(electronAPI.onGlobalPttUp(() => handleVoiceStopRef.current?.()));
+    }
+    if (electronAPI.onGlobalPttToggle) {
+      offs.push(electronAPI.onGlobalPttToggle(() => {
+        if (pttDownRef.current) handleVoiceStopRef.current?.();
+        else handleVoiceStartRef.current?.();
+      }));
+    }
+    return () => { offs.forEach((off) => { if (typeof off === 'function') off(); }); };
   }, [electronAPI]);
 
   // When callsign matched via voice: select the aircraft
@@ -1124,7 +1146,7 @@ export default function FlightStripsWindow({ airportIcao }) {
               witchMode={witchMode}
               feedback={voiceFeedback}
               onPress={handleVoiceStart}
-              onRelease={voice.stopListening}
+              onRelease={handleVoiceStop}
             />
           )}
           {/* Global PTT hotkey remap — gear immediately right of the PTT

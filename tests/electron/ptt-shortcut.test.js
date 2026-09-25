@@ -59,11 +59,24 @@ function makeConfig(initial = {}) {
   };
 }
 
+function makeKeyWatch({ available = true } = {}) {
+  let armed = null;
+  return {
+    isAvailable: () => available,
+    watch(vk, onUp) { armed = { vk, onUp }; return available; },
+    cancel() { armed = null; },
+    fireUp() { const a = armed; armed = null; if (a) a.onUp(); },
+    getArmed: () => armed,
+  };
+}
+
 function makeManager(overrides = {}) {
   const globalShortcut = overrides.globalShortcut || makeGlobalShortcut();
   const config = overrides.config || makeConfig();
   let windows = overrides.windows || [];
   const triggered = [];
+  const pressed = [];
+  const released = [];
   const manager = createPttShortcutManager({
     globalShortcut,
     loadConfig: config.loadConfig,
@@ -73,9 +86,18 @@ function makeManager(overrides = {}) {
       triggered.push(win);
       win.webContents.send('global-ptt-toggle');
     }),
+    onPress: overrides.onPress || ((win) => {
+      pressed.push(win);
+      win.webContents.send('global-ptt-down');
+    }),
+    onRelease: overrides.onRelease || ((win) => {
+      released.push(win);
+      win.webContents.send('global-ptt-up');
+    }),
+    keyWatch: overrides.keyWatch,
   });
   return {
-    manager, globalShortcut, config, triggered,
+    manager, globalShortcut, config, triggered, pressed, released,
     setWindows: (w) => { windows = w; },
   };
 }
@@ -196,6 +218,93 @@ describe('pttShortcutManager trigger routing', () => {
     expect(() => ctx.globalShortcut.fire('F9')).not.toThrow();
     expect(ctx.triggered).toEqual([]);
     expect(dead.sent).toEqual([]);
+  });
+});
+
+// ─── hold-to-talk (keyWatch present) ────────────────────────────────
+
+describe('pttShortcutManager hold-to-talk', () => {
+  it('press fires onPress + arms the watcher, release fires onRelease', () => {
+    const keyWatch = makeKeyWatch();
+    const ctx = makeManager({ keyWatch });
+    const win = makeWindow({ focused: true });
+    ctx.setWindows([win]);
+    ctx.manager.set('Shift+Space');
+
+    ctx.globalShortcut.fire('Shift+Space');
+    expect(win.sent).toEqual(['global-ptt-down']);
+    expect(ctx.triggered).toEqual([]);              // never toggles in hold mode
+    expect(keyWatch.getArmed().vk).toBe(0x20);
+
+    keyWatch.fireUp();
+    expect(win.sent).toEqual(['global-ptt-down', 'global-ptt-up']);
+    expect(keyWatch.getArmed()).toBeNull();
+  });
+
+  it('absorbs Windows hotkey auto-repeat (one down edge, release still works)', () => {
+    const keyWatch = makeKeyWatch();
+    const ctx = makeManager({ keyWatch });
+    const win = makeWindow({ focused: true });
+    ctx.setWindows([win]);
+    ctx.manager.set('Shift+Space');
+
+    ctx.globalShortcut.fire('Shift+Space');
+    ctx.globalShortcut.fire('Shift+Space');         // repeat while held
+    ctx.globalShortcut.fire('Shift+Space');
+    expect(win.sent).toEqual(['global-ptt-down']);
+
+    keyWatch.fireUp();
+    expect(win.sent).toEqual(['global-ptt-down', 'global-ptt-up']);
+  });
+
+  it('falls back to toggle when the watcher is unavailable', () => {
+    const keyWatch = makeKeyWatch({ available: false });
+    const ctx = makeManager({ keyWatch });
+    const win = makeWindow({ focused: true });
+    ctx.setWindows([win]);
+    ctx.manager.set('Shift+Space');
+
+    ctx.globalShortcut.fire('Shift+Space');
+    expect(win.sent).toEqual(['global-ptt-toggle']);
+    expect(ctx.pressed).toEqual([]);
+  });
+
+  it('falls back to toggle when the accelerator has no mappable key', () => {
+    const keyWatch = makeKeyWatch();
+    const ctx = makeManager({ keyWatch });
+    const win = makeWindow({ focused: true });
+    ctx.setWindows([win]);
+    ctx.manager.set('Super+Meta');
+
+    ctx.globalShortcut.fire('Super+Meta');
+    expect(win.sent).toEqual(['global-ptt-toggle']);
+    expect(keyWatch.getArmed()).toBeNull();
+  });
+
+  it('dispose while held releases the mic', () => {
+    const keyWatch = makeKeyWatch();
+    const ctx = makeManager({ keyWatch });
+    const win = makeWindow({ focused: true });
+    ctx.setWindows([win]);
+    ctx.manager.set('Shift+Space');
+    ctx.globalShortcut.fire('Shift+Space');
+
+    ctx.manager.dispose();
+    expect(win.sent).toEqual(['global-ptt-down', 'global-ptt-up']);
+    expect(keyWatch.getArmed()).toBeNull();
+  });
+
+  it('remapping while held releases the mic before re-registering', () => {
+    const keyWatch = makeKeyWatch();
+    const ctx = makeManager({ keyWatch });
+    const win = makeWindow({ focused: true });
+    ctx.setWindows([win]);
+    ctx.manager.set('Shift+Space');
+    ctx.globalShortcut.fire('Shift+Space');
+
+    ctx.manager.set('F9');
+    expect(win.sent).toEqual(['global-ptt-down', 'global-ptt-up']);
+    expect(ctx.manager.get().shortcut).toBe('F9');
   });
 });
 

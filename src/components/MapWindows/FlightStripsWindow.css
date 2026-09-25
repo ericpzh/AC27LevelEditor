@@ -64,6 +64,7 @@
   transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
   user-select: none;
   -webkit-user-select: none;
+  touch-action: none;   /* keep pointer events during a hold (no scroll/pinch cancel) */
 }
 
 .voice-ptt-btn:hover {

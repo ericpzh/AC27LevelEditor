@@ -3223,13 +3223,21 @@ ipcMain.handle('voice-stt-stop', async () => {
 // ─── IPC: Global PTT hotkey (works even when the window is not focused) ───
 // Logic lives in ./pttShortcut (CJS, unit-tested in tests/electron/);
 // main only wires it to globalShortcut + the strips windows + ac27-config.
+// Hold-to-talk needs a key-UP edge that globalShortcut lacks — pttKeyWatch
+// polls user32!GetAsyncKeyState (koffi, Windows-only) and falls back to the
+// legacy toggle broadcast when unavailable.
 const { createPttShortcutManager } = require('./pttShortcut');
+const { createPttKeyWatch } = require('./pttKeyWatch');
+const pttKeyWatch = createPttKeyWatch();
 const pttShortcutManager = createPttShortcutManager({
   globalShortcut,
   loadConfig,
   saveConfig,
   getStripsWindows: () => [...flightStripsWindows.values()],
   onTrigger: (win) => win.webContents.send('global-ptt-toggle'),
+  onPress: (win) => win.webContents.send('global-ptt-down'),
+  onRelease: (win) => win.webContents.send('global-ptt-up'),
+  keyWatch: pttKeyWatch,
 });
 
 ipcMain.handle('get-ptt-shortcut', async () => pttShortcutManager.get());
@@ -4588,6 +4596,7 @@ app.whenReady().then(() => {
 });
 
 app.on('will-quit', () => {
+  try { pttShortcutManager.dispose(); } catch (_) { /* shutting down */ }
   try { globalShortcut.unregisterAll(); } catch (_) { /* shutting down */ }
   stopUdpListener();
   stopApiServer();
