@@ -20,6 +20,7 @@ const {
   sortFlightsChronologically,
   collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, getFileInfo,
   loadAudioCallsigns, mergeAudioCallsigns,
+  parseAirlineCountryRegistry, loadAirlineCountryRegistry,
 } = require('./utils');
 const { scanGameRoot, findGameRoot } = require('./scanner');
 const {

@@ -334,6 +334,111 @@ describe('appStore — updateFlight language change cascades Voice', () => {
   });
 });
 
+describe('appStore — new flight row follows the airline registry', () => {
+  const VOICE_POOL = ['CN-Captain-Young', 'CN-Captain-Middle-Aged-EN', 'Yeager'];
+  const VOICE_LANGS = { 'CN-Captain-Young': 'zh', 'CN-Captain-Middle-Aged-EN': 'en', Yeager: 'en' };
+  const COUNTRIES = { CCA: 'CN', CAL: 'TW', CPA: 'HK' };
+
+  function setupAdd(airline) {
+    useAppStore.getState().initializeEditor({
+      currentPath: '/test/file.acl',
+      airportIcao: 'ZGSZ',
+      flights: [],
+      before: '', after: '', arrayContent: '', originalBlocks: [],
+      configStartTime: '06:00', configEndTime: '18:00',
+      _saveSec: 36000,
+    });
+    useAppStore.getState().setAuxData(
+      {
+        ZGSZ: {
+          AircraftType: ['B738'], Stand: ['G1'], Runway: ['33'], Airway: [],
+          Voice: VOICE_POOL, Language: ['en', 'zh'],
+          _voiceLanguages: VOICE_LANGS, _airlineCountries: COUNTRIES,
+          _registrationMap: { [`${airline}|B738`]: ['B-1111'] },
+          _flightNums: { [airline]: ['1234'] },
+        },
+      },
+      { byAirline: { [airline]: ['1234'] }, allCallsigns: [], allAirlines: [airline] },
+      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], runways: ['33'], timeline: [] } },
+      [],
+    );
+  }
+
+  it('auto-populates a non-CN carrier (CAL) with en + an en voice', () => {
+    setupAdd('CAL');
+    useAppStore.getState().addArrivalFlight();
+    const f = useAppStore.getState().flights[0];
+    expect(f.CallSign.startsWith('CAL')).toBe(true);
+    expect(f.Language).toBe('en');
+    expect(VOICE_LANGS[f.Voice]).toBe('en');
+  });
+
+  it('auto-populates a CN carrier (CCA) with zh + a zh voice at a Chinese airport', () => {
+    setupAdd('CCA');
+    useAppStore.getState().addArrivalFlight();
+    const f = useAppStore.getState().flights[0];
+    expect(f.CallSign.startsWith('CCA')).toBe(true);
+    expect(f.Language).toBe('zh');
+    expect(VOICE_LANGS[f.Voice]).toBe('zh');
+  });
+});
+
+describe('appStore — updateFlight AirlineCode change cascades Language + Voice', () => {
+  const VOICE_POOL = ['CN-Captain-Young', 'CN-Captain-Middle-Aged-EN', 'Yeager'];
+  const VOICE_LANGS = { 'CN-Captain-Young': 'zh', 'CN-Captain-Middle-Aged-EN': 'en', Yeager: 'en' };
+  const COUNTRIES = { CCA: 'CN', CAL: 'TW', CPA: 'HK' };
+
+  function setupAirlineChange() {
+    useAppStore.getState().initializeEditor({
+      currentPath: '/test/file.acl',
+      airportIcao: 'ZGSZ',
+      flights: [{
+        CallSign: 'CCA1234', ArrivalAirport: 'ZGSZ', LandingTime: '10:00:00',
+        AircraftType: 'B738', Voice: 'CN-Captain-Young', Language: 'zh',
+      }],
+      before: '', after: '', arrayContent: '', originalBlocks: [],
+      configStartTime: '06:00', configEndTime: '18:00',
+      _saveSec: 36000,
+    });
+    useAppStore.getState().setAuxData(
+      {
+        ZGSZ: {
+          AircraftType: ['B738'], Voice: VOICE_POOL, Language: ['en', 'zh'],
+          _voiceLanguages: VOICE_LANGS, _airlineCountries: COUNTRIES,
+          _flightNums: { CAL: ['2017'], CPA: ['841'] },
+        },
+      },
+      { byAirline: {}, allCallsigns: [], allAirlines: ['CAL', 'CPA'] },
+      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+      [],
+    );
+  }
+
+  it('switching to a non-CN carrier (CAL) forces en + an en voice', () => {
+    setupAirlineChange();
+    useAppStore.getState().updateFlight(0, { AirlineCode: 'CAL' });
+    const f = useAppStore.getState().flights[0];
+    expect(f.CallSign.startsWith('CAL')).toBe(true);
+    expect(f.Language).toBe('en');
+    expect(VOICE_LANGS[f.Voice]).toBe('en');
+  });
+
+  it('switching to Cathay (CPA) also forces en', () => {
+    setupAirlineChange();
+    useAppStore.getState().updateFlight(0, { AirlineCode: 'CPA' });
+    const f = useAppStore.getState().flights[0];
+    expect(f.Language).toBe('en');
+    expect(VOICE_LANGS[f.Voice]).toBe('en');
+  });
+
+  it('does not override an explicit Language supplied with the AirlineCode', () => {
+    setupAirlineChange();
+    useAppStore.getState().updateFlight(0, { AirlineCode: 'CAL', Language: 'zh' });
+    const f = useAppStore.getState().flights[0];
+    expect(f.Language).toBe('zh'); // caller's explicit choice wins
+  });
+});
+
 describe('appStore — selection', () => {
   it('selectedIndices defaults to empty', () => {
     expect(useAppStore.getState().selectedIndices.size).toBe(0);

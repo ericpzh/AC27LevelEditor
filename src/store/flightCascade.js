@@ -14,6 +14,7 @@
  * The caller (appStore.updateFlight) merges them into the flight object.
  */
 import { pickFirstFlightNumber } from './flightDefaults.js';
+import { languageForAirline } from '../utils/airlineLanguage.js';
 
 /**
  * Rebuild a CallSign from AirlineCode + FlightNum.
@@ -114,6 +115,31 @@ export function cascadeLanguageChange(newLanguage, airportValues) {
   const unknown = pool.filter((v) => !langOf[v]);
   const next = matching.length > 0 ? matching : (unknown.length > 0 ? unknown : pool);
   return next.length > 0 ? { Voice: next[0] } : {};
+}
+
+/**
+ * When the airline (callsign prefix) changes, cascade Language (and Voice) to
+ * the captain language the game's CallsignService requires: CN carriers speak
+ * zh, every other carrier speaks en. A mismatch makes the game throw
+ * "failed to allocate callsign ... for crew voice ..." at level load
+ * (CAL2017 paired with a zh `CN-Captain-Young`).
+ *
+ * Returns {} when the airline is unknown to the registry or the language is
+ * already correct, so a caller can safely merge the result.
+ *
+ * @param {string} newCode - the new 3-letter airline code
+ * @param {object} flight - the flight AFTER preliminary updates
+ * @param {object} airportValues - airportValues[currentAirport]
+ * @returns {{ Language?: string, Voice?: string }}
+ */
+export function cascadeAirlineLanguage(newCode, flight, airportValues) {
+  const vals = airportValues || {};
+  const expected = languageForAirline(newCode, vals._airlineCountries, vals.Language);
+  if (!expected || expected === (flight.Language || '')) return {};
+  const result = { Language: expected };
+  const voiceUpdates = cascadeLanguageChange(expected, vals);
+  if (voiceUpdates.Voice) result.Voice = voiceUpdates.Voice;
+  return result;
 }
 
 /**

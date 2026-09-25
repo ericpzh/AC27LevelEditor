@@ -1536,6 +1536,52 @@ function _loadVoiceCatalogForLevel(aclPath) {
 }
 
 /**
+ * Load the install's `airline_country_registry.cfg` for the level at `aclPath`.
+ * Layout: <gameRoot>/GroundATC_Data/StreamingAssets/airline_country_registry.cfg
+ * @returns {Object<string,string>|null} airline code → country code
+ */
+function _loadAirlineCountryRegistryForLevel(aclPath) {
+  try {
+    const { loadAirlineCountryRegistry } = require('./utils');
+    const cfgPath = path.join(path.dirname(aclPath), '..', '..', '..', 'airline_country_registry.cfg');
+    return loadAirlineCountryRegistry(cfgPath);
+  } catch (_) { return null; }
+}
+
+/**
+ * Whether the level's airport ships Chinese ATC/captain audio. Used to decide
+ * if a CN carrier should speak zh (ZGSZ/ZSJN) or fall back to en (KJFK/KDCA).
+ * @returns {boolean}
+ */
+function _airportSupportsChinese(aclPath) {
+  try {
+    const fs = require('fs');
+    // audio_clips_<lang>.json sits next to the level file (…/<ICAO>/Levels/).
+    return fs.existsSync(path.join(path.dirname(aclPath), 'audio_clips_zh.json'));
+  } catch (_) { return false; }
+}
+
+/**
+ * Expected captain language for a flight, per the game's callsign pool: Chinese
+ * (CN) carriers speak zh, every other carrier speaks en. Unknown airlines
+ * return null (never forced).
+ * @param {object} fl
+ * @param {Object<string,string>} countries
+ * @param {boolean} hasZh
+ * @returns {'zh'|'en'|null}
+ */
+function _expectedLanguageForFlight(fl, countries, hasZh) {
+  if (!countries) return null;
+  const cs = String((fl && fl.CallSign) || '').trim();
+  let code = cs.length >= 3 ? cs.slice(0, 3) : '';
+  if (!code) code = String((fl && (fl.AirlineName || fl.AirlineCode)) || '').trim().slice(0, 3);
+  code = code.toUpperCase();
+  if (!code) return null;
+  const { languageForAirlineCode } = require('./utils');
+  return languageForAirlineCode(code, countries, !!hasZh);
+}
+
+/**
  * GAME-COMPAT NORMALIZATION (v4) — repair the three fuzz-discovered classes
  * of saves the game rejects on level init (see tests/integration/
  * save_gamecompat.test.js and gamecompat-utils.cjs for the empirical rules):
@@ -1576,6 +1622,14 @@ function _loadVoiceCatalogForLevel(aclPath) {
  *     the catalog or whose catalog language disagrees with Language is switched
  *     to a same-language captain voice (preferring one already used in the level).
  *
+ *  6. AIRLINE / LANGUAGE — the game's CallsignService allocates a flight's
+ *     callsign from the pool shared by the captain and ATC voices. A callsign
+ *     clip only exists for one captain language, so a flight's Language must
+ *     follow its airline: Chinese (CN) carriers speak zh, every other carrier
+ *     speaks en. A mismatch throws "Flight plan '<reg>' failed to allocate
+ *     callsign '<cs>' for crew voice '<voice>'" (CAL2017 / CN-Captain-Young).
+ *     Runs before (5) so the voice is then repaired to match the new Language.
+ *
  * Violating arrival(s) are moved to a safe stand drawn from the level's own
  * stand set (plus the complete stand pool when the caller provides it).
  * Mutates `flights` in place so the StaticItems header rebuild, the
@@ -1594,10 +1648,15 @@ function _loadVoiceCatalogForLevel(aclPath) {
  * @param {Object<string,{language:string,role:string}>|null} voiceCatalog
  *                 optional voice_catalog.json map (name -> {language, role})
  *                 for Voice/Language repair — see _loadVoiceCatalogForLevel.
- * @returns {{ renamed: number, moved: number, starred: number, voiced: number }}
+ * @param {Object<string,string>|null} airlineCountries optional
+ *                 airline_country_registry.cfg map (code -> country) for
+ *                 airline/language repair — see _loadAirlineCountryRegistryForLevel.
+ * @param {boolean} [hasZh] whether the level's airport ships Chinese audio
+ *                 (a CN carrier only gets zh when it does).
+ * @returns {{ renamed: number, moved: number, starred: number, voiced: number, relanguaged: number }}
  */
-function _normalizeFlightsForGameCompat(flights, fullText, log, standPool, approachCache, voiceCatalog) {
-  const result = { renamed: 0, moved: 0, starred: 0, voiced: 0 };
+function _normalizeFlightsForGameCompat(flights, fullText, log, standPool, approachCache, voiceCatalog, airlineCountries, hasZh) {
+  const result = { renamed: 0, moved: 0, starred: 0, voiced: 0, relanguaged: 0 };
   if (!flights || !flights.length) return result;
   if (!fullText) return result;
 
@@ -1851,6 +1910,23 @@ function _normalizeFlightsForGameCompat(flights, fullText, log, standPool, appro
           log('[GAME-COMPAT] WARN: arrival ' + reg + ' has no STAR and no arrival-capable runway found — leaving empty');
         }
       }
+    }
+  }
+
+  // ── 4b. airline / language consistency ───────────────────────────
+  // The game's CallsignService allocates a callsign from the pool shared by
+  // the captain voice and the airport's ATC voice; a callsign clip exists for
+  // exactly one captain language, so Language must follow the airline (CN → zh,
+  // else en). Runs BEFORE (5) so the voice is repaired to match the new Language.
+  if (airlineCountries && typeof airlineCountries === 'object') {
+    for (const fl of flights) {
+      const expected = _expectedLanguageForFlight(fl, airlineCountries, !!hasZh);
+      if (!expected) continue;
+      const current = String(fl.Language || '').trim();
+      if (current === expected) continue;
+      fl.Language = expected;
+      result.relanguaged++;
+      log('[GAME-COMPAT] ' + (regOf(fl) || fl.CallSign || '?') + ': language "' + current + '" -> "' + expected + '" (airline ' + ((fl.CallSign || '').slice(0, 3) || fl.AirlineName || '?') + ' policy)');
     }
   }
 
@@ -5152,9 +5228,11 @@ function _rebuildStaticDataSections(aclPath, flights, baseDateTicks, approachCac
   // section rebuild so the StaticItems header rebuild, the checkpoint-frame
   // rebuild, and the CSV export all see the repaired flight state. ──
   const voiceCatalog = _loadVoiceCatalogForLevel(aclPath);
-  const gameCompat = _normalizeFlightsForGameCompat(flights, text, log, standPool, approachCache, voiceCatalog);
-  if (gameCompat.renamed > 0 || gameCompat.moved > 0 || gameCompat.starred > 0 || gameCompat.voiced > 0) {
-    log('game-compat normalization: renamed=' + gameCompat.renamed + ' moved=' + gameCompat.moved + ' starred=' + gameCompat.starred + ' voiced=' + gameCompat.voiced);
+  const airlineCountries = _loadAirlineCountryRegistryForLevel(aclPath);
+  const hasZh = _airportSupportsChinese(aclPath);
+  const gameCompat = _normalizeFlightsForGameCompat(flights, text, log, standPool, approachCache, voiceCatalog, airlineCountries, hasZh);
+  if (gameCompat.renamed > 0 || gameCompat.moved > 0 || gameCompat.starred > 0 || gameCompat.voiced > 0 || gameCompat.relanguaged > 0) {
+    log('game-compat normalization: renamed=' + gameCompat.renamed + ' moved=' + gameCompat.moved + ' starred=' + gameCompat.starred + ' voiced=' + gameCompat.voiced + ' relanguaged=' + gameCompat.relanguaged);
   }
 
   const t = createTokenizer(text);
@@ -5911,6 +5989,9 @@ module.exports = {
   _validateStandConflicts,
   _normalizeFlightsForGameCompat,
   _loadVoiceCatalogForLevel,
+  _loadAirlineCountryRegistryForLevel,
+  _airportSupportsChinese,
+  _expectedLanguageForFlight,
   _scanFrameDockedState,
   GAME_STAND_MIN_GAP_SEC,
   _rebuildTimelineSections,

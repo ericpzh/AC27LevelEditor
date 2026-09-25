@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { TOAST_DURATION_MS, TOAST_ERROR_DURATION_MS, STORAGE_KEY_THEME } from '../utils/constants';
 import { createArrivalFlight, createDepartureFlight } from './flightDefaults.js';
-import { rebuildCallSign, cascadeAirlineChange, cascadeRunwayChange, cascadeLanguageChange, clearInternalRegistration } from './flightCascade.js';
+import { rebuildCallSign, cascadeAirlineChange, cascadeRunwayChange, cascadeLanguageChange, cascadeAirlineLanguage, clearInternalRegistration } from './flightCascade.js';
 
 export const useAppStore = create((set, get) => ({
   // ─── Screen ───
@@ -332,6 +332,19 @@ export const useAppStore = create((set, get) => ({
       if ('AirlineCode' in updates) {
         const acUpdates = cascadeAirlineChange(updates.AirlineCode, flight, airportValues);
         Object.assign(flight, acUpdates);
+        // Cascade 2b: AirlineCode change → captain Language/Voice. The game's
+        // CallsignService only records a callsign for one captain language
+        // (CN → zh, every other → en), so changing the airline must not leave a
+        // stale language/voice. Skipped when the user explicitly set Language;
+        // the Voice is preserved when the user explicitly set it.
+        if (!('Language' in updates)) {
+          const langUpdates = cascadeAirlineLanguage(updates.AirlineCode, flight, airportValues);
+          if ('Voice' in updates) {
+            if (langUpdates.Language) flight.Language = langUpdates.Language;
+          } else {
+            Object.assign(flight, langUpdates);
+          }
+        }
       }
     }
 

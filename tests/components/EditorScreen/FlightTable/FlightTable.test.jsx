@@ -219,6 +219,79 @@ describe('FlightTable — Voice dropdown is constrained to the flight Language',
   });
 });
 
+describe('FlightTable — airline drives the Language/Voice dropdown (airline_country_registry)', () => {
+  const VOICES = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN', 'Yeager'];
+  const VOICE_LANGS = {
+    'CN-Captain-Young': 'zh', 'CN-Captain-Middle-Aged': 'zh', 'CN-Captain-Young-EN': 'en', Yeager: 'en',
+  };
+  const COUNTRIES = { CES: 'CN', CAL: 'TW', CPA: 'HK' };
+
+  function setupAirlineStore(flights) {
+    useAppStore.getState().initializeEditor({
+      currentPath: '/test/file.acl',
+      airportIcao: 'ZGSZ',
+      flights,
+      before: '', after: '', arrayContent: '', originalBlocks: [],
+      configStartTime: '06:00', configEndTime: '18:00',
+      _saveSec: 36000,
+    });
+    useAppStore.getState().setAuxData(
+      {
+        ZGSZ: {
+          AircraftType: ['B738'], Stand: ['G1'], Voice: VOICES,
+          Language: ['en', 'zh'], _voiceLanguages: VOICE_LANGS, _airlineCountries: COUNTRIES,
+        },
+      },
+      { byAirline: { CES: ['1234'], CAL: ['2017'] }, allCallsigns: [], allAirlines: ['CES', 'CAL'] },
+      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+      [],
+    );
+  }
+
+  function openDropdown(col, gi) {
+    const cell = getCell(col, gi);
+    expect(cell).not.toBeNull();
+    act(() => { cell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
+    act(() => { cell.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const select = cell.querySelector('select.cell-widget');
+    expect(select).not.toBeNull();
+    return [...select.options].map(o => o.value);
+  }
+
+  it('offers only en for a non-CN carrier (CAL)', () => {
+    const flights = [{ CallSign: 'CAL2017', ArrivalAirport: 'ZGSZ', LandingTime: '08:00', AircraftType: 'B738', Stand: 'G1', Voice: 'CN-Captain-Young-EN', Language: 'en' }];
+    setupAirlineStore(flights);
+    renderTable({ flights });
+    expect(openDropdown('Language', 0)).toEqual(['en']);
+    expect(openDropdown('Voice', 0)).toEqual(['CN-Captain-Young-EN', 'Yeager']);
+  });
+
+  it('offers only zh for a CN carrier (CES) at a Chinese airport', () => {
+    const flights = [{ CallSign: 'CES1234', ArrivalAirport: 'ZGSZ', LandingTime: '08:00', AircraftType: 'B738', Stand: 'G1', Voice: 'CN-Captain-Young', Language: 'zh' }];
+    setupAirlineStore(flights);
+    renderTable({ flights });
+    expect(openDropdown('Language', 0)).toEqual(['zh']);
+    expect(openDropdown('Voice', 0)).toEqual(['CN-Captain-Young', 'CN-Captain-Middle-Aged']);
+  });
+
+  it('never offers a zh voice to a non-CN carrier even on a legacy zh row', () => {
+    // The exact CAL2017 / CN-Captain-Young combo the game rejects on load.
+    const flights = [{ CallSign: 'CAL2017', ArrivalAirport: 'ZGSZ', LandingTime: '08:00', AircraftType: 'B738', Stand: 'G1', Voice: 'CN-Captain-Young', Language: 'zh' }];
+    setupAirlineStore(flights);
+    renderTable({ flights });
+    const voiceOpts = openDropdown('Voice', 0);
+    expect(voiceOpts).toContain('CN-Captain-Young-EN');
+    expect(voiceOpts).toContain('Yeager');
+    // The legacy current value stays selectable so the cell never renders blank.
+    expect(voiceOpts).toContain('CN-Captain-Young');
+    // The Language dropdown only offers the airline-required language (plus the
+    // legacy current value, kept selectable).
+    const langOpts = openDropdown('Language', 0);
+    expect(langOpts).toContain('en');
+    expect(langOpts[0]).toBe('zh'); // legacy current value kept first
+  });
+});
+
 describe('FlightTable — aircraft type dropdown is airline-independent', () => {
   it('lists every type from vals.AircraftType, ignoring _compat.airlineToAircraft', () => {
     useAppStore.getState().initializeEditor({

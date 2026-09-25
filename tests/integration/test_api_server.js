@@ -8,7 +8,7 @@
  */
 
 const http = require('http');
-const { startServer, stopServer, validateFlightObjects, buildConstraints, applyCascades, parseTimeSeconds, isArrival, handleMcpMessage, MCP_TOOLS } = require('../../electron/api-server');
+const { startServer, stopServer, validateFlightObjects, buildConstraints, airlineLanguageMap, applyCascades, parseTimeSeconds, isArrival, handleMcpMessage, MCP_TOOLS } = require('../../electron/api-server');
 
 const PORT = 31416; // use different port from default 31415
 
@@ -268,6 +268,60 @@ const cascaded3 = applyCascades(
   c
 );
 assertEqual(cascaded3.Airway, 'ABCD1A', 'cascade Runway: Airway to first STAR for 04L');
+
+// ── Airline / language registry (MCP exposure + validation + cascade) ──
+// The renderer's airportValues[icao] carries the install-global voice catalog
+// and airline_country_registry maps; buildConstraints must surface them so an
+// agent never creates a flight the game rejects with "failed to allocate
+// callsign … for crew voice …".
+const stateWithCountries = {
+  currentAirport: 'KJFK',
+  _configStartTime: '06:00:00',
+  _configEndTime: '22:00:00',
+  airportValues: {
+    KJFK: {
+      Language: ['en', 'zh'],
+      _voiceLanguages: { 'en-US-1': 'en', 'zh-CN-1': 'zh' },
+      _airlineCountries: { AAL: 'US', CCA: 'CN', CAL: 'TW', DAL: 'US', JBU: 'US' },
+    },
+  },
+};
+const c2 = buildConstraints(stateWithCountries, MOCK_AIRPORT_CACHE);
+assert(c2.airlineCountries && c2.airlineCountries.CCA === 'CN', 'constraints carries airlineCountries');
+assertEqual(c2.voiceLanguages['zh-CN-1'], 'zh', 'constraints carries voiceLanguages');
+assertEqual(c2.languages, ['en', 'zh'], 'constraints carries the airport languages');
+assertEqual(airlineLanguageMap(c2).AAL, 'en', 'airlineLanguages: AAL -> en (US)');
+assertEqual(airlineLanguageMap(c2).CCA, 'zh', 'airlineLanguages: CCA -> zh at a zh-capable airport');
+assertEqual(airlineLanguageMap(c2).DAL, 'en', 'airlineLanguages: DAL -> en');
+
+// validateFlightObjects — a non-CN carrier on a zh language is rejected
+const calZh = { ...validFlight, CallSign: 'CAL2017', Language: 'zh', Voice: 'zh-CN-1', AirlineName: 'CAL' };
+const issuesLang = validateFlightObjects([calZh], MOCK_FLIGHTS, c2);
+assert(issuesLang !== null && issuesLang.some(i => i.issue === 'airline_language_mismatch'), 'non-CN airline on zh rejected');
+
+// validateFlightObjects — the same carrier on en is accepted (no language issue)
+const calEn = { ...calZh, Language: 'en', Voice: 'en-US-1' };
+const issuesLangOk = validateFlightObjects([calEn], MOCK_FLIGHTS, c2) || [];
+assert(!issuesLangOk.some(i => i.issue === 'airline_language_mismatch'), 'non-CN airline on en accepted');
+
+// validateFlightObjects — a CN carrier at an en-only airport is accepted
+const c2enOnly = buildConstraints(
+  { ...stateWithCountries, airportValues: { KJFK: { ...stateWithCountries.airportValues.KJFK, Language: ['en'] } } },
+  MOCK_AIRPORT_CACHE
+);
+assertEqual(airlineLanguageMap(c2enOnly).CCA, 'en', 'airlineLanguages: CCA -> en at an en-only airport');
+const ccaEn = { ...validFlight, CallSign: 'CCA1111', Language: 'en', Voice: 'en-US-1', AirlineName: 'CCA' };
+const issuesCcaEn = validateFlightObjects([ccaEn], MOCK_FLIGHTS, c2enOnly) || [];
+assert(!issuesCcaEn.some(i => i.issue === 'airline_language_mismatch'), 'CN airline on en at en-only airport accepted');
+
+// applyCascades — AirlineCode change cascades Language + Voice (Cascade 2b)
+const cascadedLang = applyCascades(
+  { ...MOCK_FLIGHTS[0], CallSign: 'CCA1501', Language: 'zh', Voice: 'zh-CN-1' },
+  { AirlineCode: 'CAL', FlightNum: '2017' },
+  c2
+);
+assertEqual(cascadedLang.Language, 'en', 'cascade AirlineCode: Language follows the airline');
+assertEqual(cascadedLang.Voice, 'en-US-1', 'cascade AirlineCode: Voice follows the language');
 
 // ── MCP SSE Tests (handleMcpMessage) ────────────────────────────
 

@@ -20,6 +20,7 @@ const {
 } = require('../src/acl/constants');
 const { CHANNEL_TYPE_APPROACH } = require('../src/utils/constants/aviation');
 const { polygonIsSimple } = require('../src/acl/scenery_graph');
+const { languageForAirlineCode } = require('../src/acl/utils');
 
 // ── Module state ────────────────────────────────────────────────
 let mainWindow = null;
@@ -329,6 +330,11 @@ function buildConstraints(state, cache) {
   const dv = entry?.dropdownValues || {};
   const ad = entry?.approachData || {};
   const ac = entry?.audioCallsigns || { byAirline: {}, allCallsigns: [], allAirlines: [] };
+  // The renderer's live airportValues[icao] — the exact object the UI's
+  // validation runs against. It carries the install-global `_voiceLanguages`
+  // (voice catalog) and `_airlineCountries` (airline_country_registry.cfg),
+  // which are resolved at read time and never persisted to cache.json.
+  const sv = (state && state.airportValues && icao) ? (state.airportValues[icao] || {}) : {};
 
   // Known airline codes: from audio callsigns + dropdown values
   const knownCodes = new Set([
@@ -343,7 +349,9 @@ function buildConstraints(state, cache) {
     runways: dv.Runway || [],
     aircraftTypes: allAircraftTypes(dv, ad),
     voices: dv.Voice || [],
-    languages: dv.Language || [],
+    languages: sv.Language || dv.Language || [],
+    voiceLanguages: sv._voiceLanguages || dv._voiceLanguages || null,
+    airlineCountries: sv._airlineCountries || null,
     airlineNames: dv.AirlineName || [],
     airlineAircraftCompat: (dv._compat && dv._compat.airlineToAircraft) || {},
     runwayStarCompat: ad.runwayStarMap || {},
@@ -353,6 +361,25 @@ function buildConstraints(state, cache) {
     currentAirport: state.currentAirport,
     runwayTimeline: state.runwayTimeline || { initialRunways: [], timeline: [] },
   };
+}
+
+/**
+ * The captain language the game's CallsignService requires for each airline
+ * known to this airport (CN → zh, every other → en), resolved against the
+ * airport's available languages. Exposed to MCP clients via get_airport_info /
+ * get_airport_values so an agent never creates a flight the game rejects with
+ * "failed to allocate callsign … for crew voice …".
+ * @returns {Object<string,'zh'|'en'>}
+ */
+function airlineLanguageMap(constraints) {
+  const out = {};
+  if (!constraints.airlineCountries) return out;
+  const hasZh = Array.isArray(constraints.languages) && constraints.languages.includes('zh');
+  for (const code of constraints.knownCodes) {
+    const lang = languageForAirlineCode(code, constraints.airlineCountries, hasZh);
+    if (lang) out[code] = lang;
+  }
+  return out;
 }
 
 // ── Validation ──────────────────────────────────────────────────
@@ -425,6 +452,26 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
 
     // 6. (removed) Aircraft type is independent of the airline — any profiled
     //    type is allowed regardless of the callsign's airline.
+
+    // 6b. Airline / language — the game's CallsignService only records a
+    //     callsign for one captain language (CN → zh, every other carrier → en),
+    //     so a mismatch throws "failed to allocate callsign … for crew voice …"
+    //     at level load (CAL2017 / CN-Captain-Young).
+    if (f.Language && constraints.airlineCountries) {
+      const expected = languageForAirlineCode(
+        airlineCode,
+        constraints.airlineCountries,
+        Array.isArray(constraints.languages) && constraints.languages.includes('zh'),
+      );
+      if (expected && f.Language !== expected) {
+        details.push({
+          index: idx, field: 'Language', value: f.Language,
+          issue: 'airline_language_mismatch',
+          message: `Airline ${airlineCode} must speak '${expected}', but ${f.CallSign || '?'} has Language '${f.Language}' — the game fails to allocate the callsign on load.`,
+          valid: [expected],
+        });
+      }
+    }
 
     // 7. Arrival legs must carry a STAR — the game's FlightPlan.Init() drops
     //    a STAR-less arrival leg at level load ("Flight plan '...' has
@@ -662,6 +709,24 @@ function applyCascades(flight, updates, constraints) {
     if (validRegs && validRegs.length > 0 && !validRegs.includes(result.Registration)) {
       result.Registration = validRegs[0];
     }
+    // Cascade Language (+ Voice) to the captain language the game's
+    // CallsignService requires (CN → zh, every other carrier → en). Mirrors
+    // Cascade 2b in appStore.updateFlight. Skipped when Language is explicit.
+    if (!('Language' in updates)) {
+      const expected = languageForAirlineCode(
+        newCode,
+        constraints.airlineCountries,
+        Array.isArray(constraints.languages) && constraints.languages.includes('zh'),
+      );
+      if (expected && expected !== result.Language) {
+        result.Language = expected;
+        if (!('Voice' in updates)) {
+          const langOf = constraints.voiceLanguages || {};
+          const matching = (constraints.voices || []).filter(v => langOf[v] === expected);
+          if (matching.length > 0) result.Voice = matching[0];
+        }
+      }
+    }
   }
 
   if ('FlightNum' in updates && updates.FlightNum != null) {
@@ -687,7 +752,7 @@ function applyCascades(flight, updates, constraints) {
 const MCP_TOOLS = [
   {
     name: 'create_flights',
-    description: 'Insert one or more complete flight rows into the currently-open level. Every flight must have all 15 fields populated. The server validates all constraints and rejects invalid data. Use get_airport_info first to get valid values for each field.',
+    description: 'Insert one or more complete flight rows into the currently-open level. Every flight must have all 15 fields populated. The server validates all constraints and rejects invalid data. Use get_airport_info first to get valid values for each field. Language must follow the callsign airline (see get_airport_info.airlineLanguages: CN carriers speak zh, every other carrier speaks en) and Voice must match Language.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -727,7 +792,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'modify_flights',
-    description: 'Update fields on matching flights. Cascade: AirlineCode change rebuilds CallSign + resets Registration (aircraft type is independent of the airline). Runway change resets Airway to first valid STAR.',
+    description: 'Update fields on matching flights. Cascade: AirlineCode change rebuilds CallSign, resets Registration (aircraft type is independent of the airline), and sets Language + Voice to the airline-required captain language (CN carriers speak zh, every other carrier speaks en — see get_airport_info.airlineLanguages). Runway change resets Airway to first valid STAR.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2057,6 +2122,11 @@ async function handleMcpMessage(msg) {
               airlineAircraftCompat: constraints.airlineAircraftCompat,
               runwayStarCompat: constraints.runwayStarCompat,
               registrationsByPair: constraints.registrationsByPair,
+              // Airline → required captain Language (CN → zh, every other → en).
+              // The game's CallsignService only records a callsign for one
+              // captain language; a mismatch fails at level load.
+              airlineLanguages: airlineLanguageMap(constraints),
+              languageRules: { airline: 'CN carriers speak zh, every other carrier speaks en', voice: 'Voice catalog language must equal the flight Language' },
               // maxTime = scenario end + SCENARIO_END_GRACE_MIN, the effective validation bound
               timeRules: { minTime: state._configStartTime || null, maxTime: (state._configEndTime && !isNaN(parseTimeSeconds(state._configEndTime))) ? formatTimeSeconds(parseTimeSeconds(state._configEndTime) + SCENARIO_END_GRACE_SEC) : null, timeOrderArrival: 'LandingTime < InBlockTime', timeOrderDeparture: 'OffBlockTime < TakeoffTime', format: 'HH:MM:SS' },
               standRules: { departureDepartureConflict: 'Two departures on same stand conflict', departureArrivalConflict: 'Dep+Arr on same stand conflict when OffBlockTime >= LandingTime' },
@@ -2307,6 +2377,7 @@ async function handleRequest(req, res) {
           airlineAircraftCompat: constraints.airlineAircraftCompat,
           runwayStarCompat: constraints.runwayStarCompat,
           registrationsByPair: constraints.registrationsByPair,
+          airlineLanguages: airlineLanguageMap(constraints),
           timeRules: {
             minTime: state._configStartTime || null,
             maxTime: state._configEndTime || null,
@@ -2620,4 +2691,4 @@ function stopServer() {
   }
 }
 
-module.exports = { startServer, stopServer, validateFlightObjects, buildConstraints, applyCascades, parseTimeSeconds, isArrival, handleMcpMessage, MCP_TOOLS };
+module.exports = { startServer, stopServer, validateFlightObjects, buildConstraints, airlineLanguageMap, applyCascades, parseTimeSeconds, isArrival, handleMcpMessage, MCP_TOOLS };

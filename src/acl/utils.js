@@ -292,8 +292,73 @@ function getFileInfo(aclPath) {
   }
 }
 
-// ─── Audio callsign loading ───────────────────────────────────
+// ─── Airline country registry loading ─────────────────────────
+//
+// `<StreamingAssets>/airline_country_registry.cfg` maps an ISO country code to
+// a comma-separated airline-code list, e.g. `CN: BDJ, CCA, CES, …` /
+// `TW: CAL, EVA, …`. The game uses it to derive the captain language (CN → zh,
+// everything else → en); see `src/utils/airlineLanguage.js`.
 
+/**
+ * The captain language the game's CallsignService requires for an airline:
+ * CN carriers speak zh (when the airport ships Chinese audio), every other
+ * carrier speaks en. Returns null for an unknown airline (never forced).
+ *
+ * Mirrors `languageForAirline` in `src/utils/airlineLanguage.js` (the renderer
+ * copy) — keep the two in sync (`tests/unit/airline-language.test.js` cross-checks).
+ *
+ * @param {string} code - 3-letter ICAO airline code
+ * @param {Object<string,string>|null} countries - airline → country map
+ * @param {boolean} hasZh - whether the airport ships Chinese ATC/captain audio
+ * @returns {'zh'|'en'|null}
+ */
+function languageForAirlineCode(code, countries, hasZh) {
+  if (!countries || !code) return null;
+  const country = countries[String(code).toUpperCase()];
+  if (!country) return null;
+  if (country === 'CN') return hasZh ? 'zh' : 'en';
+  return 'en';
+}
+
+/**
+ * Parse the game's `airline_country_registry.cfg` text into a flat map.
+ * Pure + tolerant: malformed lines and unknown formats are skipped.
+ * @param {string} text
+ * @returns {Object<string,string>} airline code → country code
+ */
+function parseAirlineCountryRegistry(text) {
+  const map = {};
+  // Strip a UTF-8 BOM if the file was saved with one — `\s` does not match
+  // U+FEFF, so a BOM would otherwise swallow the first line's country code.
+  const src = String(text || '').replace(/^\uFEFF/, '');
+  for (const line of src.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z]{2})\s*:\s*(.+?)\s*$/);
+    if (!m) continue;
+    const country = m[1].toUpperCase();
+    for (const raw of m[2].split(',')) {
+      const code = raw.trim().toUpperCase();
+      if (code) map[code] = country;
+    }
+  }
+  return map;
+}
+
+/**
+ * Load the install's `airline_country_registry.cfg`.
+ * @param {string} cfgPath
+ * @returns {Object<string,string>|null} map, or null when missing/unreadable
+ */
+function loadAirlineCountryRegistry(cfgPath) {
+  try {
+    if (!fs.existsSync(cfgPath)) return null;
+    const map = parseAirlineCountryRegistry(fs.readFileSync(cfgPath, 'utf-8'));
+    return Object.keys(map).length > 0 ? map : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// ─── Audio callsign loading ───────────────────────────────────
 function loadAudioCallsigns(jsonPath) {
   const empty = { byAirline: {}, allCallsigns: [], allAirlines: [] };
   if (!fs.existsSync(jsonPath)) return empty;
@@ -356,4 +421,7 @@ module.exports = {
   getFileInfo,
   loadAudioCallsigns,
   mergeAudioCallsigns,
+  parseAirlineCountryRegistry,
+  loadAirlineCountryRegistry,
+  languageForAirlineCode,
 };

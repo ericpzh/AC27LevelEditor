@@ -70,15 +70,17 @@ other editor instance (port 31415).
 
 ```bash
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
-npm run test:fuzz # flight fuzz: all 20 prod levels, 50–200 ops each
-npm run test:fuzz:ground # ground fuzz: all 20 prod levels, 50–200 scenery ops each (runway/taxiway/fillet/area/stand/select+delete)
-$env:FUZZ_ACL_FILES = "ZSJN/ZSJN_leisure_1.acl"; npm run test:fuzz # subset (comma-separated)
+npm run test:fuzz # flight fuzz: all 24 prod levels, 50–200 ops each
+npm run test:fuzz:ground # ground fuzz: all 24 prod levels, 50–200 scenery ops each (runway/taxiway/fillet/area/stand/select+delete)
+$env:FUZZ_ACL_FILES = "ZSJN/ZSJN_leisure_1.acl,ZGSZ/ZGSZ_leisure_1.acl"; npm run test:fuzz # subset (comma-separated; must be browser-visible levels)
 $env:FUZZ_SEED = "12345"; npm run test:fuzz # reproduce a failure deterministically
-npm run test:fuzz -- --replace # copy PASSED levels' .acl + .acl.bak into the REAL game install (FUZZ_REPLACE=1 env works too)
+npm run test:fuzz -- --replace # copy PASSED levels' .acl + .acl.bak + flight_schedule_*.csv into the REAL game install (FUZZ_REPLACE=1 env works too)
 $env:E2E_KEEP_TMP = "1"; npm run test:fuzz:ground # keep tests/tmp-e2e for post-mortem (decode with tests/tmp-decode/decode.mjs pattern)
 ```
 
 `test:fuzz` and `test:fuzz:ground` share `fuzz-cli.mjs` / `fuzz-ground-cli.mjs` wrappers — the `--replace` flag is consumed by the wrapper (Playwright itself rejects unknown flags) and forwards everything else to Playwright. Without `--replace` the real game files are never touched. `E2E_KEEP_TMP=1` preserves the Playwright sandbox (otherwise `global-teardown.mjs` deletes `tests/tmp-e2e`/`tmp-e2e-userdata`).
+
+**Airline/language gate:** the flight fuzz generates the captain `Language` the callsign airline requires (CN carriers → zh, every other carrier → en; see `airline_country_registry.cfg` / `src/utils/airlineLanguage.js`), the AirlineCode modify op cascades it, and the game-compat gate (`runChecks`) asserts **`airline-language-mismatch`** — so a regression in the save pipeline's language repair fails the fuzz. Note: `FUZZ_ACL_FILES` can only target levels the editor's browser lists (`PROD_VISIBLE_BASES`); hidden levels (tutorials, `_Endless`, `_test`, `PerfBench`, `.demo`) are not staged by `global-setup.mjs` and cannot be opened by the harness.
 
 ### Integration tests (plain Node.js, in `tests/integration/`)
 

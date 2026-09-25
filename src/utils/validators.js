@@ -1,4 +1,5 @@
 import { T } from './i18n.js';
+import { airlineCodeForFlight, expectedLanguageForFlight } from './airlineLanguage.js';
 import { FIELD_LABELS, SCENARIO_END_GRACE_MIN, RUNWAY_TRANSITION_GRACE_SEC, STAND_DEP_BEFORE_ESTIMATE_MIN, STAND_ARR_AFTER_ESTIMATE_MIN, STAND_LANDING_BEFORE_INBLOCK_MIN, STAND_OCCUPANCY_START_OFFSET_MIN, STAND_OCCUPANCY_END_OFFSET_MIN, MINUTES_PER_DAY, VALID_LANGUAGES } from './constants.js';
 
 // ── Stand conflict detection helpers ──
@@ -229,6 +230,21 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
       issues.push(T('val_voice_language_mismatch', {
         cs: fl.CallSign || '?', voice: fl.Voice, vlang: voiceLanguage, lang: fl.Language,
       }));
+    }
+    // Airline / language consistency — the game's CallsignService records a
+    // callsign clip for exactly one captain language, so Language must follow
+    // the airline (CN -> zh, every other -> en). A mismatch throws
+    // "Flight plan '<reg>' failed to allocate callsign '<cs>' for crew voice
+    // '<voice>'" at level load (CAL2017 / CN-Captain-Young). Only checkable when
+    // the install's airline_country_registry reached the renderer.
+    const airlineCountries = values._airlineCountries;
+    if (airlineCountries && Array.isArray(values.Language)) {
+      const expected = expectedLanguageForFlight(fl, airlineCountries, values.Language);
+      if (expected && fl.Language && fl.Language !== expected) {
+        issues.push(T('val_airline_language_mismatch', {
+          cs: fl.CallSign || '?', code: airlineCodeForFlight(fl), lang: fl.Language, expected,
+        }));
+      }
     }
   });
 

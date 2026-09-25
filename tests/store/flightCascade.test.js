@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cascadeAirlineChange, cascadeLanguageChange } from '../../src/store/flightCascade';
+import { cascadeAirlineChange, cascadeLanguageChange, cascadeAirlineLanguage } from '../../src/store/flightCascade';
 
 describe('cascadeLanguageChange', () => {
   const POOL = ['CN-Captain-Young', 'CN-Captain-Middle-Aged', 'CN-Captain-Young-EN', 'CN-Captain-Middle-Aged-EN'];
@@ -66,5 +66,36 @@ describe('cascadeAirlineChange', () => {
     const flight = { AircraftType: 'A320', _Registration: 'N999XX' };
     const updates = cascadeAirlineChange('DAL', flight, airportValues);
     expect(updates.Registration).toBe('N111DL');
+  });
+});
+
+describe('cascadeAirlineLanguage', () => {
+  const VOICES = ['CN-Captain-Young', 'CN-Captain-Middle-Aged-EN', 'Yeager'];
+  const vals = {
+    Language: ['en', 'zh'],
+    Voice: VOICES,
+    _voiceLanguages: { 'CN-Captain-Young': 'zh', 'CN-Captain-Middle-Aged-EN': 'en', Yeager: 'en' },
+    _airlineCountries: { CCA: 'CN', CAL: 'TW', CPA: 'HK', AAL: 'US' },
+  };
+
+  it('forces en (and an en voice) when switching to a non-CN airline', () => {
+    const flight = { CallSign: 'CCA1001', Language: 'zh', Voice: 'CN-Captain-Young' };
+    expect(cascadeAirlineLanguage('CAL', flight, vals)).toEqual({ Language: 'en', Voice: 'CN-Captain-Middle-Aged-EN' });
+  });
+
+  it('forces zh when switching to a CN airline at a Chinese airport', () => {
+    const flight = { CallSign: 'CAL2017', Language: 'en', Voice: 'Yeager' };
+    expect(cascadeAirlineLanguage('CCA', flight, vals)).toEqual({ Language: 'zh', Voice: 'CN-Captain-Young' });
+  });
+
+  it('falls back to en for a CN airline at an en-only airport', () => {
+    const enOnly = { ...vals, Language: ['en'] };
+    const flight = { CallSign: 'CCA1001', Language: 'zh', Voice: 'CN-Captain-Young' };
+    expect(cascadeAirlineLanguage('CCA', flight, enOnly)).toEqual({ Language: 'en', Voice: 'CN-Captain-Middle-Aged-EN' });
+  });
+
+  it('returns {} when the language is already correct or the airline is unknown', () => {
+    expect(cascadeAirlineLanguage('CAL', { Language: 'en', Voice: 'Yeager' }, vals)).toEqual({});
+    expect(cascadeAirlineLanguage('ZZZ', { Language: 'zh', Voice: 'CN-Captain-Young' }, vals)).toEqual({});
   });
 });

@@ -75,14 +75,14 @@ The flight-schedule tools are listed below; the Ground/Air Painter tool set (sce
 |------|---------|
 | `create_flights` | Insert complete flight objects (15 fields each). Server validates all constraints. |
 | `get_flights` | Read flights with optional filters (type, airline, callsign, stand, runway, time range). |
-| `modify_flights` | Update fields on matching flights. Cascade: AirlineCode → CallSign+AircraftType+Registration; Runway → Airway. |
+| `modify_flights` | Update fields on matching flights. Cascade: AirlineCode → CallSign+AirlineName+Registration+**Language+Voice** (`cascadeAirlineLanguage` — CN → zh, every other carrier → en); Runway → Airway. |
 | `delete_flights` | Delete matching flights by callsign, airline, type, stand, runway, or aircraft type. |
 | `get_editor_status` | Current file, airport, flight counts, dirty flag, timeline status. |
-| `get_airport_info` | Full constraint map: flatLists, airline codes, flight numbers, compat maps (airline→aircraft, runway→STAR, airline+aircraft→registration), time bounds. |
+| `get_airport_info` | Full constraint map: flatLists, airline codes, flight numbers, compat maps (airline→aircraft, runway→STAR, airline+aircraft→registration), **`airlineLanguages` (per-airport airline code → required captain language, CN→zh else en) + `languageRules`**, time bounds. |
 | `get_validation_issues` | Run the full validation suite (14 checks) on current flights. Returns structured issues. |
 | `send_voice_command` | Parse a spoken sentence against the LIVE aircraft list (same pipeline as the PTT mic) and dispatch patch frames to the game. Needs game + BepInEx plugin running. Prints `[VOICE-PARSE]` to the main-process log. |
 
-## Validation (14 checks)
+## Validation (15 checks)
 
 1. All 15 fields present
 2. Airline code known (from audio callsigns + dropdown values)
@@ -90,6 +90,7 @@ The flight-schedule tools are listed below; the Ground/Air Painter tool set (sce
 4. Stand in valid set
 5. Runway in valid set
 6. Arrival legs must carry a STAR (`missing_star` — the game's `FlightPlan.Init()` drops a STAR-less arrival leg at level load: "Flight plan '...' has neither an arrival nor a departure leg"; game-authored arrivals ALWAYS carry a STAR such as `"SIE.CAMRM5"`). The renderer's `runTripleValidation` mirrors this as `val_star_required` (gated on `_starRunwayMap` being non-empty; see `src/utils/i18n.js` for the EN/ZH strings)
+6b. **Airline/language** (`airline_language_mismatch`) — the game's `CallsignService` only records a callsign for one captain language, so `Language` must follow the callsign airline (CN → zh, every other carrier → en; a CN carrier only gets zh when the airport ships `audio_clips_zh.json`). Exposed to agents as `get_airport_info.airlineLanguages`. The renderer mirrors this as `val_airline_language_mismatch`.
 7. Airway/STAR compatible with runway (`_runwayStarMap`, arrivals only)
 8. Registration valid for (airline, aircraft) pair (`_registrationMap`)
 9. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` — the strict upper bound is `end + 30 min`, not `end` (game allows events up to 30 min past scenario end; `time_after_range` only fires past the grace)
@@ -99,7 +100,9 @@ The flight-schedule tools are listed below; the Ground/Air Painter tool set (sce
 13. Duplicate registrations
 14. Runway inactive at landing — arrival `Runway` must be in active set at `LandingTime` (`initialRunways` + `timeline` sweep sorted chronologically; `<= landingTime` applies, unsorted input handled, departures ignored, exact-time landing uses post-change set; `val_runway_inactive` / `runway_inactive_at_landing`; **skipped when the level has no active-runway source — empty `initialRunways` + empty `timeline` — so arrivals are not all false-flagged**)
 
-**Aircraft type is NOT bound to the airline** — any profiled type (`constraints.aircraftTypes`, the same world-wide pool the livery page scans, minus types with no game profile) is accepted regardless of the callsign's airline. An airline change preserves the aircraft type and only cascades the registration.
+**Aircraft type is NOT bound to the airline** — any profiled type (`constraints.aircraftTypes`, the same world-wide pool the livery page scans, minus types with no game profile) is accepted regardless of the callsign's airline. An airline change preserves the aircraft type and only cascades the registration (plus Language + Voice).
+
+**Language IS bound to the airline** — the captain language must follow the callsign's airline (CN → zh, every other carrier → en), or the game throws `InvalidOperationException: Flight plan '<reg>' failed to allocate callsign '<cs>' for crew voice '<voice>'` at load. `Voice` must also match `Language`.
 
 ## Testing
 

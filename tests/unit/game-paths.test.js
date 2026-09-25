@@ -136,11 +136,29 @@ describe('derived accessors', () => {
     const sa = path.join(data, 'StreamingAssets');
     expect(gp.voicesDir(root)).toBe(path.join(sa, 'Voices'));
     expect(gp.voiceCatalogPath(root)).toBe(path.join(sa, 'Voices', 'voice_catalog.json'));
+    expect(gp.airlineCountryRegistryPath(root)).toBe(path.join(sa, 'airline_country_registry.cfg'));
     expect(gp.mainMenuVideosDir(root)).toBe(path.join(sa, 'MainMenuVideos'));
     expect(gp.builtinLiveryDir(root)).toBe(
       path.join(sa, 'BuiltInAircraftLivery', 'AircraftDefaultLivery'),
     );
     expect(gp.aircraftProfilesCsvPath(root)).toBe(path.join(sa, 'aircraft_profiles.csv'));
+  });
+
+  it('resolves the registry inside a macOS .app bundle (Data/StreamingAssets)', () => {
+    const root = path.join(tmp, 'Airport Control 27');
+    const { data } = seedMacBundle(root);
+    expect(gp.airlineCountryRegistryPath(root)).toBe(
+      path.join(data, 'StreamingAssets', 'airline_country_registry.cfg'),
+    );
+  });
+
+  it('resolves the registry inside a macOS bundle that keeps the GroundATC_Data name', () => {
+    const root = path.join(tmp, 'Airport Control 27');
+    const app = path.join(root, 'GroundATC.app');
+    const data = seedDataRoot(path.join(app, 'Contents', 'Resources', 'GroundATC_Data'));
+    expect(gp.airlineCountryRegistryPath(root)).toBe(
+      path.join(data, 'StreamingAssets', 'airline_country_registry.cfg'),
+    );
   });
 });
 

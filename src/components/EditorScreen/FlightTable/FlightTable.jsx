@@ -7,6 +7,7 @@ import { ALL_FIELDS, ARRIVAL_FIELDS, DEPARTURE_FIELDS, FIELD_LABELS, COL_CLASSES
 import ClockPopover from '../CellEditor/TimeClockPopover';
 import { getTimeValidationBounds } from '../../../utils/timeUtils';
 import { T } from '../../../utils/i18n';
+import { expectedLanguageForFlight } from '../../../utils/airlineLanguage.js';
 
 function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
   const [editing, setEditing] = useState(false);
@@ -303,8 +304,16 @@ export default function FlightTable({ type, flights, columns }) {
                       // Voice options are constrained to the flight's Language —
                       // the game's VoiceCatalog throws at level load when the
                       // captain voice language differs from the flight's.
+                      // The airline's required captain language (from the
+                      // airline_country_registry: CN -> zh, every other -> en)
+                      // drives BOTH the Language dropdown and the Voice filter,
+                      // so a CAL/CPA flight can never be offered a zh voice.
+                      const expectedLang = expectedLanguageForFlight(fl, vals._airlineCountries, vals.Language);
+                      if (col === 'Language' && expectedLang) {
+                        opts = [expectedLang];
+                      }
                       if (col === 'Voice' && opts && opts.length > 0) {
-                        const lang = (fl.Language || '').trim();
+                        const lang = expectedLang || (fl.Language || '').trim();
                         const langOf = vals._voiceLanguages || {};
                         if (lang && Object.keys(langOf).length > 0) {
                           const matching = opts.filter(v => langOf[v] === lang);

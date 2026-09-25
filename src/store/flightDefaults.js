@@ -3,6 +3,7 @@
  * Extracted from appStore.js to keep the store focused on state management.
  */
 import { getAirlineCode, FALLBACK_BASE_MINUTES, DEFAULT_TIME_OFFSET_MIN } from '../utils/constants';
+import { languageForAirline } from '../utils/airlineLanguage.js';
 
 /**
  * Pick a random element from an array.
@@ -233,7 +234,12 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
     airway = '';
   }
 
-  const language = defaultLanguageForAirport(currentAirport);
+  // Language follows the airline (CN carriers speak zh, every other carrier
+  // speaks en) because the game's CallsignService only records a callsign for
+  // one captain language. Fall back to the airport region when the airline is
+  // unknown to the registry.
+  const language = languageForAirline(airlineCode, values._airlineCountries, values.Language)
+    || defaultLanguageForAirport(currentAirport);
   const flight = {
     ...makeEmptyFlight(),
     CallSign: airlineCode + flightNum,

@@ -309,6 +309,43 @@ describe('runTripleValidation (v4 semantics)', () => {
   });
 });
 
+describe('runTripleValidation airline/language (callsign pool)', () => {
+  const AUDIO = { allAirlines: ['CES', 'CAL', 'CCA'], byAirline: { CES: [], CAL: [], CCA: [] }, allCallsigns: [] };
+  const COUNTRIES = { CES: 'CN', CCA: 'CN', CAL: 'TW', CPA: 'HK' };
+  function run(flights, airportValues = {}) {
+    return runTripleValidation(flights, airportValues, 'ZGSZ', AUDIO, null, null, null, null);
+  }
+
+  it('flags a non-CN carrier (CAL) flying on a zh voice', () => {
+    const flights = [{ CallSign: 'CAL2017', LandingTime: '10:30', Voice: 'CN-Captain-Young', Language: 'zh' }];
+    const vals = { ZGSZ: { Language: ['en', 'zh'], _airlineCountries: COUNTRIES, _voiceLanguages: { 'CN-Captain-Young': 'zh' } } };
+    const issues = run(flights, vals);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CAL2017');
+    expect(issues[0]).toContain('CAL');
+  });
+
+  it('flags a CN carrier (CCA) flying on an en voice at a zh-capable airport', () => {
+    const flights = [{ CallSign: 'CCA1111', LandingTime: '10:30', Voice: 'Yeager', Language: 'en' }];
+    const vals = { ZGSZ: { Language: ['en', 'zh'], _airlineCountries: COUNTRIES, _voiceLanguages: { Yeager: 'en' } } };
+    const issues = run(flights, vals);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CCA1111');
+  });
+
+  it('allows a CN carrier to speak en at an en-only airport', () => {
+    const flights = [{ CallSign: 'CCA1111', LandingTime: '10:30', Voice: 'Yeager', Language: 'en' }];
+    const vals = { ZGSZ: { Language: ['en'], _airlineCountries: COUNTRIES, _voiceLanguages: { Yeager: 'en' } } };
+    expect(run(flights, vals)).toEqual([]);
+  });
+
+  it('skips the check when the registry map is absent', () => {
+    const flights = [{ CallSign: 'CAL2017', LandingTime: '10:30', Voice: 'CN-Captain-Young', Language: 'zh' }];
+    const vals = { ZGSZ: { Language: ['en', 'zh'], _voiceLanguages: { 'CN-Captain-Young': 'zh' } } };
+    expect(run(flights, vals)).toEqual([]);
+  });
+});
+
 describe('runTripleValidation time range (end + 30min grace)', () => {
   const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
   function run(flights) {

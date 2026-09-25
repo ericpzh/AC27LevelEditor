@@ -20,6 +20,7 @@ const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, PROD_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { STEAM_GAME_DIR_NAME } = require('../src/utils/constants/steam.js');
 const gamePaths = require('../src/utils/gamePaths');
+const { loadAirlineCountryRegistry } = require('../src/acl/utils');
 const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS, validateFlightObjects, buildConstraints } = require('./api-server');
@@ -74,6 +75,19 @@ function _loadVoiceCatalog(rootPath) {
     }
   } catch (_) { /* catalog absent — leave empty */ }
   _voiceCatalogCache = { root: rootPath, map };
+  return map;
+}
+
+// Airline country registry (airline code -> country), keyed by game root. The
+// game's CallsignService only records a callsign for one captain language, so a
+// flight's Language must follow its airline (CN -> zh, every other -> en); the
+// renderer needs this map to pick/validate the correct language + voice.
+let _airlineCountriesCache = { root: null, map: {} };
+function _loadAirlineCountries(rootPath) {
+  if (!rootPath) return {};
+  if (_airlineCountriesCache.root === rootPath) return _airlineCountriesCache.map;
+  const map = loadAirlineCountryRegistry(gamePaths.airlineCountryRegistryPath(rootPath)) || {};
+  _airlineCountriesCache = { root: rootPath, map };
   return map;
 }
 
@@ -781,6 +795,11 @@ function _buildCollectValuesBase(airportIcao, rootPath) {
   // renderer's new-flight defaults + save validation so Voice always matches
   // the flight's Language (the game's VoiceCatalog rejects mismatches at load).
   aclValues._voiceLanguages = _loadVoiceCatalog(rootPath);
+  // Airline -> country (global to the install). Consumed by the renderer's
+  // new-flight defaults + cascade + validation so Language follows the airline
+  // (CN -> zh, every other -> en); the game's CallsignService rejects a
+  // callsign whose recorded captain language disagrees with the flight's Voice.
+  aclValues._airlineCountries = _loadAirlineCountries(rootPath);
   return { cached, aclValues };
 }
 

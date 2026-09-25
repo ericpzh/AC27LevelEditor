@@ -36,6 +36,7 @@ const SEG = Object.freeze({
   mods: 'Mods',
   aircraftProfilesCsv: 'aircraft_profiles.csv',
   voiceCatalog: 'voice_catalog.json',
+  airlineCountryRegistry: 'airline_country_registry.cfg',
   appBundle: 'GroundATC.app',
 });
 
@@ -209,6 +210,11 @@ function voiceCatalogPath(gameRoot) {
   return path.join(voicesDir(gameRoot), SEG.voiceCatalog);
 }
 
+/** `<StreamingAssets>/airline_country_registry.cfg` (airline code → country) */
+function airlineCountryRegistryPath(gameRoot) {
+  return path.join(streamingAssets(gameRoot), SEG.airlineCountryRegistry);
+}
+
 /** `<StreamingAssets>/MainMenuVideos` */
 function mainMenuVideosDir(gameRoot) {
   return path.join(streamingAssets(gameRoot), SEG.videos);
@@ -319,6 +325,7 @@ module.exports = {
   levelsDir,
   voicesDir,
   voiceCatalogPath,
+  airlineCountryRegistryPath,
   mainMenuVideosDir,
   builtinLiveryDir,
   aircraftProfilesCsvPath,

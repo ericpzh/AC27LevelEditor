@@ -239,14 +239,21 @@ function analyze(text) {
  *     'dup-plan-key', 'docked-missing-entity', 'docked-entity-wrong-target',
  *     'arr-dep-cross-reg', 'docked-stand-blocked',
  *     'docked-stand-before-offblock', 'arr-arr-close',
- *     'arrival-no-star', 'resolution-missing-leg', 'voice-language-mismatch'
+ *     'arrival-no-star', 'resolution-missing-leg', 'voice-language-mismatch',
+ *     'airline-language-mismatch'
  *
  *   `voiceLanguages` (optional) is the install's voice_catalog map
  *   (name -> language); when supplied, flights whose captain voice declares a
  *   different language than the flight are reported — the game's VoiceCatalog
  *   throws InvalidOperationException on that at level load.
+ *
+ *   `airlineCountries` (optional) is the install's airline_country_registry map
+ *   (airline code -> country) and `languages` the airport's available languages;
+ *   when supplied, flights whose Language does not follow their airline
+ *   (CN → zh, every other carrier → en) are reported — the game's CallsignService
+ *   throws "failed to allocate callsign … for crew voice …" on that at load.
  */
-function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null } = {}) {
+function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null, airlineCountries = null, languages = null } = {}) {
   const issues = [];
 
   // 1. unique flight-plan keys
@@ -376,6 +383,27 @@ function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null } = {})
         issues.push({
           code: 'voice-language-mismatch',
           msg: `${p.leg === 'A' ? 'arrival' : 'departure'} ${p.reg}: voice "${p.voice}" (catalog ${declared}) does not match language "${p.language}"`,
+        });
+      }
+    }
+  }
+
+  // 6. airline/language consistency (only when the registry map is supplied).
+  //    The game's CallsignService only records a callsign for one captain
+  //    language (CN → zh, every other carrier → en), so a mismatch throws
+  //    "failed to allocate callsign … for crew voice …" at level load.
+  if (airlineCountries && typeof airlineCountries === 'object') {
+    const hasZh = Array.isArray(languages) ? languages.includes('zh') : true;
+    for (const p of a.doc0Plans) {
+      const cs = String(p.arrCs || p.depCs || '');
+      const code = cs.substring(0, 3).toUpperCase();
+      const country = code ? airlineCountries[code] : null;
+      if (!country) continue;
+      const expected = country === 'CN' ? (hasZh ? 'zh' : 'en') : 'en';
+      if (p.language && p.language !== expected) {
+        issues.push({
+          code: 'airline-language-mismatch',
+          msg: `${p.leg === 'A' ? 'arrival' : 'departure'} ${p.reg} (${code}, ${country}): language "${p.language}" must be "${expected}"`,
         });
       }
     }

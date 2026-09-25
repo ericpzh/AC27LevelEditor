@@ -638,6 +638,40 @@ describe('createDefaultFlight', () => {
     }
   });
 
+  it('defaults a non-CN carrier (CAL) to en even at a Chinese airport', () => {
+    const audioData = { allAirlines: ['CAL'] };
+    const voices = ['CN-Captain-Young', 'CN-Captain-Young-EN'];
+    const vals = makeVals({
+      AirlineCode: ['CAL'],
+      Voice: voices,
+      Language: ['en', 'zh'],
+      _voiceLanguages: { 'CN-Captain-Young': 'zh', 'CN-Captain-Young-EN': 'en' },
+      _airlineCountries: { CCA: 'CN', CAL: 'TW' },
+    });
+    const apv = makeAirportValues('CAL');
+    for (let i = 0; i < 20; i++) {
+      const flight = createDefaultFlight('arrival', vals, audioData, 'ZGSZ', apv, []);
+      expect(flight.Language).toBe('en');
+      expect(flight.Voice).toBe('CN-Captain-Young-EN');
+    }
+  });
+
+  it('defaults a CN carrier to zh at a Chinese airport when the registry is present', () => {
+    const audioData = { allAirlines: ['CCA'] };
+    const voices = ['CN-Captain-Young', 'CN-Captain-Young-EN'];
+    const vals = makeVals({
+      AirlineCode: ['CCA'],
+      Voice: voices,
+      Language: ['en', 'zh'],
+      _voiceLanguages: { 'CN-Captain-Young': 'zh', 'CN-Captain-Young-EN': 'en' },
+      _airlineCountries: { CCA: 'CN', CAL: 'TW' },
+    });
+    const apv = makeAirportValues('CCA');
+    const flight = createDefaultFlight('arrival', vals, audioData, 'ZGSZ', apv, []);
+    expect(flight.Language).toBe('zh');
+    expect(flight.Voice).toBe('CN-Captain-Young');
+  });
+
   it('leaves Voice empty when the airport has no voice pool', () => {
     const audioData = { allAirlines: ['CCA'] };
     const vals = makeVals({ AirlineCode: ['CCA'], Voice: [] });

@@ -99,6 +99,34 @@ function _catalogVoiceLanguages() {
   return _voiceCatalogMemo;
 }
 
+// Airline country registry (code -> country) from the staged game root. Mirrors
+// the renderer's `airportValues._airlineCountries`; the game's CallsignService
+// only records a callsign for one captain language (CN → zh, every other → en),
+// so the fuzz must generate the airline-required Language and the gate must
+// assert it.
+let _airlineCountriesMemo = null;
+function _catalogAirlineCountries() {
+  if (_airlineCountriesMemo) return _airlineCountriesMemo;
+  _airlineCountriesMemo = {};
+  try {
+    const root = process.env.E2E_GAME_ROOT;
+    if (root) {
+      const p = path.join(root, 'GroundATC_Data', 'StreamingAssets', 'airline_country_registry.cfg');
+      const text = fs.readFileSync(p, 'utf8');
+      for (const line of text.split(/\r?\n/)) {
+        const m = line.match(/^\s*([A-Za-z]{2})\s*:\s*(.+?)\s*$/);
+        if (!m) continue;
+        const country = m[1].toUpperCase();
+        for (const raw of m[2].split(',')) {
+          const code = raw.trim().toUpperCase();
+          if (code) _airlineCountriesMemo[code] = country;
+        }
+      }
+    }
+  } catch (_) { /* registry absent — no consistency data */ }
+  return _airlineCountriesMemo;
+}
+
 // Default target: the 24 production levels staged by global-setup.mjs
 // (PROD_VISIBLE_BASES minus demo files).
 const DEFAULT_PROD_FILES = [
@@ -433,6 +461,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       voices: SV.Voice || C.flatLists?.Voice || [],
       languages: SV.Language || C.flatLists?.Language || [],
       voiceLanguages: (SV._voiceLanguages && Object.keys(SV._voiceLanguages).length ? SV._voiceLanguages : _catalogVoiceLanguages()),
+      airlineCountries: (SV._airlineCountries && Object.keys(SV._airlineCountries).length ? SV._airlineCountries : _catalogAirlineCountries()),
       aircraftTypes: SV.AircraftType || C.aircraftTypes || [],
       flightNums: SV._flightNums || C.flightNumbers || {},
       compat: SV._compat?.airlineToAircraft || C.airlineAircraftCompat || {},
@@ -445,6 +474,15 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     const voices = SU.voices;
     const languages = SU.languages;
     const voiceLanguages = SU.voiceLanguages || {};
+    const airlineCountries = SU.airlineCountries || {};
+    // Required captain language for an airline: CN carriers speak zh, every
+    // other carrier speaks en (the game's CallsignService only records a
+    // callsign for one captain language). Returns null for unknown airlines.
+    const airlineLanguage = (code) => {
+      const country = airlineCountries[String(code || '').toUpperCase()];
+      if (!country) return null;
+      return country === 'CN' ? (languages.includes('zh') ? 'zh' : 'en') : 'en';
+    };
     // Voice must match the flight's Language: the game's VoiceCatalog throws
     // InvalidOperationException at level load when a captain voice declares a
     // different language (fuzz-discovered at ZGSZ). Pick a voice whose catalog
@@ -585,7 +623,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       const t1 = rint(startSec, maxFlightSec - 60);
       const t2 = Math.min(t1 + rint(60, 15 * 60), maxFlightSec);
       const group = isArr ? 'arr' : 'dep';
-      const language = rpick(languages) || (icao.startsWith('Z') ? 'zh' : 'en');
+      const language = airlineLanguage(airline) || rpick(languages) || (icao.startsWith('Z') ? 'zh' : 'en');
       const flight = {
         CallSign: airline + num,
         DepartureAirport: isArr ? icao : '',
@@ -693,8 +731,10 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
           else if (r < 78) updates.Voice = pickVoice(f.Language) || f.Voice || '';
           else if (r < 86) {
             // Language changes must carry a matching voice, or the save would
-            // ship a voice/language mismatch the game rejects at load.
-            const nl = rpick(languages) || (icao.startsWith('Z') ? 'zh' : 'en');
+            // ship a voice/language mismatch the game rejects at load. The
+            // language must also follow the airline (CN → zh, else en) or the
+            // game fails to allocate the callsign.
+            const nl = airlineLanguage((f.CallSign || '').substring(0, 3)) || rpick(languages) || (icao.startsWith('Z') ? 'zh' : 'en');
             updates.Language = nl;
             updates.Voice = pickVoice(nl) || f.Voice || '';
           }
@@ -979,6 +1019,12 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
           const code = cs.substring(0, 3);
           const nums = SU.flightNums?.[code];
           if (Array.isArray(nums) && nums.length) fixes.push({ cs, updates: { FlightNum: rpick(nums) } });
+        } else if (msg.includes('应使用语言') || /must speak/i.test(msg)) {
+          // Airline/language mismatch (CN → zh, every other carrier → en) — the
+          // game fails to allocate the callsign on load. Set the required
+          // Language and a matching Voice.
+          const expected = airlineLanguage(cs.substring(0, 3));
+          if (expected) fixes.push({ cs, updates: { Language: expected, Voice: pickVoice(expected) || f.Voice || '' } });
         } else if (msg.includes('机型') || msg.toLowerCase().includes('aircraft type')) {
           const tp = typePoolFor(cs.substring(0, 3));
           if (tp.length) fixes.push({ cs, updates: { AircraftType: rpick(tp) } });
@@ -1143,7 +1189,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     // a stale build without the save-time normalization passes them and
     // still produces broken levels. Assert the saved file is game-clean.
     const gcA = analyze(readAclText(currentPath));
-    const gc = runChecks(gcA, { voiceLanguages });
+    const gc = runChecks(gcA, { voiceLanguages, airlineCountries, languages });
     // Filter out the one game-compat code the save pipeline does not yet
     // guarantee: docked-stand-before-offblock (arrival lands before a docked
     // departure's off-block) is correctly detected but not auto-repaired by
