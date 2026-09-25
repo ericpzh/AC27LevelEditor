@@ -19,7 +19,7 @@ import { fileURLToPath } from 'url';
 const require = createRequire(import.meta.url);
 const { readAclText } = require('../../src/acl/gatcarc');
 const { _normalizeFlightsForGameCompat, _loadAirlineCountryRegistryForLevel, _airportSupportsChinese } = require('../../src/acl/flight_plans');
-const { runChecks } = require('./gamecompat-utils.cjs');
+const { runChecks, analyze } = require('./gamecompat-utils.cjs');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.resolve(
@@ -188,6 +188,20 @@ describe('runChecks — voice-language-mismatch', () => {
     const a = base({ doc0Plans: [{ reg: 'B-1', leg: 'A', voice: 'X', language: 'zh' }] });
     const { issues } = runChecks(a);
     expect(issues.some((i) => i.code === 'voice-language-mismatch')).toBe(false);
+  });
+});
+
+describe('analyze — Voice/Language come from the FlightPlanState', () => {
+  it('extracts voice + language for every plan in a real level', () => {
+    // Regression: analyze() used to read Voice/Language from the leg node
+    // (InitialArrival/InitialDeparture), where they do not exist, so both
+    // voice-language-mismatch and airline-language-mismatch were silently inert.
+    const a = analyze(FIXTURE_TEXT);
+    expect(a.doc0Plans.length).toBeGreaterThan(0);
+    for (const p of a.doc0Plans) {
+      expect(p.voice).toBeTruthy();
+      expect(p.language).toBeTruthy();
+    }
   });
 });
 

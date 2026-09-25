@@ -275,20 +275,20 @@ describe('FlightTable — airline drives the Language/Voice dropdown (airline_co
   });
 
   it('never offers a zh voice to a non-CN carrier even on a legacy zh row', () => {
-    // The exact CAL2017 / CN-Captain-Young combo the game rejects on load.
+    // The exact CAL2017 / CN-Captain-Young combo the game rejects on load. The
+    // invalid option must NOT be displayed — the user can only pick a valid one,
+    // and the save gate blocks until the row is corrected.
     const flights = [{ CallSign: 'CAL2017', ArrivalAirport: 'ZGSZ', LandingTime: '08:00', AircraftType: 'B738', Stand: 'G1', Voice: 'CN-Captain-Young', Language: 'zh' }];
     setupAirlineStore(flights);
     renderTable({ flights });
     const voiceOpts = openDropdown('Voice', 0);
     expect(voiceOpts).toContain('CN-Captain-Young-EN');
     expect(voiceOpts).toContain('Yeager');
-    // The legacy current value stays selectable so the cell never renders blank.
-    expect(voiceOpts).toContain('CN-Captain-Young');
-    // The Language dropdown only offers the airline-required language (plus the
-    // legacy current value, kept selectable).
-    const langOpts = openDropdown('Language', 0);
-    expect(langOpts).toContain('en');
-    expect(langOpts[0]).toBe('zh'); // legacy current value kept first
+    // The invalid (zh) option is NOT offered, even though it is the current value.
+    expect(voiceOpts).not.toContain('CN-Captain-Young');
+    expect(voiceOpts).not.toContain('CN-Captain-Middle-Aged');
+    // The Language dropdown offers ONLY the airline-required language.
+    expect(openDropdown('Language', 0)).toEqual(['en']);
   });
 });
 

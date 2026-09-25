@@ -155,8 +155,10 @@ function analyze(text) {
               arrCs: arr ? getVal(arr, 'CallSign') : null,
               depCs: dep ? getVal(dep, 'CallSign') : null,
               star: arr ? getVal(arr, 'STAR') : null,
-              voice: arr ? getVal(arr, 'Voice') : (dep ? getVal(dep, 'Voice') : null),
-              language: arr ? getVal(arr, 'Language') : (dep ? getVal(dep, 'Language') : null),
+              // Voice/Language live on the FlightPlanState (sibling of
+              // InitialArrival/InitialDeparture), NOT on the leg node.
+              voice: getVal(fp, 'Voice'),
+              language: getVal(fp, 'Language'),
             });
           }
         }

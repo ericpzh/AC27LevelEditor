@@ -84,6 +84,19 @@ describe('useEditorSaveActions — save flow', () => {
     expect(runTripleValidation).toHaveBeenCalledTimes(1);
   });
 
+  it('handleSave BLOCKS and never saves when validation reports an issue (airline/language mismatch)', async () => {
+    // runTripleValidation is the app's real gate and includes
+    // val_airline_language_mismatch; any issue must stop the save.
+    runTripleValidation.mockReturnValueOnce(['CAL2017: airline CAL must speak "en", but the flight language is "zh"']);
+    const opts = makeOpts();
+    const actions = useEditorSaveActions(opts);
+
+    await actions.handleSave();
+
+    expect(opts.showModal).toHaveBeenCalledWith('modal_issues_title', expect.anything(), expect.anything());
+    expect(opts.electronAPI.saveAcl).not.toHaveBeenCalled();
+  });
+
   it('handleSave blocks on duplicate callsigns before runTripleValidation', async () => {
     validateCallsigns.mockReturnValueOnce(['CCA1234']);
     const opts = makeOpts();

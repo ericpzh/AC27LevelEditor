@@ -9,7 +9,7 @@ import { getTimeValidationBounds } from '../../../utils/timeUtils';
 import { T } from '../../../utils/i18n';
 import { expectedLanguageForFlight } from '../../../utils/airlineLanguage.js';
 
-function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
+function EditableCell({ value, col, globalIdx, isTime, options, flightNums, strictOptions }) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(value);
   const [showClock, setShowClock] = useState(false);
@@ -81,13 +81,17 @@ function EditableCell({ value, col, globalIdx, isTime, options, flightNums }) {
       }
       // Keep the current value selectable when filtering removed it (legacy
       // mismatched Voice, stale Airway) so the dropdown never renders blank.
-      if (editVal && !filteredOpts.includes(editVal)) filteredOpts = [editVal, ...filteredOpts];
+      // `strictOptions` opts out: when the airline mandates a language, the
+      // invalid option must NOT be offered (the save gate then blocks until the
+      // user picks a valid one), and the select shows the first valid option.
+      if (!strictOptions && editVal && !filteredOpts.includes(editVal)) filteredOpts = [editVal, ...filteredOpts];
+      const selectValue = filteredOpts.includes(editVal) ? editVal : (filteredOpts[0] || '');
 
       return (
         <td className={cls} data-col={col} data-idx={globalIdx} ref={cellRef}>
           <select
             className="cell-widget"
-            value={editVal}
+            value={selectValue}
             onChange={e => { setEditVal(e.target.value); commit(e.target.value); }}
             onBlur={() => setEditing(false)}
             autoFocus
@@ -323,7 +327,11 @@ export default function FlightTable({ type, flights, columns }) {
                         }
                       }
                       const flightNums = (col === 'FlightNum' ? validFlightNums[airlineCode] : null);
-                      return <EditableCell key={col} value={val} col={col} globalIdx={gi} isTime={isTime} options={opts} flightNums={flightNums} />;
+                      // The airline mandates the captain language, so the
+                      // Language/Voice dropdowns must never offer the invalid
+                      // option (the save gate blocks until it is corrected).
+                      const strictOptions = (col === 'Language' || col === 'Voice') && !!expectedLang;
+                      return <EditableCell key={col} value={val} col={col} globalIdx={gi} isTime={isTime} options={opts} flightNums={flightNums} strictOptions={strictOptions} />;
                     })}
                   </tr>
                 );

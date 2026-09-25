@@ -92,6 +92,15 @@ export default async function () {
     const voicesDst = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'Voices');
     if (existsSync(voicesSrc)) cpSync(voicesSrc, voicesDst, { recursive: true });
 
+    // Stage the airline country registry too. The editor's renderer-side
+    // airline/language validation + cascade (`airportValues._airlineCountries`)
+    // and the save pipeline's `_loadAirlineCountryRegistryForLevel` both read
+    // it; without it the sandbox cannot enforce/repair the rule and a fuzz run
+    // would emit game-crashing schedules that a real install never would.
+    const registrySrc = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'airline_country_registry.cfg');
+    const registryDst = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'airline_country_registry.cfg');
+    if (existsSync(registrySrc)) cpSync(registrySrc, registryDst);
+
     console.log(`[E2E setup] Staged ${staged} files to ${TMP_DIR}`);
   } else {
     // Fall back to committed fixture (ZSJN_leisure_1.acl); copy it to
