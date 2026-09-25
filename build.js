@@ -158,6 +158,7 @@ if (isMac) config.mac = {
   // documented in the README (macOS Gatekeeper section): clear the quarantine
   // attribute — `xattr -cr "/Applications/AC27 Editor.app"`.
   identity: null,
+  x64ArchFiles: '**/Contents/Resources/**/ffmpeg',
   extraResources: [{ from: 'node_modules/ffmpeg-static/ffmpeg', to: 'ffmpeg' }, ...WORKSHOP_WORKER_RESOURCES],
 };
 if (isLinux) config.linux = {
