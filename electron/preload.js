@@ -356,6 +356,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveLiveryDialog: (opts) => ipcRenderer.invoke('save-livery-dialog', opts),
   loadLiveryZip: () => ipcRenderer.invoke('load-livery-zip'),
 
+  // ─── Livery painter 3D preview ─────────────────────────
+  // Ensure/extract the aircraft model pack from the user's install, read a
+  // plane's geometry, and delete the cache when the painter closes.
+  ensureAircraft3D: (gameRoot) => ipcRenderer.invoke('livery-3d-ensure', gameRoot),
+  getAircraft3DManifest: () => ipcRenderer.invoke('livery-3d-get'),
+  readAircraft3DBin: (planeId) => ipcRenderer.invoke('livery-3d-bin', planeId),
+  cleanupAircraft3D: () => ipcRenderer.invoke('livery-3d-cleanup'),
+  _aircraft3DProgressHandlers: new Map(),
+  onAircraft3DProgress: function (cb) {
+    const handler = (_e, line) => cb(line);
+    this._aircraft3DProgressHandlers.set(cb, handler);
+    ipcRenderer.on('livery-3d-progress', handler);
+  },
+  offAircraft3DProgress: function (cb) {
+    const handler = this._aircraft3DProgressHandlers.get(cb);
+    if (handler) {
+      ipcRenderer.removeListener('livery-3d-progress', handler);
+      this._aircraft3DProgressHandlers.delete(cb);
+    }
+  },
+
   // ─── Workshop publish (standalone uploader) ──────────
   getWorkshopPublishInfo: (folder) => ipcRenderer.invoke('get-workshop-publish-info', folder),
   selectLiveryPreview: () => ipcRenderer.invoke('select-livery-preview'),

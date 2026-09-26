@@ -3719,6 +3719,7 @@ ipcMain.handle('install-livery', async (_event, zipPath) => {
 // only resolve gameRoot / dialog and delegate. Renderer table source of
 // truth: src/utils/constants/livery.js (kept in sync with livery.js).
 const livery = require('./livery');
+const aircraftModels = require('./aircraftModels');
 
 function _liveryGameRoot() {
   const cr = _readCache();
@@ -3798,6 +3799,43 @@ ipcMain.handle('delete-livery', async (_event, folder) => {
     console.error('[Livery] delete failed:', err.message);
     return { success: false, error: err.message };
   }
+});
+
+// ─── IPC: Livery painter 3D preview ─────────────────────────
+// The painter's 3D preview renders the live livery on the game's real aircraft
+// mesh. That mesh is the game's copyrighted geometry, so it is extracted from
+// the user's own install on demand — primarily by the pure-JS reader in
+// electron/unity/aircraftPack.js, with scripts/extract-aircraft-models.py
+// (UnityPy) as a last-resort fallback. The result is cached under
+// <userData>/livery-3d-models/ and deleted when the painter closes. Progress
+// streams on 'livery-3d-progress'.
+const AIRCRAFT_MODELS_SCRIPT = app.isPackaged
+  ? path.join(process.resourcesPath, 'extract-aircraft-models.py')
+  : path.join(__dirname, '..', 'scripts', 'extract-aircraft-models.py');
+
+ipcMain.handle('livery-3d-ensure', async (event, gameRoot) => {
+  const sender = event.sender;
+  return aircraftModels.ensure({
+    userData: app.getPath('userData'),
+    gameRoot: gameRoot || _liveryGameRoot(),
+    scriptPath: AIRCRAFT_MODELS_SCRIPT,
+    onLog: (line) => {
+      if (sender && !sender.isDestroyed()) sender.send('livery-3d-progress', line);
+    },
+  });
+});
+
+ipcMain.handle('livery-3d-get', async () => {
+  const manifest = aircraftModels.readManifest(app.getPath('userData'));
+  return manifest ? { success: true, planes: manifest.planes } : { success: false, error: 'NOT_READY' };
+});
+
+ipcMain.handle('livery-3d-bin', async (_event, planeId) => {
+  return aircraftModels.readModel(app.getPath('userData'), planeId);
+});
+
+ipcMain.handle('livery-3d-cleanup', async () => {
+  return aircraftModels.cleanup(app.getPath('userData'));
 });
 
 ipcMain.handle('select-livery-image', async (_event) => {

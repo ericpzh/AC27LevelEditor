@@ -24,6 +24,7 @@ import { AiOutlineClear } from 'react-icons/ai';
 import { FaEraser, FaSteam } from 'react-icons/fa';
 import { MdAdd, MdSaveAs } from 'react-icons/md';
 import { TbSticker2 } from 'react-icons/tb';
+import { LuRotate3D } from 'react-icons/lu';
 
 // ─── Button registry: icon + label key + short description key ──
 const BUTTONS = {
@@ -41,6 +42,7 @@ const BUTTONS = {
   exportZip: { icon: FaFileExport, labelKey: 'livery_export_zip', descKey: 'livery_help_d_export_zip' },
   save: { icon: IoSaveOutline, labelKey: 'livery_save', descKey: 'livery_help_d_save' },
   saveAs: { icon: MdSaveAs, labelKey: 'livery_save_as', descKey: 'livery_help_d_save_as' },
+  preview3d: { icon: LuRotate3D, labelKey: 'livery_3d_open', descKey: 'livery_help_d_3d' },
   color: { icon: IoColorPaletteOutline, labelKey: 'livery_paint_color', descKey: 'livery_help_d_color' },
   brush: { icon: IoBrushOutline, labelKey: 'livery_paint_brush', descKey: 'livery_help_d_brush' },
   eraser: { icon: FaEraser, labelKey: 'livery_paint_eraser', descKey: 'livery_help_d_eraser' },
@@ -61,7 +63,7 @@ const LIST_SECTIONS = [
   { id: 'bar', items: ['back', 'pack', 'create', 'selectAll', 'exportSelected', 'upload', 'delete', 'search'] },
 ];
 const PAINTER_SECTIONS = [
-  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'upload', 'deleteThis', 'saveAs', 'save'] },
+  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'upload', 'deleteThis', 'saveAs', 'save', 'preview3d'] },
   {
     id: 'paint',
     items: [
@@ -103,6 +105,10 @@ export default function LiveryHelpOverlay({ onClose, page = 'list', isDemo = fal
         </div>
 
         <div id="livery-help-body">
+          <div id="livery-help-tip" className="livery-help-tip">
+            <strong className="livery-help-tip-title">{t('livery_mod_hint_title')}</strong>
+            <span className="livery-help-tip-body">{t('livery_mod_hint_body')}</span>
+          </div>
           {sections.map((s) => (
             <section key={s.id} id={'livery-help-' + s.id} className="livery-help-section">
               {s.headingKey && <h2>{t(s.headingKey)}</h2>}
@@ -122,10 +128,6 @@ export default function LiveryHelpOverlay({ onClose, page = 'list', isDemo = fal
               })}
             </section>
           ))}
-          <div id="livery-help-tip" className="livery-help-tip">
-            <strong className="livery-help-tip-title">{t('livery_mod_hint_title')}</strong>
-            <span className="livery-help-tip-body">{t('livery_mod_hint_body')}</span>
-          </div>
         </div>
       </div>
     </div>

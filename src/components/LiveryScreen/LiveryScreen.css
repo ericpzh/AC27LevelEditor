@@ -994,3 +994,128 @@
   opacity: 0.35;
   cursor: default;
 }
+
+/* ─────────────────────────────────────────────────────────
+   3D livery preview — toolbar button + floating viewer window
+   ───────────────────────────────────────────────────────── */
+.lp-3d-open { color: var(--accent); }
+
+.lp-3dload {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  color: var(--text);
+}
+.lp-3dload-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: lp-3dspin 0.9s linear infinite;
+}
+@keyframes lp-3dspin { to { transform: rotate(360deg); } }
+.lp-3dload-title { font-size: 14px; font-weight: 600; }
+.lp-3dload-log {
+  max-width: 72vw;
+  max-height: 120px;
+  overflow: auto;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+.lp-3dwin {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  z-index: 9999;
+  overflow: hidden;
+}
+.lp-3dwin-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  cursor: move;
+  user-select: none;
+}
+.lp-3dwin-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+.lp-3dwin-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: radial-gradient(circle at 50% 38%, #1b2027 0%, #0d1117 78%);
+}
+.lp-3dwin-body canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.lp-3dwin-error {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--red);
+}
+/* Reset-to-default-perspective button (bottom-right of the viewport). */
+.lp-3dwin-reset {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.lp-3dwin-reset:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+/* Free-resize handles — all four edges + four corners. */
+.lp-3dwin-rz { position: absolute; z-index: 4; }
+.lp-3dwin-rz--n { top: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.lp-3dwin-rz--s { bottom: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.lp-3dwin-rz--w { left: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+.lp-3dwin-rz--e { right: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+.lp-3dwin-rz--nw { left: 0; top: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+.lp-3dwin-rz--ne { right: 0; top: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+.lp-3dwin-rz--sw { left: 0; bottom: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+.lp-3dwin-rz--se {
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+}

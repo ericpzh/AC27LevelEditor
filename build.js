@@ -53,6 +53,11 @@ const BASE = {
   ],
   extraResources: [
     { from: 'node_modules/ffmpeg-static', to: 'ffmpeg-static', filter: ['*.exe', 'ffmpeg', '*.dylib*', '*.so*'] },
+    // Aircraft 3D extractor fallback (UnityPy) — the primary extractor is the
+    // pure-JS reader in electron/unity/; this Python script is only spawned as
+    // a last resort (and a spawned child cannot read inside the asar).
+    // See electron/aircraftModels.js.
+    { from: 'scripts/extract-aircraft-models.py', to: 'extract-aircraft-models.py' },
   ],
 };
 

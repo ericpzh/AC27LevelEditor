@@ -30,6 +30,21 @@ export const PLANE_ID_TO_SHORT_CODE = Object.fromEntries(
   Object.entries(SHORT_CODE_TO_PLANE_ID).map(([k, v]) => [v, k]),
 );
 
+// Plane ids with an extractable HD model (mirrors scripts/extract-aircraft-models.py
+// PLANES). The painter's 3D-preview button is hidden for anything else — the
+// Cessna Citation X ships no HD mesh in the game's assets.
+export const MODEL_3D_PLANE_IDS = [
+  'AIRBUS A-319ceo', 'AIRBUS A-319neo', 'AIRBUS A-320ceo', 'AIRBUS A-320neo',
+  'AIRBUS A-321neo', 'AIRBUS A-330-300', 'AIRBUS A-350-900', 'AIRBUS A-380-800',
+  'BOEING 737 MAX 8', 'BOEING 737-800', 'BOEING 747-8I', 'BOEING 777-300ER',
+  'BOEING 787-9', 'BOMBARDIER CRJ700', 'BOMBARDIER CRJ900', 'COMAC C-919',
+  'EMBRAER E-JET 170', 'EMBRAER E-JET 190', 'GULFSTREAM 650',
+];
+const MODEL_3D_SET = new Set(MODEL_3D_PLANE_IDS);
+export function has3DModel(planeId) {
+  return MODEL_3D_SET.has(String(planeId || ''));
+}
+
 // Manufacturer words prefixed to the game's aircraft type ids.
 const AIRCRAFT_MANUFACTURERS = ['AIRBUS', 'BOEING', 'BOMBARDIER', 'EMBRAER', 'CESSNA', 'GULFSTREAM', 'COMAC'];
 

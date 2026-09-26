@@ -41,6 +41,7 @@ const DEMO_ROOT = 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 27 Demo'
 const FULL_ROOT = 'D:\\SteamLibrary\\steamapps\\common\\Airport Control 27';
 
 function setupMocks(overrides = {}) {
+  mockIpcInvoke.mockClear();
   mockIpcInvoke.mockImplementation((channel, ...args) => {
     if (overrides[channel] !== undefined) return overrides[channel];
     switch (channel) {
@@ -487,74 +488,17 @@ describe('LiveryScreen unsaved guard + wizard', () => {
   });
 });
 
-describe('LiveryScreen thumbnails', () => {
-  it('renders list previews from the thumbnail channel without full-image loads', async () => {
+describe('LiveryScreen 3D-only previews', () => {
+  it('never uses the resized PNG thumbnail channel', async () => {
     mockIpcInvoke.mockClear();
     mockIpcInvoke.mockImplementation((channel) => {
       if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW], reference: [] });
-      if (channel === 'read-livery-thumbnail') {
-        return Promise.resolve({ success: true, imageDataUrl: 'data:image/jpeg;base64,THUMB', thumbnail: true });
-      }
-      return Promise.resolve({});
-    });
-    renderLivery();
-    await waitFor(() => {
-      const img = document.querySelector('.livery-thumb img');
-      expect(img).not.toBeNull();
-      expect(img.getAttribute('src')).toBe('data:image/jpeg;base64,THUMB');
-    });
-    expect(mockIpcInvoke.mock.calls.filter(c => c[0] === 'read-livery-thumbnail' && c[1] === 'A20N_CCA' && c[2] === 'mine')).toHaveLength(1);
-    // The list never pulls the full 2048 texture.
-    expect(mockIpcInvoke.mock.calls.filter(c => c[0] === 'read-livery-image')).toHaveLength(0);
-  });
-
-  it('falls back to the full image when the thumbnail channel rejects', async () => {
-    mockIpcInvoke.mockClear();
-    mockIpcInvoke.mockImplementation((channel) => {
-      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW], reference: [] });
-      if (channel === 'read-livery-thumbnail') return Promise.reject(new Error('No handler'));
-      if (channel === 'read-livery-image') {
-        return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,FULL' });
-      }
-      return Promise.resolve({});
-    });
-    renderLivery();
-    await waitFor(() => {
-      const img = document.querySelector('.livery-thumb img');
-      expect(img && img.getAttribute('src')).toBe('data:image/png;base64,FULL');
-    });
-  });
-
-  it('only resolves thumbnails for the filtered rows', async () => {
-    mockIpcInvoke.mockClear();
-    const pending = [];
-    mockIpcInvoke.mockImplementation((channel, folder, pack) => {
-      if (channel === 'list-liveries') return Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] });
-      if (channel === 'read-livery-thumbnail') {
-        return new Promise((resolve) => pending.push({ folder, pack, resolve }));
-      }
       return Promise.resolve({});
     });
     renderLivery();
     await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
-    // Both rows start fetching, both stay in flight.
-    await waitFor(() => expect(pending.map(p => p.folder).sort()).toEqual(['A20N_CCA', 'B738_AAL']));
-    // Narrow the search to CCA: run#1 is cancelled, run#2 fetches CCA only.
-    fireEvent.change(document.querySelector('.livery-search input'), { target: { value: 'CCA' } });
-    await waitFor(() => expect(pending).toHaveLength(3));
-    expect(pending[2].folder).toBe('A20N_CCA');
-    // Stale run#1 resolutions are discarded…
-    pending[0].resolve({ success: true, imageDataUrl: 'data:image/jpeg;base64,STALE', thumbnail: true });
-    pending[1].resolve({ success: true, imageDataUrl: 'data:image/jpeg;base64,STALE', thumbnail: true });
-    // …while the current run's CCA thumbnail renders.
-    pending[2].resolve({ success: true, imageDataUrl: 'data:image/jpeg;base64,CCA', thumbnail: true });
-    await waitFor(() => {
-      const imgs = document.querySelectorAll('.livery-thumb img');
-      expect(imgs).toHaveLength(1);
-      expect(imgs[0].getAttribute('src')).toBe('data:image/jpeg;base64,CCA');
-    });
+    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'read-livery-thumbnail')).toBe(false);
   });
-
   it('passes no pixels to the painter so it loads the full texture itself', async () => {
     setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW], reference: [] }) });
     const user = userEvent.setup();
@@ -593,5 +537,40 @@ describe('LiveryScreen thumbnails', () => {
       expect(screen.getByRole('dialog', { name: 'Upload to Workshop' })).toBeInTheDocument();
     });
     expect(mockIpcInvoke).toHaveBeenCalledWith('get-workshop-publish-info', 'B738_AAL');
+  });
+});
+
+describe('LiveryScreen 3D model pack', () => {
+  it('extracts the pack on entering the livery page when it is not cached', async () => {
+    useAppStore.setState({ rootPath: FULL_ROOT });
+    setupMocks({
+      'livery-3d-get': Promise.resolve({ success: false, error: 'NOT_READY' }),
+      'livery-3d-ensure': Promise.resolve({ success: true, cached: false }),
+    });
+    renderLivery();
+    await waitFor(() => {
+      expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-ensure')).toBe(true);
+    });
+  });
+
+  it('uses the cached pack without extracting', async () => {
+    useAppStore.setState({ rootPath: FULL_ROOT });
+    setupMocks({
+      'livery-3d-get': Promise.resolve({ success: true, planes: { 'AIRBUS A-320neo': { bin: 'x.bin', parts: [] } } }),
+    });
+    renderLivery();
+    await waitFor(() => {
+      expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-get')).toBe(true);
+    });
+    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-ensure')).toBe(false);
+  });
+
+  it('deletes the pack when leaving the livery page', async () => {
+    setupMocks({
+      'livery-3d-get': Promise.resolve({ success: true, planes: { 'AIRBUS A-320neo': { bin: 'x.bin', parts: [] } } }),
+    });
+    const { unmount } = renderLivery();
+    unmount();
+    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-cleanup')).toBe(true);
   });
 });

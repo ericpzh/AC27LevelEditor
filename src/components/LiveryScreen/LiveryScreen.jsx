@@ -15,6 +15,8 @@ import { FaSteam } from 'react-icons/fa';
 import { MdAdd } from 'react-icons/md';
 import { FaFileExport } from 'react-icons/fa6';
 import useTooltip from '../BrowserScreen/useTooltip';
+import { useElectronAPI } from '../../hooks/useElectronAPI';
+import { disposeLiverySnapshots } from '../../utils/livery3d';
 import MyLiveriesTab from './MyLiveriesTab';
 import CreateTab from './CreateTab';
 import InstallPackTab from './InstallPackTab';
@@ -23,6 +25,7 @@ import LiveryHelpOverlay from './LiveryHelpOverlay';
 
 export default function LiveryScreen() {
   const { t } = useTranslation();
+  const electronAPI = useElectronAPI();
   const setScreen = useAppStore(s => s.setScreen);
   const rootPath = useAppStore(s => s.rootPath);
   // The realistic livery pack is only offered in the demo game root (same
@@ -51,6 +54,39 @@ export default function LiveryScreen() {
   // an in-place delete shrinks the content (no full-list refresh).
   const contentRef = useRef(null);
   const [barState, setBarState] = useState({ mineCount: 0, selectedCount: 0, allSelected: false, oneSelected: false });
+
+  // ── 3D model pack (list snapshots + painter preview) ──
+  // Extracted once when the livery page opens (in the background, so the list
+  // still renders instantly), kept for the whole page, and deleted on unmount.
+  const [modelPack, setModelPack] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (electronAPI.getAircraft3DManifest) {
+          const st = await electronAPI.getAircraft3DManifest();
+          if (!cancelled && st && st.success && st.planes) { setModelPack(st.planes); return; }
+        }
+      } catch (_) {}
+      if (!rootPath || !electronAPI.ensureAircraft3D) return;
+      try {
+        const res = await electronAPI.ensureAircraft3D(rootPath);
+        if (cancelled || !res || !res.success) return;
+        if (electronAPI.getAircraft3DManifest) {
+          const st = await electronAPI.getAircraft3DManifest();
+          if (!cancelled && st && st.success && st.planes) setModelPack(st.planes);
+        }
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootPath]);
+
+  useEffect(() => () => {
+    try { disposeLiverySnapshots(); } catch (_) {}
+    try { if (electronAPI.cleanupAircraft3D) Promise.resolve(electronAPI.cleanupAircraft3D()).catch(() => {}); } catch (_) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Unsaved painter guard: CreateTab paint mode registers
   // window.__liveryPaintGuard = { isDirty() }. Tab-leave/back prompts via
@@ -211,6 +247,7 @@ export default function LiveryScreen() {
             cmdRef={mineCmdRef}
             scrollRef={contentRef}
             onBarState={setBarState}
+            modelPack={modelPack}
             onEdit={(row) => { CreateTab.prefill = row; setPaintSession(s => s + 1); setTab('create'); }}
             onCreate={(planeId) => { CreateTab.prefill = { targetPlaneId: planeId }; setPaintSession(s => s + 1); setTab('create'); }}
             onUpload={(folder) => setUploadFolder(folder)}
@@ -221,6 +258,7 @@ export default function LiveryScreen() {
             // Stable across the painter's post-save `CreateTab.prefill` adoption:
             // only an explicit open bumps the session (see `paintSession`).
             key={`create:${paintSession}`}
+            modelsReady={Boolean(modelPack)}
             onCreated={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
             onCancel={() => { CreateTab.prefill = null; window.__liveryPaintGuard = null; setTab('mine'); }}
             onHelp={() => setHelpOpen(true)}

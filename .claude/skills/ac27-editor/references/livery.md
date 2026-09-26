@@ -893,6 +893,85 @@ lays out **one 2048² panel per part** (A388 → Fuselage + Wing, B38M → Fusel
 + Wingtip, everything else one panel), side by side with a 128px gutter
 (`PANEL_GAP`), so the secondary map is now separately addressable.
 
+## 3D livery preview (floating window + list snapshots)
+
+A `LuRotate3D` toolbar button immediately right of the aircraft dropdown
+(`AirlineAircraftFields` `onOpen3D`, hidden for types without a model via
+`constants/livery.js:has3DModel` — Cessna Citation X) shows the current livery
+on the game's **real aircraft mesh** in a floating panel
+(`Livery3DPreview.jsx`, three.js + `OrbitControls`). It renders the live panels,
+matched to the model's livery parts by `partName` (A388 `Fuselage`/`Wing`,
+everything else `Body`), and updates **live**: while the window is open the
+painter polls its overlay revision (`LiveryCanvas.getRevision`, bumped each
+`drawOverlay` frame) every ~120 ms and, when it changed, pushes refreshed panel
+textures via `exportPreviewParts(512)` (a cheap scaled composite — the 2048²
+`exportParts` is far too heavy per stroke); `Livery3DPreview` swaps each livery
+material's `map` by partName without rebuilding geometry. The panel
+is free-**movable** (header drag), **resizable** (all four edges + four corners), has a
+bottom-right **reset-view** button (`TbRotate3D`) that restores the default
+camera, and a top-right Hide button (`IoRemoveOutline` — a dash, i.e. a temporary
+hide, not a close). Orbit/zoom only (pan disabled). The default camera fits the
+model to the window's current aspect and zooms in (`margin 0.7`) so the aircraft
+fills the view. The window's **size + position are remembered** across
+hide/reopen via a module-level `savedRect` (only the camera is reset).
+
+**UV axes:** the game mesh is left-handed but the authored UVs must NOT be
+mirrored — an early `group.scale.x = -1` mirrored the livery (the reported
+"axis flipped"). The correct render is the mesh as-is with the original winding
+(Unity's CW front faces already read as front-facing in three.js here) and
+`side: DoubleSide` for single-sided panels; no winding reversal (verified
+against the X-CSL A359 as ground truth — reversal renders it inside-out/dark).
+
+The geometry is the game's copyrighted content, so it is **extracted on demand
+and never shipped**. `LiveryScreen` calls `livery-3d-get` on mount and, when the
+pack is absent, runs `livery-3d-ensure` in the **background** (progress streams
+on `livery-3d-progress`). `electron/aircraftModels.js` (pure-ish, injected
+`fs`/`spawn`/extractor, unit-tested) resolves `<dataRoot>/resources.assets` and
+builds the pack in-process with the **pure-JS reader**
+`electron/unity/aircraftPack.js` — no Python, no spawned binary,
+cross-platform by construction. That reader parses the serialized file's
+metadata/object table (`electron/unity/serializedFile.js`), reads Mesh /
+SkinnedMeshRenderer / GameObject / Transform objects through a generic
+type-tree walker, and decompresses compressed meshes
+(`electron/unity/mesh.js`). The AC27 build strips type trees, so the field
+layouts come from `electron/unity/typetrees.json` — the release type trees for
+the handful of classes needed, dumped by
+`scripts/export-unity-typetrees.py` (regenerate when targeting a new Unity
+version). Each mesh's **world transform** is baked into the vertices (some
+meshes are Z-up, some Y-up — without this the aircraft render on their side).
+Part→submesh mapping lives in `aircraftPack.js:PLANES` (the same order/names as
+the painter panels). It is authoritative for the **two-part** types only — A388
+(`Fuselage`=`A380_a`, `Wing`=`A380_b`) and B737 MAX 8 (`Fuselage`=body submesh
+0, `Wingtip`=body submesh 1, the game's `Wingtip` slot binding the *engine*
+material); every other type is a single `Body` panel over its whole mesh. To
+re-derive a mapping, read the `AircraftHD` MonoBehaviours in `resources.assets`
+whose raw data contains the part-name strings — each slot is
+`{ aligned string PartId, PPtr<Material> Material }` (B38M: `Fuselage`→
+`..._B737Max_mat`, `Wingtip`→`..._Engine_mat`). Output: `pack/manifest.json` + one `<safe>.bin` per plane:
+per part `f32 positions[3n] · f32 uv[2n] · u32 indices[m]`. Pack `version` 2;
+total ≈16 MB for all types. `livery-3d-bin` reads a plane's geometry back to
+the renderer. `livery-3d-cleanup` `rm -rf`s the cache dir when `LiveryScreen`
+unmounts (leaving the livery page); `disposeLiverySnapshots()` tears down the
+offscreen renderer.
+
+`scripts/extract-aircraft-models.py` (UnityPy) is kept as a **dev-time
+reference and last-resort fallback**: if the JS reader throws (e.g. a game
+update changes Unity's serialization) and a Python with `UnityPy` + `numpy` is
+found (`findPython`, cached), `ensure()` copies the script out of the asar (a
+spawned child can't read asar paths) and runs it into the same cache dir. When
+neither path works the painter toasts `NO_PYTHON`; there is no 2D fallback.
+
+**List snapshots (3D-only):** `src/utils/livery3d.js` holds the shared pack
+parser (`readPart`) plus a singleton offscreen `WebGLRenderer`/scene.
+`MyLiveriesTab` renders each visible card as a **3D snapshot** of that livery —
+the resized PNG thumbnail channel (`read-livery-thumbnail`) is NOT used; the
+full livery texture (`read-livery-image`) is the model's map. Renders are
+serialized through one GL context, cached by `pack:folder`, rendered 640×320
+(2:1 — matching the card's `.livery-thumb` box) with the aircraft fitted to the
+frame (bounding-box corners vs. the viewport half-angles, 1.08 margin), and only
+attempted when the pack covers the row's plane (no 2D fallback image). The pack covers 19 types; `PLANES` in the script holds
+the per-type part→mesh/submesh map and its `_static` (engine/fan) lists.
+
 ## IPC (`electron/livery.js` ← `electron/main.js` handlers ← `electron/preload.js`)
 
 Pure logic in `electron/livery.js` (unit-tested); `main.js` only resolves

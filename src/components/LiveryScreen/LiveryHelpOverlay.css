@@ -104,6 +104,7 @@
   border-left: 4px solid #ffb300;
   border-radius: var(--radius-sm);
   padding: 10px 12px;
+  margin-bottom: 18px;
   font-size: 13px; line-height: 1.6; color: var(--text);
 }
 .livery-help-tip-title { font-weight: 700; }

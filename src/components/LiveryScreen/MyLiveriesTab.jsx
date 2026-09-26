@@ -7,12 +7,13 @@ import { IoChevronForward, IoChevronDown, IoFolderOutline, IoLockClosed } from '
 import { FaSteam } from 'react-icons/fa6';
 import { MdAdd } from 'react-icons/md';
 import useTooltip from '../BrowserScreen/useTooltip';
+import { renderLiverySnapshot } from '../../utils/livery3d';
 
 function errKey(code) {
   return 'livery_err_' + String(code || 'unknown');
 }
 
-export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '', cmdRef, scrollRef, onBarState }) {
+export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '', cmdRef, scrollRef, onBarState, modelPack = null }) {
   const { t, lang } = useTranslation();
   const electronAPI = useElectronAPI();
   const [mine, setMine] = useState([]);
@@ -25,6 +26,11 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
   const [allTypes, setAllTypes] = useState([]);
   const [thumbs, setThumbs] = useState({});
   const [loading, setLoading] = useState(true);
+  // Model binary per plane id (fetched once) for the 3D snapshots.
+  const modelBinRef = useRef(new Map());
+  // Bumped when the extracted pack arrives so the thumbnail effect re-runs and
+  // upgrades the 2D previews to 3D snapshots.
+  const [packVersion, setPackVersion] = useState(0);
   // Collapsed aircraft groups, keyed by targetPlaneId ('' = unknown).
   // Mine + reference share one folder set; reference rows are read-only.
   // Seeded from (and written back to) the store so the choice — which also
@@ -103,35 +109,27 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
 
   useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Lazy low-res thumbnails (mine + reference). The list never pulls the
-  // full 2048×2048 texture — `read-livery-thumbnail` serves a ~256px JPEG
-  // (≈20KB vs several MB). Only expanded, currently-filtered rows are
-  // fetched, 4 at a time, so opening the page with a big reference pack
-  // stays instant. The painter loads the full texture on demand (it
-  // lazy-loads via readLiveryImage when prefill carries no imageDataUrl).
+  // 3D-only previews (mine + reference). Each card shows a rendered 3D snapshot
+  // of its livery — the resized PNG thumbnail channel is NOT used. Only
+  // expanded, currently-filtered rows are rendered, 4 at a time. The painter
+  // still loads the full texture itself on demand.
   // Keys already fetched. A dedicated Set — NEVER a mirror of the state
   // object: writing into the mirrored object mutates state in place, which
   // makes the setThumbs updater below see prev[key] set and bail out, so
   // the list would never re-render (all cards stuck empty).
   const fetchedRef = useRef(new Set());
+  // When the extracted pack arrives, (re)render every card's 3D snapshot.
+  useEffect(() => {
+    if (!modelPack) return;
+    fetchedRef.current = new Set();
+    setThumbs({});
+    setPackVersion(v => v + 1);
+  }, [modelPack]);
   useEffect(() => {
     let cancelled = false;
     const visible = filteredRows.filter(r => !collapsed.has(r.targetPlaneId || ''));
     const missing = visible.filter(r => !fetchedRef.current.has(r.pack + ':' + r.folder));
     if (missing.length === 0) return () => { cancelled = true; };
-    // Per-call fallback: if the thumbnail channel is missing (e.g. the
-    // running Electron main/preload predates it — Vite HMR only hot-swaps
-    // the renderer, main + preload need an app restart), `invoke` rejects.
-    // Fall back to the full image so cards never stay empty.
-    const readThumb = async (folder, pack) => {
-      if (electronAPI.readLiveryThumbnail) {
-        try {
-          const res = await electronAPI.readLiveryThumbnail(folder, pack);
-          if (res && res.success && res.imageDataUrl) return res;
-        } catch (_) {}
-      }
-      return electronAPI.readLiveryImage(folder, pack);
-    };
     (async () => {
       const CONCURRENCY = 4;
       for (let i = 0; i < missing.length; i += CONCURRENCY) {
@@ -140,18 +138,41 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
         await Promise.all(batch.map(async (row) => {
           const key = row.pack + ':' + row.folder;
           if (fetchedRef.current.has(key)) return;
+          const planeId = row.targetPlaneId;
+          if (!modelPack || !planeId || !modelPack[planeId]) return; // 3D-only preview
           try {
-            const res = await readThumb(row.folder, row.pack);
-            if (!cancelled && res && res.success && res.imageDataUrl) {
+            let model = modelBinRef.current.get(planeId);
+            if (model === undefined) {
+              model = null;
+              if (electronAPI.readAircraft3DBin) {
+                const b = await electronAPI.readAircraft3DBin(planeId);
+                if (b && b.success) model = { parts: b.parts, bin: b.bin };
+              }
+              modelBinRef.current.set(planeId, model);
+            }
+            if (!model) return;
+            // The full livery texture is the model's map (no resized thumbnail).
+            const src = electronAPI.readLiveryImage
+              ? await electronAPI.readLiveryImage(row.folder, row.pack)
+              : null;
+            const textureUrl = src && src.success ? src.imageDataUrl : null;
+            const snap = await renderLiverySnapshot({
+              key,
+              planeId,
+              parts: model.parts,
+              bin: model.bin,
+              textureUrl,
+            });
+            if (!cancelled && snap) {
               fetchedRef.current.add(key);
-              setThumbs(prev => (prev[key] ? prev : { ...prev, [key]: res.imageDataUrl }));
+              setThumbs(prev => (prev[key] ? prev : { ...prev, [key]: snap }));
             }
           } catch (_) {}
         }));
       }
     })();
     return () => { cancelled = true; };
-  }, [filteredRows, collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filteredRows, collapsed, packVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // After an in-place delete (or a group collapse) shrinks the list, keep the
   // current scroll offset but cap it to the new content maximum (otherwise

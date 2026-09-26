@@ -1530,3 +1530,69 @@ describe('CreateTab workshop upload button', () => {
     expect(await screen.findByLabelText('Folder name')).toBeInTheDocument();
   });
 });
+
+describe('CreateTab 3D preview', () => {
+  it('shows a 3D preview button next to the aircraft select', async () => {
+    setupMocks();
+    renderCreate();
+    expect(await screen.findByRole('button', { name: '3D preview' })).toBeInTheDocument();
+  });
+
+  it('hides the 3D button for a type with no model (Citation X)', async () => {
+    setupMocks();
+    const user = userEvent.setup();
+    renderCreate();
+    expect(await screen.findByRole('button', { name: '3D preview' })).toBeInTheDocument();
+    await user.selectOptions(document.querySelector('.lp-root select'), 'CESSNA CITATION X');
+    expect(screen.queryByRole('button', { name: '3D preview' })).toBeNull();
+  });
+
+  it('opens instantly without re-extracting when the pack was already built', async () => {
+    setupMocks();
+    const user = userEvent.setup();
+    renderCreate({ modelsReady: true });
+    await user.click(await screen.findByRole('button', { name: '3D preview' }));
+    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-ensure')).toBe(false);
+    expect(screen.queryByText(/Building 3D model/)).toBeNull();
+  });
+
+  it('extracts the model pack on first open and toasts when it fails', async () => {
+    let resolveEnsure;
+    setupMocks({ 'livery-3d-ensure': new Promise((r) => { resolveEnsure = r; }) });
+    const user = userEvent.setup();
+    renderCreate();
+    await user.click(await screen.findByRole('button', { name: '3D preview' }));
+    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-ensure')).toBe(true);
+    expect(await screen.findByText(/Building 3D model/)).toBeInTheDocument();
+    await act(async () => { resolveEnsure({ success: false, error: 'NO_PYTHON' }); });
+    expect(await screen.findByText(/Automatic 3D model extraction failed/)).toBeInTheDocument();
+  });
+
+  it('live-updates the preview when the painting changes', async () => {
+    setupMocks();
+    const user = userEvent.setup();
+    renderCreate({ modelsReady: true });
+    await user.click(await screen.findByRole('button', { name: '3D preview' }));
+    await waitFor(() => expect(document.querySelector('.lp-3dwin')).toBeTruthy());
+    // The initial full-res export happens on open.
+    await waitFor(() => expect(toDataSpy.mock.calls.length).toBeGreaterThan(0));
+    // Let any mount-scheduled overlay frame + poll settle before baselining.
+    await act(async () => { await new Promise((r) => setTimeout(r, 260)); });
+    const baseline = toDataSpy.mock.calls.length;
+
+    // Paint a stroke on the chrome canvas → bumps the canvas revision.
+    const cv = document.querySelector('.livery-canvas-wrap canvas[data-layer="chrome"]');
+    fireEvent.pointerDown(cv, { clientX: 30, clientY: 30, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 60, clientY: 45, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+
+    await waitFor(() => expect(toDataSpy.mock.calls.length).toBeGreaterThan(baseline), { timeout: 2000 });
+  });
+
+  it('does not delete the shared pack when the painter unmounts (LiveryScreen owns it)', async () => {
+    setupMocks();
+    const { unmount } = renderCreate();
+    unmount();
+    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-cleanup')).toBe(false);
+  });
+});

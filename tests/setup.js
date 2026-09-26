@@ -168,6 +168,14 @@ vi.stubGlobal('electronAPI', {
   saveLiveryDialog: (opts) => mockIpcInvoke('save-livery-dialog', opts),
   loadLiveryZip: () => mockIpcInvoke('load-livery-zip'),
 
+  // ─── Livery painter 3D preview ─────────────────────────
+  ensureAircraft3D: (gameRoot) => mockIpcInvoke('livery-3d-ensure', gameRoot),
+  getAircraft3DManifest: () => mockIpcInvoke('livery-3d-get'),
+  readAircraft3DBin: (planeId) => mockIpcInvoke('livery-3d-bin', planeId),
+  cleanupAircraft3D: () => mockIpcInvoke('livery-3d-cleanup'),
+  onAircraft3DProgress: (cb) => mockIpcOn('livery-3d-progress', cb),
+  offAircraft3DProgress: (cb) => { /* unsubscribe */ },
+
   // ─── Workshop publish (standalone uploader) ──────────
   getWorkshopPublishInfo: (folder) => mockIpcInvoke('get-workshop-publish-info', folder),
   selectLiveryPreview: () => mockIpcInvoke('select-livery-preview'),

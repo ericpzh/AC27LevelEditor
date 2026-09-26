@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
-import { PLANE_ID_TO_SHORT_CODE, LIVERY_FOLDER_SAFE_RE, folderFor } from '../../utils/constants/livery';
+import { PLANE_ID_TO_SHORT_CODE, LIVERY_FOLDER_SAFE_RE, folderFor, has3DModel } from '../../utils/constants/livery';
 import { CURATED_AIRLINE_CODES, airlineDisplayName } from '../../utils/constants/airlines';
 import { fileToDataUrl, normalizeToTexture } from '../../utils/liveryImage';
 import useTooltip from '../BrowserScreen/useTooltip';
@@ -18,7 +18,10 @@ import { FaSteam } from 'react-icons/fa';
 import { MdSaveAs } from 'react-icons/md';
 import { FaFileImport, FaFileExport } from 'react-icons/fa6';
 import { FaRegFolderOpen } from 'react-icons/fa';
+import { LuRotate3D } from 'react-icons/lu';
 import LiveryCanvas from './LiveryCanvas';
+import Livery3DPreview from './Livery3DPreview';
+import { useLive3DImages } from './useLive3DImages';
 
 function errKey(code) {
   return 'livery_err_' + String(code || 'unknown');
@@ -71,7 +74,7 @@ function SaveNameDialog({ initial, isSaveAs, onConfirm }) {
   );
 }
 
-function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locked, planeIds }) {
+function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locked, planeIds, onOpen3D }) {
   const { t, lang } = useTranslation();
   const airlineOptions = useMemo(() => {
     return [...CURATED_AIRLINE_CODES];
@@ -162,6 +165,17 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
           ))}
         </select>
       </label>
+      {onOpen3D && (
+        <button
+          type="button"
+          className="lp-tool lp-3d-open"
+          aria-label={t('livery_3d_open')}
+          title={t('livery_3d_open')}
+          onClick={onOpen3D}
+        >
+          <LuRotate3D size={18} />
+        </button>
+      )}
     </>
   );
 }
@@ -182,7 +196,7 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
  *   with the live form's airline/aircraft.
  * - Cancel discards (with an unsaved-changes guard) and returns to the list.
  */
-export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploadOpen = false }) {
+export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploadOpen = false, modelsReady = false }) {
   const { t, lang } = useTranslation();
   const electronAPI = useElectronAPI();
   const prefill = CreateTab.prefill || null;
@@ -274,6 +288,65 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   const [exporting, setExporting] = useState(false);
   const fileRef = useRef(null);
   const { bind, TooltipPortal } = useTooltip();
+
+  // ── 3D livery preview ─────────────────────────────────────
+  // The pack is extracted when the livery page opens (LiveryScreen). The
+  // painter only reuses it (`modelsReady`), falling back to an on-demand
+  // extract only if it wasn't built. `threeD` is null (closed) |
+  // { phase:'loading', log } | { phase:'ready', images }.
+  const [threeD, setThreeD] = useState(null);
+  const packReadyRef = useRef(false);
+  const rootPath = useAppStore(s => s.rootPath);
+
+  const exportPanelImages = () => {
+    try {
+      return canvasRef.current && canvasRef.current.exportParts ? canvasRef.current.exportParts() : [];
+    } catch (_) {
+      return [];
+    }
+  };
+
+  const open3D = async () => {
+    if (threeD && threeD.phase === 'loading') return;
+    // Already built on livery-page entry — open instantly, no (re)extract.
+    if (modelsReady || packReadyRef.current) {
+      setThreeD({ phase: 'ready', images: exportPanelImages() });
+      return;
+    }
+    setThreeD({ phase: 'loading', log: '' });
+    const onLog = (line) => {
+      setThreeD(prev => (prev && prev.phase === 'loading')
+        ? { ...prev, log: ((prev.log || '') + line).slice(-600) }
+        : prev);
+    };
+    try { if (electronAPI.onAircraft3DProgress) electronAPI.onAircraft3DProgress(onLog); } catch (_) {}
+    try {
+      const res = await electronAPI.ensureAircraft3D(rootPath);
+      if (!res || !res.success) {
+        const code = (res && res.error) || 'unknown';
+        useAppStore.getState().showToast(t(`livery_3d_error_${code}`), 'error');
+        setThreeD(null);
+        return;
+      }
+      packReadyRef.current = true;
+      setThreeD({ phase: 'ready', images: exportPanelImages() });
+    } catch (err) {
+      useAppStore.getState().showToast(String((err && err.message) || err), 'error');
+      setThreeD(null);
+    } finally {
+      try { if (electronAPI.offAircraft3DProgress) electronAPI.offAircraft3DProgress(onLog); } catch (_) {}
+    }
+  };
+
+  // Live 3D preview: while the window is open, poll the canvas revision (~8 Hz)
+  // and push fresh small panel textures when the painting changed (no React
+  // churn during the stroke itself).
+  useLive3DImages({
+    active: threeD ? threeD.phase === 'ready' : false,
+    canvasRef,
+    exportFallback: exportPanelImages,
+    onImages: (images) => setThreeD(prev => (prev && prev.phase === 'ready') ? { ...prev, images } : prev),
+  });
 
   // Panel layout: the built-in parts are the source of truth; an opened livery
   // (or a zip that had no built-in scan) falls back to its own parts.
@@ -783,7 +856,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
             </span>
           )}
           <span className="lp-sep" />
-          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReadOnly} planeIds={planeOptions} />
+          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReadOnly} planeIds={planeOptions} onOpen3D={has3DModel(planeId) ? open3D : null} />
         </div>
 
         <div className="lp-group lp-group-end">
@@ -843,6 +916,20 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         onDirty={markDirty}
         inputDisabled={uploadOpen}
       />
+      {threeD && threeD.phase === 'loading' && (
+        <div className="lp-3dload" role="status" aria-live="polite">
+          <div className="lp-3dload-spinner" aria-hidden="true" />
+          <div className="lp-3dload-title">{t('livery_3d_loading')}</div>
+          {threeD.log ? <pre className="lp-3dload-log">{threeD.log}</pre> : null}
+        </div>
+      )}
+      {threeD && threeD.phase === 'ready' && (
+        <Livery3DPreview
+          planeId={planeId}
+          images={threeD.images}
+          onHide={() => setThreeD(null)}
+        />
+      )}
       {TooltipPortal}
     </div>
   );

@@ -1972,8 +1972,13 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   // ── Overlay (sticker + shape preview), rAF-throttled ───────
+  // Bumped on every overlay frame; the live 3D preview polls this (via
+  // `getRevision`) to know when the painted content changed — without forcing a
+  // React re-render on every brush stroke.
+  const revisionRef = useRef(0);
   const drawOverlay = useCallback(() => {
     rafRef.current = 0;
+    revisionRef.current += 1;
     // Live values, not the closure's: a frame scheduled before a zoom/layout
     // change must still draw the chrome at the CURRENT scale (see effZoomRef).
     const z = effZoomRef.current || 1;
@@ -2328,6 +2333,24 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       return out;
     },
+    // Cheap per-panel export for the live 3D preview (small textures — the
+    // 2048² `exportParts` is far too heavy to run per stroke).
+    exportPreviewParts(size = 512) {
+      const px = Math.max(64, Math.min(TEXTURE, size | 0));
+      const flat = flattenToCanvas();
+      const out = [];
+      for (let i = 0; i < panelCount; i++) {
+        const c = document.createElement('canvas');
+        c.width = px; c.height = px;
+        const cctx = c.getContext('2d');
+        if (cctx) cctx.drawImage(flat, layout.x(i), 0, TEXTURE, TEXTURE, 0, 0, px, px);
+        out.push({ partName: panelNames[i], imageDataUrl: c.toDataURL('image/png') });
+      }
+      return out;
+    },
+    // Monotonic counter bumped on every overlay frame; the live preview polls
+    // it to skip re-exporting when nothing changed.
+    getRevision() { return revisionRef.current; },
     // Replace ONE panel's base image in place (the "Import image" action for
     // the active panel). Only the base layer under that panel changes — the
     // pen/fill rasters, live objects and every other panel are untouched, so an

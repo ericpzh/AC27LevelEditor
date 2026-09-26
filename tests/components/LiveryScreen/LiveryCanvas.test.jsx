@@ -3556,3 +3556,27 @@ describe('input lock (workshop upload dialog)', () => {
     expect(screen.getByRole('button', { name: 'Rect' }).className).toContain('lp-active');
   });
 });
+
+describe('LiveryCanvas preview export (live 3D)', () => {
+  it('exposes exportPreviewParts + a monotonic revision', async () => {
+    const ref = React.createRef();
+    render(
+      <I18nProvider>
+        <LiveryCanvas ref={ref} panels={['Body']} />
+        <Modal />
+        <Toast />
+      </I18nProvider>
+    );
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    expect(typeof ref.current.exportPreviewParts).toBe('function');
+    expect(typeof ref.current.getRevision).toBe('function');
+    const r0 = ref.current.getRevision();
+    expect(typeof r0).toBe('number');
+
+    const parts = ref.current.exportPreviewParts(64);
+    expect(Array.isArray(parts)).toBe(true);
+    expect(parts).toHaveLength(1);
+    expect(parts[0].partName).toBe('Body');
+    expect(parts[0].imageDataUrl).toMatch(/^data:image\/png;base64,/);
+  });
+});
