@@ -246,7 +246,7 @@ DMG 为 **universal**（通用）版本，在 Apple Silicon（arm64）与 Intel�
 
 ### Tech Stack
 
-- **Version:** v1.5.1
+- **Version:** v1.5.2
 - **Runtime:** Electron 33
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
