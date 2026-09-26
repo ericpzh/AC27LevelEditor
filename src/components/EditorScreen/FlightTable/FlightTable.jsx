@@ -164,25 +164,31 @@ export default function FlightTable({ type, flights, columns }) {
   const vals = airportValues[currentAirport] || {};
   const allColumns = useMemo(() => ['AirlineCode', 'FlightNum', ...columns.filter(c => c !== 'AirlineCode' && c !== 'FlightNum')], [columns]);
 
-  // Build valid flight numbers per airline from canonical set
-  // (_flightNums is collected during root scan from audio clips + ALL .acl files)
+  // Build valid flight numbers per airline.
+  // Primary source: the game's install-global recorded-callsign library
+  // (`_gameCallsigns`, parsed from catalog.bin) — every number the game can
+  // actually speak, so the picker can offer numbers beyond this airport's own
+  // schedule. `_flightNums` (airport schedule + audio) is unioned in, which also
+  // covers installs where the catalog couldn't be read.
   const validFlightNums = useMemo(() => {
+    const sets = {};
+    const add = (code, nums) => {
+      const set = sets[code] || (sets[code] = new Set());
+      for (const n of (nums || [])) set.add(n);
+    };
+    for (const [code, nums] of Object.entries(vals._gameCallsigns || {})) add(code, nums);
+    for (const [code, nums] of Object.entries(vals._flightNums || {})) add(code, nums);
+    for (const [code, nums] of Object.entries(audioCallsigns?.byAirline || {})) add(code, nums);
     const map = {};
-    // Primary source: canonical _flightNums (includes audio numbers merged in)
-    const canonByAirline = vals._flightNums || {};
-    for (const [code, nums] of Object.entries(canonByAirline)) {
-      map[code] = [...nums];
-    }
-    // Fallback: audio callsigns (if cache hasn't been built yet)
-    const byAirline = audioCallsigns?.byAirline || {};
-    for (const [code, nums] of Object.entries(byAirline)) {
-      if (!map[code]) map[code] = [];
-      for (const n of nums) {
-        if (!map[code].includes(n)) map[code].push(n);
-      }
+    for (const [code, set] of Object.entries(sets)) {
+      map[code] = [...set].sort((a, b) => {
+        const na = parseInt(a, 10), nb = parseInt(b, 10);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return String(a).localeCompare(String(b));
+      });
     }
     return map;
-  }, [vals._flightNums, audioCallsigns]);
+  }, [vals._flightNums, vals._gameCallsigns, audioCallsigns]);
 
   // Map global store index ↔ display index (position in the sorted flights prop)
   const giToDi = useMemo(() => {

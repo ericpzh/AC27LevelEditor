@@ -346,6 +346,39 @@ describe('runTripleValidation airline/language (callsign pool)', () => {
   });
 });
 
+describe('runTripleValidation recorded-callsign library (_gameCallsigns)', () => {
+  const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
+  function run(flights, airportValues = {}) {
+    return runTripleValidation(flights, airportValues, 'ZGSZ', AUDIO, null, null, null, null);
+  }
+
+  it('accepts a recorded library number the airport never uses', () => {
+    const flights = [{ CallSign: 'CES1111', LandingTime: '10:30' }];
+    const vals = { ZGSZ: { _flightNums: { CES: ['2641'] }, _gameCallsigns: { CES: ['1111', '2641'] } } };
+    expect(run(flights, vals)).toEqual([]);
+  });
+
+  it('still rejects a number absent from the recorded library', () => {
+    const flights = [{ CallSign: 'CES9999', LandingTime: '10:30' }];
+    const vals = { ZGSZ: { _flightNums: { CES: ['2641'] }, _gameCallsigns: { CES: ['1111', '2641'] } } };
+    const issues = run(flights, vals);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CES9999');
+  });
+
+  it('does NOT promote a library-only airline into the airport whitelist', () => {
+    // ANA is in the recorded library but not in this airport's schedules — a
+    // foreign airline fails callsign allocation in-game, so it must stay
+    // invalid even though its number is recorded.
+    const flights = [{ CallSign: 'ANA1201', LandingTime: '10:30' }];
+    const vals = { ZGSZ: { _flightNums: { CES: ['2641'] }, _gameCallsigns: { CES: ['1111'], ANA: ['1201'] } } };
+    const issues = run(flights, vals);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('ANA1201');
+    expect(issues[0]).toContain('ANA');
+  });
+});
+
 describe('runTripleValidation time range (end + 30min grace)', () => {
   const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
   function run(flights) {

@@ -342,9 +342,20 @@ function buildConstraints(state, cache) {
     ...(dv.AirlineCode || []),
   ]);
 
+  // Flight numbers: per-airport numbers unioned with the install-global recorded
+  // callsign library (renderer live `_gameCallsigns`). `knownCodes` above stays
+  // per-airport — a foreign airline is still rejected.
+  const flightNumbers = {};
+  for (const [code, nums] of Object.entries(dv._flightNums || {})) {
+    flightNumbers[code] = [...nums];
+  }
+  for (const [code, nums] of Object.entries(sv._gameCallsigns || {})) {
+    flightNumbers[code] = [...new Set([...(flightNumbers[code] || []), ...nums])];
+  }
+
   return {
     knownCodes,
-    flightNumbers: dv._flightNums || {},
+    flightNumbers,
     stands: dv.Stand || [],
     runways: dv.Runway || [],
     aircraftTypes: allAircraftTypes(dv, ad),

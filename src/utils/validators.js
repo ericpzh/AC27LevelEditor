@@ -180,19 +180,28 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
 
   const airlineCodeSet = new Set(audioData.allAirlines || []);
   const validFlightNums = {};
+  const addFlightNums = (code, nums) => {
+    if (!validFlightNums[code]) validFlightNums[code] = new Set();
+    for (const n of (nums || [])) validFlightNums[code].add(n);
+  };
+  // The game's install-global recorded-callsign library (`_gameCallsigns` from
+  // catalog.bin) — every number the game can actually speak, including numbers
+  // never used at this airport. Its airline keys are deliberately NOT added to
+  // `airlineCodeSet`: airline validity stays per-airport (a foreign airline
+  // fails callsign allocation even with a recorded number).
+  for (const [code, nums] of Object.entries(values._gameCallsigns || {})) {
+    addFlightNums(code, nums);
+  }
   // Canonical flight numbers from root scan cache (audio + ALL .acl files merged)
   const canonByAirline = values._flightNums || {};
   for (const [code, nums] of Object.entries(canonByAirline)) {
     airlineCodeSet.add(code);
-    validFlightNums[code] = new Set(nums);
+    addFlightNums(code, nums);
   }
   // Fallback: audio callsigns (if cache hasn't been built yet)
   for (const code of Object.keys(audioData.byAirline || {})) {
     airlineCodeSet.add(code);
-    if (!validFlightNums[code]) validFlightNums[code] = new Set();
-    for (const n of (audioData.byAirline[code] || [])) {
-      validFlightNums[code].add(n);
-    }
+    addFlightNums(code, audioData.byAirline[code]);
   }
   const validSets = {
     AirlineCode: airlineCodeSet,

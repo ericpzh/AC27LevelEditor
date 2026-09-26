@@ -331,3 +331,65 @@ describe('FlightTable — aircraft type dropdown is airline-independent', () => 
     expect([...select.options].map(o => o.value)).toEqual(['B738', 'A320', 'B77W']);
   });
 });
+
+describe('FlightTable — Flight # dropdown includes the recorded-callsign library', () => {
+  const FLIGHTS = [
+    { CallSign: 'CES1234', ArrivalAirport: 'KJFK', LandingTime: '08:00', AircraftType: 'B738', Stand: 'G1' },
+  ];
+
+  function setupRelaxedStore() {
+    useAppStore.getState().initializeEditor({
+      currentPath: '/test/file.acl',
+      airportIcao: 'KJFK',
+      flights: FLIGHTS,
+      before: '', after: '', arrayContent: '', originalBlocks: [],
+      configStartTime: '06:00', configEndTime: '18:00',
+      _saveSec: 36000,
+    });
+    useAppStore.getState().setAuxData(
+      {
+        KJFK: {
+          AircraftType: ['B738'], Stand: ['G1'],
+          // Airport's own numbers (a subset of the install-global library).
+          _flightNums: { CES: ['1234'] },
+          // Recorded-callsign library: CES carries extras, ANA carries a number
+          // for an airline that is NOT valid at this airport.
+          _gameCallsigns: { CES: ['1111', '1234', '9012'], ANA: ['1201'] },
+        },
+      },
+      { byAirline: { CES: ['1234'] }, allCallsigns: [], allAirlines: ['CES'] },
+      { weatherTimeline: [], windTimeline: [], runwayTimeline: { initialRunways: [], timeline: [] } },
+      [],
+    );
+  }
+
+  function openFlightNum(gi) {
+    const cell = getCell('FlightNum', gi);
+    expect(cell).not.toBeNull();
+    act(() => { cell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
+    act(() => { cell.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const select = cell.querySelector('select.cell-widget');
+    expect(select).not.toBeNull();
+    return [...select.options].map(o => o.value);
+  }
+
+  it('offers recorded library numbers beyond the airport schedule', () => {
+    setupRelaxedStore();
+    renderTable({ flights: FLIGHTS });
+    const opts = openFlightNum(0);
+    expect(opts).toEqual(['1111', '1234', '9012']);
+  });
+
+  it('never offers a number the game has no recording for', () => {
+    setupRelaxedStore();
+    renderTable({ flights: FLIGHTS });
+    expect(openFlightNum(0)).not.toContain('9999');
+  });
+
+  it('does not offer a library airline that is invalid at this airport', () => {
+    setupRelaxedStore();
+    renderTable({ flights: FLIGHTS });
+    // ANA's recorded number must not leak into a CES flight's options.
+    expect(openFlightNum(0)).not.toContain('1201');
+  });
+});

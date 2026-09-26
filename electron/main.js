@@ -20,6 +20,7 @@ const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, PROD_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { STEAM_GAME_DIR_NAME } = require('../src/utils/constants/steam.js');
 const gamePaths = require('../src/utils/gamePaths');
+const { unionFlightNums } = require('../src/utils/gameCallsigns');
 const { loadAirlineCountryRegistry } = require('../src/acl/utils');
 const { readAclText } = require('../src/acl/gatcarc');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
@@ -89,6 +90,18 @@ function _loadAirlineCountries(rootPath) {
   const map = loadAirlineCountryRegistry(gamePaths.airlineCountryRegistryPath(rootPath)) || {};
   _airlineCountriesCache = { root: rootPath, map };
   return map;
+}
+
+// Install-global flight-number pool: the union of every airport's
+// `_flightNums` (the callsigns the game's own levels ship). The game refuses to
+// load a level whose flight plan callsign has no recording (`failed to allocate
+// callsign ... for crew voice ...`), and `catalog.bin` over-reports such
+// callsigns, so the shipped union is the only reliable source. Airline validity
+// stays per-airport (a foreign airline fails even with a recorded callsign).
+// Computed fresh — cheap, and always reflects the current `airportCache`.
+function _globalFlightNums() {
+  return unionFlightNums(Object.values(airportCache || {}).map(
+    e => e && e.dropdownValues && e.dropdownValues._flightNums));
 }
 
 function _liveCacheKey(aclPath) { return path.resolve(aclPath); }
@@ -800,6 +813,11 @@ function _buildCollectValuesBase(airportIcao, rootPath) {
   // (CN -> zh, every other -> en); the game's CallsignService rejects a
   // callsign whose recorded captain language disagrees with the flight's Voice.
   aclValues._airlineCountries = _loadAirlineCountries(rootPath);
+  // Install-global shipped flight-number pool (union across airports). The
+  // renderer unions this with `_flightNums[airline]` to offer numbers beyond the
+  // current airport's own schedule. Only the Flight # picker consumes it —
+  // `AirlineCode` stays per-airport.
+  aclValues._gameCallsigns = _globalFlightNums();
   return { cached, aclValues };
 }
 
@@ -3415,6 +3433,15 @@ ipcMain.handle('validate-flights', async (_event, flights, snapshot = {}) => {
         for (const c of Object.keys(vals._compat.airlineToAircraft)) constraints.knownCodes.add(c);
       }
       if (vals._flightNums) constraints.flightNumbers = vals._flightNums;
+      // Union the recorded-callsign library so MCP validation accepts any number
+      // the game can actually speak (AirlineCode stays per-airport).
+      if (vals._gameCallsigns) {
+        const merged = { ...(constraints.flightNumbers || {}) };
+        for (const [code, nums] of Object.entries(vals._gameCallsigns)) {
+          merged[code] = [...new Set([...(merged[code] || []), ...nums])];
+        }
+        constraints.flightNumbers = merged;
+      }
       if (vals._runwayStarMap) constraints.runwayStarCompat = vals._runwayStarMap;
       if (vals._registrationMap) constraints.registrationsByPair = vals._registrationMap;
     }
