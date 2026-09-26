@@ -3546,7 +3546,11 @@ ipcMain.handle('check-bepinex', async () => {
   const cr = _readCache();
   const gameRoot = cr?.data?.gameRoot;
   if (!gameRoot) return { installed: false, error: 'NO_GAME_ROOT' };
-  return bepinex.checkStatus(gameRoot);
+  const st = bepinex.checkStatus(gameRoot);
+  if (st.missing && st.missing.length > 0) {
+    console.log('[BepInEx] check:', gameRoot, 'installed=' + st.installed, 'missing=' + st.missing.join(','));
+  }
+  return st;
 });
 
 ipcMain.handle('install-bepinex', async (_event) => {
@@ -3576,6 +3580,13 @@ ipcMain.handle('uninstall-bepinex', async () => {
 
   try {
     const result = bepinex.removeFiles(gameRoot);
+    // removeFiles throws when the BepInEx folder survives, but other items
+    // (winhttp.dll, dotnet, doorstop_config.ini) can still fail independently
+    // (e.g. locked by a running game) — never report success then.
+    if (result.errors && result.errors.length > 0) {
+      console.error('[BepInEx] uninstall incomplete:', result.errors.join('; '));
+      return { success: false, error: result.errors.join('; '), removed: result.removed, errors: result.errors };
+    }
     return { success: true, removed: result.removed, errors: result.errors };
   } catch (err) {
     console.error('[BepInEx] uninstall failed:', err.message);

@@ -93,14 +93,15 @@ describe('checkStatus', () => {
     expect(result.missing).toEqual([]);
   });
 
-  it('returns installed:false with missing list when some items absent', () => {
+  it('returns installed:true when only the BepInEx folder exists (partial leftover)', () => {
     const gameRoot = tmpDir();
     mkdir(path.join(gameRoot, 'BepInEx'));
-    // dotnet, doorstop_config.ini, winhttp.dll missing
+    // dotnet, doorstop_config.ini, winhttp.dll missing — still ON so the
+    // menu offers Uninstall/repair instead of stranding on OFF.
 
     const { checkStatus } = getBepInEx();
     const result = checkStatus(gameRoot);
-    expect(result.installed).toBe(false);
+    expect(result.installed).toBe(true);
     expect(result.missing).toContain('dotnet');
     expect(result.missing).toContain('doorstop_config.ini');
     expect(result.missing).toContain('winhttp.dll');

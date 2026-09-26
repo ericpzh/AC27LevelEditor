@@ -108,6 +108,17 @@ export default function BrowserScreen() {
     }).catch(() => {});
   }, []);
 
+  // Debug Mode state is always tied to the BepInEx folder on disk, never to a
+  // stale in-memory flag — re-probe every time the settings menu opens.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let cancelled = false;
+    electronAPI.checkBepInEx().then(result => {
+      if (!cancelled) setDebugMode(!!result.installed);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [settingsOpen]);
+
   // Platform (radar/strip buttons are Windows-only) + the persisted mod-warning
   // acknowledgement flag.
   useEffect(() => {
@@ -281,27 +292,55 @@ export default function BrowserScreen() {
 
   const handleToggleDebugMode = async () => {
     if (bepInExLoading) return;
-
-    if (debugMode) {
-      setBepInExLoading(true);
+    setBepInExLoading(true);
+    try {
+      // Re-probe the folder before deciding — the in-memory flag may be stale
+      // (e.g. folder manually deleted while the game was running).
+      let installed = debugMode;
       try {
-        const result = await electronAPI.uninstallBepInEx();
-        if (result.success) {
-          setDebugMode(false);
+        const status = await electronAPI.checkBepInEx();
+        installed = !!status.installed;
+        setDebugMode(installed);
+      } catch (_) { /* fall back to in-memory flag */ }
+
+      if (installed) {
+        // Delete failure is near-always a file lock from a running game —
+        // show the friendly "close the game" message, except NO_GAME_ROOT.
+        const uninstallErrMsg = (err) =>
+          err === 'NO_GAME_ROOT' ? t('bepinex_error_game_root') : t('bepinex_uninstall_locked');
+        try {
+          const result = await electronAPI.uninstallBepInEx();
+          if (result.success) {
+            // Verify on disk — backend throws when BepInEx survives, but
+            // re-probe so the toggle never claims "off" while folder remains.
+            try {
+              const verify = await electronAPI.checkBepInEx();
+              if (verify.installed) {
+                const { showToast } = useAppStore.getState();
+                showToast(uninstallErrMsg(result.error), 'error');
+                setDebugMode(true);
+                return;
+              }
+            } catch (_) {}
+            setDebugMode(false);
+            const { showToast } = useAppStore.getState();
+            showToast(t('bepinex_uninstalled'), 'success');
+          } else {
+            // Keep the toggle ON — the folder is still there.
+            setDebugMode(true);
+            const { showToast } = useAppStore.getState();
+            showToast(uninstallErrMsg(result.error), 'error');
+          }
+        } catch (err) {
+          setDebugMode(true);
           const { showToast } = useAppStore.getState();
-          showToast(t('bepinex_uninstalled'), 'success');
-        } else {
-          const { showToast } = useAppStore.getState();
-          showToast(result.error || 'Uninstall failed', 'error');
+          showToast(uninstallErrMsg(err && err.message), 'error');
         }
-      } catch (err) {
-        const { showToast } = useAppStore.getState();
-        showToast(err.message, 'error');
-      } finally {
-        setBepInExLoading(false);
+      } else {
+        setBepInExInstallOpen(true);
       }
-    } else {
-      setBepInExInstallOpen(true);
+    } finally {
+      setBepInExLoading(false);
     }
   };
 

@@ -77,13 +77,18 @@ const api = module.exports;
 
 /**
  * Check whether BepInEx is installed in the game root.
+ * Source of truth is the BepInEx folder itself — a partial leftover (folder
+ * present but a loader file missing, e.g. from an old interrupted uninstall
+ * while the game held locks) still reports installed:true so the menu offers
+ * Uninstall/repair instead of stranding the user on OFF with no cleanup path.
  * @param {string} gameRoot
  * @returns {{ installed: boolean, missing: string[] }}
  */
 function checkStatus(gameRoot) {
   if (!gameRoot) return { installed: false, missing: REQUIRED_ITEMS };
   const missing = REQUIRED_ITEMS.filter((item) => !fs.existsSync(path.join(gameRoot, item)));
-  return { installed: missing.length === 0, missing };
+  const installed = fs.existsSync(path.join(gameRoot, 'BepInEx'));
+  return { installed, missing };
 }
 
 /**
@@ -355,6 +360,8 @@ function installFiles(extractDir, gameRoot) {
 
 /**
  * Remove BepInEx files from game root.
+ * Throws when the BepInEx folder itself survives the delete (e.g. game is
+ * still running and holds file locks) — callers must not report success then.
  * @param {string} gameRoot
  * @returns {{ removed: string[], errors: string[] }}
  */
@@ -372,6 +379,16 @@ function removeFiles(gameRoot) {
     } catch (err) {
       errors.push(item + ': ' + err.message);
     }
+  }
+
+  // The BepInEx folder is the source of truth for Debug Mode — if it is still
+  // on disk the uninstall did not succeed, even when other items were removed.
+  // Verify on disk (not just caught errors) so a silent/partial rm also fails.
+  if (fs.existsSync(path.join(gameRoot, 'BepInEx'))) {
+    const detail = errors.find((e) => e.startsWith('BepInEx:'));
+    throw new Error(
+      'BEPINEX_REMOVE_FAILED: BepInEx folder still exists' + (detail ? ' (' + detail + ')' : '')
+    );
   }
 
   return { removed, errors };
