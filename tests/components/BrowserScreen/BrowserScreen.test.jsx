@@ -241,6 +241,38 @@ beforeEach(() => {
       });
     });
 
+    it('prompts a game restart after a successful Debug Mode install', async () => {
+      const user = userEvent.setup();
+      setupDefaultMocks({
+        'check-bepinex': Promise.resolve({ installed: false }),
+        'install-bepinex': Promise.resolve({ success: true, version: '6.0.0-test' }),
+      });
+      renderBrowser();
+
+      await waitFor(() => {
+        expect(screen.getByText('Levels')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Setting'));
+      await waitFor(() => {
+        expect(screen.getByText('Debug Mode')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Debug Mode'));
+
+      // Install overlay runs and succeeds → restart prompt modal.
+      await waitFor(() => {
+        expect(screen.getByText('Restart the game')).toBeInTheDocument();
+      });
+      expect(screen.getByText(/please restart the game/)).toBeInTheDocument();
+
+      await user.click(document.querySelector('#modal-actions .btn-confirm'));
+
+      await waitFor(() => {
+        expect(screen.queryByText('Restart the game')).toBeNull();
+      });
+    });
+
     it('hides the debug mode toggle on non-Windows platforms', async () => {
       setupDefaultMocks({
         'get-system-info': Promise.resolve({ success: true, platform: 'darwin', isPackaged: true }),

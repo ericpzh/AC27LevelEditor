@@ -576,6 +576,8 @@ const STR = {
 		    bepinex_error_sources:'下载失败，BepInEx 下载服务器暂时无法连接，请稍后重试。',
 		    bepinex_error_game_root:'请先选择游戏目录。',
 		    bepinex_uninstall_locked:'删除失败，请先关闭游戏再重试。',
+		    bepinex_restart_title:'请重启游戏',
+		    bepinex_restart_body:'调试模式已开启，请重启游戏。',
   },
   en: {
     setup_title:'AC27 Editor',
@@ -1153,6 +1155,8 @@ const STR = {
 		    bepinex_error_sources:'Download failed. The BepInEx download servers are unreachable — please try again later.',
 		    bepinex_error_game_root:'Please select the game directory first.',
 		    bepinex_uninstall_locked:'Delete failed — please close the game first and try again.',
+		    bepinex_restart_title:'Restart the game',
+		    bepinex_restart_body:'Debug mode is enabled — please restart the game.',
   },
 };
 

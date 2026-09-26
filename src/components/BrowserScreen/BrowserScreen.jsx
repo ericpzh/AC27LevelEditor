@@ -729,8 +729,14 @@ export default function BrowserScreen() {
             setBepInExInstallOpen(false);
             if (success) {
               setDebugMode(true);
-              const { showToast } = useAppStore.getState();
+              const { showToast, showModal, hideModal } = useAppStore.getState();
               showToast(t('bepinex_installed'), 'success');
+              // BepInEx loads at game startup — remind the user to restart.
+              showModal(
+                () => t('bepinex_restart_title'),
+                () => <p>{t('bepinex_restart_body')}</p>,
+                () => <button className="btn-confirm" onClick={hideModal}>{t('modal_btn_ok')}</button>
+              );
             }
           }}
         />
