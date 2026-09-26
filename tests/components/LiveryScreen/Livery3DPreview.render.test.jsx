@@ -223,6 +223,52 @@ describe('Livery3DPreview rendering', () => {
     expect(onHide).toHaveBeenCalledTimes(1);
   });
 
+  it('uses full-resolution canvas textures and re-uploads them in place', async () => {
+    setupBin();
+    const canvasA = document.createElement('canvas');
+    canvasA.width = 2048; canvasA.height = 2048;
+    const view = renderPreview({ images: [{ partName: 'Fuselage', canvas: canvasA }] });
+    const group = await waitForGroup();
+    await waitFor(() => expect(group.children[0].material.map).toBeTruthy());
+    const tex = group.children[0].material.map;
+    expect(tex.isCanvasTexture).toBe(true);
+    expect(tex.image).toBe(canvasA);
+    expect(tex.colorSpace).toBe(THREE.SRGBColorSpace);
+
+    // A repeat update with the SAME canvas element re-uses the texture and just
+    // re-flags it for upload (setting needsUpdate bumps `version`; no new
+    // texture object, no re-encode).
+    const version = tex.version;
+    view.rerender(
+      <I18nProvider>
+        <Livery3DPreview planeId="AIRBUS A-350-900" images={[{ partName: 'Fuselage', canvas: canvasA }]} onHide={() => {}} />
+      </I18nProvider>
+    );
+    await waitFor(() => expect(tex.version).toBeGreaterThan(version));
+    expect(group.children[0].material.map).toBe(tex);
+  });
+
+  it('replaces the texture and releases the old one when the panel canvas changes', async () => {
+    setupBin();
+    const a = document.createElement('canvas');
+    a.width = 2048; a.height = 2048;
+    const b = document.createElement('canvas');
+    b.width = 2048; b.height = 2048;
+    const view = renderPreview({ images: [{ partName: 'Fuselage', canvas: a }] });
+    const group = await waitForGroup();
+    await waitFor(() => expect(group.children[0].material.map?.image).toBe(a));
+    const first = group.children[0].material.map;
+    const disposeSpy = vi.spyOn(first, 'dispose');
+    view.rerender(
+      <I18nProvider>
+        <Livery3DPreview planeId="AIRBUS A-350-900" images={[{ partName: 'Fuselage', canvas: b }]} onHide={() => {}} />
+      </I18nProvider>
+    );
+    await waitFor(() => expect(group.children[0].material.map?.image).toBe(b));
+    expect(group.children[0].material.map).not.toBe(first);
+    expect(disposeSpy).toHaveBeenCalled();
+  });
+
   it('disposes the renderer and textures on unmount', async () => {
     setupBin();
     const view = renderPreview({ images: [{ partName: 'Fuselage', imageDataUrl: 'data:image/png;base64,X' }] });

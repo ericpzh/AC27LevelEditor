@@ -3558,25 +3558,37 @@ describe('input lock (workshop upload dialog)', () => {
 });
 
 describe('LiveryCanvas preview export (live 3D)', () => {
-  it('exposes exportPreviewParts + a monotonic revision', async () => {
+  it('exposes persistent full-res panel canvases + a monotonic revision', async () => {
     const ref = React.createRef();
     render(
       <I18nProvider>
-        <LiveryCanvas ref={ref} panels={['Body']} />
+        <LiveryCanvas ref={ref} panels={['Fuselage', 'Wingtip']} />
         <Modal />
         <Toast />
       </I18nProvider>
     );
     await waitFor(() => expect(ref.current).toBeTruthy());
-    expect(typeof ref.current.exportPreviewParts).toBe('function');
+    expect(typeof ref.current.getPanelCanvases).toBe('function');
     expect(typeof ref.current.getRevision).toBe('function');
-    const r0 = ref.current.getRevision();
-    expect(typeof r0).toBe('number');
+    expect(typeof ref.current.getRevision()).toBe('number');
 
-    const parts = ref.current.exportPreviewParts(64);
-    expect(Array.isArray(parts)).toBe(true);
-    expect(parts).toHaveLength(1);
-    expect(parts[0].partName).toBe('Body');
-    expect(parts[0].imageDataUrl).toMatch(/^data:image\/png;base64,/);
+    const first = ref.current.getPanelCanvases();
+    expect(first.map((p) => p.partName)).toEqual(['Fuselage', 'Wingtip']);
+    for (const p of first) {
+      expect(p.canvas).toBeTruthy();
+      expect(p.canvas.width).toBe(2048);
+      expect(p.canvas.height).toBe(2048);
+    }
+
+    // The SAME canvas elements come back on the next sample, so the renderer can
+    // re-upload them in place (CanvasTexture + needsUpdate) — no new canvases.
+    const second = ref.current.getPanelCanvases();
+    expect(second[0].canvas).toBe(first[0].canvas);
+    expect(second[1].canvas).toBe(first[1].canvas);
+
+    // A different size rebuilds the pool.
+    const small = ref.current.getPanelCanvases(256);
+    expect(small[0].canvas.width).toBe(256);
+    expect(small[0].canvas).not.toBe(first[0].canvas);
   });
 });

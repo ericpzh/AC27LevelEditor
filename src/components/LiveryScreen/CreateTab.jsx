@@ -298,9 +298,14 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   const packReadyRef = useRef(false);
   const rootPath = useAppStore(s => s.rootPath);
 
-  const exportPanelImages = () => {
+  // Full-resolution panel textures for the 3D window. Prefers the canvas-backed
+  // export (no PNG round-trip); falls back to the 2048² data-URL export.
+  const panelImages = () => {
     try {
-      return canvasRef.current && canvasRef.current.exportParts ? canvasRef.current.exportParts() : [];
+      const cv = canvasRef.current;
+      if (!cv) return [];
+      if (typeof cv.getPanelCanvases === 'function') return cv.getPanelCanvases();
+      return typeof cv.exportParts === 'function' ? cv.exportParts() : [];
     } catch (_) {
       return [];
     }
@@ -310,7 +315,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
     if (threeD && threeD.phase === 'loading') return;
     // Already built on livery-page entry — open instantly, no (re)extract.
     if (modelsReady || packReadyRef.current) {
-      setThreeD({ phase: 'ready', images: exportPanelImages() });
+      setThreeD({ phase: 'ready', images: panelImages() });
       return;
     }
     setThreeD({ phase: 'loading', log: '' });
@@ -329,7 +334,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         return;
       }
       packReadyRef.current = true;
-      setThreeD({ phase: 'ready', images: exportPanelImages() });
+      setThreeD({ phase: 'ready', images: panelImages() });
     } catch (err) {
       useAppStore.getState().showToast(String((err && err.message) || err), 'error');
       setThreeD(null);
@@ -338,13 +343,13 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
     }
   };
 
-  // Live 3D preview: while the window is open, poll the canvas revision (~8 Hz)
-  // and push fresh small panel textures when the painting changed (no React
+  // Live 3D preview: while the window is open, poll the canvas revision (~1 Hz)
+  // and push fresh full-res panel textures when the painting changed (no React
   // churn during the stroke itself).
   useLive3DImages({
     active: threeD ? threeD.phase === 'ready' : false,
     canvasRef,
-    exportFallback: exportPanelImages,
+    exportFallback: panelImages,
     onImages: (images) => setThreeD(prev => (prev && prev.phase === 'ready') ? { ...prev, images } : prev),
   });
 

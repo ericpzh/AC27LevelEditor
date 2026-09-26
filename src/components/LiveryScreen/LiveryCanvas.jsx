@@ -2315,6 +2315,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (canvasRef.current) ctx.drawImage(canvasRef.current, 0, 0);
     return out;
   };
+  // Persistent per-panel canvases for the live 3D preview (full resolution, no
+  // PNG round-trip). The SAME elements are reused so the renderer can re-upload
+  // them in place via THREE.CanvasTexture + needsUpdate.
+  const previewCanvasRef = useRef({ size: 0, list: [] });
   useImperativeHandle(ref, () => ({
     exportPNG() {
       return flattenToCanvas().toDataURL('image/png');
@@ -2333,18 +2337,32 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       }
       return out;
     },
-    // Cheap per-panel export for the live 3D preview (small textures — the
-    // 2048² `exportParts` is far too heavy to run per stroke).
-    exportPreviewParts(size = 512) {
+    // Full-resolution per-panel canvases for the live 3D preview. No PNG
+    // encode/decode — three uploads the canvas straight to the GPU, so a
+    // full-res refresh is cheap enough to sample ~1×/s while painting. The
+    // canvas elements are reused across calls; the renderer re-uploads the SAME
+    // texture (`needsUpdate`) instead of rebuilding it.
+    getPanelCanvases(size = TEXTURE) {
       const px = Math.max(64, Math.min(TEXTURE, size | 0));
+      const store = previewCanvasRef.current;
+      if (store.size !== px || store.list.length !== panelCount) {
+        store.size = px;
+        store.list = Array.from({ length: panelCount }, () => {
+          const c = document.createElement('canvas');
+          c.width = px; c.height = px;
+          return c;
+        });
+      }
       const flat = flattenToCanvas();
       const out = [];
       for (let i = 0; i < panelCount; i++) {
-        const c = document.createElement('canvas');
-        c.width = px; c.height = px;
+        const c = store.list[i];
         const cctx = c.getContext('2d');
-        if (cctx) cctx.drawImage(flat, layout.x(i), 0, TEXTURE, TEXTURE, 0, 0, px, px);
-        out.push({ partName: panelNames[i], imageDataUrl: c.toDataURL('image/png') });
+        if (cctx) {
+          if (typeof cctx.clearRect === 'function') cctx.clearRect(0, 0, px, px);
+          cctx.drawImage(flat, layout.x(i), 0, TEXTURE, TEXTURE, 0, 0, px, px);
+        }
+        out.push({ partName: panelNames[i], canvas: c });
       }
       return out;
     },

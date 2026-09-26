@@ -1574,11 +1574,11 @@ describe('CreateTab 3D preview', () => {
     renderCreate({ modelsReady: true });
     await user.click(await screen.findByRole('button', { name: '3D preview' }));
     await waitFor(() => expect(document.querySelector('.lp-3dwin')).toBeTruthy());
-    // The initial full-res export happens on open.
-    await waitFor(() => expect(toDataSpy.mock.calls.length).toBeGreaterThan(0));
-    // Let any mount-scheduled overlay frame + poll settle before baselining.
-    await act(async () => { await new Promise((r) => setTimeout(r, 260)); });
-    const baseline = toDataSpy.mock.calls.length;
+    // Drain any mount-scheduled overlay frame + poll so the baseline is stable.
+    await act(async () => { await new Promise((r) => setTimeout(r, 1300)); });
+    // The full-res panel-canvas export runs through getContext (one flat canvas +
+    // one context per panel), so its call count tracks poll refreshes.
+    const baseline = getCtxSpy.mock.calls.length;
 
     // Paint a stroke on the chrome canvas → bumps the canvas revision.
     const cv = document.querySelector('.livery-canvas-wrap canvas[data-layer="chrome"]');
@@ -1586,7 +1586,7 @@ describe('CreateTab 3D preview', () => {
     fireEvent.pointerMove(cv, { clientX: 60, clientY: 45, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { pointerId: 1 });
 
-    await waitFor(() => expect(toDataSpy.mock.calls.length).toBeGreaterThan(baseline), { timeout: 2000 });
+    await waitFor(() => expect(getCtxSpy.mock.calls.length).toBeGreaterThan(baseline), { timeout: 3000 });
   });
 
   it('does not delete the shared pack when the painter unmounts (LiveryScreen owns it)', async () => {

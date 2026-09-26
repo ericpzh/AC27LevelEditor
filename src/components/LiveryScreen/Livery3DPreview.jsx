@@ -209,7 +209,9 @@ export default function Livery3DPreview({ planeId, images, onHide }) {
     };
 
     // Live livery layer: swap the map on each livery material when the painter
-    // pushes fresh panel images (matched by partName, then by order).
+    // pushes fresh panel textures (matched by partName, then by order). A panel
+    // may carry a `canvas` (full-res, no PNG — three uploads it directly and a
+    // repeat update re-uploads the same texture) or a legacy `imageDataUrl`.
     const texLoader = new THREE.TextureLoader();
     const applyImages = (list) => {
       const st = stateRef.current;
@@ -217,13 +219,35 @@ export default function Livery3DPreview({ planeId, images, onHide }) {
       const arr = Array.isArray(list) ? list : [];
       const byName = new Map();
       arr.forEach((im, i) => {
-        byName.set(String((im && im.partName) || '').toLowerCase(), { url: im && im.imageDataUrl, index: i });
+        byName.set(String((im && im.partName) || '').toLowerCase(), { entry: im || {}, index: i });
       });
       let seen = 0;
       for (const rec of st.liveryMaterials) {
-        const matched = byName.get(String(rec.name || '').toLowerCase()) || arr[seen] || null;
+        const matched = byName.get(String(rec.name || '').toLowerCase()) || (arr[seen] ? { entry: arr[seen] } : null);
         seen += 1;
-        const url = matched && matched.url;
+        const entry = matched && matched.entry;
+        if (!entry) continue;
+
+        if (entry.canvas) {
+          if (rec.canvas === entry.canvas && rec.material.map) {
+            rec.material.map.needsUpdate = true; // re-upload the same canvas
+          } else {
+            try {
+              const tex = new THREE.CanvasTexture(entry.canvas);
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              if (rec.material.map) rec.material.map.dispose();
+              rec.material.map = tex;
+              rec.material.needsUpdate = true;
+              rec.canvas = entry.canvas;
+              rec.url = null;
+              st.textures.push(tex);
+            } catch (_) { /* keep the previous map */ }
+          }
+          continue;
+        }
+
+        const url = entry.imageDataUrl;
         if (!url || url === rec.url) continue;
         try {
           const tex = texLoader.load(url);
@@ -233,6 +257,7 @@ export default function Livery3DPreview({ planeId, images, onHide }) {
           rec.material.map = tex;
           rec.material.needsUpdate = true;
           rec.url = url;
+          rec.canvas = null;
           st.textures.push(tex);
         } catch (_) { /* keep the previous map */ }
       }
@@ -270,7 +295,7 @@ export default function Livery3DPreview({ planeId, images, onHide }) {
             material = new THREE.MeshStandardMaterial({
               color: 0xffffff, metalness: 0.05, roughness: 0.6, side: THREE.DoubleSide,
             });
-            stateRef.current.liveryMaterials.push({ name: String(part.name || ''), material, url: null });
+            stateRef.current.liveryMaterials.push({ name: String(part.name || ''), material, url: null, canvas: null });
           } else {
             material = new THREE.MeshStandardMaterial({
               color: STATIC_COLOR, metalness: 0.1, roughness: 0.7, side: THREE.DoubleSide,

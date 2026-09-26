@@ -903,10 +903,14 @@ on the game's **real aircraft mesh** in a floating panel
 matched to the model's livery parts by `partName` (A388 `Fuselage`/`Wing`,
 everything else `Body`), and updates **live**: while the window is open the
 painter polls its overlay revision (`LiveryCanvas.getRevision`, bumped each
-`drawOverlay` frame) every ~120 ms and, when it changed, pushes refreshed panel
-textures via `exportPreviewParts(512)` (a cheap scaled composite — the 2048²
-`exportParts` is far too heavy per stroke); `Livery3DPreview` swaps each livery
-material's `map` by partName without rebuilding geometry. The panel
+`drawOverlay` frame) every **~1 s** (`useLive3DImages`) and, when it changed,
+pushes refreshed **full-resolution** panel textures via
+`LiveryCanvas.getPanelCanvases()` — persistent 2048² per-panel canvas elements,
+NOT PNG data URLs, so there is no encode/decode cost; `Livery3DPreview` wraps
+them in `THREE.CanvasTexture` and, when the same canvas comes back, just sets
+`needsUpdate` to re-upload in place (no geometry rebuild). Both the initial open
+and the live refresh use this path; the `exportParts()` data-URL export remains
+only for saving. The panel
 is free-**movable** (header drag), **resizable** (all four edges + four corners), has a
 bottom-right **reset-view** button (`TbRotate3D`) that restores the default
 camera, and a top-right Hide button (`IoRemoveOutline` — a dash, i.e. a temporary
