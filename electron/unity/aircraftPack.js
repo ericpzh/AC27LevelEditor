@@ -22,7 +22,17 @@ const { parseUnityVersion, readMeshData, buildPart } = require('./mesh');
 // Cache key for the produced pack. Bump when the mapping/geometry changes so
 // electron/aircraftModels.js rejects an old cached pack and rebuilds. The
 // manifest/bin LAYOUT is unchanged; consumers ignore this value.
-const PACK_VERSION = 2;
+const PACK_VERSION = 4;
+
+// Per-plane yaw correction (degrees, about +Y) baked at extraction. These
+// prefabs ship a 90°-rotated root transform vs the rest of the fleet, so
+// without this they render sideways in the preview. Negative = clockwise
+// seen from above (X right, Z toward viewer): the nose (+Z) turns to -X.
+const YAW_CORRECTIONS_DEG = {
+  'EMBRAER E-JET 190': -90,
+  'GULFSTREAM 650': -90,
+  'BOMBARDIER CRJ700': -90,
+};
 
 // parts:  ordered livery panels — the SAME order/names the painter shows.
 // static: non-livery meshes/groups (engines/fans) rendered in flat grey.
@@ -109,6 +119,19 @@ function mulMat(a, b) {
     }
   }
   return out;
+}
+
+/** Row-major 4×4 yaw about +Y (degrees). Premultiply a world matrix by this. */
+function yawMatrix(deg) {
+  const t = (Number(deg) * Math.PI) / 180;
+  const c = Math.cos(t);
+  const s = Math.sin(t);
+  return [
+    c, 0, s, 0,
+    0, 1, 0, 0,
+    -s, 0, c, 0,
+    0, 0, 0, 1,
+  ];
 }
 
 /** Compose a Transform's world matrix up its m_Father chain, with a per-run cache. */
@@ -263,7 +286,12 @@ async function extract(o) {
       const addPart = (name, livery, meshName, groups) => {
         const md = getMeshData(meshName);
         if (!md) return;
-        const matrix = rendererByMesh.get(meshName) || null;
+        let matrix = rendererByMesh.get(meshName) || null;
+        const yaw = YAW_CORRECTIONS_DEG[planeId];
+        if (yaw) {
+          const Y = yawMatrix(yaw);
+          matrix = matrix ? mulMat(Y, matrix) : Y;
+        }
         const built = buildPart(md, groups, matrix);
         if (!built) return;
         partsOut.push({
@@ -303,4 +331,4 @@ async function extract(o) {
   }
 }
 
-module.exports = { PACK_VERSION, PLANES, safeName, extract, quatToMatrix, localMatrix, mulMat, worldMatrix, readResource, resolveVertexData };
+module.exports = { PACK_VERSION, PLANES, YAW_CORRECTIONS_DEG, yawMatrix, safeName, extract, quatToMatrix, localMatrix, mulMat, worldMatrix, readResource, resolveVertexData };

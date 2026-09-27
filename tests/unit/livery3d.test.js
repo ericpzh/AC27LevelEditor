@@ -218,7 +218,7 @@ describe('renderLiverySnapshot', () => {
     await renderLiverySnapshot({ key: 'k4', planeId: 'P4', parts: PARTS, bin: BIN });
     const { camera } = H.renderers.at(-1).renders.at(-1);
     const expected = computeCameraFit({
-      dims: { x: 1, y: 1, z: 0 }, aspect: 640 / 320, fov: 40, margin: 0.72, dir: [0.58, 0.32, 0.75],
+      dims: { x: 1, y: 1, z: 0 }, aspect: 640 / 320, fov: 40, margin: 0.48, dir: [0.58, 0.32, 0.75],
     });
     expect(camera.position.length()).toBeCloseTo(expected.dist, 6);
     expect(camera.near).toBeCloseTo(expected.near, 6);

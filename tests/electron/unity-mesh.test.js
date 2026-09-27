@@ -161,6 +161,20 @@ describe('aircraftPack transform math', () => {
     expect(pack.safeName('AIRBUS A-350-900')).toBe('AIRBUS_A-350-900');
   });
 
+  it('yaw-corrects the E190, Gulfstream 650 and CRJ700 by -90° (clockwise from above)', () => {
+    expect(pack.YAW_CORRECTIONS_DEG).toEqual({
+      'EMBRAER E-JET 190': -90,
+      'GULFSTREAM 650': -90,
+      'BOMBARDIER CRJ700': -90,
+    });
+    // A nose pointing +Z lands on -X: clockwise seen from above.
+    const { applyMatrix } = mesh;
+    const Y = pack.yawMatrix(-90);
+    expect(applyMatrix(Y, 0, 0, 2).map((v) => Math.round(v))).toEqual([-2, 0, 0]);
+    // Identity is untouched for unlisted planes.
+    expect(pack.YAW_CORRECTIONS_DEG['BOEING 787-9']).toBeUndefined();
+  });
+
   it('covers every aircraft the painter offers a 3D model for', () => {
     expect(Object.keys(pack.PLANES).length).toBe(19);
     for (const [id, cfg] of Object.entries(pack.PLANES)) {

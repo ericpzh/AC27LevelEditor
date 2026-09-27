@@ -943,6 +943,10 @@ the handful of classes needed, dumped by
 `scripts/export-unity-typetrees.py` (regenerate when targeting a new Unity
 version). Each mesh's **world transform** is baked into the vertices (some
 meshes are Z-up, some Y-up — without this the aircraft render on their side).
+E190 / Gulfstream 650 / CRJ700 ship a 90°-rotated root transform vs the rest
+of the fleet, so a per-plane −90° yaw (clockwise seen from above) from
+`YAW_CORRECTIONS_DEG` (`yawMatrix`, premultiplied onto the world matrix) is
+baked the same way — in both the JS reader and the Python fallback.
 Part→submesh mapping lives in `aircraftPack.js:PLANES` (the same order/names as
 the painter panels). It is authoritative for the **two-part** types only — A388
 (`Fuselage`=`A380_a`, `Wing`=`A380_b`) and B737 MAX 8 (`Fuselage`=body submesh
@@ -952,7 +956,9 @@ re-derive a mapping, read the `AircraftHD` MonoBehaviours in `resources.assets`
 whose raw data contains the part-name strings — each slot is
 `{ aligned string PartId, PPtr<Material> Material }` (B38M: `Fuselage`→
 `..._B737Max_mat`, `Wingtip`→`..._Engine_mat`). Output: `pack/manifest.json` + one `<safe>.bin` per plane:
-per part `f32 positions[3n] · f32 uv[2n] · u32 indices[m]`. Pack `version` 2;
+per part `f32 positions[3n] · f32 uv[2n] · u32 indices[m]`. Pack `version` 4
+(a cache key — bumped for the yaw corrections and re-bumped when CRJ700 joined
+them, so stale packs rebuild);
 total ≈16 MB for all types. `livery-3d-bin` reads a plane's geometry back to
 the renderer. `livery-3d-cleanup` `rm -rf`s the cache dir when `LiveryScreen`
 unmounts (leaving the livery page); `disposeLiverySnapshots()` tears down the
@@ -972,8 +978,13 @@ the resized PNG thumbnail channel (`read-livery-thumbnail`) is NOT used; the
 full livery texture (`read-livery-image`) is the model's map. Renders are
 serialized through one GL context, cached by `pack:folder`, rendered 640×320
 (2:1 — matching the card's `.livery-thumb` box) with the aircraft fitted to the
-frame (bounding-box corners vs. the viewport half-angles, 1.08 margin), and only
-attempted when the pack covers the row's plane (no 2D fallback image). The pack covers 19 types; `PLANES` in the script holds
+frame (bounding-box corners vs. the viewport half-angles, `MARGIN 0.48` — 50%
+closer than the original 0.72 fit), and only
+attempted when the pack covers the row's plane (no 2D fallback image).
+Aircraft groups with no model are **hidden from the list** (`MyLiveriesTab`
+filters them: the extracted pack is ground truth once loaded, `has3DModel`
+before — so the Cessna Citation X never shows a forever-loading card — while
+`''` unknown-aircraft error rows stay visible). The pack covers 19 types; `PLANES` in the script holds
 the per-type part→mesh/submesh map and its `_static` (engine/fan) lists.
 
 ## IPC (`electron/livery.js` ← `electron/main.js` handlers ← `electron/preload.js`)

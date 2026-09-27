@@ -196,7 +196,7 @@ export function renderLiverySnapshot({ key, planeId, parts, bin, textureUrl, wid
       // MARGIN < 1 zooms past a bounding-box fit (~1/1.5) so the aircraft fills
       // more of the card — the loose box corners clip, not the aircraft.
       const FOV = 40;
-      const MARGIN = 0.72;
+      const MARGIN = 0.48;
       const fit = computeCameraFit({ dims, aspect: width / height, fov: FOV, margin: MARGIN, dir: [0.58, 0.32, 0.75] });
       _camera.fov = FOV;
       _camera.aspect = width / height;

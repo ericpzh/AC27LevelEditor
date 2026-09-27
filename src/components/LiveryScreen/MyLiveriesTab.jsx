@@ -3,6 +3,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
 import { airlineDisplayName } from '../../utils/constants/airlines';
+import { has3DModel } from '../../utils/constants/livery';
 import { IoChevronForward, IoChevronDown, IoFolderOutline, IoLockClosed } from 'react-icons/io5';
 import { FaSteam } from 'react-icons/fa6';
 import { MdAdd } from 'react-icons/md';
@@ -460,6 +461,12 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
   // present in the rows (covers types added after the scan). Empty folders
   // are kept so their add-card stays reachable. Under an active search, an
   // empty folder is kept only when its type name matches the query.
+  // Types with no 3D model (Cessna Citation X, or any type missing from the
+  // extracted pack) can never render a preview — their cards would sit on the
+  // loading placeholder forever — so they are hidden from the list entirely.
+  // The extracted pack is ground truth once loaded; before it arrives the
+  // static model list stands in. Rows with no aircraft at all ('') stay
+  // visible — those are corrupt-manifest error rows, not missing models.
   const groups = useMemo(() => {
     const byPlane = new Map();
     for (const r of filteredRows) {
@@ -476,10 +483,15 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
     if (q) {
       ids = ids.filter(id => (byPlane.has(id) && byPlane.get(id).length > 0) || id.toLowerCase().includes(q));
     }
+    ids = ids.filter(id => {
+      if (!id) return true;
+      if (modelPack) return Boolean(modelPack[id]);
+      return has3DModel(id);
+    });
     const out = ids.map(id => [id, byPlane.get(id) || []]);
     if (byPlane.has('')) out.push(['', byPlane.get('')]);
     return out;
-  }, [filteredRows, allRows, allTypes, search]);
+  }, [filteredRows, allRows, allTypes, search, modelPack]);
 
   const toggleSelect = (folder) => {
     setSelected(prev => {

@@ -457,6 +457,49 @@ describe('MyLiveriesTab 3D-only previews', () => {
   });
 });
 
+describe('MyLiveriesTab missing-model hiding', () => {
+  const CITATION_ROW = {
+    folder: 'C750_FIV',
+    id: 'c750_fiv_default',
+    name: 'C750 FIV Default Livery',
+    airline: 'FIV',
+    targetPlaneId: 'CESSNA CITATION X',
+    hasBasePng: true,
+    mtime: 0,
+  };
+
+  it('hides a model-less aircraft group (Citation X) instead of a forever-loading card', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, CITATION_ROW], reference: [] }) });
+    renderMine();
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    expect(screen.queryByText('CESSNA CITATION X')).toBeNull();
+    expect(screen.queryByText('CitationAir')).toBeNull();
+  });
+
+  it('hides an empty model-less folder from the aircraft-type scan', async () => {
+    setupMocks({
+      'list-liveries': Promise.resolve({ success: true, mine: [], reference: [] }),
+      'list-aircraft-types': Promise.resolve({
+        success: true,
+        types: [{ planeId: 'CESSNA CITATION X' }, { planeId: 'AIRBUS A-320neo' }],
+      }),
+    });
+    renderMine();
+    await waitFor(() => expect(screen.getByText('AIRBUS A-320neo')).toBeInTheDocument());
+    expect(screen.queryByText('CESSNA CITATION X')).toBeNull();
+    // Only the modelled type keeps its add-livery card.
+    expect(document.querySelectorAll('.livery-add-card')).toHaveLength(1);
+  });
+
+  it('treats the extracted pack as ground truth once loaded', async () => {
+    setupMocks({ 'list-liveries': Promise.resolve({ success: true, mine: [ROW, ROW2], reference: [] }) });
+    renderMine({ modelPack: { 'AIRBUS A-320neo': {} } });
+    await waitFor(() => expect(screen.getByText('Air China')).toBeInTheDocument());
+    // BOEING 737-800 has a static model entry but is missing from this pack.
+    expect(screen.queryByText('BOEING 737-800')).toBeNull();
+  });
+});
+
 describe('MyLiveriesTab error + edge paths', () => {
   it('list failure toasts the mapped error', async () => {
     setupMocks({ 'list-liveries': Promise.resolve({ success: false, error: 'BAD_MANIFEST' }) });

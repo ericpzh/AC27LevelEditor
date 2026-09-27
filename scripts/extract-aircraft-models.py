@@ -162,6 +162,27 @@ def safe_name(plane_id):
     return re.sub(r"[^A-Za-z0-9_.-]", "_", plane_id)
 
 
+# Per-plane yaw correction (degrees, about +Y), mirroring YAW_CORRECTIONS_DEG
+# in electron/unity/aircraftPack.js. These prefabs ship a 90°-rotated root
+# transform vs the rest of the fleet. Negative = clockwise seen from above.
+YAW_CORRECTIONS_DEG = {
+    "EMBRAER E-JET 190": -90,
+    "GULFSTREAM 650": -90,
+    "BOMBARDIER CRJ700": -90,
+}
+
+
+def yaw_matrix(deg):
+    t = np.radians(deg)
+    c, s = np.cos(t), np.sin(t)
+    return np.array([
+        [c, 0.0, s, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [-s, 0.0, c, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ], dtype=np.float64)
+
+
 # ---------------------------------------------------------------------------
 # Transform math (no external deps beyond numpy)
 # ---------------------------------------------------------------------------
@@ -319,7 +340,7 @@ def main():
                 sys.stderr.write("renderer transform failed: %s\n" % e)
 
     # Keep in sync with PACK_VERSION in electron/unity/aircraftPack.js.
-    manifest = {"version": 2, "planes": {}}
+    manifest = {"version": 4, "planes": {}}
     wanted_planes = [p for p in PLANES if (not only or p in only)]
 
     for plane_id in wanted_planes:
@@ -340,6 +361,10 @@ def main():
             if len(pos) == 0:
                 return
             M = renderer_by_mesh.get(mesh_name)
+            yaw = YAW_CORRECTIONS_DEG.get(plane_id)
+            if yaw:
+                Y = yaw_matrix(yaw)
+                M = Y @ M if M is not None else Y
             if M is not None:
                 hom = np.hstack([pos, np.ones((len(pos), 1))])
                 pos = (M @ hom.T).T[:, :3]

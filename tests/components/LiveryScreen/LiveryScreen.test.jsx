@@ -465,15 +465,15 @@ describe('LiveryScreen unsaved guard + wizard', () => {
     setupMocks({
       'list-liveries': Promise.resolve({ success: true, mine: [], reference: [] }),
       'list-aircraft-types': Promise.resolve({
-        success: true, types: [{ planeId: 'AIRBUS A-220-300', shortCode: '' }],
+        success: true, types: [{ planeId: 'AIRBUS A-320neo', shortCode: '' }],
       }),
     });
     const user = userEvent.setup();
     renderLivery();
-    await waitFor(() => expect(screen.getByText('AIRBUS A-220-300')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('AIRBUS A-320neo')).toBeInTheDocument());
     await user.click(document.querySelector('.livery-add-card'));
     await waitFor(() => expect(document.querySelector('.lp-root')).toBeInTheDocument());
-    expect(document.querySelector('.lp-root select').value).toBe('AIRBUS A-220-300');
+    expect(document.querySelector('.lp-root select').value).toBe('AIRBUS A-320neo');
   });
 
   it('the install modal Close button dismisses it', async () => {
