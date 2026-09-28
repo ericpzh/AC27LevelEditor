@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleErasePolys, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, panelLayout, isTextEntry, TEXTURE, OVERLAY_PAD } from '../../../src/components/LiveryScreen/LiveryCanvas';
+import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleErasePolys, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, resizeOrigin, panelLayout, isTextEntry, TEXTURE, OVERLAY_PAD } from '../../../src/components/LiveryScreen/LiveryCanvas';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
@@ -631,10 +631,12 @@ describe('live-object handles survive a flip', () => {
     clientX: (o.x + lx) / 4,
     clientY: (o.y + ly) / 4,
   });
-  const drag = (from, to) => {
+  const drag = (from, to, opts = {}) => {
     const cv = mainCanvas();
     fireEvent.pointerDown(cv, { ...from, button: 0, pointerId: 1 });
-    fireEvent.pointerMove(cv, { ...to, button: 0, pointerId: 1 });
+    // Alt bypasses movable snapping so these tests exercise the top-left
+    // anchored scale factors in isolation (snapping has its own tests).
+    fireEvent.pointerMove(cv, { ...to, button: 0, pointerId: 1, altKey: true, ...opts });
     fireEvent.pointerUp(cv, { pointerId: 1 });
   };
   const importSticker = async (user, ref) => {
@@ -660,11 +662,13 @@ describe('live-object handles survive a flip', () => {
     expect([o.flipX, o.flipY]).toEqual([true, true]);
     drag(toClient(o, o.frame.x1, o.frame.y1), toClient(o, o.frame.x1 * 2, o.frame.y1 * 2));
     const after = ref.current.getObjectInfo();
-    expect(after.w).toBeCloseTo(before.w * 2, 0);
-    expect(after.h).toBeCloseTo(before.h * 2, 0);
-    // Scaling, NOT a body drag to the pointer.
-    expect(after.x).toBe(before.x);
-    expect(after.y).toBe(before.y);
+    // Top-left anchored: dragging the bottom-right handle out by half the
+    // object's size grows w/h by ×1.5 (the corner follows the pointer).
+    expect(after.w).toBeCloseTo(before.w * 1.5, 0);
+    expect(after.h).toBeCloseTo(before.h * 1.5, 0);
+    // Scaling, NOT a body drag — and the top-left corner stays pinned.
+    expect(after.x + after.frame.x0).toBeCloseTo(before.x + before.frame.x0, 3);
+    expect(after.y + after.frame.y0).toBeCloseTo(before.y + before.frame.y0, 3);
   });
 
   it('a scale drag keeps registering past the 2048 canvas edge', async () => {
@@ -672,8 +676,8 @@ describe('live-object handles survive a flip', () => {
     const ref = React.createRef();
     const before = await importSticker(user, ref);
     const o = ref.current.getObjectInfo();
-    // Drag the bottom-right handle far outside the canvas (2800, 2600).
-    drag(toClient(o, o.frame.x1, o.frame.y1), { clientX: 2800 / 4, clientY: 2600 / 4 });
+    // Drag the bottom-right handle far outside the canvas (4800, 4800).
+    drag(toClient(o, o.frame.x1, o.frame.y1), { clientX: 4800 / 4, clientY: 4800 / 4 });
     const after = ref.current.getObjectInfo();
     // No canvas-edge clamp: the object can grow past 2048.
     expect(after.w).toBeGreaterThan(2048);
@@ -718,10 +722,10 @@ describe('live-object handles survive a flip', () => {
     drag(toClient(o, o.frame.x1, o.frame.y1), toClient(o, o.frame.x1 * 2, o.frame.y1 * 2));
     const after = ref.current.getObjectInfo();
     expect(ref.current.getObjectCount()).toBe(1);
-    expect(after.w).toBeCloseTo(before.w * 2, 0);
-    expect(after.h).toBeCloseTo(before.h * 2, 0);
-    expect(after.x).toBe(before.x);
-    expect(after.y).toBe(before.y);
+    expect(after.w).toBeCloseTo(before.w * 1.5, 0);
+    expect(after.h).toBeCloseTo(before.h * 1.5, 0);
+    expect(after.x + after.frame.x0).toBeCloseTo(before.x + before.frame.x0, 3);
+    expect(after.y + after.frame.y0).toBeCloseTo(before.y + before.frame.y0, 3);
   });
 
   it('rotates a flipped sticker by the handle drawn above the box', async () => {
@@ -856,7 +860,8 @@ describe('free stretch vs Shift aspect-locked resize', () => {
   const drag = (from, to, opts = {}) => {
     const cv = mainCanvas();
     fireEvent.pointerDown(cv, { ...from, button: 0, pointerId: 1 });
-    fireEvent.pointerMove(cv, { ...to, button: 0, pointerId: 1, ...opts });
+    // Alt bypasses snapping: these tests pin the top-left anchored scale maths.
+    fireEvent.pointerMove(cv, { ...to, button: 0, pointerId: 1, altKey: true, ...opts });
     fireEvent.pointerUp(cv, { pointerId: 1 });
   };
   const importSticker = async (ref) => {
@@ -885,14 +890,16 @@ describe('free stretch vs Shift aspect-locked resize', () => {
     await importSticker(ref);
     const before = ref.current.getObjectInfo();
     expect([before.w, before.h]).toEqual([100, 50]);
-    // Bottom-right handle out to twice the width and half the height.
+    // Bottom-right handle out to twice the width and half the height. Anchored
+    // top-left, the corner follows the pointer: kx = (100+50)/100, ky =
+    // (12.5+25)/50.
     drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w, before.h / 4));
     const after = ref.current.getObjectInfo();
-    expect(after.w).toBeCloseTo(200, 3);
-    expect(after.h).toBeCloseTo(25, 3);
-    // Scaling about the centre, not a body drag.
-    expect(after.x).toBe(before.x);
-    expect(after.y).toBe(before.y);
+    expect(after.w).toBeCloseTo(150, 3);
+    expect(after.h).toBeCloseTo(37.5, 3);
+    // Scaling about the top-left corner, not a body drag: the corner is pinned.
+    expect(after.x + after.frame.x0).toBeCloseTo(before.x + before.frame.x0, 3);
+    expect(after.y + after.frame.y0).toBeCloseTo(before.y + before.frame.y0, 3);
   });
 
   it('keeps the aspect ratio when Shift is held', async () => {
@@ -902,11 +909,12 @@ describe('free stretch vs Shift aspect-locked resize', () => {
     drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w, before.h / 4), { shiftKey: true });
     const after = ref.current.getObjectInfo();
     // One factor for both axes: the 2:1 box stays 2:1 (and is NOT the free
-    // stretch above, which would have quartered h).
+    // stretch above, which would have quartered h). Measured from the top-left
+    // anchor: hypot(150,37.5) / hypot(100,50).
     expect(after.w / after.h).toBeCloseTo(before.w / before.h, 6);
     const k = after.w / before.w;
     expect(after.h).toBeCloseTo(before.h * k, 6);
-    expect(k).toBeCloseTo(Math.hypot(100, 12.5) / Math.hypot(50, 25), 6);
+    expect(k).toBeCloseTo(Math.hypot(150, 37.5) / Math.hypot(100, 50), 6);
     expect(after.h).not.toBeCloseTo(25, 0);
   });
 
@@ -925,8 +933,9 @@ describe('free stretch vs Shift aspect-locked resize', () => {
     drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w * 1.5, before.h / 4));
     const after = ref.current.getObjectInfo();
     expect(ref.current.getObjectCount()).toBe(1);
-    expect(after.w).toBeCloseTo(720, 3);
-    expect(after.h).toBeCloseTo(80, 3);
+    // kx = (360+120)/240 = 2, ky = (40+80)/160 = 0.75.
+    expect(after.w).toBeCloseTo(480, 3);
+    expect(after.h).toBeCloseTo(120, 3);
   });
 
   it('stretches a text box and its glyphs while keeping the font size', async () => {
@@ -937,26 +946,27 @@ describe('free stretch vs Shift aspect-locked resize', () => {
     const before = ref.current.getObjectInfo();
     expect(before.kind).toBe('text');
     ctxs.length = 0;
-    // Corner out to 3x the width, half the height.
+    // Corner out to 3x the width, half the height (kx = 2, ky = 0.75 from the
+    // top-left anchor).
     drag(toClient(before, before.w / 2, before.h / 2), toClient(before, before.w * 1.5, before.h / 4));
     const after = ref.current.getObjectInfo();
-    expect(after.w).toBeCloseTo(before.w * 3, 3);
-    expect(after.h).toBeCloseTo(before.h * 0.5, 3);
+    expect(after.w).toBeCloseTo(before.w * 2, 3);
+    expect(after.h).toBeCloseTo(before.h * 0.75, 3);
     // The font is untouched; the glyphs are scaled to fill the stretched box.
     expect(after.size).toBe(before.size);
-    expect(after.stretch.sx).toBeCloseTo(3, 6);
-    expect(after.stretch.sy).toBeCloseTo(0.5, 6);
+    expect(after.stretch.sx).toBeCloseTo(2, 6);
+    expect(after.stretch.sy).toBeCloseTo(0.75, 6);
     await waitFor(() => {
       expect(ctxs.some(c => c.scale.mock.calls.some(([x, y]) =>
-        Math.abs(x - 3) < 1e-6 && Math.abs(y - 0.5) < 1e-6))).toBe(true);
+        Math.abs(x - 2) < 1e-6 && Math.abs(y - 0.75) < 1e-6))).toBe(true);
     });
     // A later font/size change keeps the stretch (box re-measured, still stretched).
     fireEvent.change(screen.getByRole('slider', { name: /Size/ }), { target: { value: String(before.size * 2) } });
     const resized = ref.current.getObjectInfo();
     expect(resized.size).toBe(before.size * 2);
-    expect(resized.stretch.sx).toBeCloseTo(3, 6);
-    expect(resized.stretch.sy).toBeCloseTo(0.5, 6);
-    expect(resized.w / resized.h).toBeCloseTo(6, 6);
+    expect(resized.stretch.sx).toBeCloseTo(2, 6);
+    expect(resized.stretch.sy).toBeCloseTo(0.75, 6);
+    expect(resized.w / resized.h).toBeCloseTo(2 / 0.75, 6);
   });
 
   it('keeps a text box aspect-locked when Shift is held', async () => {
@@ -971,6 +981,91 @@ describe('free stretch vs Shift aspect-locked resize', () => {
     expect(after.w / after.h).toBeCloseTo(1, 6);
     const k = after.w / before.w;
     expect(after.size).toBeCloseTo(before.size * k, 6);
+  });
+});
+
+describe('movable snapping (top-left anchor + guides)', () => {
+  // jsdom canvas rect is stubbed 512×512 → client = texture / 4.
+  const toClient = (tx, ty) => ({ clientX: tx / 4, clientY: ty / 4 });
+  const move = (from, to, opts = {}) => {
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { ...from, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { ...to, button: 0, pointerId: 1, ...opts });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+  };
+
+  // Draw two rects: A spans texture 400..1200 (centre 800), B is 400² at 1800.
+  async function twoRects(user, ref) {
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    const cv = mainCanvas();
+    const draw = (a, b) => {
+      fireEvent.pointerDown(cv, { ...toClient(a[0], a[1]), button: 0, pointerId: 1 });
+      fireEvent.pointerMove(cv, { ...toClient(b[0], b[1]), button: 0, pointerId: 1 });
+      fireEvent.pointerUp(cv, { pointerId: 1 });
+    };
+    draw([400, 400], [1200, 1200]);
+    draw([1600, 1600], [2000, 2000]);
+    expect(ref.current.getObjectCount()).toBe(2);
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+  }
+
+  it('snaps a moved object edge onto another movable boundary', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await twoRects(user, ref);
+    // Grab B by its centre and drag its LEFT edge to 1215 — 15px shy of A's
+    // right edge (1200), inside the screen-constant aperture → it snaps flush.
+    move(toClient(1800, 1800), toClient(1415, 1800));
+    const after = ref.current.getObjectInfo();
+    expect(after.x).toBeCloseTo(1400, 3);
+    expect(after.y).toBeCloseTo(1800, 3);
+  });
+
+  it('does not snap a moved object when the target is out of range', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await twoRects(user, ref);
+    // 60px shy of A's right edge — outside the aperture, so it lands where
+    // dropped (the object is B, the topmost, selected by the click).
+    move(toClient(1800, 1800), toClient(1460, 1800));
+    const after = ref.current.getObjectInfo();
+    expect(after.x).toBeCloseTo(1460, 3);
+  });
+
+  it('Alt bypasses snapping for a free move', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await twoRects(user, ref);
+    move(toClient(1800, 1800), toClient(1415, 1800), { altKey: true });
+    const after = ref.current.getObjectInfo();
+    expect(after.x).toBeCloseTo(1415, 3);
+  });
+
+  it('snaps the dragged corner onto the canvas midline while scaling', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    const cv = mainCanvas();
+    // Rect spanning texture 400..800 (400², top-left 400,400).
+    fireEvent.pointerDown(cv, { ...toClient(400, 400), button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { ...toClient(800, 800), button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    // Re-select by clicking the centre, then drag the bottom-right handle out
+    // to texture x=1030 — 6px shy of the 1024 canvas midline → snaps to it.
+    move(toClient(600, 600), toClient(600, 600));
+    move(toClient(800, 800), toClient(1030, 700));
+    const after = ref.current.getObjectInfo();
+    // kx = (1024−400)/400 = 1.56 → w 624, right edge lands on 1024.
+    expect(after.w).toBeCloseTo(624, 3);
+    expect(after.x + after.frame.x0).toBeCloseTo(400, 3); // top-left pinned
+    expect(after.x + after.frame.x1).toBeCloseTo(1024, 3);
+    // The free y axis is untouched (no guide near 700).
+    expect(after.h).toBeCloseTo(300, 3);
   });
 });
 
@@ -3432,26 +3527,45 @@ describe('part-erase boundary helpers', () => {
     const L = objectLocal(rot, { x: -25, y: 50 });
     expect(L.x).toBeCloseTo(50, 6);
     expect(L.y).toBeCloseTo(25, 6);
-    // Shift: one factor for both axes, measured from the object's centre.
+    // Shift: one factor for both axes, measured from the box's TOP-LEFT anchor
+    // (the pinned corner), so the bottom-right corner follows the pointer.
     const shifted = resizeFactors(o, { x: 150, y: 225 }, { x: 200, y: 212.5 }, true);
     expect(shifted.kx).toBe(shifted.ky);
-    expect(shifted.kx).toBeCloseTo(Math.hypot(100, 12.5) / Math.hypot(50, 25), 6);
-    // Free: each axis follows the pointer, so the box stretches.
+    expect(shifted.kx).toBeCloseTo(Math.hypot(150, 37.5) / Math.hypot(100, 50), 6);
+    // Free: each axis follows the pointer, so the box stretches. Anchor A =
+    // (-50,-25); start corner S = (50,25); new corner L = (100,12.5).
     const free = resizeFactors(o, { x: 150, y: 225 }, { x: 200, y: 212.5 }, false);
-    expect(free.kx).toBeCloseTo(2, 6);
-    expect(free.ky).toBeCloseTo(0.5, 6);
-    // Dragging through the centre never yields a negative factor: the box
-    // shrinks (floor 0.02) instead of mirroring through the centre.
+    expect(free.kx).toBeCloseTo(1.5, 6);
+    expect(free.ky).toBeCloseTo(0.75, 6);
+    // A shrunk corner (still right/down of the anchor) scales below 1.
     const shrunk = resizeFactors(o, { x: 150, y: 225 }, { x: 90, y: 195 }, false);
-    expect(shrunk.kx).toBeCloseTo(0.2, 6);
-    expect(shrunk.ky).toBeCloseTo(0.2, 6);
-    const centred = resizeFactors(o, { x: 150, y: 225 }, { x: 100, y: 200 }, false);
-    expect(centred.kx).toBe(0.02);
-    expect(centred.ky).toBe(0.02);
-    // A degenerate axis (grabbed on the centre line) is left alone.
+    expect(shrunk.kx).toBeCloseTo(0.4, 6);
+    expect(shrunk.ky).toBeCloseTo(0.4, 6);
+    // Dragging back past the anchor never yields a negative factor: it collapses
+    // to the floor instead of mirroring through the top-left corner.
+    const flipped = resizeFactors(o, { x: 150, y: 225 }, { x: 0, y: 150 }, false);
+    expect(flipped.kx).toBe(0.02);
+    expect(flipped.ky).toBe(0.02);
+    // A degenerate axis (grabbed on the anchor's own column) is left alone.
     const thin = resizeFactors(o, { x: 100, y: 225 }, { x: 100, y: 250 }, false);
     expect(thin.kx).toBe(1);
-    expect(thin.ky).toBeCloseTo(2, 6);
+    expect(thin.ky).toBeCloseTo(1.5, 6);
+  });
+
+  it('re-places the origin so a top-left anchored scale pins that corner', () => {
+    const o = { x: 100, y: 200, rot: 0, w: 100, h: 50 };
+    // Growing about the top-left (-50,-25): the origin shifts right/down by
+    // A·(1−k) = (-50,-25)·(-0.5) = (25,12.5).
+    expect(resizeOrigin(o, 1.5, 1.5)).toEqual({ x: 125, y: 212.5 });
+    // The drawn top-left corner lands back on the original world point.
+    const org = resizeOrigin(o, 1.5, 1.5);
+    expect(org.x + (-50 * 1.5)).toBeCloseTo(o.x + -50, 6);
+    expect(org.y + (-25 * 1.5)).toBeCloseTo(o.y + -25, 6);
+    // A rotation carries the same local shift into world (90°: (50,25)→(-25,50)).
+    const rot = { x: 0, y: 0, rot: Math.PI / 2, w: 100, h: 50 };
+    const rorg = resizeOrigin(rot, 2, 2);
+    expect(rorg.x).toBeCloseTo(-25, 6);
+    expect(rorg.y).toBeCloseTo(50, 6);
   });
 
   it('flips a part-erased object about its boundary centre, not the origin', () => {    // Remainder occupies local x 0..50, y 0..25 (boundary centre 25, 12.5).

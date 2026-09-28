@@ -30,6 +30,7 @@ import {
   maskToImageData,
   UV_GROW_PX,
 } from '../../utils/liveryUv';
+import { objectAABB, collectSnapLines, snapBox, snapPoint } from '../../utils/liverySnap';
 import {
   IoBrushOutline,
   IoEyedropOutline,
@@ -84,6 +85,12 @@ export const LAYER_THUMB_INTERVAL_MS = 2000;
 // canvas edge — the object's own pixels are clipped to the base bitmap, the
 // selection chrome is not.
 export const OVERLAY_PAD = 256;
+
+// Movable snapping aperture, in SCREEN pixels. Converted to texture units with
+// the live zoom (`SNAP_SCREEN_PX / z`) so the snap feels the same whether the
+// canvas is zoomed in or out. Guides are the canvas boundary/mid lines plus
+// every other movable's box edges and mid lines (see utils/liverySnap).
+export const SNAP_SCREEN_PX = 8;
 
 // Opaque fallback base for a new/cleared canvas. The BaseMap replaces the
 // model's own texture, so a transparent background would render as holes.
@@ -654,24 +661,45 @@ export function objectLocal(o, p) {
   return { x: dx * c - dy * s, y: dx * s + dy * c };
 }
 
-// Per-axis resize factors for a Select corner drag, both measured about the
-// object's centre. Held Shift the frame keeps its aspect ratio (one factor for
-// both axes — the original behaviour); free, each axis follows the pointer so
-// w/h stretch independently. Factors are positive: dragging past the centre
-// shrinks to the floor instead of flipping through it. Pure — exported for
-// tests.
+// Per-axis resize factors for a Select corner drag, measured about the box's
+// TOP-LEFT corner (the anchor). The top-left is pinned while the bottom-right
+// handle is dragged, so a scale only grows the object toward the right/down —
+// the anchor never moves. Held Shift keeps the aspect ratio (one factor for
+// both axes); free, each axis follows the pointer so w/h stretch independently.
+// Factors are clamped to a small positive floor: dragging back past the anchor
+// collapses to the floor instead of mirroring through it. `o` must be the
+// object as it was when the drag STARTED (its x/y/rot/frame are the fixed
+// reference frame — the live object's origin moves during the drag). Pure —
+// exported for tests.
 export function resizeFactors(o, startP, p, shift) {
-  if (shift) {
-    const startDist = Math.max(1, Math.hypot(startP.x - o.x, startP.y - o.y));
-    const k = Math.max(0.02, Math.hypot(p.x - o.x, p.y - o.y) / startDist);
-    return { kx: k, ky: k };
-  }
+  const f = frameOf(o);
+  const A = { x: f.x0, y: f.y0 };
   const S = objectLocal(o, startP);
   const L = objectLocal(o, p);
+  const dx0 = S.x - A.x, dy0 = S.y - A.y;
+  const dx1 = L.x - A.x, dy1 = L.y - A.y;
+  if (shift) {
+    const startDist = Math.max(1, Math.hypot(dx0, dy0));
+    const k = Math.max(0.02, Math.hypot(dx1, dy1) / startDist);
+    return { kx: k, ky: k };
+  }
   return {
-    kx: Math.max(0.02, Math.abs(S.x) > 0.001 ? Math.abs(L.x / S.x) : 1),
-    ky: Math.max(0.02, Math.abs(S.y) > 0.001 ? Math.abs(L.y / S.y) : 1),
+    kx: Math.max(0.02, Math.abs(dx0) > 0.001 ? dx1 / dx0 : 1),
+    ky: Math.max(0.02, Math.abs(dy0) > 0.001 ? dy1 / dy0 : 1),
   };
+}
+
+// World position of the object's origin after a top-left-anchored scale by
+// (kx, ky). Scaling the stored local geometry by those factors keeps the origin
+// put; pinning the box's top-left instead shifts the origin by the anchor's
+// own scaled displacement (`A · (1 − k)`, rotated into world). `o` is the
+// START object (see resizeFactors). Pure — exported for tests.
+export function resizeOrigin(o, kx, ky) {
+  const f = frameOf(o);
+  const c = { x: f.x0 * (1 - kx), y: f.y0 * (1 - ky) };
+  const cos = Math.cos(o.rot || 0);
+  const sin = Math.sin(o.rot || 0);
+  return { x: o.x + c.x * cos - c.y * sin, y: o.y + c.x * sin + c.y * cos };
 }
 
 // Editable vertices of a line/curve object in local coords: the two endpoints
@@ -995,6 +1023,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // committed via Enter / double-click / tool switch as a live object.
   const curveRef = useRef(null);
   const dragRef = useRef(null);
+  // Guide lines the active move/scale gesture is snapped to ({x, y} world
+  // coords, null per axis). Overlay-only feedback; cleared when the drag ends.
+  const snapGuidesRef = useRef(null);
   const rafRef = useRef(0);
   // Live objects: a non-destructive stack of moveable overlays (sticker / text
   // / shape). Every object stays selectable until exported; selection is by id.
@@ -1260,6 +1291,27 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (panelCount <= 1) return 0;
     const p = o && o.panel != null ? o.panel : panelIndexAt(o ? o.x : 0);
     return Math.min(Math.max(0, p | 0), panelCount - 1);
+  };
+
+  // ── Movable snapping ───────────────────────────────────────
+  // The canvas guides: each panel's left/centre/right edges for the vertical
+  // lines, plus the texture top/middle/bottom for the horizontal ones. A
+  // single-image canvas is just 0 / 1024 / 2048.
+  const canvasSnapLines = () => {
+    const xs = [];
+    for (let i = 0; i < panelCount; i++) {
+      const x0 = layout.x(i);
+      xs.push(x0, x0 + TEXTURE / 2, x0 + TEXTURE);
+    }
+    return { xs, ys: [0, H / 2, H] };
+  };
+  // Screen-constant aperture expressed in texture units at the live zoom.
+  const snapThreshold = () => SNAP_SCREEN_PX / (effZoomRef.current || 1);
+  // Guide lines for the gesture: every other movable's box edges + mid lines,
+  // plus the canvas lines. Snapping is bypassed while Alt is held.
+  const snapLinesFor = (excludeId) => {
+    const base = canvasSnapLines();
+    return collectSnapLines(objectsRef.current, excludeId, base.xs, base.ys);
   };
 
   // Move the menu-target (or selected) object one step / to an end.
@@ -2708,6 +2760,28 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         ctx.restore();
       }
     }
+    // Snap guides: while a move/scale gesture is snapped, draw the matched
+    // world guide lines across the padded overlay so the alignment is visible.
+    const guides = snapGuidesRef.current;
+    if (guides && (guides.x != null || guides.y != null)) {
+      ctx.save();
+      ctx.strokeStyle = '#ff2d95';
+      ctx.lineWidth = Math.max(1, 1.5 / z);
+      ctx.setLineDash([7 / z, 5 / z]);
+      if (guides.x != null) {
+        ctx.beginPath();
+        ctx.moveTo(guides.x, -OVERLAY_PAD);
+        ctx.lineTo(guides.x, H + OVERLAY_PAD);
+        ctx.stroke();
+      }
+      if (guides.y != null) {
+        ctx.beginPath();
+        ctx.moveTo(-OVERLAY_PAD, guides.y);
+        ctx.lineTo(W + OVERLAY_PAD, guides.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     const sh = shapeRef.current;
     if (sh && sh.current) {
       ctx.save();
@@ -3550,21 +3624,18 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         // vertex mode instead of scaling the frame.
         const canResize = sel.kind !== 'line' && sel.kind !== 'curve';
         if (canResize && Math.hypot(lp.x - resizeAt.x, lp.y - resizeAt.y) < grab) {
+          // Snapshot the START object: the top-left-anchored scale pins its
+          // frame, so every factor is measured against the drag's reference
+          // object (the live one's origin shifts as it grows).
           dragRef.current = {
-            mode: 'resize', id: sel.id, startW: sel.w, startH: sel.h,
-            startSize: sel.size, startP: p, startPts: sel.pts,
-            startStretch: sel.stretch || null,
-            // Holes + boundary scale with the frame, so a part-erased object
-            // keeps its shape while being resized.
-            startErase: scaleErase(1, sel.erase), startFrame: sel.frame || null,
-            startErasePolys: scaleErasePolys(1, sel.erasePolys),
-            // The flip pivot is a local point too, so it scales with the frame.
-            startFlipPivot: sel.flipPivot || null,
+            mode: 'resize', id: sel.id, startObj: { ...sel }, startP: p,
           };
+          snapGuidesRef.current = null;
           capture(); return;
         }
         if (Math.hypot(lp.x - rotateAt.x, lp.y - rotateAt.y) < grab) {
           dragRef.current = { mode: 'rotate', id: sel.id };
+          snapGuidesRef.current = null;
           capture(); return;
         }
       }
@@ -3608,6 +3679,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       if (hit) {
         if (selIdRef.current !== hit.id) syncObjects(objs, hit.id);
         dragRef.current = { mode: 'move', id: hit.id, dx: hit.x - p.x, dy: hit.y - p.y };
+        snapGuidesRef.current = null;
         capture(); scheduleOverlay(); return;
       }
       if (sel) syncObjects(objs, null);
@@ -3826,40 +3898,68 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           // until its centre crossed. The chosen panel is persisted on the
           // object, so the panel it is dropped into is also the one it renders
           // and exports in.
-          updateObject(st.id, {
-            x: p.x + dragRef.current.dx,
-            y: p.y + dragRef.current.dy,
-            panel: panelIndexAt(p.x),
-          });
+          let nx = p.x + dragRef.current.dx;
+          let ny = p.y + dragRef.current.dy;
+          // Snap the moved box's edges + mid lines onto the guides. Alt bypasses
+          // so a precise free placement is still possible.
+          if (!e.altKey) {
+            const box = objectAABB({ ...st, x: nx, y: ny });
+            const snap = snapBox(box, snapLinesFor(st.id), snapThreshold());
+            nx += snap.dx;
+            ny += snap.dy;
+            snapGuidesRef.current = (snap.guideX != null || snap.guideY != null)
+              ? { x: snap.guideX, y: snap.guideY } : null;
+          } else {
+            snapGuidesRef.current = null;
+          }
+          updateObject(st.id, { x: nx, y: ny, panel: panelIndexAt(p.x) });
         }
         else if (mode === 'resize') {
           const d = dragRef.current;
-          // Shift keeps the aspect ratio (one factor); free, each axis follows
-          // the pointer so the object stretches. Both scale about the centre.
-          const { kx, ky } = resizeFactors(st, d.startP, p, e.shiftKey);
-          const patch = { w: Math.max(8, d.startW * kx), h: Math.max(8, d.startH * ky) };
-          if (st.kind === 'text' && d.startSize) {
+          const so = d.startObj;
+          // The dragged bottom-right corner tracks the pointer 1:1, so snapping
+          // the pointer lands the moving edge exactly on a guide. Aspect-locked
+          // (Shift) skips snapping: the lock and two independent guides fight.
+          // Alt bypasses too.
+          let sp = p;
+          if (!e.shiftKey && !e.altKey) {
+            const snap = snapPoint(p.x, p.y, snapLinesFor(st.id), snapThreshold());
+            sp = { x: p.x + snap.dx, y: p.y + snap.dy };
+            snapGuidesRef.current = (snap.guideX != null || snap.guideY != null)
+              ? { x: snap.guideX, y: snap.guideY } : null;
+          } else {
+            snapGuidesRef.current = null;
+          }
+          // Top-left-anchored: factors are measured against the START object and
+          // the origin is re-placed so the box's top-left corner stays pinned.
+          const { kx, ky } = resizeFactors(so, d.startP, sp, e.shiftKey);
+          const org = resizeOrigin(so, kx, ky);
+          const patch = {
+            x: org.x, y: org.y,
+            w: Math.max(8, so.w * kx), h: Math.max(8, so.h * ky),
+          };
+          if (st.kind === 'text' && so.size) {
             if (e.shiftKey) {
               // Aspect-locked: the font follows the box, so the glyphs match.
-              patch.size = Math.max(4, d.startSize * kx);
+              patch.size = Math.max(4, so.size * kx);
             } else {
               // Free stretch keeps the font and stretches the glyphs to the
               // box, so the box keeps hugging them.
-              const s0 = d.startStretch || { sx: 1, sy: 1 };
+              const s0 = so.stretch || { sx: 1, sy: 1 };
               patch.stretch = { sx: Math.max(0.01, s0.sx * kx), sy: Math.max(0.01, s0.sy * ky) };
             }
           }
           // Curves scale their control points with the box so the shape holds.
-          if (st.kind === 'curve' && d.startPts) {
-            patch.pts = d.startPts.map(q => ({ x: q.x * kx, y: q.y * ky }));
+          if (st.kind === 'curve' && so.pts) {
+            patch.pts = so.pts.map(q => ({ x: q.x * kx, y: q.y * ky }));
           }
           // Eraser holes and the part-erase boundary scale too: without this the
           // holes stayed put while the content grew, so a half circle turned
           // into a lopsided blob instead of staying a half circle.
-          if (d.startErase) patch.erase = scaleErase(kx, d.startErase, ky);
-          if (d.startErasePolys) patch.erasePolys = scaleErasePolys(kx, d.startErasePolys, ky);
-          if (d.startFrame) patch.frame = scaleFrame(kx, d.startFrame, ky);
-          if (d.startFlipPivot) patch.flipPivot = { x: d.startFlipPivot.x * kx, y: d.startFlipPivot.y * ky };
+          if (so.erase) patch.erase = scaleErase(kx, so.erase, ky);
+          if (so.erasePolys) patch.erasePolys = scaleErasePolys(kx, so.erasePolys, ky);
+          if (so.frame) patch.frame = scaleFrame(kx, so.frame, ky);
+          if (so.flipPivot) patch.flipPivot = { x: so.flipPivot.x * kx, y: so.flipPivot.y * ky };
           updateObject(st.id, patch);
         } else if (mode === 'rotate') {
           updateObject(st.id, { rot: Math.atan2(p.y - st.y, p.x - st.x) + Math.PI / 2 });
@@ -3943,6 +4043,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       const sh = shapeRef.current;
       shapeRef.current = null;
       commitShape(sh);
+      return;
+    }
+    if (dragRef.current) {
+      dragRef.current = null;
+      snapGuidesRef.current = null;
+      scheduleOverlay();
       return;
     }
     dragRef.current = null;

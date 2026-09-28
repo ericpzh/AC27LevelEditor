@@ -795,11 +795,26 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      tool: click an object to select/move it, drag handles to scale/rotate.
      A corner drag is **free stretch by default** (each axis follows the pointer
      so `w`/`h` move independently) and **aspect-locked while Shift is held**
-     (one factor for both axes — the original behaviour). Both scale about the
-     object's centre through the pure helpers `objectLocal(o, p)` (translate +
-     rotate only, no flip) and `resizeFactors(o, startP, p, shift)` (positive
-     factors with a 0.02 floor, so dragging through the centre shrinks instead
-     of mirroring). For a **text box** a Shift resize changes its `size` (glyphs
+     (one factor for both axes). Both scales are **anchored on the box's
+     TOP-LEFT corner**: the top-left stays pinned while the bottom-right handle
+     is dragged, so a scale only grows the object toward the right/down
+     (`resizeFactors(o, startP, p, shift)` measures each axis from the anchor,
+     and `resizeOrigin(o, kx, ky)` re-places the origin by the anchor's own
+     scaled displacement `A·(1−k)`; factors have a 0.02 floor, so dragging back
+     past the anchor collapses instead of mirroring). `o` is the **START object**
+     captured on pointer-down (`dragRef.startObj`) because the live origin moves
+     during the drag. **Snapping:** while moving or free-scaling, the movable
+     snaps to guide lines — every other movable's box edges + mid lines
+     (vertical & horizontal) and the canvas boundary + mid lines (per panel) —
+     within a screen-constant aperture (`SNAP_SCREEN_PX / effZoom`, 8px).
+     A move snaps any of its three vertical candidates (left/centre/right) and
+     three horizontal ones (top/centre/bottom) via `snapBox`; a scale snaps the
+     dragged corner via `snapPoint` (the corner tracks the pointer 1:1, so the
+     moving edge lands exactly on the guide). The matched lines are drawn on the
+     overlay while snapped. **Hold Alt to bypass snapping**; Shift aspect-locked
+     scaling also skips snapping. Pure helpers in `src/utils/liverySnap.js`
+     (`objectAABB`, `collectSnapLines`, `snapBox`, `snapPoint`). For a **text box**
+     a Shift resize changes its `size` (glyphs
      follow the frame), while a free resize keeps the font and stores a
      per-axis `stretch` (`{sx, sy}`) that `paintLiveObjectContent` applies with
      `ctx.scale` and `measureLiveText(ctx, text, o, stretch)` folds into the
