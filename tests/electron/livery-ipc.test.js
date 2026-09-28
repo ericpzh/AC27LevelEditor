@@ -853,6 +853,26 @@ describe('readDiskImage', () => {
     fs.writeFileSync(notSvg, 'just text');
     expect(livery.readDiskImage(notSvg).error).toBe('BAD_IMAGE');
   });
+
+  it('decodes DDS files to PNG data-URLs and rejects corrupt DDS', () => {
+    const ddsPath = path.join(gameRoot, 'base.dds');
+    fs.writeFileSync(ddsPath, dds4x4());
+    const res = livery.readDiskImage(ddsPath);
+    expect(res.success).toBe(true);
+    expect(res.imageDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    const badPath = path.join(gameRoot, 'bad.dds');
+    fs.writeFileSync(badPath, Buffer.from('not a dds'));
+    expect(livery.readDiskImage(badPath).error).toBe('BAD_IMAGE');
+  });
+
+  it('decodeDdsImage accepts base64 bytes and rejects junk', () => {
+    const url = livery.decodeDdsImage(dds4x4().toString('base64'));
+    expect(url.success).toBe(true);
+    expect(url.imageDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    expect(livery.decodeDdsImage('not-base64!!!').error).toBe('BAD_IMAGE');
+    expect(livery.decodeDdsImage(Buffer.from('hi').toString('base64')).error).toBe('BAD_IMAGE');
+    expect(livery.decodeDdsImage('').error).toBe('BAD_IMAGE');
+  });
 });
 
 describe('share round-trip (export → delete → load-zip)', () => {

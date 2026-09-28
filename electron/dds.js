@@ -214,15 +214,54 @@ function flipY(width, height, rgba) {
   return out;
 }
 
+// Box-average downscale of an RGBA buffer to fit within maxSize (long edge).
+// Imported DDS textures can be 4096/8192 while the painter works at 2048 —
+// downscaling here keeps the IPC payload small and matches TEXTURE_SIZE, so
+// the renderer's contain-fit becomes a near no-op.
+function downscaleRgba(width, height, rgba, maxSize) {
+  if (maxSize == null || maxSize === '') return { width, height, rgba };
+  const m = Number(maxSize);
+  if (!Number.isFinite(m) || m <= 0 || Math.max(width, height) <= m) return { width, height, rgba };
+  const scale = m / Math.max(width, height);
+  const dw = Math.max(1, Math.round(width * scale));
+  const dh = Math.max(1, Math.round(height * scale));
+  const out = Buffer.alloc(dw * dh * 4);
+  const sx = width / dw;
+  const sy = height / dh;
+  for (let y = 0; y < dh; y++) {
+    const y0 = Math.floor(y * sy);
+    const y1 = Math.max(y0 + 1, Math.min(height, Math.ceil((y + 1) * sy)));
+    for (let x = 0; x < dw; x++) {
+      const x0 = Math.floor(x * sx);
+      const x1 = Math.max(x0 + 1, Math.min(width, Math.ceil((x + 1) * sx)));
+      let r = 0, g = 0, b = 0, a = 0, n = 0;
+      for (let yy = y0; yy < y1; yy++) {
+        for (let xx = x0; xx < x1; xx++) {
+          const o = (yy * width + xx) * 4;
+          r += rgba[o]; g += rgba[o + 1]; b += rgba[o + 2]; a += rgba[o + 3];
+          n++;
+        }
+      }
+      const o = (y * dw + x) * 4;
+      out[o] = Math.round(r / n); out[o + 1] = Math.round(g / n);
+      out[o + 2] = Math.round(b / n); out[o + 3] = Math.round(a / n);
+    }
+  }
+  return { width: dw, height: dh, rgba: out };
+}
+
 // Decodes a DDS buffer and returns a PNG data-URL, or null when unsupported.
 // Y-flipped: the shipped DDS BaseMaps are bottom-up relative to the PNG
 // orientation the engine uses for a painted BaseMap (see the file header).
-function ddsToPngDataUrl(buf) {
+// maxSize (optional): downscale the long edge to fit (import path passes
+// 2048); omitted = full resolution (templates / zip preview).
+function ddsToPngDataUrl(buf, maxSize) {
   const decoded = decodeDds(buf);
   if (!decoded) return null;
   const rgba = flipY(decoded.width, decoded.height, decoded.rgba);
-  const png = encodePng(decoded.width, decoded.height, rgba);
+  const small = downscaleRgba(decoded.width, decoded.height, rgba, maxSize);
+  const png = encodePng(small.width, small.height, small.rgba);
   return 'data:image/png;base64,' + png.toString('base64');
 }
 
-module.exports = { decodeDds, encodePng, ddsToPngDataUrl };
+module.exports = { decodeDds, encodePng, ddsToPngDataUrl, downscaleRgba };

@@ -588,7 +588,28 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
     (async () => {
       setBusy(true);
       try {
-        const raw = await fileToDataUrl(file);
+        let raw;
+        if (/\.dds$/i.test(String((file && file.name) || ''))) {
+          // Chromium cannot render DDS via <img> — decode in main
+          // (electron/dds.js DXT1/5/3, Y-flipped) to a PNG data-URL first.
+          if (!electronAPI || typeof electronAPI.decodeDdsImage !== 'function') {
+            throw new Error('DDS_NO_SUPPORT');
+          }
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          try {
+            console.warn('[Livery] importing DDS ' + ((file && file.name) || '') + ' ' + bytes.length + ' bytes');
+          } catch (_) {}
+          let bin = '';
+          const CHUNK = 0x8000;
+          for (let i = 0; i < bytes.length; i += CHUNK) {
+            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+          }
+          const res = await electronAPI.decodeDdsImage(btoa(bin));
+          if (!res || !res.success) throw new Error((res && res.error) || 'BAD_IMAGE');
+          raw = res.imageDataUrl;
+        } else {
+          raw = await fileToDataUrl(file);
+        }
         const normalized = await normalizeToTexture(raw);
         // Keep the override map current so a later remount (e.g. an aircraft
         // type change) still re-primes this panel with the imported base.
@@ -989,7 +1010,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
           <input
             ref={fileRef}
             type="file"
-            accept=".png,.jpg,.jpeg"
+            accept=".png,.jpg,.jpeg,.dds"
             style={{ display: 'none' }}
             onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; loadBaseUrl(f); }}
           />

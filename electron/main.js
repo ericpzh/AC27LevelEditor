@@ -3855,7 +3855,7 @@ ipcMain.handle('select-livery-image', async (_event) => {
     : mainWindow;
   const result = await dialog.showOpenDialog(parent, {
     title: 'Select Livery Image',
-    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg'] }],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg', 'dds'] }],
     properties: ['openFile'],
   });
   if (result.canceled || !result.filePaths.length) return { canceled: true };
@@ -3864,6 +3864,14 @@ ipcMain.handle('select-livery-image', async (_event) => {
 
 ipcMain.handle('read-disk-image', async (_event, filePath) => {
   return livery.readDiskImage(filePath);
+});
+
+ipcMain.handle('decode-dds-image', async (_event, base64) => {
+  try {
+    return livery.decodeDdsImage(base64);
+  } catch (err) {
+    return { success: false, error: (err && err.message) || 'BAD_IMAGE' };
+  }
 });
 
 // Open a livery folder in the OS file explorer (painter toolbar). A saved

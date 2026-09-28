@@ -91,6 +91,8 @@
   cursor: default; user-select: none;
 }
 .livery-help-btn .btn-icon { margin-right: 1px; }
+.livery-help-btn--icon-only { padding: 2px 6px; }
+.livery-help-btn--icon-only .btn-icon { margin-right: 0; }
 .livery-help-btn:hover {
   background: var(--bg-surface); border-color: var(--accent);
   color: var(--accent);

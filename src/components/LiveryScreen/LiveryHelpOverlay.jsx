@@ -64,6 +64,11 @@ const BUTTONS = {
 const LIST_SECTIONS = [
   { id: 'bar', items: ['back', 'pack', 'create', 'selectAll', 'exportSelected', 'upload', 'delete', 'search'] },
 ];
+// In the actual painter UI only the Panel Lock switch carries visible text
+// (lp-inline-label); every other top-bar / tool-rail button is icon-only
+// (tooltip via aria-label). The painter help follows the UI: icon-only chips,
+// no text names — except the keys listed here.
+const PAINTER_TEXT_BUTTONS = new Set(['uvLock']);
 const PAINTER_SECTIONS = [
   { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'upload', 'deleteThis', 'saveAs', 'save', 'uvLock', 'preview3d'] },
   {
@@ -118,11 +123,17 @@ export default function LiveryHelpOverlay({ onClose, page = 'list', isDemo = fal
                 const b = BUTTONS[key];
                 if (!b) return null;
                 const Icon = b.icon;
+                // Painter page mirrors the real UI: icon-only buttons stay
+                // icon-only (label exposed via title for hover/accessibility).
+                const iconOnly = page === 'painter' && !PAINTER_TEXT_BUTTONS.has(key);
                 return (
                   <div key={key} className="livery-help-item">
-                    <span className="livery-help-btn">
+                    <span
+                      className={'livery-help-btn' + (iconOnly ? ' livery-help-btn--icon-only' : '')}
+                      {...(iconOnly ? { title: t(b.labelKey) } : {})}
+                    >
                       <Icon size={12} className="btn-icon" />
-                      {t(b.labelKey)}
+                      {!iconOnly && t(b.labelKey)}
                     </span>
                     {b.descKey && <span className="livery-help-text">{t(b.descKey)}</span>}
                   </div>

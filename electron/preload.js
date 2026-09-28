@@ -350,6 +350,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteLivery: (folder) => ipcRenderer.invoke('delete-livery', folder),
   selectLiveryImage: () => ipcRenderer.invoke('select-livery-image'),
   readDiskImage: (filePath) => ipcRenderer.invoke('read-disk-image', filePath),
+  decodeDdsImage: (base64) => ipcRenderer.invoke('decode-dds-image', base64),
   revealLiveryFolder: (folder, pack) => ipcRenderer.invoke('reveal-livery-folder', folder, pack),
   exportLivery: (folder) => ipcRenderer.invoke('export-livery', folder),
   exportLiveryToDir: (folder) => ipcRenderer.invoke('export-livery-to-dir', folder),

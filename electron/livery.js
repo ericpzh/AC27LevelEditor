@@ -819,12 +819,61 @@ function readDiskImage(filePath) {
     if (!filePath || !fs.existsSync(filePath)) return { success: false, error: 'IMAGE_MISSING' };
     const ext = path.extname(String(filePath)).toLowerCase();
     if (ext === '.svg') return readSvgImage(filePath);
+    if (ext === '.dds') {
+      // Game/shipped BaseMaps are DXT-compressed DDS — decode to a PNG
+      // data-URL (Y-flipped to the engine orientation) like the templates.
+      // Capped at 2048 so an 8192 DDS doesn't cross IPC at full size.
+      try {
+        const url = ddsToPngDataUrl(fs.readFileSync(filePath), 2048);
+        if (!url) return { success: false, error: 'BAD_IMAGE' };
+        return { success: true, imageDataUrl: url };
+      } catch (_) {
+        return { success: false, error: 'BAD_IMAGE' };
+      }
+    }
     const mime = ext === '.png' ? 'image/png' : (ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : null);
     if (!mime) return { success: false, error: 'BAD_IMAGE' };
     const buf = fs.readFileSync(filePath);
     return { success: true, imageDataUrl: `data:${mime};base64,` + buf.toString('base64') };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+}
+
+// Decode a renderer-supplied DDS (base64, with or without a data-URL prefix)
+// to a PNG data-URL. Renderer File objects have no disk path under
+// contextIsolation, so the painter posts bytes for a .dds import instead of
+// going through readDiskImage. Null on unsupported FourCC/truncation.
+const DDS_DECODE_MAX_BYTES = 128 * 1024 * 1024;
+function decodeDdsImage(base64) {
+  try {
+    let s = String(base64 || '');
+    const comma = s.indexOf(',');
+    if (s.startsWith('data:') && comma !== -1) s = s.slice(comma + 1);
+    if (!s || !/^[A-Za-z0-9+/=]+$/.test(s)) {
+      console.error('[Livery] DDS decode failed: not base64');
+      return { success: false, error: 'BAD_IMAGE' };
+    }
+    const buf = Buffer.from(s, 'base64');
+    if (!buf.length || buf.length > DDS_DECODE_MAX_BYTES) {
+      console.error(`[Livery] DDS decode failed: ${buf.length} bytes exceeds ${DDS_DECODE_MAX_BYTES} cap`);
+      return { success: false, error: 'BAD_IMAGE' };
+    }
+    // Downscale to the painter texture size (2048) — an 8192 DDS would
+    // otherwise cross IPC as a ~300MB PNG string.
+    const url = ddsToPngDataUrl(buf, 2048);
+    if (!url) {
+      try {
+        const fourCC = buf.length >= 88 ? buf.toString('ascii', 84, 88) : '?';
+        const h = buf.length >= 20 ? buf.readUInt32LE(12) : -1;
+        const w = buf.length >= 20 ? buf.readUInt32LE(16) : -1;
+        console.error(`[Livery] DDS decode failed: ${buf.length} bytes, ${w}x${h}, fourCC=${fourCC} (supported: DXT1/DXT3/DXT5)`);
+      } catch (_) {}
+      return { success: false, error: 'BAD_IMAGE' };
+    }
+    return { success: true, imageDataUrl: url };
+  } catch (_) {
+    return { success: false, error: 'BAD_IMAGE' };
   }
 }
 
@@ -1258,6 +1307,7 @@ module.exports = {
   createLivery,
   deleteLivery,
   readDiskImage,
+  decodeDdsImage,
   exportLivery,
   copyExportedZip,
   cleanExportTemp: _cleanExportTemp,

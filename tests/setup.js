@@ -162,6 +162,7 @@ vi.stubGlobal('electronAPI', {
   deleteLivery: (folder) => mockIpcInvoke('delete-livery', folder),
   selectLiveryImage: () => mockIpcInvoke('select-livery-image'),
   readDiskImage: (filePath) => mockIpcInvoke('read-disk-image', filePath),
+  decodeDdsImage: (base64) => mockIpcInvoke('decode-dds-image', base64),
   revealLiveryFolder: (folder, pack) => mockIpcInvoke('reveal-livery-folder', folder, pack),
   exportLivery: (folder) => mockIpcInvoke('export-livery', folder),
   exportLiveryToDir: (folder) => mockIpcInvoke('export-livery-to-dir', folder),
