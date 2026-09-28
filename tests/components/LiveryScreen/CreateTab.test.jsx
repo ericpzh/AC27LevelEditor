@@ -205,7 +205,7 @@ describe('CreateTab painter validation', () => {
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA', layers: expect.any(Object) },
     ));
     expect(onCreated).not.toHaveBeenCalled();
     expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
@@ -235,7 +235,7 @@ describe('CreateTab painter validation', () => {
     // Airline/aircraft come from the form — never parsed out of the folder.
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'My First CCA Livery' },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'My First CCA Livery', layers: expect.any(Object) },
     ));
     expect(onCreated).not.toHaveBeenCalled();
     expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
@@ -456,6 +456,7 @@ describe('CreateTab painter validation', () => {
         airline: 'AAL',
         targetPlaneId: 'BOEING 737-800',
         folder: 'B738_AAL',
+        layers: expect.any(Object),
       });
     });
   });
@@ -879,7 +880,7 @@ describe('CreateTab overwrite confirm (Save As onto an existing folder)', () => 
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA' },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA', layers: expect.any(Object) },
     ));
     expect(onCreated).not.toHaveBeenCalled();
     expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
@@ -1594,5 +1595,73 @@ describe('CreateTab 3D preview', () => {
     const { unmount } = renderCreate();
     unmount();
     expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-cleanup')).toBe(false);
+  });
+});
+
+describe('CreateTab layer sidecar', () => {
+  const sidecar = () => ({
+    version: 1,
+    activeId: 'ly1',
+    base: { panels: [{ partName: 'Body', imageDataUrl: FAKE_PNG }] },
+    layers: [
+      {
+        id: 'ly1', name: 'Fuselage art', group: 'Roundels', visible: true, objects: [],
+        panels: [{ partName: 'Body', paintDataUrl: FAKE_PNG, fillDataUrl: FAKE_PNG }],
+      },
+      {
+        id: 'ly2', name: 'Wing details', group: 'Roundels', visible: true, objects: [],
+        panels: [{ partName: 'Body', paintDataUrl: FAKE_PNG, fillDataUrl: FAKE_PNG }],
+      },
+    ],
+  });
+
+  it('restores a persisted layer stack on open and saves it back', async () => {
+    setupMocks({
+      'read-livery-images': Promise.resolve({
+        success: true,
+        imageDataUrl: FAKE_PNG,
+        parts: [{ partName: 'Body', imageDataUrl: FAKE_PNG }],
+        layers: sidecar(),
+      }),
+      'list-liveries': Promise.resolve({ success: true, mine: [], reference: [] }),
+      'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }),
+    });
+    CreateTab.prefill = { folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', pack: 'mine' };
+    const user = userEvent.setup();
+    renderCreate();
+
+    // The persisted layers (not a single default layer) are shown, grouped.
+    await waitFor(() => expect(screen.getByText('Fuselage art')).toBeInTheDocument());
+    expect(screen.getByText('Wing details')).toBeInTheDocument();
+    expect(screen.getAllByText('Roundels').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Layer 1')).toBeNull();
+
+    // A following Save ships the layer sidecar alongside the flattened BaseMap.
+    await user.click(saveBtn());
+    await confirmNameDialog(user, 'Save');
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
+      'create-livery',
+      expect.objectContaining({
+        folder: 'A20N_CCA',
+        layers: expect.objectContaining({ version: 2, layers: expect.any(Array), panel: expect.any(Array) }),
+      }),
+    ));
+  });
+});
+
+describe('panel lock toolbar', () => {
+  it('renders the lock switch in the top bar, off by default', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    renderCreate();
+    const sw = await screen.findByRole('switch', { name: 'Panel Lock' });
+    expect(sw.getAttribute('aria-checked')).toBe('false');
+    expect(sw.closest('.lp-topbar')).not.toBeNull();
+    // The 3D preview button shares the top bar; the removed panel-selection
+    // tool is gone.
+    expect(screen.getByRole('button', { name: '3D preview' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Select UV Panel' })).toBeNull();
+    await user.click(sw);
+    expect(sw.getAttribute('aria-checked')).toBe('true');
   });
 });

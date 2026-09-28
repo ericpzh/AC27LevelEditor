@@ -13,6 +13,10 @@ const gamePaths = require('../src/utils/gamePaths');
 
 const OWN_PACK = 'AC27 Custom Liveries';
 const REFERENCE_PACK = 'AC27 Realistic Aircraft Livery';
+// Editor-only layer sidecar written next to the manifest. Dot-file so the
+// share ZIP, the createLivery image cleanup and the Workshop content builder
+// all skip it; it is never game content (the game reads the flattened BaseMap).
+const LAYERS_SIDECAR = '.livery_layers.json';
 // The game ships one neutral default livery per aircraft type — the exact UV
 // atlas the model expects. The painter seeds new canvases with this so the
 // background is never transparent and each aircraft gets its real shape.
@@ -682,7 +686,16 @@ function readLiveryImages(gameRoot, folder, pack = 'mine') {
       if (imageDataUrl) parts.push({ partName: bp.partName, fileName: bp.fileName, imageDataUrl });
     }
     if (parts.length === 0) return { success: false, error: 'IMAGE_MISSING' };
-    return { success: true, imageDataUrl: _pickMainPart(parts).imageDataUrl, parts };
+    // Editor-only layer snapshot (dot-file; absent for legacy / imported
+    // liveries). Returned verbatim so the painter can rebuild the stack.
+    let layers = null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(resolved, LAYERS_SIDECAR), 'utf-8'));
+      if (parsed && Array.isArray(parsed.layers) && parsed.layers.length) layers = parsed;
+    } catch (_) { layers = null; }
+    const result = { success: true, imageDataUrl: _pickMainPart(parts).imageDataUrl, parts };
+    if (layers) result.layers = layers;
+    return result;
   } catch (_) {
     return { success: false, error: 'IMAGE_MISSING' };
   }
@@ -693,7 +706,7 @@ function readLiveryImages(gameRoot, folder, pack = 'mine') {
 // key. `images` is an ordered list of `{partName, imageDataUrl}` paintable
 // panels (single entry for legacy callers passing `imageDataUrl`). The short
 // code, file names and manifest id are derived — never parsed from the folder.
-function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, folder, variant }) {
+function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, folder, variant, layers }) {
   if (!gameRoot) return { success: false, error: 'NO_GAME_ROOT' };
   if (!AIRLINE_RE.test(String(airline || ''))) return { success: false, error: 'BAD_AIRLINE' };
   const planeId = String(targetPlaneId || '');
@@ -770,6 +783,18 @@ function createLivery(gameRoot, { images, imageDataUrl, airline, targetPlaneId, 
       }), null, 2),
       'utf-8',
     );
+    // Editor-only layer sidecar. Present → written verbatim; explicit null →
+    // stale sidecar removed; undefined (legacy callers) → left untouched.
+    if (layers !== undefined) {
+      try {
+        const side = path.join(resolved, LAYERS_SIDECAR);
+        if (layers && Array.isArray(layers.layers) && layers.layers.length) {
+          fs.writeFileSync(side, JSON.stringify(layers), 'utf-8');
+        } else if (layers === null) {
+          fs.rmSync(side, { force: true });
+        }
+      } catch (_) { /* sidecar bookkeeping never fails the save */ }
+    }
     return { success: true, folder: rawFolder };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1087,6 +1112,7 @@ function buildWorkshopContent(gameRoot, folder) {
     // saved `.workshop-preview.*` image, travels with the item.
     for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
       if (entry.name === WORKSHOP_SIDECAR) continue;
+      if (entry.name === LAYERS_SIDECAR) continue;
       fs.cpSync(path.join(srcDir, entry.name), path.join(dir, entry.name), { recursive: true });
     }
     const modName = workshopModName(folder);
@@ -1238,6 +1264,7 @@ module.exports = {
   loadLiveryZip,
   WORKSHOP_SIDECAR,
   WORKSHOP_PREVIEW_BASENAME,
+  LAYERS_SIDECAR,
   WORKSHOP_PREVIEW_MAX_BYTES,
   ensurePreviewUnderLimit,
   _setNativeImageForTests,

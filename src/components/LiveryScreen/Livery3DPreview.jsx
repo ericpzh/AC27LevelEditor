@@ -38,7 +38,7 @@ export function __resetSavedRectForTests() { savedRect = null; }
  * free-movable (header drag) and resizable (bottom-right grip); a bottom-right
  * button resets the camera; a top-right button hides it.
  */
-export default function Livery3DPreview({ planeId, images, onHide }) {
+export default function Livery3DPreview({ planeId, images, onHide, onPickUv }) {
   const { t } = useTranslation();
   const electronAPI = useElectronAPI();
   const mountRef = useRef(null);
@@ -46,6 +46,8 @@ export default function Livery3DPreview({ planeId, images, onHide }) {
   const homeRef = useRef(null);
   const imagesRef = useRef(images);
   imagesRef.current = images;
+  const onPickUvRef = useRef(onPickUv);
+  onPickUvRef.current = onPickUv;
   const applyImagesRef = useRef(null);
   const [error, setError] = useState('');
   const [rect, setRect] = useState(() => savedRect || defaultRect());
@@ -185,7 +187,40 @@ export default function Livery3DPreview({ planeId, images, onHide }) {
     };
     loop();
 
-    stateRef.current = { renderer, scene, camera, controls, group: null, textures: [], liveryMaterials: [] };
+    stateRef.current = { renderer, scene, camera, controls, group: null, textures: [], liveryMaterials: [], pickMeshes: [] };
+
+    // 3D → flat picking: a click (distinguished from an orbit drag by travel)
+    // raycasts the livery meshes and reports the hit triangle's UV so the
+    // painter can activate the matching UV island.
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    let pickDownX = 0;
+    let pickDownY = 0;
+    let pickMoved = false;
+    const onPickDown = (e) => { pickDownX = e.clientX; pickDownY = e.clientY; pickMoved = false; };
+    const onPickMove = (e) => {
+      if (Math.abs(e.clientX - pickDownX) > 4 || Math.abs(e.clientY - pickDownY) > 4) pickMoved = true;
+    };
+    const onPickUp = (e) => {
+      if (e.button !== 0 || pickMoved || !onPickUvRef.current) return;
+      const st = stateRef.current;
+      if (!st || !st.pickMeshes || !st.pickMeshes.length) return;
+      const rect = st.renderer.domElement.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(ndc, st.camera);
+      let hits = [];
+      try { hits = raycaster.intersectObjects(st.pickMeshes.map(m => m.mesh), false); } catch (_) { hits = []; }
+      if (!hits.length || !hits[0].uv) return;
+      const rec = st.pickMeshes.find(m => m.mesh === hits[0].object);
+      if (!rec) return;
+      onPickUvRef.current({ partName: rec.partName, u: hits[0].uv.x, v: hits[0].uv.y });
+    };
+    const dom = renderer.domElement;
+    dom.addEventListener('pointerdown', onPickDown);
+    window.addEventListener('pointermove', onPickMove);
+    window.addEventListener('pointerup', onPickUp);
 
     // Fit the (origin-centered) model to the current window, zoomed in so it
     // fills the view (MARGIN < 1). Used on open and by the reset button.
@@ -304,6 +339,9 @@ export default function Livery3DPreview({ planeId, images, onHide }) {
           const mesh = new THREE.Mesh(g, material);
           mesh.frustumCulled = false;
           group.add(mesh);
+          if (part.livery) {
+            stateRef.current.pickMeshes.push({ mesh, partName: String(part.name || '') });
+          }
         }
 
         if (offset === 0) { setError(t('livery_3d_error_unknown')); return; }
@@ -327,6 +365,9 @@ export default function Livery3DPreview({ planeId, images, onHide }) {
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      try { dom.removeEventListener('pointerdown', onPickDown); } catch (_) {}
+      try { window.removeEventListener('pointermove', onPickMove); } catch (_) {}
+      try { window.removeEventListener('pointerup', onPickUp); } catch (_) {}
       const st = stateRef.current;
       if (st) {
         try { st.group && st.group.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); } catch (_) {}

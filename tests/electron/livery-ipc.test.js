@@ -1413,3 +1413,68 @@ describe('Steam Workshop discovery', () => {
   });
 });
 
+describe('layer sidecar (.livery_layers.json)', () => {
+  const payload = (overrides = {}) => ({
+    imageDataUrl: png2048(),
+    airline: 'CCA',
+    targetPlaneId: 'AIRBUS A-320neo',
+    folder: 'A20N_CCA',
+    ...overrides,
+  });
+  const sampleLayers = () => ({
+    version: 1,
+    activeId: 'ly2',
+    base: { panels: [{ partName: 'Body', imageDataUrl: 'data:image/png;base64,QkFTRQ==' }] },
+    layers: [
+      {
+        id: 'ly1', name: 'Background', group: null, visible: true, objects: [],
+        panels: [{ partName: 'Body', paintDataUrl: 'data:image/png;base64,UEFJTlQ=', fillDataUrl: 'data:image/png;base64,RklMTA==' }],
+      },
+      {
+        id: 'ly2', name: 'Decals', group: 'Roundels', visible: false,
+        objects: [{ kind: 'text', text: 'hi', x: 1, y: 2, w: 3, h: 4 }],
+        panels: [{ partName: 'Body', paintDataUrl: 'data:image/png;base64,WA==', fillDataUrl: 'data:image/png;base64,WQ==' }],
+      },
+    ],
+  });
+  const sidecarPath = () => path.join(livery.ownPackDir(gameRoot), 'A20N_CCA', livery.LAYERS_SIDECAR);
+
+  it('writes the sidecar and reads it back via readLiveryImages', () => {
+    expect(livery.createLivery(gameRoot, payload({ layers: sampleLayers() })).success).toBe(true);
+    expect(fs.existsSync(sidecarPath())).toBe(true);
+    const onDisk = JSON.parse(fs.readFileSync(sidecarPath(), 'utf-8'));
+    expect(onDisk.layers.map(l => l.name)).toEqual(['Background', 'Decals']);
+
+    const read = livery.readLiveryImages(gameRoot, 'A20N_CCA', 'mine');
+    expect(read.success).toBe(true);
+    expect(read.layers).toBeTruthy();
+    expect(read.layers.activeId).toBe('ly2');
+    expect(read.layers.layers[1]).toMatchObject({ name: 'Decals', group: 'Roundels', visible: false });
+    expect(read.layers.layers[1].objects[0]).toMatchObject({ kind: 'text', text: 'hi' });
+  });
+
+  it('leaves an existing sidecar untouched when the payload omits layers', () => {
+    livery.createLivery(gameRoot, payload({ layers: sampleLayers() }));
+    livery.createLivery(gameRoot, payload());
+    expect(fs.existsSync(sidecarPath())).toBe(true);
+  });
+
+  it('removes the sidecar on an explicit null payload', () => {
+    livery.createLivery(gameRoot, payload({ layers: sampleLayers() }));
+    livery.createLivery(gameRoot, payload({ layers: null }));
+    expect(fs.existsSync(sidecarPath())).toBe(false);
+    expect(livery.readLiveryImages(gameRoot, 'A20N_CCA').layers).toBeUndefined();
+  });
+
+  it('is never packed into the share ZIP', () => {
+    const { listZipFiles } = require('../../src/utils/zipUtils');
+    livery.createLivery(gameRoot, payload({ layers: sampleLayers() }));
+    const exp = livery.exportLivery(gameRoot, 'A20N_CCA');
+    expect(exp.success).toBe(true);
+    const names = listZipFiles(exp.filePath).map(e => (typeof e === 'string' ? e : e.name));
+    expect(names.some(n => String(n).endsWith(livery.LAYERS_SIDECAR))).toBe(false);
+    // Sanity: the manifest is still packed.
+    expect(names.some(n => String(n).endsWith('aircraft_livery_manifest.json'))).toBe(true);
+  });
+});
+

@@ -26,6 +26,11 @@ import {
   chainBorderSegments,
 } from '../../utils/liveryPaint';
 import {
+  regionMask,
+  maskToImageData,
+  UV_GROW_PX,
+} from '../../utils/liveryUv';
+import {
   IoBrushOutline,
   IoEyedropOutline,
   IoColorFillOutline,
@@ -39,6 +44,16 @@ import {
   IoAddOutline,
   IoRemove,
   IoScanOutline,
+  IoEyeOutline,
+  IoEyeOffOutline,
+  IoChevronForwardOutline,
+  IoChevronDownOutline,
+  IoTrashOutline,
+  IoPencilOutline,
+  IoFolderOutline,
+  IoLockClosed,
+  IoLinkOutline,
+  IoUnlinkOutline,
 } from 'react-icons/io5';
 import { AiOutlineClear } from 'react-icons/ai';
 import { FaEraser, FaRegHandPaper, FaPaintBrush } from 'react-icons/fa';
@@ -55,6 +70,15 @@ import { PANEL_GAP } from '../../utils/constants/livery';
 
 export const TEXTURE = 2048;
 
+// Sentinel clip base: the locked base aircraft image. A clipped layer with no
+// editable layer beneath it is masked by the base texture's alpha.
+export const CLIP_BASE_ROOT = '__base__';
+
+// Layer-preview thumbnail size (CSS px + backing store) and its refresh cadence
+// — a deliberately low sample rate so live painting never pays for it.
+export const LAYER_THUMB_SIZE = 50;
+export const LAYER_THUMB_INTERVAL_MS = 2000;
+
 // The overlay canvas is padded beyond the backing store so a live object's
 // selection box + handles stay visible once the object is dragged off the
 // canvas edge — the object's own pixels are clipped to the base bitmap, the
@@ -68,6 +92,11 @@ export const DEFAULT_BASE_COLOR = '#ffffff';
 // Neutral gutter painted between the panels of a multi-image aircraft so the
 // gap reads as "not part of either texture" and is obviously unexported.
 export const GAP_FILL = '#2a2f36';
+
+// Dim painted over texels the mesh never samples (dead UV space) and over every
+// inactive panel while the UV-region lock is on, so the editable island reads at
+// a glance. Purely an overlay tint — the base/rasters are never touched.
+export const UV_DIM_COLOR = 'rgba(16,20,26,0.55)';
 
 // ── Eraser drag preview ──────────────────────────────────────
 // While the eraser pointer is down the trail is only RECORDED and darkened on
@@ -303,6 +332,46 @@ function hasLiveVisual(o) {
   if (o.kind === 'text') return Boolean(o.text);
   if (SHAPE_KINDS.includes(o.kind)) return o.w > 0 || o.h > 0;
   return Boolean(o.img);
+}
+
+// ── Layer sidecar (de)serialization ────────────────────────
+// A live object is persisted as plain JSON; its bitmap `img` and stamped
+// selection `clipMask` canvas are carried as data URLs so a livery round-trips
+// losslessly across Save → reopen. `id`s are dropped (reassigned on load).
+export function serializeLayerObject(o) {
+  if (!o) return null;
+  const { img, clipMask, id, ...rest } = o;
+  const out = { ...rest };
+  if (kindHasImage(o) && img && img.src) out.imageDataUrl = img.src;
+  if (clipMask && typeof clipMask.toDataURL === 'function') {
+    try { out.clipMaskDataUrl = clipMask.toDataURL('image/png'); } catch (_) { /* ignore */ }
+  }
+  return out;
+}
+function kindHasImage(o) {
+  return o.kind !== 'text' && !SHAPE_KINDS.includes(o.kind);
+}
+// Rebuild a live object from its serialized form. `assignId` hands out a fresh
+// live-object id; `makeCanvas(w,h)` creates the clip-mask canvas lazily.
+export function deserializeLayerObject(raw, assignId, W, H) {
+  if (!raw || typeof raw !== 'object') return null;
+  const { imageDataUrl, clipMaskDataUrl, ...rest } = raw;
+  const o = { ...rest, id: assignId() };
+  if (imageDataUrl) {
+    const img = new Image();
+    img.src = imageDataUrl;
+    o.img = img;
+  }
+  if (clipMaskDataUrl) {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const cc = c.getContext('2d');
+    const im = new Image();
+    im.onload = () => { try { if (cc) cc.drawImage(im, 0, 0); } catch (_) { /* ignore */ } };
+    im.src = clipMaskDataUrl;
+    o.clipMask = c;
+  }
+  return o;
 }
 
 // Select boundary of a live object in its own local (pre-flip) frame. Erasing
@@ -691,7 +760,8 @@ function NumberInput({ value, min, max, onCommit, ariaLabel, suffix }) {
 }
 
 const LiveryCanvas = forwardRef(function LiveryCanvas(
-  { panels, initialParts, defaultParts, activePanel, onActivePanel, initialImageDataUrl, defaultLiveryDataUrl, onDirty, inputDisabled = false },
+  { panels, initialParts, defaultParts, activePanel, onActivePanel, initialImageDataUrl, defaultLiveryDataUrl, initialLayers = null, onDirty, inputDisabled = false,
+    uvLock = false, uvRegions = null, uvGlow = null },
   ref,
 ) {
   const { t } = useTranslation();
@@ -721,21 +791,187 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ? defaultParts
     : [{ partName: panelNames[0], imageDataUrl: defaultLiveryDataUrl || null }];
   const { bind, TooltipPortal } = useTooltip();
-  // Layer stack (bottom → top): base aircraft image (locked) → raster fill
-  // (`fillCanvasRef`, under every movable) → live movables (`objectCanvasRef`)
-  // → raster pen/eraser (`canvasRef`, `ctxRef`) → chrome (`overlayRef`:
-  // selection outline, handles, previews, interaction surface). The fill is a
-  // background/underlay; the pen always renders above movables while they stay
-  // live.
+  // Layer stack (bottom → top): base aircraft image (locked) → one editable
+  // LAYER per stack entry → chrome (`overlayRef`: selection outline, handles,
+  // previews, interaction surface). Each editable layer owns its own raster
+  // fill (`fillCtxRef`, under its movables), live movables (`objectsCanvas`) and
+  // raster pen/eraser (`canvasRef`/`ctxRef`, above its movables). `ctxRef`,
+  // `fillCtxRef`, `canvasRef` and `fillCanvasRef` always alias the ACTIVE
+  // layer, so every paint/selection path stays bounded to it.
   const baseCanvasRef = useRef(null);
   const baseCtxRef = useRef(null);
   const fillCanvasRef = useRef(null);
   const fillCtxRef = useRef(null);
-  const objectCanvasRef = useRef(null);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const wrapRef = useRef(null);
   const ctxRef = useRef(null);
+  // ── Layer model ──────────────────────────────────────────────
+  // `layersRef` is the ordered (bottom → top) source of truth: each record owns
+  // its serializable metadata, its live object list and the offscreen DOM canvas
+  // elements + 2d contexts for its fill / objects / paint rasters. `layersView`
+  // mirrors only the metadata into React state so the layer panel re-renders on
+  // rename / hide / group / reorder without touching the canvases. `activeId`
+  // selects which layer edits + selection target.
+  const layerIdSeqRef = useRef(1);
+  const folderIdSeqRef = useRef(1);
+  const makeLayer = (name) => ({
+    id: `ly${layerIdSeqRef.current++}`,
+    name: name || `Layer ${layerIdSeqRef.current - 1}`,
+    visible: true,
+    // A clipped layer is masked by the alpha of the first NON-clipped layer
+    // below it (or the locked base) — Photoshop-style clipping mask. The
+    // layer's own rasters/objects are always preserved, so unclipping brings
+    // every edit back untouched.
+    clipped: false,
+    objects: [],
+    paintImg: null,
+    fillImg: null,
+  });
+  const layersRef = useRef(null);
+  if (!layersRef.current || layersRef.current.length === 0) layersRef.current = [makeLayer('Layer 1')];
+  const activeIdRef = useRef(layersRef.current[0].id);
+  // `panelRef` is the ordered panel tree (top→bottom): each node is either
+  // `{type:'layer', id}` or `{type:'folder', id, name, children:[layerId,...]}`.
+  // Folders are first-class and keep their position when layers move in/out.
+  // `layersRef` is the flat bottom→top z-order derived from the tree.
+  const panelRef = useRef(null);
+  if (!panelRef.current || panelRef.current.length === 0) panelRef.current = [{ type: 'layer', id: layersRef.current[0].id }];
+  const panelSnapshot = () => panelRef.current.map(n => (n.type === 'layer'
+    ? { type: 'layer', id: n.id }
+    : { type: 'folder', id: n.id, name: n.name, visible: n.visible !== false, children: [...n.children] }));
+  const [layersView, setLayersView] = useState(() => layersRef.current.map(l => ({ id: l.id, name: l.name, visible: l.visible, clipped: l.clipped })));
+  const [panelView, setPanelView] = useState(() => panelSnapshot());
+  const [activeId, setActiveIdState] = useState(activeIdRef.current);
+  const setActiveId = (id) => { activeIdRef.current = id; setActiveIdState(id); };
+  const syncLayersView = () => {
+    setLayersView(layersRef.current.map(l => ({ id: l.id, name: l.name, visible: l.visible, clipped: l.clipped })));
+    setPanelView(panelSnapshot());
+  };
+  // Rebuild the flat bottom→top z-order from the panel tree (top→bottom).
+  const syncLayerOrder = () => {
+    const topDown = [];
+    for (const n of panelRef.current) {
+      if (n.type === 'layer') topDown.push(n.id);
+      else for (const cid of n.children) topDown.push(cid);
+    }
+    const byId = new Map(layersRef.current.map(l => [l.id, l]));
+    layersRef.current = topDown.slice().reverse().map(id => byId.get(id)).filter(Boolean);
+  };
+  const folderNodeById = (id) => panelRef.current.find(n => n.type === 'folder' && n.id === id) || null;
+  // Locate a layer node: at root or inside a folder. Returns its container
+  // (array) + index so it can be moved without disturbing other folders.
+  const findLayerSlot = (id) => {
+    for (let i = 0; i < panelRef.current.length; i++) {
+      const n = panelRef.current[i];
+      if (n.type === 'layer' && n.id === id) return { container: panelRef.current, index: i, folder: null };
+      if (n.type === 'folder') {
+        const ci = n.children.indexOf(id);
+        if (ci >= 0) return { container: n.children, index: ci, folder: n };
+      }
+    }
+    return null;
+  };
+  // A layer is effectively visible only when its own flag AND its folder's flag
+  // are on. Every render / export / sample path uses this.
+  const layerEffectiveVisible = (id) => {
+    const l = layerById(id);
+    if (!l || !l.visible) return false;
+    const slot = findLayerSlot(id);
+    return !(slot && slot.folder && slot.folder.visible === false);
+  };
+  const folderVisible = (node) => !(node && node.visible === false);
+  // Clip base resolution in flat bottom→top z-order: the nearest layer BELOW
+  // `id` that is not itself clipped. When there is none (a clipped bottom
+  // layer) the locked base image is the mask source. Returns null when `id` is
+  // not clipped (no mask).
+  const clipBaseFor = (id) => {
+    const layer = layerById(id);
+    if (!layer || !layer.clipped) return null;
+    const i = layersRef.current.indexOf(layer);
+    for (let j = i - 1; j >= 0; j--) {
+      if (!layersRef.current[j].clipped) return layersRef.current[j].id;
+    }
+    return CLIP_BASE_ROOT;
+  };
+  // 50×50 layer previews, keyed by layer id via callback refs.
+  const thumbElsRef = useRef(new Map());
+  const bindThumbEl = (id) => (el) => {
+    if (el) thumbElsRef.current.set(id, el);
+    else thumbElsRef.current.delete(id);
+  };
+  // Canvas elements + contexts per layer, keyed by layer id. Contexts are
+  // acquired once per canvas (the same stub every read) so incremental drawing
+  // and the tests' first-context lookup agree.
+  const layerElsRef = useRef(new Map());
+  const layerCtxsRef = useRef(new Map());
+  const pendingLayersRef = useRef(null);
+  // A structural undo/redo whose snapshot recreated a layer leaves that layer's
+  // rasters to paint into the canvas AFTER React mounts it (next commit). Set by
+  // `applySnapshot`, drained by the active-layer layout effect.
+  const pendingRestoreRef = useRef(null);
+  const layerEl = (id, kind) => {
+    const rec = layerElsRef.current.get(id);
+    return rec ? rec[kind] || null : null;
+  };
+  const bindLayerEl = (id, kind) => (el) => {
+    const rec = layerElsRef.current.get(id) || {};
+    rec[kind] = el;
+    layerElsRef.current.set(id, rec);
+  };
+  const ctxFor = (id, kind) => {
+    let rec = layerCtxsRef.current.get(id);
+    if (!rec) { rec = {}; layerCtxsRef.current.set(id, rec); }
+    if (rec[kind]) return rec[kind];
+    const el = layerEl(id, kind);
+    if (!el) return null;
+    rec[kind] = el.getContext('2d');
+    return rec[kind];
+  };
+  const layerById = (id) => layersRef.current.find(l => l.id === id) || null;
+  const activeLayer = () => layerById(activeIdRef.current) || layersRef.current[0] || null;
+  // A layer is paintable/selectable only while visible (its own flag AND its
+  // folder's); hidden layers are shown in the panel but excluded from render,
+  // export and sampling.
+  const visibleLayers = () => layersRef.current.filter(l => layerEffectiveVisible(l.id));
+  const anyVisibleLayer = () => layersRef.current.some(l => layerEffectiveVisible(l.id));
+  // The object list shown/edited is the ACTIVE layer's; a change writes straight
+  // back into that layer's record.
+  const setActiveLayerObjects = (objs) => {
+    const layer = activeLayer();
+    if (!layer) return;
+    layer.objects = objs;
+    objectsRef.current = objs;
+  };
+  // Point the active-layer aliases (`ctxRef`/`fillCtxRef`/`canvasRef`/
+  // `fillCanvasRef`) at the active layer's canvases + contexts.
+  const bindActiveLayerRefs = () => {
+    const id = activeIdRef.current;
+    canvasRef.current = layerEl(id, 'paint');
+    fillCanvasRef.current = layerEl(id, 'fill');
+    ctxRef.current = ctxFor(id, 'paint');
+    fillCtxRef.current = ctxFor(id, 'fill');
+  };
+  // Per-layer raster snapshots. Cached by reference until the layer is mutated
+  // so consecutive undo snapshots share an unchanged layer's ImageData.
+  const captureLayerPixels = (layer) => {
+    if (!layer) return { paintImg: null, fillImg: null };
+    if (!layer.paintImg) {
+      const c = ctxFor(layer.id, 'paint');
+      if (c) { try { layer.paintImg = c.getImageData(0, 0, W, H); } catch (_) { /* stub */ } }
+    }
+    if (!layer.fillImg) {
+      const c = ctxFor(layer.id, 'fill');
+      if (c) { try { layer.fillImg = c.getImageData(0, 0, W, H); } catch (_) { /* stub */ } }
+    }
+    return { paintImg: layer.paintImg, fillImg: layer.fillImg };
+  };
+  const invalidateLayerPixels = (layer) => {
+    if (!layer) return;
+    layer.paintImg = null;
+    layer.fillImg = null;
+  };
+  const invalidateActivePixels = () => invalidateLayerPixels(activeLayer());
   // Last captured base-image pixels, shared by undo snapshots so a snapshot
   // never copies the (static) base per step.
   const basePixelsRef = useRef(null);
@@ -823,6 +1059,26 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // already been punched into the canvas.
   const eraseCacheRef = useRef(new Map());
   const hasMaskRef = useRef(false);
+  // ── UV regions ─────────────────────────────────────────────
+  // The mesh UV coverage is passed in per BaseMap panel (`uvRegions`). The lock
+  // clips raster edits to the ACTIVE panel's mapped texels (dead space locked).
+  // A 3D-preview click sets `uvGlow` ({ panel, id }) and we tint that atlas
+  // region on the overlay — informational only, never an edit restriction.
+  const uvLockRef = useRef(uvLock);
+  uvLockRef.current = uvLock;
+  const uvRegionsRef = useRef(uvRegions);
+  uvRegionsRef.current = uvRegions;
+  const uvGlowRef = useRef(uvGlow);
+  uvGlowRef.current = uvGlow;
+  const uvMaskCanvasRef = useRef(null);
+  const uvCoverageCanvasRef = useRef(null);
+  const uvDimCanvasRef = useRef(null);
+  const uvGlowOutlineRef = useRef([]);
+  const uvConstraintRef = useRef(false);
+  // Coverage masks are expensive (a 2048² scan) and don't change while a region
+  // object is alive, so cache them by region. A new `uvRegions` array produces
+  // new region objects and lets the old ones GC.
+  const uvCoverageCacheRef = useRef(new WeakMap());
   const textOptsRef = useRef({ font: 'sans-serif', size: 120, bold: false, italic: false, color: '#000000' });
   // Clear target — the aircraft type's built-in default livery panels. Kept in
   // refs so the confirm-modal closure reads the latest value even if the
@@ -832,8 +1088,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   useEffect(() => { defaultPartsRef.current = defaultPartsArr; });
   useEffect(() => { initialPartsRef.current = initialPartsArr; });
 
-  const [tool, setToolState] = useState('brush');
-  const [brush, setBrushState] = useState(brushRef.current);
+  const [tool, setToolState] = useState('brush');  const [brush, setBrushState] = useState(brushRef.current);
   const [shapeOpts, setShapeOptsState] = useState(shapeOptsRef.current);
   const [lineMode, setLineModeState] = useState('straight');
   const [fillTol, setFillTolState] = useState(32);
@@ -851,6 +1106,21 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const [dirty, setDirtyState] = useState(false);
   // Right-click layer-order menu anchor: { x, y, id } in client coords, or null.
   const [orderMenu, setOrderMenu] = useState(null);
+  // ── Layer panel UI state ───────────────────────────────────
+  // `layersView`/`foldersView` (declared with the layer model) drive the panel;
+  // these track transient inline-edit, folder-collapse and drag state.
+  const [editingLayerId, setEditingLayerId] = useState(null);
+  const [layerNameDraft, setLayerNameDraft] = useState('');
+  const [editingFolderId, setEditingFolderId] = useState(null);
+  const [folderNameDraft, setFolderNameDraft] = useState('');
+  const [collapsedFolders, setCollapsedFolders] = useState(() => new Set());
+  // Drag-and-drop: `dragItemRef` holds the dragged `{kind:'layer'|'folder',id}`
+  // and `dragOverKey` pins the visual drop indicator (`${kind}:${id}:${pos}`).
+  const dragItemRef = useRef(null);
+  const [dragOverKey, setDragOverKey] = useState(null);
+  // The locked base texture preview canvas.
+  const baseThumbRef = useRef(null);
+  const binderCacheRef = useRef(new Map());
   // Custom RGBA picker anchor ({ x, y } in client coords) while its popover is
   // open, or null. Positioned in a portal because the tool rail scrolls.
   const [colorAnchor, setColorAnchor] = useState(null);
@@ -888,9 +1158,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const setHasMask = (v) => { hasMaskRef.current = v; setHasMaskState(v); };
   const setFillTol = (v) => { fillTolRef.current = v; setFillTolState(v); };
   // Object layer helpers — refs mirror the state so canvas handlers read the
-  // latest objects without stale closures.
+  // latest objects without stale closures. The list belongs to the ACTIVE layer.
   const syncObjects = (objs, sid) => {
-    objectsRef.current = objs;
+    setActiveLayerObjects(objs);
     selIdRef.current = sid;
     setObjectsState(objs);
     setSelIdState(sid);
@@ -1032,11 +1302,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
   // ── Base init (mount only — parent remounts via key on base change) ─
   useEffect(() => {
-    const canvas = canvasRef.current; // pen layer (brush/eraser)
-    const fillCanvas = fillCanvasRef.current; // fill layer (under movables)
-    if (!canvas) return;
-    ctxRef.current = canvas.getContext('2d');
-    if (fillCanvas) fillCtxRef.current = fillCanvas.getContext('2d');
+    // Point the active-layer aliases at the freshly mounted canvases. The first
+    // getContext must be the active layer's paint canvas (incremental drawing
+    // and the canvas lookups then agree).
+    bindActiveLayerRefs();
+    if (!canvasRef.current && !fillCanvasRef.current) return;
     const baseCanvas = baseCanvasRef.current;
     const baseCtx = baseCanvas && baseCanvas.getContext('2d');
     baseCtxRef.current = baseCtx;
@@ -1047,21 +1317,60 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       scheduleOverlay();
     };
     undoRef.current = createUndoStack();
-    fillPixelsRef.current = null;
     setDirty(false);
-    syncObjects([], null);
-    setTextAnchor(null);
-    // Both raster layers start transparent; the base image lives on its own.
-    for (const c of [ctxRef.current, fillCtxRef.current]) {
-      if (!c) continue;
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, W, H);
+    // Every layer starts empty on a fresh mount (the base image lives on its own).
+    for (const l of layersRef.current) {
+      l.objects = [];
+      invalidateLayerPixels(l);
+      for (const c of [ctxFor(l.id, 'paint'), ctxFor(l.id, 'fill')]) {
+        if (!c) continue;
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        c.clearRect(0, 0, W, H);
+      }
     }
-    if (baseCtx) drawBase(baseCtx, layout, initialPartsArr, onBaseDone);
+    syncObjects(activeLayer().objects, null);
+    setTextAnchor(null);
+    // With a persisted layer sidecar the base texture is restored from it (see
+    // the initial-layers effect) — never paint the saved flattened BaseMap over
+    // it, which would double-composite the layers.
+    const hasInitialLayers = Boolean(initialLayers && Array.isArray(initialLayers.layers) && initialLayers.layers.length);
+    if (baseCtx && !hasInitialLayers) drawBase(baseCtx, layout, initialPartsArr, onBaseDone);
     scheduleOverlay();
     // Mount-only: the parent remounts (key) whenever the base changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Active layer / structural changes ──────────────────────
+  // Re-point the active-layer aliases (ctxRef/fillCtxRef/canvasRef) and mirror
+  // the active layer's object list into state whenever the active layer or the
+  // layer set changes (add / delete / reorder / visibility). Runs after every
+  // commit so freshly mounted layer canvases are already bound.
+  useLayoutEffect(() => {
+    const layer = layerById(activeIdRef.current);
+    if (!layer) return;
+    bindActiveLayerRefs();
+    objectsRef.current = layer.objects;
+    setObjectsState(layer.objects);
+    // A just-loaded sidecar's rasters/base are applied now that every layer's
+    // canvases are mounted and bound.
+    const pending = pendingLayersRef.current;
+    if (pending) {
+      pendingLayersRef.current = null;
+      applyLoadedLayers(pending);
+    }
+    // A structural undo/redo that recreated layer(s): their canvases are mounted
+    // now, so paint the snapshot's rasters into them.
+    const pendingRestore = pendingRestoreRef.current;
+    if (pendingRestore) {
+      pendingRestoreRef.current = null;
+      for (const ls of pendingRestore.layers) {
+        const l = layerById(ls.id);
+        if (l) writeLayerPixels(l, ls.paintImg, ls.fillImg);
+      }
+    }
+    scheduleOverlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, layersView]);
 
   // ── Fit zoom tracking ──────────────────────────────────────
   useEffect(() => {
@@ -1117,36 +1426,31 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     el.scrollTop = a.cy * a.k - a.vy;
   }, [zoom, fitScale]);
 
-  // The fill underlay changes far less often than the pen. Cache its pixels and
-  // invalidate the cache on every fill-layer mutation, so a snapshot reuses the
-  // SAME ImageData object while the fill is untouched — otherwise every
-  // snapshot would carry a second full-store raster (twice the undo memory).
-  const fillPixelsRef = useRef(null);
-  const invalidateFillPixels = () => { fillPixelsRef.current = null; };
-  const captureFillPixels = () => {
-    if (fillPixelsRef.current) return fillPixelsRef.current;
-    const fillCtx = fillCtxRef.current;
-    if (!fillCtx) return null;
-    try { fillPixelsRef.current = fillCtx.getImageData(0, 0, W, H); } catch (_) { fillPixelsRef.current = null; }
-    return fillPixelsRef.current;
-  };
+  // Per-layer raster snapshots are cached on the layer record (see
+  // `captureLayerPixels`). `invalidateFillPixels` is the name every raster
+  // mutation already calls; it now clears the ACTIVE layer's cached paint + fill
+  // so the next snapshot re-reads the changed pixels (and untouched layers keep
+  // sharing their ImageData across snapshots).
+  const invalidateFillPixels = () => invalidateLayerPixels(activeLayer());
 
-  // A snapshot captures BOTH raster layers (fill underlay + pen) *and* the
-  // live-object layer, so undo restores (or removes) objects added since the
-  // previous snapshot. The base image is stored by shared reference (it only
-  // changes on Clear/import) and so is the fill (cached above), so a snapshot
-  // never copies a static layer.
+  // A snapshot captures the WHOLE document: every layer's metadata (name,
+  // visibility, clip), object list and raster pixels (paint + fill), plus the
+  // panel tree (folders + order) and the active layer. So Ctrl+Z rebuilds
+  // content AND structure — new/deleted layers, folder moves, reordering,
+  // clipping and hiding all round-trip. The base image is stored by shared
+  // reference (it only changes on Clear/import) and unchanged layers share their
+  // cached ImageData, so a snapshot never copies a static layer.
   const snapshotState = () => {
-    const ctx = ctxRef.current;
-    const fillCtx = fillCtxRef.current;
-    if (!ctx && !fillCtx) return null;
-    let img = null;
-    try { if (ctx) img = ctx.getImageData(0, 0, W, H); } catch (_) {}
+    if (!ctxRef.current && !fillCtxRef.current) return null;
+    const layers = layersRef.current.map(l => ({
+      id: l.id, name: l.name, visible: l.visible, clipped: !!l.clipped,
+      objects: l.objects, ...captureLayerPixels(l),
+    }));
     return {
-      img,
-      fillImg: fillCtx ? captureFillPixels() : null,
       base: basePixelsRef.current,
-      objects: objectsRef.current,
+      activeId: activeIdRef.current,
+      layers,
+      panel: panelSnapshot(),
       selId: selIdRef.current,
     };
   };
@@ -1180,42 +1484,84 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
   };
 
-  // Put a snapshot's raster layers back (both, so undo restores a fill and a
-  // pen stroke together), plus the base when it changed.
-  const restoreRasters = (snap) => {
-    if (!snap) return;
-    try { if (ctxRef.current && snap.img) ctxRef.current.putImageData(snap.img, 0, 0); } catch (_) {}
-    try {
-      if (fillCtxRef.current && snap.fillImg) fillCtxRef.current.putImageData(snap.fillImg, 0, 0);
-      // The live fill now equals the snapshot's — cache it by reference.
-      fillPixelsRef.current = snap.fillImg || null;
-    } catch (_) { fillPixelsRef.current = null; }
+  // Write one layer's raster pixels into its canvases (when mounted) and keep
+  // its caches aligned with what is now live. A freshly recreated layer's
+  // canvases mount on the NEXT commit, so its pixels are applied by the layout
+  // effect via `pendingRestoreRef`.
+  const writeLayerPixels = (layer, paintImg, fillImg) => {
+    if (paintImg) {
+      const c = ctxFor(layer.id, 'paint');
+      try { if (c) c.putImageData(paintImg, 0, 0); } catch (_) {}
+    }
+    if (fillImg) {
+      const c = ctxFor(layer.id, 'fill');
+      try { if (c) c.putImageData(fillImg, 0, 0); } catch (_) {}
+    }
+    layer.paintImg = paintImg || null;
+    layer.fillImg = fillImg || null;
+  };
+
+  // Rebuild the layer set, panel tree and active layer from a snapshot. Layers
+  // that still exist are reused (canvases stay bound); missing ones are
+  // recreated (a deleted layer comes back with its rasters + objects) and extra
+  // ones discarded.
+  const applySnapshot = (snap) => {
+    if (!snap || !Array.isArray(snap.layers)) return;
+    const byId = new Map(layersRef.current.map(l => [l.id, l]));
+    const wanted = new Set(snap.layers.map(l => l.id));
+    for (const l of [...layersRef.current]) {
+      if (!wanted.has(l.id)) discardLayerRecord(l.id);
+    }
+    const recs = snap.layers.map(ls => {
+      let rec = byId.get(ls.id);
+      if (!rec || !layersRef.current.includes(rec)) {
+        rec = { id: ls.id, name: ls.name, visible: ls.visible !== false, clipped: !!ls.clipped, objects: [], paintImg: null, fillImg: null };
+      }
+      rec.name = ls.name;
+      rec.visible = ls.visible !== false;
+      rec.clipped = !!ls.clipped;
+      rec.objects = ls.objects || [];
+      return rec;
+    });
+    layersRef.current = recs;
+    panelRef.current = (Array.isArray(snap.panel) && snap.panel.length)
+      ? snap.panel.map(n => (n.type === 'folder'
+        ? { type: 'folder', id: n.id, name: n.name, visible: n.visible !== false, children: [...n.children] }
+        : { type: 'layer', id: n.id }))
+      : recs.map(r => ({ type: 'layer', id: r.id }));
+    syncLayerOrder();
+    restoreBase(snap.base);
+    // Existing layers restore immediately; recreated ones (canvases not mounted
+    // yet) are re-applied by the layout effect after the commit.
+    for (const ls of snap.layers) {
+      const l = layerById(ls.id);
+      if (l) writeLayerPixels(l, ls.paintImg, ls.fillImg);
+    }
+    pendingRestoreRef.current = snap;
+    const active = (snap.activeId && layerById(snap.activeId))
+      ? snap.activeId
+      : ((layersRef.current[layersRef.current.length - 1] || {}).id || null);
+    if (active) { activeIdRef.current = active; setActiveIdState(active); }
+    bindActiveLayerRefs();
+    const activeRec = activeLayer();
+    syncObjects(activeRec ? activeRec.objects : [], snap.selId == null ? null : snap.selId);
+    syncLayersView();
+    setDirty(true);
+    scheduleOverlay();
   };
 
   const doUndo = useCallback(() => {
     settleGesture();
     if (!ctxRef.current && !fillCtxRef.current) return;
     const prev = undoStep(undoRef.current, snapshotState());
-    if (prev) {
-      restoreRasters(prev);
-      restoreBase(prev.base);
-      syncObjects(prev.objects || [], prev.selId == null ? null : prev.selId);
-      setDirty(true);
-      scheduleOverlay();
-    }
+    if (prev) applySnapshot(prev);
   }, []);
 
   const doRedo = useCallback(() => {
     settleGesture();
     if (!ctxRef.current && !fillCtxRef.current) return;
     const next = redoStep(undoRef.current, snapshotState());
-    if (next) {
-      restoreRasters(next);
-      restoreBase(next.base);
-      syncObjects(next.objects || [], next.selId == null ? null : next.selId);
-      setDirty(true);
-      scheduleOverlay();
-    }
+    if (next) applySnapshot(next);
   }, []);
 
   // ── Selection mask (Select tool: pen / wand sub-modes) ────
@@ -1252,7 +1598,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     return scratchRef.current;
   };
   // Dedicated buffer for the wand's visible-colour sample, so it is independent
-  // of the shared scratch (which `paintObjectMasked` also uses internally).
+  // of the shared scratch (which `paintObjectThroughMasks` also uses internally).
   const getWandCanvas = () => {
     if (!wandCanvasRef.current) {
       const c = document.createElement('canvas');
@@ -1268,6 +1614,157 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       pickCanvasRef.current = c;
     }
     return pickCanvasRef.current;
+  };
+  // ── UV region lock helpers ─────────────────────────────────
+  const getUvMaskCanvas = () => {
+    if (!uvMaskCanvasRef.current) {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      uvMaskCanvasRef.current = c;
+    }
+    return uvMaskCanvasRef.current;
+  };
+  const getUvDimCanvas = () => {
+    if (!uvDimCanvasRef.current) {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      uvDimCanvasRef.current = c;
+    }
+    return uvDimCanvasRef.current;
+  };
+  const getUvCoverageCanvas = () => {
+    if (!uvCoverageCanvasRef.current) {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      uvCoverageCanvasRef.current = c;
+    }
+    return uvCoverageCanvasRef.current;
+  };
+  // ImageData for a Uint8 mask (white = editable), preferring the context's own
+  // createImageData so putImageData accepts it.
+  const uvMaskImage = (ctx, size, mask) => {
+    try {
+      const src = maskToImageData(mask, size);
+      const img = ctx && typeof ctx.createImageData === 'function' ? ctx.createImageData(size, size) : null;
+      if (img && img.data) { img.data.set(src.data); return img; }
+      return src;
+    } catch (_) { return null; }
+  };
+  // Cached full-coverage mask for a region (all panels, grown).
+  const uvCoverageMaskFor = (r) => {
+    if (!r || !r.idMap) return null;
+    const cache = uvCoverageCacheRef.current;
+    if (cache.has(r)) return cache.get(r);
+    let m = null;
+    try { m = regionMask(r, { island: -1, grow: UV_GROW_PX }); } catch (_) { m = null; }
+    cache.set(r, m);
+    return m;
+  };
+  // Rebuild the white editable mask + the dim tint for the ACTIVE panel. The
+  // lock allows edits only on mapped texels of the active BaseMap panel. Called
+  // whenever the lock, regions or active panel changes — never per stroke.
+  const rebuildUvConstraint = () => {
+    uvConstraintRef.current = false;
+    if (!uvLockRef.current) {
+      uvCoverageCanvasRef.current = null;
+      return;
+    }
+    const regions = Array.isArray(uvRegionsRef.current) ? uvRegionsRef.current : null;
+    if (!regions || !regions.length) {
+      uvCoverageCanvasRef.current = null;
+      return;
+    }
+    const panel = activeRef.current;
+
+    // 1. Coverage canvas (all panels, all islands): white where mapped, used to
+    //    keep live objects out of dead UV space. Unknown panels stay white
+    //    (fully editable) rather than vanishing.
+    const coverage = getUvCoverageCanvas();
+    const cctx = coverage ? coverage.getContext('2d') : null;
+    let anyRegion = false;
+    let activeCoverageMask = null;
+    if (cctx) {
+      cctx.save();
+      cctx.setTransform(1, 0, 0, 1, 0, 0);
+      cctx.globalCompositeOperation = 'source-over';
+      cctx.clearRect(0, 0, W, H);
+      for (let i = 0; i < panelCount; i++) {
+        const r = regions[i];
+        if (!r || !r.idMap) {
+          cctx.fillStyle = '#ffffff';
+          cctx.fillRect(layout.x(i), 0, TEXTURE, TEXTURE);
+          continue;
+        }
+        anyRegion = true;
+        const rm = uvCoverageMaskFor(r);
+        if (!rm) continue;
+        if (i === panel) activeCoverageMask = rm;
+        const rimg = uvMaskImage(cctx, r.size, rm);
+        if (rimg && typeof cctx.putImageData === 'function') {
+          try { cctx.putImageData(rimg, layout.x(i), 0); } catch (_) { /* stubbed ctx */ }
+        }
+      }
+      cctx.restore();
+      if (!anyRegion) uvCoverageCanvasRef.current = null; // nothing to clip against
+    }
+
+    // 2. Editable mask for the ACTIVE panel = its full coverage.
+    const region = regions[panel];
+    const activeMask = region && region.idMap ? activeCoverageMask : null;
+    if (activeMask) {
+      const m = getUvMaskCanvas();
+      const mctx = m.getContext('2d');
+      if (mctx) {
+        const img = uvMaskImage(mctx, region.size, activeMask);
+        mctx.save();
+        mctx.setTransform(1, 0, 0, 1, 0, 0);
+        mctx.clearRect(0, 0, W, H);
+        if (img && typeof mctx.putImageData === 'function') {
+          try { mctx.putImageData(img, layout.x(panel), 0); } catch (_) { /* stubbed ctx */ }
+        }
+        mctx.restore();
+        uvConstraintRef.current = true;
+      }
+    }
+
+    // 3. Dim tint every panel, punch the editable region clear, then stroke every
+    //    island border so the paintable panels read at a glance (step 1).
+    const dim = getUvDimCanvas();
+    const dctx = dim.getContext('2d');
+    if (dctx) {
+      dctx.save();
+      dctx.setTransform(1, 0, 0, 1, 0, 0);
+      dctx.globalCompositeOperation = 'source-over';
+      dctx.clearRect(0, 0, W, H);
+      dctx.fillStyle = UV_DIM_COLOR;
+      for (let i = 0; i < panelCount; i++) dctx.fillRect(layout.x(i), 0, TEXTURE, TEXTURE);
+      if (uvConstraintRef.current) {
+        dctx.globalCompositeOperation = 'destination-out';
+        try { dctx.drawImage(uvMaskCanvasRef.current, 0, 0); } catch (_) {}
+        dctx.globalCompositeOperation = 'source-over';
+      }
+      dctx.restore();
+    }
+  };
+
+  // Rebuild the 3D→flat glow outline: trace the boundary of the atlas region a
+  // 3D click landed on (the connected coverage component under the hit UV). Only
+  // the boundary is drawn — the art underneath is never covered — and it is a
+  // pure highlight, never an edit constraint.
+  const rebuildUvGlow = () => {
+    uvGlowOutlineRef.current = [];
+    const glow = uvGlowRef.current;
+    if (!glow) return;
+    const regions = Array.isArray(uvRegionsRef.current) ? uvRegionsRef.current : null;
+    const region = regions && regions[glow.panel];
+    if (!region || !region.idMap) return;
+    let mask = null;
+    try { mask = regionMask(region, { island: glow.id, grow: UV_GROW_PX }); } catch (_) { mask = null; }
+    if (!mask) return;
+    try {
+      const src = uvMaskImage(null, region.size, mask);
+      uvGlowOutlineRef.current = chainBorderSegments(traceMaskBorder(src));
+    } catch (_) { uvGlowOutlineRef.current = []; }
   };
   // Drop the whole selection (Deselect button, Clear, erase-to-empty).
   const clearMask = () => {
@@ -1372,12 +1869,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     sceneCtx.globalCompositeOperation = 'source-over';
     sceneCtx.globalAlpha = 1;
     sceneCtx.clearRect(0, 0, W, H);
-    if (baseCanvasRef.current) sceneCtx.drawImage(baseCanvasRef.current, 0, 0);
-    if (fillCanvasRef.current) sceneCtx.drawImage(fillCanvasRef.current, 0, 0);
-    for (const o of objectsRef.current) {
-      if (hasLiveVisual(o)) paintObjectInPanel(sceneCtx, o);
-    }
-    if (canvasRef.current) sceneCtx.drawImage(canvasRef.current, 0, 0);
+    paintVisibleComposite(sceneCtx);
     // Multi-panel: the flood is confined to the ACTIVE panel, so it can never
     // leak across the gutter into the neighbouring panel. `activeRef` carries
     // the panel just clicked, so a click into another panel works on the first
@@ -1427,38 +1919,56 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
   // Revert every raster pixel outside the mask to the pre-gesture `before`
   // pixels on ONE layer. A raster selection clips brush, eraser and fill
-  // uniformly, each layer against its own pre-gesture image.
+  // uniformly, each layer against its own pre-gesture image. When the UV lock is
+  // on, the active panel's editable mask is applied the same way, so paint can
+  // never land on dead UV space or a different island.
   const constrainLayerToMask = (layerCtx, before) => {
-    if (!hasMaskRef.current || !before || !layerCtx) return;
-    const mask = maskCanvasRef.current;
-    if (!mask) return;
-    const mctx = mask.getContext('2d');
-    if (!mctx) return;
+    if (!before || !layerCtx) return;
+    const uvOn = uvLockRef.current && uvConstraintRef.current && uvMaskCanvasRef.current;
+    if (!hasMaskRef.current && !uvOn) return;
     const cur = layerCtx.getImageData(0, 0, W, H);
-    const m = mctx.getImageData(0, 0, W, H);
-    if (constrainImageToMask(cur, before, m)) {
+    let changed = false;
+    if (hasMaskRef.current && maskCanvasRef.current) {
+      const mctx = maskCanvasRef.current.getContext('2d');
+      if (mctx) {
+        const m = mctx.getImageData(0, 0, W, H);
+        if (constrainImageToMask(cur, before, m)) changed = true;
+      }
+    }
+    if (uvOn) {
+      const uctx = uvMaskCanvasRef.current.getContext('2d');
+      if (uctx) {
+        const m = uctx.getImageData(0, 0, W, H);
+        if (constrainImageToMask(cur, before, m)) changed = true;
+      }
+    }
+    if (changed) {
       layerCtx.putImageData(cur, 0, 0);
-      if (layerCtx === fillCtxRef.current) invalidateFillPixels();
+      // The active layer's cached pixels are now stale (paint AND fill caches
+      // are cleared; only one layer is constrained per call).
+      invalidateLayerPixels(activeLayer());
     }
   };
-  // Clip BOTH raster layers to the live selection, using the pre-gesture images
-  // from the snapshot pushed at gesture start (`pushSnapshot` runs before every
-  // raster mutation). Called once at the end of a brush stroke, an eraser
-  // gesture, a Shift-click segment or a fill.
+  // Clip BOTH raster layers of the ACTIVE layer to the live selection and/or the
+  // UV region, using the pre-gesture images from the snapshot pushed at gesture
+  // start (`pushSnapshot` runs before every raster mutation). Called once at the
+  // end of a brush stroke, an eraser gesture, a Shift-click segment or a fill.
   const constrainRastersToMask = () => {
-    if (!hasMaskRef.current) return;
+    const uvOn = uvLockRef.current && uvConstraintRef.current;
+    if (!hasMaskRef.current && !uvOn) return;
     const past = undoRef.current.past;
     const snap = past.length ? past[past.length - 1] : null;
-    if (!snap) return;
-    constrainLayerToMask(ctxRef.current, snap.img);
-    constrainLayerToMask(fillCtxRef.current, snap.fillImg);
+    const ls = snap && Array.isArray(snap.layers) ? snap.layers.find(x => x.id === activeIdRef.current) : null;
+    if (!ls) return;
+    constrainLayerToMask(ctxRef.current, ls.paintImg);
+    constrainLayerToMask(fillCtxRef.current, ls.fillImg);
   };
-  // Paint one live object through `mask` onto `target` (objects layer + export).
-  // Used only for movables that carry a stamped `clipMask`; an object placed
-  // before any selection has none and is never clipped.
-  const paintObjectMasked = (target, o, mask) => {
-    const m = mask || maskCanvasRef.current;
-    if (!m) { paintObjectWithErase(target, o); return; }
+  // Paint one live object through one or more masks onto `target` (objects
+  // layer + export). Masks are applied as successive `destination-in` passes, so
+  // two masks intersect. Used by stamped selection clips and the UV lock.
+  const paintObjectThroughMasks = (target, o, masks) => {
+    const list = (masks || []).filter(Boolean);
+    if (!list.length) { paintObjectWithErase(target, o); return; }
     const sc = getScratch();
     const sctx = sc.getContext('2d');
     if (!sctx) { paintObjectWithErase(target, o); return; }
@@ -1469,16 +1979,20 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     sctx.clearRect(0, 0, W, H);
     paintObjectWithErase(sctx, o);
     sctx.globalCompositeOperation = 'destination-in';
-    sctx.drawImage(m, 0, 0);
+    for (const m of list) { try { sctx.drawImage(m, 0, 0); } catch (_) {} }
     sctx.restore();
     target.drawImage(sc, 0, 0);
   };
   // Display/export path for a movable: clip it to its own stamped selection
-  // shape (`clipMask`, captured at creation) so it stays partial forever;
-  // movables without one show whole.
+  // shape (`clipMask`, captured at creation) so it stays partial forever; and,
+  // while the UV lock is on, to the mapped texels (all panels) so a sticker /
+  // shape / text can never occupy dead UV space.
   const paintObjectForDisplay = (target, o) => {
-    if (o && o.clipMask) paintObjectMasked(target, o, o.clipMask);
-    else paintObjectWithErase(target, o);
+    const masks = [];
+    if (o && o.clipMask) masks.push(o.clipMask);
+    if (uvLockRef.current && uvCoverageCanvasRef.current) masks.push(uvCoverageCanvasRef.current);
+    if (!masks.length) { paintObjectWithErase(target, o); return; }
+    paintObjectThroughMasks(target, o, masks);
   };
   // Paint a movable clipped to the panel it BELONGS to (`objectPanel`, persisted
   // from the drag). Used everywhere the visible object layer is reproduced —
@@ -1493,6 +2007,95 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     target.clip();
     paintObjectForDisplay(target, o);
     target.restore();
+  };
+  // ── Layer clipping (Photoshop-style clipping mask) ─────────
+  // A clipped layer's content is intersected with the ALPHA of its clip base:
+  // the nearest non-clipped layer below it in the flat z-order, or the locked
+  // base image when there is none. The layer's own rasters/objects are never
+  // modified, so unclipping restores every edit.
+  //
+  // Persistent W×H canvases holding a clip base's content, keyed by base id
+  // (layer id or `CLIP_BASE_ROOT`). Reused across frames so painting the base
+  // refreshes its mask every overlay frame with no allocation.
+  const clipMaskElsRef = useRef(new Map());
+  // W×H scratch that assembles a clipped layer's content before masking —
+  // shared by the screen, export and sampling paths.
+  const clipScratchRef = useRef(null);
+  const getClipScratch = () => {
+    if (!clipScratchRef.current) {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      clipScratchRef.current = c;
+    }
+    return clipScratchRef.current;
+  };
+  // A layer's own content (fill underlay → movables → pen) into `target`.
+  const drawLayerContent = (target, layer) => {
+    const fc = layerEl(layer.id, 'fill');
+    if (fc) target.drawImage(fc, 0, 0);
+    for (const o of layer.objects) {
+      if (hasLiveVisual(o)) paintObjectInPanel(target, o);
+    }
+    const pc = layerEl(layer.id, 'paint');
+    if (pc) target.drawImage(pc, 0, 0);
+  };
+  // The mask source for a clip base (its rendered alpha). Content is used even
+  // when the base layer is hidden so a clipped layer keeps its shape.
+  const buildClipMask = (baseId) => {
+    const store = clipMaskElsRef.current;
+    let c = store.get(baseId);
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      store.set(baseId, c);
+    }
+    const cc = c.getContext('2d');
+    if (!cc) return c;
+    cc.setTransform(1, 0, 0, 1, 0, 0);
+    cc.globalCompositeOperation = 'source-over';
+    cc.globalAlpha = 1;
+    cc.clearRect(0, 0, W, H);
+    if (baseId === CLIP_BASE_ROOT) {
+      if (baseCanvasRef.current) cc.drawImage(baseCanvasRef.current, 0, 0);
+    } else {
+      const b = layerById(baseId);
+      if (b) drawLayerContent(cc, b);
+    }
+    return c;
+  };
+  // Composite a clipped layer into the W×H scratch `target`: its content,
+  // then `destination-in` against the base mask. Callers blit `target` (or, for
+  // the display canvas, use it directly).
+  const paintClippedLayer = (target, layer, maskCanvas) => {
+    target.save();
+    target.setTransform(1, 0, 0, 1, 0, 0);
+    target.globalCompositeOperation = 'source-over';
+    target.globalAlpha = 1;
+    target.clearRect(0, 0, W, H);
+    drawLayerContent(target, layer);
+    target.globalCompositeOperation = 'destination-in';
+    try { target.drawImage(maskCanvas, 0, 0); } catch (_) { /* stub */ }
+    target.globalCompositeOperation = 'source-over';
+    target.restore();
+  };
+  // Reproduce exactly what the eye sees: the locked base, then every VISIBLE
+  // layer bottom → top (its fill, its movables, its pen). Clipped layers are
+  // masked by their clip base. Used by the wand / fill / eyedropper so
+  // sampling, the screen and the export all agree.
+  const paintVisibleComposite = (target) => {
+    if (baseCanvasRef.current) target.drawImage(baseCanvasRef.current, 0, 0);
+    const scratchCanvas = layersRef.current.some(l => l.clipped) ? getClipScratch() : null;
+    const scratchCtx = scratchCanvas ? scratchCanvas.getContext('2d') : null;
+    const maskCache = new Map();
+    for (const layer of layersRef.current) {
+      if (!layerEffectiveVisible(layer.id)) continue;
+      const baseId = clipBaseFor(layer.id);
+      if (!baseId || !scratchCtx) { drawLayerContent(target, layer); continue; }
+      let mask = maskCache.get(baseId);
+      if (!mask) { mask = buildClipMask(baseId); maskCache.set(baseId, mask); }
+      paintClippedLayer(scratchCtx, layer, mask);
+      target.drawImage(scratchCanvas, 0, 0);
+    }
   };
   // Paint one live object with its eraser holes punched. The object is rendered
   // into a per-object scratch (content + holes, sized to the object frame — not
@@ -1984,30 +2587,56 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const z = effZoomRef.current || 1;
     const activeNow = activeRef.current;
     const selIdNow = selIdRef.current;
-    // Drop eraser caches for objects that no longer exist.
+    // Drop eraser caches for objects that no longer exist on any layer.
     const eraseCache = eraseCacheRef.current;
     if (eraseCache.size) {
       const live = new Set();
-      for (const st of objectsRef.current) live.add(st.id);
+      for (const l of layersRef.current) for (const st of l.objects) live.add(st.id);
       for (const id of [...eraseCache.keys()]) if (!live.has(id)) eraseCache.delete(id);
     }
-    // ── Layer 2: movables on their own canvas, BELOW the paint layer. Each
-    // renders in the panel its centre falls in (so an unselected movable on
-    // another panel is still visible; overflow past its panel is clipped). A
-    // movable placed BEFORE any selection previews in full; one ADDED while a
-    // selection exists is clipped to that selection's stamped `clipMask`.
-    const objCanvas = objectCanvasRef.current;
-    if (objCanvas) {
+    // ── Each layer's movables on that layer's own canvas, BELOW its paint
+    // raster. Hidden layers are skipped (their canvases are display:none too).
+    // Each movable renders in the panel its centre falls in (overflow past its
+    // panel is clipped); a movable placed BEFORE any selection previews in full,
+    // one ADDED while a selection exists is clipped to its stamped `clipMask`.
+    for (const layer of layersRef.current) {
+      const objCanvas = layerEl(layer.id, 'objects');
+      if (!objCanvas) continue;
       const octx = objCanvas.getContext('2d');
-      if (octx) {
-        octx.save();
-        octx.setTransform(1, 0, 0, 1, 0, 0);
-        octx.clearRect(0, 0, W, H);
-        for (const st of objectsRef.current) {
+      if (!octx) continue;
+      octx.save();
+      octx.setTransform(1, 0, 0, 1, 0, 0);
+      octx.clearRect(0, 0, W, H);
+      if (layerEffectiveVisible(layer.id)) {
+        for (const st of layer.objects) {
           if (!hasLiveVisual(st)) continue;
           paintObjectInPanel(octx, st);
         }
-        octx.restore();
+      }
+      octx.restore();
+    }
+    // ── Clipped layers: assemble a masked display canvas. Their raw fill /
+    // objects / paint canvases are hidden while clipped, so this is what the
+    // screen shows — identical to the export / sampling composite. Rebuilt every
+    // frame so painting (or hiding) the base updates the mask live.
+    if (layersRef.current.some(l => l.clipped)) {
+      const maskCache = new Map();
+      for (const layer of layersRef.current) {
+        const clipCanvas = layerEl(layer.id, 'clip');
+        if (!clipCanvas) continue;
+        const cctx = clipCanvas.getContext('2d');
+        if (!cctx) continue;
+        const baseId = layerEffectiveVisible(layer.id) ? clipBaseFor(layer.id) : null;
+        if (!baseId) {
+          cctx.save();
+          cctx.setTransform(1, 0, 0, 1, 0, 0);
+          cctx.clearRect(0, 0, W, H);
+          cctx.restore();
+          continue;
+        }
+        let mask = maskCache.get(baseId);
+        if (!mask) { mask = buildClipMask(baseId); maskCache.set(baseId, mask); }
+        paintClippedLayer(cctx, layer, mask);
       }
     }
     // ── Layer 4: chrome (selection box/handles, previews, selection outline)
@@ -2025,6 +2654,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ctx.setTransform(1, 0, 0, 1, OVERLAY_PAD, OVERLAY_PAD);
     const gap = 40 / z;
     const hr = 7 / z;
+    // UV region lock: dim every texel the active panel's mesh cannot reach (and
+    // every inactive panel) so the editable island reads at a glance. Drawn
+    // under the movable chrome so handles stay visible. Overlay only.
+    if (uvLockRef.current && uvDimCanvasRef.current) {
+      try { ctx.drawImage(uvDimCanvasRef.current, 0, 0); } catch (_) {}
+    }
     // The movable chrome (blue box + rotate/scale handles + vertices) belongs
     // to the single-select (object) sub-mode only — pen/wand show just their
     // selection outline, drawn after every movable so it stays on top.
@@ -2181,6 +2816,38 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         }
       }
     }
+    // 3D→flat glow: a glowing BOUNDARY around the clicked atlas region (no fill,
+    // so the panel art underneath stays visible). Additive strokes build a soft
+    // halo, then a crisp bright edge on top.
+    const uvLoops = uvGlowOutlineRef.current;
+    let uvPts = 0;
+    for (let i = 0; uvLoops && i < uvLoops.length; i++) uvPts += (uvLoops[i] && uvLoops[i].length) || 0;
+    if (uvLoops && uvLoops.length && uvPts <= 20000) {
+      const traceLoops = () => {
+        for (let i = 0; i < uvLoops.length; i++) {
+          const loop = uvLoops[i];
+          if (!loop || loop.length < 2) continue;
+          ctx.moveTo(loop[0][0], loop[0][1]);
+          for (let j = 1; j < loop.length; j++) ctx.lineTo(loop[j][0], loop[j][1]);
+        }
+      };
+      ctx.save();
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.setLineDash([]);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = 'rgba(255,196,64,0.10)';
+      ctx.lineWidth = Math.max(6, 14 / z);
+      ctx.beginPath(); traceLoops(); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,206,84,0.22)';
+      ctx.lineWidth = Math.max(3, 7 / z);
+      ctx.beginPath(); traceLoops(); ctx.stroke();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = 'rgba(255,228,140,0.95)';
+      ctx.lineWidth = Math.max(1.5, 2.5 / z);
+      ctx.beginPath(); traceLoops(); ctx.stroke();
+      ctx.restore();
+    }
     const lz = lassoRef.current;
     if (lz && lz.pts.length > 1) {
       const pts = lz.pts;
@@ -2198,6 +2865,22 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   }
 
   useEffect(() => { scheduleOverlay(); }, [objects, selId, textAnchor, scheduleOverlay]);
+
+  // Rebuild the UV editable mask + dim tint whenever the lock, the coverage or
+  // the active panel changes. Never per stroke.
+  useEffect(() => {
+    rebuildUvConstraint();
+    scheduleOverlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uvLock, uvRegions, active]);
+
+  // Rebuild the 3D→flat glow whenever the clicked region or the coverage
+  // changes (works whether or not the lock is on).
+  useEffect(() => {
+    rebuildUvGlow();
+    scheduleOverlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uvGlow, uvRegions]);
 
   // ── Sticker import (adds a live, moveable object) ──────────
   const importSticker = async () => {
@@ -2292,27 +2975,30 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     scheduleOverlay();
   };
 
-  // ── Export: base image → fill → movables → pen, flattened ─
-  // The layer order must match the on-screen stack (fill under the movables,
-  // pen above them).
+  // ── Export: base image → each visible layer (fill → movables → pen) ─
+  // The composite order must match the on-screen DOM stack.
   const flattenToCanvas = () => {
     const out = document.createElement('canvas');
     out.width = W; out.height = H;
     const ctx = out.getContext('2d');
     ctx.drawImage(baseCanvasRef.current, 0, 0);
-    // The fill underlay goes below every movable.
-    if (fillCanvasRef.current) ctx.drawImage(fillCanvasRef.current, 0, 0);
-    // Live objects are flattened at their actual coordinates, each clipped to
-    // the panel it BELONGS to (`objectPanel` — the panel it was dropped into,
-    // not the currently-active panel — so export never depends on which panel is
-    // active and a movable on another panel is still saved). Overflow into a
-    // neighbouring panel is clipped. Only movables with a stamped `clipMask` are
-    // clipped to that shape; every other movable flattens in full within its panel.
-    for (const o of objectsRef.current) {
-      paintObjectInPanel(ctx, o);
+    // Every VISIBLE layer composites bottom → top in the same order as its DOM
+    // canvases: fill underlay → movables → pen. Hidden layers are skipped
+    // entirely (they are not part of the exported texture). A clipped layer is
+    // intersected with its clip base's alpha, exactly like the screen.
+    const needsClip = layersRef.current.some(l => l.clipped && layerEffectiveVisible(l.id));
+    const scratchCanvas = needsClip ? getClipScratch() : null;
+    const scratchCtx = scratchCanvas ? scratchCanvas.getContext('2d') : null;
+    const maskCache = new Map();
+    for (const layer of layersRef.current) {
+      if (!layerEffectiveVisible(layer.id)) continue;
+      const baseId = clipBaseFor(layer.id);
+      if (!baseId || !scratchCtx) { drawLayerContent(ctx, layer); continue; }
+      let mask = maskCache.get(baseId);
+      if (!mask) { mask = buildClipMask(baseId); maskCache.set(baseId, mask); }
+      paintClippedLayer(scratchCtx, layer, mask);
+      ctx.drawImage(scratchCanvas, 0, 0);
     }
-    // Pen layer last, so brush/eraser strokes sit above the movables.
-    if (canvasRef.current) ctx.drawImage(canvasRef.current, 0, 0);
     return out;
   };
   // Persistent per-panel canvases for the live 3D preview (full resolution, no
@@ -2399,6 +3085,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     removeSticker,
     duplicateSticker,
     reorderObject,
+    exportLayers,
+    loadLayers,
     getObjectCount: () => objectsRef.current.length,
     getObjectIds: () => objectsRef.current.map(o => o.id),
     getSelectedId: () => selIdRef.current,
@@ -2540,8 +3228,19 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   }, [inputDisabled]);
 
   // ── Coord mapping ──────────────────────────────────────────
+  // Map pointer coords from the ALWAYS-VISIBLE base canvas. Every layer canvas
+  // shares the base's exact stage geometry, but the active layer's paint canvas
+  // can be `display:none` — a clipped layer shows a masked display canvas
+  // instead — and `getBoundingClientRect()` returns all zeros for a hidden
+  // element, which would turn the brush coordinates into garbage.
+  const stageRect = () => {
+    const el = baseCanvasRef.current || canvasRef.current || overlayRef.current;
+    return (el && typeof el.getBoundingClientRect === 'function')
+      ? el.getBoundingClientRect()
+      : { left: 0, top: 0, width: W, height: H };
+  };
   const toTexture = (clientX, clientY) => {
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = stageRect();
     return {
       x: (clientX - rect.left) * (W / rect.width),
       y: (clientY - rect.top) * (H / rect.height),
@@ -2551,7 +3250,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const n = e.nativeEvent;
     // One layout read per event: a real mouse delivers many coalesced points
     // per move, and calling getBoundingClientRect per point stalled drags.
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = stageRect();
     const sx = W / rect.width, sy = H / rect.height;
     const map = (cx, cy) => ({ x: (cx - rect.left) * sx, y: (cy - rect.top) * sy });
     // jsdom returns [] here; fall back to the raw event in that case.
@@ -2653,6 +3352,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     ctx.globalAlpha = brushRef.current.opacity == null ? 1 : brushRef.current.opacity;
     ctx.drawImage(layer, x, y, w, h, x, y, w, h);
     ctx.restore();
+    // The paint layer changed: drop its cached snapshot pixels.
+    invalidateLayerPixels(activeLayer());
   };
   const endStroke = () => {
     strokeLayerRef.current = null;
@@ -2726,12 +3427,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       sctx.globalAlpha = 1;
       sctx.clearRect(0, 0, 1, 1);
       sctx.translate(-x, -y);
-      if (baseCanvasRef.current) sctx.drawImage(baseCanvasRef.current, 0, 0);
-      if (fillCanvasRef.current) sctx.drawImage(fillCanvasRef.current, 0, 0);
-      for (const o of objectsRef.current) {
-        if (hasLiveVisual(o)) paintObjectInPanel(sctx, o);
-      }
-      if (canvasRef.current) sctx.drawImage(canvasRef.current, 0, 0);
+      paintVisibleComposite(sctx);
       sctx.restore();
       const d = sctx.getImageData(0, 0, 1, 1).data;
       if (d[3] > 0) picked = rgbaToHex(d[0], d[1], d[2]);
@@ -2764,6 +3460,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         // paints where it is clicked.
         activeRef.current = idx;
         onActivePanel(idx);
+        // Rebuild the UV mask for the new panel synchronously too, so a fill (or
+        // a single-dab stroke) started by this same press is clipped correctly.
+        rebuildUvConstraint();
       }
     }
     // Right-button press arms the movable's layer-order target only in the
@@ -2960,12 +3659,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       sceneCtx.globalCompositeOperation = 'source-over';
       sceneCtx.globalAlpha = 1;
       sceneCtx.clearRect(0, 0, W, H);
-      if (baseCanvasRef.current) sceneCtx.drawImage(baseCanvasRef.current, 0, 0);
-      if (fillCanvasRef.current) sceneCtx.drawImage(fillCanvasRef.current, 0, 0);
-      for (const o of objectsRef.current) {
-        if (hasLiveVisual(o)) paintObjectForDisplay(sceneCtx, o);
-      }
-      if (canvasRef.current) sceneCtx.drawImage(canvasRef.current, 0, 0);
+      paintVisibleComposite(sceneCtx);
       // Confine the flood to the panel just clicked (a press into another panel
       // switches panels AND fills there in one go — see `activeRef`).
       const panelRegion = panelCount > 1
@@ -3468,13 +4162,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             const clearParts = defaultPartsRef.current.some(p => p && p.imageDataUrl)
               ? defaultPartsRef.current
               : initialPartsRef.current;
-            // Reset the base layer, wipe both raster layers, drop the movables.
-            for (const layerCtx of [ctxRef.current, fillCtxRef.current]) {
-              if (!layerCtx) continue;
-              layerCtx.setTransform(1, 0, 0, 1, 0, 0);
-              layerCtx.clearRect(0, 0, W, H);
+            // Reset the base layer, wipe every layer's rasters + movables.
+            for (const l of layersRef.current) {
+              invalidateLayerPixels(l);
+              l.objects = [];
+              for (const layerCtx of [ctxFor(l.id, 'paint'), ctxFor(l.id, 'fill')]) {
+                if (!layerCtx) continue;
+                layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+                layerCtx.clearRect(0, 0, W, H);
+              }
             }
-            invalidateFillPixels();
             const baseCtx = baseCtxRef.current;
             if (baseCtx) {
               drawBase(baseCtx, layout, clearParts, () => {
@@ -3482,7 +4179,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                 scheduleOverlay();
               });
             }
-            syncObjects([], null);
+            syncObjects(activeLayer().objects, null);
             setTextAnchor(null);
             // A cleared canvas carries no selection either.
             lassoRef.current = null;
@@ -3566,6 +4263,637 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     setDirty(true);
     scheduleOverlay();
   };
+
+  // ── Layer management ───────────────────────────────────────
+  // Stable callback refs per (layer, kind) so React never detaches/reattaches
+  // the canvas element on unrelated re-renders.
+  const layerBinder = (id, kind) => {
+    const key = `${id}:${kind}`;
+    let fn = binderCacheRef.current.get(key);
+    if (!fn) {
+      fn = (el) => bindLayerEl(id, kind)(el);
+      binderCacheRef.current.set(key, fn);
+    }
+    return fn;
+  };
+  const nextLayerName = () => {
+    const used = new Set(layersRef.current.map(l => l.name));
+    let i = layersRef.current.length + 1;
+    while (used.has(`Layer ${i}`)) i++;
+    return `Layer ${i}`;
+  };
+
+  // Make `id` the editable layer. In-progress gestures settle first; the
+  // select mask belongs to the layer it was drawn on, so it is dropped.
+  const switchActiveLayer = (id) => {
+    if (!layerById(id)) return;
+    if (activeIdRef.current === id) return;
+    settleGesture();
+    setActiveId(id);
+    // The layout effect rebinds the aliases + object state after the commit;
+    // do it eagerly too so an immediately-following paint targets the new layer.
+    bindActiveLayerRefs();
+    syncObjects(activeLayer().objects, null);
+    clearMask();
+    setDirty(true);
+    scheduleOverlay();
+  };
+
+  // Discard a layer's record + canvases (used by layer/folder delete).
+  const discardLayerRecord = (id) => {
+    const i = layersRef.current.findIndex(l => l.id === id);
+    if (i >= 0) layersRef.current.splice(i, 1);
+    layerElsRef.current.delete(id);
+    layerCtxsRef.current.delete(id);
+    thumbElsRef.current.delete(id);
+    clipMaskElsRef.current.delete(id);
+    binderCacheRef.current.delete(`${id}:fill`);
+    binderCacheRef.current.delete(`${id}:objects`);
+    binderCacheRef.current.delete(`${id}:paint`);
+    binderCacheRef.current.delete(`${id}:clip`);
+  };
+  const ensureActiveLayer = () => {
+    if (layerById(activeIdRef.current)) return;
+    const first = layersRef.current[0];
+    if (!first) return;
+    setActiveId(first.id);
+    bindActiveLayerRefs();
+    syncObjects(first.objects, null);
+  };
+
+  const addLayer = () => {
+    settleGesture();
+    pushSnapshot();
+    const layer = makeLayer(nextLayerName());
+    layersRef.current.push(layer); // order is rebuilt from the panel tree
+    // A new layer sits directly ABOVE the active layer (inside its folder when
+    // the active layer is nested).
+    const slot = findLayerSlot(activeIdRef.current);
+    if (slot && slot.folder) slot.folder.children.splice(slot.index, 0, layer.id);
+    else if (slot) panelRef.current.splice(slot.index, 0, { type: 'layer', id: layer.id });
+    else panelRef.current.unshift({ type: 'layer', id: layer.id });
+    syncLayerOrder();
+    syncLayersView();
+    setActiveId(layer.id);
+    syncObjects(layer.objects, null);
+    setDirty(true);
+    scheduleOverlay();
+  };
+
+  // Remove a layer and everything on it. The last remaining layer cannot be
+  // deleted (delete is disabled); wiping uses Clear instead.
+  const deleteLayer = (id) => {
+    if (layersRef.current.length <= 1) return;
+    settleGesture();
+    pushSnapshot();
+    detachLayerNode(id);
+    discardLayerRecord(id);
+    syncLayerOrder();
+    ensureActiveLayer();
+    syncLayersView();
+    setDirty(true);
+    scheduleOverlay();
+  };
+
+  const startRenameLayer = (layer) => {
+    setEditingLayerId(layer.id);
+    setLayerNameDraft(layer.name);
+  };
+  const commitRenameLayer = () => {
+    const id = editingLayerId;
+    setEditingLayerId(null);
+    if (!id) return;
+    const layer = layerById(id);
+    const name = String(layerNameDraft || '').trim().slice(0, 48);
+    if (!layer || !name || name === layer.name) return;
+    pushSnapshot();
+    layer.name = name;
+    syncLayersView();
+    setDirty(true);
+  };
+
+  // ── Folders (first-class panel nodes) ──────────────────────
+  const nextFolderName = () => {
+    const used = new Set(panelRef.current.filter(n => n.type === 'folder').map(n => n.name));
+    let i = used.size + 1;
+    while (used.has(`Folder ${i}`)) i++;
+    return `Folder ${i}`;
+  };
+  const addFolder = () => {
+    settleGesture();
+    pushSnapshot();
+    const id = `fd${folderIdSeqRef.current++}`;
+    const name = nextFolderName();
+    panelRef.current.unshift({ type: 'folder', id, name, visible: true, children: [] });
+    syncLayersView();
+    setDirty(true);
+    setEditingFolderId(id);
+    setFolderNameDraft(name);
+  };
+  // Delete a folder AND every layer inside it (same as deleting each layer). A
+  // non-empty folder confirms first.
+  const deleteFolder = (id) => {
+    const node = folderNodeById(id);
+    if (!node) return;
+    const members = [...node.children];
+    const doDelete = () => {
+      settleGesture();
+      pushSnapshot();
+      panelRef.current = panelRef.current.filter(n => !(n.type === 'folder' && n.id === id));
+      for (const cid of members) discardLayerRecord(cid);
+      // The canvas always needs at least one layer.
+      if (layersRef.current.length === 0) {
+        const fresh = makeLayer('Layer 1');
+        layersRef.current.push(fresh);
+        panelRef.current.push({ type: 'layer', id: fresh.id });
+      }
+      syncLayerOrder();
+      ensureActiveLayer();
+      syncLayersView();
+      setDirty(true);
+      scheduleOverlay();
+    };
+    if (members.length === 0) { doDelete(); return; }
+    const { showModal, hideModal } = useAppStore.getState();
+    showModal(
+      () => t('livery_layers_delete_folder_confirm_title'),
+      () => <p>{t('livery_layers_delete_folder_confirm_body', { count: members.length })}</p>,
+      () => (
+        <>
+          <button className="btn-cancel" onClick={hideModal}>{t('modal_btn_cancel')}</button>
+          <button className="btn-danger" onClick={() => { hideModal(); doDelete(); }}>{t('livery_layers_delete_folder')}</button>
+        </>
+      ),
+    );
+  };
+  const startRenameFolder = (node) => {
+    setEditingFolderId(node.id);
+    setFolderNameDraft(node.name);
+  };
+  const commitRenameFolder = () => {
+    const id = editingFolderId;
+    setEditingFolderId(null);
+    if (!id) return;
+    const node = folderNodeById(id);
+    const name = String(folderNameDraft || '').trim().slice(0, 48);
+    if (!node || !name || name === node.name) return;
+    pushSnapshot();
+    node.name = name;
+    syncLayersView();
+    setDirty(true);
+  };
+  const toggleFolderCollapsed = (id) => {
+    setCollapsedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  // Hide/show a whole folder: every layer inside follows the folder's flag (a
+  // layer's own flag is preserved for when the folder is shown again). If the
+  // active layer becomes hidden, editing moves to the next visible layer.
+  const toggleFolderVisible = (id) => {
+    const node = folderNodeById(id);
+    if (!node) return;
+    pushSnapshot();
+    node.visible = node.visible === false;
+    if (!node.visible && !layerEffectiveVisible(activeIdRef.current)) {
+      const next = layersRef.current.find(l => layerEffectiveVisible(l.id));
+      if (next) {
+        setActiveId(next.id);
+        bindActiveLayerRefs();
+        syncObjects(next.objects, null);
+      }
+    }
+    syncLayersView();
+    setDirty(true);
+    scheduleOverlay();
+  };
+
+  // Hiding the active layer moves the target to the next visible one so the pen
+  // always has a visible surface; the last visible layer cannot be hidden.
+  const toggleLayerVisible = (id) => {
+    const layer = layerById(id);
+    if (!layer) return;
+    if (layer.visible && layersRef.current.filter(l => l.visible).length <= 1) return;
+    pushSnapshot();
+    layer.visible = !layer.visible;
+    if (!layer.visible && activeIdRef.current === id) {
+      const next = layersRef.current.find(l => l.visible && l.id !== id);
+      if (next) {
+        setActiveId(next.id);
+        bindActiveLayerRefs();
+        syncObjects(next.objects, null);
+      }
+    }
+    syncLayersView();
+    setDirty(true);
+    scheduleOverlay();
+  };
+
+  // Clip/unclip a layer. Clipping never touches its rasters or objects, so
+  // unclipping shows every edit again. The mask itself is derived at render
+  // time from the clip base (see `clipBaseFor`).
+  const toggleLayerClipped = (id) => {
+    const layer = layerById(id);
+    if (!layer) return;
+    pushSnapshot();
+    layer.clipped = !layer.clipped;
+    syncLayersView();
+    setDirty(true);
+    scheduleOverlay();
+  };
+
+  // ── Drag & drop (operates on the panel tree, never stack indices) ──
+  // Detach a layer node from wherever it sits (root or a folder).
+  const detachLayerNode = (id) => {
+    const slot = findLayerSlot(id);
+    if (!slot) return;
+    if (slot.folder) slot.folder.children.splice(slot.index, 1);
+    else panelRef.current.splice(slot.index, 1);
+  };
+  const removeFolderNode = (id) => {
+    const i = panelRef.current.findIndex(n => n.type === 'folder' && n.id === id);
+    return i >= 0 ? panelRef.current.splice(i, 1)[0] : null;
+  };
+  const commitStructure = () => { syncLayerOrder(); syncLayersView(); setDirty(true); scheduleOverlay(); };
+
+  // Insert a layer relative to an anchor layer (panel 'above' = earlier index).
+  const insertLayerNear = (draggedId, anchorId, pos) => {
+    if (!draggedId || draggedId === anchorId) return;
+    if (!layerById(draggedId) || !layerById(anchorId)) return;
+    settleGesture();
+    pushSnapshot();
+    detachLayerNode(draggedId);
+    const slot = findLayerSlot(anchorId);
+    if (!slot) return;
+    const at = pos === 'above' ? slot.index : slot.index + 1;
+    if (slot.folder) slot.folder.children.splice(at, 0, draggedId);
+    else panelRef.current.splice(at, 0, { type: 'layer', id: draggedId });
+    commitStructure();
+  };
+  // Move a layer into a folder, at the TOP of its members.
+  const moveIntoFolder = (draggedId, folderId) => {
+    if (!draggedId || !layerById(draggedId)) return;
+    settleGesture();
+    pushSnapshot();
+    detachLayerNode(draggedId);
+    const node = folderNodeById(folderId);
+    if (!node) return;
+    node.children.unshift(draggedId);
+    commitStructure();
+  };
+  // Drop a layer immediately above a folder node (becoming a root layer).
+  const moveAboveFolder = (draggedId, folderId) => {
+    if (!draggedId || !layerById(draggedId)) return;
+    settleGesture();
+    pushSnapshot();
+    detachLayerNode(draggedId);
+    const fi = panelRef.current.findIndex(n => n.type === 'folder' && n.id === folderId);
+    if (fi < 0) panelRef.current.push({ type: 'layer', id: draggedId });
+    else panelRef.current.splice(fi, 0, { type: 'layer', id: draggedId });
+    commitStructure();
+  };
+  const moveToRoot = (draggedId) => {
+    if (!draggedId || !layerById(draggedId)) return;
+    settleGesture();
+    pushSnapshot();
+    detachLayerNode(draggedId);
+    panelRef.current.push({ type: 'layer', id: draggedId });
+    commitStructure();
+  };
+  // Move a whole folder node; its member layers travel in `children`, so they
+  // stay together and no other folder moves.
+  const moveFolderNode = (folderId, anchor) => {
+    settleGesture();
+    pushSnapshot();
+    const node = removeFolderNode(folderId);
+    if (!node) return;
+    let at = panelRef.current.length;
+    if (anchor.kind === 'folder') {
+      const i = panelRef.current.findIndex(n => n.type === 'folder' && n.id === anchor.id);
+      at = i < 0 ? panelRef.current.length : (anchor.pos === 'above' ? i : i + 1);
+    } else if (anchor.kind === 'layer') {
+      const slot = findLayerSlot(anchor.id);
+      if (slot && slot.folder) {
+        const i = panelRef.current.indexOf(slot.folder);
+        at = i < 0 ? panelRef.current.length : (anchor.pos === 'above' ? i : i + 1);
+      } else if (slot) {
+        at = anchor.pos === 'above' ? slot.index : slot.index + 1;
+      }
+    } else {
+      at = anchor.pos === 'below' ? 0 : panelRef.current.length;
+    }
+    panelRef.current.splice(Math.max(0, Math.min(panelRef.current.length, at)), 0, node);
+    commitStructure();
+  };
+
+  const handleDrop = (target) => {
+    const dragged = dragItemRef.current;
+    dragItemRef.current = null;
+    setDragOverKey(null);
+    if (!dragged || !target) return;
+    if (dragged.kind === 'folder') {
+      if (target.kind === 'folder' && target.id === dragged.id) return;
+      if (target.kind === 'layer') {
+        const slot = findLayerSlot(target.id);
+        if (slot && slot.folder && slot.folder.id === dragged.id) return;
+      }
+      moveFolderNode(dragged.id, target);
+      return;
+    }
+    if (target.kind === 'folder') {
+      if (target.pos === 'into') moveIntoFolder(dragged.id, target.id);
+      else moveAboveFolder(dragged.id, target.id);
+    } else if (target.kind === 'root') {
+      moveToRoot(dragged.id);
+    } else if (target.kind === 'layer') {
+      insertLayerNear(dragged.id, target.id, target.pos);
+    }
+  };
+  const onDragStartItem = (e, kind, id) => {
+    dragItemRef.current = { kind, id };
+    try {
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); }
+    } catch (_) { /* some environments lack dataTransfer */ }
+  };
+  const onDragEndItem = () => { dragItemRef.current = null; setDragOverKey(null); };
+  const dropKeyOf = (target) => `${target.kind}:${target.id || ''}:${target.pos || ''}`;
+  const dropClass = (kind, id) => {
+    const prefix = `${kind}:${id || ''}:`;
+    if (!dragOverKey || !dragOverKey.startsWith(prefix)) return '';
+    const pos = dragOverKey.slice(prefix.length);
+    return pos ? ` lp-layer-drop-${pos}` : ' lp-layer-drop';
+  };
+  // Which half/strip of a row or folder header the pointer is over.
+  const zonePos = (e, el, kind) => {
+    const r = el.getBoundingClientRect();
+    const y = e.clientY - r.top;
+    const h = r.height || 1;
+    if (kind === 'folder') {
+      const dragging = dragItemRef.current;
+      if (dragging && dragging.kind === 'folder') return y < h / 2 ? 'above' : 'below';
+      // Dragging a layer: the top strip drops it above the folder, the rest
+      // drops it into the folder (at the top of its members).
+      return y < h * 0.3 ? 'above' : 'into';
+    }
+    return y < h / 2 ? 'above' : 'below';
+  };
+  const dropProps = (base) => ({
+    onDragOver: (e) => {
+      e.preventDefault();
+      const pos = zonePos(e, e.currentTarget, base.kind);
+      const k = dropKeyOf({ ...base, pos });
+      setDragOverKey(prev => (prev === k ? prev : k));
+    },
+    onDrop: (e) => {
+      e.preventDefault();
+      const pos = zonePos(e, e.currentTarget, base.kind);
+      handleDrop({ ...base, pos });
+    },
+  });
+
+  // ── Layer thumbnails (50×50, sampled on a low ~2s cadence) ─
+  const renderLayerThumb = (layer) => {
+    const c = thumbElsRef.current.get(layer.id);
+    const cc = c && c.getContext && c.getContext('2d');
+    if (!cc) return;
+    const S = c.width || LAYER_THUMB_SIZE;
+    const s = Math.min(S / W, S / H);
+    const ox = (S - W * s) / 2;
+    const oy = (S - H * s) / 2;
+    cc.save();
+    if (cc.setTransform) cc.setTransform(1, 0, 0, 1, 0, 0);
+    if (cc.clearRect) cc.clearRect(0, 0, S, S);
+    if (cc.translate) cc.translate(ox, oy);
+    if (cc.scale) cc.scale(s, s);
+    const fc = layerEl(layer.id, 'fill');
+    if (fc) cc.drawImage(fc, 0, 0);
+    for (const o of layer.objects) {
+      if (hasLiveVisual(o)) paintObjectInPanel(cc, o);
+    }
+    const pc = layerEl(layer.id, 'paint');
+    if (pc) cc.drawImage(pc, 0, 0);
+    cc.restore();
+  };
+  // The locked base texture preview (opaque white behind the atlas).
+  const renderBaseThumb = () => {
+    const c = baseThumbRef.current;
+    const cc = c && c.getContext && c.getContext('2d');
+    if (!cc || !baseCanvasRef.current) return;
+    const S = c.width || LAYER_THUMB_SIZE;
+    const s = Math.min(S / W, S / H);
+    const ox = (S - W * s) / 2;
+    const oy = (S - H * s) / 2;
+    cc.save();
+    if (cc.setTransform) cc.setTransform(1, 0, 0, 1, 0, 0);
+    if (cc.fillStyle !== undefined) cc.fillStyle = '#ffffff';
+    if (cc.fillRect) cc.fillRect(0, 0, S, S);
+    if (cc.translate) cc.translate(ox, oy);
+    if (cc.scale) cc.scale(s, s);
+    cc.drawImage(baseCanvasRef.current, 0, 0);
+    cc.restore();
+  };
+
+  // ── Layer persistence ──────────────────────────────────────
+  // Slice a full-store canvas into one 2048² PNG per panel (same cut as
+  // `exportParts`), so each layer's fill/paint and the locked base round-trip.
+  const panelSliceUrls = (canvas) => {
+    const out = [];
+    for (let i = 0; i < panelCount; i++) {
+      const c = document.createElement('canvas');
+      c.width = TEXTURE; c.height = TEXTURE;
+      const cc = c.getContext('2d');
+      if (cc && canvas) cc.drawImage(canvas, layout.x(i), 0, TEXTURE, TEXTURE, 0, 0, TEXTURE, TEXTURE);
+      out.push(c.toDataURL('image/png'));
+    }
+    return out;
+  };
+  // Full, lossless snapshot of the layer stack for the on-disk sidecar. The
+  // game still reads the flattened BaseMap; this is editor-only bookkeeping.
+  const exportLayers = () => {
+    const baseUrls = panelSliceUrls(baseCanvasRef.current);
+    const base = { panels: panelNames.map((pn, i) => ({ partName: pn, imageDataUrl: baseUrls[i] })) };
+    const layers = layersRef.current.map(l => {
+      const paintUrls = panelSliceUrls(layerEl(l.id, 'paint'));
+      const fillUrls = panelSliceUrls(layerEl(l.id, 'fill'));
+      return {
+        id: l.id,
+        name: l.name,
+        visible: l.visible,
+        clipped: !!l.clipped,
+        objects: l.objects.map(serializeLayerObject).filter(Boolean),
+        panels: panelNames.map((pn, i) => ({
+          partName: pn,
+          paintDataUrl: paintUrls[i],
+          fillDataUrl: fillUrls[i],
+        })),
+      };
+    });
+    return {
+      version: 2,
+      activeId: activeIdRef.current,
+      base,
+      // The ordered panel tree (folders + root layers) — folders keep their
+      // position independently of member layers.
+      panel: panelSnapshot(),
+      layers,
+    };
+  };
+  // Paint one 2048² panel of a layer's fill/paint raster from a saved data URL.
+  const paintRasterPanel = (layerId, kind, index, url) => {
+    if (!url) return;
+    const c = ctxFor(layerId, kind);
+    if (!c) return;
+    const img = new Image();
+    img.onload = () => {
+      try {
+        c.save();
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        c.globalCompositeOperation = 'source-over';
+        c.globalAlpha = 1;
+        c.drawImage(img, layout.x(index), 0, TEXTURE, TEXTURE);
+        c.restore();
+      } catch (_) { /* stub context */ }
+      invalidateLayerPixels(layerById(layerId));
+      scheduleOverlay();
+    };
+    img.src = url;
+  };
+  // Apply a just-loaded sidecar payload's rasters + locked base. Runs after the
+  // layer canvases have mounted.
+  const applyLoadedLayers = (pending) => {
+    if (!pending) return;
+    for (const rec of pending.recs) {
+      const panels = rec.savedPanels || [];
+      rec.savedPanels = null;
+      for (let i = 0; i < panelCount; i++) {
+        const p = panels[i];
+        if (!p) continue;
+        paintRasterPanel(rec.id, 'paint', i, p.paintDataUrl);
+        paintRasterPanel(rec.id, 'fill', i, p.fillDataUrl);
+      }
+      invalidateLayerPixels(rec);
+    }
+    if (Array.isArray(pending.basePanels) && pending.basePanels.length) {
+      const bctx = baseCtxRef.current;
+      if (bctx) {
+        drawBase(bctx, layout, pending.basePanels, () => {
+          try { basePixelsRef.current = bctx.getImageData(0, 0, W, H); } catch (_) {}
+          scheduleOverlay();
+        });
+      }
+    }
+  };
+  // Rebuild the whole layer stack from a persisted payload. Returns false for a
+  // missing/invalid payload (a legacy livery with no sidecar → one empty layer).
+  const loadLayers = (payload) => {
+    if (!payload || !Array.isArray(payload.layers) || payload.layers.length === 0) return false;
+    const idMap = new Map(); // saved layer id -> fresh id
+    const recs = payload.layers.map((ls, i) => {
+      const layer = makeLayer(ls.name || `Layer ${i + 1}`);
+      layer.visible = ls.visible !== false;
+      layer.clipped = ls.clipped === true;
+      layer.objects = (Array.isArray(ls.objects) ? ls.objects : [])
+        .map(raw => deserializeLayerObject(raw, () => nextIdRef.current++, W, H))
+        .filter(Boolean);
+      layer.savedPanels = Array.isArray(ls.panels) ? ls.panels : [];
+      if (ls.id) idMap.set(String(ls.id), layer.id);
+      return layer;
+    });
+    // Build the panel tree. `version 2` carries an explicit `panel`; older
+    // sidecars are migrated from `folders`+layer.folder or `group` names.
+    const sanitizeNode = (n) => {
+      if (!n || typeof n !== 'object') return null;
+      if (n.type === 'layer') { const id = idMap.get(String(n.id)); return id ? { type: 'layer', id } : null; }
+      if (n.type === 'folder') {
+        const children = (Array.isArray(n.children) ? n.children : [])
+          .map(cid => idMap.get(String(cid))).filter(Boolean);
+        return { type: 'folder', id: `fd${folderIdSeqRef.current++}`, name: String(n.name || 'Folder').slice(0, 48), visible: n.visible !== false, children };
+      }
+      return null;
+    };
+    let panel = Array.isArray(payload.panel) ? payload.panel.map(sanitizeNode).filter(Boolean) : null;
+    if (!panel) {
+      const folderByName = new Map();
+      const folderByOldId = new Map();
+      const makeFolder = (name) => {
+        const f = { type: 'folder', id: `fd${folderIdSeqRef.current++}`, name: String(name || 'Folder').slice(0, 48), visible: true, children: [] };
+        if (!folderByName.has(f.name)) folderByName.set(f.name, f);
+        return f;
+      };
+      if (Array.isArray(payload.folders)) {
+        for (const f of payload.folders) {
+          if (f && f.id) folderByOldId.set(String(f.id), makeFolder(f.name));
+        }
+      }
+      const order = [];
+      // Layers are stored bottom→top; emit the panel top→bottom.
+      for (let i = payload.layers.length - 1; i >= 0; i--) {
+        const ls = payload.layers[i];
+        const newId = idMap.get(String(ls.id));
+        if (!newId) continue;
+        let folder = null;
+        if (ls.folder) folder = folderByOldId.get(String(ls.folder)) || null;
+        else if (ls.group) folder = folderByName.get(String(ls.group)) || makeFolder(ls.group);
+        if (folder) {
+          if (!order.includes(folder)) order.push(folder);
+          folder.children.push(newId);
+        } else {
+          order.push({ type: 'layer', id: newId });
+        }
+      }
+      // Folders that ended up empty sit at the top (the old renderer's rule).
+      for (const f of folderByName.values()) if (!order.includes(f)) order.unshift(f);
+      panel = order;
+    }
+    const idx = payload.layers.findIndex(ls => ls.id === payload.activeId);
+    const activeRec = recs[idx >= 0 ? idx : 0];
+    // Retire the placeholder layer's canvases/contexts.
+    for (const l of layersRef.current) {
+      layerElsRef.current.delete(l.id);
+      layerCtxsRef.current.delete(l.id);
+      thumbElsRef.current.delete(l.id);
+      binderCacheRef.current.delete(`${l.id}:fill`);
+      binderCacheRef.current.delete(`${l.id}:objects`);
+      binderCacheRef.current.delete(`${l.id}:paint`);
+      binderCacheRef.current.delete(`${l.id}:clip`);
+    }
+    clipMaskElsRef.current.clear();
+    layersRef.current = recs;
+    panelRef.current = (panel && panel.length) ? panel : [{ type: 'layer', id: recs[0].id }];
+    syncLayerOrder();
+    activeIdRef.current = activeRec.id;
+    setActiveIdState(activeRec.id);
+    syncObjects(activeRec.objects, null);
+    syncLayersView();
+    pendingLayersRef.current = {
+      recs,
+      basePanels: payload.base && Array.isArray(payload.base.panels)
+        ? payload.base.panels.map(p => ({ partName: (p && p.partName) || 'Body', imageDataUrl: p && p.imageDataUrl }))
+        : null,
+    };
+    setDirty(false);
+    return true;
+  };
+
+  // Restore a saved layer stack once (the parent passes the sidecar it read).
+  useEffect(() => {
+    if (initialLayers && Array.isArray(initialLayers.layers) && initialLayers.layers.length) {
+      loadLayers(initialLayers);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLayers]);
+
+  // Keep the 50×50 previews fresh on a low cadence (plus immediately whenever
+  // the panel structure changes). Cheap: ~10 draws of a 50px canvas.
+  useEffect(() => {
+    const tick = () => { renderBaseThumb(); for (const l of layersRef.current) renderLayerThumb(l); };
+    tick();
+    const iv = setInterval(tick, LAYER_THUMB_INTERVAL_MS);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layersView, panelView]);
 
   return (
     <div className="lp-workspace">
@@ -3767,33 +5095,66 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
               style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
               aria-hidden="true"
             />
-            {/* Layer 2 — raster fill underlay, below every movable. */}
-            <canvas
-              ref={fillCanvasRef}
-              data-layer="fill"
-              width={W}
-              height={H}
-              style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
-              aria-hidden="true"
-            />
-            {/* Layer 3 — live movables (stickers/shapes/text). */}
-            <canvas
-              ref={objectCanvasRef}
-              data-layer="objects"
-              width={W}
-              height={H}
-              style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
-              aria-hidden="true"
-            />
-            {/* Layer 4 — raster pen (brush/eraser), above movables. */}
-            <canvas
-              ref={canvasRef}
-              data-layer="paint"
-              width={W}
-              height={H}
-              style={{ position: 'absolute', left: 0, top: 0, width: W * effZoom, height: H * effZoom, pointerEvents: 'none' }}
-              aria-hidden="true"
-            />
+            {/* Editable layers, bottom → top. Each layer owns a fill raster
+                (under its movables), an objects canvas (its live movables) and a
+                pen raster (above its movables). DOM order is the composite
+                z-order; hidden layers keep their canvases mounted (so their
+                pixels/contexts survive) but are not displayed. */}
+            {layersView.map((l) => {
+              const effVisible = layerEffectiveVisible(l.id);
+              // A clipped layer shows its masked composite canvas; its raw
+              // fill / objects / paint canvases stay mounted (pixels + contexts
+              // survive) but hidden, so its edits are preserved for unclipping.
+              const storageStyle = {
+                position: 'absolute', left: 0, top: 0,
+                width: W * effZoom, height: H * effZoom,
+                pointerEvents: 'none',
+                display: (effVisible && !l.clipped) ? 'block' : 'none',
+              };
+              const clipStyle = { ...storageStyle, display: (effVisible && l.clipped) ? 'block' : 'none' };
+              return (
+                <React.Fragment key={l.id}>
+                  <canvas
+                    ref={layerBinder(l.id, 'fill')}
+                    data-layer="fill"
+                    data-layer-id={l.id}
+                    width={W}
+                    height={H}
+                    style={storageStyle}
+                    aria-hidden="true"
+                  />
+                  <canvas
+                    ref={layerBinder(l.id, 'objects')}
+                    data-layer="objects"
+                    data-layer-id={l.id}
+                    width={W}
+                    height={H}
+                    style={storageStyle}
+                    aria-hidden="true"
+                  />
+                  <canvas
+                    ref={layerBinder(l.id, 'paint')}
+                    data-layer="paint"
+                    data-layer-id={l.id}
+                    width={W}
+                    height={H}
+                    style={storageStyle}
+                    aria-hidden="true"
+                  />
+                  {l.clipped && (
+                    <canvas
+                      ref={layerBinder(l.id, 'clip')}
+                      data-layer="clip"
+                      data-layer-id={l.id}
+                      width={W}
+                      height={H}
+                      style={clipStyle}
+                      aria-hidden="true"
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
             {/* Layer 5 — chrome + interaction surface. Extends OVERLAY_PAD past
                 the bitmap so a scale/rotate knob drawn outside the 2048 square
                 can still be grabbed and the drag keeps registering out there
@@ -3854,6 +5215,190 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             )}
           </div>
         </div>
+        {/* ── Right-hand layer panel ── */}
+        <aside className="lp-layers" aria-label={t('livery_layers')}>
+          <div className="lp-layers-head">
+            <span className="lp-layers-title">{t('livery_layers')}</span>
+            <span className="lp-layers-head-actions">
+              <button
+                className="lp-layer-mini"
+                title={t('livery_layers_add')}
+                aria-label={t('livery_layers_add')}
+                onClick={addLayer}
+              >
+                <IoAddOutline size={16} />
+              </button>
+              <button
+                className="lp-layer-mini"
+                title={t('livery_layers_new_folder')}
+                aria-label={t('livery_layers_new_folder')}
+                onClick={addFolder}
+              >
+                <IoFolderOutline size={16} />
+              </button>
+            </span>
+          </div>
+          <div className="lp-layers-list" role="list">
+            {(() => {
+              const rows = [];
+              const layerViewById = (id) => layersView.find(l => l.id === id) || null;
+              const layerRow = (l, nested) => {
+                if (!l) return null;
+                const isActive = l.id === activeId;
+                const effVisible = layerEffectiveVisible(l.id);
+                return (
+                  <div
+                    className={'lp-layer-row' + (isActive ? ' lp-layer-active' : '') + (effVisible ? '' : ' lp-layer-hidden') + (nested ? ' lp-layer-nested' : '') + (l.clipped ? ' lp-layer-clipped' : '') + dropClass('layer', l.id)}
+                    key={l.id}
+                    role="listitem"
+                    draggable
+                    aria-current={isActive || undefined}
+                    onClick={() => switchActiveLayer(l.id)}
+                    onDragStart={(e) => onDragStartItem(e, 'layer', l.id)}
+                    onDragEnd={onDragEndItem}
+                    {...dropProps({ kind: 'layer', id: l.id })}
+                  >
+                    <canvas
+                      ref={bindThumbEl(l.id)}
+                      className="lp-layer-thumb"
+                      width={LAYER_THUMB_SIZE}
+                      height={LAYER_THUMB_SIZE}
+                      aria-hidden="true"
+                    />
+                    {editingLayerId === l.id ? (
+                      <input
+                        className="lp-layer-name-input"
+                        autoFocus
+                        value={layerNameDraft}
+                        maxLength={48}
+                        aria-label={t('livery_layers_rename')}
+                        onChange={(e) => setLayerNameDraft(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onBlur={commitRenameLayer}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === 'Enter') e.target.blur();
+                          else if (e.key === 'Escape') setEditingLayerId(null);
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="lp-layer-name"
+                        title={l.name}
+                        onDoubleClick={() => startRenameLayer(l)}
+                      >
+                        {l.name}
+                      </span>
+                    )}
+                    <span className="lp-layer-actions">
+                      {/* 2×2 grid: visibility + clip on the top row, rename +
+                          delete on the bottom row. */}
+                      <button className="lp-layer-mini" title={l.visible ? t('livery_layers_hide') : t('livery_layers_show')} aria-label={l.visible ? t('livery_layers_hide') : t('livery_layers_show')} aria-pressed={l.visible} onClick={(e) => { e.stopPropagation(); toggleLayerVisible(l.id); }}>
+                        {l.visible ? <IoEyeOutline size={15} /> : <IoEyeOffOutline size={15} />}
+                      </button>
+                      <button className={'lp-layer-mini lp-layer-clip' + (l.clipped ? ' lp-layer-clip--on' : '')} title={l.clipped ? t('livery_layers_unclip') : t('livery_layers_clip')} aria-label={l.clipped ? t('livery_layers_unclip') : t('livery_layers_clip')} aria-pressed={Boolean(l.clipped)} onClick={(e) => { e.stopPropagation(); toggleLayerClipped(l.id); }}>
+                        {l.clipped ? <IoLinkOutline size={15} /> : <IoUnlinkOutline size={15} />}
+                      </button>
+                      <button className="lp-layer-mini" title={t('livery_layers_rename')} aria-label={t('livery_layers_rename')} onClick={(e) => { e.stopPropagation(); startRenameLayer(l); }}>
+                        <IoPencilOutline size={13} />
+                      </button>
+                      <button className="lp-layer-mini lp-danger" title={t('livery_layers_delete')} aria-label={t('livery_layers_delete')} disabled={layersView.length <= 1} onClick={(e) => { e.stopPropagation(); deleteLayer(l.id); }}>
+                        <IoTrashOutline size={13} />
+                      </button>
+                    </span>
+                  </div>
+                );
+              };
+              const folderHeader = (node) => {
+                const collapsed = collapsedFolders.has(node.id);
+                const grabbable = node.children.length > 0;
+                return (
+                  <div
+                    className={'lp-layer-folder' + (collapsed ? ' lp-layer-folder--collapsed' : '') + (!folderVisible(node) ? ' lp-layer-folder--hidden' : '') + dropClass('folder', node.id) + (grabbable ? ' lp-layer-folder--grab' : '')}
+                    key={`f:${node.id}`}
+                    draggable={grabbable}
+                    onDragStart={grabbable ? (e) => onDragStartItem(e, 'folder', node.id) : undefined}
+                    onDragEnd={onDragEndItem}
+                    {...dropProps({ kind: 'folder', id: node.id })}
+                  >
+                    <button
+                      className="lp-layer-folder-toggle"
+                      aria-label={collapsed ? t('livery_layers_expand') : t('livery_layers_collapse')}
+                      onClick={() => toggleFolderCollapsed(node.id)}
+                    >
+                      {collapsed ? <IoChevronForwardOutline size={13} /> : <IoChevronDownOutline size={13} />}
+                    </button>
+                    <IoFolderOutline size={14} className="lp-layer-folder-icon" />
+                    {editingFolderId === node.id ? (
+                      <input
+                        className="lp-layer-name-input"
+                        autoFocus
+                        value={folderNameDraft}
+                        maxLength={48}
+                        aria-label={t('livery_layers_folder_rename')}
+                        onChange={(e) => setFolderNameDraft(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onBlur={commitRenameFolder}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === 'Enter') e.target.blur();
+                          else if (e.key === 'Escape') setEditingFolderId(null);
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="lp-layer-folder-name"
+                        title={node.name}
+                        onDoubleClick={() => startRenameFolder(node)}
+                      >
+                        {node.name}
+                      </span>
+                    )}
+                    <span className="lp-layer-actions lp-layer-actions--row">
+                      <button className="lp-layer-mini" title={folderVisible(node) ? t('livery_layers_hide') : t('livery_layers_show')} aria-label={folderVisible(node) ? t('livery_layers_hide') : t('livery_layers_show')} aria-pressed={folderVisible(node)} onClick={(e) => { e.stopPropagation(); toggleFolderVisible(node.id); }}>
+                        {folderVisible(node) ? <IoEyeOutline size={15} /> : <IoEyeOffOutline size={15} />}
+                      </button>
+                      <button className="lp-layer-mini" title={t('livery_layers_folder_rename')} aria-label={t('livery_layers_folder_rename')} onClick={(e) => { e.stopPropagation(); startRenameFolder(node); }}>
+                        <IoPencilOutline size={13} />
+                      </button>
+                      <button className="lp-layer-mini lp-danger" title={t('livery_layers_delete_folder')} aria-label={t('livery_layers_delete_folder')} onClick={(e) => { e.stopPropagation(); deleteFolder(node.id); }}>
+                        <IoTrashOutline size={13} />
+                      </button>
+                    </span>
+                  </div>
+                );
+              };
+              for (const node of panelView) {
+                if (node.type === 'layer') {
+                  rows.push(layerRow(layerViewById(node.id), false));
+                } else {
+                  rows.push(folderHeader(node));
+                  if (!collapsedFolders.has(node.id)) {
+                    for (const cid of node.children) rows.push(layerRow(layerViewById(cid), true));
+                  }
+                }
+              }
+              return rows;
+            })()}
+            {/* Drop here to move a layer out of its folder; the locked base is
+                always bottom-most. */}
+            <div
+              className={'lp-layer-row lp-layer-base' + dropClass('root', '')}
+              role="listitem"
+              {...dropProps({ kind: 'root' })}
+            >
+              <canvas
+                ref={baseThumbRef}
+                className="lp-layer-thumb lp-layer-thumb--base"
+                width={LAYER_THUMB_SIZE}
+                height={LAYER_THUMB_SIZE}
+                aria-hidden="true"
+              />
+              <span className="lp-layer-eye lp-layer-locked" title={t('livery_layers_base_locked')}><IoLockClosed size={13} /></span>
+              <span className="lp-layer-name">{t('livery_layers_base')}</span>
+            </div>
+          </div>
+        </aside>
       </div>
 
       {/* ── Status bar — zoom ── */}

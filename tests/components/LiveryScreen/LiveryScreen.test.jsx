@@ -117,7 +117,7 @@ describe('LiveryScreen', () => {
     expect(lhs.textContent).toContain('Back');
     expect(lhs.textContent).not.toContain('Pack');
     fireEvent.click(document.getElementById('livery-help-btn'));
-    await waitFor(() => expect(screen.getByText('Livery Help')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Help')).toBeInTheDocument());
     const barSection = document.querySelector('#livery-help-bar');
     expect(barSection.textContent).toContain('Back');
     expect(barSection.textContent).not.toContain('Pack');
@@ -301,7 +301,7 @@ describe('LiveryScreen', () => {
     renderLivery();
     await user.click(document.getElementById('livery-help-btn'));
     await waitFor(() => {
-      expect(screen.getByText('Livery Help')).toBeInTheDocument();
+      expect(screen.getByText('Help')).toBeInTheDocument();
     });
     // Only the list section is present.
     const barSection = document.querySelector('#livery-help-bar');
@@ -332,7 +332,7 @@ describe('LiveryScreen', () => {
     // Painter top-left group: [Back, Help] (help is the icon-only second button).
     const helpBtn = document.querySelectorAll('.lp-topbar .lp-group')[0].querySelectorAll('button')[1];
     await user.click(helpBtn);
-    await waitFor(() => expect(screen.getByText('Livery Help')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Help')).toBeInTheDocument());
     expect(document.querySelector('#livery-help-painter')).toBeInTheDocument();
     expect(document.querySelector('#livery-help-paint')).toBeInTheDocument();
     // List-only section is absent on the painter page.
@@ -360,11 +360,11 @@ describe('LiveryScreen', () => {
     renderLivery();
     await user.click(document.getElementById('livery-help-btn'));
     await waitFor(() => {
-      expect(screen.getByText('Livery Help')).toBeInTheDocument();
+      expect(screen.getByText('Help')).toBeInTheDocument();
     });
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => {
-      expect(screen.queryByText('Livery Help')).toBeNull();
+      expect(screen.queryByText('Help')).toBeNull();
     });
   });
 
@@ -374,11 +374,11 @@ describe('LiveryScreen', () => {
     renderLivery();
     await user.click(document.getElementById('livery-help-btn'));
     await waitFor(() => {
-      expect(screen.getByText('Livery Help')).toBeInTheDocument();
+      expect(screen.getByText('Help')).toBeInTheDocument();
     });
     fireEvent.click(document.getElementById('livery-help-overlay'));
     await waitFor(() => {
-      expect(screen.queryByText('Livery Help')).toBeNull();
+      expect(screen.queryByText('Help')).toBeNull();
     });
   });
 

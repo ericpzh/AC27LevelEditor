@@ -3592,3 +3592,74 @@ describe('LiveryCanvas preview export (live 3D)', () => {
     expect(small[0].canvas).not.toBe(first[0].canvas);
   });
 });
+
+describe('UV region lock', () => {
+  // A fake full-coverage region: every texel maps to island 0. Avoids building a
+  // real 2048² raster just to exercise the lock plumbing.
+  function fullRegion() {
+    const idMap = new Int32Array(TEXTURE * TEXTURE).fill(1);
+    return { size: TEXTURE, idMap, islands: [{ tris: [0] }] };
+  }
+  const zeros = () => ({ data: new Uint8ClampedArray(TEXTURE * TEXTURE * 4), width: TEXTURE, height: TEXTURE });
+  const painted = () => {
+    const d = new Uint8ClampedArray(TEXTURE * TEXTURE * 4);
+    d[0] = 255; d[3] = 255;
+    return { data: d, width: TEXTURE, height: TEXTURE };
+  };
+
+  it('has no panel-selection controls (feature removed)', () => {
+    renderCanvas({ uvLock: true, uvRegions: [fullRegion()] });
+    expect(screen.queryByRole('button', { name: 'Select UV Panel' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'All Regions' })).toBeNull();
+  });
+
+  it('clips a brush stroke to the UV region while locked', async () => {
+    renderCanvas({ uvLock: true, uvRegions: [fullRegion()] });
+    const main = paintCtx();
+    expect(main).toBeTruthy();
+    main.getImageData.mockReturnValueOnce(zeros()).mockReturnValueOnce(painted());
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: 320, clientY: 320, button: 0, pointerId: 1 });
+    expect(main.putImageData.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it('does not constrain when the lock is off', () => {
+    renderCanvas({ uvRegions: [fullRegion()] });
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { clientX: 300, clientY: 300, button: 0, pointerId: 1 });
+    expect(ctxs.every(c => c.putImageData.mock.calls.length === 0)).toBe(true);
+  });
+
+  it('glows the clicked region boundary on the overlay (no fill, no enforcement)', async () => {
+    renderCanvas({ uvRegions: [fullRegion()], uvGlow: { panel: 0, id: 0 } });
+    // The glow draws additive halo strokes (composite 'lighter'); it works with
+    // the lock OFF too (informational highlight only) and never fills the art.
+    await waitFor(() => expect(gcoSets).toContain('lighter'));
+  });
+
+  it('routes live objects through the UV coverage mask', async () => {
+    mockIpcInvoke.mockImplementation((channel) => {
+      if (channel === 'select-livery-image') return Promise.resolve({ canceled: false, filePath: '/tmp/s.png' });
+      if (channel === 'read-disk-image') return Promise.resolve({ success: true, imageDataUrl: 'data:image/png;base64,X' });
+      return Promise.resolve({});
+    });
+    const ref = React.createRef();
+    renderCanvas({ ref, uvLock: true, uvRegions: [fullRegion()] });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await act(async () => { await ref.current.importSticker(); });
+    await waitFor(() => expect(ref.current.getObjectCount()).toBe(1));
+    // The object is drawn through a destination-in coverage mask.
+    await waitFor(() => expect(gcoSets).toContain('destination-in'));
+  });
+
+  it('i18n keys resolve in zh + en', () => {
+    setLang('en');
+    expect(T('livery_uv_toggle')).not.toBe('livery_uv_toggle');
+    setLang('zh');
+    expect(T('livery_uv_toggle')).not.toBe('livery_uv_toggle');
+    setLang('en');
+  });
+});

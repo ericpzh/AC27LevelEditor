@@ -45,6 +45,14 @@ export function has3DModel(planeId) {
   return MODEL_3D_SET.has(String(planeId || ''));
 }
 
+// 3D→flat region glow: clicking the 3D preview highlights the flat region its
+// hit UV falls in. DISABLED — the atlas is packed for texture efficiency, not by
+// anatomy, so the highlighted region often doesn't match the part the user
+// clicked (the tail fin's two sides sit at opposite ends of the atlas). Panel
+// Lock (dead-space clip) is independent of this and stays on. Flip to true to
+// revive; the painter + 3D-preview wiring is intact behind the flag.
+export const UV_GLOW_ENABLED = false;
+
 // Manufacturer words prefixed to the game's aircraft type ids.
 const AIRCRAFT_MANUFACTURERS = ['AIRBUS', 'BOEING', 'BOMBARDIER', 'EMBRAER', 'CESSNA', 'GULFSTREAM', 'COMAC'];
 

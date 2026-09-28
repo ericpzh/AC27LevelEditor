@@ -506,7 +506,7 @@ setUdpStatus(connected, currentAirport) // Update UDP health state
 | `map_help_air_dep` | æ˜¾ç¤º/éšè—ç¦»æ¸¯èˆªç­æ ‡ç­¾ | Show/hide departure aircraft labels |
 | `map_help_air_rwy_desc` | æ˜¾ç¤º/éšè—RWY{rwy}çš„STAR/SID/è¿›è¿‘ç¨‹åºè·¯å¾„ | Show/hide STAR/SID/APPR paths for RWY{rwy} |
 | `knob_pan_v` | S-N | S-N |
-| `map_help_title` | åŠŸèƒ½æŒ‡å— | Map Help |
+| `map_help_title` | 帮助 | Help |
 | `map_help_air_knobs_heading` | æ—‹é’® | Knobs |
 | `map_help_air_toggles_heading` | æŒ‰é’® | Buttons |
 | `map_help_air_interact_heading` | äº¤äº’ | Interaction |

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
-import { PLANE_ID_TO_SHORT_CODE, LIVERY_FOLDER_SAFE_RE, folderFor, has3DModel } from '../../utils/constants/livery';
+import { PLANE_ID_TO_SHORT_CODE, LIVERY_FOLDER_SAFE_RE, folderFor, has3DModel, UV_GLOW_ENABLED } from '../../utils/constants/livery';
 import { CURATED_AIRLINE_CODES, airlineDisplayName } from '../../utils/constants/airlines';
 import { fileToDataUrl, normalizeToTexture } from '../../utils/liveryImage';
 import useTooltip from '../BrowserScreen/useTooltip';
@@ -19,9 +19,11 @@ import { MdSaveAs } from 'react-icons/md';
 import { FaFileImport, FaFileExport } from 'react-icons/fa6';
 import { FaRegFolderOpen } from 'react-icons/fa';
 import { LuRotate3D } from 'react-icons/lu';
-import LiveryCanvas from './LiveryCanvas';
+import LiveryCanvas, { TEXTURE } from './LiveryCanvas';
 import Livery3DPreview from './Livery3DPreview';
 import { useLive3DImages } from './useLive3DImages';
+import { readPart, toBytes } from '../../utils/livery3d';
+import { buildPartUvRegion, hitTestRegion } from '../../utils/liveryUv';
 
 function errKey(code) {
   return 'livery_err_' + String(code || 'unknown');
@@ -74,7 +76,7 @@ function SaveNameDialog({ initial, isSaveAs, onConfirm }) {
   );
 }
 
-function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locked, planeIds, onOpen3D }) {
+function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locked, planeIds }) {
   const { t, lang } = useTranslation();
   const airlineOptions = useMemo(() => {
     return [...CURATED_AIRLINE_CODES];
@@ -165,17 +167,6 @@ function AirlineAircraftFields({ airline, setAirline, planeId, setPlaneId, locke
           ))}
         </select>
       </label>
-      {onOpen3D && (
-        <button
-          type="button"
-          className="lp-tool lp-3d-open"
-          aria-label={t('livery_3d_open')}
-          title={t('livery_3d_open')}
-          onClick={onOpen3D}
-        >
-          <LuRotate3D size={18} />
-        </button>
-      )}
     </>
   );
 }
@@ -272,9 +263,18 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   // a user import → the saved livery's own part → the built-in UV template.
   const [templates, setTemplates] = useState([]);       // built-in parts (Clear + defaults)
   const [originImages, setOriginImages] = useState([]); // the opened livery's own parts
+  const [originLayers, setOriginLayers] = useState(null); // persisted layer sidecar (null = legacy)
   const [overrides, setOverrides] = useState({});        // partName -> imported base
   const [activePanel, setActivePanel] = useState(0);
   const [canvasKey, setCanvasKey] = useState(0);
+  // UV regions: the plane's mesh coverage per BaseMap panel. `uvLock` clips
+  // raster edits to mapped texels (dead space locked); `uvRegionsByName` caches
+  // each part's coverage/id map keyed by part name; `uvGlow` is the flat region
+  // a 3D-preview click highlighted (informational only). Only offered/loaded
+  // when the type has an extractable 3D model.
+  const [uvLock, setUvLock] = useState(false);
+  const [uvRegionsByName, setUvRegionsByName] = useState(null);
+  const [uvGlow, setUvGlow] = useState(null);
   const canvasRef = useRef(null);
   const dirtyRef = useRef(false);
   // Folder we just saved to. Save/Save As adopt the saved folder as the origin
@@ -419,10 +419,14 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
     (async () => {
       try {
         let parts = null;
+        let layers = null;
         try {
           const res = await electronAPI.readLiveryImages(origin.folder, origin.pack);
           if (res && res.success && Array.isArray(res.parts) && res.parts.length) {
             parts = res.parts.map(p => ({ partName: (p && p.partName) || 'Body', imageDataUrl: p && p.imageDataUrl }));
+          }
+          if (res && res.success && res.layers && Array.isArray(res.layers.layers) && res.layers.layers.length) {
+            layers = res.layers;
           }
         } catch (_) {}
         if (!parts) {
@@ -431,6 +435,8 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         }
         if (!cancelled && parts) {
           setOriginImages(parts);
+          // Persisted layer sidecar (absent for legacy / imported liveries).
+          setOriginLayers(layers);
           // Never clobber a canvas the user has already painted on.
           if (!dirtyRef.current) setCanvasKey(k => k + 1);
         }
@@ -468,6 +474,64 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planeId]);
+
+  // UV region data resets whenever the aircraft type changes (coverage differs).
+  useEffect(() => {
+    setUvRegionsByName(null);
+    setUvGlow(null);
+  }, [planeId]);
+
+  // UV coverage for the lock (and, when enabled, the 3D→flat glow). Loaded on
+  // demand from the same extracted pack the 3D preview uses, once the lock is on
+  // or the glow's preview is ready; static (non-livery) parts are skipped after
+  // advancing the offset.
+  const previewReady = Boolean(threeD && threeD.phase === 'ready');
+  const wantUvRegions = uvLock || (UV_GLOW_ENABLED && previewReady);
+  useEffect(() => {
+    if (!planeId || !has3DModel(planeId)) return;
+    if (!wantUvRegions) return;
+    if (uvRegionsByName) return; // already loaded for this type
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await electronAPI.readAircraft3DBin(planeId);
+        if (cancelled) return;
+        if (!res || !res.success) return;
+        const bytes = toBytes(res.bin);
+        if (!bytes) return;
+        const map = new Map();
+        let offset = 0;
+        for (const part of res.parts || []) {
+          const g = readPart(bytes, offset, part.vertexCount, part.indexCount);
+          offset = g.next;
+          if (!part.livery) continue;
+          map.set(String(part.name || '').toLowerCase(), buildPartUvRegion(g.uvs, g.indices, TEXTURE));
+        }
+        if (!cancelled) setUvRegionsByName(map);
+      } catch (_) { /* leave unloaded; the lock/glow simply stay off */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantUvRegions, planeId, uvRegionsByName]);
+
+  // Align the per-part regions to the canvas panel order (by part name).
+  const uvRegions = useMemo(() => {
+    if (!uvRegionsByName) return null;
+    return panels.map(name => uvRegionsByName.get(String(name || '').toLowerCase()) || null);
+  }, [uvRegionsByName, panelSig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A click on the 3D model reports the hit triangle's UV; glow the matching flat
+  // region (the connected coverage component under that UV). Informational only.
+  const handlePickUv = (pick) => {
+    if (!pick || !uvRegionsByName) return;
+    const key = String(pick.partName || '').toLowerCase();
+    const region = uvRegionsByName.get(key);
+    if (!region) return;
+    const id = hitTestRegion(region, pick.u * region.size, (1 - pick.v) * region.size);
+    if (id < 0) return;
+    const idx = panels.findIndex(n => String(n || '').toLowerCase() === key);
+    setUvGlow({ panel: idx >= 0 ? idx : 0, id });
+  };
 
   const confirmDiscard = (proceed) => {
     if (!dirtyRef.current) { proceed(); return; }
@@ -591,12 +655,17 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
       // The variant is omitted when blank: the backend then keeps the folder's
       // existing variant (or defaults it), which is the common path.
       const reqVariant = String(targetVariant || '').trim();
+      // Lossless layer sidecar (editor-only) alongside the flattened BaseMap.
+      const layerPayload = canvasRef.current && typeof canvasRef.current.exportLayers === 'function'
+        ? canvasRef.current.exportLayers()
+        : null;
       const res = await electronAPI.createLivery({
         images,
         airline: targetAirline,
         targetPlaneId,
         folder,
         ...(reqVariant ? { variant: reqVariant } : {}),
+        ...(layerPayload ? { layers: layerPayload } : {}),
       });
       const { showToast } = useAppStore.getState();
       if (res && res.success) {
@@ -769,6 +838,9 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
       }
       confirmDiscard(() => {
         setOriginImages(parts);
+        // An imported ZIP carries no editor layer sidecar — never let a
+        // previously-opened livery's layers leak into the new canvas.
+        setOriginLayers(null);
         setOverrides({});
         setCanvasKey(k => k + 1);
       });
@@ -798,12 +870,16 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
     const { showToast } = useAppStore.getState();
     try {
       const reqVariant = String(targetVariant || '').trim();
+      const layerPayload = canvasRef.current && typeof canvasRef.current.exportLayers === 'function'
+        ? canvasRef.current.exportLayers()
+        : null;
       const res = await electronAPI.createLivery({
         images: canvasRef.current.exportParts(),
         airline: targetAirline,
         targetPlaneId,
         folder: targetFolder,
         ...(reqVariant ? { variant: reqVariant } : {}),
+        ...(layerPayload ? { layers: layerPayload } : {}),
       });
       if (!res || !res.success) {
         showToast(t(errKey(res && res.error)), 'error');
@@ -860,9 +936,44 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
               <IoLockClosed size={13} />
             </span>
           )}
-          <span className="lp-sep" />
-          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReadOnly} planeIds={planeOptions} onOpen3D={has3DModel(planeId) ? open3D : null} />
         </div>
+        <span className="lp-sep" />
+        <div className="lp-group">
+          <AirlineAircraftFields airline={airline} setAirline={setAirline} planeId={planeId} setPlaneId={setPlaneId} locked={isReadOnly} planeIds={planeOptions} />
+        </div>
+        {has3DModel(planeId) && (
+          <>
+            <span className="lp-sep" />
+            <div className="lp-group">
+              <span className="lp-inline lp-uv-switch">
+                <span className="lp-inline-label">{t('livery_uv_toggle')}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(uvLock)}
+                  aria-label={t('livery_uv_toggle')}
+                  title={t('livery_help_d_uvlock')}
+                  className={'lp-switch' + (uvLock ? ' lp-on' : '')}
+                  onClick={() => setUvLock(v => !v)}
+                >
+                  <span className="lp-switch-knob" aria-hidden="true" />
+                </button>
+              </span>
+            </div>
+            <span className="lp-sep" />
+            <div className="lp-group">
+              <button
+                type="button"
+                className="lp-tool lp-3d-open"
+                aria-label={t('livery_3d_open')}
+                title={t('livery_3d_open')}
+                onClick={open3D}
+              >
+                <LuRotate3D size={18} />
+              </button>
+            </div>
+          </>
+        )}
 
         <div className="lp-group lp-group-end">
           <span className="lp-tipwrap" {...bind(t('livery_open_folder'))}>
@@ -916,10 +1027,14 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         panels={panels}
         initialParts={initialParts}
         defaultParts={defaultParts}
+        initialLayers={originLayers}
         activePanel={activeIdx}
         onActivePanel={setActivePanel}
         onDirty={markDirty}
         inputDisabled={uploadOpen}
+        uvLock={uvLock}
+        uvRegions={uvRegions}
+        uvGlow={uvGlow}
       />
       {threeD && threeD.phase === 'loading' && (
         <div className="lp-3dload" role="status" aria-live="polite">
@@ -933,6 +1048,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
           planeId={planeId}
           images={threeD.images}
           onHide={() => setThreeD(null)}
+          onPickUv={UV_GLOW_ENABLED ? handlePickUv : undefined}
         />
       )}
       {TooltipPortal}

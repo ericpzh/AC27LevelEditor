@@ -104,6 +104,20 @@ describe('buildWorkshopContent', () => {
     expect(fs.existsSync(dir)).toBe(false);
   });
 
+  it('excludes the editor layer sidecar from the published mod', () => {
+    const srcDir = seedLivery(gameRoot, 'A20N_LAY');
+    fs.writeFileSync(path.join(srcDir, livery.LAYERS_SIDECAR), JSON.stringify({ version: 1, layers: [{ id: 'ly1' }] }));
+    const { dir, cleanup } = livery.buildWorkshopContent(gameRoot, 'A20N_LAY');
+    try {
+      // Editor-only bookkeeping never reaches subscribers…
+      expect(fs.existsSync(path.join(dir, livery.LAYERS_SIDECAR))).toBe(false);
+      // …while the game texture still ships.
+      expect(fs.existsSync(path.join(dir, 'base.png'))).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('does not count the saved preview as a texture', () => {
     const dir = path.join(livery.ownPackDir(gameRoot), 'previewonly');
     fs.mkdirSync(dir, { recursive: true });

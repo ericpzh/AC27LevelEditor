@@ -4,6 +4,7 @@ import { useTranslation } from '../../hooks/useTranslation';
 import {
   IoClose,
   IoArrowBack,
+  IoLockClosed,
   IoCloudDownloadOutline,
   IoCheckmarkDone,
   IoTrashOutline,
@@ -42,6 +43,7 @@ const BUTTONS = {
   exportZip: { icon: FaFileExport, labelKey: 'livery_export_zip', descKey: 'livery_help_d_export_zip' },
   save: { icon: IoSaveOutline, labelKey: 'livery_save', descKey: 'livery_help_d_save' },
   saveAs: { icon: MdSaveAs, labelKey: 'livery_save_as', descKey: 'livery_help_d_save_as' },
+  uvLock: { icon: IoLockClosed, labelKey: 'livery_uv_toggle', descKey: 'livery_help_d_uvlock' },
   preview3d: { icon: LuRotate3D, labelKey: 'livery_3d_open', descKey: 'livery_help_d_3d' },
   color: { icon: IoColorPaletteOutline, labelKey: 'livery_paint_color', descKey: 'livery_help_d_color' },
   brush: { icon: IoBrushOutline, labelKey: 'livery_paint_brush', descKey: 'livery_help_d_brush' },
@@ -63,7 +65,7 @@ const LIST_SECTIONS = [
   { id: 'bar', items: ['back', 'pack', 'create', 'selectAll', 'exportSelected', 'upload', 'delete', 'search'] },
 ];
 const PAINTER_SECTIONS = [
-  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'upload', 'deleteThis', 'saveAs', 'save', 'preview3d'] },
+  { id: 'painter', items: ['back', 'importImage', 'importZip', 'exportZip', 'upload', 'deleteThis', 'saveAs', 'save', 'uvLock', 'preview3d'] },
   {
     id: 'paint',
     items: [

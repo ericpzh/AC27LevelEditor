@@ -72,6 +72,15 @@ painter page).
   (PNG/JPEG). `exportLivery` includes **every** image in the folder, so a
   multi-part livery shares/round-trips as a whole.
 
+- **Layer sidecar (`.livery_layers.json`, editor-only dot-file)**: written by
+  `createLivery` when the painter sends a `layers` payload and returned by
+  `readLiveryImages` as `layers`; it carries the full editable stack (a `panel`
+  tree of folders + root layers, serialized objects, per-panel fill/paint base64
+  PNGs, the locked base). It is skipped by the share ZIP, the `createLivery`
+  image cleanup and `buildWorkshopContent` (never game/mod content). Legacy /
+  imported liveries have none and open as a single empty layer; older `group` /
+  `folders` payloads are migrated to folder nodes on load.
+
 - Manifest JSON is parsed **BOM-tolerantly**: every manifest/mod-info read goes
   through `_readJsonFile`/`_parseJsonText` (`electron/livery.js`), which strips
   a leading U+FEFF before `JSON.parse` (same strip in
@@ -272,7 +281,9 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   misses the type. The painter is **panel-based**: `panels` is derived from the
   selected type's built-in BaseMap parts (A388 → Fuselage + Wing, B38M →
   Fuselage + Wingtip, everything else one `Body` panel), and the canvas receives
-  `panels`/`initialParts`/`defaultParts`/`activePanel`/`onActivePanel`. The
+  `panels`/`initialParts`/`defaultParts`/`activePanel`/`onActivePanel` plus the
+  layer sidecar and Panel Lock props (`initialLayers`/`uvLock`/`uvRegions`/
+  `uvGlow` — see "Panel Lock — UV region lock" below). The
   canvas starts primed with the origin'**s own `parts` (the list passes no
   pixels, so it lazy-loads `readLiveryImages` — falling back to the single
   `readLiveryImage`); each panel falls back to the built-in UV template. A
@@ -347,7 +358,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   when its prefill equals the origin folder; fresh names save straight through
   and an unreadable list falls through. Both then
   funnel through `submitCreate(canvasRef.current.exportParts(), airline,
-  planeId, folder)` → `createLivery({images})` → toast. **Save / Save As stay in
+  planeId, folder)` → `createLivery({images, layers})` (`layers` =
+  `canvasRef.current.exportLayers()`, the lossless editor sidecar) → toast. **Save / Save As stay in
   the painter** — success does **not** call `onCreated` (no navigation); instead
   `CreateTab.prefill` is set to the saved `{folder, airline, targetPlaneId,
   pack:'mine'}` so the saved livery becomes the current origin (a later Save
@@ -385,7 +397,8 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `create`/`selectAll`/`exportSelected`/`delete`/`search`) — the `pack` chip is
   filtered out unless `isDemo` (it documents the demo-only Pack button);
   `PAINTER_SECTIONS` = Painter
-  (`back`/`importImage`/`importZip`/`exportZip`/`deleteThis`/`saveAs`/`save`) +
+  (`back`/`importImage`/`importZip`/`exportZip`/`deleteThis`/`saveAs`/`save`/`uvLock`
+  — the Panel Lock chip, `IoLockClosed`) +
   Paint tools
   (`color`/`brush`/`eraser`/`eyedropper`/`fill`/`line`/`rect`/`ellipse`/`text`/
    `sticker`/`select`/`clear`). Each item renders as "icon + label —
@@ -409,18 +422,156 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   save payload); `exportPNG()` still returns the whole wide flattened texture.
   The mask, scratch, stroke and undo canvases are all `W×H`
   (the wide store), and pointer→texture mapping divides by `W`/`H`.
-  - **Five stacked layers (`data-layer`)**: `base` (locked aircraft image,
-    `baseCanvasRef`, opaque, painted only by `drawBase`) → `fill`
-    (`fillCanvasRef`/`fillCtxRef`, the flood-fill underlay, BELOW every
-    movable) → `objects` (live
-    movables, `objectCanvasRef`) → `paint` (`canvasRef`/`ctxRef`, the pen:
-    brush/eraser) → `chrome` (`overlayRef`, padded, selection outline +
-    handles + previews). The pen layer draws ABOVE the movables while the fill
-    sits UNDER them, both `pointer-events:none`; the chrome layer is the pointer
-    surface. This is what
-    makes the pen "always on top" of movables while they stay live and movable —
-    no baking. Export/`pickColorAt`/`applyWandAt` composite base → fill →
-    objects → paint.
+  - **Per-layer DOM canvases (`data-layer`)**: each editable layer owns three
+    stacked canvases — `fill` (below its movables), `objects` (its live
+    movables) and `paint` (pen/eraser, above its movables) — rendered in stack
+    order (bottom→top) between the locked `base` canvas and the padded `chrome`
+    interaction surface. Every canvas carries `data-layer-id`.
+    `ctxRef`/`fillCtxRef`/`canvasRef`/`fillCanvasRef` are aliased to the ACTIVE
+    layer's canvases (`bindActiveLayerRefs`, re-run by a layout effect on
+    add/delete/reorder/visibility), so **pen, fill, eraser and object selection
+    are bounded to the active layer**. `objectsRef` mirrors the active layer's
+    object list (written straight back into its record by `syncObjects`).
+    Export / `pickColorAt` / `applyWandAt` composite the base, then every
+    VISIBLE layer in order (fill → movables → paint); hidden layers are
+    `display:none` and skipped.
+  - **Layer panel (RHS) + model**: `LiveryCanvas` keeps **`panelRef`**, an ordered
+    top→bottom tree of first-class nodes — `{type:'layer', id}` or
+    `{type:'folder', id, name, visible, children:[layerId,…]}` (one nesting
+    level). This
+    is what makes folders stable: moving a layer in/out never changes a folder's
+    position. `layersRef` is the flat bottom→top z-order **derived** from the tree
+    (`syncLayerOrder`), and `layersView`/`panelView` are the React mirrors. Ops:
+    **New Layer** (above the active layer, inside its folder if nested),
+    **New Folder** (auto-named `Folder N`, inline-renamed on create), **Delete
+    layer** (last layer non-deletable) and **Delete folder** (same danger
+    affordance; **deletes the folder AND every layer inside it**, with a confirm
+    when non-empty; a fresh empty layer is created if that would leave none),
+    **Rename** (inline, double-click), **Hide/Show** (each layer has its own eye
+    and the last visible layer refuses to hide; hiding the active layer moves the
+    target to the next visible one; **a folder header also has an eye** that
+    hides/shows the whole folder — every child follows it via
+    `layerEffectiveVisible` = own flag AND folder flag, and editing moves to the
+    next visible layer). **Clip** — each layer row also carries a link toggle
+    (`.lp-layer-clip`, always present in the 2×2 grid and accent-tinted once
+    clipped via `.lp-layer-clip--on`, `IoLinkOutline`/`IoUnlinkOutline`). A
+    clipped layer is masked by the **alpha
+    of its clip base**: the nearest NON-clipped layer below it in the flat
+    z-order, or the locked base image when there is none (`clipBaseFor`, sentinel
+    `CLIP_BASE_ROOT`). Its own rasters/objects are never modified, so unclipping
+    restores every edit; clipped rows are offset right (`.lp-layer-clipped`,
+    compounding with `.lp-layer-nested`). The **screen, export
+    (`flattenToCanvas`) and sampling (`paintVisibleComposite`) all reproduce the
+    mask identically**: a layer's content is composited to a scratch canvas then
+    `destination-in` against the base mask (`paintClippedLayer`/`buildClipMask`,
+    persistent per-base W×H canvases refreshed every overlay frame so painting the
+    base updates the mask live). While clipped, the raw fill/objects/paint
+    canvases are hidden and a masked `data-layer="clip"` display canvas takes
+    their place. Pointer→texture mapping reads the always-visible **base canvas**
+    (`stageRect`), never the active layer's paint canvas — a clipped layer's
+    rasters are `display:none` and `getBoundingClientRect` returns zeros for a
+    hidden element, which would otherwise break every brush/select/eyedropper
+    coordinate. Each **layer** row's controls sit right of the name as an
+    **always-visible 2×2 grid** (`.lp-layer-actions`,
+    `grid-template-columns: repeat(2,20px)`): eye + clip on the top row, rename +
+    delete below. **Folder headers stay a single row** of controls
+    (`.lp-layer-actions--row`, `inline-flex`): eye + rename + delete, with the
+    collapse chevron on the left. **No up/down buttons, no member-count badge**
+    (the `livery_layers_move_up`/`_move_down`, `livery_layers_group`,
+    `livery_layers_group_title`/`_group_placeholder` and `livery_layers_ungroup`
+    i18n keys are unused leftovers of an earlier toolbar design — only
+    `livery_layers_expand`/`_collapse` are still read, by the folder chevron) —
+    rows are HTML5-draggable with precise drop zones (`zonePos`): a layer row's
+    top/bottom
+    half inserts above/below it in the same container; a folder header's top strip
+    drops a layer above the folder, the rest drops it **into** the folder at the
+    top of its children; the Base row moves a layer back to the root.
+    **Folder headers are themselves draggable** (when non-empty) — the whole node
+    (with its `children`) moves, so its layers travel together and no other
+    folder shifts (`moveFolderNode`). Folder children render indented
+    (`.lp-layer-nested`) under a prominent collapsible folder header. Each layer
+    row shows a **50×50 preview canvas** (`renderLayerThumb`, the layer's fill →
+    movables → pen over a checkerboard) and the locked base row has its own
+    **opaque 50×50 preview** (`renderBaseThumb`), refreshed on a ~2s
+    `LAYER_THUMB_INTERVAL_MS` cadence and on structure changes. The base aircraft
+    texture is a fixed locked row at the bottom (also the root drop zone).
+    **Undo covers content AND structure** — `snapshotState` captures the whole
+    document: every layer's metadata (name, `visible`, `clipped`), object list,
+    cached raster ImageData (`captureLayerPixels`, invalidated on mutation and
+    shared across snapshots when unchanged), the full panel tree and the active
+    layer. `pushSnapshot()` runs before every structural mutation (add/delete
+    layer, add/delete/rename folder, rename layer, hide/show, clip and every
+    drag/drop move), and `applySnapshot` rebuilds the layer set + panel tree:
+    still-existing layers are reused (canvases stay bound), missing ones are
+    **recreated with their rasters + objects** (a deleted layer comes back) and
+    extra ones discarded. Recreated canvases mount on the next commit, so their
+    rasters are painted by the active-layer layout effect via
+    `pendingRestoreRef`.
+  - **Layer sidecar persistence**: `exportLayers()` returns
+    `{version:2, activeId, base:{panels:[{partName,imageDataUrl}]},
+    panel:[{type:'layer',id} | {type:'folder',id,name,visible,children:[layerId,…]}],
+    layers:[{id,name,visible,clipped,objects,panels:[{partName,paintDataUrl,
+    fillDataUrl}]}]}` — the `panel` tree is the authoritative order/foldering;
+    sticker bitmaps travel as `imageDataUrl`, selection `clipMask` as
+    `clipMaskDataUrl`. `CreateTab` sends it as the `layers` payload on
+    Save/Save As/Export; `electron/livery.js:createLivery` writes it verbatim to
+    the dot-file **`.livery_layers.json`** (absent → left untouched; explicit
+    `null` → removed) and `readLiveryImages` returns it as `layers`. `CreateTab`
+    passes it to `LiveryCanvas` as `initialLayers`, which `loadLayers` rebuilds
+    into fresh records (object ids reassigned), remaps the `panel` tree to the
+    new ids and `applyLoadedLayers` paints the per-panel rasters + base exactly.
+    **Older sidecars migrate on load**: a v1 `folders`+layer.`folder` payload, or
+    the first `group`-name form, is folded into folder nodes (one per distinct
+    name; empty folders land at the top). The sidecar is **editor-only**: the
+    dot-file is skipped by the share ZIP, the `createLivery` image cleanup and
+    `buildWorkshopContent`, so subscribers and the game never see it (the game
+    reads the flattened BaseMaps).
+  - **Panel Lock — UV region lock (`uvLock`)**: restricts raster edits to the
+    texels the 3D mesh actually samples. `CreateTab` owns the `uvLock` switch
+    (i18n `livery_uv_toggle`, zh `部件锁` / en `Panel Lock`, help
+    `livery_help_d_uvlock`, rendered only for types with a 3D model) plus
+    `uvRegions` — per-BaseMap-panel coverage from the **same extracted pack the
+    3D preview uses**: `readAircraft3DBin(planeId)` → `readPart` →
+    `src/utils/liveryUv.js:buildPartUvRegion(uvs, indices, TEXTURE)`. That module
+    is the pure, DOM-free/three-free geometry core (unit-testable from either
+    process): `segmentUvIslands` welds vertices sharing a quantized UV position
+    into charts; `fillTriangle` rasterizes each triangle into a 2048²
+    (`UV_MASK_SIZE`) binary coverage mask at u shifts −size/0/+size so
+    Repeat-wrapped charts land inside the tile; `dilateMask` closes
+    `PANEL_CLOSE_RATIO ≈ 0.002`
+    (≈4 texels) to merge the game's hundreds of hairline charts into artist-scale
+    panels, then `labelComponents` labels the 4-connected blocks into the id map.
+    `buildPartUvRegion` returns `{size, idMap, islands}` (`idMap[i]` = panel+1,
+    `0` = dead UV space). Regions are matched to panels by **lowercased part
+    name** and non-`livery` parts are skipped. `LiveryCanvas` turns the ACTIVE
+    panel's region into a white editable mask (`regionMask(..., {grow:
+    UV_GROW_PX = 2})` — grown into dead space only, never over a neighbouring
+    island — then `maskToImageData`/`putImageData`), cached per region in a
+    `WeakMap` and rebuilt only on lock/region/active-panel change
+    (`rebuildUvConstraint`, also called synchronously when a click switches the
+    active panel so the same press paints with the right mask). While on,
+    **brush, eraser and flood fill are clipped to it** through the same
+    `constrainLayerToMask`/`constrainRastersToMask` path as a raster selection
+    (`uvMaskCanvasRef`, intersected with a live selection), and live objects are
+    drawn through the **all-panel coverage** mask (`paintObjectForDisplay` → a
+    `destination-in` pass that intersects with the object's stamped `clipMask`)
+    so a sticker/text/shape can never occupy dead UV space. Screen-only feedback
+    is a dim tint (`UV_DIM_COLOR = rgba(16,20,26,0.55)`, drawn on the chrome
+    overlay under the movable handles) over every inactive panel and every
+    unmapped texel of the active one; base and rasters are never modified, and
+    `UV_GROW_PX` keeps bilinear/mip sampling from visibly clipping at a seam.
+  - **3D→flat picking (wired but DISABLED)**: a click on the 3D preview raycasts
+    the livery meshes (`Livery3DPreview` `pickMeshes`, orbit-drag vs. click
+    distinguished by pointer travel) and reports `{partName, u, v}`;
+    `CreateTab.handlePickUv` reverse-maps it with `liveryUv.js:hitTestRegion` to
+    glow the matching flat region (`uvGlow = {panel, id}` → `rebuildUvGlow`
+    traces the island border onto the overlay as an additive halo — a pure
+    highlight, never an edit constraint). Gated by
+    `constants/livery.js:UV_GLOW_ENABLED = false`: the atlas is packed for
+    texture efficiency, not anatomy (a tail fin's two sides sit at opposite ends
+    of the atlas), so the highlight often mismatched the clicked part. Flipping
+    the flag to `true` revives the whole wiring; **Panel Lock (dead-space clip)
+    is independent and stays on**.
   - **Padded chrome overlay + interaction surface (`OVERLAY_PAD = 256`)**: the
     chrome canvas is `(W+2·PAD)×(H+2·PAD)`, absolutely positioned at `-PAD*zoom`
     so it spills around the base bitmap, and `drawOverlay` clears the padded
@@ -489,10 +640,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      shapes, …)** the right-click instead calls the shared `pickColorAt` (same
      as the Eyedropper, keeps the active tool) and never opens the movable
      menu — so the pen tool's right-click is a colour pick. The
-     eyedropper composites the base raster with every live object through a
+     eyedropper composites the visible stack (`paintVisibleComposite`) through a
      lazily-created 1×1 scratch (`pickCanvasRef`/`getPickCanvas`) before reading
      the pixel, so a colour can be picked off **movables** (stickers / shapes /
-     text) and not just the base — mirroring the overlay's `paintObjectWithErase`
+     text) on any visible layer and not just the base — mirroring the overlay's
+     `paintObjectWithErase`
      (a selection never clips a movable);
      it falls back to the raw base pixel when the composite is empty/transparent
      or there are no objects. Two tools consume the right-button *press*
@@ -579,24 +731,25 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     trail) and re-anchors there, so repeated Shift+clicks chain a polyline.
     Each segment is one undo snapshot (`commitSegment`). **`[` / `]`** step the
     shared brush/eraser size by ∓5 (clamped 1–200) while either tool is active.
-    **Layers: the pen is always on top, the fill always at the bottom —
-    without baking.** Five stacked
-    `<canvas>` layers inside `.lp-canvas-stage` (bottom → top):
-    `base` (locked aircraft image, `baseCanvasRef`, opaque, `drawBase` only),
-    `fill` (`fillCanvasRef`, the flood-fill underlay),
-    `objects` (live
-    movables, `objectCanvasRef`), `paint` (`canvasRef`/`ctxRef`, the pen:
-    brush/eraser), `chrome` (`overlayRef`, padded, selection outline +
-    handles + previews + the pointer surface). Both raster layers are `pointer-
-    events:none`; the fill draws UNDER the movables and the pen draws ABOVE
-    them, so a stroke always covers them while they stay live and movable. UI
-    order is pinned by `data-layer` on each
-    canvas (tests target
-    `[data-layer="fill"|"paint"|"base"|"objects"|"chrome"]`).
-    Export/`pickColorAt`/`applyWandAt` composite the same order (base → fill →
-    objects → paint). Snapshots carry the pen layer plus a **shared reference**
-    to the fill pixels (cached `fillPixelsRef`, invalidated on every fill-layer
-    mutation) and to the
+    **Layers: each editable layer owns its fill / movables / pen, the base is
+    locked below and the chrome sits on top — without baking.** Inside
+    `.lp-canvas-stage` (bottom → top): `base` (locked aircraft image,
+    `baseCanvasRef`, opaque, `drawBase` only), then one `[fill, objects, paint]`
+    `<canvas>` triple PER editable layer in stack order, then `chrome`
+    (`overlayRef`, padded, selection outline + handles + previews + the pointer
+    surface). Within a layer the fill draws UNDER its movables and the pen draws
+    ABOVE them, so a stroke always covers them while they stay live and movable;
+    across layers a higher layer's fill/objects/paint composite over the lower
+    ones. `ctxRef`/`fillCtxRef`/`canvasRef`/`fillCanvasRef` alias the ACTIVE
+    layer. Every canvas carries `data-layer` (+ `data-layer-id`); all raster
+    layers are `pointer-events:none` (tests target
+    `[data-layer="fill"|"paint"|"base"|"objects"|"chrome"]` and, for a specific
+    layer, `[data-layer-id]`). See "Layer panel (RHS) + model" above.
+    Export/`pickColorAt`/`applyWandAt` composite the same order (base → each
+    visible layer's fill → objects → paint, clipped layers masked). Snapshots carry the pen layer plus a **shared per-layer
+    reference** to the fill and paint pixels (cached on each layer record by
+    `captureLayerPixels`, invalidated on that layer's mutation and shared across
+    snapshots while unchanged) and to the
     last base pixels (`basePixelsRef`, refreshed when `drawBase` lands), so undo
     restores Clear/import bases and fills without copying a static layer per
     step.
@@ -763,11 +916,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       rule as curve commits); `Escape` cancels the draft. Wand: `applyWandAt`
       floods the contiguous **visible-colour** region (`wandRegion` spans, fill
       tolerance) sampled from the exact on-screen stack in a dedicated
-      `wandCanvasRef` buffer: base image → fill underlay → each movable through
-      `paintObjectForDisplay` (so a stamped `clipMask` clips invisible geometry
-      out of the sample) → the pen layer on top. So a sticker/shape colour is
+      `wandCanvasRef` buffer: `paintVisibleComposite` reproduces the exact
+      on-screen stack — base image → every VISIBLE layer in order (its fill
+      underlay → its movables, each through `paintObjectForDisplay` so a stamped
+      `clipMask`/the UV coverage clips invisible geometry out of the sample → its
+      pen) → so a sticker/shape colour is
       selectable, but **invisible geometry never is**. **The fill tool reuses
-      this exact sample** (base → fill → movables → pen) to pick its region, then
+      this exact sample** (the same `paintVisibleComposite`) to pick its region, then
       writes only the matched spans into the fill layer — never flooding the
       transparent fill layer itself, which would ignore tolerance and fill the
       whole panel. **Multi-panel confinement:**
@@ -792,8 +947,10 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
       `hasMaskRef.current` is true (`getMaskCopy` — one shared immutable W×H copy
       per mask version, invalidated whenever the mask changes). The object is
       clipped to that **stamped** shape for good (`paintObjectForDisplay` →
-      `paintObjectMasked(target, o, o.clipMask)`: object → full-store scratch →
-      `destination-in` clip → blit) in the objects layer, `flattenToCanvas` and
+      `paintObjectThroughMasks(target, o, masks)`, where `masks` is the stamped
+      `clipMask` and — while Panel Lock is on — the all-panel UV coverage canvas,
+      applied as successive `destination-in` passes: object → full-store scratch →
+      `destination-in` clip(s) → blit) in the objects layer, `flattenToCanvas` and
       `pickColorAt`. Ctrl+D (or making a new selection) never un-clips or
       re-clips it — a movable added under a selection stays that partial shape
       permanently. A movable placed **before** any selection has no `clipMask`
@@ -895,9 +1052,11 @@ lays out **one 2048² panel per part** (A388 → Fuselage + Wing, B38M → Fusel
 
 ## 3D livery preview (floating window + list snapshots)
 
-A `LuRotate3D` toolbar button immediately right of the aircraft dropdown
-(`AirlineAircraftFields` `onOpen3D`, hidden for types without a model via
-`constants/livery.js:has3DModel` — Cessna Citation X) shows the current livery
+A `LuRotate3D` toolbar button in its own **top-bar group** right of the
+airline/aircraft group and the Panel Lock switch (only rendered when
+`constants/livery.js:has3DModel(planeId)` — the Cessna Citation X has none;
+`CreateTab` wires it straight to `open3D`, no longer via
+`AirlineAircraftFields`) shows the current livery
 on the game's **real aircraft mesh** in a floating panel
 (`Livery3DPreview.jsx`, three.js + `OrbitControls`). It renders the live panels,
 matched to the model's livery parts by `partName` (A388 `Fuselage`/`Wing`,
@@ -1010,14 +1169,17 @@ Electron's `nativeImage` (`resize` + `toJPEG(72)`), memoized in an in-memory
 unavailable/unproductive (plain-Node unit tests, empty decode) it degrades to
 the full image verbatim with `thumbnail: false` so the list still renders;
 `read-livery-images(folder, pack)` → **all** BaseMap parts of a stored livery
-(`{success, imageDataUrl (main), parts:[{partName, fileName, imageDataUrl}]}`)
+(`{success, imageDataUrl (main), parts:[{partName, fileName, imageDataUrl}],
+layers?}`)
 — the painter loads every panel; the list keeps using the single main-part
-`read-livery-image`/`read-livery-thumbnail`, so its preview is unchanged;
+`read-livery-image`/`read-livery-thumbnail`, so its preview is unchanged.
+`layers` is the parsed editor layer sidecar (`.livery_layers.json`) when
+present;
 `get-aircraft-template(planeId)` → the built-in default BaseMaps
 (`readAircraftTemplate`, now a `parts` array — see "Aircraft template" above);
 `list-aircraft-types()` → the aircraft-type dropdown source (see
 "Aircraft-type dropdown" above);
-`create-livery({images, imageDataUrl, airline, targetPlaneId, folder})` →
+`create-livery({images, imageDataUrl, airline, targetPlaneId, folder, layers})` →
 `images` is an ordered `[{partName, imageDataUrl}]` list (one entry per panel;
 legacy callers may send a single `imageDataUrl`). Validates each image (airline
 `/^[A-Z]{3}$/`, plane id resolves through `PLANE_ID_TO_SHORT_CODE`, PNG
@@ -1026,9 +1188,11 @@ and derives the short code + manifest id → writes `base.png` for a single pane
 or `base_Fuselage.png`/`base_Wing.png`/`base_Wingtip.png` per panel (removing a
 stale `base.png` from an older save) + a `parts` manifest (**silent overwrite,
 no `.bak`** — the renderer's Save As override prompt is the guard, see
-`CreateTab`), returns `{success, folder}`. The written manifest carries the
-built-in `partName` per panel (**Fuselage + Wing/Wingtip** for A388/B38M) and
-the built-in `targetModelVer` (C919 `2`, rest `1`);
+`CreateTab`), returns `{success, folder}`. `layers` (optional) is the painter's
+full layer snapshot, written verbatim to the editor-only `.livery_layers.json`
+dot-file (absent → untouched; explicit `null` → removed). The written manifest
+carries the built-in `partName` per panel (**Fuselage + Wing/Wingtip** for
+A388/B38M) and the built-in `targetModelVer` (C919 `2`, rest `1`);
 `delete-livery(folder)` (own-pack only, containment-checked `rm -rf`);
 `select-livery-image` (png/jpg/svg sticker dialog) + `read-disk-image(filePath)` (png/jpg/svg data-URL; SVG gains injected width/height so it rasterizes, `BAD_IMAGE` when no size resolves);
 `reveal-livery-folder(folder, pack)` → resolve the folder via
@@ -1294,6 +1458,12 @@ manifest for a free-form zip folder).
   and that `setPanelBase` swaps ONE panel's base **in place** (same canvas
   element — no remount that would wipe the other panels' paint/objects — with
   the import snapshotted so Ctrl+Z reverts it).
+  The same file's **"UV region lock"** block pins: a brush stroke is clipped to
+  the supplied `uvRegions` while `uvLock` is on (and never constrained when it
+  is off), live objects are routed through the coverage mask (`destination-in`),
+  the 3D→flat glow draws additive halo strokes (`composite 'lighter'`) even with
+  the lock off, `livery_uv_toggle` resolves in zh+en, and the removed
+  panel-selection controls (`Select UV Panel` / `All Regions`) are absent.
   `tests/components/LiveryScreen/CreateTab.test.jsx` asserts the
   2-panel store width instead of the removed tab strip, that H/V keep the active
   panel, that Ctrl+S / Ctrl+Shift+S open the Save / Save As dialogs (and are
@@ -1303,7 +1473,15 @@ manifest for a free-form zip folder).
   call; the canvas DOM node is the same, so live movables are not baked into the
   base and the eraser still removes them), and that importing an
   image over a dirty canvas loads into the active panel **without** the
-  unsaved-changes prompt or a canvas remount.
+  unsaved-changes prompt or a canvas remount. Its **`CreateTab layer sidecar`**
+  block opens a livery whose `read-livery-images` returns a persisted `layers`
+  payload (legacy `group` form), shows the restored named/grouped layers instead
+  of a single default layer, and asserts the following Save ships `layers` (v2
+  `panel`/`layers`) back to `create-livery`; the **`panel lock toolbar`** block
+  pins the `Panel Lock` switch (off by default, `aria-checked` flips, lives in
+  `.lp-topbar`) beside the 3D button and the absence of the removed
+  `Select UV Panel` tool. Every `create-livery` assertion now expects a `layers`
+  object.
   `tests/components/LiveryScreen/MyLiveriesTab.test.jsx` pins the in-place
   delete: a successful delete drops only its row (no full re-list, `scrollTop`
   capped to the shrunken content) and a partial batch leaves the failed rows.
@@ -1338,5 +1516,46 @@ manifest for a free-form zip folder).
   localized default title (en/zh), upload-only button label, unavailable reason,
   progress + success URL, error-keeps-input, generic fallback for unknown codes +
   `View log`, stale-main banner, no `linkItemId` sent, preview picker.
+- `tests/components/LiveryScreen/LiveryCanvasLayers.test.jsx` — the layer
+  system: starting stack (one layer + locked base row, delete disabled), add
+  layer (above active, becomes active, second paint canvas), a 50×50 preview
+  canvas per layer plus the base preview, rename (inline + `exportLayers`),
+  hide/show + refusing to hide the last visible layer, **hide an entire folder**
+  (children dim, their rasters `display:none`, the panel node persists
+  `visible:false`, and re-showing restores), **layer clipping** (toggling sets
+  the status icon + `.lp-layer-clipped` offset, hides the raw rasters for a
+  `data-layer="clip"` display canvas, persists `clipped:true`, survives an
+  unclip with objects intact, clips the bottom layer to the locked base and still
+  exports, and restores `clipped` from a saved payload), **painting still works
+  on a clipped layer** (the stroke lands on its hidden paint raster — the screen
+  only masks the display), **structural undo** (Ctrl+Z removes a just-added
+  layer / restores a deleted layer *with its objects* / reverts a clip toggle / a
+  hide / a drag reorder / a move into a folder while the folder stays; redo
+  re-applies), delete (last kept),
+  **New Folder** (no count badge), **drag a layer into a folder** (nested class +
+  `panel` folder node containing the layer id) without reordering other folders,
+  **a layer dropped at the TOP of a folder** becomes its first child, **drag out
+  to the Base row** (root node), folder rename, **delete empty folder
+  immediately** and **delete a non-empty folder after a confirm** (folder + its
+  layers removed, root layers untouched), **drag reorder** with a top-half drop =
+  above (reflected in `exportLayers` order), **dragging a whole folder** (its
+  layers travel in the node), **pen bounded to the active layer** (stroke lands
+  on that layer's `data-layer-id` paint canvas, never another), **selection
+  bounded** (a new layer cannot select a lower layer's movable; switching back
+  does), and persistence (`exportLayers` v2 `panel`/layers/objects/panels; an
+  `initialLayers` payload rebuilds names, folders, objects and per-layer
+  rasters). Backend sidecar coverage lives in
+  `tests/electron/livery-ipc.test.js` (write/read via `readLiveryImages`,
+  omitted → untouched, `null` → removed, never in the share ZIP) and
+  `tests/unit/livery-workshop-packaging.test.js` (excluded from the published
+  mod). `CreateTab.test.jsx` pins the open→restore→save-back wiring (including
+  the legacy `group` → folder migration).
+- `tests/utils/liveryUv.test.js` — the pure UV geometry (no DOM/three):
+  `uvToTexel` (flipY), `segmentUvIslands` (disjoint charts stay separate,
+  seam-duplicated vertices at a shared UV join), `buildPartUvRegion` (a
+  full-image quad maps every texel, dead UV space reads id 0 / a `-1` hit, two
+  charts stay distinct in the id map), `dilateMask` (4-connected growth, never
+  into a `blocked` pixel), `regionMask` (all islands vs. one, island growth never
+  over another island) and `maskToImageData`; `UV_MASK_SIZE === 2048`.
 - In-game acceptance (manual): create via UI → launch game → livery on model
   (validates the own-pack-dir assumption); upload via UI with Steam running.

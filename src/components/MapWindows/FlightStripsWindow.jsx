@@ -1173,7 +1173,7 @@ export default function FlightStripsWindow({ airportIcao }) {
           <div className="strips-bar-btn" onClick={handleRefresh} {...tipBind(helpTip('map_help_strips_refresh'))}>
             {witchMode ? <img src="witch/refresh.png" alt="Refresh" className="witch-refresh-img" /> : <IoRefreshOutline size={16} />}
           </div>
-          <div className="strips-bar-btn" onClick={handleHelpClick} title="Map Help">
+          <div className="strips-bar-btn" onClick={handleHelpClick} title="Help">
             {witchMode ? <img src="witch/help.png" alt="?" className="witch-help-img" /> : <IoHelpCircleOutline size={16} />}
           </div>
         </div>
