@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   readPart, toBytes, computeCameraFit, renderLiverySnapshot, disposeLiverySnapshots,
+  releaseLiveryRenderer, getCachedLiverySnapshot, isLiverySnapshotCurrent,
 } from '../../src/utils/livery3d';
 
 const H = vi.hoisted(() => ({
@@ -234,6 +235,30 @@ describe('renderLiverySnapshot', () => {
     expect(renderer.renders.length).toBe(renders);
   });
 
+  it('re-renders the same key when the revision changes', async () => {
+    const a = await renderLiverySnapshot({ key: 'rev', revision: 100, planeId: 'P5', parts: PARTS, bin: BIN });
+    const renderer = H.renderers.at(-1);
+    const renders = renderer.renders.length;
+    const b = await renderLiverySnapshot({ key: 'rev', revision: 100, planeId: 'P5', parts: PARTS, bin: BIN });
+    expect(b).toBe(a);
+    expect(renderer.renders.length).toBe(renders);
+    // New texture mtime → the stale snapshot is replaced.
+    const c = await renderLiverySnapshot({ key: 'rev', revision: 200, planeId: 'P5', parts: PARTS, bin: BIN });
+    expect(c).toBe(a); // fake canvas always returns the same URL
+    expect(renderer.renders.length).toBe(renders + 1);
+    expect(isLiverySnapshotCurrent('rev', 200)).toBe(true);
+    expect(isLiverySnapshotCurrent('rev', 100)).toBe(false);
+  });
+
+  it('exposes a synchronous warm-cache lookup for the list first paint', async () => {
+    expect(getCachedLiverySnapshot('warm')).toBeNull();
+    expect(isLiverySnapshotCurrent('warm', 1)).toBe(false);
+    const url = await renderLiverySnapshot({ key: 'warm', revision: 1, planeId: 'P5', parts: PARTS, bin: BIN });
+    expect(getCachedLiverySnapshot('warm')).toBe(url);
+    expect(isLiverySnapshotCurrent('warm', 1)).toBe(true);
+    expect(isLiverySnapshotCurrent('warm', 2)).toBe(false);
+  });
+
   it('reuses the parsed geometry for repeat planes', async () => {
     await renderLiverySnapshot({ key: 'g1', planeId: 'SHARED', parts: PARTS, bin: BIN });
     const geo1 = H.renderers.at(-1).renders.at(-1).children.find((c) => c.isGroup).children[0].geometry;
@@ -293,5 +318,23 @@ describe('disposeLiverySnapshots', () => {
 
   it('is safe to call with nothing rendered', () => {
     expect(() => disposeLiverySnapshots()).not.toThrow();
+  });
+});
+
+describe('releaseLiveryRenderer', () => {
+  it('frees the GPU renderer but keeps the snapshot URL cache warm', async () => {
+    const url = await renderLiverySnapshot({ key: 'w1', revision: 5, planeId: 'W', parts: PARTS, bin: BIN });
+    const first = H.renderers.at(-1);
+    releaseLiveryRenderer();
+    expect(first.disposed).toBeGreaterThan(0);
+    expect(first.contextLost).toBe(true);
+
+    // The URL survives and is served without a new renderer (page re-entry).
+    expect(getCachedLiverySnapshot('w1')).toBe(url);
+    expect(isLiverySnapshotCurrent('w1', 5)).toBe(true);
+    const again = await renderLiverySnapshot({ key: 'w1', revision: 5, planeId: 'W', parts: PARTS, bin: BIN });
+    expect(again).toBe(url);
+    // No second renderer was created for the warm hit.
+    expect(H.renderers).toHaveLength(1);
   });
 });

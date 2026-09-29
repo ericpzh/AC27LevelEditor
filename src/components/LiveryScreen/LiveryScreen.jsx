@@ -16,7 +16,7 @@ import { MdAdd } from 'react-icons/md';
 import { FaFileExport } from 'react-icons/fa6';
 import useTooltip from '../BrowserScreen/useTooltip';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
-import { disposeLiverySnapshots } from '../../utils/livery3d';
+import { releaseLiveryRenderer } from '../../utils/livery3d';
 import MyLiveriesTab from './MyLiveriesTab';
 import CreateTab from './CreateTab';
 import InstallPackTab from './InstallPackTab';
@@ -57,7 +57,10 @@ export default function LiveryScreen() {
 
   // ── 3D model pack (list snapshots + painter preview) ──
   // Extracted once when the livery page opens (in the background, so the list
-  // still renders instantly), kept for the whole page, and deleted on unmount.
+  // still renders instantly) and kept in the on-disk cache across page visits.
+  // Leaving the livery page no longer deletes the pack, so the list's 3D
+  // snapshots are always warm on return; `ensureAircraft3D` (the same page-entry
+  // cadence) refreshes the cache only when it is missing or stale.
   const [modelPack, setModelPack] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -82,9 +85,12 @@ export default function LiveryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootPath]);
 
+  // The offscreen snapshot renderer owns a live WebGL context, so release its
+  // GPU resources here. The rendered snapshot URLs and the extracted model pack
+  // are deliberately KEPT (both on disk and in memory) so the list paints every
+  // card from the warm cache on return — no shimmer skeleton replay.
   useEffect(() => () => {
-    try { disposeLiverySnapshots(); } catch (_) {}
-    try { if (electronAPI.cleanupAircraft3D) Promise.resolve(electronAPI.cleanupAircraft3D()).catch(() => {}); } catch (_) {}
+    try { releaseLiveryRenderer(); } catch (_) {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -443,12 +443,17 @@ function readLiveryRow(packDir, folder) {
   const dir = path.join(packDir, folder);
   let mtime = 0;
   try { mtime = fs.statSync(dir).mtimeMs; } catch (_) {}
-  const hasBasePng = Boolean(_resolveLiveryImagePath(dir));
+  const imgPath = _resolveLiveryImagePath(dir);
+  const hasBasePng = Boolean(imgPath);
+  // The paintable texture's mtime is the list's cheap snapshot-cache revision
+  // (the folder mtime does not change when base.png is overwritten in place).
+  let imgMtime = 0;
+  if (imgPath) { try { imgMtime = fs.statSync(imgPath.path).mtimeMs; } catch (_) {} }
   try {
     const m = _readJsonFile(path.join(dir, 'aircraft_livery_manifest.json'), 'utf-8');
-    return { folder, id: m.id || '', name: m.name || '', airline: m.airline || '', variant: m.variant || '', targetPlaneId: m.targetPlaneId || '', hasBasePng, mtime };
+    return { folder, id: m.id || '', name: m.name || '', airline: m.airline || '', variant: m.variant || '', targetPlaneId: m.targetPlaneId || '', hasBasePng, imgMtime, mtime };
   } catch (_) {
-    return { folder, id: '', name: '', airline: '', variant: '', targetPlaneId: '', hasBasePng, mtime, error: 'BAD_MANIFEST' };
+    return { folder, id: '', name: '', airline: '', variant: '', targetPlaneId: '', hasBasePng, imgMtime, mtime, error: 'BAD_MANIFEST' };
   }
 }
 

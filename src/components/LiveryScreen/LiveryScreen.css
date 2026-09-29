@@ -936,6 +936,17 @@
   background: #fff;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75);
 }
+/* Inner solid-core guide for a soft brush (hardness < 100%). */
+.lp-cursor-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px dashed rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
 [data-theme="light"] .lp-canvas-stage {
   background: repeating-conic-gradient(#e6e8ec 0 25%, #dcdfe4 0 50%) 0 0 / 24px 24px;
 }
@@ -971,56 +982,6 @@
   text-align: center;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
-}
-/* ── Right-click layer-order menu (movable objects) ── */
-.lp-order-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  background: transparent;
-}
-.lp-order-menu {
-  position: fixed;
-  z-index: 61;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 148px;
-  padding: 4px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-}
-.lp-order-btn {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-family: inherit;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.lp-order-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lp-order-btn:hover:not(:disabled) {
-  background: var(--bg);
-  color: var(--text);
-  border-color: var(--border);
-}
-.lp-order-btn:disabled {
-  opacity: 0.35;
-  cursor: default;
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -1220,10 +1181,16 @@
   white-space: nowrap;
   cursor: text;
 }
+/* Grid: the thumbnail spans both rows, the name/% stack and the opacity slider
+   live in the middle column, and the 2×2 actions grid owns the right column
+   over the full height — so putting the slider under the name no longer grows
+   the row past the thumbnail's height. */
 .lp-layer-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 5px;
+  column-gap: 5px;
+  row-gap: 2px;
   padding: 3px 5px;
   border-radius: 4px;
   border: 1px solid transparent;
@@ -1234,7 +1201,9 @@
 .lp-layer-row:hover { background: var(--bg-elevated); }
 .lp-layer-row.lp-layer-active { background: var(--bg-elevated); border-color: var(--accent); }
 .lp-layer-row.lp-layer-hidden .lp-layer-name { opacity: 0.45; text-decoration: line-through; }
-.lp-layer-row.lp-layer-base { cursor: default; opacity: 0.75; }
+/* The locked base image row has no opacity/actions column — keep it a simple
+   flex row (thumbnail, lock, name) rather than the layer grid. */
+.lp-layer-row.lp-layer-base { display: flex; align-items: center; gap: 5px; cursor: default; opacity: 0.75; }
 /* A clipped layer sits inset to the right (Photoshop-style) with a link status
    icon; unclipped rows keep the clip toggle hidden until hover/active. */
 .lp-layer-row.lp-layer-clipped { margin-left: 14px; }
@@ -1246,6 +1215,8 @@
 .lp-layer-folder--grab { cursor: grab; }
 .lp-layer-folder--grab:active { cursor: grabbing; }
 .lp-layer-thumb {
+  grid-column: 1;
+  grid-row: 1 / span 2;
   width: 50px;
   height: 50px;
   flex: none;
@@ -1254,6 +1225,22 @@
   background: repeating-conic-gradient(#2a2d38 0 25%, #23262f 0 50%) 0 0 / 12px 12px;
 }
 .lp-layer-thumb--base { display: block; }
+/* Middle column: layer name (with its opacity readout) on top, slider beneath. */
+.lp-layer-main {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+}
+.lp-layer-toprow {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
 .lp-layer-name {
   flex: 1;
   min-width: 0;
@@ -1291,6 +1278,8 @@
 /* Two rows of controls fit beside the 50px thumbnail: the 4 row buttons lay
    out as a 2×2 grid (eye + clip, then rename + delete). */
 .lp-layer-actions {
+  grid-column: 3;
+  grid-row: 1 / span 2;
   display: inline-grid;
   grid-template-columns: repeat(2, 20px);
   grid-auto-rows: 20px;
@@ -1323,4 +1312,32 @@
 .lp-layer-mini:hover:not(:disabled) { background: var(--bg); color: var(--text); }
 .lp-layer-mini:disabled { opacity: 0.35; cursor: default; }
 .lp-layer-mini.lp-danger:hover:not(:disabled) { color: var(--red); }
+/* Per-layer opacity slider: the second line of the middle column (directly
+   under the name), independent of the eye (hide/show) toggle. Only the
+   compositing alpha — never the pixels. */
+.lp-layer-opacity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  cursor: default;
+}
+.lp-layer-opacity-slider {
+  flex: 1 1 0%;
+  min-width: 0;
+  width: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+/* Readout rides the name's line so the slider keeps the full column width. A
+   fixed min-width keeps the name from reflowing as the value changes. */
+.lp-layer-opacity-val {
+  flex: none;
+  min-width: 28px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
 

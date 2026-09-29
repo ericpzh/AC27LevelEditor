@@ -89,7 +89,11 @@ let _camera = null;
 let _failed = false;
 let _size = { w: 0, h: 0 };
 const _geoCache = new Map(); // planeId -> [{ livery, geometry }]
-const _urlCache = new Map(); // cacheKey -> data URL
+// cacheKey -> { url, rev }. `rev` is a cheap content fingerprint supplied by the
+// caller (the livery image's mtime); a changed rev re-renders and overwrites the
+// entry. This cache is intentionally kept warm when the livery page is left (see
+// releaseLiveryRenderer) so list snapshots never replay their shimmer skeleton.
+const _urlCache = new Map();
 let _chain = Promise.resolve(); // serializes renders (one shared GL context)
 
 function serialize(fn) {
@@ -150,12 +154,16 @@ function getGeometries(planeId, parts, bin) {
 /**
  * Render `planeId` (with `textureUrl` on its livery parts) to a PNG data URL at
  * the given size (default 640×320 = the card's 2:1 box). Returns null when
- * WebGL is unavailable or anything fails. Cached by `key`.
+ * WebGL is unavailable or anything fails. Cached by `key`, invalidated when
+ * `revision` changes (so an edited livery re-renders).
  */
-export function renderLiverySnapshot({ key, planeId, parts, bin, textureUrl, width = DEFAULT_W, height = DEFAULT_H }) {
-  if (_urlCache.has(key)) return Promise.resolve(_urlCache.get(key));
+export function renderLiverySnapshot({ key, revision = '', planeId, parts, bin, textureUrl, width = DEFAULT_W, height = DEFAULT_H }) {
+  const rev = String(revision ?? '');
+  const hit = _urlCache.get(key);
+  if (hit && hit.rev === rev) return Promise.resolve(hit.url);
   return serialize(async () => {
-    if (_urlCache.has(key)) return _urlCache.get(key);
+    const again = _urlCache.get(key);
+    if (again && again.rev === rev) return again.url;
     const renderer = ensureRenderer(width, height);
     if (!renderer) return null;
     const geos = getGeometries(planeId, parts, bin);
@@ -207,7 +215,7 @@ export function renderLiverySnapshot({ key, planeId, parts, bin, textureUrl, wid
       _camera.updateProjectionMatrix();
       renderer.render(_scene, _camera);
       const url = renderer.domElement.toDataURL('image/png');
-      _urlCache.set(key, url);
+      _urlCache.set(key, { url, rev });
       return url;
     } catch (_) {
       return null;
@@ -219,16 +227,38 @@ export function renderLiverySnapshot({ key, planeId, parts, bin, textureUrl, wid
   });
 }
 
-/** Tear down the offscreen renderer + caches (leaving the livery page). */
-export function disposeLiverySnapshots() {
+/** The cached snapshot URL for `key`, or null. Synchronous — lets the list
+ * render a warm preview on its first paint instead of a shimmer skeleton. */
+export function getCachedLiverySnapshot(key) {
+  const entry = _urlCache.get(key);
+  return entry ? entry.url : null;
+}
+
+/** True when `key` has a cached snapshot built from the same `revision`. */
+export function isLiverySnapshotCurrent(key, revision = '') {
+  const entry = _urlCache.get(key);
+  return Boolean(entry) && entry.rev === String(revision ?? '');
+}
+
+/**
+ * Release the offscreen GPU resources (renderer context + parsed geometries)
+ * while KEEPING the snapshot URL cache. Called when the livery page is left: the
+ * next visit paints every list card from the warm cache with no re-render.
+ */
+export function releaseLiveryRenderer() {
   try { if (_renderer) { _renderer.dispose(); _renderer.forceContextLoss && _renderer.forceContextLoss(); } } catch (_) {}
   for (const geos of _geoCache.values()) {
     for (const g of geos) { try { g.geometry.dispose(); } catch (_) {} }
   }
   _geoCache.clear();
-  _urlCache.clear();
   _renderer = null;
   _scene = null;
   _camera = null;
   _failed = false;
+}
+
+/** Full teardown: renderer + geometries + snapshot URL cache. */
+export function disposeLiverySnapshots() {
+  releaseLiveryRenderer();
+  _urlCache.clear();
 }

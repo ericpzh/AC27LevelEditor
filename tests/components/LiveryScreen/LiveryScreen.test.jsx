@@ -565,12 +565,12 @@ describe('LiveryScreen 3D model pack', () => {
     expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-ensure')).toBe(false);
   });
 
-  it('deletes the pack when leaving the livery page', async () => {
+  it('keeps the pack cached when leaving the livery page', async () => {
     setupMocks({
       'livery-3d-get': Promise.resolve({ success: true, planes: { 'AIRBUS A-320neo': { bin: 'x.bin', parts: [] } } }),
     });
     const { unmount } = renderLivery();
     unmount();
-    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-cleanup')).toBe(true);
+    expect(mockIpcInvoke.mock.calls.some(c => c[0] === 'livery-3d-cleanup')).toBe(false);
   });
 });

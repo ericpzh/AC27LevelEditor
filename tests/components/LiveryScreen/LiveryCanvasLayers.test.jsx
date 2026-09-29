@@ -169,11 +169,22 @@ describe('layer panel — structure', () => {
     expect(rowBtn('Layer 1', 'Hide layer')).toBeInTheDocument();
   });
 
-  it('refuses to hide the last visible layer', async () => {
+  it('hides the last visible layer (the solo layer can be hidden)', async () => {
     const user = userEvent.setup();
-    renderCanvas();
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
     await user.click(rowBtn('Layer 1', 'Hide layer'));
-    expect(rowBtn('Layer 1', 'Hide layer').getAttribute('aria-pressed')).toBe('true');
+    // The last visible layer CAN be hidden now — only the locked base remains.
+    expect(rowBtn('Layer 1', 'Show layer')).toBeInTheDocument();
+    expect(rowBtn('Layer 1', 'Show layer').getAttribute('aria-pressed')).toBe('false');
+    const paintCanvases = [...document.querySelectorAll('.livery-canvas-wrap canvas[data-layer="paint"]')];
+    expect(paintCanvases.some(c => c.style.display === 'none')).toBe(true);
+    // It stays the active layer (no visible successor), so the next stroke still
+    // lands on it even while hidden.
+    expect(ref.current.exportLayers().activeId).toBe(layerIdByName(ref, 'Layer 1'));
+    await user.click(rowBtn('Layer 1', 'Show layer'));
+    expect(rowBtn('Layer 1', 'Hide layer')).toBeInTheDocument();
   });
 
   it('deletes a layer (keeping the last one)', async () => {
@@ -465,6 +476,174 @@ describe('layer panel — clipping', () => {
     expect(document.querySelector(`canvas[data-layer="clip"][data-layer-id="${id}"]`)).toBeTruthy();
     expect(layerRow('Clip Art').className).toContain('lp-layer-clipped');
     expect(ref.current.exportLayers().layers.find(l => l.id === id).clipped).toBe(true);
+  });
+});
+
+describe('layer panel — opacity', () => {
+  const opacitySlider = (name) => within(layerRow(name)).getByRole('slider', { name: 'Layer opacity' });
+
+  it('renders an opacity slider per layer, defaulting to 100%', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    expect(opacitySlider('Layer 1').value).toBe('100');
+    expect(within(layerRow('Layer 1')).getByText('100%')).toBeInTheDocument();
+    await user.click(headBtn('New Layer'));
+    expect(opacitySlider('Layer 2').value).toBe('100');
+  });
+
+  it('fades a layer to 0 without touching its content, and back to 100', async () => {
+    stickerIpc();
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(headBtn('New Layer'));
+    await act(async () => { await ref.current.importSticker(); });
+    const id = layerIdByName(ref, 'Layer 2');
+    let before = ref.current.exportLayers().layers.find(l => l.id === id);
+    await waitFor(() => {
+      before = ref.current.exportLayers().layers.find(l => l.id === id);
+      expect(before.objects).toHaveLength(1);
+    });
+
+    fireEvent.change(opacitySlider('Layer 2'), { target: { value: '0' } });
+    await waitFor(() => expect(ref.current.exportLayers().layers.find(l => l.id === id).opacity).toBe(0));
+    // Display canvases fade via CSS, but the stored rasters/objects survive.
+    expect(document.querySelector(`canvas[data-layer="paint"][data-layer-id="${id}"]`).style.opacity).toBe('0');
+    const faded = ref.current.exportLayers().layers.find(l => l.id === id);
+    expect(faded.objects).toHaveLength(1);
+    expect(faded.panels[0]).toEqual(before.panels[0]);
+    expect(() => ref.current.exportPNG()).not.toThrow();
+
+    fireEvent.change(opacitySlider('Layer 2'), { target: { value: '100' } });
+    await waitFor(() => expect(ref.current.exportLayers().layers.find(l => l.id === id).opacity).toBe(1));
+    expect(document.querySelector(`canvas[data-layer="paint"][data-layer-id="${id}"]`).style.opacity).toBe('1');
+    const restored = ref.current.exportLayers().layers.find(l => l.id === id);
+    expect(restored.objects).toHaveLength(1);
+    expect(restored.panels[0]).toEqual(before.panels[0]);
+  });
+
+  it('composites a faded layer at its opacity on export (a 0% layer contributes nothing)', async () => {
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    fireEvent.change(opacitySlider('Layer 1'), { target: { value: '40' } });
+    await waitFor(() => expect(opacitySlider('Layer 1').value).toBe('40'));
+    // The export creates its compositing context first, before any scratch.
+    let before = ctxs.length;
+    act(() => { ref.current.exportPNG(); });
+    const exportCtx = ctxs[before];
+    expect(exportCtx.globalAlpha).toBeCloseTo(0.4, 6);
+    expect(exportCtx.drawImage).toHaveBeenCalled();
+    // At 0% the layer is skipped outright — never composited at alpha 0.
+    fireEvent.change(opacitySlider('Layer 1'), { target: { value: '0' } });
+    await waitFor(() => expect(opacitySlider('Layer 1').value).toBe('0'));
+    before = ctxs.length;
+    act(() => { ref.current.exportPNG(); });
+    expect(ctxs[before].globalAlpha).not.toBe(0);
+  });
+
+  it('keeps opacity independent from the hide/show toggle', async () => {
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(headBtn('New Layer'));
+    fireEvent.change(opacitySlider('Layer 1'), { target: { value: '0' } });
+    await waitFor(() => expect(opacitySlider('Layer 1').value).toBe('0'));
+    // The eye toggle still works on a fully-faded layer and vice versa.
+    await user.click(rowBtn('Layer 1', 'Hide layer'));
+    expect(rowBtn('Layer 1', 'Show layer')).toBeInTheDocument();
+    expect(opacitySlider('Layer 1').value).toBe('0');
+    await user.click(rowBtn('Layer 1', 'Show layer'));
+    expect(rowBtn('Layer 1', 'Hide layer')).toBeInTheDocument();
+    expect(opacitySlider('Layer 1').value).toBe('0');
+  });
+
+  it('does not switch the active layer when adjusting another layer opacity', async () => {
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(headBtn('New Layer')); // Layer 2 becomes active
+    const layer2Id = layerIdByName(ref, 'Layer 2');
+    expect(ref.current.exportLayers().activeId).toBe(layer2Id);
+    fireEvent.click(opacitySlider('Layer 1'));
+    fireEvent.change(opacitySlider('Layer 1'), { target: { value: '50' } });
+    expect(ref.current.exportLayers().activeId).toBe(layer2Id);
+    expect(ref.current.exportLayers().layers.find(l => l.name === 'Layer 1').opacity).toBe(0.5);
+  });
+
+  it('a press starting on the opacity slider never starts a layer-reorder drag', async () => {
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(headBtn('New Layer')); // flat bottom→top: [Layer 1, Layer 2]
+    expect(layerNames(ref)).toEqual(['Layer 1', 'Layer 2']);
+    // The press begins on the slider: the row drag is cancelled, order kept.
+    fireEvent.pointerDown(opacitySlider('Layer 1'));
+    dragOnto('Layer 1', layerRow('Layer 2'), 10);
+    expect(layerNames(ref)).toEqual(['Layer 1', 'Layer 2']);
+    // After release the same drag reorders again.
+    fireEvent.pointerUp(window);
+    dragOnto('Layer 1', layerRow('Layer 2'), 10);
+    await waitFor(() => expect(layerNames(ref)).toEqual(['Layer 2', 'Layer 1']));
+  });
+
+  it('undo reverts an opacity change in one step', async () => {
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await user.click(headBtn('New Layer'));
+    fireEvent.change(opacitySlider('Layer 2'), { target: { value: '30' } });
+    await waitFor(() => expect(opacitySlider('Layer 2').value).toBe('30'));
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    await waitFor(() => expect(opacitySlider('Layer 2').value).toBe('100'));
+  });
+
+  it('persists opacity through exportLayers and restores it from a payload', async () => {
+    const ref = React.createRef();
+    const user = userEvent.setup();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    fireEvent.change(opacitySlider('Layer 1'), { target: { value: '35' } });
+    await waitFor(() => expect(ref.current.exportLayers().layers[0].opacity).toBeCloseTo(0.35));
+
+    const ref2 = React.createRef();
+    const payload = {
+      version: 2,
+      activeId: 'ly1',
+      base: { panels: [{ partName: 'Body', imageDataUrl: 'data:image/png;base64,QkFTRQ==' }] },
+      panel: [{ type: 'layer', id: 'ly1' }],
+      layers: [
+        { id: 'ly1', name: 'Ghost', visible: true, opacity: 0.35, objects: [], panels: [] },
+      ],
+    };
+    renderCanvas({ ref: ref2, initialLayers: payload });
+    await waitFor(() => expect(ref2.current).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Ghost')).toBeInTheDocument());
+    expect(opacitySlider('Ghost').value).toBe('35');
+    expect(ref2.current.exportLayers().layers[0].opacity).toBeCloseTo(0.35);
+  });
+
+  it('defaults a legacy payload without opacity to 1', async () => {
+    const ref = React.createRef();
+    const payload = {
+      version: 2,
+      activeId: 'ly1',
+      base: { panels: [{ partName: 'Body', imageDataUrl: 'data:image/png;base64,QkFTRQ==' }] },
+      panel: [{ type: 'layer', id: 'ly1' }],
+      layers: [
+        { id: 'ly1', name: 'Legacy', visible: true, objects: [], panels: [] },
+      ],
+    };
+    renderCanvas({ ref, initialLayers: payload });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Legacy')).toBeInTheDocument());
+    expect(ref.current.exportLayers().layers[0].opacity).toBe(1);
   });
 });
 

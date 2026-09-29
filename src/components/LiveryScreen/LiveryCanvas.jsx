@@ -57,12 +57,12 @@ import {
   IoUnlinkOutline,
 } from 'react-icons/io5';
 import { AiOutlineClear } from 'react-icons/ai';
-import { FaEraser, FaRegHandPaper, FaPaintBrush } from 'react-icons/fa';
-import { FaArrowPointer, FaAnglesUp, FaAngleUp, FaAngleDown, FaAnglesDown, FaPencil } from 'react-icons/fa6';
+import { FaEraser, FaRegHandPaper } from 'react-icons/fa';
+import { FaArrowPointer } from 'react-icons/fa6';
 import { TbSticker2, TbLayersUnion, TbLayersDifference, TbLayersSelected, TbVectorSpline } from 'react-icons/tb';
 import { BsMagic } from 'react-icons/bs';
 import { HiDocumentDuplicate } from 'react-icons/hi';
-import { MdOutlineLayersClear } from 'react-icons/md';
+import { MdOutlineLayersClear, MdBlurOn } from 'react-icons/md';
 import { CiBookmarkRemove } from 'react-icons/ci';
 import { LuFlipHorizontal, LuFlipVertical, LuLasso } from 'react-icons/lu';
 import useTooltip from '../BrowserScreen/useTooltip';
@@ -74,6 +74,36 @@ export const TEXTURE = 2048;
 // Sentinel clip base: the locked base aircraft image. A clipped layer with no
 // editable layer beneath it is masked by the base texture's alpha.
 export const CLIP_BASE_ROOT = '__base__';
+
+// Per-layer opacity (0..1, default 1), independent of the binary visible flag.
+// Opacity only affects COMPOSITING (screen CSS opacity + export/sampling
+// globalAlpha blits) — the layer's own rasters/objects are never modified, so
+// fading to 0 and back to 100% restores the original shape pixel-identically.
+export function normalizeLayerOpacity(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return 1;
+  return Math.max(0, Math.min(1, n));
+}
+
+// Brush edge hardness (0..1, default 1 = fully hard). A single continuous value
+// drives both brush modes: the paint brush maps it to a proportional shadow blur
+// (a soft halo past the stroke), the Blur pen to the width of its solid core
+// before the radial falloff. 1 = crisp edge, 0 = fully feathered.
+export function normalizeBrushHardness(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return 1;
+  return Math.max(0, Math.min(1, n));
+}
+
+// Apply the brush edge softness to a 2D context about to stroke the paint
+// brush. A hard brush (hardness 1) gets no shadow; softer brushes get a
+// proportional shadow halo (0 = the old fully-soft brush, `size/2`). A no-op at
+// hardness 1 keeps the crisp-edge output pixel-identical to before.
+export function applyBrushEdge(c, b) {
+  if (!c || !b) return;
+  const soft = (1 - normalizeBrushHardness(b.hardness)) * ((b.size || 0) / 2);
+  if (soft > 0) { c.shadowColor = b.color; c.shadowBlur = soft; }
+}
 
 // Layer-preview thumbnail size (CSS px + backing store) and its refresh cadence
 // — a deliberately low sample rate so live painting never pays for it.
@@ -91,6 +121,10 @@ export const OVERLAY_PAD = 256;
 // canvas is zoomed in or out. Guides are the canvas boundary/mid lines plus
 // every other movable's box edges and mid lines (see utils/liverySnap).
 export const SNAP_SCREEN_PX = 8;
+
+// Movable rotation soft-snap aperture: free rotation, but angles within this
+// distance of a 90° multiple suggest-snap onto it (Alt bypasses entirely).
+export const ROT_SNAP_DEG = 5;
 
 // Opaque fallback base for a new/cleared canvas. The BaseMap replaces the
 // model's own texture, so a transparent background would render as holes.
@@ -226,10 +260,20 @@ const SelectToolIcon = ({ size = 18 }) => (
   </span>
 );
 
+// The Brush rail icon advertises its two modes the same way: paint and the
+// colour-mixing Blur pen.
+const BrushToolIcon = ({ size = 18 }) => (
+  <span className="lp-select-icon" aria-hidden="true">
+    <IoBrushOutline size={Math.max(8, size - 7)} />
+    <span className="lp-select-icon-sep">/</span>
+    <MdBlurOn size={Math.max(8, size - 7)} />
+  </span>
+);
+
 // Photoshop-style left-rail tool icons + advertised keyboard shortcuts.
 const TOOL_META = {
   select: { Icon: SelectToolIcon, key: 'A' },
-  brush: { Icon: IoBrushOutline, key: 'B' },
+  brush: { Icon: BrushToolIcon, key: 'B' },
   eraser: { Icon: FaEraser, key: 'E' },
   eyedropper: { Icon: IoEyedropOutline },
   fill: { Icon: IoColorFillOutline, key: 'G' },
@@ -296,42 +340,6 @@ const clampZoom = (z) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
 // centre) and `w`/`h` = their bounding box.
 const SHAPE_KINDS = ['line', 'rect', 'ellipse', 'curve'];
 const liveFont = (o) => `${o.italic ? 'italic ' : ''}${o.bold ? 'bold ' : ''}${o.size}px ${o.font}`;
-
-// Reorder a live object inside the bottom→top stack. Pure (no refs) so it is
-// unit-testable: 'front' moves to the top end, 'forward' swaps one step up,
-// 'backward' swaps one step down, 'back' moves to the bottom start.
-// Out-of-range ids and no-op moves return the input array untouched.
-export function reorderObjects(objs, id, dir) {
-  const idx = objs.findIndex(o => o && o.id === id);
-  if (idx < 0) return objs;
-  if (dir === 'front') {
-    if (idx === objs.length - 1) return objs;
-    const next = objs.slice();
-    const [o] = next.splice(idx, 1);
-    next.push(o);
-    return next;
-  }
-  if (dir === 'back') {
-    if (idx === 0) return objs;
-    const next = objs.slice();
-    const [o] = next.splice(idx, 1);
-    next.unshift(o);
-    return next;
-  }
-  if (dir === 'forward') {
-    if (idx >= objs.length - 1) return objs;
-    const next = objs.slice();
-    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-    return next;
-  }
-  if (dir === 'backward') {
-    if (idx <= 0) return objs;
-    const next = objs.slice();
-    [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
-    return next;
-  }
-  return objs;
-}
 
 // True when a live object has a drawable/exportable payload.
 function hasLiveVisual(o) {
@@ -847,6 +855,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     id: `ly${layerIdSeqRef.current++}`,
     name: name || `Layer ${layerIdSeqRef.current - 1}`,
     visible: true,
+    opacity: 1,
     // A clipped layer is masked by the alpha of the first NON-clipped layer
     // below it (or the locked base) — Photoshop-style clipping mask. The
     // layer's own rasters/objects are always preserved, so unclipping brings
@@ -868,12 +877,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const panelSnapshot = () => panelRef.current.map(n => (n.type === 'layer'
     ? { type: 'layer', id: n.id }
     : { type: 'folder', id: n.id, name: n.name, visible: n.visible !== false, children: [...n.children] }));
-  const [layersView, setLayersView] = useState(() => layersRef.current.map(l => ({ id: l.id, name: l.name, visible: l.visible, clipped: l.clipped })));
+  const [layersView, setLayersView] = useState(() => layersRef.current.map(l => ({ id: l.id, name: l.name, visible: l.visible, opacity: normalizeLayerOpacity(l.opacity), clipped: l.clipped })));
   const [panelView, setPanelView] = useState(() => panelSnapshot());
   const [activeId, setActiveIdState] = useState(activeIdRef.current);
   const setActiveId = (id) => { activeIdRef.current = id; setActiveIdState(id); };
   const syncLayersView = () => {
-    setLayersView(layersRef.current.map(l => ({ id: l.id, name: l.name, visible: l.visible, clipped: l.clipped })));
+    setLayersView(layersRef.current.map(l => ({ id: l.id, name: l.name, visible: l.visible, opacity: normalizeLayerOpacity(l.opacity), clipped: l.clipped })));
     setPanelView(panelSnapshot());
   };
   // Rebuild the flat bottom→top z-order from the panel tree (top→bottom).
@@ -1036,7 +1045,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const editingIdRef = useRef(null);
   const cursorRingRef = useRef(null);
   const toolRef = useRef('brush');
-  const brushRef = useRef({ color: '#ff0000', size: 12, opacity: 1, hard: true });
+  const brushRef = useRef({ color: '#ff0000', size: 12, opacity: 1, hardness: 1 });
   const shapeOptsRef = useRef({ width: 8, filled: true });
   // Line tool stroke mode: 'straight' (drag) or 'curve' (click points).
   const lineModeRef = useRef('straight');
@@ -1044,6 +1053,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // Select-tool sub-mode: 'object' (move/scale/rotate) vs the selection-mask
   // builders 'pen' (freehand lasso) and 'wand' (tolerance flood).
   const selModeRef = useRef('object');
+  // Brush sub-mode: 'paint' (normal colour brush) vs 'blur' (the colour-mixing
+  // Blur pen, which samples the visible stack and paints only the average).
+  const brushModeRef = useRef('paint');
   // How a new selection region applies to the existing mask (default combine).
   const maskOpRef = useRef('combine');
   // Selection mask: lazily-created 2048² canvas (white-opaque = selected),
@@ -1068,6 +1080,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // 1×1 scratch used by the eyedropper to composite the visible pixel (base
   // raster + live objects) so movables like stickers can be picked.
   const pickCanvasRef = useRef(null);
+  // Bound-to-the-brush scratch for the Blur (colour-mix) pen: it composites the
+  // visible stack around one dab so the disc average can be read back. Sized to
+  // the current brush box and reused across dabs.
+  const blurCanvasRef = useRef(null);
   // Per-stroke layer for the brush: every dab lands here at FULL opacity and the
   // whole stroke is composited onto the base once per flush with the brush
   // alpha. Drawing each segment straight onto the base with `globalAlpha` makes
@@ -1124,6 +1140,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const [lineMode, setLineModeState] = useState('straight');
   const [fillTol, setFillTolState] = useState(32);
   const [selMode, setSelModeState] = useState('object');
+  const [brushMode, setBrushModeState] = useState('paint');
   const [maskOp, setMaskOpState] = useState('combine');
   const [hasMask, setHasMaskState] = useState(false);
   const [textOpts, setTextOptsState] = useState(textOptsRef.current);
@@ -1135,8 +1152,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const [textAnchor, setTextAnchorState] = useState(null);
   const [textDraft, setTextDraftState] = useState('');
   const [dirty, setDirtyState] = useState(false);
-  // Right-click layer-order menu anchor: { x, y, id } in client coords, or null.
-  const [orderMenu, setOrderMenu] = useState(null);
   // ── Layer panel UI state ───────────────────────────────────
   // `layersView`/`foldersView` (declared with the layer model) drive the panel;
   // these track transient inline-edit, folder-collapse and drag state.
@@ -1160,12 +1175,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // values from blur / tool-switch / canvas handlers without stale closures.
   const textAnchorRef = useRef(null);
   const textDraftRef = useRef('');
-  const orderMenuRef = useRef(null);
-  const setOrderMenuTracked = (v) => { orderMenuRef.current = v; setOrderMenu(v); };
-  // Set when a right-button press is consumed as an editing gesture (curve
-  // node pop / text commit) so the following contextmenu event stays
-  // suppressed instead of opening the layer-order menu.
-  const consumeRightRef = useRef(false);
 
   const setTool = (v) => { toolRef.current = v; setToolState(v); };
   const setTextAnchor = (v) => { textAnchorRef.current = v; setTextAnchorState(v); };
@@ -1185,6 +1194,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     setSelModeState(v);
     scheduleOverlay();
   };
+  // Brush-mode mirrors (ref so canvas handlers never read a stale closure).
+  const setBrushMode = (v) => { brushModeRef.current = v; setBrushModeState(v); };
   const setMaskOp = (v) => { maskOpRef.current = v; setMaskOpState(v); };
   const setHasMask = (v) => { hasMaskRef.current = v; setHasMaskState(v); };
   const setFillTol = (v) => { fillTolRef.current = v; setFillTolState(v); };
@@ -1232,28 +1243,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // current zoom.
   const effZoomRef = useRef(effZoom);
   effZoomRef.current = effZoom;
-
-  // Topmost live object under a texture point (same hit rule as Select).
-  const hitObjectAt = (p) => {
-    const z = effZoom || 1;
-    const objs = objectsRef.current;
-    for (let i = objs.length - 1; i >= 0; i--) {
-      const o = objs[i];
-      if (!hasLiveVisual(o)) continue;
-      const lp = stickerLocal(o, p);
-      // Thin strokes (line / curve) get a taller hit band; a near-horizontal
-      // curve can have a ~0 bounding height. A part-erased object is picked by
-      // its remaining box, so clicks on the erased-away area fall through.
-      const fb = frameOf(o);
-      const ex = (o.kind === 'line' || o.kind === 'curve')
-        ? Math.max(0, 14 / z - (fb.y1 - fb.y0) / 2)
-        : 0;
-      if (lp.x < fb.x0 || lp.x > fb.x1) continue;
-      if (lp.y < fb.y0 - ex || lp.y > fb.y1 + ex) continue;
-      return o;
-    }
-    return null;
-  };
 
   // ── Multi-image panel rendering bounds ─────────────────────
   // For a multi-image aircraft (A388/B38M) the live objects belong to the
@@ -1312,19 +1301,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const snapLinesFor = (excludeId) => {
     const base = canvasSnapLines();
     return collectSnapLines(objectsRef.current, excludeId, base.xs, base.ys);
-  };
-
-  // Move the menu-target (or selected) object one step / to an end.
-  const reorderObject = (dir, id) => {
-    const targetId = id ?? orderMenuRef.current?.id ?? selIdRef.current;
-    if (targetId == null) return;
-    const next = reorderObjects(objectsRef.current, targetId, dir);
-    if (next === objectsRef.current) return;
-    pushSnapshot();
-    syncObjects(next, targetId);
-    setDirty(true);
-    setOrderMenuTracked(null);
-    scheduleOverlay();
   };
 
   // Open the RGBA picker beside the swatch. Measured from the live rect so the
@@ -1486,7 +1462,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const invalidateFillPixels = () => invalidateLayerPixels(activeLayer());
 
   // A snapshot captures the WHOLE document: every layer's metadata (name,
-  // visibility, clip), object list and raster pixels (paint + fill), plus the
+  // visibility, opacity, clip), object list and raster pixels (paint + fill), plus the
   // panel tree (folders + order) and the active layer. So Ctrl+Z rebuilds
   // content AND structure — new/deleted layers, folder moves, reordering,
   // clipping and hiding all round-trip. The base image is stored by shared
@@ -1495,7 +1471,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const snapshotState = () => {
     if (!ctxRef.current && !fillCtxRef.current) return null;
     const layers = layersRef.current.map(l => ({
-      id: l.id, name: l.name, visible: l.visible, clipped: !!l.clipped,
+      id: l.id, name: l.name, visible: l.visible, opacity: normalizeLayerOpacity(l.opacity), clipped: !!l.clipped,
       objects: l.objects, ...captureLayerPixels(l),
     }));
     return {
@@ -1567,10 +1543,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const recs = snap.layers.map(ls => {
       let rec = byId.get(ls.id);
       if (!rec || !layersRef.current.includes(rec)) {
-        rec = { id: ls.id, name: ls.name, visible: ls.visible !== false, clipped: !!ls.clipped, objects: [], paintImg: null, fillImg: null };
+        rec = { id: ls.id, name: ls.name, visible: ls.visible !== false, opacity: normalizeLayerOpacity(ls.opacity), clipped: !!ls.clipped, objects: [], paintImg: null, fillImg: null };
       }
       rec.name = ls.name;
       rec.visible = ls.visible !== false;
+      rec.opacity = normalizeLayerOpacity(ls.opacity);
       rec.clipped = !!ls.clipped;
       rec.objects = ls.objects || [];
       return rec;
@@ -1666,6 +1643,21 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       pickCanvasRef.current = c;
     }
     return pickCanvasRef.current;
+  };
+  // Blur-pen sample buffer. Only ever read over the brush box, so it grows to
+  // the largest box seen instead of the whole W×H store.
+  const getBlurCanvas = (w = 1, h = 1) => {
+    if (!blurCanvasRef.current) {
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, w); c.height = Math.max(1, h);
+      blurCanvasRef.current = c;
+    }
+    const c = blurCanvasRef.current;
+    if (c.width < w || c.height < h) {
+      c.width = Math.max(c.width, w);
+      c.height = Math.max(c.height, h);
+    }
+    return c;
   };
   // ── UV region lock helpers ─────────────────────────────────
   const getUvMaskCanvas = () => {
@@ -2081,6 +2073,45 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
     return clipScratchRef.current;
   };
+  // Effective compositing opacity of a layer (0..1, defaults to 1).
+  const layerOpacityOf = (layer) => normalizeLayerOpacity(layer && layer.opacity);
+  // Scratch that assembles one layer's full-opacity content before it is blitted
+  // with the layer opacity. Separate from the clip scratch (which
+  // `paintObjectThroughMasks` also borrows via `getScratch`) so assembling a
+  // layer never clobbers an in-progress mask or clip composite.
+  const layerScratchRef = useRef(null);
+  const getLayerScratch = () => {
+    if (!layerScratchRef.current) {
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      layerScratchRef.current = c;
+    }
+    return layerScratchRef.current;
+  };
+  // Blit one layer's content at its own opacity: full-opacity layers draw
+  // directly; translucent ones are assembled in the layer scratch first (so the
+  // per-object alpha baked inside multiplies with the layer alpha instead of
+  // being overridden by it) and then blitted with globalAlpha. Opacity 0 draws
+  // nothing. The layer's own rasters/objects are never touched.
+  const drawLayerContentWithOpacity = (target, layer) => {
+    const op = layerOpacityOf(layer);
+    if (!(op > 0)) return;
+    if (op >= 1) { drawLayerContent(target, layer); return; }
+    const sc = getLayerScratch();
+    const sctx = sc.getContext('2d');
+    if (!sctx) { drawLayerContent(target, layer); return; }
+    sctx.save();
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.globalCompositeOperation = 'source-over';
+    sctx.globalAlpha = 1;
+    sctx.clearRect(0, 0, W, H);
+    drawLayerContent(sctx, layer);
+    sctx.restore();
+    target.save();
+    target.globalAlpha = op;
+    try { target.drawImage(sc, 0, 0); } catch (_) { /* stub */ }
+    target.restore();
+  };
   // A layer's own content (fill underlay → movables → pen) into `target`.
   const drawLayerContent = (target, layer) => {
     const fc = layerEl(layer.id, 'fill');
@@ -2131,22 +2162,31 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     target.restore();
   };
   // Reproduce exactly what the eye sees: the locked base, then every VISIBLE
-  // layer bottom → top (its fill, its movables, its pen). Clipped layers are
-  // masked by their clip base. Used by the wand / fill / eyedropper so
-  // sampling, the screen and the export all agree.
+  // layer bottom → top (its fill, its movables, its pen), each at its own
+  // opacity. Clipped layers are masked by their clip base. Used by the wand /
+  // fill / eyedropper so sampling, the screen and the export all agree.
   const paintVisibleComposite = (target) => {
     if (baseCanvasRef.current) target.drawImage(baseCanvasRef.current, 0, 0);
-    const scratchCanvas = layersRef.current.some(l => l.clipped) ? getClipScratch() : null;
+    const needsScratch = layersRef.current.some(l => l.clipped || layerOpacityOf(l) < 1);
+    const scratchCanvas = needsScratch ? getClipScratch() : null;
     const scratchCtx = scratchCanvas ? scratchCanvas.getContext('2d') : null;
     const maskCache = new Map();
     for (const layer of layersRef.current) {
       if (!layerEffectiveVisible(layer.id)) continue;
+      const op = layerOpacityOf(layer);
+      if (!(op > 0)) continue;
       const baseId = clipBaseFor(layer.id);
-      if (!baseId || !scratchCtx) { drawLayerContent(target, layer); continue; }
+      if (!baseId || !scratchCtx) { drawLayerContentWithOpacity(target, layer); continue; }
       let mask = maskCache.get(baseId);
       if (!mask) { mask = buildClipMask(baseId); maskCache.set(baseId, mask); }
       paintClippedLayer(scratchCtx, layer, mask);
-      target.drawImage(scratchCanvas, 0, 0);
+      if (op >= 1) target.drawImage(scratchCanvas, 0, 0);
+      else {
+        target.save();
+        target.globalAlpha = op;
+        try { target.drawImage(scratchCanvas, 0, 0); } catch (_) { /* stub */ }
+        target.restore();
+      }
     }
   };
   // Paint one live object with its eraser holes punched. The object is rendered
@@ -2735,12 +2775,19 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       ctx.strokeRect(fb.x0, fb.y0, fw, fh);
       // rotate handle (top-centre, on a connector) + resize handle
       // (bottom-right — omitted for lines/curves, whose end vertices own
-      // the corner and reshape the stroke instead of scaling the frame)
+      // the corner and reshape the stroke instead of scaling the frame).
+      // A rotation snap flags the snapped state the same pink as the
+      // move/scale snap guides so the clip reads at a glance.
+      const dragNow = dragRef.current;
+      const rotSnapped = dragNow && dragNow.mode === 'rotate' && dragNow.id === st.id
+        && snapGuidesRef.current && snapGuidesRef.current.rotSnap != null
+        ? snapGuidesRef.current.rotSnap : null;
+      if (rotSnapped != null) ctx.strokeStyle = '#ff2d95';
       ctx.beginPath();
       ctx.moveTo(fcx, fb.y0);
       ctx.lineTo(fcx, fb.y0 - gap);
       ctx.stroke();
-      ctx.fillStyle = '#6aa0ff';
+      ctx.fillStyle = rotSnapped != null ? '#ff2d95' : '#6aa0ff';
       if (st.kind !== 'line' && st.kind !== 'curve') {
         ctx.beginPath(); ctx.arc(fb.x1, fb.y1, hr, 0, Math.PI * 2); ctx.fill();
       }
@@ -2757,6 +2804,40 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           const wpt = worldFromLocal(st, q);
           ctx.beginPath(); ctx.arc(wpt.x, wpt.y, 6 / z, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         }
+        ctx.restore();
+      }
+      // Rotation-snap degree badge: while the rotate drag sits on a 90°
+      // multiple, flag the snapped angle above the handle (world frame so
+      // the text stays readable). Same pink as the snap guides. The chrome
+      // is drawn in the UNFLIPPED frame, so the handle world position uses
+      // translate + rotate only (no mirror), matching the drawn dot.
+      if (rotSnapped != null) {
+        const c0 = Math.cos(st.rot || 0);
+        const s0 = Math.sin(st.rot || 0);
+        const hx = fcx;
+        const hy = fb.y0 - gap;
+        const hw = { x: st.x + hx * c0 - hy * s0, y: st.y + hx * s0 + hy * c0 };
+        const txt = `${rotSnapped}\u00B0`;
+        const fs = 13 / z;
+        ctx.save();
+        ctx.font = `650 ${fs}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const tw = (ctx.measureText && typeof ctx.measureText === 'function')
+          ? ctx.measureText(txt).width : txt.length * fs * 0.62;
+        const pw = tw + fs * 1.1;
+        const ph = fs * 1.7;
+        const bx = hw.x - pw / 2;
+        const by = hw.y - 20 / z - ph;
+        ctx.fillStyle = 'rgba(10,22,40,0.94)';
+        ctx.strokeStyle = '#ff2d95';
+        ctx.lineWidth = Math.max(1, 1.5 / z);
+        ctx.beginPath();
+        ctx.rect(bx, by, pw, ph);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#ff2d95';
+        ctx.fillText(txt, hw.x, by + ph / 2);
         ctx.restore();
       }
     }
@@ -3000,7 +3081,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     pushSnapshot();
     removeObject(st.id);
     setDirty(true);
-    if (orderMenuRef.current) setOrderMenuTracked(null);
     scheduleOverlay();
   };
 
@@ -3050,7 +3130,9 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   };
 
   // ── Export: base image → each visible layer (fill → movables → pen) ─
-  // The composite order must match the on-screen DOM stack.
+  // The composite order must match the on-screen DOM stack. Each layer
+  // composites at its own opacity (0 = contributes nothing, but its stored
+  // rasters/objects are preserved for a later fade back in).
   const flattenToCanvas = () => {
     const out = document.createElement('canvas');
     out.width = W; out.height = H;
@@ -3060,18 +3142,26 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // canvases: fill underlay → movables → pen. Hidden layers are skipped
     // entirely (they are not part of the exported texture). A clipped layer is
     // intersected with its clip base's alpha, exactly like the screen.
-    const needsClip = layersRef.current.some(l => l.clipped && layerEffectiveVisible(l.id));
+    const needsClip = layersRef.current.some(l => (l.clipped || layerOpacityOf(l) < 1) && layerEffectiveVisible(l.id));
     const scratchCanvas = needsClip ? getClipScratch() : null;
     const scratchCtx = scratchCanvas ? scratchCanvas.getContext('2d') : null;
     const maskCache = new Map();
     for (const layer of layersRef.current) {
       if (!layerEffectiveVisible(layer.id)) continue;
+      const op = layerOpacityOf(layer);
+      if (!(op > 0)) continue;
       const baseId = clipBaseFor(layer.id);
-      if (!baseId || !scratchCtx) { drawLayerContent(ctx, layer); continue; }
+      if (!baseId || !scratchCtx) { drawLayerContentWithOpacity(ctx, layer); continue; }
       let mask = maskCache.get(baseId);
       if (!mask) { mask = buildClipMask(baseId); maskCache.set(baseId, mask); }
       paintClippedLayer(scratchCtx, layer, mask);
-      ctx.drawImage(scratchCanvas, 0, 0);
+      if (op >= 1) ctx.drawImage(scratchCanvas, 0, 0);
+      else {
+        ctx.save();
+        ctx.globalAlpha = op;
+        try { ctx.drawImage(scratchCanvas, 0, 0); } catch (_) { /* stub */ }
+        ctx.restore();
+      }
     }
     return out;
   };
@@ -3158,7 +3248,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     importSticker,
     removeSticker,
     duplicateSticker,
-    reorderObject,
     exportLayers,
     loadLayers,
     getObjectCount: () => objectsRef.current.length,
@@ -3238,10 +3327,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         if (lassoRef.current) { lassoRef.current = null; scheduleOverlay(); return; }
         if (curveRef.current) {
           cancelCurveDraft();
-          if (orderMenuRef.current) setOrderMenuTracked(null);
           return;
         }
-        if (orderMenuRef.current) { setOrderMenuTracked(null); return; }
         if (selIdRef.current != null) { syncObjects(objectsRef.current, null); scheduleOverlay(); }
         return;
       }
@@ -3276,8 +3363,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         setSelMode(k === 'a' ? 'object' : (k === 'l' ? 'pen' : 'wand'));
         return;
       }
-      const map = { b: 'brush', e: 'eraser', g: 'fill', u: 'line', r: 'rect', m: 'ellipse', o: 'ellipse', t: 'text' };
-      if (map[k] && TOOLS.includes(map[k])) { activateTool(map[k]); }
+      // Bare letters only: Ctrl/Alt chords belong to the app (Ctrl+S saves),
+      // so a shortcut never fires while a modifier is held.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Brush sub-modes, reachable from ANY tool: B=Paint, S=Blur (the
+        // colour-mixing pen). Each switches to the Brush tool first, like A/L/W.
+        if (k === 'b') { if (toolRef.current !== 'brush') activateTool('brush'); setBrushMode('paint'); return; }
+        if (k === 's') { if (toolRef.current !== 'brush') activateTool('brush'); setBrushMode('blur'); return; }
+        const map = { e: 'eraser', g: 'fill', u: 'line', r: 'rect', m: 'ellipse', o: 'ellipse', t: 'text' };
+        if (map[k] && TOOLS.includes(map[k])) { activateTool(map[k]); }
+      }
     };
     const onKeyUp = (e) => { if (e.key === ' ') { spaceRef.current = false; setSpaceHeld(false); } };
     window.addEventListener('keydown', onKey);
@@ -3397,7 +3492,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     target.lineCap = 'round';
     target.lineJoin = 'round';
     target.strokeStyle = b.color;
-    if (!b.hard) { target.shadowColor = b.color; target.shadowBlur = b.size / 2; }
+    applyBrushEdge(target, b);
     target.beginPath();
     target.moveTo(p.x, p.y);
     target.lineTo(p.x, p.y);
@@ -3435,6 +3530,92 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     strokeBoundsRef.current = null;
   };
 
+  // ── Blur pen (colour mixing, no colour of its own) ─────────
+  // A brush-shaped pen that never uses the rail colour: for each dab it samples
+  // the VISIBLE stack inside the brush disc (base + every visible layer's fill,
+  // movables and pen — exactly like the wand/eyedropper) and paints the average
+  // of those pixels back into the ACTIVE layer's pen raster. Sampling the whole
+  // visible stack lets a stroke mix base paint, lower layers and live movables
+  // together, while writing only into the active layer leaves every other layer
+  // untouched. Repeating an average disc across a hard edge progressively
+  // smooths it into a gradient.
+  //
+  // Average the visible pixels inside the disc (cx, cy, radius). Returns an
+  // `{r,g,b}` or null when the disc covers no visible pixel. The sample is
+  // bounded to the active panel on a multi-image aircraft so a mix never pulls
+  // colour across the gutter from the neighbouring panel.
+  const sampleVisibleAverage = (cx, cy, radius) => {
+    const x0 = Math.max(0, Math.floor(cx - radius));
+    const y0 = Math.max(0, Math.floor(cy - radius));
+    const x1 = Math.min(W, Math.ceil(cx + radius));
+    const y1 = Math.min(H, Math.ceil(cy + radius));
+    const w = x1 - x0, h = y1 - y0;
+    if (!(w > 0 && h > 0)) return null;
+    const canvas = getBlurCanvas(w, h);
+    const sctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!sctx) return null;
+    sctx.save();
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.globalCompositeOperation = 'source-over';
+    sctx.globalAlpha = 1;
+    sctx.clearRect(0, 0, w, h);
+    sctx.translate(-x0, -y0);
+    paintVisibleComposite(sctx);
+    let data = null;
+    try { data = sctx.getImageData(0, 0, w, h).data; } catch (_) { data = null; }
+    sctx.restore();
+    if (!data) return null;
+    const r2 = radius * radius;
+    const panelX0 = panelCount > 1 ? layout.x(activeRef.current) : -Infinity;
+    const panelX1 = panelCount > 1 ? panelX0 + TEXTURE : Infinity;
+    let R = 0, G = 0, B = 0, n = 0;
+    for (let y = 0; y < h; y++) {
+      const dy = (y0 + y) - cy;
+      for (let x = 0; x < w; x++) {
+        const dx = (x0 + x) - cx;
+        if (dx * dx + dy * dy > r2) continue;
+        const gx = x0 + x;
+        if (gx < panelX0 || gx >= panelX1) continue;
+        const i = (y * w + x) * 4;
+        if (data[i + 3] === 0) continue;
+        R += data[i]; G += data[i + 1]; B += data[i + 2]; n++;
+      }
+    }
+    if (n === 0) return null;
+    return { r: R / n, g: G / n, b: B / n };
+  };
+  // Deposit ONE blur dab: the averaged visible colour, a flat disc at full
+  // hardness or with a radial falloff whose solid core follows the hardness
+  // (`hardness` 1 = crisp disc, 0 = falloff from the centre), painted opaque
+  // into the per-stroke layer so the whole stroke still composites at the picker
+  // alpha exactly once (see flushStroke).
+  const paintBlurDab = (target, p) => {
+    const b = brushRef.current;
+    const radius = Math.max(1, (b.size || 1) / 2);
+    const h = normalizeBrushHardness(b.hardness);
+    const avg = sampleVisibleAverage(p.x, p.y, radius);
+    if (!avg) return;
+    const cr = Math.round(avg.r), cg = Math.round(avg.g), cb = Math.round(avg.b);
+    const col = `rgb(${cr}, ${cg}, ${cb})`;
+    target.save();
+    target.globalCompositeOperation = 'source-over';
+    target.globalAlpha = 1;
+    if (h >= 0.995) {
+      target.fillStyle = col;
+    } else {
+      const grad = target.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+      grad.addColorStop(0, col);
+      grad.addColorStop(h, col);
+      grad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
+      target.fillStyle = grad;
+    }
+    target.beginPath();
+    target.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    target.fill();
+    target.restore();
+    growStrokeBounds(p, p);
+  };
+
   // ── Shift-click straight segments (brush / eraser) ─────────
   // A plain click drops an anchor; each Shift+click paints a straight segment
   // from the previous anchor to the clicked point and moves the anchor there,
@@ -3453,7 +3634,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     layer.lineCap = 'round';
     layer.lineJoin = 'round';
     layer.strokeStyle = b.color;
-    if (!b.hard) { layer.shadowColor = b.color; layer.shadowBlur = b.size / 2; }
+    applyBrushEdge(layer, b);
     layer.beginPath();
     layer.moveTo(from.x, from.y);
     layer.lineTo(to.x, to.y);
@@ -3519,7 +3700,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   const onCanvasDown = (e) => {
     if (inputDisabledRef.current) return;
     if (e.button === 1 || spaceRef.current) return; // pan handled by wrapper
-    if (e.button !== 2) consumeRightRef.current = false;
     const ctx = ctxRef.current;
     if (!ctx) return;
     const p = toTexture(e.clientX, e.clientY);
@@ -3539,12 +3719,8 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         rebuildUvConstraint();
       }
     }
-    // Right-button press arms the movable's layer-order target only in the
-    // Select tool's object sub-mode; every other tool (pen/wand/shapes/...) and
-    // empty canvas picks the pixel colour instead. The layer-order menu itself
-    // opens on contextmenu (a full right-click, press + release) so it stays
-    // open without holding the button.
-    // Two tools consume the press as an editing gesture instead:
+    // A right-button press is a colour pick (the Eyedropper tool has no
+    // shortcut), except two tools consume it as an editing gesture instead:
     // - line tool (curve mode) with a draft: pop the last control point
     //   (a lone point cancels the draft outright);
     // - text tool with an open box: commit it, exactly like Enter.
@@ -3555,29 +3731,17 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         d.pts = d.pts.slice(0, -1);
         if (d.pts.length === 0) curveRef.current = null;
         else { d.hover = null; curveRef.current = d; }
-        consumeRightRef.current = true;
         scheduleOverlay();
         return;
       }
       if (toolRef.current === 'text' && textAnchorRef.current) {
         commitText();
         setTool('select');
-        consumeRightRef.current = true;
         return;
       }
-      if (toolRef.current === 'select' && selModeRef.current === 'object') {
-        const hit = hitObjectAt(p);
-        if (hit) {
-          if (selIdRef.current !== hit.id) syncObjects(objectsRef.current, hit.id);
-          scheduleOverlay();
-          return;
-        }
-      }
-      setOrderMenuTracked(null);
       pickColorAt(p);
       return;
     }
-    if (orderMenuRef.current) setOrderMenuTracked(null);
     const t = toolRef.current;
     // Capture on the element that received the event (the chrome interaction
     // surface) so subsequent pointermove/up keep reaching the tool handlers.
@@ -3687,6 +3851,20 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
 
     if (t === 'brush' || t === 'eraser') {
       const isErase = t === 'eraser';
+      // Brush Blur sub-mode: no colour of its own — each dab samples the visible
+      // stack and mixes. The stroke rides the same per-stroke layer as the
+      // brush so the whole stroke composites at the picker alpha once, and one
+      // snapshot covers the gesture.
+      if (t === 'brush' && brushModeRef.current === 'blur') {
+        pushSnapshot();
+        strokeRef.current = { last: p, erase: false, blur: true };
+        strokeRef.current.layer = beginStroke();
+        paintBlurDab(strokeRef.current.layer, p);
+        flushStroke();
+        capture();
+        scheduleOverlay();
+        return;
+      }
       // Shift+click draws a straight segment from the previous anchor to the
       // click, then re-anchors there (a third Shift+click chains the next line).
       if (e.shiftKey && lineAnchorRef.current) {
@@ -3786,31 +3964,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     }
   };
 
-  // Full right-click (press + release, any tool): a movable object under the
-  // cursor gets selected and pinned with the layer-order menu; empty canvas
-  // just dismisses the menu (the colour pick already ran on pointerdown).
+  // Suppress the browser context menu on the canvas: a right-button press is a
+  // colour pick (or a curve-node pop / text commit), handled on pointerdown.
   const onCanvasContextMenu = (e) => {
     e.preventDefault();
-    // A press consumed as an editing gesture (curve node pop / text commit)
-    // swallows its release too — no order menu, no colour pick.
-    if (consumeRightRef.current) { consumeRightRef.current = false; return; }
-    if (!ctxRef.current || typeof e.clientX !== 'number') return;
-    // The movable layer-order menu is a Select-tool (object sub-mode) affordance
-    // only — every other tool's right-click is a colour pick (handled on the
-    // press), so never open the menu here.
-    if (toolRef.current !== 'select' || selModeRef.current !== 'object') {
-      if (orderMenuRef.current) setOrderMenuTracked(null);
-      return;
-    }
-    const p = toTexture(e.clientX, e.clientY);
-    const hit = hitObjectAt(p);
-    if (hit) {
-      if (selIdRef.current !== hit.id) syncObjects(objectsRef.current, hit.id);
-      setOrderMenuTracked({ x: e.clientX, y: e.clientY, id: hit.id });
-      scheduleOverlay();
-      return;
-    }
-    if (orderMenuRef.current) setOrderMenuTracked(null);
   };
 
   const onCanvasMove = (e) => {
@@ -3818,6 +3975,26 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const ctx = ctxRef.current;
     if (!ctx) return;
     if (strokeRef.current) {
+      // Blur pen: sample + mix one average dab per step, then composite the
+      // stroke layer (so each step can see the previous flush — the mix
+      // propagates along the drag). Steps closer than a fraction of the radius
+      // are skipped: re-averaging the same disc adds nothing and costs a
+      // composite read each time.
+      if (strokeRef.current.blur) {
+        const target = strokeRef.current.layer || ctx;
+        const points = coalesced(e);
+        const minD = Math.max(1, brushRef.current.size / 8);
+        const minD2 = minD * minD;
+        for (let i = 0; i < points.length; i++) {
+          const prev = strokeRef.current.last;
+          const dx = points[i].x - prev.x, dy = points[i].y - prev.y;
+          if (i < points.length - 1 && dx * dx + dy * dy < minD2) continue;
+          paintBlurDab(target, points[i]);
+          strokeRef.current.last = points[i];
+        }
+        flushStroke();
+        return;
+      }
       const isErase = strokeRef.current.erase;
       const b = brushRef.current;
       const points = coalesced(e);
@@ -3853,7 +4030,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
       target.lineCap = 'round';
       target.lineJoin = 'round';
       target.strokeStyle = b.color;
-      if (!b.hard) { target.shadowColor = b.color; target.shadowBlur = b.size / 2; }
+      applyBrushEdge(target, b);
       for (let i = 0; i < points.length; i++) {
         const p = points[i];
         target.beginPath();
@@ -3962,7 +4139,24 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           if (so.flipPivot) patch.flipPivot = { x: so.flipPivot.x * kx, y: so.flipPivot.y * ky };
           updateObject(st.id, patch);
         } else if (mode === 'rotate') {
-          updateObject(st.id, { rot: Math.atan2(p.y - st.y, p.x - st.x) + Math.PI / 2 });
+          const raw = Math.atan2(p.y - st.y, p.x - st.x) + Math.PI / 2;
+          // Free rotation with suggest-snap: angles within ROT_SNAP_DEG of a
+          // 90° multiple clip onto it (same suggestion feel as the geometric
+          // move/resize snapping); Alt bypasses for fully free rotation.
+          // The snapped degree lands in snapGuidesRef so the overlay can
+          // flag the snapped state (pink handle + degree badge).
+          let rot = raw;
+          let snappedDeg = null;
+          if (!e.altKey) {
+            const step = Math.PI / 2;
+            const nearest = Math.round(raw / step) * step;
+            if (Math.abs(raw - nearest) <= (ROT_SNAP_DEG * Math.PI) / 180) {
+              rot = nearest;
+              snappedDeg = ((Math.round((nearest * 180) / Math.PI) % 360) + 360) % 360;
+            }
+          }
+          snapGuidesRef.current = snappedDeg != null ? { rotSnap: snappedDeg } : null;
+          updateObject(st.id, { rot });
         } else if (mode === 'vertex') {
           // Drag one node in the object's local frame, then re-derive the
           // frame: the world centre shifts by the dragged local offset, and
@@ -4021,11 +4215,16 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // from the snapshot pushed on pointer-down).
     if (strokeRef.current) {
       const wasErase = strokeRef.current.erase;
+      const wasBlur = strokeRef.current.blur;
       const last = strokeRef.current.last;
       const layer = strokeRef.current.layer;
       strokeRef.current = null;
       if (wasErase) applyEraseGesture();
-      else {
+      else if (wasBlur) {
+        // The down press already deposited the first dab; just composite any
+        // remaining stroke pixels at the picker alpha.
+        flushStroke();
+      } else {
         // A click with no drag still deposits one dab, so the same click that
         // activates a panel paints on it instead of needing a second click.
         if (last && layer && !strokeBoundsRef.current) paintBrushDab(layer, last);
@@ -4208,10 +4407,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     // An interrupted stroke still clips to the selection before it settles.
     if (strokeRef.current) {
       const wasErase = strokeRef.current.erase;
+      const wasBlur = strokeRef.current.blur;
       const last = strokeRef.current.last;
       const layer = strokeRef.current.layer;
       strokeRef.current = null;
       if (wasErase) applyEraseGesture();
+      else if (wasBlur) flushStroke();
       else {
         if (last && layer && !strokeBoundsRef.current) paintBrushDab(layer, last);
         flushStroke();
@@ -4233,7 +4434,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     if (dragRef.current) dragRef.current = null;
     commitText();
     commitCurveDraft();
-    if (orderMenuRef.current) setOrderMenuTracked(null);
   };
 
   // Shared tool activation for the rail buttons and the letter shortcuts.
@@ -4316,6 +4516,11 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
   // Screen diameter of the brush (texture px × zoom), clamped so tiny
   // brushes still show a usable ring.
   const ringDiameter = Math.max(5, brush.size * effZoom);
+  // The slider reads/writes a 0–100 percentage; the model stores 0..1.
+  const hardnessPct = Math.round(normalizeBrushHardness(brush.hardness) * 100);
+  // The brush ring draws an inner circle at the solid-core fraction of the
+  // hardness so the falloff is visible while adjusting the slider.
+  const ringCoreDiameter = Math.max(0, ringDiameter * normalizeBrushHardness(brush.hardness));
 
   // ── Wrapper pan (space-drag + middle-drag) ─────────────────
   // The hand icon follows the pointer while Space is held (view-port fixed).
@@ -4576,12 +4781,15 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     scheduleOverlay();
   };
 
-  // Hiding the active layer moves the target to the next visible one so the pen
-  // always has a visible surface; the last visible layer cannot be hidden.
+  // Hiding the active layer moves the target to the next visible one; when the
+  // hidden layer was the LAST visible one there is no successor, so it simply
+  // stays active (edits keep landing on it, invisibly, until it is shown again —
+  // the same as hiding a whole folder). Opacity is deliberately NOT part of
+  // this: a layer faded to 0% stays active and paintable, and its
+  // rasters/objects are preserved for a fade back in.
   const toggleLayerVisible = (id) => {
     const layer = layerById(id);
     if (!layer) return;
-    if (layer.visible && layersRef.current.filter(l => l.visible).length <= 1) return;
     pushSnapshot();
     layer.visible = !layer.visible;
     if (!layer.visible && activeIdRef.current === id) {
@@ -4608,6 +4816,56 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     syncLayersView();
     setDirty(true);
     scheduleOverlay();
+  };
+
+  // ── Per-layer opacity (0..100%, independent of the hide/show flag) ──
+  // Only the compositing alpha changes — the layer's rasters/objects are never
+  // modified, so 0% → 100% restores the original shape pixel-identically.
+  // A slider drag is ONE undo step: the snapshot is pushed once when the
+  // gesture starts (`opacityGestureRef`), then every tick mutates in place.
+  const opacityGestureRef = useRef(null);
+  const beginOpacityGesture = () => {
+    if (!opacityGestureRef.current) {
+      pushSnapshot();
+      opacityGestureRef.current = true;
+    }
+  };
+  const endOpacityGesture = () => { opacityGestureRef.current = null; };
+  const setLayerOpacity = (id, pct) => {
+    const layer = layerById(id);
+    if (!layer) return;
+    const v = Math.round(Number(pct));
+    if (!isFinite(v)) return;
+    beginOpacityGesture();
+    const next = Math.max(0, Math.min(100, v)) / 100;
+    if (Math.abs(normalizeLayerOpacity(layer.opacity) - next) < 0.0005) return;
+    layer.opacity = next;
+    syncLayersView();
+    setDirty(true);
+    scheduleOverlay();
+  };
+
+  // ── Row-drag guard (opacity slider / rename input vs layer reorder) ──
+  // The layer row is HTML5-`draggable`, and `dragstart` targets the row itself
+  // — so a press that begins on the opacity slider (or the rename input) would
+  // otherwise start a layer-reorder drag instead of adjusting the control.
+  // The control marks the in-progress press (`rowDragGuardRef`) on pointerdown
+  // and the row's `onDragStart` cancels the reorder while it is set. Cleared on
+  // release/cancel/blur so normal row drags keep working.
+  const rowDragGuardRef = useRef(false);
+  useEffect(() => {
+    const clear = () => { rowDragGuardRef.current = false; };
+    window.addEventListener('pointerup', clear);
+    window.addEventListener('pointercancel', clear);
+    window.addEventListener('blur', clear);
+    return () => {
+      window.removeEventListener('pointerup', clear);
+      window.removeEventListener('pointercancel', clear);
+      window.removeEventListener('blur', clear);
+    };
+  }, []);
+  const guardRowDragProps = {
+    onPointerDown: () => { rowDragGuardRef.current = true; },
   };
 
   // ── Drag & drop (operates on the panel tree, never stack indices) ──
@@ -4827,6 +5085,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         id: l.id,
         name: l.name,
         visible: l.visible,
+        opacity: normalizeLayerOpacity(l.opacity),
         clipped: !!l.clipped,
         objects: l.objects.map(serializeLayerObject).filter(Boolean),
         panels: panelNames.map((pn, i) => ({
@@ -4899,6 +5158,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
     const recs = payload.layers.map((ls, i) => {
       const layer = makeLayer(ls.name || `Layer ${i + 1}`);
       layer.visible = ls.visible !== false;
+      layer.opacity = normalizeLayerOpacity(ls.opacity);
       layer.clipped = ls.clipped === true;
       layer.objects = (Array.isArray(ls.objects) ? ls.objects : [])
         .map(raw => deserializeLayerObject(raw, () => nextIdRef.current++, W, H))
@@ -5012,6 +5272,14 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
         {(TOOLS_WITH_OPTIONS.includes(tool) || selectedText) && (
           <>
             <span className="lp-sep" />
+          {tool === 'brush' && (
+            <span className="lp-seg" role="group" aria-label={t('livery_paint_brush_mode')}>
+              {/* Brush sub-modes: normal paint vs the colour-mixing Blur pen.
+                  B / S switch to the Brush tool and pick the mode (any tool). */}
+              <button className={brushMode === 'paint' ? 'lp-on' : ''} {...bind(withKey(t('livery_paint_brush_paint'), 'B'))} aria-label={t('livery_paint_brush_paint')} aria-pressed={brushMode === 'paint'} onClick={() => setBrushMode('paint')}><IoBrushOutline size={15} /></button>
+              <button className={brushMode === 'blur' ? 'lp-on' : ''} {...bind(withKey(t('livery_paint_blur'), 'S'))} aria-label={t('livery_paint_blur')} aria-pressed={brushMode === 'blur'} onClick={() => setBrushMode('blur')}><MdBlurOn size={15} /></button>
+            </span>
+          )}
           {(tool === 'brush' || tool === 'eraser') && (
             <label className="lp-field">{t('livery_paint_size')}
               <input type="range" min={1} max={200} value={brush.size} onChange={(e) => setBrush({ ...brush, size: Number(e.target.value) })} />
@@ -5019,10 +5287,10 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
             </label>
           )}
           {tool === 'brush' && (
-            <span className="lp-seg">
-              <button className={brush.hard ? 'lp-on' : ''} {...bind(t('livery_paint_hard'))} aria-label={t('livery_paint_hard')} aria-pressed={brush.hard} onClick={() => setBrush({ ...brush, hard: true })}><FaPencil size={15} /></button>
-              <button className={!brush.hard ? 'lp-on' : ''} {...bind(t('livery_paint_soft'))} aria-label={t('livery_paint_soft')} aria-pressed={!brush.hard} onClick={() => setBrush({ ...brush, hard: false })}><FaPaintBrush size={15} /></button>
-            </span>
+            <label className="lp-field">{t('livery_paint_hardness')}
+              <input type="range" min={0} max={100} value={hardnessPct} onChange={(e) => setBrush({ ...brush, hardness: Number(e.target.value) / 100 })} />
+              <NumberInput value={hardnessPct} min={0} max={100} onCommit={(v) => setBrush({ ...brush, hardness: v / 100 })} ariaLabel={t('livery_paint_hardness')} suffix="%" />
+            </label>
           )}
           {tool === 'select' && (
             <>
@@ -5208,14 +5476,18 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                 pixels/contexts survive) but are not displayed. */}
             {layersView.map((l) => {
               const effVisible = layerEffectiveVisible(l.id);
+              const layerOpacity = normalizeLayerOpacity(l.opacity);
               // A clipped layer shows its masked composite canvas; its raw
               // fill / objects / paint canvases stay mounted (pixels + contexts
               // survive) but hidden, so its edits are preserved for unclipping.
+              // Layer opacity rides as CSS opacity on the DISPLAYED canvas(es)
+              // only — the stored rasters keep full alpha for a fade back in.
               const storageStyle = {
                 position: 'absolute', left: 0, top: 0,
                 width: W * effZoom, height: H * effZoom,
                 pointerEvents: 'none',
                 display: (effVisible && !l.clipped) ? 'block' : 'none',
+                opacity: layerOpacity,
               };
               const clipStyle = { ...storageStyle, display: (effVisible && l.clipped) ? 'block' : 'none' };
               return (
@@ -5295,6 +5567,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                 className="lp-cursor-ring"
                 style={{ width: ringDiameter, height: ringDiameter }}
               >
+                {tool === 'brush' && ringCoreDiameter > 2 && ringCoreDiameter < ringDiameter - 2 && (
+                  <div
+                    className="lp-cursor-core"
+                    style={{ width: ringCoreDiameter, height: ringCoreDiameter }}
+                  />
+                )}
                 <div className="lp-cursor-dot" />
               </div>
             )}
@@ -5352,6 +5630,7 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                 if (!l) return null;
                 const isActive = l.id === activeId;
                 const effVisible = layerEffectiveVisible(l.id);
+                const opacityPct = Math.round(normalizeLayerOpacity(l.opacity) * 100);
                 return (
                   <div
                     className={'lp-layer-row' + (isActive ? ' lp-layer-active' : '') + (effVisible ? '' : ' lp-layer-hidden') + (nested ? ' lp-layer-nested' : '') + (l.clipped ? ' lp-layer-clipped' : '') + dropClass('layer', l.id)}
@@ -5360,7 +5639,12 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                     draggable
                     aria-current={isActive || undefined}
                     onClick={() => switchActiveLayer(l.id)}
-                    onDragStart={(e) => onDragStartItem(e, 'layer', l.id)}
+                    onDragStart={(e) => {
+                      // A press that began on the opacity slider or the rename
+                      // input adjusts that control — cancel the reorder drag.
+                      if (rowDragGuardRef.current) { e.preventDefault(); return; }
+                      onDragStartItem(e, 'layer', l.id);
+                    }}
                     onDragEnd={onDragEndItem}
                     {...dropProps({ kind: 'layer', id: l.id })}
                   >
@@ -5369,36 +5653,71 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
                       className="lp-layer-thumb"
                       width={LAYER_THUMB_SIZE}
                       height={LAYER_THUMB_SIZE}
+                      style={{ opacity: normalizeLayerOpacity(l.opacity) }}
                       aria-hidden="true"
                     />
-                    {editingLayerId === l.id ? (
-                      <input
-                        className="lp-layer-name-input"
-                        autoFocus
-                        value={layerNameDraft}
-                        maxLength={48}
-                        aria-label={t('livery_layers_rename')}
-                        onChange={(e) => setLayerNameDraft(e.target.value)}
+                    {/* Name + opacity share the middle column, right of the
+                        thumbnail: the name reads on the top line with its
+                        percentage, the slider sits directly beneath it. This
+                        keeps the row at the thumbnail's height (the slider no
+                        longer adds a wrapped full-width line). */}
+                    <div className="lp-layer-main">
+                      <div className="lp-layer-toprow">
+                        {editingLayerId === l.id ? (
+                          <input
+                            className="lp-layer-name-input"
+                            autoFocus
+                            value={layerNameDraft}
+                            maxLength={48}
+                            aria-label={t('livery_layers_rename')}
+                            onChange={(e) => setLayerNameDraft(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            {...guardRowDragProps}
+                            onBlur={commitRenameLayer}
+                            onKeyDown={(e) => {
+                              e.stopPropagation();
+                              if (e.key === 'Enter') e.target.blur();
+                              else if (e.key === 'Escape') setEditingLayerId(null);
+                            }}
+                          />
+                        ) : (
+                          <span
+                            className="lp-layer-name"
+                            title={l.name}
+                            onDoubleClick={() => startRenameLayer(l)}
+                          >
+                            {l.name}
+                          </span>
+                        )}
+                        <span className="lp-layer-opacity-val" title={`${t('livery_layers_opacity')} (${opacityPct}%)`} aria-hidden="true">{opacityPct}%</span>
+                      </div>
+                      {/* Per-layer opacity (0–100%), independent of the eye
+                          toggle: only the compositing alpha — rasters/objects
+                          untouched. */}
+                      <div
+                        className="lp-layer-opacity"
                         onClick={(e) => e.stopPropagation()}
-                        onBlur={commitRenameLayer}
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === 'Enter') e.target.blur();
-                          else if (e.key === 'Escape') setEditingLayerId(null);
-                        }}
-                      />
-                    ) : (
-                      <span
-                        className="lp-layer-name"
-                        title={l.name}
-                        onDoubleClick={() => startRenameLayer(l)}
+                        {...guardRowDragProps}
                       >
-                        {l.name}
-                      </span>
-                    )}
+                        <input
+                          type="range"
+                          className="lp-layer-opacity-slider"
+                          min={0}
+                          max={100}
+                          value={opacityPct}
+                          title={`${t('livery_layers_opacity')} (${opacityPct}%)`}
+                          aria-label={t('livery_layers_opacity')}
+                          onChange={(e) => setLayerOpacity(l.id, Number(e.target.value))}
+                          onPointerUp={endOpacityGesture}
+                          onPointerCancel={endOpacityGesture}
+                          onBlur={endOpacityGesture}
+                        />
+                      </div>
+                    </div>
                     <span className="lp-layer-actions">
                       {/* 2×2 grid: visibility + clip on the top row, rename +
-                          delete on the bottom row. */}
+                          delete on the bottom row. It spans the full row height
+                          so the name/slider column owns the card layout. */}
                       <button className="lp-layer-mini" title={l.visible ? t('livery_layers_hide') : t('livery_layers_show')} aria-label={l.visible ? t('livery_layers_hide') : t('livery_layers_show')} aria-pressed={l.visible} onClick={(e) => { e.stopPropagation(); toggleLayerVisible(l.id); }}>
                         {l.visible ? <IoEyeOutline size={15} /> : <IoEyeOffOutline size={15} />}
                       </button>
@@ -5516,49 +5835,6 @@ const LiveryCanvas = forwardRef(function LiveryCanvas(
           <button className={zoom === 'fit' ? 'lp-active' : ''} {...bind(t('livery_paint_fit'))} aria-label={t('livery_paint_fit')} onClick={() => setZoom('fit')}><IoScanOutline size={16} /></button>
         </div>
       </div>
-      {/* ── Right-click layer-order menu for movable objects ── */}
-      {orderMenu && (() => {
-        const idx = objects.findIndex(o => o && o.id === orderMenu.id);
-        const atTop = idx < 0 || idx >= objects.length - 1;
-        const atBottom = idx <= 0;
-        const items = [
-          { dir: 'front', label: t('livery_paint_to_front'), Icon: FaAnglesUp, disabled: atTop },
-          { dir: 'forward', label: t('livery_paint_forward'), Icon: FaAngleUp, disabled: atTop },
-          { dir: 'backward', label: t('livery_paint_backward'), Icon: FaAngleDown, disabled: atBottom },
-          { dir: 'back', label: t('livery_paint_to_back'), Icon: FaAnglesDown, disabled: atBottom },
-        ];
-        return (
-          <>
-            <div
-              className="lp-order-backdrop"
-              onPointerDown={() => setOrderMenuTracked(null)}
-              onContextMenu={(e) => { e.preventDefault(); setOrderMenuTracked(null); }}
-            />
-            <div
-              className="lp-order-menu"
-              role="menu"
-              style={{ left: orderMenu.x, top: orderMenu.y }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onContextMenu={(e) => e.preventDefault()}
-            >
-              {items.map(({ dir, label, Icon, disabled }) => (
-                <button
-                  key={dir}
-                  role="menuitem"
-                  className="lp-order-btn"
-                  aria-label={label}
-                  title={label}
-                  disabled={disabled}
-                  onClick={(e) => { e.stopPropagation(); reorderObject(dir); }}
-                >
-                  <Icon size={16} />
-                  <span className="lp-order-label">{label}</span>
-                </button>
-              ))}
-            </div>
-          </>
-        );
-      })()}
       {/* ── RGBA colour picker popover (portal, anchored to the swatch) ── */}
       {colorAnchor && (
         <LiveryColorPicker

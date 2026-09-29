@@ -72,6 +72,24 @@ describe('listLiveries', () => {
     expect(res.mine[0].error).toBe('BAD_MANIFEST');
     expect(res.mine[0].hasBasePng).toBe(true);
   });
+
+  it('reports imgMtime so the list can key 3D snapshots to the texture revision', () => {
+    const dir = path.join(livery.ownPackDir(gameRoot), 'A20N_CCA');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'aircraft_livery_manifest.json'),
+      JSON.stringify({ airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo' }));
+    const imgFile = path.join(dir, 'base.png');
+    fs.writeFileSync(imgFile, pngBuffer(2048, 2048));
+
+    const first = livery.listLiveries(gameRoot).mine[0];
+    expect(first.hasBasePng).toBe(true);
+    expect(first.imgMtime).toBeGreaterThan(0);
+
+    // Overwriting the texture in place bumps imgMtime (the folder mtime does not).
+    fs.utimesSync(imgFile, new Date(), new Date(Date.now() + 60000));
+    const second = livery.listLiveries(gameRoot).mine[0];
+    expect(second.imgMtime).toBeGreaterThan(first.imgMtime);
+  });
 });
 
 describe('mod_info.json', () => {

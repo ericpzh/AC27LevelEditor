@@ -3818,8 +3818,9 @@ ipcMain.handle('delete-livery', async (_event, folder) => {
 // the user's own install on demand — primarily by the pure-JS reader in
 // electron/unity/aircraftPack.js, with scripts/extract-aircraft-models.py
 // (UnityPy) as a last-resort fallback. The result is cached under
-// <userData>/livery-3d-models/ and deleted when the painter closes. Progress
-// streams on 'livery-3d-progress'.
+// <userData>/livery-3d-models/ and kept warm across livery-page visits (the
+// renderer no longer cleans it up on exit); `livery-3d-cleanup` remains an
+// explicit purge. Progress streams on 'livery-3d-progress'.
 const AIRCRAFT_MODELS_SCRIPT = app.isPackaged
   ? path.join(process.resourcesPath, 'extract-aircraft-models.py')
   : path.join(__dirname, '..', 'scripts', 'extract-aircraft-models.py');

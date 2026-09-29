@@ -359,7 +359,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Livery painter 3D preview ─────────────────────────
   // Ensure/extract the aircraft model pack from the user's install, read a
-  // plane's geometry, and delete the cache when the painter closes.
+  // plane's geometry, and (optionally) purge the on-disk pack. The cache is
+  // kept warm across livery-page visits, so cleanup is an explicit purge only.
   ensureAircraft3D: (gameRoot) => ipcRenderer.invoke('livery-3d-ensure', gameRoot),
   getAircraft3DManifest: () => ipcRenderer.invoke('livery-3d-get'),
   readAircraft3DBin: (planeId) => ipcRenderer.invoke('livery-3d-bin', planeId),

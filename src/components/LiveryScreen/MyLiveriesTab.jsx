@@ -8,7 +8,7 @@ import { IoChevronForward, IoChevronDown, IoFolderOutline, IoLockClosed } from '
 import { FaSteam } from 'react-icons/fa6';
 import { MdAdd } from 'react-icons/md';
 import useTooltip from '../BrowserScreen/useTooltip';
-import { renderLiverySnapshot } from '../../utils/livery3d';
+import { renderLiverySnapshot, getCachedLiverySnapshot, isLiverySnapshotCurrent } from '../../utils/livery3d';
 
 function errKey(code) {
   return 'livery_err_' + String(code || 'unknown');
@@ -141,6 +141,17 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
           if (fetchedRef.current.has(key)) return;
           const planeId = row.targetPlaneId;
           if (!modelPack || !planeId || !modelPack[planeId]) return; // 3D-only preview
+          const revision = String((row && row.imgMtime) ?? '');
+          // Warm path: a snapshot built from the same texture revision is reused
+          // without reading the model binary or the full 2048² texture at all.
+          if (isLiverySnapshotCurrent(key, revision)) {
+            const cached = getCachedLiverySnapshot(key);
+            if (cached) {
+              fetchedRef.current.add(key);
+              setThumbs(prev => (prev[key] ? prev : { ...prev, [key]: cached }));
+              return;
+            }
+          }
           try {
             let model = modelBinRef.current.get(planeId);
             if (model === undefined) {
@@ -159,6 +170,7 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
             const textureUrl = src && src.success ? src.imageDataUrl : null;
             const snap = await renderLiverySnapshot({
               key,
+              revision,
               planeId,
               parts: model.parts,
               bin: model.bin,
@@ -174,6 +186,14 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
     })();
     return () => { cancelled = true; };
   }, [filteredRows, collapsed, packVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Card thumbnail source: the fetched snapshot, else the warm renderer cache —
+  // synchronous, so a page re-entry paints the image on the first frame instead
+  // of replaying the shimmer skeleton while the texture is re-read.
+  const thumbSrc = (pack, folder) => {
+    const key = pack + ':' + folder;
+    return thumbs[key] || getCachedLiverySnapshot(key);
+  };
 
   // After an in-place delete (or a group collapse) shrinks the list, keep the
   // current scroll offset but cap it to the new content maximum (otherwise
@@ -309,7 +329,7 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
       title={t('livery_tip_edit')}
     >
       <div className="livery-thumb">
-        {thumbs['mine:' + row.folder] && <img src={thumbs['mine:' + row.folder]} alt={row.folder} />}
+        {thumbSrc('mine', row.folder) && <img src={thumbSrc('mine', row.folder)} alt={row.folder} />}
         <label className="livery-check" {...bind(t('livery_tip_select'))} onClick={(e) => e.stopPropagation()}>
           <input
             type="checkbox"
@@ -345,7 +365,7 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
       title={t('livery_tip_edit')}
     >
       <div className="livery-thumb">
-        {thumbs['reference:' + row.folder] && <img src={thumbs['reference:' + row.folder]} alt={row.folder} />}
+        {thumbSrc('reference', row.folder) && <img src={thumbSrc('reference', row.folder)} alt={row.folder} />}
       </div>
       <div className="livery-meta">
         <strong>{airlineDisplayName(row.airline, lang)}</strong>
@@ -377,7 +397,7 @@ export default function MyLiveriesTab({ onEdit, onCreate, onUpload, search = '',
       title={t('livery_tip_readonly_workshop')}
     >
       <div className="livery-thumb">
-        {thumbs['workshop:' + row.folder] && <img src={thumbs['workshop:' + row.folder]} alt={row.folder} />}
+        {thumbSrc('workshop', row.folder) && <img src={thumbSrc('workshop', row.folder)} alt={row.folder} />}
       </div>
       <div className="livery-meta">
         <strong>{airlineDisplayName(row.airline, lang)}</strong>

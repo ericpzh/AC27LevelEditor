@@ -240,19 +240,23 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   `deleteLivery` per folder → `livery_deleted` / `livery_deleted_multi`). The
   header Find filters rows by folder / airline code+name / aircraft / manifest
   name (empty result shows `livery_search_empty`; empty pack shows
-  `livery_empty_mine`). Thumbnails load lazily from the **low-res
-  `read-livery-thumbnail` channel** (a ~256px JPEG, ≈20KB vs several MB) — never
-  the full 2048×2048 texture — for the currently-expanded, search-filtered rows
-  only, 4 at a time; a `fetchedRef` Set tracks keys (never a mirror of the
-  state object, which would mutate state in place and swallow the functional
-  updater). If the channel is missing/rejects (main/preload predating it — Vite
-  HMR only swaps the renderer) it falls back to `readLiveryImage`, and the whole
-  run is discarded on search change (`cancelled`). `.livery-thumb` reserves a
-  2:1 box up front with a **shimmer skeleton** (`:not(:has(img))` gradient,
-  `livery-thumb-shimmer`) so a loading card never reads as a broken black box,
-  then the `<img>` fades in on load. Cards open the painter with
-  `imageDataUrl: null` — the 256px preview is never paintable, so `CreateTab`
-  lazy-loads the full texture itself. It also calls `listAircraftTypes()`
+  `livery_empty_mine`). Previews are **3D-only**: each currently-expanded,
+  search-filtered card renders an offscreen **3D snapshot** of its livery on the
+  extracted aircraft mesh (the `read-livery-thumbnail` JPEG channel is no longer
+  used by the list — the full 2048² texture from `read-livery-image` is the
+  model's map), 4 at a time; a `fetchedRef` Set tracks keys (never a mirror of
+  the state object, which would mutate state in place and swallow the functional
+  updater). The snapshot URL cache is **kept warm across page visits**
+  (`releaseLiveryRenderer`), and cards paint from it synchronously via
+  `getCachedLiverySnapshot` so re-entry shows the image immediately; a card only
+  re-renders when its row's `imgMtime` revision changes
+  (`isLiverySnapshotCurrent`), and the whole run is discarded on search change
+  (`cancelled`). `.livery-thumb` reserves a 2:1 box up front with a **shimmer
+  skeleton** (`:not(:has(img))` gradient, `livery-thumb-shimmer`) so a
+  first-ever loading card never reads as a broken black box, then the `<img>`
+  fades in on load. Cards open the painter with `imageDataUrl: null` — the list
+  preview is never paintable data, so `CreateTab` lazy-loads the full texture
+  itself. It also calls `listAircraftTypes()`
   (best-effort) to
   build the **full folder set**: the union of every scanned aircraft type and
   every type present in the rows, so a type with **zero liveries** still gets a
@@ -448,11 +452,18 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     affordance; **deletes the folder AND every layer inside it**, with a confirm
     when non-empty; a fresh empty layer is created if that would leave none),
     **Rename** (inline, double-click), **Hide/Show** (each layer has its own eye
-    and the last visible layer refuses to hide; hiding the active layer moves the
+    and the last visible layer CAN be hidden (it stays active when no visible successor remains, so edits keep landing on it); hiding the active layer moves the
     target to the next visible one; **a folder header also has an eye** that
     hides/shows the whole folder — every child follows it via
     `layerEffectiveVisible` = own flag AND folder flag, and editing moves to the
-    next visible layer). **Clip** — each layer row also carries a link toggle
+    next visible layer). **Opacity** — each layer row carries a 0–100% slider
+    (`.lp-layer-opacity`, on its own line in the row's middle column directly
+    under the name, `livery_layers_opacity`) that is
+    fully independent of the eye toggle: it only scales the compositing alpha, so
+    0% → 100% restores the original shape pixel-identically (rasters/objects are
+    never modified; screen rides on CSS `opacity`, export/sampling on
+    `globalAlpha` blits via `drawLayerContentWithOpacity`, one undo step per
+    slider gesture). A layer at 0% stays active and paintable. **Clip** — each layer row also carries a link toggle
     (`.lp-layer-clip`, always present in the 2×2 grid and accent-tinted once
     clipped via `.lp-layer-clip--on`, `IoLinkOutline`/`IoUnlinkOutline`). A
     clipped layer is masked by the **alpha
@@ -474,7 +485,14 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     coordinate. Each **layer** row's controls sit right of the name as an
     **always-visible 2×2 grid** (`.lp-layer-actions`,
     `grid-template-columns: repeat(2,20px)`): eye + clip on the top row, rename +
-    delete below. **Folder headers stay a single row** of controls
+    delete below — and it **spans the full row height** on the right, while the
+    middle column stacks the name (with its `%` readout riding the same line,
+    `.lp-layer-toprow`) over the opacity slider. Laying the row out as a grid
+    (`.lp-layer-row`, `50px minmax(0,1fr) auto`; the thumbnail spans both rows)
+    keeps the slider from growing the row past the thumbnail height. A press
+    starting on the slider or rename input cancels the row's reorder drag via
+    `rowDragGuardRef`. The locked base row opts out of the grid (`.lp-layer-base`
+    stays `flex`). **Folder headers stay a single row** of controls
     (`.lp-layer-actions--row`, `inline-flex`): eye + rename + delete, with the
     collapse chevron on the left. **No up/down buttons, no member-count badge**
     (the `livery_layers_move_up`/`_move_down`, `livery_layers_group`,
@@ -496,7 +514,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     `LAYER_THUMB_INTERVAL_MS` cadence and on structure changes. The base aircraft
     texture is a fixed locked row at the bottom (also the root drop zone).
     **Undo covers content AND structure** — `snapshotState` captures the whole
-    document: every layer's metadata (name, `visible`, `clipped`), object list,
+    document: every layer's metadata (name, `visible`, `opacity`, `clipped`), object list,
     cached raster ImageData (`captureLayerPixels`, invalidated on mutation and
     shared across snapshots when unchanged), the full panel tree and the active
     layer. `pushSnapshot()` runs before every structural mutation (add/delete
@@ -510,7 +528,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
   - **Layer sidecar persistence**: `exportLayers()` returns
     `{version:2, activeId, base:{panels:[{partName,imageDataUrl}]},
     panel:[{type:'layer',id} | {type:'folder',id,name,visible,children:[layerId,…]}],
-    layers:[{id,name,visible,clipped,objects,panels:[{partName,paintDataUrl,
+    layers:[{id,name,visible,opacity,clipped,objects,panels:[{partName,paintDataUrl,
     fillDataUrl}]}]}` — the `panel` tree is the authoritative order/foldering;
     sticker bitmaps travel as `imageDataUrl`, selection `clipMask` as
     `clipMaskDataUrl`. `CreateTab` sends it as the `layers` payload on
@@ -621,25 +639,34 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     centre is still in panel 0.) The
     imperative handle deps include `active`/`panelCount` so its closures are
     never stale.
-   - Tools `TOOLS`: `select` (`FaArrowPointer`, A), brush (B), eraser (E),
-     eyedropper (no shortcut — right-click picks), fill (G), line (U), rect (R),
+   - Tools `TOOLS`: `select` (`FaArrowPointer`/`BsMagic`, A),
+     brush (`IoBrushOutline`/`MdBlurOn`, B — owns the Paint and Blur sub-modes),
+     eraser (E), eyedropper (no shortcut — right-click picks), fill (G), line (U),
+     rect (R),
      ellipse (M), text (T). `TOOL_META` advertises the shortcut; rail buttons and
      letter shortcuts both go through `activateTool`, which settles any
-     in-progress gesture first (see "Gesture settling" below). **A / L / W are
-     global Select sub-mode keys** (Object / Lasso / Magic Wand): pressed from
+     in-progress gesture first (see "Gesture settling" below).
+     **A / L / W are global Select sub-mode keys** (Object / Lasso / Magic Wand):
+     pressed from
      any tool they switch to Select first (e.g. from the brush, `L` jumps to
-     Lasso) — which is why Line moved to `U`. The rail **Import
+     Lasso) — which is why Line moved to `U`. **B / S are the Brush's
+     Paint / Blur mode keys** (same pattern — they switch to the Brush tool
+     first from any tool). The Brush B/S keys and the plain tool letters are
+     gated to **bare** keypresses (`!e.ctrlKey && !e.metaKey && !e.altKey`), so
+     an app chord such as `Ctrl+S` (Save) never trips a tool shortcut. The rail
+     **Import
      Sticker** button is `I` (`ACTION_KEYS.importSticker`); the Selection Pen
      sub-mode uses `LuLasso`.
-     **Right-click** is two-stage and tool-gated: right-button *press*
-     (`onCanvasDown` button 2) arms the movable's layer-order target **only in
-     the Select tool's object sub-mode** — it selects the topmost live object
-     under the cursor via `hitObjectAt` (same hit rule as Select, lines get a
-     taller band) and the matching `onCanvasContextMenu` press+release pins the
-     **layer-order menu**. In **every other tool/sub-mode (pen, wand, brush,
-     shapes, …)** the right-click instead calls the shared `pickColorAt` (same
-     as the Eyedropper, keeps the active tool) and never opens the movable
-     menu — so the pen tool's right-click is a colour pick. The
+     **Right-click** is the Eyedropper shortcut: right-button *press*
+     (`onCanvasDown` button 2) calls the shared `pickColorAt` (same as the
+     Eyedropper tool, keeps the active tool) in every tool/sub-mode, so a
+     colour can be picked off movables as well as the base. Two tools consume
+     the right-button *press* themselves: the **Line tool in Curve mode** with
+     a draft pops the last control point (a lone point cancels the draft
+     outright), and the **Text tool** with an open box commits it exactly like
+     Enter. `onCanvasContextMenu` only `preventDefault()`s to suppress the
+     native browser menu.
+     The
      eyedropper composites the visible stack (`paintVisibleComposite`) through a
      lazily-created 1×1 scratch (`pickCanvasRef`/`getPickCanvas`) before reading
      the pixel, so a colour can be picked off **movables** (stickers / shapes /
@@ -647,12 +674,7 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      `paintObjectWithErase`
      (a selection never clips a movable);
      it falls back to the raw base pixel when the composite is empty/transparent
-     or there are no objects. Two tools consume the right-button *press*
-     themselves: the **Line tool in Curve mode** with a draft pops the last
-     control point (a lone point cancels the draft outright), and the **Text
-     tool** with an open box commits it exactly like Enter. Both swallow the
-     matching `contextmenu` release (`consumeRightRef`) so no order menu /
-     colour pick follows.
+     or there are no objects.
      **The Line tool has Straight/Curve sub-modes** (`lineMode` state +
      `lineModeRef`, default `straight`): Straight drags out a line (as
      before); Curve appends a control point per click (`curveRef.pts`, hover
@@ -662,7 +684,11 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      a degenerate draft (<2 points) is discarded silently.
    - Options bar (`TOOLS_WITH_OPTIONS`; select/eyedropper have none of their own
      — but Select **does** render the text options while a text object is
-     selected): brush/eraser size + (brush only) hard/soft; fill
+     selected): brush/eraser size + (brush) a continuous **Hardness** slider
+     (`livery_paint_hardness`, 0–100%; `normalizeBrushHardness` maps it to 0..1),
+     and the brush also gets a
+     Paint/Blur `lp-seg` sub-mode toggle (`livery_paint_brush_mode`/`_paint`/
+     `livery_paint_blur`, mirroring Select's mode row); fill
      tolerance; line/rect/ellipse width + fill toggle (Line also gets a
      Straight/Curve `lp-seg` toggle, `livery_paint_line_mode`/`_straight`/
      `_curve`); text font (`FONT_OPTIONS`)
@@ -698,7 +724,13 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     overlap (alpha = 1−(1−a)ⁿ), so a translucent brush went nearly opaque on
     any slow drag — the alpha appeared to do nothing. Per-rect flushes are
     idempotent (the base copy is never modified), and `putImageData` stays reserved
-    for fills/mask clips. **The fill tool paints the bottom `fill` layer, under
+    for fills/mask clips. **Brush edge hardness** is one continuous 0..1 value
+    (`brush.hardness`, UI 0–100%; `normalizeBrushHardness`): the paint brush maps
+    it through `applyBrushEdge` to a proportional `shadowBlur` halo
+    (`(1 − hardness)·size/2`; hardness 1 is a no-op so the crisp edge is unchanged),
+    the Blur sub-mode maps it to its solid-core width, and the cursor ring draws an
+    inner core circle so the falloff is visible. **The fill tool paints the bottom
+    `fill` layer, under
     every movable** (`fillCtxRef`), but the flood region is computed from the
     VISIBLE composite (base → fill → movables → pen), exactly like the wand —
     the fill layer itself is mostly transparent, so flooding it directly always
@@ -731,6 +763,26 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
     trail) and re-anchors there, so repeated Shift+clicks chain a polyline.
     Each segment is one undo snapshot (`commitSegment`). **`[` / `]`** step the
     shared brush/eraser size by ∓5 (clamped 1–200) while either tool is active.
+    **Brush Blur sub-mode (`brushMode === 'blur'`, `MdBlurOn`, `S`)** — the
+    brush's second mode, a pen that owns no colour. For each dab `paintBlurDab`
+    samples the **VISIBLE stack** inside
+    the brush disc (base + every visible layer's fill/movables/pen, via the same
+    `paintVisibleComposite` the wand/eyedropper/fill use, into a brush-sized
+    reused scratch `blurCanvasRef`), averages those pixels
+    (`sampleVisibleAverage` skips fully transparent texels and, on a multi-image
+    aircraft, texels outside the ACTIVE panel so a mix never pulls colour across
+    the gutter) and paints the average back **only into the ACTIVE layer's pen
+    raster** — as a flat disc at hardness 100%, or a radial gradient whose
+    solid core follows the hardness (wider core = crisper, narrower = softer).
+    Dabs ride the same per-stroke layer as
+    the brush (`beginStroke`/`flushStroke`), so the entire stroke composites once
+    at the picker alpha (the picker alpha doubles as the mix strength) and one
+    undo snapshot covers the gesture; `onCanvasDown` deposits the first dab so a
+    click mixes, `onCanvasMove` samples one dab per ≥ size/8 step and flushes, so
+    each step sees the previous flush and the mix propagates along the drag.
+    Repeated dabs smooth a hard edge into a gradient; the rail colour is never
+    read or written. The selection mask and Panel Lock clip it exactly like the
+    brush (through `constrainRastersToMask`).
     **Layers: each editable layer owns its fill / movables / pen, the base is
     locked below and the chrome sits on top — without baking.** Inside
     `.lp-canvas-stage` (bottom → top): `base` (locked aircraft image,
@@ -812,7 +864,14 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      dragged corner via `snapPoint` (the corner tracks the pointer 1:1, so the
      moving edge lands exactly on the guide). The matched lines are drawn on the
      overlay while snapped. **Hold Alt to bypass snapping**; Shift aspect-locked
-     scaling also skips snapping. Pure helpers in `src/utils/liverySnap.js`
+     scaling also skips snapping. **Rotation soft-snaps** to the nearest 90°
+     multiple (`ROT_SNAP_DEG` = 5°): a rotate drag within that aperture clips
+     onto 0/90/180/270° (Alt bypasses for fully free rotation), flagging
+     `snapGuidesRef.current.rotSnap` so the overlay turns the rotate handle the
+     shared guide pink (`#ff2d95`) and draws a matching degree badge (e.g. `90°`)
+     above it. The badge is positioned in the unflipped frame
+     (translate+rotate only), matching the drawn dot. Pure
+     helpers in `src/utils/liverySnap.js`
      (`objectAABB`, `collectSnapLines`, `snapBox`, `snapPoint`). For a **text box**
      a Shift resize changes its `size` (glyphs
      follow the frame), while a free resize keeps the font and stores a
@@ -872,32 +931,22 @@ manifest, imageDataUrl}` with `shortCode` resolved from `manifest.targetPlaneId`
      selectable**, with nothing stamped onto the (wide) base, so a multi-image
      copy can never bleed into the other panel. Only `exportPNG()` returns the
      flattened texture (base + every live object).
-   - **Layer order** (`orderMenu` state + `orderMenuRef`, `hitObjectAt`,
-     `reorderObject`, pure `reorderObjects(objs, id, dir)`): right-clicking a
-     movable object pins a 4-item menu at the cursor (`lp-order-menu` +
-     transparent `lp-order-backdrop`; `FaAnglesUp`/`FaAngleUp`/`FaAngleDown`/
-     `FaAnglesDown`, i18n `livery_paint_to_front`/`_forward`/`_backward`/
-     `_to_back` = 置顶/上移一层/下移一层/置底) with the at-an-end moves
-     disabled (a lone object disables all four). `reorderObjects` moves inside
-     the bottom→top stack (`front` = to the top end, `forward`/`backward` =
-     one step, `back` = to the bottom start; out-of-range ids and no-op moves
-     return the input array untouched). `reorderObject` snapshots for undo,
-     keeps the moved object selected and closes the menu. Ref methods
-     `reorderObject` + `getObjectIds` (for tests). The menu closes on: picking
-     a move, left-click, right-click on empty canvas, backdrop pointerdown,
-     `Escape` (handled before deselect), `removeSticker`, or any tool/undo/
-     redo shortcut (via settling). `Delete`/`Backspace` = `removeSticker()`
-     (selected object, else the topmost — no selection required). **All canvas
-     shortcuts stay inert while any app modal is open** (save naming /
-     overwrite / post-save mod hint): the window keydown handler returns early
-     on `modal.open`, so keypresses behind a save popup never deselect, remove
-     or mutate the live movable — the selection survives the save.
+    - **Object order:** the old right-click layer-order menu (`orderMenu` /
+      `reorderObject` / `reorderObjects`) was removed - movables now live on
+      real layers, so stacking is controlled from the layer panel instead.
+      Right-click is purely the Eyedropper shortcut (see the tool section).
+      `Delete`/`Backspace` = `removeSticker()` (selected object, else the
+      topmost - no selection required). **All canvas
+      shortcuts stay inert while any app modal is open** (save naming /
+      overwrite / post-save mod hint): the window keydown handler returns early
+      on `modal.open`, so keypresses behind a save popup never deselect, remove
+      or mutate the live movable - the selection survives the save.
     - **Gesture settling (keyboard parity):** a toolbar click can never land
       mid-gesture (pointer capture forces release first) but a shortcut can, so
       `settleGesture()` ends a stroke (clipped to the selection first),
       commits a shape preview (`commitShape`), ends an object drag, commits
-      the text draft, commits an in-progress lasso (`commitLasso`) and
-      dismisses the order menu exactly as releasing the pointer would — and
+      the text draft and commits an in-progress lasso (`commitLasso`) exactly
+      as releasing the pointer would — and
       `activateTool` (rail buttons + letter shortcuts) / `doUndo` / `doRedo`
       all call it first, so shortcuts act on a stable canvas identically to
       clicking the matching button.
@@ -1134,9 +1183,9 @@ per part `f32 positions[3n] · f32 uv[2n] · u32 indices[m]`. Pack `version` 4
 (a cache key — bumped for the yaw corrections and re-bumped when CRJ700 joined
 them, so stale packs rebuild);
 total ≈16 MB for all types. `livery-3d-bin` reads a plane's geometry back to
-the renderer. `livery-3d-cleanup` `rm -rf`s the cache dir when `LiveryScreen`
-unmounts (leaving the livery page); `disposeLiverySnapshots()` tears down the
-offscreen renderer.
+the renderer. The cache is kept warm across livery-page visits: the page-entry
+`ensure` is the only refresh trigger and `LiveryScreen` no longer cleans it up
+on unmount. `livery-3d-cleanup` survives as an explicit `rm -rf` purge.
 
 `scripts/extract-aircraft-models.py` (UnityPy) is kept as a **dev-time
 reference and last-resort fallback**: if the JS reader throws (e.g. a game
@@ -1150,11 +1199,20 @@ parser (`readPart`) plus a singleton offscreen `WebGLRenderer`/scene.
 `MyLiveriesTab` renders each visible card as a **3D snapshot** of that livery —
 the resized PNG thumbnail channel (`read-livery-thumbnail`) is NOT used; the
 full livery texture (`read-livery-image`) is the model's map. Renders are
-serialized through one GL context, cached by `pack:folder`, rendered 640×320
+serialized through one GL context, cached by `pack:folder` with a texture-mtime
+revision, rendered 640×320
 (2:1 — matching the card's `.livery-thumb` box) with the aircraft fitted to the
 frame (bounding-box corners vs. the viewport half-angles, `MARGIN 0.48` — 50%
 closer than the original 0.72 fit), and only
 attempted when the pack covers the row's plane (no 2D fallback image).
+**Warm cache:** the snapshot URL cache survives leaving the livery page —
+`LiveryScreen` calls `releaseLiveryRenderer()` (frees the GL context +
+geometries, keeps the URLs) instead of a full `disposeLiverySnapshots()`.
+`list-liveries` rows carry `imgMtime` (the paintable texture's mtime, since the
+folder mtime doesn't change on an in-place overwrite), so a re-entry paints
+every card synchronously from `getCachedLiverySnapshot()` (no shimmer skeleton,
+no bin/texture re-read) and only re-renders a card whose `imgMtime` changed
+(`isLiverySnapshotCurrent`).
 Aircraft groups with no model are **hidden from the list** (`MyLiveriesTab`
 filters them: the extracted pack is ground truth once loaded, `has3DModel`
 before — so the Cessna Citation X never shows a forever-loading card — while
@@ -1175,19 +1233,21 @@ resolves its base dir through `_packDir` (`'mine'` / `'reference'` /
 `read-livery-image(folder, pack)` → data-URL (`_resolveLiveryImagePath`: the
 manifest's main-part BaseMap, else any part's BaseMap, else a legacy
 `base.png`; MIME PNG/JPEG by extension, `IMAGE_MISSING` when none);
-`read-livery-thumbnail(folder, pack, size?)` → the **list preview**: same
-resolution/containment as `read-livery-image` but downscaled to a
-`THUMBNAIL_SIZE` (256, clamped 64..512) JPEG `data:image/jpeg;base64,…` via
-Electron's `nativeImage` (`resize` + `toJPEG(72)`), memoized in an in-memory
-`_thumbCache` keyed `${path}:${mtimeMs}:${size}` (FIFO-evicted past 300). A
-`thumbnail: true` flag marks the real resize; when `nativeImage` is
-unavailable/unproductive (plain-Node unit tests, empty decode) it degrades to
-the full image verbatim with `thumbnail: false` so the list still renders;
+`read-livery-thumbnail(folder, pack, size?)` → **legacy low-res preview** (no
+longer used by the list, which is 3D-only): same resolution/containment as
+`read-livery-image` but downscaled to a `THUMBNAIL_SIZE` (256, clamped 64..512)
+JPEG `data:image/jpeg;base64,…` via Electron's `nativeImage` (`resize` +
+`toJPEG(72)`), memoized in an in-memory `_thumbCache` keyed
+`${path}:${mtimeMs}:${size}` (FIFO-evicted past 300). A `thumbnail: true` flag
+marks the real resize; when `nativeImage` is unavailable/unproductive
+(plain-Node unit tests, empty decode) it degrades to the full image verbatim
+with `thumbnail: false`;
 `read-livery-images(folder, pack)` → **all** BaseMap parts of a stored livery
 (`{success, imageDataUrl (main), parts:[{partName, fileName, imageDataUrl}],
 layers?}`)
-— the painter loads every panel; the list keeps using the single main-part
-`read-livery-image`/`read-livery-thumbnail`, so its preview is unchanged.
+— the painter loads every panel; the list's 3D snapshot uses the single
+main-part `read-livery-image` as the model's map (the low-res thumbnail channel
+is unused).
 `layers` is the parsed editor layer sidecar (`.livery_layers.json`) when
 present;
 `get-aircraft-template(planeId)` → the built-in default BaseMaps
@@ -1402,9 +1462,9 @@ manifest for a free-form zip folder).
 - `tests/components/LiveryScreen/` (header actions/back/install overlay/search,
   in-card checkbox select driving the header Export/Delete commands + their
   disabled-until-selected states, single vs batch delete confirms,
-  **list thumbnails** (previews come from `read-livery-thumbnail` and never pull
-  the full image, a rejecting channel falls back to `readLiveryImage`, and
-  search narrowing discards stale in-flight thumbnails),
+  **3D-only previews** (each card is an offscreen 3D snapshot; a re-entry paints
+  from the warm `getCachedLiverySnapshot` cache, a changed `imgMtime` revision
+  re-renders, and search narrowing discards stale in-flight renders),
   **per-aircraft add-livery card + empty scanned folders** (add card per group,
   `onCreate(planeId)` / `onEdit({targetPlaneId})` fallback, empty folders from
   `listAircraftTypes`, no card on the unknown type, add-card → painter with the
@@ -1418,10 +1478,9 @@ manifest for a free-form zip folder).
    **open folder** (reveals `origin.folder`+`pack`, and passes `null`/`'mine'`
    for a brand-new livery), import image, cancel, mine vs reference origin save rules, canvas
    tools/stroke/text/sticker/save payload with stubbed 2d context,
-   right-click layer-order menu (`reorderObjects` pure moves + menu open/
-   reorder/close/dismiss paths + disabled end states + right-press select +
-   selection-less Delete + shortcut settling; the menu is gated to Select
-   object mode — a pen-tool right-click picks the colour instead; H / V flip the
+   right-click is the Eyedropper colour pick (the old layer-order menu is gone —
+   movables now stack via the layer panel) plus selection-less Delete +
+   shortcut settling; H / V flip the
    selected object; Enter clears the selection instead of re-opening text; a
    scaling drag is one Ctrl+Z undo step (and keeps registering past the 2048
    canvas edge); Ctrl+C duplicates (true copy — original stays live, no base
@@ -1446,11 +1505,23 @@ manifest for a free-form zip folder).
     duplicate inherits the stamped `clipMask`, a lasso is clipped to the active
     panel (multi-image), masked stroke triggers the `putImageData` clip vs never unmasked,
     eyedropper composites live objects (sticker colour picked, not the base),
+    the Brush's Blur sub-mode averages the visible stack (live movables included)
+    and paints the mix only into the paint layer without touching the rail
+    colour, feathers through a radial gradient once the hardness drops below
+    100%, and its `S` mode key fires bare while Ctrl/Meta/Alt chords are ignored
+    for every plain tool letter and `B`/`S` (so Ctrl+S still saves), the movable
+    rotation soft-snap clips a near-90° drag to an exact multiple with a degree
+    badge while Alt frees the angle (no badge), the cursor ring draws a
+    soft-core guide that tracks the hardness, and the pure
+    `normalizeLayerOpacity`/`normalizeBrushHardness`/`applyBrushEdge`/`ROT_SNAP_DEG`
+    helpers have a dedicated block,
     a live selection never masks a movable (export counts zero `destination-in`
     clips for movables),
     `[` / `]` step the brush/eraser size by 5 with clamping and are inert for a
-    tool without a size (e.g. Rect), every options-bar slider value takes a
-    typed number (brush/eraser size, shape width, font size, sticker opacity:
+    tool without a size (e.g. Rect), the brush hardness slider softens the stroke
+    (100% = crisp, 0% = a proportional shadow blur), every options-bar slider
+    value takes a
+    typed number (brush/eraser size, hardness, shape width, font size, sticker opacity:
     blur/Enter commits, out-of-range clamps, empty reverts, Escape discards the
     draft, slider follows), canvas shortcuts stay inert while an app modal is
     open (save popups keep the movable selection), a click with no drag deposits one brush dab,
@@ -1535,7 +1606,14 @@ manifest for a free-form zip folder).
   system: starting stack (one layer + locked base row, delete disabled), add
   layer (above active, becomes active, second paint canvas), a 50×50 preview
   canvas per layer plus the base preview, rename (inline + `exportLayers`),
-  hide/show + refusing to hide the last visible layer, **hide an entire folder**
+  hide/show (including the last visible layer, which stays active), a per-layer
+  **opacity slider** (0–100%, default 100, that fades only the compositing alpha
+  — the stored content survives a 0%→100% round-trip, it is independent of the
+  eye toggle, adjusting it never switches the active layer, a press starting on
+  it cancels the row-reorder drag while a later drag still reorders, one undo
+  step per gesture, export composites at the layer alpha while a 0% layer
+  contributes nothing, and `exportLayers`/`initialLayers` round-trip `opacity`
+  with a legacy payload defaulting to 1), **hide an entire folder**
   (children dim, their rasters `display:none`, the panel node persists
   `visible:false`, and re-showing restores), **layer clipping** (toggling sets
   the status icon + `.lp-layer-clipped` offset, hides the raw rasters for a

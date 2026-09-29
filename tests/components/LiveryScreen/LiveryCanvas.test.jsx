@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import LiveryCanvas, { reorderObjects, brushRgba, frameOf, scaleErase, scaleErasePolys, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, resizeOrigin, panelLayout, isTextEntry, TEXTURE, OVERLAY_PAD } from '../../../src/components/LiveryScreen/LiveryCanvas';
+import LiveryCanvas, { brushRgba, frameOf, scaleErase, scaleErasePolys, scaleFrame, flipOffset, worldFromLocal, localFromWorld, objectLocal, resizeFactors, resizeOrigin, panelLayout, isTextEntry, normalizeLayerOpacity, normalizeBrushHardness, applyBrushEdge, ROT_SNAP_DEG, TEXTURE, OVERLAY_PAD } from '../../../src/components/LiveryScreen/LiveryCanvas';
 import CreateTab from '../../../src/components/LiveryScreen/CreateTab';
 import Modal from '../../../src/components/common/Modal';
 import Toast from '../../../src/components/common/Toast';
@@ -28,6 +28,8 @@ function makeCtx() {
     fill: vi.fn(), rect: vi.fn(), ellipse: vi.fn(), arc: vi.fn(), clip: vi.fn(),
     strokeRect: vi.fn(), setLineDash: vi.fn(),
     fillText: vi.fn(), putImageData: vi.fn(), translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
+    createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+    createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
     getImageData: vi.fn((x, y, w, h) => ({
       data: new Uint8ClampedArray(Math.max(4, w * h * 4)),
       width: w, height: h,
@@ -343,6 +345,23 @@ describe('brush cursor ring', () => {
     expect(after).toBeGreaterThan(before);
     // jsdom viewport falls back to 512px, so fit = (512 - 24) / 2048.
     expect(after).toBeCloseTo(200 * ((512 - 24) / 2048), 5);
+  });
+
+  it('draws an inner solid-core guide whose size follows the hardness', () => {
+    renderCanvas();
+    // Default 100% hardness: fully hard, so no inner core.
+    expect(document.querySelector('.lp-cursor-core')).toBeNull();
+    // Make the ring comfortably larger than the 2px render floor.
+    fireEvent.change(screen.getByRole('slider', { name: /Size/ }), { target: { value: '100' } });
+    const ringW = () => parseFloat(document.querySelector('.lp-cursor-ring').style.width);
+    const slider = screen.getByRole('slider', { name: /Hardness/ });
+    fireEvent.change(slider, { target: { value: '50' } });
+    const core = document.querySelector('.lp-cursor-core');
+    expect(core).toBeInTheDocument();
+    expect(parseFloat(core.style.width)).toBeCloseTo(ringW() * 0.5, 5);
+    // 0%: the core collapses below the 2px floor and drops out entirely.
+    fireEvent.change(slider, { target: { value: '0' } });
+    expect(document.querySelector('.lp-cursor-core')).toBeNull();
   });
 });
 
@@ -744,6 +763,60 @@ describe('live-object handles survive a flip', () => {
     expect(after.rot).toBeCloseTo(Math.atan2(ly, 80) + Math.PI / 2, 3);
     expect(after.x).toBe(o.x);
     expect(after.y).toBe(o.y);
+  });
+
+  it('soft-snaps rotation onto 90° multiples with a badge, free otherwise', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await importSticker(user, ref);
+    const o = ref.current.getObjectInfo();
+    const gap = 40 / (488 / 2048);
+    const ly = o.frame.y0 - gap;
+    // Near-90°: raw ≈ atan2(-4,100)+90° ≈ 87.7° → clips to exactly 90°.
+    // opts override the describe's Alt-bypass so the snap path is exercised.
+    // The drag is held (no pointerUp) so overlay frames render mid-gesture.
+    const from = toClient(o, 0, ly);
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { ...from, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { ...toClient(o, 100, -4), button: 0, pointerId: 1, altKey: false });
+    expect(ref.current.getObjectInfo().rot).toBeCloseTo(Math.PI / 2, 10);
+    // The snapped state is flagged on the overlay: a "90°" badge by the handle.
+    await waitFor(() => expect(
+      ctxs.some(c => c.fillText.mock.calls.some(a => a[0] === '90°')),
+    ).toBe(true));
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // Far from any multiple: raw ≈ atan2(ly,80)+90° ≈ 22° stays free, no badge.
+    const snapped = ref.current.getObjectInfo();
+    ctxs.forEach(c => c.fillText.mockClear());
+    const c0 = Math.cos(snapped.rot);
+    const s0 = Math.sin(snapped.rot);
+    const hw = { x: snapped.x - ly * s0, y: snapped.y + ly * c0 };
+    fireEvent.pointerDown(cv, { clientX: hw.x / 4, clientY: hw.y / 4, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: (snapped.x + 80) / 4, clientY: (snapped.y + ly) / 4, button: 0, pointerId: 1, altKey: false });
+    const free = ref.current.getObjectInfo();
+    expect(free.rot).toBeCloseTo(Math.atan2(ly, 80) + Math.PI / 2, 3);
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    expect(ctxs.every(c => c.fillText.mock.calls.length === 0)).toBe(true);
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+  });
+
+  it('Alt bypasses the rotation snap for a fully free angle (no badge)', async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef();
+    await importSticker(user, ref);
+    const o = ref.current.getObjectInfo();
+    const gap = 40 / (488 / 2048);
+    const ly = o.frame.y0 - gap;
+    const cv = mainCanvas();
+    // Same near-90° grab as the snap test, but Alt keeps the raw angle.
+    fireEvent.pointerDown(cv, { ...toClient(o, 0, ly), button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { ...toClient(o, 100, -4), button: 0, pointerId: 1, altKey: true });
+    const raw = ref.current.getObjectInfo().rot;
+    expect(raw).toBeCloseTo(Math.atan2(-4, 100) + Math.PI / 2, 6);
+    expect(raw).not.toBeCloseTo(Math.PI / 2, 3);
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    expect(ctxs.every(c => c.fillText.mock.calls.length === 0)).toBe(true);
+    fireEvent.pointerUp(cv, { pointerId: 1 });
   });
 
   it('sizes the handle dots from the LIVE zoom after a duplicate', async () => {
@@ -1421,16 +1494,46 @@ describe('LiveryCanvas tools — paint operations', () => {
     expect(field.value).toBe('33');
   });
 
-  it('brush hard/soft toggle sets a shadow blur on the next stroke', async () => {
-    const user = userEvent.setup();
+  it('brush hardness is a continuous slider: 100% is crisp, 0% sets a soft shadow blur', async () => {
     renderCanvas();
-    expect(document.querySelector('.lp-optionsbar').textContent).not.toContain('%');
-    // Soft edge sets a shadow blur on the next stroke.
-    await user.click(screen.getByRole('button', { name: 'Soft' }));
+    const slider = screen.getByRole('slider', { name: /Hardness/ });
+    expect(slider.value).toBe('100');
+    // 100% (default): hard edge — no shadow blur on the stroke.
     fireEvent.pointerDown(mainCanvas(), { clientX: 60, clientY: 60, button: 0, pointerId: 1 });
     fireEvent.pointerMove(mainCanvas(), { clientX: 80, clientY: 80, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(mainCanvas(), { pointerId: 1 });
+    expect(ctxs.some(c => c.shadowBlur > 0)).toBe(false);
+    // 0%: fully feathered — the stroke carries a proportional shadow blur.
+    fireEvent.change(slider, { target: { value: '0' } });
+    fireEvent.pointerDown(mainCanvas(), { clientX: 60, clientY: 60, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(mainCanvas(), { clientX: 80, clientY: 80, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(mainCanvas(), { pointerId: 1 });
     // The blur lands on the stroke-layer context the dabs are painted into.
     expect(ctxs.some(c => c.shadowBlur > 0)).toBe(true);
+  });
+
+  it('brush hardness accepts a typed number (slider follows, clamped)', async () => {
+    const user = userEvent.setup();
+    renderCanvas();
+    const slider = screen.getByRole('slider', { name: /Hardness/ });
+    const field = screen.getByRole('textbox', { name: /Hardness/ });
+    expect(slider.value).toBe('100');
+    await user.clear(field);
+    await user.type(field, '40');
+    fireEvent.blur(field);
+    expect(slider.value).toBe('40');
+    expect(field.value).toBe('40');
+    // Out-of-range clamps to the 100 maximum (non-digits are stripped on input,
+    // so the field can never hold a negative to test the 0 minimum).
+    fireEvent.change(field, { target: { value: '500' } });
+    fireEvent.blur(field);
+    expect(slider.value).toBe('100');
+    expect(field.value).toBe('100');
+    // An emptied field reverts to the committed value.
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.blur(field);
+    expect(slider.value).toBe('100');
+    expect(field.value).toBe('100');
   });
 
   it('brush strokes paint opaque into the layer, then composite once with the picker alpha', async () => {
@@ -1447,6 +1550,151 @@ describe('LiveryCanvas tools — paint operations', () => {
     // ...and the composite applies the 50% alpha exactly once per flush.
     expect(main.globalAlpha).toBe(0.5);
     expect(main.drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
+  });
+
+  // ── Blur (colour-mixing) pen ──────────────────────────────
+  // Every brush-box read (`getImageData` over a sub-texture box) returns one
+  // opaque colour, simulating the visible composite; full-store reads (undo)
+  // keep the transparent stub.
+  function stubSampleColor(r, g, b) {
+    getCtxSpy.mockImplementation(function () {
+      const c = makeCtx();
+      c._layer = this && this.dataset ? this.dataset.layer : undefined;
+      const fallback = c.getImageData.getMockImplementation();
+      c.getImageData.mockImplementation((x, y, w, h) => {
+        if (w < 1024 && h < 1024) {
+          const data = new Uint8ClampedArray(Math.max(4, w * h * 4));
+          for (let i = 0; i < data.length; i += 4) {
+            data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255;
+          }
+          return { data, width: w, height: h };
+        }
+        return fallback(x, y, w, h);
+      });
+      ctxs.push(c);
+      return c;
+    });
+  }
+
+  it('merges the colour-mixing Blur pen into the Brush as a sub-mode (Paint / Blur)', async () => {
+    renderCanvas();
+    // Blur is NOT a separate rail tool — it is a mode of the Brush.
+    expect(screen.getByRole('button', { name: 'Paint' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Blur' })).toBeInTheDocument();
+    // The options bar still offers Size + a continuous hardness slider.
+    expect(document.querySelector('.lp-optionsbar').textContent).toContain('Size');
+    expect(screen.getByRole('slider', { name: /Hardness/ })).toBeInTheDocument();
+    // Switching modes keeps the Brush tool active and flips the pressed state.
+    fireEvent.click(screen.getByRole('button', { name: 'Blur' }));
+    expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+    expect(screen.getByRole('button', { name: 'Blur' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Paint' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('offers the Paint/Blur sub-modes and hardness only while the Brush is active', () => {
+    renderCanvas();
+    expect(screen.getByRole('button', { name: 'Blur' })).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: /Hardness/ })).toBeInTheDocument();
+    // The Eraser shares the Size control but has neither hardness nor the modes.
+    fireEvent.click(screen.getByRole('button', { name: 'Eraser' }));
+    expect(screen.getByRole('slider', { name: /Size/ })).toBeInTheDocument();
+    expect(screen.queryByRole('slider', { name: /Hardness/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Blur' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Paint' })).toBeNull();
+  });
+
+  it('averages the visible pixels and paints the mix into the paint layer, leaving the rail colour alone', async () => {
+    stubSampleColor(0x12, 0x34, 0x56);
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Blur' }));
+    const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 120, clientY: 120, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    // The averaged colour (hard disc → plain fillStyle) lands on a dab context.
+    expect(ctxs.some(c => c.fillStyle === 'rgb(18, 52, 86)')).toBe(true);
+    expect(ctxs.some(c => c.arc.mock.calls.length > 0)).toBe(true);
+    // The stroke composites onto the ACTIVE layer's paint canvas (9-arg drawImage).
+    expect(paintCtx().drawImage.mock.calls.some(a => a.length === 9)).toBe(true);
+    // The pen never takes a colour of its own.
+    expect(swatch().dataset.color).toBe('#ff0000');
+  });
+
+  it('feathers the blur dab with a radial gradient once the hardness drops below 100%', async () => {
+    stubSampleColor(0x12, 0x34, 0x56);
+    const user = userEvent.setup();
+    renderCanvas();
+    await user.click(screen.getByRole('button', { name: 'Blur' }));
+    const cv = mainCanvas();
+    // 100% hardness: a flat disc — no gradient.
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ctxs.every(c => c.createRadialGradient.mock.calls.length === 0)).toBe(true);
+    // Any softness builds a radial falloff whose solid core follows the value.
+    fireEvent.change(screen.getByRole('slider', { name: /Hardness/ }), { target: { value: '0' } });
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ctxs.some(c => c.createRadialGradient.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('samples across the visible layers, including live movables', async () => {
+    stubSampleColor(0x12, 0x34, 0x56);
+    const ref = React.createRef();
+    renderCanvas({ ref });
+    await waitFor(() => expect(ref.current).toBeTruthy());
+    const user = userEvent.setup();
+    const cv = mainCanvas();
+    // Draw a filled rect object so a visible layer carries movable content.
+    await user.click(screen.getByRole('button', { name: 'Rect' }));
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(cv, { clientX: 160, clientY: 160, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(cv, { pointerId: 1 });
+    expect(ref.current.getObjectCount()).toBe(1);
+    // Back to the Brush and into Blur mode.
+    await user.click(screen.getByRole('button', { name: 'Brush' }));
+    await user.click(screen.getByRole('button', { name: 'Blur' }));
+    ctxs.forEach((c) => { c.rect.mockClear(); c.ellipse.mockClear(); });
+    fireEvent.pointerDown(cv, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    // The movable was rendered into the blur sample buffer before its pixels
+    // were read (the throttled overlay never draws synchronously here).
+    expect(ctxs.some(c => c.rect.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('S switches the Brush to Blur mode while Ctrl+S does not (the app owns the chord)', async () => {
+    renderCanvas();
+    // Leave the brush first so the mode keys have to switch the tool back.
+    fireEvent.keyDown(window, { key: 'e' });
+    expect(screen.getByRole('button', { name: 'Eraser' }).className).toContain('lp-active');
+    fireEvent.keyDown(window, { key: 's' });
+    expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
+    expect(screen.getByRole('button', { name: 'Blur' })).toHaveAttribute('aria-pressed', 'true');
+    // B returns the brush to Paint; Ctrl+S must not change the mode.
+    fireEvent.keyDown(window, { key: 'b' });
+    expect(screen.getByRole('button', { name: 'Paint' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    expect(screen.getByRole('button', { name: 'Paint' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Blur' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('plain tool letters ignore Ctrl/Meta/Alt so app chords are never hijacked', () => {
+    renderCanvas();
+    // Start on the Eraser so the guarded letters have a tool to switch back to.
+    fireEvent.click(screen.getByRole('button', { name: 'Eraser' }));
+    for (const ev of [
+      { key: 'b', ctrlKey: true }, // Ctrl+B (bold) must not pick the Brush
+      { key: 'g', metaKey: true }, // Cmd+G
+      { key: 't', altKey: true }, // Alt+T
+    ]) {
+      fireEvent.keyDown(window, ev);
+      expect(screen.getByRole('button', { name: 'Eraser' }).className).toContain('lp-active');
+    }
+    // S under Ctrl must not fall back into the Brush/Blur mode either.
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    expect(screen.getByRole('button', { name: 'Eraser' }).className).toContain('lp-active');
+    // The same key without a modifier switches the tool as usual.
+    fireEvent.keyDown(window, { key: 'b' });
+    expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
   });
 
   it('text commits carry the picker alpha and export translucent', async () => {
@@ -2341,52 +2589,7 @@ describe('panelLayout (pure multi-image helper)', () => {
   });
 });
 
-describe('reorderObjects (pure layer-order helper)', () => {
-  const objs = () => [{ id: 1 }, { id: 2 }, { id: 3 }];
-
-  it('front moves an object to the top end', () => {
-    expect(reorderObjects(objs(), 1, 'front').map(o => o.id)).toEqual([2, 3, 1]);
-    expect(reorderObjects(objs(), 2, 'front').map(o => o.id)).toEqual([1, 3, 2]);
-  });
-
-  it('back moves an object to the bottom start', () => {
-    expect(reorderObjects(objs(), 3, 'back').map(o => o.id)).toEqual([3, 1, 2]);
-    expect(reorderObjects(objs(), 2, 'back').map(o => o.id)).toEqual([2, 1, 3]);
-  });
-
-  it('forward / backward swap exactly one step', () => {
-    expect(reorderObjects(objs(), 1, 'forward').map(o => o.id)).toEqual([2, 1, 3]);
-    expect(reorderObjects(objs(), 2, 'backward').map(o => o.id)).toEqual([2, 1, 3]);
-    expect(reorderObjects(objs(), 3, 'backward').map(o => o.id)).toEqual([1, 3, 2]);
-    expect(reorderObjects(objs(), 2, 'forward').map(o => o.id)).toEqual([1, 3, 2]);
-  });
-
-  it('moves past the ends are no-ops returning the same array', () => {
-    const top = objs();
-    expect(reorderObjects(top, 3, 'front')).toBe(top);
-    expect(reorderObjects(top, 3, 'forward')).toBe(top);
-    expect(reorderObjects(top, 1, 'back')).toBe(top);
-    expect(reorderObjects(top, 1, 'backward')).toBe(top);
-  });
-
-  it('an unknown id returns the input untouched', () => {
-    const input = objs();
-    expect(reorderObjects(input, 99, 'front')).toBe(input);
-  });
-
-  it('an unknown direction returns the input untouched', () => {
-    const input = objs();
-    expect(reorderObjects(input, 2, 'sideways')).toBe(input);
-  });
-
-  it('does not mutate the input array', () => {
-    const input = objs();
-    reorderObjects(input, 1, 'front');
-    expect(input.map(o => o.id)).toEqual([1, 2, 3]);
-  });
-});
-
-describe('layer-order menu (right-click)', () => {
+describe('right-click colour pick', () => {
   // Two non-overlapping rects: A at client (100,100)-(200,200), B at
   // (400,400)-(500,500). Bottom→top stack is [A, B]; A-centre = (150,150).
   async function drawTwoRects(user, ref) {
@@ -2402,114 +2605,33 @@ describe('layer-order menu (right-click)', () => {
     await draw([100, 100], [200, 200]);
     await draw([400, 400], [500, 500]);
     expect(ref.current.getObjectCount()).toBe(2);
-    // The order menu is a Select-tool (object sub-mode) affordance now.
+    // Return to the Select tool (object sub-mode) so the tests exercise its
+    // hit rules and the right-click colour pick.
     await user.click(screen.getByRole('button', { name: 'Select' }));
     return ref.current.getObjectIds();
   }
 
-  it('right-click on a shape opens the menu; Send to top reorders and closes it', async () => {
-    const user = userEvent.setup();
-    const ref = React.createRef();
-    const [idA, idB] = await drawTwoRects(user, ref);
-    fireEvent.contextMenu(mainCanvas(), { clientX: 150, clientY: 150, button: 2 });
-    await screen.findByRole('menu');
-    // A is the bottom object: upward moves enabled, downward moves disabled.
-    expect(screen.getByRole('menuitem', { name: 'Send to top' }).disabled).toBe(false);
-    expect(screen.getByRole('menuitem', { name: 'Bring forward' }).disabled).toBe(false);
-    expect(screen.getByRole('menuitem', { name: 'Send backward' }).disabled).toBe(true);
-    expect(screen.getByRole('menuitem', { name: 'Send to bottom' }).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Send to top' }));
-    expect(ref.current.getObjectIds()).toEqual([idB, idA]);
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
-  it('a topmost target disables the upward moves; a lone object disables all four', async () => {
-    const user = userEvent.setup();
-    const ref = React.createRef();
-    await drawTwoRects(user, ref);
-    // B-centre (450,450): B is topmost.
-    fireEvent.contextMenu(mainCanvas(), { clientX: 450, clientY: 450, button: 2 });
-    await screen.findByRole('menu');
-    expect(screen.getByRole('menuitem', { name: 'Send to top' }).disabled).toBe(true);
-    expect(screen.getByRole('menuitem', { name: 'Bring forward' }).disabled).toBe(true);
-    expect(screen.getByRole('menuitem', { name: 'Send backward' }).disabled).toBe(false);
-    expect(screen.getByRole('menuitem', { name: 'Send to bottom' }).disabled).toBe(false);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Send to bottom' }));
-    expect(screen.queryByRole('menu')).toBeNull();
-    // Back down to a single object: every move is a no-op, all disabled.
-    // (The survivor is B at 450,450 — Delete took the reordered tail A.)
-    fireEvent.keyDown(window, { key: 'Escape' });
-    fireEvent.keyDown(window, { key: 'Delete' });
-    expect(ref.current.getObjectCount()).toBe(1);
-    fireEvent.contextMenu(mainCanvas(), { clientX: 450, clientY: 450, button: 2 });
-    await screen.findByRole('menu');
-    for (const name of ['Send to top', 'Bring forward', 'Send backward', 'Send to bottom']) {
-      expect(screen.getByRole('menuitem', { name }).disabled).toBe(true);
-    }
-  });
-
-  it('Escape dismisses the menu without touching the stack', async () => {
-    const user = userEvent.setup();
-    const ref = React.createRef();
-    const before = await drawTwoRects(user, ref);
-    fireEvent.contextMenu(mainCanvas(), { clientX: 150, clientY: 150, button: 2 });
-    await screen.findByRole('menu');
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(ref.current.getObjectIds()).toEqual(before);
-  });
-
-  it('backdrop pointerdown dismisses the menu', async () => {
-    const user = userEvent.setup();
-    const ref = React.createRef();
-    await drawTwoRects(user, ref);
-    fireEvent.contextMenu(mainCanvas(), { clientX: 150, clientY: 150, button: 2 });
-    await screen.findByRole('menu');
-    fireEvent.pointerDown(document.querySelector('.lp-order-backdrop'), { button: 0 });
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(ref.current.getObjectCount()).toBe(2);
-  });
-
-  it('right-click on empty canvas dismisses the menu (and keeps the colour pick)', async () => {
+  it('right-click on a shape picks the colour and opens no menu', async () => {
     const user = userEvent.setup();
     const ref = React.createRef();
     await drawTwoRects(user, ref);
     const cv = mainCanvas();
+    fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 2, pointerId: 1 });
     fireEvent.contextMenu(cv, { clientX: 150, clientY: 150, button: 2 });
-    await screen.findByRole('menu');
-    // A full right-click is pointerdown (colour pick on empty canvas) +
-    // contextmenu (menu dismissal when nothing is hit).
-    fireEvent.pointerDown(cv, { clientX: 10, clientY: 10, button: 2, pointerId: 1 });
-    fireEvent.contextMenu(cv, { clientX: 10, clientY: 10, button: 2 });
+    // Right-click is purely the Eyedropper shortcut now — no movable menu.
     expect(screen.queryByRole('menu')).toBeNull();
-    // Empty-canvas right-click still picks the pixel colour (transparent black).
     expect(swatch().dataset.color).toBe('#000000');
   });
 
-  it('left-click dismisses an open menu', async () => {
+  it('right pointer press does not change the selection', async () => {
     const user = userEvent.setup();
     const ref = React.createRef();
-    await drawTwoRects(user, ref);
-    await user.click(screen.getByRole('button', { name: 'Select' }));
+    const [idA] = await drawTwoRects(user, ref);
     const cv = mainCanvas();
-    fireEvent.contextMenu(cv, { clientX: 150, clientY: 150, button: 2 });
-    await screen.findByRole('menu');
-    fireEvent.pointerDown(cv, { clientX: 10, clientY: 10, button: 0, pointerId: 1 });
-    fireEvent.pointerUp(cv, { pointerId: 1 });
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
-  it('right pointer press selects the object under the cursor without opening the menu', async () => {
-    const user = userEvent.setup();
-    const ref = React.createRef();
-    const [, idB] = await drawTwoRects(user, ref);
-    const cv = mainCanvas();
-    fireEvent.keyDown(window, { key: 'Escape' }); // deselect (B was selected)
     fireEvent.pointerDown(cv, { clientX: 150, clientY: 150, button: 2, pointerId: 1 });
-    expect(screen.queryByRole('menu')).toBeNull();
-    // The bottom object (not the topmost) is now selected: Delete takes it.
+    // B (the topmost) stays selected, so Delete takes B and leaves A.
     fireEvent.keyDown(window, { key: 'Delete' });
-    expect(ref.current.getObjectIds()).toEqual([idB]);
+    expect(ref.current.getObjectIds()).toEqual([idA]);
   });
 
   it('Delete with no selection removes the topmost object', async () => {
@@ -2522,7 +2644,7 @@ describe('layer-order menu (right-click)', () => {
     expect(ref.current.getObjectIds()).toEqual([idA]);
   });
 
-  it('right-click outside Select mode picks the colour, never the movable menu', async () => {
+  it('right-click picks the colour in every tool mode', async () => {
     const user = userEvent.setup();
     const ref = React.createRef();
     await drawTwoRects(user, ref);
@@ -2549,35 +2671,12 @@ describe('layer-order menu (right-click)', () => {
     expect(ref.current.getObjectIds()).toEqual([idA]);
   });
 
-  it('a keyboard tool shortcut dismisses the menu and switches tool', async () => {
+  it('a keyboard tool shortcut switches tool', async () => {
     const user = userEvent.setup();
     const ref = React.createRef();
     await drawTwoRects(user, ref);
-    fireEvent.contextMenu(mainCanvas(), { clientX: 150, clientY: 150, button: 2 });
-    await screen.findByRole('menu');
     fireEvent.keyDown(window, { key: 'b' });
-    expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.getByRole('button', { name: 'Brush' }).className).toContain('lp-active');
-  });
-
-  it('reorderObject via ref moves the named object without a menu', async () => {
-    const user = userEvent.setup();
-    const ref = React.createRef();
-    const [idA, idB] = await drawTwoRects(user, ref);
-    act(() => { ref.current.reorderObject('backward', idB); });
-    expect(ref.current.getObjectIds()).toEqual([idB, idA]);
-    act(() => { ref.current.reorderObject('forward', idB); });
-    expect(ref.current.getObjectIds()).toEqual([idA, idB]);
-  });
-
-  it('undo restores the order after a reorder', async () => {
-    const user = userEvent.setup();
-    const ref = React.createRef();
-    const [idA, idB] = await drawTwoRects(user, ref);
-    act(() => { ref.current.reorderObject('front', idA); });
-    expect(ref.current.getObjectIds()).toEqual([idB, idA]);
-    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
-    expect(ref.current.getObjectIds()).toEqual([idA, idB]);
   });
 
   it('a keyboard tool shortcut commits an in-progress shape drag', async () => {
@@ -3597,6 +3696,58 @@ describe('part-erase boundary helpers', () => {
     // Without a stored pivot (erase-then-flip) the live frame centre is the axis.
     const legacy = { x: 0, y: 0, rot: 0, w: 100, h: 50, flipX: true, frame: { x0: 0, y0: 0, x1: 50, y1: 25 } };
     expect(flipOffset(legacy)).toEqual({ x: 50, y: 0 });
+  });
+});
+
+describe('brush edge + layer opacity helpers (pure)', () => {
+  it('normalizes a layer opacity to 0..1, defaulting to 1 when absent/invalid', () => {
+    expect(normalizeLayerOpacity(undefined)).toBe(1);
+    expect(normalizeLayerOpacity(NaN)).toBe(1);
+    expect(normalizeLayerOpacity(Infinity)).toBe(1);
+    expect(normalizeLayerOpacity('not a number')).toBe(1);
+    expect(normalizeLayerOpacity(0)).toBe(0);
+    expect(normalizeLayerOpacity(1)).toBe(1);
+    // Out-of-range clamps instead of wrapping.
+    expect(normalizeLayerOpacity(-0.5)).toBe(0);
+    expect(normalizeLayerOpacity(1.5)).toBe(1);
+    expect(normalizeLayerOpacity('0.35')).toBe(0.35);
+  });
+
+  it('normalizes brush hardness the same way', () => {
+    expect(normalizeBrushHardness(undefined)).toBe(1);
+    expect(normalizeBrushHardness(NaN)).toBe(1);
+    expect(normalizeBrushHardness(-1)).toBe(0);
+    expect(normalizeBrushHardness(2)).toBe(1);
+    expect(normalizeBrushHardness(0.25)).toBe(0.25);
+  });
+
+  it('applyBrushEdge is a no-op for a hard brush and a proportional shadow for a soft one', () => {
+    // Hard (100%, or no hardness at all) leaves the crisp edge untouched.
+    for (const b of [{ hardness: 1, size: 20, color: '#123456' }, { size: 20, color: '#123456' }]) {
+      const c = {};
+      applyBrushEdge(c, b);
+      expect(c.shadowBlur).toBeUndefined();
+      expect(c.shadowColor).toBeUndefined();
+    }
+    // Soft: shadowBlur = (1 − hardness) · size/2.
+    const full = {};
+    applyBrushEdge(full, { hardness: 0, size: 20, color: '#123456' });
+    expect(full.shadowColor).toBe('#123456');
+    expect(full.shadowBlur).toBe(10);
+    const half = {};
+    applyBrushEdge(half, { hardness: 0.5, size: 20, color: '#abcdef' });
+    expect(half.shadowBlur).toBe(5);
+    // A size-less soft brush has no radius to blur, so it stays a no-op.
+    const noSize = {};
+    applyBrushEdge(noSize, { hardness: 0, color: '#123456' });
+    expect(noSize.shadowBlur).toBeUndefined();
+    // Guards for a missing context / brush.
+    expect(() => applyBrushEdge(null, { hardness: 0 })).not.toThrow();
+    expect(() => applyBrushEdge({}, null)).not.toThrow();
+  });
+
+  it('exposes a small 5° rotation-snap aperture', () => {
+    expect(ROT_SNAP_DEG).toBe(5);
   });
 });
 

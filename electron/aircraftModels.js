@@ -1,8 +1,9 @@
 // ─── Aircraft 3D model pack (livery painter preview) ────────
 // The painter's 3D preview renders the live livery on the game's real aircraft
 // mesh. That mesh is the game's copyrighted geometry, so it is NOT shipped —
-// it is extracted from the user's own install on demand, cached under
-// <userData>/livery-3d-models/, and deleted when the painter closes.
+// it is extracted from the user's own install on demand and cached under
+// <userData>/livery-3d-models/. The cache is kept warm across livery-page
+// visits; `cleanup()` (the `livery-3d-cleanup` IPC) is an explicit purge only.
 //
 // Primary extractor: electron/unity/aircraftPack.js — a pure-JS reader for the
 // game's serialized files that runs in this process (no Python, no spawned
@@ -54,7 +55,7 @@ function isReady(userData) {
   return readManifest(userData) !== null;
 }
 
-/** Delete the cached pack (called when the painter exits). Best-effort. */
+/** Delete the cached pack. Explicit purge only — the renderer keeps it warm. */
 function cleanup(userData) {
   try {
     fs.rmSync(cacheDir(userData), { recursive: true, force: true });
