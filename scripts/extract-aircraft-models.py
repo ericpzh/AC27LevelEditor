@@ -83,8 +83,26 @@ PLANES = {
         "static": [("A321_A01_Body", [2])],
     },
     "AIRBUS A-330-300": {
-        "parts": [{"name": "Body", "meshes": [("A333_A01_Body", "all")]}],
-        "static": [],
+        # Nacelles + reverser doors share the `A333Body` livery material (Body
+        # panel); the fan/core uses `A333fan` → flat-grey `static`. The
+        # `Fan_Blade_*` rig meshes are excluded (their `Eng_*` bone rest pose
+        # flings them out of the nacelle); the `Thrust_Reverser_*` bones are
+        # stowed, so their doors are included to close the nacelle surface.
+        "parts": [{
+            "name": "Body",
+            "meshes": [
+                ("A333_A01_Body", "all"),
+                ("Engine_L", "all"), ("Engine_R", "all"),
+                ("Thrust_Reverser_1_L", "all"), ("Thrust_Reverser_1_R", "all"),
+                ("Thrust_Reverser_2_L", "all"), ("Thrust_Reverser_2_R", "all"),
+                ("Thrust_Reverser_3_L", "all"), ("Thrust_Reverser_3_R", "all"),
+                ("Thrust_Reverser_4_L", "all"), ("Thrust_Reverser_4_R", "all"),
+            ],
+        }],
+        "static": [
+            ("Engine_L.001", "all"),
+            ("Engine_R.001", "all"),
+        ],
     },
     "AIRBUS A-350-900": {
         "parts": [{"name": "Body", "meshes": [("A359_A01_Body", [0, 1])]}],
@@ -338,42 +356,77 @@ def main():
                 renderer_by_mesh[str(mesh_name)] = world_matrix(go.m_Transform, tr_cache)
             except Exception as e:
                 sys.stderr.write("renderer transform failed: %s\n" % e)
+        elif tn == "MeshFilter":
+            # Non-skinned meshes (A330 engines/fans) keep the mesh reference on
+            # the MeshFilter; the renderer itself has none. Mirror the JS reader.
+            try:
+                d = o.read()
+                mesh_name = d.m_Mesh.read().m_Name
+                if str(mesh_name) not in renderer_by_mesh:
+                    go = d.m_GameObject.read()
+                    renderer_by_mesh[str(mesh_name)] = world_matrix(go.m_Transform, tr_cache)
+            except Exception as e:
+                sys.stderr.write("mesh filter transform failed: %s\n" % e)
 
     # Keep in sync with PACK_VERSION in electron/unity/aircraftPack.js.
-    manifest = {"version": 4, "planes": {}}
+    manifest = {"version": 7, "planes": {}}
     wanted_planes = [p for p in PLANES if (not only or p in only)]
+
+    def build_mesh(plane_id, mesh_name, groups):
+        """Export + transform one mesh, or None (mirrors the JS buildMesh)."""
+        if mesh_name not in meshes:
+            return None
+        m = meshes[mesh_name]
+        text = m.export()
+        verts, uvs, groups_parsed = parse_obj_groups(text)
+        # Submesh i is OBJ group i + 1 (group 0 is the `g <meshName>` header).
+        sub = list(range(len(groups_parsed))) if groups == "all" else [g + 1 for g in groups]
+        sub = [g for g in sub if g < len(groups_parsed)]
+        pos, uvv, idx = build_group_geometry(verts, uvs, groups_parsed, sub)
+        if len(pos) == 0:
+            return None
+        M = renderer_by_mesh.get(mesh_name)
+        yaw = YAW_CORRECTIONS_DEG.get(plane_id)
+        if yaw:
+            Y = yaw_matrix(yaw)
+            M = Y @ M if M is not None else Y
+        if M is not None:
+            hom = np.hstack([pos, np.ones((len(pos), 1))])
+            pos = (M @ hom.T).T[:, :3]
+        bbox = [float(pos[:, 0].min()), float(pos[:, 1].min()), float(pos[:, 2].min()),
+                float(pos[:, 0].max()), float(pos[:, 1].max()), float(pos[:, 2].max())]
+        return {"pos": pos, "uv": uvv, "idx": idx, "bbox": bbox}
+
+    def merge_builts(builts):
+        """Concatenate several built meshes into one part (re-bases indices)."""
+        bs = [b for b in builts if b]
+        if not bs:
+            return None
+        if len(bs) == 1:
+            return bs[0]
+        pos = np.concatenate([b["pos"] for b in bs], axis=0)
+        uvv = np.concatenate([b["uv"] for b in bs], axis=0)
+        idx = []
+        base = 0
+        for b in bs:
+            idx.extend([base + i for i in b["idx"]])
+            base += len(b["pos"])
+        idx = np.asarray(idx, dtype="<u4")
+        bbox = [min(b["bbox"][0] for b in bs), min(b["bbox"][1] for b in bs), min(b["bbox"][2] for b in bs),
+                max(b["bbox"][3] for b in bs), max(b["bbox"][4] for b in bs), max(b["bbox"][5] for b in bs)]
+        return {"pos": pos, "uv": uvv, "idx": idx, "bbox": bbox}
 
     for plane_id in wanted_planes:
         cfg = PLANES[plane_id]
         parts_out = []
         bin_chunks = []
 
-        def add_part(name, livery, mesh_name, groups):
-            if mesh_name not in meshes:
-                return
-            m = meshes[mesh_name]
-            text = m.export()
-            verts, uvs, groups_parsed = parse_obj_groups(text)
-            # Submesh i is OBJ group i + 1 (group 0 is the `g <meshName>` header).
-            sub = list(range(len(groups_parsed))) if groups == "all" else [g + 1 for g in groups]
-            sub = [g for g in sub if g < len(groups_parsed)]
-            pos, uvv, idx = build_group_geometry(verts, uvs, groups_parsed, sub)
-            if len(pos) == 0:
-                return
-            M = renderer_by_mesh.get(mesh_name)
-            yaw = YAW_CORRECTIONS_DEG.get(plane_id)
-            if yaw:
-                Y = yaw_matrix(yaw)
-                M = Y @ M if M is not None else Y
-            if M is not None:
-                hom = np.hstack([pos, np.ones((len(pos), 1))])
-                pos = (M @ hom.T).T[:, :3]
-            bbox = [float(pos[:, 0].min()), float(pos[:, 1].min()), float(pos[:, 2].min()),
-                    float(pos[:, 0].max()), float(pos[:, 1].max()), float(pos[:, 2].max())]
+        def add_part(name, livery, built):
+            pos, uvv, idx = built["pos"], built["uv"], built["idx"]
             parts_out.append({
                 "name": name, "livery": livery,
                 "vertexCount": int(len(pos)), "indexCount": int(len(idx)),
-                "bbox": bbox,
+                "bbox": built["bbox"],
             })
             bin_chunks.append(pos.astype("<f4").tobytes())
             bin_chunks.append(uvv.astype("<f4").tobytes())
@@ -385,19 +438,22 @@ def main():
                         fh.write("v %f %f %f\n" % (p[0], p[1], p[2]))
                     for u in uvv:
                         fh.write("vt %f %f\n" % (u[0], u[1]))
-                    off = 0
-                    for i, _ in enumerate(pos):
-                        pass
                     # faces (triangles) reference v/vt 1:1 since we dedup per (vi,ti)
                     for t in range(0, len(idx), 3):
                         a, b, c = idx[t] + 1, idx[t + 1] + 1, idx[t + 2] + 1
                         fh.write("f %d/%d %d/%d %d/%d\n" % (a, a, b, b, c, c))
 
+        # One manifest part per livery panel, merging every mesh listed under it
+        # (a panel can span several meshes — the A330 nacelles share the Body
+        # map). Static engine/fan meshes stay one `_static` part each.
         for part in cfg["parts"]:
-            for (mesh_name, groups) in part["meshes"]:
-                add_part(part["name"], True, mesh_name, groups)
+            built = merge_builts([build_mesh(plane_id, mn, gr) for (mn, gr) in part["meshes"]])
+            if built:
+                add_part(part["name"], True, built)
         for (mesh_name, groups) in cfg.get("static", []):
-            add_part("_static", False, mesh_name, groups)
+            built = build_mesh(plane_id, mesh_name, groups)
+            if built:
+                add_part("_static", False, built)
 
         if not parts_out:
             sys.stderr.write("no geometry for %s\n" % plane_id)

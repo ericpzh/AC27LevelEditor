@@ -82,6 +82,15 @@ maybe('aircraft pack extraction (real install)', () => {
     const a359 = manifest.planes['AIRBUS A-350-900'];
     expect(a359.parts.filter((p) => p.livery).map((p) => p.name)).toEqual(['Body']);
     expect(a359.parts.filter((p) => !p.livery).length).toBe(3);
+
+    // A330: the nacelles + stowed reverser doors are non-skinned meshes merged
+    // onto the one Body panel; the fan/core meshes are grey static. The
+    // animated-rig fan blades are excluded (their rest pose flings them out of
+    // the nacelle). Body-only was 8 411 verts, so the merged panel is larger.
+    const a333 = manifest.planes['AIRBUS A-330-300'];
+    expect(a333.parts.filter((p) => p.livery).map((p) => p.name)).toEqual(['Body']);
+    expect(a333.parts[0].vertexCount).toBeGreaterThan(9000);
+    expect(a333.parts.filter((p) => !p.livery).length).toBe(2);
   });
 
   it('plugs into aircraftModels.ensure/readModel', async () => {

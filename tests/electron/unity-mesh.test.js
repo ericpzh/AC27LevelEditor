@@ -182,4 +182,48 @@ describe('aircraftPack transform math', () => {
       for (const p of cfg.parts) expect(typeof p.name).toBe('string');
     }
   });
+
+  it('maps the A330 engine nacelles onto the Body panel and fans to static', () => {
+    // The nacelles + stowed reverser doors are NON-skinned MeshFilter meshes
+    // sharing the `A333Body` livery material, so they belong on the Body panel;
+    // the fan/core meshes use `A333fan` → the flat-grey static bucket. The
+    // animated-rig `Fan_Blade_*` meshes are deliberately excluded.
+    const a333 = pack.PLANES['AIRBUS A-330-300'];
+    const bodyMeshes = a333.parts[0].meshes.map(([m]) => m);
+    expect(bodyMeshes).toContain('A333_A01_Body');
+    expect(bodyMeshes).toContain('Engine_L');
+    expect(bodyMeshes).toContain('Engine_R');
+    expect(bodyMeshes.filter((m) => m.startsWith('Thrust_Reverser_')).length).toBe(8);
+    const staticMeshes = a333.static.map(([m]) => m);
+    expect(staticMeshes).toEqual(['Engine_L.001', 'Engine_R.001']);
+  });
+});
+
+describe('aircraftPack mergeParts', () => {
+  const built = (positions, uvs, indices, bbox) => ({
+    positions: Float32Array.from(positions),
+    uvs: Float32Array.from(uvs),
+    indices: Uint32Array.from(indices),
+    bbox,
+  });
+
+  it('concatenates meshes, re-bases indices and unions the bbox', () => {
+    const a = built([0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 0, 1, 0, 0, 1], [0, 1, 2], [0, 0, 0, 1, 1, 0]);
+    const b = built([5, 5, 5, 6, 5, 5, 5, 6, 5], [0.5, 0, 0.6, 0, 0.5, 0.1], [0, 1, 2], [5, 5, 5, 6, 6, 5]);
+    const m = pack.mergeParts([a, b]);
+    expect(Array.from(m.indices)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(Array.from(m.positions)).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 0, 5, 5, 5, 6, 5, 5, 5, 6, 5]);
+    expect(m.uvs.length).toBe(12);
+    expect(m.bbox).toEqual([0, 0, 0, 6, 6, 5]);
+  });
+
+  it('passes a single built part through unchanged', () => {
+    const a = built([0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 0, 1, 0, 0, 1], [0, 1, 2], [0, 0, 0, 1, 1, 0]);
+    expect(pack.mergeParts([a])).toBe(a);
+  });
+
+  it('returns null when nothing was built', () => {
+    expect(pack.mergeParts([])).toBeNull();
+    expect(pack.mergeParts([null, undefined])).toBeNull();
+  });
 });

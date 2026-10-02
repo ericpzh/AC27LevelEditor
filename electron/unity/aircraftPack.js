@@ -22,7 +22,7 @@ const { parseUnityVersion, readMeshData, buildPart } = require('./mesh');
 // Cache key for the produced pack. Bump when the mapping/geometry changes so
 // electron/aircraftModels.js rejects an old cached pack and rebuilds. The
 // manifest/bin LAYOUT is unchanged; consumers ignore this value.
-const PACK_VERSION = 4;
+const PACK_VERSION = 7;
 
 // Per-plane yaw correction (degrees, about +Y) baked at extraction. These
 // prefabs ship a 90°-rotated root transform vs the rest of the fleet, so
@@ -42,7 +42,30 @@ const PLANES = {
   'AIRBUS A-320ceo': { parts: [{ name: 'Body', meshes: [['A320CEO_A01_Body', 'all']] }], static: [] },
   'AIRBUS A-320neo': { parts: [{ name: 'Body', meshes: [['A20N_A01_Body', [0, 1]]] }], static: [['A20N_A01_Body', [2]]] },
   'AIRBUS A-321neo': { parts: [{ name: 'Body', meshes: [['A321_A01_Body', [0, 1]]] }], static: [['A321_A01_Body', [2]]] },
-  'AIRBUS A-330-300': { parts: [{ name: 'Body', meshes: [['A333_A01_Body', 'all']] }], static: [] },
+  // A330: the engine nacelles + reverser doors are separate, NON-skinned
+  // MeshFilter/MeshRenderer meshes sharing the `A333Body` livery material, so
+  // they join the `Body` panel; `Engine_*.001` uses `A333fan` → flat grey
+  // `static`. The `Fan_Blade_*` meshes hang off the animated player rig
+  // (`ATCSim_Plane_Main_Dynamic_011` → `Eng_*` bones) whose ~91° rest-pose
+  // rotation flings them out of the nacelle, so they are excluded; the
+  // `Thrust_Reverser_*` rig bones sit in the stowed pose (doors flush in the
+  // nacelle), so they ARE included to close the nacelle surface.
+  'AIRBUS A-330-300': {
+    parts: [{
+      name: 'Body',
+      meshes: [
+        ['A333_A01_Body', 'all'],
+        ['Engine_L', 'all'], ['Engine_R', 'all'],
+        ['Thrust_Reverser_1_L', 'all'], ['Thrust_Reverser_1_R', 'all'],
+        ['Thrust_Reverser_2_L', 'all'], ['Thrust_Reverser_2_R', 'all'],
+        ['Thrust_Reverser_3_L', 'all'], ['Thrust_Reverser_3_R', 'all'],
+        ['Thrust_Reverser_4_L', 'all'], ['Thrust_Reverser_4_R', 'all'],
+      ],
+    }],
+    static: [
+      ['Engine_L.001', 'all'], ['Engine_R.001', 'all'],
+    ],
+  },
   'AIRBUS A-350-900': {
     parts: [{ name: 'Body', meshes: [['A359_A01_Body', [0, 1]]] }],
     static: [['A359_A01_Body', [2]], ['A359_A01_Fan_High', 'all'], ['A359_A01_Fan_Low', 'all']],
@@ -132,6 +155,41 @@ function yawMatrix(deg) {
     -s, 0, c, 0,
     0, 0, 0, 1,
   ];
+}
+
+/**
+ * Concatenate several built parts (each already in world space) into one pack
+ * part, re-basing indices. A livery panel may span more than one mesh — e.g.
+ * the A330's engine nacelles share the `Body` livery map. Returns null when
+ * nothing was built.
+ */
+function mergeParts(builts) {
+  const list = (builts || []).filter(Boolean);
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+  let vTotal = 0;
+  let iTotal = 0;
+  for (const b of list) { vTotal += b.positions.length; iTotal += b.indices.length; }
+  const positions = new Float32Array(vTotal);
+  const uvs = new Float32Array((vTotal / 3) * 2);
+  const indices = new Uint32Array(iTotal);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  let vo = 0;
+  let io = 0;
+  for (const b of list) {
+    positions.set(b.positions, vo);
+    uvs.set(b.uvs, (vo / 3) * 2);
+    const base = vo / 3;
+    for (let i = 0; i < b.indices.length; i++) indices[io + i] = base + b.indices[i];
+    vo += b.positions.length;
+    io += b.indices.length;
+    for (let a = 0; a < 3; a++) {
+      if (b.bbox[a] < min[a]) min[a] = b.bbox[a];
+      if (b.bbox[a + 3] > max[a]) max[a] = b.bbox[a + 3];
+    }
+  }
+  return { positions, uvs, indices, bbox: [min[0], min[1], min[2], max[0], max[1], max[2]] };
 }
 
 /** Compose a Transform's world matrix up its m_Father chain, with a per-run cache. */
@@ -251,6 +309,33 @@ async function extract(o) {
       if ((i & 31) === 0) await yieldTick();
     }
 
+    // 2b. MeshFilter (non-skinned) → mesh name → world matrix. Some airframes
+    // keep engine/fan meshes off the skinned body (A330: `Engine_L/R`,
+    // `Fan_Blade_*` are MeshFilter+MeshRenderer), and the mesh reference lives
+    // on the MeshFilter, so the same-world-space transform must be harvested
+    // here too — otherwise listing them in PLANES would render them at the
+    // origin. Skinned entries win on a name clash.
+    const mfs = sf.objectsOfClass(CLASS_ID.MeshFilter);
+    for (let i = 0; i < mfs.length; i++) {
+      try {
+        const f = sf.parseObject(mfs[i], false).value;
+        const meshEntry = sf.resolvePPtr(f.m_Mesh);
+        const meshName = meshEntry ? sf.peekName(meshEntry) : null;
+        if (meshName && !rendererByMesh.has(meshName)) {
+          const goEntry = sf.resolvePPtr(f.m_GameObject);
+          if (goEntry) {
+            const go = sf.parseObject(goEntry, false).value;
+            const tEntry = findTransformEntry(sf, go);
+            if (tEntry) {
+              const m = worldMatrix(sf, { m_FileID: 0, m_PathID: tEntry.pathId }, trCache);
+              if (m) rendererByMesh.set(meshName, m);
+            }
+          }
+        }
+      } catch (_) { /* skip malformed filter */ }
+      if ((i & 31) === 0) await yieldTick();
+    }
+
     const wanted = Object.keys(PLANES).filter((p) => !only || !only.length || only.indexOf(p) >= 0);
 
     // Meshes are parsed lazily and cached (a mesh can be a livery part and a
@@ -283,17 +368,19 @@ async function extract(o) {
       const partsOut = [];
       const binChunks = [];
 
-      const addPart = (name, livery, meshName, groups) => {
+      const buildMesh = (meshName, groups) => {
         const md = getMeshData(meshName);
-        if (!md) return;
+        if (!md) return null;
         let matrix = rendererByMesh.get(meshName) || null;
         const yaw = YAW_CORRECTIONS_DEG[planeId];
         if (yaw) {
           const Y = yawMatrix(yaw);
           matrix = matrix ? mulMat(Y, matrix) : Y;
         }
-        const built = buildPart(md, groups, matrix);
-        if (!built) return;
+        return buildPart(md, groups, matrix);
+      };
+
+      const addPart = (name, livery, built) => {
         partsOut.push({
           name, livery,
           vertexCount: built.positions.length / 3,
@@ -305,10 +392,17 @@ async function extract(o) {
         binChunks.push(Buffer.from(built.indices.buffer, built.indices.byteOffset, built.indices.byteLength));
       };
 
+      // One manifest part per livery panel, merging every mesh listed under it
+      // (a panel can span multiple meshes — the A330 nacelles share the Body
+      // map). Static engine/fan meshes stay one `_static` part each.
       for (const part of cfg.parts) {
-        for (const [meshName, groups] of part.meshes) addPart(part.name, true, meshName, groups);
+        const built = mergeParts(part.meshes.map(([meshName, groups]) => buildMesh(meshName, groups)));
+        if (built) addPart(part.name, true, built);
       }
-      for (const [meshName, groups] of cfg.static) addPart('_static', false, meshName, groups);
+      for (const [meshName, groups] of cfg.static) {
+        const built = buildMesh(meshName, groups);
+        if (built) addPart('_static', false, built);
+      }
 
       if (!partsOut.length) { log(`[3d] no geometry for ${planeId}\n`); continue; }
 
@@ -331,4 +425,4 @@ async function extract(o) {
   }
 }
 
-module.exports = { PACK_VERSION, PLANES, YAW_CORRECTIONS_DEG, yawMatrix, safeName, extract, quatToMatrix, localMatrix, mulMat, worldMatrix, readResource, resolveVertexData };
+module.exports = { PACK_VERSION, PLANES, YAW_CORRECTIONS_DEG, yawMatrix, safeName, extract, quatToMatrix, localMatrix, mulMat, worldMatrix, readResource, resolveVertexData, mergeParts };

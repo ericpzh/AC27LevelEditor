@@ -1171,17 +1171,37 @@ of the fleet, so a per-plane −90° yaw (clockwise seen from above) from
 `YAW_CORRECTIONS_DEG` (`yawMatrix`, premultiplied onto the world matrix) is
 baked the same way — in both the JS reader and the Python fallback.
 Part→submesh mapping lives in `aircraftPack.js:PLANES` (the same order/names as
-the painter panels). It is authoritative for the **two-part** types only — A388
-(`Fuselage`=`A380_a`, `Wing`=`A380_b`) and B737 MAX 8 (`Fuselage`=body submesh
+the painter panels). It is authoritative for the **multi-part** types — A388
+(`Fuselage`=`A380_a`, `Wing`=`A380_b`), B737 MAX 8 (`Fuselage`=body submesh
 0, `Wingtip`=body submesh 1, the game's `Wingtip` slot binding the *engine*
-material); every other type is a single `Body` panel over its whole mesh. To
+material), and A330 (`Body` = the skinned `A333_A01_Body` **plus** its two
+non-skinned nacelle meshes and the stowed reverser doors, with the fan/core
+meshes in `static`); every
+other type is a single `Body` panel over its whole mesh. A panel's `meshes` list
+is **merged into one pack part** (positions/UVs concatenated, indices re-based)
+so one panel stays one part (and one UV-lock region) even when it spans several
+meshes. The renderer→world-matrix harvest reads **both** `SkinnedMeshRenderer`
+and `MeshFilter` objects (the A330's engine/fan meshes are
+`MeshFilter`+`MeshRenderer`, so the mesh reference lives on the filter); skinned
+entries win on a name clash. The A330's `Fan_Blade_*` meshes are **excluded on
+purpose**: they hang off the animated player rig
+(`ATCSim_Plane_Main_Dynamic_011` → `Eng_*` bones), whose ~91° rest-pose
+rotation flings them out of the nacelle in a static preview. The
+`Thrust_Reverser_*` meshes come from the same rig but its bones are in the
+stowed pose, so they ARE included (as livery `Body` parts) to close the nacelle
+surface — leaving them out cuts a hole in the cowl. To
 re-derive a mapping, read the `AircraftHD` MonoBehaviours in `resources.assets`
 whose raw data contains the part-name strings — each slot is
 `{ aligned string PartId, PPtr<Material> Material }` (B38M: `Fuselage`→
-`..._B737Max_mat`, `Wingtip`→`..._Engine_mat`). Output: `pack/manifest.json` + one `<safe>.bin` per plane:
-per part `f32 positions[3n] · f32 uv[2n] · u32 indices[m]`. Pack `version` 4
-(a cache key — bumped for the yaw corrections and re-bumped when CRJ700 joined
-them, so stale packs rebuild);
+`..._B737Max_mat`, `Wingtip`→`..._Engine_mat`; A330: `A333Body` covers the
+airframe + nacelles + reverser doors, `A333fan` the fan/core → grey static).
+Output:
+`pack/manifest.json` + one `<safe>.bin` per plane:
+per part `f32 positions[3n] · f32 uv[2n] · u32 indices[m]`. Pack `version` 7
+(a cache key — bumped for the yaw corrections, again when CRJ700 joined them,
+again for the A330 engine mapping + non-skinned `MeshFilter` transforms, and
+again for the corrected A330 mapping — reverser doors in, rig fan blades out —
+so stale packs rebuild);
 total ≈16 MB for all types. `livery-3d-bin` reads a plane's geometry back to
 the renderer. The cache is kept warm across livery-page visits: the page-entry
 `ensure` is the only refresh trigger and `LiveryScreen` no longer cleans it up

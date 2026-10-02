@@ -7,8 +7,8 @@ Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format suppor
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (2680 pass / 6 skipped) + save integrity + jetway rebuild + runway pairs (5) + E2E (16 pass / 2 skipped, ~9 min)
-npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2680 pass / 6 skipped, 149 files, ~55s)
+npm run test:all      # Full suite: Vitest (2684 pass / 6 skipped) + save integrity + jetway rebuild + runway pairs (5) + E2E (16 pass / 2 skipped, ~9 min)
+npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2684 pass / 6 skipped, 149 files, ~55s)
 npm run test:e2e      # Playwright E2E tests (requires npm run build first, ~8 min; 16 pass, 2 skipped — both fuzz specs gated on FUZZ_RUN)
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
@@ -153,12 +153,12 @@ renders the live livery on the game's real aircraft mesh in a floating three.js 
 as 3D snapshots in the list). The mesh is extracted from the user's own install by a
 **pure-JS Unity serialized-file reader** (`electron/unity/`, no Python/spawn);
 `scripts/extract-aircraft-models.py` (UnityPy) is a last-resort fallback only. The pack
-(`version 4`, a cache key) is cached under `<userData>/livery-3d-models/` and kept warm
+(`PACK_VERSION`, a cache key; currently 7) is cached under `<userData>/livery-3d-models/` and kept warm
 across livery-page visits (no longer deleted on page leave; page entry is the only refresh
 trigger). Live updates push **full-resolution 2048² per-panel canvas textures**
 (`LiveryCanvas.getPanelCanvases()` → `THREE.CanvasTexture`, re-uploaded in place) sampled
 ~1×/s — no PNG encode/decode. New coverage: the extractor
-(`tests/electron/aircraft-models.test.js` 17, `unity-mesh.test.js` 17,
+(`tests/electron/aircraft-models.test.js` 17, `unity-mesh.test.js` 21,
 `unity-serialized.test.js` 8, `tests/integration/aircraft-pack.test.js` 3 — game-root
 gated), the shared util + snapshot cache/serialization (`tests/unit/livery3d.test.js` 21),
 the live poll (`tests/unit/useLive3DImages.test.jsx` 13), and the window itself —
@@ -294,11 +294,28 @@ bare-key modifier guard, the cursor soft-core guide, right-click pick; the `reor
 `tests/components/LiveryScreen/LiveryCanvasLayers.test.jsx` 31→40 (opacity, incl. the
 export compositing alpha). Full suite green: Vitest **2680 pass / 6 skipped (149 files)**.
 
-## Layer 1 - Vitest Component Tests (2680 pass + 6 skipped, 149 files)
+**A330 3D preview engine fix (2026-10-02):** the A-330-300's 3D livery preview was
+missing its engines. The A330's engine nacelles + stowed reverser doors are separate
+**non-skinned** `MeshFilter`+`MeshRenderer` meshes (material `A333Body` = the livery
+map), not part of the skinned `A333_A01_Body`, and the preview both listed only the
+body in `PLANES` and harvested world matrices from `SkinnedMeshRenderer` only. The
+JS + Python extractors now (a) also read `MeshFilter` transforms, (b) **merge a
+multi-mesh livery panel into one pack part** (`mergeParts`), and (c) map A330 `Body`
+= `A333_A01_Body` + `Engine_L/R` + the 8 stowed `Thrust_Reverser_*` doors, with
+`Engine_L.001/R.001` (material `A333fan`) as grey `static`. The animated-rig
+`Fan_Blade_*` meshes are **excluded** — their `Eng_*` bone rest-pose (~91°) flings
+them out of the nacelle. `PACK_VERSION` 4→7 so stale caches rebuild (a v5 cache
+written mid-fix was the cause of a "still broken" report; the stale
+`<userData>/livery-3d-models` cache was deleted). Coverage:
+`tests/electron/unity-mesh.test.js` 17→21 (A330 mapping + `mergeParts`
+concat/index-re-base/bbox) and `tests/integration/aircraft-pack.test.js` (+A330
+part asserts). Full suite green: Vitest **2684 pass / 6 skipped (149 files)**.
+
+## Layer 1 - Vitest Component Tests (2684 pass + 6 skipped, 149 files)
 
 Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`, `aviationstack.test.js`).
 
-### `npm test` - 2680 pass + 6 skipped (149 test files; includes the Ground Painter scenery suite + airway roundtrip + the full Livery page suite (incl. the layer system + Panel Lock / UV region lock + top-left anchored scaling & movable snapping + the 3D preview + pure-JS aircraft-model extractor) + the aviationstack realtime-import suite + the Workshop publish suite + the Flight # shipped-union pool suite + the Debug Mode restart prompt)
+### `npm test` - 2684 pass + 6 skipped (149 test files; includes the Ground Painter scenery suite + airway roundtrip + the full Livery page suite (incl. the layer system + Panel Lock / UV region lock + top-left anchored scaling & movable snapping + the 3D preview + pure-JS aircraft-model extractor) + the aviationstack realtime-import suite + the Workshop publish suite + the Flight # shipped-union pool suite + the Debug Mode restart prompt)
 
 Coverage (`npx vitest run --coverage`, provider `@vitest/coverage-v8`, config in `vitest.config.js`) is
 scoped to the core logic trees — `src/acl/**` + `src/components/EditorScreen/GroundPainter/**` — with
@@ -355,7 +372,7 @@ when the level files are absent.
 | `unit/realtime-metar.test.js` | 23 | **aviationweather.gov → weather/wind mapper (pure, no network)** — airport timezones, epoch→local wall-clock, `obsTime`/`reportTime` epoch resolution, visibility parsing, precip-token detection, midnight-crossing windows, cover→preset mapping (incl. clouds-array fallback, precip-wins, low-vis→overcast), wind rounding/defaults, chronological weather frames with run-collapse, **15-min wind grid** (forward-fill, identical values repeated, midnight crossing, off-grid end tick, no-window per-obs fallback), TAF period expansion + `buildLiveTimelines` dispatch. |
 | `unit/ptt-shortcut.test.js` | 4 | **Global PTT hotkey helpers (pure)** — `src/utils/pttShortcut.js`: `Shift+Space` default, canonical normalization (`shift + space`→`Shift+Space`, Ctrl/Alt ordering, bad F-numbers + duplicate modifiers rejected), bare-key rejection (letters/Space invalid, F-keys valid), `buildAcceleratorFromEvent` (Shift+Space / Ctrl+Alt+P, modifier-only waits, Tab passes, Enter/punctuation rejected). |
 | `electron/live-metar.test.js` | 5 | **live-metar HTTPS client** (`@vitest-environment node`, Node `https` replaced by a `vi.fn` mock — **never hits the real API**) — bad ICAO rejected without a request, `hours=24` + custom User-Agent captured, METAR 204 → TAF fallback, double-empty → `no_data`, transport error → `network_error`. |
-| `integration/aircraft-pack.test.js` | 3 | **Real-install 3D pack extraction — game-root gated (skipped when absent)** — builds every plane with sane geometry (per-part bin size matches vertex/index counts, indices %3), exercises the compressed-mesh 737 MAX 8 + multi-part liveries, and drives `aircraftModels.ensure`/`readModel` end-to-end. |
+| `integration/aircraft-pack.test.js` | 3 | **Real-install 3D pack extraction — game-root gated (skipped when absent)** — builds every plane with sane geometry (per-part bin size matches vertex/index counts, indices %3), exercises the compressed-mesh 737 MAX 8 + multi-part liveries (A350 fans, A330 non-skinned nacelles + stowed reverser doors merged onto the Body panel + 2 grey fan/core static meshes, animated-rig fan blades excluded), and drives `aircraftModels.ensure`/`readModel` end-to-end. |
 | `integration/live-metar-api.test.js` | 6 | **Real-endpoint coverage — gated on `AC27_LIVE_API=1`, skipped otherwise** (`AC27_LIVE_API=1 npx vitest run tests/integration/live-metar-api.test.js`, ~5 sequential calls): KJFK 24h METAR freshness/shape (≥12 reports, latest obs < 3h old), KDCA/ZGSZ shape, ZSJN METAR-or-TAF usability, live→timeline mapping validity (presets ∈ `WEATHER_PRESETS`, `HH:MM:SS` times, exact 4-frame 15-min wind grid for 10:15–11:00), response caching. |
 | `acl/geo_osm.test.js` | 12 | **geo_data.osm sync helpers** — `buildTaxiwayModel` / `parseGeoOsm` / `fitTransform` / `syncGeoDataForLevel` / `deriveGeoDataPath` against synthetic OSM XML and empty fixtures |
 | `acl/scenery_graph_approach_edge.test.js` | 13 | **Scenery graph — approach-edge cases** — `buildSceneryGraph` with missing/degenerate PKStaticEntities, empty `taxiway-node`/`runway`/`stand` blocks, stray `PhysicalRunwayStaticItem` fallback, area `30\|31` / name-check branches |
@@ -422,7 +439,7 @@ when the level files are absent.
 | **Electron backend:** | **248** | |
 | `electron/aircraft-models.test.js` | 17 | **Aircraft 3D pack cache + extractor orchestration** (node env) — manifest readiness (missing / wrong version / the previous version rejected), `readModel` NOT_READY/NO_PLANE/BIN_MISSING, cleanup, `findPython`; `ensure` short-circuit, pure-JS builder success, a zero-plane result discarded, and the Python last-resort fallback (spawn + NO_PYTHON/EXTRACT_FAILED). |
 | `electron/unity-serialized.test.js` | 8 | **Unity serialized-file reader** (node env) — the generic type-tree value reader (primitives, aligned strings, TypelessData, size-prefixed vectors, 4-byte realignment, PPtr-shaped classes) and the shipped fallback schema (classes 1/4/43/137 exist; Mesh exposes `m_Name`/`m_VertexData`/`m_SubMeshes`/`m_IndexBuffer`/`m_CompressedMesh`/`m_IndexFormat`). |
-| `electron/unity-mesh.test.js` | 17 | **Mesh/geometry reader** (node env) — `parseUnityVersion`, stream stride + 16-byte alignment, float32/float16 channels, `PackedBitVector` int/float unpacking (incl. bitSize 0), compressed-mesh decompression + submesh triangles, `buildPart` (X-negation, reversed winding, dedup, world matrix, submesh selection), `toIndexBytes`, and the `aircraftPack` transforms (`PLANES` completeness, TRS matrix, `mulMat`, `safeName`, plus the −90° yaw-correction map for E190/GS650/CRJ700 and the `yawMatrix` clockwise-from-above direction). |
+| `electron/unity-mesh.test.js` | 21 | **Mesh/geometry reader** (node env) — `parseUnityVersion`, stream stride + 16-byte alignment, float32/float16 channels, `PackedBitVector` int/float unpacking (incl. bitSize 0), compressed-mesh decompression + submesh triangles, `buildPart` (X-negation, reversed winding, dedup, world matrix, submesh selection), `toIndexBytes`, and the `aircraftPack` transforms (`PLANES` completeness, the A330 nacelle→Body / fan→static mapping, `mergeParts` concatenation + index re-basing + bbox union, TRS matrix, `mulMat`, `safeName`, plus the −90° yaw-correction map for E190/GS650/CRJ700 and the `yawMatrix` clockwise-from-above direction). |
 | `electron/cloud-llm.test.js` | 49 | Multi-vendor cloud LLM module. **VENDORS registry (6):** all 4 vendors have name/icon/models/baseURL, model list matches expectations. **getVendorForModel (10):** resolves all 8 models to correct vendor key+name, null for unknown/empty, baseURL present for non-Claude. **getAvailableModels (4):** empty when no keys set, filters by key presence, returns all 8 models when all keys configured. **mcpToolsToOpenAITools (3):** MCP→OpenAI function format conversion, preserves minItems/maxItems. **sanitizeToolsForVendor (6):** strips OpenAI-only keywords (minItems/maxItems/default/const) for Gemini, recursive stripping of nested items, leaves non-Gemini unchanged. **chat entry errors (5):** unknown model throws, missing/empty API key throws per vendor. **chat success OpenAI path (2):** single-turn response, existing system message preserved. **tool calling loop (3):** multi-turn tool calls→final text, tool error recovery, malformed JSON arguments. **conversation tracking (1):** multi-tool conversation grows correctly across iterations. **Gemini sanitization via chat (1):** keywords stripped before Gemini API call. **Claude Anthropic path (4):** basic chat, tool→input_schema format conversion, tool_use loop, tool error handling. **thinking (3):** Claude thinking blocks + DeepSeek reasoning_content passed through, accumulation across tool turns. **empty-content nudge (2):** OpenAI + Claude nudged when only thinking returned. |
 | `electron/updater.test.js` | 41 | Auto-update module. **computeFileMd5 (3):** known content hash, different content produces different hashes, rejects on non-existent file. **downloadUpdate (3):** resolves `{ filePath, download }` carrying the GET response's etag/last-modified/content-length + `X-AC27-MD5` (new scheme, trimmed) + `startedAt`/`receivedAt` timestamps (quoted ETag stripped, file written, progress events still emitted); `ac27Md5` is `null` when the Worker omits the header (old Worker → HEAD fallback); rejects `UPDATE_DOWNLOAD_INCOMPLETE` when fewer bytes than content-length arrive. **isUpdateSupported (5):** true on win32+packaged+PORTABLE_EXECUTABLE_FILE, false when not packaged, false on darwin, false when PORTABLE_EXECUTABLE_FILE not set — the voice build is now supported too (auto-updates via the shared `/editor` route, header-scoped). **isVoiceBuild (4)** + **variantName (2)** + **variantHeader (2):** normal/voice names and the `X-AC27-Variant` header they produce (single `/editor` route — the Worker selects objects per header, no path change). **createUpdaterScript (3):** generates .bat with expected commands, handles paths with spaces, cleans up stale .old before rename. **checkForUpdate (3):** no update when not supported, no update when exe missing, skipped etag recognized. **resolveTargetExe (5):** PORTABLE_EXECUTABLE_FILE, execPath fallback, AC27_UPDATE_TARGET in dev, auto-discovered artifact, null when no candidate. **checkForUpdate gates (6):** packaged but not portable, voice build proceeds to the network route, dev with AC27_UPDATE_TARGET, dev by default (opt-out), dev with AC27_UPDATE_DEV_CHECK=1, dev with no target exe. **installUpdate (2):** dev dry-run default, dry-run skips spawn+quit. |
 | `electron/bepinex.test.js` | 34 | BepInEx lifecycle: checkStatus (null, partial, full, empty); findBleedingEdgeUrl / findThunderstoreUrl; findDownloadUrl fallback chain (Bleeding Edge → Thunderstore → BEPINEX_ALL_SOURCES_FAILED); downloadZip (happy path + file content + incremental progress, HTTP 404, network error, timeout — all with file cleanup); extractZip (non-Windows guard); installFiles (subdirectory, missing items, flat structure); removeFiles; installLatest (full pipeline, error cleanup, progress normalization) |
