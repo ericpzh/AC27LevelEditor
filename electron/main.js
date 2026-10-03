@@ -4626,8 +4626,13 @@ app.whenReady().then(() => {
   });
 
   // ── Auto-update check: fires on startup, result pushed to renderer ──
+  // Windows-portable only — never check/prompt on mac/linux.
   (async () => {
     try {
+      if (process.platform !== 'win32') {
+        updater.log('[Updater] startup check skipped — non-Windows platform, no update prompt');
+        return;
+      }
       updater.log('[Updater] startup check beginning');
       const result = await updater.checkForUpdate();
       updater.log('[Updater] startup check result:', JSON.stringify(result));

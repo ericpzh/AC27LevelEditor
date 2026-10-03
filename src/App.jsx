@@ -107,6 +107,7 @@ function ScreenRouter() {
   useEffect(() => {
     const api = window.electronAPI;
     if (!api) return;
+    let cancelled = false;
 
     const handleResult = (result, source) => {
       if (updateCheckedRef.current) {
@@ -122,19 +123,40 @@ function ScreenRouter() {
     };
     const handlePush = (result) => handleResult(result, 'push');
 
-    // Path 1: listen for push from main process
-    if (api.onUpdateCheckResult) {
-      console.log('[App] registering update-check-result listener');
-      api.onUpdateCheckResult(handlePush);
-    }
+    const startCheck = (isWindows) => {
+      if (cancelled) return;
+      if (!isWindows) {
+        // Auto-update is Windows-portable only — never check/prompt on mac/linux.
+        updateCheckedRef.current = true;
+        console.log('[App] auto-update skipped — non-Windows platform, no update prompt');
+        return;
+      }
+      // Path 1: listen for push from main process
+      if (api.onUpdateCheckResult) {
+        console.log('[App] registering update-check-result listener');
+        api.onUpdateCheckResult(handlePush);
+      }
 
-    // Path 2: actively call (handles race condition where push was already sent)
-    if (api.checkForUpdate) {
-      console.log('[App] invoking checkForUpdate() fallback');
-      api.checkForUpdate().then((result) => handleResult(result, 'invoke'));
+      // Path 2: actively call (handles race condition where push was already sent)
+      if (api.checkForUpdate) {
+        console.log('[App] invoking checkForUpdate() fallback');
+        api.checkForUpdate().then((result) => handleResult(result, 'invoke'));
+      }
+    };
+
+    // Platform gate before any listener/invoke so mac/linux never prompts,
+    // even if the main-process push somehow fires. Fail-open when the
+    // platform is unknown — the main-process gate still returns no-update.
+    if (api.getSystemInfo) {
+      api.getSystemInfo()
+        .then((r) => startCheck(!r?.platform || r.platform === 'win32'))
+        .catch(() => startCheck(true));
+    } else {
+      startCheck(true);
     }
 
     return () => {
+      cancelled = true;
       if (api.offUpdateCheckResult) api.offUpdateCheckResult(handlePush);
     };
   }, []);
@@ -245,6 +267,17 @@ setUpdateState('idle');
       try {
         const api = window.electronAPI;
         if (!api?.checkPostUpdatePending) return;
+        // Auto-update is Windows-only — never show the post-update nudge on mac/linux.
+        if (api?.getSystemInfo) {
+          try {
+            const si = await api.getSystemInfo();
+            if (cancelled) return;
+            if (si?.platform && si.platform !== 'win32') {
+              postUpdateCheckedRef.current = true;
+              return;
+            }
+          } catch (_) {}
+        }
         const res = await api.checkPostUpdatePending();
         if (cancelled) return;
         if (!res?.pending) {
