@@ -205,7 +205,7 @@ describe('CreateTab painter validation', () => {
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA', layers: expect.any(Object) },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA', variant: 'default', layers: expect.any(Object) },
     ));
     expect(onCreated).not.toHaveBeenCalled();
     expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
@@ -235,10 +235,39 @@ describe('CreateTab painter validation', () => {
     // Airline/aircraft come from the form — never parsed out of the folder.
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'My First CCA Livery', layers: expect.any(Object) },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'My First CCA Livery', variant: 'default', layers: expect.any(Object) },
     ));
     expect(onCreated).not.toHaveBeenCalled();
     expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();
+  });
+
+  it('save dialog prefills and updates the livery variant (free-form)', async () => {
+    CreateTab.prefill = {
+      folder: 'A20N_CCA', airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo',
+      variant: 'retro', pack: 'mine', imageDataUrl: 'data:image/png;base64,BASE',
+    };
+    setupMocks({ 'create-livery': Promise.resolve({ success: true, folder: 'A20N_CCA' }) });
+    const user = userEvent.setup();
+    renderCreate();
+
+    const btn = saveBtn();
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    await user.click(btn);
+
+    // The dialog exposes the folder's current variant...
+    const variantInput = await screen.findByLabelText('Variant name');
+    expect(variantInput.value).toBe('retro');
+
+    // ...and any string is accepted; the backend token is normalized.
+    await user.clear(variantInput);
+    await user.type(variantInput, 'Special Edition');
+    const modal = document.querySelector('#modal-box');
+    await user.click(within(modal).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
+      'create-livery',
+      expect.objectContaining({ folder: 'A20N_CCA', variant: 'special_edition' }),
+    ));
   });
 
   it('H/V shortcuts keep the active panel (no reset on flip)', async () => {
@@ -456,6 +485,7 @@ describe('CreateTab painter validation', () => {
         airline: 'AAL',
         targetPlaneId: 'BOEING 737-800',
         folder: 'B738_AAL',
+        variant: 'default',
         layers: expect.any(Object),
       });
     });
@@ -880,7 +910,7 @@ describe('CreateTab overwrite confirm (Save As onto an existing folder)', () => 
 
     await waitFor(() => expect(mockIpcInvoke).toHaveBeenCalledWith(
       'create-livery',
-      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA', layers: expect.any(Object) },
+      { images: expect.any(Array), airline: 'CCA', targetPlaneId: 'AIRBUS A-320neo', folder: 'A20N_CCA', variant: 'default', layers: expect.any(Object) },
     ));
     expect(onCreated).not.toHaveBeenCalled();
     expect(document.querySelector('.livery-canvas-wrap')).toBeInTheDocument();

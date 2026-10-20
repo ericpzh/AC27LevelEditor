@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '../../hooks/useTranslation';
 import { useElectronAPI } from '../../hooks/useElectronAPI';
 import { useAppStore } from '../../store/appStore';
-import { PLANE_ID_TO_SHORT_CODE, LIVERY_FOLDER_SAFE_RE, folderFor, has3DModel, UV_GLOW_ENABLED } from '../../utils/constants/livery';
+import { PLANE_ID_TO_SHORT_CODE, LIVERY_FOLDER_SAFE_RE, DEFAULT_LIVERY_VARIANT, normalizeLiveryVariant, folderFor, has3DModel, UV_GLOW_ENABLED } from '../../utils/constants/livery';
 import { CURATED_AIRLINE_CODES, airlineDisplayName } from '../../utils/constants/airlines';
 import { fileToDataUrl, normalizeToTexture } from '../../utils/liveryImage';
 import useTooltip from '../BrowserScreen/useTooltip';
@@ -39,23 +39,27 @@ const DEFAULT_PLANE_ID = 'AIRBUS A-319neo';
 
 // Naming dialog shared by Save / Save As: the typed name is used verbatim
 // as the livery folder name (free-form, filesystem-safe only — see
-// LIVERY_FOLDER_SAFE_RE). Airline + aircraft are NOT parsed out of it; they
-// come from the manifest/origin and only feed the manifest. Buttons live
-// inside the body (instead of #modal-actions) so the input and the confirm
-// button share one state.
-function SaveNameDialog({ initial, isSaveAs, onConfirm }) {
+// LIVERY_FOLDER_SAFE_RE). The variant is free-form too (stored as a normalized
+// manifest token) and lets a re-save change an existing folder's variant.
+// Airline + aircraft are NOT parsed out of either field; they come from the
+// manifest/origin and only feed the manifest. Buttons live inside the body
+// (instead of #modal-actions) so the inputs and the confirm button share one
+// state.
+function SaveNameDialog({ initial, initialVariant, isSaveAs, onConfirm }) {
   const { t } = useTranslation();
   const hideModal = useAppStore(s => s.hideModal);
   const [name, setName] = useState(initial);
+  const [variantName, setVariantName] = useState(initialVariant || DEFAULT_LIVERY_VARIANT);
   const folder = String(name || '').trim();
   const valid = LIVERY_FOLDER_SAFE_RE.test(folder);
   const doConfirm = () => {
     if (!valid) return;
-    onConfirm(folder);
+    onConfirm(folder, String(variantName || '').trim());
   };
   return (
     <div>
       <label>
+        <span>{t('livery_folder_name')}</span>
         <input
           type="text"
           aria-label={t('livery_folder_name')}
@@ -64,6 +68,18 @@ function SaveNameDialog({ initial, isSaveAs, onConfirm }) {
           autoFocus
           placeholder="A20N_CCA"
           onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') doConfirm(); }}
+        />
+      </label>
+      <label>
+        <span>{t('livery_variant_name')}</span>
+        <input
+          type="text"
+          aria-label={t('livery_variant_name')}
+          value={variantName}
+          maxLength={64}
+          placeholder={DEFAULT_LIVERY_VARIANT}
+          onChange={(e) => setVariantName(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') doConfirm(); }}
         />
       </label>
@@ -667,15 +683,18 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
 
   // Only manifest-truth fields are sent (airline + targetPlaneId) plus the
   // free-form folder name and the per-panel images; the backend derives the
-  // file names, part bindings and manifest id.
+  // file names, part bindings and manifest id. `targetVariant` is authoritative
+  // when provided (Save / Save As dialog): blank still means "default", so a
+  // cleared field reverts an existing folder's non-default variant. Callers
+  // that omit it (the dirty-upload path) let the backend preserve the folder's
+  // current variant.
   const submitCreate = async (images, targetAirline, targetPlaneId, targetFolder, targetVariant) => {
     const folder = String(targetFolder || '').trim();
     if (!Array.isArray(images) || images.length === 0 || !/^[A-Z]{3}$/.test(targetAirline) || !knownPlanes.has(targetPlaneId) || !LIVERY_FOLDER_SAFE_RE.test(folder) || busy) return false;
     setBusy(true);
     try {
-      // The variant is omitted when blank: the backend then keeps the folder's
-      // existing variant (or defaults it), which is the common path.
-      const reqVariant = String(targetVariant || '').trim();
+      const hasVariant = targetVariant !== undefined && targetVariant !== null;
+      const reqVariant = hasVariant ? normalizeLiveryVariant(targetVariant) : '';
       // Lossless layer sidecar (editor-only) alongside the flattened BaseMap.
       const layerPayload = canvasRef.current && typeof canvasRef.current.exportLayers === 'function'
         ? canvasRef.current.exportLayers()
@@ -685,7 +704,7 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         airline: targetAirline,
         targetPlaneId,
         folder,
-        ...(reqVariant ? { variant: reqVariant } : {}),
+        ...(hasVariant ? { variant: reqVariant } : {}),
         ...(layerPayload ? { layers: layerPayload } : {}),
       });
       const { showToast } = useAppStore.getState();
@@ -696,8 +715,10 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         // Mark this origin change so the origin effect keeps the live canvas
         // rather than reloading the flattened PNGs it just wrote (which would
         // rasterise every movable into the locked base).
+        const savedVariant = hasVariant ? reqVariant : String(variant || '');
         skipOriginReloadRef.current = folder;
-        CreateTab.prefill = { folder, airline: targetAirline, targetPlaneId, variant: reqVariant || '', pack: 'mine' };
+        CreateTab.prefill = { folder, airline: targetAirline, targetPlaneId, variant: savedVariant, pack: 'mine' };
+        if (hasVariant) setVariant(savedVariant);
         dirtyRef.current = false;
         showToast(t('livery_created'), 'success');
         showModHint();
@@ -714,9 +735,9 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
   };
 
   // Save / Save As share one naming dialog: the typed name becomes the
-  // livery folder name verbatim (free-form). Airline + aircraft come from the
-  // caller (origin snapshot for Save, live form for Save As) and only feed
-  // the manifest.
+  // livery folder name verbatim (free-form); the typed variant is normalized
+  // into the manifest token. Airline + aircraft come from the caller (origin
+  // snapshot for Save, live form for Save As) and only feed the manifest.
   const openSaveDialog = (initialFolder, isSaveAs, targetAirline, targetPlaneId, targetVariant) => {
     if (!canvasRef.current || busy || !initialFolder) return;
     const { showModal, hideModal } = useAppStore.getState();
@@ -724,11 +745,12 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
       () => t(isSaveAs ? 'livery_save_as' : 'livery_save'),
       <SaveNameDialog
         initial={initialFolder}
+        initialVariant={targetVariant || DEFAULT_LIVERY_VARIANT}
         isSaveAs={isSaveAs}
-        onConfirm={(folder) => {
+        onConfirm={(folder, variantName) => {
           const images = canvasRef.current.exportParts();
           hideModal();
-          confirmOverride(folder, isSaveAs, () => submitCreate(images, targetAirline, targetPlaneId, folder, targetVariant));
+          confirmOverride(folder, isSaveAs, () => submitCreate(images, targetAirline, targetPlaneId, folder, variantName));
         }}
       />,
     );

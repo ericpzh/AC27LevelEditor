@@ -116,7 +116,13 @@ painter page).
   the field therefore backfills `variant: "default"` with an unchanged id, and a
   future non-default variant is preserved across saves. The renderer threads the
   value from a list row (`readLiveryRow.variant`) / loaded ZIP manifest through
-  Save / Save As / Export (`CreateTab` `variant` state). `createLivery` passes
+  Save / Save As / Export (`CreateTab` `variant` state). The Save / Save As
+  naming dialog also exposes a free-form **Variant name** field prefilled with
+  the current variant (`default` for a new livery); the typed value is
+  normalized and sent explicitly, so re-saving an existing folder can switch it
+  to a non-default variant (clearing the field reverts to `default`). The
+  dirty-upload path omits the field, letting the backend preserve the folder's
+  existing variant. `createLivery` passes
   `_builtInMainPartName(gameRoot, planeId)` — the built-in
   default's `Body`/`Fuselage` part (the `_pickMainPartRef` Body→Fuselage→first
   order, `Body` as the fallback when there is no built-in folder) — so a custom
