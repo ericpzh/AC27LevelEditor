@@ -184,7 +184,7 @@ const STR = {
 
     browser_loading:'正在扫描关卡文件…', browser_no_files:'未找到任何关卡文件',
     level_name_ZSJN_leisure_1:'悠闲时刻', level_name_ZSJN_leisure_2:'繁忙时刻',
-    level_name_ZSJN_runwaychange:'跑道变更', level_name_ZSJN_peakdeparture:'离港高峰', level_name_ZSJN_taixwayclosed:'滑行道封闭',
+    level_name_ZSJN_runwaychange:'跑道变更', level_name_ZSJN_peakdeparture:'离港高峰', level_name_ZSJN_taixwayclosed:'借道滑行',
     level_name_ZSJN_surfaceradarinvisible:'无场面雷达',
     level_name_KJFK_leisure_1:'悠闲时刻', level_name_KJFK_leisure_2:'繁忙时刻', level_name_KJFK_runwaychange:'跑道变更', level_name_KJFK_peakdeparture:'离港高峰', level_name_KJFK_peakarrival:'进港高峰',
     level_name_KJFK_surfaceradarinvisible:'无场面雷达',
