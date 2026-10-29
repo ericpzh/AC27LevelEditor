@@ -83,6 +83,7 @@ Phase 0: Cache Init → Phase 1: Load → Phase 2: Edit → Phase 3: Save
 
 1. `handleSave()` → `validateCallsigns()` → `runTripleValidation()`:
  - (a) Dropdown value validation — every field against valid options
+ - (a2) Route airport validation — arrivals must have `DepartureAirport`, departures `ArrivalAirport` (`val_route_airport_required`, zh+en; whitespace-only counts as empty). Direction follows the FlightTable grouping (`LandingTime` present → arrival, otherwise departure), so an empty red-cell route blocks Save/Save As. Mirrored server-side as `missing_route_airport` in `electron/api-server.js:validateFlightObjects` (MCP + `validate-flights`).
  - (b) Time range validation — flights within config startTime / endTime+30min bounds (`SCENARIO_END_GRACE_MIN`)
  - (c) Runway timeline bounds — change entry times within level range
  - (d) STAR/runway combination validation — flags flights where the assigned STAR is not valid for the assigned runway (per PKStaticEntities runway `Routes` RouteType=0 via `starRunwayMap`)

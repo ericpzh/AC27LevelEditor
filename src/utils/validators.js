@@ -257,6 +257,22 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     }
   });
 
+  // Route airport required — the table renders an empty ArrivalAirport /
+  // DepartureAirport as a red cell, and a leg without its origin/destination
+  // airport has no usable route in the game. Arrivals are grouped by
+  // LandingTime (the same rule EditorScreen/FlightTable use), everything else
+  // is a departure.
+  flights.forEach((fl) => {
+    const isArrival = !!(fl.LandingTime || '').trim();
+    const field = isArrival ? 'DepartureAirport' : 'ArrivalAirport';
+    if (!String(fl[field] || '').trim()) {
+      issues.push(T('val_route_airport_required', {
+        cs: fl.CallSign || '?',
+        field: T('field_' + field) || FIELD_LABELS[field] || field,
+      }));
+    }
+  });
+
   // Arrival legs must carry a STAR — the game's FlightPlan.Init() drops a
   // STAR-less arrival leg at level load ("Flight plan '...' has neither an
   // arrival nor a departure leg"; game-authored arrivals ALWAYS have a STAR

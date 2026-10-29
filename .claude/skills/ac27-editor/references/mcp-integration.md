@@ -79,13 +79,14 @@ The flight-schedule tools are listed below; the Ground/Air Painter tool set (sce
 | `delete_flights` | Delete matching flights by callsign, airline, type, stand, runway, or aircraft type. |
 | `get_editor_status` | Current file, airport, flight counts, dirty flag, timeline status. |
 | `get_airport_info` | Full constraint map: flatLists, airline codes, flight numbers, compat maps (airline→aircraft, runway→STAR, airline+aircraft→registration), **`airlineLanguages` (per-airport airline code → required captain language, CN→zh else en) + `languageRules`**, time bounds. |
-| `get_validation_issues` | Run the full validation suite (14 checks) on current flights. Returns structured issues. |
+| `get_validation_issues` | Run the full validation suite (16 checks) on current flights. Returns structured issues. |
 | `send_voice_command` | Parse a spoken sentence against the LIVE aircraft list (same pipeline as the PTT mic) and dispatch patch frames to the game. Needs game + BepInEx plugin running. Prints `[VOICE-PARSE]` to the main-process log. |
 
-## Validation (15 checks)
+## Validation (16 checks)
 
 1. All 15 fields present
 2. Airline code known (from audio callsigns + dropdown values)
+2b. **Route airports** (`missing_route_airport`) — arrivals must have `DepartureAirport`, departures `ArrivalAirport`; whitespace-only is empty. Direction follows the editor's FlightTable grouping (`LandingTime` present → arrival). The renderer's `runTripleValidation` mirrors this as `val_route_airport_required` and blocks Save/Save As while the cell is empty/red.
 3. Flight number canonical (if airline has a list)
 4. Stand in valid set
 5. Runway in valid set

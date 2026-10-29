@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { validateCallsigns, detectStandConflicts, runTripleValidation } from '../../src/utils/validators';
 import { getActiveColumns, ARRIVAL_FIELDS, DEPARTURE_FIELDS } from '../../src/utils/constants/fields';
+import { T } from '../../src/utils/i18n';
 
 describe('validateCallsigns', () => {
   it('returns empty array when no duplicates', () => {
@@ -226,15 +227,15 @@ describe('runTripleValidation (v4 semantics)', () => {
 
   it('skips time-order checks (InBlockTime/TakeoffTime are always 0 in v4)', () => {
     const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30', InBlockTime: '10:00' }, // in-block before landing
-      { CallSign: 'CES5678', OffBlockTime: '10:30', TakeoffTime: '10:00' }, // off-block after takeoff
+      { CallSign: 'CES1234', LandingTime: '10:30', InBlockTime: '10:00', DepartureAirport: 'ZBAA' }, // in-block before landing
+      { CallSign: 'CES5678', OffBlockTime: '10:30', TakeoffTime: '10:00', ArrivalAirport: 'ZSPD' }, // off-block after takeoff
     ];
     expect(run(flights)).toEqual([]);
   });
 
   it('still enforces non-time-order validations', () => {
     const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30', Stand: 'ZZZ' }, // stand not in options
+      { CallSign: 'CES1234', LandingTime: '10:30', Stand: 'ZZZ', DepartureAirport: 'ZBAA' }, // stand not in options
     ];
     const issues = run(flights, { ZSJN: { Stand: ['A01'] } });
     expect(issues).toHaveLength(1);
@@ -243,8 +244,8 @@ describe('runTripleValidation (v4 semantics)', () => {
 
   it('still enforces stand conflict detection', () => {
     const flights = [
-      { CallSign: 'CES1234', Stand: 'A01', OffBlockTime: '10:00', TakeoffTime: '10:30' },
-      { CallSign: 'CES5678', Stand: 'A01', OffBlockTime: '10:15', TakeoffTime: '10:45' },
+      { CallSign: 'CES1234', Stand: 'A01', OffBlockTime: '10:00', TakeoffTime: '10:30', ArrivalAirport: 'ZSPD' },
+      { CallSign: 'CES5678', Stand: 'A01', OffBlockTime: '10:15', TakeoffTime: '10:45', ArrivalAirport: 'ZSPD' },
     ];
     const issues = run(flights, { ZSJN: { Stand: ['A01'] } });
     expect(issues.length).toBeGreaterThan(0);
@@ -252,7 +253,7 @@ describe('runTripleValidation (v4 semantics)', () => {
 
   it('blocks arrivals without a STAR (game drops STAR-less arrival legs at load)', () => {
     const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30', Runway: '19' }, // STAR is empty
+      { CallSign: 'CES1234', LandingTime: '10:30', Runway: '19', DepartureAirport: 'ZBAA' }, // STAR is empty
     ];
     const issues = run(flights, { ZSJN: { _starRunwayMap: { '19': ['ABTU6W', 'PAWLN1'] } } });
     expect(issues).toHaveLength(1);
@@ -261,7 +262,7 @@ describe('runTripleValidation (v4 semantics)', () => {
 
   it('allows arrivals that carry a STAR', () => {
     const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30', Runway: '19', Airway: 'ABTU6W' },
+      { CallSign: 'CES1234', LandingTime: '10:30', Runway: '19', Airway: 'ABTU6W', DepartureAirport: 'ZBAA' },
     ];
     const issues = run(flights, { ZSJN: { _starRunwayMap: { '19': ['ABTU6W', 'PAWLN1'] } } });
     expect(issues).toEqual([]);
@@ -269,7 +270,7 @@ describe('runTripleValidation (v4 semantics)', () => {
 
   it('does not require a STAR on departures', () => {
     const flights = [
-      { CallSign: 'CES1234', OffBlockTime: '10:30', TakeoffTime: '10:45', Runway: '19', Airway: '' },
+      { CallSign: 'CES1234', OffBlockTime: '10:30', TakeoffTime: '10:45', Runway: '19', Airway: '', ArrivalAirport: 'ZSPD' },
     ];
     const issues = run(flights, { ZSJN: { _starRunwayMap: { '19': ['ABTU6W'] } } });
     expect(issues).toEqual([]);
@@ -277,14 +278,14 @@ describe('runTripleValidation (v4 semantics)', () => {
 
   it('skips the STAR-required rule when no runway/STAR data is cached', () => {
     const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30' }, // no Runway, no Airway
+      { CallSign: 'CES1234', LandingTime: '10:30', DepartureAirport: 'ZBAA' }, // no Runway, no Airway
     ];
     expect(run(flights)).toEqual([]);
   });
 
   it('flags a voice whose catalog language differs from the flight Language', () => {
     const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'zh' },
+      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'zh', DepartureAirport: 'ZBAA' },
     ];
     const vals = { ZSJN: { Stand: [], _voiceLanguages: { 'CN-Captain-Middle-Aged-EN': 'en', 'CN-Captain-Middle-Aged': 'zh' } } };
     const issues = run(flights, vals);
@@ -295,7 +296,7 @@ describe('runTripleValidation (v4 semantics)', () => {
 
   it('allows a voice whose catalog language matches the flight Language', () => {
     const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'en' },
+      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'en', DepartureAirport: 'ZBAA' },
     ];
     const vals = { ZSJN: { _voiceLanguages: { 'CN-Captain-Middle-Aged-EN': 'en' } } };
     expect(run(flights, vals)).toEqual([]);
@@ -303,7 +304,7 @@ describe('runTripleValidation (v4 semantics)', () => {
 
   it('skips the voice/language check when no catalog map is available', () => {
     const flights = [
-      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'zh' },
+      { CallSign: 'CES1234', LandingTime: '10:30', Voice: 'CN-Captain-Middle-Aged-EN', Language: 'zh', DepartureAirport: 'ZBAA' },
     ];
     expect(run(flights, { ZSJN: {} })).toEqual([]);
   });
@@ -317,7 +318,7 @@ describe('runTripleValidation airline/language (callsign pool)', () => {
   }
 
   it('flags a non-CN carrier (CAL) flying on a zh voice', () => {
-    const flights = [{ CallSign: 'CAL2017', LandingTime: '10:30', Voice: 'CN-Captain-Young', Language: 'zh' }];
+    const flights = [{ CallSign: 'CAL2017', LandingTime: '10:30', Voice: 'CN-Captain-Young', Language: 'zh', DepartureAirport: 'ZBAA' }];
     const vals = { ZGSZ: { Language: ['en', 'zh'], _airlineCountries: COUNTRIES, _voiceLanguages: { 'CN-Captain-Young': 'zh' } } };
     const issues = run(flights, vals);
     expect(issues).toHaveLength(1);
@@ -326,7 +327,7 @@ describe('runTripleValidation airline/language (callsign pool)', () => {
   });
 
   it('flags a CN carrier (CCA) flying on an en voice at a zh-capable airport', () => {
-    const flights = [{ CallSign: 'CCA1111', LandingTime: '10:30', Voice: 'Yeager', Language: 'en' }];
+    const flights = [{ CallSign: 'CCA1111', LandingTime: '10:30', Voice: 'Yeager', Language: 'en', DepartureAirport: 'ZBAA' }];
     const vals = { ZGSZ: { Language: ['en', 'zh'], _airlineCountries: COUNTRIES, _voiceLanguages: { Yeager: 'en' } } };
     const issues = run(flights, vals);
     expect(issues).toHaveLength(1);
@@ -334,13 +335,13 @@ describe('runTripleValidation airline/language (callsign pool)', () => {
   });
 
   it('allows a CN carrier to speak en at an en-only airport', () => {
-    const flights = [{ CallSign: 'CCA1111', LandingTime: '10:30', Voice: 'Yeager', Language: 'en' }];
+    const flights = [{ CallSign: 'CCA1111', LandingTime: '10:30', Voice: 'Yeager', Language: 'en', DepartureAirport: 'ZBAA' }];
     const vals = { ZGSZ: { Language: ['en'], _airlineCountries: COUNTRIES, _voiceLanguages: { Yeager: 'en' } } };
     expect(run(flights, vals)).toEqual([]);
   });
 
   it('skips the check when the registry map is absent', () => {
-    const flights = [{ CallSign: 'CAL2017', LandingTime: '10:30', Voice: 'CN-Captain-Young', Language: 'zh' }];
+    const flights = [{ CallSign: 'CAL2017', LandingTime: '10:30', Voice: 'CN-Captain-Young', Language: 'zh', DepartureAirport: 'ZBAA' }];
     const vals = { ZGSZ: { Language: ['en', 'zh'], _voiceLanguages: { 'CN-Captain-Young': 'zh' } } };
     expect(run(flights, vals)).toEqual([]);
   });
@@ -353,13 +354,13 @@ describe('runTripleValidation recorded-callsign library (_gameCallsigns)', () =>
   }
 
   it('accepts a recorded library number the airport never uses', () => {
-    const flights = [{ CallSign: 'CES1111', LandingTime: '10:30' }];
+    const flights = [{ CallSign: 'CES1111', LandingTime: '10:30', DepartureAirport: 'ZBAA' }];
     const vals = { ZGSZ: { _flightNums: { CES: ['2641'] }, _gameCallsigns: { CES: ['1111', '2641'] } } };
     expect(run(flights, vals)).toEqual([]);
   });
 
   it('still rejects a number absent from the recorded library', () => {
-    const flights = [{ CallSign: 'CES9999', LandingTime: '10:30' }];
+    const flights = [{ CallSign: 'CES9999', LandingTime: '10:30', DepartureAirport: 'ZBAA' }];
     const vals = { ZGSZ: { _flightNums: { CES: ['2641'] }, _gameCallsigns: { CES: ['1111', '2641'] } } };
     const issues = run(flights, vals);
     expect(issues).toHaveLength(1);
@@ -370,12 +371,50 @@ describe('runTripleValidation recorded-callsign library (_gameCallsigns)', () =>
     // ANA is in the recorded library but not in this airport's schedules — a
     // foreign airline fails callsign allocation in-game, so it must stay
     // invalid even though its number is recorded.
-    const flights = [{ CallSign: 'ANA1201', LandingTime: '10:30' }];
+    const flights = [{ CallSign: 'ANA1201', LandingTime: '10:30', DepartureAirport: 'ZBAA' }];
     const vals = { ZGSZ: { _flightNums: { CES: ['2641'] }, _gameCallsigns: { CES: ['1111'], ANA: ['1201'] } } };
     const issues = run(flights, vals);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('ANA1201');
     expect(issues[0]).toContain('ANA');
+  });
+});
+
+describe('runTripleValidation route airport required', () => {
+  const AUDIO = { allAirlines: ['CES'], byAirline: { CES: [] }, allCallsigns: [] };
+  const DEP_LABEL = T('field_DepartureAirport');
+  const ARR_LABEL = T('field_ArrivalAirport');
+  function run(flights) {
+    return runTripleValidation(flights, {}, 'ZSJN', AUDIO, null, null, null, null);
+  }
+
+  it('blocks an arrival with an empty DepartureAirport', () => {
+    const issues = run([{ CallSign: 'CES1234', LandingTime: '10:30', DepartureAirport: '' }]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CES1234');
+    expect(issues[0]).toContain(DEP_LABEL);
+  });
+
+  it('blocks a departure with an empty ArrivalAirport', () => {
+    const issues = run([{ CallSign: 'CES5678', OffBlockTime: '10:30', ArrivalAirport: '' }]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('CES5678');
+    expect(issues[0]).toContain(ARR_LABEL);
+  });
+
+  it('treats whitespace-only route airports as empty', () => {
+    const issues = run([
+      { CallSign: 'CES1234', LandingTime: '10:30', DepartureAirport: '   ' },
+      { CallSign: 'CES5678', OffBlockTime: '10:30', ArrivalAirport: '  ' },
+    ]);
+    expect(issues).toHaveLength(2);
+  });
+
+  it('allows arrivals with an origin and departures with a destination', () => {
+    expect(run([
+      { CallSign: 'CES1234', LandingTime: '10:30', DepartureAirport: 'ZBAA' },
+      { CallSign: 'CES5678', OffBlockTime: '10:30', ArrivalAirport: 'ZSPD' },
+    ])).toEqual([]);
   });
 });
 
@@ -387,15 +426,15 @@ describe('runTripleValidation time range (end + 30min grace)', () => {
 
   it('accepts times up to exactly end+30min', () => {
     const flights = [
-      { CallSign: 'CES1234', OffBlockTime: '22:15' },
-      { CallSign: 'CES5678', LandingTime: '22:29' },
-      { CallSign: 'CES9012', OffBlockTime: '22:30' }, // boundary: exactly end+30
+      { CallSign: 'CES1234', OffBlockTime: '22:15', ArrivalAirport: 'ZSPD' },
+      { CallSign: 'CES5678', LandingTime: '22:29', DepartureAirport: 'ZBAA' },
+      { CallSign: 'CES9012', OffBlockTime: '22:30', ArrivalAirport: 'ZSPD' }, // boundary: exactly end+30
     ];
     expect(run(flights)).toEqual([]);
   });
 
   it('flags times beyond end+30min with the relaxed hint', () => {
-    const flights = [{ CallSign: 'CES1234', OffBlockTime: '22:31' }];
+    const flights = [{ CallSign: 'CES1234', OffBlockTime: '22:31', ArrivalAirport: 'ZSPD' }];
     const issues = run(flights);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('22:31');
@@ -404,14 +443,14 @@ describe('runTripleValidation time range (end + 30min grace)', () => {
 
   it('handles minute carry when adding grace (end 22:45 -> bound 23:15)', () => {
     const carryRun = (flights) => runTripleValidation(flights, {}, 'ZSJN', AUDIO, null, '06:00', '22:45', null);
-    expect(carryRun([{ CallSign: 'CES1234', OffBlockTime: '23:10' }])).toEqual([]);
-    const issues = carryRun([{ CallSign: 'CES1234', OffBlockTime: '23:16' }]);
+    expect(carryRun([{ CallSign: 'CES1234', OffBlockTime: '23:10', ArrivalAirport: 'ZSPD' }])).toEqual([]);
+    const issues = carryRun([{ CallSign: 'CES1234', OffBlockTime: '23:16', ArrivalAirport: 'ZSPD' }]);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('23:15');
   });
 
   it('still enforces the strict start bound', () => {
-    const flights = [{ CallSign: 'CES1234', OffBlockTime: '05:59' }];
+    const flights = [{ CallSign: 'CES1234', OffBlockTime: '05:59', ArrivalAirport: 'ZSPD' }];
     const issues = run(flights);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('06:00');

@@ -224,7 +224,7 @@ const issues9 = validateFlightObjects([badOrder], MOCK_FLIGHTS, c);
 assert(issues9 !== null && issues9.some(i => i.issue === 'time_order'), 'time order rejected');
 
 // validateFlightObjects — arrival without a STAR (game drops STAR-less legs)
-const noStarArr = { ...validFlight, CallSign: 'CCA1502', LandingTime: '12:00:00', InBlockTime: '12:05:00', OffBlockTime: '', TakeoffTime: '', Runway: '04R', Airway: '', Registration: 'B-5678', AircraftType: 'B738' };
+const noStarArr = { ...validFlight, CallSign: 'CCA1502', DepartureAirport: 'ZBAA', LandingTime: '12:00:00', InBlockTime: '12:05:00', OffBlockTime: '', TakeoffTime: '', Runway: '04R', Airway: '', Registration: 'B-5678', AircraftType: 'B738' };
 const issues10 = validateFlightObjects([noStarArr], MOCK_FLIGHTS, c);
 assert(issues10 !== null && issues10.some(i => i.issue === 'missing_star'), 'arrival without STAR rejected');
 
@@ -232,6 +232,14 @@ assert(issues10 !== null && issues10.some(i => i.issue === 'missing_star'), 'arr
 const starArr = { ...noStarArr, Airway: 'ABCD2B' };
 const issues10b = validateFlightObjects([starArr], MOCK_FLIGHTS, c);
 assert(issues10b === null, 'arrival with valid STAR accepted');
+
+// validateFlightObjects — route airports are required (arrival origin / departure destination)
+const noOriginArr = { ...starArr, DepartureAirport: '' };
+const issues10c = validateFlightObjects([noOriginArr], MOCK_FLIGHTS, c);
+assert(issues10c !== null && issues10c.some(i => i.issue === 'missing_route_airport' && i.field === 'DepartureAirport'), 'arrival without origin airport rejected');
+const noDestDep = { ...validFlight, CallSign: 'AAL1003', ArrivalAirport: '' };
+const issues10d = validateFlightObjects([noDestDep], MOCK_FLIGHTS, c);
+assert(issues10d !== null && issues10d.some(i => i.issue === 'missing_route_airport' && i.field === 'ArrivalAirport'), 'departure without destination airport rejected');
 
 // applyCascades — AirlineCode change (AircraftType is airline-independent)
 const cascaded1 = applyCascades(

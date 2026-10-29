@@ -417,7 +417,19 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
 
     const airlineCode = (f.CallSign || '').substring(0, 3).toUpperCase();
 
-    // 2. Airline code known
+    // 2. Route airport required — arrivals need their origin, departures their
+    //    destination. An empty value renders as a red cell in the editor and
+    //    leaves the leg without a usable route.
+    const routeField = isArrival(f) ? 'DepartureAirport' : 'ArrivalAirport';
+    if (!String(f[routeField] || '').trim()) {
+      details.push({
+        index: idx, field: routeField, value: f[routeField],
+        issue: 'missing_route_airport',
+        message: `${isArrival(f) ? 'Arrival' : 'Departure'} ${f.CallSign || '?'} has an empty ${routeField}.`,
+      });
+    }
+
+    // 3. Airline code known
     if (airlineCode && constraints.knownCodes.size > 0 && !constraints.knownCodes.has(airlineCode)) {
       details.push({
         index: idx, field: 'CallSign', value: f.CallSign,
