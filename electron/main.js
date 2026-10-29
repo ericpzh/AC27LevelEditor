@@ -4663,8 +4663,9 @@ app.whenReady().then(() => {
     }
   } catch (err) { console.warn('[PTT] global hotkey setup failed:', err.message); }
 
-  // Start HTTP API server — always on port 31415 for MCP / external tool access
-  startApiServer(mainWindow, 31415, () => airportCache);
+  // Allow isolated test instances to use a separate API port.
+  const apiPort = Number(process.env.AC27_API_PORT) || 31415;
+  startApiServer(mainWindow, apiPort, () => airportCache);
 
   // Push live aircraft state to open map windows at 200ms
   setInterval(() => {

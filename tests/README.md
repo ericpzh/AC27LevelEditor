@@ -4,6 +4,12 @@ Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.
 
 Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format support has been removed).
 
+**Full suite (2026-10-29):** Vitest 2,688 passed / 6 skipped; save integrity, jetway rebuild and runway-pair checks passed; Playwright 16 passed / 2 skipped. The separate multi-level fuzz run timed out on ZGSZ peak arrival and did not complete.
+
+## Fuzz save safeguards
+
+The flight fuzz sandbox stages `aircraft_profiles.csv` and uses an isolated editor API port. After saving, it checks parked aircraft offsets against stand geometry as well as reload and game compatibility. Use `FUZZ_ACL_FILES` and `FUZZ_SEED` to select and reproduce runs; `--replace` copies passing results and backups to the game install.
+
 ## Quick Start
 
 ```bash

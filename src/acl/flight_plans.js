@@ -3375,10 +3375,7 @@ function _buildStandaloneAircraftEntry(opts) {
 
   var T = {
     ac:      _resolveType('ContextCross.Aircrafts.Aircraft, GroundATC.Core'),
-    spec:    _resolveType('ContextCross.Models.AircraftSpecification, GroundATC.Core'),
-    float3:  _resolveType('Unity.Mathematics.float3, Unity.Mathematics'),
-    vec4Arr: _resolveType('UnityEngine.Vector4[], UnityEngine.CoreModule'),
-    vec4:    _resolveType('UnityEngine.Vector4, UnityEngine.CoreModule'),
+    idleTimer: _resolveType('ContextCross.Aircrafts.GroundIdleTimerState, GroundATC.Core'),
     dyn:     _resolveType('ContextCross.Dynamics.AircraftDynamicsData, GroundATC.Core'),
     dynSt:   _resolveType('R3.ReactiveProperty`1[[ContextCross.Dynamics.Enums.State, GroundATC.Core]], R3'),
     coord:   _resolveType('ContextCross.Aircrafts.AircraftRunwayCoordinator, GroundATC.Core'),
@@ -3448,13 +3445,13 @@ function _buildStandaloneAircraftEntry(opts) {
     throw new Error(msg);
   }
   specCtx.designator = designatorVal;
-  var aeroCode = requireSpecField(log, specCtx, 'AerodromeCode', spec?.AerodromeCode, spec, DEFAULT_AERODROME_CODE);
-  var wakeCat = requireSpecField(log, specCtx, 'WakeTurbulenceCategory', spec?.WakeTurbulenceCategory, spec, DEFAULT_WAKE_CATEGORY);
+  requireSpecField(log, specCtx, 'AerodromeCode', spec?.AerodromeCode, spec, DEFAULT_AERODROME_CODE);
+  requireSpecField(log, specCtx, 'WakeTurbulenceCategory', spec?.WakeTurbulenceCategory, spec, DEFAULT_WAKE_CATEGORY);
   var wheelBase = requireSpecField(log, specCtx, 'WheelBase', spec?.WheelBase, spec, 0);
-  var wingSpan = requireSpecField(log, specCtx, 'WingSpan', spec?.WingSpan, spec, 0);
-  var runwayVR = requireSpecField(log, specCtx, 'RunwayVRSpeed', spec?.RunwayVRSpeed, spec, DEFAULT_RUNWAY_VR_SPEED);
-  var runwayTO = requireSpecField(log, specCtx, 'RunwayTakeOffLength', spec?.RunwayTakeOffLength, spec, DEFAULT_RUNWAY_TAKEOFF_LENGTH);
-  var mo = requireSpecField(log, specCtx, 'ModelOffset', spec?.ModelOffset, spec, DEFAULT_MODEL_OFFSET);
+  requireSpecField(log, specCtx, 'WingSpan', spec?.WingSpan, spec, 0);
+  requireSpecField(log, specCtx, 'RunwayVRSpeed', spec?.RunwayVRSpeed, spec, DEFAULT_RUNWAY_VR_SPEED);
+  requireSpecField(log, specCtx, 'RunwayTakeOffLength', spec?.RunwayTakeOffLength, spec, DEFAULT_RUNWAY_TAKEOFF_LENGTH);
+  requireSpecField(log, specCtx, 'ModelOffset', spec?.ModelOffset, spec, DEFAULT_MODEL_OFFSET);
   var dockPoses = spec?.DockingPositions;
   if (!dockPoses || !dockPoses.length) {
     console.log('[FP Standalone] MISSING DockingPositions for spec=' + (spec?.Designator || '?') + ' spec=' + JSON.stringify(spec));
@@ -3661,17 +3658,6 @@ function _buildStandaloneAircraftEntry(opts) {
 
   // --- Build structured Aircraft object ------------------------------
 
-  // DockingPositions: Vector4[]
-  console.log(
-    '[FP Standalone] DockingPositions spec=' + (spec?.Designator || '?') +
-    ' dockPosesLen=' + (dockPoses ? dockPoses.length : 0) +
-    ' T.vec4=' + T.vec4 +
-    ' dockPoses=' + JSON.stringify(dockPoses)
-  );
-  var dockContent = dockPoses.map(function(p) {
-    return { $type: T.vec4, __v: [p.x, p.y, p.z, p.w] };
-  });
-
   // ReactiveProperty<string[]> helper.  The inner string[] (always empty in
   // generated entries) is shared across ALL aircraft via a single canonical
   // definition: the first entry that emits one defines it inline and records
@@ -3767,19 +3753,6 @@ function _buildStandaloneAircraftEntry(opts) {
     $v: {
       $id: entryId,
       $type: T.ac,
-      Specification: {
-        $id: id(4),
-        $type: T.spec,
-        Designator: designatorVal,
-        AerodromeCode: aeroCode,
-        WakeTurbulenceCategory: wakeCat,
-        WheelBase: wheelBase,
-        ModelOffset: { $type: T.float3, __v: [mo.x, mo.y, mo.z] },
-        WingSpan: wingSpan,
-        DockingPositions: { $id: id(5), $type: T.vec4Arr, $rcontent: dockContent },
-        RunwayVRSpeed: runwayVR,
-        RunwayTakeOffLength: runwayTO,
-      },
       DynamicsData: {
         $id: id(6),
         $type: T.dyn,
@@ -3844,6 +3817,7 @@ function _buildStandaloneAircraftEntry(opts) {
         $type: T.rpVec3,
         __v: [{ $type: T.vec3, __v: [dirX, 0, dirZ] }],
       },
+      _groundIdleTimerState: { $type: T.idleTimer, AccumulatedTicks: 0, StartedAtTick: 0, IsRunning: false },
       SelectedPushbackLimitPosition: null,
       SelectedTowPosition: null,
       _isFirstTaxi: false,
@@ -3972,13 +3946,13 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     throw new Error(msg);
   }
   specCtx.designator = designatorVal;
-  const aeroCode = requireSpecField(log, specCtx, 'AerodromeCode', spec?.AerodromeCode, spec, DEFAULT_AERODROME_CODE);
-  const wakeCat = requireSpecField(log, specCtx, 'WakeTurbulenceCategory', spec?.WakeTurbulenceCategory, spec, DEFAULT_WAKE_CATEGORY);
+  requireSpecField(log, specCtx, 'AerodromeCode', spec?.AerodromeCode, spec, DEFAULT_AERODROME_CODE);
+  requireSpecField(log, specCtx, 'WakeTurbulenceCategory', spec?.WakeTurbulenceCategory, spec, DEFAULT_WAKE_CATEGORY);
   const wheelBase = requireSpecField(log, specCtx, 'WheelBase', spec?.WheelBase, spec, 0);
-  const wingSpan = requireSpecField(log, specCtx, 'WingSpan', spec?.WingSpan, spec, 0);
-  const runwayVR = requireSpecField(log, specCtx, 'RunwayVRSpeed', spec?.RunwayVRSpeed, spec, DEFAULT_RUNWAY_VR_SPEED);
-  const runwayTO = requireSpecField(log, specCtx, 'RunwayTakeOffLength', spec?.RunwayTakeOffLength, spec, DEFAULT_RUNWAY_TAKEOFF_LENGTH);
-  const mo = requireSpecField(log, specCtx, 'ModelOffset', spec?.ModelOffset, spec, DEFAULT_MODEL_OFFSET);
+  requireSpecField(log, specCtx, 'WingSpan', spec?.WingSpan, spec, 0);
+  requireSpecField(log, specCtx, 'RunwayVRSpeed', spec?.RunwayVRSpeed, spec, DEFAULT_RUNWAY_VR_SPEED);
+  requireSpecField(log, specCtx, 'RunwayTakeOffLength', spec?.RunwayTakeOffLength, spec, DEFAULT_RUNWAY_TAKEOFF_LENGTH);
+  requireSpecField(log, specCtx, 'ModelOffset', spec?.ModelOffset, spec, DEFAULT_MODEL_OFFSET);
   const dockPoses = spec?.DockingPositions;
   if (!dockPoses || !dockPoses.length) {
     console.log('[FP Jetway] MISSING DockingPositions for spec=' + (spec?.Designator || '?') + ' spec=' + JSON.stringify(spec));
@@ -4046,10 +4020,7 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
 
   var T = {
     ac:      _jwResolveType('ContextCross.Aircrafts.Aircraft, GroundATC.Core'),
-    spec:    _jwResolveType('ContextCross.Models.AircraftSpecification, GroundATC.Core'),
-    float3:  _jwResolveType('Unity.Mathematics.float3, Unity.Mathematics'),
-    vec4Arr: _jwResolveType('UnityEngine.Vector4[], UnityEngine.CoreModule'),
-    vec4:    _jwResolveType('UnityEngine.Vector4, UnityEngine.CoreModule'),
+    idleTimer: _jwResolveType('ContextCross.Aircrafts.GroundIdleTimerState, GroundATC.Core'),
     dyn:     _jwResolveType('ContextCross.Dynamics.AircraftDynamicsData, GroundATC.Core'),
     dynSt:   _jwResolveType('R3.ReactiveProperty`1[[ContextCross.Dynamics.Enums.State, GroundATC.Core]], R3'),
     coord:   _jwResolveType('ContextCross.Aircrafts.AircraftRunwayCoordinator, GroundATC.Core'),
@@ -4081,42 +4052,6 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
   const JT4 = _jwResolveType(JW_TYPE_RP_SINGLE);
   const JT5 = _jwResolveType(JW_TYPE_RP_AIRCRAFT);
   const JT6 = _jwResolveType(JW_TYPE_RP_INT32);
-
-  // Build DockingPositions array
-  console.log(
-    '[FP Jetway] DockingPositions spec=' + (spec?.Designator || '?') +
-    ' dockPosesLen=' + (dockPoses ? dockPoses.length : 0) +
-    ' T.vec4=' + T.vec4 +
-    ' dockPoses=' + JSON.stringify(dockPoses)
-  );
-  const dockLines = [];
-  for (let i = 0; i < dockPoses.length; i++) {
-    const p = dockPoses[i];
-    if (i > 0) dockLines.push(',');
-    dockLines.push(
-      '                                                    {',
-      '                                                        "$type": ' + T.vec4 + ',',
-      '                                                        ' + p.x + ',',
-      '                                                        ' + p.y + ',',
-      '                                                        ' + p.z + ',',
-      '                                                        ' + p.w,
-      '                                                    }');
-  }
-  const dockInner = dockLines.join('\n');
-  const dockStr = dockPoses.length > 0
-    ? ('{\n' +
-       '                                                    "$id": ' + id(5) + ',\n' +
-       '                                                    "$type": ' + T.vec4Arr + ',\n' +
-       '                                                    "$rlength": ' + dockPoses.length + ',\n' +
-       '                                                    "$rcontent": [\n' + dockInner + '\n' +
-       '                                                    ]\n' +
-       '                                                }')
-    : ('{\n' +
-       '                                                    "$id": ' + id(5) + ',\n' +
-       '                                                    "$type": ' + T.vec4Arr + ',\n' +
-       '                                                    "$rlength": 0,\n' +
-       '                                                    "$rcontent": []\n' +
-       '                                                }');
 
   function inlineEmptyStrArr(innerId) {
     return (
@@ -4202,24 +4137,6 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                        {',
     '                                            "$id": ' + aircraftId + ',',
     '                                            "$type": ' + T.ac + ',',
-    '                                            "Specification": {',
-    '                                                "$id": ' + id(4) + ',',
-    '                                                "$type": ' + T.spec + ',',
-    '                                                "Designator": "' + designatorVal + '",',
-    '                                                "AerodromeCode": ' + aeroCode + ',',
-    '                                                "WakeTurbulenceCategory": ' + wakeCat + ',',
-    '                                                "WheelBase": ' + wheelBase + ',',
-    '                                                "ModelOffset": {',
-    '                                                    "$type": ' + T.float3 + ',',
-    '                                                    ' + mo.x + ',',
-    '                                                    ' + mo.y + ',',
-    '                                                    ' + mo.z,
-    '                                                },',
-    '                                                "WingSpan": ' + wingSpan + ',',
-    '                                                "DockingPositions": ' + dockStr + ',',
-    '                                                "RunwayVRSpeed": ' + runwayVR + ',',
-    '                                                "RunwayTakeOffLength": ' + runwayTO,
-    '                                            },',
     '                                            "DynamicsData": {',
     '                                                "$id": ' + id(6) + ',',
     '                                                "$type": ' + T.dyn + ',',
@@ -4377,6 +4294,12 @@ function _buildActiveJetwayEntry(info, depFlight, approachCache, log, jwTypeMap,
     '                                                    0,',
     '                                                    ' + jwDirZ,
     '                                                }',
+    '                                            },',
+    '                                            "_groundIdleTimerState": {',
+    '                                                "$type": ' + T.idleTimer + ',',
+    '                                                "AccumulatedTicks": 0,',
+    '                                                "StartedAtTick": 0,',
+    '                                                "IsRunning": false',
     '                                            },',
     '                                            "SelectedPushbackLimitPosition": null,',
     '                                            "SelectedTowPosition": null,',

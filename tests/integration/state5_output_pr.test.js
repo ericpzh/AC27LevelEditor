@@ -124,6 +124,10 @@ describe('state=5 output ProgressRatio', () => {
   it('writes constant 0 while position/direction use the real computed PR', () => {
     const res = buildArrival('B-ST5A', '00:00:05');
     expect(res.aircraftState).toBe(5);
+    expect(res.entry.$v).not.toHaveProperty('Specification');
+    expect(res.entry.$v._groundIdleTimerState).toMatchObject({
+      AccumulatedTicks: 0, StartedAtTick: 0, IsRunning: false,
+    });
 
     const params = res.entry.$v.DynamicsData.DynamicsParams;
     expect(params).toBeDefined();

@@ -38,8 +38,7 @@
  *
  * Requires: E2E_GAME_ROOT (real game installation), npm run build first,
  * and FUZZ_RUN=1 (the spec is skipped otherwise — see npm run test:e2e).
- * The app's API server must be reachable on 127.0.0.1:31415 — close any
- * already-running editor instance before the run.
+ * The test launches its editor with an isolated API port.
  *
  * Run all production levels:
  *   $env:E2E_GAME_ROOT = "<game-root>"
@@ -59,6 +58,7 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import net from 'net';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 
@@ -74,7 +74,14 @@ const { analyze, runChecks } = require('../integration/gamecompat-utils.cjs');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP_DIR = process.env.E2E_TMP_DIR;
-const API_BASE = process.env.FUZZ_API_BASE || 'http://127.0.0.1:31415/mcp';
+let API_BASE;
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  return port;
+}
 
 // Mirrors WEATHER_PRESETS in src/utils/constants/ui.js (the editor's canonical set).
 const WEATHER_PRESETS = ['Sunny', 'FewCloudy', 'MidCloudy', 'PartlyCloudy', 'OvercastSky', 'AfterRain'];
@@ -1220,6 +1227,38 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       }
       throw new Error(`saved file has game-compat issues: ${filteredIssues.map(i => `[${i.code}] ${i.msg}`).join(' | ')}`);
     }
+    // A valid archive can still place parked aircraft far from their stands if
+    // its profile lookup falls back to wheelbases in the wrong units.
+    const savedText = readAclText(currentPath);
+    const { FRAME_SENTINEL } = require('../../src/acl/gatcarc');
+    const { createTokenizer } = require('../../src/acl/tokenizer');
+    const parkingStands = parser._parseStandPositions(savedText, true);
+    const departures = new Map(reloaded.flights.filter(f => f.isDeparture).map(f => [f._Registration || f.Registration, f]));
+    let checkedParking = 0;
+    for (const doc of savedText.split(FRAME_SENTINEL).slice(1)) {
+      const tokenizer = createTokenizer(doc);
+      for (const match of doc.matchAll(/"\$k"\s*:\s*"(jetway|aircraft):([^"\\]+)"/g)) {
+        const start = doc.lastIndexOf('{', match.index);
+        const block = doc.slice(start, tokenizer.findObjectEnd(start));
+        const reg = (block.match(/flight-plan:([^"\\]+)/) || [])[1] || (match[1] === 'aircraft' ? match[2] : null);
+        const flight = departures.get(reg) || (match[1] === 'jetway'
+          ? [...departures.values()].find(f => String(parseInt(f.Stand, 10)) === String(parseInt(match[2], 10)))
+          : null);
+        if (!flight) continue;
+        const bt = createTokenizer(block);
+        const state = bt.findSection('_state'), pos = bt.findSection('_position');
+        if (!state || !pos || !/,\s*10\s*}/.test(block.slice(state.valueStart, state.valueEnd))) continue;
+        const stand = parkingStands[flight.Stand] || parkingStands[String(parseInt(flight.Stand, 10))];
+        if (!stand) throw new Error(`parked aircraft ${reg}: stand ${flight.Stand} not found`);
+        const position = block.slice(pos.valueStart, pos.valueEnd);
+        const vector = position.match(/"\$type"\s*:\s*(?:\d+|"[^"]+"),\s*(-?[\d.eE+]+),\s*(-?[\d.eE+]+),\s*(-?[\d.eE+]+)/);
+        if (!vector) throw new Error(`parked aircraft ${reg}: position not found`);
+        const offset = Math.hypot(Number(vector[1]) - stand.noseX, Number(vector[3]) - stand.noseZ);
+        if (offset > 2) throw new Error(`parked aircraft ${reg}: ${offset.toFixed(3)} units from stand ${flight.Stand} nose`);
+        checkedParking++;
+      }
+    }
+    log(`parking offsets checked: ${checkedParking}`);
     log('game-compat clean (saved output verified against game invariants)');
 
     log(`DONE — ${fuzzLog.accepted.length} accepted / ${fuzzLog.rejected.length} rejected ops`);
@@ -1244,12 +1283,14 @@ let window;
 
 test.beforeAll(async () => {
   if (!FUZZ_RUN) return;
+  const port = await freePort();
+  API_BASE = `http://127.0.0.1:${port}/mcp`;
   electronApp = await electron.launch({
     args: [
       path.join(__dirname, '..', '..', 'dist-electron', 'main.js'),
       `--user-data-dir=${process.env.E2E_USERDATA_DIR}`,
     ],
-    env: { AC27_E2E_TMP_DIR: process.env.E2E_TMP_DIR },
+    env: { ...process.env, AC27_E2E_TMP_DIR: process.env.E2E_TMP_DIR, AC27_API_PORT: String(port) },
     timeout: 60000,
   });
   window = await electronApp.firstWindow();

@@ -101,6 +101,12 @@ export default async function () {
     const registryDst = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'airline_country_registry.cfg');
     if (existsSync(registrySrc)) cpSync(registrySrc, registryDst);
 
+    // Aircraft placement depends on the real profile wheelbase values.
+    const profilesSrc = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'aircraft_profiles.csv');
+    const profilesDst = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'aircraft_profiles.csv');
+    if (!existsSync(profilesSrc)) throw new Error(`Missing aircraft profiles: ${profilesSrc}`);
+    cpSync(profilesSrc, profilesDst);
+
     console.log(`[E2E setup] Staged ${staged} files to ${TMP_DIR}`);
   } else {
     // Fall back to committed fixture (ZSJN_leisure_1.acl); copy it to

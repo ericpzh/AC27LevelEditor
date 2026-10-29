@@ -1,17 +1,4 @@
-/**
- * Regression test: AerodromeCode is emitted from spec data — never from a
- * silent default.
- *
- * The game uses AerodromeCode (ASCII ICAO aerodrome reference code letter:
- * 67='C' narrowbody, 69='E' widebody, 70='F' 748/388-class) for stand/jetway
- * compatibility.  Both builders used to hardcode 67 for every aircraft, so a
- * widebody (B789/A333/B77W) was mislabeled as a narrowbody in saved output.
- *
- * The builders now emit spec.AerodromeCode resolved from the approach cache,
- * and any spec field that can't be resolved asserts via requireSpecField with
- * the exact lookup chain (builder, registration, AircraftType, designator,
- * lookups tried, refused default) instead of writing DEFAULT_* data.
- */
+/** Runtime aircraft omit serialized specifications while retaining cache validation. */
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 
@@ -97,16 +84,13 @@ function buildJetway(spec, reg) {
   );
 }
 
-describe('AerodromeCode emission', () => {
-  it('jetway builder emits widebody code 69 from spec data', () => {
+describe('Runtime aircraft serialization and spec validation', () => {
+  it('jetway builder omits the aircraft specification', () => {
     const res = buildJetway(SPEC_B789, 'B-0900');
-    expect(res.text).toContain('"Designator": "B789"');
-    expect(res.text).toContain('"AerodromeCode": 69');
-  });
-
-  it('jetway builder emits narrowbody code 67 from spec data', () => {
-    const res = buildJetway(SPEC_A320, 'B-0901');
-    expect(res.text).toContain('"AerodromeCode": 67');
+    expect(res.text).not.toContain('"Specification"');
+    expect(res.text).toContain('"DockingAircraft"');
+    expect(res.text).toContain('"DynamicsData"');
+    expect(res.text).toMatch(/"_groundIdleTimerState"\s*:\s*\{[^}]*"AccumulatedTicks"\s*:\s*0\s*,[^}]*"StartedAtTick"\s*:\s*0\s*,[^}]*"IsRunning"\s*:\s*false/s);
   });
 
   it('jetway builder asserts when spec lacks AerodromeCode', () => {

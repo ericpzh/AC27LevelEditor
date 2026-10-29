@@ -3134,13 +3134,19 @@ describe('selection mask', () => {
     fireEvent.pointerMove(cv, { clientX: 200, clientY: 200, button: 0, pointerId: 1 });
     fireEvent.pointerUp(cv, { pointerId: 1 });
     await user.click(screen.getByRole('button', { name: 'Select' }));
-    // Object mode: the blue box (strokeRect) is drawn for the selected movable.
-    // The overlay is rAF-scheduled, so give it room under a loaded full-suite run.
-    await waitFor(() => expect(ctxs.some(c => c.strokeRect.mock.calls.length > 0)).toBe(true), { timeout: 5000 });
-    // Entering wand mode drops the movable selection, so no box is drawn.
-    ctxs.forEach(c => c.strokeRect.mockClear());
+    // Compare drawing calls in chronological order: a pending object-mode frame
+    // may run during the click, but the wand redraw must clear it afterwards.
+    const chromeCalls = method => ctxs.filter(c => c._layer === 'chrome')
+      .flatMap(c => c[method].mock.invocationCallOrder);
+    await waitFor(() => expect(chromeCalls('strokeRect').length).toBeGreaterThan(0), { timeout: 5000 });
+    const previousClear = Math.max(0, ...chromeCalls('clearRect'));
     await user.click(screen.getByRole('button', { name: 'Magic Wand' }));
-    await waitFor(() => expect(ctxs.every(c => c.strokeRect.mock.calls.length === 0)).toBe(true), { timeout: 5000 });
+    await waitFor(() => {
+      const lastClear = Math.max(0, ...chromeCalls('clearRect'));
+      const lastStroke = Math.max(0, ...chromeCalls('strokeRect'));
+      expect(lastClear).toBeGreaterThan(previousClear);
+      expect(lastClear).toBeGreaterThan(lastStroke);
+    }, { timeout: 5000 });
   });
 
   it('keeps the pen/wand mask when switching back to Object mode', async () => {
