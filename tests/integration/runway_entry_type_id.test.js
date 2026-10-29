@@ -119,28 +119,43 @@ describe('Runway Entries/Exits type-id distinctness', () => {
     expect(() => encodeArchive(newText)).not.toThrow();
   });
 
-  it('mints a fresh, collision-free id (canonical name) when the type cannot be sampled', () => {
-    // The fixture declares no PhysicalRunwayStaticItem type. The writer must not
-    // guess a hardcoded id (the historic collision), but it must also not refuse
-    // the save: it resolves the canonical name to a fresh id ABOVE the scope max,
-    // which cannot collide, and emits the full "N|Name" form (the game resolves
-    // Odin types by name).
+  it('reuses a declared PhysicalRunwayStaticItem id and mints a fresh one when undeclared', () => {
+    // The writer must not guess a hardcoded id (the historic collision). It
+    // resolves the canonical name against the file's own PK-blobdoc table and
+    // reuses that id; a level that never declares the type gets a fresh id
+    // ABOVE the scope max (emitted as the full "N|Name" form — the game
+    // resolves Odin types by name).
     const text = readFixture('ZSJN_leisure_1.acl');
     const ranges = _staticEntitiesRanges(text);
     const scopeMax = _scopeMaxTypeId(text.substring(ranges.bd.start, ranges.bd.end));
-    const { graph, meta } = buildSceneryGraph(text);
-    const g = structuredClone(graph);
-    g.nodes = [...g.nodes, { x: 800, z: 0, type: 1, flags: 0 }, { x: 900, z: 0, type: 1, flags: 0 }];
-    const na = g.nodes.length - 2, nb = g.nodes.length - 1;
-    g.runways = [...g.runways, { thAIdx: na, thBIdx: nb, names: ['08', '26'], physicalName: '08/26', width: 0.5, entries: [{ name: 'NEWR', holdingIdx: na, lineUpIdx: nb, defineIdx: na, runwayName: '08' }], exits: [] }];
-    let out;
-    expect(() => { out = patchSceneryBlob(text, g, null, structuredClone(meta), { warnings: [] }); }).not.toThrow();
-    // The new runway serialized with a fresh id (above the file's scope max).
+    const declared = text.match(/"(\d+)\|ContextCross\.Models\.PhysicalRunwayStaticItem, GroundATC\.Core"/);
+    expect(declared).toBeTruthy();
+    const synthRunway = (base) => {
+      const { graph, meta } = buildSceneryGraph(base);
+      const g = structuredClone(graph);
+      g.nodes = [...g.nodes, { x: 800, z: 0, type: 1, flags: 0 }, { x: 900, z: 0, type: 1, flags: 0 }];
+      const na = g.nodes.length - 2, nb = g.nodes.length - 1;
+      g.runways = [...g.runways, { thAIdx: na, thBIdx: nb, names: ['08', '26'], physicalName: '08/26', width: 0.5, entries: [{ name: 'NEWR', holdingIdx: na, lineUpIdx: nb, defineIdx: na, runwayName: '08' }], exits: [] }];
+      return patchSceneryBlob(base, g, null, structuredClone(meta), { warnings: [] });
+    };
+
+    // Declared case: the shipped level registers the type, so the writer must
+    // reuse its scope id instead of minting a redundant second id for the name.
+    const out = synthRunway(text);
     const m = out.match(/"PhysicalRunwayStaticItem":\s*\{\s*"\$id":\s*\d+\s*,\s*"\$type":\s*"(\d+)\|ContextCross\.Models\.PhysicalRunwayStaticItem, GroundATC\.Core"/);
     expect(m).toBeTruthy();
-    expect(parseInt(m[1], 10)).toBeGreaterThan(scopeMax);
+    expect(m[1]).toBe(declared[1]);
     // The real collision detector: the encoder must accept the document.
     expect(() => encodeArchive(out)).not.toThrow();
+
+    // Undeclared case (pre-update level / different scope): a runway entry with
+    // no inline PhysicalRunwayStaticItem and a $blobdoc table that never names
+    // it. The writer must mint a fresh, collision-free id above the scope max
+    // rather than guess a hardcoded one.
+    const bareRunway = '{"$k": "runway:09", "$v": { "$id": 1, "$type": "13|ContextCross.Models.Runway, GroundATC.Core", "Entries": { "$id": 2, "$type": "15|ContextCross.Models.Runway+Entry[], GroundATC.Core", "$rlength": 0, "$rcontent": [] } }}';
+    const shapes = _sampleRunwayShapes([bareRunway], new Map(), { next: scopeMax + 1 });
+    expect(shapes.itemType).toContain('ContextCross.Models.PhysicalRunwayStaticItem, GroundATC.Core');
+    expect(_typeId(shapes.itemType)).toBeGreaterThan(scopeMax);
   });
 });
 
