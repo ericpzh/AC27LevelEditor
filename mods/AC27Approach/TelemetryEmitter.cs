@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Text;
 using ContextCross.Aircrafts;
 using ContextCross.Aircrafts.Policies;
@@ -74,7 +75,7 @@ internal sealed class TelemetryEmitter : MonoBehaviour
     private bool _needHasLevelLow;    // first frame after (re)activation advertises hasLevel=0
 
     private AircraftApproachSequencingManager _sequencer;
-    private AirportInfrastructureSizeLimitService _limits;
+    private string _airportIcao;
     private GameTime _gameTime;
     private string _srcName = "none";
     private int _srcTotal;
@@ -119,8 +120,7 @@ internal sealed class TelemetryEmitter : MonoBehaviour
     {
         if (Time.unscaledTime >= _nextResolve) ResolveServices();
 
-        string icao = null;
-        try { icao = _limits?.AirportIcao; } catch { }
+        string icao = _airportIcao;
 
         // Level-teardown STOP: the removed AircraftUdpCommandService.Start/Dispose
         // were the per-level (re)bind / teardown signal. With no level scope the
@@ -247,19 +247,61 @@ internal sealed class TelemetryEmitter : MonoBehaviour
         }
 
         _sequencer = best;
+        _airportIcao = null;
         if (bestScope == null)
         {
             // No level scope (menu / between levels) — drop the stale per-level
             // services so `active` goes false and the STOP frame is emitted.
-            _limits = null;
             _gameTime = null;
             return;
         }
 
-        // Resolve the rest from the SAME scope so the airport ICAO and clock
-        // always belong to the level the aircraft came from.
-        try { if (bestScope.Container.TryResolve(out AirportInfrastructureSizeLimitService lim) && lim != null) _limits = lim; } catch { }
+        // The airport ICAO used to come from AirportInfrastructureSizeLimitService;
+        // that type was removed in the 2026-11 game update and replaced by the
+        // session context (GameSessionContextProvider.Current.AirportIcao). Resolve
+        // it in an isolated, non-inlined helper so a future type rename can only
+        // fail this one resolution (caught below) — never the whole emitter's
+        // class load, which is what killed telemetry after the previous update.
+        try { _airportIcao = ResolveAirportIcao(bestScope); }
+        catch { _airportIcao = null; }
+
+        // Resolve the clock from the SAME scope so the aircraft, ICAO and clock
+        // always belong to the level that is streaming.
         try { if (bestScope.Container.TryResolve(out GameTime gt) && gt != null) _gameTime = gt; } catch { }
+    }
+
+    /// <summary>
+    /// Resolve the live airport ICAO from the session context provider.
+    /// Kept out of line so the containing method's JIT never hard-depends on
+    /// GameSessionContextProvider (a type that replaced the removed
+    /// AirportInfrastructureSizeLimitService in a game update).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static string ResolveAirportIcao(LifetimeScope bestScope)
+    {
+        // Prefer the scope that owns the live aircraft; fall back to a scan so
+        // a root-registered provider is still found.
+        var icao = TryReadIcao(bestScope);
+        if (!string.IsNullOrEmpty(icao)) return icao;
+
+        foreach (var scope in UnityEngine.Object.FindObjectsOfType<LifetimeScope>())
+        {
+            if (scope == null || scope.Container == null) continue;
+            icao = TryReadIcao(scope);
+            if (!string.IsNullOrEmpty(icao)) return icao;
+        }
+        return null;
+    }
+
+    private static string TryReadIcao(LifetimeScope scope)
+    {
+        try
+        {
+            if (scope?.Container == null) return null;
+            if (!scope.Container.TryResolve(out GameSessionContextProvider session) || session == null) return null;
+            return session.HasCurrent ? session.Current?.AirportIcao : null;
+        }
+        catch { return null; }
     }
 
     /// <summary>Resolve a game service from the active VContainer scope (same pattern as OverrideController).</summary>

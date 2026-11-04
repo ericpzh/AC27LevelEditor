@@ -12,7 +12,7 @@ namespace AC27Approach;
 /// AC27Approach — direct aircraft control via the game's native UDP command
 /// channel (report §5.4). Input: UDP only.
 /// </summary>
-[BepInPlugin("com.ac27.approach", "AC27Approach", "1.0.2")]
+[BepInPlugin("com.ac27.approach", "AC27Approach", "1.0.3")]
 public class Plugin : BasePlugin
 {
     public static Plugin Instance;

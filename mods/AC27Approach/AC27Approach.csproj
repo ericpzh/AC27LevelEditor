@@ -6,6 +6,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>AC27Approach</AssemblyName>
     <RootNamespace>AC27Approach</RootNamespace>
+    <!-- Keep in sync with the BepInPlugin attribute in Plugin.cs. -->
+    <Version>1.0.3</Version>
     <!-- Game install path. Override with the AC27_GAME_ROOT env var (the same
          single source used by tests/helpers/gameRoot.cjs) or -p:GameDir=... .
          Canonical shipping install (app 3328490) first, legacy Playtest folder
