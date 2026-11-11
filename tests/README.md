@@ -159,7 +159,7 @@ renders the live livery on the game's real aircraft mesh in a floating three.js 
 as 3D snapshots in the list). The mesh is extracted from the user's own install by a
 **pure-JS Unity serialized-file reader** (`electron/unity/`, no Python/spawn);
 `scripts/extract-aircraft-models.py` (UnityPy) is a last-resort fallback only. The pack
-(`PACK_VERSION`, a cache key; currently 7) is cached under `<userData>/livery-3d-models/` and kept warm
+(`PACK_VERSION`, a cache key; currently 8) is cached under `<userData>/livery-3d-models/` and kept warm
 across livery-page visits (no longer deleted on page leave; page entry is the only refresh
 trigger). Live updates push **full-resolution 2048² per-panel canvas textures**
 (`LiveryCanvas.getPanelCanvases()` → `THREE.CanvasTexture`, re-uploaded in place) sampled

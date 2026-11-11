@@ -176,11 +176,16 @@ describe('aircraftPack transform math', () => {
   });
 
   it('covers every aircraft the painter offers a 3D model for', () => {
-    expect(Object.keys(pack.PLANES).length).toBe(19);
+    expect(Object.keys(pack.PLANES).length).toBe(20);
     for (const [id, cfg] of Object.entries(pack.PLANES)) {
       expect(cfg.parts.length, id).toBeGreaterThan(0);
       for (const p of cfg.parts) expect(typeof p.name).toBe('string');
     }
+  });
+
+  it('includes the Boeing 737-800BCF using the 737-800 mesh', () => {
+    expect(pack.PLANES['BOEING 737-800BCF']).toBeTruthy();
+    expect(pack.PLANES['BOEING 737-800BCF']).toEqual(pack.PLANES['BOEING 737-800']);
   });
 
   it('maps the A330 engine nacelles onto the Body panel and fans to static', () => {

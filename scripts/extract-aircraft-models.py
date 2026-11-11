@@ -133,6 +133,10 @@ PLANES = {
         "parts": [{"name": "Body", "meshes": [("B738_A01_Body_UVFix", [0, 1, 2])]}],
         "static": [("B738_A01_Body_UVFix", [3])],
     },
+    "BOEING 737-800BCF": {
+        "parts": [{"name": "Body", "meshes": [("B738_A01_Body_UVFix", [0, 1, 2])]}],
+        "static": [("B738_A01_Body_UVFix", [3])],
+    },
     "BOEING 747-8I": {
         "parts": [{"name": "Body", "meshes": [("B748_A01_Body", [0, 1])]}],
         "static": [

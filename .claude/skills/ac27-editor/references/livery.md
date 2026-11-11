@@ -1242,7 +1242,7 @@ no bin/texture re-read) and only re-renders a card whose `imgMtime` changed
 Aircraft groups with no model are **hidden from the list** (`MyLiveriesTab`
 filters them: the extracted pack is ground truth once loaded, `has3DModel`
 before — so the Cessna Citation X never shows a forever-loading card — while
-`''` unknown-aircraft error rows stay visible). The pack covers 19 types; `PLANES` in the script holds
+`''` unknown-aircraft error rows stay visible). The pack covers 20 types; `PLANES` in the script holds
 the per-type part→mesh/submesh map and its `_static` (engine/fan) lists.
 
 ## IPC (`electron/livery.js` ← `electron/main.js` handlers ← `electron/preload.js`)

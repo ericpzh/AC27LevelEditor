@@ -22,7 +22,7 @@ const { parseUnityVersion, readMeshData, buildPart } = require('./mesh');
 // Cache key for the produced pack. Bump when the mapping/geometry changes so
 // electron/aircraftModels.js rejects an old cached pack and rebuilds. The
 // manifest/bin LAYOUT is unchanged; consumers ignore this value.
-const PACK_VERSION = 7;
+const PACK_VERSION = 8;
 
 // Per-plane yaw correction (degrees, about +Y) baked at extraction. These
 // prefabs ship a 90°-rotated root transform vs the rest of the fleet, so
@@ -86,6 +86,10 @@ const PLANES = {
     static: [['B737Max_A01_Fan', 'all']],
   },
   'BOEING 737-800': {
+    parts: [{ name: 'Body', meshes: [['B738_A01_Body_UVFix', [0, 1, 2]]] }],
+    static: [['B738_A01_Body_UVFix', [3]]],
+  },
+  'BOEING 737-800BCF': {
     parts: [{ name: 'Body', meshes: [['B738_A01_Body_UVFix', [0, 1, 2]]] }],
     static: [['B738_A01_Body_UVFix', [3]]],
   },
