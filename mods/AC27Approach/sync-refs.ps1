@@ -1,10 +1,10 @@
-# Syncs the build-time reference DLLs from the local game install into lib/.
+﻿# Syncs the build-time reference DLLs from the local game install into lib/.
 #
-# These 17 DLLs are compile-time references only (the csproj's <HintPath>s point
+# These 23 DLLs are compile-time references only (the csproj's <HintPath>s point
 # into $(GameDir)\BepInEx\{core,interop}). They are never shipped — the release
 # contains only AC27Approach.dll — but a GitHub Actions runner needs them on disk
 # to compile, so they are vendored here and committed. The game's interop DLLs
-# change with each playtest patch; run this after the game updates and commit the
+# change with each game patch; run this after the game updates and commit the
 # refreshed files.
 #
 # Usage:  powershell -File sync-refs.ps1 [GameDir]   (default: $env:AC27_GAME_ROOT, else the canonical shipping install, else the legacy Playtest folder)
@@ -26,9 +26,14 @@ $lib = Join-Path $PSScriptRoot 'lib\BepInEx'
 New-Item -ItemType Directory -Force (Join-Path $lib 'core'), (Join-Path $lib 'interop') | Out-Null
 
 $coreRefs = @('BepInEx.Core', 'BepInEx.Unity.IL2CPP', '0Harmony', 'Il2CppInterop.Common', 'Il2CppInterop.Runtime')
-$interopRefs = @('GroundATC.Core', 'R3', 'VContainer', 'Unity.Mathematics', 'AnyPath', 'UnityEngine',
-    'UnityEngine.CoreModule', 'UnityEngine.PhysicsModule', 'Il2Cppmscorlib', 'Il2CppSystem',
-    'Il2CppSystem.Core', 'Stateless')
+$interopRefs = @(
+    'GroundATC.Core', 'GroundATC.Simulation', 'GroundATC.Contracts',
+    'GroundAtc.Numerics', 'GroundAtc.Navigation', 'GroundAtc.Curves',
+    'R3', 'VContainer', 'Unity.Mathematics', 'AnyPath', 'UnityEngine',
+    'UnityEngine.CoreModule', 'UnityEngine.PhysicsModule',
+    'Il2Cppmscorlib', 'Il2CppSystem', 'Il2CppSystem.Core', 'Il2CppSystem.Numerics',
+    'Stateless'
+)
 
 $missing = @()
 foreach ($n in $coreRefs) {

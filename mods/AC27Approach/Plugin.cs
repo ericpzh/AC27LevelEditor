@@ -12,7 +12,7 @@ namespace AC27Approach;
 /// AC27Approach — direct aircraft control via the game's native UDP command
 /// channel (report §5.4). Input: UDP only.
 /// </summary>
-[BepInPlugin("com.ac27.approach", "AC27Approach", "1.0.3")]
+[BepInPlugin("com.ac27.approach", "AC27Approach", "1.0.4")]
 public class Plugin : BasePlugin
 {
     public static Plugin Instance;
@@ -88,7 +88,7 @@ public class Plugin : BasePlugin
         var avcType = AccessTools.Property(typeof(Dynamics), "AVCController")?.PropertyType;
         if (avcType != null)
             TryPatch(harmony, "AVC speed-target probe (AVCController.SetTargetSpeed postfix)",
-                AccessTools.Method(avcType, "SetTargetSpeed", new[] { typeof(float) }),
+                AccessTools.Method(avcType, "SetTargetSpeed", new[] { typeof(GroundAtc.Numerics.Speed) }),
                 postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.AvcSetTargetSpeedPostfix))));
         else
             Log.LogWarning("[AC27Approach] AVC speed-target probe: AVCController type not resolved — NOT applied");
@@ -101,7 +101,7 @@ public class Plugin : BasePlugin
         var scType = avcType != null ? AccessTools.Property(avcType, "speedController")?.PropertyType : null;
         if (scType != null)
             TryPatch(harmony, "SpeedController target probe (SpeedController.SetTargetSpeed postfix)",
-                AccessTools.Method(scType, "SetTargetSpeed", new[] { typeof(float) }),
+                AccessTools.Method(scType, "SetTargetSpeed", new[] { typeof(GroundAtc.Numerics.Speed) }),
                 postfix: new HarmonyMethod(typeof(Patches).GetMethod(nameof(Patches.ScSetTargetSpeedPostfix))));
         else
             Log.LogWarning("[AC27Approach] SpeedController target probe: type not resolved — NOT applied");

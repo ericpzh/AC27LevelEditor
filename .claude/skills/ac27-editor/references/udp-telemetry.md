@@ -16,10 +16,11 @@
 
 ```
 ┌──────────────────────┐ 10 Hz UDP port 20266 ┌──────────────────────┐
-│ AC27 Game           │ ──────────────────────→ │ electron/udp_ │
-│ AircraftUdpTelemetry │ │ listener.js │
-│ Service │ ←────────────────────── │ │
-└──────────────────────┘ UDP commands port 20267 │ aircraftMap │
+│ AC27 Game            │ ──────────────────────→ │ electron/udp_ │
+│ AC27Approach plugin  │ │ listener.js │
+│ (TelemetryEmitter /  │ ←────────────────────── │ │
+│  CommandReceiver)    │ UDP commands port 20267 │ aircraftMap │
+└──────────────────────┘ │ trailSnapshots │
  │ trailSnapshots │
  │ currentAirport │
  └──────────┬───────────┘

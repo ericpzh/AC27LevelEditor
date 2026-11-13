@@ -196,7 +196,7 @@ public static class OverrideController
     // on every Aircraft.Step). Read it reflectively so a missing/renamed member
     // degrades to null instead of killing the tick. The operative pause gate is
     // `TimeScale` (0 while paused), which needs no interop member.
-    private static bool? TryReadIsPaused(GameTime gt)
+    internal static bool? TryReadIsPaused(GameTime gt)
     {
         try
         {
@@ -216,11 +216,10 @@ public static class OverrideController
             foreach (var v in UnityEngine.Object.FindObjectsOfType<Aircraft3D>())
             {
                 var src = v.Source;
-                if (src != null && src._dynamics != null && src._dynamics.AircraftFlightMetrics != null
-                    && src._dynamics.AircraftFlightMetrics._gameTime != null)
+                if (src != null)
                 {
-                    GameClock = src._dynamics.AircraftFlightMetrics._gameTime;
-                    break;
+                    if (src._gameTime != null) { GameClock = src._gameTime; break; }
+                    if (src.AircraftFlightMetrics?._gameTime != null) { GameClock = src.AircraftFlightMetrics._gameTime; break; }
                 }
             }
             if (GameClock == null)
@@ -241,7 +240,7 @@ public static class OverrideController
             // ReadOnlyReactiveProperty<bool>) and the vendored/live refs can lag
             // the shipping game, so it is read reflectively — see TryReadIsPaused.
             bool? paused = TryReadIsPaused(GameClock);
-            Plugin.LogMsg($"game-time: clock resolved — Delta {GameClock.Delta:F5} s/tick (stubbed — unused), TimeScale {GameClock.TimeScale:F1}, FixedDeltaTime {GameTime.FixedDeltaTime:F5} s, IsPaused {(paused.HasValue ? paused.Value.ToString() : "?")}");
+            Plugin.LogMsg($"game-time: clock resolved — Delta {SimUnits.ToFloat(GameClock.Delta):F5} s/tick (stubbed — unused), TimeScale {SimUnits.ToFloat(GameClock.TimeScale):F1}, FixedDeltaTime {SimUnits.ToSeconds(GameTime.FixedDeltaTime):F5} s, IsPaused {(paused.HasValue ? paused.Value.ToString() : "?")}");
         }
         if (!_clockFailLogged && GameClock == null)
         {
@@ -264,7 +263,7 @@ public static class OverrideController
                 // time — 1/60 at ×1, 1/6 at ×10, 0 while paused (the
                 // IsPaused gate is a belt-and-suspenders — Aircraft.Step may
                 // not even fire while paused).
-                float dt = GameTime.FixedDeltaTime * GameClock.TimeScale;
+                float dt = (float)(SimUnits.ToSeconds(GameTime.FixedDeltaTime) * SimUnits.ToDouble(GameClock.TimeScale));
                 if (TryReadIsPaused(GameClock) == true) dt = 0f;
                 return Mathf.Max(0f, dt);
             }
@@ -317,8 +316,9 @@ public static class OverrideController
 
         // Before-state: what the game had running before the override.
         // Heading uses the game's own convention (UI shows atan2(dir.x, dir.z) in °).
-        float bHdg = HeadingDeg(ac.Direction);
-        float bSpd = ac.AirSpeedKnot != null ? Convert.ToSingle(ac.AirSpeedKnot.Value) : 0f;
+        var acDir = SimUnits.ToUnityDir(ac.Direction);
+        float bHdg = HeadingDeg(acDir);
+        float bSpd = ac.AirSpeed != null ? SimUnits.ToKnots(ac.AirSpeed.Value) : 0f;
 
         var cmd = direction.sqrMagnitude > 1e-6f ? direction.normalized : Vector3.zero;
 
@@ -336,8 +336,8 @@ public static class OverrideController
         {
             if (existing != null && existing.Current.sqrMagnitude > 1e-6f)
                 current = existing.Current;                             // mid-turn re-command — continue from here
-            else if (ac.Direction.sqrMagnitude > 1e-6f)
-                current = ac.Direction.normalized;                      // fresh command — start from the real nose
+            else if (acDir.sqrMagnitude > 1e-6f)
+                current = acDir.normalized;                             // fresh command — start from the real nose
         }
 
         // Mutate-in-place: a heading command must not disturb an
@@ -383,7 +383,7 @@ public static class OverrideController
 
         // Before-state: the game's own altitude at patch receipt (same channel
         // the editor telemetry derives ft from — position.y).
-        float bAltFt = ac.Position.y * FeetPerGameUnit;
+        float bAltFt = SimUnits.ToUnityPos(ac.Position).y * FeetPerGameUnit;
 
         float rate = rateFpm > 0f ? rateFpm : DefaultAltRateFpm;
 
@@ -446,13 +446,14 @@ public static class OverrideController
         }
 
         // Before-state: the game's own speed (raw knots — same read as patchHeading).
-        float bSpd = ac.AirSpeedKnot != null ? Convert.ToSingle(ac.AirSpeedKnot.Value) : 0f;
+        float bSpd = ac.AirSpeed != null ? SimUnits.ToKnots(ac.AirSpeed.Value) : 0f;
 
         // v12 seed: continue an ACTIVE ramp on re-command (the ramp state is
         // the truth — never re-seed from bSpd, a readback the game may be
         // easing); a fresh command starts from the aircraft's actual speed.
         float seed = (existing != null && existing.SpeedCurrentKts > 0f)
             ? existing.SpeedCurrentKts : bSpd;
+        var seedSpd = SimUnits.FromKnots(seed);
 
         // Arm: data-channel speed fields + the ACL accel constants (mirror the
         // clearForApproach speed block). v12: the arm writes the SEED (the
@@ -461,15 +462,15 @@ public static class OverrideController
         var dp = ac.DynamicsData;
         if (dp != null)
         {
-            dp.TaxiSpeed = seed;
-            dp.TargetTaxiSpeed = seed;
-            dp.DynamicsTargetTaxiSpeed = seed;
+            dp.TaxiSpeed = seedSpd;
+            dp.TargetTaxiSpeed = seedSpd;
+            dp.DynamicsTargetTaxiSpeed = seedSpd;
             dp.ForwardSpeed = true;
-            dp.PositiveTaxiAcceleration = 1f;
-            dp.NegativeTaxiAcceleration = -2f;
+            dp.PositiveTaxiAcceleration = SimUnits.FromKnotsPerSec(1f);
+            dp.NegativeTaxiAcceleration = SimUnits.FromKnotsPerSec(-2f);
         }
-        if (ac.TaxiSpeed != null) ac.TaxiSpeed.Value = seed;
-        if (ac.AirSpeedKnot != null) ac.AirSpeedKnot.Value = seed;
+        if (ac.TaxiSpeed != null) ac.TaxiSpeed.Value = seedSpd;
+        if (ac.AirSpeed != null) ac.AirSpeed.Value = seedSpd;
 
         // Mutate-in-place: a heading/altitude override (Direction/AltTargetFt)
         // survives — speed is orthogonal.
@@ -629,7 +630,7 @@ public static class OverrideController
                 Plugin.LogMsg($"cfa: {ac.CallSign} de-snap dropped (state → {ac._dynamics.CurrentState}) — the aircraft left the approach state");
                 return;
             }
-            var pos = ac.Position;
+            var pos = SimUnits.ToUnityPos(ac.Position);
             Vector3 aim = new Vector3(e.Path0.x - pos.x, 0f, e.Path0.z - pos.z);
             float dist = aim.magnitude;
             // v8-d de-snap diag: every 10 ticks, the nose vs OUR aim vs the
@@ -698,7 +699,7 @@ public static class OverrideController
             // share the entry and must keep writing.
             else if (ac._dynamics != null
                      && ac._dynamics.CurrentState != State.Approaching
-                     && !ac.IsInState(EAircraftState.Fly))
+                     && ac.State != EAircraftState.Fly)
             {
                 e.SpeedFollow = false;
                 Plugin.LogMsg($"speed: {ac.CallSign} override dropped (state → {ac._dynamics.CurrentState}) — the aircraft left the flight states");
@@ -806,24 +807,24 @@ public static class OverrideController
     /// actually follows.)</summary>
     private static void WriteHeading(Aircraft ac, Entry e)
     {
-        ac.Direction = e.Current;
-        if (ac.DirectionReactive != null) ac.DirectionReactive.Value = e.Current;
-        if (ac.Rotation != null) ac.Rotation.Value = HeadingDeg(e.Current);
+        var dir = SimUnits.ToSimDir(e.Current);
+        ac.Direction = dir;
+        if (ac.DirectionReactive != null) ac.DirectionReactive.Value = dir;
+        if (ac.Rotation != null) ac.Rotation.Value = SimUnits.ToFixed(HeadingDeg(e.Current));
     }
 
     /// <summary>Write the smoothed intermediate altitude to the model's
     /// vertical channels — the serialized reactive `_position` (Y only — X/Z
     /// are the game's own, fresh from this Step's dynamics write) and the
-    /// `HeightFeet` readout the game may drive its UI from. The visible view
+    /// `Altitude` readout the game may drive its UI from. The visible view
     /// is locked by the SetWorldPosition channel hijack (Patches).</summary>
     private static void WriteAltitude(Aircraft ac, Entry e)
     {
-        float y = e.AltCurrentFt * GameUnitPerFoot;
-        var p = ac.Position;
-        p.y = y;
+        var altLen = SimUnits.FromFeet(e.AltCurrentFt);
+        var p = ac.Position.WithY(altLen);
         ac.Position = p;
         if (ac.PositionReactive != null) ac.PositionReactive.Value = p;
-        if (ac.HeightFeet != null) ac.HeightFeet.Value = e.AltCurrentFt;   // game readout in ft
+        if (ac.Altitude != null) ac.Altitude.Value = altLen;
     }
 
     /// <summary>One-sample read-back of every heading channel plus the game's
@@ -832,13 +833,13 @@ public static class OverrideController
     /// they prove the game's own flight is untouched.</summary>
     private static void LogDiagnostic(Aircraft ac, Entry e)
     {
-        float propHdg = HeadingDeg(ac.Direction);
-        float rxHdg = ac.DirectionReactive != null ? HeadingDeg(ac.DirectionReactive.Value) : float.NaN;
-        float rot = ac.Rotation != null ? Convert.ToSingle(ac.Rotation.Value) : float.NaN;
+        float propHdg = HeadingDeg(SimUnits.ToUnityDir(ac.Direction));
+        float rxHdg = ac.DirectionReactive != null ? HeadingDeg(SimUnits.ToUnityDir(ac.DirectionReactive.Value)) : float.NaN;
+        float rot = ac.Rotation != null ? SimUnits.ToFloat(ac.Rotation.Value) : float.NaN;
         // Display-only read of the game's own speed (knots) — proves the
         // override never touches it.
-        float kts = ac.TaxiSpeed != null ? Convert.ToSingle(ac.TaxiSpeed.Value)
-                 : ac.AirSpeedKnot != null ? Convert.ToSingle(ac.AirSpeedKnot.Value)
+        float kts = ac.TaxiSpeed != null ? SimUnits.ToKnots(ac.TaxiSpeed.Value)
+                 : ac.AirSpeed != null ? SimUnits.ToKnots(ac.AirSpeed.Value)
                  : float.NaN;
         string view = "none", viewPos = "none", rbVel = "none";
         var v = e.View ?? FindView3D(ac);
@@ -851,10 +852,15 @@ public static class OverrideController
             var rb = v.GetComponent<Rigidbody>();
             if (rb != null) rbVel = rb.velocity.magnitude.ToString("F2");
         }
-        var p = ac.Position;
+        var p = SimUnits.ToUnityPos(ac.Position);
         var dyn = ac._dynamics;
-        string dynPos = dyn != null ? $"({dyn.Position.x:F1},{dyn.Position.y:F1},{dyn.Position.z:F1})" : "none";
-        string dynVel = dyn != null ? dyn.Velocity.magnitude.ToString("F2") : "none";
+        string dynPos = "none";
+        if (dyn != null)
+        {
+            var dp3 = SimUnits.ToUnityPos(dyn.Position);
+            dynPos = $"({dp3.x:F1},{dp3.y:F1},{dp3.z:F1})";
+        }
+        string dynVel = dyn != null ? SimUnits.ToGameUnitsPerSec(dyn.Velocity).ToString("F2") : "none";
         // Altitude after-state: the commanded/smoothed readout vs the target
         // Note the game's own dynPos above shows the game's Y —
         // the "untouched lateral motion" proof.
@@ -873,20 +879,22 @@ public static class OverrideController
         string dynSpd = "dynSpd n/a";
         if (dyn != null)
         {
-            try { stateStr = $"{dyn.CurrentState}/{(ac.IsInState(EAircraftState.Fly) ? "Fly" : ac.IsInState(EAircraftState.Approach) ? "Appr" : "?")}"; } catch { stateStr = "state ?"; }
+            try { stateStr = $"{dyn.CurrentState}/{(ac.State == EAircraftState.Fly ? "Fly" : ac.State == EAircraftState.Approach ? "Appr" : "?")}"; } catch { stateStr = "state ?"; }
             try
             {
-                var afm = dyn.AircraftFlightMetrics;
+                var afm = ac.AircraftFlightMetrics;
                 if (afm != null)
                 {
                     double eta = afm.ETA.TotalSeconds;
+                    double remM = afm.RemainingDistance.Metres.ToDouble();
+                    double remGu = remM * 0.01;
                     afmStr = eta > 0.0
-                        ? $"afmRem {afm.RemainingDistance:F0} afmEta {eta:F1}s pace {(afm.RemainingDistance / eta / 0.51444):F0}kt adj {afm.SpeedAdjustment}"
-                        : $"afmRem {afm.RemainingDistance:F0} afmEta 0s";
+                        ? $"afmRem {remGu:F0} afmEta {eta:F1}s pace {(remM / eta * SimUnits.MpsToKt):F0}kt adj {afm.SpeedAdjustment}"
+                        : $"afmRem {remGu:F0} afmEta 0s";
                 }
             }
             catch { afmStr = "afm ?"; }
-            try { dynSpd = $"dynTs {dyn.TaxiSpeed:F0} dynDTts {dyn.DynamicsTargetTaxiSpeed:F0} dynAir {dyn.AirSpeedKnot:F0}"; } catch { dynSpd = "dynSpd ?"; }
+            try { dynSpd = $"dynTs {SimUnits.ToKnots(dyn.TaxiSpeed):F0} dynDTts {SimUnits.ToKnots(dyn.DynamicsTargetTaxiSpeed):F0} dynAir {SimUnits.ToKnots(dyn.AirSpeed):F0}"; } catch { dynSpd = "dynSpd ?"; }
         }
         Plugin.LogMsg($"diag: {ac.CallSign} step {e.StepCount} spd {kts:F0} pos ({p.x:F1},{p.y:F1},{p.z:F1}) propHdg {propHdg:F2}° rxHdg {rxHdg:F2}° rot {rot:F2}° view3D-euler {view} view3D-pos {viewPos} rbVel {rbVel} dynPos {dynPos} dynVel {dynVel} {altStr} {stateStr} {afmStr} {dynSpd}");
     }
@@ -946,31 +954,34 @@ public static class OverrideController
     private static void LogSpeedCorrelation(Aircraft ac, Entry e, bool after)
     {
         var dyn = ac._dynamics;
-        string react = ac.TaxiSpeed != null ? $"{ac.TaxiSpeed.Value:F0}" : "?";
-        string air = ac.AirSpeedKnot != null ? $"{ac.AirSpeedKnot.Value:F0}" : "?";
+        string react = ac.TaxiSpeed != null ? $"{SimUnits.ToKnots(ac.TaxiSpeed.Value):F0}" : "?";
+        string air = ac.AirSpeed != null ? $"{SimUnits.ToKnots(ac.AirSpeed.Value):F0}" : "?";
         string dynSpd = "dynSpd ?";
         if (dyn != null)
         {
-            try { dynSpd = $"dynTs {dyn.TaxiSpeed:F0} dynDTts {dyn.DynamicsTargetTaxiSpeed:F0} dynAir {dyn.AirSpeedKnot:F0}"; } catch { dynSpd = "dynSpd ?"; }
+            try { dynSpd = $"dynTs {SimUnits.ToKnots(dyn.TaxiSpeed):F0} dynDTts {SimUnits.ToKnots(dyn.DynamicsTargetTaxiSpeed):F0} dynAir {SimUnits.ToKnots(dyn.AirSpeed):F0}"; } catch { dynSpd = "dynSpd ?"; }
         }
         string afmStr = "afm n/a";
-        var afm = dyn != null ? dyn.AircraftFlightMetrics : null;
+        var afm = ac.AircraftFlightMetrics;
         if (afm != null && afm.ETA.TotalSeconds > 0.0)
-            afmStr = $"afmRem {afm.RemainingDistance:F0} afmEta {afm.ETA.TotalSeconds:F1}s pace {(afm.RemainingDistance / afm.ETA.TotalSeconds / 0.51444):F0}kt";
+        {
+            double remM = afm.RemainingDistance.Metres.ToDouble();
+            afmStr = $"afmRem {remM * 0.01:F0} afmEta {afm.ETA.TotalSeconds:F1}s pace {(remM / afm.ETA.TotalSeconds * SimUnits.MpsToKt):F0}kt";
+        }
         // Measured motion: displacement since the previous sample ÷ the game
         // time between samples (10 ticks × GameDt) → kt — the ground truth.
         string pace = "pace n/a";
-        var pos = ac.Position;
+        var pos = SimUnits.ToUnityPos(ac.Position);
         if (e.SpeedLastTick > 0)
         {
             float dt = GameDt();
             if (dt > 0f)
             {
                 float u = Vector3.Distance(pos, e.SpeedLastPos);
-                pace = $"pace {(u / (10f * dt) / 0.51444f):F0}kt (Δu {u:F2})";
+                pace = $"pace {(u * 100f / (10f * dt) * (float)SimUnits.MpsToKt):F0}kt (Δu {u:F2})";
             }
         }
-        // v11: AVC drive readbacks (kt — the AVC surface is knots).
+        // v11: AVC drive readbacks (kt).
         string avcStr = "avc n/a";
         if (dyn?.AVCController != null)
         {
@@ -978,7 +989,7 @@ public static class OverrideController
             {
                 var avc = dyn.AVCController;
                 var sc = avc.speedController;
-                avcStr = $"avcTgt {avc.targetSpeed / 0.51444f:F0} scSpd {(sc != null ? sc.speed / 0.51444f : float.NaN):F0} scTgt {(sc != null ? sc.targetSpeed / 0.51444f : float.NaN):F0}";
+                avcStr = $"avcTgt {SimUnits.ToKnots(avc.targetSpeed):F0} scSpd {(sc != null ? SimUnits.ToKnots(sc.speed) : float.NaN):F0} scTgt {(sc != null ? SimUnits.ToKnots(sc.targetSpeed) : float.NaN):F0}";
             }
             catch { avcStr = "avc ?"; }
         }
@@ -1019,19 +1030,18 @@ public static class OverrideController
     {
         var dyn = ac._dynamics;
         // v12 belt-and-suspenders seed: an entry reaching the drive without
-        // a seed starts from the aircraft's ACTUAL speed. AirSpeedKnot is kt
-        // (the same read as patchSpeed's bSpd) — never sc.speed/avc.targetSpeed,
-        // whose unit convention is ambiguous.
+        // a seed starts from the aircraft's ACTUAL speed.
         if (e.SpeedCurrentKts <= 0f)
         {
-            if (ac.AirSpeedKnot != null) e.SpeedCurrentKts = Convert.ToSingle(ac.AirSpeedKnot.Value);
-            else if (dyn != null) { try { e.SpeedCurrentKts = dyn.AirSpeedKnot; } catch { } }
+            if (ac.AirSpeed != null) e.SpeedCurrentKts = SimUnits.ToKnots(ac.AirSpeed.Value);
+            else if (dyn != null) { try { e.SpeedCurrentKts = SimUnits.ToKnots(dyn.AirSpeed); } catch { } }
         }
         float rampKts = e.AccelKtsPerSec > 0f ? e.AccelKtsPerSec : AvcDriveAccelKtsPerSec;
         // v12: the ramp — pure math, runs even if a surface write below
         // throws. Game-time scaled (GameDt): frozen on pause, ×N at ×N speed.
         e.SpeedCurrentKts = Mathf.MoveTowards(e.SpeedCurrentKts, e.TargetKts, rampKts * GameDt());
         float cur = e.SpeedCurrentKts;   // the ONE value written to every surface
+        var curSpd = SimUnits.FromKnots(cur);
         try
         {
             if (dyn?.AVCController != null)
@@ -1048,12 +1058,12 @@ public static class OverrideController
                         // ControlData.GroundSpeed → Dynamics.Update → motion.
                         // v12: DIRECT write (the MoveTowards on the game's own
                         // field is gone — the ramp IS e.SpeedCurrentKts).
-                        sc.speed = cur;
-                        sc.targetSpeed = cur;
+                        sc.speed = curSpd;
+                        sc.targetSpeed = curSpd;
                     }
                     catch { }
                 }
-                try { avc.targetSpeed = cur; } catch { }
+                try { avc.targetSpeed = curSpd; } catch { }
             }
         }
         catch { }
@@ -1066,20 +1076,20 @@ public static class OverrideController
         {
             if (dyn != null)
             {
-                dyn.TaxiSpeed = cur;
-                dyn.DynamicsTargetTaxiSpeed = cur;
-                dyn.AirSpeedKnot = cur;
+                dyn.TaxiSpeed = curSpd;
+                dyn.DynamicsTargetTaxiSpeed = curSpd;
+                dyn.AirSpeed = curSpd;
             }
             var dp = ac.DynamicsData;
             if (dp != null)
             {
-                dp.TaxiSpeed = cur;
-                dp.TargetTaxiSpeed = cur;
-                dp.DynamicsTargetTaxiSpeed = cur;
+                dp.TaxiSpeed = curSpd;
+                dp.TargetTaxiSpeed = curSpd;
+                dp.DynamicsTargetTaxiSpeed = curSpd;
                 dp.ForwardSpeed = true;
             }
-            if (ac.TaxiSpeed != null) ac.TaxiSpeed.Value = cur;
-            if (ac.AirSpeedKnot != null) ac.AirSpeedKnot.Value = cur;
+            if (ac.TaxiSpeed != null) ac.TaxiSpeed.Value = curSpd;
+            if (ac.AirSpeed != null) ac.AirSpeed.Value = curSpd;
         }
         catch { }
     }
@@ -1244,7 +1254,7 @@ public static class OverrideController
         _overrides.Remove(ac);
 
         // 2) Only aircraft on the STAR can be handed to the approach.
-        if (!ac.IsInState(EAircraftState.Fly)) return false;
+        if (ac.State != EAircraftState.Fly) return false;
 
         // 3) Resolve the approach procedure (RouteType.APP): by name if supplied,
         //    else nearest to the aircraft among the runway's registered APP routes
@@ -1289,7 +1299,7 @@ public static class OverrideController
         //    static path[0]) yet the aircraft still crawling at ~1-4 u/s —
         //    the flight-model pace, which the reschedule at step 5b fixes.
         var flyParams = default(FlyApproachDynamicsParams);
-        var sourceNodes = new List<Vector3>();
+        var sourceNodes = new List<GroundAtc.Numerics.Position3>();
         // 4a) Path reference — the aircraft's own procedure (for the state
         //     check + the gate-bypass params). Same interop gotcha as
         //     everywhere in this project: the interface-typed getter wraps
@@ -1333,7 +1343,7 @@ public static class OverrideController
         //     own procedure (IAF → threshold) as an Il2Cpp list. The game's
         //     own ApproachState.Init derives exactly this from AppPointList —
         //     the 6b state check VERIFIES it rather than rewriting.
-        var expectedPath = new Il2CppSystem.Collections.Generic.List<Vector3>();
+        var expectedPath = new Il2CppSystem.Collections.Generic.List<GroundAtc.Numerics.Position3>();
         for (int i = 0; i < sourceNodes.Count; i++) expectedPath.Add(sourceNodes[i]);
 
         // 5) Speed. No params plant (v5): the game's own ApproachState.Init
@@ -1363,15 +1373,17 @@ public static class OverrideController
         // (deep-failure path — no per-tick drive), the accel constants let the
         // game's OWN integration lift toward apprSpeedKts from the actual
         // speed (pre-v11 semantics, still progressing — never a snap).
-        float cfaSeedKts = ac.AirSpeedKnot != null ? Convert.ToSingle(ac.AirSpeedKnot.Value) : apprSpeedKts;
+        float cfaSeedKts = ac.AirSpeed != null ? SimUnits.ToKnots(ac.AirSpeed.Value) : apprSpeedKts;
         float cfaRampKts = speedAccelKtsPerSec > 0f ? speedAccelKtsPerSec : AvcDriveAccelKtsPerSec;
-        dp.TaxiSpeed = cfaSeedKts;
-        dp.TargetTaxiSpeed = cfaSeedKts;
-        dp.DynamicsTargetTaxiSpeed = cfaSeedKts;
-        if (ac.TaxiSpeed != null) ac.TaxiSpeed.Value = cfaSeedKts;
-        if (ac.AirSpeedKnot != null) ac.AirSpeedKnot.Value = cfaSeedKts;
+        var cfaSeedSpd = SimUnits.FromKnots(cfaSeedKts);
+        dp.TaxiSpeed = cfaSeedSpd;
+        dp.TargetTaxiSpeed = cfaSeedSpd;
+        dp.DynamicsTargetTaxiSpeed = cfaSeedSpd;
+        if (ac.TaxiSpeed != null) ac.TaxiSpeed.Value = cfaSeedSpd;
+        if (ac.AirSpeed != null) ac.AirSpeed.Value = cfaSeedSpd;
         dp.ForwardSpeed = true;
-        dp.PositiveTaxiAcceleration = 1f; dp.NegativeTaxiAcceleration = -2f;   // ACL constants
+        dp.PositiveTaxiAcceleration = SimUnits.FromKnotsPerSec(1f);
+        dp.NegativeTaxiAcceleration = SimUnits.FromKnotsPerSec(-2f);   // ACL constants
         // log audit: per-handoff event log — commented out; uncomment to re-enable
         // Plugin.LogMsg($"cfa: {callsign} speed: ts={cfaSeedKts:F0} tts={cfaSeedKts:F0} dtts={cfaSeedKts:F0} fwd=True accel 1/-2 → ramp {cfaSeedKts:F0}→{apprSpeedKts:F0} kt at {cfaRampKts:F0} kt/s{(speedKnots > 0f ? "" : " (default 240)")}");
 
@@ -1406,7 +1418,7 @@ public static class OverrideController
         }
         // log audit: per-handoff event log — commented out; uncomment to re-enable
         // else Plugin.LogMsg($"cfa: {callsign} CommandContinueApproach SKIPPED (native=0)");
-        if (ac.IsInState(EAircraftState.Fly))
+        if (ac.State == EAircraftState.Fly)
         {
             try
             {
@@ -1451,12 +1463,13 @@ public static class OverrideController
                 // approach path start; its steering must not be fought).
                 void ArmDeSnap()
                 {
+                    var curDir = SimUnits.ToUnityDir(ac.Direction);
                     var deSnap = new Entry {
                         Direction = Vector3.zero,   // set per-tick by the de-snap branch in OnAircraftStep
-                        Current = ac.Direction.sqrMagnitude > 1e-6f ? ac.Direction.normalized : new Vector3(0f, 0f, 1f),
+                        Current = curDir.sqrMagnitude > 1e-6f ? curDir.normalized : new Vector3(0f, 0f, 1f),
                         TurnRateDeg = turnRateDeg > 0f ? turnRateDeg : 3f,   // frame rate or the plugin's standard default
                         CfaFollow = true,
-                        Path0 = expectedPath[0],
+                        Path0 = SimUnits.ToUnityPos(expectedPath[0]),
                         TargetKts = apprSpeedKts,
                         SpeedCurrentKts = cfaSeedKts,        // v12: ramp from the actual speed (the local above — local functions close over it)
                         AccelKtsPerSec = speedAccelKtsPerSec, // v12: 0 = the plugin default 5 kt/s
@@ -1468,40 +1481,19 @@ public static class OverrideController
 
                 if (curOb.ObjectClass == Il2CppClassPointerStore<ApproachState>.NativeClassPtr)
                 {
-                    // log audit: per-handoff state-check dump — commented out; uncomment to re-enable
-                    // var st = new ApproachState(curOb.Pointer);
-                    // bool pathMismatch = PathMismatch(st._pathPointList, expectedPath);
-                    // bool rtMismatch = st._runtimeData == null || PathMismatch(st._runtimeData.PathPointList, expectedPath);
-                    // Plugin.LogMsg($"cfa: {callsign} state check: ApproachState stPath={ParamTrace.ListSummary(st._pathPointList)} stPr={st.GetProgressRatio():F3}{ParamTrace.ApproachStateDiag(st, ac.Position)} — {(pathMismatch ? "PATH MISMATCH (Init derived something else than the aircraft's own procedure?)" : "path ok (aircraft's own procedure)")}{(rtMismatch ? " RT MISMATCH" : " rt ok")}");
-                    // No rewrite: the aircraft's own procedure is correct by
-                    // definition; a mismatch here means a game flow re-derived
-                    // the path from other data — logged for the watch read.
                     ArmDeSnap();
                 }
                 else if (curOb.ObjectClass == Il2CppClassPointerStore<FlyApproachState>.NativeClassPtr)
                 {
-                    // Live: the transition NEVER activates the state
-                    // OBJECT. The fires flipped the enum (dyn.CurrentState →
-                    // Approaching — the AFTER dump read Appr(5)/Approaching)
-                    // but `_currentState` stayed FlyApproachState through all
-                    // 90 watch steps: the game's Fly→Approach transition is
-                    // gated by FlyToApproachCondition (the aircraft must be at
-                    // the STAR's transition point; ours was mid-STAR), so the
-                    // fires' transition was silently dropped. Bypass the gate
-                    // via the CANONICAL transition entry — the game's own
-                    // SetCurrentState(IDynamicState, IDynamicsParams), which
-                    // every real transition flows through and Inits the
-                    // activated state from the params. Use the dynamics'
-                    // pre-created ApproachState instance (nothing minted). If
-                    // SetCurrentState itself refuses, last resort is a direct
-                    // `_currentState` field force. Every path is logged.
+                    var lastU = SimUnits.ToUnityPos(expectedPath[expectedPath.Count - 1]);
+                    var prevU = SimUnits.ToUnityPos(expectedPath[expectedPath.Count - 2]);
                     var p2 = new ApproachDynamicsParams {
-                        ProgressRatio = 0f,                           // game re-derives pose from path (ACL constant)
-                        TouchDownPosition = runway.TouchDownPosition, // public getter — runway threshold
-                        ApproachDirection = (expectedPath[expectedPath.Count - 1] - expectedPath[expectedPath.Count - 2]).normalized,
+                        ProgressRatio = SimUnits.ToFixed(0f),                         // game re-derives pose from path (ACL constant)
+                        TouchDownPosition = runway.TouchDownPosition,                 // public getter — runway threshold
+                        ApproachDirection = SimUnits.ToSimDir((lastU - prevU).normalized),
                         CommandedGoAround = false,
-                        InitialPosition = new Vector3(ac.Position.x, 15.24f, ac.Position.z),   // the aircraft's pose — what the game's own Init computes
-                        PathPointList = expectedPath,                 // the aircraft's OWN procedure (IAF → threshold)
+                        InitialPosition = ac.Position.WithY(SimUnits.FromFeet(5000f)), // 15.24 GU = 5000 ft approach ceiling
+                        PathPointList = expectedPath,                                 // the aircraft's OWN procedure (IAF → threshold)
                     };
                     Plugin.LogMsg($"cfa: {callsign} state check: STILL FlyApproachState — the transition did not take (gate) — attempting SetCurrentState bypass");
                     var dyn2 = ac._dynamics;
@@ -1510,7 +1502,7 @@ public static class OverrideController
                     {
                         try
                         {
-                            Plugin.LogMsg($"cfa: {callsign} bypass: _approachState stPath={ParamTrace.ListSummary(apprSt._pathPointList)} stPr={apprSt.GetProgressRatio():F3} — calling SetCurrentState(_approachState, own-procedure params)");
+                            Plugin.LogMsg($"cfa: {callsign} bypass: _approachState stPath={ParamTrace.ListSummary(apprSt._pathPointList)} stPr={SimUnits.ToFloat(apprSt.GetProgressRatio()):F3} — calling SetCurrentState(_approachState, own-procedure params)");
                             // Interface-proxy gotcha (the same one everywhere in
                             // this project): the stub's concrete states do NOT
                             // cast to IDynamicState — the interface has its own
@@ -1522,14 +1514,14 @@ public static class OverrideController
                             {
                                 var st2 = new ApproachState(cur2.Pointer);
                                 bool mismatch2 = PathMismatch(st2._pathPointList, expectedPath);
-                                Plugin.LogMsg($"cfa: {callsign} bypass: SetCurrentState → ApproachState stPath={ParamTrace.ListSummary(st2._pathPointList)} stPr={st2.GetProgressRatio():F3}{ParamTrace.ApproachStateDiag(st2, ac.Position)} — {(mismatch2 ? "MISMATCH — rewriting to the aircraft's own procedure" : "matches the aircraft's own procedure")}");
+                                Plugin.LogMsg($"cfa: {callsign} bypass: SetCurrentState → ApproachState stPath={ParamTrace.ListSummary(st2._pathPointList)} stPr={SimUnits.ToFloat(st2.GetProgressRatio()):F3}{ParamTrace.ApproachStateDiag(st2, SimUnits.ToUnityPos(ac.Position), ac)} — {(mismatch2 ? "MISMATCH — rewriting to the aircraft's own procedure" : "matches the aircraft's own procedure")}");
                                 if (mismatch2)
                                 {
                                     st2._pathPointList = expectedPath;
                                     st2._initialPosition = p2.InitialPosition;
                                     st2._approachDirection = p2.ApproachDirection;
                                     st2._touchDownPosition = p2.TouchDownPosition;
-                                    st2.startingProgress = 0f;
+                                    st2.startingProgress = SimUnits.ToFixed(0f);
                                     st2._runtimeData = p2;
                                     Plugin.LogMsg($"cfa: {callsign} bypass: ApproachState path + Init fields + _runtimeData rewritten ({expectedPath.Count} pts)");
                                 }
@@ -1554,7 +1546,7 @@ public static class OverrideController
                                 apprSt._initialPosition = p2.InitialPosition;
                                 apprSt._approachDirection = p2.ApproachDirection;
                                 apprSt._touchDownPosition = p2.TouchDownPosition;
-                                apprSt.startingProgress = 0f;
+                                apprSt.startingProgress = SimUnits.ToFixed(0f);
                                 if (apprSt._runtimeData != null) apprSt._runtimeData = p2;
                                 dp.DynamicsParams = p2;
                                 _plantedParams[ac] = p2.Pointer;
@@ -1673,41 +1665,22 @@ public static class OverrideController
     /// LAST point only — enough to prove the active state carries the
     /// aircraft's own procedure (the game's Init-derived path is the same
     /// point sequence; first-point differences are cosmetic).</summary>
-    private static bool PathMismatch(Il2CppSystem.Collections.Generic.List<Vector3> l,
-                                     Il2CppSystem.Collections.Generic.List<Vector3> expected)
+    private static bool PathMismatch(Il2CppSystem.Collections.Generic.List<GroundAtc.Numerics.Position3> l,
+                                     Il2CppSystem.Collections.Generic.List<GroundAtc.Numerics.Position3> expected)
         => l == null || expected == null || l.Count != expected.Count
-        || (l.Count > 0 && l[l.Count - 1] != expected[expected.Count - 1]);
+        || (l.Count > 0 && !l[l.Count - 1].Equals(expected[expected.Count - 1]));
 
-    /// <summary>v11: DORMANT — all callers removed. The v5–v10
-    /// flight-model reschedule shifted BOTH the plan anchor and _appRouteTime
-    /// by (ETA − remaining/speed) so ETA = remaining/speed and the model's
-    /// pace target = the commanded knots (the crawl = rem/ETA against the
-    /// level schedule's ~8-min-out landing time). Root-cause analysis (v11,
-    /// from the v10 live log) proved the shift CANNOT change the pace: rem
-    /// and ETA are end-anchored (rem ≈ pace × ETA with the pace baked in at
-    /// Init — the stale STAR pace) — after the −1020 s dispatch shift ETA
-    /// read 1033→12.3 s BUT rem collapsed 1276→15 u in the same tick (15 ≈
-    /// 12.3 × 1.23), and the per-tick re-assert (recomputing newEta from the
-    /// collapsed rem, no floor) cascaded ETA to 0.1 s, rem → 0 — which is
-    /// exactly what flipped the model into IncreaseDecelerate → the ~144 kt
-    /// Vapp ease that defeated the override. The AVC drive (DriveAvcSpeed)
-    /// re-paces the aircraft directly; the model recomputes rem/ETA from the
-    /// driven speed. Retained ONLY as the fallback-ladder API (L3: re-anchor
-    /// via _appRouteTime without shifting the plan end), guarded so it can
-    /// never collapse a model: bail on rem < RescheduleMinRemU (a collapsed
-    /// model) and never shift when ETA is already <= the target. Raw-ticks
-    /// shift — the interop exposes the IL2CPP BCL's DateTime/TimeSpan with no
-    /// managed operators in the stubs. `entry` rate-limits the log: the
-    /// first 3 fires, then every 30th.</summary>
     private static void RescheduleEta(Aircraft ac, float speedKts, string tag, Entry entry = null)
     {
         try
         {
-            var afm = ac._dynamics?.AircraftFlightMetrics;
+            var afm = ac.AircraftFlightMetrics;
             if (afm == null || afm.FlightPlan == null || afm.ETA.TotalSeconds <= 0.0) return;
-            double speedMs = speedKts * 0.51444;
-            double newEtaSec = afm.RemainingDistance / speedMs;
-            if (afm.RemainingDistance < RescheduleMinRemU) return;   // v11: never re-shift a collapsed model
+            double speedMs = speedKts * SimUnits.KtToMps;
+            double remMetres = afm.RemainingDistance.Metres.ToDouble();
+            double remGu = remMetres * 0.01;
+            double newEtaSec = remMetres / speedMs;
+            if (remGu < RescheduleMinRemU) return;                   // v11: never re-shift a collapsed model
             if (afm.ETA.TotalSeconds <= newEtaSec) return;           // v11: never shift backward / below the target
             if (afm.ETA.TotalSeconds <= newEtaSec + 5.0) return;     // v7 idempotency guard (kept)
             if (entry != null)
@@ -1716,12 +1689,13 @@ public static class OverrideController
                 if (entry.RescheduleLogs > 3 && entry.RescheduleLogs % 30 != 0) return;
             }
             double beforeEta = afm.ETA.TotalSeconds;
-            long shiftTicks = (long)((beforeEta - newEtaSec) * TimeSpan.TicksPerSecond);
+            double shiftSec = beforeEta - newEtaSec;
+            long shiftTicks = (long)(shiftSec * TimeSpan.TicksPerSecond);
             var plan = afm.FlightPlan;
             var end = plan.GetEndTime(EFlightDirection.Arrival);
             plan.SetEndTime(EFlightDirection.Arrival, new Il2CppSystem.DateTime(end.Ticks - shiftTicks));
-            afm._appRouteTime = new Il2CppSystem.TimeSpan(afm._appRouteTime.Ticks - shiftTicks);
-            Plugin.LogMsg($"cfa: {ac.CallSign} flight-model reschedule v2 ({tag}): ETA {beforeEta:F0} s → {newEtaSec:F1} s (rem {afm.RemainingDistance:F0} u) — plan anchor AND _appRouteTime shifted −{shiftTicks / TimeSpan.TicksPerSecond:F0} s — pace target = {speedKts:F0} kt");
+            afm._appRouteTime = SimUnits.FromSeconds(SimUnits.ToSeconds(afm._appRouteTime) - shiftSec);
+            Plugin.LogMsg($"cfa: {ac.CallSign} flight-model reschedule v2 ({tag}): ETA {beforeEta:F0} s → {newEtaSec:F1} s (rem {remGu:F0} u) — plan anchor AND _appRouteTime shifted −{shiftTicks / TimeSpan.TicksPerSecond:F0} s — pace target = {speedKts:F0} kt");
         }
         catch (Exception ex)
         {

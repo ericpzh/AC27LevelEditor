@@ -62,15 +62,15 @@ public static class Patches
     // sync) carries the commanded heading instead. Idempotent with our own
     // postfix writes — they read the same commanded value. (Position is NOT
     // locked — game-owned.)
-    public static void SetDirectionPrefix(Aircraft __instance, ref Vector3 value)
+    public static void SetDirectionPrefix(Aircraft __instance, ref GroundAtc.Numerics.Direction3 value)
     {
         if (!OverrideController.IsOverridden(__instance)) return;
         // cfa-turn mode: this prefix sees the game's TRUE
         // path-tangent heading (the only place it is visible — everything
         // else reads the substituted value) — pass it through so
         // CommandedDirection can stash it as the rotation target.
-        var d = OverrideController.CommandedDirection(__instance, value);
-        if (d.sqrMagnitude > 1e-6f) value = d;
+        var d = OverrideController.CommandedDirection(__instance, SimUnits.ToUnityDir(value));
+        if (d.sqrMagnitude > 1e-6f) value = SimUnits.ToSimDir(d);
     }
 
     // ── UDP Mechanism A: `!`-prefixed callsigns are patch frames (§5.4) ─
@@ -450,16 +450,11 @@ public static class Patches
     // + the armed-value filter live in OverrideController: our own re-asserts
     // write exactly the armed TargetKts and are filtered; a hit is BY
     // DEFINITION a game-side write of a different target.
-    public static void AvcSetTargetSpeedPostfix(Il2CppObjectBase __instance, float speed)
+    public static void AvcSetTargetSpeedPostfix(Il2CppObjectBase __instance, GroundAtc.Numerics.Speed value)
     {
-        // NOTE: the parameter MUST be named `speed` — Harmony binds postfix
-        // params by NAME, and the game's method is SetTargetSpeed(float speed)
-        // (the real type is ContextCross.AutonomousVehicleControl.Controller —
-        // what Dynamics.AVCController is typed as). A `value`-named param
-        // fails with "Parameter 'value' not found" (the documented field-
-        // accessor signature — this one is a genuine method, so the rename
-        // fixes it; the field-accessor case is NOT patchable either way).
-        try { OverrideController.OnAvcTargetWrite(__instance, speed); }
+        // NOTE: Harmony binds postfix params by NAME, and the game's 2026-11
+        // method is SetTargetSpeed(GroundAtc.Numerics.Speed value).
+        try { OverrideController.OnAvcTargetWrite(__instance, SimUnits.ToKnots(value)); }
         catch { }   // never throw into the game's speed controller
     }
 
@@ -468,10 +463,10 @@ public static class Patches
     // probe caught NO game-side AVCController.SetTargetSpeed calls live, so
     // the game either writes the targetSpeed field directly or targets the
     // ramp instead). Same postfix shape as the AVC probe — the parameter MUST
-    // be named `speed` (Harmony name-binding; see the note above).
-    public static void ScSetTargetSpeedPostfix(Il2CppObjectBase __instance, float speed)
+    // be named `value` (Harmony name-binding; see the note above).
+    public static void ScSetTargetSpeedPostfix(Il2CppObjectBase __instance, GroundAtc.Numerics.Speed value)
     {
-        try { OverrideController.OnScTargetWrite(__instance, speed); }
+        try { OverrideController.OnScTargetWrite(__instance, SimUnits.ToKnots(value)); }
         catch { }   // never throw into the game's speed controller
     }
 

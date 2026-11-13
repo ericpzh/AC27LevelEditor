@@ -70,18 +70,18 @@ public static class ParamTrace
     public static string BuildDump(Aircraft ac)
     {
         var sb = new StringBuilder();
-        var p = ac.Position;
+        var p = SimUnits.ToUnityPos(ac.Position);
         sb.Append("pos (").Append(F(p.x)).Append(',').Append(F(p.y)).Append(',').Append(F(p.z)).Append(')');
         sb.Append(" alt ").Append((p.y * OverrideController.FeetPerGameUnit).ToString("F0")).Append("ft");
-        sb.Append(" hdg ").Append(OverrideController.GameHeading(ac.Direction).ToString("F0")).Append('°');
-        float spd = ac.TaxiSpeed != null ? Convert.ToSingle(ac.TaxiSpeed.Value)
-                  : ac.AirSpeedKnot != null ? Convert.ToSingle(ac.AirSpeedKnot.Value)
+        sb.Append(" hdg ").Append(OverrideController.GameHeading(SimUnits.ToUnityDir(ac.Direction)).ToString("F0")).Append('°');
+        float spd = ac.TaxiSpeed != null ? SimUnits.ToKnots(ac.TaxiSpeed.Value)
+                  : ac.AirSpeed != null ? SimUnits.ToKnots(ac.AirSpeed.Value)
                   : float.NaN;
         sb.Append(" spd ").Append(spd.ToString("F0")).Append("kt");
         sb.Append(" acState ");
-        if (ac.IsInState(EAircraftState.Fly)) sb.Append("Fly(30)");
-        else if (ac.IsInState(EAircraftState.Approach)) sb.Append("Appr(5)");
-        else sb.Append('?');
+        if (ac.State == EAircraftState.Fly) sb.Append("Fly(30)");
+        else if (ac.State == EAircraftState.Approach) sb.Append("Appr(5)");
+        else sb.Append(ac.State);
         var dyn = ac._dynamics;
         if (dyn != null)
         {
@@ -96,7 +96,7 @@ public static class ParamTrace
             // Init-captured at activation). The game's path-following reads
             // THESE, not the data channel — so this is the list the aircraft
             // is actually flying (STAR tail vs full ILS procedure at a glance).
-            sb.Append(" st=").Append(DescribeState(dyn, p));
+            sb.Append(" st=").Append(DescribeState(dyn, p, ac));
         }
         else sb.Append(" dyn=<null>");
 
@@ -107,9 +107,9 @@ public static class ParamTrace
         // aircraft-level `spd` read above does NOT reflect these; the approach
         // path-following speed comes from the channel (prime suspect: kts-less
         // frames left them unset → the ~1-4 u/s crawl instead of 240 kt).
-        sb.Append(" chTs=").Append(F(dp.TaxiSpeed));
-        sb.Append(" chTts=").Append(F(dp.TargetTaxiSpeed));
-        sb.Append(" chDTts=").Append(F(dp.DynamicsTargetTaxiSpeed));
+        sb.Append(" chTs=").Append(F(SimUnits.ToKnots(dp.TaxiSpeed)));
+        sb.Append(" chTts=").Append(F(SimUnits.ToKnots(dp.TargetTaxiSpeed)));
+        sb.Append(" chDTts=").Append(F(SimUnits.ToKnots(dp.DynamicsTargetTaxiSpeed)));
         sb.Append(" chFwd=").Append(dp.ForwardSpeed);
         // Actual motion + dynamics-level speed (v4): chTs=240 alone
         // does NOT prove the aircraft moves at 240 kt — the live-log crawl
@@ -121,10 +121,10 @@ public static class ParamTrace
         // the wrong surface.
         if (dyn != null)
         {
-            sb.Append(" dynVel=").Append(dyn.Velocity.magnitude.ToString("F2"));
-            try { sb.Append(" dynTs=").Append(F(dyn.TaxiSpeed)); } catch { sb.Append(" dynTs=?"); }
-            try { sb.Append(" dynDTts=").Append(F(dyn.DynamicsTargetTaxiSpeed)); } catch { sb.Append(" dynDTts=?"); }
-            try { sb.Append(" dynAir=").Append(F(dyn.AirSpeedKnot)); } catch { sb.Append(" dynAir=?"); }
+            sb.Append(" dynVel=").Append(SimUnits.ToGameUnitsPerSec(dyn.Velocity).ToString("F2"));
+            try { sb.Append(" dynTs=").Append(F(SimUnits.ToKnots(dyn.TaxiSpeed))); } catch { sb.Append(" dynTs=?"); }
+            try { sb.Append(" dynDTts=").Append(F(SimUnits.ToKnots(dyn.DynamicsTargetTaxiSpeed))); } catch { sb.Append(" dynDTts=?"); }
+            try { sb.Append(" dynAir=").Append(F(SimUnits.ToKnots(dyn.AirSpeed))); } catch { sb.Append(" dynAir=?"); }
         }
         var v3d = OverrideController.FindView3D(ac);
         if (v3d != null && v3d.transform != null)
@@ -158,7 +158,7 @@ public static class ParamTrace
     /// and re-wrap. For the two flight states the state's own list summary
     /// and progress ratio are included; `pos` (the aircraft's position) feeds
     /// the ApproachState hold diagnostics.</summary>
-    private static string DescribeState(Dynamics dyn, Vector3 pos)
+    private static string DescribeState(Dynamics dyn, Vector3 pos, Aircraft ac = null)
     {
         var cur = dyn._currentState;
         if (cur is Il2CppObjectBase ob)
@@ -168,12 +168,12 @@ public static class ParamTrace
                 if (ob.ObjectClass == Il2CppClassPointerStore<ApproachState>.NativeClassPtr)
                 {
                     var s = new ApproachState(ob.Pointer);
-                    return $"ApproachState stPath={ListSummary(s._pathPointList)} stPr={s.GetProgressRatio():F3}{ApproachStateDiag(s, pos)}";
+                    return $"ApproachState stPath={ListSummary(s._pathPointList)} stPr={SimUnits.ToFloat(s.GetProgressRatio()):F3}{ApproachStateDiag(s, pos, ac)}";
                 }
                 if (ob.ObjectClass == Il2CppClassPointerStore<FlyApproachState>.NativeClassPtr)
                 {
                     var s = new FlyApproachState(ob.Pointer);
-                    return $"FlyApproachState stPath={ListSummary(s._flyApproachPathPointList)} stPr={s.GetProgressRatio():F3}";
+                    return $"FlyApproachState stPath={ListSummary(s._flyApproachPathPointList)} stPr={SimUnits.ToFloat(s.GetProgressRatio()):F3}";
                 }
                 return $"state 0x{ob.ObjectClass.ToInt64():X}";
             }
@@ -202,12 +202,12 @@ public static class ParamTrace
                 if (ob.ObjectClass == Il2CppClassPointerStore<ApproachDynamicsParams>.NativeClassPtr)
                 {
                     var appr = new ApproachDynamicsParams(ob.Pointer);
-                    return $"ApproachDynamicsParams pr={appr.ProgressRatio:F3} path={ListSummary(appr.PathPointList)} init={V(appr.InitialPosition)} tdp={V(appr.TouchDownPosition)} dir={V(appr.ApproachDirection)} goAround={appr.CommandedGoAround}";
+                    return $"ApproachDynamicsParams pr={SimUnits.ToFloat(appr.ProgressRatio):F3} path={ListSummary(appr.PathPointList)} init={V(appr.InitialPosition)} tdp={V(appr.TouchDownPosition)} dir={V(appr.ApproachDirection)} goAround={appr.CommandedGoAround}";
                 }
                 if (ob.ObjectClass == Il2CppClassPointerStore<FlyApproachDynamicsParams>.NativeClassPtr)
                 {
                     var fly = new FlyApproachDynamicsParams(ob.Pointer);
-                    return $"FlyApproachDynamicsParams pr={fly.ProgressRatio:F3} flyPath={ListSummary(fly.FlyApproachPathPointList)} appPts={ListSummary(fly.AppPointList)}";
+                    return $"FlyApproachDynamicsParams pr={SimUnits.ToFloat(fly.ProgressRatio):F3} flyPath={ListSummary(fly.FlyApproachPathPointList)} appPts={ListSummary(fly.AppPointList)}";
                 }
                 return $"IDynamicsParams (class 0x{ob.ObjectClass.ToInt64():X})";
             }
@@ -219,16 +219,16 @@ public static class ParamTrace
         switch (p)
         {
             case FlyApproachDynamicsParams fly:
-                return $"FlyApproachDynamicsParams pr={fly.ProgressRatio:F3} flyPath={ListSummary(fly.FlyApproachPathPointList)} appPts={ListSummary(fly.AppPointList)}";
+                return $"FlyApproachDynamicsParams pr={SimUnits.ToFloat(fly.ProgressRatio):F3} flyPath={ListSummary(fly.FlyApproachPathPointList)} appPts={ListSummary(fly.AppPointList)}";
             case ApproachDynamicsParams appr:
-                return $"ApproachDynamicsParams pr={appr.ProgressRatio:F3} path={ListSummary(appr.PathPointList)} init={V(appr.InitialPosition)} tdp={V(appr.TouchDownPosition)} dir={V(appr.ApproachDirection)} goAround={appr.CommandedGoAround}";
+                return $"ApproachDynamicsParams pr={SimUnits.ToFloat(appr.ProgressRatio):F3} path={ListSummary(appr.PathPointList)} init={V(appr.InitialPosition)} tdp={V(appr.TouchDownPosition)} dir={V(appr.ApproachDirection)} goAround={appr.CommandedGoAround}";
             default:
                 return p?.GetType().Name ?? "<null>";
         }
     }
 
     /// <summary>len + first/last of a path list — public for the state-copy check.</summary>
-    public static string ListSummary(Il2CppSystem.Collections.Generic.List<Vector3> list)
+    public static string ListSummary(Il2CppSystem.Collections.Generic.List<GroundAtc.Numerics.Position3> list)
     {
         if (list == null) return "<null>";
         int n = list.Count;
@@ -246,26 +246,29 @@ public static class ParamTrace
     /// (AircraftFlightMetrics is Init-built from the flight plan — not
     /// rebuildable from the plugin). Public for the state-check verdict line.
     /// Never throws — returns "" on any interop failure.</summary>
-    public static string ApproachStateDiag(ApproachState st, Vector3 acPos)
+    public static string ApproachStateDiag(ApproachState st, Vector3 acPos, Aircraft ac = null)
     {
         try
         {
             var sb = new StringBuilder();
             sb.Append(" stInit=").Append(V(st._initialPosition));
-            sb.Append(" stSP=").Append(st.startingProgress.ToString("F3"));
+            sb.Append(" stSP=").Append(SimUnits.ToFloat(st.startingProgress).ToString("F3"));
             var lp = st._pathPointList;
-            if (lp != null && lp.Count > 0) sb.Append(" stA0=").Append(Dist2(acPos, lp[0])).Append('/').Append(Dist3(acPos, lp[0]));
+            if (lp != null && lp.Count > 0) sb.Append(" stA0=").Append(Dist2(acPos, SimUnits.ToUnityPos(lp[0]))).Append('/').Append(Dist3(acPos, SimUnits.ToUnityPos(lp[0])));
             var rd = st._runtimeData;
             if (rd != null && rd.PathPointList != null && rd.PathPointList.Count > 0)
-                sb.Append(" rtA0=").Append(Dist2(acPos, rd.PathPointList[0])).Append('/').Append(Dist3(acPos, rd.PathPointList[0]));
-            if (st.afm != null)
+                sb.Append(" rtA0=").Append(Dist2(acPos, SimUnits.ToUnityPos(rd.PathPointList[0]))).Append('/').Append(Dist3(acPos, SimUnits.ToUnityPos(rd.PathPointList[0])));
+            var afm = ac?.AircraftFlightMetrics;
+            if (afm == null && st.afm is Il2CppObjectBase afmOb && afmOb.ObjectClass == Il2CppClassPointerStore<AircraftFlightMetrics>.NativeClassPtr)
+                afm = new AircraftFlightMetrics(afmOb.Pointer);
+            if (afm != null)
             {
-                sb.Append(" afmRem=").Append(st.afm.RemainingDistance.ToString("F1"));
-                try { sb.Append(" afmAppT=").Append(st.afm._appRouteTime); } catch { sb.Append(" afmAppT=?"); }
+                sb.Append(" afmRem=").Append(SimUnits.ToGameUnits(afm.RemainingDistance).ToString("F1"));
+                try { sb.Append(" afmAppT=").Append(SimUnits.ToSeconds(afm._appRouteTime).ToString("F1")).Append('s'); } catch { sb.Append(" afmAppT=?"); }
                 // v4: the docs' §8.17 "next suspect" once chTs=240
                 // is visible — the flight model's speed adjustment + plan ETA.
-                try { sb.Append(" afmAdj=").Append(st.afm.SpeedAdjustment); } catch { sb.Append(" afmAdj=?"); }
-                try { sb.Append(" afmETA=").Append(st.afm.ETA); } catch { sb.Append(" afmETA=?"); }
+                try { sb.Append(" afmAdj=").Append(afm.SpeedAdjustment); } catch { sb.Append(" afmAdj=?"); }
+                try { sb.Append(" afmETA=").Append(afm.ETA); } catch { sb.Append(" afmETA=?"); }
             }
             return sb.ToString();
         }
@@ -276,6 +279,8 @@ public static class ParamTrace
     private static string Dist3(Vector3 a, Vector3 b) => Vector3.Distance(a, b).ToString("F1");
 
     private static string V(Vector3 v) => $"({v.x:F1},{v.y:F1},{v.z:F1})";
+    private static string V(GroundAtc.Numerics.Position3 p) => V(SimUnits.ToUnityPos(p));
+    private static string V(GroundAtc.Numerics.Direction3 d) => V(SimUnits.ToUnityDir(d));
     private static string F(float x) => x.ToString("F1");
 }
 

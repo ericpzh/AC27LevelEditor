@@ -213,9 +213,9 @@ internal sealed class TelemetryEmitter : MonoBehaviour
         if (_gameTime == null) return;
         try
         {
-            float ts = _gameTime.TimeScale;
+            float ts = SimUnits.ToFloat(_gameTime.TimeScale);
             timeScale = Mathf.Clamp(Mathf.RoundToInt(ts), 0, 255);
-            if (ts <= 0f) paused = 1;
+            if (ts <= 0f || OverrideController.TryReadIsPaused(_gameTime) == true) paused = 1;
         }
         catch { }
     }
@@ -424,8 +424,8 @@ internal sealed class TelemetryEmitter : MonoBehaviour
         b[rec + TelemetryProtocol.RStatus] = Status(ac);
         WriteVec3(b, rec + TelemetryProtocol.RPosition, SafePosition(ac));
         WriteVec3(b, rec + TelemetryProtocol.RNose, SafeDirection(ac));
-        WriteFloat(b, rec + TelemetryProtocol.RTaxiSpeed, SafeFloat(() => ac.TaxiSpeed?.Value ?? 0f));
-        WriteFloat(b, rec + TelemetryProtocol.RAirSpeed, SafeFloat(() => ac.AirSpeedKnot?.Value ?? 0f));
+        WriteFloat(b, rec + TelemetryProtocol.RTaxiSpeed, SafeFloat(() => ac.TaxiSpeed != null ? SimUnits.ToKnots(ac.TaxiSpeed.Value) : 0f));
+        WriteFloat(b, rec + TelemetryProtocol.RAirSpeed, SafeFloat(() => ac.AirSpeed != null ? SimUnits.ToKnots(ac.AirSpeed.Value) : 0f));
         WriteAscii(b, rec + TelemetryProtocol.RStar, 16, Safe(() => ac.FlightPlan?.GetStar()));
         WriteAscii(b, rec + TelemetryProtocol.RRunway, 4, Safe(() => ac.RunwayName));
         WriteAscii(b, rec + TelemetryProtocol.RStand, 8, Safe(() => ac.StandName));
@@ -499,8 +499,8 @@ internal sealed class TelemetryEmitter : MonoBehaviour
         try
         {
             bool flying = ac.IsFlying?.CurrentValue ?? false;
-            float air = ac.AirSpeedKnot?.Value ?? 0f;
-            float taxi = ac.TaxiSpeed?.Value ?? 0f;
+            float air = ac.AirSpeed != null ? SimUnits.ToKnots(ac.AirSpeed.Value) : 0f;
+            float taxi = ac.TaxiSpeed != null ? SimUnits.ToKnots(ac.TaxiSpeed.Value) : 0f;
             return !flying && air <= 1f && taxi <= 0.1f;
         }
         catch { return false; }
@@ -508,12 +508,12 @@ internal sealed class TelemetryEmitter : MonoBehaviour
 
     private static Vector3 SafePosition(Aircraft ac)
     {
-        try { return ac.Position; } catch { return Vector3.zero; }
+        try { return SimUnits.ToUnityPos(ac.Position); } catch { return Vector3.zero; }
     }
 
     private static Vector3 SafeDirection(Aircraft ac)
     {
-        try { return ac.Direction; } catch { return Vector3.zero; }
+        try { return SimUnits.ToUnityDir(ac.Direction); } catch { return Vector3.zero; }
     }
 
     private static bool SafeBool(Func<bool> f) { try { return f(); } catch { return false; } }
