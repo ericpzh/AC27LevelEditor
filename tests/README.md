@@ -2,20 +2,40 @@
 
 Three-layer testing: **Vitest (component)** → **Playwright (E2E)** → **Node.js (integration)**.
 
-Covers the **v4 GATCArc binary-format** save/load path (v2/v3 text-format support has been removed).
+Covers **per-file format dispatch (`src/acl/archive.js`)** across:
+- **GATCARC4 storage version 3** (`gatcarc4-v3`, schema hash `ca34c2ab4444042a719e43df7896794fd87ceb05977556bd405dc51e59721510`) — shipped across all 40 `.acl` files in the 2026-11-12 Steam update (`KDCA`, `KJFK`, `ZGSZ`, `ZSJN`, plus CSV-only `EGLC`)
+- **GATCARC4 storage versions 2 and 1** (`gatcarc4-v2`, `gatcarc4-v1`) and **legacy plain-text JSON** (`legacy-text`) — isolated behind `src/acl/legacy_handler.js` + `src/acl/gatcarc.js` + `src/acl/odin/`
 
-**Full suite (2026-10-29):** Vitest 2,688 passed / 6 skipped; save integrity, jetway rebuild and runway-pair checks passed; Playwright 16 passed / 2 skipped. The separate multi-level fuzz run timed out on ZGSZ peak arrival and did not complete.
+**Version-preserving save contract:** Every `.acl` file saves back in the exact format/version it was opened from (`v3 → v3`, `v2 → v2`, `v1 → v1`, `legacy-text → legacy-text`), including inside mixed-version airport folders and ZIP import/export round-trips.
+
+**Checked-in Dual-Version Reference Fixtures & 1-to-1 v2/v3 Parity:**
+- **`tests/fixtures/game-root` (GATCARC4 v2):** Checked-in Odin v2 `.acl` reference fixtures + metadata.
+- **`tests/fixtures/game-root-v3` (GATCARC4 v3):** All 13 pristine ZSJN v3 `.acl` files (`ZSJN_Endless`, `ZSJN_EmergencyTutorial`, `ZSJN_PushbackDirectionTutorial`, `ZSJN_Tutorial`, `ZSJN_leisure_1`, `ZSJN_leisure_1.demo`, `ZSJN_leisure_2`, `ZSJN_peakarrival`, `ZSJN_peakarrival.demo`, `ZSJN_peakdeparture`, `ZSJN_runwaychange`, `ZSJN_surfaceradarinvisible`, `ZSJN_taixwayclosed`, `ZSJN_test`) plus paired `.aclcfg`, `.timeline.json`, `flight_schedule_*.csv`, `ZSJN/` airport configs (`airport_brief.json`, `radio_template_en.csv`, `radio_template_zh.csv`, `stand_aircraft_compatibility.json`, `stand_constraints.csv`), `Voices/voice_catalog.json`, and `StreamingAssets/{aircraft_profiles.csv,aircraft_registration_rules.cfg,airline_country_registry.cfg}`.
+- **1-to-1 v2 & v3 Parity Suites:**
+  - Framing & corpus: `tests/acl/v3_framing_schema.test.js`, `tests/acl/v3_corpus_and_edits.test.js` (always-on 13-file `FIXTURES_GAME_ROOT_V3` sweep + optional 40-file installed-game corpus sweep)
+  - Checkpoint frame & reconciliation: `tests/integration/gatcarc_v3_frame_edit.test.js` (mirrors `gatcarc_v2_frame_edit.test.js`), `tests/integration/v3_frame_reconciliation.test.js` (mirrors `v2_frame_reconciliation.test.js`)
+  - Flight-save invariants: `tests/integration/v3_flight_save_parity.test.js` (mirrors `save_gamecompat`, `new_departure_save`, `save_leg_type_idempotent`, `zeroflight_save`, `voice_language_normalization`, `state5_output_pr`, `animator_lean_scope`, `aerodrome_code`, `flightplan_ref_integrity`)
+  - Scenery & Ground/Air Painter invariants: `tests/integration/v3_scenery_ground_air_parity.test.js` (mirrors all 22 Odin v2 Ground/Air Painter scenery suites)
+  - Dual-format Vitest readers: `tests/integration/stand_positions.test.js`, `tests/integration/test_airway_nodes.test.js`, `tests/integration/test_star_waypoints.test.js`, and `tests/integration/gamecompat-utils.cjs` (`analyze` + `analyzeV3` / `analyzeAclFile`)
+  - Dual-format CLI scripts & E2E fuzz gates: `tests/save-integrity-check.js`, `tests/integration/test_save_integrity_all.js`, `tests/integration/test_jetway_rebuild.js`, `tests/integration/test_extract_v4_runway_pairs.js`, `tests/integration/test_gatcarc_roundtrip.js`, `tests/run-all.mjs` (runs Layer 2 against both `FIXTURES_GAME_ROOT` v2 and `GAME_ROOT` v3), `tests/e2e/fuzz-save.spec.mjs`, and `tests/e2e/fuzz-ground-save.spec.mjs`.
 
 ## Fuzz save safeguards
 
-The flight fuzz sandbox stages `aircraft_profiles.csv` and uses an isolated editor API port. After saving, it checks parked aircraft offsets against stand geometry as well as reload and game compatibility. Use `FUZZ_ACL_FILES` and `FUZZ_SEED` to select and reproduce runs; `--replace` copies passing results and backups to the game install.
+The flight fuzz sandbox stages `aircraft_profiles.csv`, `airport_brief.json`, and `radio_template_{en,zh}.csv` alongside `airport_config.json`, and uses an isolated editor API port. After saving, both `fuzz-save.spec.mjs` and `fuzz-ground-save.spec.mjs` validate format-preserving v2 and v3 outputs (parked aircraft offsets, reload, game compatibility, physical-runway pair counts, and per-`OsmId` visual property uniformity). Use `FUZZ_ACL_FILES` and `FUZZ_SEED` to select and reproduce runs; `--replace` copies passing results and backups to the game install.
 
 ## Quick Start
 
 ```bash
-npm run test:all      # Full suite: Vitest (2684 pass / 6 skipped) + save integrity + jetway rebuild + runway pairs (5) + E2E (16 pass / 2 skipped, ~9 min)
-npm test              # Vitest component + store + utility + electron + integration + MapWindow + updater tests (2684 pass / 6 skipped, 149 files, ~55s)
+npm run test:all      # Full suite: Vitest + dual v2/v3 save integrity, jetway rebuild, runway pairs + E2E
+npm test              # Vitest component + ACL v3/v2 + store + utility + electron + integration + MapWindow + updater tests
 npm run test:e2e      # Playwright E2E tests (requires npm run build first, ~8 min; 16 pass, 2 skipped — both fuzz specs gated on FUZZ_RUN)
+
+# GATCARC4 v3 framing, schema validator, 13-file checked-in ZSJN corpus, and 1-to-1 v3 integration parity suites:
+npx vitest run tests/acl/v3_framing_schema.test.js tests/acl/v3_corpus_and_edits.test.js tests/integration/gatcarc_v3_frame_edit.test.js tests/integration/v3_frame_reconciliation.test.js tests/integration/v3_flight_save_parity.test.js tests/integration/v3_scenery_ground_air_parity.test.js
+
+# Point at a custom Airport Control 27 install path for the 40-file v3 corpus sweep (PowerShell):
+$env:AC27_GAME_ROOT = "D:\SteamLibrary\steamapps\common\Airport Control 27"
+npx vitest run tests/acl/v3_corpus_and_edits.test.js
 
 # Fuzz save test — randomized edit storms (50–200 ops/level) + real SAVE w/ backup
 $env:E2E_GAME_ROOT = "<game-root>"; $env:FUZZ_RUN = "1"
@@ -25,11 +45,13 @@ npm run test:fuzz:ground  # ground+air fuzz: all 24 production levels (see "Fuzz
 node tests/integration/test_api_server.js      # MCP/API tests: 145 tests (~1s)
 node tests/integration/test_api_e2e_examples.js # MCP E2E examples: 44 tests (~1s)
 
-# Save integrity — all .acl files across both airports:
-node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root <game-root> --prod-demo
+# Save integrity — all .acl files across airports (v2 or v3):
+node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root tests/fixtures/game-root-v3 --prod-demo
+node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root tests/fixtures/game-root --prod-demo
 
-# v4 GATCArc binary round-trip (all airports):
-node tests/integration/test_gatcarc_roundtrip.js
+# GATCARC4 binary round-trip (supports both checked-in v2 and v3 fixtures):
+node tests/integration/test_gatcarc_roundtrip.js --airports-dir tests/fixtures/game-root-v3/GroundATC_Data/StreamingAssets/Airports
+node tests/integration/test_gatcarc_roundtrip.js --airports-dir tests/fixtures/game-root/GroundATC_Data/StreamingAssets/Airports
 
 # Type number integrity (uses fixture):
 node --require ./tests/integration/preload.cjs tests/integration/test_type_number_integrity.js
@@ -317,20 +339,17 @@ written mid-fix was the cause of a "still broken" report; the stale
 concat/index-re-base/bbox) and `tests/integration/aircraft-pack.test.js` (+A330
 part asserts). Full suite green: Vitest **2684 pass / 6 skipped (149 files)**.
 
-## Layer 1 - Vitest Component Tests (2684 pass + 6 skipped, 149 files)
+## Layer 1 - Vitest Component & ACL Tests (2712 pass + 6 skipped, 151 files)
 
-Tests run in jsdom with mocked `window.electronAPI`. No Electron needed. Some electron-backend tests use `@vitest-environment node` (see `cloud-llm.test.js`, `updater.test.js`, `aviationstack.test.js`).
+Tests run in jsdom with mocked `window.electronAPI` (plus `@vitest-environment node` for Electron/ACL suites). No Electron needed.
 
-### `npm test` - 2684 pass + 6 skipped (149 test files; includes the Ground Painter scenery suite + airway roundtrip + the full Livery page suite (incl. the layer system + Panel Lock / UV region lock + top-left anchored scaling & movable snapping + the 3D preview + pure-JS aircraft-model extractor) + the aviationstack realtime-import suite + the Workshop publish suite + the Flight # shipped-union pool suite + the Debug Mode restart prompt)
+### `npm test` - 2712 pass + 6 skipped (151 test files; includes GATCARC4 v3 framing/schema/corpus/edit suites + Odin v2 regression suites + Ground Painter scenery suite + airway roundtrip + Livery page suite + aviationstack realtime-import + Workshop publish + Flight # shipped-union pool + Debug Mode)
 
 Coverage (`npx vitest run --coverage`, provider `@vitest/coverage-v8`, config in `vitest.config.js`) is
 scoped to the core logic trees — `src/acl/**` + `src/components/EditorScreen/GroundPainter/**` — with
-global thresholds (55/40/48/55 stmt/branch/func/line) that fail the run on regression. The Ground
-Painter save-path integration suites read real game levels from the AC27 install; set
-`AC27_GAME_ROOT=/path/to/game/root` to point at a non-default install — the default
-lives in `tests/helpers/gameRoot.cjs` (change `GAME_DIR_NAME` there once, and every
-suite/dev script follows). The fixture-gated suites skip cleanly (instead of ENOENT-failing)
-when the level files are absent.
+global thresholds (55/40/48/55 stmt/branch/func/line) that fail the run on regression.
+- **Installed-game v3 corpus (`AC27_GAME_ROOT`):** `tests/helpers/gameRoot.cjs` resolves `GAME_ROOT` automatically (or via `AC27_GAME_ROOT` / `AC27_STEAM_COMMON`). When the installed game ships GATCARC4 v3 levels, `tests/acl/v3_corpus_and_edits.test.js` sweeps all 40 `.acl` files across `KDCA`, `KJFK`, `ZGSZ`, and `ZSJN` (plus CSV-only `EGLC`) for discovery, read projection, byte-exact no-edit round-trip, and full flight/timeline/scenery/ZIP edits; when absent, the synthetic v3 fixtures (`tests/fixtures/v3/synthetic_v3.acl`) still run unconditionally.
+- **Retained Odin v2 regression suites (`v2LevelPath` / `v2GameLevelExists`):** Odin-specific binary/text suites (`area_readd_after_delete_all`, `ghost_ref_invariant`, `runway_entries_prune_on_taxiway_delete`, `runway_entry_type_id`, `save_leg_type_idempotent`, `survivor_ref_gate`, `v2_frame_reconciliation`) resolve v1/v2 levels from `GAME_ROOT` when present and automatically fall back to checked-in `tests/fixtures/game-root` when `GAME_ROOT` has upgraded to v3, so both v3 and v2 pipelines stay tested on every `npm test`.
 
 | File | Tests | What it validates |
 |------|-------|-------------------|

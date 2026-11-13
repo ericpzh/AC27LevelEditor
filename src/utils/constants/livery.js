@@ -9,6 +9,7 @@ export const SHORT_CODE_TO_PLANE_ID = {
   A21N: 'AIRBUS A-321neo',
   A319: 'AIRBUS A-319ceo',
   A320: 'AIRBUS A-320ceo',
+  A320P2F: 'AIRBUS A-320P2F',
   A333: 'AIRBUS A-330-300',
   A359: 'AIRBUS A-350-900',
   A388: 'AIRBUS A-380-800',
@@ -35,7 +36,7 @@ export const PLANE_ID_TO_SHORT_CODE = Object.fromEntries(
 // PLANES). The painter's 3D-preview button is hidden for anything else — the
 // Cessna Citation X ships no HD mesh in the game's assets.
 export const MODEL_3D_PLANE_IDS = [
-  'AIRBUS A-319ceo', 'AIRBUS A-319neo', 'AIRBUS A-320ceo', 'AIRBUS A-320neo',
+  'AIRBUS A-319ceo', 'AIRBUS A-319neo', 'AIRBUS A-320ceo', 'AIRBUS A-320P2F', 'AIRBUS A-320neo',
   'AIRBUS A-321neo', 'AIRBUS A-330-300', 'AIRBUS A-350-900', 'AIRBUS A-380-800',
   'BOEING 737 MAX 8', 'BOEING 737-800', 'BOEING 737-800BCF', 'BOEING 747-8I', 'BOEING 777-300ER',
   'BOEING 787-9', 'BOMBARDIER CRJ700', 'BOMBARDIER CRJ900', 'COMAC C-919',

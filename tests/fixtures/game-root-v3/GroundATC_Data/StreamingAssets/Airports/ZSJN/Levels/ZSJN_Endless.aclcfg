@@ -1,0 +1,30 @@
+{
+    "prototypeName": "ZSJN",
+    "geoDataFile": "geo_data",
+    "taxiNavigationDataFile": "taxi_nav_data",
+    "generatedTaxiNavigationDataFile": "taxi_nav_data_generated",
+    "visualGeoDataFile": "visual_data",
+    "radioTemplateFileZH": "radio_template_zh",
+    "radioTemplateFileEN": "radio_template_en",
+    "channelFile": "radio_channel_config",
+    "refPoint": {
+        "x": 36.858333587646487,
+        "y": 117.21499633789063
+    },
+    "offset": {
+        "x": 0.0,
+        "y": 0.0
+    },
+    "scaleFactor": 0.009999999776482582,
+    "offsetDistance": 10.0,
+    "offsetPercent": 5.0,
+    "usePercentOffset": false,
+    "name": "ZSJN_Endless",
+    "flightScheduleFile": "flight_schedule_endless",
+    "radioAudioClipNamesFileZH": "audio_clips_zh",
+    "radioAudioClipNamesFileEN": "audio_clips_en",
+    "startTime": "00:00:00",
+    "endTime": "23:59:59",
+    "tutorialScenario": 0,
+    "isSurfaceRadarTrafficHidden": false
+}

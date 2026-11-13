@@ -4,10 +4,8 @@
 const fs = require('fs');
 const path = require('path');
 const { DROPDOWN_FIELDS } = require('./constants.js');
-const { _parseWorldStateFlightPlans, _parseRunwayTimeline } = require('./flight_plans');
 const { buildPkIndex, extractStringFromV4, resolveIref } = require('./v4_pk_index');
-const { resolveConfigTime } = require('./config');
-const { readAclText } = require('./gatcarc');
+const { openAclFile } = require('./archive');
 const { createTokenizer } = require('./tokenizer');
 
 
@@ -33,11 +31,15 @@ function collectUniqueValues(aclPaths) {
   const regMap = new Map();
 
   for (const aclPath of aclPaths) {
-    const text = readAclText(aclPath);
-    let flights;
-    const fpResult = _parseWorldStateFlightPlans(text);
-    if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
-      flights = fpResult.flights;
+    let flights = null;
+    try {
+      const handle = openAclFile(aclPath);
+      const fpResult = handle.readFlights(aclPath);
+      if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
+        flights = fpResult.flights;
+      }
+    } catch (_) {
+      continue;
     }
     if (!flights || flights.length === 0) continue;
     for (const fl of flights) {
@@ -124,8 +126,9 @@ function collectRunwayPairs(aclPaths) {
   const pairSet = new Set();
   for (const aclPath of aclPaths) {
     try {
-      const text = readAclText(aclPath);
-      const data = _parseRunwayTimeline(text);
+      const handle = openAclFile(aclPath);
+      const tl = handle.readTimelines();
+      const data = tl && tl.runwayTimeline;
       if (!data || !data.timeline || !Array.isArray(data.timeline)) continue;
       for (const entry of data.timeline) {
         if (!entry.changes || !Array.isArray(entry.changes)) continue;
@@ -140,6 +143,25 @@ function collectRunwayPairs(aclPaths) {
   }
   if (pairSet.size === 0) return [];
   return Array.from(pairSet).sort().map(s => {
+    const [source, dest] = s.split('|');
+    return { source, dest };
+  });
+}
+
+function collectSceneryRunwayPairs(aclPaths) {
+  const pairSet = new Set();
+  for (const aclPath of aclPaths) {
+    try {
+      const handle = openAclFile(aclPath);
+      for (const p of handle.readRunwayPairs()) {
+        if (p && p.source && p.dest) {
+          pairSet.add(p.source + '|' + p.dest);
+        }
+      }
+    } catch (_) { /* skip malformed files */ }
+  }
+  if (pairSet.size === 0) return [];
+  return Array.from(pairSet).sort().map((s) => {
     const [source, dest] = s.split('|');
     return { source, dest };
   });
@@ -202,6 +224,9 @@ function _findPhysicalNameByIref(aclText, pkIndex, iref) {
  * @returns {Array<{source: string, dest: string}>} sorted runway pairs
  */
 function extractV4RunwayPairs(aclText) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.readRunwayPairs === 'function') {
+    return aclText.readRunwayPairs();
+  }
   const pkIndex = buildPkIndex(aclText);
   const rwMap = pkIndex.byType.get('runway');
   if (!rwMap) return [];
@@ -254,39 +279,14 @@ function extractV4RunwayPairs(aclText) {
 
 function getFileInfo(aclPath) {
   try {
-    const stat = fs.statSync(aclPath);
-    const text = readAclText(aclPath);
-    let flights;
-    let error = null;
-    const fpResult = _parseWorldStateFlightPlans(text);
-    if (fpResult && fpResult.flights && fpResult.flights.length > 0) {
-      flights = fpResult.flights;
+    const handle = openAclFile(aclPath);
+    const summary = handle.readSummary({ filePath: aclPath });
+    if (!summary.error) {
+      console.log('[getFileInfo]', path.basename(aclPath),
+        'resolveConfigTime -> startTime=' + summary.startTime,
+        'endTime=' + summary.endTime);
     }
-    if (!flights || flights.length === 0) {
-      error = 'No WorldState flight data';
-    }
-    if (error) return { error, filename: path.basename(aclPath), size: stat.size };
-
-    // Extract level config via the centralized resolver (applies CDT override)
-    const config = resolveConfigTime(text);
-    console.log('[getFileInfo]', path.basename(aclPath),
-      'resolveConfigTime -> startTime=' + (config ? config.startTime : null),
-      'endTime=' + (config ? config.endTime : null));
-    let arrivals = 0, departures = 0;
-    for (const fl of flights) {
-      if ((fl.LandingTime || '').trim()) arrivals++;
-      else if ((fl.OffBlockTime || '').trim()) departures++;
-    }
-    return {
-      filename: path.basename(aclPath),
-      path: aclPath,
-      size: stat.size,
-      flightCount: flights.length,
-      arrivals,
-      departures,
-      startTime: config ? config.startTime : null,
-      endTime: config ? config.endTime : null,
-    };
+    return summary;
   } catch (err) {
     return { error: err.message, filename: path.basename(aclPath), size: 0 };
   }
@@ -417,6 +417,7 @@ module.exports = {
   sortFlightsChronologically,
   collectUniqueValues,
   collectRunwayPairs,
+  collectSceneryRunwayPairs,
   extractV4RunwayPairs,
   getFileInfo,
   loadAudioCallsigns,

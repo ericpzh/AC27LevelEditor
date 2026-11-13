@@ -26,6 +26,12 @@ const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
 const { readAclText, RE_FRAME_SENTINEL } = require('../../src/acl/gatcarc');
+const { openAcl, openAclFile, detectAclFormat } = require('../../src/acl/archive');
+const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
+const { validateV3Container } = require('../../src/acl/v3/validator');
+const { dictEntries, indexDocumentGraph, resolveGraphNode, unwrapReactive } = require('../../src/acl/v3/graph');
+const { parseIsoWallClock } = require('../../src/acl/v3/q32');
+const { analyzeV3, runChecks } = require('./gamecompat-utils.cjs');
 const { _rebuildJetwayEntries, _buildActiveJetwayEntry, _validateStandConflicts } = require('../../src/acl/flight_plans');
 const { buildApproachCache } = require('../../src/acl/approach');
 const { createTokenizer } = require('../../src/acl/tokenizer');
@@ -406,6 +412,113 @@ for (const file of aclFiles) {
   const fileResult = { label, status: 'pending', diffs: [], errors: [], metrics: {}, invariantChecks: {} };
 
   try {
+    const rawBuf = fs.readFileSync(file.sourcePath);
+    if (detectAclFormat(rawBuf) === 'gatcarc4-v3') {
+      const goldenHandle = openAcl(rawBuf, { filePath: file.sourcePath, validateOnOpen: true });
+      const loaded = goldenHandle.readFlights(file.sourcePath);
+      if (!loaded || !loaded.flights.length) {
+        fileResult.status = 'skipped';
+        fileResult.skipReason = 'No flight data in ACL';
+        report.summary.skipped++;
+        report.files.push(fileResult);
+        console.log(`  ~ ${label} — no flights, skipped`);
+        continue;
+      }
+
+      let approachCache = approachCacheByIcao[file.icao] || null;
+      if (!approachCache && !args.noCache) {
+        try {
+          if (fs.existsSync(file.sourceDir)) {
+            approachCache = buildApproachCache(file.sourceDir);
+            approachCacheByIcao[file.icao] = approachCache;
+          }
+        } catch (_) {}
+      }
+
+      const schema = getSchemaForHash(goldenHandle.container.header.schemaHash);
+      const goldenFrameStats = goldenHandle.container.frames.map((frame) => {
+        const g = indexDocumentGraph(frame.runtimeData, schema.roots.runtime, schema);
+        const re = resolveGraphNode(frame.runtimeData.RuntimeEntities, g);
+        const nonFlightKeys = [];
+        const jetwayKeys = [];
+        for (const [k] of dictEntries(re)) {
+          if (k.startsWith('jetway:')) jetwayKeys.push(k);
+          else if (!k.startsWith('flight-plan:') && !k.startsWith('aircraft:') && !k.startsWith('aircraft-animator:')) {
+            nonFlightKeys.push(k);
+          }
+        }
+        return { nonFlightKeys: nonFlightKeys.sort(), jetwayKeys: jetwayKeys.sort() };
+      });
+
+      const workHandle = openAcl(Buffer.from(rawBuf), { filePath: file.sourcePath });
+      const flightsClone = JSON.parse(JSON.stringify(loaded.flights));
+      workHandle.applyEdits({
+        flights: flightsClone,
+        approachCache,
+        filePath: file.sourcePath,
+      });
+      const outBytes = workHandle.toBuffer();
+      const resultHandle = openAcl(outBytes, { filePath: file.sourcePath, validateOnOpen: true });
+      validateV3Container(resultHandle.container);
+
+      const problems = [];
+      if (resultHandle.container.frames.length !== goldenHandle.container.frames.length) {
+        problems.push(`Frame count changed: ${goldenHandle.container.frames.length} → ${resultHandle.container.frames.length}`);
+      }
+
+      for (let fi = 0; fi < resultHandle.container.frames.length; fi++) {
+        const frame = resultHandle.container.frames[fi];
+        const g = indexDocumentGraph(frame.runtimeData, schema.roots.runtime, schema);
+        const re = resolveGraphNode(frame.runtimeData.RuntimeEntities, g);
+        const nonFlightKeys = [];
+        const jetwayKeys = [];
+        for (const [k] of dictEntries(re)) {
+          if (k.startsWith('jetway:')) jetwayKeys.push(k);
+          else if (!k.startsWith('flight-plan:') && !k.startsWith('aircraft:') && !k.startsWith('aircraft-animator:')) {
+            nonFlightKeys.push(k);
+          }
+        }
+        if (JSON.stringify(nonFlightKeys.sort()) !== JSON.stringify(goldenFrameStats[fi].nonFlightKeys)) {
+          problems.push(`Frame ${fi}: non-flight/non-jetway RuntimeEntities keys changed`);
+        }
+        if (JSON.stringify(jetwayKeys.sort()) !== JSON.stringify(goldenFrameStats[fi].jetwayKeys)) {
+          problems.push(`Frame ${fi}: jetway RuntimeEntities keys changed`);
+        }
+      }
+
+      const gc = runChecks(analyzeV3(resultHandle.container));
+      const blockingGc = gc.issues.filter((i) => !['docked-stand-before-offblock'].includes(i.code));
+      for (const iss of blockingGc) {
+        problems.push(`[${iss.code}] ${iss.msg}`);
+      }
+
+      fileResult.metrics = {
+        format: 'gatcarc4-v3',
+        flights: loaded.flights.length,
+        frameCount: resultHandle.container.frames.length,
+        approachCacheBuilt: approachCache !== null,
+      };
+      fileResult.invariantChecks = {
+        v3SchemaValid: { pass: true },
+        frameCountPreserved: { pass: resultHandle.container.frames.length === goldenHandle.container.frames.length },
+        gameCompatClean: { pass: blockingGc.length === 0, issues: blockingGc.length },
+      };
+
+      if (problems.length === 0) {
+        fileResult.status = 'passed';
+        report.summary.passed++;
+        console.log(`  ✓ ${label} (v3) — ${resultHandle.container.frames.length} frame(s), schema + jetways valid`);
+      } else {
+        fileResult.status = 'failed';
+        report.summary.failed++;
+        fileResult.diffs = problems;
+        console.log(`  ✗ ${label} (v3) — ${problems.length} issue(s):`);
+        problems.slice(0, 10).forEach((p) => console.log(`      ${p}`));
+      }
+      report.files.push(fileResult);
+      continue;
+    }
+
     // ── Step 1: Decode ACL to text (GOLDEN) ─────────────────────
     const goldenText = readAclText(file.sourcePath);
 
@@ -733,8 +846,94 @@ const firstV4File = aclFiles.find(f => {
 });
 
 if (!firstV4File) {
-  console.log('  SKIP: no v4 ACL files available for integration tests');
-  t24_assert(true, 'T2-T4: (skipped — no v4 files)');
+  // Check for a v3 checkpointed file with jetway:* RuntimeEntities instead
+  const firstV3File = aclFiles.find((f) => {
+    try {
+      const h = openAclFile(f.sourcePath);
+      return h.format === 'gatcarc4-v3' && h.container.frames.length > 0;
+    } catch (_) {
+      return false;
+    }
+  });
+  if (!firstV3File) {
+    console.log('  SKIP: no v4/v3 checkpointed ACL files available for integration tests');
+    t24_assert(true, 'T2-T4: (skipped — no checkpointed files)');
+  } else {
+    const baseBuf = fs.readFileSync(firstV3File.sourcePath);
+    const baseHandle = openAcl(baseBuf, { filePath: firstV3File.sourcePath });
+    const schema = getSchemaForHash(baseHandle.container.header.schemaHash);
+    const rt0Idx = indexDocumentGraph(baseHandle.container.frames[0].runtimeData, schema.roots.runtime, schema);
+    const re0 = resolveGraphNode(baseHandle.container.frames[0].RuntimeEntities || baseHandle.container.frames[0].runtimeData.RuntimeEntities, rt0Idx);
+    const hasJetways = dictEntries(re0).some(([k]) => k.startsWith('jetway:'));
+    t24_assert(hasJetways, 'v3 scaffold frame has RuntimeEntities with jetway entries');
+
+    let approachCache = null;
+    try { approachCache = buildApproachCache(firstV3File.sourceDir); } catch (_) {}
+
+    const gt = resolveGraphNode(re0['singleton:game-time'], rt0Idx);
+    const cdtIso = gt ? unwrapReactive(gt.CurrentDateTime, rt0Idx) : null;
+    const snapSec = parseIsoWallClock(cdtIso)?.secSinceMidnight ?? 28800;
+    const fmtSec = (s) => `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    const depOffBlock = fmtSec(snapSec + 3600);
+
+    const activeJetwayStandsInV3 = (flights) => {
+      const h = openAcl(Buffer.from(baseBuf), { filePath: firstV3File.sourcePath });
+      h.applyEdits({ flights, approachCache, filePath: firstV3File.sourcePath });
+      const out = openAcl(h.toBuffer(), { validateOnOpen: true });
+      const g = indexDocumentGraph(out.container.frames[0].runtimeData, schema.roots.runtime, schema);
+      const re = resolveGraphNode(out.container.frames[0].runtimeData.RuntimeEntities, g);
+      const stands = new Set();
+      for (const [k, rawV] of dictEntries(re)) {
+        if (!k.startsWith('jetway:')) continue;
+        const jw = resolveGraphNode(rawV, g);
+        const dockAc = jw ? resolveGraphNode(unwrapReactive(jw.DockingAircraft, g), g) : null;
+        if (dockAc) {
+          stands.add(String(parseInt(k.slice('jetway:'.length), 10) || k.slice('jetway:'.length)));
+        }
+      }
+      return stands;
+    };
+
+    // T2 (v3): Same-REG ARR+DEP turnaround deduplicates & keeps departure leg docked at stand 1
+    {
+      const t2Flights = [
+        _makeFlight({ isDeparture: false, Stand: '1', LandingTime: '00:00:00', _Registration: 'B-TEST1',
+          CallSign: 'TST101', Runway: '01', AircraftType: 'AIRBUS A-320ceo', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'en', DepartureAirport: 'ZSJN', Airway: 'PANK8X' }),
+        _makeFlight({ isDeparture: true, Stand: '1', OffBlockTime: depOffBlock, _Registration: 'B-TEST1',
+          CallSign: 'TST101', Runway: '01', AircraftType: 'AIRBUS A-320ceo', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'en', ArrivalAirport: 'ZBAA', Airway: '' }),
+      ];
+      const stands = activeJetwayStandsInV3(t2Flights);
+      t24_assert(stands.has('1'),
+        'T2 (v3): Same-REG ARR+DEP deduplicates & docks departure leg on jetway stand 1');
+    }
+
+    // T3 (v3): Normal departure -> jetway populated
+    {
+      const t3Flights = [
+        _makeFlight({ isDeparture: true, Stand: '1', OffBlockTime: depOffBlock, _Registration: 'B-TEST2',
+          CallSign: 'TST102', Runway: '01', AircraftType: 'AIRBUS A-320ceo', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'en', ArrivalAirport: 'ZBAA', Airway: '' }),
+      ];
+      const stands = activeJetwayStandsInV3(t3Flights);
+      t24_assert(stands.has('1'),
+        'T3 (v3): Departure-only (no matching ARR) → jetway for stand 1 is populated');
+    }
+
+    // T4 (v3): Already-departed flight (OffBlockTime <= snapshot) -> jetway empty
+    {
+      const pastOffBlock = fmtSec(Math.max(0, snapSec - 600));
+      const t4Flights = [
+        _makeFlight({ isDeparture: true, Stand: '1', OffBlockTime: pastOffBlock, _Registration: 'B-TEST3',
+          CallSign: 'TST103', Runway: '01', AircraftType: 'AIRBUS A-320ceo', AirlineName: 'Test Air',
+          Voice: 'EN', Language: 'en', ArrivalAirport: 'ZBAA', Airway: '' }),
+      ];
+      const stands = activeJetwayStandsInV3(t4Flights);
+      t24_assert(!stands.has('1'),
+        `T4 (v3): Departure before snapshot (${pastOffBlock}) → jetway for stand 1 is empty`);
+    }
+  }
 } else {
   const scaffoldText = readAclText(firstV4File.sourcePath);
   const scaffoldSegments = scaffoldText.split(RE_FRAME_SENTINEL);

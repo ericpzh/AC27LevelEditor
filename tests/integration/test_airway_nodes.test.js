@@ -74,3 +74,58 @@ describe('airwayNodes serialize/deserialize round-trip', () => {
     expect(roundTripped.airwayNodes[0]).toEqual(airwayNodes[0]);
   });
 });
+
+// ─── GATCARC4 v3 fixture parity ──────────────────────────────────
+
+const V3_LEVEL_DIR = path.join(__dirname, '..', 'fixtures', 'game-root-v3', 'GroundATC_Data',
+  'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
+const V3_FIXTURE_ACL = path.join(V3_LEVEL_DIR, 'ZSJN_leisure_1.acl');
+
+if (!fs.existsSync(V3_FIXTURE_ACL)) {
+  throw new Error('v3 fixture missing: ' + V3_FIXTURE_ACL);
+}
+
+const v3Cache = buildApproachCache(V3_LEVEL_DIR);
+const v3AirwayNodes = v3Cache.airwayNodes || [];
+
+describe('buildApproachCache airwayNodes (v3 ZSJN fixture)', () => {
+  it('extracts only ICAO-style fixes from the ZSJN v3 fixture (16 fixes)', () => {
+    expect(v3AirwayNodes.length).toBe(16);
+  });
+
+  it('every v3 node has finite x/z and a pk', () => {
+    for (const n of v3AirwayNodes) {
+      expect(Number.isFinite(n.x), `node ${n.pk} x=${n.x} should be finite`).toBe(true);
+      expect(Number.isFinite(n.z), `node ${n.pk} z=${n.z} should be finite`).toBe(true);
+      expect(typeof n.pk).toBe('string');
+      expect(n.pk.startsWith('airway-node:')).toBe(true);
+    }
+  });
+
+  it('every v3 fix name is all-uppercase 3-5 letters (turn points filtered out)', () => {
+    for (const n of v3AirwayNodes) {
+      expect(n.name, `node ${n.pk} name ${n.name} should match /^[A-Z]{3,5}$/`).toMatch(/^[A-Z]{3,5}$/);
+    }
+    expect(v3AirwayNodes.find(n => n.name === 'TurnPoint19')).toBeUndefined();
+    expect(v3AirwayNodes.find(n => n.name === 'TP19W1')).toBeUndefined();
+    expect(v3AirwayNodes.find(n => n.name === 'JN210')).toBeUndefined();
+    expect(v3AirwayNodes.find(n => n.name === 'PointInTheTrees')).toBeUndefined();
+  });
+
+  it('PANKI matches the known airway-node:-244674 entry in v3', () => {
+    const panki = v3AirwayNodes.find(n => n.name === 'PANKI');
+    expect(panki).toBeDefined();
+    expect(panki.pk).toBe('airway-node:-244674');
+    expect(panki.osmId).toBe(-244674);
+    expect(panki.x).toBeCloseTo(-191.74353, 3);
+    expect(panki.z).toBeCloseTo(487.024719, 3);
+  });
+});
+
+describe('airwayNodes serialize/deserialize round-trip (v3)', () => {
+  it('preserves length and first entry through serialize → deserialize', () => {
+    const roundTripped = deserializeApproachCache(serializeApproachCache(v3Cache));
+    expect(roundTripped.airwayNodes.length).toBe(v3AirwayNodes.length);
+    expect(roundTripped.airwayNodes[0]).toEqual(v3AirwayNodes[0]);
+  });
+});

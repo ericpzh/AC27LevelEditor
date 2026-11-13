@@ -122,3 +122,53 @@ describe('_parseStandPositions v4', () => {
     expect(_parseStandPositions('not a valid acl', true)).toEqual({});
   });
 });
+
+// ─── GATCARC4 v3 PKStaticEntities path ───────────────────────────
+
+const { openAclFile } = require('../../src/acl/archive');
+
+const V3_FIXTURE_PATH = path.join(
+  __dirname,
+  '..', 'fixtures', 'game-root-v3', 'GroundATC_Data', 'StreamingAssets',
+  'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl'
+);
+
+const v3Handle = fs.existsSync(V3_FIXTURE_PATH) ? openAclFile(V3_FIXTURE_PATH) : null;
+const v3Stands = v3Handle ? v3Handle.readStandPositions() : null;
+
+describe('readStandPositions v3 (ZSJN v3 fixture)', () => {
+  it('should parse 57 stands from the ZSJN v3 fixture', () => {
+    expect(v3Handle).not.toBeNull();
+    expect(v3Handle.format).toBe('gatcarc4-v3');
+    expect(v3Stands).toBeDefined();
+    expect(typeof v3Stands).toBe('object');
+    expect(Object.keys(v3Stands)).toHaveLength(57);
+  });
+
+  it('should have stands "300", "1", and "22" with valid finite coordinates', () => {
+    for (const key of ['300', '1', '22']) {
+      expect(v3Stands[key]).toBeDefined();
+      expect(Number.isFinite(v3Stands[key].x)).toBe(true);
+      expect(Number.isFinite(v3Stands[key].y)).toBe(true);
+    }
+  });
+
+  it('each v3 stand should have finite x/y, numeric heading, and tail/nose positions', () => {
+    for (const [id, pos] of Object.entries(v3Stands)) {
+      expect(Number.isFinite(pos.x), `stand "${id}" x=${pos.x} should be finite`).toBe(true);
+      expect(Number.isFinite(pos.y), `stand "${id}" y=${pos.y} should be finite`).toBe(true);
+      expect(typeof pos.heading, `stand "${id}" heading should be numeric`).toBe('number');
+      expect(Number.isFinite(pos.tailX), `stand "${id}" tailX should be finite`).toBe(true);
+      expect(Number.isFinite(pos.tailZ), `stand "${id}" tailZ should be finite`).toBe(true);
+      expect(Number.isFinite(pos.noseX), `stand "${id}" noseX should be finite`).toBe(true);
+      expect(Number.isFinite(pos.noseZ), `stand "${id}" noseZ should be finite`).toBe(true);
+    }
+  });
+
+  it('v3 stand coordinates should be within reasonable bounds', () => {
+    for (const [id, pos] of Object.entries(v3Stands)) {
+      expect(Math.abs(pos.x), `stand "${id}" x=${pos.x} too large`).toBeLessThan(20);
+      expect(Math.abs(pos.y), `stand "${id}" y=${pos.y} too large`).toBeLessThan(20);
+    }
+  });
+});

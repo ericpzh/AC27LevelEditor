@@ -1,0 +1,29 @@
+{
+  "weather": [
+    {
+      "preset": "LightRain",
+      "time": "08:15:00"
+    },
+    {
+      "preset": "MidRain",
+      "time": "08:30:24"
+    },
+    {
+      "preset": "LightRain",
+      "time": "08:50:00"
+    }
+  ],
+  "wind": [
+    {
+      "direction": 185,
+      "speed": 6,
+      "time": "05:00:00"
+    }
+  ],
+  "runway": {
+    "initialRunways": [
+      "19"
+    ],
+    "timeline": []
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "radioChannels": [
+    {
+      "type": "Ramp",
+      "frequency": 130.9,
+      "shortCode": "RMP",
+      "radioName": "KennedyRamp",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "ramp_kjfk",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    },
+    {
+      "type": "Ground",
+      "frequency": 121.9,
+      "shortCode": "GND",
+      "radioName": "KennedyGround",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "ground_kjfk",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    },
+    {
+      "type": "Tower",
+      "frequency": 123.9,
+      "shortCode": "TWR",
+      "radioName": "KennedyTower",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "tower_kjfk",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    },
+    {
+      "type": "Departure",
+      "frequency": 118.175,
+      "shortCode": "DEP",
+      "radioName": "NewYorkDeparture",
+      "isMuted": true,
+      "isAutoControlled": true,
+      "isTalking": false,
+      "localizationKey": "departure_kjfk",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    },
+    {
+      "type": "Approach",
+      "frequency": 128.125,
+      "shortCode": "APP",
+      "radioName": "NewYorkApproach",
+      "isMuted": true,
+      "isAutoControlled": true,
+      "isTalking": false,
+      "localizationKey": "approach_kjfk",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    }
+  ],
+  "channelMapping": {
+    "Ramp": "Ramp",
+    "Ground": "Ground",
+    "Tower": "Tower",
+    "Departure": "Departure",
+    "Approach": "Approach"
+  }
+}

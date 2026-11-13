@@ -49,12 +49,16 @@ export function useEditorSaveActions({
         return false;
       }
       const store = useAppStore.getState();
-      if (st.weatherPath && st.timelineModified.weather) {
-        await electronAPI.saveWeatherTimeline({ filePath: st.weatherPath, data: st.weatherTimeline });
+      if (st.timelineModified.weather) {
+        if (st.weatherPath) {
+          await electronAPI.saveWeatherTimeline({ filePath: st.weatherPath, data: st.weatherTimeline });
+        }
         store.setTimelineModified('weather', false);
       }
-      if (st.windPath && st.timelineModified.wind) {
-        await electronAPI.saveWindTimeline({ filePath: st.windPath, data: nativeWind });
+      if (st.timelineModified.wind) {
+        if (st.windPath) {
+          await electronAPI.saveWindTimeline({ filePath: st.windPath, data: nativeWind });
+        }
         store.setTimelineModified('wind', false);
       }
       if (st.timelineModified.runway) {

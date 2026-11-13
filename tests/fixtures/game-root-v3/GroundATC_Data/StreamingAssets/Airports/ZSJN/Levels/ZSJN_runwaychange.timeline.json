@@ -1,0 +1,46 @@
+{
+  "weather": [
+    {
+      "preset": "Sunny",
+      "time": "09:00:00"
+    }
+  ],
+  "wind": [
+    {
+      "direction": 355,
+      "speed": 6,
+      "time": "18:00:00"
+    },
+    {
+      "direction": 10,
+      "speed": 6,
+      "time": "18:25:00"
+    },
+    {
+      "direction": 175,
+      "speed": 6,
+      "time": "18:30:00"
+    },
+    {
+      "direction": 190,
+      "speed": 6,
+      "time": "19:00:00"
+    }
+  ],
+  "runway": {
+    "initialRunways": [
+      "01"
+    ],
+    "timeline": [
+      {
+        "time": "18:30:00",
+        "changes": [
+          {
+            "source": "01",
+            "dest": "19"
+          }
+        ]
+      }
+    ]
+  }
+}

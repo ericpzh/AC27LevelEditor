@@ -1,0 +1,4 @@
+registration,arrivalCallSign,originAirport,landingTime,arrivalStand,arrivalRunway,arrivalSTAR,departureCallSign,destinationAirport,offBlockTime,departureStand,departureRunway,airline,aircraftType,voice,language
+B-UWBA,CCA9119,ZUTF,08:14:00,9,01,WFG91A,,,,,,CCA,COMAC C-919,CN-Captain-Middle-Aged,zh
+B-ZBLO,,,,,,,CES1234,ZSSS,07:59:45,18,01,CES,BOEING 737-800,CN-Captain-Young,zh
+B-HDOI,,,,,,,CES1111,ZSSS,07:50:45,17,01,CES,BOEING 737-800,CN-Captain-Young,zh

@@ -114,18 +114,29 @@ AC27Editor/
 │ │ ├── flightDefaults.js # Pure helpers for new flight creation (random airline, cascaded aircraft/reg, non-conflicting stand, airline-aware Language via languageForAirline — CN→zh else en, falling back to Z*→zh, random Voice from dropdown, runway-constrained STAR for arrivals, Airway always cleared for departures)
 │ │ └── flightCascade.js # Pure helpers for cascading field updates
 │ │
-│ ├── acl/ # Backend modules (19 files + odin/; CommonJS + some ESM)
+│ ├── acl/ # Backend modules (CommonJS + some ESM)
 │ │ ├── parser.js # FACADE — re-exports all backend modules
-│ │ ├── tokenizer.js # String-aware section boundary scanner (no more brace-counting)
+│ │ ├── archive.js # Unified per-file format dispatch — detectAclFormat/openAcl/openAclFile (v3 vs v2/v1/legacy-text) + StaleSourceError
+│ │ ├── framing.js # Shared GATCARC4 framing primitives (MAGIC/FramingError/hasGatcMagic/readContainerVersion/sha256)
+│ │ ├── v3/ # GATCARC4 storage v3 handler (current format)
+│ │ │ ├── handler.js # openV3Acl — reads, applyEdits(), schema validation, atomic saveToFile (STALE_ACL_SOURCE)
+│ │ │ ├── framing.js # parseV3Container / encodeV3Container (NODS/NODH/MARF/NODF)
+│ │ │ ├── readers.js / writers_flights.js / writers_meta.js / writers_scenery.js
+│ │ │ ├── validator.js + schema_registry.js + schema_ca34c2ab.json
+│ │ │ ├── q32.js / lossless_json.js / graph.js / audio.js
+│ │ │ └── WIRE_CONTRACT.md # authoritative v3 framing/schema/unit reference
+│ │ ├── legacy_handler.js # v1/v2/legacy-text handler (wraps gatcarc.js + Odin readers/writers behind the same handle API)
+│ │ ├── demo_window.js # format-aware demo helpers (isDemoVisibleFile/shouldTrimDemoSchedule/loadLevelForEditor)
+│ │ ├── tokenizer.js # String-aware section boundary scanner (legacy Odin text)
 │ │ ├── acl_json.js # Pre-processor (Unity JSON→valid JSON) + serializer + Odin recursive-descent parser
 │ │ ├── acl_document.js # In-memory document model (lazy parsing, mutation tracking)
 │ │ ├── constants.js # CJS re-export of utils/constants.js (backward compat)
 │ │ ├── config.js # resolveConfigTime / resolveDisplayTimes (Config block + GameTime.CurrentDateTime override)
 │ │ ├── scanner.js # Scans game root for airports & .acl files
-│ │ ├── gatcarc.js # GATCARC4 binary container — readAclText() / writeAcl() (the only .acl I/O; writeAcl renumbers ids via id_renumber.js)
-│ │ ├── id_renumber.js # $id/$iref renumberer — strictly ascending ids in text order (game's JsonDataReader requirement); renumberDocument/renumberAclIds/countIdDescents
-│ │ ├── v4_pk_index.js # PKStaticEntities index builder ($iref → $id resolution, field helpers)
-│ │ ├── odin/ # OdinSerializer binary codec (binary/json readers + writers, .NET primitives, entry types)
+│ │ ├── gatcarc.js # GATCARC4 v1/v2 binary container — readAclText() / writeAcl() (legacy path; writeAcl renumbers ids via id_renumber.js)
+│ │ ├── id_renumber.js # (legacy) $id/$iref renumberer — strictly ascending ids in text order (game's JsonDataReader requirement); renumberDocument/renumberAclIds/countIdDescents
+│ │ ├── v4_pk_index.js # (legacy) PKStaticEntities index builder ($iref → $id resolution, field helpers)
+│ │ ├── odin/ # (legacy) OdinSerializer binary codec (binary/json readers + writers, .NET primitives, entry types)
 │ │ ├── flight_plans.js # StaticData/StaticItems flight-plan parse + v4 save pipeline (_rebuildStaticDataSections, timeline rebuild)
 │ │ ├── approach.js # Approach aircraft construction (State=30/State=5) + approach cache builder (v5: global aircraft_profiles.csv + allAclTexts merge, PhysicalRunwayStaticItem, Area 31)
 │ │ ├── scenery.js # PKStaticEntities scenery parser (runway/stand lookups + stand position extraction; v5: Area 30→31)
@@ -184,7 +195,7 @@ module.exports = { publicFn, _privateFn };
 
 **No external dependencies for core logic.** Uses only Node.js built-ins (`fs`, `path`, `zlib`, `crypto`). Do not add npm dependencies without strong justification.
 
-**Facade pattern:** `src/acl/parser.js` is the single entry point. `electron/main.js` imports only from `parser.js`. New parsing modules must be re-exported through `parser.js`. **Deliberate exception — Ground Painter:** `src/acl/scenery_graph.js` and `src/acl/scenery_write.js` are **not** re-exported through the facade; `electron/main.js` `require()`s them directly (`load-ground-painter-data` builds the Graph in the main process so the renderer never has to dynamic-import the CJS acl module). Do not blindly add them to `parser.js` — they are self-contained and lifecycle-scoped to the painter IPC/Tests.
+**Facade pattern:** `src/acl/parser.js` is the legacy parser/format facade. `electron/main.js` also imports the **archive layer** directly — `src/acl/archive.js` (`openAcl`/`openAclFile`/`detectAclFormat`), `src/acl/demo_window.js`, and the v3 handler — because per-file format dispatch happens before any format-specific parsing. New format-agnostic ACL I/O should go through `archive.js`; legacy parsing modules should still be re-exported through `parser.js`. **Deliberate exceptions — Ground Painter:** `src/acl/scenery_graph.js` and `src/acl/scenery_write.js` are **not** re-exported through the facade; `electron/main.js` `require()`s them directly (`load-ground-painter-data` builds the Graph in the main process so the renderer never has to dynamic-import the CJS acl module), while v3 scenery edits go through `v3/writers_scenery.js` via `handle.applyEdits({ sceneryGraph })`. Do not blindly add them to `parser.js` — they are self-contained and lifecycle-scoped to the painter IPC/Tests.
 
 ### Frontend (React / `src/components/*.jsx` + `src/hooks/*.jsx`)
 
@@ -277,7 +288,7 @@ window.electronAPI ipcRenderer.invoke() ipcMain.handle()
 - All file I/O goes through IPC handlers in `electron/main.js`
 - IPC channels use kebab-case strings matching the handler name
  - Every `ipcMain.handle()` must return `{ success: true/false }`
- - New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer. Ground Painter channels: `load-ground-painter-data` (→ readAclText + buildSceneryGraph) and `save-ground-painter-data` (→ patchSceneryBlob + .bak + writeAcl, returns the new baseline text; also refreshes `liveSceneryCache` in-memory for the saved file). Live-scenery channels: `get-live-values` (→ `_getOrComputeLiveScenery` from the open `.acl`, populates `liveSceneryCache`, returns full `collect-values`-shaped `vals`) and `invalidate-live-values` (→ `_invalidateLiveCache`), bridged as `getLiveValues`/`invalidateLiveValues` in `preload.js`; renderer uses `get-live-values` on Editor mount and after GroundPainter save, with `collect-values` as fallback.
+ - New IPC channels require: (1) handler in `electron/main.js`, (2) bridge method in `electron/preload.js`, (3) call site in renderer. Ground Painter channels: `load-ground-painter-data` (→ `openAclFile().readSceneryGraph()`; the legacy path may still use `buildSceneryGraph(text)`) and `save-ground-painter-data` (→ `handle.applyEdits({ sceneryGraph, sceneryMeta })` + `handle.saveToFile()` for v3, or `patchSceneryBlob` + `.bak` + `writeAcl` for v1/v2; returns the new baseline text/token; also refreshes `liveSceneryCache` in-memory for the saved file). Live-scenery channels: `get-live-values` (→ `_getOrComputeLiveScenery` from the open `.acl`, populates `liveSceneryCache`, returns full `collect-values`-shaped `vals`) and `invalidate-live-values` (→ `_invalidateLiveCache`), bridged as `getLiveValues`/`invalidateLiveValues` in `preload.js`; renderer uses `get-live-values` on Editor mount and after GroundPainter save, with `collect-values` as fallback.
 - **Main→renderer events:**
  - `cache-build-progress` — per-file progress during scan: `{ current: number, total: number }`; preload bridges via `onCacheBuildProgress(cb)` / `offCacheBuildProgress(cb)` (uses handler-map pattern, same function reference required for cleanup)
  - `store-api-update` — pushes bulk state updates from MCP/API server to renderer: `{ flights, modified, ... }`; preload bridges via `onStoreApiUpdate(cb)` / `offStoreApiUpdate(cb)` (handler-map pattern). Renderer converts arrays→Sets and calls `setLegacyState()`.
@@ -289,7 +300,8 @@ window.electronAPI ipcRenderer.invoke() ipcMain.handle()
 Three-layer testing strategy:
 
 **Layer 1 — Component tests (Vitest + React Testing Library):**
-- `npm test` or `npm run test:watch` — 2181 tests (component + store + utility + electron + integration + MapWindow + updater, ~35s)
+- `npm test` or `npm run test:watch` — ~2700 tests (component + store + utility + electron + integration + MapWindow + updater + GATCARC4 v3 framing/schema/corpus/parity, ~35s)
+- **v3 suites:** `tests/acl/v3_framing_schema.test.js`, `tests/acl/v3_corpus_and_edits.test.js`, `tests/acl/v3_save_preservation.test.js`, and the integration parity suites `tests/integration/gatcarc_v3_frame_edit.test.js`, `v3_flight_save_parity.test.js`, `v3_frame_reconciliation.test.js`, `v3_scenery_ground_air_parity.test.js`. The checked-in corpus is `tests/fixtures/game-root-v3/` (13 ZSJN files); the optional 40-file installed-game sweep uses `AC27_GAME_ROOT`. Legacy Odin v2 regression suites automatically fall back to `tests/fixtures/game-root`.
 - Isolated component rendering in jsdom with mocked `window.electronAPI`
 - Electron backend tests use `@vitest-environment node` + `require.cache` priming to stub ESM SDK packages (see `tests/electron/cloud-llm.test.js`)
 - zustand stores are tested with the real store using `setState()` — never mock stores

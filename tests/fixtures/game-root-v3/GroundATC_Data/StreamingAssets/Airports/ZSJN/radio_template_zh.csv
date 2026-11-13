@@ -1,0 +1,74 @@
+AudioEventType,Speaker,Template
+CaptainRequestTaxiWhenDeparture,Captain,[AircraftCallSign] | 申请滑出
+AtcClearedToTaxi,ATC,[AircraftCallSign] | 可以滑出 | 沿 | [TaxiRoute] | [HoldingPoint]前等待
+AtcClearedToTaxi,Captain,[TaxiRoute] | [HoldingPoint]前等待 | [AircraftCallSign]
+AtcStandByTaxi,ATC,[AircraftCallSign] | 稍等
+AtcStandByTaxi,Captain,稍等 | [AircraftCallSign]
+AtcHoldPosition,ATC,[AircraftCallSign] | 稍等
+AtcHoldPosition,Captain,稍等 | [AircraftCallSign]
+AtcContinueTaxi,ATC,[AircraftCallSign] | 继续滑
+AtcContinueTaxi,Captain,继续滑 | [AircraftCallSign]
+AtcContactTower,ATC,[AircraftCallSign] | 联系塔台[JurisdictionChannelFrequency]再见
+AtcContactTower,Captain,[JurisdictionChannelFrequency]再见
+AtcClearedForTakeoff_Accepted,ATC,[AircraftCallSign] | [WindDynamic] | 跑道[Runway] | 可以起飞
+AtcClearedForTakeoff_Accepted,Captain,跑道[Runway] | 可以起飞 | [AircraftCallSign]
+AtcClearedForTakeoff_Rejected,ATC,[AircraftCallSign] | [WindDynamic] | 跑道[Runway] | 可以起飞
+AtcClearedForTakeoff_Rejected,Captain,拒绝 | [AircraftCallSign]
+AtcHoldShortOfRunway,ATC,[AircraftCallSign] | 跑道[Runway]外等待
+AtcHoldShortOfRunway,Captain,跑道[Runway]外等待 | [AircraftCallSign]
+AtcLineUpAndWait,ATC,[AircraftCallSign] | 进跑道[Runway]等待
+AtcLineUpAndWait,Captain,进跑道[Runway]等待 | [AircraftCallSign]
+AtcClearedToLand_Accepted,ATC,[AircraftCallSign] | [WindDynamic] | 跑道[Runway] | 可以落地
+AtcClearedToLand_Accepted,Captain,跑道[Runway] | 可以落地 | [AircraftCallSign]
+AtcClearedToLand_Rejected,ATC,[AircraftCallSign] | [WindDynamic] | 跑道[Runway] | 可以落地
+AtcClearedToLand_Rejected,Captain,拒绝 | [AircraftCallSign]
+AtcContactDeparture,ATC,[AircraftCallSign] | 联系进近[JurisdictionChannelFrequency]再见
+AtcContactDeparture,Captain,[JurisdictionChannelFrequency]再见
+AtcContinueApproach,ATC,[AircraftCallSign] | 继续进近 | 跑道[Runway]
+AtcContinueApproach,Captain,继续进近 | [AircraftCallSign]
+CaptainGoingAround,Captain,正在复飞 | [AircraftCallSign]
+AtcGoAround,ATC,[AircraftCallSign] | 执行复飞
+AtcGoAround,Captain,执行复飞 | [AircraftCallSign]
+AtcCancelTakeoffClearance,ATC,[AircraftCallSign] | 取消起飞许可
+AtcCancelTakeoffClearance,Captain,取消起飞许可 | [AircraftCallSign]
+AtcCancelLandingClearance,ATC,[AircraftCallSign] | 继续进近 | 取消落地许可
+AtcCancelLandingClearance,Captain,落地许可已取消 | 继续进近 | [AircraftCallSign]
+AtcContactGroundWhenApproach,ATC,[AircraftCallSign] | 联系地面[JurisdictionChannelFrequency]再见
+AtcContactGroundWhenApproach,Captain,[JurisdictionChannelFrequency]再见
+AtcContactGroundWhenDepartureExitRunway,ATC,[AircraftCallSign] | 联系地面[JurisdictionChannelFrequency]再见
+AtcContactGroundWhenDepartureExitRunway,Captain,[JurisdictionChannelFrequency]再见
+AtcTaxiRouteWhenApproach,ATC,[AircraftCallSign] | 滑行沿 | [TaxiRoute] | [ApproachStandTail]
+AtcTaxiRouteWhenApproach,Captain,[TaxiRoute] | [ApproachStandTail] | [AircraftCallSign]
+AtcTaxiRouteDeparture,ATC,[AircraftCallSign] | 继续滑 | [TaxiRoute] | [HoldingPoint]前等待
+AtcTaxiRouteDeparture,Captain,继续滑 | [TaxiRoute] | [HoldingPoint]前等待 | [AircraftCallSign]
+AtcRunwayRollout,ATC,[AircraftCallSign] | [TurnDirection] | [ExitPoint] | 脱离
+AtcRunwayRollout,Captain,[TurnDirection] | [ExitPoint] | 脱离 | [AircraftCallSign]
+CaptainSwitchToTowerFrequency,Captain,塔台你好 | [AircraftCallSign]
+CaptainRequestToLand,Captain,塔台你好 | [AircraftCallSign]
+CaptainRequestTaxiWhenApproach,Captain,地面你好 | [AircraftCallSign] | 现在脱离跑道 | [HoldingPoint] | 滑行
+CaptainRequestTaxiWhenDepartureExitRunway,Captain,地面你好 | [AircraftCallSign]
+CaptainRequestPushback,Captain,地面你好 | [AircraftCallSign] | 停机位 | [Spot] | 准备好
+AtcPushbackApproved,ATC,[AircraftCallSign] | 可以推出开车 | 跑道[Runway] | 头朝[PushbackHeading]
+AtcPushbackApproved,Captain,可以推出开车 | 跑道[Runway] | 头朝[PushbackHeading] | [AircraftCallSign]
+AtcStandByPushback,ATC,[AircraftCallSign] | 稍等
+AtcStandByPushback,Captain,稍等 | [AircraftCallSign]
+AtcPausePushback,ATC,[AircraftCallSign] | 停止推出 | 原地等待
+AtcPausePushback,Captain,原地等待 | [AircraftCallSign]
+AtcContinuePushback,ATC,[AircraftCallSign] | 同意推出
+AtcContinuePushback,Captain,同意推出 | [AircraftCallSign]
+AtcReturnToStand,ATC,[AircraftCallSign] | 滑到 | 停机位 | [Spot]
+AtcReturnToStand,Captain,滑到 | 停机位 | [Spot] | [AircraftCallSign]
+AtcPermitCrossRunway,ATC, [AircraftCallSign] | 可以穿越 | 跑道[Runway]
+AtcPermitCrossRunway,Captain, 可以穿越 | 跑道[Runway] | [AircraftCallSign]
+AtcForbidCrossRunway,ATC, [AircraftCallSign] | 跑道[Runway]外等待
+AtcForbidCrossRunway,Captain, 跑道[Runway]外等待 | [AircraftCallSign]
+AtcChangeRunway,ATC,[AircraftCallSign] | 变更为 | 跑道[Runway]
+AtcChangeRunway,Captain,变更为 | 跑道[Runway] | [AircraftCallSign]
+CaptainUnableToEnterStand, Captain, [AircraftCallSign] | 无法进入停机位 | [Spot]
+CaptainWaitingForCrossRunway, Captain, [AircraftCallSign] | 等待穿越 | 跑道[Runway]
+CaptainRunwayVacated, Captain, [AircraftCallSign] | 已脱离 | 跑道[Runway]
+AtcPermitTow,ATC,[AircraftCallSign] | 后推沿 | [TaxiRoute] | [HoldingPoint]前等待
+AtcPermitTow,Captain,后推沿 | [TaxiRoute] | [HoldingPoint]前等待 | [AircraftCallSign]
+AtcStopTow,ATC,[AircraftCallSign] | 停止后推
+AtcStopTow,Captain,停止后推 | [AircraftCallSign]
+CaptainTowComplete,Captain,后推完成 | [AircraftCallSign]

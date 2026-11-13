@@ -79,7 +79,7 @@ Create and share your own `Body`/`BaseMap` aircraft liveries. The Livery page (b
 
 **Share contract:** Export produces `<FOLDER>.zip` containing `<FOLDER>/aircraft_livery_manifest.json` + `<FOLDER>/base.png`. Send it to a friend — they install it via **Import livery** in the painter, or by unzipping straight into `<gameRoot>/Mods/AC27 Custom Liveries/`.
 
-**3D livery preview:** a `LuRotate3D` button right of the aircraft selector (hidden for types with no HD model — the Cessna Citation X) renders the current livery on the game's **real aircraft geometry** in a floating window (drag to orbit, wheel to zoom, header drag to move, corner grip to resize, bottom-right button to reset the camera, top-right to hide). The mesh is the game's copyrighted content, so it is never shipped: when the livery page opens, the editor extracts the geometry **in-process** from the user's own `<dataRoot>/resources.assets` (a pure-JS Unity serialized-file reader, `electron/unity/` — no Python, no spawned binary, cross-platform by construction; the AC27 build strips type trees, so field layouts come from `electron/unity/typetrees.json`), caches a compact binary pack (manifest + per-plane positions/UVs/indices, ~16 MB for all types) under `<userData>/livery-3d-models/`, and keeps it warm across livery-page visits (the page-entry extract is the only refresh trigger and the cache is no longer deleted on exit, so the list's 3D snapshots are ready immediately next time). `scripts/extract-aircraft-models.py` (UnityPy) is kept as a last-resort fallback if a game update changes Unity's serialization and a Python with `UnityPy`/`numpy` is installed; otherwise a failed extraction toasts and the list/preview simply falls back to no preview. While the pack is available, each livery card's preview is a **3D snapshot** of that livery on its aircraft (rendered offscreen; the resized PNG thumbnail channel is no longer used — the full livery texture is the model's map), and those snapshots are cached warm across livery-page visits too (keyed by the texture's mtime, so an edited livery refreshes) — re-entering the list paints every card instantly instead of replaying the loading shimmer. The pack is keyed by plane id and covers all 20 shipped types, with per-type livery-part mapping (`Fuselage`/`Wing` for the A388, `Body` elsewhere); mesh world transforms are baked at extraction so every aircraft comes out Y-up, and non-livery parts (engines/fans) render in flat grey.
+**3D livery preview:** a `LuRotate3D` button right of the aircraft selector (hidden for types with no HD model — the Cessna Citation X) renders the current livery on the game's **real aircraft geometry** in a floating window (drag to orbit, wheel to zoom, header drag to move, corner grip to resize, bottom-right button to reset the camera, top-right to hide). The mesh is the game's copyrighted content, so it is never shipped: when the livery page opens, the editor extracts the geometry **in-process** from the user's own `<dataRoot>/resources.assets` (a pure-JS Unity serialized-file reader, `electron/unity/` — no Python, no spawned binary, cross-platform by construction; the AC27 build strips type trees, so field layouts come from `electron/unity/typetrees.json`), caches a compact binary pack (manifest + per-plane positions/UVs/indices, ~16 MB for all types) under `<userData>/livery-3d-models/`, and keeps it warm across livery-page visits (the page-entry extract is the only refresh trigger and the cache is no longer deleted on exit, so the list's 3D snapshots are ready immediately next time). `scripts/extract-aircraft-models.py` (UnityPy) is kept as a last-resort fallback if a game update changes Unity's serialization and a Python with `UnityPy`/`numpy` is installed; otherwise a failed extraction toasts and the list/preview simply falls back to no preview. While the pack is available, each livery card's preview is a **3D snapshot** of that livery on its aircraft (rendered offscreen; the resized PNG thumbnail channel is no longer used — the full livery texture is the model's map), and those snapshots are cached warm across livery-page visits too (keyed by the texture's mtime, so an edited livery refreshes) — re-entering the list paints every card instantly instead of replaying the loading shimmer. The pack is keyed by plane id and covers all 21 shipped types, with per-type livery-part mapping (`Fuselage`/`Wing` for the A388, `Body` elsewhere); mesh world transforms are baked at extraction so every aircraft comes out Y-up, and non-livery parts (engines/fans) render in flat grey.
 
 **Workshop publish:** the header-bar **Upload** button (and the painter toolbar's upload button, which silently saves a dirty canvas first) publishes a custom livery as a standalone Workshop mod for the shipping game (appid `3328490`), or a new version of the same item on repeat uploads. The dialog collects title/description/visibility/tags/change-note/preview, pre-filled from the previous version (live Steam metadata → local `.workshop.json` sidecar inside the livery folder → manifest defaults), and shows progress plus the item URL on success. The published item id is recorded automatically in the livery folder's `.workshop.json` after the first upload, so repeat uploads update the same item with no user input (the whole livery folder is uploaded verbatim, except the private `.workshop.json` sidecar). The preview image used for the item is also saved in the livery folder (`.workshop-preview.*`) and reused on later uploads unless a new one is chosen, and it ships inside the uploaded mod content as well; an oversized preview is automatically downscaled/re-encoded below Steam's 1 MiB limit before upload. Before updating, the recorded id is verified against Steam — if the item was deleted on the Workshop, a fresh item is published and the new id is recorded instead of failing. Requires the Steam client running with an account that owns the game (appid `3328490`; temporary licenses such as Family Sharing / free weekends cannot publish). Deleting the livery locally does not remove the Steam item.
 
@@ -251,7 +251,7 @@ DMG 为 **universal**（通用）版本，在 Apple Silicon（arm64）与 Intel�
 - **Frontend:** React 19 + Vite 8 + zustand 5
 - **Language:** JavaScript (plain, no TypeScript)
 - **Build:** electron-builder (programmatic API via `build.js`)
-- **Tests:** Vitest (105 test files, 1935 tests) + Playwright (E2E, 9 spec files) + Node.js (integration, 60 scripts; 173 MCP/API tests)
+- **Tests:** Vitest (151 test files, 2712 tests) + Playwright (E2E, 9 spec files) + Node.js (integration, 60 scripts; 173 MCP/API tests)
 
 ### Quick Start
 
@@ -280,11 +280,14 @@ src/App.jsx          →  Root component: providers + screen routing (+ map wind
 src/components/      →  React component tree (Setup, Browser, Livery, Editor, common, MapWindows)
 src/hooks/           →  Custom React hooks (useTranslation, useEditorShell, etc.)
 src/store/           →  zustand store (single source of truth for all UI state)
-src/acl/             →  CommonJS backend modules (parser facade + 19 modules + OdinSerializer binary codec)
+src/acl/             →  CommonJS backend modules (unified per-file format dispatch + v3 & legacy Odin codecs)
+src/acl/archive.js   →  Editor-facing per-file format entry point (`gatcarc4-v3`, `gatcarc4-v2`, `gatcarc4-v1`, `legacy-text`)
+src/acl/v3/          →  GATCARC4 storage v3 codec: framing (`NODS`/`NODH`/`MARF`/`NODF` + SHA-256), lossless int64 JSON, Q32.32 math, schema `ca34c2ab…` validator, `$id`/`$ref`/`pk:` graph indexer, readers, and semantic writers
+src/acl/legacy_handler.js → Legacy handler wrapping GATCARC4 v1/v2 + OdinSerializer text/binary pipelines
 src/acl/config.js    →  Centralized config time resolution: resolveConfigTime (CDT override), resolveDisplayTimes
-src/acl/gatcarc.js   →  GATCARC4 binary container: readAclText/writeAcl universal I/O (binary + text)
-src/acl/v4_pk_index.js → v4 PK entity index: $iref→$id lookup, vector3/string/iref extraction helpers
-src/acl/odin/        →  OdinSerializer binary codec (reader, writer, JSON reader/writer, .NET values)
+src/acl/gatcarc.js   →  Legacy GATCARC4 v1/v2 binary container: readAclText/writeAcl universal I/O (v1/v2 binary + text)
+src/acl/v4_pk_index.js → Legacy Odin PK entity index: $iref→$id lookup, vector3/string/iref extraction helpers
+src/acl/odin/        →  OdinSerializer binary codec (reader, writer, JSON reader/writer, .NET values — v1/v2/legacy)
 src/utils/           →  Shared utilities (ESM for frontend + CJS for backend)
 ```
 
@@ -296,9 +299,9 @@ All file I/O goes through IPC (`ipcMain.handle` / `ipcRenderer.invoke`). The ren
 
 ```
 Phase 0 (once):   Game Root → scan audio + approach data + taxiway/SID/missed-app paths (merged from all .acl files) + dropdowns + runway pairs → AirportCache. Progress bar shows global 0–100% across all airports/files.
-Phase 1 (load):   .acl → readAclText() (GATCARC4 decode) → parse flights + timelines → zustand store. All files are v4: StaticData.$blobdoc.StaticItems (flight-plan: entries). Config startTime resolved via resolveConfigTime (overrides with GameTime.CurrentDateTime if present).
+Phase 1 (load):   .acl → openAclFile() (`src/acl/archive.js`) detects format per file (`gatcarc4-v3`, `gatcarc4-v2`, `gatcarc4-v1`, or `legacy-text`) → reads normalized flights, scenery, and timelines → zustand store. Storage v3 decodes length/SHA-256-framed UTF-8 JSON + Base64 `StaticData`/`RuntimeData` with lossless `BigInt` precision and Q32.32 fixed-point conversions (`schemaHash = ca34c2ab…`); storage v1/v2 decode through the legacy OdinSerializer handler. Config startTime is resolved via `resolveConfigTime` (overrides with `GameTime.CurrentDateTime` if present).
 Phase 2 (edit):   All edits go through zustand store actions. InBlockTime/TakeoffTime columns are hidden.
-Phase 3 (save):   Validation → generate flights → writeAcl() to .acl + .csv + timeline .json. Rebuilds StaticData.$blobdoc.StaticItems (no AircraftStates). The GATCARC4 container version is preserved on disk (v1 stays v1, v2 stays v2). A **0-flight level** (scenery-only / fully-cleared schedule) is now a valid save — the pipeline runs with an empty flight set, removing every flight-plan/aircraft/animator runtime entity while preserving jetways, radio channels, and scenery, and `loadFlights` reloads it as an empty schedule. Rebuilt runtime-adjacent types (e.g. `AircraftAnimator`) and the `StaticData.$blobdoc` types that the game strips from a flight-less level resolve lazily / with fallback so a lean scope never aborts a save.
+Phase 3 (save):   Validation → semantic edits (`applyEdits` on v3, Odin rebuild/patch on v1/v2/legacy) → atomic staged save to `.acl` + `.csv` + applicable timeline `.json` sidecars. **Saves are strictly version-preserving per file**: GATCARC4 v3 stays v3, v2 stays v2, v1 stays v1, and legacy plain-text stays plain-text — even in mixed-version airport folders. On v3 files, untouched segments/blobs reuse exact wire bytes, modified `StaticData`/`RuntimeData` and `MARF` checkpoint frames are schema-validated before atomic rename, and embedded `MetaData` timelines (`WeatherFrames`, `WindFrames`, `RunwayTimeline`) are written directly without requiring external timeline sidecar JSONs. A **0-flight level** (scenery-only / Endless / fully-cleared schedule) is a valid save across both v3 and legacy handlers, removing flight-plan/aircraft/animator runtime entities while preserving jetways, radio channels, and scenery.
 UDP (live):       Game → UDP 20266 (10 Hz) → udp_listener.js → map windows (Surface Radar / Approach Radar / Flight Strips)
 MCP (AI agent):   Claude Code → stdio → mcp/bridge.js → HTTP :31415 → api-server.js → IPC → store → UI
 ```
@@ -405,9 +408,26 @@ node tests/integration/test_api_e2e_examples.js     # Composition examples (44 t
 │   │   └── flightCascade.js     # cascading field updates (CallSign rebuild, airline→type/reg, runway→STAR)
 │   │
 │   ├── acl/                 # Backend modules (CommonJS)
+│   │   ├── archive.js           # Unified per-file format dispatch (GATCARC4 v3, v2, v1, legacy-text)
+│   │   ├── framing.js           # Shared bounded LE framing, SHA-256, and commit-marker primitives
+│   │   ├── legacy_handler.js    # Legacy handler isolating GATCARC4 v1/v2 + Odin text/binary readers & writers
+│   │   ├── v3/                  # GATCARC4 storage v3 codec (pure Node, zero Electron/Unity deps)
+│   │   │   ├── WIRE_CONTRACT.md     # Verified v3 framing, schemaHash ca34c2ab…, Q32.32 & unit conversions
+│   │   │   ├── schema_ca34c2ab.json # Embedded v3 wire schema
+│   │   │   ├── framing.js           # NODS/NODH/MARF/NODF framing + SHA-256 + byte-preserving re-encode
+│   │   │   ├── lossless_json.js     # Lossless UTF-8 JSON parser/serializer preserving int64 BigInt precision
+│   │   │   ├── q32.js               # Signed Q32.32 fixed-point, angle/wind, GU/metre, and ISO-8601 helpers
+│   │   │   ├── graph.js             # $id/$ref, typed-array & reactive wrappers, and pk: authority indexer
+│   │   │   ├── schema_registry.js   # Schema hash lookup & canonical hash verification
+│   │   │   ├── validator.js         # Strict schema + reference + int64 range validator
+│   │   │   ├── readers.js           # Editor-shaped projections (flights, timelines, scenery, approach, radar)
+│   │   │   ├── writers_meta.js      # Config + weather/wind/runway timeline semantic writers
+│   │   │   ├── writers_flights.js   # Static + runtime flight/aircraft/animator builders & checkpoint reconcile
+│   │   │   ├── writers_scenery.js   # Ground/Air Painter scenery builders + delete/rename reference cascades
+│   │   │   └── handler.js           # Stateful v3 archive handle + stale-source check + atomic staged save
 │   │   ├── config.js            # Centralized time resolution (resolveConfigTime, CDT override)
 │   │   ├── parser.js            # FACADE — main.js imports everything through here
-│   │   ├── gatcarc.js           # GATCARC4 binary container (universal readAclText/writeAcl)
+│   │   ├── gatcarc.js           # Legacy GATCARC4 v1/v2 binary container (readAclText/writeAcl)
 │   │   ├── id_renumber.js       # Strictly-ascending $id/$iref renumbering for the game's checkpoint reader
 │   │   ├── v4_pk_index.js       # v4 PK entity index + $iref resolution
 │   │   ├── scenery_graph.js     # Ground Painter read path — id-free scenery Graph + meta
@@ -467,10 +487,18 @@ See `tests/README.md` for the full test matrix, expected values, and test infras
 npm run test:all      # Vitest + save integrity (16 files) + jetway rebuild (16 v4) + v4 runway pairs + build + Playwright E2E (~4.5 min, sets E2E_GAME_ROOT)
 ```
 
-**Component tests (Vitest — 105 test files, 1935 tests):**
+**Component & ACL tests (Vitest — full 1-to-1 GATCARC4 v2 & v3 parity):**
 ```bash
-npm test              # Run all component + store + utility + MapWindow + updater tests (~8s)
+npm test              # Run all ACL v3/v2 + component + store + utility + MapWindow + updater tests
 npm run test:watch    # Watch mode — re-runs on file changes
+
+# GATCARC4 v3 framing, schema validator, 13-file checked-in ZSJN v3 reference corpus, and 1-to-1 v3 integration parity suites:
+npx vitest run tests/acl/v3_framing_schema.test.js tests/acl/v3_corpus_and_edits.test.js tests/integration/gatcarc_v3_frame_edit.test.js tests/integration/v3_frame_reconciliation.test.js tests/integration/v3_flight_save_parity.test.js tests/integration/v3_scenery_ground_air_parity.test.js
+
+# Point at a non-default Airport Control 27 install for the 40-file v3 corpus sweep:
+# PowerShell:
+$env:AC27_GAME_ROOT = "D:\SteamLibrary\steamapps\common\Airport Control 27"
+npx vitest run tests/acl/v3_corpus_and_edits.test.js
 ```
 
 **E2E tests (Playwright + Electron — 9 spec files):**

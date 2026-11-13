@@ -22,7 +22,7 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { levelPath, gameLevelExists } from '../helpers/gameRoot';
+import { v2LevelPath, v2GameLevelExists } from '../helpers/gameRoot';
 
 const require = createRequire(import.meta.url);
 const parser = require('../../src/acl/parser');
@@ -34,8 +34,8 @@ const LEVEL = 'ZSJN_leisure_1.acl';
 const ICAO = 'ZSJN';
 const SENTINEL = '$$$ GATCARC4 CHECKPOINT FRAME $$$';
 
-const hasLevel = gameLevelExists(ICAO, LEVEL);
-const srcPath = hasLevel ? levelPath(ICAO, LEVEL) : null;
+const hasLevel = v2GameLevelExists(ICAO, LEVEL, null, null);
+const srcPath = hasLevel ? v2LevelPath(ICAO, LEVEL, null, null) : null;
 const isV2 = hasLevel && getStorageVersion(fs.readFileSync(srcPath)) === 2;
 
 // The bug is v2-specific; skip cleanly on a missing level or a v1 archive.

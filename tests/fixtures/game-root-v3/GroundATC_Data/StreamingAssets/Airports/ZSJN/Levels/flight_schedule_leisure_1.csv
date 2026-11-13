@@ -1,0 +1,23 @@
+registration,arrivalCallSign,originAirport,landingTime,arrivalStand,arrivalRunway,arrivalSTAR,departureCallSign,destinationAirport,offBlockTime,departureStand,departureRunway,airline,aircraftType,voice,language
+B-42CT,,,,,,,DKH4923,ZBAA,05:47:04,4,01,DKH,BOEING 787-9,CN-Captain-Middle-Aged-EN,en
+B-7851,CCA3115,ZPPP,05:48:06,21,01,PANK8X,,,,,,CCA,AIRBUS A-320P2F,CN-Captain-Middle-Aged-EN,en
+B-74A3,,,,,,,CES6819,ZUGY,05:49:22,36,01,CES,AIRBUS A-320neo,CN-Captain-Middle-Aged-EN,en
+B-08D5,CSN6433,ZYTX,05:51:30,24,01,UBSS8X,,,,,,CSN,BOEING 737-800BCF,CN-Captain-Middle-Aged-EN,en
+B-90PT,,,,,,,CDG8078,ZSSS,05:51:49,309,01,CDG,BOMBARDIER CRJ700,CN-Captain-Middle-Aged-EN,en
+B-226E,CDG8032,ZGHA,05:53:56,304,01,ABTU8X,,,,,,CDG,BOMBARDIER CRJ700,CN-Captain-Middle-Aged-EN,en
+B-5129,,,,,,,CES6313,ZUCK,05:55:39,303,01,CES,COMAC C-919,CN-Captain-Middle-Aged-EN,en
+B-3872I,CSN9355,ZBAA,05:55:44,28,01,WFG91A,,,,,,CSN,BOEING 737 MAX 8,CN-Captain-Middle-Aged-EN,en
+B-5402Q,,,,,,,CSN9173,ZBAA,05:57:28,2,01,CSN,AIRBUS A-319neo,CN-Captain-Middle-Aged-EN,en
+B-3632C,CXA3174,ZGHA,05:58:11,13,01,PANK8X,,,,,,CXA,AIRBUS A-321neo,CN-Captain-Middle-Aged-EN,en
+B-0299J,,,,,,,CCA4793,ZJSY,05:59:02,17,01,CCA,AIRBUS A-350-900,CN-Captain-Middle-Aged-EN,en
+B-17I2,DKH4514,ZBAA,06:00:34,10,01,WFG91A,,,,,,DKH,AIRBUS A-320ceo,CN-Captain-Middle-Aged-EN,en
+B-879X,,,,,,,CQH7171,ZJSY,06:02:31,34,01,CQH,AIRBUS A-320ceo,CN-Captain-Middle-Aged-EN,en
+B-1412D,CDG9664,ZYCC,06:02:59,18,01,WFG91A,,,,,,CDG,BOEING 737 MAX 8,CN-Captain-Middle-Aged-EN,en
+B-477F,GCR3764,ZSYT,06:04:23,300,01,BASV8X,,,,,,GCR,EMBRAER E-JET 190,CN-Captain-Middle-Aged-EN,en
+B-62H2,,,,,,,DKH5137,ZBAA,06:05:05,1,01,DKH,AIRBUS A-320ceo,CN-Captain-Middle-Aged-EN,en
+B-6308,CDG9956,ZUTF,06:07:11,22,01,ABTU8X,,,,,,CDG,BOEING 737-800,CN-Captain-Middle-Aged-EN,en
+B-2449O,,,,,,,BDJ5236,ZUTF,06:08:37,307,01,BDJ,GULFSTREAM 650,CN-Captain-Middle-Aged-EN,en
+B-79FQ,DKH4086,ZYCC,06:10:35,313,01,WFG91A,,,,,,DKH,AIRBUS A-320neo,CN-Captain-Middle-Aged-EN,en
+B-79G4,,,,,,,CES5888,ZBAA,06:11:20,33,01,CES,AIRBUS A-319ceo,CN-Captain-Middle-Aged-EN,en
+B-82O6,CES5657,ZBAA,06:12:23,5,01,BASV8X,,,,,,CES,BOEING 737-800,CN-Captain-Middle-Aged-EN,en
+B-62X4,,,,,,,CSN5437,ZBAA,06:12:57,301,01,CSN,AIRBUS A-320neo,CN-Captain-Middle-Aged-EN,en

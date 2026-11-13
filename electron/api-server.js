@@ -359,10 +359,11 @@ function buildConstraints(state, cache) {
     stands: dv.Stand || [],
     runways: dv.Runway || [],
     aircraftTypes: allAircraftTypes(dv, ad),
-    voices: dv.Voice || [],
+    voices: sv.Voice || dv.Voice || [],
     languages: sv.Language || dv.Language || [],
     voiceLanguages: sv._voiceLanguages || dv._voiceLanguages || null,
     airlineCountries: sv._airlineCountries || null,
+    v3Audio: sv._v3Audio || null,
     airlineNames: dv.AirlineName || [],
     airlineAircraftCompat: (dv._compat && dv._compat.airlineToAircraft) || {},
     runwayStarCompat: ad.runwayStarMap || {},
@@ -476,11 +477,66 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
     // 6. (removed) Aircraft type is independent of the airline — any profiled
     //    type is allowed regardless of the callsign's airline.
 
-    // 6b. Airline / language — the game's CallsignService only records a
-    //     callsign for one captain language (CN → zh, every other carrier → en),
-    //     so a mismatch throws "failed to allocate callsign … for crew voice …"
-    //     at level load (CAL2017 / CN-Captain-Young).
-    if (f.Language && constraints.airlineCountries) {
+    // 6b. Language / Voice / clip allocation
+    if (constraints.v3Audio) {
+      const v3 = constraints.v3Audio;
+      const trimmedLang = String(f.Language ?? '').trim();
+      const trimmedVoice = String(f.Voice ?? '').trim();
+      const trimmedCs = String(f.CallSign ?? '').trim();
+      if (!trimmedLang) {
+        details.push({
+          index: idx, field: 'Language', value: f.Language,
+          issue: 'missing_language',
+          message: `Flight ${f.CallSign || '?'} is missing required Language.`,
+        });
+      } else if (Array.isArray(v3.knownChannelLanguages) && v3.knownChannelLanguages.length > 0 && !v3.knownChannelLanguages.includes(trimmedLang)) {
+        details.push({
+          index: idx, field: 'Language', value: f.Language,
+          issue: 'invalid_language',
+          message: `Language '${trimmedLang}' is not configured for airport ${v3.icao || constraints.currentAirport || ''}.`,
+          valid: v3.knownChannelLanguages,
+        });
+      }
+      if (!trimmedVoice) {
+        details.push({
+          index: idx, field: 'Voice', value: f.Voice,
+          issue: 'missing_voice',
+          message: `Flight ${f.CallSign || '?'} is missing required Voice.`,
+        });
+      }
+      const vLangMap = constraints.voiceLanguages || v3.voiceLanguages || {};
+      if (trimmedVoice && trimmedLang && vLangMap[trimmedVoice] && vLangMap[trimmedVoice] !== trimmedLang) {
+        details.push({
+          index: idx, field: 'Voice', value: f.Voice,
+          issue: 'voice_language_mismatch',
+          message: `Voice '${trimmedVoice}' has language '${vLangMap[trimmedVoice]}', which mismatches flight Language '${trimmedLang}' on ${f.CallSign || '?'}.`,
+        });
+      }
+      if (v3.hasClipIndex && trimmedCs) {
+        if (trimmedVoice) {
+          const capClips = v3.voiceCallsigns?.[trimmedVoice];
+          if (!Array.isArray(capClips) || !capClips.includes(trimmedCs)) {
+            details.push({
+              index: idx, field: 'Voice', value: f.Voice,
+              issue: 'callsign_voice_mismatch',
+              message: `${trimmedCs}: callsign '${trimmedCs}' has no audio clip for captain voice '${trimmedVoice}'.`,
+            });
+          }
+        }
+        if (trimmedLang && v3.knownChannelConfig) {
+          for (const atcVoice of (v3.atcVoicesByLang?.[trimmedLang] || [])) {
+            const atcClips = v3.atcCallsigns?.[atcVoice];
+            if (!Array.isArray(atcClips) || !atcClips.includes(trimmedCs)) {
+              details.push({
+                index: idx, field: 'CallSign', value: f.CallSign,
+                issue: 'callsign_atc_voice_mismatch',
+                message: `${trimmedCs}: callsign '${trimmedCs}' has no audio clip for ATC voice '${atcVoice}' (${trimmedLang}).`,
+              });
+            }
+          }
+        }
+      }
+    } else if (f.Language && constraints.airlineCountries) {
       const expected = languageForAirlineCode(
         airlineCode,
         constraints.airlineCountries,
@@ -575,7 +631,9 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
       const sec = parseTimeSeconds(pt);
       if (constraints.configStartTime) {
         const startSec = parseTimeSeconds(constraints.configStartTime);
-        if (!isNaN(sec) && !isNaN(startSec) && sec < startSec) {
+        const sourceCol = isArrival(f) ? '_sourceLandingTime' : '_sourceOffBlockTime';
+        const isUnretimedSourceFlight = !f._isNew && !!f[sourceCol] && pt === f[sourceCol];
+        if (!isNaN(sec) && !isNaN(startSec) && sec < startSec && !isUnretimedSourceFlight) {
           details.push({
             index: idx, field: isArrival(f) ? 'LandingTime' : 'OffBlockTime', value: pt,
             issue: 'time_before_range',

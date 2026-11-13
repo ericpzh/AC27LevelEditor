@@ -1,0 +1,21 @@
+{
+  "weather": [
+    {
+      "preset": "Sunny",
+      "time": "09:00:00"
+    }
+  ],
+  "wind": [
+    {
+      "direction": 5,
+      "speed": 8,
+      "time": "20:00:00"
+    }
+  ],
+  "runway": {
+    "initialRunways": [
+      "01"
+    ],
+    "timeline": []
+  }
+}

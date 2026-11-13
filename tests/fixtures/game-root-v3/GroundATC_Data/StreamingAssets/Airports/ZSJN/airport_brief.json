@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "icao": "ZSJN",
+  "runways": [
+    {
+      "physicalName": "01/19",
+      "length": 3730,
+      "directions": [
+        {
+          "name": "01",
+          "useMode": "TakeoffAndLanding"
+        },
+        {
+          "name": "19",
+          "useMode": "TakeoffAndLanding"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "radioChannels": [
+    {
+      "type": "Ramp",
+      "frequency": 122.7,
+      "shortCode": "RMP",
+      "radioName": "Apron",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "ramp_zgsz",
+      "voice": {
+        "zh": "ZGSZ-Female-ATC",
+        "en": "Hanser-EN"
+      }
+    },
+    {
+      "type": "Ground",
+      "frequency": 121.8,
+      "shortCode": "GND",
+      "radioName": "Ground",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "ground_zgsz",
+      "voice": {
+        "zh": "ZGSZ-Female-ATC",
+        "en": "Hanser-EN"
+      }
+    },
+    {
+      "type": "Tower",
+      "frequency": 118.45,
+      "shortCode": "TWR",
+      "radioName": "Tower",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "tower_zgsz",
+      "voice": {
+        "zh": "ZGSZ-Female-ATC",
+        "en": "Hanser-EN"
+      }
+    },
+    {
+      "type": "Approach",
+      "frequency": 121.4,
+      "shortCode": "APP",
+      "radioName": "Approach",
+      "isMuted": true,
+      "isAutoControlled": true,
+      "isTalking": false,
+      "localizationKey": "approach_zgsz",
+      "voice": {
+        "zh": "ZGSZ-Female-ATC",
+        "en": "Hanser-EN"
+      }
+    }
+  ],
+  "channelMapping": {
+    "Ramp": "Ramp",
+    "Ground": "Ground",
+    "Tower": "Tower",
+    "Departure": "Approach",
+    "Approach": "Approach"
+  }
+}

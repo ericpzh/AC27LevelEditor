@@ -80,9 +80,11 @@ export default async function () {
         if (le.name.endsWith('.acl') || le.name.endsWith('.acl.bak')) continue;
         cpSync(path.join(srcLevels, le.name), path.join(dstLevels, le.name));
       }
-      const cfgSrc = path.join(srcAirports, icao, 'airport_config.json');
-      const cfgDst = path.join(dstAirports, icao, 'airport_config.json');
-      if (existsSync(cfgSrc) && !existsSync(cfgDst)) cpSync(cfgSrc, cfgDst);
+      for (const extraName of ['airport_config.json', 'airport_brief.json', 'radio_template_en.csv', 'radio_template_zh.csv']) {
+        const extraSrc = path.join(srcAirports, icao, extraName);
+        const extraDst = path.join(dstAirports, icao, extraName);
+        if (existsSync(extraSrc) && !existsSync(extraDst)) cpSync(extraSrc, extraDst);
+      }
     }
 
     // Stage the voice catalog so the editor's renderer-side Voice/Language

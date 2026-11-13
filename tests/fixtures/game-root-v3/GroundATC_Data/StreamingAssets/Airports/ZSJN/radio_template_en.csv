@@ -1,0 +1,74 @@
+AudioEventType,Speaker,Template
+CaptainRequestTaxiWhenDeparture,Captain,[CurrentChannelName] | [AircraftCallSign] | RequestTaxi
+AtcClearedToTaxi,ATC,[AircraftCallSign] | Runway[Runway] | TaxiToHoldingPoint | [HoldingPoint] | Via | [TaxiRoute]
+AtcClearedToTaxi,Captain,Runway[Runway] | Via | [TaxiRoute] | ToHoldingPoint | [HoldingPoint] | [AircraftCallSign]
+AtcStandByTaxi,ATC,[AircraftCallSign] | StandByTaxi
+AtcStandByTaxi,Captain,StandingBy | [AircraftCallSign]
+AtcHoldPosition,ATC,[AircraftCallSign] | HoldPosition
+AtcHoldPosition,Captain,Holding | [AircraftCallSign]
+AtcContinueTaxi,ATC,[AircraftCallSign] | ContinueTaxi
+AtcContinueTaxi,Captain,ContinueTaxi | [AircraftCallSign]
+AtcContactTower,ATC,[AircraftCallSign] | Contact[JurisdictionChannelName] | [JurisdictionChannelFrequency]
+AtcContactTower,Captain,Contact[JurisdictionChannelName] | [JurisdictionChannelFrequency] | [AircraftCallSign]
+AtcClearedForTakeoff_Accepted,ATC,[AircraftCallSign] | [WindDynamic] | Runway[Runway] | ClearedForTakeoff
+AtcClearedForTakeoff_Accepted,Captain,Runway[Runway] | ClearedForTakeoff | [AircraftCallSign]
+AtcClearedForTakeoff_Rejected,ATC,[AircraftCallSign] | [WindDynamic] | Runway[Runway] | ClearedForTakeoff
+AtcClearedForTakeoff_Rejected,Captain,Rejected | [AircraftCallSign]
+AtcHoldShortOfRunway,ATC,[AircraftCallSign] | HoldShortOfRunway(mid) | [Runway]
+AtcHoldShortOfRunway,Captain,HoldShortOfRunway(mid) | [Runway] | [AircraftCallSign]
+AtcLineUpAndWait,ATC,[AircraftCallSign] | Runway[Runway] | LineUpAndWait
+AtcLineUpAndWait,Captain,Runway[Runway] | LineUpAndWait | [AircraftCallSign]
+AtcClearedToLand_Accepted,ATC,[AircraftCallSign] | Runway[Runway] | ClearedToLand | [WindDynamic]
+AtcClearedToLand_Accepted,Captain,Runway[Runway] | ClearedToLand | [AircraftCallSign]
+AtcClearedToLand_Rejected,ATC,[AircraftCallSign] | Runway[Runway] | ClearedToLand | [WindDynamic]
+AtcClearedToLand_Rejected,Captain,Rejected | [AircraftCallSign]
+AtcContactDeparture,ATC,[AircraftCallSign] | Contact[JurisdictionChannelName] | [JurisdictionChannelFrequency]
+AtcContactDeparture,Captain,Contact[JurisdictionChannelName] | [JurisdictionChannelFrequency] | [AircraftCallSign]
+AtcContinueApproach,ATC,[AircraftCallSign] | [CurrentChannelName] | Runway[Runway] | ContinueApproach
+AtcContinueApproach,Captain,ContinueApproach | Runway[Runway] | [AircraftCallSign]
+CaptainGoingAround,Captain,WeAreGoingAround | [AircraftCallSign]
+AtcGoAround,ATC,[AircraftCallSign] | GoAround | ExecuteMissedApproach
+AtcGoAround,Captain,GoingAround | ExecuteMissedApproach | [AircraftCallSign]
+AtcCancelTakeoffClearance,ATC,[AircraftCallSign] | CancelTakeoffClearance
+AtcCancelTakeoffClearance,Captain,CancelTakeoffClearance | [AircraftCallSign]
+AtcCancelLandingClearance,ATC,[AircraftCallSign] | ContinueApproach | CancelLandingClearance
+AtcCancelLandingClearance,Captain,LandingClearanceCancelled | ContinuingApproach | [AircraftCallSign]
+AtcContactGroundWhenApproach,ATC,[AircraftCallSign] | Contact[JurisdictionChannelName] | [JurisdictionChannelFrequency]
+AtcContactGroundWhenApproach,Captain,Contact[JurisdictionChannelName] | [JurisdictionChannelFrequency] | [AircraftCallSign]
+AtcContactGroundWhenDepartureExitRunway,ATC,[AircraftCallSign] | Contact[JurisdictionChannelName] | [JurisdictionChannelFrequency]
+AtcContactGroundWhenDepartureExitRunway,Captain,Contact[JurisdictionChannelName] | [JurisdictionChannelFrequency] | [AircraftCallSign]
+AtcTaxiRouteWhenApproach,ATC,[AircraftCallSign] | TaxiVia | [TaxiRoute] | [ApproachStandTail]
+AtcTaxiRouteWhenApproach,Captain,TaxiVia | [TaxiRoute] | [ApproachStandTail] | [AircraftCallSign]
+AtcTaxiRouteDeparture,ATC,[AircraftCallSign] | TaxiVia | [TaxiRoute] | Runway[Runway]
+AtcTaxiRouteDeparture,Captain,TaxiVia | [TaxiRoute] | Runway[Runway] | [AircraftCallSign]
+AtcRunwayRollout,ATC,[AircraftCallSign] | Turn[TurnDirection] | [ExitPoint]
+AtcRunwayRollout,Captain,Turn[TurnDirection] | [ExitPoint] | [AircraftCallSign]
+CaptainSwitchToTowerFrequency,Captain,[CurrentChannelName] | [AircraftCallSign] | OnYourFrequency
+CaptainRequestToLand,Captain,[CurrentChannelName] | [AircraftCallSign] | Stand | [Spot]
+CaptainRequestTaxiWhenApproach,Captain,[CurrentChannelName] | [AircraftCallSign] | [HoldingPoint] | Stand | [Spot]
+CaptainRequestTaxiWhenDepartureExitRunway,Captain,[CurrentChannelName] | [AircraftCallSign] | OnYourFrequency
+CaptainRequestPushback,Captain,[CurrentChannelName] | [AircraftCallSign] | Stand | [Spot] | RequestPushback | WeHaveInformation | [Information]
+AtcPushbackApproved,ATC,[AircraftCallSign] | PushbackApproved | Heading[PushbackHeading] | Runway[Runway]
+AtcPushbackApproved,Captain,PushbackApproved | Runway[Runway] | [AircraftCallSign]
+AtcStandByPushback,ATC,[AircraftCallSign] | [CurrentChannelName] | StandByPushback
+AtcStandByPushback,Captain,StandingBy | [AircraftCallSign]
+AtcPausePushback,ATC,[AircraftCallSign] | StopPushback | HoldPosition
+AtcPausePushback,Captain,HoldPosition | [AircraftCallSign]
+AtcContinuePushback,ATC,[AircraftCallSign] | PushbackApproved
+AtcContinuePushback,Captain,PushbackApproved | [AircraftCallSign]
+AtcReturnToStand,ATC,[AircraftCallSign] | TaxiTo | Stand | [Spot] | Via | [TaxiRoute]
+AtcReturnToStand,Captain,Stand | [Spot] | Via | [TaxiRoute] | [AircraftCallSign]
+AtcPermitCrossRunway, ATC, [AircraftCallSign] | CrossRunway | [Runway]
+AtcPermitCrossRunway, Captain, CrossRunway | [Runway] | [AircraftCallSign]
+AtcForbidCrossRunway, ATC, [AircraftCallSign] | HoldShortOfRunway | [Runway]
+AtcForbidCrossRunway, Captain, HoldShortOfRunway | [Runway] | [AircraftCallSign]
+AtcChangeRunway, ATC, [AircraftCallSign] | ChangeTo | Runway[Runway]
+AtcChangeRunway, Captain, ChangeTo | Runway[Runway] | [AircraftCallSign]
+CaptainUnableToEnterStand, Captain, [AircraftCallSign] | UnableToEnterStand | [Spot]
+CaptainWaitingForCrossRunway, Captain, [AircraftCallSign] | WaitingToCross | Runway[Runway]
+CaptainRunwayVacated, Captain, [AircraftCallSign] | Vacated | Runway[Runway]
+AtcPermitTow,ATC,[AircraftCallSign] | TowVia | [TaxiRoute] | HoldShortAt | [HoldingPoint]
+AtcPermitTow,Captain,TowVia | [TaxiRoute] | HoldShortAt | [HoldingPoint] | [AircraftCallSign]
+AtcStopTow,ATC,[AircraftCallSign] | StopTow
+AtcStopTow,Captain,StopTow | [AircraftCallSign]
+CaptainTowComplete,Captain,TowComplete | [AircraftCallSign]

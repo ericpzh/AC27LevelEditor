@@ -203,56 +203,96 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     airlineCodeSet.add(code);
     addFlightNums(code, audioData.byAirline[code]);
   }
+  const v3Audio = values._v3Audio || null;
+  const languageValidSet = (v3Audio && Array.isArray(v3Audio.knownChannelLanguages) && v3Audio.knownChannelLanguages.length > 0)
+    ? new Set(v3Audio.knownChannelLanguages)
+    : VALID_LANGUAGES;
   const validSets = {
     AirlineCode: airlineCodeSet,
     Stand: new Set(values.Stand || []),
     Runway: new Set(values.Runway || []),
     AircraftType: new Set(values.AircraftType || []),
     Voice: new Set(values.Voice || []),
-    Language: VALID_LANGUAGES,
+    Language: languageValidSet,
   };
 
   flights.forEach((fl) => {
+    const cs = fl.CallSign || '?';
     const airlineCode = (fl.CallSign || '').substring(0, 3);
     if (airlineCode && !validSets.AirlineCode.has(airlineCode)) {
-      issues.push(T('val_airline_not_in_whitelist', { cs: fl.CallSign || '?', code: airlineCode }));
+      issues.push(T('val_airline_not_in_whitelist', { cs, code: airlineCode }));
     }
     const flightNum = (fl.CallSign || '').substring(3);
     if (airlineCode && flightNum) {
       const vNums = validFlightNums[airlineCode];
       if (vNums && vNums.size > 0 && !vNums.has(flightNum)) {
-        issues.push(T('val_flightnum_not_valid', { cs: fl.CallSign || '?', num: flightNum, code: airlineCode }));
+        issues.push(T('val_flightnum_not_valid', { cs, num: flightNum, code: airlineCode }));
+      }
+    }
+    if (v3Audio) {
+      for (const reqCol of ['Language', 'Voice']) {
+        if (!String(fl[reqCol] ?? '').trim()) {
+          issues.push(T('val_field_required', {
+            cs,
+            field: T('field_' + reqCol) || FIELD_LABELS[reqCol] || reqCol,
+          }));
+        }
       }
     }
     for (const col of ['Stand', 'Runway', 'AircraftType', 'Voice', 'Language']) {
       const val = fl[col];
       if (val && validSets[col] && validSets[col].size > 0 && !validSets[col].has(val)) {
-        issues.push(T('val_field_not_in_options', { cs: fl.CallSign || '?', field: T('field_' + col) || FIELD_LABELS[col] || col, val: val }));
+        issues.push(T('val_field_not_in_options', { cs, field: T('field_' + col) || FIELD_LABELS[col] || col, val: val }));
       }
     }
     // Voice/Language consistency — the game's VoiceCatalog throws
     // InvalidOperationException at level load when a flight's captain voice
     // declares a different language than the flight (e.g. a `...-EN` voice on
-    // a `zh` flight). Only checkable when the catalog map reached the renderer.
-    const voiceLanguage = (values._voiceLanguages || {})[fl.Voice];
+    // a `zh` flight).
+    const voiceLangMap = values._voiceLanguages || v3Audio?.voiceLanguages || {};
+    const voiceLanguage = voiceLangMap[fl.Voice];
     if (voiceLanguage && fl.Language && voiceLanguage !== fl.Language) {
       issues.push(T('val_voice_language_mismatch', {
-        cs: fl.CallSign || '?', voice: fl.Voice, vlang: voiceLanguage, lang: fl.Language,
+        cs, voice: fl.Voice, vlang: voiceLanguage, lang: fl.Language,
       }));
     }
-    // Airline / language consistency — the game's CallsignService records a
-    // callsign clip for exactly one captain language, so Language must follow
-    // the airline (CN -> zh, every other -> en). A mismatch throws
-    // "Flight plan '<reg>' failed to allocate callsign '<cs>' for crew voice
-    // '<voice>'" at level load (CAL2017 / CN-Captain-Young). Only checkable when
-    // the install's airline_country_registry reached the renderer.
-    const airlineCountries = values._airlineCountries;
-    if (airlineCountries && Array.isArray(values.Language)) {
-      const expected = expectedLanguageForFlight(fl, airlineCountries, values.Language);
-      if (expected && fl.Language && fl.Language !== expected) {
-        issues.push(T('val_airline_language_mismatch', {
-          cs: fl.CallSign || '?', code: airlineCodeForFlight(fl), lang: fl.Language, expected,
-        }));
+
+    if (v3Audio) {
+      // GATCARC4 v3 exact clip-allocation validation against radio_clip_durations.json:
+      // the selected captain voice AND every ATC voice mapped to fl.Language at this
+      // airport must carry a clip for fl.CallSign.
+      const trimmedCs = String(fl.CallSign || '').trim();
+      const trimmedVoice = String(fl.Voice || '').trim();
+      const trimmedLang = String(fl.Language || '').trim();
+      if (v3Audio.hasClipIndex && trimmedCs) {
+        if (trimmedVoice) {
+          const capClips = v3Audio.voiceCallsigns?.[trimmedVoice];
+          if (!Array.isArray(capClips) || !capClips.includes(trimmedCs)) {
+            issues.push(T('val_callsign_voice_mismatch', { cs: trimmedCs, voice: trimmedVoice }));
+          }
+        }
+        if (trimmedLang && v3Audio.knownChannelConfig) {
+          const atcList = v3Audio.atcVoicesByLang?.[trimmedLang] || [];
+          for (const atcVoice of atcList) {
+            const atcClips = v3Audio.atcCallsigns?.[atcVoice];
+            if (!Array.isArray(atcClips) || !atcClips.includes(trimmedCs)) {
+              issues.push(T('val_callsign_atc_voice_mismatch', {
+                cs: trimmedCs, voice: atcVoice, lang: trimmedLang,
+              }));
+            }
+          }
+        }
+      }
+    } else {
+      // Legacy / v2 airline -> language consistency via airline_country_registry
+      const airlineCountries = values._airlineCountries;
+      if (airlineCountries && Array.isArray(values.Language)) {
+        const expected = expectedLanguageForFlight(fl, airlineCountries, values.Language);
+        if (expected && fl.Language && fl.Language !== expected) {
+          issues.push(T('val_airline_language_mismatch', {
+            cs, code: airlineCodeForFlight(fl), lang: fl.Language, expected,
+          }));
+        }
       }
     }
   });
@@ -328,10 +368,14 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
         const parts = String(timeVal).split(':');
         if (parts.length < 2) continue;
         const t = parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10);
-        if (t < startTime || t > endTime) {
+        const sourceCol = col === 'LandingTime' ? '_sourceLandingTime' : '_sourceOffBlockTime';
+        const isUnretimedSourceFlight = !fl._isNew && !!fl[sourceCol] && timeVal === fl[sourceCol];
+        const tooEarly = t < startTime && !isUnretimedSourceFlight;
+        const tooLate = t > endTime;
+        if (tooEarly || tooLate) {
           let hint = '';
-          if (t < startTime && t > endTime) hint = '≥ ' + startLabel + ' / ≤ ' + endLabel;
-          else if (t < startTime) hint = '≥ ' + startLabel;
+          if (tooEarly && tooLate) hint = '≥ ' + startLabel + ' / ≤ ' + endLabel;
+          else if (tooEarly) hint = '≥ ' + startLabel;
           else hint = '≤ ' + endLabel;
           issues.push(T('val_time_out_of_range', { cs: fl.CallSign || '?', field: T('field_' + col) || FIELD_LABELS[col] || col, time: timeVal, hint: hint }));
         }

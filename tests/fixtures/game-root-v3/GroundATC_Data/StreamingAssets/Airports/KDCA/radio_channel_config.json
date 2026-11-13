@@ -1,0 +1,63 @@
+{
+  "radioChannels": [
+    {
+      "type": "Ground",
+      "frequency": 121.7,
+      "shortCode": "GND",
+      "radioName": "WashingtonGround",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "ground_kdca",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    },
+    {
+      "type": "Tower",
+      "frequency": 119.1,
+      "shortCode": "TWR",
+      "radioName": "WashingtonTower",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "tower_kdca",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    },
+    {
+      "type": "Departure",
+      "frequency": 118.95,
+      "shortCode": "DEP",
+      "radioName": "PotomacDeparture",
+      "isMuted": true,
+      "isAutoControlled": true,
+      "isTalking": false,
+      "localizationKey": "departure_kdca",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    },
+    {
+      "type": "Approach",
+      "frequency": 119.85,
+      "shortCode": "APP",
+      "radioName": "PotomacApproach",
+      "isMuted": true,
+      "isAutoControlled": true,
+      "isTalking": false,
+      "localizationKey": "approach_kdca",
+      "voice": {
+        "en": "American-Female-ATC"
+      }
+    }
+  ],
+  "channelMapping": {
+    "Ramp": "Ground",
+    "Ground": "Ground",
+    "Tower": "Tower",
+    "Departure": "Departure",
+    "Approach": "Approach"
+  }
+}

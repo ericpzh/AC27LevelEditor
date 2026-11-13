@@ -67,20 +67,21 @@ console.log(`\nGame root: ${GAME_ROOT}`);
 const startTime = Date.now();
 
 // ── 1. Vitest ────────────────────────────────────────────────────
-runStep('Layer 1: Vitest (1200 component tests)', 'npx vitest run');
+runStep('Layer 1: Vitest (all unit, component, v2 + v3 integration suites)', 'npx vitest run');
 
-// ── 2. Save Integrity (16 prod+demo files) ───────────────────────
-// Quote paths to handle spaces in game root
+// ── 2. Save Integrity (v2 fixture + active game root) ────────────
+runStep('Layer 2a: Save Integrity (v2 fixture root)', `node --require "${PRELOAD}" "${SAVE_INTEGRITY}" --root "${gameRoot.FIXTURES_GAME_ROOT}" --prod-demo`);
 const layer2Cmd = `node --require "${PRELOAD}" "${SAVE_INTEGRITY}" --root "${GAME_ROOT}" --prod-demo`;
-runStep('Layer 2: Save Integrity (13 prod + 3 demo .acl files)', layer2Cmd);
+runStep('Layer 2a-live: Save Integrity (24 prod + 3 demo .acl files)', layer2Cmd);
 
-// ── 2b. Jetway Rebuild Test (16 prod+demo files) ────────────────
+// ── 2b. Jetway Rebuild Test (v2 fixture + active game root) ──────
+runStep('Layer 2b-v2: Jetway Rebuild (v2 fixture root)', `node --require "${PRELOAD}" "${JETWAY_REBUILD}" --root "${gameRoot.FIXTURES_GAME_ROOT}" --prod-demo --no-cache`);
 const layer2bCmd = `node --require "${PRELOAD}" "${JETWAY_REBUILD}" --root "${GAME_ROOT}" --prod-demo --no-cache`;
-runStep('Layer 2b: Jetway Rebuild (16 v4 files)', layer2bCmd);
+runStep('Layer 2b-live: Jetway Rebuild (prod+demo files)', layer2bCmd);
 
-// ── 2c. v4 Runway Pair Extraction ────────────────────────────────
+// ── 2c. Runway Pair Extraction (v2 + v3 fixtures + game root) ────
 const layer2cCmd = `node "${RUNWAY_PAIRS}" --root "${GAME_ROOT}"`;
-runStep('Layer 2c: v4 Runway Pair Extraction', layer2cCmd);
+runStep('Layer 2c: Runway Pair Extraction (v2 + v3)', layer2cCmd);
 
 // ── 3. Build (E2E needs dist-electron/main.js) ──────────────────
 console.log(`\n${'='.repeat(60)}`);

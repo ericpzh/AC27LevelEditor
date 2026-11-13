@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 import path from 'path';
-import { levelPath, gameLevelExists } from '../helpers/gameRoot';
+import { v2LevelPath, v2GameLevelExists } from '../helpers/gameRoot';
 
 const require = createRequire(import.meta.url);
 const { readAclText, encodeArchive } = require('../../src/acl/gatcarc');
@@ -163,11 +163,11 @@ describe('Runway Entries/Exits type-id distinctness', () => {
 // and declare their types only as shared singletons — the document-wide sampler
 // must not guess (nor collide) but omit the optional field and encode. Skipped
 // cleanly where the game is not installed.
-const describeWithRealLevel = gameLevelExists('ZSJN', 'ZSJN_leisure_1.acl') ? describe : describe.skip;
+const describeWithRealLevel = v2GameLevelExists('ZSJN', 'ZSJN_leisure_1.acl') ? describe : describe.skip;
 
 describeWithRealLevel('runway synthesis on a shipped v5 level', () => {
   it('omits optional IsActive (type not declared in the PK blobdoc) and still encodes', () => {
-    const text = readAclText(levelPath('ZSJN', 'ZSJN_leisure_1.acl'));
+    const text = readAclText(v2LevelPath('ZSJN', 'ZSJN_leisure_1.acl'));
     const { graph, meta } = buildSceneryGraph(text);
     const g = structuredClone(graph);
     g.nodes = [...g.nodes, { x: 800, z: 0, type: 1, flags: 0 }, { x: 900, z: 0, type: 1, flags: 0 }];

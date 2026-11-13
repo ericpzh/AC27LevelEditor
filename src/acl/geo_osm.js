@@ -22,9 +22,17 @@ const fs = require('fs');
 const path = require('path');
 
 /** Derive the airport's geo_data.osm path from a level ACL file path + its Config. */
-function deriveGeoDataPath(aclText, aclFilePath) {
-  const m = aclText.match(/"geoDataFile":\s*"([^"]+)"/);
-  const base = m ? m[1] : 'geo_data';
+function deriveGeoDataPath(aclTextOrHandle, aclFilePath) {
+  let base = 'geo_data';
+  if (typeof aclTextOrHandle === 'string') {
+    const m = aclTextOrHandle.match(/"geoDataFile":\s*"([^"]+)"/);
+    if (m) base = m[1];
+  } else if (aclTextOrHandle && typeof aclTextOrHandle === 'object') {
+    const cfg = typeof aclTextOrHandle.readConfig === 'function'
+      ? aclTextOrHandle.readConfig()
+      : aclTextOrHandle;
+    if (cfg && cfg.geoDataFile) base = cfg.geoDataFile;
+  }
   const levelDir = path.dirname(aclFilePath);
   const airportDir = path.dirname(levelDir); // <Airports>/<ICAO>/Levels -> <Airports>/<ICAO>
   return path.join(airportDir, base + '.osm');
@@ -32,7 +40,16 @@ function deriveGeoDataPath(aclText, aclFilePath) {
 
 // ─── ACL → taxiway model ─────────────────────────────────────────
 
-function buildTaxiwayModel(aclText) {
+function buildTaxiwayModel(aclTextOrHandle) {
+  if (aclTextOrHandle && typeof aclTextOrHandle === 'object') {
+    if (typeof aclTextOrHandle.buildTaxiwayModel === 'function') {
+      return aclTextOrHandle.buildTaxiwayModel();
+    }
+    if (aclTextOrHandle.nodes instanceof Map && Array.isArray(aclTextOrHandle.segments)) {
+      return aclTextOrHandle;
+    }
+  }
+  const aclText = aclTextOrHandle;
   const idx = buildPkIndex(aclText);
   const nodes = new Map();
   const osmByIref = new Map();

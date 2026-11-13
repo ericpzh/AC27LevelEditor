@@ -78,16 +78,21 @@ const { OdinJsonWriter } = require('./odin/json_writer');
 const { readJson } = require('./odin/json_reader');
 const { OdinBinaryWriter } = require('./odin/binary_writer');
 const { renumberAclIds, countIdDescents } = require('./id_renumber');
+const {
+  MAGIC,
+  FRAME_MARKER,
+  HEADER_COMMIT_V1: HEADER_COMMIT,
+  HEADER_COMMIT_V2,
+  FRAME_COMMIT,
+  HASH_LENGTH,
+  hasGatcMagic,
+  sha256,
+  buildHashedBlock,
+} = require('./framing');
 
-const MAGIC = Buffer.from('GATCARC4', 'ascii');
-const FRAME_MARKER = Buffer.from('MARF', 'ascii');
-const HEADER_COMMIT = Buffer.from('NODH', 'ascii'); // v1 header commit
-const HEADER_COMMIT_V2 = Buffer.from('NODS', 'ascii'); // v2 header commit
-const FRAME_COMMIT = Buffer.from('NODF', 'ascii');
 const STORAGE_VERSION = 1;
 const STORAGE_VERSION_LATEST = 2;
 const SUPPORTED_VERSIONS = [1, 2];
-const HASH_LENGTH = 32;
 const DEFAULT_SCHEMA_HASH = '0a8aa9630c0a3a1a3465c85fab2873e9bd9d3036fa16aff9b72cd62b8b3e9f4e';
 
 const FRAME_SENTINEL = '$$$ GATCARC4 CHECKPOINT FRAME $$$';
@@ -385,12 +390,7 @@ function decodeV2Archive(buffer) {
 }
 
 function buildSegment(marker, commitMarker, payload, version = STORAGE_VERSION) {
-  const head = Buffer.alloc(marker.length + 8);
-  marker.copy(head, 0);
-  head.writeUInt32LE(version, marker.length);
-  head.writeUInt32LE(payload.length, marker.length + 4);
-  const hash = crypto.createHash('sha256').update(payload).digest();
-  return Buffer.concat([head, payload, hash, commitMarker]);
+  return buildHashedBlock(payload, commitMarker, marker, version);
 }
 
 function buildV2HeaderSegment(archiveGuid, airportIcao, schemaHash = DEFAULT_SCHEMA_HASH) {
@@ -402,19 +402,11 @@ function buildV2HeaderSegment(archiveGuid, airportIcao, schemaHash = DEFAULT_SCH
     airportIcao,
   });
   const headerBytes = Buffer.from(headerJson, 'utf-8');
-  const head = Buffer.alloc(MAGIC.length + 8);
-  MAGIC.copy(head, 0);
-  head.writeUInt32LE(STORAGE_VERSION_LATEST, MAGIC.length);
-  head.writeUInt32LE(headerBytes.length, MAGIC.length + 4);
-  const hash = crypto.createHash('sha256').update(headerBytes).digest();
-  return Buffer.concat([head, headerBytes, hash, HEADER_COMMIT_V2]);
+  return buildHashedBlock(headerBytes, HEADER_COMMIT_V2, MAGIC, STORAGE_VERSION_LATEST);
 }
 
 function buildV2MainSegment(payload) {
-  const lenBuf = Buffer.alloc(4);
-  lenBuf.writeUInt32LE(payload.length, 0);
-  const hash = crypto.createHash('sha256').update(payload).digest();
-  return Buffer.concat([lenBuf, payload, hash, HEADER_COMMIT]);
+  return buildHashedBlock(payload, HEADER_COMMIT);
 }
 
 /**
@@ -428,7 +420,7 @@ function buildV2FrameSegment(frameVersion, originalPayload, binPayload) {
   const prefix = originalPayload.subarray(0, 4 + jsonLen + HASH_LENGTH); // [len][json][jsonHash]
   const lenBuf = Buffer.alloc(4);
   lenBuf.writeUInt32LE(binPayload.length, 0);
-  const binHash = crypto.createHash('sha256').update(binPayload).digest();
+  const binHash = sha256(binPayload);
   const payload = Buffer.concat([prefix, lenBuf, binPayload, binHash, FRAME_COMMIT]);
   const head = Buffer.alloc(12);
   FRAME_MARKER.copy(head, 0);

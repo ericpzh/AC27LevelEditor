@@ -10,13 +10,14 @@
  - [Two-Pass Parsing (`src/acl/acl_json.js`)](#two-pass-parsing-srcaclacl_jsonjs)
  - [Key Section Types](#key-section-types)
  - [Timeline Frames (Weather / Wind / Runway)](#timeline-frames-weather--wind--runway)
- - [File Schema (v4 Only)](#file-schema-v4-only)
- - [GATCARC4 Binary Container](#gatcarc4-binary-container)
+ - [GATCARC4 Storage v3 (Current Format)](#gatcarc4-storage-v3-current-format)
+ - [File Schema (Legacy Odin v1/v2/v5)](#file-schema-legacy-odin-v1v2v5)
+ - [GATCARC4 Binary Container (v1/v2)](#gatcarc4-binary-container-v1v2)
  - [Odin JSON Text Dialect](#odin-json-text-dialect)
- - [v4 Structure at a Glance](#v4-structure-at-a-glance)
+ - [Odin (v1/v2/v5) Structure at a Glance](#odin-v1v2v5-structure-at-a-glance)
  - [$blobdoc Nested Document Pattern](#blobdoc-nested-document-pattern)
  - [PKStaticEntities $iref/$id Reference System](#pkstaticentities-irefid-reference-system)
- - [v4 Flight-Plan Entries](#v4-flight-plan-entries)
+ - [Legacy Flight-Plan Entries (Odin)](#legacy-flight-plan-entries-odin)
  - [Independent Type Numbering](#independent-type-numbering)
  - [Scope-Aware Type Expansion During Save](#scope-aware-type-expansion-during-save)
  - [Runway Routes (PKStaticEntities)](#runway-routes-pkstaticentities)
@@ -92,9 +93,64 @@ The three timeline sections inside `MetaData` hold frame entries with string `Ti
 
 **Semantics — weather/wind frames are level-wide step settings.** A frame governs the level from its time onward, so a single frame whose time sits **outside** the scenario window `[Config.startTime, Config.endTime]` still controls the whole level. Shipped levels rely on this: `ZSJN_leisure_1.acl` (window 05:39:14–06:15:00) has wind at 05:00:00, weather at 09:00:00, and WeatherFrames spanning 06:00–24:00. Therefore the editors **never hide or bounds-check weather/wind frames** (no active-range filtering, no TimeCell min/max, no save-time validation). Only `RunwayTimeline` is window-bounded by design: out-of-window changes are auto-removed on load (`EditorScreen.jsx`) and flagged at save (`val_runway_change_bounds`). Save always writes every weather/wind frame back (`_rebuildV4TimelineSections`).
 
-## File Schema (v4 Only)
+## GATCARC4 Storage v3 (Current Format)
 
-A game update introduced the **v4 schema**; it is now the only schema. Every `.acl` file is a **GATCARC4 binary archive** (see below). When decoded, the header document has these top-level sections:
+The 2026-11-12 game build ships **GATCARC4 storage version 3** (`gatcarc4-v3`) for every `.acl` (40 files across KDCA/KJFK/ZGSZ/ZSJN; EGLC is CSV-only). The editor detects it per file in `src/acl/archive.js` and routes it to `src/acl/v3/handler.js`; v1/v2/legacy-text stay on `legacy_handler.js`. The authoritative wire reference is `src/acl/v3/WIRE_CONTRACT.md`; the checked-in schema is `src/acl/v3/schema_ca34c2ab.json`.
+
+### Container framing
+
+All integers are `uint32LE`.
+
+```
+Header (NODS):
+ [0..7]   "GATCARC4"
+ [8..11]  storage version 3
+ [12..15] header JSON length N
+ [16..16+N)  UTF-8 JSON {schemaHash, archiveGuid, progressDisplayName, levelGuid, airportIcao}
+ [16+N..48+N) SHA-256 of header JSON
+ [48+N..52+N) "NODS"
+
+Main LevelPayload (NODH):
+ [0..3]   main JSON length P
+ [4..4+P) UTF-8 JSON {"MetaData": <LevelMetaData>, "StaticData": "<base64 UTF-8 JSON StaticField>"}
+ [4+P..36+P) SHA-256 of main JSON
+ [36+P..40+P) "NODH"
+
+Checkpoint frames (MARF/NODF), zero or more:
+ [0..3]   "MARF"
+ [4..7]   storage version 3
+ [8..11]  outer frame length M
+ [12..12+M) body:
+   [0..3] summary JSON length J
+   [4..4+J) UTF-8 summary JSON {guid, displayName, kind, createdAtUtcTicks,
+            inGameDateTimeTicks, departureCount, arrivalCount, warningCount, infoCount}
+   [4+J..36+J) SHA-256 of summary
+   [36+J..40+J) uint32 payload JSON length B
+   [40+J..40+J+B) UTF-8 JSON {"RuntimeData": "<base64 UTF-8 JSON RuntimeField>", "RecentMessages": [...]}
+   [40+J+B..72+J+B) SHA-256 of payload
+   [72+J+B..76+J+B) "NODF"
+```
+
+Strict mode (`allowInterruptedTail: false`, the editor default) rejects truncated/uncommitted tails with byte offset + frame index. Header/summary bytes are preserved verbatim on an unedited save; edited summaries keep `kind`/counts non-negative and `displayName` matching `progressDisplayName` for `kind > 0`.
+
+### Schema-driven JSON graph
+
+The schema hash is the canonical (sorted-key, compact UTF-8) SHA-256 of the embedded schema: `ca34c2ab4444042a719e43df7896794fd87ceb05977556bd405dc51e59721510`. An unknown hash fails at open.
+
+- **Roots:** `MetaData` and `RecentMessages` are plain JSON (no ids/type tags/array wrappers). `StaticData` (`StaticField`) and `RuntimeData` (`RuntimeField`) are Base64 UTF-8 JSON graph roots with independent positive-int string id namespaces (`"1"`, `"2"`, …).
+- **Nodes:** objects `{"$id": "<n>", ...members}` / back-ref `{"$ref": "<n>"}` / external static authority `{"$ref": "pk:<ConcreteType>:<PK>"}`; dictionaries `{"$id": "<n>", "<key>": <value>, ...}`; arrays `{"id": "<n>", "type": "<ElementType>[]", "values": [...]}`; reactive `{"id": "<n>", "value": <T>}`; lists are bare arrays; `Position3`/`Direction3`/`Displacement2` are bare integer tuples.
+- **Polymorphism:** emit `"$type": "<assembly-free full name>"` iff the declared slot type is abstract or has assignable implementations (`IPkStaticEntity`, `IStaticEntity`, `IStaticItem`, `IRuntimeEntity`, `IDynamicsParams`, `AircraftEvent`); concrete slots never carry `$type`.
+- **Members:** every declared member of the concrete type must be present (explicit `null` when unset and nullable); no undeclared keys except `$id` and polymorphic `$type`. `pk:` references validate against `StaticData.PKStaticEntities` / `StaticItems`.
+- **Lossless integers:** `createdAtUtcTicks` and other int64 values exceed `Number.MAX_SAFE_INTEGER`; parse/stringify must use `BigInt`-aware `lossless_json.js` (never `JSON.parse` → `number`) or summary metadata is silently corrupted.
+- **Unit conversion (`q32.js`):** Q32.32 (`raw / 2^32`) for positions/width/lengths (SI meters; game units = m × 0.01), directions (unit vectors), wind (radians→degrees, m/s→knots), `Fixed64` ratios, and durations (seconds). `.NET DateTime` is local wall-clock ISO text (substring clock parse, no TZ shift). Untouched tuples are preserved verbatim for byte-stable no-op saves.
+
+### Read/edit/save lifecycle
+
+`openV3Acl(bytes)` exposes editor-shaped readers (`readFlights`, `readConfigResolved`, `readTimelines`, `readScenery*`, `readStarWaypoint`/SID/APPR helpers, etc.), `applyEdits({config, weatherTimeline, windTimeline, runwayTimeline, sceneryGraph, flights})`, `toBuffer()`, and `saveToFile(path, opts)`. `saveToFile` checks the source SHA-256 (`STALE_ACL_SOURCE` / `StaleSourceError` if it changed), validates the whole container against the schema, stages to a hidden temp file, optionally writes `.bak`, then atomically renames. v3 `.demo.acl` levels keep their own `endTime` and are the only v3 files whose schedule is trimmed on load (`src/acl/demo_window.js`).
+
+## File Schema (Legacy Odin v1/v2/v5)
+
+v1/v2 and the legacy-text fixtures keep the Odin/`$blobdoc` payload described below; this is no longer the only schema. `.acl` files from the current build are v3 (previous section). When decoded, a legacy header document has these top-level sections:
 
 | Section | Description |
 |---------|-------------|
@@ -104,11 +160,11 @@ A game update introduced the **v4 schema**; it is now the only schema. Every `.a
 
 Each appended **checkpoint frame** document is a `CheckpointPayload`. Newer (v5+) frames expose `RuntimeData` directly (alongside `RecentMessages`); older fixtures nest it as `Snapshot` (RuntimeSnapshot) → `RuntimeData`. Either way the runtime entries live at `RuntimeData.$blobdoc.RuntimeField.RuntimeEntities` — the aircraft / jetway / event entries reconciled and rebuilt by the save pipeline.
 
-All files are v4 — there is no schema detection and no `isV4` parameter anywhere in the code.
+Legacy files are detected per file by `src/acl/archive.js` (`detectAclFormat`); there is no global `isV4` flag. v3 is handled by `v3/handler.js`, while v1/v2/legacy-text go through `legacy_handler.js` → `gatcarc.js`. The v5 **content** variant (below) still applies to legacy files.
 
-### GATCARC4 Binary Container
+### GATCARC4 Binary Container (v1/v2)
 
-GATCARC4 is an append-only binary archive format that wraps Odin-serialized payloads. There are **two on-disk storage versions**, both handled transparently by `src/acl/gatcarc.js` as long as the magic is `GATCARC4` and the storage version is `1` or `2` (`SUPPORTED_VERSIONS = [1, 2]`); any other version throws `unsupported ... storage version`.
+On the legacy path, GATCARC4 is an append-only binary archive format that wraps Odin-serialized payloads. There are **two legacy on-disk storage versions**, both handled transparently by `src/acl/gatcarc.js` as long as the magic is `GATCARC4` and the storage version is `1` or `2` (`SUPPORTED_VERSIONS = [1, 2]`); v3 is NOT decoded here — `archive.js` routes it to `v3/handler.js`.
 
 **v1 (storage version 1) — the legacy layout:**
 
@@ -169,19 +225,20 @@ $$$ GATCARC4 CHECKPOINT FRAME $$$
 ```
 
 **I/O rules:**
-- `readAclText(path)` — universal read: decodes a GATCARC4 archive to Odin JSON text. `decodeArchive()` handles v1; `decodeV2Archive()` handles v2 (decoding the main `LevelPayload`, plus any checkpoint frame whose inner binary payload hash-verifies and looks like a checkpoint). Non-archive input passes through unchanged.
-- `writeAcl(path, text, { format })` — writes binary (GATCARC4 archive, v2 if the file was v2 or is new, v1 if it was v1) or text. Default `'auto'` preserves the on-disk format; `'text'` exists for debugging only.
-- All game `.acl` files are GATCARC4 binary archives — the editor never writes plain text.
+- `archive.js:openAclFile(path)` — universal entry point: detects the format from bytes, records source metadata, and dispatches to the v3 handler or the legacy handler.
+- `openV3Acl(bytes)` → handle with typed reads, `applyEdits()`, `toBuffer()` and atomic `saveToFile()` (schema validation + stale-source check).
+- On the legacy handle, `readAclText(path)` decodes a GATCARC4 v1/v2 archive to Odin JSON text and `writeAcl(path, text, { format })` re-encodes preserving the on-disk version (v2 stays v2, v1 stays v1, new files are v2; `'text'` is debugging-only). Non-archive input passes through as text.
+- Saves always preserve the opened file's format/version: `v3→v3`, `v2→v2`, `v1→v1`, `legacy-text→legacy-text`.
 
-All ACL I/O in the editor goes through `src/acl/gatcarc.js`. No code calls `fs.readFileSync(path, 'utf-8')` on `.acl` files.
+All ACL I/O in the editor goes through `src/acl/archive.js` (or `gatcarc.js` on the legacy-only path). No code calls `fs.readFileSync(path, 'utf-8')` on `.acl` files.
 
 ### Odin JSON Text Dialect
 
 Decoded GATCARC4 payloads use the Odin JSON text dialect — the extensions listed in [Standard JSON-Plus Extensions](#standard-json-plus-extensions) above. All parsing code (tokenizer, pre-processor, etc.) operates on this decoded text.
 
-### v4 Structure at a Glance
+### Odin (v1/v2/v5) Structure at a Glance
 
-| Aspect | v4 |
+| Aspect | Legacy Odin |
 |--------|-----|
 | Top-level sections | Header document: `MetaData` (nested `Config` + timeline sections), `StaticData` (`$blobdoc`); checkpoint frames: `RuntimeData` (newer) or `Snapshot.RuntimeData` (older) |
 | Scenery entities | `StaticData.$blobdoc.PKStaticEntities` (flat array, all entity types) + `NonPKStaticEntities` (areas) |
@@ -206,7 +263,7 @@ StaticData
 
 ### PKStaticEntities $iref/$id Reference System
 
-In v4, all scenery entities live in a single flat `PKStaticEntities.$rcontent` array, each with a `$k` (type-prefixed primary key like `"runway:31L"`, `"stand:12"`, `"taxiway-node:123"`) and a `$v` block. The `$v` block contains a numeric `$id` that other entities reference via `$iref:N`:
+In the legacy Odin schema, all scenery entities live in a single flat `PKStaticEntities.$rcontent` array, each with a `$k` (type-prefixed primary key like `"runway:31L"`, `"stand:12"`, `"taxiway-node:123"`) and a `$v` block. The `$v` block contains a numeric `$id` that other entities reference via `$iref:N`:
 
 ```json
 // A taxiway segment references its endpoint nodes:
@@ -227,9 +284,9 @@ In v4, all scenery entities live in a single flat `PKStaticEntities.$rcontent` a
 
 The `src/acl/v4_pk_index.js` module builds a dual index (`byType` + `byId`) from the flat array and provides helpers for field extraction.
 
-### v4 Flight-Plan Entries
+### Legacy Flight-Plan Entries (Odin)
 
-v4 flight plans live in `StaticData.$blobdoc.StaticItems.$rcontent` with keys prefixed `flight-plan:`:
+Legacy flight plans live in `StaticData.$blobdoc.StaticItems.$rcontent` with keys prefixed `flight-plan:`:
 
 ```json
 { "$k": "flight-plan:N738AC",

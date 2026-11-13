@@ -1,9 +1,14 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, waitFor } from '@testing-library/react';
 import { I18nProvider } from '../../../../src/hooks/useTranslation';
 import { useAppStore } from '../../../../src/store/appStore';
 import StarMap from '../../../../src/components/EditorScreen/StarMap/StarMap';
+
+const { getAircraftPositions } = vi.hoisted(() => ({ getAircraftPositions: vi.fn() }));
+vi.mock('../../../../src/hooks/useElectronAPI', () => ({
+  useElectronAPI: () => ({ getAircraftPositions }),
+}));
 
 const MOCK_STAR_PATHS = {
   'STAR1A': [
@@ -124,5 +129,40 @@ describe('StarMap', () => {
     fireEvent.mouseEnter(firstGroup);
     const hovered = document.querySelector('.star-map-line.hovered');
     expect(hovered).not.toBeNull();
+  });
+
+  it('keeps each aircraft at its computed position when selection changes', async () => {
+    getAircraftPositions.mockResolvedValue({
+      success: true,
+      totalApproachTimes: { STAR1A: 300, STAR2B: 300 },
+      positions: [
+        { callsign: 'CCA1234', x: 1, z: 4, headingDeg: 45 },
+        { callsign: 'DKH6071', x: 0, z: 7, headingDeg: 90 },
+      ],
+    });
+    const arrivalFlights = [
+      { CallSign: 'CCA1234', Airway: 'STAR1A', Runway: '01', _landingSec: 180 },
+      { CallSign: 'DKH6071', Airway: 'STAR2B', Runway: '01', _landingSec: 200 },
+    ];
+    const chart = (callsign, selectedStar) => (
+      <I18nProvider>
+        <StarMap starPaths={MOCK_STAR_PATHS} starRunwayMap={MOCK_STAR_RUNWAY_MAP}
+          selectedRunway="01" callsign={callsign} selectedStar={selectedStar}
+          arrivalFlights={arrivalFlights} airportIcao="ZSJN" saveSec={100}
+          buttonRef={makeButtonRef()} />
+      </I18nProvider>
+    );
+    const marker = (callsign) => [...document.querySelectorAll('.star-map-ac-label')]
+      .find(label => label.textContent === callsign)?.previousElementSibling;
+    const { rerender } = render(chart('CCA1234', 'STAR1A'));
+
+    await waitFor(() => expect(marker('DKH6071')).toBeTruthy());
+    const transforms = arrivalFlights.map(flight => marker(flight.CallSign).style.transform);
+    expect(marker('CCA1234').classList.contains('editing')).toBe(true);
+
+    rerender(chart('DKH6071', 'STAR2B'));
+
+    expect(arrivalFlights.map(flight => marker(flight.CallSign).style.transform)).toEqual(transforms);
+    expect(marker('DKH6071').classList.contains('editing')).toBe(true);
   });
 });

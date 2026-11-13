@@ -1556,8 +1556,11 @@ function _loadAirlineCountryRegistryForLevel(aclPath) {
 function _airportSupportsChinese(aclPath) {
   try {
     const fs = require('fs');
-    // audio_clips_<lang>.json sits next to the level file (…/<ICAO>/Levels/).
-    return fs.existsSync(path.join(path.dirname(aclPath), 'audio_clips_zh.json'));
+    // audio_clips_<lang>.json sits next to the level file (…/<ICAO>/Levels/);
+    // v3 airports store radio_template_zh.csv in the parent airport dir (…/<ICAO>/).
+    const dir = path.dirname(aclPath);
+    return fs.existsSync(path.join(dir, 'audio_clips_zh.json'))
+      || fs.existsSync(path.join(dir, '..', 'radio_template_zh.csv'));
   } catch (_) { return false; }
 }
 

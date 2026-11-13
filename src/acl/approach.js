@@ -12,7 +12,7 @@
 
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson } = require('./acl_json');
-const { readAclText } = require('./gatcarc');
+const { openAclFile } = require('./archive');
 const {
   DEFAULT_RUNWAY_TAKEOFF_LENGTH,
   DEFAULT_MODEL_OFFSET,
@@ -704,6 +704,9 @@ function computeApproachTimesFromScenery(aclText, starMappings, appPointMap, ref
  */
 function resolveFlyApproachPoints(aclText, route, runway) {
   if (!route || !runway) return [];
+  if (aclText && typeof aclText === 'object' && typeof aclText.resolveFlyApproachPoints === 'function') {
+    return aclText.resolveFlyApproachPoints(route, runway);
+  }
 
   // v4: navigate runway → Routes → find route by Name → resolve AirwayNodes $iref → positions
   const { buildPkIndex, getPkEntriesByType, resolveIref, extractStringFromV4, extractVector3FromV4, extractIrefArray } = require('./v4_pk_index');
@@ -830,6 +833,9 @@ function _findPhysicalNameByIref(aclText, pkIndex, iref) {
 }
 
 function _parseRunwayThresholds(aclText) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.readRunwayThresholds === 'function') {
+    return aclText.readRunwayThresholds();
+  }
   const result = {};
 
   // v4/v5: resolve ThresholdPoints $iref → taxiway-node positions via pkIndex.
@@ -972,6 +978,9 @@ function computeFullTerminalPath(aclText, star, runway) {
  * @returns {{starRunwayMap: Object<string, string[]>, runwayStarMap: Object<string, string[]>}}
  */
 function extractStarRunwayMappings(aclText) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.readStarRunwayMappings === 'function') {
+    return aclText.readStarRunwayMappings();
+  }
   const starRunwayMap = {};  // { starName → [runway, ...] }
   const runwayStarMap = {};  // { runway → [starName, ...] }
   if (!aclText) return { starRunwayMap, runwayStarMap };
@@ -1062,6 +1071,9 @@ function extractStarRunwayMappings(aclText) {
  * @returns {Object} — { "STAR|runway": [{name, x, z}, ...] } in route order
  */
 function extractStarWaypoints(aclText) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.readStarWaypoints === 'function') {
+    return aclText.readStarWaypoints();
+  }
   const result = {};
   if (!aclText) return result;
 
@@ -1162,6 +1174,9 @@ function extractStarWaypoints(aclText) {
  */
 function resolveApproachProcedureData(aclText, runway, hintPosition) {
   if (!runway) return null;
+  if (aclText && typeof aclText === 'object' && typeof aclText.resolveApproachProcedureData === 'function') {
+    return aclText.resolveApproachProcedureData(runway, hintPosition);
+  }
 
   // v4: navigate runway → Routes for RouteType=1 (Approach), resolve AirwayNodes $iref → positions
   const { buildPkIndex, getPkEntriesByType, resolveIref, extractStringFromV4, extractVector3FromV4, extractIrefArray, extractSingleIref } = require('./v4_pk_index');
@@ -2351,10 +2366,9 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
   }
   const typeMap = new Map(); // per-airport: type_number → type_name
   const fileTypeMaps = new Map(); // per-file: basename → Map<number, string>
-  let firstAclText = null;
-  const allAclTexts = []; // v5: collect all texts to merge STAR/SID/APPR/runway/waypoints across every level
+  let firstHandle = null;
+  const allHandles = []; // collect all opened handles across mixed v2/v3 levels
 
-  const { parseTaxiwayPaths } = require('./taxiway');
   const seenTaxiwayKeys = new Set();
   const mergedTaxiwayPaths = [];
 
@@ -2365,15 +2379,15 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
       progressCallback({ current: i + 1, total, fileName: path.basename(aclPath) });
     }
     try {
-      const text = readAclText(aclPath);
-      if (!firstAclText) {
-        firstAclText = text;
+      const handle = openAclFile(aclPath);
+      if (!firstHandle) {
+        firstHandle = handle;
       }
-      allAclTexts.push(text);
+      allHandles.push(handle);
 
       // ── Taxiway paths: parse from every file, merge with dedup ──
       try {
-        const twResult = parseTaxiwayPaths(text);
+        const twResult = handle.readTaxiwayPaths();
         for (const tp of twResult.paths) {
           const key = (tp.name || '') + '|' + tp.points.map(p =>
             `${p.x.toFixed(2)},${(p.z !== undefined ? p.z : 0).toFixed(2)}`
@@ -2385,29 +2399,29 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
         }
       } catch (_) { /* skip taxiway parse errors */ }
 
-      const entries = extractApproachData(text);
+      const entries = handle.readApproachEntries(path.basename(aclPath));
       for (const e of entries) e._file = path.basename(aclPath);
       allEntries.push(...entries);
 
       // Merge specDB from each file
-      const fileSpecs = extractSpecificationDB(text, path.basename(aclPath));
+      const fileSpecs = handle.readSpecificationDB(path.basename(aclPath));
       for (const [k, v] of fileSpecs) {
         if (!specDB.has(k)) specDB.set(k, v);
       }
 
       // Designator mapping from each file
-      const dm = buildDesignatorMapping(text);
+      const dm = handle.readDesignatorMapping();
       for (const [k, v] of dm) designatorMap.set(k, v);
 
-      // Type map from each file
-      const fileTypeMap = extractTypeMap(text);
+      // Type map from each file (legacy/v2 Odin files; empty on v3)
+      const fileTypeMap = handle.readTypeMap();
       for (const [k, v] of fileTypeMap) {
         if (!typeMap.has(k)) typeMap.set(k, v);
       }
 
       fileTypeMaps.set(path.basename(aclPath), fileTypeMap);
 
-      log('  ' + path.basename(aclPath) + ': ' + entries.length + ' approach a/c, ' + fileSpecs.size + ' specs, ' + fileTypeMap.size + ' types');
+      log('  ' + path.basename(aclPath) + ' [' + handle.format + ']: ' + entries.length + ' approach a/c, ' + fileSpecs.size + ' specs, ' + fileTypeMap.size + ' types');
     } catch (e) {
       log('  SKIP ' + path.basename(aclPath) + ': ' + e.message);
     }
@@ -2415,48 +2429,20 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
 
   if (allEntries.length === 0) {
     log('WARNING: no approach aircraft found in any file');
-    // Don't return null — SceneryData-derived data (starRunwayMap, runwayThresholds,
-    // taxiwayPaths, sidPaths, state5ParamsMap, etc.) is still extractable even without
-    // State=30 aircraft. Airports with zero aircraft entries (e.g., KDCA smoke test)
-    // still need map data for GroundMapWindow/AirMapWindow.
-    if (!firstAclText) {
-      log('WARNING: no ACL text available — returning null');
+    if (!firstHandle) {
+      log('WARNING: no ACL file readable — returning null');
       return null;
     }
     log('Building SceneryData-only cache (no aircraft-derived data)');
   }
 
-  // ── Derive path data from SceneryData (NOT from Aircraft section) ──
-  // v5: each .acl may carry a different subset of STAR/SID/APPR per level
-  // (e.g. ZSJN leisure_1 only RWY19, other levels only RWY01). Merge across
-  // every file in the airport so the cache covers ALL runways.
-
-  // Helper: try resolver across every ACL text until it returns a non-empty result
-  const _tryAllTexts = (fn, ...args) => {
-    for (const txt of allAclTexts) {
-      try {
-        const res = fn(txt, ...args);
-        if (res) {
-          if (Array.isArray(res) && res.length === 0) continue;
-          if (res instanceof Map && res.size === 0) continue;
-          if (typeof res === 'object' && !Array.isArray(res) && !(res instanceof Map)) {
-            if (Object.keys(res).length === 0) continue;
-          }
-          // for STAR waypoints etc. check length
-          return res;
-        }
-      } catch (_) {}
-    }
-    return null;
-  };
-
   // Extract authoritative STAR↔runway mappings from SceneryData — merge across all files.
   let starMappings = { starRunwayMap: {}, runwayStarMap: {} };
-  if (allAclTexts.length > 0) {
+  if (allHandles.length > 0) {
     const mergedStarRunway = {};
     const mergedRunwayStar = {};
-    for (const txt of allAclTexts) {
-      const m = extractStarRunwayMappings(txt);
+    for (const h of allHandles) {
+      const m = h.readStarRunwayMappings();
       for (const [star, rwys] of Object.entries(m.starRunwayMap)) {
         if (!mergedStarRunway[star]) mergedStarRunway[star] = [];
         for (const rwy of rwys) if (!mergedStarRunway[star].includes(rwy)) mergedStarRunway[star].push(rwy);
@@ -2474,9 +2460,11 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
   if (starMappings.runwayStarMap) {
     for (const runway of Object.keys(starMappings.runwayStarMap)) {
       let data = null;
-      for (const txt of allAclTexts) {
-        data = resolveApproachProcedureData(txt, runway, undefined);
-        if (data) break;
+      for (const h of allHandles) {
+        try {
+          data = h.resolveApproachProcedureData(runway, undefined);
+          if (data) break;
+        } catch (_) {}
       }
       if (data) {
         state5ParamsMap.set(runway, data);
@@ -2488,20 +2476,22 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
     }
   }
 
-  // Build appPointMap from SceneryData — merge across all files, trying every text.
+  // Build appPointMap from SceneryData — merge across all files.
   const appPointMap = new Map();
   for (const [runway, stars] of Object.entries(starMappings.runwayStarMap)) {
     for (const star of stars) {
       let flyPoints = null;
-      for (const txt of allAclTexts) {
-        const pts = resolveFlyApproachPoints(txt, star, runway);
+      for (const h of allHandles) {
+        const pts = h.resolveFlyApproachPoints(star, runway);
         if (pts && pts.length > 0) { flyPoints = pts; break; }
       }
       const hintPos = (flyPoints && flyPoints.length > 0) ? flyPoints[flyPoints.length - 1] : null;
       let s5 = null;
-      for (const txt of allAclTexts) {
-        const cand = resolveApproachProcedureData(txt, runway, hintPos);
-        if (cand && cand.pathPointList && cand.pathPointList.length >= 2) { s5 = cand; break; }
+      for (const h of allHandles) {
+        try {
+          const cand = h.resolveApproachProcedureData(runway, hintPos);
+          if (cand && cand.pathPointList && cand.pathPointList.length >= 2) { s5 = cand; break; }
+        } catch (_) {}
       }
       if (!s5 || !s5.pathPointList || s5.pathPointList.length < 2) continue;
       appPointMap.set(star + '|' + runway, s5.pathPointList);
@@ -2512,15 +2502,17 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
     if (normRunway !== runway) {
       for (const star of stars) {
         let flyPoints = null;
-        for (const txt of allAclTexts) {
-          const pts = resolveFlyApproachPoints(txt, star, normRunway);
+        for (const h of allHandles) {
+          const pts = h.resolveFlyApproachPoints(star, normRunway);
           if (pts && pts.length > 0) { flyPoints = pts; break; }
         }
         const hintPos = (flyPoints && flyPoints.length > 0) ? flyPoints[flyPoints.length - 1] : null;
         let s5n = null;
-        for (const txt of allAclTexts) {
-          const cand = resolveApproachProcedureData(txt, normRunway, hintPos);
-          if (cand && cand.pathPointList) { s5n = cand; break; }
+        for (const h of allHandles) {
+          try {
+            const cand = h.resolveApproachProcedureData(normRunway, hintPos);
+            if (cand && cand.pathPointList) { s5n = cand; break; }
+          } catch (_) {}
         }
         if (!s5n || !s5n.pathPointList) continue;
         const key = star + '|' + normRunway;
@@ -2533,15 +2525,13 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
 
   // Build starPaths from appPointMap and starRunwayMap — merge across all files.
   let starPaths = {};
-  if (allAclTexts.length > 0) {
-    // Use first non-empty buildStarPaths result, merging across files
+  if (allHandles.length > 0) {
     const mergedPaths = {};
-    for (const txt of allAclTexts) {
-      const part = buildStarPaths(txt, appPointMap, starMappings.starRunwayMap);
+    for (const h of allHandles) {
+      const part = buildStarPaths(h, appPointMap, starMappings.starRunwayMap);
       for (const [k, v] of Object.entries(part)) {
         if (!mergedPaths[k]) mergedPaths[k] = v;
         else {
-          // dedup by runway
           const seen = new Set(mergedPaths[k].map(e => e.runway));
           for (const e of v) if (!seen.has(e.runway)) mergedPaths[k].push(e);
         }
@@ -2552,17 +2542,17 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
 
   // Ordered STAR waypoint names — merge across all files.
   let starWaypoints = {};
-  if (allAclTexts.length > 0) {
-    for (const txt of allAclTexts) {
-      const part = extractStarWaypoints(txt);
+  if (allHandles.length > 0) {
+    for (const h of allHandles) {
+      const part = h.readStarWaypoints();
       for (const [k, v] of Object.entries(part)) if (!starWaypoints[k]) starWaypoints[k] = v;
     }
   }
   // Runway thresholds — merge across all files.
   let runwayThresholds = {};
-  if (allAclTexts.length > 0) {
-    for (const txt of allAclTexts) {
-      const part = _parseRunwayThresholds(txt);
+  if (allHandles.length > 0) {
+    for (const h of allHandles) {
+      const part = h.readRunwayThresholds();
       for (const [k, v] of Object.entries(part)) if (!runwayThresholds[k]) runwayThresholds[k] = v;
     }
   }
@@ -2573,18 +2563,17 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
     log('  taxiway paths: ' + mergedTaxiwayPaths.length + ' segments merged from ' + aclFiles.length + ' files');
   }
 
-  // ── Parse SID + Missed Approach routes from SceneryData — merge across all files (v5 per-level filtering) ──
+  // ── Parse SID + Missed Approach routes from SceneryData — merge across all files ──
   let sidRunwayMap = {};
   let runwaySidMap = {};
   let missedAppMap = {};
   let runwayMissedAppMap = {};
   let sidPaths = {};
   let missedAppPaths = {};
-  if (allAclTexts.length > 0) {
+  if (allHandles.length > 0) {
     try {
-      const { extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('./sid_goaround');
-      for (const txt of allAclTexts) {
-        const sidMappings = extractSidRunwayMappings(txt);
+      for (const h of allHandles) {
+        const sidMappings = h.readSidRunwayMappings();
         for (const [k, v] of Object.entries(sidMappings.sidRunwayMap || {})) {
           if (!sidRunwayMap[k]) sidRunwayMap[k] = [];
           for (const r of v) if (!sidRunwayMap[k].includes(r)) sidRunwayMap[k].push(r);
@@ -2593,7 +2582,7 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
           if (!runwaySidMap[k]) runwaySidMap[k] = [];
           for (const r of v) if (!runwaySidMap[k].includes(r)) runwaySidMap[k].push(r);
         }
-        const maMappings = extractMissedApproachMappings(txt);
+        const maMappings = h.readMissedApproachMappings();
         for (const [k, v] of Object.entries(maMappings.missedAppMap || {})) {
           if (!missedAppMap[k]) missedAppMap[k] = [];
           for (const r of v) if (!missedAppMap[k].includes(r)) missedAppMap[k].push(r);
@@ -2603,11 +2592,10 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
           for (const r of v) if (!runwayMissedAppMap[k].includes(r)) runwayMissedAppMap[k].push(r);
         }
       }
-      // Build paths — try every file, merge deduped
       const mergedSidPaths = {};
       const mergedMissedPaths = {};
-      for (const txt of allAclTexts) {
-        const partSid = buildSidPaths(txt, sidRunwayMap);
+      for (const h of allHandles) {
+        const partSid = h.buildSidPaths(sidRunwayMap);
         for (const [k, v] of Object.entries(partSid)) {
           if (!mergedSidPaths[k]) mergedSidPaths[k] = v;
           else {
@@ -2615,7 +2603,7 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
             for (const e of v) if (!seen.has(e.runway)) mergedSidPaths[k].push(e);
           }
         }
-        const partMissed = buildMissedApproachPaths(txt, missedAppMap);
+        const partMissed = h.buildMissedApproachPaths(missedAppMap);
         for (const [k, v] of Object.entries(partMissed)) {
           if (!mergedMissedPaths[k]) mergedMissedPaths[k] = v;
           else {
@@ -2633,11 +2621,10 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
   let apprRunwayMap = {};
   let runwayApprMap = {};
   let apprPaths = {};
-  if (allAclTexts.length > 0) {
+  if (allHandles.length > 0) {
     try {
-      const { extractApprRunwayMappings, buildApprPaths } = require('./sid_goaround');
-      for (const txt of allAclTexts) {
-        const apprMappings = extractApprRunwayMappings(txt);
+      for (const h of allHandles) {
+        const apprMappings = h.readApprRunwayMappings();
         for (const [k, v] of Object.entries(apprMappings.apprRunwayMap || {})) {
           if (!apprRunwayMap[k]) apprRunwayMap[k] = [];
           for (const r of v) if (!apprRunwayMap[k].includes(r)) apprRunwayMap[k].push(r);
@@ -2648,8 +2635,8 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
         }
       }
       const mergedApprPaths = {};
-      for (const txt of allAclTexts) {
-        const part = buildApprPaths(txt, apprRunwayMap);
+      for (const h of allHandles) {
+        const part = h.buildApprPaths(apprRunwayMap);
         for (const [k, v] of Object.entries(part)) {
           if (!mergedApprPaths[k]) mergedApprPaths[k] = v;
           else {
@@ -2664,41 +2651,45 @@ function buildApproachCache(airportDir, progressCallback, fileFilter) {
 
   // ── Extract fixes/waypoints (AirwayNode PK entities) — merge across all files ──
   let airwayNodes = [];
-  if (allAclTexts.length > 0) {
+  if (allHandles.length > 0) {
     try {
-      const { buildPkIndex, getPkEntriesByType, extractVector3FromV4, extractStringFromV4, extractIntFromV4 } = require('./v4_pk_index');
       const seenPks = new Set();
-      for (const txt of allAclTexts) {
-        const pkIndex = buildPkIndex(txt);
-        for (const entry of getPkEntriesByType(pkIndex, 'airway-node')) {
+      for (const h of allHandles) {
+        for (const entry of h.readAirwayFixes()) {
           if (seenPks.has(entry.pk)) continue;
           seenPks.add(entry.pk);
-          const pos = extractVector3FromV4(entry.block);
-          if (!pos) continue;
-          const name = extractStringFromV4(entry.block, 'Name');
-          if (!name || !FIX_NAME_RE.test(name)) continue;
-          airwayNodes.push({
-            pk: entry.pk,
-            name,
-            osmId: extractIntFromV4(entry.block, 'OsmId'),
-            x: pos.x,
-            z: pos.z,
-          });
+          airwayNodes.push(entry);
         }
       }
     } catch (e) { log('  airway-node parse warning: ' + e.message); }
   }
 
   // Compute per-airport coordinate scale from runway threshold geometry
-  const airportScale = firstAclText
-    ? computeAirportScale(firstAclText)
-    : DEFAULT_AIRPORT_SCALE;
+  const airportScale = DEFAULT_AIRPORT_SCALE;
+
+  // Multi-handle resolver so split-runway airports resolve procedures across all levels
+  const multiHandleResolver = {
+    resolveFlyApproachPoints(star, runway) {
+      for (const h of allHandles) {
+        const pts = h.resolveFlyApproachPoints(star, runway);
+        if (pts && pts.length > 0) return pts;
+      }
+      return [];
+    },
+    resolveApproachProcedureData(runway, hintPos) {
+      for (const h of allHandles) {
+        try {
+          const data = h.resolveApproachProcedureData(runway, hintPos);
+          if (data) return data;
+        } catch (_) {}
+      }
+      return null;
+    },
+  };
 
   // Compute totalApproachTimes from SceneryData path-length estimates.
-  // Uses physics-based formula: TAT = totalGamePath × airportScale / 240kts
-  // with ratio estimation from reference STARs on the same runway where available.
   const totalApproachTimes = computeApproachTimesFromScenery(
-    firstAclText, starMappings, appPointMap, null, DEFAULT_TAT, airportScale
+    firstHandle ? multiHandleResolver : null, starMappings, appPointMap, null, DEFAULT_TAT, airportScale
   );
 
   // Compute per-file saveTime offsets from approach entries.

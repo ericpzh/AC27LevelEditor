@@ -1,0 +1,5 @@
+registration,arrivalCallSign,originAirport,landingTime,arrivalStand,arrivalRunway,arrivalSTAR,departureCallSign,destinationAirport,offBlockTime,departureStand,departureRunway,airline,aircraftType,voice,language
+B-U9TP,,,,,,,CCA9120,ZUTF,08:10:00,16,19,CCA,COMAC C-919,CN-Captain-Middle-Aged,zh
+B-XI40,CSN1234,ZBAA,08:28:00,19,19,UBSS6W,,,,,,CSN,BOEING 787-9,CN-Captain-Young,zh
+B-A8ZQ,CSZ4321,ZBAA,08:32:00,20,19,UBSS6W,,,,,,CSZ,AIRBUS A-320neo,CN-Captain-Middle-Aged,zh
+B-LH5J,,,,,,,CDG1234,ZSSS,08:36:00,18,19,CDG,BOEING 737 MAX 8,CN-Captain-Young,zh

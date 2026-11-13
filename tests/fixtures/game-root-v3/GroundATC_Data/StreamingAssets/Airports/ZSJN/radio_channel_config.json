@@ -1,0 +1,53 @@
+{
+  "radioChannels": [
+    {
+      "type": "Ground",
+      "frequency": 121.85,
+      "shortCode": "GND",
+      "radioName": "Ground",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "ground_zsjn",
+      "voice": {
+        "zh": "Hanser",
+        "en": "Hanser-EN"
+      }
+    },
+    {
+      "type": "Tower",
+      "frequency": 118.55,
+      "shortCode": "TWR",
+      "radioName": "Tower",
+      "isMuted": false,
+      "isAutoControlled": false,
+      "isTalking": false,
+      "localizationKey": "tower_zsjn",
+      "voice": {
+        "zh": "Hanser",
+        "en": "Hanser-EN"
+      }
+    },
+    {
+      "type": "Approach",
+      "frequency": 119.05,
+      "shortCode": "APP",
+      "radioName": "Approach",
+      "isMuted": true,
+      "isAutoControlled": true,
+      "isTalking": false,
+      "localizationKey": "approach_zsjn",
+      "voice": {
+        "zh": "Hanser",
+        "en": "Hanser-EN"
+      }
+    }
+  ],
+  "channelMapping": {
+    "Ramp": "Ground",
+    "Ground": "Ground",
+    "Tower": "Tower",
+    "Departure": "Approach",
+    "Approach": "Approach"
+  }
+}

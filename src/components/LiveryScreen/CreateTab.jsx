@@ -250,7 +250,12 @@ export default function CreateTab({ onCreated, onCancel, onHelp, onUpload, uploa
         const res = await electronAPI.listAircraftTypes();
         if (cancelled || !res || !res.success || !Array.isArray(res.types)) return;
         const ids = res.types.map(x => x && x.planeId).filter(Boolean);
-        if (ids.length) setPlaneOptions(ids);
+        // The scanned list is the source of truth for what the game ships, but
+        // the hardcoded short-code table is the painter's allow-list, so types
+        // known to the editor (e.g. cargo variants sharing a base airframe)
+        // stay selectable even before the game ships a built-in livery folder.
+        const merged = Array.from(new Set([...PLANE_IDS, ...ids]));
+        if (merged.length) setPlaneOptions(merged);
       } catch (_) {}
     })();
     return () => { cancelled = true; };

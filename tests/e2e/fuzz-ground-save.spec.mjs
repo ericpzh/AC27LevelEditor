@@ -88,6 +88,9 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const { readAclText } = require('../../src/acl/gatcarc');
+const { openAclFile } = require('../../src/acl/archive');
+const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
+const { dictEntries, indexDocumentGraph, resolveGraphNode } = require('../../src/acl/v3/graph');
 const parser = require('../../src/acl/parser');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1531,12 +1534,12 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     // Verify the saved .acl still decodes and scenery reloads
     let reloadedGraph = null;
     let reloadedFlights = null;
+    let savedHandle = null;
+    let bakHandle = null;
     try {
-      const savedText = readAclText(currentPath);
-      // Use the graph builder directly (same path as Ground Painter load)
-      const { buildSceneryGraph } = require('../../src/acl/scenery_graph');
-      const built = buildSceneryGraph(savedText);
-      reloadedGraph = built.graph;
+      savedHandle = openAclFile(currentPath, { validateOnOpen: true });
+      bakHandle = openAclFile(bakPath);
+      reloadedGraph = savedHandle.readSceneryGraph().graph;
       const loaded = parser.loadFlights(currentPath);
       reloadedFlights = loaded.flights;
     } catch (e) {
@@ -1554,25 +1557,11 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     };
     log(`reload: segs=${summary.reloaded.segments} (expected ${expected.ground?.segments ?? '?'}) airwayNodes=${summary.reloaded.airwayNodes} procedures=${summary.reloaded.procedures} flights=${summary.reloaded.flights} (file baseline ${fileCallsignsBefore.size})`);
     // ── Air-graph gates (airside edits must persist consistently) ──
-    // The writer drops degenerate procedures (<2 fixes) and gates dangling
-    // airway refs, so a saved procedure may disappear but never exist in an
-    // invalid shape. Every stored procedure must have ≥2 distinct fixes that
-    // resolve within the saved airway-node list, and the save must never ADD
-    // air objects relative to the pre-save snapshot.
     const reloadedAirNodes = reloadedGraph.airwayNodes || [];
     reloadedAirNodes.forEach((n, i) => {
       if (!n || !isFinite(n.x) || !isFinite(n.z)) throw new Error(`saved file has a non-finite airway node at index ${i}`);
     });
-    // Consecutive duplicate fixes can be PRE-EXISTING authored data — the ZGSZ
-    // files ship `OVGOT1.33` with one — and survivors are copied verbatim, so
-    // exempt any procedure whose baseline already had one. The exemption keys on
-    // the DUPLICATED PAIR'S COORDINATES (+ name|routeType), NOT the runway: a
-    // runway rename cascades `procedures[].runwayName` (the writer keys Routes by
-    // it), so a runway-based key stopped matching after a rename and the authored
-    // dup was misreported as NEW. Coordinates survive a rename, while a dup the
-    // fuzz creates at a new position still fails.
-    const { buildSceneryGraph: buildBakGraph } = require('../../src/acl/scenery_graph');
-    const bakGraph = buildBakGraph(readAclText(bakPath)).graph || {};
+    const bakGraph = bakHandle.readSceneryGraph().graph || {};
     const r3 = (v) => Number(v).toFixed(3);
     const dupSig = (p, a) => `${(p && p.name) || ''}|${p && p.routeType}|${a ? r3(a.x) + ',' + r3(a.z) : '?'}`;
     const bakDupSigs = new Set();
@@ -1622,7 +1611,7 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       throw new Error(`ground save introduced flights: extra=${extra.join(',')}`);
     }
     const normSt = (v) => String(v || '').trim().replace(/^0+/, '');
-    const { polygonIsSimple, buildSceneryGraph } = require('../../src/acl/scenery_graph');
+    const { polygonIsSimple } = require('../../src/acl/scenery_graph');
     const savedStandNames = new Set();
     for (const st of reloadedGraph.stands) {
       for (const nm of [st.identifier, st.name]) { const v = normSt(nm); if (v) savedStandNames.add(v); }
@@ -1636,13 +1625,12 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     // like the save itself — only touches references that were resolvable
     // before the save. A flight referencing a stand/runway that the ORIGINAL
     // file never had is pre-existing data and must be left alone.
-    const bakGraphGates = buildSceneryGraph(readAclText(bakPath));
     const preStandNames = new Set();
-    for (const st of bakGraphGates.graph.stands) {
+    for (const st of (bakGraph.stands || [])) {
       for (const nm of [st.identifier, st.name]) { const v = normSt(nm); if (v) preStandNames.add(v); }
     }
     const preRunwayEnds = new Set();
-    for (const rw of bakGraphGates.graph.runways) {
+    for (const rw of (bakGraph.runways || [])) {
       if (Array.isArray(rw.names)) for (const n of rw.names) { const v = normSt(n); if (v) preRunwayEnds.add(v); }
       if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) { const v = normSt(n); if (v) preRunwayEnds.add(v); }
     }
@@ -1663,9 +1651,9 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       return m;
     };
     const savedProcNames = new Set((reloadedGraph.procedures || []).map((p) => normSt(p.name)).filter(Boolean));
-    const preProcNames = new Set((bakGraphGates.graph.procedures || []).map((p) => normSt(p.name)).filter(Boolean));
+    const preProcNames = new Set((bakGraph.procedures || []).map((p) => normSt(p.name)).filter(Boolean));
     const savedProcsByRunway = procsByRunwayG(reloadedGraph);
-    const preProcsByRunway = procsByRunwayG(bakGraphGates.graph);
+    const preProcsByRunway = procsByRunwayG(bakGraph);
     const starPurgeWarranted = (f) => {
       if (!f.Airway) return false;
       const st = normSt(f.Airway);
@@ -1721,28 +1709,54 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     //    by key and the game's registry resolves the original physical runway to
     //    zero named runways ("must have exactly two named runways, found 0").
     //    Keys already duplicated pre-save (.bak) are pre-existing and exempt.
-    const swGates = require('../../src/acl/scenery_write');
-    const countKs = (text) => {
-      const counts = new Map();
-      const ranges = swGates._staticEntitiesRanges(text);
-      let scope = '';
-      if (ranges) {
-        for (const key of ['pkRc', 'npkRc', 'siRc']) {
-          if (ranges[key]) scope += text.substring(ranges[key].start, ranges[key].end);
-        }
-      } else {
-        scope = text; // fallback: files without the expected section layout
+    if (savedHandle.format === 'gatcarc4-v3') {
+      const v3Schema = getSchemaForHash(savedHandle.header.schemaHash);
+      const stIdx = indexDocumentGraph(savedHandle.container.staticData, v3Schema.roots.static, v3Schema);
+      const pkDict = resolveGraphNode(savedHandle.container.staticData.PKStaticEntities, stIdx);
+      const siDict = resolveGraphNode(savedHandle.container.staticData.StaticItems, stIdx);
+      const physCounts = new Map();
+      for (const [k] of dictEntries(siDict)) {
+        if (k.startsWith('physical-runway:')) physCounts.set(k, 0);
       }
-      const re = /"\$k"\s*:\s*"((?:physical-)?runway:[^"]+)"/g;
-      let mm2;
-      while ((mm2 = re.exec(scope)) !== null) counts.set(mm2[1], (counts.get(mm2[1]) || 0) + 1);
-      return counts;
-    };
-    const baseK = countKs(readAclText(bakPath));
-    const dupK = [...countKs(readAclText(currentPath)).entries()]
-      .filter(([k, c]) => c > 1 && (baseK.get(k) || 0) <= 1)
-      .map(([k]) => k);
-    if (dupK.length) throw new Error(`saved file has duplicate runway $k entries: ${dupK.join(',')}`);
+      for (const [k, rawV] of dictEntries(pkDict)) {
+        if (!k.startsWith('runway:')) continue;
+        const rwObj = resolveGraphNode(rawV, stIdx);
+        const refStr = rwObj?.PhysicalRunwayStaticItem?.$ref || '';
+        const mPhys = refStr.match(/physical-runway:(.+)$/);
+        const physKey = mPhys ? `physical-runway:${mPhys[1]}` : null;
+        if (!physKey || !physCounts.has(physKey)) {
+          throw new Error(`saved v3 file has runway ${k} referencing missing physical runway (${refStr || 'none'})`);
+        }
+        physCounts.set(physKey, physCounts.get(physKey) + 1);
+      }
+      const badPhys = [...physCounts.entries()].filter(([, c]) => c !== 2).map(([k, c]) => `${k}(count=${c})`);
+      if (badPhys.length) {
+        throw new Error(`saved v3 file has physical-runway without exactly 2 named runways: ${badPhys.join(',')}`);
+      }
+    } else {
+      const swGates = require('../../src/acl/scenery_write');
+      const countKs = (text) => {
+        const counts = new Map();
+        const ranges = swGates._staticEntitiesRanges(text);
+        let scope = '';
+        if (ranges) {
+          for (const key of ['pkRc', 'npkRc', 'siRc']) {
+            if (ranges[key]) scope += text.substring(ranges[key].start, ranges[key].end);
+          }
+        } else {
+          scope = text; // fallback: files without the expected section layout
+        }
+        const re = /"\$k"\s*:\s*"((?:physical-)?runway:[^"]+)"/g;
+        let mm2;
+        while ((mm2 = re.exec(scope)) !== null) counts.set(mm2[1], (counts.get(mm2[1]) || 0) + 1);
+        return counts;
+      };
+      const baseK = countKs(readAclText(bakPath));
+      const dupK = [...countKs(readAclText(currentPath)).entries()]
+        .filter(([k, c]) => c > 1 && (baseK.get(k) || 0) <= 1)
+        .map(([k]) => k);
+      if (dupK.length) throw new Error(`saved file has duplicate runway $k entries: ${dupK.join(',')}`);
+    }
     // 3. No orphan pavement strips: a segment named like a runway designation
     //    pair must belong to a runway that still exists.
     const physNames = new Set(reloadedGraph.runways.map(rw => rw.physicalName).filter(Boolean));
@@ -1764,7 +1778,29 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     //      InvalidOperationException: Taxiway segments '...:0' and '...:2' for
     //      OSM way '...' have inconsistent visual properties
     //    (KDCA_leisure_2 OSM -378884, air-map fuzz).
-    {
+    if (savedHandle.format === 'gatcarc4-v3') {
+      const v3Schema = getSchemaForHash(savedHandle.header.schemaHash);
+      const stIdx = indexDocumentGraph(savedHandle.container.staticData, v3Schema.roots.static, v3Schema);
+      const pkDict = resolveGraphNode(savedHandle.container.staticData.PKStaticEntities, stIdx);
+      const sigByOsm = new Map();
+      for (const [pk, rawV] of dictEntries(pkDict)) {
+        if (!pk.startsWith('taxiway-segment:')) continue;
+        const sgObj = resolveGraphNode(rawV, stIdx);
+        if (!sgObj || sgObj.OsmId == null) continue;
+        const osmKey = String(sgObj.OsmId);
+        const sig = JSON.stringify({
+          name: String(sgObj.Name ?? ''),
+          flags: Number(sgObj.Flags ?? 0),
+          directed: Boolean(sgObj.Directed),
+          isHidden: Boolean(sgObj.IsHidden),
+          isUnselectable: Boolean(sgObj.IsUnselectable),
+        });
+        if (sigByOsm.has(osmKey) && sigByOsm.get(osmKey) !== sig) {
+          throw new Error(`saved v3 file has inconsistent visual properties within OSM way ${osmKey} (${pk})`);
+        }
+        sigByOsm.set(osmKey, sig);
+      }
+    } else {
       const { _segVisualOf } = require('../../src/acl/scenery_write');
       const { buildPkIndex, getPkEntriesByType } = require('../../src/acl/v4_pk_index');
       const sigByOsm = new Map();

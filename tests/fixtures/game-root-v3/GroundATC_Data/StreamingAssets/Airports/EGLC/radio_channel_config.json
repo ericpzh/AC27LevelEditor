@@ -1,0 +1,20 @@
+{
+  "radioChannels": [
+    {
+      "type": "Ground"
+    },
+    {
+      "type": "Tower"
+    },
+    {
+      "type": "Departure"
+    }
+  ],
+  "channelMapping": {
+    "Ramp": "Ground",
+    "Ground": "Ground",
+    "Tower": "Tower",
+    "Departure": "Departure",
+    "Approach": "Departure"
+  }
+}

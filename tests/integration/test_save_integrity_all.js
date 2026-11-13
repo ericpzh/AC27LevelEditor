@@ -20,14 +20,13 @@
 const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
-const { readAclText } = require('../../src/acl/gatcarc');
+const { openAclFile } = require('../../src/acl/archive');
+const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
+const { dictEntries, indexDocumentGraph, resolveGraphNode } = require('../../src/acl/v3/graph');
+const { UNSET_DATETIME_ISO } = require('../../src/acl/v3/q32');
 const { buildApproachCache } = require('../../src/acl/approach');
 
-const {
-  loadFlights, generateFullAcl,
-  _extractConfig,
-  _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
-} = parser;
+const { loadFlights, generateFullAcl } = parser;
 
 // ── The 24 production + 3 demo .acl files ───────────────────────
 // Mirrors PROD_VISIBLE_BASES (24) + the .demo entries of DEMO_VISIBLE_BASES
@@ -241,12 +240,14 @@ function copyLevelFiles(sourceAclPath, sourceDir, destDir, destName) {
   const destAcl = path.join(destDir, destName);
   fs.copyFileSync(sourceAclPath, destAcl);
 
-  // Discover and copy associated timeline JSONs from source directory
+  // Discover and copy associated timeline JSONs + v3 sidecars from source directory
   const baseName = path.basename(sourceAclPath, '.acl');
   const JSON_PATTERNS = [
     'weather_timeline.json',
     'wind_timeline.json',
     `runway_timeline_${baseName}.json`,
+    `${baseName}.aclcfg`,
+    `${baseName}.timeline.json`,
   ];
 
   for (const pattern of JSON_PATTERNS) {
@@ -269,6 +270,48 @@ function copyLevelFiles(sourceAclPath, sourceDir, destDir, destName) {
   return destAcl;
 }
 
+function inspectFlightPlanRuntimeTimes(handle) {
+  if (handle.format === 'gatcarc4-v3') {
+    const schema = getSchemaForHash(handle.container.header.schemaHash);
+    let dtZero = 0, dtTotal = 0, aiZero = 0, aiTotal = 0;
+    for (const frame of handle.container.frames || []) {
+      if (!frame?.runtimeData) continue;
+      const rtIdx = indexDocumentGraph(frame.runtimeData, schema.roots.runtime, schema);
+      const reDict = resolveGraphNode(frame.runtimeData.RuntimeEntities, rtIdx);
+      if (!reDict) continue;
+      for (const [k, rawV] of dictEntries(reDict)) {
+        if (!k.startsWith('flight-plan:')) continue;
+        const fp = resolveGraphNode(rawV, rtIdx);
+        if (!fp) continue;
+        if (typeof fp._departureTakeoffTime === 'string') {
+          dtTotal++;
+          if (!fp._departureTakeoffTime || fp._departureTakeoffTime === UNSET_DATETIME_ISO) dtZero++;
+        }
+        if (typeof fp._arrivalInBlockTime === 'string') {
+          aiTotal++;
+          if (!fp._arrivalInBlockTime || fp._arrivalInBlockTime === UNSET_DATETIME_ISO) aiZero++;
+        }
+      }
+    }
+    return { dtZero, dtTotal, aiZero, aiTotal };
+  }
+
+  const savedText = handle.rawText;
+  const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
+  let dtZero = 0, dtTotal = 0, dtMatch;
+  while ((dtMatch = depTtRe.exec(savedText)) !== null) {
+    dtTotal++;
+    if (dtMatch[1] === '0') dtZero++;
+  }
+  const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
+  let aiZero = 0, aiTotal = 0, aiMatch;
+  while ((aiMatch = arrIbRe.exec(savedText)) !== null) {
+    aiTotal++;
+    if (aiMatch[1] === '0') aiZero++;
+  }
+  return { dtZero, dtTotal, aiZero, aiTotal };
+}
+
 // ── Run ──────────────────────────────────────────────────────────
 const report = {
   gameRoot,
@@ -288,24 +331,33 @@ for (const file of aclFiles) {
   try {
     // ── Step 1: Copy original + timeline JSONs → golden/ ──────────
     const goldenAcl = copyLevelFiles(file.sourcePath, file.sourceDir, goldenSubDir, file.name);
-    const goldenText = readAclText(goldenAcl);
+    const goldenHandle = openAclFile(goldenAcl);
 
     // ── Step 2: Load golden → snapshot ────────────────────────────
     const goldenResult = loadFlights(goldenAcl);
     if (!goldenResult || !goldenResult.flights.length) {
+      if (file.name.toLowerCase().includes('tutorial') || file.name.toLowerCase().includes('endless')) {
+        fileReport.status = 'skipped';
+        report.summary.skipped++;
+        report.files.push(fileReport);
+        console.log(`  ~ ${label} — 0 flights (tutorial/endless), skipped`);
+        continue;
+      }
       throw new Error('Golden loadFlights returned empty');
     }
-    const goldenCfg = _extractConfig(goldenText) || {};
-    const goldenWeather = countTimeline(_parseWeatherFrames(goldenText));
-    const goldenWind = countTimeline(_parseWindFrames(goldenText));
-    const goldenRunway = countTimeline(_parseRunwayTimeline(goldenText));
+    const goldenCfg = goldenHandle.readConfig() || {};
+    const goldenTl = goldenHandle.readTimelines();
+    const goldenWeather = countTimeline(goldenTl.weatherTimeline);
+    const goldenWind = countTimeline(goldenTl.windTimeline);
+    const goldenRunway = countTimeline(goldenTl.runwayTimeline?.timeline || goldenTl.runwayTimeline);
 
     fileReport.metrics = {
+      format: goldenHandle.format,
       flights: goldenResult.flights.length,
       weatherFrames: goldenWeather,
       windFrames: goldenWind,
       runwayEntries: goldenRunway,
-      goldenSize: Buffer.byteLength(goldenText, 'utf-8'),
+      goldenSize: fs.statSync(goldenAcl).size,
     };
 
     // ── Step 3: Copy golden → result/ ─────────────────────────────
@@ -330,17 +382,22 @@ for (const file of aclFiles) {
     if (!savedResult || !savedResult.flights.length) {
       throw new Error('Result loadFlights returned empty after save');
     }
-    const savedText = readAclText(resultAcl);
-    const savedCfg = _extractConfig(savedText) || {};
-    const savedWeather = countTimeline(_parseWeatherFrames(savedText));
-    const savedWind = countTimeline(_parseWindFrames(savedText));
-    const savedRunway = countTimeline(_parseRunwayTimeline(savedText));
+    const savedHandle = openAclFile(resultAcl);
+    const savedCfg = savedHandle.readConfig() || {};
+    const savedTl = savedHandle.readTimelines();
+    const savedWeather = countTimeline(savedTl.weatherTimeline);
+    const savedWind = countTimeline(savedTl.windTimeline);
+    const savedRunway = countTimeline(savedTl.runwayTimeline?.timeline || savedTl.runwayTimeline);
 
-    fileReport.metrics.resultSize = Buffer.byteLength(savedText, 'utf-8');
+    fileReport.metrics.resultSize = fs.statSync(resultAcl).size;
     fileReport.metrics.sizeDelta = fileReport.metrics.resultSize - fileReport.metrics.goldenSize;
 
     // ── Step 6: Compare every component ────────────────────────────
     const allDiffs = [];
+
+    if (savedHandle.format !== goldenHandle.format) {
+      allDiffs.push(`Format changed: ${goldenHandle.format} → ${savedHandle.format}`);
+    }
 
     allDiffs.push(...compareFlights(goldenResult.flights, savedResult.flights));
     allDiffs.push(...compareConfig(goldenCfg, savedCfg, file.name));
@@ -350,22 +407,9 @@ for (const file of aclFiles) {
     if (goldenWind !== savedWind) allDiffs.push(`Wind frames: ${goldenWind} → ${savedWind}`);
     if (goldenRunway !== savedRunway) allDiffs.push(`Runway timeline: ${goldenRunway} → ${savedRunway}`);
 
-    // ── Text-level _departureTakeoffTime / _arrivalInBlockTime validation ──
+    // ── Runtime _departureTakeoffTime / _arrivalInBlockTime validation ──
     {
-      const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
-      let dtZero = 0, dtTotal = 0;
-      let dtMatch;
-      while ((dtMatch = depTtRe.exec(savedText)) !== null) {
-        dtTotal++;
-        if (dtMatch[1] === '0') dtZero++;
-      }
-      const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
-      let aiZero = 0, aiTotal = 0;
-      let aiMatch;
-      while ((aiMatch = arrIbRe.exec(savedText)) !== null) {
-        aiTotal++;
-        if (aiMatch[1] === '0') aiZero++;
-      }
+      const { dtZero, dtTotal, aiZero, aiTotal } = inspectFlightPlanRuntimeTimes(savedHandle);
       const depCount = savedResult.flights.filter(f => f.isDeparture === true).length;
       const arrCount = savedResult.flights.filter(f => f.isDeparture === false).length;
       if (dtZero === dtTotal && dtTotal > 0 && depCount > 0) {

@@ -29,6 +29,27 @@ npm run test:watch # Watch mode — re-runs on file changes
 npx vitest run tests/electron/updater.test.js
 ```
 
+### GATCARC4 v3 suites (current format)
+
+The checked-in v3 corpus is `tests/fixtures/game-root-v3/` (13 pristine ZSJN levels + airport configs/audio); no game install is needed for these:
+
+```bash
+npx vitest run tests/acl/v3_framing_schema.test.js tests/acl/v3_corpus_and_edits.test.js \
+  tests/acl/v3_save_preservation.test.js \
+  tests/integration/gatcarc_v3_frame_edit.test.js tests/integration/v3_frame_reconciliation.test.js \
+  tests/integration/v3_flight_save_parity.test.js tests/integration/v3_scenery_ground_air_parity.test.js
+
+# Optional 40-file installed-game corpus sweep (PowerShell):
+$env:AC27_GAME_ROOT = "D:\SteamLibrary\steamapps\common\Airport Control 27"
+npx vitest run tests/acl/v3_corpus_and_edits.test.js
+
+# Save integrity / binary round-trip against the v3 fixture:
+node --require ./tests/integration/preload.cjs tests/integration/test_save_integrity_all.js --root tests/fixtures/game-root-v3 --prod-demo
+node tests/integration/test_gatcarc_roundtrip.js --airports-dir tests/fixtures/game-root-v3/GroundATC_Data/StreamingAssets/Airports
+```
+
+`tests/helpers/gameRoot.cjs` resolves the install from `AC27_GAME_ROOT`, else `AC27_STEAM_COMMON` (or the per-OS default Steam library), exporting the result as `GAME_ROOT`/`STEAM_COMMON`; suites that need a real level skip cleanly when none is installed. Legacy Odin v2 regression suites fall back to `tests/fixtures/game-root` when the installed game has upgraded to v3.
+
 ### Cross-platform parity (macOS / Linux)
 
 The suite is developed on Windows but platform-clean. Run it as another OS to

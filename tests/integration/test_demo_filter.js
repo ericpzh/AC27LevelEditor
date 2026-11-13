@@ -13,7 +13,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { extractCurrentDateTime, _extractConfig, loadFlights } = require('../../src/acl/parser');
+const {
+  extractCurrentDateTime,
+  _extractConfig,
+  loadFlights,
+  shouldTrimDemoSchedule,
+  loadLevelForEditor,
+} = require('../../src/acl/parser');
 const { readAclText } = require('../../src/acl/gatcarc');
 
 let passed = 0;
@@ -170,11 +176,9 @@ test('v4 fixture: every flight falls inside Config startTime ~ endTime+30min gra
   const flights = loadFlights(fixture).flights;
   assert(flights.length > 0, 'v4 fixture must have flights');
 
-  // The fixture (a copy of current prod ZSJN_leisure_1.acl) schedules 6 of its
-  // 21 flights inside the game's post-scenario grace period (endTime+30 min,
-  // SCENARIO_END_GRACE_MIN in src/utils/constants/timing.js) — the game accepts
-  // events past scenario end, so every flight must fit [startTime, endTime+30m).
-  assertEq(flights.length, 21, 'fixture must have 21 flights');
+  // The fixture (a copy of prod ZSJN_leisure_1.acl) contains 24 flights, all
+  // fitting inside [Config.startTime, Config.endTime+30m).
+  assertEq(flights.length, 24, 'fixture must have 24 flights');
 
   const startMin = toMin(config.startTime);
   const graceEndMin = toMin(config.endTime) + 30;
@@ -185,6 +189,31 @@ test('v4 fixture: every flight falls inside Config startTime ~ endTime+30min gra
     assert(m >= startMin && m < graceEndMin,
       'flight ' + (fl.CallSign || '?') + ' at ' + t + ' outside [' + config.startTime + ', ' + config.endTime + '+30m)');
   }
+});
+
+// ─── 4. Format-aware demo schedule trimming (v2 vs v3) ─────────
+
+console.log('\n=== 4. Format-aware demo schedule trimming (v2 vs v3) ===\n');
+
+test('v2 vs v3: ordinary ZSJN_leisure_1.acl trims on v2 (22) and keeps full 24 on v3', () => {
+  assertEq(shouldTrimDemoSchedule('ZSJN_leisure_1.acl', 'gatcarc4-v2'), true);
+  assertEq(shouldTrimDemoSchedule('ZSJN_leisure_1.acl', 'gatcarc4-v3'), false);
+  assertEq(shouldTrimDemoSchedule('ZSJN_peakdeparture.demo.acl', 'gatcarc4-v3'), true);
+
+  const v2Path = path.join(__dirname, '..', 'fixtures', 'game-root',
+    'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl');
+  const v3Path = path.join(__dirname, '..', 'fixtures', 'game-root-v3',
+    'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl');
+
+  const v2Loaded = loadLevelForEditor(v2Path);
+  assertEq(v2Loaded.isDemo, true, 'v2 ZSJN_leisure_1.acl should be demo-trimmed');
+  assertEq(v2Loaded.flights.length, 22, 'v2 ZSJN_leisure_1.acl keeps 22 flights');
+
+  const v3Loaded = loadLevelForEditor(v3Path);
+  assertEq(v3Loaded.isDemo, false, 'v3 ZSJN_leisure_1.acl must NOT be demo-trimmed');
+  assertEq(v3Loaded.flights.length, 24, 'v3 ZSJN_leisure_1.acl keeps all 24 flights');
+  assert(v3Loaded.flights.some(f => f.CallSign === 'CES9197'), 'retains CES9197 (05:45:00)');
+  assert(v3Loaded.flights.some(f => f.CallSign === 'DKH6071'), 'retains DKH6071 (05:45:42)');
 });
 
 // ─── Summary ───────────────────────────────────────────────────

@@ -1,0 +1,5 @@
+identifier,operation,min,max
+01,takeoff,A,F
+01,landing,A,F
+19,takeoff,A,F
+19,landing,A,F

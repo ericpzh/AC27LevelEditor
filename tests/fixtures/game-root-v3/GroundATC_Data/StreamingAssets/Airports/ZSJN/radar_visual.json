@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "icao": "ZSJN",
+  "approachDefaults": {
+    "position": {
+      "x": 7.22274,
+      "y": -2.8984413,
+      "z": -10.0
+    },
+    "pixelPerUnit": 1.522723
+  },
+  "surfaceDefaults": {
+    "position": {
+      "x": -281.22833,
+      "y": -615.1044,
+      "z": -10.0
+    },
+    "pixelPerUnit": 4.9884415
+  }
+}

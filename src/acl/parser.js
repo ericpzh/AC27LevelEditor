@@ -41,10 +41,10 @@ const {
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
   _extractConfig, _extractTowerChannelGuid,
 } = require('./flight_plans');
-const { createZip, listZipFiles, extractZip } = require('../utils/zipUtils');
+const { createZip, listZipFiles, extractZip, readZipEntries } = require('../utils/zipUtils');
 const { createTokenizer } = require('./tokenizer');
 const { preprocessUnityJson, serializeUnityJson, isUnityJson, parseOdinValue, parseOdinObject, parseOdinArray } = require('./acl_json');
-const { readAclText } = require('./gatcarc');
+const { openAcl, openAclFile, detectAclFormat } = require('./archive');
 const { AclDocument } = require('./acl_document');
 const { parseTaxiwayPaths } = require('./taxiway');
 const {
@@ -53,6 +53,27 @@ const {
   extractApprRunwayMappings,
   buildApprPaths,
 } = require('./sid_goaround');
+const {
+  isDemoVisibleFile,
+  shouldTrimDemoSchedule,
+  shouldApplyLegacyDemoEndTimeOverride,
+  filterFlightsToConfigWindow,
+  loadLevelForEditor,
+} = require('./demo_window');
+const {
+  clearV3AudioCache,
+  loadV3VoiceCatalog,
+  loadV3ClipIndex,
+  loadV3ChannelConfig,
+  lookupV3Callsigns,
+  lookupV3CallsignsForAirport,
+  loadV3AirportAudio,
+  peekAclFormat,
+  hasV2AudioClips,
+  hasV3AudioAssets,
+  resolveAirportAudioMode,
+  computeAudioSourceSignature,
+} = require('./v3/audio');
 
 // ─── Load flights from ACL (single source of truth) ───────────
 
@@ -60,52 +81,12 @@ function loadFlights(aclPath) {
   const log = (msg) => console.log('[ACL-LOAD]', path.basename(aclPath), '|', msg);
   log('loadFlights() START');
 
-  const text = readAclText(aclPath);
-  const _rawText = text;
-
-  let sceneryMaps = { runwayNameToGuid:{}, standIdToGuid:{}, runwayGuidToName:{}, standGuidToId:{} };
-  let worldStateData = null;
-  let flights = [];
-
-  try {
-    sceneryMaps = _parseSceneryData(text);
-
-    // Primary: parse FlightPlans directly from ACL
-    const fpResult = _parseWorldStateFlightPlans(text);
-    if (fpResult && fpResult.flights && fpResult.flights.length > 0 && fpResult.fpData) {
-      log('Found FlightPlans format — using as primary source');
-      flights = fpResult.flights;
-      worldStateData = fpResult.fpData;
-    }
-  } catch (e) {
-    log('ACL structure parse FAILED: ' + e.message);
-    throw e;
-  }
-
-  if (flights.length === 0) {
-    // A 0-flight ACL is a valid level (e.g. a scenery-only level or a cleared
-    // schedule saved via the "allow 0 flight save" path). Do not throw — return
-    // the empty schedule so the editor opens with an empty flight table and the
-    // level can be saved again. (A genuinely-broken file still throws earlier in
-    // readAclText / _parseWorldStateFlightPlans.)
+  const handle = openAclFile(aclPath);
+  const result = handle.readFlights(aclPath);
+  if (!result.flights || result.flights.length === 0) {
     log('No flight data found in ACL — returning empty schedule (0-flight level)');
   }
-
-  // Locate CSV path from ACL's Config block for reference only (not read)
-  let csvPath = null;
-  const dir = path.dirname(aclPath);
-  const config = _extractConfig(text);
-  if (config && config.flightScheduleFile) {
-    const candidate = path.join(dir, config.flightScheduleFile + '.csv');
-    if (fs.existsSync(candidate)) csvPath = candidate;
-  }
-
-  return {
-    flights, sceneryMaps, csvPath,
-    before: '', after: '', arrayContent: '', originalBlocks: [],
-    worldStateData,
-    _rawText,
-  };
+  return result;
 }
 
 // ─── Extract CurrentDateTime from ACL text ──────────────────
@@ -188,6 +169,19 @@ function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _sc
   // Pre-validation: detect stand occupancy conflicts before save
   _validateStandConflicts(flights);
 
+  const handle = openAclFile(aclPath);
+  if (handle.format === 'gatcarc4-v3') {
+    handle.applyEdits({
+      flights,
+      sceneryMaps: _sceneryMaps,
+      approachCache,
+      filePath: aclPath,
+      _saveSec,
+    });
+    handle.saveToFile(aclPath);
+    return;
+  }
+
   // The renderer's stand list (sceneryMaps.standIdToGuid keys) doubles as the
   // complete stand pool for the game-compat stand normalization.
   const standPool = (_sceneryMaps && _sceneryMaps.standIdToGuid)
@@ -203,9 +197,11 @@ function generateFullAcl(aclPath, flights, _before, _after, _originalBlocks, _sc
 module.exports = {
   // Public API
   loadFlights, generateFullAcl, extractCurrentDateTime,
+  openAcl, openAclFile, detectAclFormat,
   exportCSV, exportGameCSV,
   collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns,
   getFileInfo, loadAudioCallsigns,
+  parseAirlineCountryRegistry, loadAirlineCountryRegistry,
   sortFlightsChronologically,
   scanGameRoot, findGameRoot,
   extractSpecificationDB, extractApproachData, extractState5Data, extractTypeMap,
@@ -221,7 +217,7 @@ module.exports = {
   _rebuildTimelineSections, _generateFramesSection, _generateRunwayTimelineSection,
   _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
   _extractConfig,
-  createZip, listZipFiles, extractZip,
+  createZip, listZipFiles, extractZip, readZipEntries,
   // New object-based parser
   createTokenizer, preprocessUnityJson, serializeUnityJson, isUnityJson,
   parseOdinValue, parseOdinObject, parseOdinArray,
@@ -231,6 +227,24 @@ module.exports = {
   extractSidRunwayMappings, extractMissedApproachMappings,
   buildSidPaths, buildMissedApproachPaths,
   extractApprRunwayMappings, buildApprPaths,
+  // Format-aware demo window + v3 audio metadata loaders
+  isDemoVisibleFile,
+  shouldTrimDemoSchedule,
+  shouldApplyLegacyDemoEndTimeOverride,
+  filterFlightsToConfigWindow,
+  loadLevelForEditor,
+  clearV3AudioCache,
+  loadV3VoiceCatalog,
+  loadV3ClipIndex,
+  loadV3ChannelConfig,
+  lookupV3Callsigns,
+  lookupV3CallsignsForAirport,
+  loadV3AirportAudio,
+  peekAclFormat,
+  hasV2AudioClips,
+  hasV3AudioAssets,
+  resolveAirportAudioMode,
+  computeAudioSourceSignature,
   // Internal exports (used by tests)
   _parseSceneryData, _parseStandPositions, _parseAreas,
   _parseRunwayThresholds,

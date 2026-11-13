@@ -15,13 +15,12 @@
 const fs = require('fs');
 const path = require('path');
 const parser = require('../src/acl/parser');
-const { readAclText } = require('../src/acl/gatcarc');
+const { openAclFile } = require('../src/acl/archive');
+const { getSchemaForHash } = require('../src/acl/v3/schema_registry');
+const { dictEntries, indexDocumentGraph, resolveGraphNode } = require('../src/acl/v3/graph');
+const { UNSET_DATETIME_ISO } = require('../src/acl/v3/q32');
 
-const {
-  loadFlights,
-  _extractConfig,
-  _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline,
-} = parser;
+const { loadFlights } = parser;
 
 // ── CLI ──────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -77,10 +76,54 @@ try {
 let pass = true;
 const diffs = [];
 
+function inspectFlightPlanRuntimeTimes(filePath) {
+  const handle = openAclFile(filePath);
+  if (handle.format === 'gatcarc4-v3') {
+    const schema = getSchemaForHash(handle.container.header.schemaHash);
+    let dtZero = 0, dtTotal = 0, aiZero = 0, aiTotal = 0;
+    for (const frame of handle.container.frames || []) {
+      if (!frame?.runtimeData) continue;
+      const rtIdx = indexDocumentGraph(frame.runtimeData, schema.roots.runtime, schema);
+      const reDict = resolveGraphNode(frame.runtimeData.RuntimeEntities, rtIdx);
+      if (!reDict) continue;
+      for (const [k, rawV] of dictEntries(reDict)) {
+        if (!k.startsWith('flight-plan:')) continue;
+        const fp = resolveGraphNode(rawV, rtIdx);
+        if (!fp) continue;
+        if (typeof fp._departureTakeoffTime === 'string') {
+          dtTotal++;
+          if (!fp._departureTakeoffTime || fp._departureTakeoffTime === UNSET_DATETIME_ISO) dtZero++;
+        }
+        if (typeof fp._arrivalInBlockTime === 'string') {
+          aiTotal++;
+          if (!fp._arrivalInBlockTime || fp._arrivalInBlockTime === UNSET_DATETIME_ISO) aiZero++;
+        }
+      }
+    }
+    return { dtZero, dtTotal, aiZero, aiTotal };
+  }
+
+  const savedText = handle.rawText;
+  const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
+  let dtZero = 0, dtTotal = 0, dtMatch;
+  while ((dtMatch = depTtRe.exec(savedText)) !== null) {
+    dtTotal++;
+    if (dtMatch[1] === '0') dtZero++;
+  }
+  const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
+  let aiZero = 0, aiTotal = 0, aiMatch;
+  while ((aiMatch = arrIbRe.exec(savedText)) !== null) {
+    aiTotal++;
+    if (aiMatch[1] === '0') aiZero++;
+  }
+  return { dtZero, dtTotal, aiZero, aiTotal };
+}
+
 // ── Demo mode: parsability + flight data validation only ─────────
 if (isDemo) {
-  const savedText = readAclText(aclPath);
-  const savedCfg = _extractConfig(savedText) || {};
+  const savedHandle = openAclFile(aclPath);
+  const savedCfg = savedHandle.readConfig() || {};
+  const savedTl = savedHandle.readTimelines();
 
   // Verify every flight has required key fields
   const KEY_FIELDS = ['CallSign', 'LandingTime', 'InBlockTime', 'OffBlockTime', 'TakeoffTime'];
@@ -110,9 +153,9 @@ if (isDemo) {
   console.log(`  [OK] Scenery maps: ${rw} runways, ${st} stands`);
 
   // Verify timelines
-  const sw = countTimeline(_parseWeatherFrames(savedText));
-  const sWi = countTimeline(_parseWindFrames(savedText));
-  const sr = countTimeline(_parseRunwayTimeline(savedText));
+  const sw = countTimeline(savedTl.weatherTimeline);
+  const sWi = countTimeline(savedTl.windTimeline);
+  const sr = countTimeline(savedTl.runwayTimeline?.timeline || savedTl.runwayTimeline);
   console.log(`  [OK] Timelines: weather=${sw} wind=${sWi} runway=${sr}`);
 
   // Timeline JSONs
@@ -176,8 +219,10 @@ if (isDemo) {
   }
 
   // 4. Config
-  const savedCfg = _extractConfig(readAclText(aclPath)) || {};
-  const origCfg = _extractConfig(readAclText(bakPath)) || {};
+  const savedHandle = openAclFile(aclPath);
+  const origHandle = openAclFile(bakPath);
+  const savedCfg = savedHandle.readConfig() || {};
+  const origCfg = origHandle.readConfig() || {};
   let cfgOk = true;
   for (const f of CFG_FIELDS) {
     if ((savedCfg[f]||'') !== (origCfg[f]||'')) { diffs.push(`Config.${f}: "${origCfg[f]}" → "${savedCfg[f]}"`); cfgOk = false; }
@@ -194,11 +239,12 @@ if (isDemo) {
   else { diffs.push(`Scenery: runways ${origRw}→${savedRw}, stands ${origSt}→${savedSt}`); pass = false; }
 
   // 6. Embedded timelines
-  const savedText = readAclText(aclPath);
-  const origText = readAclText(bakPath);
-  const sw2 = countTimeline(_parseWeatherFrames(savedText)), ow2 = countTimeline(_parseWeatherFrames(origText));
-  const sWi2 = countTimeline(_parseWindFrames(savedText)), oWi2 = countTimeline(_parseWindFrames(origText));
-  const sr2 = countTimeline(_parseRunwayTimeline(savedText)), or2 = countTimeline(_parseRunwayTimeline(origText));
+  const savedTl = savedHandle.readTimelines();
+  const origTl = origHandle.readTimelines();
+  const sw2 = countTimeline(savedTl.weatherTimeline), ow2 = countTimeline(origTl.weatherTimeline);
+  const sWi2 = countTimeline(savedTl.windTimeline), oWi2 = countTimeline(origTl.windTimeline);
+  const sr2 = countTimeline(savedTl.runwayTimeline?.timeline || savedTl.runwayTimeline);
+  const or2 = countTimeline(origTl.runwayTimeline?.timeline || origTl.runwayTimeline);
   if (sw2 === ow2 && sWi2 === oWi2 && sr2 === or2) console.log(`  [OK] Timelines: weather=${sw2} wind=${sWi2} runway=${sr2}`);
   else {
     if (sw2 !== ow2) diffs.push(`Weather: ${ow2}→${sw2}`);
@@ -210,28 +256,9 @@ if (isDemo) {
 
 // ── Timeline JSONs (common) ──────────────────────────────────────
 
-// ── 7. Text-level _departureTakeoffTime / _arrivalInBlockTime validation ─
+// ── 7. Runtime _departureTakeoffTime / _arrivalInBlockTime validation ─
 {
-  const savedText = readAclText(aclPath);
-  // Count all _departureTakeoffTime values that are 0 in the saved text.
-  // These appear in both arrival and departure flight-plan entries.
-  // For arrivals: _departureTakeoffTime=0 is expected (departure side unused).
-  // For departures: _departureTakeoffTime should be non-zero.
-  const depTtRe = /"_departureTakeoffTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
-  let dtZero = 0, dtTotal = 0;
-  let dtMatch;
-  while ((dtMatch = depTtRe.exec(savedText)) !== null) {
-    dtTotal++;
-    if (dtMatch[1] === '0') dtZero++;
-  }
-  // Count _arrivalInBlockTime zeros
-  const arrIbRe = /"_arrivalInBlockTime":\s*\{\s*"\$type":\s*(?:"[^"]*"|\d+),\s*(-?\d+)\s*\}/g;
-  let aiZero = 0, aiTotal = 0;
-  let aiMatch;
-  while ((aiMatch = arrIbRe.exec(savedText)) !== null) {
-    aiTotal++;
-    if (aiMatch[1] === '0') aiZero++;
-  }
+  const { dtZero, dtTotal, aiZero, aiTotal } = inspectFlightPlanRuntimeTimes(aclPath);
 
   const depCount = savedResult.flights.filter(f => f.isDeparture === true).length;
   const arrCount = savedResult.flights.filter(f => f.isDeparture === false).length;

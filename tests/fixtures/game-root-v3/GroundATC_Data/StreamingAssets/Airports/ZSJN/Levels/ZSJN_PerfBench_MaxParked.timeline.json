@@ -1,0 +1,22 @@
+{
+  "weather": [
+    {
+      "preset": "HeavyRain",
+      "time": "09:00:00"
+    }
+  ],
+  "wind": [
+    {
+      "direction": 190,
+      "speed": 4,
+      "time": "09:00:00"
+    }
+  ],
+  "runway": {
+    "initialRunways": [
+      "01",
+      "19"
+    ],
+    "timeline": []
+  }
+}

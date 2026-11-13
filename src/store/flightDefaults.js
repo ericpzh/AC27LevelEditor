@@ -53,6 +53,68 @@ export function pickVoiceForLanguage(values, language) {
 }
 
 /**
+ * Resolve compatible `(Language, Voice, flightNum)` for GATCARC4 v3 levels
+ * using `values._v3Audio` (channel languages + captain voices + clip index).
+ *
+ * @param {string} airlineCode
+ * @param {string} requestedNum
+ * @param {object} values
+ * @param {string} currentAirport
+ * @returns {{ language: string, voice: string, flightNum: string }}
+ */
+export function pickV3LanguageVoiceAndNumber(airlineCode, requestedNum, values, currentAirport) {
+  const v3 = values && values._v3Audio;
+  const allowedLangs = (Array.isArray(v3?.knownChannelLanguages) && v3.knownChannelLanguages.length > 0)
+    ? v3.knownChannelLanguages
+    : ((Array.isArray(values?.Language) && values.Language.length > 0) ? values.Language : ['en', 'zh']);
+
+  const regionLang = defaultLanguageForAirport(currentAirport);
+  const preferredLang = languageForAirline(airlineCode, values?._airlineCountries, allowedLangs)
+    || (allowedLangs.includes(regionLang) ? regionLang : allowedLangs[0])
+    || 'en';
+  const candidateLangs = [preferredLang, ...allowedLangs.filter((l) => l !== preferredLang)];
+
+  const voicePool = (Array.isArray(values?.Voice) && values.Voice.length > 0)
+    ? values.Voice
+    : (v3?.captainVoices?.length > 0 ? v3.captainVoices : (v3?.allCaptainVoices || []));
+  const langOf = values?._voiceLanguages || v3?.voiceLanguages || {};
+
+  if (v3?.hasClipIndex && voicePool.length > 0) {
+    // 1. Prefer a captain voice in candidate language order that can allocate requestedNum
+    if (requestedNum) {
+      for (const lang of candidateLangs) {
+        const voices = voicePool.filter((v) => !langOf[v] || langOf[v] === lang);
+        const exact = voices.filter((v) => (v3.allocatableByVoice?.[v]?.[airlineCode] || []).includes(requestedNum));
+        if (exact.length > 0) {
+          return { language: lang, voice: randomPick(exact), flightNum: requestedNum };
+        }
+      }
+    }
+    // 2. Otherwise pick a captain voice that has any allocatable flight numbers for airlineCode
+    for (const lang of candidateLangs) {
+      const voices = voicePool.filter((v) => !langOf[v] || langOf[v] === lang);
+      const withAirline = voices.filter((v) => (v3.allocatableByVoice?.[v]?.[airlineCode] || []).length > 0);
+      if (withAirline.length > 0) {
+        const chosenVoice = randomPick(withAirline);
+        const nums = v3.allocatableByVoice[chosenVoice][airlineCode];
+        const chosenNum = (requestedNum && nums.includes(requestedNum)) ? requestedNum : randomPick(nums);
+        return { language: lang, voice: chosenVoice, flightNum: chosenNum || requestedNum || '1' };
+      }
+    }
+  }
+
+  const fallbackLang = candidateLangs[0] || regionLang || 'en';
+  const fallbackVoice = pickVoiceForLanguage({ ...values, Voice: voicePool, _voiceLanguages: langOf }, fallbackLang)
+    || (v3?.allCaptainVoices && v3.allCaptainVoices[0])
+    || '';
+  return {
+    language: fallbackLang,
+    voice: fallbackVoice,
+    flightNum: requestedNum || '1',
+  };
+}
+
+/**
  * Compute a default base time (in minutes from midnight) for new flights.
  * Uses configEndTime minus DEFAULT_TIME_OFFSET_MIN, clamped to >= 0,
  * falling back to FALLBACK_BASE_MINUTES (06:00).
@@ -234,15 +296,26 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
     airway = '';
   }
 
-  // Language follows the airline (CN carriers speak zh, every other carrier
-  // speaks en) because the game's CallsignService only records a callsign for
-  // one captain language. Fall back to the airport region when the airline is
-  // unknown to the registry.
-  const language = languageForAirline(airlineCode, values._airlineCountries, values.Language)
-    || defaultLanguageForAirport(currentAirport);
+  let finalFlightNum = flightNum;
+  let language;
+  let voice;
+  if (values && values._v3Audio) {
+    const picked = pickV3LanguageVoiceAndNumber(airlineCode, flightNum, values, currentAirport);
+    finalFlightNum = picked.flightNum;
+    language = picked.language;
+    voice = picked.voice;
+  } else {
+    // Language follows the airline (CN carriers speak zh, every other carrier
+    // speaks en) because the game's v2 CallsignService only records a callsign for
+    // one captain language. Fall back to the airport region when the airline is
+    // unknown to the registry.
+    language = languageForAirline(airlineCode, values._airlineCountries, values.Language)
+      || defaultLanguageForAirport(currentAirport);
+    voice = pickVoiceForLanguage(values, language);
+  }
   const flight = {
     ...makeEmptyFlight(),
-    CallSign: airlineCode + flightNum,
+    CallSign: airlineCode + finalFlightNum,
     Language: language,
     AircraftType: aircraftType,
     AirlineName: airlineCode,
@@ -251,7 +324,7 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
     Runway: runway,
     Airway: airway,
     Registration: registration,
-    Voice: pickVoiceForLanguage(values, language),
+    Voice: voice,
   };
 
   if (type === 'arrival') {

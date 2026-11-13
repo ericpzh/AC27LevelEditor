@@ -213,7 +213,13 @@ export const useAppStore = create((set, get) => ({
       if (state.highlightedIdx < 0) return;
       indices = [state.highlightedIdx];
     }
-    const copies = indices.map(i => ({ ...state.flights[i], _isNew: true }));
+    const copies = indices.map((i) => {
+      const copy = { ...state.flights[i], _isNew: true };
+      delete copy._fpGuid;
+      delete copy._sourceLandingTime;
+      delete copy._sourceOffBlockTime;
+      return copy;
+    });
     const insertAt = indices[indices.length - 1] + 1;
     const flights = [...state.flights];
     flights.splice(insertAt, 0, ...copies);
@@ -358,7 +364,7 @@ export const useAppStore = create((set, get) => ({
     // language (the FlightTable Voice dropdown is filtered by Language; the
     // game's VoiceCatalog rejects a mismatch at level load).
     if ('Language' in updates && !('Voice' in updates)) {
-      const langUpdates = cascadeLanguageChange(updates.Language, airportValues);
+      const langUpdates = cascadeLanguageChange(updates.Language, airportValues, flight);
       Object.assign(flight, langUpdates);
     }
 

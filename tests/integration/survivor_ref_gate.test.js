@@ -17,11 +17,11 @@ import { readFileSync } from 'fs';
 import { decodeArchive } from '../../src/acl/gatcarc';
 import { buildSceneryGraph } from '../../src/acl/scenery_graph';
 import { patchSceneryBlob } from '../../src/acl/scenery_write';
-import { levelPath, gameLevelExists } from '../helpers/gameRoot';
+import { v2LevelPath, v2GameLevelExists } from '../helpers/gameRoot';
 
-const LEVEL = levelPath('ZSJN', 'ZSJN_test.acl');
-// Real-game fixture: skipped (rather than failing) where the game is not installed.
-const describeWithLevel = gameLevelExists('ZSJN', 'ZSJN_test.acl') ? describe : describe.skip;
+const LEVEL = v2LevelPath('ZSJN', 'ZSJN_test.acl');
+// Odin v2 fixture: uses live v2 level when present or checked-in v2 fixture when GAME_ROOT is v3.
+const describeWithLevel = v2GameLevelExists('ZSJN', 'ZSJN_test.acl') ? describe : describe.skip;
 
 function loadLevel() {
   const text = decodeArchive(readFileSync(LEVEL));

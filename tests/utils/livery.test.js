@@ -16,13 +16,15 @@ describe('livery constants', () => {
     expect(OWN_PACK_NAME).toBe('AC27 Custom Liveries');
   });
 
-  it('short-code table has all 21 built-in aircraft rows', () => {
-    expect(Object.keys(SHORT_CODE_TO_PLANE_ID)).toHaveLength(21);
+  it('short-code table has all 22 built-in aircraft rows', () => {
+    expect(Object.keys(SHORT_CODE_TO_PLANE_ID)).toHaveLength(22);
     expect(SHORT_CODE_TO_PLANE_ID.A20N).toBe('AIRBUS A-320neo');
     expect(SHORT_CODE_TO_PLANE_ID.B38M).toBe('BOEING 737 MAX 8');
     expect(SHORT_CODE_TO_PLANE_ID.C919).toBe('COMAC C-919');
     expect(SHORT_CODE_TO_PLANE_ID.B738BCF).toBe('BOEING 737-800BCF');
     expect(PLANE_ID_TO_SHORT_CODE['BOEING 737-800BCF']).toBe('B738BCF');
+    expect(SHORT_CODE_TO_PLANE_ID.A320P2F).toBe('AIRBUS A-320P2F');
+    expect(PLANE_ID_TO_SHORT_CODE['AIRBUS A-320P2F']).toBe('A320P2F');
     expect(SHORT_CODE_TO_PLANE_ID.CRJ7).toBe('BOMBARDIER CRJ700');
     expect(SHORT_CODE_TO_PLANE_ID.C750).toBe('CESSNA CITATION X');
     expect(SHORT_CODE_TO_PLANE_ID.GLF6).toBe('GULFSTREAM 650');

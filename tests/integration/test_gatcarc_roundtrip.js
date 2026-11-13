@@ -22,6 +22,9 @@ const path = require('path');
 const {
   isGatcArchive, parseArchive, decodeArchive, encodeArchive, decodePayloadToText, encodeTextToPayload,
 } = require('../../src/acl/gatcarc');
+const { detectAclFormat } = require('../../src/acl/archive');
+const { parseV3Container, encodeV3Container } = require('../../src/acl/v3/framing');
+const { validateV3Container } = require('../../src/acl/v3/validator');
 
 const DEFAULT_AIRPORTS = path.join(__dirname, '..', '..', '..',
   'GroundATC_Data', 'StreamingAssets', 'Airports');
@@ -50,8 +53,46 @@ function firstDiff(a, b) {
   return a.length === b.length ? -1 : n;
 }
 
+function testV3BinaryFile(filePath, name) {
+  const bin = fs.readFileSync(filePath);
+  let parsed = null;
+
+  check(`${name}: v3 container + schema valid`, () => {
+    parsed = parseV3Container(bin);
+    validateV3Container(parsed);
+    console.log(`         (v3 schema ${parsed.header.schemaHash.slice(0, 12)}…, ${parsed.frames.length} frame(s))`);
+  });
+  if (!parsed) return;
+
+  check(`${name}: v3 untouched encode is byte-identical`, () => {
+    const binExact = encodeV3Container(parsed);
+    if (!binExact.equals(bin)) {
+      throw new Error(`untouched encode length ${binExact.length} != original ${bin.length} or bytes differ`);
+    }
+  });
+
+  check(`${name}: v3 forceReencode -> parse -> validate is identity`, () => {
+    const binReencoded = encodeV3Container(parsed, { forceReencode: true });
+    const parsed2 = parseV3Container(binReencoded);
+    validateV3Container(parsed2);
+    if (parsed2.frames.length !== parsed.frames.length) {
+      throw new Error(`frame count ${parsed2.frames.length} != ${parsed.frames.length}`);
+    }
+    const binReencoded2 = encodeV3Container(parsed2, { forceReencode: true });
+    if (!binReencoded2.equals(binReencoded)) {
+      throw new Error('v3 forceReencode is not idempotent on second pass');
+    }
+    const delta = binReencoded.length - bin.length;
+    console.log(`         (v3 forceReencode ${binReencoded.length} bytes, ${delta >= 0 ? '+' : ''}${delta} vs original)`);
+  });
+}
+
 function testBinaryFile(filePath, name) {
   const bin = fs.readFileSync(filePath);
+  if (detectAclFormat(bin) === 'gatcarc4-v3') {
+    testV3BinaryFile(filePath, name);
+    return;
+  }
   let text1 = null;
 
   check(`${name}: container + hash valid`, () => {

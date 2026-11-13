@@ -12,7 +12,9 @@ export const TICKS_PER_DAY_NUM = 864000000000;
 // ─── CACHE_VERSION — bump when cache.json schema changes ───
 // 29: added the top-level `flags` bag (dismissed UI hints, e.g.
 //     flags.liveryModHintDismissed from the post-save mod-enable prompt).
-export const CACHE_VERSION = 31;
+// 32: GATCARC4 storage version 3 support (rebuild stale pre-v3 airport caches).
+// 33: v3 audio metadata (voice_catalog / radio_clip_durations / radio_channel_config) + audioSourceSignature.
+export const CACHE_VERSION = 33;
 
 // ─── Game timing / scenario ────────────────────────────────
 // Flights are allowed up to SCENARIO_END_GRACE_MIN past scenario end.

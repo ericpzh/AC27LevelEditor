@@ -176,7 +176,7 @@ describe('aircraftPack transform math', () => {
   });
 
   it('covers every aircraft the painter offers a 3D model for', () => {
-    expect(Object.keys(pack.PLANES).length).toBe(20);
+    expect(Object.keys(pack.PLANES).length).toBe(21);
     for (const [id, cfg] of Object.entries(pack.PLANES)) {
       expect(cfg.parts.length, id).toBeGreaterThan(0);
       for (const p of cfg.parts) expect(typeof p.name).toBe('string');
@@ -186,6 +186,11 @@ describe('aircraftPack transform math', () => {
   it('includes the Boeing 737-800BCF using the 737-800 mesh', () => {
     expect(pack.PLANES['BOEING 737-800BCF']).toBeTruthy();
     expect(pack.PLANES['BOEING 737-800BCF']).toEqual(pack.PLANES['BOEING 737-800']);
+  });
+
+  it('includes the Airbus A-320P2F using the A-320ceo mesh', () => {
+    expect(pack.PLANES['AIRBUS A-320P2F']).toBeTruthy();
+    expect(pack.PLANES['AIRBUS A-320P2F']).toEqual(pack.PLANES['AIRBUS A-320ceo']);
   });
 
   it('maps the A330 engine nacelles onto the Body panel and fans to static', () => {

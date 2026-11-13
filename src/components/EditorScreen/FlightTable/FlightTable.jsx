@@ -311,20 +311,22 @@ export default function FlightTable({ type, flights, columns }) {
                         const filtered = vals._registrationMap?.[regKey];
                         if (filtered && filtered.length > 0) opts = filtered;
                       }
-                      // Voice options are constrained to the flight's Language —
-                      // the game's VoiceCatalog throws at level load when the
-                      // captain voice language differs from the flight's.
-                      // The airline's required captain language (from the
-                      // airline_country_registry: CN -> zh, every other -> en)
-                      // drives BOTH the Language dropdown and the Voice filter,
-                      // so a CAL/CPA flight can never be offered a zh voice.
-                      const expectedLang = expectedLanguageForFlight(fl, vals._airlineCountries, vals.Language);
+                      // On v2 (`!vals._v3Audio`), airline_country_registry mandates a single
+                      // captain language (CN -> zh, every other -> en) and locks Language/Voice.
+                      // On v3 (`vals._v3Audio`), Language is driven by the airport's radio channel
+                      // config and users may explicitly switch Language + Voice across all
+                      // airport-configured languages; Voice filters by fl.Language and FlightNum
+                      // offers callsign numbers allocatable for the selected Voice + airport ATC.
+                      const isV3Audio = !!vals._v3Audio;
+                      const expectedLang = isV3Audio
+                        ? null
+                        : expectedLanguageForFlight(fl, vals._airlineCountries, vals.Language);
                       if (col === 'Language' && expectedLang) {
                         opts = [expectedLang];
                       }
                       if (col === 'Voice' && opts && opts.length > 0) {
                         const lang = expectedLang || (fl.Language || '').trim();
-                        const langOf = vals._voiceLanguages || {};
+                        const langOf = vals._voiceLanguages || vals._v3Audio?.voiceLanguages || {};
                         if (lang && Object.keys(langOf).length > 0) {
                           const matching = opts.filter(v => langOf[v] === lang);
                           const unknown = opts.filter(v => !langOf[v]);
@@ -332,11 +334,16 @@ export default function FlightTable({ type, flights, columns }) {
                           else if (unknown.length > 0) opts = unknown;
                         }
                       }
-                      const flightNums = (col === 'FlightNum' ? validFlightNums[airlineCode] : null);
-                      // The airline mandates the captain language, so the
-                      // Language/Voice dropdowns must never offer the invalid
-                      // option (the save gate blocks until it is corrected).
-                      const strictOptions = (col === 'Language' || col === 'Voice') && !!expectedLang;
+                      let flightNums = null;
+                      if (col === 'FlightNum') {
+                        const voiceAlloc = isV3Audio && fl.Voice
+                          ? vals._v3Audio.allocatableByVoice?.[fl.Voice]?.[airlineCode]
+                          : null;
+                        flightNums = (voiceAlloc && voiceAlloc.length > 0)
+                          ? voiceAlloc
+                          : validFlightNums[airlineCode];
+                      }
+                      const strictOptions = !isV3Audio && (col === 'Language' || col === 'Voice') && !!expectedLang;
                       return <EditableCell key={col} value={val} col={col} globalIdx={gi} isTime={isTime} options={opts} flightNums={flightNums} strictOptions={strictOptions} />;
                     })}
                   </tr>

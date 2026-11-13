@@ -70,7 +70,11 @@ const parser = require('../../src/acl/parser');
 // guarantees the fuzz never tries to save a state the editor rejects.
 const validators = require('../../src/utils/validators.js');
 const { readAclText } = require('../../src/acl/gatcarc');
-const { analyze, runChecks } = require('../integration/gamecompat-utils.cjs');
+const { openAclFile } = require('../../src/acl/archive');
+const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
+const { dictEntries, indexDocumentGraph, resolveGraphNode, unwrapReactive } = require('../../src/acl/v3/graph');
+const { decodePosition3ToGu } = require('../../src/acl/v3/q32');
+const { analyze, analyzeAclFile, runChecks } = require('../integration/gamecompat-utils.cjs');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP_DIR = process.env.E2E_TMP_DIR;
@@ -1195,7 +1199,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     // keys, missing docked aircraft entities, stand-allocation conflicts) —
     // a stale build without the save-time normalization passes them and
     // still produces broken levels. Assert the saved file is game-clean.
-    const gcA = analyze(readAclText(currentPath));
+    const gcA = analyzeAclFile(currentPath);
     const gc = runChecks(gcA, { voiceLanguages, airlineCountries, languages });
     // Filter out the one game-compat code the save pipeline does not yet
     // guarantee: docked-stand-before-offblock (arrival lands before a docked
@@ -1229,33 +1233,62 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     }
     // A valid archive can still place parked aircraft far from their stands if
     // its profile lookup falls back to wheelbases in the wrong units.
-    const savedText = readAclText(currentPath);
-    const { FRAME_SENTINEL } = require('../../src/acl/gatcarc');
-    const { createTokenizer } = require('../../src/acl/tokenizer');
-    const parkingStands = parser._parseStandPositions(savedText, true);
+    const savedHandle = openAclFile(currentPath);
+    const parkingStands = savedHandle.readStandPositions();
     const departures = new Map(reloaded.flights.filter(f => f.isDeparture).map(f => [f._Registration || f.Registration, f]));
     let checkedParking = 0;
-    for (const doc of savedText.split(FRAME_SENTINEL).slice(1)) {
-      const tokenizer = createTokenizer(doc);
-      for (const match of doc.matchAll(/"\$k"\s*:\s*"(jetway|aircraft):([^"\\]+)"/g)) {
-        const start = doc.lastIndexOf('{', match.index);
-        const block = doc.slice(start, tokenizer.findObjectEnd(start));
-        const reg = (block.match(/flight-plan:([^"\\]+)/) || [])[1] || (match[1] === 'aircraft' ? match[2] : null);
-        const flight = departures.get(reg) || (match[1] === 'jetway'
-          ? [...departures.values()].find(f => String(parseInt(f.Stand, 10)) === String(parseInt(match[2], 10)))
-          : null);
-        if (!flight) continue;
-        const bt = createTokenizer(block);
-        const state = bt.findSection('_state'), pos = bt.findSection('_position');
-        if (!state || !pos || !/,\s*10\s*}/.test(block.slice(state.valueStart, state.valueEnd))) continue;
-        const stand = parkingStands[flight.Stand] || parkingStands[String(parseInt(flight.Stand, 10))];
-        if (!stand) throw new Error(`parked aircraft ${reg}: stand ${flight.Stand} not found`);
-        const position = block.slice(pos.valueStart, pos.valueEnd);
-        const vector = position.match(/"\$type"\s*:\s*(?:\d+|"[^"]+"),\s*(-?[\d.eE+]+),\s*(-?[\d.eE+]+),\s*(-?[\d.eE+]+)/);
-        if (!vector) throw new Error(`parked aircraft ${reg}: position not found`);
-        const offset = Math.hypot(Number(vector[1]) - stand.noseX, Number(vector[3]) - stand.noseZ);
-        if (offset > 2) throw new Error(`parked aircraft ${reg}: ${offset.toFixed(3)} units from stand ${flight.Stand} nose`);
-        checkedParking++;
+    if (savedHandle.format === 'gatcarc4-v3') {
+      const schema = getSchemaForHash(savedHandle.container.header.schemaHash);
+      for (const frame of savedHandle.container.frames || []) {
+        if (!frame?.runtimeData) continue;
+        const rtIdx = indexDocumentGraph(frame.runtimeData, schema.roots.runtime, schema);
+        const reDict = resolveGraphNode(frame.runtimeData.RuntimeEntities, rtIdx);
+        if (!reDict) continue;
+        for (const [k, rawV] of dictEntries(reDict)) {
+          if (!k.startsWith('aircraft:')) continue;
+          const reg = k.slice('aircraft:'.length);
+          const flight = departures.get(reg);
+          if (!flight) continue;
+          const acObj = resolveGraphNode(rawV, rtIdx);
+          if (!acObj) continue;
+          const stVal = unwrapReactive(acObj._state, rtIdx);
+          if (stVal !== 10) continue;
+          const stand = parkingStands[flight.Stand] || parkingStands[String(parseInt(flight.Stand, 10))];
+          if (!stand) throw new Error(`parked aircraft ${reg}: stand ${flight.Stand} not found`);
+          const posTuple = unwrapReactive(acObj._position, rtIdx);
+          if (!Array.isArray(posTuple) || posTuple.length < 3) throw new Error(`parked aircraft ${reg}: position not found`);
+          const posGu = decodePosition3ToGu(posTuple);
+          const offset = Math.hypot(posGu.x - stand.noseX, posGu.z - stand.noseZ);
+          if (offset > 2) throw new Error(`parked aircraft ${reg}: ${offset.toFixed(3)} units from stand ${flight.Stand} nose`);
+          checkedParking++;
+        }
+      }
+    } else {
+      const savedText = savedHandle.rawText;
+      const { FRAME_SENTINEL } = require('../../src/acl/gatcarc');
+      const { createTokenizer } = require('../../src/acl/tokenizer');
+      for (const doc of savedText.split(FRAME_SENTINEL).slice(1)) {
+        const tokenizer = createTokenizer(doc);
+        for (const match of doc.matchAll(/"\$k"\s*:\s*"(jetway|aircraft):([^"\\]+)"/g)) {
+          const start = doc.lastIndexOf('{', match.index);
+          const block = doc.slice(start, tokenizer.findObjectEnd(start));
+          const reg = (block.match(/flight-plan:([^"\\]+)/) || [])[1] || (match[1] === 'aircraft' ? match[2] : null);
+          const flight = departures.get(reg) || (match[1] === 'jetway'
+            ? [...departures.values()].find(f => String(parseInt(f.Stand, 10)) === String(parseInt(match[2], 10)))
+            : null);
+          if (!flight) continue;
+          const bt = createTokenizer(block);
+          const state = bt.findSection('_state'), pos = bt.findSection('_position');
+          if (!state || !pos || !/,\s*10\s*}/.test(block.slice(state.valueStart, state.valueEnd))) continue;
+          const stand = parkingStands[flight.Stand] || parkingStands[String(parseInt(flight.Stand, 10))];
+          if (!stand) throw new Error(`parked aircraft ${reg}: stand ${flight.Stand} not found`);
+          const position = block.slice(pos.valueStart, pos.valueEnd);
+          const vector = position.match(/"\$type"\s*:\s*(?:\d+|"[^"]+"),\s*(-?[\d.eE+]+),\s*(-?[\d.eE+]+),\s*(-?[\d.eE+]+)/);
+          if (!vector) throw new Error(`parked aircraft ${reg}: position not found`);
+          const offset = Math.hypot(Number(vector[1]) - stand.noseX, Number(vector[3]) - stand.noseZ);
+          if (offset > 2) throw new Error(`parked aircraft ${reg}: ${offset.toFixed(3)} units from stand ${flight.Stand} nose`);
+          checkedParking++;
+        }
       }
     }
     log(`parking offsets checked: ${checkedParking}`);

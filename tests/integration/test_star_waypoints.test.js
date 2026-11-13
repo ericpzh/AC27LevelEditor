@@ -67,3 +67,52 @@ describe('starWaypoints serialize/deserialize round-trip', () => {
     expect(roundTripped.starWaypoints).toEqual(starWaypoints);
   });
 });
+
+// ─── GATCARC4 v3 fixture parity ──────────────────────────────────
+
+const V3_LEVEL_DIR = path.join(__dirname, '..', 'fixtures', 'game-root-v3', 'GroundATC_Data',
+  'StreamingAssets', 'Airports', 'ZSJN', 'Levels');
+
+if (!fs.existsSync(V3_LEVEL_DIR)) {
+  throw new Error('v3 fixture missing: ' + V3_LEVEL_DIR);
+}
+
+const v3Cache = buildApproachCache(V3_LEVEL_DIR);
+const v3StarWaypoints = v3Cache.starWaypoints || {};
+
+describe('buildApproachCache starWaypoints (v3 ZSJN fixture)', () => {
+  it('resolves each STAR route to ordered named waypoints', () => {
+    expect(v3StarWaypoints['UBSS6W|19'].map((w) => w.name)).toEqual(['UBSIS', 'SUNOK', 'JN213', 'METOG', 'JN108']);
+    expect(v3StarWaypoints['PANK8X|01'].map((w) => w.name)).toEqual(['PANKI', 'JN107', 'JN108', 'METOG', 'JN210']);
+    expect(v3StarWaypoints['OKAL6W|19'].map((w) => w.name)).toEqual(['OKALI', 'JN112', 'JN111', 'JN110']);
+  });
+
+  it('every v3 waypoint has a name and finite x/z', () => {
+    for (const [key, list] of Object.entries(v3StarWaypoints)) {
+      expect(key, 'key ' + key + ' should be STAR|runway').toContain('|');
+      expect(list.length).toBeGreaterThan(0);
+      for (const w of list) {
+        expect(typeof w.name).toBe('string');
+        expect(w.name.length).toBeGreaterThan(0);
+        expect(Number.isFinite(w.x), `${key} ${w.name} x=${w.x} should be finite`).toBe(true);
+        expect(Number.isFinite(w.z), `${key} ${w.name} z=${w.z} should be finite`).toBe(true);
+      }
+    }
+  });
+
+  it('covers every STAR↔runway combination in v3 starRunwayMap', () => {
+    const starRunwayMap = v3Cache.starRunwayMap || {};
+    for (const [star, runways] of Object.entries(starRunwayMap)) {
+      for (const runway of runways) {
+        expect(v3StarWaypoints[star + '|' + runway], `${star}|${runway} missing`).toBeDefined();
+      }
+    }
+  });
+});
+
+describe('starWaypoints serialize/deserialize round-trip (v3)', () => {
+  it('preserves the full map through serialize → deserialize', () => {
+    const roundTripped = deserializeApproachCache(serializeApproachCache(v3Cache));
+    expect(roundTripped.starWaypoints).toEqual(v3StarWaypoints);
+  });
+});

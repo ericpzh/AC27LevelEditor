@@ -15,20 +15,23 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { levelPath, gameLevelExists } from '../helpers/gameRoot';
+import { v2LevelPath, v2GameLevelExists } from '../helpers/gameRoot';
 
 const require = createRequire(import.meta.url);
 const { loadFlights, _rebuildStaticDataSections } = require('../../src/acl/parser');
 const { readAclText } = require('../../src/acl/gatcarc');
 const { createTokenizer } = require('../../src/acl/tokenizer');
 
-const describeWithLevel = gameLevelExists('KJFK', 'KJFK_peakarrival.acl') ? describe : describe.skip;
+const SRC_LEVEL = v2LevelPath('KJFK', 'KJFK_peakarrival.acl');
+const describeWithLevel = v2GameLevelExists('KJFK', 'KJFK_peakarrival.acl') ? describe : describe.skip;
 
-function tempLevel(icao, name) {
+function tempLevel(srcFile) {
+  const name = path.basename(srcFile);
+  const icao = name.split('_')[0] || 'ZSJN';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac27-legtype-'));
   const dest = path.join(dir, 'Airports', icao, 'Levels', name);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(levelPath(icao, name), dest);
+  fs.copyFileSync(srcFile, dest);
   return { dir, dest };
 }
 
@@ -49,7 +52,7 @@ function blobdocTypeDecls(aclPath, needle) {
 
 describeWithLevel('flight-plan leg type idempotency', () => {
   it('re-declares FlightPlanArrivalLeg after a prior all-departure save stripped it', () => {
-    const { dir, dest } = tempLevel('KJFK', 'KJFK_peakarrival.acl');
+    const { dir, dest } = tempLevel(SRC_LEVEL);
     try {
       // 1. Save with every flight as a departure → the blobdoc drops the
       //    (now-unused) FlightPlanArrivalLeg declaration.

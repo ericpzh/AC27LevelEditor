@@ -194,42 +194,7 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
     return { x: hp.x, y: hp.y || 0, z: hp.z || 0, headingDeg };
   }, [hoveredStar, callsign, starPaths, totalApproachTimes, saveSec, arrivalFlights]);
 
-  // ── Editing flight's actual position — computed LOCALLY ─
-  const editPosition = useMemo(() => {
-    if (!callsign || !starPaths || !totalApproachTimes || !saveSec) return null;
-    const ef = (arrivalFlights || []).find(
-      (f) => (f.CallSign || f.callsign) === callsign,
-    );
-    if (!ef) return null;
-
-    const star = ef.Airway || ef.star;
-    const runway = ef.Runway || ef.runway;
-
-    const tat = getApproachTime(star);
-    if (!tat) return null;
-
-    const landingSec = ef._landingSec != null
-      ? ef._landingSec
-      : timeToSec(ef.LandingTime || ef.landingTime);
-    const ttl = landingSec - saveSec;
-    const pr = 1 - Math.max(APPROACH_MIN_TTL, ttl) / tat;
-    if (pr <= 0 || pr >= 1) return null;
-
-    const variants = starPaths[star];
-    if (!variants) return null;
-    const variant = variants.find(
-      (v) => v.runway && v.runway.toUpperCase() === (runway || '').toUpperCase(),
-    );
-    if (!variant || !variant.points || variant.points.length < 2) return null;
-
-    const extPoints = extendPathToThreshold(variant.points);
-    const totalLen = pathLength(extPoints);
-    const targetDist = totalLen * pr;
-    const hp = interpolateOnPath(extPoints, targetDist);
-    const headingDeg = Math.atan2(-hp.dirZ, hp.dirX) * (180 / Math.PI);
-
-    return { x: hp.x, y: hp.y || 0, z: hp.z || 0, headingDeg };
-  }, [callsign, arrivalFlights, starPaths, totalApproachTimes, saveSec]);
+  const selectedPosition = aircraftPositions.find(ac => ac.callsign === callsign);
 
   // ── Flatten into renderable lines with availability ──────
   const { lines, viewBox, vbX, vbY, vbW, vbH, sortedStars, labelPositions } = useMemo(() => {
@@ -698,18 +663,8 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
 
                 const elements = [];
 
-                // ── Editing flight: always render from local computation ──
                 if (callsign) {
-                  let editRenderPos = null;
-                  if (hoverPosition) {
-                    editRenderPos = hoverPosition;
-                  } else if (editPosition) {
-                    editRenderPos = editPosition;
-                  }
-                  if (!editRenderPos) {
-                    const ipcEdit = aircraftPositions.find(ac => ac.callsign === callsign);
-                    if (ipcEdit) editRenderPos = ipcEdit;
-                  }
+                  const editRenderPos = hoverPosition || selectedPosition;
 
                   if (editRenderPos) {
                     elements.push(renderAircraft(
@@ -731,9 +686,7 @@ export default function StarMap({ starPaths, selectedStar, selectedRunway, starR
 
               {/* Hover ghost: dashed line from editing aircraft to hovered STAR position */}
               {hoverPosition && (() => {
-                const fromPos = (editPosition) || aircraftPositions.find(
-                  (ac) => callsign && ac.callsign === callsign,
-                );
+                const fromPos = selectedPosition;
                 if (!fromPos) return null;
 
                 const fromX = fromPos.x;

@@ -37,6 +37,8 @@ const SEG = Object.freeze({
   aircraftProfilesCsv: 'aircraft_profiles.csv',
   voiceCatalog: 'voice_catalog.json',
   airlineCountryRegistry: 'airline_country_registry.cfg',
+  radioChannelConfig: 'radio_channel_config.json',
+  radioClipDurations: 'radio_clip_durations.json',
   appBundle: 'GroundATC.app',
 });
 
@@ -195,9 +197,19 @@ function airportsDir(gameRoot) {
   return path.join(streamingAssets(gameRoot), SEG.airports);
 }
 
+/** `<StreamingAssets>/Airports/<ICAO>` */
+function airportDir(gameRoot, icao) {
+  return path.join(airportsDir(gameRoot), String(icao));
+}
+
 /** `<StreamingAssets>/Airports/<ICAO>/Levels` */
 function levelsDir(gameRoot, icao) {
-  return path.join(airportsDir(gameRoot), String(icao), SEG.levels);
+  return path.join(airportDir(gameRoot, icao), SEG.levels);
+}
+
+/** `<StreamingAssets>/Airports/<ICAO>/radio_channel_config.json` */
+function radioChannelConfigPath(gameRoot, icao) {
+  return path.join(airportDir(gameRoot, icao), SEG.radioChannelConfig);
 }
 
 /** `<StreamingAssets>/Voices` */
@@ -213,6 +225,11 @@ function voiceCatalogPath(gameRoot) {
 /** `<StreamingAssets>/airline_country_registry.cfg` (airline code → country) */
 function airlineCountryRegistryPath(gameRoot) {
   return path.join(streamingAssets(gameRoot), SEG.airlineCountryRegistry);
+}
+
+/** `<StreamingAssets>/radio_clip_durations.json` */
+function radioClipDurationsPath(gameRoot) {
+  return path.join(streamingAssets(gameRoot), SEG.radioClipDurations);
 }
 
 /** `<StreamingAssets>/MainMenuVideos` */
@@ -322,10 +339,13 @@ module.exports = {
   clearCache,
   streamingAssets,
   airportsDir,
+  airportDir,
   levelsDir,
+  radioChannelConfigPath,
   voicesDir,
   voiceCatalogPath,
   airlineCountryRegistryPath,
+  radioClipDurationsPath,
   mainMenuVideosDir,
   builtinLiveryDir,
   aircraftProfilesCsvPath,

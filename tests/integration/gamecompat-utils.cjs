@@ -44,8 +44,20 @@
  */
 'use strict';
 
+const fs = require('fs');
 const { readJson } = require('../../src/acl/odin/json_reader');
 const { readBinary } = require('../../src/acl/odin/binary_reader');
+const { detectAclFormat } = require('../../src/acl/archive');
+const { readAclText } = require('../../src/acl/gatcarc');
+const { parseV3Container } = require('../../src/acl/v3/framing');
+const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
+const {
+  dictEntries,
+  indexDocumentGraph,
+  resolveGraphNode,
+  unwrapReactive,
+} = require('../../src/acl/v3/graph');
+const { parseIsoWallClock, UNSET_DATETIME_ISO } = require('../../src/acl/v3/q32');
 
 const SENT = /\r?\n\$\$\$ GATCARC4 CHECKPOINT FRAME \$\$\$\r?\n/;
 
@@ -233,6 +245,130 @@ function analyze(text) {
   }
 
   return { config, doc0Plans, frameDocked, frameAircraftRegs, frameAircraftMap, frameFp, planKeys };
+}
+
+function isoToSecOrNull(isoStr) {
+  if (!isoStr || typeof isoStr !== 'string' || isoStr === UNSET_DATETIME_ISO) return null;
+  const parsed = parseIsoWallClock(isoStr);
+  if (!parsed || parsed.isUnset) return null;
+  return parsed.secSinceMidnight;
+}
+
+/**
+ * Parse a GATCARC4 v3 buffer (or parsed container) into the exact same
+ * structures `analyze(text)` produces so `runChecks(a, opts)` works identically
+ * across v1/v2 Odin archives and v3 archives.
+ */
+function analyzeV3(bufOrContainer) {
+  const container = Buffer.isBuffer(bufOrContainer)
+    ? parseV3Container(bufOrContainer)
+    : bufOrContainer;
+  const schema = getSchemaForHash(container.header.schemaHash);
+
+  const cfg = container.metaData && container.metaData.Config;
+  const config = {
+    startSec: cfg && cfg.startTime ? timeStrToSec(cfg.startTime) : null,
+    endSec: cfg && cfg.endTime ? timeStrToSec(cfg.endTime) : null,
+  };
+
+  const planKeys = new Map();
+  const doc0Plans = [];
+  const sIdx = indexDocumentGraph(container.staticData, schema.roots.static, schema);
+  const siDict = resolveGraphNode(container.staticData && container.staticData.StaticItems, sIdx);
+  if (siDict) {
+    for (const [k, rawVal] of dictEntries(siDict)) {
+      if (!k.startsWith('flight-plan:')) continue;
+      const reg = k.substring('flight-plan:'.length);
+      planKeys.set(reg, (planKeys.get(reg) || 0) + 1);
+      const fp = resolveGraphNode(rawVal, sIdx);
+      if (!fp) continue;
+      const arr = fp.InitialArrival ? resolveGraphNode(fp.InitialArrival, sIdx) : null;
+      const dep = fp.InitialDeparture ? resolveGraphNode(fp.InitialDeparture, sIdx) : null;
+      doc0Plans.push({
+        reg,
+        leg: arr ? 'A' : (dep ? 'D' : '?'),
+        stand: arr ? (arr.Stand ?? null) : (dep ? (dep.Stand ?? null) : null),
+        tSec: arr ? isoToSecOrNull(arr.LandingTime) : (dep ? isoToSecOrNull(dep.OffBlockTime) : null),
+        arrCs: arr ? (arr.CallSign ?? null) : null,
+        depCs: dep ? (dep.CallSign ?? null) : null,
+        star: arr ? (arr.STAR ?? null) : null,
+        voice: fp.Voice ?? null,
+        language: fp.Language ?? null,
+      });
+    }
+  }
+
+  const frameDocked = [];
+  const frameAircraftRegs = [];
+  const frameAircraftMap = new Map();
+  const frameFp = new Map();
+
+  if (Array.isArray(container.frames) && container.frames.length > 0) {
+    const lastFrame = container.frames[container.frames.length - 1];
+    const rIdx = indexDocumentGraph(lastFrame.runtimeData, schema.roots.runtime, schema);
+    const reDict = resolveGraphNode(lastFrame.runtimeData && lastFrame.runtimeData.RuntimeEntities, rIdx);
+    if (!reDict) {
+      throw new Error('v3 frame has no RuntimeEntities');
+    }
+    for (const [k, rawV] of dictEntries(reDict)) {
+      if (k.startsWith('aircraft:') && !k.startsWith('aircraft-animator')) {
+        const reg = k.substring('aircraft:'.length);
+        frameAircraftRegs.push(reg);
+        const acNode = resolveGraphNode(rawV, rIdx);
+        const irefTarget = acNode && acNode.$id != null ? Number(acNode.$id) : null;
+        frameAircraftMap.set(reg, { irefTarget });
+      } else if (k.startsWith('jetway:')) {
+        const jw = resolveGraphNode(rawV, rIdx);
+        if (!jw || Number(jw.Status) !== 2) continue;
+        const dockRaw = unwrapReactive(jw.DockingAircraft, rIdx);
+        const acNode = resolveGraphNode(dockRaw, rIdx);
+        if (!acNode) continue;
+        const fpNode = resolveGraphNode(acNode._flightPlan, rIdx);
+        const siRef = fpNode && fpNode.StaticItem && fpNode.StaticItem.$ref;
+        const m = typeof siRef === 'string' ? siRef.match(/flight-plan:(.+)$/) : null;
+        const reg = m ? m[1] : null;
+        if (!reg) continue;
+        frameDocked.push({
+          reg,
+          stand: fpNode ? (fpNode._departureStand ?? null) : null,
+          takeoffSec: fpNode ? isoToSecOrNull(fpNode._departureTakeoffTime) : null,
+          acId: acNode.$id != null ? Number(acNode.$id) : null,
+        });
+      } else if (k.startsWith('flight-plan:')) {
+        const reg = k.substring('flight-plan:'.length);
+        const fpNode = resolveGraphNode(rawV, rIdx);
+        if (fpNode) {
+          frameFp.set(reg, {
+            arrStand: fpNode._arrivalStand ?? null,
+            depStand: fpNode._departureStand ?? null,
+            arrRwy: fpNode._arrivalRunway ?? null,
+            depRwy: fpNode._departureRunway ?? null,
+          });
+        }
+      }
+    }
+
+    const depPlanByReg = new Map(doc0Plans.filter((p) => p.leg === 'D').map((p) => [p.reg, p]));
+    for (const d of frameDocked) {
+      const p = depPlanByReg.get(d.reg);
+      d.offBlockSec = p ? p.tSec : null;
+    }
+  }
+
+  return { config, doc0Plans, frameDocked, frameAircraftRegs, frameAircraftMap, frameFp, planKeys };
+}
+
+/**
+ * Format-auto-dispatching game-compat analyzer for any `.acl` file on disk
+ * (GATCARC4 v3, v2, v1, or legacy text).
+ */
+function analyzeAclFile(aclPath) {
+  const bytes = fs.readFileSync(aclPath);
+  const fmt = detectAclFormat(bytes);
+  if (fmt === 'gatcarc4-v3') {
+    return analyzeV3(bytes);
+  }
+  return analyze(readAclText(aclPath));
 }
 
 /**
@@ -424,5 +560,7 @@ module.exports = {
   timeStrToSec,
   STAND_MIN_GAP,
   analyze,
+  analyzeV3,
+  analyzeAclFile,
   runChecks,
 };

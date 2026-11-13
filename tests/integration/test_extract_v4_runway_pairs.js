@@ -20,7 +20,8 @@ const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
 const { readAclText } = require('../../src/acl/gatcarc');
-const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
+const { openAclFile } = require('../../src/acl/archive');
+const { GAME_ROOT, FIXTURES_GAME_ROOT_V3 } = require('../helpers/gameRoot.cjs');
 
 const { extractV4RunwayPairs } = parser;
 
@@ -35,6 +36,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 
 const FIXTURE_DIR = path.resolve(__dirname, '..', 'fixtures', 'game-root', 'GroundATC_Data', 'StreamingAssets', 'Airports');
+const FIXTURE_V3_DIR = path.join(FIXTURES_GAME_ROOT_V3, 'GroundATC_Data', 'StreamingAssets', 'Airports');
 const gameRoot = args.root || GAME_ROOT;
 const gameAirportsDir = path.join(gameRoot, 'GroundATC_Data', 'StreamingAssets', 'Airports');
 
@@ -87,14 +89,23 @@ test('T1: ZSJN v4 fixture extracts 01/19 reciprocal pair', () => {
   assertEq(pairs.map(pairKey), ['01|19', '19|01'], 'ZSJN runway pairs');
 });
 
-// ── T2: KJFK (game root) ─────────────────────────────────────────
+// ── T1b: ZSJN v3 fixture (offline) ───────────────────────────────
+
+test('T1b: ZSJN v3 fixture extracts 01/19 reciprocal pair', () => {
+  const aclPath = findLevelFile(FIXTURE_V3_DIR, 'ZSJN', 'ZSJN_leisure_1.acl');
+  assert(aclPath, 'v3 fixture ZSJN_leisure_1.acl not found');
+  const handle = openAclFile(aclPath);
+  assertEq(handle.format, 'gatcarc4-v3', 'fixture must be gatcarc4-v3');
+  const pairs = handle.readRunwayPairs();
+  assertEq(pairs.map(pairKey), ['01|19', '19|01'], 'ZSJN v3 runway pairs');
+});
+
+// ── T2: KJFK (game root — v2 or v3) ──────────────────────────────
 
 const kjfkPath = findLevelFile(gameAirportsDir, 'KJFK', 'KJFK_runwaychange.acl');
 if (kjfkPath) {
   test('T2: KJFK extracts 4 physical-runway groups (8 reciprocal pairs)', () => {
-    const text = readAclText(kjfkPath);
-    assert(text.includes('StaticData'), 'KJFK_09-11.acl must be v4 (StaticData present)');
-    const pairs = extractV4RunwayPairs(text);
+    const pairs = openAclFile(kjfkPath).readRunwayPairs();
     assertEq(pairs.length, 8, 'KJFK must produce 8 pairs (4 groups × 2 directions)');
     const keys = new Set(pairs.map(pairKey));
     for (const k of ['4L|22R', '22R|4L', '13R|31L', '31L|13R', '4R|22L', '22L|4R', '13L|31R', '31R|13L']) {
@@ -106,14 +117,12 @@ if (kjfkPath) {
   console.log('  SKIP: T2 KJFK — game root not found at ' + path.join(gameAirportsDir, 'KJFK'));
 }
 
-// ── T3: KDCA (game root) ─────────────────────────────────────────
+// ── T3: KDCA (game root — v2 or v3) ──────────────────────────────
 
 const kdcaPath = findLevelFile(gameAirportsDir, 'KDCA', 'KDCA_Endless.acl');
 if (kdcaPath) {
   test('T3: KDCA extracts 3 physical-runway groups (6 reciprocal pairs)', () => {
-    const text = readAclText(kdcaPath);
-    assert(text.includes('StaticData'), 'KDCA_Endless.acl must be v4 (StaticData present)');
-    const pairs = extractV4RunwayPairs(text);
+    const pairs = openAclFile(kdcaPath).readRunwayPairs();
     assertEq(pairs.length, 6, 'KDCA must produce 6 pairs (3 groups × 2 directions)');
     const keys = new Set(pairs.map(pairKey));
     // KDCA stores its runway designations UNPADDED ("runway:1", PhysicalName "1/19"),
@@ -136,7 +145,7 @@ test('T4: empty/garbage input returns empty array', () => {
 
 // ── T5: dedup — shared PhysicalName yields exactly 2 pairs ───────
 
-test('T5: both ends of a physical runway are deduplicated into exactly 2 pairs', () => {
+test('T5: both ends of a physical runway are deduplicated into exactly 2 pairs (v2)', () => {
   const aclPath = findLevelFile(FIXTURE_DIR, 'ZSJN', 'ZSJN_leisure_1.acl');
   assert(aclPath, 'fixture ZSJN_leisure_1.acl not found');
   const text = readAclText(aclPath);
@@ -145,6 +154,14 @@ test('T5: both ends of a physical runway are deduplicated into exactly 2 pairs',
   // both declare PhysicalName "01/19"
   assertEq(pairs.length, new Set(pairs.map(pairKey)).size, 'no duplicate pairs');
   assertEq(pairs.length, 2, 'exactly one physical runway group in ZSJN');
+});
+
+test('T5b: both ends of a physical runway are deduplicated into exactly 2 pairs (v3)', () => {
+  const aclPath = findLevelFile(FIXTURE_V3_DIR, 'ZSJN', 'ZSJN_leisure_1.acl');
+  assert(aclPath, 'v3 fixture ZSJN_leisure_1.acl not found');
+  const pairs = openAclFile(aclPath).readRunwayPairs();
+  assertEq(pairs.length, new Set(pairs.map(pairKey)).size, 'no duplicate pairs in v3');
+  assertEq(pairs.length, 2, 'exactly one physical runway group in ZSJN v3');
 });
 
 // ── Summary ──────────────────────────────────────────────────────

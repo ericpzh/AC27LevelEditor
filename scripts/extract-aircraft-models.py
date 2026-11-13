@@ -74,6 +74,10 @@ PLANES = {
         "parts": [{"name": "Body", "meshes": [("A320CEO_A01_Body", "all")]}],
         "static": [],
     },
+    "AIRBUS A-320P2F": {
+        "parts": [{"name": "Body", "meshes": [("A320CEO_A01_Body", "all")]}],
+        "static": [],
+    },
     "AIRBUS A-320neo": {
         "parts": [{"name": "Body", "meshes": [("A20N_A01_Body", [0, 1])]}],
         "static": [("A20N_A01_Body", [2])],

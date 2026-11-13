@@ -1,0 +1,8 @@
+registration,arrivalCallSign,originAirport,landingTime,arrivalStand,arrivalRunway,arrivalSTAR,departureCallSign,destinationAirport,offBlockTime,departureStand,departureRunway,airline,aircraftType,voice,language
+B-0832,,,,,,,CHH8765,ZUUU,08:50:00,7,01,CHH,AIRBUS A-320ceo,CN-Captain-Middle-Aged,zh
+B-L0PG,,,,,,,CSN8765,ZSSS,08:51:00,9,01,CSN,AIRBUS A-320neo,CN-Captain-Young,zh
+B-6UKK,,,,,,,CDG8765,ZSPD,08:52:00,11,01,CDG,BOEING 737 MAX 8,CN-Captain-Young,zh
+B-RCCR,CXA5678,ZSAN,09:00:00,20,01,WFG91A,,,,,,CXA,BOEING 737-800,CN-Captain-Middle-Aged,zh
+B-KTUM,CCA5678,ZUTF,09:04:00,18,01,WFG91A,,,,,,CCA,BOEING 747-8I,CN-Captain-Middle-Aged,zh
+B-CYNL,CSZ5678,ZSSS,09:08:00,21,01,WFG91A,,,,,,CSZ,AIRBUS A-320neo,CN-Captain-Middle-Aged,zh
+B-9PXZ,CES5678,ZSPD,09:12:00,22,01,WFG91A,,,,,,CES,BOEING 737-800,CN-Captain-Middle-Aged,zh

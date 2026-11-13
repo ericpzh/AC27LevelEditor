@@ -1,0 +1,481 @@
+{
+  "schemaVersion": 4,
+  "clearanceMarginMeters": 17179869184,
+  "sourceOsmSha256": "7491857c5a348d7204e6f7de2c2acd3423c4904a927fc93e240648ece37b8ab3",
+  "sourceAircraftSpecSha256": "ac65e0dd1e5eaea518aa546abcb47b22da9489e3c303ce47ed8c0bff77b9a9bc",
+  "sourceStandStopLinesSha256": "a0a6cf361f3b2850661e148d370c36dc4c0f8d8cbb495c305f553962a5ced43c",
+  "stands": [
+    "1",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16",
+    "17",
+    "18",
+    "19",
+    "2",
+    "20",
+    "201",
+    "202",
+    "203",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26",
+    "27",
+    "28",
+    "29",
+    "3",
+    "30",
+    "300",
+    "301",
+    "302",
+    "303",
+    "304",
+    "305",
+    "306",
+    "307",
+    "308",
+    "309",
+    "31",
+    "311",
+    "312",
+    "313",
+    "314",
+    "32",
+    "321",
+    "322",
+    "323",
+    "324",
+    "33",
+    "34",
+    "35",
+    "36",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9"
+  ],
+  "aircraftTypes": [
+    "AIRBUS A-319ceo",
+    "AIRBUS A-319neo",
+    "AIRBUS A-320P2F",
+    "AIRBUS A-320ceo",
+    "AIRBUS A-320neo",
+    "AIRBUS A-321neo",
+    "AIRBUS A-330-300",
+    "AIRBUS A-350-900",
+    "AIRBUS A-380-800",
+    "BOEING 737 MAX 8",
+    "BOEING 737-800",
+    "BOEING 737-800BCF",
+    "BOEING 747-8I",
+    "BOEING 777-300ER",
+    "BOEING 787-9",
+    "BOMBARDIER CRJ700",
+    "BOMBARDIER CRJ900",
+    "COMAC C-919",
+    "EMBRAER E-JET 170",
+    "EMBRAER E-JET 190",
+    "GULFSTREAM 650"
+  ],
+  "standPairs": [
+    {
+      "standA": "1",
+      "standB": "2",
+      "compatibleBitmap": "fe71fff38fff1c7ff8e3ffc71ffe38ff0006a00004000007e38fff1c7ff8e3f000000000020004bfce7ffe71ffe38fff9cfffce3ffe73f8"
+    },
+    {
+      "standA": "10",
+      "standB": "11",
+      "compatibleBitmap": "fc71ffe38ffe1c7ff0e3ff871fe000940000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ff871ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "10",
+      "standB": "9",
+      "compatibleBitmap": "fc71ffc38ffe1c7ff0e3ff871fc000940000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ff871ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "11",
+      "standB": "12",
+      "compatibleBitmap": "fc71ffe38ffe1c7ff0e3ff871fe000dc0000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ffc71ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "12",
+      "standB": "13",
+      "compatibleBitmap": "fc71ffc38ffe1c7ff0e3ff871fc000940000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ff871ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "12",
+      "standB": "14",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffffdffffee7ffc71ffffffffffffffffffc71fff38fffddfffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "13",
+      "standB": "14",
+      "compatibleBitmap": "ff7ffffbffffdffffefffff7ffffb9ffe1c7e00004000007fb9fffdcfffee7f000000000030004ffefffff77fffbfffffffffefffff7ff8"
+    },
+    {
+      "standA": "14",
+      "standB": "15",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffffdcfffee7ffc71ffffffffffffffffffc71ffe38fffdcfffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "15",
+      "standB": "16",
+      "compatibleBitmap": "fc71ffe38fff1c7ff8e3ffc71ffe38fc0000000000000007e38fff1c7ff8e3f0000000000000001f8e3ffc71ffe38fff1c7ff8e3ffc71f8"
+    },
+    {
+      "standA": "16",
+      "standB": "17",
+      "compatibleBitmap": "f871ffc00ff0006f80037c001b8000100000000000000006000d70004b800250000000000000001f0e3ff841fe000dff1c7ff003ff871f8"
+    },
+    {
+      "standA": "16",
+      "standB": "18",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "17",
+      "standB": "18",
+      "compatibleBitmap": "f871ffc38ffe007ff003ff801f8000100000000000000006000df0006f800370000000000000001f0e3ff871ffc00dff1c7ff0e3ff871f8"
+    },
+    {
+      "standA": "17",
+      "standB": "19",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "18",
+      "standB": "19",
+      "compatibleBitmap": "f871ffc38ffe1c7ff0e3ff871f8000940000000000000007c00ffe007ff003f0000000000000001f8e3ff871ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "19",
+      "standB": "20",
+      "compatibleBitmap": "f871ffc38ffe1c7ff0e3ff871f8000940000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ff871ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "19",
+      "standB": "21",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "2",
+      "standB": "3",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffff9cfff8e3ff871ffffffffffffffffffc71ffe38fff1c7ffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "20",
+      "standB": "21",
+      "compatibleBitmap": "f871ffc00ff0006f80037c001b8000100000000000000004000960004b000250000000000000001f0e3ff801fe000dff1c7ff003ff871f8"
+    },
+    {
+      "standA": "20",
+      "standB": "22",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "201",
+      "standB": "202",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffff9c7ff8e3ffc71ffffffffffffffffffc71ffe38fff1c7ffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "21",
+      "standB": "22",
+      "compatibleBitmap": "fc71ffc38ffe1c7ff0e3ff871fc000940000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ff871ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "22",
+      "standB": "23",
+      "compatibleBitmap": "fc71ffe38fff1c7ff8e3ffc71ffe38fc0000800000000007e38fff1c7ff8e3f0000000000000009f8e3ffc71ffe38fff9cfff8e3ffc71f8"
+    },
+    {
+      "standA": "23",
+      "standB": "24",
+      "compatibleBitmap": "fc71ffe38fff1c7ff8e3ffc71ffe38fc0004a00004000007e38fff1c7ff8e3f000000000000004bfce7ffc71ffe38fffdcfff8e3ffe73f8"
+    },
+    {
+      "standA": "24",
+      "standB": "25",
+      "compatibleBitmap": "ff73fffb9fff9cfffce7ffe73fff38fff1c7ff8e3ffc71fff39fff9cfffce7ffc71ffe38fff1c7ffee7fff73fff39fffdcfffee7fff73f8"
+    },
+    {
+      "standA": "24",
+      "standB": "26",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffffdffffeffffe73fffffffffffffffffff73fffb9fffdffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "25",
+      "standB": "26",
+      "compatibleBitmap": "f871ffc38ffe007ff003ff801f8000100000000000000006000df0006f800370000000000000001f0e3ff871ffc00fff1c7ff0e3ff871f8"
+    },
+    {
+      "standA": "25",
+      "standB": "27",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "26",
+      "standB": "27",
+      "compatibleBitmap": "f871ffc38ff0006f80037c001b8000100000000000000006000970004b800250000000000000001f0e3ff801fe000dff1c7ff003ff871f8"
+    },
+    {
+      "standA": "26",
+      "standB": "28",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "27",
+      "standB": "28",
+      "compatibleBitmap": "f871ffc38ffe007ff003ff801f8000900000000000000006000df0006f800370000000000000001f8e3ff871ffc00fff1c7ff0e3ff871f8"
+    },
+    {
+      "standA": "29",
+      "standB": "30",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff77fffffffffffffffffff77fffbfffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "3",
+      "standB": "4",
+      "compatibleBitmap": "fe73fff39fff1c7ff8e3ffc71ffe38ff0006e00024000007e38fff1c7ff8e3f000000000030006ffee7ffe73ffe38fffdcfffce7fff73f8"
+    },
+    {
+      "standA": "3",
+      "standB": "5",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "30",
+      "standB": "31",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffbffff1c7ff8e3ffc71ffffffffffffffffffc71ffe38fff1c7ffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "300",
+      "standB": "301",
+      "compatibleBitmap": "ff7ffffbffffdffffefffff7ffffb9fff1c7ff8e3ffc71fffbbfffddfffeefffc71ffe38fff1c7ffefffff7ffffbffffdffffefffff7ff8"
+    },
+    {
+      "standA": "300",
+      "standB": "302",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffeffffe73fffffffffffffffffff77fffbfffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "300",
+      "standB": "311",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "300",
+      "standB": "33",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffffddfffee7ffc71ffffffffffffffffffe71fff39fffdcfffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "300",
+      "standB": "34",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffffdffffee7ffe71ffffffffffffffffffe73fffb9fffddfffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "300",
+      "standB": "35",
+      "compatibleBitmap": "fc71ffe38ffe1c7ff0e3ff871fe000940000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ff871ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "300",
+      "standB": "36",
+      "compatibleBitmap": "fc71ffe38fff1c7ff8e3ffc71ffc38fc0000000000000007e38fff1c7ff8e3f0000000000000001f8e3ffc71ffe38fff1c7ff8e3ffc71f8"
+    },
+    {
+      "standA": "301",
+      "standB": "302",
+      "compatibleBitmap": "fc71ffe38fff1c7ff8e3ffc71ffc20fc0000000000000007e38ffe1c7ff0e3f0000000000000001f8e3ffc71ffe38fff1c7ff8e3ffc71f8"
+    },
+    {
+      "standA": "301",
+      "standB": "311",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffff9c7ff8e3ff871ffffffffffffffffffc71ffe38fff1c7ffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "302",
+      "standB": "303",
+      "compatibleBitmap": "ff73fff39fff9cfffce7ffe73ffe38ffe1c7f00025000007f38fff9c7ffce3f00000000003e007ffee7ffe73fff39fffdcfffce7fff73f8"
+    },
+    {
+      "standA": "302",
+      "standB": "311",
+      "compatibleBitmap": "ff73fffb9fff9cfffce7ffe73ffe38ffe007e00000000007f38fff9c7ffce3f000000000020004bfee7ffe73fff39fffddfffce7fff73f8"
+    },
+    {
+      "standA": "303",
+      "standB": "304",
+      "compatibleBitmap": "fc71ffe38ffe1c7ff0e3ff871fe000dc0000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ffc71ffc38fff1c7ff8e3ffc71f8"
+    },
+    {
+      "standA": "303",
+      "standB": "311",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffbffff1c7ff8e3fc0012ffbffffdffffeffffc71ffe38fff1c7ffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "303",
+      "standB": "312",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffbffff1c7ff8e3f000027fbffffdffffeffff871ffe38fff1c7ffffffff7fffffffffffffffffffffff8"
+    },
+    {
+      "standA": "304",
+      "standB": "305",
+      "compatibleBitmap": "fe73fff39fff9cfffce7ffe73ffe38ffe007e00025000007e38fff1c7ff8e3f00000000003e006ffee7ffe73fff38fffdcfffce7fff73f8"
+    },
+    {
+      "standA": "304",
+      "standB": "311",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "304",
+      "standB": "312",
+      "compatibleBitmap": "ff73fff39fff9cfffce7ffe73ffe38ff0004e00000000007e38fff1c7ff8e3f0000000000000049fee7ffe71fff39fffddfffce7fff73f8"
+    },
+    {
+      "standA": "304",
+      "standB": "313",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "305",
+      "standB": "306",
+      "compatibleBitmap": "fc71ffe38ffe1c7ff0e3ff871fe000dc0000000000000007c38ffe1c7ff0e3f0000000000000001f8e3ffc71ffc38fff1c7ff8e3ffc71f8"
+    },
+    {
+      "standA": "305",
+      "standB": "312",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffff9cfff8e3ff871ffffffffffffffffffc71ffe38fff9c7ffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "305",
+      "standB": "313",
+      "compatibleBitmap": "ff7ffffbffffdffffefffff7ffffbbfff1c7ff8e3f000007fbffffdffffeffff801ffc38fff1c7ffefffff7ffffbfffffffffefffff7ff8"
+    },
+    {
+      "standA": "306",
+      "standB": "307",
+      "compatibleBitmap": "fe73fff39fff9c7ffce3ffe71ffe38ffe007e00025000007e38fff1c7ff8e3f000000000030006ffee7ffe73fff38fffdcfffce7fff73f8"
+    },
+    {
+      "standA": "306",
+      "standB": "313",
+      "compatibleBitmap": "ff73fffb9fff9cfffce7ffe73ffe38ffe007e00000000007f38fff9c7ffce3f000000000020004bfee7ffe73fff39fffdffffce7fff73f8"
+    },
+    {
+      "standA": "306",
+      "standB": "314",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff73fffffffffffffffffff7ffffbfffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "307",
+      "standB": "308",
+      "compatibleBitmap": "fc71ffe38fff1c7ff8e3ffc71ffc38fc0000000000000007e38fff1c7ff8e3f0000000000000001f8e3ffc71ffe38fff1c7ff8e3ffc71f8"
+    },
+    {
+      "standA": "307",
+      "standB": "313",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffffdcfffce7ffc71ffffffffffffffffffc71ffe38fffdcfffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "307",
+      "standB": "314",
+      "compatibleBitmap": "ff7ffffbffffdffffefffff7ffffb9fff1c7ff0e3f000007fb9fffdcfffee7f00002600097f1c7ffefffff77fffbfffffffffefffff7ff8"
+    },
+    {
+      "standA": "308",
+      "standB": "309",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffbffff1c7ff8e3ff871ffffffffffffffffffc71ffe38fff1c7ffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "308",
+      "standB": "314",
+      "compatibleBitmap": "ff73fffb9fffdcfffee7fff73fff38ffe1c7e00004000007f39fff9cfffce7f00000000003e007ffee7ffe73fffb9fffdffffee7fff73f8"
+    },
+    {
+      "standA": "309",
+      "standB": "314",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff73fffffffffffffffffff7ffffbfffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "32",
+      "standB": "33",
+      "compatibleBitmap": "fc71ffe38fff1c7ff8e3ffc71ffe38fc0000000000000007e38fff1c7ff8e3f0000000000000001f8e3ffc71ffe38fff1c7ff8e3ffc71f8"
+    },
+    {
+      "standA": "32",
+      "standB": "34",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffff9cfff8e3ffc71ffffffffffffffffffc71ffe38fff9cfffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "321",
+      "standB": "322",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffffdffffeefffc71ffffffffffffffffffe73fffb9fffdffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "33",
+      "standB": "34",
+      "compatibleBitmap": "f871ffc38ffe007ff003ff801f8000100000000000000006000df0006f800370000000000000001f0e3ff871ffc00fff1c7ff0e3ff871f8"
+    },
+    {
+      "standA": "33",
+      "standB": "35",
+      "compatibleBitmap": "ff7ffffbffffddfffeeffff77fff39fff1c7ff8e3fc0012ffb9fffdcfffee7ff871ffe38fff1c7ffefffff77fffbbfffdffffeeffff7ff8"
+    },
+    {
+      "standA": "33",
+      "standB": "36",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffeffffe71fffffffffffffffffff73fffbbffffffffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "34",
+      "standB": "35",
+      "compatibleBitmap": "f871ffc38ffe007ff003ff801f8000100000000000000006000df0006f800370000000000000001f0e3ff871ffc00dff1c7ff0e3ff871f8"
+    },
+    {
+      "standA": "34",
+      "standB": "36",
+      "compatibleBitmap": "ff7ffffbffffddfffeeffff77fff39fff1c7ff8e3f80012ffb9fffdcfffee7ff801ffc38fff1c7ffefffff77fffbbfffdffffeeffff7ff8"
+    },
+    {
+      "standA": "35",
+      "standB": "36",
+      "compatibleBitmap": "f871ffc38ffe007ff003ff801f8000100000000000000006000df0006f800370000000000000001f0e3ff871ffc00fff1c7ff0e3ff871f8"
+    },
+    {
+      "standA": "4",
+      "standB": "5",
+      "compatibleBitmap": "f871ffc38ffe1c7ff0e3ff871f8000940000000000000007c00ffe007ff003f0000000000000001f8e3ff871ffc38fff1c7ff0e3ffc71f8"
+    },
+    {
+      "standA": "5",
+      "standB": "6",
+      "compatibleBitmap": "ffffffffbfffddfffeeffff77ffe38ffe1c6f80037000007fb9fffdcfffee7f00000000097e1c7fffffffff7fffbbfffffffffefffffff8"
+    },
+    {
+      "standA": "6",
+      "standB": "7",
+      "compatibleBitmap": "fffffffbbfffddfffeeffff77fffb9fff1c7ff8e3ff871fffbbfffddfffeefff871ffc38fff1c7ffffffff7ffffbbffffffffeefffffff8"
+    },
+    {
+      "standA": "7",
+      "standB": "8",
+      "compatibleBitmap": "fffffffffffffffffffffffffffffffff1c7ff8e3ffc71ffffffffffffffffffc71ffe38fff9c7ffffffffffffffffffffffffffffffff8"
+    },
+    {
+      "standA": "8",
+      "standB": "9",
+      "compatibleBitmap": "ffffffffffffffffffffffffffffffffffffffffffff77ffffffffffffffffffff7fffffffffffffffffffffffffffffffffffffffffff8"
+    }
+  ]
+}

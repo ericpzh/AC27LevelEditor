@@ -207,4 +207,66 @@ function extractZip(zipPath, targetDir) {
   }
 }
 
-module.exports = { createZip, listZipFiles, extractZip };
+/**
+ * Read all non-directory entries from a ZIP into memory (`Map<string, Buffer>`)
+ * with CRC-32 verification, without touching the filesystem.
+ */
+function readZipEntries(zipPathOrBuffer) {
+  const buf = Buffer.isBuffer(zipPathOrBuffer) ? zipPathOrBuffer : fs.readFileSync(zipPathOrBuffer);
+
+  let eocdOff = -1;
+  for (let i = buf.length - 22; i >= 0; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocdOff = i;
+      break;
+    }
+  }
+  if (eocdOff < 0) throw new Error('Invalid ZIP: EOCD not found');
+
+  const cdOffset = buf.readUInt32LE(eocdOff + 16);
+  const cdCount = buf.readUInt16LE(eocdOff + 8);
+  const entries = new Map();
+
+  let pos = cdOffset;
+  for (let i = 0; i < cdCount; i++) {
+    if (buf.readUInt32LE(pos) !== 0x02014b50) throw new Error('Invalid central directory entry');
+    const method = buf.readUInt16LE(pos + 10);
+    const crc = buf.readUInt32LE(pos + 16);
+    const compSize = buf.readUInt32LE(pos + 20);
+    const uncompSize = buf.readUInt32LE(pos + 24);
+    const nameLen = buf.readUInt16LE(pos + 28);
+    const extraLen = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    const localOff = buf.readUInt32LE(pos + 42);
+    const name = buf.toString('utf-8', pos + 46, pos + 46 + nameLen);
+
+    const lp = localOff;
+    if (buf.readUInt32LE(lp) !== 0x04034b50) throw new Error(`Invalid local header for ${name}`);
+    const lnameLen = buf.readUInt16LE(lp + 26);
+    const lextraLen = buf.readUInt16LE(lp + 28);
+    const dataOff = lp + 30 + lnameLen + lextraLen;
+    const compressed = buf.subarray(dataOff, dataOff + compSize);
+
+    let data;
+    if (method === 0) {
+      data = Buffer.from(compressed);
+    } else if (method === 8) {
+      data = zlib.inflateRawSync(compressed);
+    } else {
+      throw new Error(`Unsupported compression method ${method} for ${name}`);
+    }
+
+    if (crc32(data) !== crc) throw new Error(`CRC mismatch for ${name}`);
+
+    const isDir = name.endsWith('/') || name.endsWith('\\') || (uncompSize === 0 && compSize === 0 && name.endsWith('/'));
+    if (!isDir) {
+      entries.set(name, data);
+    }
+
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+
+  return entries;
+}
+
+module.exports = { createZip, listZipFiles, extractZip, readZipEntries };

@@ -15,14 +15,28 @@ const { readCacheFlag, writeCacheFlag } = require('./cache-flags');
 // Skip file logging in E2E tests so we can see console output
 if (!app.isPackaged && !process.env.AC27_E2E_TMP_DIR) initLogger();
 
-const { loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs, mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns, sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, findGameRoot, buildApproachCache, serializeApproachCache, deserializeApproachCache, extractGameTime, extractCurrentDateTime, createZip, listZipFiles, extractZip, _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig, _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap, parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths } = require('../src/acl/parser');
+const {
+  loadFlights, generateFullAcl, collectUniqueValues, collectRunwayPairs, extractV4RunwayPairs,
+  mergeAudioCallsigns, getFileInfo, exportCSV, exportGameCSV, loadAudioCallsigns,
+  sortFlightsChronologically, _rebuildTimelineSections, scanGameRoot, findGameRoot,
+  buildApproachCache, serializeApproachCache, deserializeApproachCache, extractGameTime,
+  extractCurrentDateTime, createZip, listZipFiles, extractZip, readZipEntries,
+  _parseWeatherFrames, _parseWindFrames, _parseRunwayTimeline, _extractConfig,
+  _parseStandPositions, _parseAreas, computePosition, computeDirection, computeApproachCap,
+  parseTaxiwayPaths, extractSidRunwayMappings, extractMissedApproachMappings,
+  buildSidPaths, buildMissedApproachPaths,
+  shouldTrimDemoSchedule, shouldApplyLegacyDemoEndTimeOverride,
+  filterFlightsToConfigWindow, loadLevelForEditor,
+  loadV3VoiceCatalog, loadV3AirportAudio, peekAclFormat,
+  resolveAirportAudioMode, computeAudioSourceSignature,
+} = require('../src/acl/parser');
 const { resolveConfigTime } = require('../src/acl/config');
 const { APPROACH_MIN_TTL, WARMUP_SEC, DEMO_WINDOW_SEC, DEMO_WINDOW_MIN, DEMO_VISIBLE_BASES, PROD_VISIBLE_BASES, MIDNIGHT_CROSS_START_HOUR, MIDNIGHT_CROSS_THRESHOLD_MIN, MINUTES_PER_DAY, DEFAULT_TAT, CACHE_VERSION } = require('../src/acl/constants');
 const { STEAM_GAME_DIR_NAME } = require('../src/utils/constants/steam.js');
 const gamePaths = require('../src/utils/gamePaths');
 const { unionFlightNums } = require('../src/utils/gameCallsigns');
 const { loadAirlineCountryRegistry } = require('../src/acl/utils');
-const { readAclText } = require('../src/acl/gatcarc');
+const { openAcl, openAclFile, detectAclFormat } = require('../src/acl/archive');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS, validateFlightObjects, buildConstraints } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
@@ -60,36 +74,136 @@ let airportCache = null; // Phase 0 cache: { [ICAO]: { csvValues, audioCallsigns
 // Keyed by absolute aclPath (per-level truth). Invalidated on save or mtime change.
 const liveSceneryCache = new Map(); // aclPath -> { icao, mtimeMs, vals, computedAt }
 
-// Voice catalog (name -> language), keyed by game root. The game asserts a
-// flight's captain voice language equals its Language at level load, so the
-// renderer needs this map to pick/validate region-appropriate voices.
-let _voiceCatalogCache = { root: null, map: {} };
+// Voice catalog (name -> language), keyed by game root + file stat via loadV3VoiceCatalog.
+// The game asserts a flight's captain voice language equals its Language at level load,
+// so the renderer needs this map to pick/validate region-appropriate voices.
 function _loadVoiceCatalog(rootPath) {
   if (!rootPath) return {};
-  if (_voiceCatalogCache.root === rootPath) return _voiceCatalogCache.map;
-  const map = {};
+  return loadV3VoiceCatalog(rootPath).voiceLanguages;
+}
+
+// Airline country registry (airline code -> country), keyed by game root + stat. The
+// game's CallsignService on v2 only records a callsign for one captain language, so a
+// flight's Language follows its airline (CN -> zh, every other -> en).
+let _airlineCountriesCache = { root: null, sig: null, map: {} };
+function _loadAirlineCountries(rootPath) {
+  if (!rootPath) return {};
+  const regPath = gamePaths.airlineCountryRegistryPath(rootPath);
+  let sig = 'missing';
   try {
-    const catalogPath = gamePaths.voiceCatalogPath(rootPath);
-    const json = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
-    for (const v of (json.voices || [])) {
-      if (v && v.name) map[v.name] = v.language || '';
-    }
-  } catch (_) { /* catalog absent — leave empty */ }
-  _voiceCatalogCache = { root: rootPath, map };
+    const st = fs.statSync(regPath);
+    if (st.isFile()) sig = `${st.mtimeMs}:${st.size}`;
+  } catch (_) {}
+  if (_airlineCountriesCache.root === rootPath && _airlineCountriesCache.sig === sig) {
+    return _airlineCountriesCache.map;
+  }
+  const map = loadAirlineCountryRegistry(regPath) || {};
+  _airlineCountriesCache = { root: rootPath, sig, map };
   return map;
 }
 
-// Airline country registry (airline code -> country), keyed by game root. The
-// game's CallsignService only records a callsign for one captain language, so a
-// flight's Language must follow its airline (CN -> zh, every other -> en); the
-// renderer needs this map to pick/validate the correct language + voice.
-let _airlineCountriesCache = { root: null, map: {} };
-function _loadAirlineCountries(rootPath) {
-  if (!rootPath) return {};
-  if (_airlineCountriesCache.root === rootPath) return _airlineCountriesCache.map;
-  const map = loadAirlineCountryRegistry(gamePaths.airlineCountryRegistryPath(rootPath)) || {};
-  _airlineCountriesCache = { root: rootPath, map };
-  return map;
+function _listAirportAclPaths(rootPath, icao) {
+  if (!rootPath || !icao) return [];
+  const ld = gamePaths.levelsDir(rootPath, icao);
+  if (!fs.existsSync(ld)) return [];
+  const out = [];
+  try {
+    for (const le of fs.readdirSync(ld, { withFileTypes: true })) {
+      if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) {
+        out.push(path.join(ld, le.name));
+      }
+    }
+  } catch (_) {}
+  return out;
+}
+
+function _loadV2AirportAudio(rootPath, icao) {
+  const levelsPath = gamePaths.levelsDir(rootPath, icao);
+  const enPath = path.join(levelsPath, 'audio_clips_en.json');
+  const zhPath = path.join(levelsPath, 'audio_clips_zh.json');
+  const enExists = fs.existsSync(enPath);
+  const zhExists = fs.existsSync(zhPath);
+  const enData = enExists ? loadAudioCallsigns(enPath) : null;
+  const zhData = zhExists ? loadAudioCallsigns(zhPath) : null;
+  const audioCallsigns = mergeAudioCallsigns(enData, zhData);
+  const availableLanguages = [];
+  if (enExists) availableLanguages.push('en');
+  if (zhExists) availableLanguages.push('zh');
+  return { audioCallsigns, availableLanguages };
+}
+
+function _mergeFlightNumsIntoDropdowns(dropdownValues, audioCallsigns) {
+  if (!dropdownValues || !audioCallsigns?.byAirline) return;
+  if (!dropdownValues._flightNums) dropdownValues._flightNums = {};
+  for (const [code, nums] of Object.entries(audioCallsigns.byAirline)) {
+    if (!dropdownValues._flightNums[code]) dropdownValues._flightNums[code] = [];
+    const existing = dropdownValues._flightNums[code];
+    for (const n of nums) {
+      if (!existing.includes(n)) existing.push(n);
+    }
+    existing.sort((a, b) => {
+      const na = parseInt(a, 10), nb = parseInt(b, 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+  }
+}
+
+function _applyV3AudioToDropdowns(dropdownValues, v3Res) {
+  if (!dropdownValues || !v3Res) return;
+  const atcRoleSet = new Set(
+    Object.entries(v3Res.v3Audio?.voiceRoles || {})
+      .filter(([, role]) => role === 'atc')
+      .map(([name]) => name),
+  );
+  const voiceSet = new Set((dropdownValues.Voice || []).filter((v) => !atcRoleSet.has(v)));
+  for (const v of (v3Res.captainVoices || [])) voiceSet.add(v);
+  if (voiceSet.size > 0) {
+    dropdownValues.Voice = [...voiceSet].sort((a, b) => a.localeCompare(b));
+  }
+  if (Array.isArray(v3Res.languages)) {
+    const langSet = new Set(v3Res.languages);
+    for (const l of (dropdownValues.Language || [])) {
+      if (l) langSet.add(l);
+    }
+    dropdownValues.Language = [...langSet].sort((a, b) => a.localeCompare(b));
+  } else if (!dropdownValues.Language || dropdownValues.Language.length === 0) {
+    // Unknown channel voice mapping (e.g. EGLC): expose catalog captain languages
+    // so dropdowns do not assume zero languages, while v3Audio.knownChannelLanguages stays null.
+    const fallbackLangs = new Set();
+    for (const v of (v3Res.captainVoices || [])) {
+      const l = v3Res.voiceLanguages?.[v];
+      if (l) fallbackLangs.add(l);
+    }
+    if (fallbackLangs.size > 0) {
+      dropdownValues.Language = [...fallbackLangs].sort((a, b) => a.localeCompare(b));
+    }
+  }
+}
+
+function _computeAirportAudioForMode(rootPath, icao, audioMode, dropdownValues = null) {
+  if (audioMode === 'v3') {
+    const v3Res = loadV3AirportAudio(rootPath, icao);
+    if (dropdownValues) {
+      _applyV3AudioToDropdowns(dropdownValues, v3Res);
+      _mergeFlightNumsIntoDropdowns(dropdownValues, v3Res.audioCallsigns);
+    }
+    return { audioCallsigns: v3Res.audioCallsigns, v3Res };
+  }
+  if (audioMode === 'mixed') {
+    const v2Res = _loadV2AirportAudio(rootPath, icao);
+    const v3Res = loadV3AirportAudio(rootPath, icao);
+    const merged = mergeAudioCallsigns(v2Res.audioCallsigns, v3Res.audioCallsigns);
+    if (dropdownValues) {
+      _mergeFlightNumsIntoDropdowns(dropdownValues, merged);
+    }
+    return { audioCallsigns: merged, v2Res, v3Res };
+  }
+  const v2Res = _loadV2AirportAudio(rootPath, icao);
+  if (dropdownValues) {
+    _mergeFlightNumsIntoDropdowns(dropdownValues, v2Res.audioCallsigns);
+  }
+  return { audioCallsigns: v2Res.audioCallsigns, v2Res };
 }
 
 // Install-global flight-number pool: the union of every airport's
@@ -117,106 +231,56 @@ function _invalidateLiveCache(aclPath) { liveSceneryCache.delete(_liveCacheKey(a
  * so StandMap / StarMap update immediately after a Ground-Painter save.
  */
 function _collectLiveSceneryForFile(aclPath) {
-  const text = readAclText(aclPath);
+  const handle = openAclFile(aclPath);
+  const scen = handle.readScenery();
 
-  // Stand — src/acl/scenery.js:61
-  let standPositions = {};
-  try { standPositions = _parseStandPositions(text) || {}; } catch (_) { standPositions = {}; }
+  const standPositions = scen.standPositions || {};
   const standList = Object.keys(standPositions).sort((a, b) => a.localeCompare(b));
+  const areaData = scen.areaData || {};
 
-  // Area — src/acl/scenery.js
-  let areaData = {};
-  try { areaData = _parseAreas(text) || {}; } catch (_) { areaData = {}; }
-
-  // Runway — extractV4RunwayPairs + buildSceneryGraph fallback for v5 PhysicalRunwayStaticItem
-  let runwayPairs = [];
-  try { runwayPairs = extractV4RunwayPairs(text) || []; } catch (_) { runwayPairs = []; }
+  // Runway — runwayPairs + readSceneryGraph fallback for PhysicalRunwayStaticItem
+  const runwayPairs = scen.runwayPairs || [];
   const runwayNames = new Set();
   for (const p of runwayPairs) { if (p.source) runwayNames.add(p.source); if (p.dest) runwayNames.add(p.dest); }
-  let sceneryGraph = null;
   try {
-    const { buildSceneryGraph } = require('../src/acl/scenery_graph');
-    const res = buildSceneryGraph(text);
-    sceneryGraph = res.graph;
-    for (const rw of (sceneryGraph.runways || [])) {
+    const res = handle.readSceneryGraph();
+    const sceneryGraph = res && res.graph;
+    for (const rw of (sceneryGraph?.runways || [])) {
       for (const n of (rw.names || [])) if (n) runwayNames.add(String(n).trim());
       if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) if (n) runwayNames.add(String(n).trim());
     }
   } catch (_) {}
   const runwayList = [...runwayNames].sort((a, b) => a.localeCompare(b));
 
-  // STAR / Airway — src/acl/approach.js
-  let starRunwayMap = {}, runwayStarMap = {};
-  try {
-    const approach = require('../src/acl/approach');
-    const mappings = approach.extractStarRunwayMappings(text);
-    starRunwayMap = mappings.starRunwayMap || {};
-    runwayStarMap = mappings.runwayStarMap || {};
-  } catch (_) {}
+  const starRunwayMap = scen.starRunwayMap || {};
+  const runwayStarMap = scen.runwayStarMap || {};
   const airwayList = Object.keys(starRunwayMap).sort((a, b) => a.localeCompare(b));
 
-  // Taxiway paths — src/acl/taxiway.js (for StandMap)
-  let taxiwayPaths = { paths: [] };
-  try {
-    const { parseTaxiwayPaths } = require('../src/acl/taxiway');
-    const tw = parseTaxiwayPaths(text);
-    if (tw && Array.isArray(tw.paths)) taxiwayPaths = tw;
-  } catch (_) { taxiwayPaths = { paths: [] }; }
-
-  // Runway thresholds — src/acl/approach.js (for StarMap + StandMap runwayData)
-  let runwayThresholds = {};
-  try {
-    const approach = require('../src/acl/approach');
-    if (typeof approach._parseRunwayThresholds === 'function') {
-      runwayThresholds = approach._parseRunwayThresholds(text) || {};
-    }
-  } catch (_) { runwayThresholds = {}; }
+  const taxiwayPaths = (scen.taxiwayPaths && Array.isArray(scen.taxiwayPaths.paths))
+    ? scen.taxiwayPaths
+    : { paths: [] };
+  const runwayThresholds = scen.runwayThresholds || {};
 
   // Star paths & waypoints — per-file (for StarMap)
   let starPaths = {};
-  let starWaypoints = {};
-  let airwayNodes = [];
   try {
     const approach = require('../src/acl/approach');
-    // starPaths from SceneryData (fly approach points) — per-file
     if (typeof approach.buildStarPaths === 'function') {
-      try { starPaths = approach.buildStarPaths(text, null, starRunwayMap) || {}; } catch (_) { starPaths = {}; }
+      starPaths = approach.buildStarPaths(handle, null, starRunwayMap) || {};
     }
-    if (typeof approach.extractStarWaypoints === 'function') {
-      try { starWaypoints = approach.extractStarWaypoints(text) || {}; } catch (_) { starWaypoints = {}; }
-    }
-    // airwayNodes — per-file PK extraction (same filter as buildApproachCache)
-    try {
-      const { buildPkIndex, getPkEntriesByType, extractVector3FromV4, extractStringFromV4, extractIntFromV4 } = require('../src/acl/v4_pk_index');
-      const { FIX_NAME_RE } = require('../src/utils/constants/aviation');
-      const pkIndex = buildPkIndex(text);
-      const nodes = [];
-      for (const entry of getPkEntriesByType(pkIndex, 'airway-node')) {
-        const pos = extractVector3FromV4(entry.block);
-        if (!pos) continue;
-        const name = extractStringFromV4(entry.block, 'Name');
-        if (!name || !FIX_NAME_RE.test(name)) continue;
-        nodes.push({ pk: entry.pk, name, osmId: extractIntFromV4(entry.block, 'OsmId'), x: pos.x, z: pos.z });
-      }
-      airwayNodes = nodes;
-    } catch (_) { airwayNodes = []; }
-  } catch (_) {}
+  } catch (_) { starPaths = {}; }
+  const starWaypoints = scen.starWaypoints || {};
+  const airwayNodes = scen.airwayNodes || [];
 
-  // SID / APPR / Missed — keep per-file if available (optional, for AirMap filter)
-  let sidPaths = {}, missedAppPaths = {}, apprPaths = {};
-  let sidRunwayMap = {}, runwaySidMap = {}, missedAppMap = {}, runwayMissedAppMap = {}, apprRunwayMap = {}, runwayApprMap = {};
-  try {
-    const { extractSidRunwayMappings, extractMissedApproachMappings, buildSidPaths, buildMissedApproachPaths, extractApprRunwayMappings, buildApprPaths } = require('../src/acl/sid_goaround');
-    const sidM = extractSidRunwayMappings(text) || {};
-    sidRunwayMap = sidM.sidRunwayMap || {}; runwaySidMap = sidM.runwaySidMap || {};
-    const maM = extractMissedApproachMappings(text) || {};
-    missedAppMap = maM.missedAppMap || {}; runwayMissedAppMap = maM.runwayMissedAppMap || {};
-    const apprM = extractApprRunwayMappings(text) || {};
-    apprRunwayMap = apprM.apprRunwayMap || {}; runwayApprMap = apprM.runwayApprMap || {};
-    try { sidPaths = buildSidPaths(text, sidRunwayMap) || {}; } catch (_) {}
-    try { missedAppPaths = buildMissedApproachPaths(text, missedAppMap) || {}; } catch (_) {}
-    try { apprPaths = buildApprPaths(text, apprRunwayMap) || {}; } catch (_) {}
-  } catch (_) {}
+  const sidPaths = scen.sidPaths || {};
+  const missedAppPaths = scen.missedAppPaths || {};
+  const apprPaths = scen.apprPaths || {};
+  const sidRunwayMap = scen.sidRunwayMap || {};
+  const runwaySidMap = scen.runwaySidMap || {};
+  const missedAppMap = scen.missedAppMap || {};
+  const runwayMissedAppMap = scen.runwayMissedAppMap || {};
+  const apprRunwayMap = scen.apprRunwayMap || {};
+  const runwayApprMap = scen.runwayApprMap || {};
 
   return {
     standPositions, areaData, taxiwayPaths, runwayThresholds, starRunwayMap, runwayStarMap,
@@ -348,8 +412,7 @@ function _unionLiveEntries(entries) {
 function _parseAreaFromAcl(aclPaths, logPrefix) {
   try {
     if (aclPaths.length > 0) {
-      const firstAclText = readAclText(aclPaths[0]);
-      const areaData = _parseAreas(firstAclText);
+      const areaData = openAclFile(aclPaths[0]).readAreas();
       if (logPrefix) {
         console.log(logPrefix + ': area polygons parsed from ' + path.basename(aclPaths[0]) +
           ' (' + (areaData[0]?.length || 0) + ' Type0, ' + (areaData[1]?.length || 0) + ' Type1, ' +
@@ -378,15 +441,13 @@ function _parseAreaFromAcl(aclPaths, logPrefix) {
  */
 function _computeAirportGroundAnchor(aclPaths, logPrefix) {
   try {
-    const { buildSceneryGraph } = require('../src/acl/scenery_graph');
     let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
     let nodeCount = 0;
     // Airport ground geometry is shared across all levels, but union the node
     // bounds across cache .acl files so any single malformed file can't skew it.
     for (const p of aclPaths) {
       try {
-        const text = readAclText(p);
-        const { graph } = buildSceneryGraph(text);
+        const { graph } = openAclFile(p).readSceneryGraph();
         for (const n of (graph && graph.nodes) || []) {
           if (!isFinite(n.x) || !isFinite(n.z)) continue;
           nodeCount++;
@@ -410,13 +471,11 @@ function _computeAirportGroundAnchor(aclPaths, logPrefix) {
 
 function _computeAirportAirAnchor(aclPaths, logPrefix) {
   try {
-    const { buildSceneryGraph } = require('../src/acl/scenery_graph');
     let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
     let nodeCount = 0;
     for (const p of aclPaths) {
       try {
-        const text = readAclText(p);
-        const { graph } = buildSceneryGraph(text);
+        const { graph } = openAclFile(p).readSceneryGraph();
         for (const n of (graph && graph.airwayNodes) || []) {
           if (!isFinite(n.x) || !isFinite(n.z)) continue;
           nodeCount++;
@@ -690,14 +749,14 @@ ipcMain.handle('get-file-info', async (_event, filePath) => {
   const info = getFileInfo(filePath);
   if (info && !info.error) {
     try {
-      const isDemo = _isDemoFile(filePath);
+      const fmt = peekAclFormat(filePath);
+      const isDemo = shouldTrimDemoSchedule(filePath, fmt);
       info.isDemo = isDemo;
       info.isEmer = _isEmerFile(filePath);
 
-      if (isDemo) {
-        // For demo files: compute the 30-min window (matching get-airport-files-info)
-        const text = readAclText(filePath);
-        const cdt = extractCurrentDateTime(text);
+      if (shouldApplyLegacyDemoEndTimeOverride(filePath, fmt)) {
+        // Legacy / v2 demo files: compute the 30-min window (matching get-airport-files-info)
+        const cdt = openAclFile(filePath).readCurrentDateTime();
         if (cdt && cdt.timeString) {
           info.currentDateTime = cdt.timeString;
           const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
@@ -713,9 +772,9 @@ ipcMain.handle('get-file-info', async (_event, filePath) => {
             '— no CDT, using config range [' + (info.startTime || 'none') + ' ~ ' + (info.endTime || 'none') + ']');
         }
       } else {
-        // Non-demo: getFileInfo() already returns CDT-corrected startTime via resolveConfigTime
+        // Non-demo and v3 .demo.acl: getFileInfo() already returns Config's intended startTime/endTime
         console.log('[IPC] get-file-info:', path.basename(filePath),
-          '— startTime=' + (info.startTime || 'none') + ' endTime=' + (info.endTime || 'none'));
+          '— startTime=' + (info.startTime || 'none') + ' endTime=' + (info.endTime || 'none') + (isDemo ? ' [DEMO]' : ''));
       }
     } catch (e) {
       console.log('[IPC] get-file-info: ERROR for', path.basename(filePath), ':', e.message);
@@ -735,16 +794,17 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
   console.log('[IPC] get-airport-files-info:', airportIcao, 'files count:', airport.aclFiles.length);
   const results = airport.aclFiles.map((f, i) => {
     const info = getFileInfo(f.path);
-    const isDemo = _isDemoFile(f.filename);
+    const fmt = peekAclFormat(f.path);
+    const isDemo = shouldTrimDemoSchedule(f.path, fmt);
     const isEmer = _isEmerFile(f.filename);
     info.isDemo = isDemo;
     info.isEmer = isEmer;
-    // getFileInfo() now returns CDT-corrected startTime via resolveConfigTime.
-    // For .demo.acl files: override endTime with the 30-min demo window.
-    if (isDemo) {
+    // getFileInfo() returns CDT-corrected startTime via resolveConfigTime.
+    // Legacy/v2 demo files override endTime with the 30-min demo window; v3 .demo.acl
+    // files already store their intended demo endTime in MetaData.Config.
+    if (shouldApplyLegacyDemoEndTimeOverride(f.path, fmt)) {
       try {
-        const text = readAclText(f.path);
-        const cdt = extractCurrentDateTime(text);
+        const cdt = openAclFile(f.path).readCurrentDateTime();
         console.log('[IPC] get-airport-files-info: demo file', f.filename,
           '— startTime=' + (info.startTime || 'none'),
           '— extractCurrentDateTime returned', cdt ? ('timeString=' + cdt.timeString) : 'NULL');
@@ -764,7 +824,7 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
         }
       } catch (e) { console.log('[IPC] get-airport-files-info: demo file', f.filename, '— ERROR:', e.message); }
     }
-    // Non-demo: getFileInfo() already returns CDT-corrected startTime/endTime — no override needed.
+    // Non-demo and v3 .demo.acl: getFileInfo() already returns resolved startTime/endTime.
     console.log('[IPC]   file', i, f.filename, '->', info.error ? ('ERROR: ' + info.error) : ('OK arrivals=' + info.arrivals + ' departures=' + info.departures + ' startTime=' + (info.startTime || 'none') + ' endTime=' + (info.endTime || 'none') + (isDemo ? ' [DEMO]' : '')));
     return info;
   });
@@ -777,11 +837,42 @@ ipcMain.handle('get-airport-files-info', async (_event, airportIcao, rootPath) =
 /**
  * Build the non-live portion of collect-values response (used by both collect-values and get-live-values).
  */
-function _buildCollectValuesBase(airportIcao, rootPath) {
+function _buildCollectValuesBase(airportIcao, rootPath, activeAclPath = null) {
   const cached = airportCache && airportCache[airportIcao];
-  const aclValues = cached?.dropdownValues ? { ...cached.dropdownValues } : {};
+  const aclValues = cached?.dropdownValues ? {
+    ...cached.dropdownValues,
+    _flightNums: cached.dropdownValues._flightNums
+      ? Object.fromEntries(Object.entries(cached.dropdownValues._flightNums).map(([k, v]) => [k, [...v]]))
+      : undefined,
+  } : {};
   // Ensure live keys never come from the persisted cache
   delete aclValues.Stand; delete aclValues.Runway; delete aclValues.Airway;
+  delete aclValues._v3Audio;
+
+  // Determine effective audio mode for this request (per-level when activeAclPath is known,
+  // otherwise airport-wide) and refresh audio overlays from disk so changes to audio assets
+  // or mixed-version installs never serve stale cached audio data.
+  if (rootPath && airportIcao) {
+    const aclPaths = activeAclPath ? [] : _listAirportAclPaths(rootPath, airportIcao);
+    const effectiveMode = resolveAirportAudioMode(rootPath, airportIcao, aclPaths, activeAclPath);
+    if (effectiveMode === 'v3') {
+      const v3Res = loadV3AirportAudio(rootPath, airportIcao);
+      _applyV3AudioToDropdowns(aclValues, v3Res);
+      _mergeFlightNumsIntoDropdowns(aclValues, v3Res.audioCallsigns);
+      aclValues._v3Audio = v3Res.v3Audio;
+    } else {
+      const v2Res = _loadV2AirportAudio(rootPath, airportIcao);
+      const availableLanguages = [...v2Res.availableLanguages];
+      for (const l of (aclValues.Language || [])) {
+        if (!availableLanguages.includes(l)) availableLanguages.push(l);
+      }
+      if (availableLanguages.length > 0) {
+        aclValues.Language = availableLanguages.sort();
+      }
+      _mergeFlightNumsIntoDropdowns(aclValues, v2Res.audioCallsigns);
+    }
+  }
+
   // Aircraft types are NOT bound to any airline: the flight-schedule dropdown
   // offers every type the game ships a profile for (the designatorMap keys that
   // are full AircraftType names — same world-wide set the livery page scans),
@@ -809,9 +900,7 @@ function _buildCollectValuesBase(airportIcao, rootPath) {
   // the flight's Language (the game's VoiceCatalog rejects mismatches at load).
   aclValues._voiceLanguages = _loadVoiceCatalog(rootPath);
   // Airline -> country (global to the install). Consumed by the renderer's
-  // new-flight defaults + cascade + validation so Language follows the airline
-  // (CN -> zh, every other -> en); the game's CallsignService rejects a
-  // callsign whose recorded captain language disagrees with the flight's Voice.
+  // new-flight defaults + cascade + validation.
   aclValues._airlineCountries = _loadAirlineCountries(rootPath);
   // Install-global shipped flight-number pool (union across airports). The
   // renderer unions this with `_flightNums[airline]` to offer numbers beyond the
@@ -822,19 +911,7 @@ function _buildCollectValuesBase(airportIcao, rootPath) {
 }
 
 ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
-  const { cached, aclValues } = _buildCollectValuesBase(airportIcao, rootPath);
-
-  // Language: derive from audio_clips_*.json existence
-  const availableLanguages = [];
-  const levelsPath = gamePaths.levelsDir(rootPath, airportIcao);
-  if (fs.existsSync(path.join(levelsPath, 'audio_clips_en.json'))) availableLanguages.push('en');
-  if (fs.existsSync(path.join(levelsPath, 'audio_clips_zh.json'))) availableLanguages.push('zh');
-  for (const l of (aclValues.Language || [])) {
-    if (!availableLanguages.includes(l)) availableLanguages.push(l);
-  }
-  if (availableLanguages.length > 0) {
-    aclValues.Language = availableLanguages.sort();
-  }
+  const { cached, aclValues } = _buildCollectValuesBase(airportIcao, rootPath, null);
 
   // AircraftType is expanded in _buildCollectValuesBase (all profiled types,
   // airline-independent) — no per-airline filtering here.
@@ -1006,8 +1083,8 @@ ipcMain.handle('collect-values', async (_event, rootPath, airportIcao) => {
 });
 
 // ─── IPC: get-live-values / invalidate-live-values (fully dynamic, per-file) ──
-function _buildCollectValuesWithLive(airportIcao, rootPath, live) {
-  const { cached, aclValues } = _buildCollectValuesBase(airportIcao, rootPath);
+function _buildCollectValuesWithLive(airportIcao, rootPath, live, activeAclPath = null) {
+  const { cached, aclValues } = _buildCollectValuesBase(airportIcao, rootPath, activeAclPath);
   // Language + AircraftType etc. already in base; override live fields from the single file's live data
   // Per-file live: StandMap / StarMap are now per-ACL, not per-airport.
   const hasLive = !!live;
@@ -1089,21 +1166,7 @@ ipcMain.handle('get-live-values', async (_event, aclPath, icao) => {
     // Build full vals shape the renderer expects (collect-values shape) with live fields injected
     let vals;
     try {
-      // Prefer building via the live-aware helper (includes non-live fields from airportCache)
-      // We need a temporary cached lookup — reuse _buildCollectValuesWithLive logic but need rootPath
-      // For now reconstruct similarly to collect-values but with live override
-      const { cached, aclValues: base } = _buildCollectValuesBase(icao, effectiveRoot);
-      // Apply live overrides
-      base.Stand = live.dropdownPatch?.Stand || [];
-      base.Runway = live.dropdownPatch?.Runway || [];
-      base.Airway = live.dropdownPatch?.Airway || [];
-      base._standPositions = live.standPositions || {};
-      base._starRunwayMap = live.starRunwayMap || {};
-      base._runwayStarMap = live.runwayStarMap || {};
-      // Fill remaining fields from cached (similar to _buildCollectValuesWithLive)
-      // Reuse helper for remaining fields
-      vals = _buildCollectValuesWithLive(icao, effectiveRoot, live);
-      // Ensure live overrides are not clobbered — helper already did, but double-ensure
+      vals = _buildCollectValuesWithLive(icao, effectiveRoot, live, aclPath);
       vals.Stand = live.dropdownPatch?.Stand || [];
       vals.Runway = live.dropdownPatch?.Runway || [];
       vals.Airway = live.dropdownPatch?.Airway || [];
@@ -1254,8 +1317,8 @@ function _writeCache(data) {
 function _collectAirportRunwayPairs(aclPaths) {
   if (!aclPaths || aclPaths.length === 0) return [];
   try {
-    const firstText = readAclText(aclPaths[0]);
-    return extractV4RunwayPairs(firstText);
+    const pairs = openAclFile(aclPaths[0]).readRunwayPairs();
+    if (pairs && pairs.length > 0) return pairs;
   } catch (e) {
     console.log('[CACHE] runway pair scan warning (' + (aclPaths[0] || '') + '):', e.message);
   }
@@ -1284,6 +1347,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
   }
 
   const cache = {};
+  let needsCachePersist = !diskCache;
 
   // Count airports and total .acl files for global progress
   const airportList = [];
@@ -1292,11 +1356,15 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     const ap = path.join(airportsDir, icao);
     if (fs.statSync(ap).isDirectory()) {
       const ld = path.join(ap, 'Levels');
-      if (fs.existsSync(ld)) {
+      const hasLevels = fs.existsSync(ld);
+      const hasChannelCfg = fs.existsSync(gamePaths.radioChannelConfigPath(rootPath, icao));
+      if (hasLevels || hasChannelCfg) {
         airportList.push(icao);
-        try {
-          totalAclFiles += fs.readdirSync(ld).filter(f => isCacheAclFile(f)).length;
-        } catch (_) {}
+        if (hasLevels) {
+          try {
+            totalAclFiles += fs.readdirSync(ld).filter(f => isCacheAclFile(f)).length;
+          } catch (_) {}
+        }
       }
     }
   }
@@ -1305,19 +1373,18 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
   for (const icao of airportList) {
     const airportPath = path.join(airportsDir, icao);
     const levelsDir = path.join(airportPath, 'Levels');
-    if (!fs.existsSync(levelsDir)) continue;
+    const hasLevels = fs.existsSync(levelsDir);
 
-    // Load audio clips (always from JSON files — fast)
-    const enPath = path.join(levelsDir, 'audio_clips_en.json');
-    const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
-    const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
-    const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
-    const audioCallsigns = mergeAudioCallsigns(enData, zhData);
+    const aclPaths = hasLevels ? _listAirportAclPaths(rootPath, icao) : [];
+    const audioMode = resolveAirportAudioMode(rootPath, icao, aclPaths);
+    const audioSourceSignature = computeAudioSourceSignature(rootPath, icao, audioMode);
 
     // Collect dropdown values + runway pairs from ALL .acl files
     let dropdownValues = {};
     let runwayPairs = [];
     const cachedEntry = diskCache && diskCache[icao];
+    const audioSigMatches = !!(cachedEntry && cachedEntry.audioSourceSignature === audioSourceSignature);
+    if (!audioSigMatches) needsCachePersist = true;
     // Live-only keys (Stand/Runway/Airway + derived maps) are never served from cache.json.
     // Strip them from the disk entry so hasCachedDropdowns does not consider them.
     if (cachedEntry && cachedEntry.dropdownValues) {
@@ -1326,21 +1393,14 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       delete cachedEntry.dropdownValues.Airway;
     }
     // Ignore stale standPositions/star mappings backed by cache.json — live path recomputes per file.
-    const hasCachedDropdowns = cachedEntry && cachedEntry.dropdownValues && Object.keys(cachedEntry.dropdownValues).filter(k => !k.startsWith('_')).length > 0;
+    // Also bypass cached dropdownValues whenever the audio source signature changed.
+    const hasCachedDropdowns = audioSigMatches && cachedEntry && cachedEntry.dropdownValues && Object.keys(cachedEntry.dropdownValues).filter(k => !k.startsWith('_')).length > 0;
 
     if (hasCachedDropdowns) {
       dropdownValues = { ...cachedEntry.dropdownValues };
       runwayPairs = cachedEntry.runwayPairs || [];
       console.log('[INIT-CACHE]   ' + icao + ': dropdowns from disk cache (' + Object.keys(dropdownValues).filter(k => !k.startsWith('_')).join(',') + ')');
     } else {
-      const aclPaths = [];
-      try {
-        for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) {
-            aclPaths.push(path.join(levelsDir, le.name));
-          }
-        }
-      } catch (_) {}
       dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
       // Remove live-only keys even from fresh scan — they are per-file, not per-airport.
       delete dropdownValues.Stand;
@@ -1354,18 +1414,19 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     delete dropdownValues.Runway;
     delete dropdownValues.Airway;
 
+    // Load format-aware audio metadata (v3 catalog/clip-index/channel-config or v2 audio_clips_*.json)
+    // and merge into dropdownValues (Voice, Language, _flightNums).
+    const { audioCallsigns } = _computeAirportAudioForMode(rootPath, icao, audioMode, dropdownValues);
+
     // Parse stand positions from first .acl file (airport-level, shared across all levels)
     let standPositions = cachedEntry?.standPositions || null;
     if (!standPositions) {
       try {
-        const aclFiles = [];
-        for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) aclFiles.push(path.join(levelsDir, le.name));
-        }
-        if (aclFiles.length > 0) {
-          const firstAclText = readAclText(aclFiles[0]);
-          standPositions = _parseStandPositions(firstAclText);
-          console.log('[INIT-CACHE]   ' + icao + ': stand positions parsed from ' + path.basename(aclFiles[0]) + ' (' + Object.keys(standPositions).length + ' stands)');
+        if (aclPaths.length > 0) {
+          standPositions = openAclFile(aclPaths[0]).readStandPositions();
+          console.log('[INIT-CACHE]   ' + icao + ': stand positions parsed from ' + path.basename(aclPaths[0]) + ' (' + Object.keys(standPositions).length + ' stands)');
+        } else {
+          standPositions = {};
         }
       } catch (e) {
         console.log('[INIT-CACHE]   ' + icao + ': stand position parsing failed:', e.message);
@@ -1378,36 +1439,11 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     // Parse area polygons from SceneryData.Areas (airport-level, shared across all levels)
     let areaData = cachedEntry?.areaData || null;
     if (!areaData) {
-      const aclAreaFiles = [];
-      for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-        if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) aclAreaFiles.push(path.join(levelsDir, le.name));
-      }
-      areaData = _parseAreaFromAcl(aclAreaFiles, '[INIT-CACHE]   ' + icao);
+      areaData = aclPaths.length > 0 ? _parseAreaFromAcl(aclPaths, '[INIT-CACHE]   ' + icao) : {};
     } else {
       console.log('[INIT-CACHE]   ' + icao + ': area data from disk cache (' +
         (areaData[0]?.length || 0) + ' Type0, ' + (areaData[1]?.length || 0) + ' Type1, ' +
         (areaData[2]?.length || 0) + ' Type2)');
-    }
-
-    // Stand / Runway / Airway are live-only (per-file, in-memory). Do not populate from airport scan.
-    // (Previously dropdownValues.Stand was set from standPositions here; removed per v2 plan.)
-
-    // Merge audio flight numbers into dropdown _flightNums
-    if (audioCallsigns?.byAirline) {
-      if (!dropdownValues._flightNums) dropdownValues._flightNums = {};
-      for (const [code, nums] of Object.entries(audioCallsigns.byAirline)) {
-        if (!dropdownValues._flightNums[code]) dropdownValues._flightNums[code] = [];
-        const existing = dropdownValues._flightNums[code];
-        for (const n of nums) {
-          if (!existing.includes(n)) existing.push(n);
-        }
-        // Re-sort after merging
-        existing.sort((a, b) => {
-          const na = parseInt(a, 10), nb = parseInt(b, 10);
-          if (!isNaN(na) && !isNaN(nb)) return na - nb;
-          return String(a).localeCompare(String(b));
-        });
-      }
     }
 
     // Pre-scan approach data — from disk cache if available, otherwise scan files
@@ -1426,14 +1462,14 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         try {
           const aclFiles = fs.readdirSync(levelsDir).filter(f => isCacheAclFile(f));
           if (aclFiles.length > 0) {
-            const firstText = readAclText(path.join(levelsDir, aclFiles[0]));
-            const mappings = approach.extractStarRunwayMappings(firstText);
+            const firstHandle = openAclFile(path.join(levelsDir, aclFiles[0]));
+            const mappings = approach.extractStarRunwayMappings(firstHandle);
 
             // Rebuild state5ParamsMap (approach procedure params per runway)
             if (!approachData.state5ParamsMap) {
               approachData.state5ParamsMap = new Map();
               for (const rwy of Object.keys(mappings.runwayStarMap || {})) {
-                const data = approach.resolveApproachProcedureData(firstText, rwy);
+                const data = approach.resolveApproachProcedureData(firstHandle, rwy);
                 if (data) {
                   approachData.state5ParamsMap.set(rwy, data);
                   // Also register normalized runway variant (e.g. "1" for "01")
@@ -1452,11 +1488,11 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
               approachData.appPointMap = new Map();
               for (const [runway, stars] of Object.entries(mappings.runwayStarMap || {})) {
                 for (const star of stars) {
-                  const flyPoints = approach.resolveFlyApproachPoints(firstText, star, runway);
+                  const flyPoints = approach.resolveFlyApproachPoints(firstHandle, star, runway);
                   const hintPos = (flyPoints && flyPoints.length > 0)
                     ? flyPoints[flyPoints.length - 1]
                     : null;
-                  const s5 = approach.resolveApproachProcedureData(firstText, runway, hintPos);
+                  const s5 = approach.resolveApproachProcedureData(firstHandle, runway, hintPos);
                   if (!s5 || !s5.pathPointList || s5.pathPointList.length < 2) continue;
                   approachData.appPointMap.set(star + '|' + runway, s5.pathPointList);
                   // Also store STAR-specific state5Params for State=5 generation
@@ -1469,11 +1505,11 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
                 const normRunway = approach._normalizeRunway(runway);
                 if (normRunway !== runway) {
                   for (const star of stars) {
-                    const flyPoints = approach.resolveFlyApproachPoints(firstText, star, normRunway);
+                    const flyPoints = approach.resolveFlyApproachPoints(firstHandle, star, normRunway);
                     const hintPos = (flyPoints && flyPoints.length > 0)
                       ? flyPoints[flyPoints.length - 1]
                       : null;
-                    const s5n = approach.resolveApproachProcedureData(firstText, normRunway, hintPos);
+                    const s5n = approach.resolveApproachProcedureData(firstHandle, normRunway, hintPos);
                     if (!s5n || !s5n.pathPointList) continue;
                     const key = star + '|' + normRunway;
                     if (!approachData.appPointMap.has(key)) approachData.appPointMap.set(key, s5n.pathPointList);
@@ -1487,14 +1523,14 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
             }
 
             // Compute per-airport coordinate scale from runway thresholds (needed for TAT)
-            if (approachData.airportScale == null && firstText) {
-              approachData.airportScale = approach.computeAirportScale(firstText);
+            if (approachData.airportScale == null && firstHandle) {
+              approachData.airportScale = approach.computeAirportScale(firstHandle);
             }
 
             // Rebuild totalApproachTimes from SceneryData path lengths (fallback for old caches)
             if (!approachData.totalApproachTimes) {
               approachData.totalApproachTimes = approach.computeApproachTimesFromScenery(
-                firstText, mappings, approachData.appPointMap, null, DEFAULT_TAT,
+                firstHandle, mappings, approachData.appPointMap, null, DEFAULT_TAT,
                 approachData.airportScale
               );
             }
@@ -1509,7 +1545,7 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
           console.error('[INIT-CACHE]   ' + icao + ': failed to rebuild SceneryData maps:', e.message);
         }
       }
-    } else {
+    } else if (hasLevels) {
       approachData = buildApproachCache(levelsDir, () => {
         processedFiles++;
         if (_event.sender && !_event.sender.isDestroyed()) {
@@ -1537,15 +1573,9 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
       const poolNodeSet = new Set();
       const poolSegSet = new Set();
       try {
-        const aclPoolFiles = [];
-        for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) aclPoolFiles.push(path.join(levelsDir, le.name));
-        }
-        const { extractTaxiwayOsmPool } = require('../src/acl/scenery_write');
-        for (const p of aclPoolFiles) {
+        for (const p of aclPaths) {
           try {
-            const t = readAclText(p);
-            const pool = extractTaxiwayOsmPool(t);
+            const pool = openAclFile(p).readTaxiwayOsmPool();
             for (const id of pool.nodeIds) poolNodeSet.add(id);
             for (const id of pool.segIds) poolSegSet.add(id);
           } catch (_) {}
@@ -1562,12 +1592,8 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     // ground-bounds center here and always use it, so re-importing an image never
     // drifts to a recomputed center. Reuse from disk cache if present.
     let groundAnchor = cachedEntry?.groundAnchor || null;
-    if (!groundAnchor) {
-      const anchorAclFiles = [];
-      for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-        if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) anchorAclFiles.push(path.join(levelsDir, le.name));
-      }
-      groundAnchor = _computeAirportGroundAnchor(anchorAclFiles, '[INIT-CACHE]   ' + icao);
+    if (!groundAnchor && aclPaths.length > 0) {
+      groundAnchor = _computeAirportGroundAnchor(aclPaths, '[INIT-CACHE]   ' + icao);
     } else if (groundAnchor && groundAnchor.anchorX != null) {
       console.log('[INIT-CACHE]   ' + icao + ': ground anchor from disk cache (' + groundAnchor.anchorX.toFixed(1) + ', ' + groundAnchor.anchorZ.toFixed(1) + ')');
     }
@@ -1577,23 +1603,31 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
     // ground bounds) without rescanning ACLs. Computed as the union of airwayNode bounds
     // across the airport's level ACLs, mirroring the ground anchor logic.
     let airAnchor = cachedEntry?.airAnchor || null;
-    if (!airAnchor) {
-      const anchorAclFilesAir = [];
-      for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-        if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) anchorAclFilesAir.push(path.join(levelsDir, le.name));
-      }
-      airAnchor = _computeAirportAirAnchor(anchorAclFilesAir, '[INIT-CACHE]   ' + icao);
+    if (!airAnchor && aclPaths.length > 0) {
+      airAnchor = _computeAirportAirAnchor(aclPaths, '[INIT-CACHE]   ' + icao);
     } else if (airAnchor && airAnchor.anchorX != null) {
       console.log('[INIT-CACHE]   ' + icao + ': air anchor from disk cache (' + airAnchor.anchorX.toFixed(1) + ', ' + airAnchor.anchorZ.toFixed(1) + ')');
     }
 
-    cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData, taxiwayOsmPool, groundAnchor, airAnchor };
+    cache[icao] = {
+      audioCallsigns,
+      audioMode,
+      audioSourceSignature,
+      approachData,
+      dropdownValues,
+      runwayPairs,
+      standPositions,
+      areaData,
+      taxiwayOsmPool,
+      groundAnchor,
+      airAnchor,
+    };
   }
 
   airportCache = cache;
 
-  // ── Persist to disk for next launch ──
-  if (!diskCache) {
+  // ── Persist to disk for next launch (or when audioSourceSignature invalidated stale cache) ──
+  if (needsCachePersist) {
     try {
       const serialized = {};
       for (const [icao, entry] of Object.entries(cache)) {
@@ -1602,6 +1636,8 @@ ipcMain.handle('init-airport-cache', async (_event, rootPath) => {
         // Also strip live-only derived maps so stale STAR/runway never round-trips via cache.json
         const sp = {}; // standPositions is live-only — do not persist
         serialized[icao] = {
+          audioMode: entry.audioMode || 'v2',
+          audioSourceSignature: entry.audioSourceSignature || null,
           approachData: entry.approachData ? serializeApproachCache(entry.approachData) : null,
           dropdownValues: dv,
           runwayPairs: entry.runwayPairs || [],
@@ -1662,9 +1698,13 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       const ap = path.join(airportsDir, icao);
       if (fs.statSync(ap).isDirectory()) {
         const ld = path.join(ap, 'Levels');
-        if (fs.existsSync(ld)) {
+        const hasLevels = fs.existsSync(ld);
+        const hasChannelCfg = fs.existsSync(gamePaths.radioChannelConfigPath(rootPath, icao));
+        if (hasLevels || hasChannelCfg) {
           airportListR.push(icao);
-          try { totalAclFilesR += fs.readdirSync(ld).filter(f => isCacheAclFile(f)).length; } catch (_) {}
+          if (hasLevels) {
+            try { totalAclFilesR += fs.readdirSync(ld).filter(f => isCacheAclFile(f)).length; } catch (_) {}
+          }
         }
       }
     }
@@ -1672,46 +1712,21 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
     for (const icao of airportListR) {
       const airportPath = path.join(airportsDir, icao);
       const levelsDir = path.join(airportPath, 'Levels');
-      if (!fs.existsSync(levelsDir)) continue;
-
-      // Load audio clips
-      const enPath = path.join(levelsDir, 'audio_clips_en.json');
-      const zhPath = path.join(levelsDir, 'audio_clips_zh.json');
-      const enData = fs.existsSync(enPath) ? loadAudioCallsigns(enPath) : null;
-      const zhData = fs.existsSync(zhPath) ? loadAudioCallsigns(zhPath) : null;
-      const audioCallsigns = mergeAudioCallsigns(enData, zhData);
+      const hasLevels = fs.existsSync(levelsDir);
 
       // Scan all .acl files for dropdown values + runway pairs
-      const aclPaths = [];
-      try {
-        for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-          if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) {
-            aclPaths.push(path.join(levelsDir, le.name));
-          }
-        }
-      } catch (_) {}
+      const aclPaths = hasLevels ? _listAirportAclPaths(rootPath, icao) : [];
+      const audioMode = resolveAirportAudioMode(rootPath, icao, aclPaths);
+      const audioSourceSignature = computeAudioSourceSignature(rootPath, icao, audioMode);
+
       let dropdownValues = aclPaths.length > 0 ? collectUniqueValues(aclPaths) : {};
       delete dropdownValues.Stand; delete dropdownValues.Runway; delete dropdownValues.Airway;
       const runwayPairs = _collectAirportRunwayPairs(aclPaths);
 
-      // Merge audio flight numbers into dropdown _flightNums
-      if (audioCallsigns?.byAirline) {
-        if (!dropdownValues._flightNums) dropdownValues._flightNums = {};
-        for (const [code, nums] of Object.entries(audioCallsigns.byAirline)) {
-          if (!dropdownValues._flightNums[code]) dropdownValues._flightNums[code] = [];
-          const existing = dropdownValues._flightNums[code];
-          for (const n of nums) {
-            if (!existing.includes(n)) existing.push(n);
-          }
-          existing.sort((a, b) => {
-            const na = parseInt(a, 10), nb = parseInt(b, 10);
-            if (!isNaN(na) && !isNaN(nb)) return na - nb;
-            return String(a).localeCompare(String(b));
-          });
-        }
-      }
+      // Load format-aware audio metadata & merge into dropdownValues
+      const { audioCallsigns } = _computeAirportAudioForMode(rootPath, icao, audioMode, dropdownValues);
 
-      const approachData = buildApproachCache(levelsDir, () => {
+      const approachData = hasLevels ? buildApproachCache(levelsDir, () => {
         processedFilesR++;
         if (_event.sender && !_event.sender.isDestroyed()) {
           _event.sender.send('cache-build-progress', {
@@ -1719,18 +1734,17 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
             total: totalAclFilesR,
           });
         }
-      }, isCacheAclFile);
+      }, isCacheAclFile) : null;
       // Parse stand positions from first .acl file
       let standPositions = {};
       try {
         if (aclPaths.length > 0) {
-          const firstAclText = readAclText(aclPaths[0]);
-          standPositions = _parseStandPositions(firstAclText);
+          standPositions = openAclFile(aclPaths[0]).readStandPositions();
         }
       } catch (e) { standPositions = {}; }
 
       // Parse area polygons from SceneryData.Areas
-      const areaData = _parseAreaFromAcl(aclPaths, null);
+      const areaData = aclPaths.length > 0 ? _parseAreaFromAcl(aclPaths, null) : {};
 
       // Stand / Runway / Airway are live-only — do not populate from airport scan.
       delete dropdownValues.Stand; delete dropdownValues.Runway; delete dropdownValues.Airway;
@@ -1739,11 +1753,9 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       const poolNodeSetR = new Set();
       const poolSegSetR = new Set();
       try {
-        const { extractTaxiwayOsmPool } = require('../src/acl/scenery_write');
         for (const p of aclPaths) {
           try {
-            const t = readAclText(p);
-            const pool = extractTaxiwayOsmPool(t);
+            const pool = openAclFile(p).readTaxiwayOsmPool();
             for (const id of pool.nodeIds) poolNodeSetR.add(id);
             for (const id of pool.segIds) poolSegSetR.add(id);
           } catch (_) {}
@@ -1752,14 +1764,22 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       const taxiwayOsmPool = { nodeIds: [...poolNodeSetR].sort((a, b) => a - b), segIds: [...poolSegSetR].sort((a, b) => a - b) };
 
       // ── Ground-painter anchor (deterministic, per airport) ──────────
-      const anchorAclFiles = [];
-      for (const le of fs.readdirSync(levelsDir, { withFileTypes: true })) {
-        if (le.isFile() && le.name.endsWith('.acl') && isCacheAclFile(le.name)) anchorAclFiles.push(path.join(levelsDir, le.name));
-      }
-      const groundAnchor = _computeAirportGroundAnchor(anchorAclFiles, '[IPC] refresh-root-scan ' + icao);
-      const airAnchor = _computeAirportAirAnchor(anchorAclFiles, '[IPC] refresh-root-scan ' + icao);
+      const groundAnchor = aclPaths.length > 0 ? _computeAirportGroundAnchor(aclPaths, '[IPC] refresh-root-scan ' + icao) : null;
+      const airAnchor = aclPaths.length > 0 ? _computeAirportAirAnchor(aclPaths, '[IPC] refresh-root-scan ' + icao) : null;
 
-      cache[icao] = { audioCallsigns, approachData, dropdownValues, runwayPairs, standPositions, areaData, taxiwayOsmPool, groundAnchor, airAnchor };
+      cache[icao] = {
+        audioCallsigns,
+        audioMode,
+        audioSourceSignature,
+        approachData,
+        dropdownValues,
+        runwayPairs,
+        standPositions,
+        areaData,
+        taxiwayOsmPool,
+        groundAnchor,
+        airAnchor,
+      };
     }
 
     airportCache = cache;
@@ -1770,6 +1790,8 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
       const dvR = { ...(entry.dropdownValues || {}) };
       delete dvR.Stand; delete dvR.Runway; delete dvR.Airway;
       serialized[icao] = {
+        audioMode: entry.audioMode || 'v2',
+        audioSourceSignature: entry.audioSourceSignature || null,
         approachData: entry.approachData ? serializeApproachCache(entry.approachData) : null,
         dropdownValues: dvR,
         runwayPairs: entry.runwayPairs || [],
@@ -1800,8 +1822,6 @@ ipcMain.handle('refresh-root-scan', async (_event, rootPath) => {
 
 /**
  * Returns true if the file is an emergency scenario (contains _emerg).
- * Emergency files ending with .demo.acl also get the 30-minute demo window,
- * same as regular .demo.acl files.
  * @param {string} filePathOrName
  * @returns {boolean}
  */
@@ -1810,20 +1830,21 @@ function _isEmerFile(filePathOrName) {
 }
 
 /**
- * Returns true if the file gets the 30-minute demo window treatment.
- * Determined by DEMO_VISIBLE_BASES dict — exact match on full filename
- * (including extension), not by file extension or path prefix.
- * @param {string} filePathOrName — full path or just filename
+ * Format-aware schedule-trimming predicate:
+ *   - On gatcarc4-v3: only explicit `.demo.acl` levels trim their schedule.
+ *   - On legacy / v1 / v2: `DEMO_VISIBLE_BASES` determines demo schedule trimming.
+ * @param {string} filePathOrName
+ * @param {string|null} [format]
  * @returns {boolean}
  */
-function _isDemoFile(filePathOrName) {
-  const name = path.basename(filePathOrName);
-  return DEMO_VISIBLE_BASES.has(name);
+function _isDemoFile(filePathOrName, format = null) {
+  const fmt = format ?? peekAclFormat(filePathOrName);
+  return shouldTrimDemoSchedule(filePathOrName, fmt);
 }
 
 /**
  * Rounds minutes to the nearest 5-minute boundary (:X0 or :X5).
- * Used by the demo 30-min window to produce tidy end times.
+ * Used by the legacy demo 30-min window to produce tidy end times.
  * @param {number} minutes
  * @returns {number}
  */
@@ -1832,46 +1853,17 @@ function _roundNearest5(minutes) {
 }
 
 /**
- * For demo files (as determined by _isDemoFile): filter flights to the
- * MetaData.Config startTime/endTime window — v4 demo levels already have
- * their intended window set in Config.
- * Uses integer minutes (Math.floor) so flights at the boundary minute are
- * kept, and strict upper bound (<) so flights exactly at endTime are excluded.
- * @param {string} filePath
- * @param {Array} flights
- * @param {object|null} config
- * @returns {{ flights: Array, config: object|null, _currentDateTime: string|null, removedCount: number }}
+ * Filter flights to the MetaData.Config [startTime, endTime) window.
  */
 function _filterDemoFlights(filePath, flights, config) {
-  try {
-    const rawText = readAclText(filePath);
-
-    const toMin = t => {
-      const p = String(t).split(':');
-      return parseInt(p[0]) * 60 + parseInt(p[1]);
-    };
-
-    if (config && config.startTime && config.endTime) {
-      const startMin = toMin(config.startTime);
-      const endMin = toMin(config.endTime);
-      const before = flights.length;
-      flights = flights.filter(fl => {
-        const lt = (fl.LandingTime || '').trim();
-        const ob = (fl.OffBlockTime || '').trim();
-        const flightMin = lt ? toMin(lt) : (ob ? toMin(ob) : Infinity);
-        return flightMin >= startMin && flightMin < endMin;
-      });
-      const removedCount = before - flights.length;
-      if (removedCount > 0) {
-        console.log('[DEMO] removed ' + removedCount + ' flights outside [' + config.startTime + ' ~ ' + config.endTime + ']');
-      }
-      console.log('[DEMO] window [' + config.startTime + ' ~ ' + config.endTime + '] (from MetaData.Config)');
-      return { flights, config, _currentDateTime: config.startTime, removedCount };
-    }
-  } catch (e) {
-    console.log('[DEMO] flight filtering failed:', e.message);
+  const res = filterFlightsToConfigWindow(flights, config);
+  if (res.removedCount > 0 && config) {
+    console.log('[DEMO] removed ' + res.removedCount + ' flights outside [' + config.startTime + ' ~ ' + config.endTime + ']');
   }
-  return { flights, config, _currentDateTime: null, removedCount: 0 };
+  if (config && config.startTime && config.endTime) {
+    console.log('[DEMO] window [' + config.startTime + ' ~ ' + config.endTime + '] (from MetaData.Config)');
+  }
+  return res;
 }
 
 // ─── IPC: Load an .acl file ──────────────────────────────
@@ -1879,46 +1871,11 @@ function _filterDemoFlights(filePath, flights, config) {
 ipcMain.handle('load-acl', async (_event, filePath) => {
   console.log('[IPC] load-acl START:', filePath);
   try {
-    const data = loadFlights(filePath);
-    console.log('[IPC] load-acl OK: flights=' + data.flights.length);
-
-    // Extract config from ACL (single source: resolveConfigTime applies CDT override)
-    let config = data._rawText ? resolveConfigTime(data._rawText) : null;
-    console.log('[IPC] load-acl: config from ACL ->', config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime) : 'NULL');
-
-    const isDemo = _isDemoFile(filePath);
-    const isEmer = _isEmerFile(filePath);
-    console.log('[IPC] load-acl: isDemo=' + isDemo + ' isEmer=' + isEmer + ' flights=' + (data.flights ? data.flights.length : 0) + ' config=' + (config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime) : 'NULL'));
-
-    // For .demo.acl (including _emerg): filter flights to 30-min window at CurrentDateTime
-    let _currentDateTime = null;
-    let removedCount = 0;
-    if (isDemo && data.flights && data.flights.length > 0) {
-      const result = _filterDemoFlights(filePath, data.flights, config);
-      data.flights = result.flights;
-      config = result.config;
-      _currentDateTime = result._currentDateTime;
-      removedCount = result.removedCount;
-    }
-
-    // Extract saveTime: prefer GameTime.CurrentDateTime, fall back to
-    // config.startTime + warmup so _saveSec is never null when config exists
-    let _saveSec = null;
-    try {
-      const rawText = readAclText(filePath);
-      _saveSec = extractGameTime(rawText);
-      if (_saveSec !== null) {
-        console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from GameTime.CurrentDateTime');
-      }
-    } catch (_) {}
-    // Final fallback: compute from config.startTime + 13min warmup
-    if (_saveSec == null && config && config.startTime) {
-      const p = String(config.startTime).split(':');
-      _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + WARMUP_SEC;
-      console.log('[IPC] load-acl: saveTime=' + _saveSec + 's from config.startTime + warmup (final fallback)');
-    }
-
-    return { success: true, path: filePath, config, _saveSec, _currentDateTime, isDemo, ...data };
+    const loaded = loadLevelForEditor(filePath);
+    const { handle: _h, format: _fmt, removedCount: _rc, ...payload } = loaded;
+    console.log('[IPC] load-acl OK: isDemo=' + payload.isDemo + ' flights=' + (payload.flights ? payload.flights.length : 0) +
+      ' config=' + (payload.config ? ('startTime=' + payload.config.startTime + ' endTime=' + payload.config.endTime) : 'NULL'));
+    return { success: true, path: filePath, ...payload };
   } catch (err) {
     console.error('[IPC] load-acl FAIL:', filePath, '|', err.message, '|', err.stack);
     return { success: false, error: err.message };
@@ -1930,44 +1887,36 @@ ipcMain.handle('load-acl', async (_event, filePath) => {
 ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, arrayContent, originalBlocks, sceneryMaps, createBackup, weatherTimeline, windTimeline, runwayTimeline, _saveSec }) => {
   try {
     const dir = path.dirname(filePath);
-    const base = path.basename(filePath, '.acl');
 
     // Re-sort flights to chronological (file) order before saving,
     // so ACL block pairing and CSV output match the original order.
     const saveFlights = sortFlightsChronologically(flights);
 
-    // Create .bak overwrite backup if requested
-    console.log('[IPC] save-acl: createBackup=' + createBackup + ' filePath=' + filePath + ' exists=' + fs.existsSync(filePath));
-    if (createBackup && fs.existsSync(filePath)) {
-      fs.copyFileSync(filePath, filePath + '.bak');
-      console.log('[IPC] save-acl: .bak created at ' + filePath + '.bak');
-    } else {
-      console.log('[IPC] save-acl: .bak NOT created (createBackup=' + createBackup + ')');
-    }
+    // Open through unified format dispatch BEFORE touching .bak or target on disk
+    const saveHandle = openAclFile(filePath);
 
     // Read the ACL's Config block for startTime and file references
     let aclcfgStartTime = null;
     let aclcfgEndTime = null;
     let config = null;
-    const isDemoSave = _isDemoFile(filePath);
-    const isEmerSave = _isEmerFile(filePath);
     try {
-      const text = readAclText(filePath);
-      config = resolveConfigTime(text);
+      config = saveHandle.readConfigResolved();
       if (config) {
         aclcfgStartTime = config.startTime || null;
         aclcfgEndTime = config.endTime || null;
       }
-      // For .demo.acl files (including _emerg): override endTime with 30-min demo window.
-      // startTime is already CDT-overridden by resolveConfigTime above.
-      const cdt = extractCurrentDateTime(text);
-      if (isDemoSave && cdt && cdt.timeString) {
-        const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
-        const roundedEndMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN);
-        const eh = Math.floor(roundedEndMin / 60) % 24;
-        const em = roundedEndMin % 60;
-        aclcfgEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':00';
-        console.log('[IPC] save-acl: demo — aclcfgStartTime=' + aclcfgStartTime + ' aclcfgEndTime=' + aclcfgEndTime);
+      // Legacy/v2 demo files override endTime with 30-min CDT window;
+      // v3 .demo.acl files already carry their intended demo endTime in MetaData.Config.
+      if (shouldApplyLegacyDemoEndTimeOverride(filePath, saveHandle.format)) {
+        const cdt = saveHandle.readCurrentDateTime();
+        if (cdt && cdt.timeString) {
+          const cdtMin = Math.floor(cdt.secSinceMidnight / 60);
+          const roundedEndMin = _roundNearest5(cdtMin + DEMO_WINDOW_MIN);
+          const eh = Math.floor(roundedEndMin / 60) % 24;
+          const em = roundedEndMin % 60;
+          aclcfgEndTime = String(eh).padStart(2, '0') + ':' + String(em).padStart(2, '0') + ':00';
+          console.log('[IPC] save-acl: demo — aclcfgStartTime=' + aclcfgStartTime + ' aclcfgEndTime=' + aclcfgEndTime);
+        }
       }
     } catch (_) {}
 
@@ -1976,15 +1925,40 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
     const icao = icaoMatch ? icaoMatch[1] : '';
     const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
 
-    // Generate full ACL from scratch, preserving header structure
-    generateFullAcl(filePath, saveFlights, before, after, originalBlocks, sceneryMaps, approachCache, aclcfgStartTime, _saveSec);
+    if (saveHandle.format === 'gatcarc4-v3') {
+      console.log('[IPC] save-acl (v3): createBackup=' + createBackup + ' filePath=' + filePath);
+      saveHandle.applyEdits({
+        flights: saveFlights,
+        weatherTimeline,
+        windTimeline,
+        windSpeedUnit: 'knots',
+        runwayTimeline,
+        sceneryMaps,
+        approachCache,
+        filePath,
+        _saveSec,
+      });
+      saveHandle.saveToFile(filePath, { createBackup });
+      try { _invalidateLiveCache(filePath); } catch (_) {}
+    } else {
+      // Legacy / v1 / v2 path — preserve exact Odin behavior
+      console.log('[IPC] save-acl: createBackup=' + createBackup + ' filePath=' + filePath + ' exists=' + fs.existsSync(filePath));
+      if (createBackup && fs.existsSync(filePath)) {
+        fs.copyFileSync(filePath, filePath + '.bak');
+        console.log('[IPC] save-acl: .bak created at ' + filePath + '.bak');
+      } else {
+        console.log('[IPC] save-acl: .bak NOT created (createBackup=' + createBackup + ')');
+      }
 
-    // ── Patch timeline sections into ACL ──
-    _rebuildTimelineSections(filePath, weatherTimeline, windTimeline, runwayTimeline);
+      generateFullAcl(filePath, saveFlights, before, after, originalBlocks, sceneryMaps, approachCache, aclcfgStartTime, _saveSec);
+      _rebuildTimelineSections(filePath, weatherTimeline, windTimeline, runwayTimeline);
+      try { _invalidateLiveCache(filePath); } catch (_) {}
+    }
 
     // ── Also sync the CSV that the game loads ──
     let csvSynced = false;
     let csvBackupDone = false;
+    let csvSyncError = null;
     try {
       if (config && config.flightScheduleFile) {
         const csvPath = path.join(dir, config.flightScheduleFile + '.csv');
@@ -1997,11 +1971,17 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
         csvSynced = true;
       }
     } catch (csvErr) {
-      // CSV sync is best-effort; don't fail the whole save
-      console.error('CSV sync warning:', csvErr.message);
+      // CSV sync failed after ACL commit — surface partial failure warning
+      csvSyncError = csvErr.message || String(csvErr);
+      console.error('CSV sync warning:', csvSyncError);
     }
 
-    return { success: true, csvSynced, csvBackupDone };
+    return {
+      success: true,
+      csvSynced,
+      csvBackupDone,
+      ...(csvSyncError ? { partialFailure: true, warning: `ACL saved, but CSV sync failed: ${csvSyncError}` } : {}),
+    };
   } catch (err) {
     // Log the full error (a [TYPE-ASSERT] message carries the offending canonical
     // type name + the whole scope declaration dump on later lines) to the
@@ -2012,11 +1992,10 @@ ipcMain.handle('save-acl', async (_event, { filePath, flights, before, after, ar
 });
 
 // ─── IPC: Export ZIP (Save As) ──────────────────────────
-// Collects all 5 level files from the current acl's directory and packages into a ZIP.
+// Collects level files from the current acl's directory and packages into a ZIP.
 
 function getLevelFilePaths(aclPath) {
   const dir = path.dirname(aclPath);
-  const baseName = path.basename(aclPath, '.acl');
   const entries = [];
 
   // 1) .acl file
@@ -2027,8 +2006,7 @@ function getLevelFilePaths(aclPath) {
   // Read Config block from ACL for file references (single source of truth)
   let config = null;
   try {
-    const text = readAclText(aclPath);
-    config = _extractConfig(text);
+    config = openAclFile(aclPath).readConfig();
   } catch (_) {}
 
   // 2) .csv file (from ACL Config → flightScheduleFile, fallback to .acl → .csv)
@@ -2039,6 +2017,16 @@ function getLevelFilePaths(aclPath) {
   if (!csvPath) csvPath = aclPath.replace(/\.acl$/i, '.csv');
   if (fs.existsSync(csvPath)) {
     entries.push({ name: path.basename(csvPath), data: fs.readFileSync(csvPath) });
+  }
+
+  // 2b) v3 / companion level metadata files if present alongside .acl
+  const aclcfgPath = aclPath.replace(/\.acl$/i, '.aclcfg');
+  if (aclcfgPath !== aclPath && fs.existsSync(aclcfgPath)) {
+    entries.push({ name: path.basename(aclcfgPath), data: fs.readFileSync(aclcfgPath) });
+  }
+  const v3TimelineSidecar = aclPath.replace(/\.acl$/i, '.timeline.json');
+  if (v3TimelineSidecar !== aclPath && fs.existsSync(v3TimelineSidecar)) {
+    entries.push({ name: path.basename(v3TimelineSidecar), data: fs.readFileSync(v3TimelineSidecar) });
   }
 
   // 3) weather_timeline.json
@@ -2111,8 +2099,9 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
   try {
     const zipPath = result.filePaths[0];
 
-    // 2) Validate ZIP contents — must contain all necessary file types
-    const fileList = listZipFiles(zipPath);
+    // 2) Inspect and validate incoming ZIP contents in memory BEFORE touching disk
+    const zipEntries = readZipEntries(zipPath);
+    const fileList = [...zipEntries.keys()];
     const lowerNames = fileList.map(f => f.toLowerCase());
 
     const hasAcl = lowerNames.some(f => f.endsWith('.acl'));
@@ -2121,20 +2110,30 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     const hasWind = lowerNames.some(f => f === 'wind_timeline.json');
     const hasRunway = lowerNames.some(f => f.startsWith('runway_timeline') && f.endsWith('.json'));
 
+    const currentAclName = path.basename(aclPath);
+    const zipAclNames = fileList.filter(f => f.toLowerCase().endsWith('.acl'));
+    let incomingPreview = null;
+    if (zipAclNames.length > 0) {
+      const previewAclName = zipAclNames.includes(currentAclName) ? currentAclName : zipAclNames[0];
+      const aclEntryBuf = zipEntries.get(previewAclName);
+      incomingPreview = openAcl(aclEntryBuf, { validateOnOpen: true, filePath: aclPath });
+    }
+    const isIncomingV3 = incomingPreview ? incomingPreview.format === 'gatcarc4-v3' : false;
+
     const missing = [];
     if (!hasAcl) missing.push('flight schedule');
     if (!hasCsv) missing.push('flight data');
-    if (!hasWeather) missing.push('weather timeline');
-    if (!hasWind) missing.push('wind timeline');
-    if (!hasRunway) missing.push('runway timeline');
+    if (!isIncomingV3) {
+      if (!hasWeather) missing.push('weather timeline');
+      if (!hasWind) missing.push('wind timeline');
+      if (!hasRunway) missing.push('runway timeline');
+    }
 
     if (missing.length > 0) {
       return { canceled: false, error: `ZIP missing required files: ${missing.join(', ')}` };
     }
 
     // 3) Validate ZIP .acl filename matches current level (reject airport/level mismatch)
-    const currentAclName = path.basename(aclPath);
-    const zipAclNames = fileList.filter(f => f.toLowerCase().endsWith('.acl'));
     if (!zipAclNames.includes(currentAclName)) {
       return { canceled: false, error: 'Level mismatch' };
     }
@@ -2157,44 +2156,17 @@ ipcMain.handle('import-zip', async (_event, { aclPath, createBackup }) => {
     // 5) Extract ZIP to the target directory (overwrites existing)
     extractZip(zipPath, dir);
 
-    // 6) Reload the ACL to return parsed data
+    // 6) Reload the ACL to return parsed data (and invalidate live scenery cache)
     const aclFile = path.basename(aclPath);
     const newAclPath = path.join(dir, aclFile);
-    const data = loadFlights(newAclPath);
-    const isDemo = _isDemoFile(aclFile);
-    const isEmer = _isEmerFile(aclFile);
-
-    // 6b) Extract config (single source: resolveConfigTime applies CDT override)
-    let config = data._rawText ? resolveConfigTime(data._rawText) : null;
-
-    // 6c) For .demo.acl (including _emerg): filter flights to 30-min window at CurrentDateTime
-    let _currentDateTime = null;
-    if (isDemo && data.flights && data.flights.length > 0) {
-      const result = _filterDemoFlights(newAclPath, data.flights, config);
-      data.flights = result.flights;
-      config = result.config;
-      _currentDateTime = result._currentDateTime;
-      if (result.removedCount > 0) {
-        console.log('[IPC] import-zip: removed ' + result.removedCount + ' flights outside demo window');
-      }
+    try { _invalidateLiveCache(newAclPath); } catch (_) {}
+    const loaded = loadLevelForEditor(newAclPath);
+    const { handle: _h, format: _fmt, removedCount, ...payload } = loaded;
+    if (removedCount > 0) {
+      console.log('[IPC] import-zip: removed ' + removedCount + ' flights outside demo window');
     }
 
-    // 8) Extract saveTime (same as load-acl handler)
-    let _saveSec = null;
-    try {
-      const rawText = readAclText(newAclPath);
-      _saveSec = extractGameTime(rawText);
-      if (_saveSec !== null) {
-        console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from GameTime.CurrentDateTime');
-      }
-    } catch (_) {}
-    if (_saveSec == null && config && config.startTime) {
-      const p2 = String(config.startTime).split(':');
-      _saveSec = parseInt(p2[0]) * 3600 + parseInt(p2[1]) * 60 + (parseInt(p2[2]) || 0) + WARMUP_SEC;
-      console.log('[IPC] import-zip: saveTime=' + _saveSec + 's from config.startTime + warmup (final fallback)');
-    }
-
-    return { canceled: false, path: newAclPath, config, _saveSec, _currentDateTime, isDemo, ...data };
+    return { canceled: false, path: newAclPath, ...payload };
   } catch (err) {
     return { canceled: false, error: err.message };
   }
@@ -2228,10 +2200,11 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
     fs.copyFileSync(aclBak, filePath);
     restored.push('flight schedule');
 
-    // 2) Read config from restored ACL (single source: resolveConfigTime applies CDT override)
+    // 2) Read config from restored ACL (single source: readConfigResolved applies CDT override)
+    const restoredHandle = openAclFile(filePath);
     let config = null;
     try {
-      config = resolveConfigTime(readAclText(filePath));
+      config = restoredHandle.readConfigResolved();
     } catch (_) {}
 
     // 3) Restore CSV .bak → .csv
@@ -2255,6 +2228,15 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
       timelineFiles.push({ bak: rwyPath + '.bak', dest: rwyPath, label: 'Runway Timeline' });
     }
 
+    const aclcfgDest = filePath.replace(/\.acl$/i, '.aclcfg');
+    if (aclcfgDest !== filePath) {
+      timelineFiles.push({ bak: aclcfgDest + '.bak', dest: aclcfgDest, label: 'Level Config' });
+    }
+    const v3TimelineDest = filePath.replace(/\.acl$/i, '.timeline.json');
+    if (v3TimelineDest !== filePath) {
+      timelineFiles.push({ bak: v3TimelineDest + '.bak', dest: v3TimelineDest, label: 'Level Timeline' });
+    }
+
     for (const tf of timelineFiles) {
       if (fs.existsSync(tf.bak)) {
         fs.copyFileSync(tf.bak, tf.dest);
@@ -2262,28 +2244,9 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
       }
     }
 
-    // 5) Parse restored ACL and return flights
-    const data = loadFlights(filePath);
-
-    // 5b) Demo filtering (same as load-acl handler) — filter flights to 30-min window
-    let _currentDateTime = null;
-    const isDemo = _isDemoFile(filePath);
-    if (isDemo && data.flights && data.flights.length > 0) {
-      const result = _filterDemoFlights(filePath, data.flights, config);
-      data.flights = result.flights;
-      config = result.config;
-      _currentDateTime = result._currentDateTime;
-    }
-
-    let _saveSec = null;
-    try {
-      const rawText = readAclText(filePath);
-      _saveSec = extractGameTime(rawText);
-    } catch (_) {}
-    if (_saveSec == null && config && config.startTime) {
-      const p = String(config.startTime).split(':');
-      _saveSec = parseInt(p[0]) * 3600 + parseInt(p[1]) * 60 + (parseInt(p[2]) || 0) + WARMUP_SEC;
-    }
+    // 5) Parse restored ACL and return flights with format-aware demo trimming
+    const loaded = loadLevelForEditor(filePath);
+    const { handle: _h, format: _fmt, removedCount: _rc, ...payload } = loaded;
 
     // Clear cache.json — restored file may have stale cached approach data etc.
     // Also invalidate in-memory live scenery entry for this file so next
@@ -2299,7 +2262,7 @@ ipcMain.handle('restore-latest-backup', async (_event, filePath) => {
       console.error('[restore-latest-backup] failed to remove cache.json', err.message);
     }
 
-    return { success: true, path: filePath, restored, config, _saveSec, _currentDateTime, isDemo, ...data };
+    return { success: true, path: filePath, restored, ...payload };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -2407,36 +2370,39 @@ ipcMain.handle('get-cached-lang', () => {
 // ─── Ground Painter IPC ───────────────────────────────────────────
 ipcMain.handle('load-ground-painter-data', async (_event, filePath) => {
   // Re-read latest disk state (post-save if the entry warning chose Save).
-  const text = readAclText(filePath);
-  // Build the id-free Graph + meta here (main is CJS and can require the acl
-  // module); the renderer cannot reliably dynamic-import the CJS acl module.
-  const { buildSceneryGraph } = require('../src/acl/scenery_graph');
-  const { graph, meta } = buildSceneryGraph(text);
-  // Derive taxiway OSM pool from the original snapshot (finite reuse set).
-  const { extractTaxiwayOsmPool, getTaxiwayOsmPoolInfo, extractAirwayOsmPool, getAirwayOsmPoolInfo } = require('../src/acl/scenery_write');
-  const pool = extractTaxiwayOsmPool(text);
-  const airwayPool = extractAirwayOsmPool(text);
-  // Also compute current free counts from snapshot (no edits yet → all free = pool \ survivors)
-  // At load time survivors == pool, so free == 0; after deletions free >0.
-  const poolInfo = getTaxiwayOsmPoolInfo(
-    (() => {
-      const { _splitArrayEntries, _staticEntitiesRanges } = require('../src/acl/scenery_write');
-      const ranges = _staticEntitiesRanges(text);
-      const pkArrayValue = text.substring(ranges.pkRc.start, ranges.pkRc.end);
-      return _splitArrayEntries(pkArrayValue);
-    })(),
-    graph, meta
-  );
-  const airwayPoolInfo = getAirwayOsmPoolInfo(
-    (() => {
-      const { _splitArrayEntries, _staticEntitiesRanges } = require('../src/acl/scenery_write');
-      const ranges = _staticEntitiesRanges(text);
-      const pkArrayValue = text.substring(ranges.pkRc.start, ranges.pkRc.end);
-      return _splitArrayEntries(pkArrayValue);
-    })(),
-    graph, meta
-  );
-  return { text, graph, meta, pool, poolInfo: { nodePoolSize: poolInfo.nodePoolSize, segPoolSize: poolInfo.segPoolSize, freeNodeCount: poolInfo.freeNodeCount, freeSegCount: poolInfo.freeSegCount }, airwayPool, airwayPoolInfo: { nodePoolSize: airwayPoolInfo.nodePoolSize, segPoolSize: airwayPoolInfo.segPoolSize, freeNodeCount: airwayPoolInfo.freeNodeCount, freeSegCount: airwayPoolInfo.freeSegCount }, bg: readBgSidecar(filePath) };
+  const handle = openAclFile(filePath);
+  const { graph, meta } = handle.readSceneryGraph();
+  const pool = handle.readTaxiwayOsmPool();
+  const airwayPool = handle.readAirwayOsmPool();
+  let text;
+  let poolInfo;
+  let airwayPoolInfo;
+  if (handle.format === 'gatcarc4-v3') {
+    text = handle.createPainterSnapshotToken();
+    poolInfo = {
+      nodePoolSize: pool.nodeIds.length,
+      segPoolSize: pool.segIds.length,
+      freeNodeCount: 0,
+      freeSegCount: 0,
+    };
+    airwayPoolInfo = {
+      nodePoolSize: airwayPool.nodeIds.length,
+      segPoolSize: airwayPool.segIds.length,
+      freeNodeCount: 0,
+      freeSegCount: 0,
+    };
+  } else {
+    text = handle.rawText;
+    const { getTaxiwayOsmPoolInfo, getAirwayOsmPoolInfo, _splitArrayEntries, _staticEntitiesRanges } = require('../src/acl/scenery_write');
+    const ranges = _staticEntitiesRanges(text);
+    const pkArrayValue = text.substring(ranges.pkRc.start, ranges.pkRc.end);
+    const pkEntries = _splitArrayEntries(pkArrayValue);
+    const tInfo = getTaxiwayOsmPoolInfo(pkEntries, graph, meta);
+    const aInfo = getAirwayOsmPoolInfo(pkEntries, graph, meta);
+    poolInfo = { nodePoolSize: tInfo.nodePoolSize, segPoolSize: tInfo.segPoolSize, freeNodeCount: tInfo.freeNodeCount, freeSegCount: tInfo.freeSegCount };
+    airwayPoolInfo = { nodePoolSize: aInfo.nodePoolSize, segPoolSize: aInfo.segPoolSize, freeNodeCount: aInfo.freeNodeCount, freeSegCount: aInfo.freeSegCount };
+  }
+  return { text, graph, meta, pool, poolInfo, airwayPool, airwayPoolInfo, bg: readBgSidecar(filePath) };
 });
 
 // Background-image sidecar (<file>.bg.json) — persists the imported reference
@@ -2455,22 +2421,198 @@ function readBgSidecar(filePath) {
   }
 }
 
+function _reconcileSceneryFlightReferences({ savedGraph, snap, graph, meta, flights }) {
+  const norm = (v) => String(v || '').trim().replace(/^0+/, '');
+  const curStandNames = new Set();
+  for (const st of (savedGraph.graph.stands || [])) {
+    for (const nm of [st.identifier, st.name]) { const v = norm(nm); if (v) curStandNames.add(v); }
+  }
+  const curRunwayEnds = new Set();
+  for (const rw of (savedGraph.graph.runways || [])) {
+    if (Array.isArray(rw.names)) for (const n of rw.names) { const v = norm(n); if (v) curRunwayEnds.add(v); }
+    if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) { const v = norm(n); if (v) curRunwayEnds.add(v); }
+  }
+  const snapStandNames = new Set();
+  for (const st of (snap.graph.stands || [])) {
+    for (const nm of [st.identifier, st.name]) { const v = norm(nm); if (v) snapStandNames.add(v); }
+  }
+  const snapRunwayEnds = new Set();
+  for (const rw of (snap.graph.runways || [])) {
+    if (Array.isArray(rw.names)) for (const n of rw.names) { const v = norm(n); if (v) snapRunwayEnds.add(v); }
+    if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) { const v = norm(n); if (v) snapRunwayEnds.add(v); }
+  }
+  const procNamesOf = (g) => {
+    const s = new Set();
+    for (const p of (g.graph.procedures || [])) { const v = norm(p.name); if (v) s.add(v); }
+    return s;
+  };
+  const curStarNames = procNamesOf(savedGraph);
+  const snapStarNames = procNamesOf(snap);
+  const procsByRunwayOf = (g) => {
+    const m = new Map();
+    for (const p of (g.graph.procedures || [])) {
+      const rw = norm(p.runwayName), nm = norm(p.name);
+      if (!rw || !nm) continue;
+      if (!m.has(rw)) m.set(rw, new Set());
+      m.get(rw).add(nm);
+    }
+    return m;
+  };
+  const curProcsByRunway = procsByRunwayOf(savedGraph);
+  const snapProcsByRunway = procsByRunwayOf(snap);
+
+  const runwayRename = new Map(); // normalized old end → new end (exact)
+  if (Array.isArray(meta && meta.runwayOrigInfo) && Array.isArray(meta.runwayOrigPk)) {
+    for (let i = 0; i < (graph.runways || []).length && i < meta.runwayOrigInfo.length && i < meta.runwayOrigPk.length; i++) {
+      if (meta.runwayOrigPk[i] == null) continue;
+      const orig = meta.runwayOrigInfo[i];
+      const cur = graph.runways[i];
+      if (!orig || !cur || !Array.isArray(orig.names) || !Array.isArray(cur.names)) continue;
+      for (let j = 0; j < 2 && j < orig.names.length && j < cur.names.length; j++) {
+        const o = norm(orig.names[j]), n = String(cur.names[j] || '').trim();
+        if (o && n && o !== norm(n)) runwayRename.set(o, n);
+      }
+    }
+  }
+  for (const [o, n] of [...runwayRename]) {
+    if (!curRunwayEnds.has(norm(n))) runwayRename.delete(o);
+  }
+
+  const standRename = new Map(); // normalized old identifier → new identifier (exact)
+  const snapStandByNose = new Map();
+  for (const st of (snap.graph.stands || [])) {
+    const nose = snap.graph.nodes[st.noseIdx];
+    if (!nose) continue;
+    const key = nose.x.toFixed(4) + ',' + nose.z.toFixed(4);
+    if (!snapStandByNose.has(key)) snapStandByNose.set(key, st);
+  }
+  for (const st of (graph.stands || [])) {
+    const nose = (graph.nodes || [])[st.noseIdx];
+    if (!nose) continue;
+    const key = nose.x.toFixed(4) + ',' + nose.z.toFixed(4);
+    const origSt = snapStandByNose.get(key);
+    if (!origSt) continue;
+    const newIdent = String(st.identifier || '').trim();
+    if (origSt.identifier && newIdent && norm(origSt.identifier) !== norm(newIdent)) {
+      standRename.set(norm(origSt.identifier), newIdent);
+    }
+  }
+  for (const [o, n] of [...standRename]) {
+    if (!curStandNames.has(norm(n))) standRename.delete(o);
+  }
+
+  const remap = (value, map) => {
+    if (!value || !map.size) return value;
+    let key = norm(value);
+    if (!map.has(key)) return value;
+    const seen = new Set([key]);
+    let cur = map.get(key);
+    while (cur && map.has(norm(cur)) && !seen.has(norm(cur))) { seen.add(norm(cur)); cur = map.get(norm(cur)); }
+    return cur != null ? String(cur) : value;
+  };
+
+  let refsRemapped = 0;
+  for (const f of flights) {
+    if (f.Runway) {
+      const mapped = remap(f.Runway, runwayRename);
+      if (mapped !== f.Runway) { f.Runway = mapped; refsRemapped++; }
+    }
+    if (f.Stand) {
+      const mapped = remap(f.Stand, standRename);
+      if (mapped !== f.Stand) { f.Stand = mapped; refsRemapped++; }
+    }
+  }
+
+  const regKey = (f) => String(f._Registration || f._fpGuid || f.CallSign || '');
+  const danglingLegs = new Set();
+  const starGoneOf = (f) => !!f.Airway && !curStarNames.has(norm(f.Airway)) && snapStarNames.has(norm(f.Airway));
+  const starOffRunwayOf = (f) => {
+    if (!f.Airway || !f.Runway) return false;
+    const rw = norm(f.Runway), st = norm(f.Airway);
+    const sn = snapProcsByRunway.get(rw);
+    if (!sn || !sn.has(st)) return false;
+    const cur = curProcsByRunway.get(rw);
+    return !(cur && cur.has(st));
+  };
+  for (const f of flights) {
+    const standGone = !!f.Stand && !curStandNames.has(norm(f.Stand)) && snapStandNames.has(norm(f.Stand));
+    const runwayGone = !!f.Runway && !curRunwayEnds.has(norm(f.Runway)) && snapRunwayEnds.has(norm(f.Runway));
+    if (standGone || runwayGone || starGoneOf(f) || starOffRunwayOf(f)) danglingLegs.add(regKey(f));
+  }
+
+  if (!danglingLegs.size && refsRemapped === 0) {
+    return { needsRebuild: false, purgedFlights: [], refsRemapped: 0, keptFlights: flights };
+  }
+
+  const purgedFlights = flights
+    .filter((f) => danglingLegs.has(regKey(f)))
+    .map((f) => ({
+      CallSign: f.CallSign || '', Registration: f._Registration || '',
+      Stand: f.Stand || '', Runway: f.Runway || '',
+      STAR: f.Airway || '',
+      reason: (f.Stand && !curStandNames.has(norm(f.Stand)) && snapStandNames.has(norm(f.Stand))) ? 'stand removed or renamed away'
+        : (f.Runway && !curRunwayEnds.has(norm(f.Runway)) && snapRunwayEnds.has(norm(f.Runway))) ? 'runway removed or renamed away'
+          : starGoneOf(f) ? 'STAR procedure removed or renamed away'
+            : starOffRunwayOf(f) ? 'STAR variant removed or renamed away for this runway' : 'same aircraft leg removed',
+    }));
+  const keptFlights = sortFlightsChronologically(flights.filter((f) => !danglingLegs.has(regKey(f))));
+  return { needsRebuild: true, purgedFlights, refsRemapped, keptFlights };
+}
+
+function _throwZeroRunwayPainterError(graph, warnings) {
+  const graphCount = (graph && Array.isArray(graph.runways)) ? graph.runways.length : 0;
+  const graphNames = (graph && Array.isArray(graph.runways))
+    ? graph.runways.map((rw) => (Array.isArray(rw.names) ? rw.names.join('/') : (rw.physicalName || rw.name || '?'))).join(', ')
+    : '';
+  const warnSummary = warnings.length
+    ? '写入警告：' + warnings.map((w) => (w && w.text) || String(w)).join('；')
+    : '写入无警告（跑道可能在发送前已被机构修复丢弃，请查看渲染进程控制台 [GP] save 日志）';
+  throw new Error('保存被拒绝：关卡必须至少保留一条跑道（游戏要求 InitialRunways 非空）。请先绘制一条跑道再保存。'
+    + '（诊断：画布跑道 ' + graphCount + ' 条[' + graphNames + ']，写入结果跑道 0 条。' + warnSummary + '）');
+}
+
 ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotText, graph, meta, createBackup, bg }) => {
   console.log('[GroundPainter] save-ground-painter-data filePath=' + filePath);
-  // Cross-level contamination guard: snapshot ArchiveGuid must match target file.
+  const baseName = filePath ? path.basename(filePath, '.acl') : null;
+
+  let v3Snap = null;
+  if (typeof snapshotText === 'string' && snapshotText.trimStart().startsWith('{')) {
+    try {
+      const parsedSnap = JSON.parse(snapshotText);
+      if (parsedSnap && parsedSnap.__v3Snapshot) v3Snap = parsedSnap;
+    } catch (_) {}
+  }
+
+  let isV3 = Boolean(v3Snap);
+  if (!isV3 && filePath && fs.existsSync(filePath)) {
+    try {
+      const headBuf = Buffer.alloc(16);
+      const fd = fs.openSync(filePath, 'r');
+      let bytesRead = 0;
+      try { bytesRead = fs.readSync(fd, headBuf, 0, 16, 0); } finally { fs.closeSync(fd); }
+      if (detectAclFormat(headBuf.subarray(0, bytesRead)) === 'gatcarc4-v3') isV3 = true;
+    } catch (_) {}
+  }
+
+  // Cross-level contamination guard: snapshot ArchiveGuid / levelBaseName must match target file.
   try {
-    const guidMatch = snapshotText.match(/"ArchiveGuid"\s*:\s*"([^"]+)"/);
-    const snapGuid = guidMatch ? guidMatch[1] : null;
-    const baseName = filePath ? path.basename(filePath, '.acl') : null;
-    if (snapGuid && baseName && snapGuid !== baseName) {
-      throw new Error('GroundPainter refusal: snapshot ArchiveGuid "' + snapGuid + '" does not match target file "' + baseName + '.acl" — likely cross-level graph contamination. Please close and reopen the Ground Painter.');
+    if (v3Snap) {
+      const snapBase = v3Snap.levelBaseName || v3Snap.ArchiveGuid || null;
+      if (snapBase && baseName && snapBase !== baseName) {
+        throw new Error('GroundPainter refusal: snapshot ArchiveGuid "' + snapBase + '" does not match target file "' + baseName + '.acl" — likely cross-level graph contamination. Please close and reopen the Ground Painter.');
+      }
+    } else if (typeof snapshotText === 'string') {
+      const guidMatch = snapshotText.match(/"ArchiveGuid"\s*:\s*"([^"]+)"/);
+      const snapGuid = guidMatch ? guidMatch[1] : null;
+      if (snapGuid && baseName && snapGuid !== baseName) {
+        throw new Error('GroundPainter refusal: snapshot ArchiveGuid "' + snapGuid + '" does not match target file "' + baseName + '.acl" — likely cross-level graph contamination. Please close and reopen the Ground Painter.');
+      }
     }
   } catch (e) {
     // Only abort on the specific contamination error; other parse errors fall through
     if (e.message && e.message.includes('GroundPainter refusal')) throw e;
   }
-  const { patchSceneryBlob, _validateNoDegenerateEdges } = require('../src/acl/scenery_write');
-  const { writeAcl } = require('../src/acl/gatcarc');
+
   // Runway end-name guard: the two ends of the same physical runway cannot share
   // the same name (e.g. 27/27). The renderer save() checks this first, but the
   // MCP path bypasses it — reject here so a bad graph never reaches disk.
@@ -2484,41 +2626,129 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
       }
     }
   }
-  // Non-fatal problems found while patching (e.g. an entity whose node refs no
-  // longer resolve and was dropped) — reported back so the UI can surface them
-  // instead of silently losing geometry.
+
+  if (isV3) {
+    const diskHandle = openAclFile(filePath);
+    if (v3Snap && v3Snap.headerArchiveGuid && diskHandle.archiveGuid && v3Snap.headerArchiveGuid !== diskHandle.archiveGuid) {
+      throw new Error('GroundPainter refusal: snapshot ArchiveGuid "' + v3Snap.headerArchiveGuid + '" does not match target file "' + baseName + '.acl" — likely cross-level graph contamination. Please close and reopen the Ground Painter.');
+    }
+
+    const snap = diskHandle.readSceneryGraph();
+    const scenRes = diskHandle.applyEdits({ sceneryGraph: graph, sceneryMeta: meta });
+    const warnings = Array.isArray(scenRes && scenRes.warnings) ? [...scenRes.warnings] : [];
+    const savedGraph = diskHandle.readSceneryGraph();
+
+    if (!savedGraph || !savedGraph.graph || !Array.isArray(savedGraph.graph.runways) || savedGraph.graph.runways.length === 0) {
+      _throwZeroRunwayPainterError(graph, warnings);
+    }
+
+    let purgedFlights = [];
+    let refsRemapped = 0;
+    let flightSectionsRebuilt = false;
+    let keptFlightsForCsv = null;
+    try {
+      const preFlightData = diskHandle.readFlights(filePath);
+      const flights = Array.isArray(preFlightData && preFlightData.flights) ? preFlightData.flights : [];
+      const rec = _reconcileSceneryFlightReferences({ savedGraph, snap, graph, meta, flights });
+      purgedFlights = rec.purgedFlights;
+      refsRemapped = rec.refsRemapped;
+      if (rec.needsRebuild) {
+        flightSectionsRebuilt = true;
+        keptFlightsForCsv = rec.keptFlights;
+        const icaoMatch = String(filePath).match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+        const icao = icaoMatch ? icaoMatch[1] : '';
+        const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
+        diskHandle.applyEdits({ flights: rec.keptFlights, approachCache, filePath });
+        console.log('[GroundPainter] (v3) flight purge: ' + purgedFlights.length + ' flight(s) removed, ' + refsRemapped + ' reference(s) remapped');
+      }
+    } catch (purgeErr) {
+      throw new Error('Flight reference reconciliation failed: ' + (purgeErr && purgeErr.message ? purgeErr.message : purgeErr));
+    }
+
+    diskHandle.saveToFile(filePath, {
+      createBackup: Boolean(createBackup),
+      expectedSourceSha256: v3Snap && v3Snap.sourceSha256 ? v3Snap.sourceSha256 : undefined,
+    });
+    console.log('[GroundPainter] save-ground-painter-data (v3): wrote ' + filePath);
+
+    // Reload saved graph through the unified handler to verify output
+    const verifyHandle = openAclFile(filePath);
+    const verifiedScenery = verifyHandle.readSceneryGraph();
+    if (!verifiedScenery || !verifiedScenery.graph || !Array.isArray(verifiedScenery.graph.runways) || verifiedScenery.graph.runways.length === 0) {
+      throw new Error('Post-save verification failed: reloaded v3 scenery graph has no runways.');
+    }
+
+    // In-memory live cache refresh
+    try {
+      const m = String(filePath).match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+      const icaoForLive = m ? m[1] : null;
+      _invalidateLiveCache(filePath);
+      if (icaoForLive) {
+        try { _getOrComputeLiveScenery(filePath, icaoForLive); console.log('[GroundPainter] liveSceneryCache refreshed for', path.basename(filePath)); } catch (e) { console.warn('[GroundPainter] live cache refresh failed:', e.message); }
+      }
+    } catch (e) {
+      console.warn('[GroundPainter] live cache refresh outer failed:', e.message);
+    }
+
+    // Sync the game-side CSV when flights were purged or remapped
+    let csvSyncError = null;
+    if (flightSectionsRebuilt && keptFlightsForCsv) {
+      try {
+        const cfg = verifyHandle.readConfigResolved();
+        if (cfg && cfg.flightScheduleFile) {
+          const csvPath = path.join(path.dirname(filePath), cfg.flightScheduleFile + '.csv');
+          if (createBackup && fs.existsSync(csvPath)) fs.copyFileSync(csvPath, csvPath + '.bak');
+          exportGameCSV(keptFlightsForCsv, csvPath);
+        }
+      } catch (csvErr) {
+        csvSyncError = csvErr.message || String(csvErr);
+        console.error('[GroundPainter] CSV sync warning: ' + csvSyncError);
+      }
+    }
+
+    // Persist or clear background-image sidecar
+    try {
+      if (bg && bg.src) fs.writeFileSync(bgSidecarPath(filePath), JSON.stringify(bg), 'utf8');
+      else if (fs.existsSync(bgSidecarPath(filePath))) fs.unlinkSync(bgSidecarPath(filePath));
+    } catch (e) {
+      console.error('[GroundPainter] write bg sidecar failed: ' + (e && e.message));
+    }
+
+    // Sync painted taxiway geometry to geo_data.osm
+    let geoResult = { skipped: true };
+    try {
+      const { syncGeoDataForLevel } = require('../src/acl/geo_osm');
+      geoResult = syncGeoDataForLevel(verifyHandle, filePath, { createBackup: false });
+      if (!geoResult.ok && geoResult.error) console.error('[GroundPainter] geo_data sync failed: ' + geoResult.error);
+      else if (geoResult.ok) console.log('[GroundPainter] geo_data sync: +' + geoResult.addedNodes + ' nodes, +' + geoResult.addedWays + ' ways');
+    } catch (e) {
+      console.error('[GroundPainter] geo_data sync error: ' + (e && e.message));
+    }
+
+    if (warnings.length) console.warn('[GroundPainter] save warnings: ' + warnings.map((w) => (w && w.text) || String(w)).join(' | '));
+    return {
+      newText: verifyHandle.createPainterSnapshotToken(),
+      geoResult,
+      warnings,
+      purgedFlights,
+      refsRemapped,
+      ...(csvSyncError ? { partialFailure: true, warning: `ACL saved, but CSV sync failed: ${csvSyncError}` } : {}),
+    };
+  }
+
+  // ── Legacy / v1 / v2 Odin path ──────────────────────────────────
+  const { patchSceneryBlob, _validateNoDegenerateEdges } = require('../src/acl/scenery_write');
+  const { writeAcl } = require('../src/acl/gatcarc');
   const warnings = [];
   let newText = patchSceneryBlob(snapshotText, graph, null, meta, { warnings });
-  // Integrity guard (see _validateNoDegenerateEdges): refuse to write an .acl the
-  // game's taxiway graph will reject (duplicate taxiway keys / self-loop edges,
-  // e.g. "edge id=-10 has the same vertex index for both endpoints"). Refusing
-  // keeps the editor's saved file loadable instead of silently corrupting it.
   const integrityIssues = _validateNoDegenerateEdges(newText);
   if (integrityIssues.length > 0) {
     throw new Error('保存被拒绝：编辑后的滑行道会生成损坏的图结构（' + integrityIssues.join('；') + '）。请撤销最近的曲线/拖拽操作后重试。');
   }
-  // Runway guard: a level must keep at least one runway. The game resolves the
-  // embedded RunwayTimeline.InitialRunways at load and throws
-  // `ArgumentException: runway.initialRunways is empty` when the scenery has no
-  // runway (typically after the painter deleted every runway). The writer
-  // auto-adds newly drawn runways to InitialRunways, but a level with zero
-  // runways must never reach disk.
   const runwayCount = (newText.match(/"\$k"\s*:\s*"runway:[^"]+"/g) || []).length;
   if (runwayCount === 0) {
-    const graphCount = (graph && Array.isArray(graph.runways)) ? graph.runways.length : 0;
-    const graphNames = (graph && Array.isArray(graph.runways))
-      ? graph.runways.map((rw) => (Array.isArray(rw.names) ? rw.names.join('/') : (rw.physicalName || rw.name || '?'))).join(', ')
-      : '';
-    const warnSummary = warnings.length
-      ? '写入警告：' + warnings.map((w) => (w && w.text) || String(w)).join('；')
-      : '写入无警告（跑道可能在发送前已被机构修复丢弃，请查看渲染进程控制台 [GP] save 日志）';
-    throw new Error('保存被拒绝：关卡必须至少保留一条跑道（游戏要求 InitialRunways 非空）。请先绘制一条跑道再保存。'
-      + '（诊断：画布跑道 ' + graphCount + ' 条[' + graphNames + ']，写入结果跑道 0 条。' + warnSummary + '）');
+    _throwZeroRunwayPainterError(graph, warnings);
   }
-  // Corrupt-type auto-repair: patchSceneryBlob already repairs bare "$type": 0
-  // inside PK/NonPK entries (see _repairPkEntryTypes / _repairNpkEntryTypes).
-  // If any somehow remain (e.g. in an outer envelope), repair in-place so the
-  // save succeeds instead of throwing.
   if (/"\$type":\s*0(?=[,\}\]])/.test(newText)) {
     console.warn('[GroundPainter] remaining "$type": 0 detected post-patch — repairing in place');
     newText = newText.replace(/"\$type":\s*0(?=[,\}\]])/g, '"$type": "99|Repaired.Fallback, GroundATC.Core"');
@@ -2526,7 +2756,6 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   if (createBackup && fs.existsSync(filePath)) fs.copyFileSync(filePath, filePath + '.bak');
   writeAcl(filePath, newText, { format: 'auto', originalText: snapshotText });
   console.log('[GroundPainter] save-ground-painter-data: wrote ' + filePath);
-  // ── In-memory live cache refresh (v2: fully dynamic, no cache.json) ──
   try {
     const m = String(filePath).match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
     const icaoForLive = m ? m[1] : null;
@@ -2539,217 +2768,48 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   } catch (e) {
     console.warn('[GroundPainter] live cache refresh outer failed:', e.message);
   }
-  // ── Flight-reference reconciliation (stands/runways deleted or renamed) ──
-  // Removing a stand or runway in the Ground Painter strands every flight parked
-  // on that stand or assigned to that runway; renaming one leaves flights under
-  // the old name. Saved as-is, the .acl carries flight-plan entries referencing
-  // scenery the game can no longer resolve. Remap renamed references, purge the
-  // flights whose references no longer resolve, and rebuild the flight sections
-  // through the regular save pipeline (generateFullAcl) so frames, jetway
-  // docking state and EventLog entries that pointed at the purged flights go
-  // with them.
-  // The truth for "which scenery exists" is the SAVED FILE, not the in-memory
-  // graph: the writer's dangling-ref gate may legitimately drop entities the
-  // graph still shows, and a purge that trusted the graph would keep flights
-  // pointing at scenery that is no longer in the file. A reference is only
-  // dangling if it existed in the pre-save snapshot and no longer exists in the
-  // saved file (so garbage that predates the edit is left alone, and a
-  // re-created stand with the same name keeps its flights).
   let purgedFlights = [];
   let refsRemapped = 0;
   let flightSectionsRebuilt = false;
+  let csvSyncError = null;
   try {
     const { buildSceneryGraph } = require('../src/acl/scenery_graph');
-    const norm = (v) => String(v || '').trim().replace(/^0+/, '');
-    const savedGraph = buildSceneryGraph(readAclText(filePath));
-    const curStandNames = new Set();
-    for (const st of (savedGraph.graph.stands || [])) {
-      for (const nm of [st.identifier, st.name]) { const v = norm(nm); if (v) curStandNames.add(v); }
-    }
-    const curRunwayEnds = new Set();
-    for (const rw of (savedGraph.graph.runways || [])) {
-      if (Array.isArray(rw.names)) for (const n of rw.names) { const v = norm(n); if (v) curRunwayEnds.add(v); }
-      if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) { const v = norm(n); if (v) curRunwayEnds.add(v); }
-    }
+    const savedGraph = openAclFile(filePath).readSceneryGraph();
     const snap = buildSceneryGraph(snapshotText);
-    const snapStandNames = new Set();
-    for (const st of (snap.graph.stands || [])) {
-      for (const nm of [st.identifier, st.name]) { const v = norm(nm); if (v) snapStandNames.add(v); }
-    }
-    const snapRunwayEnds = new Set();
-    for (const rw of (snap.graph.runways || [])) {
-      if (Array.isArray(rw.names)) for (const n of rw.names) { const v = norm(n); if (v) snapRunwayEnds.add(v); }
-      if (rw.physicalName) for (const n of String(rw.physicalName).split('/')) { const v = norm(n); if (v) snapRunwayEnds.add(v); }
-    }
-    // STAR/approach route names present in the saved file vs. the pre-save
-    // snapshot. An arrival leg whose STAR no longer resolves makes the game throw
-    // NullReferenceException in RuntimeAircraftSpawnService.SpawnFlyApproachingAircraft
-    // (the route can disappear when its runway is renamed away or the procedure is
-    // deleted), so such a leg is purged exactly like a removed stand/runway.
-    const procNamesOf = (g) => {
-      const s = new Set();
-      for (const p of (g.graph.procedures || [])) { const v = norm(p.name); if (v) s.add(v); }
-      return s;
-    };
-    const curStarNames = procNamesOf(savedGraph);
-    const snapStarNames = procNamesOf(snap);
-    // STAR validity is PER RUNWAY: the game resolves `FlightPlan.STAR` among the
-    // routes of the flight's runway (`Runways[rwy].Routes`), so a STAR that still
-    // exists on another runway is not enough. Map normalized end name → set of
-    // normalized procedure names for both the saved file and the snapshot; a leg
-    // whose (STAR, runway) pair was valid before but not after is purged.
-    const procsByRunwayOf = (g) => {
-      const m = new Map();
-      for (const p of (g.graph.procedures || [])) {
-        const rw = norm(p.runwayName), nm = norm(p.name);
-        if (!rw || !nm) continue;
-        if (!m.has(rw)) m.set(rw, new Set());
-        m.get(rw).add(nm);
-      }
-      return m;
-    };
-    const curProcsByRunway = procsByRunwayOf(savedGraph);
-    const snapProcsByRunway = procsByRunwayOf(snap);
-    // Renamed runway ends: surviving runways pair with their original entries by
-    // index (meta arrays are index-parallel — the same pairing the writer uses
-    // for physPatchMap). Walk chains safely (a rename cycle resolves to itself).
-    const runwayRename = new Map(); // normalized old end → new end (exact)
-    if (Array.isArray(meta && meta.runwayOrigInfo) && Array.isArray(meta.runwayOrigPk)) {
-      for (let i = 0; i < graph.runways.length && i < meta.runwayOrigInfo.length && i < meta.runwayOrigPk.length; i++) {
-        if (meta.runwayOrigPk[i] == null) continue;
-        const orig = meta.runwayOrigInfo[i];
-        const cur = graph.runways[i];
-        if (!orig || !cur || !Array.isArray(orig.names) || !Array.isArray(cur.names)) continue;
-        for (let j = 0; j < 2 && j < orig.names.length && j < cur.names.length; j++) {
-          const o = norm(orig.names[j]), n = String(cur.names[j] || '').trim();
-          if (o && n && o !== norm(n)) runwayRename.set(o, n);
-        }
-      }
-    }
-    // A rename target must actually exist in the saved scenery — if the writer
-    // dropped that runway, remapping onto it would trade one dangling reference
-    // for another; the leg is purged instead.
-    for (const [o, n] of [...runwayRename]) {
-      if (!curRunwayEnds.has(norm(n))) runwayRename.delete(o);
-    }
-    // Renamed stands: match by nose position (renames don't move the stand).
-    // Only an Identifier change re-keys the stand — flight plans and aircraft
-    // reference stands by Identifier (the Name is the display name, see
-    // _synthesizeStand), so a display-only rename never touches flights.
-    const standRename = new Map(); // normalized old identifier → new identifier (exact)
-    const snapStandByNose = new Map();
-    for (const st of (snap.graph.stands || [])) {
-      const nose = snap.graph.nodes[st.noseIdx];
-      if (!nose) continue;
-      const key = nose.x.toFixed(4) + ',' + nose.z.toFixed(4);
-      if (!snapStandByNose.has(key)) snapStandByNose.set(key, st);
-    }
-    for (const st of (graph.stands || [])) {
-      const nose = (graph.nodes || [])[st.noseIdx];
-      if (!nose) continue;
-      const key = nose.x.toFixed(4) + ',' + nose.z.toFixed(4);
-      const origSt = snapStandByNose.get(key);
-      if (!origSt) continue;
-      const newIdent = String(st.identifier || '').trim();
-      if (origSt.identifier && newIdent && norm(origSt.identifier) !== norm(newIdent)) {
-        standRename.set(norm(origSt.identifier), newIdent);
-      }
-    }
-    // Same target-existence guard as runway renames (see above).
-    for (const [o, n] of [...standRename]) {
-      if (!curStandNames.has(norm(n))) standRename.delete(o);
-    }
-    const remap = (value, map) => {
-      if (!value || !map.size) return value;
-      let key = norm(value);
-      if (!map.has(key)) return value;
-      const seen = new Set([key]);
-      let cur = map.get(key);
-      while (cur && map.has(norm(cur)) && !seen.has(norm(cur))) { seen.add(norm(cur)); cur = map.get(norm(cur)); }
-      return cur != null ? String(cur) : value;
-    };
-    // The saved file's own flight set is the purge baseline — the scenery patch
-    // does not touch flight sections, so the flight entries on disk right now
-    // are exactly the pre-save ones.
     const data = loadFlights(filePath);
     const flights = Array.isArray(data.flights) ? data.flights : [];
-    for (const f of flights) {
-      if (f.Runway) {
-        const mapped = remap(f.Runway, runwayRename);
-        if (mapped !== f.Runway) { f.Runway = mapped; refsRemapped++; }
-      }
-      if (f.Stand) {
-        const mapped = remap(f.Stand, standRename);
-        if (mapped !== f.Stand) { f.Stand = mapped; refsRemapped++; }
-      }
-    }
-    const regKey = (f) => String(f._Registration || f._fpGuid || f.CallSign || '');
-    const danglingLegs = new Set();
-    const starGoneOf = (f) => !!f.Airway && !curStarNames.has(norm(f.Airway)) && snapStarNames.has(norm(f.Airway));
-    const starOffRunwayOf = (f) => {
-      if (!f.Airway || !f.Runway) return false;
-      const rw = norm(f.Runway), st = norm(f.Airway);
-      const sn = snapProcsByRunway.get(rw);
-      if (!sn || !sn.has(st)) return false; // never valid for this runway — not ours to purge
-      const cur = curProcsByRunway.get(rw);
-      return !(cur && cur.has(st));
-    };
-    for (const f of flights) {
-      const standGone = !!f.Stand && !curStandNames.has(norm(f.Stand)) && snapStandNames.has(norm(f.Stand));
-      const runwayGone = !!f.Runway && !curRunwayEnds.has(norm(f.Runway)) && snapRunwayEnds.has(norm(f.Runway));
-      if (standGone || runwayGone || starGoneOf(f) || starOffRunwayOf(f)) danglingLegs.add(regKey(f));
-    }
-    if (danglingLegs.size || refsRemapped > 0) {
-      purgedFlights = flights
-        .filter((f) => danglingLegs.has(regKey(f)))
-        .map((f) => ({
-          CallSign: f.CallSign || '', Registration: f._Registration || '',
-          Stand: f.Stand || '', Runway: f.Runway || '',
-          STAR: f.Airway || '',
-          reason: (f.Stand && !curStandNames.has(norm(f.Stand)) && snapStandNames.has(norm(f.Stand))) ? 'stand removed or renamed away'
-            : (f.Runway && !curRunwayEnds.has(norm(f.Runway)) && snapRunwayEnds.has(norm(f.Runway))) ? 'runway removed or renamed away'
-              : starGoneOf(f) ? 'STAR procedure removed or renamed away'
-                : starOffRunwayOf(f) ? 'STAR variant removed or renamed away for this runway' : 'same aircraft leg removed',
-        }));
-      const keptFlights = sortFlightsChronologically(flights.filter((f) => !danglingLegs.has(regKey(f))));
+    const rec = _reconcileSceneryFlightReferences({ savedGraph, snap, graph, meta, flights });
+    purgedFlights = rec.purgedFlights;
+    refsRemapped = rec.refsRemapped;
+    if (rec.needsRebuild) {
       flightSectionsRebuilt = true;
-      // Full flight rebuild for the purged/remapped set — same pipeline as the
-      // regular Ctrl+S save (rebuilds flight-plan StaticItems, frame runtime
-      // entities, jetway docking and EventLog; preserves the scenery blob and
-      // weather/wind/runway timeline sections).
+      const keptFlights = rec.keptFlights;
       const icaoMatch = filePath.match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
       const icao = icaoMatch ? icaoMatch[1] : '';
       const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
       generateFullAcl(filePath, keptFlights, null, null, null, null, approachCache, null, null);
       console.log('[GroundPainter] flight purge: ' + purgedFlights.length + ' flight(s) removed, ' + refsRemapped + ' reference(s) remapped');
-      // Sync the game-side CSV with the kept flight set (best-effort, mirrors save-acl).
       try {
-        const cfg = resolveConfigTime(readAclText(filePath));
+        const cfg = openAclFile(filePath).readConfigResolved();
         if (cfg && cfg.flightScheduleFile) {
           const csvPath = path.join(path.dirname(filePath), cfg.flightScheduleFile + '.csv');
           if (createBackup && fs.existsSync(csvPath)) fs.copyFileSync(csvPath, csvPath + '.bak');
           exportGameCSV(keptFlights, csvPath);
         }
       } catch (csvErr) {
-        console.error('[GroundPainter] CSV sync warning: ' + csvErr.message);
+        csvSyncError = csvErr.message || String(csvErr);
+        console.error('[GroundPainter] CSV sync warning: ' + csvSyncError);
       }
     }
   } catch (purgeErr) {
-    // A refused save is safer than a file with dangling flight references.
     throw new Error('Flight reference reconciliation failed: ' + (purgeErr && purgeErr.message ? purgeErr.message : purgeErr));
   }
-  // Persist the background-image sidecar so the level reopens with the exact image
-  // placement (or remove it when the user cleared the image).
   try {
     if (bg && bg.src) fs.writeFileSync(bgSidecarPath(filePath), JSON.stringify(bg), 'utf8');
     else if (fs.existsSync(bgSidecarPath(filePath))) fs.unlinkSync(bgSidecarPath(filePath));
   } catch (e) {
     console.error('[GroundPainter] write bg sidecar failed: ' + (e && e.message));
   }
-  // The game renders the airport ground from geo_data.osm (Config.geoDataFile),
-  // not from the ACL's PKStaticEntities. Push the painted taxiway geometry there
-  // too so editor-created taxiways show up in-game. Failure here must NOT undo a
-  // successful ACL save, so it is logged and returned as a non-fatal field.
   let geoResult = { skipped: true };
   try {
     const { syncGeoDataForLevel } = require('../src/acl/geo_osm');
@@ -2760,11 +2820,15 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
     console.error('[GroundPainter] geo_data sync error: ' + (e && e.message));
   }
   if (warnings.length) console.warn('[GroundPainter] save warnings: ' + warnings.map((w) => (w && w.text) || String(w)).join(' | '));
-  // When the flight purge rebuilt the flight sections on disk after the scenery
-  // write, newText is stale — return the final on-disk text so the renderer's
-  // snapshot reflects it (a stale snapshot would revert the purge next save).
-  const finalText = flightSectionsRebuilt ? readAclText(filePath) : newText;
-  return { newText: finalText, geoResult, warnings, purgedFlights, refsRemapped };
+  const finalText = flightSectionsRebuilt ? openAclFile(filePath).createPainterSnapshotToken() : newText;
+  return {
+    newText: finalText,
+    geoResult,
+    warnings,
+    purgedFlights,
+    refsRemapped,
+    ...(csvSyncError ? { partialFailure: true, warning: `ACL saved, but CSV sync failed: ${csvSyncError}` } : {}),
+  };
 });
 
 ipcMain.handle('save-cached-lang', (_event, lang) => {
@@ -2811,37 +2875,32 @@ ipcMain.handle('open-external', async (_event, url) => {
 ipcMain.handle('load-timelines', async (_event, aclPath) => {
   try {
     const levelsDir = path.dirname(aclPath);
-
-    // Parse timelines directly from ACL (single source of truth: resolveConfigTime applies CDT override)
-    const aclText = readAclText(aclPath);
-    const config = resolveConfigTime(aclText);
+    const handle = openAclFile(aclPath);
+    const config = handle.readConfigResolved();
     console.log('[IPC] load-timelines: config from ACL ->', config ? ('startTime=' + config.startTime + ' endTime=' + config.endTime + ' runwayTimelineFile=' + config.runwayTimelineFile) : 'NULL');
-    const weatherTimeline = _parseWeatherFrames(aclText);
-    const windTimeline = _parseWindFrames(aclText);
-    const runwayTimeline = _parseRunwayTimeline(aclText);
+    const { weatherTimeline, windTimeline, runwayTimeline, windSpeedUnit } = handle.readTimelines();
 
-    // Read windSpeedUnit from airport_config.json (default to 'knots')
-    let windSpeedUnit = 'knots';
-    try {
-      const airportConfigPath = path.join(path.dirname(levelsDir), 'airport_config.json');
-      if (fs.existsSync(airportConfigPath)) {
-        const acJson = JSON.parse(fs.readFileSync(airportConfigPath, 'utf-8'));
-        if (acJson.windSpeedUnit) windSpeedUnit = acJson.windSpeedUnit;
-        console.log('[IPC] load-timelines: windSpeedUnit=' + windSpeedUnit + ' from airport_config.json');
-      }
-    } catch (e) { /* keep default */ }
+    const weatherCandidate = path.join(levelsDir, 'weather_timeline.json');
+    const windCandidate = path.join(levelsDir, 'wind_timeline.json');
+    const isV3 = handle.format === 'gatcarc4-v3';
+    const weatherPath = (!isV3 || fs.existsSync(weatherCandidate)) ? weatherCandidate : null;
+    const windPath = (!isV3 || fs.existsSync(windCandidate)) ? windCandidate : null;
+    const rwyCandidate = (config && config.runwayTimelineFile)
+      ? path.join(levelsDir, config.runwayTimelineFile + '.json')
+      : null;
+    const runwayTimelinePath = rwyCandidate && (!isV3 || fs.existsSync(rwyCandidate))
+      ? rwyCandidate
+      : null;
 
     return {
       success: true,
       weatherTimeline,
-      weatherPath: path.join(levelsDir, 'weather_timeline.json'),
+      weatherPath,
       windTimeline,
-      windPath: path.join(levelsDir, 'wind_timeline.json'),
+      windPath,
       runwayTimeline,
-      runwayTimelinePath: (config && config.runwayTimelineFile)
-        ? path.join(levelsDir, config.runwayTimelineFile + '.json')
-        : null,
-      windSpeedUnit,
+      runwayTimelinePath,
+      windSpeedUnit: windSpeedUnit || 'knots',
     };
   } catch (err) {
     return { success: false, error: err.message };
@@ -2887,9 +2946,24 @@ ipcMain.handle('save-wind-timeline', async (_event, { filePath, data }) => {
 // ─── IPC: Load audio callsigns for an airport (en + zh merged) ─────
 
 ipcMain.handle('load-audio-callsigns', async (_event, rootPath, airportIcao) => {
-  // Read from airport cache (built during init-airport-cache / refresh-root-scan)
+  const empty = { byAirline: {}, allCallsigns: [], allAirlines: [] };
+  if (!airportIcao) return empty;
   const cached = airportCache && airportCache[airportIcao];
-  return cached?.audioCallsigns || { byAirline: {}, allCallsigns: [], allAirlines: [] };
+  if (!rootPath) return cached?.audioCallsigns || empty;
+
+  const aclPaths = _listAirportAclPaths(rootPath, airportIcao);
+  const mode = resolveAirportAudioMode(rootPath, airportIcao, aclPaths);
+  const sig = computeAudioSourceSignature(rootPath, airportIcao, mode);
+  if (cached && cached.audioCallsigns && cached.audioSourceSignature === sig) {
+    return cached.audioCallsigns;
+  }
+  const { audioCallsigns } = _computeAirportAudioForMode(rootPath, airportIcao, mode, cached?.dropdownValues || null);
+  if (cached) {
+    cached.audioCallsigns = audioCallsigns;
+    cached.audioMode = mode;
+    cached.audioSourceSignature = sig;
+  }
+  return audioCallsigns || empty;
 });
 
 // ─── IPC: Save runway_timeline*.json ─────────────────────
@@ -3042,8 +3116,9 @@ ipcMain.handle('get-aircraft-positions', async (_event, icao, arrivals, saveSec)
 
 ipcMain.handle('reload-acl', async (_event, filePath) => {
   try {
-    const data = loadFlights(filePath);
-    return { success: true, path: filePath, ...data };
+    const loaded = loadLevelForEditor(filePath);
+    const { handle: _h, format: _fmt, removedCount: _rc, ...payload } = loaded;
+    return { success: true, path: filePath, ...payload };
   } catch (err) {
     return { success: false, error: err.message };
   }

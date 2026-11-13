@@ -12,6 +12,7 @@
  */
 import {
   makeEmptyFlight, randomPick, pickVoiceForLanguage, defaultLanguageForAirport,
+  pickV3LanguageVoiceAndNumber,
 } from '../../store/flightDefaults.js';
 
 const MINUTES_PER_DAY = 24 * 60;
@@ -227,8 +228,16 @@ export function mapAviationstackFlight(raw, ctx) {
   const timeStr = fitted || minutesToTime(schedMin);
 
   // ── Language / Voice ──────────────────────────────────────
-  const language = defaultLanguageForAirport(icao);
-  const voice = pickVoiceForLanguage(vals, language);
+  let language;
+  let voice;
+  if (vals._v3Audio) {
+    const picked = pickV3LanguageVoiceAndNumber(airlineCode, number, vals, icao);
+    language = picked.language;
+    voice = picked.voice;
+  } else {
+    language = defaultLanguageForAirport(icao);
+    voice = pickVoiceForLanguage(vals, language);
+  }
 
   const flight = {
     ...makeEmptyFlight(),

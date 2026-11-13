@@ -137,6 +137,11 @@ describe('derived accessors', () => {
     expect(gp.voicesDir(root)).toBe(path.join(sa, 'Voices'));
     expect(gp.voiceCatalogPath(root)).toBe(path.join(sa, 'Voices', 'voice_catalog.json'));
     expect(gp.airlineCountryRegistryPath(root)).toBe(path.join(sa, 'airline_country_registry.cfg'));
+    expect(gp.radioClipDurationsPath(root)).toBe(path.join(sa, 'radio_clip_durations.json'));
+    expect(gp.airportDir(root, 'ZSJN')).toBe(path.join(sa, 'Airports', 'ZSJN'));
+    expect(gp.radioChannelConfigPath(root, 'ZSJN')).toBe(
+      path.join(sa, 'Airports', 'ZSJN', 'radio_channel_config.json'),
+    );
     expect(gp.mainMenuVideosDir(root)).toBe(path.join(sa, 'MainMenuVideos'));
     expect(gp.builtinLiveryDir(root)).toBe(
       path.join(sa, 'BuiltInAircraftLivery', 'AircraftDefaultLivery'),

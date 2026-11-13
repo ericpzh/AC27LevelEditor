@@ -1,0 +1,3 @@
+registration,arrivalCallSign,originAirport,landingTime,arrivalStand,arrivalRunway,arrivalSTAR,departureCallSign,destinationAirport,offBlockTime,departureStand,departureRunway,airline,aircraftType,voice,language
+NEW-001,,,,,,,CSN1234,ZBAA,08:00:00,2,01,AAL,AIRBUS A-319ceo,CN-Captain-Young,zh
+NEW-002,CES5678,ZBAA,08:05:00,1,01,WFG91A,,,,,,AAL,AIRBUS A-319ceo,CN-Captain-Young,zh

@@ -13,7 +13,7 @@
  * All functions are pure: they take inputs and return computed updates.
  * The caller (appStore.updateFlight) merges them into the flight object.
  */
-import { pickFirstFlightNumber } from './flightDefaults.js';
+import { pickFirstFlightNumber, pickV3LanguageVoiceAndNumber } from './flightDefaults.js';
 import { languageForAirline } from '../utils/airlineLanguage.js';
 
 /**
@@ -107,25 +107,36 @@ export function cascadeRunwayChange(newRunway, flight, airportValues) {
  * @param {object} airportValues - airportValues[currentAirport]
  * @returns {{ Voice: string } | {}}
  */
-export function cascadeLanguageChange(newLanguage, airportValues) {
-  const langOf = (airportValues || {})._voiceLanguages || {};
-  const pool = (airportValues || {}).Voice || [];
+export function cascadeLanguageChange(newLanguage, airportValues, flight = null) {
+  const vals = airportValues || {};
+  const langOf = vals._voiceLanguages || {};
+  const pool = vals.Voice || [];
   if (!newLanguage || pool.length === 0 || Object.keys(langOf).length === 0) return {};
   const matching = pool.filter((v) => langOf[v] === newLanguage);
   const unknown = pool.filter((v) => !langOf[v]);
   const next = matching.length > 0 ? matching : (unknown.length > 0 ? unknown : pool);
-  return next.length > 0 ? { Voice: next[0] } : {};
+  if (next.length === 0) return {};
+
+  if (vals._v3Audio?.hasClipIndex && flight?.CallSign) {
+    const cs = String(flight.CallSign).trim();
+    const withAlloc = next.find((v) => (vals._v3Audio.allocatableCallsignsByVoice?.[v] || []).includes(cs));
+    if (withAlloc) return { Voice: withAlloc };
+    const withClip = next.find((v) => (vals._v3Audio.voiceCallsigns?.[v] || []).includes(cs));
+    if (withClip) return { Voice: withClip };
+  }
+  return { Voice: next[0] };
 }
 
 /**
  * When the airline (callsign prefix) changes, cascade Language (and Voice) to
- * the captain language the game's CallsignService requires: CN carriers speak
- * zh, every other carrier speaks en. A mismatch makes the game throw
- * "failed to allocate callsign ... for crew voice ..." at level load
- * (CAL2017 paired with a zh `CN-Captain-Young`).
+ * a compatible language/voice pair.
  *
- * Returns {} when the airline is unknown to the registry or the language is
- * already correct, so a caller can safely merge the result.
+ * - On GATCARC4 v3 (`vals._v3Audio` present): if the flight's existing
+ *   `(Language, Voice)` already allocates the new `CallSign` against the
+ *   airport's clip index, keep it untouched; otherwise pick a compatible
+ *   `(Language, Voice)` from `vals._v3Audio`.
+ * - On legacy/v2 (`vals._v3Audio` absent): CN carriers speak `zh` and every
+ *   other carrier speaks `en` per `airline_country_registry`.
  *
  * @param {string} newCode - the new 3-letter airline code
  * @param {object} flight - the flight AFTER preliminary updates
@@ -134,10 +145,34 @@ export function cascadeLanguageChange(newLanguage, airportValues) {
  */
 export function cascadeAirlineLanguage(newCode, flight, airportValues) {
   const vals = airportValues || {};
+  if (vals._v3Audio) {
+    const v3 = vals._v3Audio;
+    const curLang = String(flight?.Language || '').trim();
+    const curVoice = String(flight?.Voice || '').trim();
+    const cs = String(flight?.CallSign || '').trim();
+    const langAllowed = !Array.isArray(v3.knownChannelLanguages)
+      || v3.knownChannelLanguages.length === 0
+      || v3.knownChannelLanguages.includes(curLang);
+    if (
+      curLang &&
+      curVoice &&
+      langAllowed &&
+      (!v3.hasClipIndex || (v3.allocatableCallsignsByVoice?.[curVoice] || []).includes(cs))
+    ) {
+      return {};
+    }
+    const flightNum = cs.startsWith(newCode) ? cs.slice(newCode.length) : cs.slice(3);
+    const picked = pickV3LanguageVoiceAndNumber(newCode, flightNum, vals, v3.icao || '');
+    const result = {};
+    if (picked.language && picked.language !== curLang) result.Language = picked.language;
+    if (picked.voice && picked.voice !== curVoice) result.Voice = picked.voice;
+    return result;
+  }
+
   const expected = languageForAirline(newCode, vals._airlineCountries, vals.Language);
   if (!expected || expected === (flight.Language || '')) return {};
   const result = { Language: expected };
-  const voiceUpdates = cascadeLanguageChange(expected, vals);
+  const voiceUpdates = cascadeLanguageChange(expected, vals, flight);
   if (voiceUpdates.Voice) result.Voice = voiceUpdates.Voice;
   return result;
 }
