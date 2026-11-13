@@ -40,7 +40,27 @@ const {
   decodePosition3ToGu,
   encodeGuToPosition3,
 } = require('./q32');
+const { RawJsonNumber } = require('./lossless_json');
+const { validateV3PushbackPaths, loadWheelBasesNearLevel } = require('./pushback_validation');
 const readers = require('./readers');
+
+function cloneWireValue(val, seen = new WeakMap()) {
+  if (val === null || typeof val !== 'object') return val;
+  if (val instanceof RawJsonNumber) return new RawJsonNumber(val.raw);
+  if (seen.has(val)) return seen.get(val);
+  if (Array.isArray(val)) {
+    const out = new Array(val.length);
+    seen.set(val, out);
+    for (let i = 0; i < val.length; i++) out[i] = cloneWireValue(val[i], seen);
+    return out;
+  }
+  const out = {};
+  seen.set(val, out);
+  for (const k of Object.keys(val)) {
+    out[k] = cloneWireValue(val[k], seen);
+  }
+  return out;
+}
 
 const MANAGED_PK_TYPES = new Set([
   'taxiway-node',
@@ -645,7 +665,7 @@ function reconcileRuntimeFramesForScenery(
   }
 }
 
-function applySceneryGraphEdits(container, editIntent) {
+function applySceneryGraphEdits(container, editIntent, context = {}) {
   const graph = editIntent.sceneryGraph;
   const mm = editIntent.sceneryMeta || {};
   if (!graph || typeof graph !== 'object') {
@@ -658,15 +678,19 @@ function applySceneryGraphEdits(container, editIntent) {
   };
 
   const schema = getSchemaForHash(container.header.schemaHash);
-  const preStaticIdx = indexDocumentGraph(container.staticData, schema.roots.static, schema);
-  const pkDict = resolveGraphNode(container.staticData.PKStaticEntities, preStaticIdx);
-  const siDict = resolveGraphNode(container.staticData.StaticItems, preStaticIdx);
-  const npkList = Array.isArray(container.staticData.NonPKStaticEntities)
-    ? container.staticData.NonPKStaticEntities
+  const preStaticData = container.staticData;
+  const workingStaticData = cloneWireValue(preStaticData);
+  const preStaticIdx = indexDocumentGraph(workingStaticData, schema.roots.static, schema);
+  const pkDict = resolveGraphNode(workingStaticData.PKStaticEntities, preStaticIdx);
+  const siDict = resolveGraphNode(workingStaticData.StaticItems, preStaticIdx);
+  const npkList = Array.isArray(workingStaticData.NonPKStaticEntities)
+    ? workingStaticData.NonPKStaticEntities
     : [];
   if (!pkDict || !siDict) {
     throw new Error('applySceneryGraphEdits: StaticData PKStaticEntities / StaticItems missing');
   }
+
+  const directlyAffectedStandIdents = new Set();
 
   // Materialize top-level entries with their resolved JS objects
   const origPkEntries = dictEntries(pkDict).map(([pk, rawVal]) => [pk, resolveGraphNode(rawVal, preStaticIdx)]);
@@ -966,6 +990,7 @@ function applySceneryGraphEdits(container, editIntent) {
             obj.TailPosition = nextTail;
             const nextPbs = pbObjs.map(resolveReplacementTaxiNode).filter(Boolean);
             obj.PushbackLimitPositions = makeTypedArray('ContextCross.Models.TaxiwayNode[]', nextPbs);
+            directlyAffectedStandIdents.add(String(obj.Identifier || pk.slice(6)).trim());
           }
           refGateDirty = true;
         }
@@ -1181,9 +1206,11 @@ function applySceneryGraphEdits(container, editIntent) {
         if (twin) {
           obj.Reference = twin;
           refGateDirty = true;
+          if (obj.RelatedStand) directlyAffectedStandIdents.add(String(obj.RelatedStand).trim());
         } else {
           pkToDelete.add(pk);
           droppedTaxiNavCount++;
+          if (obj.RelatedStand) directlyAffectedStandIdents.add(String(obj.RelatedStand).trim());
         }
       }
     }
@@ -1443,12 +1470,13 @@ function applySceneryGraphEdits(container, editIntent) {
 
   if (!staticDirty) {
     const metaChanged = reconcileMetaDataRunwayTimeline(container, oldNameToNewName, liveRunwayEnds, newRunwayEnds);
-    const staticAuth = indexStaticAuthorities(container.staticData, schema, preStaticIdx);
+    const staticAuth = indexStaticAuthorities(container.staticData, schema);
+    const untouchedSiDict = resolveGraphNode(container.staticData.StaticItems, staticAuth.staticGraph);
     const validPhysKeys = new Set(
-      dictEntries(siDict).map(([k]) => k).filter((k) => k.startsWith('physical-runway:')),
+      dictEntries(untouchedSiDict).map(([k]) => k).filter((k) => k.startsWith('physical-runway:')),
     );
     const validJetwayKeys = new Set(
-      dictEntries(siDict).map(([k]) => k).filter((k) => k.startsWith('jetway:')),
+      dictEntries(untouchedSiDict).map(([k]) => k).filter((k) => k.startsWith('jetway:')),
     );
     reconcileRuntimeFramesForScenery(
       container,
@@ -1504,11 +1532,30 @@ function applySceneryGraphEdits(container, editIntent) {
         obj.Name = airwayNodeNamePatch.get(origPk);
       }
     } else if (pref === 'stand') {
-      if (standNamePatch.has(origPk)) obj.Name = standNamePatch.get(origPk);
+      const stIdent = String(obj.Identifier || origPk.slice(6)).trim();
+      if (standNamePatch.has(origPk)) {
+        obj.Name = standNamePatch.get(origPk);
+        if (stIdent) directlyAffectedStandIdents.add(stIdent);
+      }
       if (standPropsPatch.has(origPk)) {
         const p = standPropsPatch.get(origPk);
         obj.ParkingType = p.parkingType;
         obj.EgressType = p.egressType;
+        if (stIdent) directlyAffectedStandIdents.add(stIdent);
+      }
+      if (stIdent && movedNodeObjs.size > 0) {
+        const noseNode = resolveGraphNode(obj.NosePosition, preStaticIdx);
+        const tailNode = resolveGraphNode(obj.TailPosition, preStaticIdx);
+        const pbNodes = (unwrapTypedArray(obj.PushbackLimitPositions, preStaticIdx) || [])
+          .map((r) => resolveGraphNode(r, preStaticIdx))
+          .filter(Boolean);
+        if (
+          movedNodeObjs.has(noseNode) ||
+          movedNodeObjs.has(tailNode) ||
+          pbNodes.some((n) => movedNodeObjs.has(n))
+        ) {
+          directlyAffectedStandIdents.add(stIdent);
+        }
       }
     } else if (pref === 'taxiway-segment') {
       if (segNamePatch.has(origPk)) {
@@ -1551,11 +1598,13 @@ function applySceneryGraphEdits(container, editIntent) {
         const mv = movedNodeObjs.get(tailNode);
         if (mv) {
           obj.Position = encodeUpdatedPosition3(obj.Position, mv.x, mv.z);
+          if (obj.RelatedStand) directlyAffectedStandIdents.add(String(obj.RelatedStand).trim());
         }
       } else if (Number(obj.Type) === 3 && refTarget) {
         const mv = movedNodeObjs.get(refTarget);
         if (mv) {
           obj.Position = encodeUpdatedPosition3(obj.Position, mv.x, mv.z);
+          if (obj.RelatedStand) directlyAffectedStandIdents.add(String(obj.RelatedStand).trim());
         }
       }
     }
@@ -1726,6 +1775,7 @@ function applySceneryGraphEdits(container, editIntent) {
     }
 
     const standPk = `stand:${ident}`;
+    directlyAffectedStandIdents.add(ident);
     const standObj = {
       $type: 'ContextCross.Models.Stand',
       EgressType: stand.egressType != null ? Number(stand.egressType) : 0,
@@ -2182,7 +2232,7 @@ function applySceneryGraphEdits(container, editIntent) {
       NodePositions: makeReactive(area.points.map((p) => encodeGuToPosition3({ x: p.x, y: 0, z: p.z }))),
     });
   }
-  container.staticData.NonPKStaticEntities = nextNpkList;
+  workingStaticData.NonPKStaticEntities = nextNpkList;
 
   // ─── 10. Reconcile `StaticData.StaticItems` (`physical-runway:*`, `jetway:*`, `flight-plan:*`) ───
   // Map every live physical runway name -> exact shared `PhysicalRunwayStaticItem` JS object
@@ -2230,12 +2280,22 @@ function applySceneryGraphEdits(container, editIntent) {
   }
 
   // Normalize `StaticData` graph so every `$id`/`id`/`$ref` is clean & collision-free
-  container.staticData = normalizeDocumentGraph(
-    container.staticData,
+  const nextStaticData = normalizeDocumentGraph(
+    workingStaticData,
     schema.roots.static,
     schema,
     preStaticIdx,
   );
+
+  // Validate final rebuilt v3 pushback paths & stand navigation points BEFORE mutating `container`
+  const resolvedFilePath = editIntent.filePath || context.filePath || null;
+  validateV3PushbackPaths(nextStaticData, schema, {
+    preStaticData,
+    directlyAffectedStandIdents,
+    wheelBaseByAircraft: editIntent.wheelBaseByAircraft || loadWheelBasesNearLevel(resolvedFilePath),
+  });
+
+  container.staticData = nextStaticData;
   container.dirtyStaticData = true;
 
   // ─── 11. Cascade into `MetaData.RunwayTimeline` & `RuntimeData` frames ───

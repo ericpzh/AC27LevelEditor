@@ -140,6 +140,32 @@ function buildSyntheticV3Container(overrides = {}) {
     PK: 'taxiway-segment:-2002:0',
   };
 
+  const segStand101 = {
+    $type: 'ContextCross.Models.TaxiwaySegment',
+    Directed: false,
+    Flags: 1,
+    Head: null,
+    IsHidden: false,
+    IsUnselectable: false,
+    Name: 'S101',
+    Nodes: makeReactive([stand101Nose, stand101Tail, stand101Push]),
+    OsmId: -2003,
+    PK: 'taxiway-segment:-2003:0',
+  };
+
+  const segStand102 = {
+    $type: 'ContextCross.Models.TaxiwaySegment',
+    Directed: false,
+    Flags: 1,
+    Head: null,
+    IsHidden: false,
+    IsUnselectable: false,
+    Name: 'S102',
+    Nodes: makeReactive([stand102Nose, stand102Tail, twMid]),
+    OsmId: -2004,
+    PK: 'taxiway-segment:-2004:0',
+  };
+
   const awFix1 = {
     $type: 'ContextCross.Models.AirwayNode',
     Name: 'PEXEL',
@@ -287,7 +313,7 @@ function buildSyntheticV3Container(overrides = {}) {
     CrossTaxiwayNames: emptyStrArr,
     Direction: null,
     PK: 'taxi-navigation:stand:101',
-    Position: encodeGuToPosition3({ x: -3.0, y: 0, z: -1.0 }),
+    Position: encodeGuToPosition3({ x: -2.37, y: 0, z: -1.0 }),
     Reference: stand101,
     RelatedRunway: '',
     RelatedStand: '101',
@@ -303,6 +329,30 @@ function buildSyntheticV3Container(overrides = {}) {
     Reference: stand101Push,
     RelatedRunway: '',
     RelatedStand: '101',
+    TaxiwayName: 'A',
+    Type: 3,
+  };
+  const navStand102 = {
+    $type: 'ContextCross.Models.FixedTaxiNavigationPoint',
+    CrossTaxiwayNames: emptyStrArr,
+    Direction: null,
+    PK: 'taxi-navigation:stand:102',
+    Position: encodeGuToPosition3({ x: -2.37, y: 0, z: 1.0 }),
+    Reference: stand102,
+    RelatedRunway: '',
+    RelatedStand: '102',
+    TaxiwayName: '',
+    Type: 4,
+  };
+  const navPush102 = {
+    $type: 'ContextCross.Models.FixedTaxiNavigationPoint',
+    CrossTaxiwayNames: emptyStrArr,
+    Direction: null,
+    PK: 'taxi-navigation:pushback:102:-1005',
+    Position: encodeGuToPosition3({ x: -1.2, y: 0, z: 0 }),
+    Reference: twMid,
+    RelatedRunway: '',
+    RelatedStand: '102',
     TaxiwayName: 'A',
     Type: 3,
   };
@@ -334,6 +384,8 @@ function buildSyntheticV3Container(overrides = {}) {
       'taxiway-node:-1099': farBoundaryNode,
       'taxiway-segment:-2001:0': segMain,
       'taxiway-segment:-2002:0': segRwyStrip,
+      'taxiway-segment:-2003:0': segStand101,
+      'taxiway-segment:-2004:0': segStand102,
       'airway-node:-3001': awFix1,
       'airway-node:-3002': awFix2,
       'airway-node:-3003': awFix3,
@@ -345,6 +397,8 @@ function buildSyntheticV3Container(overrides = {}) {
       'stand:102': stand102,
       'taxi-navigation:stand:101': navStand101,
       'taxi-navigation:pushback:101:0': navPush101,
+      'taxi-navigation:stand:102': navStand102,
+      'taxi-navigation:pushback:102:-1005': navPush102,
     },
     StaticItems: {
       'physical-runway:01/19': sharedPhysRwy,

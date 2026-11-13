@@ -2628,112 +2628,33 @@ ipcMain.handle('save-ground-painter-data', async (_event, { filePath, snapshotTe
   }
 
   if (isV3) {
-    const diskHandle = openAclFile(filePath);
-    if (v3Snap && v3Snap.headerArchiveGuid && diskHandle.archiveGuid && v3Snap.headerArchiveGuid !== diskHandle.archiveGuid) {
-      throw new Error('GroundPainter refusal: snapshot ArchiveGuid "' + v3Snap.headerArchiveGuid + '" does not match target file "' + baseName + '.acl" — likely cross-level graph contamination. Please close and reopen the Ground Painter.');
-    }
-
-    const snap = diskHandle.readSceneryGraph();
-    const scenRes = diskHandle.applyEdits({ sceneryGraph: graph, sceneryMeta: meta });
-    const warnings = Array.isArray(scenRes && scenRes.warnings) ? [...scenRes.warnings] : [];
-    const savedGraph = diskHandle.readSceneryGraph();
-
-    if (!savedGraph || !savedGraph.graph || !Array.isArray(savedGraph.graph.runways) || savedGraph.graph.runways.length === 0) {
-      _throwZeroRunwayPainterError(graph, warnings);
-    }
-
-    let purgedFlights = [];
-    let refsRemapped = 0;
-    let flightSectionsRebuilt = false;
-    let keptFlightsForCsv = null;
-    try {
-      const preFlightData = diskHandle.readFlights(filePath);
-      const flights = Array.isArray(preFlightData && preFlightData.flights) ? preFlightData.flights : [];
-      const rec = _reconcileSceneryFlightReferences({ savedGraph, snap, graph, meta, flights });
-      purgedFlights = rec.purgedFlights;
-      refsRemapped = rec.refsRemapped;
-      if (rec.needsRebuild) {
-        flightSectionsRebuilt = true;
-        keptFlightsForCsv = rec.keptFlights;
-        const icaoMatch = String(filePath).match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
-        const icao = icaoMatch ? icaoMatch[1] : '';
-        const approachCache = (icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null;
-        diskHandle.applyEdits({ flights: rec.keptFlights, approachCache, filePath });
-        console.log('[GroundPainter] (v3) flight purge: ' + purgedFlights.length + ' flight(s) removed, ' + refsRemapped + ' reference(s) remapped');
-      }
-    } catch (purgeErr) {
-      throw new Error('Flight reference reconciliation failed: ' + (purgeErr && purgeErr.message ? purgeErr.message : purgeErr));
-    }
-
-    diskHandle.saveToFile(filePath, {
-      createBackup: Boolean(createBackup),
-      expectedSourceSha256: v3Snap && v3Snap.sourceSha256 ? v3Snap.sourceSha256 : undefined,
-    });
-    console.log('[GroundPainter] save-ground-painter-data (v3): wrote ' + filePath);
-
-    // Reload saved graph through the unified handler to verify output
-    const verifyHandle = openAclFile(filePath);
-    const verifiedScenery = verifyHandle.readSceneryGraph();
-    if (!verifiedScenery || !verifiedScenery.graph || !Array.isArray(verifiedScenery.graph.runways) || verifiedScenery.graph.runways.length === 0) {
-      throw new Error('Post-save verification failed: reloaded v3 scenery graph has no runways.');
-    }
-
-    // In-memory live cache refresh
-    try {
-      const m = String(filePath).match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
-      const icaoForLive = m ? m[1] : null;
-      _invalidateLiveCache(filePath);
-      if (icaoForLive) {
-        try { _getOrComputeLiveScenery(filePath, icaoForLive); console.log('[GroundPainter] liveSceneryCache refreshed for', path.basename(filePath)); } catch (e) { console.warn('[GroundPainter] live cache refresh failed:', e.message); }
-      }
-    } catch (e) {
-      console.warn('[GroundPainter] live cache refresh outer failed:', e.message);
-    }
-
-    // Sync the game-side CSV when flights were purged or remapped
-    let csvSyncError = null;
-    if (flightSectionsRebuilt && keptFlightsForCsv) {
-      try {
-        const cfg = verifyHandle.readConfigResolved();
-        if (cfg && cfg.flightScheduleFile) {
-          const csvPath = path.join(path.dirname(filePath), cfg.flightScheduleFile + '.csv');
-          if (createBackup && fs.existsSync(csvPath)) fs.copyFileSync(csvPath, csvPath + '.bak');
-          exportGameCSV(keptFlightsForCsv, csvPath);
-        }
-      } catch (csvErr) {
-        csvSyncError = csvErr.message || String(csvErr);
-        console.error('[GroundPainter] CSV sync warning: ' + csvSyncError);
-      }
-    }
-
-    // Persist or clear background-image sidecar
-    try {
-      if (bg && bg.src) fs.writeFileSync(bgSidecarPath(filePath), JSON.stringify(bg), 'utf8');
-      else if (fs.existsSync(bgSidecarPath(filePath))) fs.unlinkSync(bgSidecarPath(filePath));
-    } catch (e) {
-      console.error('[GroundPainter] write bg sidecar failed: ' + (e && e.message));
-    }
-
-    // Sync painted taxiway geometry to geo_data.osm
-    let geoResult = { skipped: true };
-    try {
-      const { syncGeoDataForLevel } = require('../src/acl/geo_osm');
-      geoResult = syncGeoDataForLevel(verifyHandle, filePath, { createBackup: false });
-      if (!geoResult.ok && geoResult.error) console.error('[GroundPainter] geo_data sync failed: ' + geoResult.error);
-      else if (geoResult.ok) console.log('[GroundPainter] geo_data sync: +' + geoResult.addedNodes + ' nodes, +' + geoResult.addedWays + ' ways');
-    } catch (e) {
-      console.error('[GroundPainter] geo_data sync error: ' + (e && e.message));
-    }
-
-    if (warnings.length) console.warn('[GroundPainter] save warnings: ' + warnings.map((w) => (w && w.text) || String(w)).join(' | '));
-    return {
-      newText: verifyHandle.createPainterSnapshotToken(),
-      geoResult,
-      warnings,
-      purgedFlights,
-      refsRemapped,
-      ...(csvSyncError ? { partialFailure: true, warning: `ACL saved, but CSV sync failed: ${csvSyncError}` } : {}),
-    };
+    const { saveV3GroundPainterData } = require('../src/acl/v3/ground_painter_save');
+    return saveV3GroundPainterData(
+      { filePath, snapshotText, v3Snap, graph, meta, createBackup, bg },
+      {
+        reconcileSceneryFlightReferences: _reconcileSceneryFlightReferences,
+        throwZeroRunwayPainterError: _throwZeroRunwayPainterError,
+        getApproachCache: (icao) => ((icao && airportCache && airportCache[icao]) ? airportCache[icao].approachData : null),
+        bgSidecarPath,
+        onAfterAclSaved: (savedFilePath) => {
+          try {
+            const m = String(savedFilePath).match(/[\\/]Airports[\\/]([^\\/]+)[\\/]Levels[\\/]/i);
+            const icaoForLive = m ? m[1] : null;
+            _invalidateLiveCache(savedFilePath);
+            if (icaoForLive) {
+              try {
+                _getOrComputeLiveScenery(savedFilePath, icaoForLive);
+                console.log('[GroundPainter] liveSceneryCache refreshed for', path.basename(savedFilePath));
+              } catch (e) {
+                console.warn('[GroundPainter] live cache refresh failed:', e.message);
+              }
+            }
+          } catch (e) {
+            console.warn('[GroundPainter] live cache refresh outer failed:', e.message);
+          }
+        },
+      },
+    );
   }
 
   // ── Legacy / v1 / v2 Odin path ──────────────────────────────────

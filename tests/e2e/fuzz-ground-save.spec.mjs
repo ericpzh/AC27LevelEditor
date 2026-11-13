@@ -83,6 +83,8 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import net from 'net';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 
@@ -91,11 +93,28 @@ const { readAclText } = require('../../src/acl/gatcarc');
 const { openAclFile } = require('../../src/acl/archive');
 const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
 const { dictEntries, indexDocumentGraph, resolveGraphNode } = require('../../src/acl/v3/graph');
+const { applySceneryGraphEdits } = require('../../src/acl/v3/writers_scenery');
+const {
+  PushbackValidationError,
+  loadWheelBasesNearLevel,
+  validateV3PushbackPaths,
+} = require('../../src/acl/v3/pushback_validation');
 const parser = require('../../src/acl/parser');
+
+function sha256File(fp) {
+  return crypto.createHash('sha256').update(fs.readFileSync(fp)).digest('hex');
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP_DIR = process.env.E2E_TMP_DIR;
-const API_BASE = process.env.FUZZ_API_BASE || 'http://127.0.0.1:31415/mcp';
+let API_BASE = process.env.FUZZ_API_BASE || 'http://127.0.0.1:31415/mcp';
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  return port;
+}
 
 const DEFAULT_PROD_FILES = [
   'ZSJN/ZSJN_leisure_1.acl', 'ZSJN/ZSJN_leisure_2.acl',
@@ -421,6 +440,7 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
   const summary = {
     file: base, seed: (seed >>> 0) ^ fnv1a(base),
     ops: 0, accepted: 0, rejected: 0, rejectedReasons: {},
+    rejectedInvalidSaves: [], deterministicPushbackRepro: null,
     backupCreated: false, reloaded: null, issues: [], error: null,
   };
 
@@ -484,6 +504,100 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     let groundState = await getGroundState();
     let graph = groundState.graph;
     if (!graph) throw new Error('ground painter graph is null after open');
+
+    const baselineAclHandle = openAclFile(currentPath);
+    const isV3Level = baselineAclHandle.format === 'gatcarc4-v3';
+    const v3BaselineStaticData = isV3Level ? baselineAclHandle.container.staticData : null;
+    const v3WheelBases = isV3Level ? loadWheelBasesNearLevel(currentPath) : null;
+    const v3ProbeContainer = isV3Level
+      ? { header: baselineAclHandle.header, metaData: null, staticData: v3BaselineStaticData, frames: [] }
+      : null;
+
+    // ── 2b. Deterministic v3 pushback-rejection reproducer (distinct from successful save) ──
+    if (isV3Level) {
+      const pushOutCandidates = (graph.stands || []).filter(
+        (st) => (st.egressType ?? 0) === 0 && Array.isArray(st.pushbackIdxs) && st.pushbackIdxs.length > 0,
+      );
+      const reproStand = pushOutCandidates.find(
+        (st) => String(st.identifier ?? st.name ?? '').trim() === '3',
+      ) || pushOutCandidates[0] || null;
+
+      if (reproStand) {
+        const reproIdent = String(reproStand.identifier ?? reproStand.name ?? '').trim();
+        const origNose = { ...graph.nodes[reproStand.noseIdx] };
+        const origTail = { ...graph.nodes[reproStand.tailIdx] };
+        const sdx = origNose.x - origTail.x;
+        const sdz = origNose.z - origTail.z;
+        const sLen = Math.hypot(sdx, sdz) || 1;
+        // Drag nose across tail to flip stand heading ~178° against its pushback corridor
+        const brokenNoseTo = {
+          x: origTail.x - sdx - (sdz / sLen) * 0.02,
+          z: origTail.z - sdz + (sdx / sLen) * 0.02,
+        };
+
+        const preRejectAclSha = sha256File(currentPath);
+        const reproBakPath = currentPath + '.bak';
+        const hadBakBefore = fs.existsSync(reproBakPath);
+        const preRejectBakSha = hadBakBefore ? sha256File(reproBakPath) : null;
+
+        await mcpCall('move_ground_endpoint', {
+          target: { x: origNose.x, z: origNose.z },
+          to: brokenNoseTo,
+          threshold: 0.01,
+          kind: 'node',
+        });
+
+        await saveViaGroundUI(window);
+        const gpReproErr = await waitFor(
+          async () => {
+            const txt = await window.locator('div.gp-error').textContent({ timeout: 300 }).catch(() => null);
+            return txt && txt.trim() ? txt.trim() : false;
+          },
+          { timeout: 15000, interval: 200, label: `pushback rejection banner for stand ${reproIdent}` },
+        );
+
+        if (!gpReproErr.includes(`"${reproIdent}"`) && !gpReproErr.includes(reproIdent)) {
+          throw new Error(`deterministic pushback reproducer banner did not name stand "${reproIdent}": ${gpReproErr}`);
+        }
+        if (!gpReproErr.includes('taxi-navigation:pushback:')) {
+          throw new Error(`deterministic pushback reproducer banner did not name pushback PK: ${gpReproErr}`);
+        }
+        if (sha256File(currentPath) !== preRejectAclSha) {
+          throw new Error('rejected invalid pushback save modified target .acl bytes on disk');
+        }
+        if (fs.existsSync(reproBakPath) !== hadBakBefore || (hadBakBefore && sha256File(reproBakPath) !== preRejectBakSha)) {
+          throw new Error('rejected invalid pushback save created or modified .acl.bak on disk');
+        }
+        if (!(await getGroundState()).hasEdited) {
+          throw new Error('rejected invalid pushback save discarded in-memory Ground Painter edits');
+        }
+
+        const rejectedRecord = {
+          kind: 'pushback_validation',
+          stand: reproIdent,
+          message: gpReproErr.substring(0, 300),
+          aclUnchanged: true,
+          bakUnchanged: true,
+        };
+        summary.rejectedInvalidSaves.push(rejectedRecord);
+        summary.deterministicPushbackRepro = rejectedRecord;
+        log(`deterministic invalid pushback save REJECTED as expected (stand=${reproIdent}, disk untouched): ${gpReproErr.substring(0, 180)}`);
+
+        // Undo the reproducer mutation and reset hasEdited before starting the random fuzz storm
+        const undoRes = await mcpCall('undo_ground_painter', {});
+        if (!undoRes.undone) {
+          throw new Error('failed to undo deterministic pushback reproducer mutation');
+        }
+        await window.evaluate(() => {
+          window.__AC27_STORE.setState({ groundPainterHasEdited: false });
+        });
+        graph = (await getGroundState()).graph;
+        const restoredNose = graph.nodes[reproStand.noseIdx];
+        if (!restoredNose || Math.hypot(restoredNose.x - origNose.x, restoredNose.z - origNose.z) > 1e-6) {
+          throw new Error(`deterministic pushback reproducer undo did not restore stand ${reproIdent} nose`);
+        }
+      }
+    }
 
     // Derive ground bounds from current graph nodes (with fallback). The active
     // `bounds` scopes randPoint/randDelta/clampToBounds and is swapped to the
@@ -1355,10 +1469,32 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
 
     const fuzzLog = { accepted: [], rejected: [] };
     let deleteCount = 0;
+    const PUSHBACK_RISKY_GROUND_OPS = new Set([
+      'move_stand',
+      'move_segment',
+      'move_endpoint',
+      'move_single',
+      'move_multi',
+      'fillet',
+      'fillet_runway_connect',
+      'delete_one',
+    ]);
+
+    const readRendererPainterSnapshot = () =>
+      window.evaluate(() => {
+        const s = window.__AC27_STORE.getState();
+        return {
+          graph: s.groundPainterGraph,
+          meta: s.groundPainterMeta,
+          hasEdited: !!s.groundPainterHasEdited,
+        };
+      });
 
     // Operation dispatch — shared by both phases.
     const dispatchOp = async (op, idx, total) => {
       let done = false;
+      const checkPushback = isV3Level && PUSHBACK_RISKY_GROUND_OPS.has(op);
+      const preSnap = checkPushback ? await readRendererPainterSnapshot() : null;
       lastOpName = op + ' #' + (fuzzLog.accepted.length + fuzzLog.rejected.length + 1);
       if (op === 'add_taxiway') done = await doAddTaxiway(fuzzLog);
       else if (op === 'add_runway') done = await doAddRunway(fuzzLog);
@@ -1388,6 +1524,36 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       else if (op === 'rename_airway_procedure') done = await doRenameAirwayProcedure(fuzzLog);
       else if (op === 'delete_airway_node') done = await doDeleteAirwayNode(fuzzLog);
       else if (op === 'delete_airway_procedure') done = await doDeleteAirwayProcedure(fuzzLog);
+
+      if (done && checkPushback && preSnap && v3ProbeContainer) {
+        const postSnap = await readRendererPainterSnapshot();
+        try {
+          v3ProbeContainer.staticData = v3BaselineStaticData;
+          applySceneryGraphEdits(v3ProbeContainer, {
+            sceneryGraph: postSnap.graph,
+            sceneryMeta: postSnap.meta,
+            wheelBaseByAircraft: v3WheelBases,
+          });
+        } catch (err) {
+          if (!(err instanceof PushbackValidationError)) throw err;
+          await window.evaluate((snap) => {
+            window.__AC27_STORE.setState({
+              groundPainterGraph: snap.graph,
+              groundPainterMeta: snap.meta,
+              groundPainterHasEdited: snap.hasEdited,
+              groundPainterHistory: null,
+              groundPainterMetaHistory: null,
+            });
+          }, preSnap);
+          await refreshGraph();
+          fuzzLog.accepted.pop();
+          fuzzLog.rejected.push(
+            `pushback_validation(${op}): stand=${err.standIdentifier || '?'} pk=${err.pushbackPk || '?'}`,
+          );
+          done = false;
+        }
+      }
+
       if (op === 'delete_one' && done) deleteCount++;
       summary.accepted += done ? 1 : 0;
       summary.rejected += done ? 0 : 1;
@@ -1714,18 +1880,30 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       const stIdx = indexDocumentGraph(savedHandle.container.staticData, v3Schema.roots.static, v3Schema);
       const pkDict = resolveGraphNode(savedHandle.container.staticData.PKStaticEntities, stIdx);
       const siDict = resolveGraphNode(savedHandle.container.staticData.StaticItems, stIdx);
+      const physByKey = new Map();
       const physCounts = new Map();
-      for (const [k] of dictEntries(siDict)) {
-        if (k.startsWith('physical-runway:')) physCounts.set(k, 0);
+      for (const [k, rawSi] of dictEntries(siDict)) {
+        if (!k.startsWith('physical-runway:')) continue;
+        if (physCounts.has(k)) throw new Error(`saved v3 file has duplicate StaticItems runway key: ${k}`);
+        const siObj = resolveGraphNode(rawSi, stIdx);
+        const expectedName = k.slice('physical-runway:'.length);
+        if (!siObj || siObj.PhysicalName !== expectedName) {
+          throw new Error(`saved v3 file has StaticItems ${k} with mismatched PhysicalName (${siObj?.PhysicalName || 'none'})`);
+        }
+        physByKey.set(k, siObj);
+        physCounts.set(k, 0);
       }
+      const seenRunwayKeys = new Set();
       for (const [k, rawV] of dictEntries(pkDict)) {
         if (!k.startsWith('runway:')) continue;
+        if (seenRunwayKeys.has(k)) throw new Error(`saved v3 file has duplicate PKStaticEntities runway key: ${k}`);
+        seenRunwayKeys.add(k);
         const rwObj = resolveGraphNode(rawV, stIdx);
-        const refStr = rwObj?.PhysicalRunwayStaticItem?.$ref || '';
-        const mPhys = refStr.match(/physical-runway:(.+)$/);
-        const physKey = mPhys ? `physical-runway:${mPhys[1]}` : null;
-        if (!physKey || !physCounts.has(physKey)) {
-          throw new Error(`saved v3 file has runway ${k} referencing missing physical runway (${refStr || 'none'})`);
+        const physObj = resolveGraphNode(rwObj?.PhysicalRunwayStaticItem, stIdx);
+        const physName = physObj && typeof physObj.PhysicalName === 'string' ? physObj.PhysicalName : '';
+        const physKey = physName ? `physical-runway:${physName}` : null;
+        if (!physKey || !physCounts.has(physKey) || physByKey.get(physKey) !== physObj) {
+          throw new Error(`saved v3 file has runway ${k} referencing missing or unshared physical runway (${physName || 'none'})`);
         }
         physCounts.set(physKey, physCounts.get(physKey) + 1);
       }
@@ -1800,6 +1978,11 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
         }
         sigByOsm.set(osmKey, sig);
       }
+      // 5. Every surviving PushOut stand's advertised pushback options must build a
+      //    valid non-empty pushback path in PushbackPathBuilder (TaxiTimeEstimator).
+      validateV3PushbackPaths(savedHandle.container.staticData, v3Schema, {
+        wheelBaseByAircraft: v3WheelBases || loadWheelBasesNearLevel(currentPath),
+      });
     } else {
       const { _segVisualOf } = require('../../src/acl/scenery_write');
       const { buildPkIndex, getPkEntriesByType } = require('../../src/acl/v4_pk_index');
@@ -1843,12 +2026,16 @@ let window;
 
 test.beforeAll(async () => {
   if (!FUZZ_RUN) return;
+  const port = await freePort();
+  if (!process.env.FUZZ_API_BASE) {
+    API_BASE = `http://127.0.0.1:${port}/mcp`;
+  }
   electronApp = await electron.launch({
     args: [
       path.join(__dirname, '..', '..', 'dist-electron', 'main.js'),
       `--user-data-dir=${process.env.E2E_USERDATA_DIR}`,
     ],
-    env: { AC27_E2E_TMP_DIR: process.env.E2E_TMP_DIR },
+    env: { ...process.env, AC27_E2E_TMP_DIR: process.env.E2E_TMP_DIR, AC27_API_PORT: String(port) },
     timeout: 60000,
   });
   window = await electronApp.firstWindow();
@@ -1934,7 +2121,7 @@ test('Fuzz ground+air save — ground phase, air-mode swap, air phase, save', as
     results.push(r);
     if (r.ok && !r.error) {
       passed++;
-      console.log(`  ✓ PASSED (${r.accepted} accepted ops, backup=${r.backupCreated})`);
+      console.log(`  ✓ PASSED (${r.accepted} accepted ops, rejectedInvalidSaves=${r.rejectedInvalidSaves?.length ?? 0}, backup=${r.backupCreated})`);
       if (FUZZ_REPLACE) {
         try { copyToRealGame(aclPath); }
         catch (e) { failed++; console.error(`  ✗ replace copy FAILED: ${e.message}`); }
@@ -1951,7 +2138,11 @@ test('Fuzz ground+air save — ground phase, air-mode swap, air phase, save', as
   results.forEach(r => {
     const icon = r.ok && !r.error ? '✓' : '✗';
     const reload = r.reloaded ? ` segs=${r.reloaded.segments} rw=${r.reloaded.runways} stands=${r.reloaded.stands} air=${r.reloaded.airwayNodes}/${r.reloaded.procedures}` : '';
-    console.log(`  ${icon} ${r.file} (seed ${r.seed}, ${r.accepted}✓/${r.rejected}✖ ops [air ${r.airAccepted ?? 0}✓], deletes=${r.deletes ?? 0}, backup=${r.backupCreated}${reload}${r.error ? ` err=${r.error}` : ''})`);
+    const rejSaves = r.rejectedInvalidSaves?.length ? ` rejectedInvalidSaves=${r.rejectedInvalidSaves.length}` : '';
+    console.log(`  ${icon} ${r.file} (seed ${r.seed}, ${r.accepted}✓/${r.rejected}✖ ops [air ${r.airAccepted ?? 0}✓], deletes=${r.deletes ?? 0},${rejSaves} backup=${r.backupCreated}${reload}${r.error ? ` err=${r.error}` : ''})`);
+    if (r.deterministicPushbackRepro) {
+      console.log(`      deterministic invalid pushback save rejected (distinct from final save): stand=${r.deterministicPushbackRepro.stand} msg=${JSON.stringify(r.deterministicPushbackRepro.message)}`);
+    }
     if (r.rejectedReasons && Object.keys(r.rejectedReasons).length) {
       console.log(`      rejected reasons: ${JSON.stringify(r.rejectedReasons)}`);
     }

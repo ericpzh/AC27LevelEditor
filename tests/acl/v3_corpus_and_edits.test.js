@@ -257,7 +257,7 @@ describe('GATCARC4 v3 — Synthetic Edit & Safety Coverage (Always Runs)', () =>
 
     // 2. Synthesize new TaxiwayNodes + TaxiwaySegment + Stand ('V388') + pushback node
     const pbIdx = graph.nodes.length;
-    graph.nodes.push({ x: -1.2, z: 3.25, type: 2, flags: 0 });
+    graph.nodes.push({ x: -1.35, z: 3.25, type: 2, flags: 0 });
     meta.nodeOrigPk.push(null);
 
     const tailIdx = graph.nodes.length;
@@ -404,7 +404,7 @@ describe('GATCARC4 v3 — Synthetic Edit & Safety Coverage (Always Runs)', () =>
     const pbNavKey = Object.keys(pkDict).find((k) => k.startsWith('taxi-navigation:pushback:V388:'));
     expect(pbNavKey).toBeTruthy();
     const pbNavGu = decodePosition3ToGu(resolveGraphNode(pkDict[pbNavKey], sIdx).Position);
-    expect(pbNavGu.x).toBeCloseTo(-1.2, 6);
+    expect(pbNavGu.x).toBeCloseTo(-1.35, 6);
     expect(pbNavGu.y).toBe(0);
     expect(pbNavGu.z).toBeCloseTo(3.25, 6);
 
@@ -706,10 +706,10 @@ describe.skipIf(!HAS_INSTALLED_V3_CORPUS)('GATCARC4 v3 — Installed 40-File Gam
 
     graph.segments.push({
       aIdx: 5,
-      bIdx: nIdxB,
-      nodeIdxs: [5, nIdxA, nIdxB],
+      bIdx: nIdxNose,
+      nodeIdxs: [5, nIdxA, nIdxB, nIdxTail, nIdxNose],
       name: 'TWY_V3',
-      flags: 0,
+      flags: 1,
       directed: false,
       isHidden: false,
       isUnselectable: false,
