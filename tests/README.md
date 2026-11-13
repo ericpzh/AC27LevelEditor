@@ -19,6 +19,14 @@ Covers **per-file format dispatch (`src/acl/archive.js`)** across:
   - Dual-format Vitest readers: `tests/integration/stand_positions.test.js`, `tests/integration/test_airway_nodes.test.js`, `tests/integration/test_star_waypoints.test.js`, and `tests/integration/gamecompat-utils.cjs` (`analyze` + `analyzeV3` / `analyzeAclFile`)
   - Dual-format CLI scripts & E2E fuzz gates: `tests/save-integrity-check.js`, `tests/integration/test_save_integrity_all.js`, `tests/integration/test_jetway_rebuild.js`, `tests/integration/test_extract_v4_runway_pairs.js`, `tests/integration/test_gatcarc_roundtrip.js`, `tests/run-all.mjs` (runs Layer 2 against both `FIXTURES_GAME_ROOT` v2 and `GAME_ROOT` v3), `tests/e2e/fuzz-save.spec.mjs`, and `tests/e2e/fuzz-ground-save.spec.mjs`.
 
+## v3 save verification (2026-11-12)
+
+`npm run test:all` exited successfully: Vitest reported **2,778 passed / 6 skipped**; installed-file save integrity and jetway rebuild each passed **27 files**, runway extraction passed **7 checks**, and Playwright reported **16 passed / 2 skipped**. The build passed. The focused `tests/acl/v3_save_preservation.test.js` suite passed **13 tests**, and the v3 fixture binary round-trip passed **39 assertions across 13 files**.
+
+The Electron no-change save sweep passed 23 of 24 levels and skipped `ZGSZ_runwaychange.acl` when validation blocked saving. It reported `CSS4255` landing on runway `15` at `10:35:41` while `33, 34L, 34R` were active, and `CES5751` landing on `33` at `11:24:43` while `15, 16L, 16R` were active. The cause has not been established. The overall runner still passed because the sweep treats this as a skip.
+
+These automated checks do not establish that a rebuilt save loads in the game itself. Details are in [the v3 save error report](../v3-save-error-report.md).
+
 ## Fuzz save safeguards
 
 The flight fuzz sandbox stages `aircraft_profiles.csv`, `airport_brief.json`, and `radio_template_{en,zh}.csv` alongside `airport_config.json`, and uses an isolated editor API port. After saving, both `fuzz-save.spec.mjs` and `fuzz-ground-save.spec.mjs` validate format-preserving v2 and v3 outputs (parked aircraft offsets, reload, game compatibility, physical-runway pair counts, and per-`OsmId` visual property uniformity). Use `FUZZ_ACL_FILES` and `FUZZ_SEED` to select and reproduce runs; `--replace` copies passing results and backups to the game install.
