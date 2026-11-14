@@ -4,6 +4,7 @@
  */
 import { getAirlineCode, FALLBACK_BASE_MINUTES, DEFAULT_TIME_OFFSET_MIN } from '../utils/constants';
 import { languageForAirline } from '../utils/airlineLanguage.js';
+import { collectRunwayTimelineMembers } from '../acl/runway_timeline_membership.js';
 
 /**
  * Pick a random element from an array.
@@ -261,7 +262,7 @@ function firstOrEmpty(arr) {
  * @param {Array} existingFlights - current flights array (for stand conflict avoidance)
  * @returns {object} new flight object
  */
-export function createDefaultFlight(type, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
+export function createDefaultFlight(type, values, audioData, currentAirport, airportValuesForNum, existingFlights, runwayTimeline = null) {
   const baseMin = computeDefaultBaseMin(null); // will be overridden by caller
   const airlineCode = pickRandomAirlineCode(audioData, values);
   const flightNum = pickRandomFlightNumber(airportValuesForNum, airlineCode);
@@ -279,8 +280,26 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
   // Pick random unused stand (avoids conflicts with existing flights)
   const stand = pickRandomUnusedStand(values, existingFlights) || firstOrEmpty(values.Stand);
 
-  // Randomize runway, then constrain STAR/SID to the selected runway
-  const runway = randomPick(values.Runway) || firstOrEmpty(values.Runway);
+  // Randomize runway (preferring timeline-eligible runways in v3 and STAR/APPR-eligible runways for arrivals)
+  const allRunways = values.Runway || [];
+  const isV3 = Boolean(values && (values._v3Audio || values._isV3));
+  let candidateRunways = allRunways;
+  if (isV3 && runwayTimeline) {
+    const tlMembers = collectRunwayTimelineMembers(runwayTimeline).members;
+    const inTimeline = allRunways.filter((r) => tlMembers.has(r));
+    if (inTimeline.length > 0) candidateRunways = inTimeline;
+  }
+  if (type === 'arrival') {
+    const runwayStarMap = (airportValuesForNum || {})._runwayStarMap || {};
+    const withStar = candidateRunways.filter((r) => (runwayStarMap[r] || []).length > 0);
+    if (withStar.length > 0) candidateRunways = withStar;
+    if (isV3 && Array.isArray(values._liveUsableApprRunways) && values._liveUsableApprRunways.length > 0) {
+      const apprSet = new Set(values._liveUsableApprRunways);
+      const withAppr = candidateRunways.filter((r) => apprSet.has(r));
+      if (withAppr.length > 0) candidateRunways = withAppr;
+    }
+  }
+  const runway = randomPick(candidateRunways) || randomPick(allRunways) || firstOrEmpty(allRunways);
 
   let airway = firstOrEmpty(values.Airway);
   if (type === 'arrival') {
@@ -340,9 +359,9 @@ export function createDefaultFlight(type, values, audioData, currentAirport, air
 /**
  * Build a complete arrival flight with time defaults.
  */
-export function createArrivalFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
+export function createArrivalFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights, runwayTimeline = null) {
   const baseMin = computeDefaultBaseMin(configEndTime);
-  const flight = createDefaultFlight('arrival', values, audioData, currentAirport, airportValuesForNum, existingFlights);
+  const flight = createDefaultFlight('arrival', values, audioData, currentAirport, airportValuesForNum, existingFlights, runwayTimeline);
   flight.LandingTime = minutesToTimeString(baseMin);
   return flight;
 }
@@ -350,9 +369,9 @@ export function createArrivalFlight(configEndTime, values, audioData, currentAir
 /**
  * Build a complete departure flight with time defaults.
  */
-export function createDepartureFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights) {
+export function createDepartureFlight(configEndTime, values, audioData, currentAirport, airportValuesForNum, existingFlights, runwayTimeline = null) {
   const baseMin = computeDefaultBaseMin(configEndTime);
-  const flight = createDefaultFlight('departure', values, audioData, currentAirport, airportValuesForNum, existingFlights);
+  const flight = createDefaultFlight('departure', values, audioData, currentAirport, airportValuesForNum, existingFlights, runwayTimeline);
   flight.OffBlockTime = minutesToTimeString(baseMin);
   return flight;
 }

@@ -1414,9 +1414,9 @@ function applySceneryGraphEdits(container, editIntent, context = {}) {
 
   // Airway Routes dirty check
   let airwayRoutesDirty = false;
+  const origSnap = readers.readSceneryGraph(container);
+  const origProcs = origSnap.graph.procedures || [];
   {
-    const origSnap = readers.readSceneryGraph(container);
-    const origProcs = origSnap.graph.procedures || [];
     const curProcs = graph.procedures || [];
     const origSegPks = mm.airwaySegOrigPk || [];
     if (curProcs.length !== origProcs.length || hasNull(origSegPks) || curProcs.length !== origSegPks.length) {
@@ -1437,7 +1437,14 @@ function applySceneryGraphEdits(container, editIntent, context = {}) {
         }
       }
     }
-    if (!airwayRoutesDirty && (mm.deletedAirwayPks || []).length > 0) {
+    if (
+      !airwayRoutesDirty &&
+      (
+        (mm.deletedAirwayPks || []).length > 0 ||
+        deadAirwayNodeCoords.size > 0 ||
+        [...deletedPks].some((pk) => pk.startsWith('airway-node:') || pk.startsWith('airway-segment:'))
+      )
+    ) {
       airwayRoutesDirty = true;
     }
   }
@@ -2072,6 +2079,30 @@ function applySceneryGraphEdits(container, editIntent, context = {}) {
   }
 
   if (airwayRoutesDirty || oldNameToNewName.size > 0) {
+    const resolveEffectiveProcRunway = (p, pi) => {
+      const curRw = String(p?.runwayName || '').trim();
+      const origSegPk = Array.isArray(mm.airwaySegOrigPk) && pi < mm.airwaySegOrigPk.length
+        ? mm.airwaySegOrigPk[pi]
+        : undefined;
+      const origProc = pi < origProcs.length && origSegPk !== null ? origProcs[pi] : null;
+      if (origProc) {
+        const origRw = String(origProc.runwayName || '').trim();
+        // If caller (UI / MCP) already updated `p.runwayName` away from `origRw`,
+        // do NOT apply `oldNameToNewName` a second time (which would mis-route
+        // swap/chain renames such as `4L -> 4R` + `4R -> 6C`).
+        if (curRw !== origRw) {
+          return liveRunwayEnds.has(curRw) ? curRw : (oldNameToNewName.get(curRw) || curRw);
+        }
+        return oldNameToNewName.get(curRw) || curRw;
+      }
+      return liveRunwayEnds.has(curRw) ? curRw : (oldNameToNewName.get(curRw) || curRw);
+    };
+
+    const allProcsWithResolvedRw = (graph.procedures || []).map((p, pi) => ({
+      proc: p,
+      effectiveRw: resolveEffectiveProcRunway(p, pi),
+    }));
+
     for (const [pk, obj] of workingPkEntries) {
       if (pkPrefix(pk) !== 'runway' || !obj) continue;
       const curDirName = pk.slice('runway:'.length);
@@ -2080,14 +2111,35 @@ function applySceneryGraphEdits(container, editIntent, context = {}) {
         const matchingOld = [...oldNameToNewName.entries()].find(([, nw]) => nw === curDirName)?.[0];
         if (!matchingOld) continue;
       }
-      const procsForDir = (graph.procedures || []).filter((p) => {
-        const mappedRw = oldNameToNewName.get(p.runwayName) || p.runwayName;
-        return mappedRw === curDirName;
-      });
+      const procsForDir = allProcsWithResolvedRw
+        .filter((entry) => entry.effectiveRw === curDirName)
+        .map((entry) => entry.proc);
       const nextRoutes = [];
       for (const p of procsForDir) {
-        const aObjs = (p.airwayNodeIdxs || []).map((ni) => airwayNodeObjByGraphIdx[ni]).filter(Boolean);
-        if (aObjs.length < 2) continue;
+        const rawObjs = (p.airwayNodeIdxs || []).map((ni) => airwayNodeObjByGraphIdx[ni]).filter(Boolean);
+        const aObjs = [];
+        let prevPos = null;
+        for (const aObj of rawObjs) {
+          if (!aObj || !aObj.Position) continue;
+          const pos = decodePosition3ToGu(aObj.Position);
+          if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) continue;
+          if (prevPos && Math.hypot(pos.x - prevPos.x, pos.z - prevPos.z) <= 1e-6) continue;
+          aObjs.push(aObj);
+          prevPos = pos;
+        }
+        if (aObjs.length < 2) {
+          warn({
+            key: 'ground_painter_writer_procedure_dropped',
+            params: {
+              name: String(p.name || ''),
+              runway: curDirName,
+              routeType: Number(p.routeType ?? 0),
+              resolvedCount: aObjs.length,
+            },
+            text: `Dropped procedure "${String(p.name || '')}" (type ${Number(p.routeType ?? 0)}) on runway ${curDirName}: fewer than 2 usable airway nodes resolved (${aObjs.length})`,
+          });
+          continue;
+        }
         nextRoutes.push({
           AirwayNodes: makeTypedArray('ContextCross.Models.AirwayNode[]', aObjs),
           Name: String(p.name || ''),

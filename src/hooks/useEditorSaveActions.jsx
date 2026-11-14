@@ -131,7 +131,7 @@ export function useEditorSaveActions({
         <div className="modal-actions-row"><button className="btn-confirm" onClick={hideModal}>{t('modal_btn_close')}</button></div>);
       return;
     }
-    await doSave(false, true);
+    if (!(await doSave(false, true))) return;
     const result = await electronAPI.exportZip({ aclPath: st.currentPath });
     if (result.canceled) return;
     if (result.error) {

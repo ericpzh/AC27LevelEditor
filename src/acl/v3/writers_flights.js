@@ -737,20 +737,20 @@ function synthesizeArrivalAircraft({
     flyPoints = readers.resolveFlyApproachPoints(container, star, runway) || [];
   } catch (_) {}
 
-  let state5Params = approachCache?.state5ParamsMap?.get(appKey)
-    || approachCache?.state5ParamsMap?.get(runway)
-    || null;
+  let state5Params = null;
+  try {
+    const hintPos = flyPoints.length > 0 ? flyPoints[flyPoints.length - 1] : null;
+    state5Params = readers.resolveApproachProcedureData(container, runway, hintPos);
+  } catch (_) {}
   if (!state5Params) {
-    try {
-      const hintPos = flyPoints.length > 0 ? flyPoints[flyPoints.length - 1] : null;
-      state5Params = readers.resolveApproachProcedureData(container, runway, hintPos);
-    } catch (_) {}
+    state5Params = approachCache?.state5ParamsMap?.get(appKey)
+      || approachCache?.state5ParamsMap?.get(runway)
+      || null;
   }
 
-  let appPoints = approachCache?.appPointMap?.get(appKey) || null;
-  if (!appPoints && state5Params?.pathPointList?.length >= 2) {
-    appPoints = state5Params.pathPointList;
-  }
+  let appPoints = state5Params?.pathPointList?.length >= 2
+    ? state5Params.pathPointList
+    : (approachCache?.appPointMap?.get(appKey) || null);
   if (!appPoints || appPoints.length === 0) return null;
 
   const tdPos = state5Params?.touchDownPosition || approachCache?.runwayThresholds?.[runway] || null;

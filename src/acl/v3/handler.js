@@ -15,6 +15,8 @@ const { sha256 } = require('../framing');
 const { parseV3Container, encodeV3Container } = require('./framing');
 const { getSchemaForHash } = require('./schema_registry');
 const { validateV3Container } = require('./validator');
+const { validateV3ContainerRunwayTimelineMembership } = require('./runway_timeline_validation');
+const { validateV3ApproachRoutes } = require('./approach_validation');
 const readers = require('./readers');
 
 class StaleSourceError extends Error {
@@ -187,6 +189,13 @@ function openV3Acl(bytes, options = {}) {
       }
 
       // Stage and schema-validate complete output BEFORE touching backup or target
+      const schema = getSchemaForHash(container.header.schemaHash);
+      if (saveOptions.validateTimelineMembership !== false) {
+        validateV3ContainerRunwayTimelineMembership(container, schema);
+      }
+      if (saveOptions.validateApproachRoutes !== false) {
+        validateV3ApproachRoutes(container.staticData, schema);
+      }
       validateV3Container(container);
       const encoded = encodeV3Container(container, {
         forceReencode: Boolean(saveOptions.forceReencode),

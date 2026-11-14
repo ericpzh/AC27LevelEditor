@@ -35,7 +35,8 @@ The checked-in v3 corpus is `tests/fixtures/game-root-v3/` (13 pristine ZSJN lev
 
 ```bash
 npx vitest run tests/acl/v3_framing_schema.test.js tests/acl/v3_corpus_and_edits.test.js \
-  tests/acl/v3_save_preservation.test.js \
+  tests/acl/v3_save_preservation.test.js tests/acl/v3_pushback_path.test.js \
+  tests/acl/v3_runway_timeline_membership.test.js tests/acl/v3_approach_route_validation.test.js \
   tests/integration/gatcarc_v3_frame_edit.test.js tests/integration/v3_frame_reconciliation.test.js \
   tests/integration/v3_flight_save_parity.test.js tests/integration/v3_scenery_ground_air_parity.test.js
 
@@ -302,4 +303,4 @@ It is a dry run by default: it writes `workshop/create-item.<appid>.vdf` (appid 
 - Manual release: trigger the workflow via `workflow_dispatch` on GitHub Actions with an optional version input.
 - macOS builds produce an unsigned universal `.dmg` (users must clear the quarantine attribute — see above); Windows builds produce a portable `.exe` (no installer); Linux builds produce an `.AppImage` + `.deb` (no auto-update — the updater is win32+portable only).
 
-Fuzz save stages `aircraft_profiles.csv` for wheelbase lookup, uses a separate API port for its editor, and checks saved parked aircraft against stand nose positions before replacement. `FUZZ_ACL_FILES` selects levels; `FUZZ_SEED` reproduces a run.
+Fuzz save stages `aircraft_profiles.csv` for wheelbase lookup, uses a separate API port for its editor, picks v3 departure runways from the live timeline (recomputed after timeline mutations) + arrival runways with usable `RouteType=1` approaches, runs deterministic negative checks (`22R`-style non-timeline departure + removing a referenced timeline runway), and checks saved parked aircraft + `runway-not-in-timeline` + `arrival-missing-approach` before replacement. Ground fuzz (`tests/e2e/fuzz-ground-save.spec.mjs`) additionally runs deterministic v3 pushback-rejection and missing-approach (`4R→6C`-style) rejection reproducers before Phase 1 (recording rejected invalid saves distinctly from the final save), per-op v3 pushback & approach-survival rollback guards, and post-save `validateV3PushbackPaths` + `validateV3ContainerRunwayTimelineMembership` + `validateV3ApproachRoutes` gates before `--replace`. `FUZZ_ACL_FILES` selects levels; `FUZZ_SEED` reproduces a run.

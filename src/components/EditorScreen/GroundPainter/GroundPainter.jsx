@@ -4310,12 +4310,39 @@ export default function GroundPainter({ vals }) {
     // runway and every STAR/APP route on it was dropped from the saved file. The
     // game then null-derefed in RuntimeAircraftSpawnService.SpawnFlyApproachingAircraft
     // for arrivals still referencing those STARs.
+    // Bind each procedure to its originating `(rwIdx, endIdx)` on first rename so
+    // intermediate keystrokes (e.g. clearing to "" or temporarily matching another
+    // runway's designator while typing) never lose or hijack procedures.
     let procedures = gg.procedures;
     if (Array.isArray(procedures) && procedures.length) {
       let procsPatched = false;
       const mapped = procedures.map((p) => {
-        if (p.runwayName === oldNames[0] && oldNames[0] !== names[0]) { procsPatched = true; return { ...p, runwayName: names[0] }; }
-        if (p.runwayName === oldNames[1] && oldNames[1] !== names[1]) { procsPatched = true; return { ...p, runwayName: names[1] }; }
+        let bound = p._boundRunwayEnd || null;
+        if (!bound) {
+          if (p.runwayName === oldNames[0]) bound = { rwIdx: idx, end: 0 };
+          else if (p.runwayName === oldNames[1]) bound = { rwIdx: idx, end: 1 };
+          else {
+            for (let ri = 0; ri < gg.runways.length; ri++) {
+              if (ri === idx) continue;
+              const oRw = gg.runways[ri];
+              const oN = Array.isArray(oRw?.names) ? oRw.names : [];
+              if (p.runwayName === oN[0]) { bound = { rwIdx: ri, end: 0 }; break; }
+              if (p.runwayName === oN[1]) { bound = { rwIdx: ri, end: 1 }; break; }
+            }
+          }
+        }
+        if (bound && bound.rwIdx === idx) {
+          const targetName = names[bound.end];
+          if (p.runwayName !== targetName || !p._boundRunwayEnd) {
+            procsPatched = true;
+            return { ...p, runwayName: targetName, _boundRunwayEnd: bound };
+          }
+          return p;
+        }
+        if (bound && !p._boundRunwayEnd) {
+          procsPatched = true;
+          return { ...p, _boundRunwayEnd: bound };
+        }
         return p;
       });
       if (procsPatched) procedures = mapped;

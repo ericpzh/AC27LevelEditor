@@ -58,6 +58,9 @@ const {
   unwrapReactive,
 } = require('../../src/acl/v3/graph');
 const { parseIsoWallClock, UNSET_DATETIME_ISO } = require('../../src/acl/v3/q32');
+const { formatRunwayTimelineMembershipIssue } = require('../../src/acl/runway_timeline_membership');
+const { validateV3ContainerRunwayTimelineMembership } = require('../../src/acl/v3/runway_timeline_validation');
+const { validateV3ApproachRoutes, formatApproachValidationIssue } = require('../../src/acl/v3/approach_validation');
 
 const SENT = /\r?\n\$\$\$ GATCARC4 CHECKPOINT FRAME \$\$\$\r?\n/;
 
@@ -355,7 +358,24 @@ function analyzeV3(bufOrContainer) {
     }
   }
 
-  return { config, doc0Plans, frameDocked, frameAircraftRegs, frameAircraftMap, frameFp, planKeys };
+  const v3TimelineCheck = validateV3ContainerRunwayTimelineMembership(container, schema, {
+    throwOnError: false,
+  });
+  const v3ApproachCheck = validateV3ApproachRoutes(container.staticData, schema, {
+    throwOnError: false,
+  });
+
+  return {
+    config,
+    doc0Plans,
+    frameDocked,
+    frameAircraftRegs,
+    frameAircraftMap,
+    frameFp,
+    planKeys,
+    v3TimelineCheck,
+    v3ApproachCheck,
+  };
 }
 
 /**
@@ -544,6 +564,26 @@ function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null, airlin
           msg: `${p.leg === 'A' ? 'arrival' : 'departure'} ${p.reg} (${code}, ${country}): language "${p.language}" must be "${expected}"`,
         });
       }
+    }
+  }
+
+  // 7. v3 Runway timeline membership (FlightPlanSessionValidator.ValidateRunways)
+  if (a.v3TimelineCheck && Array.isArray(a.v3TimelineCheck.issues)) {
+    for (const iss of a.v3TimelineCheck.issues) {
+      issues.push({
+        code: 'runway-not-in-timeline',
+        msg: formatRunwayTimelineMembershipIssue(iss),
+      });
+    }
+  }
+
+  // 8. v3 Arrival approach route resolution (AirwayRouteService.GetRoute('APP'))
+  if (a.v3ApproachCheck && Array.isArray(a.v3ApproachCheck.issues)) {
+    for (const iss of a.v3ApproachCheck.issues) {
+      issues.push({
+        code: 'arrival-missing-approach',
+        msg: iss.message || formatApproachValidationIssue(iss),
+      });
     }
   }
 

@@ -99,6 +99,9 @@ const {
   loadWheelBasesNearLevel,
   validateV3PushbackPaths,
 } = require('../../src/acl/v3/pushback_validation');
+const { validateV3ApproachRoutes } = require('../../src/acl/v3/approach_validation');
+const { validateV3ContainerRunwayTimelineMembership } = require('../../src/acl/v3/runway_timeline_validation');
+const { analyzeAclFile, runChecks } = require('../integration/gamecompat-utils.cjs');
 const parser = require('../../src/acl/parser');
 
 function sha256File(fp) {
@@ -440,7 +443,7 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
   const summary = {
     file: base, seed: (seed >>> 0) ^ fnv1a(base),
     ops: 0, accepted: 0, rejected: 0, rejectedReasons: {},
-    rejectedInvalidSaves: [], deterministicPushbackRepro: null,
+    rejectedInvalidSaves: [], deterministicPushbackRepro: null, deterministicApproachRepro: null,
     backupCreated: false, reloaded: null, issues: [], error: null,
   };
 
@@ -595,6 +598,166 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
         const restoredNose = graph.nodes[reproStand.noseIdx];
         if (!restoredNose || Math.hypot(restoredNose.x - origNose.x, restoredNose.z - origNose.z) > 1e-6) {
           throw new Error(`deterministic pushback reproducer undo did not restore stand ${reproIdent} nose`);
+        }
+      }
+
+      // ── 2c. Deterministic v3 missing-approach reproducer (e.g. 4R → 6C with STAR intact & sole RouteType=1 removed) ──
+      const arrivalsWithStar = fileFlightsBefore.filter(
+        (f) => !!(f.LandingTime || '').trim() && !!(f.Airway || '').trim() && !!(f.Runway || '').trim(),
+      );
+      const findReproArrival = () => {
+        const ordered = [
+          ...arrivalsWithStar.filter((f) => String(f.Runway).trim() === '4R'),
+          ...arrivalsWithStar.filter((f) => String(f.Runway).trim() !== '4R'),
+        ];
+        for (const cand of ordered) {
+          const rwyEnd = String(cand.Runway).trim();
+          const starNm = String(cand.Airway).trim();
+          const rwIdx = (graph.runways || []).findIndex((rw) => {
+            const ends = Array.isArray(rw.names) && rw.names.length >= 2
+              ? rw.names
+              : String(rw.physicalName || '').split('/');
+            return ends.some((e) => String(e || '').trim() === rwyEnd);
+          });
+          if (rwIdx < 0) continue;
+          const hasStar = (graph.procedures || []).some(
+            (p) => p.routeType === 0 && String(p.runwayName || '').trim() === rwyEnd && String(p.name || '').trim() === starNm,
+          );
+          const hasApp = (graph.procedures || []).some(
+            (p) => p.routeType === 1 && String(p.runwayName || '').trim() === rwyEnd,
+          );
+          if (hasStar && hasApp) return { flight: cand, rwIdx, origEnd: rwyEnd };
+        }
+        return null;
+      };
+      const appRepro = findReproArrival();
+      if (appRepro) {
+        const { rwIdx, origEnd } = appRepro;
+        const rwObj = graph.runways[rwIdx];
+        const origEnds = Array.isArray(rwObj.names) && rwObj.names.length >= 2
+          ? [String(rwObj.names[0]).trim(), String(rwObj.names[1]).trim()]
+          : String(rwObj.physicalName || '').split('/').map((s) => s.trim());
+        const endSlot = origEnds[1] === origEnd ? 1 : 0;
+        const usedEnds = new Set();
+        (graph.runways || []).forEach((rw, idx) => {
+          if (idx === rwIdx) return;
+          for (const e of (rw.names || [])) if (e) usedEnds.add(String(e).trim());
+          for (const e of String(rw.physicalName || '').split('/')) if (e) usedEnds.add(String(e).trim());
+        });
+        const candidatePairs = [['6C', '24'], ['7C', '25'], ['8C', '26'], ['9C', '27'], ['10C', '28']];
+        const pickedPair = candidatePairs.find(([a, b]) => !usedEnds.has(a) && !usedEnds.has(b)) || ['6C', '24'];
+        const nextNames = endSlot === 0 ? [pickedPair[0], pickedPair[1]] : [pickedPair[1], pickedPair[0]];
+        const newArrivalRwy = nextNames[endSlot];
+        const affectedCallsigns = arrivalsWithStar
+          .filter((f) => String(f.Runway).trim() === origEnd)
+          .map((f) => f.CallSign);
+
+        const preAppSnap = await window.evaluate(() => {
+          const s = window.__AC27_STORE.getState();
+          return {
+            graph: s.groundPainterGraph,
+            meta: s.groundPainterMeta,
+            hasEdited: !!s.groundPainterHasEdited,
+            history: s.groundPainterHistory,
+            metaHistory: s.groundPainterMetaHistory,
+          };
+        });
+        const preAppAclSha = sha256File(currentPath);
+        const reproBakPath = currentPath + '.bak';
+        const hadBakBefore = fs.existsSync(reproBakPath);
+        const preAppBakSha = hadBakBefore ? sha256File(reproBakPath) : null;
+        const icaoDir = path.basename(path.dirname(path.dirname(currentPath)));
+        const levelSuffix = base.startsWith(icaoDir + '_') ? base.slice(icaoDir.length + 1) : base;
+        const csvPath = path.join(path.dirname(currentPath), 'flight_schedule_' + levelSuffix + '.csv');
+        const hadCsvBefore = fs.existsSync(csvPath);
+        const preAppCsvSha = hadCsvBefore ? sha256File(csvPath) : null;
+
+        try {
+          await mcpCall('rename_ground_object', { kind: 'runway', idx: rwIdx, names: nextNames });
+          // Remove sole RouteType=1 approach route(s) on newArrivalRwy while keeping STAR intact
+          const stripRes = await window.evaluate((targetRwy) => {
+            const s = window.__AC27_STORE.getState();
+            const g = structuredClone(s.groundPainterGraph);
+            const m = structuredClone(s.groundPainterMeta || {});
+            if (!Array.isArray(m.deletedAirwayPks)) m.deletedAirwayPks = [];
+            if (!Array.isArray(m.airwaySegOrigPk)) m.airwaySegOrigPk = (g.procedures || []).map(() => null);
+            let removedApp = 0;
+            for (let pi = (g.procedures || []).length - 1; pi >= 0; pi--) {
+              const p = g.procedures[pi];
+              if (p && p.routeType === 1 && String(p.runwayName || '').trim() === targetRwy) {
+                const pk = m.airwaySegOrigPk[pi];
+                if (pk != null && !m.deletedAirwayPks.includes(pk)) m.deletedAirwayPks.push(pk);
+                g.procedures.splice(pi, 1);
+                m.airwaySegOrigPk.splice(pi, 1);
+                removedApp++;
+              }
+            }
+            const keptStars = (g.procedures || []).filter(
+              (p) => p && p.routeType === 0 && String(p.runwayName || '').trim() === targetRwy,
+            ).length;
+            window.__AC27_STORE.setState({
+              groundPainterGraph: g,
+              groundPainterMeta: m,
+              groundPainterHasEdited: true,
+            });
+            return { removedApp, keptStars };
+          }, newArrivalRwy);
+          if (stripRes.removedApp < 1 || stripRes.keptStars < 1) {
+            throw new Error(`missing-approach repro setup unexpected counts: ${JSON.stringify(stripRes)}`);
+          }
+
+          await saveViaGroundUI(window);
+          const gpAppErr = await waitFor(
+            async () => {
+              const txt = await window.locator('div.gp-error').textContent({ timeout: 300 }).catch(() => null);
+              if (!txt || !txt.trim()) return false;
+              const t = txt.trim();
+              return (t.includes(newArrivalRwy) && (t.includes('RouteType = 1') || t.toLowerCase().includes('approach') || t.includes('进近航线')))
+                ? t
+                : false;
+            },
+            { timeout: 15000, interval: 200, label: `missing-approach rejection banner for ${origEnd}→${newArrivalRwy}` },
+          );
+
+          if (!affectedCallsigns.some((cs) => gpAppErr.includes(cs))) {
+            throw new Error(`missing-approach rejection banner did not name any affected arrival (${affectedCallsigns.slice(0, 4).join(',')}): ${gpAppErr}`);
+          }
+          if (sha256File(currentPath) !== preAppAclSha) {
+            throw new Error('rejected missing-approach save modified target .acl bytes on disk');
+          }
+          if (fs.existsSync(reproBakPath) !== hadBakBefore || (hadBakBefore && sha256File(reproBakPath) !== preAppBakSha)) {
+            throw new Error('rejected missing-approach save created or modified .acl.bak on disk');
+          }
+          if (fs.existsSync(csvPath) !== hadCsvBefore || (hadCsvBefore && sha256File(csvPath) !== preAppCsvSha)) {
+            throw new Error('rejected missing-approach save modified companion flight_schedule CSV on disk');
+          }
+          if (!(await getGroundState()).hasEdited) {
+            throw new Error('rejected missing-approach save discarded in-memory Ground Painter edits');
+          }
+
+          const appRejectedRecord = {
+            kind: 'missing_approach_validation',
+            fromRunway: origEnd,
+            toRunway: newArrivalRwy,
+            affectedArrivals: affectedCallsigns.length,
+            message: gpAppErr.substring(0, 300),
+            aclUnchanged: true,
+            bakUnchanged: true,
+          };
+          summary.rejectedInvalidSaves.push(appRejectedRecord);
+          summary.deterministicApproachRepro = appRejectedRecord;
+          log(`deterministic missing-approach save REJECTED as expected (${origEnd}→${newArrivalRwy}, arrivals=${affectedCallsigns.length}, disk untouched): ${gpAppErr.substring(0, 180)}`);
+        } finally {
+          await window.evaluate((snap) => {
+            window.__AC27_STORE.setState({
+              groundPainterGraph: snap.graph,
+              groundPainterMeta: snap.meta,
+              groundPainterHasEdited: snap.hasEdited,
+              groundPainterHistory: snap.history,
+              groundPainterMetaHistory: snap.metaHistory,
+            });
+          }, preAppSnap);
+          graph = (await getGroundState()).graph;
         }
       }
     }
@@ -1479,6 +1642,131 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       'fillet_runway_connect',
       'delete_one',
     ]);
+    const APPROACH_RISKY_OPS = new Set([
+      'delete_airway_node',
+      'delete_airway_procedure',
+      'move_airway_node',
+      'move_airway_procedure',
+      'air_fillet',
+    ]);
+
+    const baselineNormSt = (v) => String(v || '').trim().replace(/^0+/, '');
+    const baselineGraph = baselineAclHandle.readSceneryGraph().graph || {};
+    const baselineStandSet = new Set();
+    for (const st of (baselineGraph.stands || [])) {
+      for (const nm of [st.identifier, st.name]) {
+        const v = baselineNormSt(nm);
+        if (v) baselineStandSet.add(v);
+      }
+    }
+    const baselineRunwayEnds = new Set();
+    for (const rw of (baselineGraph.runways || [])) {
+      for (const nm of (rw.names || [])) if (nm) baselineRunwayEnds.add(baselineNormSt(nm));
+      for (const nm of String(rw.physicalName || '').split('/')) if (nm) baselineRunwayEnds.add(baselineNormSt(nm));
+    }
+    const baselineStarByRwy = new Map();
+    const baselineAllStars = new Set();
+    for (const p of (baselineGraph.procedures || [])) {
+      if (p.routeType != null && p.routeType !== 0) continue;
+      const rw = baselineNormSt(p.runwayName);
+      const nm = baselineNormSt(p.name);
+      if (nm) baselineAllStars.add(nm);
+      if (rw && nm) {
+        if (!baselineStarByRwy.has(rw)) baselineStarByRwy.set(rw, new Set());
+        baselineStarByRwy.get(rw).add(nm);
+      }
+    }
+
+    const findMissingApproachForSurvivingArrivals = (g, meta) => {
+      if (!g) return null;
+      const liveStands = new Set();
+      for (const st of (g.stands || [])) {
+        for (const nm of [st.identifier, st.name]) {
+          const v = baselineNormSt(nm);
+          if (v) liveStands.add(v);
+        }
+      }
+      const liveEnds = new Set();
+      for (const rw of (g.runways || [])) {
+        for (const nm of (rw.names || [])) if (nm) liveEnds.add(baselineNormSt(nm));
+        for (const nm of String(rw.physicalName || '').split('/')) if (nm) liveEnds.add(baselineNormSt(nm));
+      }
+      const origToCurEnd = new Map();
+      const origInfos = meta?.runwayOrigInfo || [];
+      const origPks = meta?.runwayOrigPk || [];
+      for (let i = 0; i < (g.runways || []).length && i < origInfos.length; i++) {
+        if (origPks.length && origPks[i] == null) continue;
+        const orig = origInfos[i];
+        const cur = g.runways[i];
+        if (!orig || !cur) continue;
+        const oNames = orig.names || [];
+        const cNames = Array.isArray(cur.names) && cur.names.length >= 2
+          ? cur.names
+          : String(cur.physicalName || '').split('/');
+        if (oNames[0] && cNames[0]) origToCurEnd.set(baselineNormSt(oNames[0]), baselineNormSt(cNames[0]));
+        if (oNames[1] && cNames[1]) origToCurEnd.set(baselineNormSt(oNames[1]), baselineNormSt(cNames[1]));
+      }
+
+      const deletedAirSet = new Set([...(meta?.deletedPks || []), ...(meta?.deletedAirwayPks || [])]);
+      const airOrigPks = meta?.airwayNodeOrigPk || [];
+      const procOrigPks = meta?.airwaySegOrigPk || [];
+      const usableStarsByRwy = new Map();
+      const usableAllStars = new Set();
+      const usableAppRunways = new Set();
+
+      (g.procedures || []).forEach((p, pi) => {
+        if (!p) return;
+        const segPk = pi < procOrigPks.length ? procOrigPks[pi] : null;
+        if (segPk != null && deletedAirSet.has(segPk)) return;
+        const rawRw = baselineNormSt(p.runwayName);
+        const effRw = liveEnds.has(rawRw) ? rawRw : (origToCurEnd.get(rawRw) || rawRw);
+        if (!effRw || !liveEnds.has(effRw)) return;
+        const dedupCoords = [];
+        for (const ni of (p.airwayNodeIdxs || [])) {
+          const nd = (g.airwayNodes || [])[ni];
+          if (!nd || !isFinite(nd.x) || !isFinite(nd.z)) continue;
+          const nPk = ni < airOrigPks.length ? airOrigPks[ni] : null;
+          if (nPk != null && deletedAirSet.has(nPk)) continue;
+          const prev = dedupCoords[dedupCoords.length - 1];
+          if (prev && Math.hypot(nd.x - prev.x, nd.z - prev.z) <= 1e-6) continue;
+          dedupCoords.push(nd);
+        }
+        if (dedupCoords.length < 2) return;
+        if (p.routeType === 0) {
+          const nm = baselineNormSt(p.name);
+          if (nm) {
+            usableAllStars.add(nm);
+            if (!usableStarsByRwy.has(effRw)) usableStarsByRwy.set(effRw, new Set());
+            usableStarsByRwy.get(effRw).add(nm);
+          }
+        } else if (p.routeType === 1) {
+          usableAppRunways.add(effRw);
+        }
+      });
+
+      for (const f of fileFlightsBefore) {
+        if (!(f.LandingTime || '').trim()) continue;
+        const stNm = baselineNormSt(f.Stand);
+        if (stNm && baselineStandSet.has(stNm) && !liveStands.has(stNm)) continue; // purged by stand
+        const origRw = baselineNormSt(f.Runway);
+        if (!origRw) continue;
+        const curRw = origToCurEnd.get(origRw) || origRw;
+        if (baselineRunwayEnds.has(origRw) && !liveEnds.has(curRw)) continue; // purged by runway
+        const starNm = baselineNormSt(f.Airway);
+        if (starNm) {
+          if (baselineAllStars.has(starNm) && !usableAllStars.has(starNm)) continue; // purged by STAR
+          const preSet = baselineStarByRwy.get(origRw);
+          if (preSet && preSet.has(starNm)) {
+            const curSet = usableStarsByRwy.get(curRw);
+            if (!curSet || !curSet.has(starNm)) continue; // purged by STAR-off-runway
+          }
+        }
+        if (!usableAppRunways.has(curRw)) {
+          return { runway: curRw, callsign: f.CallSign };
+        }
+      }
+      return null;
+    };
 
     const readRendererPainterSnapshot = () =>
       window.evaluate(() => {
@@ -1494,7 +1782,8 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     const dispatchOp = async (op, idx, total) => {
       let done = false;
       const checkPushback = isV3Level && PUSHBACK_RISKY_GROUND_OPS.has(op);
-      const preSnap = checkPushback ? await readRendererPainterSnapshot() : null;
+      const checkApproach = isV3Level && APPROACH_RISKY_OPS.has(op);
+      const preSnap = (checkPushback || checkApproach) ? await readRendererPainterSnapshot() : null;
       lastOpName = op + ' #' + (fuzzLog.accepted.length + fuzzLog.rejected.length + 1);
       if (op === 'add_taxiway') done = await doAddTaxiway(fuzzLog);
       else if (op === 'add_runway') done = await doAddRunway(fuzzLog);
@@ -1549,6 +1838,28 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
           fuzzLog.accepted.pop();
           fuzzLog.rejected.push(
             `pushback_validation(${op}): stand=${err.standIdentifier || '?'} pk=${err.pushbackPk || '?'}`,
+          );
+          done = false;
+        }
+      }
+
+      if (done && checkApproach && preSnap) {
+        const postSnap = await readRendererPainterSnapshot();
+        const appViolation = findMissingApproachForSurvivingArrivals(postSnap.graph, postSnap.meta);
+        if (appViolation) {
+          await window.evaluate((snap) => {
+            window.__AC27_STORE.setState({
+              groundPainterGraph: snap.graph,
+              groundPainterMeta: snap.meta,
+              groundPainterHasEdited: snap.hasEdited,
+              groundPainterHistory: null,
+              groundPainterMetaHistory: null,
+            });
+          }, preSnap);
+          await refreshGraph();
+          fuzzLog.accepted.pop();
+          fuzzLog.rejected.push(
+            `approach_validation(${op}): runway=${appViolation.runway} flight=${appViolation.callsign}`,
           );
           done = false;
         }
@@ -1806,9 +2117,11 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     // a save may legitimately purge a leg whose STAR vanished entirely OR whose
     // (STAR, runway) variant no longer exists (KLGA/KJFK `SIE.CAMRM5@4L` was
     // renamed away while the same STAR survived on 4R/15L).
+    const isStarProc = (p) => p && (p.routeType == null || p.routeType === 0);
     const procsByRunwayG = (gr) => {
       const m = new Map();
       for (const p of (gr.procedures || [])) {
+        if (!isStarProc(p)) continue;
         const rw = normSt(p.runwayName), nm = normSt(p.name);
         if (!rw || !nm) continue;
         if (!m.has(rw)) m.set(rw, new Set());
@@ -1816,8 +2129,8 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       }
       return m;
     };
-    const savedProcNames = new Set((reloadedGraph.procedures || []).map((p) => normSt(p.name)).filter(Boolean));
-    const preProcNames = new Set((bakGraph.procedures || []).map((p) => normSt(p.name)).filter(Boolean));
+    const savedProcNames = new Set((reloadedGraph.procedures || []).filter(isStarProc).map((p) => normSt(p.name)).filter(Boolean));
+    const preProcNames = new Set((bakGraph.procedures || []).filter(isStarProc).map((p) => normSt(p.name)).filter(Boolean));
     const savedProcsByRunway = procsByRunwayG(reloadedGraph);
     const preProcsByRunway = procsByRunwayG(bakGraph);
     const starPurgeWarranted = (f) => {
@@ -1983,6 +2296,41 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
       validateV3PushbackPaths(savedHandle.container.staticData, v3Schema, {
         wheelBaseByAircraft: v3WheelBases || loadWheelBasesNearLevel(currentPath),
       });
+      // 6. Decoded v3 candidate gates: every surviving flight leg must reference a
+      //    runway present in MetaData.RunwayTimeline, and every surviving arrival
+      //    must resolve a usable RouteType = 1 (APP) approach route on its runway
+      //    in rebuilt StaticData. Blocks `--replace` and records seed + artifact.
+      try {
+        validateV3ContainerRunwayTimelineMembership(savedHandle.container);
+        validateV3ApproachRoutes(savedHandle.container.staticData, v3Schema);
+        const gcA = analyzeAclFile(currentPath);
+        const gc = runChecks(gcA);
+        const v3Blocking = gc.issues.filter((i) =>
+          i.code === 'runway-not-in-timeline' || i.code === 'arrival-missing-approach',
+        );
+        if (v3Blocking.length) {
+          throw new Error(`saved v3 file failed game-compat checks: ${v3Blocking.map((i) => `[${i.code}] ${i.msg}`).join(' | ')}`);
+        }
+      } catch (gateErr) {
+        try {
+          const dbgDir = path.join(__dirname, '..', '_debug');
+          fs.mkdirSync(dbgDir, { recursive: true });
+          fs.copyFileSync(currentPath, path.join(dbgDir, 'ground-gc-fail-' + base + '.acl'));
+          fs.writeFileSync(
+            path.join(dbgDir, 'ground-gc-fail-' + base + '.json'),
+            JSON.stringify({
+              seed: summary.seed,
+              file: base,
+              error: gateErr.message,
+              code: gateErr.code || null,
+              issues: gateErr.issues || null,
+            }, null, 2),
+            'utf-8',
+          );
+          console.log(`  [ground-gc-fail-artifact] saved ${base} to tests/_debug/ground-gc-fail-${base}.{acl,json}`);
+        } catch (_) {}
+        throw gateErr;
+      }
     } else {
       const { _segVisualOf } = require('../../src/acl/scenery_write');
       const { buildPkIndex, getPkEntriesByType } = require('../../src/acl/v4_pk_index');
@@ -2142,6 +2490,9 @@ test('Fuzz ground+air save — ground phase, air-mode swap, air phase, save', as
     console.log(`  ${icon} ${r.file} (seed ${r.seed}, ${r.accepted}✓/${r.rejected}✖ ops [air ${r.airAccepted ?? 0}✓], deletes=${r.deletes ?? 0},${rejSaves} backup=${r.backupCreated}${reload}${r.error ? ` err=${r.error}` : ''})`);
     if (r.deterministicPushbackRepro) {
       console.log(`      deterministic invalid pushback save rejected (distinct from final save): stand=${r.deterministicPushbackRepro.stand} msg=${JSON.stringify(r.deterministicPushbackRepro.message)}`);
+    }
+    if (r.deterministicApproachRepro) {
+      console.log(`      deterministic missing-approach save rejected (distinct from final save): ${r.deterministicApproachRepro.fromRunway}→${r.deterministicApproachRepro.toRunway} arrivals=${r.deterministicApproachRepro.affectedArrivals} msg=${JSON.stringify(r.deterministicApproachRepro.message)}`);
     }
     if (r.rejectedReasons && Object.keys(r.rejectedReasons).length) {
       console.log(`      rejected reasons: ${JSON.stringify(r.rejectedReasons)}`);

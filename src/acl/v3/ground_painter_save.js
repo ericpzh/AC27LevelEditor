@@ -20,6 +20,8 @@ const {
   validateV3PushbackPaths,
   loadWheelBasesNearLevel,
 } = require('./pushback_validation');
+const { validateV3ContainerRunwayTimelineMembership } = require('./runway_timeline_validation');
+const { validateV3ApproachRoutes } = require('./approach_validation');
 
 function defaultBgSidecarPath(filePath) {
   return `${filePath}.bg.json`;
@@ -88,6 +90,7 @@ function defaultReconcileSceneryFlightReferences({ savedGraph, snap, graph, meta
   const procNamesOf = (g) => {
     const s = new Set();
     for (const p of (g.graph.procedures || [])) {
+      if (p.routeType != null && Number(p.routeType) !== 0) continue;
       const v = norm(p.name);
       if (v) s.add(v);
     }
@@ -98,6 +101,7 @@ function defaultReconcileSceneryFlightReferences({ savedGraph, snap, graph, meta
   const procsByRunwayOf = (g) => {
     const m = new Map();
     for (const p of (g.graph.procedures || [])) {
+      if (p.routeType != null && Number(p.routeType) !== 0) continue;
       const rw = norm(p.runwayName);
       const nm = norm(p.name);
       if (!rw || !nm) continue;
@@ -154,17 +158,14 @@ function defaultReconcileSceneryFlightReferences({ savedGraph, snap, graph, meta
     if (!value || !map.size) return value;
     const key = norm(value);
     if (!map.has(key)) return value;
-    const seen = new Set([key]);
-    let cur = map.get(key);
-    while (cur && map.has(norm(cur)) && !seen.has(norm(cur))) {
-      seen.add(norm(cur));
-      cur = map.get(norm(cur));
-    }
+    const cur = map.get(key);
     return cur != null ? String(cur) : value;
   };
 
+  const origRunwayByFlight = new WeakMap();
   let refsRemapped = 0;
   for (const f of flights) {
+    origRunwayByFlight.set(f, f.Runway || '');
     if (f.Runway) {
       const mapped = remap(f.Runway, runwayRename);
       if (mapped !== f.Runway) {
@@ -186,11 +187,12 @@ function defaultReconcileSceneryFlightReferences({ savedGraph, snap, graph, meta
   const starGoneOf = (f) => !!f.Airway && !curStarNames.has(norm(f.Airway)) && snapStarNames.has(norm(f.Airway));
   const starOffRunwayOf = (f) => {
     if (!f.Airway || !f.Runway) return false;
-    const rw = norm(f.Runway);
+    const origRw = norm(origRunwayByFlight.get(f) || f.Runway);
+    const curRw = norm(f.Runway);
     const st = norm(f.Airway);
-    const sn = snapProcsByRunway.get(rw);
+    const sn = snapProcsByRunway.get(origRw);
     if (!sn || !sn.has(st)) return false;
-    const cur = curProcsByRunway.get(rw);
+    const cur = curProcsByRunway.get(curRw);
     return !(cur && cur.has(st));
   };
   for (const f of flights) {
@@ -273,6 +275,7 @@ function saveV3GroundPainterData(
   const preStaticData = diskHandle.container.staticData;
   const wheelBaseByAircraft = loadWheelBasesNearLevel(filePath);
   const snap = diskHandle.readSceneryGraph();
+  const preFlightData = diskHandle.readFlights(filePath);
   const scenRes = diskHandle.applyEdits({
     sceneryGraph: graph,
     sceneryMeta: meta,
@@ -291,7 +294,6 @@ function saveV3GroundPainterData(
   let flightSectionsRebuilt = false;
   let keptFlightsForCsv = null;
   try {
-    const preFlightData = diskHandle.readFlights(filePath);
     const flights = Array.isArray(preFlightData && preFlightData.flights) ? preFlightData.flights : [];
     const rec = reconcileRefs({ savedGraph, snap, graph, meta, flights });
     purgedFlights = rec.purgedFlights;
@@ -309,13 +311,15 @@ function saveV3GroundPainterData(
     throw new Error('Flight reference reconciliation failed: ' + (purgeErr && purgeErr.message ? purgeErr.message : purgeErr));
   }
 
+  const schema = getSchemaForHash(diskHandle.header.schemaHash);
   if (flightSectionsRebuilt) {
-    const schema = getSchemaForHash(diskHandle.header.schemaHash);
     validateV3PushbackPaths(diskHandle.container.staticData, schema, {
       preStaticData,
       wheelBaseByAircraft,
     });
   }
+  validateV3ContainerRunwayTimelineMembership(diskHandle.container, schema);
+  validateV3ApproachRoutes(diskHandle.container.staticData, schema);
 
   diskHandle.saveToFile(filePath, {
     createBackup: Boolean(createBackup),

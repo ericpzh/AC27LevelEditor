@@ -145,7 +145,9 @@ The server WILL reject invalid requests with a 422 error containing `error.detai
 
 **Rule 3: Aircraft type is independent of the airline.** Choose any type from `constraints.aircraftTypes` (the game's full profiled type pool) regardless of the callsign's airline. `constraints.airlineAircraftCompat` is informational only.
 
-**Rule 4: Airway/STAR must be compatible with runway (arrivals only).** Check `constraints.runwayStarCompat[runway]`. If the runway has a list, the airway MUST be from it.
+**Rule 4: Airway/STAR must be compatible with runway (arrivals only), and on v3 levels runways must satisfy timeline membership + arrival approach support.** Check `constraints.runwayStarCompat[runway]`. If the runway has a list, the airway MUST be from it. On GATCARC4 v3 levels (`constraints.aclFormat === 'gatcarc4-v3'`):
+- **Both arrival and departure `Runway`s** must appear in `constraints.timelineRunways` whenever `constraints.hasExplicitRunwayTimeline` is true (initial active set ∪ destinations of valid sequential transitions — enforced even when `RunwayTimeline` is explicitly empty `[]`, skipped only when `RunwayTimeline` is absent/`null`).
+- **Arrival `Runway`s** must also have a usable `RouteType = 1` approach route (`constraints.runwayApproachSupport[runway]?.hasUsableApproach !== false`), not just a STAR.
 
 **Rule 5: Registration must be valid for (airline, aircraft) pair.** Check `constraints.registrationsByPair['AAL|A320']`. If the pair has a list, the registration MUST be from it. Also: same registration on 2+ departures OR 2+ arrivals = rejected.
 
@@ -158,7 +160,7 @@ The server WILL reject invalid requests with a 422 error containing `error.detai
 2. Choose an airline code from `constraints.airlineCode`.
 3. Choose a flight number from `constraints.flightNumbers[airlineCode]`. Combine into `CallSign = airlineCode + flightNumber`.
 4. Choose any aircraft type from `constraints.aircraftTypes` (airline-independent).
-5. Choose a runway from `constraints.flatLists.Runway`.
+5. Choose a runway from `constraints.flatLists.Runway` (on v3 levels with `constraints.hasExplicitRunwayTimeline`, intersect with `constraints.timelineRunways`; for arrivals also require `constraints.runwayApproachSupport[runway]?.hasUsableApproach !== false`).
 6. Choose a stand from `constraints.flatLists.Stand`.
 7. For arrivals: choose an airway from `constraints.runwayStarCompat[runway]`. For departures: leave Airway empty.
 8. Choose a registration from `constraints.registrationsByPair['airlineCode|aircraftType']`.
@@ -177,7 +179,7 @@ The server WILL reject invalid requests with a 422 error containing `error.detai
 No parameters. Returns: `editorReady`, `currentPath`, `currentAirport`, `flightCount`, `arrivalCount`, `departureCount`, `configStartTime`, `configEndTime`, `isDemo`, `modified`, `hasTimelines`.
 
 ### `get_airport_info`
-No parameters. Returns: `cacheReady`, `currentAirport`, `configTimeRange`, and `constraints` with all validation maps (flatLists, airlineCode, flightNumbers, aircraftTypes, airlineAircraftCompat, runwayStarCompat, registrationsByPair, timeRules, standRules, registrationRules). **Call this before any create/modify.**
+No parameters. Returns: `cacheReady`, `currentAirport`, `configTimeRange`, and `constraints` with all validation maps (`flatLists`, `airlineCode`, `flightNumbers`, `aircraftTypes`, `airlineAircraftCompat`, `runwayStarCompat`, `registrationsByPair`, `aclFormat`, `hasExplicitRunwayTimeline`, `timelineRunways`, `runwayApproachSupport`, `timeRules`, `standRules`, `registrationRules`). **Call this before any create/modify.**
 
 ### `create_flights`
 `{flights: [{CallSign, DepartureAirport, ArrivalAirport, Stand, Runway, OffBlockTime, TakeoffTime, LandingTime, InBlockTime, AirlineName, AircraftType, Airway, Registration, Voice, Language}]}`. All 15 fields required per flight. Returns `{success, created}` or 422 with `error.details`. Server-side enrichment: `isDeparture` is derived from `OffBlockTime` presence (drives which leg the save writes); `AirlineName` defaults to `CallSign.substring(0, 3)` when empty.
@@ -186,7 +188,7 @@ No parameters. Returns: `cacheReady`, `currentAirport`, `configTimeRange`, and `
 `{type?, airline?, callsign?, stand?, runway?, aircraftType?, timeAfter?, timeBefore?, limit?, offset?}`. Returns `{success, flights, total}`. Rows carry the 15 fields plus an `isDeparture` boolean (internal flag the save uses to choose the leg).
 
 ### `modify_flights`
-`{match: {callsigns?, callsign?, airline?, type?, stand?, runway?, aircraftType?}, updates: {Stand?, Runway?, OffBlockTime?, ...}}`. Server applies cascade logic. Returns `{success, matched, modified}` or 422.
+`{match: {callsigns?, callsign?, airline?, type?, stand?, runway?, aircraftType?}, updates: {Stand?, Runway?, OffBlockTime?, ...}}`. Server applies cascade logic (and scopes `runway_not_in_timeline` to the modified target rows so schedules invalidated by timeline edits can be repaired incrementally). Returns `{success, matched, modified}` or 422.
 
 ### `delete_flights`
 `{match: {callsigns?, callsign?, airline?, type?, stand?, runway?, aircraftType?}}`. Returns `{success, deleted}`.
@@ -342,3 +344,5 @@ First turn on any ground/air task: `get_editor_status → get_ground_painter_sta
 - **Degenerate-edge guards**: node drags freeze when consecutive vertices would colocate; `attachVirtualFilletLeg`/`applyVirtualFillet` reject collapsed legs/arcs and same-anchor fillets before mutating; `create_areas` and area vertex drags reject bowtie polygons via `polygonIsSimple` (`src/acl/scenery_graph.js` + ESM mirror `polygon_simple.js`); air fillet rejects non-connected (virtual) pairs.
 - **Runway designation dedup**: `create_runways` suffix-deduplicates heading-derived names (`L/R` then `C`) so two runways never share a `$k: runway:<name>` key.
 - **Jetway & airway integrity**: stand deletes via `delete_ground_objects` record PKs, so the save drops `jetway:*` static items and their checkpoint `jetway:*` runtime entities — no more `Jetway: static item 'jetway:NN' does not exist` at level init. Airway node deletes cascade to degenerate procedures (`<2` nodes) and are guarded by the airway dangling gate (`airway-node` → `airway-segment`/`runway Routes`), so no stray `$iref` to a deleted FIX survives.
+- **v3 pushback-path validation (`saveV3GroundPainterData` / `validateV3PushbackPaths`)**: on v3 levels, saving through Ground Painter validates every affected `EgressType=0` stand's advertised `taxi-navigation:pushback:*` options (`TryProject` `mask=1/3`, `EndpointTolerance=2.0 m`, `MaximumTurnAngle=120°`, `StandPhase` transitions, `Directed`/`Head` orientation, `aircraft_profiles.csv` wheelbases) **before** writing `.acl`, `.acl.bak`, `.csv`, `.bg.json`, or `geo_data.osm`. A broken pushback path rejects the save with the stand identifier, pushback PK, and reason while keeping in-memory edits intact so `undo_ground_painter` or endpoint/stand moves can repair and retry.
+- **v3 runway-timeline membership & approach-route validation (`validateV3ContainerRunwayTimelineMembership` / `validateV3ApproachRoutes`)**: on v3 levels, runway designator renames preserve procedure associations (`writers_scenery.js` + `GroundPainter.jsx`) and emit a structured `ground_painter_writer_procedure_dropped` warning when `< 2` distinct airway nodes resolve. After flight reconciliation on the candidate archive, both Ground Painter saves (`saveV3GroundPainterData`) and ordinary v3 flight saves (`v3/handler.js`) reject **before** modifying `.acl`, `.acl.bak`, `.csv`, or sidecars if any surviving arrival/departure leg references a runway absent from `MetaData.RunwayTimeline` (`RunwayTimelineMembershipError`) or any surviving arrival uses a runway whose rebuilt `Routes` lack a surviving STAR or usable `RouteType = 1` approach route (`ApproachRouteValidationError`; departure-only runways remain valid).

@@ -21,6 +21,11 @@ const {
 const { CHANNEL_TYPE_APPROACH } = require('../src/utils/constants/aviation');
 const { polygonIsSimple } = require('../src/acl/scenery_graph');
 const { languageForAirlineCode } = require('../src/acl/utils');
+const {
+  collectRunwayTimelineMembers,
+  validateFlightRunwayTimelineMembership,
+  formatRunwayTimelineMembershipIssue,
+} = require('../src/acl/runway_timeline_membership');
 
 // ── Module state ────────────────────────────────────────────────
 let mainWindow = null;
@@ -353,25 +358,33 @@ function buildConstraints(state, cache) {
     flightNumbers[code] = [...new Set([...(flightNumbers[code] || []), ...nums])];
   }
 
+  const runwayTimeline = state.runwayTimeline ?? null;
+  const timelineRunways = runwayTimeline != null
+    ? [...collectRunwayTimelineMembers(runwayTimeline).members]
+    : null;
+
   return {
     knownCodes,
     flightNumbers,
-    stands: dv.Stand || [],
-    runways: dv.Runway || [],
+    stands: Array.isArray(sv.Stand) ? sv.Stand : (dv.Stand || []),
+    runways: Array.isArray(sv.Runway) ? sv.Runway : (dv.Runway || []),
     aircraftTypes: allAircraftTypes(dv, ad),
     voices: sv.Voice || dv.Voice || [],
     languages: sv.Language || dv.Language || [],
     voiceLanguages: sv._voiceLanguages || dv._voiceLanguages || null,
     airlineCountries: sv._airlineCountries || null,
     v3Audio: sv._v3Audio || null,
+    isV3: Boolean(sv._v3Audio || sv._isV3),
+    liveUsableApprRunways: Array.isArray(sv._liveUsableApprRunways) ? sv._liveUsableApprRunways : null,
     airlineNames: dv.AirlineName || [],
     airlineAircraftCompat: (dv._compat && dv._compat.airlineToAircraft) || {},
-    runwayStarCompat: ad.runwayStarMap || {},
+    runwayStarCompat: sv._runwayStarMap || ad.runwayStarMap || {},
     registrationsByPair: dv._registrationMap || {},
     configStartTime: state._configStartTime,
     configEndTime: state._configEndTime,
     currentAirport: state.currentAirport,
-    runwayTimeline: state.runwayTimeline || { initialRunways: [], timeline: [] },
+    runwayTimeline,
+    timelineRunways,
   };
 }
 
@@ -400,9 +413,14 @@ function airlineLanguageMap(constraints) {
  * Build a structured error response from validation failures.
  * Returns null if all checks pass.
  */
-function validateFlightObjects(newFlights, existingFlights, constraints) {
+function validateFlightObjects(newFlights, existingFlights, constraints, opts = {}) {
   const details = [];
   const allFlights = [...existingFlights, ...newFlights];
+  const targetIndexSet = opts && opts.targetIndices instanceof Set
+    ? opts.targetIndices
+    : (newFlights.length > 0
+      ? new Set(newFlights.map((_, i) => existingFlights.length + i))
+      : null);
 
   for (let i = 0; i < newFlights.length; i++) {
     const f = newFlights[i];
@@ -761,6 +779,53 @@ function validateFlightObjects(newFlights, existingFlights, constraints) {
     }
   }
 
+  // 13. v3 Runway timeline membership across the full schedule (initialRunways ∪ valid changes).
+  // Runs over allFlights so get_validation_issues / GET /api/validation / PATCH batch
+  // revalidate existing flights against pending timeline edits as well as new flights.
+  if (constraints.isV3 && constraints.runwayTimeline != null) {
+    const missingFieldIndices = new Set(
+      details.filter((d) => d.issue === 'missing_field').map((d) => d.index),
+    );
+    const tlCheck = validateFlightRunwayTimelineMembership(allFlights, constraints.runwayTimeline, {
+      skipEmptyRunway: true,
+    });
+    for (const iss of tlCheck.issues) {
+      if (missingFieldIndices.has(iss.index)) continue;
+      if (targetIndexSet && !targetIndexSet.has(iss.index)) continue;
+      details.push({
+        index: iss.index,
+        field: 'Runway',
+        value: iss.runway,
+        issue: 'runway_not_in_timeline',
+        message: formatRunwayTimelineMembershipIssue(iss),
+        valid: iss.timelineRunways,
+      });
+    }
+  }
+
+  // 14. v3 Arrival runway must have >= 1 usable RouteType=1 (APP) route in the current level's SceneryData.
+  if (constraints.isV3 && Array.isArray(constraints.liveUsableApprRunways)) {
+    const usableApprSet = new Set(constraints.liveUsableApprRunways);
+    for (let i = 0; i < allFlights.length; i++) {
+      if (targetIndexSet && !targetIndexSet.has(i)) continue;
+      const f = allFlights[i];
+      if (!isArrival(f)) continue;
+      const rwy = String(f.Runway || '').trim();
+      if (!rwy) continue;
+      if (constraints.runways.length > 0 && !constraints.runways.includes(rwy)) continue;
+      if (!usableApprSet.has(rwy)) {
+        details.push({
+          index: i,
+          field: 'Runway',
+          value: f.Runway,
+          issue: 'runway_missing_approach',
+          message: `Arrival ${f.CallSign || '?'} on runway '${rwy}' has no usable approach route (RouteType=1 with >= 2 airway nodes) in this level's SceneryData. Restore an approach route in the Ground/Air Painter or change/remove this arrival.`,
+          valid: constraints.liveUsableApprRunways,
+        });
+      }
+    }
+  }
+
   return details.length > 0 ? details : null;
 }
 
@@ -1039,6 +1104,7 @@ async function handleMcpMessage(msg) {
           if (args.match.callsign) matchCallsigns.add(args.match.callsign);
           let flights = [...(state.flights || [])];
           let matched = 0, modified = 0;
+          const matchedIndices = new Set();
           for (let i = 0; i < flights.length; i++) {
             const f = flights[i];
             let isMatch = true;
@@ -1051,12 +1117,13 @@ async function handleMcpMessage(msg) {
             if (args.match.aircraftType) isMatch = isMatch && f.AircraftType === args.match.aircraftType;
             if (isMatch) {
               matched++;
+              matchedIndices.add(i);
               const updated = applyCascades(f, args.updates, constraints);
               if (JSON.stringify(updated) !== JSON.stringify(f)) { flights[i] = updated; modified++; }
               else { flights[i] = updated; }
             }
           }
-          const issues = validateFlightObjects([], flights, constraints);
+          const issues = validateFlightObjects([], flights, constraints, { targetIndices: matchedIndices });
           if (issues) {
             return respond({ content: [{ type: 'text', text: JSON.stringify({ success: false, error: { code: 'VALIDATION_FAILED', message: issues.length + ' validation issue(s).', details: issues } }) }], isError: true });
           }
@@ -2202,6 +2269,8 @@ async function handleMcpMessage(msg) {
               aircraftTypes: constraints.aircraftTypes,
               airlineAircraftCompat: constraints.airlineAircraftCompat,
               runwayStarCompat: constraints.runwayStarCompat,
+              ...(constraints.timelineRunways != null ? { timelineRunways: constraints.timelineRunways } : {}),
+              ...(constraints.liveUsableApprRunways != null ? { usableApproachRunways: constraints.liveUsableApprRunways } : {}),
               registrationsByPair: constraints.registrationsByPair,
               // Airline → required captain Language (CN → zh, every other → en).
               // The game's CallsignService only records a callsign for one
@@ -2457,6 +2526,8 @@ async function handleRequest(req, res) {
           aircraftTypes: constraints.aircraftTypes,
           airlineAircraftCompat: constraints.airlineAircraftCompat,
           runwayStarCompat: constraints.runwayStarCompat,
+          ...(constraints.timelineRunways != null ? { timelineRunways: constraints.timelineRunways } : {}),
+          ...(constraints.liveUsableApprRunways != null ? { usableApproachRunways: constraints.liveUsableApprRunways } : {}),
           registrationsByPair: constraints.registrationsByPair,
           airlineLanguages: airlineLanguageMap(constraints),
           timeRules: {
@@ -2594,6 +2665,7 @@ async function handleRequest(req, res) {
       let flights = [...(state.flights || [])];
       let matched = 0;
       let modified = 0;
+      const matchedIndices = new Set();
 
       for (let i = 0; i < flights.length; i++) {
         const f = flights[i];
@@ -2608,6 +2680,7 @@ async function handleRequest(req, res) {
 
         if (isMatch) {
           matched++;
+          matchedIndices.add(i);
           const updated = applyCascades(f, body.updates, constraints);
           if (JSON.stringify(updated) !== JSON.stringify(f)) {
             flights[i] = updated;
@@ -2619,7 +2692,7 @@ async function handleRequest(req, res) {
       }
 
       // Validate the resulting flight array
-      const issues = validateFlightObjects([], flights, constraints);
+      const issues = validateFlightObjects([], flights, constraints, { targetIndices: matchedIndices });
       if (issues) {
         res.writeHead(422);
         res.end(JSON.stringify({

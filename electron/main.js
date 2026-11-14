@@ -37,6 +37,7 @@ const gamePaths = require('../src/utils/gamePaths');
 const { unionFlightNums } = require('../src/utils/gameCallsigns');
 const { loadAirlineCountryRegistry } = require('../src/acl/utils');
 const { openAcl, openAclFile, detectAclFormat } = require('../src/acl/archive');
+const { inspectV3RunwayApproachSupport } = require('../src/acl/v3/approach_validation');
 const { start: startUdpListener, stop: stopUdpListener, getUdpStatus, getUdpAircraftState, resetAircraftState, sendCommand: sendUdpCommand } = require('./udp_listener');
 const { startServer: startApiServer, stopServer: stopApiServer, handleMcpMessage, MCP_TOOLS, validateFlightObjects, buildConstraints } = require('./api-server');
 const cloudLLM = require('./cloud-llm');
@@ -282,7 +283,14 @@ function _collectLiveSceneryForFile(aclPath) {
   const apprRunwayMap = scen.apprRunwayMap || {};
   const runwayApprMap = scen.runwayApprMap || {};
 
+  const isV3 = handle.format === 'gatcarc4-v3';
+  const usableApprRunways = isV3
+    ? inspectV3RunwayApproachSupport(handle.container && handle.container.staticData, handle.container).usableApproachRunways
+    : null;
+
   return {
+    isV3,
+    usableApprRunways,
     standPositions, areaData, taxiwayPaths, runwayThresholds, starRunwayMap, runwayStarMap,
     starPaths, starWaypoints, airwayNodes,
     sidPaths, missedAppPaths, apprPaths, sidRunwayMap, runwaySidMap, missedAppMap, runwayMissedAppMap, apprRunwayMap, runwayApprMap,
@@ -848,6 +856,8 @@ function _buildCollectValuesBase(airportIcao, rootPath, activeAclPath = null) {
   // Ensure live keys never come from the persisted cache
   delete aclValues.Stand; delete aclValues.Runway; delete aclValues.Airway;
   delete aclValues._v3Audio;
+  delete aclValues._isV3;
+  delete aclValues._liveUsableApprRunways;
 
   // Determine effective audio mode for this request (per-level when activeAclPath is known,
   // otherwise airport-wide) and refresh audio overlays from disk so changes to audio assets
@@ -855,6 +865,7 @@ function _buildCollectValuesBase(airportIcao, rootPath, activeAclPath = null) {
   if (rootPath && airportIcao) {
     const aclPaths = activeAclPath ? [] : _listAirportAclPaths(rootPath, airportIcao);
     const effectiveMode = resolveAirportAudioMode(rootPath, airportIcao, aclPaths, activeAclPath);
+    aclValues._isV3 = effectiveMode === 'v3';
     if (effectiveMode === 'v3') {
       const v3Res = loadV3AirportAudio(rootPath, airportIcao);
       _applyV3AudioToDropdowns(aclValues, v3Res);
@@ -871,6 +882,8 @@ function _buildCollectValuesBase(airportIcao, rootPath, activeAclPath = null) {
       }
       _mergeFlightNumsIntoDropdowns(aclValues, v2Res.audioCallsigns);
     }
+  } else if (activeAclPath && fs.existsSync(activeAclPath)) {
+    try { aclValues._isV3 = detectAclFormat(activeAclPath) === 'gatcarc4-v3'; } catch (_) {}
   }
 
   // Aircraft types are NOT bound to any airline: the flight-schedule dropdown
@@ -1096,6 +1109,10 @@ function _buildCollectValuesWithLive(airportIcao, rootPath, live, activeAclPath 
     aclValues._starRunwayMap = live.starRunwayMap || {};
     aclValues._runwayStarMap = live.runwayStarMap || {};
     aclValues._runwayPairs = live.runwayPairs || [];
+    aclValues._isV3 = Boolean(live.isV3);
+    if (live.isV3 && Array.isArray(live.usableApprRunways)) {
+      aclValues._liveUsableApprRunways = live.usableApprRunways;
+    }
   }
   // Per-file live maps — prefer live when present, otherwise fall back to cached
   const threshSource = hasLive && live.runwayThresholds && Object.keys(live.runwayThresholds).length > 0 ? live.runwayThresholds : (cached?.approachData?.runwayThresholds || {});
@@ -1173,9 +1190,22 @@ ipcMain.handle('get-live-values', async (_event, aclPath, icao) => {
       vals._standPositions = live.standPositions || {};
       vals._starRunwayMap = live.starRunwayMap || {};
       vals._runwayStarMap = live.runwayStarMap || {};
+      vals._isV3 = Boolean(live.isV3);
+      if (live.isV3 && Array.isArray(live.usableApprRunways)) {
+        vals._liveUsableApprRunways = live.usableApprRunways;
+      }
     } catch (e) {
       console.warn('[get-live-values] build fallback failed:', e.message);
-      vals = { Stand: live.dropdownPatch?.Stand || [], Runway: live.dropdownPatch?.Runway || [], Airway: live.dropdownPatch?.Airway || [], _standPositions: live.standPositions || {}, _starRunwayMap: live.starRunwayMap || {}, _runwayStarMap: live.runwayStarMap || {} };
+      vals = {
+        Stand: live.dropdownPatch?.Stand || [],
+        Runway: live.dropdownPatch?.Runway || [],
+        Airway: live.dropdownPatch?.Airway || [],
+        _standPositions: live.standPositions || {},
+        _starRunwayMap: live.starRunwayMap || {},
+        _runwayStarMap: live.runwayStarMap || {},
+        _isV3: Boolean(live.isV3),
+        ...(live.isV3 && Array.isArray(live.usableApprRunways) ? { _liveUsableApprRunways: live.usableApprRunways } : {}),
+      };
     }
     return { success: true, vals, live };
   } catch (e) { return { success: false, error: e.message }; }
@@ -2443,7 +2473,11 @@ function _reconcileSceneryFlightReferences({ savedGraph, snap, graph, meta, flig
   }
   const procNamesOf = (g) => {
     const s = new Set();
-    for (const p of (g.graph.procedures || [])) { const v = norm(p.name); if (v) s.add(v); }
+    for (const p of (g.graph.procedures || [])) {
+      if (p.routeType != null && Number(p.routeType) !== 0) continue;
+      const v = norm(p.name);
+      if (v) s.add(v);
+    }
     return s;
   };
   const curStarNames = procNamesOf(savedGraph);
@@ -2451,6 +2485,7 @@ function _reconcileSceneryFlightReferences({ savedGraph, snap, graph, meta, flig
   const procsByRunwayOf = (g) => {
     const m = new Map();
     for (const p of (g.graph.procedures || [])) {
+      if (p.routeType != null && Number(p.routeType) !== 0) continue;
       const rw = norm(p.runwayName), nm = norm(p.name);
       if (!rw || !nm) continue;
       if (!m.has(rw)) m.set(rw, new Set());
@@ -2503,16 +2538,16 @@ function _reconcileSceneryFlightReferences({ savedGraph, snap, graph, meta, flig
 
   const remap = (value, map) => {
     if (!value || !map.size) return value;
-    let key = norm(value);
+    const key = norm(value);
     if (!map.has(key)) return value;
-    const seen = new Set([key]);
-    let cur = map.get(key);
-    while (cur && map.has(norm(cur)) && !seen.has(norm(cur))) { seen.add(norm(cur)); cur = map.get(norm(cur)); }
+    const cur = map.get(key);
     return cur != null ? String(cur) : value;
   };
 
+  const origRunwayByFlight = new WeakMap();
   let refsRemapped = 0;
   for (const f of flights) {
+    origRunwayByFlight.set(f, f.Runway || '');
     if (f.Runway) {
       const mapped = remap(f.Runway, runwayRename);
       if (mapped !== f.Runway) { f.Runway = mapped; refsRemapped++; }
@@ -2528,10 +2563,12 @@ function _reconcileSceneryFlightReferences({ savedGraph, snap, graph, meta, flig
   const starGoneOf = (f) => !!f.Airway && !curStarNames.has(norm(f.Airway)) && snapStarNames.has(norm(f.Airway));
   const starOffRunwayOf = (f) => {
     if (!f.Airway || !f.Runway) return false;
-    const rw = norm(f.Runway), st = norm(f.Airway);
-    const sn = snapProcsByRunway.get(rw);
+    const origRw = norm(origRunwayByFlight.get(f) || f.Runway);
+    const curRw = norm(f.Runway);
+    const st = norm(f.Airway);
+    const sn = snapProcsByRunway.get(origRw);
     if (!sn || !sn.has(st)) return false;
-    const cur = curProcsByRunway.get(rw);
+    const cur = curProcsByRunway.get(curRw);
     return !(cur && cur.has(st));
   };
   for (const f of flights) {
@@ -3406,17 +3443,18 @@ ipcMain.handle('fetch-live-metar', async (_event, icao) => {
 ipcMain.handle('validate-flights', async (_event, flights, snapshot = {}) => {
   try {
     const state = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    const vals = state.vals && typeof state.vals === 'object' ? state.vals : null;
     const syntheticState = {
       currentAirport: state.currentAirport || null,
       _configStartTime: state.configStartTime || null,
       _configEndTime: state.configEndTime || null,
-      runwayTimeline: state.runwayTimeline || { initialRunways: [], timeline: [] },
+      runwayTimeline: state.runwayTimeline ?? null,
+      airportValues: vals && state.currentAirport ? { [state.currentAirport]: vals } : {},
     };
     const cache = airportCache || {};
     const constraints = buildConstraints(syntheticState, cache);
 
     // Overlay live per-file values (authoritative for the open level).
-    const vals = state.vals && typeof state.vals === 'object' ? state.vals : null;
     if (vals) {
       if (Array.isArray(vals.Stand)) constraints.stands = vals.Stand;
       if (Array.isArray(vals.Runway)) constraints.runways = vals.Runway;

@@ -1,6 +1,7 @@
 import { T } from './i18n.js';
 import { airlineCodeForFlight, expectedLanguageForFlight } from './airlineLanguage.js';
 import { FIELD_LABELS, SCENARIO_END_GRACE_MIN, RUNWAY_TRANSITION_GRACE_SEC, STAND_DEP_BEFORE_ESTIMATE_MIN, STAND_ARR_AFTER_ESTIMATE_MIN, STAND_LANDING_BEFORE_INBLOCK_MIN, STAND_OCCUPANCY_START_OFFSET_MIN, STAND_OCCUPANCY_END_OFFSET_MIN, MINUTES_PER_DAY, VALID_LANGUAGES } from './constants.js';
+import { validateFlightRunwayTimelineMembership } from '../acl/runway_timeline_membership.js';
 
 // ── Stand conflict detection helpers ──
 
@@ -528,6 +529,52 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
           return a.localeCompare(b);
         }).join(', ') || '(none)',
       }));
+    }
+  }
+
+  // v3-only checks:
+  //   1) FlightPlanSessionValidator.ValidateRunways — every arrival and departure
+  //      leg's runway must appear in the effective RunwayTimeline (initialRunways
+  //      plus valid timeline transitions).
+  //   2) AirwayRouteService.GetRoute(APP) — every arrival runway must have at
+  //      least one usable RouteType = 1 (APPR) route in this level's live scenery.
+  const isV3 = Boolean(v3Audio || values._isV3);
+  if (isV3 && runwayTimeline != null && flights && flights.length) {
+    const tlCheck = validateFlightRunwayTimelineMembership(flights, runwayTimeline, {
+      skipEmptyRunway: true,
+    });
+    const sortedTlNames = [...tlCheck.timelineRunways].sort((a, b) => {
+      const na = parseInt(a, 10) || 0, nb = parseInt(b, 10) || 0;
+      if (na !== nb) return na - nb;
+      return a.localeCompare(b);
+    }).join(', ') || '(none)';
+    for (const iss of tlCheck.issues) {
+      issues.push(T('val_runway_not_in_timeline', {
+        cs: iss.callsign || iss.registration || '?',
+        dir: T(iss.direction === 'arrival' ? 'val_dir_arrival' : 'val_dir_departure'),
+        runway: iss.runway,
+        timeline: sortedTlNames,
+      }));
+    }
+  }
+
+  if (isV3 && Array.isArray(values._liveUsableApprRunways) && flights && flights.length) {
+    const normRw = (r) => String(r || '').trim().replace(/^0+(\d)/, '$1');
+    const usableApprNorm = new Set(values._liveUsableApprRunways.map(normRw).filter(Boolean));
+    for (const fl of flights) {
+      const isArrival = Boolean((fl.LandingTime || '').trim())
+        || (fl.isDeparture === false && !(fl.OffBlockTime || '').trim());
+      if (!isArrival) continue;
+      const runway = String(fl.Runway || '').trim();
+      if (!runway) continue;
+      if (validSets.Runway.size > 0 && !validSets.Runway.has(runway)) continue;
+      if (!usableApprNorm.has(normRw(runway))) {
+        issues.push(T('val_runway_missing_approach', {
+          cs: fl.CallSign || '?',
+          runway,
+          star: fl.Airway || '',
+        }));
+      }
     }
   }
 

@@ -58,6 +58,7 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import net from 'net';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -69,6 +70,7 @@ const parser = require('../../src/acl/parser');
 // typeless-ESM on the require path (same as src/acl/parser above). This
 // guarantees the fuzz never tries to save a state the editor rejects.
 const validators = require('../../src/utils/validators.js');
+const { collectRunwayTimelineMembers } = require('../../src/acl/runway_timeline_membership');
 const { readAclText } = require('../../src/acl/gatcarc');
 const { openAclFile } = require('../../src/acl/archive');
 const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
@@ -510,33 +512,56 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     log(`range ${info.configTimeRange.start}–${info.configTimeRange.end}  airlines=${airlines.length} runways=${runways.length} stands=${stands.length}`);
     if (!airlines.length || !runways.length || !stands.length) throw new Error('empty constraint lists — cannot build valid flights');
 
-    // STAR for a runway — arrivals must ALWAYS carry one: the game's
-    // FlightPlan.Init() drops a STAR-less arrival leg at level load
-    // ("neither an arrival nor a departure leg", see gamecompat-utils
-    // arrival-no-star). Runways without STAR data (departure-only, e.g.
-    // KJFK 13R) resolve to the first arrival-capable runway instead, so the
-    // saved STAR/runway pair always satisfies both the editor validators
-    // and the game.
-    const firstArrivalCapable = Object.keys(SU.rwyStars || {}).sort()
-      .find((r) => (SU.rwyStars[r] || []).length > 0) || null;
-    const starFor = (rwy) => {
+    const isV3Level = openAclFile(currentPath).format === 'gatcarc4-v3' || Boolean(SV._v3Audio || SV._isV3);
+    const usableApprSet = isV3Level && Array.isArray(SV._liveUsableApprRunways)
+      ? new Set(SV._liveUsableApprRunways)
+      : null;
+
+    // STAR + approach eligibility for arrivals — arrivals must ALWAYS carry a
+    // STAR (FlightPlan.Init() drops STAR-less arrival legs) and on v3 must
+    // land on a runway with a usable RouteType = 1 approach route.
+    const arrivalCapableRunways = Object.keys(SU.rwyStars || {}).sort()
+      .filter((r) => runways.includes(r) && (SU.rwyStars[r] || []).length > 0 && (!usableApprSet || usableApprSet.has(r)));
+    const firstArrivalCapable = arrivalCapableRunways[0] || null;
+
+    // On v3, FlightPlanSessionValidator.ValidateRunways requires every flight
+    // leg's runway to appear in MetaData.RunwayTimeline (initial set or valid
+    // transitions). Recompute dynamically from live runwayTimeline so choices
+    // stay valid after timeline mutations.
+    const computeValidRunwaysForTimeline = (rt) => {
+      if (!isV3Level) {
+        return { enforced: false, members: new Set(runways), depRunways: runways, arrRunways: arrivalCapableRunways };
+      }
+      const { enforced, members } = collectRunwayTimelineMembers(rt);
+      const depRunways = enforced ? runways.filter((r) => members.has(r)) : runways;
+      const depSet = new Set(depRunways);
+      const arrRunways = arrivalCapableRunways.filter((r) => !enforced || depSet.has(r));
+      return { enforced, members, depRunways, arrRunways };
+    };
+    const getLiveValidRunways = async () => {
+      const rt = await window.evaluate(() => window.__AC27_STORE.getState().runwayTimeline ?? null);
+      return { rt, ...computeValidRunwaysForTimeline(rt) };
+    };
+
+    const starFor = (rwy, allowedArrRunways = arrivalCapableRunways) => {
       const list = SU.rwyStars?.[rwy];
-      if (Array.isArray(list) && list.length > 0) {
+      if (Array.isArray(list) && list.length > 0 && (!allowedArrRunways.length || allowedArrRunways.includes(rwy))) {
         const star = rpick(list);
         return star || list[0];
       }
-      // Runway has no STAR data — return a STAR from the first
-      // arrival-capable runway (the caller pairs it with a Runway move
-      // when the picked runway itself has none).
-      return firstArrivalCapable ? (SU.rwyStars[firstArrivalCapable][0] || null) : null;
+      const fallbackRwy = (allowedArrRunways && allowedArrRunways.length ? allowedArrRunways[0] : firstArrivalCapable);
+      return fallbackRwy ? (SU.rwyStars[fallbackRwy]?.[0] || null) : null;
     };
     // Airway (+ optional Runway) update that always yields a STAR/runway
-    // pair the game accepts. Returns null when the airport has no STAR
-    // data at all (in which case no arrival can be game-valid).
-    const starUpdateFor = (rwy) => {
+    // pair the game accepts. Returns null when no arrival runway is available.
+    const starUpdateFor = (rwy, allowedArrRunways = arrivalCapableRunways) => {
       const stars = SU.rwyStars?.[rwy] || [];
-      if (stars.length) return { Airway: rpick(stars) || stars[0] };
-      if (firstArrivalCapable) return { Runway: firstArrivalCapable, Airway: SU.rwyStars[firstArrivalCapable][0] };
+      const rwyAllowed = !allowedArrRunways.length || allowedArrRunways.includes(rwy);
+      if (stars.length && rwyAllowed) return { Airway: rpick(stars) || stars[0] };
+      const fallbackRwy = (allowedArrRunways && allowedArrRunways.length ? allowedArrRunways[0] : firstArrivalCapable);
+      if (fallbackRwy && SU.rwyStars[fallbackRwy]?.length) {
+        return { Runway: fallbackRwy, Airway: SU.rwyStars[fallbackRwy][0] };
+      }
       return null;
     };
     // Registration the editor actually accepts for a (airline, aircraft) pair.
@@ -623,13 +648,16 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       if (!airline) airline = rpick(airlines);
       const ac = typePoolFor(airline);
       const aircraft = rpick(ac);
-      const isArr = rand() < 0.5;
+      const { depRunways, arrRunways } = await getLiveValidRunways();
+      let isArr = rand() < 0.5;
+      if (isArr && !arrRunways.length && depRunways.length) isArr = false;
       const num = numFor(airline) || String(rint(1000, 9999));
-      // Arrivals must land on an arrival-capable runway — the STAR/runway
-      // pair must resolve or the editor validator blocks the save.
-      const arrivalRunways = Object.keys(SU.rwyStars || {})
-        .filter((r) => runways.includes(r) && (SU.rwyStars[r] || []).length > 0);
-      const runway = isArr && arrivalRunways.length ? rpick(arrivalRunways) : rpick(runways);
+      // Arrivals must land on an arrival-capable runway (STAR + usable approach)
+      // that also appears in the live v3 runwayTimeline; departures must use a
+      // runway in the live v3 runwayTimeline.
+      const runway = isArr
+        ? rpick(arrRunways.length ? arrRunways : arrivalCapableRunways)
+        : rpick(depRunways.length ? depRunways : runways);
       const stand = rpick(stands);
       const t1 = rint(startSec, maxFlightSec - 60);
       const t2 = Math.min(t1 + rint(60, 15 * 60), maxFlightSec);
@@ -647,13 +675,115 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
         InBlockTime: isArr ? secToTime(t2) : '',
         AirlineName: airline,
         AircraftType: aircraft,
-        Airway: isArr ? (starFor(runway) || '') : '',
+        Airway: isArr ? (starFor(runway, arrRunways) || '') : '',
         Registration: regAvoiding(airline, aircraft, avoidRegs[group]),
         Voice: pickVoice(language),
         Language: language,
       };
       return flight;
     };
+
+    // ── 2b. Deterministic v3 negative checks (no RNG consumption) ──
+    if (isV3Level) {
+      const sha256File = (p) => fs.existsSync(p)
+        ? crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex')
+        : null;
+      const initValid = await getLiveValidRunways();
+      const initFlights = (await getFlights()).flights;
+      if (initValid.enforced && initFlights.length > 0) {
+        // Negative Case 1: assigning a scenery runway absent from runwayTimeline
+        // must be rejected by MCP modify_flights and block UI Save without touching files.
+        const outsideRwy = runways.find((r) => !initValid.members.has(r));
+        const depSample = initFlights.find((f) => !isArrOf(f)) || initFlights[0];
+        if (outsideRwy && depSample) {
+          let mcpRejected = false;
+          try {
+            await mcpCall('modify_flights', { match: { callsign: depSample.CallSign }, updates: { Runway: outsideRwy } });
+          } catch (negErr) {
+            const msg = reasonOf(negErr);
+            if (!msg.includes('runway_not_in_timeline') && !msg.includes('level runway timeline')) {
+              throw new Error(`expected runway_not_in_timeline on ${depSample.CallSign} → ${outsideRwy}, got: ${msg}`);
+            }
+            mcpRejected = true;
+          }
+          if (!mcpRejected) {
+            throw new Error(`MCP modify_flights accepted non-timeline runway ${outsideRwy} for ${depSample.CallSign}`);
+          }
+
+          const preAclHash = sha256File(currentPath);
+          const preBakHash = sha256File(currentPath + '.bak');
+          const snapA = await window.evaluate(({ cs, badRwy }) => {
+            const st = window.__AC27_STORE.getState();
+            const prevFlights = st.flights;
+            const prevMod = st.modified;
+            const nextFlights = prevFlights.map((f) => f.CallSign === cs ? { ...f, Runway: badRwy } : f);
+            window.__AC27_STORE.setState({ flights: nextFlights, modified: true });
+            return { prevFlights, prevMod };
+          }, { cs: depSample.CallSign, badRwy: outsideRwy });
+          try {
+            const blockedSave = await saveViaUI(window);
+            if (blockedSave.saved) {
+              throw new Error(`UI Save succeeded despite non-timeline runway ${outsideRwy} on ${depSample.CallSign}`);
+            }
+            if (sha256File(currentPath) !== preAclHash || sha256File(currentPath + '.bak') !== preBakHash) {
+              throw new Error('rejected UI Save modified .acl or .acl.bak');
+            }
+          } finally {
+            await window.evaluate(({ prevFlights, prevMod }) => {
+              window.__AC27_STORE.setState({ flights: prevFlights, modified: prevMod });
+            }, snapA);
+          }
+          log(`negative check 1 passed: ${depSample.CallSign} → non-timeline ${outsideRwy} rejected by MCP & UI Save`);
+        }
+
+        // Negative Case 2: timeline-only edit removing a runway still referenced
+        // by an existing flight must fail whole-schedule MCP validation and block UI Save.
+        const refFlight = initFlights.find((f) => f.Runway && initValid.members.has(f.Runway));
+        if (refFlight) {
+          const usedRwy = refFlight.Runway;
+          const preAclHash = sha256File(currentPath);
+          const preBakHash = sha256File(currentPath + '.bak');
+          const snapB = await window.evaluate((dropRwy) => {
+            const st = window.__AC27_STORE.getState();
+            const prevRt = st.runwayTimeline;
+            const prevTlm = st.timelineModified;
+            const prevMod = st.modified;
+            const keepInit = (prevRt?.initialRunways || []).filter((r) => r !== dropRwy);
+            const keepTl = (prevRt?.timeline || [])
+              .map((entry) => ({
+                ...entry,
+                changes: (entry.changes || []).filter((c) => c.source !== dropRwy && c.dest !== dropRwy),
+              }))
+              .filter((entry) => entry.changes.length > 0);
+            window.__AC27_STORE.setState({
+              runwayTimeline: { initialRunways: keepInit, timeline: keepTl },
+              timelineModified: { ...(prevTlm || {}), runway: true },
+              modified: true,
+            });
+            return { prevRt, prevTlm, prevMod };
+          }, usedRwy);
+          try {
+            const valRes = await mcpCall('get_validation_issues', {});
+            const hit = (valRes.issues || []).some((m) => m.includes(refFlight.CallSign) && m.includes('level runway timeline'));
+            if (!hit) {
+              throw new Error(`timeline-only removal of ${usedRwy} did not flag ${refFlight.CallSign} in get_validation_issues: ${JSON.stringify(valRes.issues)}`);
+            }
+            const blockedSave2 = await saveViaUI(window);
+            if (blockedSave2.saved) {
+              throw new Error(`UI Save succeeded after removing referenced runway ${usedRwy} from timeline`);
+            }
+            if (sha256File(currentPath) !== preAclHash || sha256File(currentPath + '.bak') !== preBakHash) {
+              throw new Error('rejected timeline-only UI Save modified .acl or .acl.bak');
+            }
+          } finally {
+            await window.evaluate(({ prevRt, prevTlm, prevMod }) => {
+              window.__AC27_STORE.setState({ runwayTimeline: prevRt, timelineModified: prevTlm, modified: prevMod });
+            }, snapB);
+          }
+          log(`negative check 2 passed: removing referenced runway ${usedRwy} from timeline flagged ${refFlight.CallSign} & blocked UI Save`);
+        }
+      }
+    }
 
     // ── 3. Randomized operations ──
     const nOps = rint(Math.min(minOps, maxOps), maxOps);
@@ -719,6 +849,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       for (let attempt = 0; attempt < 6; attempt++) {
         const flights = (await getFlights()).flights;
         if (!flights.length) return false;
+        const { depRunways, arrRunways } = await getLiveValidRunways();
         const f = rpick(flights);
         const isArr = !!f.LandingTime;
         const updates = {};
@@ -726,8 +857,21 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
         const r = roll();
         try {
           if (r < 14) updates.Stand = rpick(stands);
-          else if (r < 28) updates.Runway = rpick(runways);
-          else if (r < 38 && isArr && f.Runway) Object.assign(updates, starUpdateFor(f.Runway) || { Airway: starFor(f.Runway) || '' });
+          else if (r < 28) {
+            if (isArr) {
+              const nextRwy = rpick(arrRunways);
+              if (!nextRwy) continue;
+              updates.Runway = nextRwy;
+              if (!(SU.rwyStars?.[nextRwy] || []).includes(f.Airway)) {
+                updates.Airway = starFor(nextRwy, arrRunways) || '';
+              }
+            } else {
+              const nextRwy = rpick(depRunways);
+              if (!nextRwy) continue;
+              updates.Runway = nextRwy;
+            }
+          }
+          else if (r < 38 && isArr && f.Runway) Object.assign(updates, starUpdateFor(f.Runway, arrRunways) || { Airway: starFor(f.Runway, arrRunways) || '' });
           else if (r < 50) {
             const tp = typePoolFor((f.CallSign || '').substring(0, 3));
             if (tp.length) updates.AircraftType = rpick(tp);
@@ -738,7 +882,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
             const avoid = await usedRegs();
             updates.Registration = regAvoiding((f.CallSign || '').substring(0, 3), f.AircraftType || '', avoid[group]);
           }
-          else if (r < 70 && f.Runway && isArr) Object.assign(updates, starUpdateFor(f.Runway) || { Airway: starFor(f.Runway) });
+          else if (r < 70 && f.Runway && isArr) Object.assign(updates, starUpdateFor(f.Runway, arrRunways) || { Airway: starFor(f.Runway, arrRunways) });
           else if (r < 78) updates.Voice = pickVoice(f.Language) || f.Voice || '';
           else if (r < 86) {
             // Language changes must carry a matching voice, or the save would
@@ -943,7 +1087,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
     // (Store-level timeline rejections are the generator's own guards, prefixed
     // "timeline (" — they never carry server-side bounds messages.)
     for (const r of fuzzLog.rejected) {
-      if (!r.startsWith('timeline (') && /time|range|bounds|clock/.test(r)) {
+      if (!r.startsWith('timeline (') && !/runway_not_in_timeline/.test(r) && /time|range|bounds|clock/.test(r)) {
         throw new Error('time-range rejection during fuzz: ' + r);
       }
     }
@@ -1006,6 +1150,59 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       // come from the same imported module, so extraction is deterministic).
       const rowByCs = new Map(flightRows.map(f => [f.CallSign, f]));
       const fixes = [];
+      const willClearTimeline = issues.some((m) => m.includes('跑道变更') || /runway.*change/i.test(m));
+      let effectiveRt = willClearTimeline
+        ? { ...(storeSnap.runwayTimeline || {}), timeline: [] }
+        : storeSnap.runwayTimeline;
+      let validForRepair = computeValidRunwaysForTimeline(effectiveRt);
+      if (
+        isV3Level &&
+        validForRepair.enforced &&
+        (validForRepair.depRunways.length === 0 || (flightRows.some(isArrOf) && validForRepair.arrRunways.length === 0))
+      ) {
+        const fallbackInitRwy = arrivalCapableRunways[0] || runways[0];
+        if (fallbackInitRwy) {
+          fixes.push({ timeline: 'ensureViableInitial', runway: fallbackInitRwy });
+          effectiveRt = {
+            ...(effectiveRt || {}),
+            initialRunways: [...new Set([...(effectiveRt?.initialRunways || []), fallbackInitRwy])],
+          };
+          validForRepair = computeValidRunwaysForTimeline(effectiveRt);
+        }
+      }
+      const activeArrivalRunwaysAt = (landingTimeStr) => {
+        const lSec = timeToSec(landingTimeStr);
+        if (isNaN(lSec) || !Array.isArray(effectiveRt?.initialRunways) || !effectiveRt.initialRunways.length) {
+          return validForRepair.arrRunways;
+        }
+        const active = new Set(effectiveRt.initialRunways);
+        const deact = new Map();
+        const sortedTl = [...(effectiveRt.timeline || [])].sort((a, b) => timeToSec(a.time) - timeToSec(b.time));
+        for (const entry of sortedTl) {
+          const tSec = timeToSec(entry.time);
+          if (isNaN(tSec) || tSec > lSec) break;
+          for (const ch of (entry.changes || [])) {
+            if (ch.source && active.has(ch.source)) {
+              active.delete(ch.source);
+              deact.set(ch.source, tSec);
+              if (ch.dest) {
+                active.add(ch.dest);
+                deact.delete(ch.dest);
+              }
+            }
+          }
+        }
+        const eligible = validForRepair.arrRunways.filter((r) => {
+          if (active.has(r)) return true;
+          const dAt = deact.get(r);
+          return dAt != null && (lSec - dAt) <= 600;
+        });
+        if (eligible.length > 0) return eligible;
+        if (!fixes.some((fx) => fx.timeline === 'runwayClear')) {
+          fixes.push({ timeline: 'runwayClear' });
+        }
+        return validForRepair.arrRunways;
+      };
       for (const msg of issues) {
         // Runway timeline issues have no callsign — they are like "跑道变更 #1: 切换 ..."
         // Fix by clearing the entire runway timeline (the fuzz often creates many
@@ -1068,7 +1265,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
           // Missing/incompatible STAR — repair must yield a valid
           // STAR/runway pair (move the runway when it has no STAR data,
           // otherwise the new arrival-no-STAR validator loops forever).
-          const suFix = starUpdateFor(f.Runway) || { Airway: '' };
+          const suFix = starUpdateFor(f.Runway, validForRepair.arrRunways) || { Airway: '' };
           fixes.push({ cs, updates: suFix });
         } else if (msg.includes('时段') || msg.toLowerCase().includes('conflict') || msg.toLowerCase().includes('overlapping')) {
           // Stand occupancy conflict — move one side to a different stand.
@@ -1077,8 +1274,23 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
           fixes.push({ cs: target, updates: { Stand: rpick(stands) } });
         } else if (msg.includes('停机位') || msg.toLowerCase().includes('stand')) {
           fixes.push({ cs, updates: { Stand: rpick(stands) } });
-        } else if (msg.includes('跑道') || msg.toLowerCase().includes('runway')) {
-          fixes.push({ cs, updates: { Runway: rpick(runways) } });
+        } else if (msg.includes('跑道') || msg.toLowerCase().includes('runway') || msg.includes('进近航线') || msg.toLowerCase().includes('approach route')) {
+          if (isArrOf(f)) {
+            const activeArr = activeArrivalRunwaysAt(f.LandingTime);
+            const nextRwy = rpick(activeArr.length ? activeArr : validForRepair.arrRunways);
+            if (nextRwy) {
+              fixes.push({
+                cs,
+                updates: {
+                  Runway: nextRwy,
+                  Airway: starFor(nextRwy, validForRepair.arrRunways) || f.Airway || '',
+                },
+              });
+            }
+          } else {
+            const nextRwy = rpick(validForRepair.depRunways.length ? validForRepair.depRunways : runways);
+            if (nextRwy) fixes.push({ cs, updates: { Runway: nextRwy } });
+          }
         }
       }
       return fixes;
@@ -1113,9 +1325,24 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
         }
       }
       if (!fixes.length) break;
+      const ensureInitFixes = fixes.filter(f => f.timeline === 'ensureViableInitial');
       const timelineClearFixes = fixes.filter(f => f.timeline === 'runwayClear');
       const timelineFixes = fixes.filter(f => f.timeline === 'runway').sort((a, b) => b.idx - a.idx);
       const flightFixes = fixes.filter(f => !f.timeline);
+      for (const fx of ensureInitFixes) {
+        try {
+          await window.evaluate((rwy) => {
+            const st = window.__AC27_STORE.getState();
+            const rw = st.runwayTimeline || { initialRunways: [], timeline: [] };
+            const nextInit = [...new Set([...(rw.initialRunways || []), rwy])];
+            window.__AC27_STORE.setState({ runwayTimeline: { ...rw, initialRunways: nextInit }, timelineModified: { ...st.timelineModified, runway: true }, modified: true });
+            return true;
+          }, fx.runway);
+          log(`repair runway timeline ensure initial ${fx.runway}`);
+          repaired++;
+        } catch (e) { log(`repair runway timeline ensure initial: ${e.message}`); }
+        await window.waitForTimeout(200);
+      }
       for (const fx of timelineClearFixes) {
         try {
           await window.evaluate(() => {
@@ -1218,6 +1445,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
         fs.mkdirSync(dbgDir, { recursive: true });
         fs.copyFileSync(currentPath, path.join(dbgDir, 'fuzz-gc-fail-' + base + '.acl'));
         const detail = {
+          seed: summary.seed,
           issues: filteredIssues,
           allIssues: gc.issues,
           config: gcA.config,
