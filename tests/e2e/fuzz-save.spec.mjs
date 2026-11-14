@@ -787,6 +787,28 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
       const hi = exclusive ? endSec - 60 : endSec;
       return secToTime(rint(lo, Math.max(lo, hi)));
     };
+    // Source levels can ship pre-startTime warmup flights (e.g. 05:45:42 in
+    // ZSJN_leisure_1 starting 05:46:00). Because MCP Check 16 strictly validates
+    // time bounds on every target flight of modify_flights, retime out-of-window
+    // source flights into [startSec, maxFlightSec] whenever we modify them.
+    const ensureInWindowTime = (fRow, updatesObj) => {
+      if (!fRow || !updatesObj) return updatesObj;
+      if (updatesObj.LandingTime || updatesObj.OffBlockTime) return updatesObj;
+      const arr = isArrOf(fRow);
+      const curStr = arr ? fRow.LandingTime : fRow.OffBlockTime;
+      const curSec = timeToSec(curStr);
+      if (!isNaN(curSec) && curSec >= startSec && curSec <= maxFlightSec) return updatesObj;
+      const t = rint(startSec, Math.max(startSec, maxFlightSec - 60));
+      const t2 = Math.min(t + rint(60, 15 * 60), maxFlightSec);
+      if (arr) {
+        updatesObj.LandingTime = secToTime(t);
+        updatesObj.InBlockTime = secToTime(t2);
+      } else {
+        updatesObj.OffBlockTime = secToTime(t);
+        updatesObj.TakeoffTime = secToTime(t2);
+      }
+      return updatesObj;
+    };
 
     const buildRandomFlight = async (avoidRegs, usedCallsigns = new Set()) => {
       const { depRunways, arrRunways } = await getLiveValidRunways();
@@ -1317,6 +1339,7 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
             else { updates.OffBlockTime = secToTime(t); updates.TakeoffTime = secToTime(t2); }
           }
           if (!Object.keys(updates).length) continue;
+          ensureInWindowTime(f, updates);
           const r2 = await mcpCall('modify_flights', { match: { callsign: f.CallSign }, updates });
           if (r2.matched === 0) { lastReason = 'no-match'; continue; }
           fuzzLog.accepted.push(`modify_flights ${f.CallSign} ${Object.entries(updates).map(([k, v]) => `${k}=${v}`).join(', ')}`);
@@ -1839,8 +1862,10 @@ export async function FuzzTest(aclFilePath, { window, seed = Date.now(), minOps 
         await window.waitForTimeout(200);
       }
       for (const fx of flightFixes) {
+        const curRow = flightRows.find((r) => r.CallSign === fx.cs);
         const variants = fx.variants || [fx.updates];
-        for (const u of variants) {
+        for (const rawU of variants) {
+          const u = ensureInWindowTime(curRow, { ...rawU });
           try {
             await mcpCall('modify_flights', { match: { callsign: fx.cs }, updates: u });
             repaired++;

@@ -18,7 +18,7 @@ const {
   extractApprRunwayMappings,
   buildApprPaths,
 } = require('../../src/acl/sid_goaround');
-const { readAclText } = require('../../src/acl/gatcarc');
+const { openAclFile } = require('../../src/acl/archive');
 const path = require('path');
 const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
 
@@ -54,7 +54,7 @@ function assertEquals(actual, expected, msg) {
 console.log('Loading KJFK v4 data...');
 let aclText;
 try {
-  aclText = readAclText(KJFK_FILE);
+  aclText = openAclFile(KJFK_FILE);
 } catch (e) {
   console.error('FAIL: Cannot read KJFK file:', e.message);
   console.error('Is the file present at:', KJFK_FILE, '?');

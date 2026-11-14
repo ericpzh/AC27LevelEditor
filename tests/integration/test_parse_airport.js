@@ -10,9 +10,10 @@
 const fs = require('fs');
 const path = require('path');
 const { loadFlights, FIELDS } = require('../../src/acl/parser');
+const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
 
 // ─── CLI ──────────────────────────────────────────────────────
-let ROOT = path.resolve(__dirname, '..', '..', '..', '..');
+let ROOT = GAME_ROOT;
 for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--root' && i + 1 < process.argv.length) {
     ROOT = path.resolve(process.argv[++i]);

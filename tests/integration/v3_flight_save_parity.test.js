@@ -30,6 +30,7 @@ const { buildApproachCache } = require('../../src/acl/approach');
 const { GAME_STAND_MIN_GAP_SEC, _airportSupportsChinese } = require('../../src/acl/flight_plans');
 const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
 const { validateV3Container } = require('../../src/acl/v3/validator');
+const { loadV3AirportAudio } = require('../../src/acl/v3/audio');
 const {
   dictEntries,
   dictGet,
@@ -458,7 +459,7 @@ describe('GATCARC4 v3 — departure inference, leg-type idempotency, and zero-fl
 
 describe('GATCARC4 v3 — explicit Language & Voice preservation without legacy sidecar heuristics', () => {
   it('preserves submitted explicit Language and Voice pairs verbatim (including cross-language selections) without auto-rewriting', () => {
-    const { aclPath, voiceCatalog, freeStands } = stageTempV3Level({ includeZhTemplate: true });
+    const { root, aclPath, voiceCatalog, freeStands } = stageTempV3Level({ includeZhTemplate: true });
     const { flights } = parser.loadFlights(aclPath);
     const cnFlight = flights.find((f) => /^CES|^CSN|^CCA|^CSC/.test(f.CallSign));
     expect(cnFlight).toBeTruthy();
@@ -471,9 +472,14 @@ describe('GATCARC4 v3 — explicit Language & Voice preservation without legacy 
     cnFlight.Language = 'en';
     cnFlight.Voice = enCaptain;
 
-    const intlFlight = {
+    const usedCallsigns = new Set(flights.map((f) => f.CallSign));
+    const { v3Audio } = loadV3AirportAudio(root, ICAO);
+    const allocatableEnCallsign = (v3Audio.allocatableCallsignsByVoice[enCaptain] || []).find((cs) => !usedCallsigns.has(cs));
+    expect(allocatableEnCallsign).toBeTruthy();
+
+    const addedEnFlight = {
       ...cnFlight,
-      CallSign: 'CAL2017',
+      CallSign: allocatableEnCallsign,
       _Registration: 'B-HKV3',
       Registration: 'B-HKV3',
       Stand: freeStands[0],
@@ -489,16 +495,16 @@ describe('GATCARC4 v3 — explicit Language & Voice preservation without legacy 
     };
 
     const handle = openAclFile(aclPath);
-    handle.applyEdits({ flights: [...flights, intlFlight], approachCache });
+    handle.applyEdits({ flights: [...flights, addedEnFlight], approachCache });
     handle.saveToFile(aclPath);
 
     const savedFlights = parser.loadFlights(aclPath).flights;
     const savedCn = savedFlights.find((f) => (f._Registration || f.Registration) === (cnFlight._Registration || cnFlight.Registration));
-    const savedIntl = savedFlights.find((f) => (f._Registration || f.Registration) === 'B-HKV3');
+    const savedAdded = savedFlights.find((f) => (f._Registration || f.Registration) === 'B-HKV3');
     expect(savedCn.Language).toBe('en');
     expect(savedCn.Voice).toBe(enCaptain);
-    expect(savedIntl.Language).toBe('en');
-    expect(savedIntl.Voice).toBe(enCaptain);
+    expect(savedAdded.Language).toBe('en');
+    expect(savedAdded.Voice).toBe(enCaptain);
   });
 
   it('preserves Chinese Language and Voice when the airport folder lacks legacy radio_template_zh.csv and audio_clips_zh.json', () => {

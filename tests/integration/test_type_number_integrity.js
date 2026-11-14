@@ -123,7 +123,7 @@ for (const c of CASES) {
   // [8] Verify known problematic types are correct
   console.log('[8] Verifying specific type numbers...');
   const listVec3Num = outTypeDecls.get(42);
-  if (listVec3Num && listVec3Num.includes('List')) {
+  if (listVec3Num && listVec3Num.includes('List`1[[UnityEngine.Vector3')) {
     check(false, `[${c.label}] type 42 should NOT be List<Vector3> (is: ${listVec3Num})`);
   } else {
     check(true, `[${c.label}] type 42 is not List<Vector3> (correct)`);

@@ -233,29 +233,47 @@ function _buildRoutePaths(aclText, routeRunwayMap) {
 // ─── C. Public API ──────────────────────────────────────────────────
 
 function extractSidRunwayMappings(aclText) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.readSidRunwayMappings === 'function') {
+    return aclText.readSidRunwayMappings();
+  }
   const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 2);
   return { sidRunwayMap: routeRunwayMap, runwaySidMap: runwayRouteMap };
 }
 
 function extractMissedApproachMappings(aclText) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.readMissedApproachMappings === 'function') {
+    return aclText.readMissedApproachMappings();
+  }
   const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 3);
   return { missedAppMap: routeRunwayMap, runwayMissedAppMap: runwayRouteMap };
 }
 
 function buildSidPaths(aclText, sidRunwayMap) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.buildSidPaths === 'function') {
+    return aclText.buildSidPaths(sidRunwayMap);
+  }
   return _buildRoutePaths(aclText, sidRunwayMap);
 }
 
 function buildMissedApproachPaths(aclText, missedAppMap) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.buildMissedApproachPaths === 'function') {
+    return aclText.buildMissedApproachPaths(missedAppMap);
+  }
   return _buildRoutePaths(aclText, missedAppMap);
 }
 
 function extractApprRunwayMappings(aclText) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.readApprRunwayMappings === 'function') {
+    return aclText.readApprRunwayMappings();
+  }
   const { routeRunwayMap, runwayRouteMap } = _extractRouteMappingsByType(aclText, 1);
   return { apprRunwayMap: routeRunwayMap, runwayApprMap: runwayRouteMap };
 }
 
 function buildApprPaths(aclText, apprRunwayMap) {
+  if (aclText && typeof aclText === 'object' && typeof aclText.buildApprPaths === 'function') {
+    return aclText.buildApprPaths(apprRunwayMap);
+  }
   return _buildRoutePaths(aclText, apprRunwayMap);
 }
 

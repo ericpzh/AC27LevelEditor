@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const parser = require('../../src/acl/parser');
-const { readAclText } = require('../../src/acl/gatcarc');
+const { openAclFile } = require('../../src/acl/archive');
 const { buildApproachCache } = require('../../src/acl/approach');
 
 // ─── CLI ──────────────────────────────────────────────────────
@@ -40,8 +40,7 @@ const CSV_TEMP = path.join(TEST_DIR, '_e2e_temp_' + aclBase + '.csv');
 // Derive CSV path from ACL's Config block, or by convention
 function findCsvPath(aclPath) {
   try {
-    const text = readAclText(aclPath);
-    const config = parser._extractConfig(text);
+    const config = openAclFile(aclPath).readConfig();
     if (config && config.flightScheduleFile) {
       const csvPath = path.join(path.dirname(aclPath), config.flightScheduleFile + '.csv');
       if (fs.existsSync(csvPath)) return csvPath;
@@ -144,8 +143,7 @@ fs.copyFileSync(CSV_ORIGINAL, CSV_TEMP);
 // [5] Run generateFullAcl on temp
 console.log('\n[5] Running generateFullAcl on temp copy...');
 try {
-  const originalText = readAclText(aclOriginal);
-  const aclCfgStartTime = (parser._extractConfig(originalText) || {}).startTime || null;
+  const aclCfgStartTime = (openAclFile(aclOriginal).readConfig() || {}).startTime || null;
   // The jetway rebuild needs DockingPositions from the approach cache specDB —
   // the app builds this from the level's .acl files.
   let approachCache = null;

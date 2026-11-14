@@ -25,9 +25,10 @@ const {
 const { detectAclFormat } = require('../../src/acl/archive');
 const { parseV3Container, encodeV3Container } = require('../../src/acl/v3/framing');
 const { validateV3Container } = require('../../src/acl/v3/validator');
+const { GAME_ROOT } = require('../helpers/gameRoot.cjs');
+const gamePaths = require('../../src/utils/gamePaths');
 
-const DEFAULT_AIRPORTS = path.join(__dirname, '..', '..', '..',
-  'GroundATC_Data', 'StreamingAssets', 'Airports');
+const DEFAULT_AIRPORTS = gamePaths.airportsDir(GAME_ROOT);
 
 const argIdx = process.argv.indexOf('--airports-dir');
 const AIRPORTS_DIR = argIdx >= 0 ? process.argv[argIdx + 1] : DEFAULT_AIRPORTS;

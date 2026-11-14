@@ -42,22 +42,59 @@ test.afterAll(async () => {
 // ── E10a: Save success flow ──────────────────────────────────────
 
 test('E10a — save creates .bak file', async () => {
+  // Clamp any pre-startTime source flights (e.g. ZSJN_leisure_1 05:45:00 / 05:45:42 < 05:46:00)
+  // into the valid level window so Ctrl+S exercises a real save rather than hitting validation.
+  await window.evaluate(() => {
+    const store = window.__AC27_STORE;
+    if (!store) return;
+    const st = store.getState();
+    const startTime = st._configStartTime;
+    if (!startTime) return;
+    const toSec = (t) => {
+      const p = String(t || '').trim().split(':').map(Number);
+      if (p.length < 2 || p.some(Number.isNaN)) return null;
+      return p[0] * 3600 + p[1] * 60 + (p[2] || 0);
+    };
+    const startSec = toSec(startTime);
+    if (startSec === null) return;
+    const minStr = startTime.split(':').length === 2 ? `${startTime}:00` : startTime;
+    const nextFlights = st.flights.map((f) => {
+      const patched = { ...f };
+      for (const col of ['OffBlockTime', 'LandingTime']) {
+        const s = toSec(patched[col]);
+        if (s !== null && s < startSec) patched[col] = minStr;
+      }
+      return patched;
+    });
+    store.setState({ flights: nextFlights });
+  });
+
   // Trigger save via Ctrl+S
   await window.keyboard.press('Control+s');
-  await window.waitForTimeout(1500);
+  await expect(window.locator('#modal-overlay')).toBeVisible({ timeout: 5000 });
+
+  const confirmTitle = await window.locator('#modal-title').textContent();
+  expect(confirmTitle).toMatch(/backup|备份|保存前/i);
 
   // Save confirmation modal: click Confirm Save (btn-confirm), not Cancel
   const confirmSaveBtn = window.locator('#modal-actions .btn-confirm').first();
-  if (await confirmSaveBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await confirmSaveBtn.click();
-    await window.waitForTimeout(1000);
+  await expect(confirmSaveBtn).toBeVisible({ timeout: 3000 });
+  await confirmSaveBtn.click();
+
+  // Wait for Save Successful modal and dismiss it
+  await expect(window.locator('#modal-title')).toContainText(/Save Successful|保存成功/i, { timeout: 15000 });
+  const modalOk = window.locator('#modal-actions .btn-confirm').first();
+  if (await modalOk.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await modalOk.click();
+    await window.waitForTimeout(300);
   }
 
-  // Dismiss success toast modal if it appears
-  const modalOk = window.locator('#modal-actions .btn-confirm').first();
-  if (await modalOk.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await modalOk.click();
-    await window.waitForTimeout(500);
+  const bakFiles = findBakFiles(TMP_DIR);
+  expect(bakFiles.length).toBeGreaterThan(0);
+
+  // Remove .bak created by E10a so E8a independently verifies manual backup .bak creation
+  for (const bf of bakFiles) {
+    fs.rmSync(bf, { force: true });
   }
 });
 
