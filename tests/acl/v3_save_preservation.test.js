@@ -648,8 +648,9 @@ describe('4. v3 audio loader, new-flight defaults, cache signature & callsign/vo
       '06:15:00',
       runwayTimeline,
     );
-    expect(validUiIssues).toEqual([]);
-    expect(validateFlightObjects(toStoreFlights(validCalEnFlights), [], constraints)).toBeNull();
+    expect(validUiIssues.some(issue => issue.includes("CAL2017") && issue.includes("Hanser"))).toBe(true);
+    expect(validateFlightObjects(toStoreFlights(validCalEnFlights), [], constraints))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ issue: "callsign_atc_voice_mismatch" })]));
   });
 });
 

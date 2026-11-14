@@ -11,8 +11,8 @@
  *     active radio channels.
  *   - Every stored leg (`InitialArrival` and `InitialDeparture`) must have a
  *     recorded callsign clip for its selected captain voice (`<voice>/<callsign>`
- *     in `radio_clip_durations.json`) AND for every session ATC voice assigned to
- *     that language (`Airports/<ICAO>/radio_channel_config.json` / static
+ *     in `radio_clip_durations.json`) AND for every configured session ATC voice
+ *     (`Airports/<ICAO>/radio_channel_config.json` / static
  *     `radio-channel:*` items).
  *   - Dual-leg plans (`InitialArrival` + `InitialDeparture`) must have two
  *     distinct callsigns, and callsigns cannot collide across different owners.
@@ -363,7 +363,7 @@ function formatCallsignAllocationIssue(iss) {
     }
     case 'missing_atc_clip': {
       const atcStr = Array.isArray(iss.missingAtcVoices) ? iss.missingAtcVoices.join(', ') : (iss.atcVoice || 'ATC');
-      return `Flight plan ${iss.planKey || regPart} (${regPart}, ${csLabel}): airport ATC voice(s) "${atcStr}" (${iss.language || '?'}) have no audio recording for callsign "${iss.callSign}" in radio_clip_durations.json.`;
+      return `Flight plan ${iss.planKey || regPart} (${regPart}, ${csLabel}): airport ATC voice(s) "${atcStr}" have no audio recording for callsign "${iss.callSign}" in radio_clip_durations.json.`;
     }
     case 'unknown_captain_voice':
       return `Flight plan ${iss.planKey || regPart} (${regPart}): voice "${iss.voice}" is not defined in Voices/voice_catalog.json.`;
@@ -606,6 +606,7 @@ function validateV3CallsignAllocation(container, schema = null, opts = {}) {
   }
   const effectiveChannelLangs = Object.keys(effectiveAtcVoicesByLang);
   const effectiveChannelKnown = effectiveChannelLangs.length > 0;
+  const sessionAtcVoices = [...new Set(Object.values(effectiveAtcVoicesByLang).flat())];
 
   const voiceRoles = v3Audio.voiceRoles || {};
   const voiceLanguages = v3Audio.voiceLanguages || {};
@@ -619,9 +620,8 @@ function validateV3CallsignAllocation(container, schema = null, opts = {}) {
       if (!_voiceHasCallsignClip(cv, callSign, clipIndex, v3Audio.voiceCallsigns)) continue;
       const cvLang = voiceLanguages[cv] || '';
       if (effectiveChannelKnown && cvLang) {
-        const reqAtc = effectiveAtcVoicesByLang[cvLang];
-        if (!Array.isArray(reqAtc) || reqAtc.length === 0) continue;
-        const atcOk = reqAtc.every((av) =>
+        if (!effectiveAtcVoicesByLang[cvLang]?.length) continue;
+        const atcOk = sessionAtcVoices.every((av) =>
           _voiceHasCallsignClip(av, callSign, clipIndex, v3Audio.atcCallsigns),
         );
         if (!atcOk) continue;
@@ -690,11 +690,6 @@ function validateV3CallsignAllocation(container, schema = null, opts = {}) {
       issues.push(iss);
     }
 
-    const effectiveLang = language || (voice && voiceLanguages[voice]) || '';
-    const reqAtcVoices = (effectiveChannelKnown && effectiveLang && Array.isArray(effectiveAtcVoicesByLang[effectiveLang]))
-      ? effectiveAtcVoicesByLang[effectiveLang]
-      : [];
-
     for (const leg of plan.legs) {
       if (!leg.callSign) continue;
 
@@ -721,8 +716,8 @@ function validateV3CallsignAllocation(container, schema = null, opts = {}) {
       }
 
       // Session ATC clip check — enforced against every ATC voice for this language
-      if (reqAtcVoices.length > 0) {
-        const missingAtcVoices = reqAtcVoices.filter(
+      if (sessionAtcVoices.length > 0) {
+        const missingAtcVoices = sessionAtcVoices.filter(
           (av) => !_voiceHasCallsignClip(av, leg.callSign, clipIndex, v3Audio.atcCallsigns),
         );
         if (missingAtcVoices.length > 0) {
@@ -733,7 +728,7 @@ function validateV3CallsignAllocation(container, schema = null, opts = {}) {
             callSign: leg.callSign,
             slot: leg.slot,
             direction: leg.direction,
-            language: effectiveLang,
+            language,
             voice,
             missingAtcVoices,
             atcVoice: missingAtcVoices[0],

@@ -339,8 +339,8 @@ export default function FlightTable({ type, flights, columns }) {
                         const voiceAlloc = isV3Audio && fl.Voice
                           ? vals._v3Audio.allocatableByVoice?.[fl.Voice]?.[airlineCode]
                           : null;
-                        flightNums = (voiceAlloc && voiceAlloc.length > 0)
-                          ? voiceAlloc
+                        flightNums = isV3Audio && vals._v3Audio.hasClipIndex && fl.Voice
+                          ? (voiceAlloc || [])
                           : validFlightNums[airlineCode];
                       }
                       const strictOptions = !isV3Audio && (col === 'Language' || col === 'Voice') && !!expectedLang;

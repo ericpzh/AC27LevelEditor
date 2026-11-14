@@ -152,6 +152,14 @@ function _mergeFlightNumsIntoDropdowns(dropdownValues, audioCallsigns) {
 
 function _applyV3AudioToDropdowns(dropdownValues, v3Res) {
   if (!dropdownValues || !v3Res) return;
+  const eligibleAirlines = v3Res.v3Audio?.allocatableAirlines;
+  if (eligibleAirlines) {
+    const eligible = new Set(eligibleAirlines);
+    dropdownValues.AirlineCode = (dropdownValues.AirlineCode || []).filter(code => eligible.has(code));
+    dropdownValues._flightNums = Object.fromEntries(
+      Object.entries(dropdownValues._flightNums || {}).filter(([code]) => eligible.has(code)),
+    );
+  }
   const atcRoleSet = new Set(
     Object.entries(v3Res.v3Audio?.voiceRoles || {})
       .filter(([, role]) => role === 'atc')

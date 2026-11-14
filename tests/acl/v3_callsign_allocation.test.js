@@ -230,6 +230,32 @@ afterEach(() => {
   }
 });
 
+it.each([
+  ['B-7964', 'ANA1201', 'CN-Captain-Middle-Aged-EN'],
+  ['B-6451', 'EPA6383', 'CN-Captain-Young-EN'],
+])('rejects flight %s outside the ZSJN session pool while keeping its captain available', (registration, callSign, voice) => {
+  const root = makeTmpDir('ac27-zsjn-session-pool-');
+  const aclPath = stageLevelCopy(root, 'ZSJN', 'ZSJN_leisure_1.acl', V3_ZSJN_FIXTURE);
+  const clipPath = gamePaths.radioClipDurationsPath(root);
+  const clipIndex = JSON.parse(fs.readFileSync(clipPath, 'utf8'));
+  for (const name of [voice, 'Hanser-EN']) {
+    clipIndex.clips[`${name}/${callSign}`] = Object.values(clipIndex.clips)[0];
+  }
+  fs.writeFileSync(clipPath, JSON.stringify(clipIndex));
+  const originalHash = sha256File(aclPath);
+  const audio = loadV3AirportAudio(root, 'ZSJN');
+  expect(audio.captainVoices).toContain(voice);
+  expect(audio.v3Audio.allocatableAirlines).not.toContain(callSign.slice(0, 3));
+
+  const handle = openAclFile(aclPath);
+  const flights = handle.readFlights().flights;
+  flights[0] = { ...flights[0], _Registration: registration, CallSign: callSign, Language: 'en', Voice: voice };
+  handle.applyEdits({ flights });
+  expect(() => handle.saveToFile(aclPath, { createBackup: true })).toThrow(/Hanser.*no audio recording/);
+  expect(sha256File(aclPath)).toBe(originalHash);
+  expect(fs.existsSync(`${aclPath}.bak`)).toBe(false);
+});
+
 describe('1c. Absent Recording vs Unavailable Metadata & Captain vs ATC Rule', () => {
   it('distinguishes an absent clip in a loaded index from missing or unreadable audio metadata', () => {
     const srcHandle = openAclFile(V3_ZSJN_FIXTURE);
@@ -400,7 +426,7 @@ describe('1c. Absent Recording vs Unavailable Metadata & Captain vs ATC Rule', (
     });
     const atcFail = zgszCheck.issues.find((i) => i.registration === 'A6-UYY' && i.kind === 'missing_atc_clip');
     expect(atcFail).toBeTruthy();
-    expect(atcFail.missingAtcVoices).toEqual(['Hanser-EN']);
+    expect(atcFail.missingAtcVoices).toEqual(['Hanser-EN', 'ZGSZ-Female-ATC']);
   });
 });
 
@@ -477,7 +503,7 @@ describe('1a. Multi-Leg Static Plans (`InitialArrival` + `InitialDeparture`) & R
 describe('1b, 3b, 3c. Deterministic Negative Regression: AXM1416 + Yeager (flight-plan:B-13Q2)', () => {
   it('fails UI preflight, MCP validation, v3 saveToFile, ground painter save, and replacement gate while leaving files intact', () => {
     const tmpRoot = makeTmpDir('ac27-axm-neg-');
-    const stagedAcl = stageLevelCopy(tmpRoot, 'ZSJN', 'ZSJN_leisure_1.acl', V3_ZSJN_FIXTURE);
+    const stagedAcl = stageLevelCopy(tmpRoot, 'ZGSZ', 'ZGSZ_leisure_1.acl', V3_ZSJN_FIXTURE);
     const bakPath = `${stagedAcl}.bak`;
     const csvPath = path.join(path.dirname(stagedAcl), 'flight_schedule_leisure_1.csv');
     fs.writeFileSync(bakPath, 'ORIGINAL_BACKUP_SENTINEL', 'utf8');
@@ -488,7 +514,7 @@ describe('1b, 3b, 3c. Deterministic Negative Regression: AXM1416 + Yeager (fligh
     const origCsvHash = sha256File(csvPath);
 
     const handle = openAclFile(stagedAcl);
-    const airportValues = buildAirportValuesForTest(tmpRoot, 'ZSJN', handle);
+    const airportValues = buildAirportValuesForTest(tmpRoot, 'ZGSZ', handle);
     const loaded = handle.readFlights();
     const rwyTimeline = handle.readTimelines().runwayTimeline;
     const baseArrival = loaded.flights.find((f) => !f.isDeparture && f.Airway) || loaded.flights[0];
@@ -513,8 +539,8 @@ describe('1b, 3b, 3c. Deterministic Negative Regression: AXM1416 + Yeager (fligh
     // 1. UI preflight (`runTripleValidation`)
     const uiIssues = runTripleValidation(
       [badAxmFlight],
-      { ZSJN: airportValues },
-      'ZSJN',
+      { ZGSZ: airportValues },
+      'ZGSZ',
       { byAirline: {}, allCallsigns: [], allAirlines: [] },
       null,
       null,
@@ -530,7 +556,7 @@ describe('1b, 3b, 3c. Deterministic Negative Regression: AXM1416 + Yeager (fligh
 
     // 2. MCP validation (`validateFlightObjects` & `applyCascades`)
     const constraints = buildConstraints(
-      { currentAirport: 'ZSJN', airportValues: { ZSJN: airportValues }, runwayTimeline: rwyTimeline },
+      { currentAirport: 'ZGSZ', airportValues: { ZGSZ: airportValues }, runwayTimeline: rwyTimeline },
       null,
     );
     const mcpDetails = validateFlightObjects([badAxmFlight], [], constraints);

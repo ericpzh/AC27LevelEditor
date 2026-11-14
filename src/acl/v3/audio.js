@@ -379,21 +379,14 @@ function lookupV3Callsigns(clipIndex, { captainVoice = null, atcVoices = [] } = 
  *
  * @param {string} gameRoot
  * @param {string} icao
- * @param {{ captainVoice?: string|null, language?: string|null }} options
+ * @param {{ captainVoice?: string|null }} options
  */
-function lookupV3CallsignsForAirport(gameRoot, icao, { captainVoice = null, language = null } = {}) {
-  const catalog = loadV3VoiceCatalog(gameRoot);
+function lookupV3CallsignsForAirport(gameRoot, icao, { captainVoice = null } = {}) {
   const clipIndex = loadV3ClipIndex(gameRoot);
   const channelCfg = loadV3ChannelConfig(gameRoot, icao);
 
   const cap = typeof captainVoice === 'string' && captainVoice.trim() ? captainVoice.trim() : null;
-  const resolvedLang = (typeof language === 'string' && language.trim())
-    ? language.trim()
-    : (cap && catalog.voiceLanguages[cap]) || null;
-
-  const atcVoices = (resolvedLang && channelCfg.known)
-    ? (channelCfg.atcVoicesByLang[resolvedLang] || [])
-    : [];
+  const atcVoices = Object.values(channelCfg.atcVoicesByLang).flat();
 
   return lookupV3Callsigns(clipIndex, { captainVoice: cap, atcVoices });
 }
@@ -411,6 +404,9 @@ function loadV3AirportAudio(gameRoot, icao) {
 
   const languages = channelCfg.known ? [...channelCfg.languages] : null;
   const langFilter = languages ? new Set(languages) : null;
+  // The airport's callsign pool must account for its local ATC libraries,
+  // including when an English captain shares a recording with global ATC audio.
+  const sessionAtcVoices = [...new Set(Object.values(channelCfg.atcVoicesByLang).flat())];
 
   // Step 1: Captain voices matching airport channel languages (all captain voices when unknown)
   const langMatchedCaptains = catalog.captainVoices.filter((v) => {
@@ -422,13 +418,9 @@ function loadV3AirportAudio(gameRoot, icao) {
   // Step 2: Allocatable callsigns per catalog captain voice against this airport's ATC voice(s)
   const allocatableLookupByVoice = {};
   for (const capVoice of catalog.captainVoices) {
-    const vLang = catalog.voiceLanguages[capVoice] || '';
-    const atcVoices = (channelCfg.known && vLang)
-      ? (channelCfg.atcVoicesByLang[vLang] || [])
-      : [];
     allocatableLookupByVoice[capVoice] = lookupV3Callsigns(clipIndex, {
       captainVoice: capVoice,
-      atcVoices,
+      atcVoices: sessionAtcVoices,
     });
   }
 
@@ -460,10 +452,7 @@ function loadV3AirportAudio(gameRoot, icao) {
       audioCallsigns = mergeAudioCallsigns(audioCallsigns, allocatableLookupByVoice[v]);
     }
   } else if (clipIndex.present && channelCfg.known) {
-    for (const atcList of Object.values(channelCfg.atcVoicesByLang)) {
-      const res = lookupV3Callsigns(clipIndex, { atcVoices: atcList });
-      audioCallsigns = mergeAudioCallsigns(audioCallsigns, res);
-    }
+    audioCallsigns = lookupV3Callsigns(clipIndex, { atcVoices: sessionAtcVoices });
   }
 
   // Step 5: Serializable IPC / validator payload
@@ -509,6 +498,8 @@ function loadV3AirportAudio(gameRoot, icao) {
     clipIndexSig: clipIndex.sig,
     channelConfigSig: channelCfg.sig,
     knownChannelLanguages: languages,
+    sessionAtcVoices,
+    allocatableAirlines: clipIndex.present && channelCfg.known ? audioCallsigns.allAirlines : null,
     atcVoicesByLang: channelCfg.atcVoicesByLang,
     voiceLanguages: catalog.voiceLanguages,
     voiceRoles: catalog.voiceRoles,

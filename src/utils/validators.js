@@ -210,7 +210,9 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     ? new Set(v3AudioObj.knownChannelLanguages)
     : VALID_LANGUAGES;
   const validSets = {
-    AirlineCode: airlineCodeSet,
+    AirlineCode: Array.isArray(v3AudioObj?.allocatableAirlines)
+      ? new Set(v3AudioObj.allocatableAirlines)
+      : airlineCodeSet,
     Stand: new Set(values.Stand || []),
     Runway: new Set(values.Runway || []),
     AircraftType: new Set(values.AircraftType || []),
@@ -319,7 +321,7 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
           }
         }
         if (trimmedLang && v3AudioObj.knownChannelConfig) {
-          const atcList = v3AudioObj.atcVoicesByLang?.[trimmedLang] || [];
+          const atcList = v3AudioObj.sessionAtcVoices || v3AudioObj.atcVoicesByLang?.[trimmedLang] || [];
           for (const atcVoice of atcList) {
             const atcClips = v3AudioObj.atcCallsigns?.[atcVoice];
             if (!Array.isArray(atcClips) || !atcClips.includes(trimmedCs)) {

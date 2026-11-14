@@ -342,7 +342,7 @@ function buildConstraints(state, cache) {
   const sv = (state && state.airportValues && icao) ? (state.airportValues[icao] || {}) : {};
 
   // Known airline codes: from audio callsigns + dropdown values + live airportValues
-  const knownCodes = new Set([
+  const knownCodes = new Set(sv._v3Audio?.allocatableAirlines ?? [
     ...Object.keys(ac.byAirline || {}),
     ...Object.keys(dv._flightNums || {}),
     ...Object.keys(sv._flightNums || {}),
@@ -881,7 +881,7 @@ function validateFlightObjects(newFlights, existingFlights, constraints, opts = 
           }
         }
         if (trimmedLang && v3Obj.knownChannelConfig) {
-          for (const atcVoice of (v3Obj.atcVoicesByLang?.[trimmedLang] || [])) {
+          for (const atcVoice of (v3Obj.sessionAtcVoices || v3Obj.atcVoicesByLang?.[trimmedLang] || [])) {
             const atcClips = v3Obj.atcCallsigns?.[atcVoice];
             if (!Array.isArray(atcClips) || !atcClips.includes(trimmedCs)) {
               details.push({
