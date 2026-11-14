@@ -605,3 +605,25 @@ describe.runIf(Boolean(CLEAN_KJFK_LEISURE_1))('v3 Runway Timeline Membership —
     expect(postGc.issues.filter((i) => i.code === 'runway-not-in-timeline')).toEqual([]);
   });
 });
+
+describe('v3 Runway Timeline Membership — Vite Dev ESM & CJS Interop', () => {
+  it('serves native ESM named exports in Vite dev server while remaining CJS-requireable', async () => {
+    const { createServer } = await import('vite');
+    const server = await createServer({ configFile: false, logLevel: 'silent' });
+    try {
+      const res = await server.transformRequest('/src/acl/runway_timeline_membership.js');
+      expect(res?.code).toBeTruthy();
+      expect(res.code).not.toMatch(/\bmodule\.exports\b/);
+      expect(res.code).toMatch(/\bexport\s+function\s+collectRunwayTimelineMembers\b/);
+      expect(res.code).toMatch(/\bexport\s+function\s+validateFlightRunwayTimelineMembership\b/);
+      expect(res.code).toMatch(/\bexport\s+function\s+formatRunwayTimelineMembershipIssue\b/);
+    } finally {
+      await server.close();
+    }
+
+    const cjsMod = require('../../src/acl/runway_timeline_membership');
+    expect(typeof cjsMod.collectRunwayTimelineMembers).toBe('function');
+    expect(typeof cjsMod.validateFlightRunwayTimelineMembership).toBe('function');
+    expect(typeof cjsMod.formatRunwayTimelineMembershipIssue).toBe('function');
+  });
+});

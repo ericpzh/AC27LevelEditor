@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Pure v3 Runway Timeline Membership Check (`src/acl/runway_timeline_membership.js`).
  *
@@ -50,7 +48,7 @@ function _parseTimeSec(timeStr) {
  *   invalidChanges: Array<{ frameIndex: number, time: string, source: string, dest: string, reason: string }>
  * }}
  */
-function collectRunwayTimelineMembers(runwayTimeline) {
+export function collectRunwayTimelineMembers(runwayTimeline) {
   if (runwayTimeline == null || typeof runwayTimeline !== 'object') {
     return {
       enforced: false,
@@ -225,7 +223,7 @@ function _extractLegsFromEntry(entry) {
  *   }>
  * }}
  */
-function validateFlightRunwayTimelineMembership(flightsOrPlans, runwayTimeline, opts = {}) {
+export function validateFlightRunwayTimelineMembership(flightsOrPlans, runwayTimeline, opts = {}) {
   const skipEmptyRunway = Boolean(opts && opts.skipEmptyRunway);
   const membership = collectRunwayTimelineMembers(runwayTimeline);
   const timelineRunways = [...membership.members];
@@ -270,7 +268,7 @@ function validateFlightRunwayTimelineMembership(flightsOrPlans, runwayTimeline, 
  * Format a concise English diagnostic for one membership issue (used by MCP,
  * write-boundary errors, and decoded-output gamecompat checks).
  */
-function formatRunwayTimelineMembershipIssue(issue) {
+export function formatRunwayTimelineMembershipIssue(issue) {
   const who = issue.callsign && issue.registration
     ? `${issue.callsign} (${issue.registration})`
     : (issue.callsign || issue.registration || `Flight #${(issue.index ?? 0) + 1}`);
@@ -280,9 +278,3 @@ function formatRunwayTimelineMembershipIssue(issue) {
     : 'none';
   return `${who}: ${dirLabel} runway "${issue.runway || '(empty)'}" does not appear in the level runway timeline (timeline runways: ${tlList}). Edit the flight runway assignment or add/activate "${issue.runway || ''}" in the Runway Timeline.`;
 }
-
-module.exports = {
-  collectRunwayTimelineMembers,
-  validateFlightRunwayTimelineMembership,
-  formatRunwayTimelineMembershipIssue,
-};
