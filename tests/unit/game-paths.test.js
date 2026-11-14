@@ -209,6 +209,15 @@ describe('gameRootFromLevelPath', () => {
     expect(gp.gameRootFromLevelPath(path.join(tmp, 'foo', 'bar.acl'))).toBeNull();
     expect(gp.gameRootFromLevelPath(null)).toBeNull();
   });
+
+  it('extracts airport ICAO from level paths via airportIcaoFromLevelPath', () => {
+    const root = path.join(tmp, 'Airport Control 27');
+    const data = seedWinLinux(root, 'ZGSZ');
+    const acl = path.join(data, 'StreamingAssets', 'Airports', 'ZGSZ', 'Levels', 'ZGSZ_leisure_1.acl');
+    expect(gp.airportIcaoFromLevelPath(acl)).toBe('ZGSZ');
+    expect(gp.airportIcaoFromLevelPath(path.join(tmp, 'foo', 'bar.acl'))).toBeNull();
+    expect(gp.airportIcaoFromLevelPath(null)).toBeNull();
+  });
 });
 
 describe('steamCommonDirs', () => {

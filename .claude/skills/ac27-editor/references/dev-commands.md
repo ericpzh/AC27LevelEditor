@@ -19,7 +19,7 @@ Both `npm start` forms compile and launch from JS (vite-plugin-electron) — **n
 
 ## Running Tests
 
-### Component tests (2181 tests, 116 files, ~35s)
+### Component tests (2,813 tests, 160 files, ~35s)
 
 ```bash
 npm test # Run all Vitest component + store + utility + electron + MapWindow + updater tests
@@ -37,6 +37,7 @@ The checked-in v3 corpus is `tests/fixtures/game-root-v3/` (13 pristine ZSJN lev
 npx vitest run tests/acl/v3_framing_schema.test.js tests/acl/v3_corpus_and_edits.test.js \
   tests/acl/v3_save_preservation.test.js tests/acl/v3_pushback_path.test.js \
   tests/acl/v3_runway_timeline_membership.test.js tests/acl/v3_approach_route_validation.test.js \
+  tests/acl/v3_callsign_allocation.test.js \
   tests/integration/gatcarc_v3_frame_edit.test.js tests/integration/v3_frame_reconciliation.test.js \
   tests/integration/v3_flight_save_parity.test.js tests/integration/v3_scenery_ground_air_parity.test.js
 
@@ -102,7 +103,7 @@ $env:E2E_KEEP_TMP = "1"; npm run test:fuzz:ground # keep tests/tmp-e2e for post-
 
 `test:fuzz` and `test:fuzz:ground` share `fuzz-cli.mjs` / `fuzz-ground-cli.mjs` wrappers — the `--replace` flag is consumed by the wrapper (Playwright itself rejects unknown flags) and forwards everything else to Playwright. Without `--replace` the real game files are never touched. `E2E_KEEP_TMP=1` preserves the Playwright sandbox (otherwise `global-teardown.mjs` deletes `tests/tmp-e2e`/`tmp-e2e-userdata`).
 
-**Airline/language gate:** the flight fuzz generates the captain `Language` the callsign airline requires (CN carriers → zh, every other carrier → en; see `airline_country_registry.cfg` / `src/utils/airlineLanguage.js`), the AirlineCode modify op cascades it, and the game-compat gate (`runChecks`) asserts **`airline-language-mismatch`** — so a regression in the save pipeline's language repair fails the fuzz. Note: `FUZZ_ACL_FILES` can only target levels the editor's browser lists (`PROD_VISIBLE_BASES`); hidden levels (tutorials, `_Endless`, `_test`, `PerfBench`, `.demo`) are not staged by `global-setup.mjs` and cannot be opened by the harness.
+**Audio, callsign, & language gates:** `tests/e2e/global-setup.mjs` (via `src/utils/gamePaths.js`) stages `Voices/voice_catalog.json`, `radio_clip_durations.json`, and per-airport `Airports/<ICAO>/radio_channel_config.json` alongside legacy `airline_country_registry.cfg` / `audio_clips_*.json` (`E2E_OMIT_V3_AUDIO=1` omits v3 audio to exercise the `[v3-audio-startup]` failure guard). On GATCARC4 v3 levels, both `fuzz-save.spec.mjs` and `fuzz-ground-save.spec.mjs` verify staged v3 audio capabilities at startup, `fuzz-save.spec.mjs` selects compatible `(CallSign, Language, Voice)` tuples from `v3Audio.allocatableByVoice` / `allocatableCallsignsByVoice` and runs a deterministic negative check (`AXM1416` + `Yeager`), and `runChecks` / `verifyAndCopyReplacedLevel` enforce destination-audio `v3-missing-captain-clip`, `v3-missing-atc-clip`, `v3-audio-metadata-unavailable`, `runway-not-in-timeline`, and `arrival-missing-approach` before `--replace` touches the game install (legacy/v2 levels keep `airline-language-mismatch` via `airline_country_registry.cfg`). Note: `FUZZ_ACL_FILES` can only target levels the editor's browser lists (`PROD_VISIBLE_BASES`); hidden levels (tutorials, `_Endless`, `_test`, `PerfBench`, `.demo`) are not staged by `global-setup.mjs` and cannot be opened by the harness.
 
 ### Integration tests (plain Node.js, in `tests/integration/`)
 

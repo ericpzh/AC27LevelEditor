@@ -31,7 +31,7 @@ import os from 'os';
 import path from 'path';
 
 const require = createRequire(import.meta.url);
-const { FIXTURES_GAME_ROOT_V3, levelPath, gameLevelExists } = require('../helpers/gameRoot.cjs');
+const { GAME_ROOT, FIXTURES_GAME_ROOT_V3, levelPath, gameLevelExists, stageV3AudioIntoRoot } = require('../helpers/gameRoot.cjs');
 const { openAclFile, detectAclFormat } = require('../../src/acl/archive');
 const { encodeV3Container } = require('../../src/acl/v3/framing');
 const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
@@ -502,6 +502,7 @@ describe.runIf(Boolean(CLEAN_KJFK_LEISURE_1))('v3 Runway Timeline Membership —
     const tmpDir = makeTmpDir('ac27-kjfk-l1-');
     const tmpLevels = path.join(tmpDir, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels');
     fs.mkdirSync(tmpLevels, { recursive: true });
+    stageV3AudioIntoRoot(tmpDir, 'KJFK', GAME_ROOT);
     const dstAcl = path.join(tmpLevels, 'KJFK_leisure_1.acl');
     const bakAcl = `${dstAcl}.bak`;
     fs.copyFileSync(CLEAN_KJFK_LEISURE_1, dstAcl);

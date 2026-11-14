@@ -101,7 +101,17 @@ const {
 } = require('../../src/acl/v3/pushback_validation');
 const { validateV3ApproachRoutes } = require('../../src/acl/v3/approach_validation');
 const { validateV3ContainerRunwayTimelineMembership } = require('../../src/acl/v3/runway_timeline_validation');
-const { analyzeAclFile, runChecks } = require('../integration/gamecompat-utils.cjs');
+const {
+  CallsignAllocationError,
+  validateV3CallsignAllocation,
+  verifyV3AudioCapabilities,
+} = require('../../src/acl/v3/callsign_validation');
+const gamePaths = require('../../src/utils/gamePaths');
+const {
+  analyzeAclFile,
+  runChecks,
+  verifyAndCopyReplacedLevel,
+} = require('../integration/gamecompat-utils.cjs');
 const parser = require('../../src/acl/parser');
 
 function sha256File(fp) {
@@ -319,45 +329,19 @@ async function saveViaGroundUI(window) {
 // ── FUZZ_REPLACE: propagate sandbox results into the real game install ──
 const FUZZ_REPLACE = process.env.FUZZ_REPLACE === '1';
 
-function copyToRealGame(tmpAclPath) {
-  const gameRoot = process.env.E2E_GAME_ROOT;
-  if (!gameRoot) throw new Error('FUZZ_REPLACE requires E2E_GAME_ROOT to be set');
-  const rel = path.relative(TMP_DIR, tmpAclPath);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    throw new Error(`sandbox file outside E2E_TMP_DIR, refusing to map: ${tmpAclPath}`);
+function copyToRealGame(tmpAclPath, opts = {}) {
+  const res = verifyAndCopyReplacedLevel(tmpAclPath, {
+    tmpDir: opts.tmpDir || process.env.E2E_TMP_DIR || TMP_DIR,
+    gameRoot: opts.gameRoot || process.env.E2E_GAME_ROOT,
+    debugDir: opts.debugDir !== undefined ? opts.debugDir : path.join(__dirname, '..', '_debug'),
+    syncBgSidecar: true,
+    ...opts,
+  });
+  console.log(`  [replace] → ${res.dest} (+ .bak${res.bgDest ? ' + .bg.json' : ''})`);
+  if (res.csvDest) {
+    console.log(`  [replace] → ${res.csvDest}${fs.existsSync(res.csvDest + '.bak') ? ' (+ .bak)' : ''}`);
   }
-  const dest = path.join(gameRoot, rel);
-  const bakSrc = tmpAclPath + '.bak';
-  if (!fs.existsSync(bakSrc)) throw new Error(`no .acl.bak to copy: ${bakSrc}`);
-  if (!fs.existsSync(dest)) throw new Error(`destination missing (is this level installed in E2E_GAME_ROOT?): ${dest}`);
-  fs.copyFileSync(tmpAclPath, dest);
-  fs.copyFileSync(bakSrc, dest + '.bak');
-  // Also copy background sidecar if present (ground painter image placement)
-  const bgSrc = tmpAclPath + '.bg.json';
-  const bgDest = dest + '.bg.json';
-  if (fs.existsSync(bgSrc)) {
-    fs.copyFileSync(bgSrc, bgDest);
-    console.log(`  [replace] → ${dest} (+ .bak + .bg.json)`);
-  } else {
-    // If sidecar was removed, ensure destination sidecar is removed too
-    if (fs.existsSync(bgDest)) fs.unlinkSync(bgDest);
-    console.log(`  [replace] → ${dest} (+ .bak)`);
-  }
-  // geo_data.osm is not copied — it lives outside the sandbox Levels dir
-  // Flight schedule CSV: the ground save's flight purge rewrites it next to
-  // the .acl, so it propagates alongside (identical content when no purge
-  // ran, so this is always safe). csv.bak keeps the rollback chain aligned
-  // with the .acl.bak.
-  const icao = path.basename(path.dirname(path.dirname(tmpAclPath))); // <TMP>/.../Airports/<ICAO>/Levels/<file>
-  const baseName = path.basename(tmpAclPath, '.acl');
-  const levelSuffix = baseName.startsWith(icao + '_') ? baseName.slice(icao.length + 1) : baseName;
-  const csvSrc = path.join(path.dirname(tmpAclPath), 'flight_schedule_' + levelSuffix + '.csv');
-  if (fs.existsSync(csvSrc)) {
-    const csvDest = path.join(path.dirname(dest), path.basename(csvSrc));
-    fs.copyFileSync(csvSrc, csvDest);
-    if (fs.existsSync(csvSrc + '.bak')) fs.copyFileSync(csvSrc + '.bak', csvDest + '.bak');
-    console.log(`  [replace] → ${csvDest}${fs.existsSync(csvSrc + '.bak') ? ' (+ .bak)' : ''}`);
-  }
+  return res;
 }
 
 async function goBackToBrowser(window) {
@@ -510,6 +494,23 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
 
     const baselineAclHandle = openAclFile(currentPath);
     const isV3Level = baselineAclHandle.format === 'gatcarc4-v3';
+    const levelIcao = gamePaths.airportIcaoFromLevelPath(currentPath)
+      || baselineAclHandle.header?.airportIcao
+      || path.basename(path.dirname(path.dirname(currentPath)));
+    let v3StartupCap = null;
+    if (isV3Level) {
+      v3StartupCap = verifyV3AudioCapabilities({
+        targetRoot: process.env.E2E_TMP_DIR,
+        icao: levelIcao,
+        sourceRoot: process.env.E2E_GAME_ROOT || null,
+        requireUsable: false,
+      });
+      if (v3StartupCap.sourceShipsV3Audio && !v3StartupCap.ok) {
+        throw new Error(
+          `[v3-audio-startup] Ground fuzz staging lacks required v3 audio metadata for ${levelIcao}: ${v3StartupCap.message}`,
+        );
+      }
+    }
     const v3BaselineStaticData = isV3Level ? baselineAclHandle.container.staticData : null;
     const v3WheelBases = isV3Level ? loadWheelBasesNearLevel(currentPath) : null;
     const v3ProbeContainer = isV3Level
@@ -1633,11 +1634,17 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
     const fuzzLog = { accepted: [], rejected: [] };
     let deleteCount = 0;
     const PUSHBACK_RISKY_GROUND_OPS = new Set([
+      'add_taxiway',
+      'add_runway',
+      'move_runway',
+      'move_area',
+      'add_stand',
       'move_stand',
       'move_segment',
       'move_endpoint',
       'move_single',
       'move_multi',
+      'move_select_all',
       'fillet',
       'fillet_runway_connect',
       'delete_one',
@@ -2297,16 +2304,48 @@ export async function FuzzGroundTest(aclFilePath, { window, seed = Date.now(), m
         wheelBaseByAircraft: v3WheelBases || loadWheelBasesNearLevel(currentPath),
       });
       // 6. Decoded v3 candidate gates: every surviving flight leg must reference a
-      //    runway present in MetaData.RunwayTimeline, and every surviving arrival
-      //    must resolve a usable RouteType = 1 (APP) approach route on its runway
-      //    in rebuilt StaticData. Blocks `--replace` and records seed + artifact.
+      //    runway present in MetaData.RunwayTimeline, every surviving arrival must
+      //    resolve a usable RouteType = 1 (APP) approach route on its runway in
+      //    rebuilt StaticData, and every surviving flight leg must pass per-voice
+      //    captain + ATC callsign clip allocation. Blocks `--replace` and records seed + artifact.
       try {
         validateV3ContainerRunwayTimelineMembership(savedHandle.container);
         validateV3ApproachRoutes(savedHandle.container.staticData, v3Schema);
-        const gcA = analyzeAclFile(currentPath);
-        const gc = runChecks(gcA);
+        const csAlloc = validateV3CallsignAllocation(savedHandle.container, v3Schema, {
+          levelPath: currentPath,
+          gameRoot: process.env.E2E_TMP_DIR,
+          airportIcao: levelIcao,
+          requireAudioMetadata: Boolean(v3StartupCap?.sourceShipsV3Audio),
+        });
+        if (csAlloc.issues.length > 0) {
+          throw new CallsignAllocationError(
+            csAlloc.issues.map((i) => i.message).join(' | '),
+            { issues: csAlloc.issues },
+          );
+        }
+        const gcA = analyzeAclFile(currentPath, {
+          gameRoot: process.env.E2E_TMP_DIR,
+          airportIcao: levelIcao,
+          requireV3Audio: Boolean(v3StartupCap?.sourceShipsV3Audio),
+        });
+        const gc = runChecks(gcA, {
+          gameRoot: process.env.E2E_TMP_DIR,
+          airportIcao: levelIcao,
+          requireV3Audio: Boolean(v3StartupCap?.sourceShipsV3Audio),
+        });
         const v3Blocking = gc.issues.filter((i) =>
-          i.code === 'runway-not-in-timeline' || i.code === 'arrival-missing-approach',
+          i.code === 'runway-not-in-timeline'
+          || i.code === 'arrival-missing-approach'
+          || i.code === 'v3-missing-captain-clip'
+          || i.code === 'v3-missing-atc-clip'
+          || i.code === 'v3-audio-metadata-unavailable'
+          || i.code === 'v3-unknown-captain-voice'
+          || i.code === 'v3-invalid-captain-voice'
+          || i.code === 'voice-language-mismatch'
+          || i.code === 'v3-unsupported-language'
+          || i.code === 'v3-duplicate-pair-callsign'
+          || i.code === 'v3-duplicate-callsign'
+          || i.code === 'v3-missing-audio-field',
         );
         if (v3Blocking.length) {
           throw new Error(`saved v3 file failed game-compat checks: ${v3Blocking.map((i) => `[${i.code}] ${i.msg}`).join(' | ')}`);
@@ -2420,10 +2459,10 @@ function resolveTargetFiles() {
   return entries.map((e) => {
     if (fs.existsSync(e)) return { path: e, base: path.basename(e, '.acl') };
     const baseName = path.basename(e);
-    const root = path.join(TMP_DIR, 'GroundATC_Data', 'StreamingAssets', 'Airports');
+    const root = gamePaths.airportsDir(TMP_DIR);
     const found = [];
     for (const icao of fs.existsSync(root) ? fs.readdirSync(root) : []) {
-      const dir = path.join(root, icao, 'Levels');
+      const dir = gamePaths.levelsDir(TMP_DIR, icao);
       if (!fs.existsSync(dir)) continue;
       const full = path.join(dir, baseName);
       if (fs.existsSync(full)) found.push(full);
@@ -2471,7 +2510,7 @@ test('Fuzz ground+air save — ground phase, air-mode swap, air phase, save', as
       passed++;
       console.log(`  ✓ PASSED (${r.accepted} accepted ops, rejectedInvalidSaves=${r.rejectedInvalidSaves?.length ?? 0}, backup=${r.backupCreated})`);
       if (FUZZ_REPLACE) {
-        try { copyToRealGame(aclPath); }
+        try { copyToRealGame(aclPath, { seed: r.seed }); }
         catch (e) { failed++; console.error(`  ✗ replace copy FAILED: ${e.message}`); }
       }
     }

@@ -43,7 +43,7 @@ import GroundPainter from '../../src/components/EditorScreen/GroundPainter/Groun
 import Modal from '../../src/components/common/Modal';
 
 const require = createRequire(import.meta.url);
-const { FIXTURES_GAME_ROOT_V3 } = require('../helpers/gameRoot.cjs');
+const { FIXTURES_GAME_ROOT_V3, stageV3AudioIntoRoot } = require('../helpers/gameRoot.cjs');
 const { openAcl, openAclFile } = require('../../src/acl/archive');
 const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
 const { validateV3Container, validateDocument } = require('../../src/acl/v3/validator');
@@ -525,6 +525,7 @@ describe('GATCARC4 v3 — Pushback Path & Stand Navigation Validation', () => {
     const airportDir = path.join(rootDir, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN');
     const levelsDir = path.join(airportDir, 'Levels');
     fs.mkdirSync(levelsDir, { recursive: true });
+    stageV3AudioIntoRoot(rootDir, 'ZSJN', FIXTURES_GAME_ROOT_V3);
 
     const aclPath = path.join(levelsDir, 'ZSJN_leisure_2.acl');
     const bakPath = `${aclPath}.bak`;

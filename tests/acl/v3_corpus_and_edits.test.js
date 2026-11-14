@@ -16,12 +16,16 @@ import os from 'os';
 import path from 'path';
 
 const require = createRequire(import.meta.url);
-const { GAME_ROOT, FIXTURES_GAME_ROOT_V3, levelPath, gameLevelExists } = require('../helpers/gameRoot.cjs');
+const { GAME_ROOT, FIXTURES_GAME_ROOT_V3, levelPath, gameLevelExists, stageV3AudioIntoRoot } = require('../helpers/gameRoot.cjs');
 const gamePaths = require('../../src/utils/gamePaths');
 const { openAcl, openAclFile, detectAclFormat } = require('../../src/acl/archive');
 const { StaleSourceError } = require('../../src/acl/v3/handler');
 const { TARGET_SCHEMA_HASH, getSchemaForHash } = require('../../src/acl/v3/schema_registry');
 const { validateV3Container } = require('../../src/acl/v3/validator');
+const { loadV3AirportAudio } = require('../../src/acl/v3/audio');
+const { validateV3CallsignAllocation } = require('../../src/acl/v3/callsign_validation');
+const { validateV3ApproachRoutes } = require('../../src/acl/v3/approach_validation');
+const { validateV3ContainerRunwayTimelineMembership } = require('../../src/acl/v3/runway_timeline_validation');
 const { decodePosition3ToGu } = require('../../src/acl/v3/q32');
 const { indexDocumentGraph, resolveGraphNode, unwrapReactive } = require('../../src/acl/v3/graph');
 const {
@@ -168,14 +172,19 @@ describe('GATCARC4 v3 — Synthetic Edit & Safety Coverage (Always Runs)', () =>
     const tmpRoot = makeTmpDir('ac27-v3-mixed-');
     const levelsDir = path.join(tmpRoot, 'GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels');
     fs.mkdirSync(levelsDir, { recursive: true });
+    stageV3AudioIntoRoot(tmpRoot, 'ZSJN', HAS_INSTALLED_V3_CORPUS ? GAME_ROOT : FIXTURES_GAME_ROOT_V3);
 
     const v2FixtureDir = path.dirname(V2_ZSJN_LEISURE);
     for (const f of fs.readdirSync(v2FixtureDir)) {
       fs.copyFileSync(path.join(v2FixtureDir, f), path.join(levelsDir, f));
     }
+    const zsjnPeakFixture = path.join(
+      FIXTURES_GAME_ROOT_V3,
+      'GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels/ZSJN_peakdeparture.acl',
+    );
     const v3SourceBytes = HAS_INSTALLED_V3_CORPUS
       ? fs.readFileSync(levelPath('ZSJN', 'ZSJN_peakdeparture.acl'))
-      : fs.readFileSync(SYNTH_FIXTURE_PATH);
+      : fs.readFileSync(zsjnPeakFixture);
     const v3Path = path.join(levelsDir, 'ZSJN_v3_level.acl');
     const v2Path = path.join(levelsDir, 'ZSJN_leisure_1.acl');
     fs.writeFileSync(v3Path, v3SourceBytes);
@@ -577,11 +586,30 @@ describe.skipIf(!HAS_INSTALLED_V3_CORPUS)('GATCARC4 v3 — Installed 40-File Gam
       { icao: 'ZGSZ', file: 'ZGSZ_leisure_1.acl', expectFrames: 0 },
     ];
 
+    const resolveCleanInstalledLevel = (icao, file) => {
+      const mainPath = levelPath(icao, file);
+      const bakPath = `${mainPath}.bak`;
+      for (const candidate of [bakPath, mainPath]) {
+        if (!fs.existsSync(candidate)) continue;
+        try {
+          const buf = fs.readFileSync(candidate);
+          if (detectAclFormat(buf) !== 'gatcarc4-v3') continue;
+          const ch = openAclFile(candidate);
+          const rwyOk = validateV3ContainerRunwayTimelineMembership(ch.container, { throwOnError: false }).issues.length === 0;
+          const apprOk = validateV3ApproachRoutes(ch.container.staticData, ch.container, { throwOnError: false }).ok;
+          const csOk = validateV3CallsignAllocation(ch.container, null, { gameRoot: GAME_ROOT, airportIcao: icao }).ok;
+          if (rwyOk && apprOk && csOk) return candidate;
+        } catch (_) {}
+      }
+      return mainPath;
+    };
+
     for (const t of targets) {
       const tmpRoot = makeTmpDir(`ac27-v3-fl-${t.icao}-`);
       const tmpLevels = path.join(tmpRoot, 'GroundATC_Data/StreamingAssets/Airports', t.icao, 'Levels');
       fs.mkdirSync(tmpLevels, { recursive: true });
-      const srcPath = levelPath(t.icao, t.file);
+      stageV3AudioIntoRoot(tmpRoot, t.icao, GAME_ROOT);
+      const srcPath = resolveCleanInstalledLevel(t.icao, t.file);
       const dstPath = path.join(tmpLevels, t.file);
       fs.copyFileSync(srcPath, dstPath);
 
@@ -613,10 +641,18 @@ describe.skipIf(!HAS_INSTALLED_V3_CORPUS)('GATCARC4 v3 — Installed 40-File Gam
       });
 
       const sampleDep = flights.find((f) => f.FlightType === 'Departure') || flights[0];
+      const usedCallsigns = new Set(editedFlights.map((f) => f.CallSign));
+      const v3Aud = loadV3AirportAudio(tmpRoot, t.icao).v3Audio;
+      const depVoice = v3Aud.captainVoices.includes(sampleDep.Voice) ? sampleDep.Voice : v3Aud.captainVoices[0];
+      const depLang = v3Aud.voiceLanguages[depVoice] || sampleDep.Language || 'en';
+      const newCallSign = (v3Aud.allocatableCallsignsByVoice[depVoice] || []).find((cs) => !usedCallsigns.has(cs));
+      expect(newCallSign).toBeTruthy();
       editedFlights.push({
         ...sampleDep,
-        CallSign: 'CES9876',
-        FlightNumber: 'MU9876',
+        CallSign: newCallSign,
+        FlightNumber: newCallSign,
+        Language: depLang,
+        Voice: depVoice,
         Registration: 'B-88V3',
         _Registration: 'B-88V3',
         Stand: freeStandName,

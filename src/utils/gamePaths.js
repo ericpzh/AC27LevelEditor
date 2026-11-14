@@ -275,6 +275,27 @@ function modsDir(gameRoot) {
 }
 
 /**
+ * Extract the airport ICAO segment from an `.acl` level path inside
+ * `.../Airports/<ICAO>/Levels/...` (case-insensitive on directory names).
+ * @param {string} aclPath
+ * @returns {string|null}
+ */
+function airportIcaoFromLevelPath(aclPath) {
+  if (!aclPath) return null;
+  const parts = path.resolve(String(aclPath)).split(/[\\/]+/);
+  for (let i = 0; i + 2 < parts.length; i++) {
+    if (
+      parts[i].toLowerCase() === SEG.airports.toLowerCase() &&
+      parts[i + 2].toLowerCase() === SEG.levels.toLowerCase() &&
+      parts[i + 1]
+    ) {
+      return parts[i + 1];
+    }
+  }
+  return null;
+}
+
+/**
  * Best-effort game root derived from an absolute .acl path. Works for the
  * Windows/Linux layout (`.../GroundATC_Data/StreamingAssets/...`) and the macOS
  * bundle (`.../GroundATC.app/Contents/Resources/Data/StreamingAssets/...`).
@@ -350,6 +371,7 @@ module.exports = {
   builtinLiveryDir,
   aircraftProfilesCsvPath,
   modsDir,
+  airportIcaoFromLevelPath,
   gameRootFromLevelPath,
   steamCommonDirs,
 };

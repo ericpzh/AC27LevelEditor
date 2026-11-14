@@ -17,6 +17,10 @@ const { getSchemaForHash } = require('./schema_registry');
 const { validateV3Container } = require('./validator');
 const { validateV3ContainerRunwayTimelineMembership } = require('./runway_timeline_validation');
 const { validateV3ApproachRoutes } = require('./approach_validation');
+const {
+  validateV3CallsignAllocation,
+  CallsignAllocationError,
+} = require('./callsign_validation');
 const readers = require('./readers');
 
 class StaleSourceError extends Error {
@@ -196,6 +200,21 @@ function openV3Acl(bytes, options = {}) {
       if (saveOptions.validateApproachRoutes !== false) {
         validateV3ApproachRoutes(container.staticData, schema);
       }
+      if (saveOptions.validateCallsignAllocation !== false) {
+        const allocRes = validateV3CallsignAllocation(container, schema, {
+          levelPath: resolvedTarget,
+          gameRoot: saveOptions.gameRoot,
+          airportIcao: saveOptions.airportIcao,
+          v3Audio: saveOptions.v3Audio,
+          requireAudioMetadata: Boolean(saveOptions.requireAudioMetadata),
+        });
+        if (!allocRes.ok) {
+          throw new CallsignAllocationError(allocRes.issues, {
+            metadataUnavailable: allocRes.metadataUnavailable,
+            missingResources: allocRes.missingResources,
+          });
+        }
+      }
       validateV3Container(container);
       const encoded = encodeV3Container(container, {
         forceReencode: Boolean(saveOptions.forceReencode),
@@ -279,4 +298,5 @@ function openV3Acl(bytes, options = {}) {
 module.exports = {
   openV3Acl,
   StaleSourceError,
+  CallsignAllocationError,
 };

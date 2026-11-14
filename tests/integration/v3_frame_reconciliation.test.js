@@ -17,7 +17,7 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FIXTURES_GAME_ROOT_V3, v3LevelPath, v3GameLevelExists, isV3Acl } from '../helpers/gameRoot';
+import { FIXTURES_GAME_ROOT_V3, v3LevelPath, v3GameLevelExists, isV3Acl, stageV3AudioIntoRoot } from '../helpers/gameRoot';
 
 const require = createRequire(import.meta.url);
 const parser = require('../../src/acl/parser');
@@ -77,6 +77,7 @@ function tmpV3LevelCopy() {
   }
   const vcSrc = path.join(saSrc, 'Voices', 'voice_catalog.json');
   if (fs.existsSync(vcSrc)) fs.copyFileSync(vcSrc, path.join(voicesDst, 'voice_catalog.json'));
+  stageV3AudioIntoRoot(root, ICAO, FIXTURES_GAME_ROOT_V3);
 
   for (const apFile of [
     'airport_brief.json',

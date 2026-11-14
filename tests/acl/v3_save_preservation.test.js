@@ -28,7 +28,7 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FIXTURES_GAME_ROOT, FIXTURES_GAME_ROOT_V3, GAME_ROOT } from '../helpers/gameRoot';
+import { FIXTURES_GAME_ROOT, FIXTURES_GAME_ROOT_V3, GAME_ROOT, stageV3AudioIntoRoot } from '../helpers/gameRoot';
 import { runTripleValidation } from '../../src/utils/validators';
 import { createArrivalFlight, createDepartureFlight } from '../../src/store/flightDefaults';
 import { cascadeLanguageChange, cascadeAirlineLanguage } from '../../src/store/flightCascade';
@@ -367,6 +367,8 @@ describe('3. v3 writer independence from legacy sibling audio files & explicit m
     const aclWith = path.join(dirWith, 'GroundATC_Data', 'StreamingAssets', 'Airports', 'ZSJN', 'Levels', 'ZSJN_leisure_1.acl');
     fs.mkdirSync(path.dirname(aclWithout), { recursive: true });
     fs.mkdirSync(path.dirname(aclWith), { recursive: true });
+    stageV3AudioIntoRoot(dirWithout, 'ZSJN', FIXTURES_GAME_ROOT_V3);
+    stageV3AudioIntoRoot(dirWith, 'ZSJN', FIXTURES_GAME_ROOT_V3);
     fs.copyFileSync(ZSJN_LEISURE_1_V3, aclWithout);
     fs.copyFileSync(ZSJN_LEISURE_1_V3, aclWith);
 

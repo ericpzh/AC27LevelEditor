@@ -16,8 +16,6 @@
 const fs = require('fs');
 const path = require('path');
 const gamePaths = require('../../utils/gamePaths');
-const { detectAclFormat } = require('../archive');
-const { mergeAudioCallsigns } = require('../utils');
 
 // Operational non-callsign clip prefixes present in radio_clip_durations.json
 // (e.g. RWY01, RWY15, RWY16L, RWY16R, RWY19, RWY33, RWY34L, RWY34R).
@@ -88,6 +86,7 @@ function loadV3VoiceCatalog(gameRoot) {
   const empty = {
     present: false,
     sig: 'missing',
+    filePath: null,
     voices: [],
     voiceLanguages: {},
     voiceRoles: {},
@@ -104,7 +103,7 @@ function loadV3VoiceCatalog(gameRoot) {
   if (cached && cached.sig === sig) return cached.value;
 
   if (!sig.startsWith('present:')) {
-    const res = { ...empty, sig };
+    const res = { ...empty, filePath: catalogPath, sig };
     _catalogCache.set(cacheKey, { sig, value: res });
     return res;
   }
@@ -139,6 +138,12 @@ function loadV3VoiceCatalog(gameRoot) {
       }
     }
 
+    if (voices.length === 0) {
+      const res = { ...empty, filePath: catalogPath, sig: `empty:${sig}` };
+      _catalogCache.set(cacheKey, { sig, value: res });
+      return res;
+    }
+
     const captainVoices = [...captainSet].sort((a, b) => a.localeCompare(b));
     const atcVoices = [...atcSet].sort((a, b) => a.localeCompare(b));
     const captainVoicesByLang = {};
@@ -149,6 +154,7 @@ function loadV3VoiceCatalog(gameRoot) {
     const value = {
       present: true,
       sig,
+      filePath: catalogPath,
       voices,
       voiceLanguages,
       voiceRoles,
@@ -159,7 +165,7 @@ function loadV3VoiceCatalog(gameRoot) {
     _catalogCache.set(cacheKey, { sig, value });
     return value;
   } catch (_) {
-    const res = { ...empty, sig: `unreadable:${sig}` };
+    const res = { ...empty, filePath: catalogPath, sig: `unreadable:${sig}` };
     _catalogCache.set(cacheKey, { sig, value: res });
     return res;
   }
@@ -174,6 +180,7 @@ function loadV3ClipIndex(gameRoot) {
   const empty = {
     present: false,
     sig: 'missing',
+    filePath: null,
     clipsByVoice: new Map(),
     callsignsByVoice: new Map(),
   };
@@ -186,7 +193,7 @@ function loadV3ClipIndex(gameRoot) {
   if (cached && cached.sig === sig) return cached.value;
 
   if (!sig.startsWith('present:')) {
-    const res = { ...empty, sig };
+    const res = { ...empty, filePath: clipPath, sig };
     _clipIndexCache.set(cacheKey, { sig, value: res });
     return res;
   }
@@ -195,7 +202,7 @@ function loadV3ClipIndex(gameRoot) {
     const raw = JSON.parse(fs.readFileSync(clipPath, 'utf8'));
     const clips = raw && raw.clips && typeof raw.clips === 'object' ? raw.clips : null;
     if (!clips) {
-      const res = { ...empty, sig: `empty:${sig}` };
+      const res = { ...empty, filePath: clipPath, sig: `empty:${sig}` };
       _clipIndexCache.set(cacheKey, { sig, value: res });
       return res;
     }
@@ -230,13 +237,14 @@ function loadV3ClipIndex(gameRoot) {
     const value = {
       present: true,
       sig,
+      filePath: clipPath,
       clipsByVoice,
       callsignsByVoice,
     };
     _clipIndexCache.set(cacheKey, { sig, value });
     return value;
   } catch (_) {
-    const res = { ...empty, sig: `unreadable:${sig}` };
+    const res = { ...empty, filePath: clipPath, sig: `unreadable:${sig}` };
     _clipIndexCache.set(cacheKey, { sig, value: res });
     return res;
   }
@@ -255,6 +263,8 @@ function loadV3ClipIndex(gameRoot) {
 function loadV3ChannelConfig(gameRoot, icao) {
   const unknown = {
     known: false,
+    present: false,
+    filePath: null,
     languages: null,
     atcVoicesByLang: {},
     sig: 'missing',
@@ -268,14 +278,19 @@ function loadV3ChannelConfig(gameRoot, icao) {
   if (cached && cached.sig === sig) return cached.value;
 
   if (!sig.startsWith('present:')) {
-    const res = { ...unknown, sig };
+    const res = { ...unknown, filePath: cfgPath, sig };
     _channelConfigCache.set(cacheKey, { sig, value: res });
     return res;
   }
 
   try {
     const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    const channels = Array.isArray(raw && raw.radioChannels) ? raw.radioChannels : [];
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      const res = { ...unknown, filePath: cfgPath, present: false, sig: `empty:${sig}` };
+      _channelConfigCache.set(cacheKey, { sig, value: res });
+      return res;
+    }
+    const channels = Array.isArray(raw.radioChannels) ? raw.radioChannels : [];
     const byLangSets = new Map();
 
     for (const ch of channels) {
@@ -290,7 +305,7 @@ function loadV3ChannelConfig(gameRoot, icao) {
     }
 
     if (byLangSets.size === 0) {
-      const res = { ...unknown, sig };
+      const res = { ...unknown, filePath: cfgPath, present: true, sig };
       _channelConfigCache.set(cacheKey, { sig, value: res });
       return res;
     }
@@ -303,6 +318,8 @@ function loadV3ChannelConfig(gameRoot, icao) {
 
     const value = {
       known: true,
+      present: true,
+      filePath: cfgPath,
       languages,
       atcVoicesByLang,
       sig,
@@ -310,7 +327,7 @@ function loadV3ChannelConfig(gameRoot, icao) {
     _channelConfigCache.set(cacheKey, { sig, value });
     return value;
   } catch (_) {
-    const res = { ...unknown, sig: `unreadable:${sig}` };
+    const res = { ...unknown, filePath: cfgPath, present: false, sig: `unreadable:${sig}` };
     _channelConfigCache.set(cacheKey, { sig, value: res });
     return res;
   }
@@ -436,6 +453,7 @@ function loadV3AirportAudio(gameRoot, icao) {
   }
 
   // Step 4: Merge allocatable callsigns across compatible captain voices for airport-level audioCallsigns
+  const { mergeAudioCallsigns } = require('../utils');
   let audioCallsigns = { byAirline: {}, allCallsigns: [], allAirlines: [] };
   if (captainVoices.length > 0) {
     for (const v of captainVoices) {
@@ -485,7 +503,11 @@ function loadV3AirportAudio(gameRoot, icao) {
     icao: String(icao || ''),
     hasCatalog: catalog.present,
     hasClipIndex: clipIndex.present,
+    hasChannelConfigFile: Boolean(channelCfg.present),
     knownChannelConfig: channelCfg.known,
+    catalogSig: catalog.sig,
+    clipIndexSig: clipIndex.sig,
+    channelConfigSig: channelCfg.sig,
     knownChannelLanguages: languages,
     atcVoicesByLang: channelCfg.atcVoicesByLang,
     voiceLanguages: catalog.voiceLanguages,
@@ -522,6 +544,7 @@ function loadV3AirportAudio(gameRoot, icao) {
  */
 function peekAclFormat(filePath) {
   if (!filePath) return null;
+  const { detectAclFormat } = require('../archive');
   let fd = null;
   try {
     fd = fs.openSync(filePath, 'r');

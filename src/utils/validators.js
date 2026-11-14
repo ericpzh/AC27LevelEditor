@@ -205,8 +205,9 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     addFlightNums(code, audioData.byAirline[code]);
   }
   const v3Audio = values._v3Audio || null;
-  const languageValidSet = (v3Audio && Array.isArray(v3Audio.knownChannelLanguages) && v3Audio.knownChannelLanguages.length > 0)
-    ? new Set(v3Audio.knownChannelLanguages)
+  const v3AudioObj = (v3Audio && typeof v3Audio === 'object') ? v3Audio : null;
+  const languageValidSet = (v3AudioObj && Array.isArray(v3AudioObj.knownChannelLanguages) && v3AudioObj.knownChannelLanguages.length > 0)
+    ? new Set(v3AudioObj.knownChannelLanguages)
     : VALID_LANGUAGES;
   const validSets = {
     AirlineCode: airlineCodeSet,
@@ -216,6 +217,19 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     Voice: new Set(values.Voice || []),
     Language: languageValidSet,
   };
+
+  if (v3AudioObj && flights.length > 0) {
+    const missingMeta = [];
+    if (!v3AudioObj.hasCatalog) missingMeta.push('Voices/voice_catalog.json');
+    if (!v3AudioObj.hasClipIndex) missingMeta.push('radio_clip_durations.json');
+    const chSig = String(v3AudioObj.channelConfigSig || '');
+    if (chSig.startsWith('unreadable:') || chSig.startsWith('empty:')) {
+      missingMeta.push(`Airports/${v3AudioObj.icao || currentAirport || '<ICAO>'}/radio_channel_config.json`);
+    }
+    if (missingMeta.length > 0) {
+      issues.push(T('val_v3_audio_metadata_unavailable', { resources: missingMeta.join(', ') }));
+    }
+  }
 
   flights.forEach((fl) => {
     const cs = fl.CallSign || '?';
@@ -250,7 +264,7 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     // InvalidOperationException at level load when a flight's captain voice
     // declares a different language than the flight (e.g. a `...-EN` voice on
     // a `zh` flight).
-    const voiceLangMap = values._voiceLanguages || v3Audio?.voiceLanguages || {};
+    const voiceLangMap = values._voiceLanguages || v3AudioObj?.voiceLanguages || {};
     const voiceLanguage = voiceLangMap[fl.Voice];
     if (voiceLanguage && fl.Language && voiceLanguage !== fl.Language) {
       issues.push(T('val_voice_language_mismatch', {
@@ -265,20 +279,55 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
       const trimmedCs = String(fl.CallSign || '').trim();
       const trimmedVoice = String(fl.Voice || '').trim();
       const trimmedLang = String(fl.Language || '').trim();
-      if (v3Audio.hasClipIndex && trimmedCs) {
-        if (trimmedVoice) {
-          const capClips = v3Audio.voiceCallsigns?.[trimmedVoice];
+      const regVal = String(fl.Registration || fl._Registration || '').trim();
+      const regTag = regVal ? ` [Reg ${regVal}]` : '';
+
+      if (v3AudioObj && v3AudioObj.hasCatalog && trimmedVoice && v3AudioObj.voiceRoles) {
+        const vRole = v3AudioObj.voiceRoles[trimmedVoice];
+        if (!vRole || vRole !== 'captain') {
+          issues.push(T('val_invalid_captain_voice', {
+            cs: trimmedCs || cs,
+            regTag,
+            voice: trimmedVoice,
+            role: vRole || 'missing',
+          }));
+        }
+      }
+
+      if (v3AudioObj && v3AudioObj.hasClipIndex && trimmedCs) {
+        const isCaptainVoice = !v3AudioObj.hasCatalog
+          || !v3AudioObj.voiceRoles
+          || v3AudioObj.voiceRoles[trimmedVoice] === 'captain';
+        if (trimmedVoice && isCaptainVoice) {
+          const capClips = v3AudioObj.voiceCallsigns?.[trimmedVoice];
           if (!Array.isArray(capClips) || !capClips.includes(trimmedCs)) {
-            issues.push(T('val_callsign_voice_mismatch', { cs: trimmedCs, voice: trimmedVoice }));
+            const compatVoices = (v3AudioObj.allCaptainVoices || v3AudioObj.captainVoices || []).filter((cv) => {
+              const list = v3AudioObj.knownChannelConfig
+                ? v3AudioObj.allocatableCallsignsByVoice?.[cv]
+                : v3AudioObj.voiceCallsigns?.[cv];
+              return Array.isArray(list) && list.includes(trimmedCs);
+            });
+            const hint = compatVoices.length > 0
+              ? ` (compatible: ${compatVoices.join(', ')})`
+              : '';
+            issues.push(T('val_callsign_voice_mismatch', {
+              cs: trimmedCs,
+              regTag,
+              voice: trimmedVoice,
+              hint,
+            }));
           }
         }
-        if (trimmedLang && v3Audio.knownChannelConfig) {
-          const atcList = v3Audio.atcVoicesByLang?.[trimmedLang] || [];
+        if (trimmedLang && v3AudioObj.knownChannelConfig) {
+          const atcList = v3AudioObj.atcVoicesByLang?.[trimmedLang] || [];
           for (const atcVoice of atcList) {
-            const atcClips = v3Audio.atcCallsigns?.[atcVoice];
+            const atcClips = v3AudioObj.atcCallsigns?.[atcVoice];
             if (!Array.isArray(atcClips) || !atcClips.includes(trimmedCs)) {
               issues.push(T('val_callsign_atc_voice_mismatch', {
-                cs: trimmedCs, voice: atcVoice, lang: trimmedLang,
+                cs: trimmedCs,
+                regTag,
+                voice: atcVoice,
+                lang: trimmedLang,
               }));
             }
           }

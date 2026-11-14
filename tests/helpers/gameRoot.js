@@ -19,3 +19,4 @@ export const v2GameLevelExists = gameRoot.v2GameLevelExists;
 export const isV3Acl = gameRoot.isV3Acl;
 export const v3LevelPath = gameRoot.v3LevelPath;
 export const v3GameLevelExists = gameRoot.v3GameLevelExists;
+export const stageV3AudioIntoRoot = gameRoot.stageV3AudioIntoRoot;

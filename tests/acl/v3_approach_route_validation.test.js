@@ -31,7 +31,7 @@ import os from 'os';
 import path from 'path';
 
 const require = createRequire(import.meta.url);
-const { FIXTURES_GAME_ROOT_V3, levelPath, gameLevelExists } = require('../helpers/gameRoot.cjs');
+const { GAME_ROOT, FIXTURES_GAME_ROOT_V3, levelPath, gameLevelExists, stageV3AudioIntoRoot } = require('../helpers/gameRoot.cjs');
 const { openAclFile, detectAclFormat } = require('../../src/acl/archive');
 const { encodeV3Container } = require('../../src/acl/v3/framing');
 const { getSchemaForHash } = require('../../src/acl/v3/schema_registry');
@@ -75,6 +75,13 @@ function makeTmpDir(prefix = 'ac27-v3-appr-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tmpDirs.push(dir);
   return dir;
+}
+
+function stageTmpLevels(tmpDir, icao, sourceRoot = FIXTURES_GAME_ROOT_V3) {
+  const tmpLevels = path.join(tmpDir, 'GroundATC_Data/StreamingAssets/Airports', icao, 'Levels');
+  fs.mkdirSync(tmpLevels, { recursive: true });
+  stageV3AudioIntoRoot(tmpDir, icao, sourceRoot);
+  return tmpLevels;
 }
 
 function sha256File(fp) {
@@ -125,8 +132,7 @@ describe('v3 Arrival Approach Route Validation — Scenery Writer, Candidate Gat
   it('preserves STAR (RouteType=0) and APPR (RouteType=1) routes across runway rename-only (both pre-remapped and raw proc.runwayName)', () => {
     for (const preRemapProcs of [true, false]) {
       const tmpDir = makeTmpDir('ac27-zsjn-rename-');
-      const tmpLevels = path.join(tmpDir, 'GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels');
-      fs.mkdirSync(tmpLevels, { recursive: true });
+      const tmpLevels = stageTmpLevels(tmpDir, 'ZSJN', FIXTURES_GAME_ROOT_V3);
       const dstAcl = path.join(tmpLevels, 'ZSJN_leisure_1.acl');
       fs.copyFileSync(path.join(ZSJN_V3_DIR, 'ZSJN_leisure_1.acl'), dstAcl);
 
@@ -160,8 +166,7 @@ describe('v3 Arrival Approach Route Validation — Scenery Writer, Candidate Gat
 
   it('rejects Ground Painter save when sole RouteType=1 approach is removed while STAR and arrivals remain, leaving .acl/.bak/.csv/.bg.json untouched', () => {
     const tmpDir = makeTmpDir('ac27-zsjn-noappr-');
-    const tmpLevels = path.join(tmpDir, 'GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels');
-    fs.mkdirSync(tmpLevels, { recursive: true });
+    const tmpLevels = stageTmpLevels(tmpDir, 'ZSJN', FIXTURES_GAME_ROOT_V3);
     const dstAcl = path.join(tmpLevels, 'ZSJN_leisure_1.acl');
     const bakAcl = `${dstAcl}.bak`;
     const csvSidecar = path.join(tmpLevels, 'flight_schedule_leisure_1.csv');
@@ -305,8 +310,7 @@ describe('v3 Arrival Approach Route Validation — Scenery Writer, Candidate Gat
 
   it('accepts a valid replacement RouteType=1 approach (>= 2 distinct finite airway nodes) and keeps departure-only runways valid without approaches', () => {
     const tmpDir = makeTmpDir('ac27-zsjn-replace-appr-');
-    const tmpLevels = path.join(tmpDir, 'GroundATC_Data/StreamingAssets/Airports/ZSJN/Levels');
-    fs.mkdirSync(tmpLevels, { recursive: true });
+    const tmpLevels = stageTmpLevels(tmpDir, 'ZSJN', FIXTURES_GAME_ROOT_V3);
     const dstAcl = path.join(tmpLevels, 'ZSJN_leisure_1.acl');
     fs.copyFileSync(path.join(ZSJN_V3_DIR, 'ZSJN_leisure_1.acl'), dstAcl);
 
@@ -506,8 +510,7 @@ describe('v3 Arrival Approach Route Validation — Scenery Writer, Candidate Gat
 describe.runIf(Boolean(CLEAN_KJFK_LEISURE_2))('v3 Arrival Approach Route Validation — Disposable KJFK_leisure_2 (4R -> 6C) Reproduction', () => {
   it('rename-only (4R/22L -> 6C/24, plus swap/chain 4L/22R -> 4R/22L) preserves RNAV Y Rwy 4R and all 12 SIE.CAMRM5 arrivals including KAL1202 (B-19O5)', () => {
     const tmpDir = makeTmpDir('ac27-kjfk-l2-rename-');
-    const tmpLevels = path.join(tmpDir, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels');
-    fs.mkdirSync(tmpLevels, { recursive: true });
+    const tmpLevels = stageTmpLevels(tmpDir, 'KJFK', GAME_ROOT);
     const dstAcl = path.join(tmpLevels, 'KJFK_leisure_2.acl');
     fs.copyFileSync(CLEAN_KJFK_LEISURE_2, dstAcl);
 
@@ -580,8 +583,7 @@ describe.runIf(Boolean(CLEAN_KJFK_LEISURE_2))('v3 Arrival Approach Route Validat
 
   it('deterministic regression: 4R -> 6C with SIE.CAMRM5 intact and sole RouteType=1 approach removed rejects save, names 6C + KAL1202 (B-19O5), and leaves target intact; valid replacement approach restores save', () => {
     const tmpDir = makeTmpDir('ac27-kjfk-l2-repro-');
-    const tmpLevels = path.join(tmpDir, 'GroundATC_Data/StreamingAssets/Airports/KJFK/Levels');
-    fs.mkdirSync(tmpLevels, { recursive: true });
+    const tmpLevels = stageTmpLevels(tmpDir, 'KJFK', GAME_ROOT);
     const dstAcl = path.join(tmpLevels, 'KJFK_leisure_2.acl');
     const bakAcl = `${dstAcl}.bak`;
     const csvSidecar = path.join(tmpLevels, 'flight_schedule_leisure_2.csv');

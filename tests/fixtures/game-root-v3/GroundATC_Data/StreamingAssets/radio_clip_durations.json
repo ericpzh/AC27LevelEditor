@@ -61,6 +61,11 @@
       "sampleRate": 48000,
       "sha256": "aab0140703c4116858ae7af490cf8da974db8c93440e8a47d4f6dc0fdeaa5646"
     },
+    "American-Female-ATC/ETD8349": {
+      "sampleCount": 71760,
+      "sampleRate": 48000,
+      "sha256": "0bfd3e8a64fa4e1c200fee8a355be866a6469267d0d03d61420227f6af208ff9"
+    },
     "American-Female-ATC/RWY19": {
       "sampleCount": 61741,
       "sampleRate": 48000,
@@ -71,895 +76,10 @@
       "sampleRate": 48000,
       "sha256": "a30d1add7e67cff2110d146d37305bd6727722647cc03fe15f5e090e4c60353d"
     },
-    "CN-Captain-Middle-Aged/BDJ1641": {
-      "sampleCount": 35200,
+    "CN-Captain-Middle-Aged-EN/AXM1416": {
+      "sampleCount": 52320,
       "sampleRate": 48000,
-      "sha256": "387a938526855c6c736b45d482db7a7ac3a03eaae9cffad38fb6113ab73d53dc"
-    },
-    "CN-Captain-Middle-Aged/BDJ4043": {
-      "sampleCount": 36000,
-      "sampleRate": 48000,
-      "sha256": "e8dc0a561e0b789a70c81045729899372912f276cd59d843f1178ec5def55d9c"
-    },
-    "CN-Captain-Middle-Aged/BDJ5236": {
-      "sampleCount": 33600,
-      "sampleRate": 48000,
-      "sha256": "0ae08c954f436285614878e46d407c611a04659b4618f41166ef50b101661ca6"
-    },
-    "CN-Captain-Middle-Aged/CCA2761": {
-      "sampleCount": 41924,
-      "sampleRate": 48000,
-      "sha256": "a7c5f25236e5baeeb565714cd701b2d7b65aea5f15e5106889249be38f6e3fa0"
-    },
-    "CN-Captain-Middle-Aged/CCA2762": {
-      "sampleCount": 43680,
-      "sampleRate": 48000,
-      "sha256": "608b7e23f5c11f0c5a2e6fd2bdb6e748f11d49130938ac5f730bc521d6aeadef"
-    },
-    "CN-Captain-Middle-Aged/CCA3115": {
-      "sampleCount": 38948,
-      "sampleRate": 48000,
-      "sha256": "30d381a3393ad5e0e00b37c0040fa1b511abdb6deb48104e9aa4e36fb5a383df"
-    },
-    "CN-Captain-Middle-Aged/CCA4662": {
-      "sampleCount": 40359,
-      "sampleRate": 48000,
-      "sha256": "4d2b18bb911fcea5c6d1c07379ba4389ce573836547f7e9702e6a8bb517070ba"
-    },
-    "CN-Captain-Middle-Aged/CCA4793": {
-      "sampleCount": 41768,
-      "sampleRate": 48000,
-      "sha256": "c43760527ac9c42d0a96b7f8fc785709a5a68c0c715772092419114a138949cc"
-    },
-    "CN-Captain-Middle-Aged/CCA4851": {
-      "sampleCount": 40957,
-      "sampleRate": 48000,
-      "sha256": "2ec90d185a4596bf800dc2358ef8d4fe9b6a0f620799f7f36dd2514b49bfbc8a"
-    },
-    "CN-Captain-Middle-Aged/CCA5198": {
-      "sampleCount": 45127,
-      "sampleRate": 48000,
-      "sha256": "0a2edcf8e387322fe27cb09744c34132f9b0af6dbf278411d01d07acb5516746"
-    },
-    "CN-Captain-Middle-Aged/CCA5678": {
-      "sampleCount": 44833,
-      "sampleRate": 48000,
-      "sha256": "aaf4670ffcef4b494c5f53f1f43686db70f237975650eeb20574d4e9749d9884"
-    },
-    "CN-Captain-Middle-Aged/CCA7198": {
-      "sampleCount": 39535,
-      "sampleRate": 48000,
-      "sha256": "0e6339ebfc86aa1fd7b7b85f27520049725557a213d1394e6c14aad2a6de296d"
-    },
-    "CN-Captain-Middle-Aged/CCA8708": {
-      "sampleCount": 45733,
-      "sampleRate": 48000,
-      "sha256": "f58808ef067fcc743362ad5ebc7181fb979f404d536f48231f6de89a403c13b0"
-    },
-    "CN-Captain-Middle-Aged/CCA9052": {
-      "sampleCount": 35232,
-      "sampleRate": 48000,
-      "sha256": "27ee38a53a74799eb20cc1280353f2f7436ffa7afc2ded1400253e5934675695"
-    },
-    "CN-Captain-Middle-Aged/CCA9119": {
-      "sampleCount": 49795,
-      "sampleRate": 48000,
-      "sha256": "bafae80c6bc3d007d76a05559ee3de3fa63810bbcc4e5cbb6282162804cbbb48"
-    },
-    "CN-Captain-Middle-Aged/CCA9120": {
-      "sampleCount": 37528,
-      "sampleRate": 48000,
-      "sha256": "e03bdb53113497431c95525ec22068f495a2522feba1bbcb9bbdb36c66adc0bd"
-    },
-    "CN-Captain-Middle-Aged/CDG1152": {
-      "sampleCount": 38880,
-      "sampleRate": 48000,
-      "sha256": "e058f841e78303b3b099a54c222cc0006162f76d656c62523fbab59c2f8d4879"
-    },
-    "CN-Captain-Middle-Aged/CDG1174": {
-      "sampleCount": 40154,
-      "sampleRate": 48000,
-      "sha256": "4f858b491d81dfef748ed97eaf0e1c3bf4bd473e94e5b02aa521a5e2237aec69"
-    },
-    "CN-Captain-Middle-Aged/CDG1188": {
-      "sampleCount": 36480,
-      "sampleRate": 48000,
-      "sha256": "e27c28e189e3e69819ea76d374f75abafb097b8644c78d900fe0cd61f369f263"
-    },
-    "CN-Captain-Middle-Aged/CDG1191": {
-      "sampleCount": 36466,
-      "sampleRate": 48000,
-      "sha256": "0974f6a1ab591ab6a3b985c8fb2deddc188cabd8d51a36aec8695c1219221d5a"
-    },
-    "CN-Captain-Middle-Aged/CDG1192": {
-      "sampleCount": 43680,
-      "sampleRate": 48000,
-      "sha256": "3deeb9c989b2a41001edf8ff1f3e913c97f0f37c2cab2361d90a75c155de331c"
-    },
-    "CN-Captain-Middle-Aged/CDG1198": {
-      "sampleCount": 37595,
-      "sampleRate": 48000,
-      "sha256": "a4a29dbecf0c00907fccc0b2e0dcd1c82393d911c318ef96775f0028e9bf1ce2"
-    },
-    "CN-Captain-Middle-Aged/CDG1234": {
-      "sampleCount": 45600,
-      "sampleRate": 48000,
-      "sha256": "6cf08203bac69492cf72fa378119c8852547e98ff8c7ed12c27650bf752b0732"
-    },
-    "CN-Captain-Middle-Aged/CDG2355": {
-      "sampleCount": 43731,
-      "sampleRate": 48000,
-      "sha256": "da75924d6d1e1c5a629a13d5a65436cee3dbcfeb3886689401a8835c5c97e382"
-    },
-    "CN-Captain-Middle-Aged/CDG2577": {
-      "sampleCount": 34700,
-      "sampleRate": 48000,
-      "sha256": "7813060650774fdcc0c90efb9963dd7ed06e3f4738c8bd6c138abfa692e61e6d"
-    },
-    "CN-Captain-Middle-Aged/CDG2701": {
-      "sampleCount": 41638,
-      "sampleRate": 48000,
-      "sha256": "c40a7223466ff6f7a47c64e850fc21b6992afedd826ccd64f8e77ddd16a2baf6"
-    },
-    "CN-Captain-Middle-Aged/CDG2702": {
-      "sampleCount": 37445,
-      "sampleRate": 48000,
-      "sha256": "e3f844174a25e33e641fb3e907de6f4e2970a74670cbb174e19436e53e76d7ba"
-    },
-    "CN-Captain-Middle-Aged/CDG3827": {
-      "sampleCount": 44979,
-      "sampleRate": 48000,
-      "sha256": "8cd0e423fbf5ccad6431295f244f52b4c8ec598b75505ca6aeac70eefd966e31"
-    },
-    "CN-Captain-Middle-Aged/CDG3828": {
-      "sampleCount": 39668,
-      "sampleRate": 48000,
-      "sha256": "d6cf48a4b128ecc7f7811ace1d2df9f3e78319435cf6b208ef5894c99e1f2a55"
-    },
-    "CN-Captain-Middle-Aged/CDG5073": {
-      "sampleCount": 42512,
-      "sampleRate": 48000,
-      "sha256": "dd223d9007eca5ba2c98c7dd3fe18960f9efae5d2cf2b1260daeeb19a7872619"
-    },
-    "CN-Captain-Middle-Aged/CDG5144": {
-      "sampleCount": 42883,
-      "sampleRate": 48000,
-      "sha256": "a66e89f9d899d889e007e7efb113a730edbb231c1168b96f70d75bba7a2ec83f"
-    },
-    "CN-Captain-Middle-Aged/CDG5166": {
-      "sampleCount": 36659,
-      "sampleRate": 48000,
-      "sha256": "6ca99adcaea40fcae4ae4f0ae847abd7bfa95f8c3db00ea3135e649b7dcde74d"
-    },
-    "CN-Captain-Middle-Aged/CDG5737": {
-      "sampleCount": 39840,
-      "sampleRate": 48000,
-      "sha256": "e304047bf20283c8343ae759ba2a7bc1265e2fe18d0f85c99a5544bdb6377719"
-    },
-    "CN-Captain-Middle-Aged/CDG5738": {
-      "sampleCount": 43012,
-      "sampleRate": 48000,
-      "sha256": "0aeaf625d7991518acf5a4e8f91362b4c1a43bc945707babf85cd7e480b9fc40"
-    },
-    "CN-Captain-Middle-Aged/CDG6445": {
-      "sampleCount": 37860,
-      "sampleRate": 48000,
-      "sha256": "3a9e94b1becdae17b9d04a7296b9248ba39a4817641a2eb559c330d66674fd11"
-    },
-    "CN-Captain-Middle-Aged/CDG8032": {
-      "sampleCount": 38098,
-      "sampleRate": 48000,
-      "sha256": "e7e02c0ee3bc83db5ae7a7e7c0feb5b4182c0003c5f39ef81f8a49beae8fcde9"
-    },
-    "CN-Captain-Middle-Aged/CDG8034": {
-      "sampleCount": 39823,
-      "sampleRate": 48000,
-      "sha256": "c0dcbd767c9c6d1b2b876b2fe4bb57f4c8c5a459c68366af5438c33f700c10f9"
-    },
-    "CN-Captain-Middle-Aged/CDG8044": {
-      "sampleCount": 39840,
-      "sampleRate": 48000,
-      "sha256": "d034b4fe5e3116759765e90cba56fb829816adce9b1347ef7efc8810634115ac"
-    },
-    "CN-Captain-Middle-Aged/CDG8078": {
-      "sampleCount": 41096,
-      "sampleRate": 48000,
-      "sha256": "8384c784a69f7e11e7dcd4dfaba46412d82f3f88921f1b429ebecca86fb5acb2"
-    },
-    "CN-Captain-Middle-Aged/CDG8085": {
-      "sampleCount": 43818,
-      "sampleRate": 48000,
-      "sha256": "5c5a3d97868fd554b64888c87faf86abe9abe9f822f58f3f82d3239d042e396f"
-    },
-    "CN-Captain-Middle-Aged/CDG8086": {
-      "sampleCount": 37845,
-      "sampleRate": 48000,
-      "sha256": "a10f2382e3bd8e8b2a1d516fd97f07cbd0e494b34b5b66cf402fc2c74ff17c67"
-    },
-    "CN-Captain-Middle-Aged/CDG8412": {
-      "sampleCount": 37122,
-      "sampleRate": 48000,
-      "sha256": "1e367d0c3afa4744997fd2f39ab63504f56a1a4af39e548c925f82cc6a9d13fe"
-    },
-    "CN-Captain-Middle-Aged/CDG8414": {
-      "sampleCount": 40457,
-      "sampleRate": 48000,
-      "sha256": "2fa519b9921ef132fb9c5b9c1d4bd18d9462e054148fcf36e21385bfb5eae27f"
-    },
-    "CN-Captain-Middle-Aged/CDG8711": {
-      "sampleCount": 36990,
-      "sampleRate": 48000,
-      "sha256": "4a31a29aa0b5a78d1d05ec86bd1b8b9f9b5ee057cde1bdcc2fd925c85f5f72cc"
-    },
-    "CN-Captain-Middle-Aged/CDG8712": {
-      "sampleCount": 39177,
-      "sampleRate": 48000,
-      "sha256": "3ac8d58d2cb6ce86d62e81f2723cc6c4cbaca0b9e1f7306314a57807b5bfcd54"
-    },
-    "CN-Captain-Middle-Aged/CDG8742": {
-      "sampleCount": 40232,
-      "sampleRate": 48000,
-      "sha256": "21805fb8e4cbdeee637ae130fe9ce21d3d306c3252df0071ed7c90919f6ce13b"
-    },
-    "CN-Captain-Middle-Aged/CDG8765": {
-      "sampleCount": 37920,
-      "sampleRate": 48000,
-      "sha256": "b075ed74368a4f4bb224ac8e642d85bba41ac22427fddfea0b9633f2dd219e09"
-    },
-    "CN-Captain-Middle-Aged/CDG8818": {
-      "sampleCount": 40018,
-      "sampleRate": 48000,
-      "sha256": "3508f52792824bb295c3a9cb94ba30f983096a03cda6f4b62d362bbb7655e1d1"
-    },
-    "CN-Captain-Middle-Aged/CDG8821": {
-      "sampleCount": 39343,
-      "sampleRate": 48000,
-      "sha256": "2229f50e146f030f0fa3b681e6d9e978fa243a7fd3eb7fcedded086691cecef6"
-    },
-    "CN-Captain-Middle-Aged/CDG8825": {
-      "sampleCount": 37113,
-      "sampleRate": 48000,
-      "sha256": "085821bca4b4c6bef107e3fdfa7ef09d42fa39659dc28af3be10e02aee4e4d3a"
-    },
-    "CN-Captain-Middle-Aged/CDG8828": {
-      "sampleCount": 40338,
-      "sampleRate": 48000,
-      "sha256": "8fb4d951dea50c6356d5a7aeee67bbe15e997f21c124188835079d4781e91d6c"
-    },
-    "CN-Captain-Middle-Aged/CDG8851": {
-      "sampleCount": 36362,
-      "sampleRate": 48000,
-      "sha256": "02105b5852f9098dfb10b332e19666344219e6ad645da87c2109d432de48b6a5"
-    },
-    "CN-Captain-Middle-Aged/CDG8879": {
-      "sampleCount": 43005,
-      "sampleRate": 48000,
-      "sha256": "69562d02227a5e20acf15dd278c97963b2b3246ccfea2430d8b777787ad11ff3"
-    },
-    "CN-Captain-Middle-Aged/CDG9639": {
-      "sampleCount": 38698,
-      "sampleRate": 48000,
-      "sha256": "9b3e1e7d4bdcc5d2ac540fa5eacc4cb3d86d180d7a3c5e6a2bba4e00cf1e722d"
-    },
-    "CN-Captain-Middle-Aged/CDG9662": {
-      "sampleCount": 35548,
-      "sampleRate": 48000,
-      "sha256": "42edc9ce15acd831cd5ec34fb8c1977455f4d29c021bc9720b2b0b3c0d1c208d"
-    },
-    "CN-Captain-Middle-Aged/CDG9663": {
-      "sampleCount": 39485,
-      "sampleRate": 48000,
-      "sha256": "3e2c2ad55259215940b2599c61f34fae2debabf486b79f4be617d8af7b37367a"
-    },
-    "CN-Captain-Middle-Aged/CDG9664": {
-      "sampleCount": 41068,
-      "sampleRate": 48000,
-      "sha256": "98b5f19432a1ecef516552960dd03c79786fb249ff8d95d841cec8d73ae28aff"
-    },
-    "CN-Captain-Middle-Aged/CDG9956": {
-      "sampleCount": 41585,
-      "sampleRate": 48000,
-      "sha256": "88594c64fd6919a26269dc68d473caee10ca8b70456e2b41f34d26c6585635a0"
-    },
-    "CN-Captain-Middle-Aged/CES1111": {
-      "sampleCount": 41024,
-      "sampleRate": 48000,
-      "sha256": "78a0b885a6f8d42434c1bdb3f41fc76efcbaddbe7595b0c063d1537b961d1ca8"
-    },
-    "CN-Captain-Middle-Aged/CES2430": {
-      "sampleCount": 36961,
-      "sampleRate": 48000,
-      "sha256": "dac8b50feb6c20fdb9df74f46bc2aaf5a5cadd9a53cc010dbc9aabd64d6fa46d"
-    },
-    "CN-Captain-Middle-Aged/CES2604": {
-      "sampleCount": 47230,
-      "sampleRate": 48000,
-      "sha256": "a50aff28ba9d12d833334d177b7e35ddc0a6b5621382aed95476ce3b150091f6"
-    },
-    "CN-Captain-Middle-Aged/CES2641": {
-      "sampleCount": 44863,
-      "sampleRate": 48000,
-      "sha256": "0c0bd0a994829867e8aad27beb110eadbc63c38744c7c388d55416128418e69b"
-    },
-    "CN-Captain-Middle-Aged/CES3547": {
-      "sampleCount": 42419,
-      "sampleRate": 48000,
-      "sha256": "3a42514db94dd41df3525d8ae64537ec8c66ef977bc43cb6cdfbc6adfbff4012"
-    },
-    "CN-Captain-Middle-Aged/CES3548": {
-      "sampleCount": 40723,
-      "sampleRate": 48000,
-      "sha256": "6164d669133e91720438981f3658f890320a98e5326eaa3c513eab9a7e1e8857"
-    },
-    "CN-Captain-Middle-Aged/CES3551": {
-      "sampleCount": 37791,
-      "sampleRate": 48000,
-      "sha256": "fdf8b21357931f946e99cbb0ab5dd057e558b992223f926b8aece481949f7c96"
-    },
-    "CN-Captain-Middle-Aged/CES4755": {
-      "sampleCount": 37871,
-      "sampleRate": 48000,
-      "sha256": "7face7cbc70388856b18c593df7fad4d35a325759e9e560eea6fc815859fb714"
-    },
-    "CN-Captain-Middle-Aged/CES4951": {
-      "sampleCount": 36381,
-      "sampleRate": 48000,
-      "sha256": "523549a90d58de175614a5011c7eb79c90a1cc975309124f1da6ef0ba4bae15c"
-    },
-    "CN-Captain-Middle-Aged/CES5435": {
-      "sampleCount": 35153,
-      "sampleRate": 48000,
-      "sha256": "01fcd16c8095de9cf869ef529e6efa5eec162169c7057bcb440830fa1e2a8527"
-    },
-    "CN-Captain-Middle-Aged/CES5472": {
-      "sampleCount": 35973,
-      "sampleRate": 48000,
-      "sha256": "0b0047df7d6224a6bf6ad64be9723f353513516359dcf988db20a44071059b10"
-    },
-    "CN-Captain-Middle-Aged/CES5578": {
-      "sampleCount": 35520,
-      "sampleRate": 48000,
-      "sha256": "7f2bc391c9451773579f1750f2eaf250f982b2cadc3cb43dfa79fcb1c5739d09"
-    },
-    "CN-Captain-Middle-Aged/CES5629": {
-      "sampleCount": 42019,
-      "sampleRate": 48000,
-      "sha256": "13055685df39d5f9cd6bfc99ec456ed49e586a32d57d493609dbdb520d08eb95"
-    },
-    "CN-Captain-Middle-Aged/CES5657": {
-      "sampleCount": 36960,
-      "sampleRate": 48000,
-      "sha256": "20b1fb5b6f1e6c81b4f24eb969563b0efc02ec86f516f9d4d223cf0892f9762b"
-    },
-    "CN-Captain-Middle-Aged/CES5678": {
-      "sampleCount": 36618,
-      "sampleRate": 48000,
-      "sha256": "ab5a1310db3b019472eaba0cf03a49d6ed7e861ab2033bf549026897c54cd2d1"
-    },
-    "CN-Captain-Middle-Aged/CES5751": {
-      "sampleCount": 39360,
-      "sampleRate": 48000,
-      "sha256": "a8abcb291235d0a5a10f22375c1c9b2fe6442600f383c07fd720726b75c5b3c6"
-    },
-    "CN-Captain-Middle-Aged/CES5887": {
-      "sampleCount": 41023,
-      "sampleRate": 48000,
-      "sha256": "8318b2baa04c1ce95484f5474d64c0e20687b55a0607a40f16a91d3607d0f276"
-    },
-    "CN-Captain-Middle-Aged/CES5888": {
-      "sampleCount": 40728,
-      "sampleRate": 48000,
-      "sha256": "c4367ecb0acde5ad080a33afba2b5ea5842925eb83c27588294cd906dc0eb611"
-    },
-    "CN-Captain-Middle-Aged/CES6131": {
-      "sampleCount": 38468,
-      "sampleRate": 48000,
-      "sha256": "01f8b9804f3361aa52f1d06098285606b38b3386279eac00056b7ecd0dd4a939"
-    },
-    "CN-Captain-Middle-Aged/CES6132": {
-      "sampleCount": 37333,
-      "sampleRate": 48000,
-      "sha256": "e3ccfda1b2221dcdc2ca1fd7a30980a987b2435ac6d9d904e19c37c79d10b76e"
-    },
-    "CN-Captain-Middle-Aged/CES6313": {
-      "sampleCount": 37521,
-      "sampleRate": 48000,
-      "sha256": "51a67ce53890435f591ae46deadca12ed4cc1ed8009b8b9c23957b38ef37f1db"
-    },
-    "CN-Captain-Middle-Aged/CES6359": {
-      "sampleCount": 40419,
-      "sampleRate": 48000,
-      "sha256": "d5ba6e148bc5b084678022700c7f081923172224126d5f57336187e6e0a3ef75"
-    },
-    "CN-Captain-Middle-Aged/CES6819": {
-      "sampleCount": 40978,
-      "sampleRate": 48000,
-      "sha256": "55da199b819bc42bbb03f0050ed97f717433abeed5035cc73ca9f454655b3084"
-    },
-    "CN-Captain-Middle-Aged/CES9197": {
-      "sampleCount": 38880,
-      "sampleRate": 48000,
-      "sha256": "541543c112504fc47c45764af9c12dbd5d9e9551132e1cc6efb74b77f0630b2c"
-    },
-    "CN-Captain-Middle-Aged/CHH2710": {
-      "sampleCount": 37478,
-      "sampleRate": 48000,
-      "sha256": "7814d1863515c13b15b53677fadf267c98a883dbb8193992149f963fa63e327e"
-    },
-    "CN-Captain-Middle-Aged/CHH4209": {
-      "sampleCount": 37388,
-      "sampleRate": 48000,
-      "sha256": "5fd46c89d32e54c9cbef21462e048328d2cf58b50132e473656dddf4fc423225"
-    },
-    "CN-Captain-Middle-Aged/CHH4337": {
-      "sampleCount": 39191,
-      "sampleRate": 48000,
-      "sha256": "72a90d725ac923f988b0a5c9440eb4631c15c6dc7a56a33b6a62f9f4b12ef107"
-    },
-    "CN-Captain-Middle-Aged/CHH7041": {
-      "sampleCount": 37920,
-      "sampleRate": 48000,
-      "sha256": "ceae88fc1a6f9ff1164969f6c691bd00d529a61085d84e9a45f902425393ee64"
-    },
-    "CN-Captain-Middle-Aged/CHH7042": {
-      "sampleCount": 32640,
-      "sampleRate": 48000,
-      "sha256": "007063f1e08e9f0008d9dfa3f6c9c18741fe6b36b2e4a15a855781c28ed85b70"
-    },
-    "CN-Captain-Middle-Aged/CHH7306": {
-      "sampleCount": 36480,
-      "sampleRate": 48000,
-      "sha256": "7ee7cd244571505b16fe3bdc18c6fd47fd3a11b10caeae73d85256503fbcd008"
-    },
-    "CN-Captain-Middle-Aged/CHH7789": {
-      "sampleCount": 37440,
-      "sampleRate": 48000,
-      "sha256": "363b851f8a8539ed88af9a0ba519b6d0706bd25cf6bb502119239adb64286525"
-    },
-    "CN-Captain-Middle-Aged/CHH8765": {
-      "sampleCount": 44097,
-      "sampleRate": 48000,
-      "sha256": "6a4e14b6dd5774582eb2b25dad074c5184a88069076985b6c809679609ab40d7"
-    },
-    "CN-Captain-Middle-Aged/CHH9015": {
-      "sampleCount": 34998,
-      "sampleRate": 48000,
-      "sha256": "c268edf1152fbfdec1ebcc81073ad5a0eab3302acf14f31e32bed90a62e487be"
-    },
-    "CN-Captain-Middle-Aged/CHH9024": {
-      "sampleCount": 40328,
-      "sampleRate": 48000,
-      "sha256": "b8ab6e9f63bccbcf6d08292eef3b3b3546f811a4098ab635172828fb7e0a4e73"
-    },
-    "CN-Captain-Middle-Aged/CJX0697": {
-      "sampleCount": 39832,
-      "sampleRate": 48000,
-      "sha256": "1c7527ed4a060784897a7b7b3a308c55b282fba56e519c02f59d0f384911f715"
-    },
-    "CN-Captain-Middle-Aged/CJX2697": {
-      "sampleCount": 41503,
-      "sampleRate": 48000,
-      "sha256": "8cd95c00d07b74b6595c85b5b42a4376860a9d6e5d77015a7ed126293e27c405"
-    },
-    "CN-Captain-Middle-Aged/CJX8923": {
-      "sampleCount": 43200,
-      "sampleRate": 48000,
-      "sha256": "9dfeab27830599a66fd2650ffbbb1859733c4df5863ee4a51cafebbd46a4ce3f"
-    },
-    "CN-Captain-Middle-Aged/CQH4635": {
-      "sampleCount": 35040,
-      "sampleRate": 48000,
-      "sha256": "1721981a188ab01e55e99622fa4c4c983896604161919188577092ac1c2dccf5"
-    },
-    "CN-Captain-Middle-Aged/CQH6596": {
-      "sampleCount": 38880,
-      "sampleRate": 48000,
-      "sha256": "6fb4c30c0b2bf03d16a9c49955e1f8b56f094092072c941dd5b0527b7e4e0bbd"
-    },
-    "CN-Captain-Middle-Aged/CQH7171": {
-      "sampleCount": 45956,
-      "sampleRate": 48000,
-      "sha256": "857053ef37d2d219388411b792ed23fdb37477fb9b35d18b6c38125dbc4d0fb7"
-    },
-    "CN-Captain-Middle-Aged/CQH9098": {
-      "sampleCount": 40700,
-      "sampleRate": 48000,
-      "sha256": "f0b394ff6cf3d59a4e5f575900460a59a7a7814df323a4b371211c43bb41bd93"
-    },
-    "CN-Captain-Middle-Aged/CSC3248": {
-      "sampleCount": 38880,
-      "sampleRate": 48000,
-      "sha256": "70514a9bd0d65697a11ab7e8996967c9ab934090048065b7eb324fb4c7779c6a"
-    },
-    "CN-Captain-Middle-Aged/CSC3559": {
-      "sampleCount": 42126,
-      "sampleRate": 48000,
-      "sha256": "58d1b26182c5f374669d6ca2a55612c16c271c0c2ccb3c129abcbe21dda5a339"
-    },
-    "CN-Captain-Middle-Aged/CSC5353": {
-      "sampleCount": 41311,
-      "sampleRate": 48000,
-      "sha256": "793b6fcf79fb18f9e7f1a175305c079a5c13c4a0f502832df9e3098558e988a9"
-    },
-    "CN-Captain-Middle-Aged/CSC6220": {
-      "sampleCount": 37582,
-      "sampleRate": 48000,
-      "sha256": "da8355411e2119ef420e80f9d26b06fc291c7377cd7ac36a1e993a2abde8c12c"
-    },
-    "CN-Captain-Middle-Aged/CSC6381": {
-      "sampleCount": 38400,
-      "sampleRate": 48000,
-      "sha256": "5a8141395ff5a8555490aeb2b4d7259adbe324d827492263a835dda3557aadf2"
-    },
-    "CN-Captain-Middle-Aged/CSC8247": {
-      "sampleCount": 42240,
-      "sampleRate": 48000,
-      "sha256": "14b5d9d2a8ef31057290a7d025a30fbb5c0f057e3b8547844870a56310370b76"
-    },
-    "CN-Captain-Middle-Aged/CSC8957": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "e40458039cc4dbae4a0e4a5bf6dff7fc8dd2f1b24a5cd5316e24b28f95c7c1f7"
-    },
-    "CN-Captain-Middle-Aged/CSC9669": {
-      "sampleCount": 39966,
-      "sampleRate": 48000,
-      "sha256": "4400c0776df59924e1651d7498c4884f487b53c9cc7377312fd6d48b541b3798"
-    },
-    "CN-Captain-Middle-Aged/CSC9737": {
-      "sampleCount": 37513,
-      "sampleRate": 48000,
-      "sha256": "f4173a203b6949ca4825460220b22b0136f0c4cbfca659ebd453d536ef5d2585"
-    },
-    "CN-Captain-Middle-Aged/CSN1234": {
-      "sampleCount": 42781,
-      "sampleRate": 48000,
-      "sha256": "bc3fe7271aa7e28bc26631aa3b33f63e07ee9e26384e7b3871c8afd5d3e978f4"
-    },
-    "CN-Captain-Middle-Aged/CSN2197": {
-      "sampleCount": 41475,
-      "sampleRate": 48000,
-      "sha256": "0f275470b2d41f87add950f49cf40a0fb9016c8bfa0730e148501318b8f8e73b"
-    },
-    "CN-Captain-Middle-Aged/CSN3664": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "d7e9433edd3a644c4412ad5f21326b7a04ef24e11642e224df477cd599803489"
-    },
-    "CN-Captain-Middle-Aged/CSN3711": {
-      "sampleCount": 39360,
-      "sampleRate": 48000,
-      "sha256": "5b40b219209fe7c9099743372116eb1d521aea1d3c422f896a5e307088ef7011"
-    },
-    "CN-Captain-Middle-Aged/CSN4042": {
-      "sampleCount": 41413,
-      "sampleRate": 48000,
-      "sha256": "7e2bc0ea19be5beeaff852f1a1b54532de80538d91bc10e6d8047f04b69ac04e"
-    },
-    "CN-Captain-Middle-Aged/CSN4463": {
-      "sampleCount": 40880,
-      "sampleRate": 48000,
-      "sha256": "fc94c60ae0bb082e5f1f2580c2cc5d3fae36ca95dda5d53087fa68f1e0ab6223"
-    },
-    "CN-Captain-Middle-Aged/CSN5437": {
-      "sampleCount": 36864,
-      "sampleRate": 48000,
-      "sha256": "3126c11b7cae2e143b800e00f3a8044ff548a70e6ea8939ed21a74cb41973ce2"
-    },
-    "CN-Captain-Middle-Aged/CSN5851": {
-      "sampleCount": 38545,
-      "sampleRate": 48000,
-      "sha256": "02987bc92b2f6d5cefd9b52e30d8cacc3e1f6918b47ba5dd48056a033bc434e7"
-    },
-    "CN-Captain-Middle-Aged/CSN6020": {
-      "sampleCount": 34264,
-      "sampleRate": 48000,
-      "sha256": "03af549d6c568f3564fee3a306581f6f45ffcc99c4719603fa5ada098fac7648"
-    },
-    "CN-Captain-Middle-Aged/CSN6433": {
-      "sampleCount": 37954,
-      "sampleRate": 48000,
-      "sha256": "fd967a15842d8cbb7ba2673014394d6c80f1b3df71d744f4d1248f4b95ab6072"
-    },
-    "CN-Captain-Middle-Aged/CSN6738": {
-      "sampleCount": 35933,
-      "sampleRate": 48000,
-      "sha256": "9f29390fde7d6e4802bc7929b83996e66d255382d03c33b8a13f14551123a93b"
-    },
-    "CN-Captain-Middle-Aged/CSN7350": {
-      "sampleCount": 33880,
-      "sampleRate": 48000,
-      "sha256": "168ca747aadb84f8773644e104d4c84d8d407ffcd3e99658a1579eef0372eba6"
-    },
-    "CN-Captain-Middle-Aged/CSN8545": {
-      "sampleCount": 39840,
-      "sampleRate": 48000,
-      "sha256": "b74090e7dd032b5cbe815e7ca7d4150bb6336a899ff7fd63b6276b4efccf5f99"
-    },
-    "CN-Captain-Middle-Aged/CSN8765": {
-      "sampleCount": 43303,
-      "sampleRate": 48000,
-      "sha256": "d7251c3b2260e517a82ea1d5ca5b7dcb25cec62e691a3d79c9905a46a2374153"
-    },
-    "CN-Captain-Middle-Aged/CSN8798": {
-      "sampleCount": 41760,
-      "sampleRate": 48000,
-      "sha256": "57654abfcf1f6abe171f0364766a6f1ae68d633b50557f0f8a66980ca7ac9834"
-    },
-    "CN-Captain-Middle-Aged/CSN9043": {
-      "sampleCount": 40148,
-      "sampleRate": 48000,
-      "sha256": "e505aad4864f89599179e9fd34d3413bd84c7b276dfcbf5849c1297401c9d8e8"
-    },
-    "CN-Captain-Middle-Aged/CSN9173": {
-      "sampleCount": 42623,
-      "sampleRate": 48000,
-      "sha256": "8880ec5c34eb6a763a81dffc4b5c913f83a4e9d405621b1ac159f73b699bb85d"
-    },
-    "CN-Captain-Middle-Aged/CSN9190": {
-      "sampleCount": 37440,
-      "sampleRate": 48000,
-      "sha256": "e608a717fc85a33c4565eb915d629c88c06803b146b2a7a639210412ceff7a00"
-    },
-    "CN-Captain-Middle-Aged/CSN9255": {
-      "sampleCount": 45722,
-      "sampleRate": 48000,
-      "sha256": "834ac681af9a6339108679fe8a125a191ebf62f805cfb50546d6d60a304966bc"
-    },
-    "CN-Captain-Middle-Aged/CSN9355": {
-      "sampleCount": 40538,
-      "sampleRate": 48000,
-      "sha256": "63eca93ca4f2bb58639c90584422c35e5a03a62c6c229ef1bdccd8f83a17fed7"
-    },
-    "CN-Captain-Middle-Aged/CSN9938": {
-      "sampleCount": 38234,
-      "sampleRate": 48000,
-      "sha256": "e342945002d26421bc933a20c5465d348e8b233d93d150276cff1a9d44269089"
-    },
-    "CN-Captain-Middle-Aged/CSZ0820": {
-      "sampleCount": 36217,
-      "sampleRate": 48000,
-      "sha256": "fb3c6efb62659c1bc615cd405f5fb30876ecf00a16b473490245fad092d79140"
-    },
-    "CN-Captain-Middle-Aged/CSZ2546": {
-      "sampleCount": 41094,
-      "sampleRate": 48000,
-      "sha256": "0093dfc4b27f164cd27543fdbcf3a7d704a8bfdfdd20c0d6410291129e4eeff4"
-    },
-    "CN-Captain-Middle-Aged/CSZ2884": {
-      "sampleCount": 39167,
-      "sampleRate": 48000,
-      "sha256": "8cfaa0d7032d01b1fddb7d0443eaefd669d5f6b1067ebb09a4e3106107104eb3"
-    },
-    "CN-Captain-Middle-Aged/CSZ2917": {
-      "sampleCount": 43433,
-      "sampleRate": 48000,
-      "sha256": "a7ec8d3f9135234edc00fe4de3b9bb85ef7b5c5f4d2c4742fbabb890cf7eeb87"
-    },
-    "CN-Captain-Middle-Aged/CSZ3690": {
-      "sampleCount": 37627,
-      "sampleRate": 48000,
-      "sha256": "22fa86c0f12c89e020dd689c78821bcf8b7a519fd134d7f5df16ed65648a672c"
-    },
-    "CN-Captain-Middle-Aged/CSZ4321": {
-      "sampleCount": 42112,
-      "sampleRate": 48000,
-      "sha256": "695a7d20990a188321e2aa2f62c13cce5cb1334eafb929e27f094f5d3347a211"
-    },
-    "CN-Captain-Middle-Aged/CSZ5678": {
-      "sampleCount": 42118,
-      "sampleRate": 48000,
-      "sha256": "252b1dc3e3a781679f550195c31ea583738ef3db3eeffe4ba3dd09893c0197b0"
-    },
-    "CN-Captain-Middle-Aged/CSZ8235": {
-      "sampleCount": 39198,
-      "sampleRate": 48000,
-      "sha256": "67b47283ec5a40958035c1e49d9750748b1883985639ddad6ef0096859fb5fc3"
-    },
-    "CN-Captain-Middle-Aged/CSZ8855": {
-      "sampleCount": 39417,
-      "sampleRate": 48000,
-      "sha256": "22860095ddd874b7f0dd2751c2a5807f4dd3813026cdb78abbf2015239af068e"
-    },
-    "CN-Captain-Middle-Aged/CSZ9820": {
-      "sampleCount": 40108,
-      "sampleRate": 48000,
-      "sha256": "facb9aaec99a6c88c9f714f5acc352f55206e117856d47e95b6889179de18e55"
-    },
-    "CN-Captain-Middle-Aged/CSZ9929": {
-      "sampleCount": 36997,
-      "sampleRate": 48000,
-      "sha256": "341fecef57c86afdfb3f0641bc03bae3aa8507e496501e04bd22d302763f92d6"
-    },
-    "CN-Captain-Middle-Aged/CSZ9978": {
-      "sampleCount": 46194,
-      "sampleRate": 48000,
-      "sha256": "a2f6b38f45e1b6888947f9e802e99577bbbb4a2785e7cba891ad68114c90abb8"
-    },
-    "CN-Captain-Middle-Aged/CXA3174": {
-      "sampleCount": 34635,
-      "sampleRate": 48000,
-      "sha256": "69be38d373bab98227d53f9d8c32b77a0f64f21a2b2f4e5eb4c409e9abba0ea0"
-    },
-    "CN-Captain-Middle-Aged/CXA5172": {
-      "sampleCount": 41827,
-      "sampleRate": 48000,
-      "sha256": "ef51b6a85f3fed813664f745840c8241002f28f7f4eeb7d5334a56acd423adcf"
-    },
-    "CN-Captain-Middle-Aged/CXA5678": {
-      "sampleCount": 42557,
-      "sampleRate": 48000,
-      "sha256": "2da07210808a9391753cbe2ac22a5dab8efcb90414212a27841ad89069ddbafd"
-    },
-    "CN-Captain-Middle-Aged/CXA7380": {
-      "sampleCount": 39360,
-      "sampleRate": 48000,
-      "sha256": "e830eb2a6bff56565f060e5b95029354afd794ed2d4e49517a0827a7daf5fad9"
-    },
-    "CN-Captain-Middle-Aged/CXA8083": {
-      "sampleCount": 43200,
-      "sampleRate": 48000,
-      "sha256": "4a83574c1d9008c45a8d34483e34bd64aa9cafe8223c2d5abe0713bff549acab"
-    },
-    "CN-Captain-Middle-Aged/CXA8528": {
-      "sampleCount": 37402,
-      "sampleRate": 48000,
-      "sha256": "066f00fa947a114758539bf598b372b449742907482bb5eef83b55e5033eea9f"
-    },
-    "CN-Captain-Middle-Aged/CYZ0231": {
-      "sampleCount": 39360,
-      "sampleRate": 48000,
-      "sha256": "e72d9165094d8decf393b51c54893dafc6da2dab1e8bb6a0c914f786f26918a7"
-    },
-    "CN-Captain-Middle-Aged/CYZ3312": {
-      "sampleCount": 34560,
-      "sampleRate": 48000,
-      "sha256": "3e5888e235ac6ec6684a2cce7b5474a7f22e26cf61abac10cd1b37c2758996f7"
-    },
-    "CN-Captain-Middle-Aged/CYZ4237": {
-      "sampleCount": 31680,
-      "sampleRate": 48000,
-      "sha256": "5b135e8c87435ca12c07de9080d1e44005ce6d356afc8734ce096e076f2325f3"
-    },
-    "CN-Captain-Middle-Aged/CYZ6351": {
-      "sampleCount": 34560,
-      "sampleRate": 48000,
-      "sha256": "d4bdf5ac1c2e7ff2d72cf740fee1c1bf2f3490fb94ee63dd35f85bb2896560d8"
-    },
-    "CN-Captain-Middle-Aged/CYZ6722": {
-      "sampleCount": 34560,
-      "sampleRate": 48000,
-      "sha256": "99fffe3ef57bfd1529c69290df1ca9a32f77b89d869096c2fa0e574907956008"
-    },
-    "CN-Captain-Middle-Aged/CYZ9331": {
-      "sampleCount": 38400,
-      "sampleRate": 48000,
-      "sha256": "f9c465f71fc60e8ec9470395e6c0336e53b2692828ee829536914be775b1b7fc"
-    },
-    "CN-Captain-Middle-Aged/CYZ9370": {
-      "sampleCount": 33600,
-      "sampleRate": 48000,
-      "sha256": "b56553fad152daaac14c8e27c5d689022ce7465ba66b60ad5dcc9f6f6c5a68f5"
-    },
-    "CN-Captain-Middle-Aged/DKH1533": {
-      "sampleCount": 34560,
-      "sampleRate": 48000,
-      "sha256": "0efafe3ed7a1689f37af3503f389788ce473b2a3f42459baca41007f706ab430"
-    },
-    "CN-Captain-Middle-Aged/DKH4086": {
-      "sampleCount": 36480,
-      "sampleRate": 48000,
-      "sha256": "ef3da862f3370be2266bbe3c3d5531985f472f5529c37caa6e5de0b92e01254b"
-    },
-    "CN-Captain-Middle-Aged/DKH4514": {
-      "sampleCount": 42720,
-      "sampleRate": 48000,
-      "sha256": "c2728d67711d57e63ab2c669ccd5eacdbdd5e931eba09ab1811f2413e970821a"
-    },
-    "CN-Captain-Middle-Aged/DKH4923": {
-      "sampleCount": 36480,
-      "sampleRate": 48000,
-      "sha256": "57f8f93f5f2fed215f433dd301dc9e53906751b65bd8b832d8968e7d31858b18"
-    },
-    "CN-Captain-Middle-Aged/DKH5137": {
-      "sampleCount": 33600,
-      "sampleRate": 48000,
-      "sha256": "fdb4c2b3838e198dbcebb3c2e83dbd43ddf347901aba0d041e25c817f16d76f6"
-    },
-    "CN-Captain-Middle-Aged/DKH5709": {
-      "sampleCount": 36480,
-      "sampleRate": 48000,
-      "sha256": "7b1c7f4697bee2d370f0091f2c9ad364b016e33d50e4dd403b62707ae68ce749"
-    },
-    "CN-Captain-Middle-Aged/DKH6071": {
-      "sampleCount": 38400,
-      "sampleRate": 48000,
-      "sha256": "fce77ce12175f102c3cc535b080aae9cb052fc3e24a0d01ac0a2d843c5ae01a5"
-    },
-    "CN-Captain-Middle-Aged/GCR1550": {
-      "sampleCount": 33200,
-      "sampleRate": 48000,
-      "sha256": "358737366d61603610b5aa7e4090ae7c6bc57759658720c82b5d1d2d20527a9e"
-    },
-    "CN-Captain-Middle-Aged/GCR2621": {
-      "sampleCount": 36800,
-      "sampleRate": 48000,
-      "sha256": "4eb80336b82387c6ca7bb1944b8a68d6fe8173a52f356a6cea2e3b48d1bd8ba6"
-    },
-    "CN-Captain-Middle-Aged/GCR3764": {
-      "sampleCount": 43600,
-      "sampleRate": 48000,
-      "sha256": "eb8bdafba0c13850d0876a48d31ba5dbf818a2ffcf1df6eb72592b7f2af6569b"
-    },
-    "CN-Captain-Middle-Aged/HXA2922": {
-      "sampleCount": 36800,
-      "sampleRate": 48000,
-      "sha256": "cc694b980fec8855d3df6ed4ab991cb29cc3800251076ada6a2842db4d95f2b5"
-    },
-    "CN-Captain-Middle-Aged/HXA8166": {
-      "sampleCount": 30800,
-      "sampleRate": 48000,
-      "sha256": "959951c5c6dacc7ed9ba314e3fdec7ae8db633fec3672d5b6662d020663cf46d"
-    },
-    "CN-Captain-Middle-Aged/RWY01": {
-      "sampleCount": 30158,
-      "sampleRate": 48000,
-      "sha256": "a658d55803df56eff1290604f218de58fdb774a1b6ba613dfbe2dc389a30fbea"
-    },
-    "CN-Captain-Middle-Aged/RWY16L": {
-      "sampleCount": 28800,
-      "sampleRate": 48000,
-      "sha256": "fc149a8f1e09e954b62e2fbfbe9b1dd2bf87b6709a90f78db99b24174c895756"
-    },
-    "CN-Captain-Middle-Aged/RWY19": {
-      "sampleCount": 24000,
-      "sampleRate": 48000,
-      "sha256": "5804b7435c3d6e608c1ea769c6b07fa317727d73f0484ea89ac5864264f346da"
-    },
-    "CN-Captain-Middle-Aged/RWY34R": {
-      "sampleCount": 32160,
-      "sampleRate": 48000,
-      "sha256": "8a0b91e6a4ac1903ec18eb5aab419f96388f433c8f3ee3b462cfd734b9d6fe10"
-    },
-    "CN-Captain-Middle-Aged/UEA1889": {
-      "sampleCount": 38400,
-      "sampleRate": 48000,
-      "sha256": "53d7d2cebc4ff002e507362314ed12464274b12902c4c0b36646fc16f0493d04"
-    },
-    "CN-Captain-Middle-Aged/UEA1890": {
-      "sampleCount": 39637,
-      "sampleRate": 48000,
-      "sha256": "2cee123ac8087c0b9f23ae67e8952b84353a3513a32407357f82cde8872108a6"
-    },
-    "CN-Captain-Middle-Aged/UEA2985": {
-      "sampleCount": 41648,
-      "sampleRate": 48000,
-      "sha256": "9012ed9140b4c9b3e0c3bbce17a3f4da3d47fecf97bd8761b2e3e9f28bc986e6"
-    },
-    "CN-Captain-Middle-Aged/UEA4704": {
-      "sampleCount": 42105,
-      "sampleRate": 48000,
-      "sha256": "6f579425e2a8e773a8ac89efdc9241e6a29b2b340ce09797bff60adbba8f4b5d"
-    },
-    "CN-Captain-Middle-Aged/UEA6306": {
-      "sampleCount": 35640,
-      "sampleRate": 48000,
-      "sha256": "4c08e1537978be0d5c01c8386a08e24f61b1397c79ffbf58863e40fd4d20d477"
-    },
-    "CN-Captain-Middle-Aged/UEA7323": {
-      "sampleCount": 42300,
-      "sampleRate": 48000,
-      "sha256": "b504d85e484f2b1c1a1ddbb03aa93d19e4a7960f190da78f0f778e36dacb5dc0"
-    },
-    "CN-Captain-Middle-Aged/UEA7518": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "cea9b5966c27d4c2c5115f14cd39f636cffd248c8d1661fa4b5272fe5ba74ae4"
-    },
-    "CN-Captain-Middle-Aged/UEA8345": {
-      "sampleCount": 39613,
-      "sampleRate": 48000,
-      "sha256": "a1e5403a01a4c3fae14b2b57c35e6d8878f2d256d4a2cb53be94dfee8dc9785b"
+      "sha256": "a201da7eeb6a11bd1ac6142f2595e88b0333f2d9859d65715cb41f2bcbc06a4b"
     },
     "CN-Captain-Middle-Aged-EN/BDJ1641": {
       "sampleCount": 51600,
@@ -1861,895 +981,900 @@
       "sampleRate": 48000,
       "sha256": "397d355379deb42f6b619c34c9d56b5d4c852d268a0313f05d462ec1cd6bd909"
     },
-    "CN-Captain-Young/BDJ1641": {
-      "sampleCount": 38400,
+    "CN-Captain-Middle-Aged/BDJ1641": {
+      "sampleCount": 35200,
       "sampleRate": 48000,
-      "sha256": "af3d371fb6d31eaf5b189e2c45760e39df2c9f928860bbd0ccf9fba90035cee5"
+      "sha256": "387a938526855c6c736b45d482db7a7ac3a03eaae9cffad38fb6113ab73d53dc"
     },
-    "CN-Captain-Young/BDJ4043": {
-      "sampleCount": 37600,
-      "sampleRate": 48000,
-      "sha256": "c1f3099d0c017e5806375058389429bbb5bd6e4152efb5a412829eb27423b200"
-    },
-    "CN-Captain-Young/BDJ5236": {
-      "sampleCount": 43600,
-      "sampleRate": 48000,
-      "sha256": "db69e70dbce0b9b8982ccf794e75abce5c490b0310e69728e0703ba39dee1533"
-    },
-    "CN-Captain-Young/CCA2761": {
-      "sampleCount": 45409,
-      "sampleRate": 48000,
-      "sha256": "2f7f925dac32b23ac44ff188cb9093f1f3a42b87cdcf402a08b66ebb330ab6fe"
-    },
-    "CN-Captain-Young/CCA2762": {
-      "sampleCount": 49920,
-      "sampleRate": 48000,
-      "sha256": "337fedf1dfaea58d4d275e563e5aa1ee7aface5f89b7233ece9de2bf842f61ad"
-    },
-    "CN-Captain-Young/CCA3115": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "50bd443dd933d2896f4e95e31b9ea8188b8ed9b3f92b207526bb7bd1356de8a7"
-    },
-    "CN-Captain-Young/CCA4662": {
-      "sampleCount": 42708,
-      "sampleRate": 48000,
-      "sha256": "23df7b1543847151535b508debe391f16acf9d4a441b978e41e303f480cec814"
-    },
-    "CN-Captain-Young/CCA4793": {
-      "sampleCount": 54317,
-      "sampleRate": 48000,
-      "sha256": "048c42098a9c9ede353c002c232a1f16e8aac780d95a3e71b6537bed7c6bac1b"
-    },
-    "CN-Captain-Young/CCA4851": {
-      "sampleCount": 50926,
-      "sampleRate": 48000,
-      "sha256": "7a2df2575662b6abf9f17bf21c466477e05a4cdd40e00eeb3f156325fff50d9c"
-    },
-    "CN-Captain-Young/CCA5198": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "c892e19c505ea6ca52576b7d3c5814e4a63bbf226e548a7b38226bae5e6462c8"
-    },
-    "CN-Captain-Young/CCA5678": {
-      "sampleCount": 49408,
-      "sampleRate": 48000,
-      "sha256": "8ca84a4719100e307f575c10ba558982c006eacd0a485566079d3468e8c35569"
-    },
-    "CN-Captain-Young/CCA7198": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "d177f8fc6eda4957d360dcb9ceb554b9e9790fa836985bfff91188b334fca373"
-    },
-    "CN-Captain-Young/CCA8708": {
-      "sampleCount": 43680,
-      "sampleRate": 48000,
-      "sha256": "2b58c082689b3cf21f903d75687538b279b493ac1fba0626b17e9a373f3b0d59"
-    },
-    "CN-Captain-Young/CCA9052": {
-      "sampleCount": 48480,
-      "sampleRate": 48000,
-      "sha256": "cf48cc295f3edc840748e16f9991a7f0e6b9c974e6ec19bdb4535d0903586f22"
-    },
-    "CN-Captain-Young/CCA9120": {
-      "sampleCount": 43194,
-      "sampleRate": 48000,
-      "sha256": "0b3904711ff18848d7a54dd9909ab40ed6c6f185b989dfa94b396a3633dfe9bd"
-    },
-    "CN-Captain-Young/CDG1152": {
-      "sampleCount": 36960,
-      "sampleRate": 48000,
-      "sha256": "74540eeba4a4fe40983ad80080f31a4ccc4032db882104ea9a86dc642ca981da"
-    },
-    "CN-Captain-Young/CDG1174": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "ec0f00b514b2c47e0c878b06f8fa01da1939afb80d8414f027d2f3528f915715"
-    },
-    "CN-Captain-Young/CDG1188": {
-      "sampleCount": 43200,
-      "sampleRate": 48000,
-      "sha256": "8dda0cd8bef90e6d249e5bc316327f98081fe60fe8d6dfb6dbe6a1ad49e88760"
-    },
-    "CN-Captain-Young/CDG1191": {
-      "sampleCount": 40242,
-      "sampleRate": 48000,
-      "sha256": "a3ec58d9a2122ed4b78bc98bceebbee6dba0c813638e99217bfad802e1ed6764"
-    },
-    "CN-Captain-Young/CDG1192": {
-      "sampleCount": 41760,
-      "sampleRate": 48000,
-      "sha256": "ed58310bec70785d1ebdf111eba45dbf49d271d64e95b589ace3fc21deb52cc0"
-    },
-    "CN-Captain-Young/CDG1198": {
-      "sampleCount": 41134,
-      "sampleRate": 48000,
-      "sha256": "99c8d47468c070069afbbe24d281686d340401a1c3963e32508587831d2b5f30"
-    },
-    "CN-Captain-Young/CDG1234": {
-      "sampleCount": 46688,
-      "sampleRate": 48000,
-      "sha256": "1afb11722be96c2fc831cb013a46b57a5e92213bcbfb9af76cb507b6c6b23d92"
-    },
-    "CN-Captain-Young/CDG2355": {
-      "sampleCount": 42720,
-      "sampleRate": 48000,
-      "sha256": "1c295cdbd2ec8583ed2c165bb57d7b7e7592a720df5a33f95c4898f2cc5c5de7"
-    },
-    "CN-Captain-Young/CDG2577": {
-      "sampleCount": 39360,
-      "sampleRate": 48000,
-      "sha256": "49a3c7fb457b7887c8d539c76e1deb1f4f4e0f4d2d761bad8d3a9997886f10c0"
-    },
-    "CN-Captain-Young/CDG2701": {
-      "sampleCount": 44684,
-      "sampleRate": 48000,
-      "sha256": "2129cfc949064e822522b7b15611eca3e530f2eadb1e4a3264b223993eaecbbb"
-    },
-    "CN-Captain-Young/CDG2702": {
-      "sampleCount": 47520,
-      "sampleRate": 48000,
-      "sha256": "abc437b8df7b9a931318420291eaa3e26bffd92279904f2427ddb396c6365f10"
-    },
-    "CN-Captain-Young/CDG3827": {
-      "sampleCount": 45600,
-      "sampleRate": 48000,
-      "sha256": "7dfd2ea94cd2689581195234ab764dadca8669c393c8735c6a597c9fd37fa57c"
-    },
-    "CN-Captain-Young/CDG3828": {
-      "sampleCount": 42720,
-      "sampleRate": 48000,
-      "sha256": "ee81f5d8c954fa124b67d2a06bd6ac3f045419e75adb5416aa149caa4c2fd75c"
-    },
-    "CN-Captain-Young/CDG5073": {
-      "sampleCount": 45853,
-      "sampleRate": 48000,
-      "sha256": "eacda76d36f6a3c6f7245040656b36d6c9ae21a1edfb2dcf2b5a1cfa8ccef1f7"
-    },
-    "CN-Captain-Young/CDG5144": {
-      "sampleCount": 39840,
-      "sampleRate": 48000,
-      "sha256": "ec4278e1f872e26d0789114c4c85d5fae3c454d3773ecc870be1b4af7c9bb696"
-    },
-    "CN-Captain-Young/CDG5166": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "baae581961e8284775fffff3d207b8bc4f3119e0e840a9aef205af56dac3cb34"
-    },
-    "CN-Captain-Young/CDG5737": {
-      "sampleCount": 43680,
-      "sampleRate": 48000,
-      "sha256": "fbabbdddd28f612e96917fadecc603990a5e47ee6b2c798df2f3397da3b01b59"
-    },
-    "CN-Captain-Young/CDG5738": {
-      "sampleCount": 43338,
-      "sampleRate": 48000,
-      "sha256": "e3c7b51b80f74ee8a3fbe21324c1e4d19d011a53146f63e9204aada01961f96a"
-    },
-    "CN-Captain-Young/CDG6445": {
-      "sampleCount": 38880,
-      "sampleRate": 48000,
-      "sha256": "06f990bdb9da0ab8d9281f55b582723419f6c968dcf52988dcaf2ebbc06369de"
-    },
-    "CN-Captain-Young/CDG8032": {
-      "sampleCount": 37749,
-      "sampleRate": 48000,
-      "sha256": "2a7ed4aff6e2fa6be834292ff1528e3f86b537b0e105c2b2ac153fb996a8ae13"
-    },
-    "CN-Captain-Young/CDG8034": {
-      "sampleCount": 42033,
-      "sampleRate": 48000,
-      "sha256": "3b635d446cdab3bd8656db51d13c7ef4ce122d4cff13237c4b5945682a48177d"
-    },
-    "CN-Captain-Young/CDG8044": {
-      "sampleCount": 42240,
-      "sampleRate": 48000,
-      "sha256": "b0ec2c44c4abf46e13426a55e116eb7024780b689879aec4dcd2c48415a3b09f"
-    },
-    "CN-Captain-Young/CDG8078": {
-      "sampleCount": 43792,
-      "sampleRate": 48000,
-      "sha256": "b280f9f7afa00e0f1e99614e6329ed6eb7589015acf006c718e16bc2b6c31946"
-    },
-    "CN-Captain-Young/CDG8085": {
-      "sampleCount": 45695,
-      "sampleRate": 48000,
-      "sha256": "52a120c2fc08cc08856c2d29d506bdfbaf023bf34eef3ebd51fd26a443cc3578"
-    },
-    "CN-Captain-Young/CDG8086": {
-      "sampleCount": 41888,
-      "sampleRate": 48000,
-      "sha256": "0ae4b877709c8a1ab626a36b2852a21044f7d911ca4d5803115143869ff155ec"
-    },
-    "CN-Captain-Young/CDG8412": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "13c5593d099602f2a000ab8b1d1badcdffffe8f94b33ac9b26284c8de6e21de5"
-    },
-    "CN-Captain-Young/CDG8414": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "8d3c8dbc0e79134abc44a6bae7cee7069d2e9681501f0ba8fca7b90776b9e7d3"
-    },
-    "CN-Captain-Young/CDG8711": {
-      "sampleCount": 41998,
-      "sampleRate": 48000,
-      "sha256": "106bc088b4b87fe98025029e7437f41ff280d54ead0049990ea475a0e7466b92"
-    },
-    "CN-Captain-Young/CDG8712": {
-      "sampleCount": 36480,
-      "sampleRate": 48000,
-      "sha256": "4293488a853f1b7671d31958383c980c6b2eebb0421dc93c13a2dfa367102af9"
-    },
-    "CN-Captain-Young/CDG8742": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "9d52e4367a0da463555d15045cc64f8ff1e2d99c89eead0068854081e7bff2ed"
-    },
-    "CN-Captain-Young/CDG8765": {
-      "sampleCount": 46113,
-      "sampleRate": 48000,
-      "sha256": "f93702b0bca4cda5cd378e8b18042f48fded8b0096081b7c48a5f83f0bcea100"
-    },
-    "CN-Captain-Young/CDG8818": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "82fe726a431d361677438e2e0a83083d161d8601ba4e763476bfb83e51305585"
-    },
-    "CN-Captain-Young/CDG8821": {
-      "sampleCount": 43627,
-      "sampleRate": 48000,
-      "sha256": "da4f5594fd80018cd21dc989c6935729e011818dee4d1a95e8f5df1be0fc632a"
-    },
-    "CN-Captain-Young/CDG8825": {
-      "sampleCount": 42240,
-      "sampleRate": 48000,
-      "sha256": "da6a14aaf98bb70e3705aea86b993cd166ec3cf109d926b51e46a2448b3f4c34"
-    },
-    "CN-Captain-Young/CDG8828": {
-      "sampleCount": 40389,
-      "sampleRate": 48000,
-      "sha256": "42a8d4c473331be09d405ac00d4b0f753cb1fa1b92936cd6ef9363a323df5723"
-    },
-    "CN-Captain-Young/CDG8851": {
-      "sampleCount": 41280,
-      "sampleRate": 48000,
-      "sha256": "59053b7a4029d10e9efc5640cff096cef7df7063e3170ffc84d748fbb1919ee4"
-    },
-    "CN-Captain-Young/CDG8879": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "4b66e782c3f7d26691f7ad34ac196d3a53ffc3203471c8ece64ff9274bd1d508"
-    },
-    "CN-Captain-Young/CDG9639": {
-      "sampleCount": 45246,
-      "sampleRate": 48000,
-      "sha256": "21defac3aeff7189de017f7332a36e5b96ad2da5078f3bdd603786f432528d56"
-    },
-    "CN-Captain-Young/CDG9662": {
-      "sampleCount": 39644,
-      "sampleRate": 48000,
-      "sha256": "9563caaeef0c314d35ee759dcc09c6e1f3da62facc790c390de4b4f9f401b2aa"
-    },
-    "CN-Captain-Young/CDG9663": {
-      "sampleCount": 42646,
-      "sampleRate": 48000,
-      "sha256": "4fce4d16ec3336f3060219afab86f370fb32e9517340fee401540986d9bfde70"
-    },
-    "CN-Captain-Young/CDG9664": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "51042388caf62584ad5acfab33ee6b318a9ff28ec8fab56ad4d9c1d05877b96d"
-    },
-    "CN-Captain-Young/CDG9956": {
-      "sampleCount": 48000,
-      "sampleRate": 48000,
-      "sha256": "399118ef2377665df81e853393fbec779112efaefaa4976935bc698721c8379c"
-    },
-    "CN-Captain-Young/CES1111": {
-      "sampleCount": 46026,
-      "sampleRate": 48000,
-      "sha256": "5ccec4baf01ce4ea1ace7be3d9fc12e4f5e535f42a845f74cceeb6484dd6d634"
-    },
-    "CN-Captain-Young/CES1234": {
-      "sampleCount": 47879,
-      "sampleRate": 48000,
-      "sha256": "4c13e51b430a0ed23cdaa3f6b85edfd863937f41f1ee3b8c9013bbb3dfe621eb"
-    },
-    "CN-Captain-Young/CES2430": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "e4030ebd152d3f00a66e640878b7ad0e81c496ce558caefaccb003a7798a9514"
-    },
-    "CN-Captain-Young/CES2604": {
-      "sampleCount": 44946,
-      "sampleRate": 48000,
-      "sha256": "b619f80fb5357f25c1a5193b23d10e8c68eaf7e9f2a2f270ad095b90982c427d"
-    },
-    "CN-Captain-Young/CES2641": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "39cb48a31fe3221dbdf96eee9964fa4038f426ee05002dc4e20e05ef8f6974dc"
-    },
-    "CN-Captain-Young/CES3547": {
-      "sampleCount": 47520,
-      "sampleRate": 48000,
-      "sha256": "18e654c1aa6197f9f51a8611e8a5b6cc013d2353f3d41a5ea3cdcd3152e40e67"
-    },
-    "CN-Captain-Young/CES3548": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "18913a784108fe18e6251425348de723bb451cc93a11b134cdf70dcff7a588d6"
-    },
-    "CN-Captain-Young/CES3551": {
-      "sampleCount": 42493,
-      "sampleRate": 48000,
-      "sha256": "e2f75881c07a88e22ce4b1930b823a1171b459daf14e4fda09016ad8fc0c7698"
-    },
-    "CN-Captain-Young/CES4755": {
-      "sampleCount": 37440,
-      "sampleRate": 48000,
-      "sha256": "ad09cd756c1883cbaa8d34f9420b96bde877310b8c1820229b10ca349e7952a8"
-    },
-    "CN-Captain-Young/CES4951": {
-      "sampleCount": 40963,
-      "sampleRate": 48000,
-      "sha256": "5148054a4932742d88ef401474d7209c0e569b625526e4ff174b81079fd62e9d"
-    },
-    "CN-Captain-Young/CES5435": {
-      "sampleCount": 41415,
-      "sampleRate": 48000,
-      "sha256": "689e1ef9fe05d456680d080430bedfeea6fb85680215085fcc2b2598e83da0d2"
-    },
-    "CN-Captain-Young/CES5472": {
+    "CN-Captain-Middle-Aged/BDJ4043": {
       "sampleCount": 36000,
       "sampleRate": 48000,
-      "sha256": "a3c3a933d122a67c59b13d49904a0adfbe596a200b8bcd558f35ed23aa9aa72e"
+      "sha256": "e8dc0a561e0b789a70c81045729899372912f276cd59d843f1178ec5def55d9c"
     },
-    "CN-Captain-Young/CES5578": {
-      "sampleCount": 40948,
+    "CN-Captain-Middle-Aged/BDJ5236": {
+      "sampleCount": 33600,
       "sampleRate": 48000,
-      "sha256": "73e3a476c25ebd3dc838141afafdc293c7cf70532be46a95bdbae96b76e5d717"
+      "sha256": "0ae08c954f436285614878e46d407c611a04659b4618f41166ef50b101661ca6"
     },
-    "CN-Captain-Young/CES5629": {
-      "sampleCount": 44160,
+    "CN-Captain-Middle-Aged/CCA2761": {
+      "sampleCount": 41924,
       "sampleRate": 48000,
-      "sha256": "4f2bf8ccd11081ddb395df47b9c96f32ac9740ee02a37fdf85db6d99d0271dee"
+      "sha256": "a7c5f25236e5baeeb565714cd701b2d7b65aea5f15e5106889249be38f6e3fa0"
     },
-    "CN-Captain-Young/CES5657": {
-      "sampleCount": 38880,
-      "sampleRate": 48000,
-      "sha256": "43c56f8df69f4859095746a679622de648bf07f3c6d9b50eab923ba47c6e062f"
-    },
-    "CN-Captain-Young/CES5678": {
-      "sampleCount": 40728,
-      "sampleRate": 48000,
-      "sha256": "03642fc331f84b744071919d5bdf626b57083d5de14c2db27824e2ef4f7adf24"
-    },
-    "CN-Captain-Young/CES5751": {
-      "sampleCount": 42221,
-      "sampleRate": 48000,
-      "sha256": "d70a0163f8755c96eb52627094357c21ec02dc4489607205a2b87bb8ceccf7af"
-    },
-    "CN-Captain-Young/CES5887": {
-      "sampleCount": 42720,
-      "sampleRate": 48000,
-      "sha256": "8e15d8194945e2bfde87ef37607fd1ba23b6be32aafb6f061e44db4eda6cbe41"
-    },
-    "CN-Captain-Young/CES5888": {
-      "sampleCount": 47040,
-      "sampleRate": 48000,
-      "sha256": "bab6dbc0feb3d94dc75e5ac14c5cc13d27b19446a72cb29278d367449f2f6d30"
-    },
-    "CN-Captain-Young/CES6131": {
-      "sampleCount": 41961,
-      "sampleRate": 48000,
-      "sha256": "ad0638ee7f053474b3cc4d3ac6dc79959b9d8dd36ddf74f33cdf673b4ec17454"
-    },
-    "CN-Captain-Young/CES6132": {
-      "sampleCount": 41184,
-      "sampleRate": 48000,
-      "sha256": "7f2a44d011d5cc27af821c31185ff51c7bbbe9a538e786f8ab52ae560f754486"
-    },
-    "CN-Captain-Young/CES6313": {
-      "sampleCount": 47810,
-      "sampleRate": 48000,
-      "sha256": "27ce74780ee8f27de8c1c8a0d569115b2a6bf1b5dcf6cbfad36092374e0d776b"
-    },
-    "CN-Captain-Young/CES6359": {
-      "sampleCount": 40384,
-      "sampleRate": 48000,
-      "sha256": "74e83b7d8f24b7f8865da1fa2c5ce5d4140d43b5b156576ec9d7614de7759d2c"
-    },
-    "CN-Captain-Young/CES6819": {
-      "sampleCount": 44025,
-      "sampleRate": 48000,
-      "sha256": "f4b4df50184d7149bde1aafd4438a8cad1bf9520fdf2cd874dd5078ed7f077d9"
-    },
-    "CN-Captain-Young/CES9197": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "fe4de0dd3393bb399a313e14c25ba363c82c9a92967c3ad3c36103d295235f71"
-    },
-    "CN-Captain-Young/CHH2710": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "91a933d21eca42cceb1285880b9f9172c36636f10a642211133060e60a7e4c12"
-    },
-    "CN-Captain-Young/CHH4209": {
-      "sampleCount": 37920,
-      "sampleRate": 48000,
-      "sha256": "f682f7cca7cb3ff46361ccca8c6a2d417b4b6e1627a4eb0430455fbba76ea9fe"
-    },
-    "CN-Captain-Young/CHH4337": {
-      "sampleCount": 42117,
-      "sampleRate": 48000,
-      "sha256": "bdc3f3d4e28f96fcbef735cf8f0657b49d8f2b6ce3918269488288e70c0c7fc8"
-    },
-    "CN-Captain-Young/CHH7041": {
-      "sampleCount": 42265,
-      "sampleRate": 48000,
-      "sha256": "6d4a5f0e2829580fe8213f0448fdfd37d1813e169b77f41e9b8a98977aeb69c8"
-    },
-    "CN-Captain-Young/CHH7042": {
-      "sampleCount": 38880,
-      "sampleRate": 48000,
-      "sha256": "85ae10783defe6f9e6c13cf1195f459531575deda981ac702b85907e510b457b"
-    },
-    "CN-Captain-Young/CHH7306": {
-      "sampleCount": 47559,
-      "sampleRate": 48000,
-      "sha256": "b69bd946dfe294cca81d9d996001876dc666dfc241b041e56656b52e42aac82f"
-    },
-    "CN-Captain-Young/CHH7789": {
-      "sampleCount": 48000,
-      "sampleRate": 48000,
-      "sha256": "cbfa04e27eff2ac140c159354c849961cbf280cd6f2e2ad28af4e27506a36669"
-    },
-    "CN-Captain-Young/CHH8765": {
-      "sampleCount": 45342,
-      "sampleRate": 48000,
-      "sha256": "4f4ee8f59b7ba8aa297d9116f91192551b4124aef436072d6b0aa6685334fe9f"
-    },
-    "CN-Captain-Young/CHH9015": {
-      "sampleCount": 38880,
-      "sampleRate": 48000,
-      "sha256": "d1cc0e940ffd970d01701cba395395f1d0f633bf3e81cc7da5fb84c51de6f32d"
-    },
-    "CN-Captain-Young/CHH9024": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "55b5409d1d86e66b96a9c31e502e69bc0ebd1feeaabeb5f32d23aee18df938e6"
-    },
-    "CN-Captain-Young/CJX0697": {
-      "sampleCount": 43200,
-      "sampleRate": 48000,
-      "sha256": "5f95fcaf2715b0c0161ea1e5b5d8d9934b2e98b8ef38b8349f53465dd86f9771"
-    },
-    "CN-Captain-Young/CJX2697": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "8806dac14603145badb5dce8853c6ed6e1945bdc98f1e225b2a56868b2ce1e7f"
-    },
-    "CN-Captain-Young/CJX8923": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "0771d909764cdd5fb2ded54baf6862cab78b78edf92e8b57c7a4b6ffa626decd"
-    },
-    "CN-Captain-Young/CQH4635": {
+    "CN-Captain-Middle-Aged/CCA2762": {
       "sampleCount": 43680,
       "sampleRate": 48000,
-      "sha256": "ae2af093f39bc9d1dfff887dd380d038401c879fb2749c34e2fbfe4444017ce4"
+      "sha256": "608b7e23f5c11f0c5a2e6fd2bdb6e748f11d49130938ac5f730bc521d6aeadef"
     },
-    "CN-Captain-Young/CQH6596": {
-      "sampleCount": 44640,
+    "CN-Captain-Middle-Aged/CCA3115": {
+      "sampleCount": 38948,
       "sampleRate": 48000,
-      "sha256": "b9a95f6b9f006b76dcd1d0d29e931899dc14706b0f631ea714543f9e5f2df190"
+      "sha256": "30d381a3393ad5e0e00b37c0040fa1b511abdb6deb48104e9aa4e36fb5a383df"
     },
-    "CN-Captain-Young/CQH7171": {
-      "sampleCount": 46933,
+    "CN-Captain-Middle-Aged/CCA4662": {
+      "sampleCount": 40359,
       "sampleRate": 48000,
-      "sha256": "83307853d330977c754917addcd1164e5f1c5886ca98fe9607799769458427d5"
+      "sha256": "4d2b18bb911fcea5c6d1c07379ba4389ce573836547f7e9702e6a8bb517070ba"
     },
-    "CN-Captain-Young/CQH9098": {
-      "sampleCount": 43384,
+    "CN-Captain-Middle-Aged/CCA4793": {
+      "sampleCount": 41768,
       "sampleRate": 48000,
-      "sha256": "ae66a3846e2da5526a49eafff02ce527ccd247d91439079f7cd3dbd45c82092e"
+      "sha256": "c43760527ac9c42d0a96b7f8fc785709a5a68c0c715772092419114a138949cc"
     },
-    "CN-Captain-Young/CSC3248": {
-      "sampleCount": 50611,
+    "CN-Captain-Middle-Aged/CCA4851": {
+      "sampleCount": 40957,
       "sampleRate": 48000,
-      "sha256": "aa210528e128c68d0d74f812adcbdfb1f1a865ee8fe572eaee514ef4f78d57e9"
+      "sha256": "2ec90d185a4596bf800dc2358ef8d4fe9b6a0f620799f7f36dd2514b49bfbc8a"
     },
-    "CN-Captain-Young/CSC3559": {
-      "sampleCount": 42720,
+    "CN-Captain-Middle-Aged/CCA5198": {
+      "sampleCount": 45127,
       "sampleRate": 48000,
-      "sha256": "b54cbfbc4efeead39e827ad299b1fe4afbff3e9af1721893f915880162085b53"
+      "sha256": "0a2edcf8e387322fe27cb09744c34132f9b0af6dbf278411d01d07acb5516746"
     },
-    "CN-Captain-Young/CSC5353": {
-      "sampleCount": 49880,
+    "CN-Captain-Middle-Aged/CCA5678": {
+      "sampleCount": 44833,
       "sampleRate": 48000,
-      "sha256": "712c45f7ad7b3b1f26e6acb033df6440e796ead0c20ebe756061e8f32dc3700e"
+      "sha256": "aaf4670ffcef4b494c5f53f1f43686db70f237975650eeb20574d4e9749d9884"
     },
-    "CN-Captain-Young/CSC6220": {
-      "sampleCount": 43200,
+    "CN-Captain-Middle-Aged/CCA7198": {
+      "sampleCount": 39535,
       "sampleRate": 48000,
-      "sha256": "fc459139b6a715809d8b53e6b6423779b81f52888de90d8a7d721ca80674bcab"
+      "sha256": "0e6339ebfc86aa1fd7b7b85f27520049725557a213d1394e6c14aad2a6de296d"
     },
-    "CN-Captain-Young/CSC6381": {
-      "sampleCount": 44157,
+    "CN-Captain-Middle-Aged/CCA8708": {
+      "sampleCount": 45733,
       "sampleRate": 48000,
-      "sha256": "3980163772bbc83f27ec5fd4770b1bf676952ecac2d91d85866c4126ca150059"
+      "sha256": "f58808ef067fcc743362ad5ebc7181fb979f404d536f48231f6de89a403c13b0"
     },
-    "CN-Captain-Young/CSC8247": {
+    "CN-Captain-Middle-Aged/CCA9052": {
+      "sampleCount": 35232,
+      "sampleRate": 48000,
+      "sha256": "27ee38a53a74799eb20cc1280353f2f7436ffa7afc2ded1400253e5934675695"
+    },
+    "CN-Captain-Middle-Aged/CCA9119": {
+      "sampleCount": 49795,
+      "sampleRate": 48000,
+      "sha256": "bafae80c6bc3d007d76a05559ee3de3fa63810bbcc4e5cbb6282162804cbbb48"
+    },
+    "CN-Captain-Middle-Aged/CCA9120": {
+      "sampleCount": 37528,
+      "sampleRate": 48000,
+      "sha256": "e03bdb53113497431c95525ec22068f495a2522feba1bbcb9bbdb36c66adc0bd"
+    },
+    "CN-Captain-Middle-Aged/CDG1152": {
       "sampleCount": 38880,
       "sampleRate": 48000,
-      "sha256": "f691962f7e1d0dde4131eb0422ba2526494cdb3e0f03141e8f6a66c0abaae469"
+      "sha256": "e058f841e78303b3b099a54c222cc0006162f76d656c62523fbab59c2f8d4879"
     },
-    "CN-Captain-Young/CSC8957": {
-      "sampleCount": 39840,
+    "CN-Captain-Middle-Aged/CDG1174": {
+      "sampleCount": 40154,
       "sampleRate": 48000,
-      "sha256": "067d7e2e161a3d297a922ce64ccb5d22f9d98585117b6a1f1f701fcc86b9e1c5"
+      "sha256": "4f858b491d81dfef748ed97eaf0e1c3bf4bd473e94e5b02aa521a5e2237aec69"
     },
-    "CN-Captain-Young/CSC9669": {
-      "sampleCount": 44640,
+    "CN-Captain-Middle-Aged/CDG1188": {
+      "sampleCount": 36480,
       "sampleRate": 48000,
-      "sha256": "a94be726e01786a2ac6c9431e04b7774e0e741ee9f1a42d4055109b626e59485"
+      "sha256": "e27c28e189e3e69819ea76d374f75abafb097b8644c78d900fe0cd61f369f263"
     },
-    "CN-Captain-Young/CSC9737": {
-      "sampleCount": 43200,
+    "CN-Captain-Middle-Aged/CDG1191": {
+      "sampleCount": 36466,
       "sampleRate": 48000,
-      "sha256": "81e18a30f79b127fcd1d1ed2d74def0aee62cbc26ce46496090a8fd65f04eca0"
+      "sha256": "0974f6a1ab591ab6a3b985c8fb2deddc188cabd8d51a36aec8695c1219221d5a"
     },
-    "CN-Captain-Young/CSN1234": {
-      "sampleCount": 38880,
+    "CN-Captain-Middle-Aged/CDG1192": {
+      "sampleCount": 43680,
       "sampleRate": 48000,
-      "sha256": "2b869161e9425612cd2cf2843719f6c9f6705764d445d94be2e2bb106dc1586f"
+      "sha256": "3deeb9c989b2a41001edf8ff1f3e913c97f0f37c2cab2361d90a75c155de331c"
     },
-    "CN-Captain-Young/CSN2197": {
-      "sampleCount": 46560,
+    "CN-Captain-Middle-Aged/CDG1198": {
+      "sampleCount": 37595,
       "sampleRate": 48000,
-      "sha256": "e4f15640d42542266deb0b884a8ea1fb96063f28e848879fcdb893844f171d3f"
+      "sha256": "a4a29dbecf0c00907fccc0b2e0dcd1c82393d911c318ef96775f0028e9bf1ce2"
     },
-    "CN-Captain-Young/CSN3664": {
+    "CN-Captain-Middle-Aged/CDG1234": {
       "sampleCount": 45600,
       "sampleRate": 48000,
-      "sha256": "6ad44c40ef04de78cc1f7e028dfbbfa4c025107a9f34b680cea0646dd3cdeaa9"
+      "sha256": "6cf08203bac69492cf72fa378119c8852547e98ff8c7ed12c27650bf752b0732"
     },
-    "CN-Captain-Young/CSN3711": {
-      "sampleCount": 48826,
+    "CN-Captain-Middle-Aged/CDG2355": {
+      "sampleCount": 43731,
       "sampleRate": 48000,
-      "sha256": "d393f9d38936464b5972158e005bf479bd83cb48717c6b8f8ac4046ce3681d6f"
+      "sha256": "da75924d6d1e1c5a629a13d5a65436cee3dbcfeb3886689401a8835c5c97e382"
     },
-    "CN-Captain-Young/CSN4042": {
-      "sampleCount": 47520,
+    "CN-Captain-Middle-Aged/CDG2577": {
+      "sampleCount": 34700,
       "sampleRate": 48000,
-      "sha256": "bfd1e01a1f2c76a132cb47985058720240112ef1003c240bebef2d70b5760dd1"
+      "sha256": "7813060650774fdcc0c90efb9963dd7ed06e3f4738c8bd6c138abfa692e61e6d"
     },
-    "CN-Captain-Young/CSN4463": {
-      "sampleCount": 40541,
+    "CN-Captain-Middle-Aged/CDG2701": {
+      "sampleCount": 41638,
       "sampleRate": 48000,
-      "sha256": "3fcd763ef0feaa6f781c46a60aa9eecbb49e956acee6120ed7113d099562c9fb"
+      "sha256": "c40a7223466ff6f7a47c64e850fc21b6992afedd826ccd64f8e77ddd16a2baf6"
     },
-    "CN-Captain-Young/CSN5437": {
-      "sampleCount": 43680,
+    "CN-Captain-Middle-Aged/CDG2702": {
+      "sampleCount": 37445,
       "sampleRate": 48000,
-      "sha256": "02cd96e1706d478c68e2074caa4ccacf344f4bff98ee528c29819914b8b8beab"
+      "sha256": "e3f844174a25e33e641fb3e907de6f4e2970a74670cbb174e19436e53e76d7ba"
     },
-    "CN-Captain-Young/CSN5851": {
-      "sampleCount": 41280,
+    "CN-Captain-Middle-Aged/CDG3827": {
+      "sampleCount": 44979,
       "sampleRate": 48000,
-      "sha256": "3a3b79768e309a025b72a50d5e080c76501e15687671cc651191d05cd7c6af68"
+      "sha256": "8cd0e423fbf5ccad6431295f244f52b4c8ec598b75505ca6aeac70eefd966e31"
     },
-    "CN-Captain-Young/CSN6020": {
-      "sampleCount": 42720,
+    "CN-Captain-Middle-Aged/CDG3828": {
+      "sampleCount": 39668,
       "sampleRate": 48000,
-      "sha256": "ee3bad705410f7097e534fd545f50e31fd34a0028a6108b1e9f14f74229117a2"
+      "sha256": "d6cf48a4b128ecc7f7811ace1d2df9f3e78319435cf6b208ef5894c99e1f2a55"
     },
-    "CN-Captain-Young/CSN6433": {
-      "sampleCount": 42240,
+    "CN-Captain-Middle-Aged/CDG5073": {
+      "sampleCount": 42512,
       "sampleRate": 48000,
-      "sha256": "7c8c659b0391dd37d4a8c1b1ae840ee395960409c73ee3218392895ecda9bcfb"
+      "sha256": "dd223d9007eca5ba2c98c7dd3fe18960f9efae5d2cf2b1260daeeb19a7872619"
     },
-    "CN-Captain-Young/CSN6738": {
-      "sampleCount": 42720,
+    "CN-Captain-Middle-Aged/CDG5144": {
+      "sampleCount": 42883,
       "sampleRate": 48000,
-      "sha256": "dba4a9d2d3b63bfbd51f8c11279e7b16afd4a712990168dfa486ab9c3edf5237"
+      "sha256": "a66e89f9d899d889e007e7efb113a730edbb231c1168b96f70d75bba7a2ec83f"
     },
-    "CN-Captain-Young/CSN7350": {
-      "sampleCount": 46056,
+    "CN-Captain-Middle-Aged/CDG5166": {
+      "sampleCount": 36659,
       "sampleRate": 48000,
-      "sha256": "36da86ff9f54de7b9d6270003d6ef4614d31d54f199d782ce0bdd405a263d902"
+      "sha256": "6ca99adcaea40fcae4ae4f0ae847abd7bfa95f8c3db00ea3135e649b7dcde74d"
     },
-    "CN-Captain-Young/CSN8545": {
-      "sampleCount": 42720,
-      "sampleRate": 48000,
-      "sha256": "78bf11c49a13a7cb00a02198fe3e7a30abdec6e10c4d1fb03bd7f631e871679c"
-    },
-    "CN-Captain-Young/CSN8765": {
-      "sampleCount": 44135,
-      "sampleRate": 48000,
-      "sha256": "2770da3d514242ad53bcef0a85df38d38e3c4205895c359e5a87d2b75cb527fa"
-    },
-    "CN-Captain-Young/CSN8798": {
-      "sampleCount": 49440,
-      "sampleRate": 48000,
-      "sha256": "8bc142d35215ac7f3cba0247c02197efee46c0fb1e67b265dbcf9a22c525d59c"
-    },
-    "CN-Captain-Young/CSN9043": {
-      "sampleCount": 39433,
-      "sampleRate": 48000,
-      "sha256": "286e7f0068993fef356e1220c4338da7cbcb63abca369a7916d93b79a51ccb78"
-    },
-    "CN-Captain-Young/CSN9173": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "18b0aba601b0dfb47cdb0292631ff1f4f92de343865cfb6b84a425a6f9b6996e"
-    },
-    "CN-Captain-Young/CSN9190": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "82ab2ffa7cf29a48837d1c1a3f75e6cfda0e22371d86a4de4e40292e84b9e709"
-    },
-    "CN-Captain-Young/CSN9255": {
-      "sampleCount": 49440,
-      "sampleRate": 48000,
-      "sha256": "c0b6fd55259f8dd1b68ac47bc642e3b1eb3fe6992b14b89797c19a58d24c93d0"
-    },
-    "CN-Captain-Young/CSN9355": {
-      "sampleCount": 43200,
-      "sampleRate": 48000,
-      "sha256": "998576ce500937ed31ffda81115fdb7dcd2d7147e459518868f2b17ba673a6c1"
-    },
-    "CN-Captain-Young/CSN9938": {
-      "sampleCount": 44228,
-      "sampleRate": 48000,
-      "sha256": "03ff9ffcc4ed74627cbbdda4bbe830fae907daa54ad54d44b7b6284745e34381"
-    },
-    "CN-Captain-Young/CSZ0820": {
-      "sampleCount": 46080,
-      "sampleRate": 48000,
-      "sha256": "20662832e142795a76dbd61605981a23f8c40729a744dd2291a35338593e91c5"
-    },
-    "CN-Captain-Young/CSZ2546": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "a50a23447e1949b63b54907a696bb9d84dda0b84fe17e5a83ada325e9011d20c"
-    },
-    "CN-Captain-Young/CSZ2884": {
-      "sampleCount": 41022,
-      "sampleRate": 48000,
-      "sha256": "51515e6045524166fcef9d0dba3dc5d374a750dae62f4c05bb748a601b727d80"
-    },
-    "CN-Captain-Young/CSZ2917": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "0ced146d395292541e2a7a1398e2564fe5df95c790439d268c4750f848f0a076"
-    },
-    "CN-Captain-Young/CSZ3690": {
-      "sampleCount": 40734,
-      "sampleRate": 48000,
-      "sha256": "aed7e5acf47bdc22155c831ed2b31ff36eec447aeb72931eda80497741564f21"
-    },
-    "CN-Captain-Young/CSZ4321": {
-      "sampleCount": 47009,
-      "sampleRate": 48000,
-      "sha256": "177fae10e04665324c91d505eb12af92fc3148a3ff56615510e5d2956c2c78e1"
-    },
-    "CN-Captain-Young/CSZ5678": {
-      "sampleCount": 44445,
-      "sampleRate": 48000,
-      "sha256": "4c73bf938e8686c61043f51ac10f9d8d3214766b191eced1bd5aa8a9294b057f"
-    },
-    "CN-Captain-Young/CSZ8235": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "00ef9eacd9955f6fb63c4b3f7cde627044f8ab0e48baa7db12b600bfa5c86b87"
-    },
-    "CN-Captain-Young/CSZ8855": {
-      "sampleCount": 41550,
-      "sampleRate": 48000,
-      "sha256": "3bb077b98cc3e35d082fb8dfc857f2be949fb3f480af169ee71da11005c13cba"
-    },
-    "CN-Captain-Young/CSZ9820": {
-      "sampleCount": 37920,
-      "sampleRate": 48000,
-      "sha256": "8d566006bf99428e95176a1c86ebcdbccb873362f52add8063066badc00e4693"
-    },
-    "CN-Captain-Young/CSZ9929": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "57b193af5a337a6dae25d38cae4e848105f02a4392d19d0307e4982988193159"
-    },
-    "CN-Captain-Young/CSZ9978": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "1a549944a438f822c9e8b4e05cbb8284200f5420408d8a24269dfa18f662b74d"
-    },
-    "CN-Captain-Young/CXA3174": {
-      "sampleCount": 41946,
-      "sampleRate": 48000,
-      "sha256": "7f7c062e920b9f333a2bb5f4ba9ea95995c8942d24fc86166e57b98911b50a23"
-    },
-    "CN-Captain-Young/CXA5172": {
-      "sampleCount": 37920,
-      "sampleRate": 48000,
-      "sha256": "bc2f71c66a6072ca8f0dcf5d6d7a4e9305df724088d1bdfb0118379ce7b4ba47"
-    },
-    "CN-Captain-Young/CXA5678": {
-      "sampleCount": 46462,
-      "sampleRate": 48000,
-      "sha256": "972b2c811b8b1ce44d12a3fe58e6b61ad069f6d74e7d739f41315e0a88f2a7ba"
-    },
-    "CN-Captain-Young/CXA7380": {
-      "sampleCount": 41280,
-      "sampleRate": 48000,
-      "sha256": "c97a035ab65fb94c8987cfbb1441977a08da7ec9375113e66820cde19ac13709"
-    },
-    "CN-Captain-Young/CXA8083": {
-      "sampleCount": 46173,
-      "sampleRate": 48000,
-      "sha256": "8b1e8da3b00086e7f84c8e1d5f881e18f0b85eb1eece363cf152af1b473da375"
-    },
-    "CN-Captain-Young/CXA8528": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "50e36facd5e0f0ff2fc74306ef942e3330c829073358bac9bae3aecf3c822c6d"
-    },
-    "CN-Captain-Young/CYZ0231": {
-      "sampleCount": 37920,
-      "sampleRate": 48000,
-      "sha256": "60f4b4902e89fdadf940f24a4912623aab513044144fe2ed477b2e05970bc73a"
-    },
-    "CN-Captain-Young/CYZ3312": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "9aaeb3feb8740cc2caa71027a6d67da3b7411b7af8071cba2440c15ca5718b80"
-    },
-    "CN-Captain-Young/CYZ4237": {
-      "sampleCount": 32640,
-      "sampleRate": 48000,
-      "sha256": "a4ab2a19aa5eab69d5515980d2ff7eb053de411961328e6c0496703d0857ae79"
-    },
-    "CN-Captain-Young/CYZ6351": {
-      "sampleCount": 38400,
-      "sampleRate": 48000,
-      "sha256": "5b85e194f8e9148eb1a3ebce28b27b55eaca98c7072ae10a7312c167eceddf89"
-    },
-    "CN-Captain-Young/CYZ6722": {
-      "sampleCount": 35040,
-      "sampleRate": 48000,
-      "sha256": "fc28d7d85f17f1b1313b916c5f1b26706c4fe8b1ff8e4502f9b509532b6421b8"
-    },
-    "CN-Captain-Young/CYZ9331": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "138c5fccd21889baed1f4d827e5114a7c7994028bfa58828050115723cbbdcfd"
-    },
-    "CN-Captain-Young/CYZ9370": {
-      "sampleCount": 39360,
-      "sampleRate": 48000,
-      "sha256": "339dcb3782dfe3cd712337f9a02570ccaeeb703f65713fb16a2e68d63314e834"
-    },
-    "CN-Captain-Young/DKH1533": {
-      "sampleCount": 41760,
-      "sampleRate": 48000,
-      "sha256": "7aa8653f6fb0c624cf396b791669516de04063b312b82ee9890f34c45917f41b"
-    },
-    "CN-Captain-Young/DKH4086": {
-      "sampleCount": 41280,
-      "sampleRate": 48000,
-      "sha256": "2b925e977bb29e26ad9799230db4d882f7c54b589213c8600be3f8c291c63042"
-    },
-    "CN-Captain-Young/DKH4514": {
+    "CN-Captain-Middle-Aged/CDG5737": {
       "sampleCount": 39840,
       "sampleRate": 48000,
-      "sha256": "decefa937709fe6683b942b12a93b0a6b1452916b9be344ff7d0ca35c3ebc616"
+      "sha256": "e304047bf20283c8343ae759ba2a7bc1265e2fe18d0f85c99a5544bdb6377719"
     },
-    "CN-Captain-Young/DKH4923": {
-      "sampleCount": 38880,
+    "CN-Captain-Middle-Aged/CDG5738": {
+      "sampleCount": 43012,
       "sampleRate": 48000,
-      "sha256": "ece9b0a4bf4278af00a4ceddcbbba21a792fb9cb9b364953cdc0eea0eb2d575b"
+      "sha256": "0aeaf625d7991518acf5a4e8f91362b4c1a43bc945707babf85cd7e480b9fc40"
     },
-    "CN-Captain-Young/DKH5137": {
+    "CN-Captain-Middle-Aged/CDG6445": {
+      "sampleCount": 37860,
+      "sampleRate": 48000,
+      "sha256": "3a9e94b1becdae17b9d04a7296b9248ba39a4817641a2eb559c330d66674fd11"
+    },
+    "CN-Captain-Middle-Aged/CDG8032": {
+      "sampleCount": 38098,
+      "sampleRate": 48000,
+      "sha256": "e7e02c0ee3bc83db5ae7a7e7c0feb5b4182c0003c5f39ef81f8a49beae8fcde9"
+    },
+    "CN-Captain-Middle-Aged/CDG8034": {
+      "sampleCount": 39823,
+      "sampleRate": 48000,
+      "sha256": "c0dcbd767c9c6d1b2b876b2fe4bb57f4c8c5a459c68366af5438c33f700c10f9"
+    },
+    "CN-Captain-Middle-Aged/CDG8044": {
+      "sampleCount": 39840,
+      "sampleRate": 48000,
+      "sha256": "d034b4fe5e3116759765e90cba56fb829816adce9b1347ef7efc8810634115ac"
+    },
+    "CN-Captain-Middle-Aged/CDG8078": {
+      "sampleCount": 41096,
+      "sampleRate": 48000,
+      "sha256": "8384c784a69f7e11e7dcd4dfaba46412d82f3f88921f1b429ebecca86fb5acb2"
+    },
+    "CN-Captain-Middle-Aged/CDG8085": {
+      "sampleCount": 43818,
+      "sampleRate": 48000,
+      "sha256": "5c5a3d97868fd554b64888c87faf86abe9abe9f822f58f3f82d3239d042e396f"
+    },
+    "CN-Captain-Middle-Aged/CDG8086": {
+      "sampleCount": 37845,
+      "sampleRate": 48000,
+      "sha256": "a10f2382e3bd8e8b2a1d516fd97f07cbd0e494b34b5b66cf402fc2c74ff17c67"
+    },
+    "CN-Captain-Middle-Aged/CDG8412": {
+      "sampleCount": 37122,
+      "sampleRate": 48000,
+      "sha256": "1e367d0c3afa4744997fd2f39ab63504f56a1a4af39e548c925f82cc6a9d13fe"
+    },
+    "CN-Captain-Middle-Aged/CDG8414": {
+      "sampleCount": 40457,
+      "sampleRate": 48000,
+      "sha256": "2fa519b9921ef132fb9c5b9c1d4bd18d9462e054148fcf36e21385bfb5eae27f"
+    },
+    "CN-Captain-Middle-Aged/CDG8711": {
+      "sampleCount": 36990,
+      "sampleRate": 48000,
+      "sha256": "4a31a29aa0b5a78d1d05ec86bd1b8b9f9b5ee057cde1bdcc2fd925c85f5f72cc"
+    },
+    "CN-Captain-Middle-Aged/CDG8712": {
+      "sampleCount": 39177,
+      "sampleRate": 48000,
+      "sha256": "3ac8d58d2cb6ce86d62e81f2723cc6c4cbaca0b9e1f7306314a57807b5bfcd54"
+    },
+    "CN-Captain-Middle-Aged/CDG8742": {
+      "sampleCount": 40232,
+      "sampleRate": 48000,
+      "sha256": "21805fb8e4cbdeee637ae130fe9ce21d3d306c3252df0071ed7c90919f6ce13b"
+    },
+    "CN-Captain-Middle-Aged/CDG8765": {
+      "sampleCount": 37920,
+      "sampleRate": 48000,
+      "sha256": "b075ed74368a4f4bb224ac8e642d85bba41ac22427fddfea0b9633f2dd219e09"
+    },
+    "CN-Captain-Middle-Aged/CDG8818": {
+      "sampleCount": 40018,
+      "sampleRate": 48000,
+      "sha256": "3508f52792824bb295c3a9cb94ba30f983096a03cda6f4b62d362bbb7655e1d1"
+    },
+    "CN-Captain-Middle-Aged/CDG8821": {
+      "sampleCount": 39343,
+      "sampleRate": 48000,
+      "sha256": "2229f50e146f030f0fa3b681e6d9e978fa243a7fd3eb7fcedded086691cecef6"
+    },
+    "CN-Captain-Middle-Aged/CDG8825": {
+      "sampleCount": 37113,
+      "sampleRate": 48000,
+      "sha256": "085821bca4b4c6bef107e3fdfa7ef09d42fa39659dc28af3be10e02aee4e4d3a"
+    },
+    "CN-Captain-Middle-Aged/CDG8828": {
+      "sampleCount": 40338,
+      "sampleRate": 48000,
+      "sha256": "8fb4d951dea50c6356d5a7aeee67bbe15e997f21c124188835079d4781e91d6c"
+    },
+    "CN-Captain-Middle-Aged/CDG8851": {
+      "sampleCount": 36362,
+      "sampleRate": 48000,
+      "sha256": "02105b5852f9098dfb10b332e19666344219e6ad645da87c2109d432de48b6a5"
+    },
+    "CN-Captain-Middle-Aged/CDG8879": {
+      "sampleCount": 43005,
+      "sampleRate": 48000,
+      "sha256": "69562d02227a5e20acf15dd278c97963b2b3246ccfea2430d8b777787ad11ff3"
+    },
+    "CN-Captain-Middle-Aged/CDG9639": {
+      "sampleCount": 38698,
+      "sampleRate": 48000,
+      "sha256": "9b3e1e7d4bdcc5d2ac540fa5eacc4cb3d86d180d7a3c5e6a2bba4e00cf1e722d"
+    },
+    "CN-Captain-Middle-Aged/CDG9662": {
+      "sampleCount": 35548,
+      "sampleRate": 48000,
+      "sha256": "42edc9ce15acd831cd5ec34fb8c1977455f4d29c021bc9720b2b0b3c0d1c208d"
+    },
+    "CN-Captain-Middle-Aged/CDG9663": {
+      "sampleCount": 39485,
+      "sampleRate": 48000,
+      "sha256": "3e2c2ad55259215940b2599c61f34fae2debabf486b79f4be617d8af7b37367a"
+    },
+    "CN-Captain-Middle-Aged/CDG9664": {
+      "sampleCount": 41068,
+      "sampleRate": 48000,
+      "sha256": "98b5f19432a1ecef516552960dd03c79786fb249ff8d95d841cec8d73ae28aff"
+    },
+    "CN-Captain-Middle-Aged/CDG9956": {
+      "sampleCount": 41585,
+      "sampleRate": 48000,
+      "sha256": "88594c64fd6919a26269dc68d473caee10ca8b70456e2b41f34d26c6585635a0"
+    },
+    "CN-Captain-Middle-Aged/CES1111": {
+      "sampleCount": 41024,
+      "sampleRate": 48000,
+      "sha256": "78a0b885a6f8d42434c1bdb3f41fc76efcbaddbe7595b0c063d1537b961d1ca8"
+    },
+    "CN-Captain-Middle-Aged/CES2430": {
+      "sampleCount": 36961,
+      "sampleRate": 48000,
+      "sha256": "dac8b50feb6c20fdb9df74f46bc2aaf5a5cadd9a53cc010dbc9aabd64d6fa46d"
+    },
+    "CN-Captain-Middle-Aged/CES2604": {
+      "sampleCount": 47230,
+      "sampleRate": 48000,
+      "sha256": "a50aff28ba9d12d833334d177b7e35ddc0a6b5621382aed95476ce3b150091f6"
+    },
+    "CN-Captain-Middle-Aged/CES2641": {
+      "sampleCount": 44863,
+      "sampleRate": 48000,
+      "sha256": "0c0bd0a994829867e8aad27beb110eadbc63c38744c7c388d55416128418e69b"
+    },
+    "CN-Captain-Middle-Aged/CES3547": {
+      "sampleCount": 42419,
+      "sampleRate": 48000,
+      "sha256": "3a42514db94dd41df3525d8ae64537ec8c66ef977bc43cb6cdfbc6adfbff4012"
+    },
+    "CN-Captain-Middle-Aged/CES3548": {
+      "sampleCount": 40723,
+      "sampleRate": 48000,
+      "sha256": "6164d669133e91720438981f3658f890320a98e5326eaa3c513eab9a7e1e8857"
+    },
+    "CN-Captain-Middle-Aged/CES3551": {
+      "sampleCount": 37791,
+      "sampleRate": 48000,
+      "sha256": "fdf8b21357931f946e99cbb0ab5dd057e558b992223f926b8aece481949f7c96"
+    },
+    "CN-Captain-Middle-Aged/CES4755": {
+      "sampleCount": 37871,
+      "sampleRate": 48000,
+      "sha256": "7face7cbc70388856b18c593df7fad4d35a325759e9e560eea6fc815859fb714"
+    },
+    "CN-Captain-Middle-Aged/CES4951": {
+      "sampleCount": 36381,
+      "sampleRate": 48000,
+      "sha256": "523549a90d58de175614a5011c7eb79c90a1cc975309124f1da6ef0ba4bae15c"
+    },
+    "CN-Captain-Middle-Aged/CES5435": {
+      "sampleCount": 35153,
+      "sampleRate": 48000,
+      "sha256": "01fcd16c8095de9cf869ef529e6efa5eec162169c7057bcb440830fa1e2a8527"
+    },
+    "CN-Captain-Middle-Aged/CES5472": {
+      "sampleCount": 35973,
+      "sampleRate": 48000,
+      "sha256": "0b0047df7d6224a6bf6ad64be9723f353513516359dcf988db20a44071059b10"
+    },
+    "CN-Captain-Middle-Aged/CES5578": {
+      "sampleCount": 35520,
+      "sampleRate": 48000,
+      "sha256": "7f2bc391c9451773579f1750f2eaf250f982b2cadc3cb43dfa79fcb1c5739d09"
+    },
+    "CN-Captain-Middle-Aged/CES5629": {
+      "sampleCount": 42019,
+      "sampleRate": 48000,
+      "sha256": "13055685df39d5f9cd6bfc99ec456ed49e586a32d57d493609dbdb520d08eb95"
+    },
+    "CN-Captain-Middle-Aged/CES5657": {
       "sampleCount": 36960,
       "sampleRate": 48000,
-      "sha256": "0109fd7d8543200f8ff2e2dbb64831e1b42bb5c88d3efb729aeb5e42517521a4"
+      "sha256": "20b1fb5b6f1e6c81b4f24eb969563b0efc02ec86f516f9d4d223cf0892f9762b"
     },
-    "CN-Captain-Young/DKH5709": {
+    "CN-Captain-Middle-Aged/CES5678": {
+      "sampleCount": 36618,
+      "sampleRate": 48000,
+      "sha256": "ab5a1310db3b019472eaba0cf03a49d6ed7e861ab2033bf549026897c54cd2d1"
+    },
+    "CN-Captain-Middle-Aged/CES5751": {
       "sampleCount": 39360,
       "sampleRate": 48000,
-      "sha256": "b5e5b2d643ee473a584bd05689b19a4e21e1278a88e89549bf86c9025b215765"
+      "sha256": "a8abcb291235d0a5a10f22375c1c9b2fe6442600f383c07fd720726b75c5b3c6"
     },
-    "CN-Captain-Young/DKH6071": {
-      "sampleCount": 35520,
+    "CN-Captain-Middle-Aged/CES5887": {
+      "sampleCount": 41023,
       "sampleRate": 48000,
-      "sha256": "4f4035d3d9a8ff15fe3b69cb49cacf408de82e230b5bbdbe95c13561593bf9f1"
+      "sha256": "8318b2baa04c1ce95484f5474d64c0e20687b55a0607a40f16a91d3607d0f276"
     },
-    "CN-Captain-Young/GCR1550": {
-      "sampleCount": 39600,
+    "CN-Captain-Middle-Aged/CES5888": {
+      "sampleCount": 40728,
       "sampleRate": 48000,
-      "sha256": "bf13afdfb52989038845cf3321577f1a38e7561b9ed22cc7ce231011b670b3ba"
+      "sha256": "c4367ecb0acde5ad080a33afba2b5ea5842925eb83c27588294cd906dc0eb611"
     },
-    "CN-Captain-Young/GCR2621": {
-      "sampleCount": 44800,
+    "CN-Captain-Middle-Aged/CES6131": {
+      "sampleCount": 38468,
       "sampleRate": 48000,
-      "sha256": "317445f5ef52e1e900da734e3b83cae372f4ef743e83a81095dc6f3378b137a1"
+      "sha256": "01f8b9804f3361aa52f1d06098285606b38b3386279eac00056b7ecd0dd4a939"
     },
-    "CN-Captain-Young/GCR3764": {
+    "CN-Captain-Middle-Aged/CES6132": {
+      "sampleCount": 37333,
+      "sampleRate": 48000,
+      "sha256": "e3ccfda1b2221dcdc2ca1fd7a30980a987b2435ac6d9d904e19c37c79d10b76e"
+    },
+    "CN-Captain-Middle-Aged/CES6313": {
+      "sampleCount": 37521,
+      "sampleRate": 48000,
+      "sha256": "51a67ce53890435f591ae46deadca12ed4cc1ed8009b8b9c23957b38ef37f1db"
+    },
+    "CN-Captain-Middle-Aged/CES6359": {
+      "sampleCount": 40419,
+      "sampleRate": 48000,
+      "sha256": "d5ba6e148bc5b084678022700c7f081923172224126d5f57336187e6e0a3ef75"
+    },
+    "CN-Captain-Middle-Aged/CES6819": {
+      "sampleCount": 40978,
+      "sampleRate": 48000,
+      "sha256": "55da199b819bc42bbb03f0050ed97f717433abeed5035cc73ca9f454655b3084"
+    },
+    "CN-Captain-Middle-Aged/CES9197": {
+      "sampleCount": 38880,
+      "sampleRate": 48000,
+      "sha256": "541543c112504fc47c45764af9c12dbd5d9e9551132e1cc6efb74b77f0630b2c"
+    },
+    "CN-Captain-Middle-Aged/CHH2710": {
+      "sampleCount": 37478,
+      "sampleRate": 48000,
+      "sha256": "7814d1863515c13b15b53677fadf267c98a883dbb8193992149f963fa63e327e"
+    },
+    "CN-Captain-Middle-Aged/CHH4209": {
+      "sampleCount": 37388,
+      "sampleRate": 48000,
+      "sha256": "5fd46c89d32e54c9cbef21462e048328d2cf58b50132e473656dddf4fc423225"
+    },
+    "CN-Captain-Middle-Aged/CHH4337": {
+      "sampleCount": 39191,
+      "sampleRate": 48000,
+      "sha256": "72a90d725ac923f988b0a5c9440eb4631c15c6dc7a56a33b6a62f9f4b12ef107"
+    },
+    "CN-Captain-Middle-Aged/CHH7041": {
+      "sampleCount": 37920,
+      "sampleRate": 48000,
+      "sha256": "ceae88fc1a6f9ff1164969f6c691bd00d529a61085d84e9a45f902425393ee64"
+    },
+    "CN-Captain-Middle-Aged/CHH7042": {
+      "sampleCount": 32640,
+      "sampleRate": 48000,
+      "sha256": "007063f1e08e9f0008d9dfa3f6c9c18741fe6b36b2e4a15a855781c28ed85b70"
+    },
+    "CN-Captain-Middle-Aged/CHH7306": {
+      "sampleCount": 36480,
+      "sampleRate": 48000,
+      "sha256": "7ee7cd244571505b16fe3bdc18c6fd47fd3a11b10caeae73d85256503fbcd008"
+    },
+    "CN-Captain-Middle-Aged/CHH7789": {
+      "sampleCount": 37440,
+      "sampleRate": 48000,
+      "sha256": "363b851f8a8539ed88af9a0ba519b6d0706bd25cf6bb502119239adb64286525"
+    },
+    "CN-Captain-Middle-Aged/CHH8765": {
+      "sampleCount": 44097,
+      "sampleRate": 48000,
+      "sha256": "6a4e14b6dd5774582eb2b25dad074c5184a88069076985b6c809679609ab40d7"
+    },
+    "CN-Captain-Middle-Aged/CHH9015": {
+      "sampleCount": 34998,
+      "sampleRate": 48000,
+      "sha256": "c268edf1152fbfdec1ebcc81073ad5a0eab3302acf14f31e32bed90a62e487be"
+    },
+    "CN-Captain-Middle-Aged/CHH9024": {
+      "sampleCount": 40328,
+      "sampleRate": 48000,
+      "sha256": "b8ab6e9f63bccbcf6d08292eef3b3b3546f811a4098ab635172828fb7e0a4e73"
+    },
+    "CN-Captain-Middle-Aged/CJX0697": {
+      "sampleCount": 39832,
+      "sampleRate": 48000,
+      "sha256": "1c7527ed4a060784897a7b7b3a308c55b282fba56e519c02f59d0f384911f715"
+    },
+    "CN-Captain-Middle-Aged/CJX2697": {
+      "sampleCount": 41503,
+      "sampleRate": 48000,
+      "sha256": "8cd95c00d07b74b6595c85b5b42a4376860a9d6e5d77015a7ed126293e27c405"
+    },
+    "CN-Captain-Middle-Aged/CJX8923": {
       "sampleCount": 43200,
       "sampleRate": 48000,
-      "sha256": "567b8e0a8f2eb0e208444b615d8d63f70866968bc4cb5e2bb4f3b8ab3162c63d"
+      "sha256": "9dfeab27830599a66fd2650ffbbb1859733c4df5863ee4a51cafebbd46a4ce3f"
     },
-    "CN-Captain-Young/HXA2922": {
-      "sampleCount": 44400,
+    "CN-Captain-Middle-Aged/CQH4635": {
+      "sampleCount": 35040,
       "sampleRate": 48000,
-      "sha256": "64a4d4462b14850a46ff23befafafa15e08e621218b190220340367914698444"
+      "sha256": "1721981a188ab01e55e99622fa4c4c983896604161919188577092ac1c2dccf5"
     },
-    "CN-Captain-Young/HXA8166": {
-      "sampleCount": 37600,
+    "CN-Captain-Middle-Aged/CQH6596": {
+      "sampleCount": 38880,
       "sampleRate": 48000,
-      "sha256": "8544ecd06af0323379d1e67677218d3022caffccf2e75e118000eb06bd5a2dc1"
+      "sha256": "6fb4c30c0b2bf03d16a9c49955e1f8b56f094092072c941dd5b0527b7e4e0bbd"
     },
-    "CN-Captain-Young/RWY01": {
-      "sampleCount": 34177,
+    "CN-Captain-Middle-Aged/CQH7171": {
+      "sampleCount": 45956,
       "sampleRate": 48000,
-      "sha256": "8dd082a444a35b1217886a8413a45662e8a8efaa0c6b646aa75ac6328ca3e667"
+      "sha256": "857053ef37d2d219388411b792ed23fdb37477fb9b35d18b6c38125dbc4d0fb7"
     },
-    "CN-Captain-Young/RWY16L": {
-      "sampleCount": 31680,
+    "CN-Captain-Middle-Aged/CQH9098": {
+      "sampleCount": 40700,
       "sampleRate": 48000,
-      "sha256": "d05f5dd0e9a7d6c8d0d4a634cab49054178d882176baa111fa2734245e70305a"
+      "sha256": "f0b394ff6cf3d59a4e5f575900460a59a7a7814df323a4b371211c43bb41bd93"
     },
-    "CN-Captain-Young/RWY19": {
-      "sampleCount": 28366,
+    "CN-Captain-Middle-Aged/CSC3248": {
+      "sampleCount": 38880,
       "sampleRate": 48000,
-      "sha256": "75a8d1f1263b0729a0c9fcbe3e35e5660f72663272d39a92c9fbfbc3afaf7a7b"
+      "sha256": "70514a9bd0d65697a11ab7e8996967c9ab934090048065b7eb324fb4c7779c6a"
     },
-    "CN-Captain-Young/RWY34R": {
-      "sampleCount": 35520,
+    "CN-Captain-Middle-Aged/CSC3559": {
+      "sampleCount": 42126,
       "sampleRate": 48000,
-      "sha256": "ccdfbe1f019dbec2241e111354356028d4d9c11dfee89604d96b24256c7c0040"
+      "sha256": "58d1b26182c5f374669d6ca2a55612c16c271c0c2ccb3c129abcbe21dda5a339"
     },
-    "CN-Captain-Young/UEA1889": {
+    "CN-Captain-Middle-Aged/CSC5353": {
+      "sampleCount": 41311,
+      "sampleRate": 48000,
+      "sha256": "793b6fcf79fb18f9e7f1a175305c079a5c13c4a0f502832df9e3098558e988a9"
+    },
+    "CN-Captain-Middle-Aged/CSC6220": {
+      "sampleCount": 37582,
+      "sampleRate": 48000,
+      "sha256": "da8355411e2119ef420e80f9d26b06fc291c7377cd7ac36a1e993a2abde8c12c"
+    },
+    "CN-Captain-Middle-Aged/CSC6381": {
+      "sampleCount": 38400,
+      "sampleRate": 48000,
+      "sha256": "5a8141395ff5a8555490aeb2b4d7259adbe324d827492263a835dda3557aadf2"
+    },
+    "CN-Captain-Middle-Aged/CSC8247": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "14b5d9d2a8ef31057290a7d025a30fbb5c0f057e3b8547844870a56310370b76"
+    },
+    "CN-Captain-Middle-Aged/CSC8957": {
       "sampleCount": 40320,
       "sampleRate": 48000,
-      "sha256": "fe51a8f2b04161858046596cf715e906f92261910e3daf62261f704f8a465b71"
+      "sha256": "e40458039cc4dbae4a0e4a5bf6dff7fc8dd2f1b24a5cd5316e24b28f95c7c1f7"
     },
-    "CN-Captain-Young/UEA1890": {
-      "sampleCount": 44044,
+    "CN-Captain-Middle-Aged/CSC9669": {
+      "sampleCount": 39966,
       "sampleRate": 48000,
-      "sha256": "7c5597c231c23a0a4f76948d71550346f2bac33702d1c644b7ae2ceb0affb69f"
+      "sha256": "4400c0776df59924e1651d7498c4884f487b53c9cc7377312fd6d48b541b3798"
     },
-    "CN-Captain-Young/UEA2985": {
+    "CN-Captain-Middle-Aged/CSC9737": {
+      "sampleCount": 37513,
+      "sampleRate": 48000,
+      "sha256": "f4173a203b6949ca4825460220b22b0136f0c4cbfca659ebd453d536ef5d2585"
+    },
+    "CN-Captain-Middle-Aged/CSN1234": {
+      "sampleCount": 42781,
+      "sampleRate": 48000,
+      "sha256": "bc3fe7271aa7e28bc26631aa3b33f63e07ee9e26384e7b3871c8afd5d3e978f4"
+    },
+    "CN-Captain-Middle-Aged/CSN2197": {
+      "sampleCount": 41475,
+      "sampleRate": 48000,
+      "sha256": "0f275470b2d41f87add950f49cf40a0fb9016c8bfa0730e148501318b8f8e73b"
+    },
+    "CN-Captain-Middle-Aged/CSN3664": {
       "sampleCount": 40800,
       "sampleRate": 48000,
-      "sha256": "ceca057679220b785c736c685b4ffc834cd9ca7db5094659a7942e0ea289f9fe"
+      "sha256": "d7e9433edd3a644c4412ad5f21326b7a04ef24e11642e224df477cd599803489"
     },
-    "CN-Captain-Young/UEA4704": {
-      "sampleCount": 41605,
-      "sampleRate": 48000,
-      "sha256": "49b313c1d0fb70dacf9961bdca6a88b5769123b57b7f0272d64338527b63de73"
-    },
-    "CN-Captain-Young/UEA6306": {
-      "sampleCount": 39579,
-      "sampleRate": 48000,
-      "sha256": "87476a1deb5102bb3db70b4d7d52af8a6c0b22741187983c3ca4901ab943cf18"
-    },
-    "CN-Captain-Young/UEA7323": {
-      "sampleCount": 42887,
-      "sampleRate": 48000,
-      "sha256": "e62c6e0207f198d3e2c01d17c06ac3b1e46094fdb518ad175582b362682d7797"
-    },
-    "CN-Captain-Young/UEA7518": {
-      "sampleCount": 44443,
-      "sampleRate": 48000,
-      "sha256": "f65a112889045f796f45e747f09400029b6180fe1b9cd75ce432f03a4e7a837e"
-    },
-    "CN-Captain-Young/UEA8345": {
+    "CN-Captain-Middle-Aged/CSN3711": {
       "sampleCount": 39360,
       "sampleRate": 48000,
-      "sha256": "50ccbe3b37e9f437cbeac8c051237e639d9ed2b3b30d8ced52dd5566d651970f"
+      "sha256": "5b40b219209fe7c9099743372116eb1d521aea1d3c422f896a5e307088ef7011"
+    },
+    "CN-Captain-Middle-Aged/CSN4042": {
+      "sampleCount": 41413,
+      "sampleRate": 48000,
+      "sha256": "7e2bc0ea19be5beeaff852f1a1b54532de80538d91bc10e6d8047f04b69ac04e"
+    },
+    "CN-Captain-Middle-Aged/CSN4463": {
+      "sampleCount": 40880,
+      "sampleRate": 48000,
+      "sha256": "fc94c60ae0bb082e5f1f2580c2cc5d3fae36ca95dda5d53087fa68f1e0ab6223"
+    },
+    "CN-Captain-Middle-Aged/CSN5437": {
+      "sampleCount": 36864,
+      "sampleRate": 48000,
+      "sha256": "3126c11b7cae2e143b800e00f3a8044ff548a70e6ea8939ed21a74cb41973ce2"
+    },
+    "CN-Captain-Middle-Aged/CSN5851": {
+      "sampleCount": 38545,
+      "sampleRate": 48000,
+      "sha256": "02987bc92b2f6d5cefd9b52e30d8cacc3e1f6918b47ba5dd48056a033bc434e7"
+    },
+    "CN-Captain-Middle-Aged/CSN6020": {
+      "sampleCount": 34264,
+      "sampleRate": 48000,
+      "sha256": "03af549d6c568f3564fee3a306581f6f45ffcc99c4719603fa5ada098fac7648"
+    },
+    "CN-Captain-Middle-Aged/CSN6433": {
+      "sampleCount": 37954,
+      "sampleRate": 48000,
+      "sha256": "fd967a15842d8cbb7ba2673014394d6c80f1b3df71d744f4d1248f4b95ab6072"
+    },
+    "CN-Captain-Middle-Aged/CSN6738": {
+      "sampleCount": 35933,
+      "sampleRate": 48000,
+      "sha256": "9f29390fde7d6e4802bc7929b83996e66d255382d03c33b8a13f14551123a93b"
+    },
+    "CN-Captain-Middle-Aged/CSN7350": {
+      "sampleCount": 33880,
+      "sampleRate": 48000,
+      "sha256": "168ca747aadb84f8773644e104d4c84d8d407ffcd3e99658a1579eef0372eba6"
+    },
+    "CN-Captain-Middle-Aged/CSN8545": {
+      "sampleCount": 39840,
+      "sampleRate": 48000,
+      "sha256": "b74090e7dd032b5cbe815e7ca7d4150bb6336a899ff7fd63b6276b4efccf5f99"
+    },
+    "CN-Captain-Middle-Aged/CSN8765": {
+      "sampleCount": 43303,
+      "sampleRate": 48000,
+      "sha256": "d7251c3b2260e517a82ea1d5ca5b7dcb25cec62e691a3d79c9905a46a2374153"
+    },
+    "CN-Captain-Middle-Aged/CSN8798": {
+      "sampleCount": 41760,
+      "sampleRate": 48000,
+      "sha256": "57654abfcf1f6abe171f0364766a6f1ae68d633b50557f0f8a66980ca7ac9834"
+    },
+    "CN-Captain-Middle-Aged/CSN9043": {
+      "sampleCount": 40148,
+      "sampleRate": 48000,
+      "sha256": "e505aad4864f89599179e9fd34d3413bd84c7b276dfcbf5849c1297401c9d8e8"
+    },
+    "CN-Captain-Middle-Aged/CSN9173": {
+      "sampleCount": 42623,
+      "sampleRate": 48000,
+      "sha256": "8880ec5c34eb6a763a81dffc4b5c913f83a4e9d405621b1ac159f73b699bb85d"
+    },
+    "CN-Captain-Middle-Aged/CSN9190": {
+      "sampleCount": 37440,
+      "sampleRate": 48000,
+      "sha256": "e608a717fc85a33c4565eb915d629c88c06803b146b2a7a639210412ceff7a00"
+    },
+    "CN-Captain-Middle-Aged/CSN9255": {
+      "sampleCount": 45722,
+      "sampleRate": 48000,
+      "sha256": "834ac681af9a6339108679fe8a125a191ebf62f805cfb50546d6d60a304966bc"
+    },
+    "CN-Captain-Middle-Aged/CSN9355": {
+      "sampleCount": 40538,
+      "sampleRate": 48000,
+      "sha256": "63eca93ca4f2bb58639c90584422c35e5a03a62c6c229ef1bdccd8f83a17fed7"
+    },
+    "CN-Captain-Middle-Aged/CSN9938": {
+      "sampleCount": 38234,
+      "sampleRate": 48000,
+      "sha256": "e342945002d26421bc933a20c5465d348e8b233d93d150276cff1a9d44269089"
+    },
+    "CN-Captain-Middle-Aged/CSZ0820": {
+      "sampleCount": 36217,
+      "sampleRate": 48000,
+      "sha256": "fb3c6efb62659c1bc615cd405f5fb30876ecf00a16b473490245fad092d79140"
+    },
+    "CN-Captain-Middle-Aged/CSZ2546": {
+      "sampleCount": 41094,
+      "sampleRate": 48000,
+      "sha256": "0093dfc4b27f164cd27543fdbcf3a7d704a8bfdfdd20c0d6410291129e4eeff4"
+    },
+    "CN-Captain-Middle-Aged/CSZ2884": {
+      "sampleCount": 39167,
+      "sampleRate": 48000,
+      "sha256": "8cfaa0d7032d01b1fddb7d0443eaefd669d5f6b1067ebb09a4e3106107104eb3"
+    },
+    "CN-Captain-Middle-Aged/CSZ2917": {
+      "sampleCount": 43433,
+      "sampleRate": 48000,
+      "sha256": "a7ec8d3f9135234edc00fe4de3b9bb85ef7b5c5f4d2c4742fbabb890cf7eeb87"
+    },
+    "CN-Captain-Middle-Aged/CSZ3690": {
+      "sampleCount": 37627,
+      "sampleRate": 48000,
+      "sha256": "22fa86c0f12c89e020dd689c78821bcf8b7a519fd134d7f5df16ed65648a672c"
+    },
+    "CN-Captain-Middle-Aged/CSZ4321": {
+      "sampleCount": 42112,
+      "sampleRate": 48000,
+      "sha256": "695a7d20990a188321e2aa2f62c13cce5cb1334eafb929e27f094f5d3347a211"
+    },
+    "CN-Captain-Middle-Aged/CSZ5678": {
+      "sampleCount": 42118,
+      "sampleRate": 48000,
+      "sha256": "252b1dc3e3a781679f550195c31ea583738ef3db3eeffe4ba3dd09893c0197b0"
+    },
+    "CN-Captain-Middle-Aged/CSZ8235": {
+      "sampleCount": 39198,
+      "sampleRate": 48000,
+      "sha256": "67b47283ec5a40958035c1e49d9750748b1883985639ddad6ef0096859fb5fc3"
+    },
+    "CN-Captain-Middle-Aged/CSZ8855": {
+      "sampleCount": 39417,
+      "sampleRate": 48000,
+      "sha256": "22860095ddd874b7f0dd2751c2a5807f4dd3813026cdb78abbf2015239af068e"
+    },
+    "CN-Captain-Middle-Aged/CSZ9820": {
+      "sampleCount": 40108,
+      "sampleRate": 48000,
+      "sha256": "facb9aaec99a6c88c9f714f5acc352f55206e117856d47e95b6889179de18e55"
+    },
+    "CN-Captain-Middle-Aged/CSZ9929": {
+      "sampleCount": 36997,
+      "sampleRate": 48000,
+      "sha256": "341fecef57c86afdfb3f0641bc03bae3aa8507e496501e04bd22d302763f92d6"
+    },
+    "CN-Captain-Middle-Aged/CSZ9978": {
+      "sampleCount": 46194,
+      "sampleRate": 48000,
+      "sha256": "a2f6b38f45e1b6888947f9e802e99577bbbb4a2785e7cba891ad68114c90abb8"
+    },
+    "CN-Captain-Middle-Aged/CXA3174": {
+      "sampleCount": 34635,
+      "sampleRate": 48000,
+      "sha256": "69be38d373bab98227d53f9d8c32b77a0f64f21a2b2f4e5eb4c409e9abba0ea0"
+    },
+    "CN-Captain-Middle-Aged/CXA5172": {
+      "sampleCount": 41827,
+      "sampleRate": 48000,
+      "sha256": "ef51b6a85f3fed813664f745840c8241002f28f7f4eeb7d5334a56acd423adcf"
+    },
+    "CN-Captain-Middle-Aged/CXA5678": {
+      "sampleCount": 42557,
+      "sampleRate": 48000,
+      "sha256": "2da07210808a9391753cbe2ac22a5dab8efcb90414212a27841ad89069ddbafd"
+    },
+    "CN-Captain-Middle-Aged/CXA7380": {
+      "sampleCount": 39360,
+      "sampleRate": 48000,
+      "sha256": "e830eb2a6bff56565f060e5b95029354afd794ed2d4e49517a0827a7daf5fad9"
+    },
+    "CN-Captain-Middle-Aged/CXA8083": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "4a83574c1d9008c45a8d34483e34bd64aa9cafe8223c2d5abe0713bff549acab"
+    },
+    "CN-Captain-Middle-Aged/CXA8528": {
+      "sampleCount": 37402,
+      "sampleRate": 48000,
+      "sha256": "066f00fa947a114758539bf598b372b449742907482bb5eef83b55e5033eea9f"
+    },
+    "CN-Captain-Middle-Aged/CYZ0231": {
+      "sampleCount": 39360,
+      "sampleRate": 48000,
+      "sha256": "e72d9165094d8decf393b51c54893dafc6da2dab1e8bb6a0c914f786f26918a7"
+    },
+    "CN-Captain-Middle-Aged/CYZ3312": {
+      "sampleCount": 34560,
+      "sampleRate": 48000,
+      "sha256": "3e5888e235ac6ec6684a2cce7b5474a7f22e26cf61abac10cd1b37c2758996f7"
+    },
+    "CN-Captain-Middle-Aged/CYZ4237": {
+      "sampleCount": 31680,
+      "sampleRate": 48000,
+      "sha256": "5b135e8c87435ca12c07de9080d1e44005ce6d356afc8734ce096e076f2325f3"
+    },
+    "CN-Captain-Middle-Aged/CYZ6351": {
+      "sampleCount": 34560,
+      "sampleRate": 48000,
+      "sha256": "d4bdf5ac1c2e7ff2d72cf740fee1c1bf2f3490fb94ee63dd35f85bb2896560d8"
+    },
+    "CN-Captain-Middle-Aged/CYZ6722": {
+      "sampleCount": 34560,
+      "sampleRate": 48000,
+      "sha256": "99fffe3ef57bfd1529c69290df1ca9a32f77b89d869096c2fa0e574907956008"
+    },
+    "CN-Captain-Middle-Aged/CYZ9331": {
+      "sampleCount": 38400,
+      "sampleRate": 48000,
+      "sha256": "f9c465f71fc60e8ec9470395e6c0336e53b2692828ee829536914be775b1b7fc"
+    },
+    "CN-Captain-Middle-Aged/CYZ9370": {
+      "sampleCount": 33600,
+      "sampleRate": 48000,
+      "sha256": "b56553fad152daaac14c8e27c5d689022ce7465ba66b60ad5dcc9f6f6c5a68f5"
+    },
+    "CN-Captain-Middle-Aged/DKH1533": {
+      "sampleCount": 34560,
+      "sampleRate": 48000,
+      "sha256": "0efafe3ed7a1689f37af3503f389788ce473b2a3f42459baca41007f706ab430"
+    },
+    "CN-Captain-Middle-Aged/DKH4086": {
+      "sampleCount": 36480,
+      "sampleRate": 48000,
+      "sha256": "ef3da862f3370be2266bbe3c3d5531985f472f5529c37caa6e5de0b92e01254b"
+    },
+    "CN-Captain-Middle-Aged/DKH4514": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "c2728d67711d57e63ab2c669ccd5eacdbdd5e931eba09ab1811f2413e970821a"
+    },
+    "CN-Captain-Middle-Aged/DKH4923": {
+      "sampleCount": 36480,
+      "sampleRate": 48000,
+      "sha256": "57f8f93f5f2fed215f433dd301dc9e53906751b65bd8b832d8968e7d31858b18"
+    },
+    "CN-Captain-Middle-Aged/DKH5137": {
+      "sampleCount": 33600,
+      "sampleRate": 48000,
+      "sha256": "fdb4c2b3838e198dbcebb3c2e83dbd43ddf347901aba0d041e25c817f16d76f6"
+    },
+    "CN-Captain-Middle-Aged/DKH5709": {
+      "sampleCount": 36480,
+      "sampleRate": 48000,
+      "sha256": "7b1c7f4697bee2d370f0091f2c9ad364b016e33d50e4dd403b62707ae68ce749"
+    },
+    "CN-Captain-Middle-Aged/DKH6071": {
+      "sampleCount": 38400,
+      "sampleRate": 48000,
+      "sha256": "fce77ce12175f102c3cc535b080aae9cb052fc3e24a0d01ac0a2d843c5ae01a5"
+    },
+    "CN-Captain-Middle-Aged/GCR1550": {
+      "sampleCount": 33200,
+      "sampleRate": 48000,
+      "sha256": "358737366d61603610b5aa7e4090ae7c6bc57759658720c82b5d1d2d20527a9e"
+    },
+    "CN-Captain-Middle-Aged/GCR2621": {
+      "sampleCount": 36800,
+      "sampleRate": 48000,
+      "sha256": "4eb80336b82387c6ca7bb1944b8a68d6fe8173a52f356a6cea2e3b48d1bd8ba6"
+    },
+    "CN-Captain-Middle-Aged/GCR3764": {
+      "sampleCount": 43600,
+      "sampleRate": 48000,
+      "sha256": "eb8bdafba0c13850d0876a48d31ba5dbf818a2ffcf1df6eb72592b7f2af6569b"
+    },
+    "CN-Captain-Middle-Aged/HXA2922": {
+      "sampleCount": 36800,
+      "sampleRate": 48000,
+      "sha256": "cc694b980fec8855d3df6ed4ab991cb29cc3800251076ada6a2842db4d95f2b5"
+    },
+    "CN-Captain-Middle-Aged/HXA8166": {
+      "sampleCount": 30800,
+      "sampleRate": 48000,
+      "sha256": "959951c5c6dacc7ed9ba314e3fdec7ae8db633fec3672d5b6662d020663cf46d"
+    },
+    "CN-Captain-Middle-Aged/RWY01": {
+      "sampleCount": 30158,
+      "sampleRate": 48000,
+      "sha256": "a658d55803df56eff1290604f218de58fdb774a1b6ba613dfbe2dc389a30fbea"
+    },
+    "CN-Captain-Middle-Aged/RWY16L": {
+      "sampleCount": 28800,
+      "sampleRate": 48000,
+      "sha256": "fc149a8f1e09e954b62e2fbfbe9b1dd2bf87b6709a90f78db99b24174c895756"
+    },
+    "CN-Captain-Middle-Aged/RWY19": {
+      "sampleCount": 24000,
+      "sampleRate": 48000,
+      "sha256": "5804b7435c3d6e608c1ea769c6b07fa317727d73f0484ea89ac5864264f346da"
+    },
+    "CN-Captain-Middle-Aged/RWY34R": {
+      "sampleCount": 32160,
+      "sampleRate": 48000,
+      "sha256": "8a0b91e6a4ac1903ec18eb5aab419f96388f433c8f3ee3b462cfd734b9d6fe10"
+    },
+    "CN-Captain-Middle-Aged/UEA1889": {
+      "sampleCount": 38400,
+      "sampleRate": 48000,
+      "sha256": "53d7d2cebc4ff002e507362314ed12464274b12902c4c0b36646fc16f0493d04"
+    },
+    "CN-Captain-Middle-Aged/UEA1890": {
+      "sampleCount": 39637,
+      "sampleRate": 48000,
+      "sha256": "2cee123ac8087c0b9f23ae67e8952b84353a3513a32407357f82cde8872108a6"
+    },
+    "CN-Captain-Middle-Aged/UEA2985": {
+      "sampleCount": 41648,
+      "sampleRate": 48000,
+      "sha256": "9012ed9140b4c9b3e0c3bbce17a3f4da3d47fecf97bd8761b2e3e9f28bc986e6"
+    },
+    "CN-Captain-Middle-Aged/UEA4704": {
+      "sampleCount": 42105,
+      "sampleRate": 48000,
+      "sha256": "6f579425e2a8e773a8ac89efdc9241e6a29b2b340ce09797bff60adbba8f4b5d"
+    },
+    "CN-Captain-Middle-Aged/UEA6306": {
+      "sampleCount": 35640,
+      "sampleRate": 48000,
+      "sha256": "4c08e1537978be0d5c01c8386a08e24f61b1397c79ffbf58863e40fd4d20d477"
+    },
+    "CN-Captain-Middle-Aged/UEA7323": {
+      "sampleCount": 42300,
+      "sampleRate": 48000,
+      "sha256": "b504d85e484f2b1c1a1ddbb03aa93d19e4a7960f190da78f0f778e36dacb5dc0"
+    },
+    "CN-Captain-Middle-Aged/UEA7518": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "cea9b5966c27d4c2c5115f14cd39f636cffd248c8d1661fa4b5272fe5ba74ae4"
+    },
+    "CN-Captain-Middle-Aged/UEA8345": {
+      "sampleCount": 39613,
+      "sampleRate": 48000,
+      "sha256": "a1e5403a01a4c3fae14b2b57c35e6d8878f2d256d4a2cb53be94dfee8dc9785b"
+    },
+    "CN-Captain-Young-EN/AXM1416": {
+      "sampleCount": 62880,
+      "sampleRate": 48000,
+      "sha256": "0d3579d96f964d225e4579eb23b5426bb1764cec13704b6ac825c4438707155f"
     },
     "CN-Captain-Young-EN/BDJ1641": {
       "sampleCount": 48800,
@@ -3651,890 +2776,900 @@
       "sampleRate": 48000,
       "sha256": "611d54d927ab0010402af3b740043fa5b0b16a6c4fa9a463de656573bea8bd84"
     },
-    "Hanser/BDJ1641": {
-      "sampleCount": 47600,
+    "CN-Captain-Young/BDJ1641": {
+      "sampleCount": 38400,
       "sampleRate": 48000,
-      "sha256": "5d242b04585079fc306f906607c2032b33b83f7bc78700474c27f496a86eb392"
+      "sha256": "af3d371fb6d31eaf5b189e2c45760e39df2c9f928860bbd0ccf9fba90035cee5"
     },
-    "Hanser/BDJ4043": {
-      "sampleCount": 49800,
+    "CN-Captain-Young/BDJ4043": {
+      "sampleCount": 37600,
       "sampleRate": 48000,
-      "sha256": "df2e6209ffce3e90e3f7604e70ac0586f1183899d1422472e823e0cfdc4a6c08"
+      "sha256": "c1f3099d0c017e5806375058389429bbb5bd6e4152efb5a412829eb27423b200"
     },
-    "Hanser/BDJ5236": {
-      "sampleCount": 46000,
+    "CN-Captain-Young/BDJ5236": {
+      "sampleCount": 43600,
       "sampleRate": 48000,
-      "sha256": "a48de1511ea2a5067391b39e7054cebc607c487b085d1231054f45c92ef5030f"
+      "sha256": "db69e70dbce0b9b8982ccf794e75abce5c490b0310e69728e0703ba39dee1533"
     },
-    "Hanser/CCA2761": {
-      "sampleCount": 47520,
+    "CN-Captain-Young/CCA2761": {
+      "sampleCount": 45409,
       "sampleRate": 48000,
-      "sha256": "f364a41af207f64ee2fa829607b54c0475f068f679bbc3f0030496c94d202f7a"
+      "sha256": "2f7f925dac32b23ac44ff188cb9093f1f3a42b87cdcf402a08b66ebb330ab6fe"
     },
-    "Hanser/CCA2762": {
-      "sampleCount": 44936,
+    "CN-Captain-Young/CCA2762": {
+      "sampleCount": 49920,
       "sampleRate": 48000,
-      "sha256": "a9d23152e66933dff2d7de730356ac719dfbb01dbe87809c684836144a174c88"
+      "sha256": "337fedf1dfaea58d4d275e563e5aa1ee7aface5f89b7233ece9de2bf842f61ad"
     },
-    "Hanser/CCA3115": {
-      "sampleCount": 44371,
+    "CN-Captain-Young/CCA3115": {
+      "sampleCount": 44160,
       "sampleRate": 48000,
-      "sha256": "519a1f5560d7b1490903e9d9390d77cff7a59534ca15271cdc44488b3a0bff61"
+      "sha256": "50bd443dd933d2896f4e95e31b9ea8188b8ed9b3f92b207526bb7bd1356de8a7"
     },
-    "Hanser/CCA4662": {
-      "sampleCount": 43049,
+    "CN-Captain-Young/CCA4662": {
+      "sampleCount": 42708,
       "sampleRate": 48000,
-      "sha256": "6112264f884cde56a6e125081827cba6acac513ba7861079116c17d703b93f51"
+      "sha256": "23df7b1543847151535b508debe391f16acf9d4a441b978e41e303f480cec814"
     },
-    "Hanser/CCA4793": {
-      "sampleCount": 51548,
+    "CN-Captain-Young/CCA4793": {
+      "sampleCount": 54317,
       "sampleRate": 48000,
-      "sha256": "957b8cf0188d3fe36abef86c18cdc53fbb9a21d75f5f55c32abe8eac74ef3c33"
+      "sha256": "048c42098a9c9ede353c002c232a1f16e8aac780d95a3e71b6537bed7c6bac1b"
     },
-    "Hanser/CCA4851": {
-      "sampleCount": 47833,
+    "CN-Captain-Young/CCA4851": {
+      "sampleCount": 50926,
       "sampleRate": 48000,
-      "sha256": "f9cd8d35060bdcb6aba68ba649984b906efb448163dade8244c10d6a2af17f28"
+      "sha256": "7a2df2575662b6abf9f17bf21c466477e05a4cdd40e00eeb3f156325fff50d9c"
     },
-    "Hanser/CCA5198": {
-      "sampleCount": 44105,
+    "CN-Captain-Young/CCA5198": {
+      "sampleCount": 44640,
       "sampleRate": 48000,
-      "sha256": "edd8c3ec8fa14a7db1b505176052aaa3d948ae16bb089f8f8dd5c099e83e7359"
+      "sha256": "c892e19c505ea6ca52576b7d3c5814e4a63bbf226e548a7b38226bae5e6462c8"
     },
-    "Hanser/CCA5678": {
-      "sampleCount": 44463,
+    "CN-Captain-Young/CCA5678": {
+      "sampleCount": 49408,
       "sampleRate": 48000,
-      "sha256": "dbb02c56bccbda4d50fbbc73da536bab1ec4cd196eea8560ed1f71b898f7c422"
+      "sha256": "8ca84a4719100e307f575c10ba558982c006eacd0a485566079d3468e8c35569"
     },
-    "Hanser/CCA7198": {
+    "CN-Captain-Young/CCA7198": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "d177f8fc6eda4957d360dcb9ceb554b9e9790fa836985bfff91188b334fca373"
+    },
+    "CN-Captain-Young/CCA8708": {
+      "sampleCount": 43680,
+      "sampleRate": 48000,
+      "sha256": "2b58c082689b3cf21f903d75687538b279b493ac1fba0626b17e9a373f3b0d59"
+    },
+    "CN-Captain-Young/CCA9052": {
+      "sampleCount": 48480,
+      "sampleRate": 48000,
+      "sha256": "cf48cc295f3edc840748e16f9991a7f0e6b9c974e6ec19bdb4535d0903586f22"
+    },
+    "CN-Captain-Young/CCA9120": {
+      "sampleCount": 43194,
+      "sampleRate": 48000,
+      "sha256": "0b3904711ff18848d7a54dd9909ab40ed6c6f185b989dfa94b396a3633dfe9bd"
+    },
+    "CN-Captain-Young/CDG1152": {
+      "sampleCount": 36960,
+      "sampleRate": 48000,
+      "sha256": "74540eeba4a4fe40983ad80080f31a4ccc4032db882104ea9a86dc642ca981da"
+    },
+    "CN-Captain-Young/CDG1174": {
+      "sampleCount": 40800,
+      "sampleRate": 48000,
+      "sha256": "ec0f00b514b2c47e0c878b06f8fa01da1939afb80d8414f027d2f3528f915715"
+    },
+    "CN-Captain-Young/CDG1188": {
       "sampleCount": 43200,
       "sampleRate": 48000,
-      "sha256": "026d0628ce5e2421fa51b63a1b5d135dcaa667318c047a1fd5fd51d7d9d611be"
+      "sha256": "8dda0cd8bef90e6d249e5bc316327f98081fe60fe8d6dfb6dbe6a1ad49e88760"
     },
-    "Hanser/CCA8708": {
-      "sampleCount": 49440,
+    "CN-Captain-Young/CDG1191": {
+      "sampleCount": 40242,
       "sampleRate": 48000,
-      "sha256": "fc76e432ba734bf19e123e7735e49a56b62b9e3d5f9306c3a2d0aff319bfa1db"
+      "sha256": "a3ec58d9a2122ed4b78bc98bceebbee6dba0c813638e99217bfad802e1ed6764"
     },
-    "Hanser/CCA9052": {
-      "sampleCount": 44160,
+    "CN-Captain-Young/CDG1192": {
+      "sampleCount": 41760,
       "sampleRate": 48000,
-      "sha256": "feee43956eb46eafdf3946090eef18eb02244336d07aa58eb9fab24301e8c322"
+      "sha256": "ed58310bec70785d1ebdf111eba45dbf49d271d64e95b589ace3fc21deb52cc0"
     },
-    "Hanser/CCA9119": {
-      "sampleCount": 45120,
+    "CN-Captain-Young/CDG1198": {
+      "sampleCount": 41134,
       "sampleRate": 48000,
-      "sha256": "be3c21237856c7cae5bdb05c4deb96085039021965186eced6397766e0b9785c"
+      "sha256": "99c8d47468c070069afbbe24d281686d340401a1c3963e32508587831d2b5f30"
     },
-    "Hanser/CCA9120": {
+    "CN-Captain-Young/CDG1234": {
+      "sampleCount": 46688,
+      "sampleRate": 48000,
+      "sha256": "1afb11722be96c2fc831cb013a46b57a5e92213bcbfb9af76cb507b6c6b23d92"
+    },
+    "CN-Captain-Young/CDG2355": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "1c295cdbd2ec8583ed2c165bb57d7b7e7592a720df5a33f95c4898f2cc5c5de7"
+    },
+    "CN-Captain-Young/CDG2577": {
+      "sampleCount": 39360,
+      "sampleRate": 48000,
+      "sha256": "49a3c7fb457b7887c8d539c76e1deb1f4f4e0f4d2d761bad8d3a9997886f10c0"
+    },
+    "CN-Captain-Young/CDG2701": {
+      "sampleCount": 44684,
+      "sampleRate": 48000,
+      "sha256": "2129cfc949064e822522b7b15611eca3e530f2eadb1e4a3264b223993eaecbbb"
+    },
+    "CN-Captain-Young/CDG2702": {
       "sampleCount": 47520,
       "sampleRate": 48000,
-      "sha256": "edd7e647815669b35157b32efa080e15fa4a35788718769b5d8ee81f93fe2b06"
+      "sha256": "abc437b8df7b9a931318420291eaa3e26bffd92279904f2427ddb396c6365f10"
     },
-    "Hanser/CDG1152": {
+    "CN-Captain-Young/CDG3827": {
+      "sampleCount": 45600,
+      "sampleRate": 48000,
+      "sha256": "7dfd2ea94cd2689581195234ab764dadca8669c393c8735c6a597c9fd37fa57c"
+    },
+    "CN-Captain-Young/CDG3828": {
       "sampleCount": 42720,
       "sampleRate": 48000,
-      "sha256": "2c6945e1f9aa75458f81b96ab6d0376e1218e16c7b73d29e5cf4d263ebf74e84"
+      "sha256": "ee81f5d8c954fa124b67d2a06bd6ac3f045419e75adb5416aa149caa4c2fd75c"
     },
-    "Hanser/CDG1174": {
-      "sampleCount": 50155,
+    "CN-Captain-Young/CDG5073": {
+      "sampleCount": 45853,
       "sampleRate": 48000,
-      "sha256": "5f371df0bd7fe090cab6608d99e1d0aa7c30e92442c5c66d68f9b5d5b0712000"
+      "sha256": "eacda76d36f6a3c6f7245040656b36d6c9ae21a1edfb2dcf2b5a1cfa8ccef1f7"
     },
-    "Hanser/CDG1188": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "d1237a27d4394506b40bd60e4ce153b770f2e9e6c1176a81d85d744e375fe8ba"
-    },
-    "Hanser/CDG1191": {
-      "sampleCount": 48000,
-      "sampleRate": 48000,
-      "sha256": "a2f818c4c40a7122edbddc5fa7956550fa5d29eef596c5009a495f1d79cad8d8"
-    },
-    "Hanser/CDG1192": {
-      "sampleCount": 46080,
-      "sampleRate": 48000,
-      "sha256": "60a68ae56288fc41767adb6abb03c3f83fa072ebdf0126812922cf887b27803e"
-    },
-    "Hanser/CDG1198": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "ac4d08dc11107237c742ccfa38fa5c99f9de70d5553a5f650883131021015fa1"
-    },
-    "Hanser/CDG1234": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "a24b98596a99eedf14b0c8c38ca47ff9dc39ea231a0e3517f3f81a30c20d7b16"
-    },
-    "Hanser/CDG2355": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "350d6623af6f7239a7569f8e0ed70a9ddf11f28d114c4a96010922a92e2dce0d"
-    },
-    "Hanser/CDG2577": {
-      "sampleCount": 40320,
-      "sampleRate": 48000,
-      "sha256": "6f7dcf73e667e731fff73c7944f04ed36f08707a8b92b40d7e2ad56063d25b81"
-    },
-    "Hanser/CDG2701": {
-      "sampleCount": 48000,
-      "sampleRate": 48000,
-      "sha256": "28cb81e2a0d2a90bfe03a4996b232db73c2f57f08cd0a00effee2745c2da813d"
-    },
-    "Hanser/CDG2702": {
-      "sampleCount": 48000,
-      "sampleRate": 48000,
-      "sha256": "5bddaab72703f5783ae49b236db13be56ce173c3142547a481ea87e31c8719d7"
-    },
-    "Hanser/CDG3827": {
-      "sampleCount": 42720,
-      "sampleRate": 48000,
-      "sha256": "6be330753c8efb7221a69cc96051f31ed4626e276670f505e16463ed2b533814"
-    },
-    "Hanser/CDG3828": {
-      "sampleCount": 44416,
-      "sampleRate": 48000,
-      "sha256": "7bf5e3e66c125988935c3886beb066b265ec930bd3b2942d2378a999a87f0545"
-    },
-    "Hanser/CDG5073": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "b448a8dde2b87cb9522af03468eefcbe8d07cff10c4ebd4ed88c99fe5c9bd636"
-    },
-    "Hanser/CDG5144": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "a725f103b1893503039f4ef9ac0f1146e1e7d4c75d41c1f0e30c7e555bee1c74"
-    },
-    "Hanser/CDG5166": {
-      "sampleCount": 42240,
-      "sampleRate": 48000,
-      "sha256": "02abe22dd17cee314bcb26ce32ff6e89bfde1230f10a2cf279716e43b7a2a339"
-    },
-    "Hanser/CDG5737": {
+    "CN-Captain-Young/CDG5144": {
       "sampleCount": 39840,
       "sampleRate": 48000,
-      "sha256": "b559c9a863eeebb28a7507aa91548953108857c590684dfc4b6dfd3d8e9e9c88"
+      "sha256": "ec4278e1f872e26d0789114c4c85d5fae3c454d3773ecc870be1b4af7c9bb696"
     },
-    "Hanser/CDG5738": {
-      "sampleCount": 49440,
-      "sampleRate": 48000,
-      "sha256": "92c5aa8032f01c5d540709aeae7e2442b1d818dea29db9cdbeb9c96eec5d7dbc"
-    },
-    "Hanser/CDG6445": {
-      "sampleCount": 47833,
-      "sampleRate": 48000,
-      "sha256": "92212f1b770486acec6e89f4782e1c152dc93a2600e06a4c8835bd79c6a11f04"
-    },
-    "Hanser/CDG8032": {
-      "sampleCount": 46273,
-      "sampleRate": 48000,
-      "sha256": "357120050459824c0425d65a0119ceddcc04877b8adc438df86445b53501ee79"
-    },
-    "Hanser/CDG8034": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "c8f390dbe8401fbdefc8f60df74f0d1391aef6d9e95bb0fde0f7e3cfd7587244"
-    },
-    "Hanser/CDG8044": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "14831821e0abcd938a6223e4d144c399f6104fd5d3bde47bfeb78b7d6f6e6597"
-    },
-    "Hanser/CDG8078": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "dee0df326e3ddfac6cee9feedeb85410d81cd8e90128b84e4dc97b235d5e1b1f"
-    },
-    "Hanser/CDG8085": {
-      "sampleCount": 45385,
-      "sampleRate": 48000,
-      "sha256": "04b34602b13e4c89984116d0e37018b44e10a838bce9c8c317c8ceee60024dba"
-    },
-    "Hanser/CDG8086": {
-      "sampleCount": 48960,
-      "sampleRate": 48000,
-      "sha256": "1335bbe6d3b401905bb8417b7848476ae6caa7e15399f13fec4aba9931981123"
-    },
-    "Hanser/CDG8412": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "025fcde8cdfc029fba4f4707392e244f982ec54baa87bdbca7dcf0fe1941b4c1"
-    },
-    "Hanser/CDG8414": {
-      "sampleCount": 47040,
-      "sampleRate": 48000,
-      "sha256": "bffc4045de7fa9a0bda54eb8167219578707b7d8a09643c370a9e6c286a0f893"
-    },
-    "Hanser/CDG8711": {
-      "sampleCount": 44089,
-      "sampleRate": 48000,
-      "sha256": "b0333b39f24c902dc0576b22deb507e8e3e001050d11e2348308de4101d07e78"
-    },
-    "Hanser/CDG8712": {
-      "sampleCount": 42240,
-      "sampleRate": 48000,
-      "sha256": "6d85e1bbe130b760bcddf1728c0a8f83ec2e9735fd30afc381cd58d93bd61bee"
-    },
-    "Hanser/CDG8742": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "a4df2d868b3cdf236ddc18ad2e961c9a86eb37d83f7d8b9f88c4a8562de9fcef"
-    },
-    "Hanser/CDG8765": {
-      "sampleCount": 47520,
-      "sampleRate": 48000,
-      "sha256": "badbec02182ffd5c6e1a9fc18c6a5fef3ceac52de371c2d6b0799f48036b8b4e"
-    },
-    "Hanser/CDG8818": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "60e929ed65e3bf986d0e051e03fc894d36e15599fc282405ada738b81c9677b7"
-    },
-    "Hanser/CDG8821": {
-      "sampleCount": 42817,
-      "sampleRate": 48000,
-      "sha256": "91e3f975e4a1e313070d0c50d75756926652df92d583d03759c17a5abb5a2f78"
-    },
-    "Hanser/CDG8825": {
-      "sampleCount": 44640,
-      "sampleRate": 48000,
-      "sha256": "5cdcf5ba831f042b6dfdae6c1c880cfd5c3333ddee57e687825b2cd6ba437965"
-    },
-    "Hanser/CDG8828": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "be303567361da08be1c9cbb93ca26e1a0b1c9cf602b175b221e8a5606674f829"
-    },
-    "Hanser/CDG8851": {
-      "sampleCount": 47040,
-      "sampleRate": 48000,
-      "sha256": "b8af9130d0ea6f456e6fb5030384a4e32c4489a44950e4df90aa50d6da12679e"
-    },
-    "Hanser/CDG8879": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "2e235b0fd8a9a534f6cfabbcec0f27bae74cb4d9c4030fe306d407407ccd187a"
-    },
-    "Hanser/CDG9639": {
-      "sampleCount": 43098,
-      "sampleRate": 48000,
-      "sha256": "97364a18b67689cdec5b83768f0dc3941f5b74c2a5f5824633d5c45dab95ed37"
-    },
-    "Hanser/CDG9662": {
+    "CN-Captain-Young/CDG5166": {
       "sampleCount": 40320,
       "sampleRate": 48000,
-      "sha256": "56e8684ce96676d5d463da99d6fb4ef0e90e902e2027beedeb1e2fcff2c1e630"
+      "sha256": "baae581961e8284775fffff3d207b8bc4f3119e0e840a9aef205af56dac3cb34"
     },
-    "Hanser/CDG9663": {
+    "CN-Captain-Young/CDG5737": {
+      "sampleCount": 43680,
+      "sampleRate": 48000,
+      "sha256": "fbabbdddd28f612e96917fadecc603990a5e47ee6b2c798df2f3397da3b01b59"
+    },
+    "CN-Captain-Young/CDG5738": {
+      "sampleCount": 43338,
+      "sampleRate": 48000,
+      "sha256": "e3c7b51b80f74ee8a3fbe21324c1e4d19d011a53146f63e9204aada01961f96a"
+    },
+    "CN-Captain-Young/CDG6445": {
+      "sampleCount": 38880,
+      "sampleRate": 48000,
+      "sha256": "06f990bdb9da0ab8d9281f55b582723419f6c968dcf52988dcaf2ebbc06369de"
+    },
+    "CN-Captain-Young/CDG8032": {
+      "sampleCount": 37749,
+      "sampleRate": 48000,
+      "sha256": "2a7ed4aff6e2fa6be834292ff1528e3f86b537b0e105c2b2ac153fb996a8ae13"
+    },
+    "CN-Captain-Young/CDG8034": {
+      "sampleCount": 42033,
+      "sampleRate": 48000,
+      "sha256": "3b635d446cdab3bd8656db51d13c7ef4ce122d4cff13237c4b5945682a48177d"
+    },
+    "CN-Captain-Young/CDG8044": {
       "sampleCount": 42240,
       "sampleRate": 48000,
-      "sha256": "faec0ef043c50751ca66eaa47dea8b1564e11a0010d8fad070cef4211e0b6ad8"
+      "sha256": "b0ec2c44c4abf46e13426a55e116eb7024780b689879aec4dcd2c48415a3b09f"
     },
-    "Hanser/CDG9664": {
-      "sampleCount": 46439,
+    "CN-Captain-Young/CDG8078": {
+      "sampleCount": 43792,
       "sampleRate": 48000,
-      "sha256": "ebeb0cdd19b01fff424ca164c8db09592f49e35a9f9d9a43eebdb01b48d844d7"
+      "sha256": "b280f9f7afa00e0f1e99614e6329ed6eb7589015acf006c718e16bc2b6c31946"
     },
-    "Hanser/CDG9956": {
-      "sampleCount": 44640,
+    "CN-Captain-Young/CDG8085": {
+      "sampleCount": 45695,
       "sampleRate": 48000,
-      "sha256": "23c821a39b5c1c3bd61dc56149637d7fd7f6c856002edf27ba3fb38968bcaee4"
+      "sha256": "52a120c2fc08cc08856c2d29d506bdfbaf023bf34eef3ebd51fd26a443cc3578"
     },
-    "Hanser/CES1111": {
-      "sampleCount": 54240,
+    "CN-Captain-Young/CDG8086": {
+      "sampleCount": 41888,
       "sampleRate": 48000,
-      "sha256": "3a487fa7466e88e09a10f288afb6d580ee5ab59875f30ccec44c9af6c9554a0f"
+      "sha256": "0ae4b877709c8a1ab626a36b2852a21044f7d911ca4d5803115143869ff155ec"
     },
-    "Hanser/CES1234": {
-      "sampleCount": 48960,
-      "sampleRate": 48000,
-      "sha256": "d5577e61201247f4bc4ad4fb9bd929fab612eae02074fd366d3d161e3dcc1ad0"
-    },
-    "Hanser/CES2430": {
-      "sampleCount": 47601,
-      "sampleRate": 48000,
-      "sha256": "80d3059624266adbf1864cb77fd15a582cbfe6f63fb33c18637987cf2100f04a"
-    },
-    "Hanser/CES2604": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "95ee421af2e69bef11a8259a2e7e27d1fef3c30ae8eda5af730d116834faca79"
-    },
-    "Hanser/CES2641": {
-      "sampleCount": 46439,
-      "sampleRate": 48000,
-      "sha256": "8ef8cb12297e825c638c6f8f0afb4b564bb888a26506a83c2670a1b78c505ebf"
-    },
-    "Hanser/CES3547": {
-      "sampleCount": 40800,
-      "sampleRate": 48000,
-      "sha256": "ae6e8c780c35069cc2222629d325b7b12108e887718d2bce01c7dc3ad4cd60f3"
-    },
-    "Hanser/CES3548": {
-      "sampleCount": 42240,
-      "sampleRate": 48000,
-      "sha256": "c1a60beef2f872e2b916dd0c6563c006d1432e2dfdc770a38c7f0736ba900b7b"
-    },
-    "Hanser/CES3551": {
-      "sampleCount": 48000,
-      "sampleRate": 48000,
-      "sha256": "17329951c8218d400bdb35c5cda57b141f14dc1b8a963f95b2d9e5a29cf8e890"
-    },
-    "Hanser/CES4755": {
-      "sampleCount": 45600,
-      "sampleRate": 48000,
-      "sha256": "71a8f62af18b32bfd69a5d49a09c4c60ac2056fd8e98df081b53979f60511bdf"
-    },
-    "Hanser/CES4951": {
-      "sampleCount": 41280,
-      "sampleRate": 48000,
-      "sha256": "d68ed1fae3042a3a418c22d2349868c9576987af31636d73d616c638591a54d6"
-    },
-    "Hanser/CES5435": {
-      "sampleCount": 41760,
-      "sampleRate": 48000,
-      "sha256": "89fa6af2e535eee16da46919488a9e4e0e70e69d8a83bdfa42182298cc173785"
-    },
-    "Hanser/CES5472": {
-      "sampleCount": 42240,
-      "sampleRate": 48000,
-      "sha256": "a9caf7fb471c8698a2a77ab9f6441db2cec0873ea118311b9d318c7a134a127a"
-    },
-    "Hanser/CES5578": {
-      "sampleCount": 48863,
-      "sampleRate": 48000,
-      "sha256": "5de6621798c76b163a911eeb9c4d1cd0e87a82998323335cedd832f425da4a31"
-    },
-    "Hanser/CES5629": {
-      "sampleCount": 51840,
-      "sampleRate": 48000,
-      "sha256": "69e4933007e174b3e21945d247fc33014901caa4279c5f224905da318e40f27e"
-    },
-    "Hanser/CES5657": {
-      "sampleCount": 45556,
-      "sampleRate": 48000,
-      "sha256": "9f857b32b858751769873e065b73468f3f18d5c4537f170ccedf37185a22b46d"
-    },
-    "Hanser/CES5678": {
-      "sampleCount": 44983,
-      "sampleRate": 48000,
-      "sha256": "a451addaac39200d37c20308cfcb6fc3c614a35a22e3e03ca9037990ad46c4a4"
-    },
-    "Hanser/CES5751": {
-      "sampleCount": 48568,
-      "sampleRate": 48000,
-      "sha256": "c8794a5905443effc947fe0b148ad26e2a27bffbd10fa97071d6151736dfda45"
-    },
-    "Hanser/CES5887": {
-      "sampleCount": 43200,
-      "sampleRate": 48000,
-      "sha256": "f4af1f873970e6189e750a8d92881623342a19fb80127ca6d11263795878c857"
-    },
-    "Hanser/CES5888": {
-      "sampleCount": 41760,
-      "sampleRate": 48000,
-      "sha256": "9d492445476200d06a3f6d08630e43257186701fa66b7f06d54c053f90f10a2e"
-    },
-    "Hanser/CES6131": {
-      "sampleCount": 47520,
-      "sampleRate": 48000,
-      "sha256": "e93e1897903fc9d1b51fcb69d17f25b461cdbc96536fa30b823e18caf747ab12"
-    },
-    "Hanser/CES6132": {
-      "sampleCount": 42240,
-      "sampleRate": 48000,
-      "sha256": "efd6b95fabf224e51f165f4fe86c2495479565ee89c4cc3e56a4a110ccd49417"
-    },
-    "Hanser/CES6313": {
-      "sampleCount": 43802,
-      "sampleRate": 48000,
-      "sha256": "b906b318d2fd0c66fb9d11a26d5eb01a73e17c7de18ebef902c75035c02a89f1"
-    },
-    "Hanser/CES6359": {
-      "sampleCount": 41280,
-      "sampleRate": 48000,
-      "sha256": "b2d1243dbccef8cbf0b1d7919a6c5fc49b6ad7c32f127d89582e7a57c8b3b8ea"
-    },
-    "Hanser/CES6819": {
-      "sampleCount": 47040,
-      "sampleRate": 48000,
-      "sha256": "da0d73cc3964c61a0aecdc6083fa7f1fad37a5fc5076eff6238ae320505ca4ab"
-    },
-    "Hanser/CES9197": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "8b577846227fc2fd033d8803ec9a868bc117a19f6c7aab1be059d5fa5ddf7bd4"
-    },
-    "Hanser/CHH2710": {
-      "sampleCount": 49440,
-      "sampleRate": 48000,
-      "sha256": "1b5a2f943054d1a95305aa92da74c4da73b7068bced826ff66d0b72e738c166b"
-    },
-    "Hanser/CHH4209": {
-      "sampleCount": 43200,
-      "sampleRate": 48000,
-      "sha256": "b137c7bf861686f6a58cf5fbf725fe5e0b3ef5a8910b539331d5d25ea6d3dfed"
-    },
-    "Hanser/CHH4337": {
-      "sampleCount": 41760,
-      "sampleRate": 48000,
-      "sha256": "6085c242ed6099a888c0414bb385ade33627736082aa5087479b43e21a984e4e"
-    },
-    "Hanser/CHH7041": {
-      "sampleCount": 40445,
-      "sampleRate": 48000,
-      "sha256": "1fba3510ca64729bfa487edcd09f41ae1fa9bfd388a2d40ce51455f99b39a297"
-    },
-    "Hanser/CHH7042": {
+    "CN-Captain-Young/CDG8412": {
       "sampleCount": 40320,
       "sampleRate": 48000,
-      "sha256": "9ec3070a519422e1594157438bf7ec011519e87a4469568946108381c4676d6f"
+      "sha256": "13c5593d099602f2a000ab8b1d1badcdffffe8f94b33ac9b26284c8de6e21de5"
     },
-    "Hanser/CHH7306": {
-      "sampleCount": 48771,
-      "sampleRate": 48000,
-      "sha256": "40f4c39010f2238dac80430875c068ab729ccc666406443ec8546f4610dd66f7"
-    },
-    "Hanser/CHH7789": {
-      "sampleCount": 39489,
-      "sampleRate": 48000,
-      "sha256": "174b142783bdbd76f2a2c906724cdd468c3e8b705cb0b846074ca6f826265c83"
-    },
-    "Hanser/CHH8765": {
-      "sampleCount": 48454,
-      "sampleRate": 48000,
-      "sha256": "619d31802c161f6efa51ff514fb46fa6b4b14dcedcc94e9dd0955f703fd83106"
-    },
-    "Hanser/CHH9015": {
-      "sampleCount": 43680,
-      "sampleRate": 48000,
-      "sha256": "e089815c2a8ee36d1a8c0c0361c2c77ccba2090d0f54473dc535b6d02b6677d1"
-    },
-    "Hanser/CHH9024": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "b870e791aedbe2543ab2230c99a47c89208988043cf2e27f2f50d61aa0a9234d"
-    },
-    "Hanser/CJX0697": {
+    "CN-Captain-Young/CDG8414": {
       "sampleCount": 44640,
       "sampleRate": 48000,
-      "sha256": "4bc1306269f58f0e098f849ae2f1ce9b78c5b9cb0eac50775019c63fa3c4a4cd"
+      "sha256": "8d3c8dbc0e79134abc44a6bae7cee7069d2e9681501f0ba8fca7b90776b9e7d3"
     },
-    "Hanser/CJX2697": {
-      "sampleCount": 41280,
+    "CN-Captain-Young/CDG8711": {
+      "sampleCount": 41998,
       "sampleRate": 48000,
-      "sha256": "850a71dfff019ce594938bbed129a01f5be6a99cd8635b127cb76fc1bd39a9c4"
+      "sha256": "106bc088b4b87fe98025029e7437f41ff280d54ead0049990ea475a0e7466b92"
     },
-    "Hanser/CJX8923": {
-      "sampleCount": 48480,
+    "CN-Captain-Young/CDG8712": {
+      "sampleCount": 36480,
       "sampleRate": 48000,
-      "sha256": "8c27589ac8015834a5fb255ad112ef6d046656b9d518b36300fe5704c3b71ac0"
+      "sha256": "4293488a853f1b7671d31958383c980c6b2eebb0421dc93c13a2dfa367102af9"
     },
-    "Hanser/CQH4635": {
-      "sampleCount": 55680,
+    "CN-Captain-Young/CDG8742": {
+      "sampleCount": 40800,
       "sampleRate": 48000,
-      "sha256": "46295f64779cb5056c2eaaf870c0a0eec2556a56e1a6827c92fa67bf1ab9e3b6"
+      "sha256": "9d52e4367a0da463555d15045cc64f8ff1e2d99c89eead0068854081e7bff2ed"
     },
-    "Hanser/CQH6596": {
-      "sampleCount": 52741,
+    "CN-Captain-Young/CDG8765": {
+      "sampleCount": 46113,
       "sampleRate": 48000,
-      "sha256": "1cf51f4bfc197ab2d11b6532e5dde31ee70cadffc7ee306dac13ef08089c79da"
+      "sha256": "f93702b0bca4cda5cd378e8b18042f48fded8b0096081b7c48a5f83f0bcea100"
     },
-    "Hanser/CQH7171": {
-      "sampleCount": 54097,
+    "CN-Captain-Young/CDG8818": {
+      "sampleCount": 40800,
       "sampleRate": 48000,
-      "sha256": "3c4581be965ea4de535014d190f0d186552b49600d41d82cda7fad84e2ec1272"
+      "sha256": "82fe726a431d361677438e2e0a83083d161d8601ba4e763476bfb83e51305585"
     },
-    "Hanser/CQH9098": {
-      "sampleCount": 51840,
+    "CN-Captain-Young/CDG8821": {
+      "sampleCount": 43627,
       "sampleRate": 48000,
-      "sha256": "74cc0276f3b760fa7b1da89fe8b0dd3827c5de343e0274b7857f6d6a69d86874"
+      "sha256": "da4f5594fd80018cd21dc989c6935729e011818dee4d1a95e8f5df1be0fc632a"
     },
-    "Hanser/CSC3248": {
-      "sampleCount": 49440,
-      "sampleRate": 48000,
-      "sha256": "5b135c9c4944071e929b62b2e57e94d9cc61e525c87d2a6187f930a1ea2b2c94"
-    },
-    "Hanser/CSC3559": {
-      "sampleCount": 46080,
-      "sampleRate": 48000,
-      "sha256": "edae4f230199896100f9b6fe2914e8cf4029ee654a020ba29a385861d878d933"
-    },
-    "Hanser/CSC5353": {
-      "sampleCount": 48480,
-      "sampleRate": 48000,
-      "sha256": "34a890eeeec7c6b2e39f1db816dbeab48149fb5f670a6c3b9b97cd3614bbe675"
-    },
-    "Hanser/CSC6220": {
-      "sampleCount": 51360,
-      "sampleRate": 48000,
-      "sha256": "f2b7758614bb52e226181fa953e98c9fe47264bd62844dd0556ea92813fa4fe5"
-    },
-    "Hanser/CSC6381": {
-      "sampleCount": 49920,
-      "sampleRate": 48000,
-      "sha256": "036fbe22c4dc3175fd0223512630c0a8bd2c3c5f5c2c8815c1982e82b3552c19"
-    },
-    "Hanser/CSC8247": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "97c393b0c8c079136eb4023ea8d986db57ac58ba17811fc5b2d5d0bd297f06e4"
-    },
-    "Hanser/CSC8957": {
-      "sampleCount": 45600,
-      "sampleRate": 48000,
-      "sha256": "29582d45f7a3f5c596dd58f757423b831872f414e622c420ad74e570560f990f"
-    },
-    "Hanser/CSC9669": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "136c92aae5d56d921127096e263010e179e48739f3ce948848eceb69fcc785e8"
-    },
-    "Hanser/CSC9737": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "1ff2692e6976e7332491eb4b97c574f03a1b542df02438e37607ceb940ba0134"
-    },
-    "Hanser/CSN1234": {
-      "sampleCount": 46080,
-      "sampleRate": 48000,
-      "sha256": "ea5f513a4de9dc502bb1ebe3d3f5059d594028feb3069f3d9cfd60410d390d4e"
-    },
-    "Hanser/CSN2197": {
-      "sampleCount": 48960,
-      "sampleRate": 48000,
-      "sha256": "17cb8934612add6a005bdabc39e082e8b98b6dfd612a4aa4322b2b717b4401a5"
-    },
-    "Hanser/CSN3664": {
-      "sampleCount": 48000,
-      "sampleRate": 48000,
-      "sha256": "95eb9548ec7b8ea1c6149542637a6f175c9697537d71656e6c4e4322c5f2e4a4"
-    },
-    "Hanser/CSN3711": {
-      "sampleCount": 49399,
-      "sampleRate": 48000,
-      "sha256": "85f160252cd4d71786e367edda80d73caa475dd4e924647b55a79951e6662fa9"
-    },
-    "Hanser/CSN4042": {
-      "sampleCount": 46080,
-      "sampleRate": 48000,
-      "sha256": "32182246decec3931851f6b42b92b60dc887151c506fde4792239f7c2c965fb2"
-    },
-    "Hanser/CSN4463": {
-      "sampleCount": 45120,
-      "sampleRate": 48000,
-      "sha256": "b34101c656aca1f7614376558b72017f6dbd38fe6d3db3a1e2f89c5198241ad1"
-    },
-    "Hanser/CSN5437": {
-      "sampleCount": 48480,
-      "sampleRate": 48000,
-      "sha256": "744bb092e090d06b804e05cf1a1c996c9eccbdc0eed13f452b90b147600ec2bf"
-    },
-    "Hanser/CSN5851": {
-      "sampleCount": 48480,
-      "sampleRate": 48000,
-      "sha256": "05bfa6cf022fc4a394b328fe3dd60a4f97fc5615eeebf29aeb6089f5953595fb"
-    },
-    "Hanser/CSN6020": {
-      "sampleCount": 44118,
-      "sampleRate": 48000,
-      "sha256": "e6cf48df09776ebcb38a53923020383977ba9e1f1fa700d40936a4b188e49468"
-    },
-    "Hanser/CSN6433": {
-      "sampleCount": 45511,
-      "sampleRate": 48000,
-      "sha256": "930503fcd19a1b098405a03bfbdcdfb40a180bdcc6a7751b677d430af4cd6b7d"
-    },
-    "Hanser/CSN6738": {
-      "sampleCount": 44994,
-      "sampleRate": 48000,
-      "sha256": "856611fb1c69c4eece0e39625e7bfb3ce111b3ff1b1adc904ee65962ca74ea37"
-    },
-    "Hanser/CSN7350": {
-      "sampleCount": 50293,
-      "sampleRate": 48000,
-      "sha256": "da7772c1f964a12e0961b9c2b83c7225131ca76fec028d3930d2a232128f5bd3"
-    },
-    "Hanser/CSN8545": {
-      "sampleCount": 52630,
-      "sampleRate": 48000,
-      "sha256": "81f0004cdd25bd7195ed01d7347dee38bea69ec21b4cf3b7bec37397fab84762"
-    },
-    "Hanser/CSN8765": {
-      "sampleCount": 43442,
-      "sampleRate": 48000,
-      "sha256": "4c3360f74625974c86e78f67a474c4084666e30338a3a4a07cf6d6abd6506771"
-    },
-    "Hanser/CSN8798": {
-      "sampleCount": 42766,
-      "sampleRate": 48000,
-      "sha256": "386a77ee035d7f39cfa208693b94d88bd0111b2bce7e895c58482c7e8b52f4e1"
-    },
-    "Hanser/CSN9043": {
-      "sampleCount": 53760,
-      "sampleRate": 48000,
-      "sha256": "561b92063c178f1ba1895124621de2dfc2bab39e111c239f972ce7e94884223f"
-    },
-    "Hanser/CSN9173": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "f4a0213d6580ed5ba6f84b56ec5f7af2088044b081f82f8435f3196d66f4e059"
-    },
-    "Hanser/CSN9190": {
-      "sampleCount": 45691,
-      "sampleRate": 48000,
-      "sha256": "7ab73d2bc7f74eaa9f08bdca7ef81af6048142c8d0dd93c889b32588afdbf6c6"
-    },
-    "Hanser/CSN9255": {
-      "sampleCount": 47520,
-      "sampleRate": 48000,
-      "sha256": "2e23e69920be29c296117e0db25250b82e7a8b8559b0142ed5c3b387a403109b"
-    },
-    "Hanser/CSN9355": {
-      "sampleCount": 48093,
-      "sampleRate": 48000,
-      "sha256": "bd11bf3547343aa81ce3ebaf963f4d74831c3c10c60bb7446ed49f4ccf2688b0"
-    },
-    "Hanser/CSN9938": {
-      "sampleCount": 51360,
-      "sampleRate": 48000,
-      "sha256": "147d54f71985b2cd15d18da2037d14c47db56ce09e693e1067dfc38555b2c988"
-    },
-    "Hanser/CSZ0820": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "e87795b62fc235bceceb8739f92061abae0f1f9295f2f754698d9c1a45474dca"
-    },
-    "Hanser/CSZ2546": {
-      "sampleCount": 44160,
-      "sampleRate": 48000,
-      "sha256": "b7c771163d1014fc23056becab77d84a7682713379f662ca6c8f46b2363b65b2"
-    },
-    "Hanser/CSZ2884": {
-      "sampleCount": 47040,
-      "sampleRate": 48000,
-      "sha256": "1aa1d761e3767b037ea7c3111cd9109f3e31b2a74b596fa8a8ebbad53884b4ca"
-    },
-    "Hanser/CSZ2917": {
-      "sampleCount": 41280,
-      "sampleRate": 48000,
-      "sha256": "45067e018c96386574245c78905dd311590bc85660562d07ef3a66d8041290f6"
-    },
-    "Hanser/CSZ3690": {
-      "sampleCount": 45961,
-      "sampleRate": 48000,
-      "sha256": "42b0ae8edee91f22ec47a69202a97e76aa98a68eb646643223c95cd8c877a152"
-    },
-    "Hanser/CSZ4321": {
-      "sampleCount": 48960,
-      "sampleRate": 48000,
-      "sha256": "df8be17a39ea2c2c181b4fc03957b11a934c85d453e47fe45732539b8cdeaf22"
-    },
-    "Hanser/CSZ5678": {
-      "sampleCount": 43034,
-      "sampleRate": 48000,
-      "sha256": "9e66f290b7eb19695160da7f2cfd4d5c613d2c4e1bc28c53d0a216345fff20dd"
-    },
-    "Hanser/CSZ8235": {
-      "sampleCount": 46080,
-      "sampleRate": 48000,
-      "sha256": "6e4d0de071b1de8f4bba046a905ff8dfa4c6098515e56bdbef310286fb1372a0"
-    },
-    "Hanser/CSZ8855": {
+    "CN-Captain-Young/CDG8825": {
       "sampleCount": 42240,
       "sampleRate": 48000,
-      "sha256": "464f955823133dc28d83674bdd286cf4de554d05004a40fcd72e8af8c6145f4e"
+      "sha256": "da6a14aaf98bb70e3705aea86b993cd166ec3cf109d926b51e46a2448b3f4c34"
     },
-    "Hanser/CSZ9820": {
-      "sampleCount": 42674,
+    "CN-Captain-Young/CDG8828": {
+      "sampleCount": 40389,
       "sampleRate": 48000,
-      "sha256": "87ae94201c5e7feb560a79258842b0d68e55dba98c2a8e02453d9fc16d99eafc"
+      "sha256": "42a8d4c473331be09d405ac00d4b0f753cb1fa1b92936cd6ef9363a323df5723"
     },
-    "Hanser/CSZ9929": {
-      "sampleCount": 42720,
+    "CN-Captain-Young/CDG8851": {
+      "sampleCount": 41280,
       "sampleRate": 48000,
-      "sha256": "c07573ebd936d31c0c8377ca085c5df3a656ac8d763bf5057fa06871ed7ced4a"
+      "sha256": "59053b7a4029d10e9efc5640cff096cef7df7063e3170ffc84d748fbb1919ee4"
     },
-    "Hanser/CSZ9978": {
-      "sampleCount": 42766,
+    "CN-Captain-Young/CDG8879": {
+      "sampleCount": 40320,
       "sampleRate": 48000,
-      "sha256": "8634596cd3015bbc513d4061321b11ea7c135063e02777d7085cc313b96e9662"
+      "sha256": "4b66e782c3f7d26691f7ad34ac196d3a53ffc3203471c8ece64ff9274bd1d508"
     },
-    "Hanser/CXA3174": {
-      "sampleCount": 48000,
+    "CN-Captain-Young/CDG9639": {
+      "sampleCount": 45246,
       "sampleRate": 48000,
-      "sha256": "a1cb323d052e81ba3b3291eeb48416f1a9ba86307e78c6e61f48243da8b32aab"
+      "sha256": "21defac3aeff7189de017f7332a36e5b96ad2da5078f3bdd603786f432528d56"
     },
-    "Hanser/CXA5172": {
-      "sampleCount": 42762,
+    "CN-Captain-Young/CDG9662": {
+      "sampleCount": 39644,
       "sampleRate": 48000,
-      "sha256": "8173e21f76bf9803d3b73b19bf1d1fe919feff9fd45eb13680254060a5474859"
+      "sha256": "9563caaeef0c314d35ee759dcc09c6e1f3da62facc790c390de4b4f9f401b2aa"
     },
-    "Hanser/CXA5678": {
-      "sampleCount": 46560,
+    "CN-Captain-Young/CDG9663": {
+      "sampleCount": 42646,
       "sampleRate": 48000,
-      "sha256": "7b8867bf03d0fd0ed1486bb0d22386aaaa65dda1c4a29c2cc18e19ba9a4b1150"
+      "sha256": "4fce4d16ec3336f3060219afab86f370fb32e9517340fee401540986d9bfde70"
     },
-    "Hanser/CXA7380": {
-      "sampleCount": 51639,
-      "sampleRate": 48000,
-      "sha256": "bf267556a1082d7dd8efb91185c66f8290a18c856b268ee80d2d1baa677d1dbc"
-    },
-    "Hanser/CXA8083": {
-      "sampleCount": 49920,
-      "sampleRate": 48000,
-      "sha256": "abd3abc60a4a70a86ad9cb6bf4d051fe91264e48573d11772c4767fd5e0eb49f"
-    },
-    "Hanser/CXA8528": {
-      "sampleCount": 49440,
-      "sampleRate": 48000,
-      "sha256": "f884c4748ce4dfbccb61cf524c1b65dae7aed29e67e4200056ac2b05fe10885e"
-    },
-    "Hanser/CYZ0231": {
-      "sampleCount": 49200,
-      "sampleRate": 48000,
-      "sha256": "925006eb3cea41507b030fbbb2aa1f499caa46706b5dd0c4d65fb732eaeaf2c4"
-    },
-    "Hanser/CYZ3312": {
-      "sampleCount": 46320,
-      "sampleRate": 48000,
-      "sha256": "55536dfa2cae5a876eb7e90e80170f7b1bf9fbe836c79527295e12bd9f14e326"
-    },
-    "Hanser/CYZ4237": {
-      "sampleCount": 41520,
-      "sampleRate": 48000,
-      "sha256": "69ad31a4ba3bcd0c95650a6f93628772e49d09ad4cfd2ff1b1d799dfefc477cb"
-    },
-    "Hanser/CYZ6351": {
-      "sampleCount": 42720,
-      "sampleRate": 48000,
-      "sha256": "8d75e0a4dc9f3681dcd0547ee76ba8831f00afdc90da7e797be0323094c9a16b"
-    },
-    "Hanser/CYZ6722": {
-      "sampleCount": 40560,
-      "sampleRate": 48000,
-      "sha256": "7e4924cc10e99e53d5563c1bebfa5476593612b8aca7822f1898c18b95a2f530"
-    },
-    "Hanser/CYZ9331": {
-      "sampleCount": 48240,
-      "sampleRate": 48000,
-      "sha256": "c44fec45137d2fa09f58cf0ac9c33c3406eecd68248c071d62ad1f9e7c1be957"
-    },
-    "Hanser/CYZ9370": {
-      "sampleCount": 48240,
-      "sampleRate": 48000,
-      "sha256": "847664455b6aee2c6cb593dcb7665097349bc09ec8a83e20239449b7a182a46e"
-    },
-    "Hanser/DKH1533": {
-      "sampleCount": 45840,
-      "sampleRate": 48000,
-      "sha256": "23ca0ad6bc5d449b199e0ebee1e960f3590898c7371410c98df166bf5d628be3"
-    },
-    "Hanser/DKH4086": {
-      "sampleCount": 48240,
-      "sampleRate": 48000,
-      "sha256": "aefe9dc38f3391ea3e9fe9a5d842ee77f9784cded82152c9bd94a6042f2d5c50"
-    },
-    "Hanser/DKH4514": {
-      "sampleCount": 45600,
-      "sampleRate": 48000,
-      "sha256": "1a142f9ca1b37c347d32596230a42e6dda66b5071e10aa1fe33d5db23bf7d24b"
-    },
-    "Hanser/DKH4923": {
-      "sampleCount": 46320,
-      "sampleRate": 48000,
-      "sha256": "7067abb2b39df209725f76bc7de5d6c695546411d1b96514b8d0553bbbffb92e"
-    },
-    "Hanser/DKH5137": {
-      "sampleCount": 41760,
-      "sampleRate": 48000,
-      "sha256": "eee0de617f46eaaca715702c6abbf0a5d7c5730d3439cfa0fefe0ff2acff2083"
-    },
-    "Hanser/DKH5709": {
-      "sampleCount": 49680,
-      "sampleRate": 48000,
-      "sha256": "7d65963ec4858aa50ee3a5659ebc6df3851be0b75d4032a712486d96b5480c6d"
-    },
-    "Hanser/DKH6071": {
-      "sampleCount": 45600,
-      "sampleRate": 48000,
-      "sha256": "16f873a72d135b8137c6a170e72c18aaf7cfb6a477cc145420c01639b4b0abbc"
-    },
-    "Hanser/GCR1550": {
-      "sampleCount": 39000,
-      "sampleRate": 48000,
-      "sha256": "74461551209ecfcfff2cc94490a73e04652e42e4e701f46d35d44f97ce12efd4"
-    },
-    "Hanser/GCR2621": {
-      "sampleCount": 44800,
-      "sampleRate": 48000,
-      "sha256": "8581d1d2147c0c9ed315e442581ab5f6f5eb27bfd936737a66cabd7b9ced09a5"
-    },
-    "Hanser/GCR3764": {
-      "sampleCount": 45000,
-      "sampleRate": 48000,
-      "sha256": "c4ddfefe989201538de46112b3725783c2dc95ccdd7ad8d2e2f15157b7003794"
-    },
-    "Hanser/HXA2922": {
-      "sampleCount": 44800,
-      "sampleRate": 48000,
-      "sha256": "4e580516f98171e0bb1a85fdbe79c80a664bc656183e323d3caa540d5abb442f"
-    },
-    "Hanser/HXA8166": {
-      "sampleCount": 45600,
-      "sampleRate": 48000,
-      "sha256": "34ac668062eaf6e1e8ba54fab7c2ae962c8b2813beb1cc14f2dc308ef5ea3bca"
-    },
-    "Hanser/RWY01": {
-      "sampleCount": 31700,
-      "sampleRate": 48000,
-      "sha256": "2420be9c33edea002e494701ec35009cfb40dfbd091ed8110b7325fb1cf2c15c"
-    },
-    "Hanser/RWY19": {
-      "sampleCount": 30874,
-      "sampleRate": 48000,
-      "sha256": "5fb8ee4419b7e095a5a401e756227044815ff007ff0474a7ae841887d5c79a82"
-    },
-    "Hanser/UEA1889": {
-      "sampleCount": 51247,
-      "sampleRate": 48000,
-      "sha256": "e4d6fd5ebed55adde0fc5f423375303d674a7699fcbfee5157551ff5e552280b"
-    },
-    "Hanser/UEA1890": {
-      "sampleCount": 49440,
-      "sampleRate": 48000,
-      "sha256": "c92f5c7ecf0bf36b4bdc650ad1a8b93e1b3606b4fd03f9a650e4183183f032d4"
-    },
-    "Hanser/UEA2985": {
-      "sampleCount": 43680,
-      "sampleRate": 48000,
-      "sha256": "3f4649737a2ad59bee920c4aab71c41728117064aa1790178fcab6d6268be044"
-    },
-    "Hanser/UEA4704": {
-      "sampleCount": 50155,
-      "sampleRate": 48000,
-      "sha256": "88541b50a8f098535e6dbf96ba74e44a44955e2bfd97c94a41a2b6bee182e941"
-    },
-    "Hanser/UEA6306": {
-      "sampleCount": 46560,
-      "sampleRate": 48000,
-      "sha256": "b44dd88c28ad2ecfe7acedbb2eff520fe5bc1531dd6c1aa8f9b9cf330806b041"
-    },
-    "Hanser/UEA7323": {
-      "sampleCount": 58346,
-      "sampleRate": 48000,
-      "sha256": "6f1c0ab8d3f6f31a723dc4fb1ca51a6f4b3543fda910c824fd17d018be0aeb42"
-    },
-    "Hanser/UEA7518": {
+    "CN-Captain-Young/CDG9664": {
       "sampleCount": 45120,
       "sampleRate": 48000,
-      "sha256": "7a8d891e06674737a542ebf021ec20bff7d5e1c9a1571c84c6794d1460435740"
+      "sha256": "51042388caf62584ad5acfab33ee6b318a9ff28ec8fab56ad4d9c1d05877b96d"
     },
-    "Hanser/UEA8345": {
-      "sampleCount": 48960,
+    "CN-Captain-Young/CDG9956": {
+      "sampleCount": 48000,
       "sampleRate": 48000,
-      "sha256": "a2bf4296cfa14cf73d40a94120620162aaa99b49afe67c1cd6efff382d7c88e4"
+      "sha256": "399118ef2377665df81e853393fbec779112efaefaa4976935bc698721c8379c"
+    },
+    "CN-Captain-Young/CES1111": {
+      "sampleCount": 46026,
+      "sampleRate": 48000,
+      "sha256": "5ccec4baf01ce4ea1ace7be3d9fc12e4f5e535f42a845f74cceeb6484dd6d634"
+    },
+    "CN-Captain-Young/CES1234": {
+      "sampleCount": 47879,
+      "sampleRate": 48000,
+      "sha256": "4c13e51b430a0ed23cdaa3f6b85edfd863937f41f1ee3b8c9013bbb3dfe621eb"
+    },
+    "CN-Captain-Young/CES2430": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "e4030ebd152d3f00a66e640878b7ad0e81c496ce558caefaccb003a7798a9514"
+    },
+    "CN-Captain-Young/CES2604": {
+      "sampleCount": 44946,
+      "sampleRate": 48000,
+      "sha256": "b619f80fb5357f25c1a5193b23d10e8c68eaf7e9f2a2f270ad095b90982c427d"
+    },
+    "CN-Captain-Young/CES2641": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "39cb48a31fe3221dbdf96eee9964fa4038f426ee05002dc4e20e05ef8f6974dc"
+    },
+    "CN-Captain-Young/CES3547": {
+      "sampleCount": 47520,
+      "sampleRate": 48000,
+      "sha256": "18e654c1aa6197f9f51a8611e8a5b6cc013d2353f3d41a5ea3cdcd3152e40e67"
+    },
+    "CN-Captain-Young/CES3548": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "18913a784108fe18e6251425348de723bb451cc93a11b134cdf70dcff7a588d6"
+    },
+    "CN-Captain-Young/CES3551": {
+      "sampleCount": 42493,
+      "sampleRate": 48000,
+      "sha256": "e2f75881c07a88e22ce4b1930b823a1171b459daf14e4fda09016ad8fc0c7698"
+    },
+    "CN-Captain-Young/CES4755": {
+      "sampleCount": 37440,
+      "sampleRate": 48000,
+      "sha256": "ad09cd756c1883cbaa8d34f9420b96bde877310b8c1820229b10ca349e7952a8"
+    },
+    "CN-Captain-Young/CES4951": {
+      "sampleCount": 40963,
+      "sampleRate": 48000,
+      "sha256": "5148054a4932742d88ef401474d7209c0e569b625526e4ff174b81079fd62e9d"
+    },
+    "CN-Captain-Young/CES5435": {
+      "sampleCount": 41415,
+      "sampleRate": 48000,
+      "sha256": "689e1ef9fe05d456680d080430bedfeea6fb85680215085fcc2b2598e83da0d2"
+    },
+    "CN-Captain-Young/CES5472": {
+      "sampleCount": 36000,
+      "sampleRate": 48000,
+      "sha256": "a3c3a933d122a67c59b13d49904a0adfbe596a200b8bcd558f35ed23aa9aa72e"
+    },
+    "CN-Captain-Young/CES5578": {
+      "sampleCount": 40948,
+      "sampleRate": 48000,
+      "sha256": "73e3a476c25ebd3dc838141afafdc293c7cf70532be46a95bdbae96b76e5d717"
+    },
+    "CN-Captain-Young/CES5629": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "4f2bf8ccd11081ddb395df47b9c96f32ac9740ee02a37fdf85db6d99d0271dee"
+    },
+    "CN-Captain-Young/CES5657": {
+      "sampleCount": 38880,
+      "sampleRate": 48000,
+      "sha256": "43c56f8df69f4859095746a679622de648bf07f3c6d9b50eab923ba47c6e062f"
+    },
+    "CN-Captain-Young/CES5678": {
+      "sampleCount": 40728,
+      "sampleRate": 48000,
+      "sha256": "03642fc331f84b744071919d5bdf626b57083d5de14c2db27824e2ef4f7adf24"
+    },
+    "CN-Captain-Young/CES5751": {
+      "sampleCount": 42221,
+      "sampleRate": 48000,
+      "sha256": "d70a0163f8755c96eb52627094357c21ec02dc4489607205a2b87bb8ceccf7af"
+    },
+    "CN-Captain-Young/CES5887": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "8e15d8194945e2bfde87ef37607fd1ba23b6be32aafb6f061e44db4eda6cbe41"
+    },
+    "CN-Captain-Young/CES5888": {
+      "sampleCount": 47040,
+      "sampleRate": 48000,
+      "sha256": "bab6dbc0feb3d94dc75e5ac14c5cc13d27b19446a72cb29278d367449f2f6d30"
+    },
+    "CN-Captain-Young/CES6131": {
+      "sampleCount": 41961,
+      "sampleRate": 48000,
+      "sha256": "ad0638ee7f053474b3cc4d3ac6dc79959b9d8dd36ddf74f33cdf673b4ec17454"
+    },
+    "CN-Captain-Young/CES6132": {
+      "sampleCount": 41184,
+      "sampleRate": 48000,
+      "sha256": "7f2a44d011d5cc27af821c31185ff51c7bbbe9a538e786f8ab52ae560f754486"
+    },
+    "CN-Captain-Young/CES6313": {
+      "sampleCount": 47810,
+      "sampleRate": 48000,
+      "sha256": "27ce74780ee8f27de8c1c8a0d569115b2a6bf1b5dcf6cbfad36092374e0d776b"
+    },
+    "CN-Captain-Young/CES6359": {
+      "sampleCount": 40384,
+      "sampleRate": 48000,
+      "sha256": "74e83b7d8f24b7f8865da1fa2c5ce5d4140d43b5b156576ec9d7614de7759d2c"
+    },
+    "CN-Captain-Young/CES6819": {
+      "sampleCount": 44025,
+      "sampleRate": 48000,
+      "sha256": "f4b4df50184d7149bde1aafd4438a8cad1bf9520fdf2cd874dd5078ed7f077d9"
+    },
+    "CN-Captain-Young/CES9197": {
+      "sampleCount": 40800,
+      "sampleRate": 48000,
+      "sha256": "fe4de0dd3393bb399a313e14c25ba363c82c9a92967c3ad3c36103d295235f71"
+    },
+    "CN-Captain-Young/CHH2710": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "91a933d21eca42cceb1285880b9f9172c36636f10a642211133060e60a7e4c12"
+    },
+    "CN-Captain-Young/CHH4209": {
+      "sampleCount": 37920,
+      "sampleRate": 48000,
+      "sha256": "f682f7cca7cb3ff46361ccca8c6a2d417b4b6e1627a4eb0430455fbba76ea9fe"
+    },
+    "CN-Captain-Young/CHH4337": {
+      "sampleCount": 42117,
+      "sampleRate": 48000,
+      "sha256": "bdc3f3d4e28f96fcbef735cf8f0657b49d8f2b6ce3918269488288e70c0c7fc8"
+    },
+    "CN-Captain-Young/CHH7041": {
+      "sampleCount": 42265,
+      "sampleRate": 48000,
+      "sha256": "6d4a5f0e2829580fe8213f0448fdfd37d1813e169b77f41e9b8a98977aeb69c8"
+    },
+    "CN-Captain-Young/CHH7042": {
+      "sampleCount": 38880,
+      "sampleRate": 48000,
+      "sha256": "85ae10783defe6f9e6c13cf1195f459531575deda981ac702b85907e510b457b"
+    },
+    "CN-Captain-Young/CHH7306": {
+      "sampleCount": 47559,
+      "sampleRate": 48000,
+      "sha256": "b69bd946dfe294cca81d9d996001876dc666dfc241b041e56656b52e42aac82f"
+    },
+    "CN-Captain-Young/CHH7789": {
+      "sampleCount": 48000,
+      "sampleRate": 48000,
+      "sha256": "cbfa04e27eff2ac140c159354c849961cbf280cd6f2e2ad28af4e27506a36669"
+    },
+    "CN-Captain-Young/CHH8765": {
+      "sampleCount": 45342,
+      "sampleRate": 48000,
+      "sha256": "4f4ee8f59b7ba8aa297d9116f91192551b4124aef436072d6b0aa6685334fe9f"
+    },
+    "CN-Captain-Young/CHH9015": {
+      "sampleCount": 38880,
+      "sampleRate": 48000,
+      "sha256": "d1cc0e940ffd970d01701cba395395f1d0f633bf3e81cc7da5fb84c51de6f32d"
+    },
+    "CN-Captain-Young/CHH9024": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "55b5409d1d86e66b96a9c31e502e69bc0ebd1feeaabeb5f32d23aee18df938e6"
+    },
+    "CN-Captain-Young/CJX0697": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "5f95fcaf2715b0c0161ea1e5b5d8d9934b2e98b8ef38b8349f53465dd86f9771"
+    },
+    "CN-Captain-Young/CJX2697": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "8806dac14603145badb5dce8853c6ed6e1945bdc98f1e225b2a56868b2ce1e7f"
+    },
+    "CN-Captain-Young/CJX8923": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "0771d909764cdd5fb2ded54baf6862cab78b78edf92e8b57c7a4b6ffa626decd"
+    },
+    "CN-Captain-Young/CQH4635": {
+      "sampleCount": 43680,
+      "sampleRate": 48000,
+      "sha256": "ae2af093f39bc9d1dfff887dd380d038401c879fb2749c34e2fbfe4444017ce4"
+    },
+    "CN-Captain-Young/CQH6596": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "b9a95f6b9f006b76dcd1d0d29e931899dc14706b0f631ea714543f9e5f2df190"
+    },
+    "CN-Captain-Young/CQH7171": {
+      "sampleCount": 46933,
+      "sampleRate": 48000,
+      "sha256": "83307853d330977c754917addcd1164e5f1c5886ca98fe9607799769458427d5"
+    },
+    "CN-Captain-Young/CQH9098": {
+      "sampleCount": 43384,
+      "sampleRate": 48000,
+      "sha256": "ae66a3846e2da5526a49eafff02ce527ccd247d91439079f7cd3dbd45c82092e"
+    },
+    "CN-Captain-Young/CSC3248": {
+      "sampleCount": 50611,
+      "sampleRate": 48000,
+      "sha256": "aa210528e128c68d0d74f812adcbdfb1f1a865ee8fe572eaee514ef4f78d57e9"
+    },
+    "CN-Captain-Young/CSC3559": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "b54cbfbc4efeead39e827ad299b1fe4afbff3e9af1721893f915880162085b53"
+    },
+    "CN-Captain-Young/CSC5353": {
+      "sampleCount": 49880,
+      "sampleRate": 48000,
+      "sha256": "712c45f7ad7b3b1f26e6acb033df6440e796ead0c20ebe756061e8f32dc3700e"
+    },
+    "CN-Captain-Young/CSC6220": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "fc459139b6a715809d8b53e6b6423779b81f52888de90d8a7d721ca80674bcab"
+    },
+    "CN-Captain-Young/CSC6381": {
+      "sampleCount": 44157,
+      "sampleRate": 48000,
+      "sha256": "3980163772bbc83f27ec5fd4770b1bf676952ecac2d91d85866c4126ca150059"
+    },
+    "CN-Captain-Young/CSC8247": {
+      "sampleCount": 38880,
+      "sampleRate": 48000,
+      "sha256": "f691962f7e1d0dde4131eb0422ba2526494cdb3e0f03141e8f6a66c0abaae469"
+    },
+    "CN-Captain-Young/CSC8957": {
+      "sampleCount": 39840,
+      "sampleRate": 48000,
+      "sha256": "067d7e2e161a3d297a922ce64ccb5d22f9d98585117b6a1f1f701fcc86b9e1c5"
+    },
+    "CN-Captain-Young/CSC9669": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "a94be726e01786a2ac6c9431e04b7774e0e741ee9f1a42d4055109b626e59485"
+    },
+    "CN-Captain-Young/CSC9737": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "81e18a30f79b127fcd1d1ed2d74def0aee62cbc26ce46496090a8fd65f04eca0"
+    },
+    "CN-Captain-Young/CSN1234": {
+      "sampleCount": 38880,
+      "sampleRate": 48000,
+      "sha256": "2b869161e9425612cd2cf2843719f6c9f6705764d445d94be2e2bb106dc1586f"
+    },
+    "CN-Captain-Young/CSN2197": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "e4f15640d42542266deb0b884a8ea1fb96063f28e848879fcdb893844f171d3f"
+    },
+    "CN-Captain-Young/CSN3664": {
+      "sampleCount": 45600,
+      "sampleRate": 48000,
+      "sha256": "6ad44c40ef04de78cc1f7e028dfbbfa4c025107a9f34b680cea0646dd3cdeaa9"
+    },
+    "CN-Captain-Young/CSN3711": {
+      "sampleCount": 48826,
+      "sampleRate": 48000,
+      "sha256": "d393f9d38936464b5972158e005bf479bd83cb48717c6b8f8ac4046ce3681d6f"
+    },
+    "CN-Captain-Young/CSN4042": {
+      "sampleCount": 47520,
+      "sampleRate": 48000,
+      "sha256": "bfd1e01a1f2c76a132cb47985058720240112ef1003c240bebef2d70b5760dd1"
+    },
+    "CN-Captain-Young/CSN4463": {
+      "sampleCount": 40541,
+      "sampleRate": 48000,
+      "sha256": "3fcd763ef0feaa6f781c46a60aa9eecbb49e956acee6120ed7113d099562c9fb"
+    },
+    "CN-Captain-Young/CSN5437": {
+      "sampleCount": 43680,
+      "sampleRate": 48000,
+      "sha256": "02cd96e1706d478c68e2074caa4ccacf344f4bff98ee528c29819914b8b8beab"
+    },
+    "CN-Captain-Young/CSN5851": {
+      "sampleCount": 41280,
+      "sampleRate": 48000,
+      "sha256": "3a3b79768e309a025b72a50d5e080c76501e15687671cc651191d05cd7c6af68"
+    },
+    "CN-Captain-Young/CSN6020": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "ee3bad705410f7097e534fd545f50e31fd34a0028a6108b1e9f14f74229117a2"
+    },
+    "CN-Captain-Young/CSN6433": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "7c8c659b0391dd37d4a8c1b1ae840ee395960409c73ee3218392895ecda9bcfb"
+    },
+    "CN-Captain-Young/CSN6738": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "dba4a9d2d3b63bfbd51f8c11279e7b16afd4a712990168dfa486ab9c3edf5237"
+    },
+    "CN-Captain-Young/CSN7350": {
+      "sampleCount": 46056,
+      "sampleRate": 48000,
+      "sha256": "36da86ff9f54de7b9d6270003d6ef4614d31d54f199d782ce0bdd405a263d902"
+    },
+    "CN-Captain-Young/CSN8545": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "78bf11c49a13a7cb00a02198fe3e7a30abdec6e10c4d1fb03bd7f631e871679c"
+    },
+    "CN-Captain-Young/CSN8765": {
+      "sampleCount": 44135,
+      "sampleRate": 48000,
+      "sha256": "2770da3d514242ad53bcef0a85df38d38e3c4205895c359e5a87d2b75cb527fa"
+    },
+    "CN-Captain-Young/CSN8798": {
+      "sampleCount": 49440,
+      "sampleRate": 48000,
+      "sha256": "8bc142d35215ac7f3cba0247c02197efee46c0fb1e67b265dbcf9a22c525d59c"
+    },
+    "CN-Captain-Young/CSN9043": {
+      "sampleCount": 39433,
+      "sampleRate": 48000,
+      "sha256": "286e7f0068993fef356e1220c4338da7cbcb63abca369a7916d93b79a51ccb78"
+    },
+    "CN-Captain-Young/CSN9173": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "18b0aba601b0dfb47cdb0292631ff1f4f92de343865cfb6b84a425a6f9b6996e"
+    },
+    "CN-Captain-Young/CSN9190": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "82ab2ffa7cf29a48837d1c1a3f75e6cfda0e22371d86a4de4e40292e84b9e709"
+    },
+    "CN-Captain-Young/CSN9255": {
+      "sampleCount": 49440,
+      "sampleRate": 48000,
+      "sha256": "c0b6fd55259f8dd1b68ac47bc642e3b1eb3fe6992b14b89797c19a58d24c93d0"
+    },
+    "CN-Captain-Young/CSN9355": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "998576ce500937ed31ffda81115fdb7dcd2d7147e459518868f2b17ba673a6c1"
+    },
+    "CN-Captain-Young/CSN9938": {
+      "sampleCount": 44228,
+      "sampleRate": 48000,
+      "sha256": "03ff9ffcc4ed74627cbbdda4bbe830fae907daa54ad54d44b7b6284745e34381"
+    },
+    "CN-Captain-Young/CSZ0820": {
+      "sampleCount": 46080,
+      "sampleRate": 48000,
+      "sha256": "20662832e142795a76dbd61605981a23f8c40729a744dd2291a35338593e91c5"
+    },
+    "CN-Captain-Young/CSZ2546": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "a50a23447e1949b63b54907a696bb9d84dda0b84fe17e5a83ada325e9011d20c"
+    },
+    "CN-Captain-Young/CSZ2884": {
+      "sampleCount": 41022,
+      "sampleRate": 48000,
+      "sha256": "51515e6045524166fcef9d0dba3dc5d374a750dae62f4c05bb748a601b727d80"
+    },
+    "CN-Captain-Young/CSZ2917": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "0ced146d395292541e2a7a1398e2564fe5df95c790439d268c4750f848f0a076"
+    },
+    "CN-Captain-Young/CSZ3690": {
+      "sampleCount": 40734,
+      "sampleRate": 48000,
+      "sha256": "aed7e5acf47bdc22155c831ed2b31ff36eec447aeb72931eda80497741564f21"
+    },
+    "CN-Captain-Young/CSZ4321": {
+      "sampleCount": 47009,
+      "sampleRate": 48000,
+      "sha256": "177fae10e04665324c91d505eb12af92fc3148a3ff56615510e5d2956c2c78e1"
+    },
+    "CN-Captain-Young/CSZ5678": {
+      "sampleCount": 44445,
+      "sampleRate": 48000,
+      "sha256": "4c73bf938e8686c61043f51ac10f9d8d3214766b191eced1bd5aa8a9294b057f"
+    },
+    "CN-Captain-Young/CSZ8235": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "00ef9eacd9955f6fb63c4b3f7cde627044f8ab0e48baa7db12b600bfa5c86b87"
+    },
+    "CN-Captain-Young/CSZ8855": {
+      "sampleCount": 41550,
+      "sampleRate": 48000,
+      "sha256": "3bb077b98cc3e35d082fb8dfc857f2be949fb3f480af169ee71da11005c13cba"
+    },
+    "CN-Captain-Young/CSZ9820": {
+      "sampleCount": 37920,
+      "sampleRate": 48000,
+      "sha256": "8d566006bf99428e95176a1c86ebcdbccb873362f52add8063066badc00e4693"
+    },
+    "CN-Captain-Young/CSZ9929": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "57b193af5a337a6dae25d38cae4e848105f02a4392d19d0307e4982988193159"
+    },
+    "CN-Captain-Young/CSZ9978": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "1a549944a438f822c9e8b4e05cbb8284200f5420408d8a24269dfa18f662b74d"
+    },
+    "CN-Captain-Young/CXA3174": {
+      "sampleCount": 41946,
+      "sampleRate": 48000,
+      "sha256": "7f7c062e920b9f333a2bb5f4ba9ea95995c8942d24fc86166e57b98911b50a23"
+    },
+    "CN-Captain-Young/CXA5172": {
+      "sampleCount": 37920,
+      "sampleRate": 48000,
+      "sha256": "bc2f71c66a6072ca8f0dcf5d6d7a4e9305df724088d1bdfb0118379ce7b4ba47"
+    },
+    "CN-Captain-Young/CXA5678": {
+      "sampleCount": 46462,
+      "sampleRate": 48000,
+      "sha256": "972b2c811b8b1ce44d12a3fe58e6b61ad069f6d74e7d739f41315e0a88f2a7ba"
+    },
+    "CN-Captain-Young/CXA7380": {
+      "sampleCount": 41280,
+      "sampleRate": 48000,
+      "sha256": "c97a035ab65fb94c8987cfbb1441977a08da7ec9375113e66820cde19ac13709"
+    },
+    "CN-Captain-Young/CXA8083": {
+      "sampleCount": 46173,
+      "sampleRate": 48000,
+      "sha256": "8b1e8da3b00086e7f84c8e1d5f881e18f0b85eb1eece363cf152af1b473da375"
+    },
+    "CN-Captain-Young/CXA8528": {
+      "sampleCount": 40800,
+      "sampleRate": 48000,
+      "sha256": "50e36facd5e0f0ff2fc74306ef942e3330c829073358bac9bae3aecf3c822c6d"
+    },
+    "CN-Captain-Young/CYZ0231": {
+      "sampleCount": 37920,
+      "sampleRate": 48000,
+      "sha256": "60f4b4902e89fdadf940f24a4912623aab513044144fe2ed477b2e05970bc73a"
+    },
+    "CN-Captain-Young/CYZ3312": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "9aaeb3feb8740cc2caa71027a6d67da3b7411b7af8071cba2440c15ca5718b80"
+    },
+    "CN-Captain-Young/CYZ4237": {
+      "sampleCount": 32640,
+      "sampleRate": 48000,
+      "sha256": "a4ab2a19aa5eab69d5515980d2ff7eb053de411961328e6c0496703d0857ae79"
+    },
+    "CN-Captain-Young/CYZ6351": {
+      "sampleCount": 38400,
+      "sampleRate": 48000,
+      "sha256": "5b85e194f8e9148eb1a3ebce28b27b55eaca98c7072ae10a7312c167eceddf89"
+    },
+    "CN-Captain-Young/CYZ6722": {
+      "sampleCount": 35040,
+      "sampleRate": 48000,
+      "sha256": "fc28d7d85f17f1b1313b916c5f1b26706c4fe8b1ff8e4502f9b509532b6421b8"
+    },
+    "CN-Captain-Young/CYZ9331": {
+      "sampleCount": 40800,
+      "sampleRate": 48000,
+      "sha256": "138c5fccd21889baed1f4d827e5114a7c7994028bfa58828050115723cbbdcfd"
+    },
+    "CN-Captain-Young/CYZ9370": {
+      "sampleCount": 39360,
+      "sampleRate": 48000,
+      "sha256": "339dcb3782dfe3cd712337f9a02570ccaeeb703f65713fb16a2e68d63314e834"
+    },
+    "CN-Captain-Young/DKH1533": {
+      "sampleCount": 41760,
+      "sampleRate": 48000,
+      "sha256": "7aa8653f6fb0c624cf396b791669516de04063b312b82ee9890f34c45917f41b"
+    },
+    "CN-Captain-Young/DKH4086": {
+      "sampleCount": 41280,
+      "sampleRate": 48000,
+      "sha256": "2b925e977bb29e26ad9799230db4d882f7c54b589213c8600be3f8c291c63042"
+    },
+    "CN-Captain-Young/DKH4514": {
+      "sampleCount": 39840,
+      "sampleRate": 48000,
+      "sha256": "decefa937709fe6683b942b12a93b0a6b1452916b9be344ff7d0ca35c3ebc616"
+    },
+    "CN-Captain-Young/DKH4923": {
+      "sampleCount": 38880,
+      "sampleRate": 48000,
+      "sha256": "ece9b0a4bf4278af00a4ceddcbbba21a792fb9cb9b364953cdc0eea0eb2d575b"
+    },
+    "CN-Captain-Young/DKH5137": {
+      "sampleCount": 36960,
+      "sampleRate": 48000,
+      "sha256": "0109fd7d8543200f8ff2e2dbb64831e1b42bb5c88d3efb729aeb5e42517521a4"
+    },
+    "CN-Captain-Young/DKH5709": {
+      "sampleCount": 39360,
+      "sampleRate": 48000,
+      "sha256": "b5e5b2d643ee473a584bd05689b19a4e21e1278a88e89549bf86c9025b215765"
+    },
+    "CN-Captain-Young/DKH6071": {
+      "sampleCount": 35520,
+      "sampleRate": 48000,
+      "sha256": "4f4035d3d9a8ff15fe3b69cb49cacf408de82e230b5bbdbe95c13561593bf9f1"
+    },
+    "CN-Captain-Young/GCR1550": {
+      "sampleCount": 39600,
+      "sampleRate": 48000,
+      "sha256": "bf13afdfb52989038845cf3321577f1a38e7561b9ed22cc7ce231011b670b3ba"
+    },
+    "CN-Captain-Young/GCR2621": {
+      "sampleCount": 44800,
+      "sampleRate": 48000,
+      "sha256": "317445f5ef52e1e900da734e3b83cae372f4ef743e83a81095dc6f3378b137a1"
+    },
+    "CN-Captain-Young/GCR3764": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "567b8e0a8f2eb0e208444b615d8d63f70866968bc4cb5e2bb4f3b8ab3162c63d"
+    },
+    "CN-Captain-Young/HXA2922": {
+      "sampleCount": 44400,
+      "sampleRate": 48000,
+      "sha256": "64a4d4462b14850a46ff23befafafa15e08e621218b190220340367914698444"
+    },
+    "CN-Captain-Young/HXA8166": {
+      "sampleCount": 37600,
+      "sampleRate": 48000,
+      "sha256": "8544ecd06af0323379d1e67677218d3022caffccf2e75e118000eb06bd5a2dc1"
+    },
+    "CN-Captain-Young/RWY01": {
+      "sampleCount": 34177,
+      "sampleRate": 48000,
+      "sha256": "8dd082a444a35b1217886a8413a45662e8a8efaa0c6b646aa75ac6328ca3e667"
+    },
+    "CN-Captain-Young/RWY16L": {
+      "sampleCount": 31680,
+      "sampleRate": 48000,
+      "sha256": "d05f5dd0e9a7d6c8d0d4a634cab49054178d882176baa111fa2734245e70305a"
+    },
+    "CN-Captain-Young/RWY19": {
+      "sampleCount": 28366,
+      "sampleRate": 48000,
+      "sha256": "75a8d1f1263b0729a0c9fcbe3e35e5660f72663272d39a92c9fbfbc3afaf7a7b"
+    },
+    "CN-Captain-Young/RWY34R": {
+      "sampleCount": 35520,
+      "sampleRate": 48000,
+      "sha256": "ccdfbe1f019dbec2241e111354356028d4d9c11dfee89604d96b24256c7c0040"
+    },
+    "CN-Captain-Young/UEA1889": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "fe51a8f2b04161858046596cf715e906f92261910e3daf62261f704f8a465b71"
+    },
+    "CN-Captain-Young/UEA1890": {
+      "sampleCount": 44044,
+      "sampleRate": 48000,
+      "sha256": "7c5597c231c23a0a4f76948d71550346f2bac33702d1c644b7ae2ceb0affb69f"
+    },
+    "CN-Captain-Young/UEA2985": {
+      "sampleCount": 40800,
+      "sampleRate": 48000,
+      "sha256": "ceca057679220b785c736c685b4ffc834cd9ca7db5094659a7942e0ea289f9fe"
+    },
+    "CN-Captain-Young/UEA4704": {
+      "sampleCount": 41605,
+      "sampleRate": 48000,
+      "sha256": "49b313c1d0fb70dacf9961bdca6a88b5769123b57b7f0272d64338527b63de73"
+    },
+    "CN-Captain-Young/UEA6306": {
+      "sampleCount": 39579,
+      "sampleRate": 48000,
+      "sha256": "87476a1deb5102bb3db70b4d7d52af8a6c0b22741187983c3ca4901ab943cf18"
+    },
+    "CN-Captain-Young/UEA7323": {
+      "sampleCount": 42887,
+      "sampleRate": 48000,
+      "sha256": "e62c6e0207f198d3e2c01d17c06ac3b1e46094fdb518ad175582b362682d7797"
+    },
+    "CN-Captain-Young/UEA7518": {
+      "sampleCount": 44443,
+      "sampleRate": 48000,
+      "sha256": "f65a112889045f796f45e747f09400029b6180fe1b9cd75ce432f03a4e7a837e"
+    },
+    "CN-Captain-Young/UEA8345": {
+      "sampleCount": 39360,
+      "sampleRate": 48000,
+      "sha256": "50ccbe3b37e9f437cbeac8c051237e639d9ed2b3b30d8ced52dd5566d651970f"
+    },
+    "Hanser-EN/AXM1416": {
+      "sampleCount": 55736,
+      "sampleRate": 48000,
+      "sha256": "59c3bcb1e3144877b9cf3361f52a45a05181390dc39bdca626dcc01782ff2b33"
     },
     "Hanser-EN/BDJ1641": {
       "sampleCount": 50800,
@@ -5436,6 +4571,891 @@
       "sampleRate": 48000,
       "sha256": "b4b876e477d9f49eaae2f765bdb450e387bcbe9d50983432398d812e9c20f7b3"
     },
+    "Hanser/BDJ1641": {
+      "sampleCount": 47600,
+      "sampleRate": 48000,
+      "sha256": "5d242b04585079fc306f906607c2032b33b83f7bc78700474c27f496a86eb392"
+    },
+    "Hanser/BDJ4043": {
+      "sampleCount": 49800,
+      "sampleRate": 48000,
+      "sha256": "df2e6209ffce3e90e3f7604e70ac0586f1183899d1422472e823e0cfdc4a6c08"
+    },
+    "Hanser/BDJ5236": {
+      "sampleCount": 46000,
+      "sampleRate": 48000,
+      "sha256": "a48de1511ea2a5067391b39e7054cebc607c487b085d1231054f45c92ef5030f"
+    },
+    "Hanser/CCA2761": {
+      "sampleCount": 47520,
+      "sampleRate": 48000,
+      "sha256": "f364a41af207f64ee2fa829607b54c0475f068f679bbc3f0030496c94d202f7a"
+    },
+    "Hanser/CCA2762": {
+      "sampleCount": 44936,
+      "sampleRate": 48000,
+      "sha256": "a9d23152e66933dff2d7de730356ac719dfbb01dbe87809c684836144a174c88"
+    },
+    "Hanser/CCA3115": {
+      "sampleCount": 44371,
+      "sampleRate": 48000,
+      "sha256": "519a1f5560d7b1490903e9d9390d77cff7a59534ca15271cdc44488b3a0bff61"
+    },
+    "Hanser/CCA4662": {
+      "sampleCount": 43049,
+      "sampleRate": 48000,
+      "sha256": "6112264f884cde56a6e125081827cba6acac513ba7861079116c17d703b93f51"
+    },
+    "Hanser/CCA4793": {
+      "sampleCount": 51548,
+      "sampleRate": 48000,
+      "sha256": "957b8cf0188d3fe36abef86c18cdc53fbb9a21d75f5f55c32abe8eac74ef3c33"
+    },
+    "Hanser/CCA4851": {
+      "sampleCount": 47833,
+      "sampleRate": 48000,
+      "sha256": "f9cd8d35060bdcb6aba68ba649984b906efb448163dade8244c10d6a2af17f28"
+    },
+    "Hanser/CCA5198": {
+      "sampleCount": 44105,
+      "sampleRate": 48000,
+      "sha256": "edd8c3ec8fa14a7db1b505176052aaa3d948ae16bb089f8f8dd5c099e83e7359"
+    },
+    "Hanser/CCA5678": {
+      "sampleCount": 44463,
+      "sampleRate": 48000,
+      "sha256": "dbb02c56bccbda4d50fbbc73da536bab1ec4cd196eea8560ed1f71b898f7c422"
+    },
+    "Hanser/CCA7198": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "026d0628ce5e2421fa51b63a1b5d135dcaa667318c047a1fd5fd51d7d9d611be"
+    },
+    "Hanser/CCA8708": {
+      "sampleCount": 49440,
+      "sampleRate": 48000,
+      "sha256": "fc76e432ba734bf19e123e7735e49a56b62b9e3d5f9306c3a2d0aff319bfa1db"
+    },
+    "Hanser/CCA9052": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "feee43956eb46eafdf3946090eef18eb02244336d07aa58eb9fab24301e8c322"
+    },
+    "Hanser/CCA9119": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "be3c21237856c7cae5bdb05c4deb96085039021965186eced6397766e0b9785c"
+    },
+    "Hanser/CCA9120": {
+      "sampleCount": 47520,
+      "sampleRate": 48000,
+      "sha256": "edd7e647815669b35157b32efa080e15fa4a35788718769b5d8ee81f93fe2b06"
+    },
+    "Hanser/CDG1152": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "2c6945e1f9aa75458f81b96ab6d0376e1218e16c7b73d29e5cf4d263ebf74e84"
+    },
+    "Hanser/CDG1174": {
+      "sampleCount": 50155,
+      "sampleRate": 48000,
+      "sha256": "5f371df0bd7fe090cab6608d99e1d0aa7c30e92442c5c66d68f9b5d5b0712000"
+    },
+    "Hanser/CDG1188": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "d1237a27d4394506b40bd60e4ce153b770f2e9e6c1176a81d85d744e375fe8ba"
+    },
+    "Hanser/CDG1191": {
+      "sampleCount": 48000,
+      "sampleRate": 48000,
+      "sha256": "a2f818c4c40a7122edbddc5fa7956550fa5d29eef596c5009a495f1d79cad8d8"
+    },
+    "Hanser/CDG1192": {
+      "sampleCount": 46080,
+      "sampleRate": 48000,
+      "sha256": "60a68ae56288fc41767adb6abb03c3f83fa072ebdf0126812922cf887b27803e"
+    },
+    "Hanser/CDG1198": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "ac4d08dc11107237c742ccfa38fa5c99f9de70d5553a5f650883131021015fa1"
+    },
+    "Hanser/CDG1234": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "a24b98596a99eedf14b0c8c38ca47ff9dc39ea231a0e3517f3f81a30c20d7b16"
+    },
+    "Hanser/CDG2355": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "350d6623af6f7239a7569f8e0ed70a9ddf11f28d114c4a96010922a92e2dce0d"
+    },
+    "Hanser/CDG2577": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "6f7dcf73e667e731fff73c7944f04ed36f08707a8b92b40d7e2ad56063d25b81"
+    },
+    "Hanser/CDG2701": {
+      "sampleCount": 48000,
+      "sampleRate": 48000,
+      "sha256": "28cb81e2a0d2a90bfe03a4996b232db73c2f57f08cd0a00effee2745c2da813d"
+    },
+    "Hanser/CDG2702": {
+      "sampleCount": 48000,
+      "sampleRate": 48000,
+      "sha256": "5bddaab72703f5783ae49b236db13be56ce173c3142547a481ea87e31c8719d7"
+    },
+    "Hanser/CDG3827": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "6be330753c8efb7221a69cc96051f31ed4626e276670f505e16463ed2b533814"
+    },
+    "Hanser/CDG3828": {
+      "sampleCount": 44416,
+      "sampleRate": 48000,
+      "sha256": "7bf5e3e66c125988935c3886beb066b265ec930bd3b2942d2378a999a87f0545"
+    },
+    "Hanser/CDG5073": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "b448a8dde2b87cb9522af03468eefcbe8d07cff10c4ebd4ed88c99fe5c9bd636"
+    },
+    "Hanser/CDG5144": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "a725f103b1893503039f4ef9ac0f1146e1e7d4c75d41c1f0e30c7e555bee1c74"
+    },
+    "Hanser/CDG5166": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "02abe22dd17cee314bcb26ce32ff6e89bfde1230f10a2cf279716e43b7a2a339"
+    },
+    "Hanser/CDG5737": {
+      "sampleCount": 39840,
+      "sampleRate": 48000,
+      "sha256": "b559c9a863eeebb28a7507aa91548953108857c590684dfc4b6dfd3d8e9e9c88"
+    },
+    "Hanser/CDG5738": {
+      "sampleCount": 49440,
+      "sampleRate": 48000,
+      "sha256": "92c5aa8032f01c5d540709aeae7e2442b1d818dea29db9cdbeb9c96eec5d7dbc"
+    },
+    "Hanser/CDG6445": {
+      "sampleCount": 47833,
+      "sampleRate": 48000,
+      "sha256": "92212f1b770486acec6e89f4782e1c152dc93a2600e06a4c8835bd79c6a11f04"
+    },
+    "Hanser/CDG8032": {
+      "sampleCount": 46273,
+      "sampleRate": 48000,
+      "sha256": "357120050459824c0425d65a0119ceddcc04877b8adc438df86445b53501ee79"
+    },
+    "Hanser/CDG8034": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "c8f390dbe8401fbdefc8f60df74f0d1391aef6d9e95bb0fde0f7e3cfd7587244"
+    },
+    "Hanser/CDG8044": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "14831821e0abcd938a6223e4d144c399f6104fd5d3bde47bfeb78b7d6f6e6597"
+    },
+    "Hanser/CDG8078": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "dee0df326e3ddfac6cee9feedeb85410d81cd8e90128b84e4dc97b235d5e1b1f"
+    },
+    "Hanser/CDG8085": {
+      "sampleCount": 45385,
+      "sampleRate": 48000,
+      "sha256": "04b34602b13e4c89984116d0e37018b44e10a838bce9c8c317c8ceee60024dba"
+    },
+    "Hanser/CDG8086": {
+      "sampleCount": 48960,
+      "sampleRate": 48000,
+      "sha256": "1335bbe6d3b401905bb8417b7848476ae6caa7e15399f13fec4aba9931981123"
+    },
+    "Hanser/CDG8412": {
+      "sampleCount": 40800,
+      "sampleRate": 48000,
+      "sha256": "025fcde8cdfc029fba4f4707392e244f982ec54baa87bdbca7dcf0fe1941b4c1"
+    },
+    "Hanser/CDG8414": {
+      "sampleCount": 47040,
+      "sampleRate": 48000,
+      "sha256": "bffc4045de7fa9a0bda54eb8167219578707b7d8a09643c370a9e6c286a0f893"
+    },
+    "Hanser/CDG8711": {
+      "sampleCount": 44089,
+      "sampleRate": 48000,
+      "sha256": "b0333b39f24c902dc0576b22deb507e8e3e001050d11e2348308de4101d07e78"
+    },
+    "Hanser/CDG8712": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "6d85e1bbe130b760bcddf1728c0a8f83ec2e9735fd30afc381cd58d93bd61bee"
+    },
+    "Hanser/CDG8742": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "a4df2d868b3cdf236ddc18ad2e961c9a86eb37d83f7d8b9f88c4a8562de9fcef"
+    },
+    "Hanser/CDG8765": {
+      "sampleCount": 47520,
+      "sampleRate": 48000,
+      "sha256": "badbec02182ffd5c6e1a9fc18c6a5fef3ceac52de371c2d6b0799f48036b8b4e"
+    },
+    "Hanser/CDG8818": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "60e929ed65e3bf986d0e051e03fc894d36e15599fc282405ada738b81c9677b7"
+    },
+    "Hanser/CDG8821": {
+      "sampleCount": 42817,
+      "sampleRate": 48000,
+      "sha256": "91e3f975e4a1e313070d0c50d75756926652df92d583d03759c17a5abb5a2f78"
+    },
+    "Hanser/CDG8825": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "5cdcf5ba831f042b6dfdae6c1c880cfd5c3333ddee57e687825b2cd6ba437965"
+    },
+    "Hanser/CDG8828": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "be303567361da08be1c9cbb93ca26e1a0b1c9cf602b175b221e8a5606674f829"
+    },
+    "Hanser/CDG8851": {
+      "sampleCount": 47040,
+      "sampleRate": 48000,
+      "sha256": "b8af9130d0ea6f456e6fb5030384a4e32c4489a44950e4df90aa50d6da12679e"
+    },
+    "Hanser/CDG8879": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "2e235b0fd8a9a534f6cfabbcec0f27bae74cb4d9c4030fe306d407407ccd187a"
+    },
+    "Hanser/CDG9639": {
+      "sampleCount": 43098,
+      "sampleRate": 48000,
+      "sha256": "97364a18b67689cdec5b83768f0dc3941f5b74c2a5f5824633d5c45dab95ed37"
+    },
+    "Hanser/CDG9662": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "56e8684ce96676d5d463da99d6fb4ef0e90e902e2027beedeb1e2fcff2c1e630"
+    },
+    "Hanser/CDG9663": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "faec0ef043c50751ca66eaa47dea8b1564e11a0010d8fad070cef4211e0b6ad8"
+    },
+    "Hanser/CDG9664": {
+      "sampleCount": 46439,
+      "sampleRate": 48000,
+      "sha256": "ebeb0cdd19b01fff424ca164c8db09592f49e35a9f9d9a43eebdb01b48d844d7"
+    },
+    "Hanser/CDG9956": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "23c821a39b5c1c3bd61dc56149637d7fd7f6c856002edf27ba3fb38968bcaee4"
+    },
+    "Hanser/CES1111": {
+      "sampleCount": 54240,
+      "sampleRate": 48000,
+      "sha256": "3a487fa7466e88e09a10f288afb6d580ee5ab59875f30ccec44c9af6c9554a0f"
+    },
+    "Hanser/CES1234": {
+      "sampleCount": 48960,
+      "sampleRate": 48000,
+      "sha256": "d5577e61201247f4bc4ad4fb9bd929fab612eae02074fd366d3d161e3dcc1ad0"
+    },
+    "Hanser/CES2430": {
+      "sampleCount": 47601,
+      "sampleRate": 48000,
+      "sha256": "80d3059624266adbf1864cb77fd15a582cbfe6f63fb33c18637987cf2100f04a"
+    },
+    "Hanser/CES2604": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "95ee421af2e69bef11a8259a2e7e27d1fef3c30ae8eda5af730d116834faca79"
+    },
+    "Hanser/CES2641": {
+      "sampleCount": 46439,
+      "sampleRate": 48000,
+      "sha256": "8ef8cb12297e825c638c6f8f0afb4b564bb888a26506a83c2670a1b78c505ebf"
+    },
+    "Hanser/CES3547": {
+      "sampleCount": 40800,
+      "sampleRate": 48000,
+      "sha256": "ae6e8c780c35069cc2222629d325b7b12108e887718d2bce01c7dc3ad4cd60f3"
+    },
+    "Hanser/CES3548": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "c1a60beef2f872e2b916dd0c6563c006d1432e2dfdc770a38c7f0736ba900b7b"
+    },
+    "Hanser/CES3551": {
+      "sampleCount": 48000,
+      "sampleRate": 48000,
+      "sha256": "17329951c8218d400bdb35c5cda57b141f14dc1b8a963f95b2d9e5a29cf8e890"
+    },
+    "Hanser/CES4755": {
+      "sampleCount": 45600,
+      "sampleRate": 48000,
+      "sha256": "71a8f62af18b32bfd69a5d49a09c4c60ac2056fd8e98df081b53979f60511bdf"
+    },
+    "Hanser/CES4951": {
+      "sampleCount": 41280,
+      "sampleRate": 48000,
+      "sha256": "d68ed1fae3042a3a418c22d2349868c9576987af31636d73d616c638591a54d6"
+    },
+    "Hanser/CES5435": {
+      "sampleCount": 41760,
+      "sampleRate": 48000,
+      "sha256": "89fa6af2e535eee16da46919488a9e4e0e70e69d8a83bdfa42182298cc173785"
+    },
+    "Hanser/CES5472": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "a9caf7fb471c8698a2a77ab9f6441db2cec0873ea118311b9d318c7a134a127a"
+    },
+    "Hanser/CES5578": {
+      "sampleCount": 48863,
+      "sampleRate": 48000,
+      "sha256": "5de6621798c76b163a911eeb9c4d1cd0e87a82998323335cedd832f425da4a31"
+    },
+    "Hanser/CES5629": {
+      "sampleCount": 51840,
+      "sampleRate": 48000,
+      "sha256": "69e4933007e174b3e21945d247fc33014901caa4279c5f224905da318e40f27e"
+    },
+    "Hanser/CES5657": {
+      "sampleCount": 45556,
+      "sampleRate": 48000,
+      "sha256": "9f857b32b858751769873e065b73468f3f18d5c4537f170ccedf37185a22b46d"
+    },
+    "Hanser/CES5678": {
+      "sampleCount": 44983,
+      "sampleRate": 48000,
+      "sha256": "a451addaac39200d37c20308cfcb6fc3c614a35a22e3e03ca9037990ad46c4a4"
+    },
+    "Hanser/CES5751": {
+      "sampleCount": 48568,
+      "sampleRate": 48000,
+      "sha256": "c8794a5905443effc947fe0b148ad26e2a27bffbd10fa97071d6151736dfda45"
+    },
+    "Hanser/CES5887": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "f4af1f873970e6189e750a8d92881623342a19fb80127ca6d11263795878c857"
+    },
+    "Hanser/CES5888": {
+      "sampleCount": 41760,
+      "sampleRate": 48000,
+      "sha256": "9d492445476200d06a3f6d08630e43257186701fa66b7f06d54c053f90f10a2e"
+    },
+    "Hanser/CES6131": {
+      "sampleCount": 47520,
+      "sampleRate": 48000,
+      "sha256": "e93e1897903fc9d1b51fcb69d17f25b461cdbc96536fa30b823e18caf747ab12"
+    },
+    "Hanser/CES6132": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "efd6b95fabf224e51f165f4fe86c2495479565ee89c4cc3e56a4a110ccd49417"
+    },
+    "Hanser/CES6313": {
+      "sampleCount": 43802,
+      "sampleRate": 48000,
+      "sha256": "b906b318d2fd0c66fb9d11a26d5eb01a73e17c7de18ebef902c75035c02a89f1"
+    },
+    "Hanser/CES6359": {
+      "sampleCount": 41280,
+      "sampleRate": 48000,
+      "sha256": "b2d1243dbccef8cbf0b1d7919a6c5fc49b6ad7c32f127d89582e7a57c8b3b8ea"
+    },
+    "Hanser/CES6819": {
+      "sampleCount": 47040,
+      "sampleRate": 48000,
+      "sha256": "da0d73cc3964c61a0aecdc6083fa7f1fad37a5fc5076eff6238ae320505ca4ab"
+    },
+    "Hanser/CES9197": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "8b577846227fc2fd033d8803ec9a868bc117a19f6c7aab1be059d5fa5ddf7bd4"
+    },
+    "Hanser/CHH2710": {
+      "sampleCount": 49440,
+      "sampleRate": 48000,
+      "sha256": "1b5a2f943054d1a95305aa92da74c4da73b7068bced826ff66d0b72e738c166b"
+    },
+    "Hanser/CHH4209": {
+      "sampleCount": 43200,
+      "sampleRate": 48000,
+      "sha256": "b137c7bf861686f6a58cf5fbf725fe5e0b3ef5a8910b539331d5d25ea6d3dfed"
+    },
+    "Hanser/CHH4337": {
+      "sampleCount": 41760,
+      "sampleRate": 48000,
+      "sha256": "6085c242ed6099a888c0414bb385ade33627736082aa5087479b43e21a984e4e"
+    },
+    "Hanser/CHH7041": {
+      "sampleCount": 40445,
+      "sampleRate": 48000,
+      "sha256": "1fba3510ca64729bfa487edcd09f41ae1fa9bfd388a2d40ce51455f99b39a297"
+    },
+    "Hanser/CHH7042": {
+      "sampleCount": 40320,
+      "sampleRate": 48000,
+      "sha256": "9ec3070a519422e1594157438bf7ec011519e87a4469568946108381c4676d6f"
+    },
+    "Hanser/CHH7306": {
+      "sampleCount": 48771,
+      "sampleRate": 48000,
+      "sha256": "40f4c39010f2238dac80430875c068ab729ccc666406443ec8546f4610dd66f7"
+    },
+    "Hanser/CHH7789": {
+      "sampleCount": 39489,
+      "sampleRate": 48000,
+      "sha256": "174b142783bdbd76f2a2c906724cdd468c3e8b705cb0b846074ca6f826265c83"
+    },
+    "Hanser/CHH8765": {
+      "sampleCount": 48454,
+      "sampleRate": 48000,
+      "sha256": "619d31802c161f6efa51ff514fb46fa6b4b14dcedcc94e9dd0955f703fd83106"
+    },
+    "Hanser/CHH9015": {
+      "sampleCount": 43680,
+      "sampleRate": 48000,
+      "sha256": "e089815c2a8ee36d1a8c0c0361c2c77ccba2090d0f54473dc535b6d02b6677d1"
+    },
+    "Hanser/CHH9024": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "b870e791aedbe2543ab2230c99a47c89208988043cf2e27f2f50d61aa0a9234d"
+    },
+    "Hanser/CJX0697": {
+      "sampleCount": 44640,
+      "sampleRate": 48000,
+      "sha256": "4bc1306269f58f0e098f849ae2f1ce9b78c5b9cb0eac50775019c63fa3c4a4cd"
+    },
+    "Hanser/CJX2697": {
+      "sampleCount": 41280,
+      "sampleRate": 48000,
+      "sha256": "850a71dfff019ce594938bbed129a01f5be6a99cd8635b127cb76fc1bd39a9c4"
+    },
+    "Hanser/CJX8923": {
+      "sampleCount": 48480,
+      "sampleRate": 48000,
+      "sha256": "8c27589ac8015834a5fb255ad112ef6d046656b9d518b36300fe5704c3b71ac0"
+    },
+    "Hanser/CQH4635": {
+      "sampleCount": 55680,
+      "sampleRate": 48000,
+      "sha256": "46295f64779cb5056c2eaaf870c0a0eec2556a56e1a6827c92fa67bf1ab9e3b6"
+    },
+    "Hanser/CQH6596": {
+      "sampleCount": 52741,
+      "sampleRate": 48000,
+      "sha256": "1cf51f4bfc197ab2d11b6532e5dde31ee70cadffc7ee306dac13ef08089c79da"
+    },
+    "Hanser/CQH7171": {
+      "sampleCount": 54097,
+      "sampleRate": 48000,
+      "sha256": "3c4581be965ea4de535014d190f0d186552b49600d41d82cda7fad84e2ec1272"
+    },
+    "Hanser/CQH9098": {
+      "sampleCount": 51840,
+      "sampleRate": 48000,
+      "sha256": "74cc0276f3b760fa7b1da89fe8b0dd3827c5de343e0274b7857f6d6a69d86874"
+    },
+    "Hanser/CSC3248": {
+      "sampleCount": 49440,
+      "sampleRate": 48000,
+      "sha256": "5b135c9c4944071e929b62b2e57e94d9cc61e525c87d2a6187f930a1ea2b2c94"
+    },
+    "Hanser/CSC3559": {
+      "sampleCount": 46080,
+      "sampleRate": 48000,
+      "sha256": "edae4f230199896100f9b6fe2914e8cf4029ee654a020ba29a385861d878d933"
+    },
+    "Hanser/CSC5353": {
+      "sampleCount": 48480,
+      "sampleRate": 48000,
+      "sha256": "34a890eeeec7c6b2e39f1db816dbeab48149fb5f670a6c3b9b97cd3614bbe675"
+    },
+    "Hanser/CSC6220": {
+      "sampleCount": 51360,
+      "sampleRate": 48000,
+      "sha256": "f2b7758614bb52e226181fa953e98c9fe47264bd62844dd0556ea92813fa4fe5"
+    },
+    "Hanser/CSC6381": {
+      "sampleCount": 49920,
+      "sampleRate": 48000,
+      "sha256": "036fbe22c4dc3175fd0223512630c0a8bd2c3c5f5c2c8815c1982e82b3552c19"
+    },
+    "Hanser/CSC8247": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "97c393b0c8c079136eb4023ea8d986db57ac58ba17811fc5b2d5d0bd297f06e4"
+    },
+    "Hanser/CSC8957": {
+      "sampleCount": 45600,
+      "sampleRate": 48000,
+      "sha256": "29582d45f7a3f5c596dd58f757423b831872f414e622c420ad74e570560f990f"
+    },
+    "Hanser/CSC9669": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "136c92aae5d56d921127096e263010e179e48739f3ce948848eceb69fcc785e8"
+    },
+    "Hanser/CSC9737": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "1ff2692e6976e7332491eb4b97c574f03a1b542df02438e37607ceb940ba0134"
+    },
+    "Hanser/CSN1234": {
+      "sampleCount": 46080,
+      "sampleRate": 48000,
+      "sha256": "ea5f513a4de9dc502bb1ebe3d3f5059d594028feb3069f3d9cfd60410d390d4e"
+    },
+    "Hanser/CSN2197": {
+      "sampleCount": 48960,
+      "sampleRate": 48000,
+      "sha256": "17cb8934612add6a005bdabc39e082e8b98b6dfd612a4aa4322b2b717b4401a5"
+    },
+    "Hanser/CSN3664": {
+      "sampleCount": 48000,
+      "sampleRate": 48000,
+      "sha256": "95eb9548ec7b8ea1c6149542637a6f175c9697537d71656e6c4e4322c5f2e4a4"
+    },
+    "Hanser/CSN3711": {
+      "sampleCount": 49399,
+      "sampleRate": 48000,
+      "sha256": "85f160252cd4d71786e367edda80d73caa475dd4e924647b55a79951e6662fa9"
+    },
+    "Hanser/CSN4042": {
+      "sampleCount": 46080,
+      "sampleRate": 48000,
+      "sha256": "32182246decec3931851f6b42b92b60dc887151c506fde4792239f7c2c965fb2"
+    },
+    "Hanser/CSN4463": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "b34101c656aca1f7614376558b72017f6dbd38fe6d3db3a1e2f89c5198241ad1"
+    },
+    "Hanser/CSN5437": {
+      "sampleCount": 48480,
+      "sampleRate": 48000,
+      "sha256": "744bb092e090d06b804e05cf1a1c996c9eccbdc0eed13f452b90b147600ec2bf"
+    },
+    "Hanser/CSN5851": {
+      "sampleCount": 48480,
+      "sampleRate": 48000,
+      "sha256": "05bfa6cf022fc4a394b328fe3dd60a4f97fc5615eeebf29aeb6089f5953595fb"
+    },
+    "Hanser/CSN6020": {
+      "sampleCount": 44118,
+      "sampleRate": 48000,
+      "sha256": "e6cf48df09776ebcb38a53923020383977ba9e1f1fa700d40936a4b188e49468"
+    },
+    "Hanser/CSN6433": {
+      "sampleCount": 45511,
+      "sampleRate": 48000,
+      "sha256": "930503fcd19a1b098405a03bfbdcdfb40a180bdcc6a7751b677d430af4cd6b7d"
+    },
+    "Hanser/CSN6738": {
+      "sampleCount": 44994,
+      "sampleRate": 48000,
+      "sha256": "856611fb1c69c4eece0e39625e7bfb3ce111b3ff1b1adc904ee65962ca74ea37"
+    },
+    "Hanser/CSN7350": {
+      "sampleCount": 50293,
+      "sampleRate": 48000,
+      "sha256": "da7772c1f964a12e0961b9c2b83c7225131ca76fec028d3930d2a232128f5bd3"
+    },
+    "Hanser/CSN8545": {
+      "sampleCount": 52630,
+      "sampleRate": 48000,
+      "sha256": "81f0004cdd25bd7195ed01d7347dee38bea69ec21b4cf3b7bec37397fab84762"
+    },
+    "Hanser/CSN8765": {
+      "sampleCount": 43442,
+      "sampleRate": 48000,
+      "sha256": "4c3360f74625974c86e78f67a474c4084666e30338a3a4a07cf6d6abd6506771"
+    },
+    "Hanser/CSN8798": {
+      "sampleCount": 42766,
+      "sampleRate": 48000,
+      "sha256": "386a77ee035d7f39cfa208693b94d88bd0111b2bce7e895c58482c7e8b52f4e1"
+    },
+    "Hanser/CSN9043": {
+      "sampleCount": 53760,
+      "sampleRate": 48000,
+      "sha256": "561b92063c178f1ba1895124621de2dfc2bab39e111c239f972ce7e94884223f"
+    },
+    "Hanser/CSN9173": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "f4a0213d6580ed5ba6f84b56ec5f7af2088044b081f82f8435f3196d66f4e059"
+    },
+    "Hanser/CSN9190": {
+      "sampleCount": 45691,
+      "sampleRate": 48000,
+      "sha256": "7ab73d2bc7f74eaa9f08bdca7ef81af6048142c8d0dd93c889b32588afdbf6c6"
+    },
+    "Hanser/CSN9255": {
+      "sampleCount": 47520,
+      "sampleRate": 48000,
+      "sha256": "2e23e69920be29c296117e0db25250b82e7a8b8559b0142ed5c3b387a403109b"
+    },
+    "Hanser/CSN9355": {
+      "sampleCount": 48093,
+      "sampleRate": 48000,
+      "sha256": "bd11bf3547343aa81ce3ebaf963f4d74831c3c10c60bb7446ed49f4ccf2688b0"
+    },
+    "Hanser/CSN9938": {
+      "sampleCount": 51360,
+      "sampleRate": 48000,
+      "sha256": "147d54f71985b2cd15d18da2037d14c47db56ce09e693e1067dfc38555b2c988"
+    },
+    "Hanser/CSZ0820": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "e87795b62fc235bceceb8739f92061abae0f1f9295f2f754698d9c1a45474dca"
+    },
+    "Hanser/CSZ2546": {
+      "sampleCount": 44160,
+      "sampleRate": 48000,
+      "sha256": "b7c771163d1014fc23056becab77d84a7682713379f662ca6c8f46b2363b65b2"
+    },
+    "Hanser/CSZ2884": {
+      "sampleCount": 47040,
+      "sampleRate": 48000,
+      "sha256": "1aa1d761e3767b037ea7c3111cd9109f3e31b2a74b596fa8a8ebbad53884b4ca"
+    },
+    "Hanser/CSZ2917": {
+      "sampleCount": 41280,
+      "sampleRate": 48000,
+      "sha256": "45067e018c96386574245c78905dd311590bc85660562d07ef3a66d8041290f6"
+    },
+    "Hanser/CSZ3690": {
+      "sampleCount": 45961,
+      "sampleRate": 48000,
+      "sha256": "42b0ae8edee91f22ec47a69202a97e76aa98a68eb646643223c95cd8c877a152"
+    },
+    "Hanser/CSZ4321": {
+      "sampleCount": 48960,
+      "sampleRate": 48000,
+      "sha256": "df8be17a39ea2c2c181b4fc03957b11a934c85d453e47fe45732539b8cdeaf22"
+    },
+    "Hanser/CSZ5678": {
+      "sampleCount": 43034,
+      "sampleRate": 48000,
+      "sha256": "9e66f290b7eb19695160da7f2cfd4d5c613d2c4e1bc28c53d0a216345fff20dd"
+    },
+    "Hanser/CSZ8235": {
+      "sampleCount": 46080,
+      "sampleRate": 48000,
+      "sha256": "6e4d0de071b1de8f4bba046a905ff8dfa4c6098515e56bdbef310286fb1372a0"
+    },
+    "Hanser/CSZ8855": {
+      "sampleCount": 42240,
+      "sampleRate": 48000,
+      "sha256": "464f955823133dc28d83674bdd286cf4de554d05004a40fcd72e8af8c6145f4e"
+    },
+    "Hanser/CSZ9820": {
+      "sampleCount": 42674,
+      "sampleRate": 48000,
+      "sha256": "87ae94201c5e7feb560a79258842b0d68e55dba98c2a8e02453d9fc16d99eafc"
+    },
+    "Hanser/CSZ9929": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "c07573ebd936d31c0c8377ca085c5df3a656ac8d763bf5057fa06871ed7ced4a"
+    },
+    "Hanser/CSZ9978": {
+      "sampleCount": 42766,
+      "sampleRate": 48000,
+      "sha256": "8634596cd3015bbc513d4061321b11ea7c135063e02777d7085cc313b96e9662"
+    },
+    "Hanser/CXA3174": {
+      "sampleCount": 48000,
+      "sampleRate": 48000,
+      "sha256": "a1cb323d052e81ba3b3291eeb48416f1a9ba86307e78c6e61f48243da8b32aab"
+    },
+    "Hanser/CXA5172": {
+      "sampleCount": 42762,
+      "sampleRate": 48000,
+      "sha256": "8173e21f76bf9803d3b73b19bf1d1fe919feff9fd45eb13680254060a5474859"
+    },
+    "Hanser/CXA5678": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "7b8867bf03d0fd0ed1486bb0d22386aaaa65dda1c4a29c2cc18e19ba9a4b1150"
+    },
+    "Hanser/CXA7380": {
+      "sampleCount": 51639,
+      "sampleRate": 48000,
+      "sha256": "bf267556a1082d7dd8efb91185c66f8290a18c856b268ee80d2d1baa677d1dbc"
+    },
+    "Hanser/CXA8083": {
+      "sampleCount": 49920,
+      "sampleRate": 48000,
+      "sha256": "abd3abc60a4a70a86ad9cb6bf4d051fe91264e48573d11772c4767fd5e0eb49f"
+    },
+    "Hanser/CXA8528": {
+      "sampleCount": 49440,
+      "sampleRate": 48000,
+      "sha256": "f884c4748ce4dfbccb61cf524c1b65dae7aed29e67e4200056ac2b05fe10885e"
+    },
+    "Hanser/CYZ0231": {
+      "sampleCount": 49200,
+      "sampleRate": 48000,
+      "sha256": "925006eb3cea41507b030fbbb2aa1f499caa46706b5dd0c4d65fb732eaeaf2c4"
+    },
+    "Hanser/CYZ3312": {
+      "sampleCount": 46320,
+      "sampleRate": 48000,
+      "sha256": "55536dfa2cae5a876eb7e90e80170f7b1bf9fbe836c79527295e12bd9f14e326"
+    },
+    "Hanser/CYZ4237": {
+      "sampleCount": 41520,
+      "sampleRate": 48000,
+      "sha256": "69ad31a4ba3bcd0c95650a6f93628772e49d09ad4cfd2ff1b1d799dfefc477cb"
+    },
+    "Hanser/CYZ6351": {
+      "sampleCount": 42720,
+      "sampleRate": 48000,
+      "sha256": "8d75e0a4dc9f3681dcd0547ee76ba8831f00afdc90da7e797be0323094c9a16b"
+    },
+    "Hanser/CYZ6722": {
+      "sampleCount": 40560,
+      "sampleRate": 48000,
+      "sha256": "7e4924cc10e99e53d5563c1bebfa5476593612b8aca7822f1898c18b95a2f530"
+    },
+    "Hanser/CYZ9331": {
+      "sampleCount": 48240,
+      "sampleRate": 48000,
+      "sha256": "c44fec45137d2fa09f58cf0ac9c33c3406eecd68248c071d62ad1f9e7c1be957"
+    },
+    "Hanser/CYZ9370": {
+      "sampleCount": 48240,
+      "sampleRate": 48000,
+      "sha256": "847664455b6aee2c6cb593dcb7665097349bc09ec8a83e20239449b7a182a46e"
+    },
+    "Hanser/DKH1533": {
+      "sampleCount": 45840,
+      "sampleRate": 48000,
+      "sha256": "23ca0ad6bc5d449b199e0ebee1e960f3590898c7371410c98df166bf5d628be3"
+    },
+    "Hanser/DKH4086": {
+      "sampleCount": 48240,
+      "sampleRate": 48000,
+      "sha256": "aefe9dc38f3391ea3e9fe9a5d842ee77f9784cded82152c9bd94a6042f2d5c50"
+    },
+    "Hanser/DKH4514": {
+      "sampleCount": 45600,
+      "sampleRate": 48000,
+      "sha256": "1a142f9ca1b37c347d32596230a42e6dda66b5071e10aa1fe33d5db23bf7d24b"
+    },
+    "Hanser/DKH4923": {
+      "sampleCount": 46320,
+      "sampleRate": 48000,
+      "sha256": "7067abb2b39df209725f76bc7de5d6c695546411d1b96514b8d0553bbbffb92e"
+    },
+    "Hanser/DKH5137": {
+      "sampleCount": 41760,
+      "sampleRate": 48000,
+      "sha256": "eee0de617f46eaaca715702c6abbf0a5d7c5730d3439cfa0fefe0ff2acff2083"
+    },
+    "Hanser/DKH5709": {
+      "sampleCount": 49680,
+      "sampleRate": 48000,
+      "sha256": "7d65963ec4858aa50ee3a5659ebc6df3851be0b75d4032a712486d96b5480c6d"
+    },
+    "Hanser/DKH6071": {
+      "sampleCount": 45600,
+      "sampleRate": 48000,
+      "sha256": "16f873a72d135b8137c6a170e72c18aaf7cfb6a477cc145420c01639b4b0abbc"
+    },
+    "Hanser/GCR1550": {
+      "sampleCount": 39000,
+      "sampleRate": 48000,
+      "sha256": "74461551209ecfcfff2cc94490a73e04652e42e4e701f46d35d44f97ce12efd4"
+    },
+    "Hanser/GCR2621": {
+      "sampleCount": 44800,
+      "sampleRate": 48000,
+      "sha256": "8581d1d2147c0c9ed315e442581ab5f6f5eb27bfd936737a66cabd7b9ced09a5"
+    },
+    "Hanser/GCR3764": {
+      "sampleCount": 45000,
+      "sampleRate": 48000,
+      "sha256": "c4ddfefe989201538de46112b3725783c2dc95ccdd7ad8d2e2f15157b7003794"
+    },
+    "Hanser/HXA2922": {
+      "sampleCount": 44800,
+      "sampleRate": 48000,
+      "sha256": "4e580516f98171e0bb1a85fdbe79c80a664bc656183e323d3caa540d5abb442f"
+    },
+    "Hanser/HXA8166": {
+      "sampleCount": 45600,
+      "sampleRate": 48000,
+      "sha256": "34ac668062eaf6e1e8ba54fab7c2ae962c8b2813beb1cc14f2dc308ef5ea3bca"
+    },
+    "Hanser/RWY01": {
+      "sampleCount": 31700,
+      "sampleRate": 48000,
+      "sha256": "2420be9c33edea002e494701ec35009cfb40dfbd091ed8110b7325fb1cf2c15c"
+    },
+    "Hanser/RWY19": {
+      "sampleCount": 30874,
+      "sampleRate": 48000,
+      "sha256": "5fb8ee4419b7e095a5a401e756227044815ff007ff0474a7ae841887d5c79a82"
+    },
+    "Hanser/UEA1889": {
+      "sampleCount": 51247,
+      "sampleRate": 48000,
+      "sha256": "e4d6fd5ebed55adde0fc5f423375303d674a7699fcbfee5157551ff5e552280b"
+    },
+    "Hanser/UEA1890": {
+      "sampleCount": 49440,
+      "sampleRate": 48000,
+      "sha256": "c92f5c7ecf0bf36b4bdc650ad1a8b93e1b3606b4fd03f9a650e4183183f032d4"
+    },
+    "Hanser/UEA2985": {
+      "sampleCount": 43680,
+      "sampleRate": 48000,
+      "sha256": "3f4649737a2ad59bee920c4aab71c41728117064aa1790178fcab6d6268be044"
+    },
+    "Hanser/UEA4704": {
+      "sampleCount": 50155,
+      "sampleRate": 48000,
+      "sha256": "88541b50a8f098535e6dbf96ba74e44a44955e2bfd97c94a41a2b6bee182e941"
+    },
+    "Hanser/UEA6306": {
+      "sampleCount": 46560,
+      "sampleRate": 48000,
+      "sha256": "b44dd88c28ad2ecfe7acedbb2eff520fe5bc1531dd6c1aa8f9b9cf330806b041"
+    },
+    "Hanser/UEA7323": {
+      "sampleCount": 58346,
+      "sampleRate": 48000,
+      "sha256": "6f1c0ab8d3f6f31a723dc4fb1ca51a6f4b3543fda910c824fd17d018be0aeb42"
+    },
+    "Hanser/UEA7518": {
+      "sampleCount": 45120,
+      "sampleRate": 48000,
+      "sha256": "7a8d891e06674737a542ebf021ec20bff7d5e1c9a1571c84c6794d1460435740"
+    },
+    "Hanser/UEA8345": {
+      "sampleCount": 48960,
+      "sampleRate": 48000,
+      "sha256": "a2bf4296cfa14cf73d40a94120620162aaa99b49afe67c1cd6efff382d7c88e4"
+    },
     "Yeager/AAL0101": {
       "sampleCount": 71040,
       "sampleRate": 48000,
@@ -5496,6 +5516,11 @@
       "sampleRate": 48000,
       "sha256": "92a94e7b692511803c56aa5578cf80e30233a753d3833dafabb8333f77c0a053"
     },
+    "Yeager/ETD8349": {
+      "sampleCount": 59280,
+      "sampleRate": 48000,
+      "sha256": "68fce17fb9348ffe64605edf095a9e35183493da53b7bf0d2bef6503a9583f27"
+    },
     "Yeager/RWY19": {
       "sampleCount": 57678,
       "sampleRate": 48000,
@@ -5505,6 +5530,11 @@
       "sampleCount": 66455,
       "sampleRate": 48000,
       "sha256": "fa6769d17dd26e4620c2ac35c5f31f6a8802ac98271da255c45be2d7b558538b"
+    },
+    "ZGSZ-Female-ATC/AXM1416": {
+      "sampleCount": 55736,
+      "sampleRate": 48000,
+      "sha256": "59c3bcb1e3144877b9cf3361f52a45a05181390dc39bdca626dcc01782ff2b33"
     },
     "ZGSZ-Female-ATC/BDJ1641": {
       "sampleCount": 44400,

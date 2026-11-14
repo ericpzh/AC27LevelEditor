@@ -21,7 +21,7 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FIXTURES_GAME_ROOT_V3 } from '../helpers/gameRoot';
+import { FIXTURES_GAME_ROOT_V3, stageV3AudioIntoRoot } from '../helpers/gameRoot';
 
 const require = createRequire(import.meta.url);
 const parser = require('../../src/acl/parser');
@@ -92,6 +92,7 @@ function stageTempV3Level({ includeZhTemplate = true } = {}) {
   }
   const vcSrc = path.join(saSrc, 'Voices', 'voice_catalog.json');
   if (fs.existsSync(vcSrc)) fs.copyFileSync(vcSrc, path.join(voicesDst, 'voice_catalog.json'));
+  stageV3AudioIntoRoot(root, ICAO, FIXTURES_GAME_ROOT_V3);
 
   const apFiles = [
     'airport_brief.json',
@@ -321,7 +322,7 @@ describe('GATCARC4 v3 — departure inference, leg-type idempotency, and zero-fl
 
     const newDep = {
       ...templateDep,
-      CallSign: 'CSC3212',
+      CallSign: 'CCA2761',
       _Registration: 'B-NEW3',
       Registration: 'B-NEW3',
       AirlineName: '',
@@ -354,7 +355,7 @@ describe('GATCARC4 v3 — departure inference, leg-type idempotency, and zero-fl
     const found = reloaded.find((f) => (f._Registration || f.Registration) === 'B-NEW3');
     expect(found).toBeTruthy();
     expect(found.isDeparture).toBe(true);
-    expect(found.CallSign).toBe('CSC3212');
+    expect(found.CallSign).toBe('CCA2761');
     expect(found.OffBlockTime).toBe('10:25:00');
   });
 
@@ -462,7 +463,7 @@ describe('GATCARC4 v3 — explicit Language & Voice preservation without legacy 
     const cnFlight = flights.find((f) => /^CES|^CSN|^CCA|^CSC/.test(f.CallSign));
     expect(cnFlight).toBeTruthy();
 
-    const enCaptain = Object.entries(voiceCatalog).find(([, m]) => m.role === 'captain' && m.language === 'en')?.[0];
+    const enCaptain = Object.entries(voiceCatalog).find(([name, m]) => m.role === 'captain' && m.language === 'en' && name.startsWith('CN-Captain-'))?.[0];
     const zhCaptain = Object.entries(voiceCatalog).find(([, m]) => m.role === 'captain' && m.language === 'zh')?.[0];
     expect(enCaptain).toBeTruthy();
     expect(zhCaptain).toBeTruthy();
@@ -472,7 +473,7 @@ describe('GATCARC4 v3 — explicit Language & Voice preservation without legacy 
 
     const intlFlight = {
       ...cnFlight,
-      CallSign: 'CPA800',
+      CallSign: 'CAL2017',
       _Registration: 'B-HKV3',
       Registration: 'B-HKV3',
       Stand: freeStands[0],
@@ -562,7 +563,7 @@ describe('GATCARC4 v3 — airborne state-5/state-30 synthesis, lean Aircraft/Ani
     // Synthesize one close-in arrival (TTL = 75s -> state 5) and one STAR arrival (TTL = 900s -> state 30)
     const arrState5 = {
       ...templateArr,
-      CallSign: 'CES9505',
+      CallSign: 'CCA2761',
       _Registration: 'B-ST05',
       Registration: 'B-ST05',
       Stand: freeStands[0],
@@ -571,7 +572,7 @@ describe('GATCARC4 v3 — airborne state-5/state-30 synthesis, lean Aircraft/Ani
     };
     const arrState30 = {
       ...templateArr,
-      CallSign: 'CES9530',
+      CallSign: 'CCA2762',
       _Registration: 'B-ST30',
       Registration: 'B-ST30',
       Stand: freeStands[1],

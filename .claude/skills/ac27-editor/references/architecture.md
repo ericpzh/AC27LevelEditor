@@ -111,7 +111,7 @@ AC27Editor/
 │ │
 │ ├── store/
 │ │ ├── appStore.js # zustand store — all app state
-│ │ ├── flightDefaults.js # Pure helpers for new flight creation (random airline, cascaded aircraft/reg, non-conflicting stand, airline-aware Language via languageForAirline — CN→zh else en, falling back to Z*→zh, random Voice from dropdown, runway-constrained STAR for arrivals, Airway always cleared for departures)
+│ │ ├── flightDefaults.js # Pure helpers for new flight creation (on v3 levels with _v3Audio, selects allocatable (CallSign, Language, Voice) tuples; otherwise random airline, cascaded aircraft/reg, non-conflicting stand, airline-aware Language via languageForAirline — CN→zh else en, falling back to Z*→zh, random Voice from dropdown; runway-constrained STAR for arrivals, Airway always cleared for departures)
 │ │ └── flightCascade.js # Pure helpers for cascading field updates
 │ │
 │ ├── acl/ # Backend modules (CommonJS + some ESM)
@@ -122,7 +122,7 @@ AC27Editor/
 │ │ │ ├── handler.js # openV3Acl — reads, applyEdits(), schema validation, atomic saveToFile (STALE_ACL_SOURCE)
 │ │ │ ├── framing.js # parseV3Container / encodeV3Container (NODS/NODH/MARF/NODF)
 │ │ │ ├── readers.js / writers_flights.js / writers_meta.js / writers_scenery.js
-│ │ │ ├── pushback_validation.js / runway_timeline_validation.js / approach_validation.js / ground_painter_save.js # v3 candidate-archive validators + pre-write Ground Painter save pipeline (runway_timeline_membership.js lives in src/acl/)
+│ │ │ ├── pushback_validation.js / runway_timeline_validation.js / approach_validation.js / callsign_validation.js / ground_painter_save.js # v3 candidate-archive validators + pre-write Ground Painter save pipeline (runway_timeline_membership.js lives in src/acl/)
 │ │ │ ├── validator.js + schema_registry.js + schema_ca34c2ab.json
 │ │ │ ├── q32.js / lossless_json.js / graph.js / audio.js
 │ │ │ └── WIRE_CONTRACT.md # authoritative v3 framing/schema/unit reference
@@ -159,13 +159,14 @@ AC27Editor/
 │ │ └── ui.js # Storage keys, i18n, weather, compass, file filters
 │ ├── timeUtils.js # Tick↔time conversion, timeline helpers (CJS + ESM)
 │ ├── i18n.js # Chinese/English translation (T(), getLang, setLang)
-│ ├── validators.js # validateCallsigns, runTripleValidation
+│ ├── validators.js # validateCallsigns, runTripleValidation (incl. v3 per-voice callsign & ATC clip allocation preflight)
 │ ├── htmlUtils.js # escapeHtml, stripSuffixes
 │ ├── safeHtml.jsx # Safe i18n HTML rendering (strong/em/br only)
 │ ├── debugLog.js # Gated debug logging (localStorage + URL flag)
 │ ├── csvIo.js # CSV export
 │ ├── zipUtils.js # Pure Node.js ZIP (zlib, no deps)
-│ └── logger.js # Console → file redirect (dev mode)
+│ ├── logger.js # Console → file redirect (dev mode)
+│ └── gamePaths.js # Canonical StreamingAssets/Airports/Levels/Voices/clip-index path helpers (ESM + CJS)
 │
 ├──   tests/               # Vitest + Playwright E2E + Node.js integration scripts
 │ ├── electron/cloud-llm.test.js # cloud-llm backend tests (49 tests, node env)

@@ -45,6 +45,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { readJson } = require('../../src/acl/odin/json_reader');
 const { readBinary } = require('../../src/acl/odin/binary_reader');
 const { detectAclFormat } = require('../../src/acl/archive');
@@ -61,6 +62,13 @@ const { parseIsoWallClock, UNSET_DATETIME_ISO } = require('../../src/acl/v3/q32'
 const { formatRunwayTimelineMembershipIssue } = require('../../src/acl/runway_timeline_membership');
 const { validateV3ContainerRunwayTimelineMembership } = require('../../src/acl/v3/runway_timeline_validation');
 const { validateV3ApproachRoutes, formatApproachValidationIssue } = require('../../src/acl/v3/approach_validation');
+const { peekAclFormat } = require('../../src/acl/v3/audio');
+const {
+  verifyV3AudioCapabilities,
+  validateV3CallsignAllocation,
+  formatCallsignAllocationIssue,
+} = require('../../src/acl/v3/callsign_validation');
+const gamePaths = require('../../src/utils/gamePaths');
 
 const SENT = /\r?\n\$\$\$ GATCARC4 CHECKPOINT FRAME \$\$\$\r?\n/;
 
@@ -262,7 +270,7 @@ function isoToSecOrNull(isoStr) {
  * structures `analyze(text)` produces so `runChecks(a, opts)` works identically
  * across v1/v2 Odin archives and v3 archives.
  */
-function analyzeV3(bufOrContainer) {
+function analyzeV3(bufOrContainer, opts = {}) {
   const container = Buffer.isBuffer(bufOrContainer)
     ? parseV3Container(bufOrContainer)
     : bufOrContainer;
@@ -358,14 +366,33 @@ function analyzeV3(bufOrContainer) {
     }
   }
 
+  const levelPath = opts.levelPath || null;
+  const airportIcao = opts.airportIcao
+    || (levelPath ? gamePaths.airportIcaoFromLevelPath(levelPath) : null)
+    || container.header?.airportIcao
+    || (cfg && cfg.prototypeName)
+    || null;
+
   const v3TimelineCheck = validateV3ContainerRunwayTimelineMembership(container, schema, {
     throwOnError: false,
   });
   const v3ApproachCheck = validateV3ApproachRoutes(container.staticData, schema, {
     throwOnError: false,
   });
+  const v3CallsignCheck = validateV3CallsignAllocation(container, schema, {
+    levelPath,
+    gameRoot: opts.gameRoot,
+    airportIcao,
+    v3Audio: opts.v3Audio,
+    requireAudioMetadata: Boolean(opts.requireV3Audio),
+  });
 
   return {
+    isV3: true,
+    container,
+    schema,
+    levelPath,
+    airportIcao,
     config,
     doc0Plans,
     frameDocked,
@@ -375,6 +402,7 @@ function analyzeV3(bufOrContainer) {
     planKeys,
     v3TimelineCheck,
     v3ApproachCheck,
+    v3CallsignCheck,
   };
 }
 
@@ -382,11 +410,11 @@ function analyzeV3(bufOrContainer) {
  * Format-auto-dispatching game-compat analyzer for any `.acl` file on disk
  * (GATCARC4 v3, v2, v1, or legacy text).
  */
-function analyzeAclFile(aclPath) {
+function analyzeAclFile(aclPath, opts = {}) {
   const bytes = fs.readFileSync(aclPath);
   const fmt = detectAclFormat(bytes);
   if (fmt === 'gatcarc4-v3') {
-    return analyzeV3(bytes);
+    return analyzeV3(bytes, { ...opts, levelPath: opts.levelPath || aclPath });
   }
   return analyze(readAclText(aclPath));
 }
@@ -411,7 +439,19 @@ function analyzeAclFile(aclPath) {
  *   (CN → zh, every other carrier → en) are reported — the game's CallsignService
  *   throws "failed to allocate callsign … for crew voice …" on that at load.
  */
-function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null, airlineCountries = null, languages = null } = {}) {
+function runChecks(
+  a,
+  {
+    minGapSec = STAND_MIN_GAP,
+    voiceLanguages = null,
+    airlineCountries = null,
+    languages = null,
+    gameRoot = undefined,
+    airportIcao = null,
+    v3Audio = null,
+    requireV3Audio = false,
+  } = {},
+) {
   const issues = [];
 
   // 1. unique flight-plan keys
@@ -531,10 +571,34 @@ function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null, airlin
     }
   }
 
-  // 5. voice/language consistency (only when the catalog map is supplied).
+  // Resolve v3 callsign/voice audio allocation check against explicit
+  // destination gameRoot / v3Audio when supplied, else pre-computed check.
+  let v3CallsignCheck = a.v3CallsignCheck || null;
+  if (
+    a.isV3 &&
+    a.container &&
+    (gameRoot !== undefined || v3Audio != null || airportIcao != null || requireV3Audio)
+  ) {
+    v3CallsignCheck = validateV3CallsignAllocation(a.container, a.schema, {
+      levelPath: a.levelPath || null,
+      gameRoot,
+      airportIcao: airportIcao || a.airportIcao || null,
+      v3Audio,
+      requireAudioMetadata: Boolean(requireV3Audio),
+    });
+  }
+  const v3CatalogChecked = Boolean(
+    a.isV3 &&
+    v3CallsignCheck &&
+    !v3CallsignCheck.metadataUnavailable &&
+    (gameRoot || v3Audio || (a.levelPath && gamePaths.gameRootFromLevelPath(a.levelPath))),
+  );
+
+  // 5. voice/language consistency (only when the catalog map is supplied and
+  //    v3 callsign check has not already verified voice_catalog.json).
   //    The game's VoiceCatalog throws InvalidOperationException at level load
   //    when an aircraft's captain voice language != the flight's Language.
-  if (voiceLanguages && typeof voiceLanguages === 'object') {
+  if (!v3CatalogChecked && voiceLanguages && typeof voiceLanguages === 'object') {
     for (const p of a.doc0Plans) {
       const declared = p.voice ? voiceLanguages[p.voice] : null;
       if (p.voice && p.language && declared && declared !== p.language) {
@@ -546,11 +610,10 @@ function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null, airlin
     }
   }
 
-  // 6. airline/language consistency (only when the registry map is supplied).
-  //    The game's CallsignService only records a callsign for one captain
-  //    language (CN → zh, every other carrier → en), so a mismatch throws
-  //    "failed to allocate callsign … for crew voice …" at level load.
-  if (airlineCountries && typeof airlineCountries === 'object') {
+  // 6. Legacy/v2 airline/language consistency (only on pre-v3 archives when the
+  //    registry map is supplied — GATCARC4 v3 uses radio_clip_durations.json +
+  //    voice_catalog.json + radio_channel_config.json instead).
+  if (!a.isV3 && airlineCountries && typeof airlineCountries === 'object') {
     const hasZh = Array.isArray(languages) ? languages.includes('zh') : true;
     for (const p of a.doc0Plans) {
       const cs = String(p.arrCs || p.depCs || '');
@@ -587,7 +650,211 @@ function runChecks(a, { minGapSec = STAND_MIN_GAP, voiceLanguages = null, airlin
     }
   }
 
+  // 9. v3 Callsign/voice audio allocation (FlightScheduleManager.TryAllocateCallsignReservation / CallsignService)
+  if (v3CallsignCheck && Array.isArray(v3CallsignCheck.issues)) {
+    const codeByKind = {
+      audio_metadata_unavailable: 'v3-audio-metadata-unavailable',
+      missing_captain_clip: 'v3-missing-captain-clip',
+      missing_atc_clip: 'v3-missing-atc-clip',
+      unknown_captain_voice: 'v3-unknown-captain-voice',
+      invalid_captain_voice: 'v3-invalid-captain-voice',
+      voice_language_mismatch: 'voice-language-mismatch',
+      unsupported_language: 'v3-unsupported-language',
+      duplicate_pair_callsign: 'v3-duplicate-pair-callsign',
+      duplicate_callsign: 'v3-duplicate-callsign',
+      missing_voice: 'v3-missing-audio-field',
+      missing_language: 'v3-missing-audio-field',
+      missing_callsign: 'v3-missing-audio-field',
+    };
+    for (const iss of v3CallsignCheck.issues) {
+      issues.push({
+        code: codeByKind[iss.kind] || `v3-${iss.kind}`,
+        kind: iss.kind,
+        registration: iss.registration || null,
+        callSign: iss.callSign || null,
+        voice: iss.voice || null,
+        language: iss.language || null,
+        direction: iss.direction || null,
+        ...(iss.compatibleCaptainVoices ? { compatibleCaptainVoices: iss.compatibleCaptainVoices } : {}),
+        ...(iss.missingAtcVoices ? { missingAtcVoices: iss.missingAtcVoices } : {}),
+        ...(iss.missingResources ? { missingResources: iss.missingResources } : {}),
+        msg: iss.message || formatCallsignAllocationIssue(iss),
+      });
+    }
+  }
+
   return { issues, messages: issues.map(i => i.msg) };
+}
+
+function _readVoiceLanguagesForRoot(root) {
+  const out = {};
+  if (!root) return out;
+  try {
+    const p = gamePaths.voiceCatalogPath(root);
+    const json = JSON.parse(fs.readFileSync(p, 'utf8'));
+    for (const v of (json.voices || [])) {
+      if (v && v.name) out[v.name] = v.language || '';
+    }
+  } catch (_) {}
+  return out;
+}
+
+function _readAirlineCountriesForRoot(root) {
+  const out = {};
+  if (!root) return out;
+  try {
+    const p = gamePaths.airlineCountryRegistryPath(root);
+    const text = fs.readFileSync(p, 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Za-z]{2})\s*:\s*(.+?)\s*$/);
+      if (!m) continue;
+      const country = m[1].toUpperCase();
+      for (const raw of m[2].split(',')) {
+        const code = raw.trim().toUpperCase();
+        if (code) out[code] = country;
+      }
+    }
+  } catch (_) {}
+  return out;
+}
+
+function persistGcFailArtifact(aclPath, {
+  base = path.basename(aclPath, '.acl'),
+  seed = null,
+  filteredIssues = [],
+  allIssues = [],
+  gcA = null,
+  debugDir = path.join(__dirname, '..', '_debug'),
+} = {}) {
+  if (debugDir === false) return null;
+  try {
+    const targetDir = debugDir || path.join(__dirname, '..', '_debug');
+    fs.mkdirSync(targetDir, { recursive: true });
+    const aclOut = path.join(targetDir, `fuzz-gc-fail-${base}.acl`);
+    const jsonOut = path.join(targetDir, `fuzz-gc-fail-${base}.json`);
+    fs.copyFileSync(aclPath, aclOut);
+    const detail = {
+      seed,
+      issues: filteredIssues,
+      allIssues,
+      config: gcA?.config || null,
+      docked: gcA?.frameDocked || [],
+      doc0Plans: gcA?.doc0Plans || [],
+      v3CallsignCheck: gcA?.v3CallsignCheck || null,
+    };
+    fs.writeFileSync(jsonOut, JSON.stringify(detail, null, 2), 'utf-8');
+    return { aclOut, jsonOut };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Flight Fuzz `--replace` safety gate: verifies audio capability flags and
+ * decoded game-compatibility invariants (including v3 callsign/voice clips
+ * against the destination install's audio data) BEFORE copying `.acl`,
+ * `.acl.bak`, or `flight_schedule_<level>.csv`.
+ */
+function verifyAndCopyReplacedLevel(tmpAclPath, opts = {}) {
+  const baseTmpDir = opts.tmpDir || process.env.E2E_TMP_DIR;
+  const gameRoot = opts.gameRoot || process.env.E2E_GAME_ROOT;
+  if (!gameRoot) throw new Error('FUZZ_REPLACE requires E2E_GAME_ROOT to be set');
+  if (!baseTmpDir) throw new Error('FUZZ_REPLACE requires E2E_TMP_DIR to be set');
+
+  const rel = path.relative(baseTmpDir, tmpAclPath);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`sandbox file outside E2E_TMP_DIR, refusing to map: ${tmpAclPath}`);
+  }
+  const dest = path.join(gameRoot, rel);
+  const bakSrc = tmpAclPath + '.bak';
+  if (!fs.existsSync(bakSrc)) throw new Error(`no .acl.bak to copy: ${bakSrc}`);
+  if (!fs.existsSync(dest)) {
+    throw new Error(`destination missing (is this level installed in E2E_GAME_ROOT?): ${dest}`);
+  }
+
+  const icao = gamePaths.airportIcaoFromLevelPath(dest)
+    || path.basename(path.dirname(path.dirname(tmpAclPath)));
+  const baseName = path.basename(tmpAclPath, '.acl');
+  const isV3 = peekAclFormat(tmpAclPath) === 'gatcarc4-v3' || peekAclFormat(dest) === 'gatcarc4-v3';
+
+  if (isV3) {
+    const destCap = verifyV3AudioCapabilities({
+      targetRoot: gameRoot,
+      icao,
+      sourceRoot: gameRoot,
+      requireUsable: false,
+    });
+    if (destCap.sourceShipsV3Audio && !destCap.ok) {
+      throw new Error(`[replace-gate] withholding replacement for ${baseName}: ${destCap.message}`);
+    }
+    const stagedCap = verifyV3AudioCapabilities({
+      targetRoot: baseTmpDir,
+      icao,
+      sourceRoot: gameRoot,
+      requireUsable: Boolean(destCap.sourceShipsV3Audio),
+    });
+    if (!stagedCap.ok) {
+      throw new Error(`[replace-gate] withholding replacement for ${baseName} (staged sandbox incomplete): ${stagedCap.message}`);
+    }
+
+    const gcA = analyzeAclFile(tmpAclPath, {
+      gameRoot,
+      airportIcao: icao,
+      requireV3Audio: Boolean(destCap.sourceShipsV3Audio),
+    });
+    const gc = runChecks(gcA, {
+      voiceLanguages: _readVoiceLanguagesForRoot(gameRoot),
+      airlineCountries: _readAirlineCountriesForRoot(gameRoot),
+      gameRoot,
+      airportIcao: icao,
+      requireV3Audio: Boolean(destCap.sourceShipsV3Audio),
+    });
+    const blockingIssues = gc.issues.filter((i) => !['docked-stand-before-offblock'].includes(i.code));
+    if (blockingIssues.length > 0) {
+      const artifact = persistGcFailArtifact(tmpAclPath, {
+        base: baseName,
+        seed: opts.seed ?? null,
+        filteredIssues: blockingIssues,
+        allIssues: gc.issues,
+        gcA,
+        debugDir: opts.debugDir,
+      });
+      const err = new Error(
+        `[replace-gate] withholding replacement for ${baseName}: ` +
+        blockingIssues.map((i) => `[${i.code}] ${i.msg}`).join(' | '),
+      );
+      err.issues = blockingIssues;
+      err.artifact = artifact;
+      throw err;
+    }
+  }
+
+  fs.copyFileSync(tmpAclPath, dest);
+  fs.copyFileSync(bakSrc, dest + '.bak');
+
+  let bgCopied = null;
+  if (opts.syncBgSidecar) {
+    const bgSrc = tmpAclPath + '.bg.json';
+    const bgDest = dest + '.bg.json';
+    if (fs.existsSync(bgSrc)) {
+      fs.copyFileSync(bgSrc, bgDest);
+      bgCopied = bgDest;
+    } else if (fs.existsSync(bgDest)) {
+      fs.unlinkSync(bgDest);
+    }
+  }
+
+  const levelSuffix = baseName.startsWith(icao + '_') ? baseName.slice(icao.length + 1) : baseName;
+  const csvSrc = path.join(path.dirname(tmpAclPath), 'flight_schedule_' + levelSuffix + '.csv');
+  let csvCopied = null;
+  if (fs.existsSync(csvSrc)) {
+    const csvDest = path.join(path.dirname(dest), path.basename(csvSrc));
+    fs.copyFileSync(csvSrc, csvDest);
+    if (fs.existsSync(csvSrc + '.bak')) fs.copyFileSync(csvSrc + '.bak', csvDest + '.bak');
+    csvCopied = csvDest;
+  }
+
+  return { dest, bakDest: dest + '.bak', bgDest: bgCopied, csvDest: csvCopied };
 }
 
 module.exports = {
@@ -603,4 +870,6 @@ module.exports = {
   analyzeV3,
   analyzeAclFile,
   runChecks,
+  persistGcFailArtifact,
+  verifyAndCopyReplacedLevel,
 };

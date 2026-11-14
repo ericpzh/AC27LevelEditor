@@ -22,6 +22,10 @@ const {
 } = require('./pushback_validation');
 const { validateV3ContainerRunwayTimelineMembership } = require('./runway_timeline_validation');
 const { validateV3ApproachRoutes } = require('./approach_validation');
+const {
+  validateV3CallsignAllocation,
+  CallsignAllocationError,
+} = require('./callsign_validation');
 
 function defaultBgSidecarPath(filePath) {
   return `${filePath}.bg.json`;
@@ -320,6 +324,21 @@ function saveV3GroundPainterData(
   }
   validateV3ContainerRunwayTimelineMembership(diskHandle.container, schema);
   validateV3ApproachRoutes(diskHandle.container.staticData, schema);
+  if (hooks.validateCallsignAllocation !== false) {
+    const allocRes = validateV3CallsignAllocation(diskHandle.container, schema, {
+      levelPath: filePath,
+      gameRoot: hooks.gameRoot,
+      airportIcao: hooks.airportIcao,
+      v3Audio: hooks.v3Audio,
+      requireAudioMetadata: Boolean(hooks.requireAudioMetadata),
+    });
+    if (!allocRes.ok) {
+      throw new CallsignAllocationError(allocRes.issues, {
+        metadataUnavailable: allocRes.metadataUnavailable,
+        missingResources: allocRes.missingResources,
+      });
+    }
+  }
 
   diskHandle.saveToFile(filePath, {
     createBackup: Boolean(createBackup),

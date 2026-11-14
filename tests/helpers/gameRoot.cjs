@@ -167,6 +167,32 @@ function v3LevelPath(icao, fileName, fallbackIcao = 'ZSJN', fallbackFileName = '
 const v3GameLevelExists = (icao, fileName, fallbackIcao, fallbackFileName) =>
   isV3Acl(v3LevelPath(icao, fileName, fallbackIcao, fallbackFileName));
 
+/**
+ * Stage v3 audio validation inputs (`Voices/voice_catalog.json`,
+ * `radio_clip_durations.json`, and `Airports/<ICAO>/radio_channel_config.json`)
+ * into a temporary game root via `src/utils/gamePaths.js`.
+ */
+function stageV3AudioIntoRoot(dstRoot, icao = null, sourceRoot = FIXTURES_GAME_ROOT_V3) {
+  const srcRoots = [sourceRoot, FIXTURES_GAME_ROOT_V3, GAME_ROOT].filter(Boolean);
+  const copyFirst = (pathFn) => {
+    for (const sr of srcRoots) {
+      const sp = pathFn(sr);
+      if (sp && fs.existsSync(sp)) {
+        const dp = pathFn(dstRoot);
+        fs.mkdirSync(path.dirname(dp), { recursive: true });
+        fs.copyFileSync(sp, dp);
+        return dp;
+      }
+    }
+    return null;
+  };
+  copyFirst((r) => gamePaths.voiceCatalogPath(r));
+  copyFirst((r) => gamePaths.radioClipDurationsPath(r));
+  if (icao) {
+    copyFirst((r) => gamePaths.radioChannelConfigPath(r, icao));
+  }
+}
+
 module.exports = {
   GAME_ROOT,
   FIXTURES_GAME_ROOT,
@@ -182,4 +208,5 @@ module.exports = {
   isV3Acl,
   v3LevelPath,
   v3GameLevelExists,
+  stageV3AudioIntoRoot,
 };

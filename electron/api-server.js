@@ -341,18 +341,24 @@ function buildConstraints(state, cache) {
   // which are resolved at read time and never persisted to cache.json.
   const sv = (state && state.airportValues && icao) ? (state.airportValues[icao] || {}) : {};
 
-  // Known airline codes: from audio callsigns + dropdown values
+  // Known airline codes: from audio callsigns + dropdown values + live airportValues
   const knownCodes = new Set([
     ...Object.keys(ac.byAirline || {}),
+    ...Object.keys(dv._flightNums || {}),
+    ...Object.keys(sv._flightNums || {}),
     ...(dv.AirlineCode || []),
+    ...(sv.AirlineCode || []),
   ]);
 
-  // Flight numbers: per-airport numbers unioned with the install-global recorded
-  // callsign library (renderer live `_gameCallsigns`). `knownCodes` above stays
-  // per-airport — a foreign airline is still rejected.
+  // Flight numbers: per-airport numbers unioned with live _flightNums and the
+  // install-global recorded callsign library (renderer live `_gameCallsigns`).
+  // `knownCodes` above stays per-airport — a foreign airline is still rejected.
   const flightNumbers = {};
   for (const [code, nums] of Object.entries(dv._flightNums || {})) {
     flightNumbers[code] = [...nums];
+  }
+  for (const [code, nums] of Object.entries(sv._flightNums || {})) {
+    flightNumbers[code] = [...new Set([...(flightNumbers[code] || []), ...nums])];
   }
   for (const [code, nums] of Object.entries(sv._gameCallsigns || {})) {
     flightNumbers[code] = [...new Set([...(flightNumbers[code] || []), ...nums])];
@@ -368,7 +374,7 @@ function buildConstraints(state, cache) {
     flightNumbers,
     stands: Array.isArray(sv.Stand) ? sv.Stand : (dv.Stand || []),
     runways: Array.isArray(sv.Runway) ? sv.Runway : (dv.Runway || []),
-    aircraftTypes: allAircraftTypes(dv, ad),
+    aircraftTypes: [...new Set([...allAircraftTypes(dv, ad), ...(Array.isArray(sv.AircraftType) ? sv.AircraftType : [])])],
     voices: sv.Voice || dv.Voice || [],
     languages: sv.Language || dv.Language || [],
     voiceLanguages: sv._voiceLanguages || dv._voiceLanguages || null,
@@ -495,66 +501,9 @@ function validateFlightObjects(newFlights, existingFlights, constraints, opts = 
     // 6. (removed) Aircraft type is independent of the airline — any profiled
     //    type is allowed regardless of the callsign's airline.
 
-    // 6b. Language / Voice / clip allocation
-    if (constraints.v3Audio) {
-      const v3 = constraints.v3Audio;
-      const trimmedLang = String(f.Language ?? '').trim();
-      const trimmedVoice = String(f.Voice ?? '').trim();
-      const trimmedCs = String(f.CallSign ?? '').trim();
-      if (!trimmedLang) {
-        details.push({
-          index: idx, field: 'Language', value: f.Language,
-          issue: 'missing_language',
-          message: `Flight ${f.CallSign || '?'} is missing required Language.`,
-        });
-      } else if (Array.isArray(v3.knownChannelLanguages) && v3.knownChannelLanguages.length > 0 && !v3.knownChannelLanguages.includes(trimmedLang)) {
-        details.push({
-          index: idx, field: 'Language', value: f.Language,
-          issue: 'invalid_language',
-          message: `Language '${trimmedLang}' is not configured for airport ${v3.icao || constraints.currentAirport || ''}.`,
-          valid: v3.knownChannelLanguages,
-        });
-      }
-      if (!trimmedVoice) {
-        details.push({
-          index: idx, field: 'Voice', value: f.Voice,
-          issue: 'missing_voice',
-          message: `Flight ${f.CallSign || '?'} is missing required Voice.`,
-        });
-      }
-      const vLangMap = constraints.voiceLanguages || v3.voiceLanguages || {};
-      if (trimmedVoice && trimmedLang && vLangMap[trimmedVoice] && vLangMap[trimmedVoice] !== trimmedLang) {
-        details.push({
-          index: idx, field: 'Voice', value: f.Voice,
-          issue: 'voice_language_mismatch',
-          message: `Voice '${trimmedVoice}' has language '${vLangMap[trimmedVoice]}', which mismatches flight Language '${trimmedLang}' on ${f.CallSign || '?'}.`,
-        });
-      }
-      if (v3.hasClipIndex && trimmedCs) {
-        if (trimmedVoice) {
-          const capClips = v3.voiceCallsigns?.[trimmedVoice];
-          if (!Array.isArray(capClips) || !capClips.includes(trimmedCs)) {
-            details.push({
-              index: idx, field: 'Voice', value: f.Voice,
-              issue: 'callsign_voice_mismatch',
-              message: `${trimmedCs}: callsign '${trimmedCs}' has no audio clip for captain voice '${trimmedVoice}'.`,
-            });
-          }
-        }
-        if (trimmedLang && v3.knownChannelConfig) {
-          for (const atcVoice of (v3.atcVoicesByLang?.[trimmedLang] || [])) {
-            const atcClips = v3.atcCallsigns?.[atcVoice];
-            if (!Array.isArray(atcClips) || !atcClips.includes(trimmedCs)) {
-              details.push({
-                index: idx, field: 'CallSign', value: f.CallSign,
-                issue: 'callsign_atc_voice_mismatch',
-                message: `${trimmedCs}: callsign '${trimmedCs}' has no audio clip for ATC voice '${atcVoice}' (${trimmedLang}).`,
-              });
-            }
-          }
-        }
-      }
-    } else if (f.Language && constraints.airlineCountries) {
+    // 6b. Legacy/v2 airline -> captain language consistency (v3 audio/clip
+    //     allocation is validated in Step 15 across all target flights).
+    if (!constraints.v3Audio && f.Language && constraints.airlineCountries) {
       const expected = languageForAirlineCode(
         airlineCode,
         constraints.airlineCountries,
@@ -826,6 +775,127 @@ function validateFlightObjects(newFlights, existingFlights, constraints, opts = 
     }
   }
 
+  // 15. v3 Language / Voice / CallSign audio allocation across all target flights
+  //     (covers create_flights, modify_flights, PATCH /api/flights/batch, and
+  //     get_validation_issues / GET /api/validation).
+  if (constraints.v3Audio) {
+    const v3 = constraints.v3Audio;
+    const v3Obj = (v3 && typeof v3 === 'object') ? v3 : null;
+    const missingFieldSet = new Set(
+      details.filter((d) => d.issue === 'missing_field').map((d) => d.index),
+    );
+
+    if (v3Obj && allFlights.length > 0) {
+      const missingMeta = [];
+      if (!v3Obj.hasCatalog) missingMeta.push('Voices/voice_catalog.json');
+      if (!v3Obj.hasClipIndex) missingMeta.push('radio_clip_durations.json');
+      const chSig = String(v3Obj.channelConfigSig || '');
+      if (chSig.startsWith('unreadable:') || chSig.startsWith('empty:')) {
+        missingMeta.push(`Airports/${v3Obj.icao || constraints.currentAirport || '<ICAO>'}/radio_channel_config.json`);
+      }
+      if (missingMeta.length > 0) {
+        details.push({
+          index: -1,
+          field: 'Voice',
+          value: null,
+          issue: 'audio_metadata_unavailable',
+          message: `Cannot verify v3 callsign audio allocation: missing or unreadable audio metadata (${missingMeta.join(', ')}).`,
+        });
+      }
+    }
+
+    for (let i = 0; i < allFlights.length; i++) {
+      if (missingFieldSet.has(i)) continue;
+      if (targetIndexSet && !targetIndexSet.has(i)) continue;
+      const f = allFlights[i];
+      const trimmedLang = String(f.Language ?? '').trim();
+      const trimmedVoice = String(f.Voice ?? '').trim();
+      const trimmedCs = String(f.CallSign ?? '').trim();
+      const regVal = String(f.Registration || f._Registration || '').trim();
+      const regTag = regVal ? ` [Reg ${regVal}]` : '';
+
+      if (!trimmedLang) {
+        details.push({
+          index: i, field: 'Language', value: f.Language,
+          issue: 'missing_language',
+          message: `Flight ${trimmedCs || '?'}${regTag} is missing required Language.`,
+        });
+      } else if (v3Obj && Array.isArray(v3Obj.knownChannelLanguages) && v3Obj.knownChannelLanguages.length > 0 && !v3Obj.knownChannelLanguages.includes(trimmedLang)) {
+        details.push({
+          index: i, field: 'Language', value: f.Language,
+          issue: 'invalid_language',
+          message: `Language '${trimmedLang}' is not configured for airport ${v3Obj.icao || constraints.currentAirport || ''}.`,
+          valid: v3Obj.knownChannelLanguages,
+        });
+      }
+
+      if (!trimmedVoice) {
+        details.push({
+          index: i, field: 'Voice', value: f.Voice,
+          issue: 'missing_voice',
+          message: `Flight ${trimmedCs || '?'}${regTag} is missing required Voice.`,
+        });
+      } else if (v3Obj && v3Obj.hasCatalog && v3Obj.voiceRoles) {
+        const vRole = v3Obj.voiceRoles[trimmedVoice];
+        if (!vRole || vRole !== 'captain') {
+          details.push({
+            index: i, field: 'Voice', value: f.Voice,
+            issue: 'invalid_captain_voice',
+            message: `${trimmedCs || '?'}:${regTag} voice '${trimmedVoice}' is unknown or not a captain voice in voice_catalog.json (role: ${vRole || 'missing'}).`,
+            valid: v3Obj.captainVoices || v3Obj.allCaptainVoices || [],
+          });
+        }
+      }
+
+      const vLangMap = constraints.voiceLanguages || v3Obj?.voiceLanguages || {};
+      if (trimmedVoice && trimmedLang && vLangMap[trimmedVoice] && vLangMap[trimmedVoice] !== trimmedLang) {
+        details.push({
+          index: i, field: 'Voice', value: f.Voice,
+          issue: 'voice_language_mismatch',
+          message: `Voice '${trimmedVoice}' has language '${vLangMap[trimmedVoice]}', which mismatches flight Language '${trimmedLang}' on ${trimmedCs || '?'}${regTag}.`,
+        });
+      }
+
+      if (v3Obj && v3Obj.hasClipIndex && trimmedCs) {
+        const isCaptainVoice = !v3Obj.hasCatalog
+          || !v3Obj.voiceRoles
+          || v3Obj.voiceRoles[trimmedVoice] === 'captain';
+        if (trimmedVoice && isCaptainVoice) {
+          const capClips = v3Obj.voiceCallsigns?.[trimmedVoice];
+          if (!Array.isArray(capClips) || !capClips.includes(trimmedCs)) {
+            const compatVoices = (v3Obj.allCaptainVoices || v3Obj.captainVoices || []).filter((cv) => {
+              const list = v3Obj.knownChannelConfig
+                ? v3Obj.allocatableCallsignsByVoice?.[cv]
+                : v3Obj.voiceCallsigns?.[cv];
+              return Array.isArray(list) && list.includes(trimmedCs);
+            });
+            const compatHint = compatVoices.length > 0
+              ? ` (compatible captain voices: ${compatVoices.join(', ')})`
+              : '';
+            details.push({
+              index: i, field: 'Voice', value: f.Voice,
+              issue: 'callsign_voice_mismatch',
+              message: `${trimmedCs}:${regTag} callsign '${trimmedCs}' has no audio clip for captain voice '${trimmedVoice}'${compatHint}.`,
+              ...(compatVoices.length > 0 ? { valid: compatVoices } : {}),
+            });
+          }
+        }
+        if (trimmedLang && v3Obj.knownChannelConfig) {
+          for (const atcVoice of (v3Obj.atcVoicesByLang?.[trimmedLang] || [])) {
+            const atcClips = v3Obj.atcCallsigns?.[atcVoice];
+            if (!Array.isArray(atcClips) || !atcClips.includes(trimmedCs)) {
+              details.push({
+                index: i, field: 'CallSign', value: f.CallSign,
+                issue: 'callsign_atc_voice_mismatch',
+                message: `${trimmedCs}:${regTag} callsign '${trimmedCs}' has no audio clip for ATC voice '${atcVoice}' (${trimmedLang}).`,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
   return details.length > 0 ? details : null;
 }
 
@@ -834,8 +904,9 @@ function validateFlightObjects(newFlights, existingFlights, constraints, opts = 
 /**
  * Apply cascade logic when updating flights (mirrors updateFlight in appStore.js:276-348).
  * - AirlineCode change → rebuild CallSign, cascade Registration (aircraft type
- *   is independent of the airline)
- * - FlightNum change → rebuild CallSign
+ *   is independent of the airline), and cascade Language/Voice
+ * - FlightNum change → rebuild CallSign (and cascade Voice/Language on v3 if needed)
+ * - Language change → cascade Voice when Voice is not explicitly provided
  * - Runway change → cascade Airway from _runwayStarMap
  */
 function applyCascades(flight, updates, constraints) {
@@ -855,10 +926,8 @@ function applyCascades(flight, updates, constraints) {
     if (validRegs && validRegs.length > 0 && !validRegs.includes(result.Registration)) {
       result.Registration = validRegs[0];
     }
-    // Cascade Language (+ Voice) to the captain language the game's
-    // CallsignService requires (CN → zh, every other carrier → en). Mirrors
-    // Cascade 2b in appStore.updateFlight. Skipped when Language is explicit.
-    if (!('Language' in updates)) {
+    // Legacy/v2: Cascade Language (+ Voice) via airline_country_registry (CN -> zh, else en).
+    if (!constraints.v3Audio && !('Language' in updates)) {
       const expected = languageForAirlineCode(
         newCode,
         constraints.airlineCountries,
@@ -881,6 +950,53 @@ function applyCascades(flight, updates, constraints) {
 
   if ('AirlineCode' in updates || 'FlightNum' in updates) {
     result.CallSign = newCode + newNum;
+  }
+
+  const v3Obj = (constraints.v3Audio && typeof constraints.v3Audio === 'object') ? constraints.v3Audio : null;
+  if (v3Obj && !('Voice' in updates)) {
+    const langOf = constraints.voiceLanguages || v3Obj.voiceLanguages || {};
+    const voicePool = Array.isArray(constraints.voices) && constraints.voices.length > 0
+      ? constraints.voices
+      : (v3Obj.captainVoices || v3Obj.allCaptainVoices || []);
+    const cs = String(result.CallSign || '').trim();
+    const allocListOf = (v) => (
+      v3Obj.knownChannelConfig
+        ? (v3Obj.allocatableCallsignsByVoice?.[v] || [])
+        : (v3Obj.voiceCallsigns?.[v] || [])
+    );
+
+    if ('Language' in updates && result.Language) {
+      const matching = voicePool.filter((v) => langOf[v] === result.Language);
+      const withClip = v3Obj.hasClipIndex && cs
+        ? matching.find((v) => allocListOf(v).includes(cs))
+        : null;
+      if (withClip) result.Voice = withClip;
+      else if (matching.length > 0 && langOf[result.Voice] !== result.Language) result.Voice = matching[0];
+    } else if ('AirlineCode' in updates || 'FlightNum' in updates) {
+      const curVoiceOk = Boolean(
+        result.Voice &&
+        (!result.Language || !langOf[result.Voice] || langOf[result.Voice] === result.Language) &&
+        (!v3Obj.hasClipIndex || !cs || allocListOf(result.Voice).includes(cs)),
+      );
+      if (!curVoiceOk && v3Obj.hasClipIndex && cs) {
+        const sameLangHit = result.Language
+          ? voicePool.find((v) => langOf[v] === result.Language && allocListOf(v).includes(cs))
+          : null;
+        const anyHit = sameLangHit || voicePool.find((v) => allocListOf(v).includes(cs));
+        if (anyHit) {
+          result.Voice = anyHit;
+          if (!('Language' in updates) && langOf[anyHit]) {
+            result.Language = langOf[anyHit];
+          }
+        }
+      }
+    }
+  } else if (!v3Obj && 'Language' in updates && result.Language && !('Voice' in updates)) {
+    const langOf = constraints.voiceLanguages || {};
+    const matching = (constraints.voices || []).filter((v) => langOf[v] === result.Language);
+    if (matching.length > 0 && langOf[result.Voice] !== result.Language) {
+      result.Voice = matching[0];
+    }
   }
 
   if ('Runway' in updates && updates.Runway) {
@@ -2257,9 +2373,20 @@ async function handleMcpMessage(msg) {
           const state = await readStoreState();
           const cache = getAirportCache ? getAirportCache() : null;
           const constraints = buildConstraints(state, cache);
+          const v3Summary = (constraints.v3Audio && typeof constraints.v3Audio === 'object') ? {
+            hasCatalog: Boolean(constraints.v3Audio.hasCatalog),
+            hasClipIndex: Boolean(constraints.v3Audio.hasClipIndex),
+            knownChannelConfig: Boolean(constraints.v3Audio.knownChannelConfig),
+            knownChannelLanguages: constraints.v3Audio.knownChannelLanguages || null,
+            atcVoicesByLang: constraints.v3Audio.atcVoicesByLang || {},
+            captainVoices: constraints.v3Audio.captainVoices || [],
+            captainVoicesByLang: constraints.v3Audio.captainVoicesByLang || {},
+            allocatableByVoice: constraints.v3Audio.allocatableByVoice || {},
+          } : null;
           result = {
             success: true,
             currentAirport: state.currentAirport,
+            ...(constraints.isV3 ? { aclFormat: 'gatcarc4-v3' } : {}),
             cacheReady: !!(cache && state.currentAirport && cache[state.currentAirport]),
             configTimeRange: { start: state._configStartTime || null, end: state._configEndTime || null },
             constraints: {
@@ -2271,6 +2398,7 @@ async function handleMcpMessage(msg) {
               runwayStarCompat: constraints.runwayStarCompat,
               ...(constraints.timelineRunways != null ? { timelineRunways: constraints.timelineRunways } : {}),
               ...(constraints.liveUsableApprRunways != null ? { usableApproachRunways: constraints.liveUsableApprRunways } : {}),
+              ...(v3Summary ? { v3Audio: v3Summary } : {}),
               registrationsByPair: constraints.registrationsByPair,
               // Airline → required captain Language (CN → zh, every other → en).
               // The game's CallsignService only records a callsign for one
@@ -2504,10 +2632,22 @@ async function handleRequest(req, res) {
       const cache = getAirportCache ? getAirportCache() : null;
       const constraints = buildConstraints(state, cache);
 
+      const v3Summary = (constraints.v3Audio && typeof constraints.v3Audio === 'object') ? {
+        hasCatalog: Boolean(constraints.v3Audio.hasCatalog),
+        hasClipIndex: Boolean(constraints.v3Audio.hasClipIndex),
+        knownChannelConfig: Boolean(constraints.v3Audio.knownChannelConfig),
+        knownChannelLanguages: constraints.v3Audio.knownChannelLanguages || null,
+        atcVoicesByLang: constraints.v3Audio.atcVoicesByLang || {},
+        captainVoices: constraints.v3Audio.captainVoices || [],
+        captainVoicesByLang: constraints.v3Audio.captainVoicesByLang || {},
+        allocatableByVoice: constraints.v3Audio.allocatableByVoice || {},
+      } : null;
+
       res.writeHead(200);
       res.end(JSON.stringify({
         success: true,
         currentAirport: state.currentAirport,
+        ...(constraints.isV3 ? { aclFormat: 'gatcarc4-v3' } : {}),
         cacheReady: !!(cache && state.currentAirport && cache[state.currentAirport]),
         configTimeRange: {
           start: state._configStartTime || null,
@@ -2528,6 +2668,7 @@ async function handleRequest(req, res) {
           runwayStarCompat: constraints.runwayStarCompat,
           ...(constraints.timelineRunways != null ? { timelineRunways: constraints.timelineRunways } : {}),
           ...(constraints.liveUsableApprRunways != null ? { usableApproachRunways: constraints.liveUsableApprRunways } : {}),
+          ...(v3Summary ? { v3Audio: v3Summary } : {}),
           registrationsByPair: constraints.registrationsByPair,
           airlineLanguages: airlineLanguageMap(constraints),
           timeRules: {
