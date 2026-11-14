@@ -94,7 +94,7 @@ The flight-schedule tools are listed below; the Ground/Air Painter tool set (sce
 6b. **Airline/language** (`airline_language_mismatch`) — the game's `CallsignService` only records a callsign for one captain language, so `Language` must follow the callsign airline (CN → zh, every other carrier → en; a CN carrier only gets zh when the airport ships `audio_clips_zh.json`). Exposed to agents as `get_airport_info.airlineLanguages`. The renderer mirrors this as `val_airline_language_mismatch`.
 7. Airway/STAR compatible with runway (`_runwayStarMap`, arrivals only)
 8. Registration valid for (airline, aircraft) pair (`_registrationMap`)
-9. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` — the strict upper bound is `end + 30 min`, not `end` (game allows events up to 30 min past scenario end; `time_after_range` only fires past the grace)
+9. Time bounds: primary time (OffBlockTime/LandingTime) within `[_configStartTime, _configEndTime + SCENARIO_END_GRACE_MIN (30 min)]` across all target flights (`create_flights`, `modify_flights`, `PATCH /api/flights/batch`, and full-schedule `get_validation_issues` / `GET /api/validation`) — strict second-accurate lower bound (`time_before_range`, with no exemption for unmodified pre-`startTime` source flights) and upper bound `end + 30 min` (`time_after_range` only fires past the grace)
 10. Time order (LandingTime < InBlockTime, OffBlockTime < TakeoffTime)
 11. Duplicate callsigns
 12. Stand conflicts
@@ -111,7 +111,7 @@ The flight-schedule tools are listed below; the Ground/Air Painter tool set (sce
 ## Testing
 
 ```bash
-# API server unit + HTTP integration + MCP protocol (147 tests)
+# API server unit + HTTP integration + MCP protocol (149 tests)
 node tests/integration/test_api_server.js
 
 # E2E composition examples from skill (44 tests)

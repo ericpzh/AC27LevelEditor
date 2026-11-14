@@ -405,9 +405,9 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
     const ceH = parseInt(ceParts[0], 10), ceM = parseInt(ceParts[1], 10);
 
     const csParts = String(_configStartTime).split(':');
-    const csH = parseInt(csParts[0], 10), csM = parseInt(csParts[1], 10);
-    const startTime = csH * 100 + csM;
-    const startLabel = String(csH).padStart(2, '0') + ':' + String(csM).padStart(2, '0');
+    const csH = parseInt(csParts[0], 10), csM = parseInt(csParts[1], 10), csS = parseInt(csParts[2], 10) || 0;
+    const startSec = csH * 3600 + csM * 60 + csS;
+    const startLabel = String(csH).padStart(2, '0') + ':' + String(csM).padStart(2, '0') + (csS > 0 ? ':' + String(csS).padStart(2, '0') : '');
     // Upper bound relaxed: flights may run up to SCENARIO_END_GRACE_MIN past scenario end.
     const endGraceMin = ceH * 60 + ceM + SCENARIO_END_GRACE_MIN;
     const endTime = Math.floor(endGraceMin / 60) * 100 + (endGraceMin % 60);
@@ -419,10 +419,10 @@ export function runTripleValidation(flights, airportValues, currentAirport, audi
         if (!timeVal) continue;
         const parts = String(timeVal).split(':');
         if (parts.length < 2) continue;
-        const t = parseInt(parts[0], 10) * 100 + parseInt(parts[1], 10);
-        const sourceCol = col === 'LandingTime' ? '_sourceLandingTime' : '_sourceOffBlockTime';
-        const isUnretimedSourceFlight = !fl._isNew && !!fl[sourceCol] && timeVal === fl[sourceCol];
-        const tooEarly = t < startTime && !isUnretimedSourceFlight;
+        const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10), s = parseInt(parts[2], 10) || 0;
+        const tSec = h * 3600 + m * 60 + s;
+        const t = h * 100 + m;
+        const tooEarly = tSec < startSec;
         const tooLate = t > endTime;
         if (tooEarly || tooLate) {
           let hint = '';

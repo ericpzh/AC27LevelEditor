@@ -216,8 +216,6 @@ export const useAppStore = create((set, get) => ({
     const copies = indices.map((i) => {
       const copy = { ...state.flights[i], _isNew: true };
       delete copy._fpGuid;
-      delete copy._sourceLandingTime;
-      delete copy._sourceOffBlockTime;
       return copy;
     });
     const insertAt = indices[indices.length - 1] + 1;

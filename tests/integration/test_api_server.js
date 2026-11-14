@@ -208,6 +208,13 @@ const badTime = { ...validFlight, CallSign: 'DAL2001', OffBlockTime: '25:00:00' 
 const issues8 = validateFlightObjects([badTime], MOCK_FLIGHTS, c);
 assert(issues8 !== null && issues8.some(i => i.issue === 'time_after_range'), 'time after range rejected');
 
+// validateFlightObjects — time before start range rejected (both new flights and full-schedule validation)
+const beforeStartFlight = { ...validFlight, CallSign: 'DAL2001', OffBlockTime: '05:59:42' };
+const issuesBeforeStartNew = validateFlightObjects([beforeStartFlight], MOCK_FLIGHTS, c);
+assert(issuesBeforeStartNew !== null && issuesBeforeStartNew.some(i => i.issue === 'time_before_range'), 'time before start range rejected on create');
+const issuesBeforeStartExisting = validateFlightObjects([], [...MOCK_FLIGHTS, beforeStartFlight], c);
+assert(issuesBeforeStartExisting !== null && issuesBeforeStartExisting.some(i => i.issue === 'time_before_range' && i.message.includes('DAL2001')), 'time before start range flagged on full-schedule validation');
+
 // validateFlightObjects — time within end+30min grace accepted (end 22:00, flight 22:15)
 const graceTime = { ...validFlight, CallSign: 'AAL1003', OffBlockTime: '22:15:00', TakeoffTime: '22:20:00' };
 const issues8b = validateFlightObjects([graceTime], MOCK_FLIGHTS, c);

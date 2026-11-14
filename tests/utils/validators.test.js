@@ -455,6 +455,35 @@ describe('runTripleValidation time range (end + 30min grace)', () => {
     expect(issues).toHaveLength(1);
     expect(issues[0]).toContain('06:00');
   });
+
+  it('rejects pre-startTime source flights like 05:45:42 in a level starting 05:46', () => {
+    const AUDIO_ZSJN = { allAirlines: ['CES', 'DKH'], byAirline: { CES: [], DKH: [] }, allCallsigns: [] };
+    const flights = [
+      { CallSign: 'DKH6071', LandingTime: '05:45:42', InBlockTime: '05:51:00', DepartureAirport: 'ZSPD' },
+      { CallSign: 'CES9197', OffBlockTime: '05:45:00', TakeoffTime: '05:51:00', ArrivalAirport: 'ZSPD' },
+      { CallSign: 'CES1234', LandingTime: '05:46:00', InBlockTime: '05:52:00', DepartureAirport: 'ZBAA' },
+    ];
+    const issues = runTripleValidation(flights, {}, 'ZSJN', AUDIO_ZSJN, null, '05:46:00', '06:15:00', null);
+    expect(issues).toHaveLength(2);
+    expect(issues.some((m) => m.includes('DKH6071') && m.includes('05:45:42') && m.includes('≥ 05:46'))).toBe(true);
+    expect(issues.some((m) => m.includes('CES9197') && m.includes('05:45:00') && m.includes('≥ 05:46'))).toBe(true);
+  });
+
+  it('enforces second-level start bound when config start time has non-zero seconds', () => {
+    const issues = runTripleValidation(
+      [{ CallSign: 'CES1234', LandingTime: '05:35:10', DepartureAirport: 'ZBAA' }],
+      {},
+      'ZSJN',
+      AUDIO,
+      null,
+      '05:35:42',
+      '06:15:00',
+      null,
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('05:35:10');
+    expect(issues[0]).toContain('≥ 05:35:42');
+  });
 });
 
 describe('getActiveColumns (v4 semantics)', () => {

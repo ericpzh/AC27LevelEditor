@@ -592,34 +592,7 @@ function validateFlightObjects(newFlights, existingFlights, constraints, opts = 
       }
     }
 
-    // 9. Time bounds
-    const pt = primaryTime(f);
-    if (pt) {
-      const sec = parseTimeSeconds(pt);
-      if (constraints.configStartTime) {
-        const startSec = parseTimeSeconds(constraints.configStartTime);
-        const sourceCol = isArrival(f) ? '_sourceLandingTime' : '_sourceOffBlockTime';
-        const isUnretimedSourceFlight = !f._isNew && !!f[sourceCol] && pt === f[sourceCol];
-        if (!isNaN(sec) && !isNaN(startSec) && sec < startSec && !isUnretimedSourceFlight) {
-          details.push({
-            index: idx, field: isArrival(f) ? 'LandingTime' : 'OffBlockTime', value: pt,
-            issue: 'time_before_range',
-            message: `${isArrival(f) ? 'LandingTime' : 'OffBlockTime'} ${pt} is before config start ${constraints.configStartTime}.`,
-          });
-        }
-      }
-      if (constraints.configEndTime) {
-        const endSec = parseTimeSeconds(constraints.configEndTime);
-        // Flights may run up to SCENARIO_END_GRACE_MIN past scenario end.
-        if (!isNaN(sec) && !isNaN(endSec) && sec > endSec + SCENARIO_END_GRACE_SEC) {
-          details.push({
-            index: idx, field: isArrival(f) ? 'LandingTime' : 'OffBlockTime', value: pt,
-            issue: 'time_after_range',
-            message: `${isArrival(f) ? 'LandingTime' : 'OffBlockTime'} ${pt} is after config end ${constraints.configEndTime} (max +${SCENARIO_END_GRACE_MIN} min).`,
-          });
-        }
-      }
-    }
+    // 9. (Time bounds run below across all target flights — see Check 16)
 
     // 10. Time order
     if (isArrival(f)) {
@@ -892,6 +865,46 @@ function validateFlightObjects(newFlights, existingFlights, constraints, opts = 
             }
           }
         }
+      }
+    }
+  }
+
+  // 16. Time bounds across all target flights (covers create_flights, modify_flights,
+  //     PATCH /api/flights/batch, and get_validation_issues / GET /api/validation).
+  if (constraints.configStartTime || constraints.configEndTime) {
+    const startSec = constraints.configStartTime ? parseTimeSeconds(constraints.configStartTime) : NaN;
+    const endSec = constraints.configEndTime ? parseTimeSeconds(constraints.configEndTime) : NaN;
+    const missingFieldSet = new Set(
+      details.filter((d) => d.issue === 'missing_field').map((d) => d.index),
+    );
+    for (let i = 0; i < allFlights.length; i++) {
+      if (missingFieldSet.has(i)) continue;
+      if (targetIndexSet && !targetIndexSet.has(i)) continue;
+      const f = allFlights[i];
+      const pt = primaryTime(f);
+      if (!pt) continue;
+      const sec = parseTimeSeconds(pt);
+      if (isNaN(sec)) continue;
+      const field = isArrival(f) ? 'LandingTime' : 'OffBlockTime';
+      const csPrefix = f.CallSign ? `${f.CallSign}: ` : '';
+      if (!isNaN(startSec) && sec < startSec) {
+        details.push({
+          index: i,
+          field,
+          value: pt,
+          issue: 'time_before_range',
+          message: `${csPrefix}${field} ${pt} is before config start ${constraints.configStartTime}.`,
+        });
+      }
+      // Flights may run up to SCENARIO_END_GRACE_MIN past scenario end.
+      if (!isNaN(endSec) && sec > endSec + SCENARIO_END_GRACE_SEC) {
+        details.push({
+          index: i,
+          field,
+          value: pt,
+          issue: 'time_after_range',
+          message: `${csPrefix}${field} ${pt} is after config end ${constraints.configEndTime} (max +${SCENARIO_END_GRACE_MIN} min).`,
+        });
       }
     }
   }

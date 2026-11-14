@@ -251,7 +251,6 @@ function _flightFromV3StaticItem(pk, item, g) {
     f.Stand = arrLeg.Stand || '';
     f.Airway = arrLeg.STAR || '';
     f.LandingTime = isoToEditorTime(arrLeg.LandingTime);
-    f._sourceLandingTime = f.LandingTime;
     f.InBlockTime = isoToEditorTime(arrLeg.InBlockTime);
     f.OffBlockTime = '';
     f.TakeoffTime = '';
@@ -269,7 +268,6 @@ function _flightFromV3StaticItem(pk, item, g) {
     f.LandingTime = '';
     f.InBlockTime = '';
     f.OffBlockTime = isoToEditorTime(depLeg.OffBlockTime);
-    f._sourceOffBlockTime = f.OffBlockTime;
     f.TakeoffTime = isoToEditorTime(depLeg.TakeoffTime);
     return f;
   }

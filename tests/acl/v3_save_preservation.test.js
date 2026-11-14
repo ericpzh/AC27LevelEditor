@@ -172,11 +172,9 @@ describe('1. v3 load-stage schedule preservation & early-flight validation', () 
     expect(ces9197).toBeTruthy();
     expect(regOf(ces9197)).toBe('B-66X5');
     expect(ces9197.OffBlockTime).toBe('05:45:00');
-    expect(ces9197._sourceOffBlockTime).toBe('05:45:00');
     expect(dkh6071).toBeTruthy();
     expect(regOf(dkh6071)).toBe('B-5716D');
     expect(dkh6071.LandingTime).toBe('05:45:42');
-    expect(dkh6071._sourceLandingTime).toBe('05:45:42');
 
     // Backup restore path (.acl.bak -> .acl -> loadLevelForEditor)
     const bakPath = aclCopy + '.bak';
@@ -208,7 +206,7 @@ describe('1. v3 load-stage schedule preservation & early-flight validation', () 
     expect(zipLoaded.flights).toHaveLength(24);
   });
 
-  it('allows unretimed pre-startTime source flights while blocking retimed, copied, or newly added early flights', () => {
+  it('rejects pre-startTime source flights (CES9197 05:45:00, DKH6071 05:45:42 < 05:46:00) on save validation until retimed or removed', () => {
     const loaded = loadLevelForEditor(ZSJN_LEISURE_1_V3);
     const { vals, audioCallsigns } = buildZsjnV3AirportContext(loaded.flights);
     const runwayTimeline = loaded.handle.readTimelines().runwayTimeline;
@@ -227,8 +225,9 @@ describe('1. v3 load-stage schedule preservation & early-flight validation', () 
       },
     });
 
-    // 1. Unmodified 24-flight schedule passes both UI validator and MCP validator
-    const cleanUiIssues = runTripleValidation(
+    // 1. Unmodified 24-flight schedule is rejected by both UI validator and MCP validator
+    //    because CES9197 (05:45:00) and DKH6071 (05:45:42) precede startTime 05:46:00
+    const rawUiIssues = runTripleValidation(
       loaded.flights,
       { ZSJN: vals },
       'ZSJN',
@@ -238,15 +237,23 @@ describe('1. v3 load-stage schedule preservation & early-flight validation', () 
       '06:15:00',
       runwayTimeline,
     );
-    expect(cleanUiIssues).toEqual([]);
-    expect(validateFlightObjects(toStoreFlights(loaded.flights), [], constraints)).toBeNull();
+    expect(rawUiIssues).toHaveLength(2);
+    expect(rawUiIssues.some((msg) => msg.includes('CES9197') && msg.includes('05:45:00') && msg.includes('≥ 05:46'))).toBe(true);
+    expect(rawUiIssues.some((msg) => msg.includes('DKH6071') && msg.includes('05:45:42') && msg.includes('≥ 05:46'))).toBe(true);
 
-    // 2. Retiming CES9197 from 05:45:00 to 05:45:30 (still < 05:46:00) is blocked
-    const retimedFlights = loaded.flights.map((f) =>
-      f.CallSign === 'CES9197' ? { ...f, OffBlockTime: '05:45:30' } : f,
-    );
-    const retimedUiIssues = runTripleValidation(
-      retimedFlights,
+    const rawMcpIssues = validateFlightObjects([], toStoreFlights(loaded.flights), constraints);
+    expect(rawMcpIssues).toHaveLength(2);
+    expect(rawMcpIssues.some((e) => e.issue === 'time_before_range' && e.field === 'OffBlockTime' && e.value === '05:45:00')).toBe(true);
+    expect(rawMcpIssues.some((e) => e.issue === 'time_before_range' && e.field === 'LandingTime' && e.value === '05:45:42')).toBe(true);
+
+    // 2. Retiming both early flights to >= 05:46:00 makes the full 24-flight schedule pass both validators
+    const validRetimedFlights = loaded.flights.map((f) => {
+      if (f.CallSign === 'CES9197') return { ...f, OffBlockTime: '05:46:00', TakeoffTime: '05:52:00' };
+      if (f.CallSign === 'DKH6071') return { ...f, LandingTime: '05:46:00', InBlockTime: '05:52:00' };
+      return f;
+    });
+    const cleanUiIssues = runTripleValidation(
+      validRetimedFlights,
       { ZSJN: vals },
       'ZSJN',
       audioCallsigns,
@@ -255,27 +262,25 @@ describe('1. v3 load-stage schedule preservation & early-flight validation', () 
       '06:15:00',
       runwayTimeline,
     );
-    expect(retimedUiIssues.some((msg) => msg.includes('CES9197'))).toBe(true);
-    const retimedMcp = validateFlightObjects(toStoreFlights(retimedFlights), [], constraints);
-    expect(retimedMcp?.some((e) => e.field === 'OffBlockTime')).toBe(true);
+    expect(cleanUiIssues).toEqual([]);
+    expect(validateFlightObjects([], toStoreFlights(validRetimedFlights), constraints)).toBeNull();
 
-    // 3. Copying CES9197 (_isNew: true, stripped _sourceOffBlockTime) without retiming is blocked
-    const usedStands = new Set(loaded.flights.map((f) => f.Stand));
+    // 3. Copying or adding an early flight (< 05:46:00) is also blocked
+    const usedStands = new Set(validRetimedFlights.map((f) => f.Stand));
     const freeStand = vals.Stand.find((s) => !usedStands.has(s)) || '201';
-    const cesIdx = loaded.flights.findIndex((f) => f.CallSign === 'CES9197');
-    const altCesNum = (vals._flightNums.CES || []).find((n) => n !== '9197') || '9197';
+    const cesIdx = validRetimedFlights.findIndex((f) => f.CallSign === 'CES9197');
+    const altCesNum = (vals._flightNums.CES || []).find((n) => !validRetimedFlights.some((fl) => fl.CallSign === `CES${n}`)) || '9198';
     const copiedRow = {
-      ...loaded.flights[cesIdx],
+      ...validRetimedFlights[cesIdx],
       CallSign: `CES${altCesNum}`,
       _Registration: 'B-9999',
       Stand: freeStand,
+      OffBlockTime: '05:45:30',
       _isNew: true,
     };
-    delete copiedRow._sourceOffBlockTime;
-    delete copiedRow._sourceLandingTime;
     delete copiedRow._fpGuid;
 
-    const copiedFlights = [...loaded.flights, copiedRow];
+    const copiedFlights = [...validRetimedFlights, copiedRow];
     const copiedUiIssues = runTripleValidation(
       copiedFlights,
       { ZSJN: vals },
@@ -286,9 +291,9 @@ describe('1. v3 load-stage schedule preservation & early-flight validation', () 
       '06:15:00',
       runwayTimeline,
     );
-    expect(copiedUiIssues.some((msg) => msg.includes(copiedRow.CallSign))).toBe(true);
+    expect(copiedUiIssues.some((msg) => msg.includes(copiedRow.CallSign) && msg.includes('05:45:30'))).toBe(true);
     const copiedMcp = validateFlightObjects(toStoreFlights(copiedFlights), [], constraints);
-    expect(copiedMcp?.some((e) => e.index === copiedFlights.length - 1 && e.field === 'OffBlockTime')).toBe(true);
+    expect(copiedMcp?.some((e) => e.index === copiedFlights.length - 1 && e.field === 'OffBlockTime' && e.issue === 'time_before_range')).toBe(true);
   });
 });
 
