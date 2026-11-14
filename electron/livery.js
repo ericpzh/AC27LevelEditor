@@ -35,7 +35,7 @@ const OWN_PACK_MOD_INFO = {
 };
 const SHORT_CODE_TO_PLANE_ID = {
   A19N: 'AIRBUS A-319neo', A20N: 'AIRBUS A-320neo', A21N: 'AIRBUS A-321neo',
-  A319: 'AIRBUS A-319ceo', A320: 'AIRBUS A-320ceo', A320P2F: 'AIRBUS A-320P2F', A333: 'AIRBUS A-330-300',
+  A319: 'AIRBUS A-319ceo', A320: 'AIRBUS A-320ceo', A333: 'AIRBUS A-330-300',
   A359: 'AIRBUS A-350-900', A388: 'AIRBUS A-380-800', B38M: 'BOEING 737 MAX 8',
   B738: 'BOEING 737-800', B738BCF: 'BOEING 737-800BCF', B748: 'BOEING 747-8I', B77W: 'BOEING 777-300ER',
   B789: 'BOEING 787-9', CRJ7: 'BOMBARDIER CRJ700', CRJ9: 'BOMBARDIER CRJ900',
@@ -182,28 +182,13 @@ function resolvePackFolder(gameRoot, folder, pack = 'mine') {
   try { return fs.existsSync(resolved) ? resolved : null; } catch (_) { return null; }
 }
 
-// Cargo variants that share an airframe with a passenger type reuse that type's
-// built-in default livery/UV template when the game has not shipped a
-// dedicated folder for them yet (e.g. A320P2F falls back to A320ceo).
-function _builtInBasePlaneId(gameRoot, planeId) {
-  const id = String(planeId || '');
-  if (id === 'AIRBUS A-320P2F') {
-    try {
-      const own = path.join(gamePaths.builtinLiveryDir(gameRoot), id, 'aircraft_livery_manifest.json');
-      if (fs.existsSync(own)) return id;
-    } catch (_) {}
-    return 'AIRBUS A-320ceo';
-  }
-  return id;
-}
-
 // Does the game ship a built-in default livery for this plane id? The folder
 // name IS the plane id, and its manifest confirms it is a real livery.
 function hasBuiltInTemplate(gameRoot, planeId) {
   if (!gameRoot || !planeId) return false;
   try {
     return fs.existsSync(path.join(
-      gamePaths.builtinLiveryDir(gameRoot), _builtInBasePlaneId(gameRoot, planeId), 'aircraft_livery_manifest.json',
+      gamePaths.builtinLiveryDir(gameRoot), String(planeId), 'aircraft_livery_manifest.json',
     ));
   } catch (_) {
     return false;
@@ -383,7 +368,7 @@ function _readBuiltInManifest(gameRoot, planeId) {
   try {
     if (!gameRoot || !planeId) return null;
     return _readJsonFile(
-      path.join(gamePaths.builtinLiveryDir(gameRoot), _builtInBasePlaneId(gameRoot, planeId), 'aircraft_livery_manifest.json'),
+      path.join(gamePaths.builtinLiveryDir(gameRoot), String(planeId), 'aircraft_livery_manifest.json'),
       'utf-8',
     );
   } catch (_) {
@@ -512,11 +497,6 @@ function listAircraftTypes(gameRoot) {
       if (!entry.isDirectory()) continue;
       if (!hasBuiltInTemplate(gameRoot, entry.name)) continue;
       types.push({ planeId: entry.name, shortCode: PLANE_ID_TO_SHORT_CODE[entry.name] || '' });
-    }
-    // Cargo variants that share an airframe with a passenger type are offered
-    // even when the game has not shipped a dedicated built-in livery folder.
-    if (!types.some(t => t.planeId === 'AIRBUS A-320P2F') && hasBuiltInTemplate(gameRoot, 'AIRBUS A-320P2F')) {
-      types.push({ planeId: 'AIRBUS A-320P2F', shortCode: PLANE_ID_TO_SHORT_CODE['AIRBUS A-320P2F'] || '' });
     }
   } catch (_) {
     return { success: true, types: [] };

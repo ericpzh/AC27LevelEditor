@@ -22,7 +22,7 @@ const { parseUnityVersion, readMeshData, buildPart } = require('./mesh');
 // Cache key for the produced pack. Bump when the mapping/geometry changes so
 // electron/aircraftModels.js rejects an old cached pack and rebuilds. The
 // manifest/bin LAYOUT is unchanged; consumers ignore this value.
-const PACK_VERSION = 9;
+const PACK_VERSION = 8;
 
 // Per-plane yaw correction (degrees, about +Y) baked at extraction. These
 // prefabs ship a 90°-rotated root transform vs the rest of the fleet, so
@@ -40,7 +40,6 @@ const PLANES = {
   'AIRBUS A-319ceo': { parts: [{ name: 'Body', meshes: [['A319FCFM_a', 'all']] }], static: [['A319FCFM_b', 'all']] },
   'AIRBUS A-319neo': { parts: [{ name: 'Body', meshes: [['A19NCFM_a', 'all']] }], static: [['A19NCFM_b', 'all']] },
   'AIRBUS A-320ceo': { parts: [{ name: 'Body', meshes: [['A320CEO_A01_Body', 'all']] }], static: [] },
-  'AIRBUS A-320P2F': { parts: [{ name: 'Body', meshes: [['A320CEO_A01_Body', 'all']] }], static: [] },
   'AIRBUS A-320neo': { parts: [{ name: 'Body', meshes: [['A20N_A01_Body', [0, 1]]] }], static: [['A20N_A01_Body', [2]]] },
   'AIRBUS A-321neo': { parts: [{ name: 'Body', meshes: [['A321_A01_Body', [0, 1]]] }], static: [['A321_A01_Body', [2]]] },
   // A330: the engine nacelles + reverser doors are separate, NON-skinned
