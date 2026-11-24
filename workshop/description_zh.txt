@@ -42,4 +42,4 @@ Airport Control 27 修改器工具盒。
 [hr]
 [h1]代码签名政策 (Code signing policy)[/h1]
 免费代码签名由 [url=https://signpath.io/]SignPath.io[/url] 提供，证书由 [url=https://signpath.org/]SignPath Foundation[/url] 签发。
-完整政策与隐私说明请见：[url=https://github.com/ericpzh/AC27LevelEditor/blob/main/CODE_SIGNING_POLICY.md]CODE_SIGNING_POLICY.md[/url] | 开源协议：[url=https://github.com/ericpzh/AC27LevelEditor/blob/main/LICENSE]MIT[/url]。
+完整政策与隐私说明请见：[url=https://github.com/ericpzh/AC27LevelEditor/blob/master/CODE_SIGNING_POLICY.md]CODE_SIGNING_POLICY.md[/url] | 开源协议：[url=https://github.com/ericpzh/AC27LevelEditor/blob/master/LICENSE]MIT[/url]。

@@ -41,4 +41,4 @@ If a runtime error occurs while using the editor, or if levels are accidentally 
 [hr]
 [h1]Code signing policy[/h1]
 Free code signing provided by [url=https://signpath.io/]SignPath.io[/url], certificate by [url=https://signpath.org/]SignPath Foundation[/url].
-Full policy, team roles, and privacy policy: [url=https://github.com/ericpzh/AC27LevelEditor/blob/main/CODE_SIGNING_POLICY.md]CODE_SIGNING_POLICY.md[/url] | License: [url=https://github.com/ericpzh/AC27LevelEditor/blob/main/LICENSE]MIT[/url].
+Full policy, team roles, and privacy policy: [url=https://github.com/ericpzh/AC27LevelEditor/blob/master/CODE_SIGNING_POLICY.md]CODE_SIGNING_POLICY.md[/url] | License: [url=https://github.com/ericpzh/AC27LevelEditor/blob/master/LICENSE]MIT[/url].
