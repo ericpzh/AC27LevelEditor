@@ -1,7 +1,7 @@
 Airport Control 27 修改器工具盒。
 [b]本模组仅支持 Windows。[/b]如果你使用其他平台，请前往 [url=https://github.com/ericpzh/AC27LevelEditor/releases]GitHub Releases 页面[/url] 下载。
 
-源码请访问 [url=https://github.com]AC27LevelEditor GitHub[/url]。
+源码请访问 [url=https://github.com/ericpzh/AC27LevelEditor]AC27LevelEditor GitHub[/url]。
 
 [h1]核心功能[/h1]
 [list]
@@ -40,3 +40,6 @@ Airport Control 27 修改器工具盒。
 [*] 点击 [b]验证游戏文件的完整性[/b]。Steam 将自动重新下载原始的关卡文件。
 [/list]
 [hr]
+[h1]代码签名政策 (Code signing policy)[/h1]
+免费代码签名由 [url=https://signpath.io/]SignPath.io[/url] 提供，证书由 [url=https://signpath.org/]SignPath Foundation[/url] 签发。
+完整政策与隐私说明请见：[url=https://github.com/ericpzh/AC27LevelEditor/blob/main/CODE_SIGNING_POLICY.md]CODE_SIGNING_POLICY.md[/url] | 开源协议：[url=https://github.com/ericpzh/AC27LevelEditor/blob/main/LICENSE]MIT[/url]。

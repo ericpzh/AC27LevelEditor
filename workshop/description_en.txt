@@ -1,6 +1,6 @@
 A comprehensive desktop utility and level editor toolbox for [b]Airport Control 27[/b].
 [b]Note: This mod is for Windows only.[/b] If you are on another platform (macOS / Linux), please download the editor from [url=https://github.com/ericpzh/AC27LevelEditor/releases]GitHub Releases[/url].
-For source code, please visit [url=https://github.com]AC27LevelEditor GitHub[/url].
+For source code, please visit [url=https://github.com/ericpzh/AC27LevelEditor]AC27LevelEditor GitHub[/url].
 
 [h1]Core Features[/h1]
 [list]
@@ -39,3 +39,6 @@ If a runtime error occurs while using the editor, or if levels are accidentally 
 [*] Click [b]Verify integrity of game files[/b]. Steam will automatically re-download the original level files.
 [/list]
 [hr]
+[h1]Code signing policy[/h1]
+Free code signing provided by [url=https://signpath.io/]SignPath.io[/url], certificate by [url=https://signpath.org/]SignPath Foundation[/url].
+Full policy, team roles, and privacy policy: [url=https://github.com/ericpzh/AC27LevelEditor/blob/main/CODE_SIGNING_POLICY.md]CODE_SIGNING_POLICY.md[/url] | License: [url=https://github.com/ericpzh/AC27LevelEditor/blob/main/LICENSE]MIT[/url].

@@ -2,6 +2,12 @@
   "name": "ac27-editor",
   "version": "1.6.0",
   "description": "Cross-platform Level Editor for Airport Control 27 .acl flight schedules",
+  "license": "MIT",
+  "homepage": "https://github.com/ericpzh/AC27LevelEditor#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ericpzh/AC27LevelEditor.git"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",

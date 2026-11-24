@@ -23,6 +23,12 @@ Cross-platform desktop level editor for **Airport Control 27** `.acl` flight sch
 - Default Steam path: `...\SteamLibrary\steamapps\common\Airport Control 27 Demo`
 - The editor auto-scans all airports and their level files
 
+### Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for team roles, build/approval process, and privacy policy.
+
+Licensed under the [MIT License](LICENSE).
+
 ### Restore Game Files
 
 If the editor corrupts level files, Steam can restore the originals:

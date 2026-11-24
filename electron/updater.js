@@ -26,6 +26,7 @@
  * Every decision step is logged via log() — console + <userData>/updater.log.
  *
  * ## Env var overrides (for testing)
+ *   AC27_DISABLE_AUTO_UPDATE — '1' disables automatic startup update checks
  *   AC27_UPDATE_SERVER    — base URL for update checks (default: https://ericpzh.rest/editor)
  *   AC27_UPDATE_DRY_RUN   — '1' skips actual spawn of updater.bat ('0' forces real install in dev)
  *   AC27_UPDATE_DEV_CHECK — dev only: '1' enables the check under npm start (auto-discovers a build artifact)
@@ -96,6 +97,7 @@ function isWorkshopBuild() {
  * @returns {boolean}
  */
 function isUpdateSupported() {
+  if (process.env.AC27_DISABLE_AUTO_UPDATE === '1') return false;
   if (isWorkshopBuild()) return false;
   return app.isPackaged
     && process.platform === 'win32'
@@ -281,6 +283,11 @@ async function checkForUpdate() {
     '| variant:', variantName(),
     '| workshop:', isWorkshopBuild(),
     '| server:', UPDATE_BASE);
+
+  if (process.env.AC27_DISABLE_AUTO_UPDATE === '1') {
+    log('[Updater] auto-update disabled by AC27_DISABLE_AUTO_UPDATE=1 — skipping');
+    return { hasUpdate: false };
+  }
 
   if (isWorkshopBuild()) {
     log('[Updater] workshop build — auto-update disabled by marker (Steam Workshop handles updates) — skipping');
